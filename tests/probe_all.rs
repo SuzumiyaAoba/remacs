@@ -36,6 +36,16 @@ fn probe_edge_typed_args() {
 }
 
 #[test]
+fn probe_runtime_semantics() {
+    let (mut i, _) = interp();
+    let src = include_str!("probe_runtime.el");
+    match i.eval_str(src) {
+        Ok(_) => {}
+        Err(f) => panic!("probe failed: {:?}", f),
+    }
+}
+
+#[test]
 fn probe_editor_module() {
     let (mut i, _) = interp();
     let src = include_str!("probe_editor.el");

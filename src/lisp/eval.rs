@@ -1261,6 +1261,11 @@ impl Interp {
         put(self, "search-failed", &["search-failed", "error"]);
         put(self, "no-catch", &["no-catch", "error"]);
         put(self, "scan-error", &["scan-error", "error"]);
+        put(self, "invalid-regexp", &["invalid-regexp", "error"]);
+        put(self, "recursion-error", &["recursion-error", "error"]);
+        put(self, "file-already-exists", &["file-already-exists", "file-error", "error"]);
+        put(self, "file-supersession", &["file-supersession", "file-error", "error"]);
+        put(self, "permission-denied", &["permission-denied", "file-error", "error"]);
         put(self, "mark-set", &["mark-set"]);
         put(self, "mark-active", &["mark-active"]);
         put(self, "mark-inactive", &["mark-inactive"]);
@@ -1296,6 +1301,10 @@ impl Interp {
             ("search-failed", "Search failed"),
             ("no-catch", "No catch for tag"),
             ("scan-error", "Scan error"),
+            ("invalid-regexp", "Invalid regexp"),
+            ("file-already-exists", "File already exists"),
+            ("file-supersession", "File is already being edited"),
+            ("permission-denied", "Permission denied"),
             ("recursion-error", "Variable binding depth exceeds max-specpdl-size"),
         ];
         for (name, msg) in msgs {

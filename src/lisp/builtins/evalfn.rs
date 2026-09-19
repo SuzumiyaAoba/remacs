@@ -310,8 +310,19 @@ pub(crate) fn apply_format_simple(i: &Interp, fmt: &str, args: &[Value]) -> Stri
 }
 
 fn f_throw(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    let _ = i;
-    Err(Flow::Throw(args[0].clone(), args[1].clone()))
+    // Emacs: Fthrow scans the catch chain; with no matching catch it
+    // signals `no-catch' at the throw site (so condition-case can catch
+    // it, but an outer matching catch would have won instead).
+    if i
+        .catch_tags
+        .iter()
+        .any(|t| crate::lisp::eq_values(t, &args[0]))
+    {
+        Err(Flow::Throw(args[0].clone(), args[1].clone()))
+    } else {
+        let nc = i.intern("no-catch");
+        Err(i.signal_data(nc, vec![args[0].clone(), args[1].clone()]))
+    }
 }
 
 fn f_condition_case_raw(i: &mut Interp, args: Vec<Value>) -> EvalResult {

@@ -533,7 +533,10 @@ fn sf_while(i: &mut Interp, args: Value) -> EvalResult {
 fn sf_catch(i: &mut Interp, args: Value) -> EvalResult {
     let tag = i.eval(&car(&args))?;
     let body = cdr(&args);
-    match i.eval_progn(&body) {
+    i.catch_tags.push(tag.clone());
+    let r = i.eval_progn(&body);
+    i.catch_tags.pop();
+    match r {
         Err(Flow::Throw(t, v)) => {
             if crate::lisp::eq_values(&t, &tag) {
                 Ok(v)
