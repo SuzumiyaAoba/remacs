@@ -170,13 +170,13 @@ pub(crate) static SUBRS: &[Subr] = &[
     // --- markers ---
     S!("markerp", 1, 1, f_markerp, "t if OBJECT is a marker."),
     S!("make-marker", 0, 0, f_make_marker, "Create a marker pointing nowhere."),
-    S!("copy-marker", 0, 2, f_copy_marker, "Copy MARKER."),
-    S!("set-marker", 1, 3, f_set_marker, "Point MARKER at POSITION in BUFFER."),
+    S!("copy-marker", 1, 2, f_copy_marker, "Copy MARKER."),
+    S!("set-marker", 2, 3, f_set_marker, "Point MARKER at POSITION in BUFFER."),
     S!("marker-position", 1, 1, f_marker_position, "Position of MARKER."),
     S!("marker-buffer", 1, 1, f_marker_buffer, "Buffer of MARKER."),
     S!("marker-insertion-type", 1, 1, f_marker_insertion_type, "Insertion type of MARKER."),
     S!("set-marker-insertion-type", 2, 2, f_set_marker_insertion_type, "Set insertion type."),
-    S!("move-marker", 1, 3, f_set_marker, "Move MARKER."),
+    S!("move-marker", 2, 3, f_set_marker, "Move MARKER."),
     // --- searching ---
     S!("looking-at", 1, 2, f_looking_at, "t if text at point matches REGEXP."),
     S!("looking-at-p", 1, 1, f_looking_at, "Predicate version."),

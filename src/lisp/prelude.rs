@@ -375,9 +375,10 @@ returning that buffer's contents as a string."
   (interactive "^p")
   (let ((n (or arg 1)))
     (while (> n 0)
-      (when (re-search-forward "[.!?][])}\"']*[ \t\n]+" nil t)
-        (setq n (1- n)))
-      (setq n (if (eobp) 0 (max 0 n)))))
+      (if (re-search-forward "[.!?][])}\"']*[ \t\n]+" nil t)
+          (setq n (1- n))
+        (goto-char (point-max))
+        (setq n 0))))
   (skip-chars-forward " \t\n"))
 
 (defun backward-sentence (&optional arg)
@@ -385,10 +386,12 @@ returning that buffer's contents as a string."
   (interactive "^p")
   (let ((n (or arg 1)))
     (while (> n 0)
-      (when (re-search-backward "[.!?][])}\"']*[ \t\n]+" nil t)
-        (goto-char (match-end 0))
-        (setq n (1- n)))
-      (setq n (if (bobp) 0 (max 0 n))))))
+      (if (re-search-backward "[.!?][])}\"']*[ \t\n]+" nil t)
+          (progn
+            (goto-char (match-end 0))
+            (setq n (1- n)))
+        (goto-char (point-min))
+        (setq n 0)))))
 
 (defun forward-page (&optional count)
   "Move forward to page boundary."
@@ -556,17 +559,23 @@ returning that buffer's contents as a string."
   (save-some-buffers arg)
   (kill-emacs))
 
-(defun isearch-forward (&optional regexp-p no-recursive-edit)
-  "Search forward interactively (simple prompt version)."
-  (interactive "sI-search: \nP\nP")
-  (let ((s (car command-args)))
-    s))
+(defun isearch-forward (regexp-p string)
+  "Search forward; prompts for a string (line-input fallback)."
+  (interactive "P\nsI-search: ")
+  (when (> (length string) 0)
+    (if regexp-p
+        (re-search-forward string nil t)
+      (search-forward string nil t)))
+  string)
 
-(defun isearch-backward (&optional regexp-p no-recursive-edit)
-  "Search backward interactively (simple prompt version)."
-  (interactive "sI-search backward: \nP\nP")
-  (let ((s (car command-args)))
-    s))
+(defun isearch-backward (regexp-p string)
+  "Search backward; prompts for a string (line-input fallback)."
+  (interactive "P\nsI-search backward: ")
+  (when (> (length string) 0)
+    (if regexp-p
+        (re-search-backward string nil t)
+      (search-backward string nil t)))
+  string)
 
 (defun query-replace (from-string to-string &optional delimited)
   "Replace occurrences of FROM-STRING with TO-STRING, asking."

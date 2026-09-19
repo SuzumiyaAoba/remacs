@@ -214,7 +214,7 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!("frame-list", 0, 0, f_frame_list, "All live frames."),
     S!("visible-frame-list", 0, 0, f_frame_list, ""),
     S!("delete-frame", 0, 2, f_delete_frame, "Delete FRAME."),
-    S!("frame-parameter", 1, 2, f_frame_parameter, "FRAME's PARAMETER."),
+    S!("frame-parameter", 2, 2, f_frame_parameter, "FRAME's PARAMETER."),
     S!("frame-parameters", 0, 1, f_frame_parameters, "FRAME's parameters alist."),
     S!("modify-frame-parameters", 2, 2, f_modify_frame_parameters, "Set FRAME parameters."),
     S!("set-frame-parameter", 3, 3, f_set_frame_parameter, "Set FRAME parameter."),
@@ -339,7 +339,7 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!("add-name-to-file", 2, 3, f_rename_file, "Hard link FILE to NEWNAME."),
     S!("insert-file-contents", 1, 7, f_insert_file_contents, "Insert contents of FILENAME."),
     S!("insert-file-contents-literally", 1, 5, f_insert_file_contents_literally, ""),
-    S!("write-region", 2, 7, f_write_region, "Write region to FILENAME."),
+    S!("write-region", 3, 7, f_write_region, "Write region to FILENAME."),
     S!("write-region-annotate-functions", 0, 0, f_nil, ""),
     S!("write-region-post-annotation-function", 0, 0, f_nil, ""),
     S!("write-region-charset-for-write", 0, 0, f_nil, ""),
@@ -370,7 +370,7 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!("file-equal-p", 2, 2, f_nil, ""),
     // processes
     S!("call-process", 1, 8, f_call_process, "Run PROGRAM synchronously."),
-    S!("call-process-region", 2, 9, f_call_process_region, "Run PROGRAM on region."),
+    S!("call-process-region", 3, 9, f_call_process_region, "Run PROGRAM on region."),
     S!("shell-command", 1, 4, f_shell_command, "Run COMMAND in a shell."),
     S!("shell-command-to-string", 1, 1, f_shell_command_to_string, "Run COMMAND, return output."),
     S!("start-process", 3, 3, f_start_process_stub, "Start async process (unsupported)."),
@@ -1038,9 +1038,12 @@ fn f_get_buffer_window(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 }
 
 fn f_get_buffer_window_list(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let bid = i
-        .buffer_id_of(&a[0])
-        .ok_or_else(|| i.error_obj("No such buffer", &a[0]))?;
+    let bid = match a.get(0) {
+        None => i.current_buffer,
+        Some(v) => i
+            .buffer_id_of(v)
+            .ok_or_else(|| i.error_obj("No such buffer", v))?,
+    };
     let mut out = Vec::new();
     for f in &i.frames {
         for w in &f.borrow().windows {
@@ -3058,7 +3061,7 @@ fn write_file_string(
 fn f_set_visited_file_name(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let b = cur(i);
     let mut bb = b.borrow_mut();
-    match &a[0] {
+    match &a.get(0).cloned().unwrap_or(Value::Nil) {
         Value::Nil => bb.file_name = None,
         Value::Str(s) => bb.file_name = Some(s.borrow().clone()),
         other => return Err(i.wrong_type_mut("stringp", other)),

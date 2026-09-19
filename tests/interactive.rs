@@ -326,6 +326,53 @@ fn describe_key_shape() {
 }
 
 #[test]
+fn load_file_evals_forms() {
+    let path = std::env::temp_dir().join("remacs_test_load.el");
+    std::fs::write(
+        &path,
+        "(defun loaded-fn (x) (+ x 41))\n(setq loaded-var 99)\n",
+    )
+    .unwrap();
+    let (mut i, _) = interp();
+    let v = ev_in(
+        &mut i,
+        &format!("(progn (load \"{}\") (loaded-fn 1))", path.display()),
+    );
+    assert_eq!(i.prin1_to_string(&v), "42");
+    assert_eq!(pev(&mut i, "loaded-var"), "99");
+    // load-file-name is bound only during loading.
+    let b = pev(&mut i, "(boundp 'load-file-name)");
+    assert!(b == "nil" || b == "t");
+}
+
+#[test]
+fn load_path_search() {
+    let dir = std::env::temp_dir().join("remacs_load_path_test");
+    std::fs::create_dir_all(&dir).unwrap();
+    let lib = dir.join("mylib.el");
+    std::fs::write(&lib, "(defun mylib-fn () 'from-mylib)\n").unwrap();
+    let (mut i, _) = interp();
+    let v = ev_in(
+        &mut i,
+        &format!(
+            "(let ((load-path (list \"{}\")))
+               (load \"mylib\") (mylib-fn))",
+            dir.display()
+        ),
+    );
+    assert_eq!(i.prin1_to_string(&v), "from-mylib");
+}
+
+#[test]
+fn load_missing_signals() {
+    let (mut i, _) = interp();
+    assert_eq!(
+        ev_err_in(&mut i, "(load \"/nonexistent-dir-xyz/nofile\")"),
+        "file-error"
+    );
+}
+
+#[test]
 fn substitute_command_keys_basic() {
     assert_eq!(
         ev("(substitute-command-keys \"Press \\\\[forward-char]\")"),

@@ -554,3 +554,143 @@ fn minibuf_loop(
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyEventState, KeyModifiers};
+
+    fn ev(code: KeyCode, mods: KeyModifiers) -> KeyEvent {
+        KeyEvent {
+            code,
+            modifiers: mods,
+            kind: KeyEventKind::Press,
+            state: KeyEventState::empty(),
+        }
+    }
+
+    #[test]
+    fn ctrl_chars_fold_to_control_codes() {
+        // C-u -> 21, C-x -> 24, C-a -> 1 (Emacs event representation).
+        assert_eq!(
+            key_event_to_code(ev(KeyCode::Char('u'), KeyModifiers::CONTROL)),
+            Some(21)
+        );
+        assert_eq!(
+            key_event_to_code(ev(KeyCode::Char('x'), KeyModifiers::CONTROL)),
+            Some(24)
+        );
+        assert_eq!(
+            key_event_to_code(ev(KeyCode::Char('a'), KeyModifiers::CONTROL)),
+            Some(1)
+        );
+        // C-? -> DEL
+        assert_eq!(
+            key_event_to_code(ev(KeyCode::Char('?'), KeyModifiers::CONTROL)),
+            Some(127)
+        );
+        // C-@ -> 0 (crossterm may deliver it as C-2 or C-Space variant)
+        assert_eq!(
+            key_event_to_code(ev(KeyCode::Char('@'), KeyModifiers::CONTROL)),
+            Some(0)
+        );
+    }
+
+    #[test]
+    fn meta_sets_bit() {
+        assert_eq!(
+            key_event_to_code(ev(KeyCode::Char('f'), KeyModifiers::ALT)),
+            Some(b'f' as i128 | CHAR_META)
+        );
+        // M-C-f -> meta | control-folded char
+        assert_eq!(
+            key_event_to_code(ev(
+                KeyCode::Char('f'),
+                KeyModifiers::ALT | KeyModifiers::CONTROL
+            )),
+            Some(6 | CHAR_META)
+        );
+    }
+
+    #[test]
+    fn named_keys_get_symbol_codes() {
+        assert_eq!(
+            key_event_to_code(ev(KeyCode::Up, KeyModifiers::empty())),
+            Some(named_code("up"))
+        );
+        assert_eq!(
+            key_event_to_code(ev(KeyCode::PageDown, KeyModifiers::empty())),
+            Some(named_code("next"))
+        );
+        assert_eq!(
+            key_event_to_code(ev(KeyCode::F(3), KeyModifiers::empty())),
+            Some(named_code("f3"))
+        );
+        // M-<up>
+        assert_eq!(
+            key_event_to_code(ev(KeyCode::Up, KeyModifiers::ALT)),
+            Some(named_code("up") | CHAR_META)
+        );
+    }
+
+    #[test]
+    fn plain_chars_and_whitespace() {
+        assert_eq!(
+            key_event_to_code(ev(KeyCode::Char('a'), KeyModifiers::empty())),
+            Some(97)
+        );
+        assert_eq!(
+            key_event_to_code(ev(KeyCode::Enter, KeyModifiers::empty())),
+            Some(13)
+        );
+        assert_eq!(
+            key_event_to_code(ev(KeyCode::Tab, KeyModifiers::empty())),
+            Some(9)
+        );
+        assert_eq!(
+            key_event_to_code(ev(KeyCode::Backspace, KeyModifiers::empty())),
+            Some(127)
+        );
+        assert_eq!(
+            key_event_to_code(ev(KeyCode::Esc, KeyModifiers::empty())),
+            Some(27)
+        );
+    }
+
+    #[test]
+    fn lookup_routes_to_bindings() {
+        let mut i = crate::lisp::Interp::new();
+        let seq = |k: i128| {
+            Value::Vec(std::rc::Rc::new(std::cell::RefCell::new(vec![
+                Value::Int(k),
+            ])))
+        };
+        // 'a' -> t default -> self-insert-command
+        match lookup_command(&mut i, &seq(97)) {
+            LookupResult::Command(v) => {
+                assert_eq!(i.princ_to_string(&v), "self-insert-command")
+            }
+            _ => panic!("'a' should resolve to self-insert-command"),
+        }
+        // C-u -> universal-argument
+        match lookup_command(&mut i, &seq(21)) {
+            LookupResult::Command(v) => {
+                assert_eq!(i.princ_to_string(&v), "universal-argument")
+            }
+            _ => panic!("C-u should resolve to universal-argument"),
+        }
+        // C-x alone -> prefix keymap
+        assert!(matches!(lookup_command(&mut i, &seq(24)), LookupResult::Prefix));
+        // C-x C-c -> save-buffers-kill-emacs
+        let two = Value::Vec(std::rc::Rc::new(std::cell::RefCell::new(vec![
+            Value::Int(24),
+            Value::Int(3),
+        ])));
+        match lookup_command(&mut i, &two) {
+            LookupResult::Command(v) => {
+                assert_eq!(i.princ_to_string(&v), "save-buffers-kill-emacs")
+            }
+            _ => panic!("C-x C-c should resolve"),
+        }
+    }
+}
