@@ -1,0 +1,320 @@
+//! Core Lisp object representation.
+//!
+//! Unlike Emacs (tagged pointers), we use a plain enum of reference-counted
+//! objects. Mutability goes through `RefCell`; sharing through `Rc`. Cycles
+//! can leak — acceptable for now, and the architecture note in AGENTS.md
+//! documents this as a deliberate simplification over Emacs's mark-and-sweep.
+
+use std::cell::RefCell;
+use std::collections::HashMap;
+use std::fmt;
+use std::rc::Rc;
+
+use crate::buffer::Buffer;
+use crate::editor::{Frame, Window};
+
+/// Symbol identifier: index into the obarray's symbol vector.
+pub type SymId = u32;
+
+pub type ConsRef = Rc<RefCell<Cons>>;
+pub type StrRef = Rc<RefCell<String>>;
+pub type VecRef = Rc<RefCell<Vec<Value>>>;
+pub type HashRef = Rc<RefCell<LispHash>>;
+pub type LambdaRef = Rc<Lambda>;
+pub type BufferRef = Rc<RefCell<Buffer>>;
+pub type MarkerRef = Rc<RefCell<Marker>>;
+pub type WindowRef = Rc<RefCell<Window>>;
+pub type FrameRef = Rc<RefCell<Frame>>;
+
+/// Emacs fixnum range on 64-bit builds: 62 bits (2 tag bits in C).
+/// Integers outside this range are bignums — we represent all integers
+/// as i128 so promotion is exact for any value a real program produces.
+pub const FIXNUM_MAX: i128 = (1i128 << 61) - 1;
+pub const FIXNUM_MIN: i128 = -(1i128 << 61);
+
+#[derive(Clone)]
+pub enum Value {
+    Nil,
+    Int(i128),
+    Float(f64),
+    Sym(SymId),
+    Cons(ConsRef),
+    Str(StrRef),
+    Vec(VecRef),
+    /// Emacs record object (read syntax `#s(tag fields...)`).
+    Record(VecRef),
+    Hash(HashRef),
+    Subr(&'static Subr),
+    Lambda(LambdaRef),
+    Buffer(BufferRef),
+    Marker(MarkerRef),
+    Window(WindowRef),
+    Frame(FrameRef),
+}
+
+/// A cons cell. `cdr` may be any value (dotted pair).
+pub struct Cons {
+    pub car: Value,
+    pub cdr: Value,
+}
+
+impl Cons {
+    pub fn new(car: Value, cdr: Value) -> ConsRef {
+        Rc::new(RefCell::new(Cons { car, cdr }))
+    }
+}
+
+/// Hash table test function (make-hash-table :test ...).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum HashTest {
+    Eq,
+    Eql,
+    Equal,
+}
+
+pub struct LispHash {
+    pub test: HashTest,
+    /// We key on a normalized form so `equal` keys hash correctly.
+    pub map: HashMap<HashKey, Value>,
+    /// Keep original keys for `maphash`/`hash-table-keys`.
+    pub keys: HashMap<HashKey, Value>,
+}
+
+impl LispHash {
+    pub fn new(test: HashTest) -> Self {
+        LispHash {
+            test,
+            map: HashMap::new(),
+            keys: HashMap::new(),
+        }
+    }
+}
+
+/// Normalized hash key. Deep-normalizes conses/strings so that `equal`
+/// comparisons work; `eq`/`eql` use identity-ish keys.
+#[derive(PartialEq, Eq, Hash, Clone, Debug)]
+pub enum HashKey {
+    Nil,
+    True,
+    Sym(SymId),
+    Int(i128),
+    /// Bit pattern so -0.0/NaN behave deterministically.
+    Float(u64),
+    Str(String),
+    /// Identity key for objects where `eq` compares by pointer.
+    Ptr(usize),
+    Cons(Box<HashKey>, Box<HashKey>),
+    Vec(Vec<HashKey>),
+}
+
+impl HashKey {
+    pub fn ptr_of<T>(r: &Rc<RefCell<T>>) -> HashKey {
+        HashKey::Ptr(Rc::as_ptr(r) as usize)
+    }
+}
+
+/// Max argument count for a subr: fixed or unlimited.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Arity {
+    /// Exactly `min..=max` evaluated args.
+    Range { min: u16, max: u16 },
+    /// At least `min` evaluated args (MANY).
+    Many { min: u16 },
+    /// Args passed raw (unevaluated) as a list — a special form.
+    Unevalled,
+}
+
+/// A primitive function implemented in Rust.
+pub struct Subr {
+    pub name: &'static str,
+    pub arity: Arity,
+    pub func: SubrFn,
+    pub doc: &'static str,
+}
+
+pub type SubrFn = fn(&mut crate::lisp::Interp, Vec<Value>) -> crate::lisp::EvalResult;
+
+/// An interpreted function (or macro) defined in Lisp.
+pub struct Lambda {
+    /// `Some` for macros: body returns a form to re-evaluate.
+    pub is_macro: bool,
+    pub required: Vec<SymId>,
+    pub optional: Vec<OptParam>,
+    pub rest: Option<SymId>,
+    pub body: Vec<Value>,
+    /// Captured lexical environment (used when `lexical-binding` is t).
+    pub env: crate::lisp::LexEnv,
+    pub doc: Option<String>,
+    /// Raw `interactive` spec form, if this is a command.
+    pub interactive: Option<Value>,
+    /// Name for display purposes (from defun or set-name).
+    pub name: Option<String>,
+}
+
+#[derive(Clone)]
+pub struct OptParam {
+    pub sym: SymId,
+    pub default: Option<Value>,
+}
+
+impl Lambda {
+    pub fn arity(&self) -> Arity {
+        let min = self.required.len() as u16;
+        if self.rest.is_some() {
+            Arity::Many { min }
+        } else {
+            Arity::Range {
+                min,
+                max: min + self.optional.len() as u16,
+            }
+        }
+    }
+}
+
+/// A marker: a position in a buffer that tracks edits.
+pub struct Marker {
+    /// Buffer name or identity of the owner; `None` if marker points nowhere.
+    pub buffer: Option<usize>,
+    /// Character position (0-based byte-in-chars offset).
+    pub position: usize,
+    /// Insertion type: if true, text inserted at the marker goes after it.
+    pub insertion_type: bool,
+}
+
+impl Value {
+    pub fn is_nil(&self) -> bool {
+        matches!(self, Value::Nil)
+    }
+
+    pub fn truthy(&self) -> bool {
+        !self.is_nil()
+    }
+
+    pub fn t() -> Value {
+        Value::Sym(crate::lisp::sym::T)
+    }
+
+    /// Canonical `t`/`nil` from a boolean.
+    pub fn from_bool(b: bool) -> Value {
+        if b { Value::t() } else { Value::Nil }
+    }
+
+    /// Integer value if this is an Int.
+    pub fn int(&self) -> Option<i128> {
+        match self {
+            Value::Int(n) => Some(*n),
+            _ => None,
+        }
+    }
+
+    /// `fixnump`: integer in Emacs's fixnum range.
+    pub fn fixnump(&self) -> bool {
+        matches!(self, Value::Int(n) if (FIXNUM_MIN..=FIXNUM_MAX).contains(n))
+    }
+
+    /// Integer truncated to i64 (for positions/sizes; clamps bignums).
+    pub fn int_i64(&self) -> Option<i64> {
+        self.int().map(|n| n.clamp(i64::MIN as i128, i64::MAX as i128) as i64)
+    }
+
+    pub fn cons(car: Value, cdr: Value) -> Value {
+        Value::Cons(Cons::new(car, cdr))
+    }
+
+    pub fn string(s: impl Into<String>) -> Value {
+        Value::Str(Rc::new(RefCell::new(s.into())))
+    }
+
+    pub fn list(items: Vec<Value>) -> Value {
+        let mut tail = Value::Nil;
+        for item in items.into_iter().rev() {
+            tail = Value::cons(item, tail);
+        }
+        tail
+    }
+
+    /// Iterate over a proper or dotted list's cars. Returns the tail after
+    /// the last cons (nil for proper lists, the dotted value otherwise).
+    /// The callback gets a cloned car so it may mutate conses freely.
+    /// NOTE: no cycle detection — callers that need it use `list_to_vec`.
+    pub fn each_car(&self, mut f: impl FnMut(&Value)) -> Value {
+        let mut cur = self.clone();
+        loop {
+            match cur {
+                Value::Cons(c) => {
+                    let (car, next) = {
+                        let b = c.borrow();
+                        (b.car.clone(), b.cdr.clone())
+                    };
+                    f(&car);
+                    cur = next;
+                }
+                other => return other,
+            }
+        }
+    }
+
+    /// Convert a proper list to a Vec. Errors on improper lists or circles.
+    pub fn list_to_vec(&self) -> Result<Vec<Value>, ListError> {
+        let mut out = Vec::new();
+        let mut cur = self.clone();
+        let mut slow = self.clone();
+        let mut steps = 0usize;
+        loop {
+            match cur {
+                Value::Nil => return Ok(out),
+                Value::Cons(c) => {
+                    let b = c.borrow();
+                    let next = b.cdr.clone();
+                    out.push(b.car.clone());
+                    drop(b);
+                    cur = next;
+                }
+                _ => return Err(ListError::Dotted),
+            }
+            steps += 1;
+            if steps % 2 == 0 {
+                if let Value::Cons(c) = slow {
+                    let next = c.borrow().cdr.clone();
+                    slow = next;
+                }
+                if let (Value::Cons(a), Value::Cons(b)) = (&slow, &cur) {
+                    if Rc::ptr_eq(a, b) {
+                        return Err(ListError::Circular);
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Errors traversing a list.
+#[derive(Debug, PartialEq, Eq)]
+pub enum ListError {
+    /// List ended in a non-nil non-cons (dotted pair).
+    Dotted,
+    /// Circular list detected.
+    Circular,
+}
+
+impl fmt::Debug for Value {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Value::Nil => write!(f, "nil"),
+            Value::Int(i) => write!(f, "{i}"),
+            Value::Float(x) => write!(f, "{x}"),
+            Value::Sym(id) => write!(f, "Sym({id})"),
+            Value::Cons(_) => write!(f, "Cons(..)"),
+            Value::Str(s) => write!(f, "{:?}", s.borrow()),
+            Value::Vec(_) => write!(f, "Vec(..)"),
+            Value::Record(_) => write!(f, "Record(..)"),
+            Value::Hash(_) => write!(f, "Hash(..)"),
+            Value::Subr(s) => write!(f, "#<subr {}>", s.name),
+            Value::Lambda(_) => write!(f, "Lambda(..)"),
+            Value::Buffer(_) => write!(f, "Buffer(..)"),
+            Value::Marker(_) => write!(f, "Marker(..)"),
+            Value::Window(_) => write!(f, "Window(..)"),
+            Value::Frame(_) => write!(f, "Frame(..)"),
+        }
+    }
+}
