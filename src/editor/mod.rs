@@ -3200,7 +3200,7 @@ fn f_call_process(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let prog = want_str(i, &a[0])?;
     // (call-process PROGRAM &optional INFILE DESTINATION DISPLAY &rest ARGS)
     let mut cmd = std::process::Command::new(&prog);
-    for v in &a[4..] {
+    for v in a.get(4..).unwrap_or(&[]) {
         cmd.arg(want_str(i, v)?);
     }
     if let Some(Value::Str(infile)) = a.get(1) {
@@ -3263,7 +3263,7 @@ fn f_call_process_region(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let mut cmd = std::process::Command::new(&prog);
     cmd.stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped());
-    for v in &a[6..] {
+    for v in a.get(6..).unwrap_or(&[]) {
         cmd.arg(want_str(i, v)?);
     }
     let mut child = match cmd.spawn() {

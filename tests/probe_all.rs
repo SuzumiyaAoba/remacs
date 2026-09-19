@@ -24,3 +24,23 @@ fn probe_deep_editing_session() {
         Err(f) => panic!("probe failed: {:?}", f),
     }
 }
+
+#[test]
+fn probe_edge_typed_args() {
+    let (mut i, _) = interp();
+    let src = include_str!("probe_edge.el");
+    match i.eval_str(src) {
+        Ok(_) => {}
+        Err(f) => panic!("probe failed: {:?}", f),
+    }
+}
+
+#[test]
+fn probe_editor_module() {
+    let (mut i, _) = interp();
+    let src = include_str!("probe_editor.el");
+    match i.eval_str(src) {
+        Ok(_) => {}
+        Err(f) => panic!("probe failed: {:?}", f),
+    }
+}

@@ -384,6 +384,12 @@ fn f_string_to_number(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     if t.is_empty() {
         return Ok(Value::Int(0));
     }
+    // Emacs: BASE is 0 (auto) or 2..16.
+    if base != 0 && !(2..=16).contains(&base) {
+        let sym = i.intern("args-out-of-range");
+        return Err(i.signal_data(sym, vec![Value::Int(base)]));
+    }
+    let base = if base == 0 { 10 } else { base };
     if base != 10 {
         let neg = t.starts_with('-');
         let digits = t.trim_start_matches(['+', '-']);
