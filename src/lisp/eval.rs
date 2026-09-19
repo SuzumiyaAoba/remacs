@@ -220,10 +220,14 @@ impl Interp {
 
     /// Global (default) value of a symbol.
     pub fn symbol_value(&self, id: SymId) -> Value {
-        // Buffer-local binding in current buffer wins.
+        // Buffer-local binding in current buffer wins. `try_borrow`:
+        // primitives that hold the buffer mutably borrowed may still
+        // consult variables (they see the global binding).
         if let Some(b) = self.buffers.get(self.current_buffer) {
-            if let Some(v) = b.borrow().locals.get(&id) {
-                return v.clone();
+            if let Ok(bb) = b.try_borrow() {
+                if let Some(v) = bb.locals.get(&id) {
+                    return v.clone();
+                }
             }
         }
         let v = &self.obarray.symbol(id).value;
@@ -261,8 +265,10 @@ impl Interp {
             return true;
         }
         if let Some(b) = self.buffers.get(self.current_buffer) {
-            if b.borrow().locals.contains_key(&id) {
-                return true;
+            if let Ok(bb) = b.try_borrow() {
+                if bb.locals.contains_key(&id) {
+                    return true;
+                }
             }
         }
         !matches!(
@@ -287,10 +293,11 @@ impl Interp {
         }
         let is_auto_local = self.obarray.symbol(id).make_local_if_set;
         if let Some(b) = self.buffers.get(self.current_buffer) {
-            let mut bb = b.borrow_mut();
-            if is_auto_local || bb.locals.contains_key(&id) {
-                bb.locals.insert(id, val);
-                return Ok(());
+            if let Ok(mut bb) = b.try_borrow_mut() {
+                if is_auto_local || bb.locals.contains_key(&id) {
+                    bb.locals.insert(id, val);
+                    return Ok(());
+                }
             }
         }
         self.obarray.symbol_mut(id).value = val;

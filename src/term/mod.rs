@@ -317,6 +317,10 @@ pub fn run_editor(i: &mut Interp) -> io::Result<()> {
         }
     }
     let mut keys: Vec<i128> = Vec::new();
+    // Set while a universal/digit-argument sequence is being entered:
+    // digits, `-', and further C-u keep building `prefix-arg' (Emacs's
+    // `universal-argument' continuation behavior).
+    let mut arg_mode = false;
     loop {
         if i.quit_editor {
             break;
@@ -328,6 +332,20 @@ pub fn run_editor(i: &mut Interp) -> io::Result<()> {
             Some(k) => k,
             None => continue,
         };
+        if arg_mode {
+            let digit = (48..58).contains(&key);
+            let minus = key == 45;
+            let cu = key == 21;
+            if digit || minus || cu {
+                let lce = i.intern("last-command-event");
+                let _ = i.set_symbol(lce, Value::Int(key));
+                let name = if cu { "universal-argument" } else { "digit-argument" };
+                let id = i.intern(name);
+                let _ = i.command_execute(&Value::Sym(id));
+                continue;
+            }
+            arg_mode = false;
+        }
         keys.push(key);
         let seq = Value::Vec(std::rc::Rc::new(std::cell::RefCell::new(
             keys.iter().map(|k| Value::Int(*k)).collect(),
@@ -380,6 +398,14 @@ pub fn run_editor(i: &mut Interp) -> io::Result<()> {
                         ));
                         let _ = v;
                     }
+                }
+                // Continue arg entry after C-u / M-digit / M--.
+                if let Value::Sym(id) = &cmd {
+                    let n = i.symbol_name(*id);
+                    arg_mode = matches!(
+                        n.as_str(),
+                        "universal-argument" | "digit-argument" | "negative-argument"
+                    );
                 }
             }
             LookupResult::Prefix => {
