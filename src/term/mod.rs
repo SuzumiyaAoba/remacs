@@ -34,6 +34,8 @@ impl Terminal {
     /// Enter raw mode + alternate screen.
     pub fn enter() -> io::Result<Terminal> {
         let (w, h) = terminal::size().unwrap_or((80, 24));
+        let w = w.max(10);
+        let h = h.max(3);
         terminal::enable_raw_mode()?;
         let mut out = io::stdout();
         queue!(out, terminal::EnterAlternateScreen, cursor::Hide)?;
@@ -70,8 +72,8 @@ impl Terminal {
         match event::read()? {
             Event::Key(k) => Ok(key_event_to_code(k)),
             Event::Resize(w, h) => {
-                self.width = w as usize;
-                self.height = h as usize;
+                self.width = (w as usize).max(10);
+                self.height = (h as usize).max(3);
                 Ok(None)
             }
             _ => Ok(None),
@@ -187,7 +189,10 @@ impl Terminal {
             }
         }
         // Minibuffer / echo area (last line).
-        queue!(self.out, cursor::MoveTo(0, (height - 1) as u16))?;
+        queue!(
+            self.out,
+            cursor::MoveTo(0, height.saturating_sub(1) as u16)
+        )?;
         let mini_text = match fb.minibuffer.as_ref().and_then(|w| {
             i.buffers.get(w.borrow().buffer)
         }) {
@@ -203,6 +208,21 @@ impl Terminal {
         if let Some((x, y)) = cursor_pos {
             queue!(self.out, cursor::MoveTo(x as u16, y as u16), cursor::Show)?;
         }
+        self.out.flush()
+    }
+
+    /// Draw the echo-area line with TEXT, cursor at its end.
+    pub fn draw_echo(&mut self, text: &str) -> io::Result<()> {
+        let y = self.height.saturating_sub(1) as u16;
+        queue!(
+            self.out,
+            cursor::MoveTo(0, y),
+            terminal::Clear(terminal::ClearType::CurrentLine)
+        )?;
+        let width = self.width;
+        let _ = write!(self.out, "{:<width$}", text, width = width);
+        let cx = text.chars().count().min(width.saturating_sub(1));
+        queue!(self.out, cursor::MoveTo(cx as u16, y), cursor::Show)?;
         self.out.flush()
     }
 }
@@ -238,12 +258,13 @@ fn key_event_to_code(k: KeyEvent) -> Option<i128> {
             if c.is_ascii_uppercase() && k.modifiers.contains(KeyModifiers::SHIFT) {
                 mods &= !CHAR_SHIFT; // shift folded into the char
             }
-            if mods & CHAR_CTL != 0 {
-                let lc = c.to_ascii_lowercase();
-                if lc.is_ascii_lowercase() {
-                    lc as i128
+            if mods & CHAR_CTL != 0 && (c as i128) < 128 {
+                // Emacs folds C-<ascii> to the control char (C-u → 21).
+                mods &= !CHAR_CTL;
+                if c == '?' {
+                    127
                 } else {
-                    c as i128
+                    (c as i128) & 0x1f
                 }
             } else {
                 c as i128
@@ -277,21 +298,33 @@ fn named_code(name: &str) -> i128 {
 
 /// Run the editor until `C-x C-c` (or `kill-emacs`).
 pub fn run_editor(i: &mut Interp) -> io::Result<()> {
-    let mut term = Terminal::enter()?;
+    let term = std::rc::Rc::new(std::cell::RefCell::new(Terminal::enter()?));
+    // Install the interactive input hook so read-from-minibuffer,
+    // M-x, y-or-n-p, read-char, and `interactive' spec codes can read
+    // input from inside the evaluator.
+    {
+        let t = term.clone();
+        i.minibuf_reader = Some(std::rc::Rc::new(move |interp, prompt, single| {
+            minibuf_loop(&t, interp, prompt, single)
+        }));
+    }
     // Sync frame geometry.
-    if let Some(f) = &i.selected_frame {
-        f.borrow_mut().width = term.width;
-        f.borrow_mut().height = term.height;
+    {
+        let (w, h) = (term.borrow().width, term.borrow().height);
+        if let Some(f) = &i.selected_frame {
+            f.borrow_mut().width = w;
+            f.borrow_mut().height = h;
+        }
     }
     let mut keys: Vec<i128> = Vec::new();
     loop {
         if i.quit_editor {
             break;
         }
-        term.render(i)?;
+        term.borrow_mut().render(i)?;
         // Poll input. Sleep deadlines keep the UI responsive.
         let timeout = Duration::from_millis(50);
-        let key = match term.poll_key(timeout)? {
+        let key = match term.borrow_mut().poll_key(timeout)? {
             Some(k) => k,
             None => continue,
         };
@@ -315,6 +348,9 @@ pub fn run_editor(i: &mut Interp) -> io::Result<()> {
                 let prefix = i.symbol_value(pa);
                 let cpa = i.intern("current-prefix-arg");
                 let _ = i.set_symbol(cpa, prefix);
+                // Consume prefix-arg BEFORE executing so commands that
+                // set it (C-u, digit-argument) affect the NEXT command.
+                let _ = i.set_symbol(pa, Value::Nil);
                 match i.command_execute(&cmd) {
                     Ok(_) => {}
                     Err(crate::lisp::error::Flow::Quit) => {
@@ -345,8 +381,6 @@ pub fn run_editor(i: &mut Interp) -> io::Result<()> {
                         let _ = v;
                     }
                 }
-                let pa = i.intern("prefix-arg");
-                let _ = i.set_symbol(pa, Value::Nil);
             }
             LookupResult::Prefix => {
                 // keep reading keys
@@ -443,4 +477,54 @@ pub fn nonblocking_sleep(i: &mut Interp, dur: Duration) -> io::Result<()> {
         std::thread::sleep(Duration::from_millis(5));
     }
     Ok(())
+}
+
+/// Nested input loop for minibuffer reads. Runs while the outer
+/// command loop is suspended inside `command_execute`.
+fn minibuf_loop(
+    term: &std::rc::Rc<std::cell::RefCell<Terminal>>,
+    i: &mut Interp,
+    prompt: &str,
+    single: bool,
+) -> Result<crate::lisp::eval::MinibufInput, crate::lisp::error::Flow> {
+    use crate::lisp::eval::MinibufInput;
+    let mut text = String::new();
+    loop {
+        {
+            let mut t = term.borrow_mut();
+            let _ = t.draw_echo(&format!("{}{}", prompt, text));
+        }
+        let k = term
+            .borrow_mut()
+            .poll_key(Duration::from_secs(86400))
+            .ok()
+            .flatten();
+        let Some(code) = k else {
+            continue;
+        };
+        if single {
+            return Ok(MinibufInput::Key(code));
+        }
+        let base = code & 0x3f_ffff;
+        let mods = code & !0x3f_ffff;
+        if code == 7 {
+            // C-g aborts.
+            return Err(crate::lisp::error::Flow::Quit);
+        }
+        match base {
+            13 => return Ok(MinibufInput::Text(text)), // RET
+            127 => {
+                text.pop();
+            }
+            c if mods == 0 && (32..0x110000).contains(&c) => {
+                if let Some(ch) = char::from_u32(c as u32) {
+                    text.push(ch);
+                }
+            }
+            _ => {
+                // Ignore other events (arrows, modifiers).
+                let _ = i;
+            }
+        }
+    }
 }

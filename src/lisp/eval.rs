@@ -107,6 +107,20 @@ pub struct Interp {
     pub selected_frame: Option<crate::editor::FrameRef>,
     /// Set by `kill-emacs` to exit the command loop.
     pub quit_editor: bool,
+    /// Interactive input hook installed by the terminal front-end.
+    /// Called as (interp, prompt, single_key) -> MinibufInput.
+    /// `single_key` reads one event (y-or-n-p, read-char).
+    pub minibuf_reader: Option<
+        std::rc::Rc<dyn Fn(&mut Interp, &str, bool) -> Result<MinibufInput, Flow>>,
+    >,
+}
+
+/// Result of a minibuffer read from the front-end.
+pub enum MinibufInput {
+    /// A completed input line.
+    Text(String),
+    /// A single raw key event code (modifier bits included).
+    Key(i128),
 }
 
 impl Interp {
@@ -141,6 +155,7 @@ impl Interp {
             frames: Vec::new(),
             selected_frame: None,
             quit_editor: false,
+            minibuf_reader: None,
         };
         crate::lisp::builtins::install(&mut interp);
         crate::buffer::install_primitives(&mut interp);
@@ -1869,6 +1884,33 @@ impl Interp {
         }
     }
 
+    /// Read minibuffer input via the front-end hook. `single` reads one
+    /// raw key event instead of a full line.
+    pub fn minibuf_input(&mut self, prompt: &str, single: bool) -> Result<MinibufInput, Flow> {
+        let reader = self.minibuf_reader.clone();
+        match reader {
+            Some(r) => r(self, prompt, single),
+            None => Err(self.error("minibuffer input unavailable")),
+        }
+    }
+
+    /// Read a full input line via the front-end hook.
+    pub fn minibuf_line(&mut self, prompt: &str) -> Result<String, Flow> {
+        match self.minibuf_input(prompt, false)? {
+            MinibufInput::Text(t) => Ok(t),
+            MinibufInput::Key(k) => Ok(char::from_u32(k as u32)
+                .map(|c| c.to_string())
+                .unwrap_or_default()),
+        }
+    }
+
+    /// Value of `current-prefix-arg` (nil when unset).
+    pub fn prefix_arg(&self) -> Value {
+        self.intern_soft("current-prefix-arg")
+            .map(|id| self.symbol_value(id))
+            .unwrap_or(Value::Nil)
+    }
+
     /// `wrong-type-argument` where pred is a value (used by builtins that
     /// pass arbitrary predicates).
     pub fn error_obj(&self, msg: &str, v: &Value) -> Flow {
@@ -1890,7 +1932,17 @@ impl Interp {
         // editor drives real prompting; batch mode uses defaults).
         if let Some(l) = fun.as_lambda() {
             if let Some(spec) = &l.interactive {
-                let argv = self.eval_interactive_spec(spec, l)?;
+                let argv = self.eval_interactive_spec(spec)?;
+                return self.apply(&fun, argv);
+            }
+        }
+        // Subrs: honor the declared interactive spec, if any.
+        if let Value::Subr(s) = &fun {
+            if let Some(spec) = subr_interactive(s.name) {
+                let isym = self.intern("interactive");
+                let spec_form =
+                    Value::list(vec![Value::Sym(isym), Value::string(spec)]);
+                let argv = self.eval_interactive_spec(&spec_form)?;
                 return self.apply(&fun, argv);
             }
         }
@@ -1904,7 +1956,6 @@ impl Interp {
     pub fn eval_interactive_spec(
         &mut self,
         spec_form: &Value,
-        _l: &Rc<Lambda>,
     ) -> Result<Vec<Value>, Flow> {
         let items = spec_form.list_to_vec().unwrap_or_default();
         let spec = items.get(1).cloned().unwrap_or(Value::Nil);
@@ -1925,25 +1976,18 @@ impl Interp {
                 Ok(Vec::new())
             }
             Value::Str(s) => {
-                // Parse letter codes; pull from command_args queue first.
-                let codes: Vec<char> = s.borrow().chars().collect();
+                // Parse letter codes. A code's prompt is the text after
+                // the code up to the next newline (Emacs spec syntax).
+                let chars: Vec<char> = s.borrow().chars().collect();
                 let mut out = Vec::new();
-                for c in codes {
+                let mut pos = 0usize;
+                while pos < chars.len() {
+                    let c = chars[pos];
+                    pos += 1;
                     match c {
                         // Prefix modifiers and prompt separators produce
                         // no argument.
                         '*' | '^' | '@' | '\n' => {}
-                        'p' => {
-                            out.push(
-                                self.command_args
-                                    .first()
-                                    .cloned()
-                                    .unwrap_or(Value::Int(1)),
-                            );
-                        }
-                        'P' => out.push(
-                            self.command_args.first().cloned().unwrap_or(Value::Nil),
-                        ),
                         'r' => {
                             let (beg, end) = self
                                 .current_buffer_ref()
@@ -1955,17 +1999,142 @@ impl Interp {
                             out.push(Value::Int(beg as i128 + 1));
                             out.push(Value::Int(end as i128 + 1));
                         }
+                        'd' => {
+                            let p = self
+                                .current_buffer_ref()
+                                .map(|b| b.borrow().point)
+                                .unwrap_or(0);
+                            out.push(Value::Int(p as i128 + 1));
+                        }
+                        'm' => {
+                            let m = self
+                                .current_buffer_ref()
+                                .and_then(|b| b.borrow().mark)
+                                .unwrap_or(0);
+                            out.push(Value::Int(m as i128 + 1));
+                        }
+                        'p' | 'P' => {
+                            let pa = self.prefix_arg();
+                            let numeric = c == 'p';
+                            if pa.is_nil() {
+                                let fb = self.command_args.first().cloned();
+                                out.push(match fb {
+                                    Some(v) => v,
+                                    None => {
+                                        if numeric {
+                                            Value::Int(1)
+                                        } else {
+                                            Value::Nil
+                                        }
+                                    }
+                                });
+                            } else if numeric {
+                                out.push(prefix_numeric(&pa));
+                            } else {
+                                out.push(pa);
+                            }
+                            skip_prompt(&chars, &mut pos);
+                        }
                         'n' | 'N' => {
-                            out.push(
-                                self.command_args
-                                    .first()
-                                    .cloned()
-                                    .unwrap_or(Value::Int(0)),
-                            );
+                            let prompt = take_prompt(&chars, &mut pos);
+                            let pa = self.prefix_arg();
+                            if !pa.is_nil() {
+                                out.push(prefix_numeric(&pa));
+                            } else if let Some(v) = self.command_args.first() {
+                                out.push(v.clone());
+                            } else if self.minibuf_reader.is_some() {
+                                let s = self.minibuf_line(&prompt)?;
+                                let n = s.trim().parse::<i128>().unwrap_or(0);
+                                out.push(Value::Int(n));
+                            } else {
+                                out.push(Value::Nil);
+                            }
+                        }
+                        's' | 'B' | 'b' | 'F' | 'f' | 'D' | 'z' | 'Z' => {
+                            let prompt = take_prompt(&chars, &mut pos);
+                            if let Some(v) = self.command_args.first() {
+                                out.push(v.clone());
+                            } else if self.minibuf_reader.is_some() {
+                                let s = self.minibuf_line(&prompt)?;
+                                // `b' defaults to the current buffer on
+                                // empty input (Emacs spec semantics).
+                                if s.is_empty() && c == 'b' {
+                                    let n = self
+                                        .current_buffer_ref()
+                                        .map(|b| b.borrow().name.clone())
+                                        .unwrap_or_default();
+                                    out.push(Value::string(n));
+                                } else {
+                                    out.push(Value::string(s));
+                                }
+                            } else {
+                                out.push(Value::Nil);
+                            }
+                        }
+                        'a' | 'C' | 'S' | 'v' => {
+                            let prompt = take_prompt(&chars, &mut pos);
+                            if let Some(v) = self.command_args.first() {
+                                out.push(v.clone());
+                            } else if self.minibuf_reader.is_some() {
+                                let s = self.minibuf_line(&prompt)?;
+                                out.push(Value::Sym(self.intern(&s)));
+                            } else {
+                                out.push(Value::Nil);
+                            }
+                        }
+                        'k' | 'K' => {
+                            let prompt = take_prompt(&chars, &mut pos);
+                            if let Some(v) = self.command_args.first() {
+                                out.push(v.clone());
+                            } else if self.minibuf_reader.is_some() {
+                                let s = self.minibuf_line(&prompt)?;
+                                out.push(Value::string(s));
+                            } else {
+                                out.push(Value::Nil);
+                            }
+                        }
+                        'x' | 'X' => {
+                            let prompt = take_prompt(&chars, &mut pos);
+                            if let Some(v) = self.command_args.first() {
+                                out.push(v.clone());
+                            } else if self.minibuf_reader.is_some() {
+                                let s = self.minibuf_line(&prompt)?;
+                                match self.read_from_string(&s, 0) {
+                                    Ok((form, _)) => {
+                                        if c == 'x' {
+                                            out.push(self.eval(&form)?);
+                                        } else {
+                                            out.push(form);
+                                        }
+                                    }
+                                    Err(_) => out.push(Value::Nil),
+                                }
+                            } else {
+                                out.push(Value::Nil);
+                            }
+                        }
+                        'c' | 'e' => {
+                            let prompt = take_prompt(&chars, &mut pos);
+                            if let Some(v) = self.command_args.first() {
+                                out.push(v.clone());
+                            } else if self.minibuf_reader.is_some() {
+                                match self.minibuf_input(&prompt, true)? {
+                                    MinibufInput::Key(k) => {
+                                        out.push(Value::Int(k))
+                                    }
+                                    MinibufInput::Text(t) => {
+                                        let n =
+                                            t.chars().next().map(|c| c as i128).unwrap_or(0);
+                                        out.push(Value::Int(n));
+                                    }
+                                }
+                            } else {
+                                out.push(Value::Nil);
+                            }
                         }
                         _ => {
-                            // Prompting codes require the editor front-end;
-                            // noninteractive → nil.
+                            // Unknown/prompting code → nil in batch.
+                            skip_prompt(&chars, &mut pos);
                             out.push(Value::Nil);
                         }
                     }
@@ -1979,6 +2148,115 @@ impl Interp {
             }
         }
     }
+}
+
+/// Interactive specs for subrs that Emacs declares `interactive'.
+/// `commandp`/`command-execute` consult this for primitives.
+pub(crate) fn subr_interactive(name: &str) -> Option<&'static str> {
+    const T: &[(&str, &str)] = &[
+        ("self-insert-command", "p"),
+        ("forward-char", "p"),
+        ("backward-char", "p"),
+        ("delete-char", "p\nP"),
+        ("delete-backward-char", "p\nP"),
+        ("move-beginning-of-line", "p"),
+        ("move-end-of-line", "p"),
+        ("forward-word", "p"),
+        ("backward-word", "p"),
+        ("forward-sexp", "p"),
+        ("backward-sexp", "p"),
+        ("forward-line", "p"),
+        ("newline", "p\nP"),
+        ("open-line", "p\nP"),
+        ("indent-line-to", "p"),
+        ("indent-rigidly", "r\nP"),
+        ("transpose-chars", "p"),
+        ("kill-line", "P\np"),
+        ("kill-region", "r"),
+        ("kill-whole-line", "p"),
+        ("kill-word", "p"),
+        ("backward-kill-word", "p"),
+        ("yank", "P"),
+        ("yank-pop", "p"),
+        ("undo", "p"),
+        ("scroll-up-command", "P"),
+        ("scroll-down-command", "P"),
+        ("scroll-other-window", "p"),
+        ("upcase-word", "p"),
+        ("downcase-word", "p"),
+        ("capitalize-word", "p"),
+        ("upcase-region", "r"),
+        ("downcase-region", "r"),
+        ("zap-to-char", "p\ncZap to char: "),
+        ("just-one-space", "p"),
+        ("delete-horizontal-space", "p"),
+        ("delete-indentation", "p"),
+        ("digit-argument", "p"),
+        ("negative-argument", "p"),
+        ("universal-argument", ""),
+        ("abort-recursive-edit", ""),
+        ("suspend-emacs", ""),
+        ("kill-emacs", "P"),
+        ("save-buffer", "p"),
+        ("write-file", "FWrite file: "),
+        ("find-file", "FFind file: "),
+        ("other-window", "p\np"),
+        ("delete-window", "p"),
+        ("delete-other-windows", "p"),
+        ("split-window-below", "P"),
+        ("split-window-right", "p"),
+        ("narrow-to-region", "r"),
+        ("narrow-to-page", "r"),
+        ("widen", ""),
+        ("beginning-of-defun", "p"),
+        ("end-of-defun", "p"),
+        ("mark-defun", ""),
+        ("narrow-to-defun", ""),
+        ("what-cursor-position", "P"),
+        ("insert-char", "p\nP"),
+        ("erase-buffer", ""),
+        ("bury-buffer", "bBury buffer: "),
+        ("kill-buffer", "bKill buffer: "),
+        ("move-to-window-line", "P"),
+        ("recenter", "P"),
+        ("count-words-region", ""),
+        ("eval-expression", "xEval: "),
+        ("execute-extended-command", "P"),
+        ("mark-page", "p"),
+        ("count-lines-page", "p"),
+    ];
+    T.iter().find(|(n, _)| *n == name).map(|(_, s)| *s)
+}
+
+/// Numeric value of a prefix-arg value: (4)→4, (16)→16, (-)→-1, nil→1.
+fn prefix_numeric(v: &Value) -> Value {
+    match v {
+        Value::Nil => Value::Int(1),
+        Value::Int(n) => Value::Int(*n),
+        Value::Cons(c) => match &c.borrow().car {
+            Value::Int(n) => Value::Int(*n),
+            _ => Value::Int(-1),
+        },
+        _ => Value::Int(1),
+    }
+}
+
+/// Consume an interactive-spec prompt (text until `\n` or end).
+fn take_prompt(chars: &[char], pos: &mut usize) -> String {
+    let mut p = String::new();
+    while *pos < chars.len() && chars[*pos] != '\n' {
+        p.push(chars[*pos]);
+        *pos += 1;
+    }
+    if *pos < chars.len() {
+        *pos += 1;
+    }
+    p
+}
+
+/// Skip an interactive-spec prompt without capturing it.
+fn skip_prompt(chars: &[char], pos: &mut usize) {
+    let _ = take_prompt(chars, pos);
 }
 
 /// Saved point/buffer for `save-excursion`.

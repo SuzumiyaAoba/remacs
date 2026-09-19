@@ -451,10 +451,10 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!("read-string", 1, 5, f_read_string, "Read a string."),
     S!("read-command", 1, 2, f_read_command, "Read a command name."),
     S!("read-variable", 1, 2, f_read_variable, "Read a variable name."),
-    S!("read-key", 0, 2, f_nil, ""),
-    S!("read-event", 0, 3, f_nil, ""),
-    S!("read-char", 0, 3, f_nil, ""),
-    S!("read-char-exclusive", 0, 3, f_nil, ""),
+    S!("read-key", 0, 2, f_read_char, "Read one key event."),
+    S!("read-event", 0, 3, f_read_char, "Read one input event."),
+    S!("read-char", 0, 3, f_read_char, "Read one character."),
+    S!("read-char-exclusive", 0, 3, f_read_char, "Read one character."),
     S!("y-or-n-p", 1, 1, f_y_or_n_p, "Ask yes/no (batch: t)."),
     S!("yes-or-no-p", 1, 1, f_y_or_n_p, ""),
     // commands/misc
@@ -472,8 +472,8 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!("kbd-macro-query", 0, 0, f_nil, ""),
     S!("prefix-numeric-value", 1, 1, f_prefix_numeric_value, "Numeric prefix value."),
     S!("universal-argument", 0, 0, f_universal_argument, "C-u."),
-    S!("digit-argument", 1, 1, f_nil, ""),
-    S!("negative-argument", 1, 1, f_nil, ""),
+    S!("digit-argument", 1, 1, f_digit_argument, "Set prefix arg from typed digits."),
+    S!("negative-argument", 1, 1, f_negative_argument, "M--."),
     S!("beginning-of-defun", 0, 1, f_beginning_of_defun, "Move to defun start."),
     S!("end-of-defun", 0, 1, f_end_of_defun, "Move past defun end."),
     S!("mark-defun", 0, 0, f_mark_defun, "Mark the defun."),
@@ -2258,10 +2258,38 @@ fn f_text_char_description(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     }
 }
 
+/// Read one raw key event through the front-end hook.
+fn f_read_char(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
+    if i.minibuf_reader.is_some() {
+        match i.minibuf_input("", true)? {
+            crate::lisp::eval::MinibufInput::Key(k) => {
+                return Ok(Value::Int(k));
+            }
+            crate::lisp::eval::MinibufInput::Text(t) => {
+                let n = t.chars().next().map(|c| c as i128).unwrap_or(0);
+                return Ok(Value::Int(n));
+            }
+        }
+    }
+    Ok(Value::Nil)
+}
+
 fn f_read_key_sequence(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    // Editor front-end supplies pending input; batch mode returns "".
-    let _ = i;
-    let _ = a;
+    // Read one key through the front-end; batch mode returns "".
+    if i.minibuf_reader.is_some() {
+        let prompt = match &a[0] {
+            Value::Str(s) => s.borrow().clone(),
+            _ => String::new(),
+        };
+        if let crate::lisp::eval::MinibufInput::Key(k) = i.minibuf_input(&prompt, true)? {
+            if k < 128 {
+                return Ok(Value::string(
+                    char::from_u32(k as u32).unwrap_or(' ').to_string(),
+                ));
+            }
+            return Ok(Value::Vec(Rc::new(RefCell::new(vec![Value::Int(k)]))));
+        }
+    }
     Ok(Value::string(""))
 }
 fn f_read_key_sequence_vector(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
@@ -3892,13 +3920,40 @@ fn f_minibuffer_message(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     Ok(Value::Nil)
 }
 
-fn f_read_from_minibuffer(_i: &mut Interp, a: Vec<Value>) -> EvalResult {
+/// If the front-end input hook is installed, read a line with PROMPT;
+/// otherwise fall back to `fallback` (batch behavior).
+fn minibuf_or(
+    i: &mut Interp,
+    prompt: &Value,
+    fallback: Value,
+) -> Result<Option<String>, Flow> {
+    if i.minibuf_reader.is_none() {
+        return Ok(None);
+    }
+    let p = match prompt {
+        Value::Str(s) => s.borrow().clone(),
+        _ => String::new(),
+    };
+    let _ = fallback;
+    Ok(Some(i.minibuf_line(&p)?))
+}
+
+fn f_read_from_minibuffer(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    if let Some(s) = minibuf_or(i, &a[0], arg(&a, 4))? {
+        return Ok(Value::string(s));
+    }
     Ok(arg(&a, 4))
 }
-fn f_read_buffer(_i: &mut Interp, a: Vec<Value>) -> EvalResult {
+fn f_read_buffer(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    if let Some(s) = minibuf_or(i, &a[0], arg(&a, 1))? {
+        return Ok(Value::string(s));
+    }
     Ok(arg(&a, 1))
 }
-fn f_read_file_name(_i: &mut Interp, a: Vec<Value>) -> EvalResult {
+fn f_read_file_name(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    if let Some(s) = minibuf_or(i, &a[0], arg(&a, 3))? {
+        return Ok(Value::string(s));
+    }
     Ok(arg(&a, 3))
 }
 fn f_read_number(_i: &mut Interp, a: Vec<Value>) -> EvalResult {
@@ -3914,8 +3969,32 @@ fn f_read_regexp(_i: &mut Interp, a: Vec<Value>) -> EvalResult {
     }
 }
 fn f_completing_read(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    // (completing-read PROMPT TABLE ...) — batch: use initial-input or
-    // first matching candidate.
+    // (completing-read PROMPT TABLE ...) — interactive: read a line and
+    // complete it against TABLE; batch: use initial-input or default.
+    if i.minibuf_reader.is_some() {
+        let prompt = match &a[0] {
+            Value::Str(s) => s.borrow().clone(),
+            _ => String::new(),
+        };
+        let cands = completion_candidates(i, &a[1]);
+        let input = i.minibuf_line(&prompt)?;
+        if input.is_empty() {
+            // Empty input → default (arg 3) or "".
+            return Ok(arg(&a, 3));
+        }
+        // Complete: exact match, else unique prefix completion.
+        if cands.iter().any(|c| c == &input) {
+            return Ok(Value::string(input));
+        }
+        let matches: Vec<&String> = cands
+            .iter()
+            .filter(|c| c.starts_with(&input))
+            .collect();
+        return Ok(Value::string(match matches.len() {
+            1 => matches[0].clone(),
+            _ => input,
+        }));
+    }
     let initial = arg(&a, 4);
     if initial.truthy() {
         if let Value::Str(s) = &initial {
@@ -3999,10 +4078,16 @@ fn f_test_completion(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     Ok(Value::from_bool(cands.iter().any(|c| c == &s)))
 }
 
-fn f_read_string(_i: &mut Interp, a: Vec<Value>) -> EvalResult {
+fn f_read_string(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    if let Some(s) = minibuf_or(i, &a[0], arg(&a, 1))? {
+        return Ok(Value::string(s));
+    }
     Ok(arg(&a, 1))
 }
-fn f_read_command(_i: &mut Interp, a: Vec<Value>) -> EvalResult {
+fn f_read_command(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    if let Some(s) = minibuf_or(i, &a[0], Value::Nil)? {
+        return Ok(Value::Sym(i.intern(&s)));
+    }
     match a.get(1) {
         Some(v) => Ok(v.clone()),
         None => Ok(Value::Nil),
@@ -4011,8 +4096,35 @@ fn f_read_command(_i: &mut Interp, a: Vec<Value>) -> EvalResult {
 fn f_read_variable(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     f_read_command(i, a)
 }
-fn f_y_or_n_p(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
-    let _ = i;
+fn f_y_or_n_p(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    if i.minibuf_reader.is_some() {
+        let prompt = match &a[0] {
+            Value::Str(s) => s.borrow().clone(),
+            _ => String::new(),
+        };
+        loop {
+            match i.minibuf_input(&format!("{} (y or n) ", prompt), true)? {
+                crate::lisp::eval::MinibufInput::Key(k) => {
+                    let base = k & 0x3f_ffff;
+                    match base {
+                        x if x == 'y' as i128 => return Ok(Value::t()),
+                        x if x == 'n' as i128 => return Ok(Value::Nil),
+                        7 | 3 => return Err(crate::lisp::error::Flow::Quit),
+                        _ => {
+                            i.message("Please answer y or n");
+                        }
+                    }
+                }
+                crate::lisp::eval::MinibufInput::Text(t) => {
+                    match t.chars().next() {
+                        Some('y') => return Ok(Value::t()),
+                        Some('n') => return Ok(Value::Nil),
+                        _ => {}
+                    }
+                }
+            }
+        }
+    }
     Ok(Value::t())
 }
 
@@ -4026,7 +4138,7 @@ fn f_commandp(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     };
     Ok(Value::from_bool(match &cmd {
         Value::Lambda(l) => l.interactive.is_some(),
-        Value::Subr(_) => false,
+        Value::Subr(s) => crate::lisp::eval::subr_interactive(s.name).is_some(),
         _ => false,
     }))
 }
@@ -4036,8 +4148,19 @@ fn f_call_interactively(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 }
 
 fn f_execute_extended_command(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    // With a numeric arg; batch mode reads no input.
     let _ = &a;
+    // Interactive: prompt "M-x " through the front-end.
+    if i.minibuf_reader.is_some() {
+        let name = i.minibuf_line("M-x ")?;
+        if name.is_empty() {
+            return Ok(Value::Nil);
+        }
+        let sym = i.intern(&name);
+        if !i.fbound_p(sym) {
+            return Err(i.error(&format!("M-x {} is undefined", name)));
+        }
+        return i.command_execute(&Value::Sym(sym));
+    }
     // Try `this-command` set by the harness.
     let tc = i.symbol_value(i.intern_soft("this-command").unwrap_or(0));
     if let Value::Sym(_) = tc {
@@ -4073,6 +4196,51 @@ fn f_universal_argument(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
         Value::Int(n) => Value::Int(n * 4),
         Value::Cons(_) => Value::list(vec![Value::Int(16)]),
         _ => Value::list(vec![Value::Int(4)]),
+    };
+    i.obarray.symbol_mut(pa).value = next;
+    Ok(Value::Nil)
+}
+
+fn f_digit_argument(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
+    // The digit/minus that invoked this command is `last-command-event`.
+    let ev = i.symbol_value(i.intern_soft("last-command-event").unwrap_or(0));
+    let base = match ev {
+        Value::Int(c) => c & 0x3f_ffff,
+        _ => -1,
+    };
+    let pa = i.intern("prefix-arg");
+    let cur = i.symbol_value(pa);
+    let next = if base == '-' as i128 {
+        // M-- starts a negative numeric arg.
+        match &cur {
+            Value::Cons(_) => cur.clone(),
+            Value::Int(n) => Value::Int(-n),
+            _ => Value::list(vec![Value::Sym(i.intern("-"))]),
+        }
+    } else if let Some(d) = char::from_u32(base as u32).and_then(|c| c.to_digit(10)) {
+        match &cur {
+            Value::Nil => Value::Int(d as i128),
+            Value::Int(n) => {
+                let sign = if *n < 0 { -1 } else { 1 };
+                Value::Int(n * 10 + sign * d as i128)
+            }
+            Value::Cons(_) => Value::Int(d as i128),
+            _ => Value::Int(d as i128),
+        }
+    } else {
+        cur
+    };
+    i.obarray.symbol_mut(pa).value = next;
+    Ok(Value::Nil)
+}
+
+fn f_negative_argument(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
+    let pa = i.intern("prefix-arg");
+    let cur = i.symbol_value(pa);
+    let next = match &cur {
+        Value::Int(n) => Value::Int(-n),
+        Value::Cons(_) => cur.clone(),
+        _ => Value::list(vec![Value::Sym(i.intern("-"))]),
     };
     i.obarray.symbol_mut(pa).value = next;
     Ok(Value::Nil)

@@ -323,15 +323,28 @@ impl<'a> Reader<'a> {
             Some('C') if self.peek() == Some('-') => {
                 self.pos += 1;
                 let v = self.read_char_literal()?;
-                let ch = (v & !(CHAR_CTL | CHAR_META | CHAR_SHIFT | CHAR_HYPER | CHAR_SUPER | CHAR_ALT))
-                    | CHAR_CTL;
-                Ok(char::from_u32(ch as u32))
+                // Strings hold plain chars: fold C- like ?\C-x (control char).
+                let base = v
+                    & !(CHAR_CTL
+                        | CHAR_META
+                        | CHAR_SHIFT
+                        | CHAR_HYPER
+                        | CHAR_SUPER
+                        | CHAR_ALT);
+                Ok(char::from_u32(base as u32).map(ctrl_of))
             }
             Some('M') if self.peek() == Some('-') => {
                 self.pos += 1;
                 let v = self.read_char_literal()?;
-                let ch = (v & !(CHAR_META)) | CHAR_META;
-                Ok(char::from_u32(ch as u32))
+                // Meta bits can't live in a Rust char; emit the base char.
+                let base = v
+                    & !(CHAR_CTL
+                        | CHAR_META
+                        | CHAR_SHIFT
+                        | CHAR_HYPER
+                        | CHAR_SUPER
+                        | CHAR_ALT);
+                Ok(char::from_u32(base as u32))
             }
             Some('^') => {
                 match self.next() {
