@@ -1,16 +1,34 @@
 //! Reader subrs: read, read-from-string.
 
 use super::S;
+use crate::lisp::Interp;
 use crate::lisp::error::EvalResult;
 use crate::lisp::obarray::sym;
 use crate::lisp::value::{Subr, Value};
-use crate::lisp::Interp;
 
 pub(crate) static SUBRS: &[Subr] = &[
     S!("read", 0, 1, f_read, "Read one Lisp object."),
-    S!("read-from-string", 1, 3, f_read_from_string, "Read one object from STRING."),
-    S!("read-string", 1, 5, f_read_string, "Read a string (minibuffer stub)."),
-    S!("read-from-minibuffer", 1, 8, f_read_from_minibuffer, "Read from minibuffer (stub)."),
+    S!(
+        "read-from-string",
+        1,
+        3,
+        f_read_from_string,
+        "Read one object from STRING."
+    ),
+    S!(
+        "read-string",
+        1,
+        5,
+        f_read_string,
+        "Read a string (minibuffer stub)."
+    ),
+    S!(
+        "read-from-minibuffer",
+        1,
+        8,
+        f_read_from_minibuffer,
+        "Read from minibuffer (stub)."
+    ),
 ];
 
 fn f_read(i: &mut Interp, args: Vec<Value>) -> EvalResult {
@@ -77,11 +95,7 @@ fn f_read_from_string(i: &mut Interp, args: Vec<Value>) -> EvalResult {
         Value::Str(s) => s.borrow().clone(),
         other => return Err(i.wrong_type_mut("stringp", other)),
     };
-    let start = args
-        .get(1)
-        .and_then(|v| v.int())
-        .unwrap_or(0)
-        .max(0) as usize;
+    let start = args.get(1).and_then(|v| v.int()).unwrap_or(0).max(0) as usize;
     let (v, end) = i.read_from_string(&src, start)?;
     Ok(Value::cons(v, Value::Int(end as i128)))
 }

@@ -1,8 +1,8 @@
 //! File loading: locate libraries on load-path, eval .el files.
 
+use crate::lisp::Interp;
 use crate::lisp::error::EvalResult;
 use crate::lisp::value::Value;
-use crate::lisp::Interp;
 use std::path::{Path, PathBuf};
 
 /// Candidate paths for library NAME under DIR (with .elc/.el suffixes).

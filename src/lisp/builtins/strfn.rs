@@ -1,92 +1,416 @@
 //! String subrs: concat, substring, comparison, case, format, etc.
 
-use super::{arg, want_int, want_string, S};
+use super::{S, arg, want_int, want_string};
+use crate::lisp::Interp;
 use crate::lisp::error::{EvalResult, Flow};
 use crate::lisp::obarray::sym;
 use crate::lisp::value::{Subr, Value};
-use crate::lisp::Interp;
 
 pub(crate) static SUBRS: &[Subr] = &[
     S!("string", many 0, f_string, "Concatenate characters into a string."),
     S!("concat", many 0, f_concat, "Concatenate sequences into a string."),
     S!("vconcat", many 0, f_vconcat, "Concatenate sequences into a vector."),
-    S!("substring", 1, 3, f_substring, "Substring of STRING from FROM to TO."),
-    S!("substring-no-properties", 1, 3, f_substring, "Substring without text props."),
-    S!("string=", 2, 2, f_string_eq, "t if two strings have identical contents."),
-    S!("string<", 2, 2, f_string_lt, "t if S1 is less than S2 lexicographically."),
+    S!(
+        "substring",
+        1,
+        3,
+        f_substring,
+        "Substring of STRING from FROM to TO."
+    ),
+    S!(
+        "substring-no-properties",
+        1,
+        3,
+        f_substring,
+        "Substring without text props."
+    ),
+    S!(
+        "string=",
+        2,
+        2,
+        f_string_eq,
+        "t if two strings have identical contents."
+    ),
+    S!(
+        "string<",
+        2,
+        2,
+        f_string_lt,
+        "t if S1 is less than S2 lexicographically."
+    ),
     S!("string>", 2, 2, f_string_gt, "t if S1 is greater than S2."),
     S!("string<=", 2, 2, f_string_le, "t if S1 <= S2."),
     S!("string>=", 2, 2, f_string_ge, "t if S1 >= S2."),
     S!("string-lessp", 2, 2, f_string_lt, "Alias for string<."),
     S!("string-greaterp", 2, 2, f_string_gt, "t if S1 > S2."),
-    S!("string-empty-p", 1, 1, f_string_empty_p, "t if STRING has zero length."),
-    S!("string-blank-p", 1, 1, f_string_blank_p, "t if STRING is all whitespace."),
-    S!("string-prefix-p", 2, 3, f_string_prefix_p, "t if S1 is a prefix of S2."),
-    S!("string-suffix-p", 2, 3, f_string_suffix_p, "t if S1 is a suffix of S2."),
-    S!("string-compare", 3, 5, f_string_compare, "Compare substrings of S1 and S2."),
+    S!(
+        "string-empty-p",
+        1,
+        1,
+        f_string_empty_p,
+        "t if STRING has zero length."
+    ),
+    S!(
+        "string-blank-p",
+        1,
+        1,
+        f_string_blank_p,
+        "t if STRING is all whitespace."
+    ),
+    S!(
+        "string-prefix-p",
+        2,
+        3,
+        f_string_prefix_p,
+        "t if S1 is a prefix of S2."
+    ),
+    S!(
+        "string-suffix-p",
+        2,
+        3,
+        f_string_suffix_p,
+        "t if S1 is a suffix of S2."
+    ),
+    S!(
+        "string-compare",
+        3,
+        5,
+        f_string_compare,
+        "Compare substrings of S1 and S2."
+    ),
     S!("upcase", 1, 1, f_upcase, "Uppercase a string or char."),
     S!("downcase", 1, 1, f_downcase, "Lowercase a string or char."),
-    S!("capitalize", 1, 1, f_capitalize, "Capitalize a string or char."),
-    S!("upcase-initials", 1, 1, f_upcase_initials, "Uppercase each word's initial."),
-    S!("string-to-number", 1, 2, f_string_to_number, "Parse NUMBER from STRING."),
-    S!("number-to-string", 1, 1, f_number_to_string, "Return NUMBER as a string."),
-    S!("string-to-char", 1, 1, f_string_to_char, "First char of STRING, or 0."),
-    S!("char-to-string", 1, 1, f_char_to_string, "String containing CHAR."),
+    S!(
+        "capitalize",
+        1,
+        1,
+        f_capitalize,
+        "Capitalize a string or char."
+    ),
+    S!(
+        "upcase-initials",
+        1,
+        1,
+        f_upcase_initials,
+        "Uppercase each word's initial."
+    ),
+    S!(
+        "string-to-number",
+        1,
+        2,
+        f_string_to_number,
+        "Parse NUMBER from STRING."
+    ),
+    S!(
+        "number-to-string",
+        1,
+        1,
+        f_number_to_string,
+        "Return NUMBER as a string."
+    ),
+    S!(
+        "string-to-char",
+        1,
+        1,
+        f_string_to_char,
+        "First char of STRING, or 0."
+    ),
+    S!(
+        "char-to-string",
+        1,
+        1,
+        f_char_to_string,
+        "String containing CHAR."
+    ),
     S!("format", many 1, f_format, "Format a string (printf-style)."),
     S!("format-message", many 1, f_format, "Format with quoting conventions."),
-    S!("string-trim", 1, 3, f_string_trim, "Trim STRING of TRIM regexps."),
+    S!(
+        "string-trim",
+        1,
+        3,
+        f_string_trim,
+        "Trim STRING of TRIM regexps."
+    ),
     S!("string-trim-left", 1, 2, f_string_trim_left, "Trim left."),
-    S!("string-trim-right", 1, 2, f_string_trim_right, "Trim right."),
+    S!(
+        "string-trim-right",
+        1,
+        2,
+        f_string_trim_right,
+        "Trim right."
+    ),
     S!("string-pad", 2, 4, f_string_pad, "Pad STRING to LENGTH."),
-    S!("string-join", 1, 2, f_string_join, "Join STRINGS with SEPARATOR."),
-    S!("split-string", 1, 4, f_split_string, "Split STRING on SEPARATORS regexp."),
-    S!("string-replace", 3, 3, f_string_replace, "Replace all FROM with TO."),
-    S!("string-chop-newline", 1, 1, f_string_chop_newline, "Strip trailing newline."),
-    S!("string-width", 1, 3, f_string_width, "Display width of STRING."),
-    S!("truncate-string-to-width", 2, 4, f_truncate_string_to_width, "Truncate STRING to WIDTH columns."),
-    S!("string-fill", 2, 2, f_string_fill, "Placeholder: return STRING."),
-    S!("string-lines", 1, 2, f_string_lines, "Split STRING on newlines."),
+    S!(
+        "string-join",
+        1,
+        2,
+        f_string_join,
+        "Join STRINGS with SEPARATOR."
+    ),
+    S!(
+        "split-string",
+        1,
+        4,
+        f_split_string,
+        "Split STRING on SEPARATORS regexp."
+    ),
+    S!(
+        "string-replace",
+        3,
+        3,
+        f_string_replace,
+        "Replace all FROM with TO."
+    ),
+    S!(
+        "string-chop-newline",
+        1,
+        1,
+        f_string_chop_newline,
+        "Strip trailing newline."
+    ),
+    S!(
+        "string-width",
+        1,
+        3,
+        f_string_width,
+        "Display width of STRING."
+    ),
+    S!(
+        "truncate-string-to-width",
+        2,
+        4,
+        f_truncate_string_to_width,
+        "Truncate STRING to WIDTH columns."
+    ),
+    S!(
+        "string-fill",
+        2,
+        2,
+        f_string_fill,
+        "Placeholder: return STRING."
+    ),
+    S!(
+        "string-lines",
+        1,
+        2,
+        f_string_lines,
+        "Split STRING on newlines."
+    ),
     S!("upcase-initials-region", 2, 2, f_region_stub, ""),
-    S!("string-to-multibyte", 1, 1, f_identity, "Return STRING unchanged."),
-    S!("string-to-unibyte", 1, 1, f_identity, "Return STRING unchanged."),
-    S!("string-as-unibyte", 1, 1, f_identity, "Return STRING unchanged."),
-    S!("string-as-multibyte", 1, 1, f_identity, "Return STRING unchanged."),
-    S!("string-make-unibyte", 1, 1, f_identity, "Return STRING unchanged."),
-    S!("string-make-multibyte", 1, 1, f_identity, "Return STRING unchanged."),
-    S!("string-equal-ignore-case", 2, 2, f_string_equal_ignore_case, "t if strings match ignoring case."),
-    S!("string-collate-equalp", 2, 3, f_string_eq, "Collation equality (simple)."),
-    S!("string-collate-lessp", 2, 3, f_string_lt, "Collation lessp (simple)."),
-    S!("char-equal", 2, 3, f_char_equal, "t if two chars are equal (case-fold-aware)."),
+    S!(
+        "string-to-multibyte",
+        1,
+        1,
+        f_identity,
+        "Return STRING unchanged."
+    ),
+    S!(
+        "string-to-unibyte",
+        1,
+        1,
+        f_identity,
+        "Return STRING unchanged."
+    ),
+    S!(
+        "string-as-unibyte",
+        1,
+        1,
+        f_identity,
+        "Return STRING unchanged."
+    ),
+    S!(
+        "string-as-multibyte",
+        1,
+        1,
+        f_identity,
+        "Return STRING unchanged."
+    ),
+    S!(
+        "string-make-unibyte",
+        1,
+        1,
+        f_identity,
+        "Return STRING unchanged."
+    ),
+    S!(
+        "string-make-multibyte",
+        1,
+        1,
+        f_identity,
+        "Return STRING unchanged."
+    ),
+    S!(
+        "string-equal-ignore-case",
+        2,
+        2,
+        f_string_equal_ignore_case,
+        "t if strings match ignoring case."
+    ),
+    S!(
+        "string-collate-equalp",
+        2,
+        3,
+        f_string_eq,
+        "Collation equality (simple)."
+    ),
+    S!(
+        "string-collate-lessp",
+        2,
+        3,
+        f_string_lt,
+        "Collation lessp (simple)."
+    ),
+    S!(
+        "char-equal",
+        2,
+        3,
+        f_char_equal,
+        "t if two chars are equal (case-fold-aware)."
+    ),
     S!("multibyte-char-to-unibyte", 1, 1, f_char_identity, ""),
     S!("unibyte-char-to-multibyte", 1, 1, f_char_identity, ""),
     S!("char-or-string-p", 1, 1, f_char_or_string_p, ""),
-    S!("string-search", 2, 3, f_string_search, "Search for NEEDLE in HAYSTACK."),
-    S!("string-version-lessp", 2, 2, f_string_version_lessp, "Compare version strings."),
-    S!("string-distance", 2, 3, f_string_distance, "Levenshtein distance."),
-    S!("string-pixel-width", 1, 2, f_string_width, "Width (in columns here)."),
-    S!("string-glyph-split", 1, 1, f_string_glyph_split, "Split into grapheme clusters (chars)."),
+    S!(
+        "string-search",
+        2,
+        3,
+        f_string_search,
+        "Search for NEEDLE in HAYSTACK."
+    ),
+    S!(
+        "string-version-lessp",
+        2,
+        2,
+        f_string_version_lessp,
+        "Compare version strings."
+    ),
+    S!(
+        "string-distance",
+        2,
+        3,
+        f_string_distance,
+        "Levenshtein distance."
+    ),
+    S!(
+        "string-pixel-width",
+        1,
+        2,
+        f_string_width,
+        "Width (in columns here)."
+    ),
+    S!(
+        "string-glyph-split",
+        1,
+        1,
+        f_string_glyph_split,
+        "Split into grapheme clusters (chars)."
+    ),
     S!("sxhash-equal", 1, 1, f_sxhash, "Hash of OBJECT."),
     S!("sxhash", 1, 1, f_sxhash, "Hash of OBJECT."),
     S!("sxhash-eq", 1, 1, f_sxhash, "Hash of OBJECT."),
     S!("sxhash-eql", 1, 1, f_sxhash, "Hash of OBJECT."),
     S!("sxhash-equal-including-properties", 1, 1, f_sxhash, ""),
-    S!("clear-string", 1, 1, f_clear_string, "Make STRING empty (fill with NUL)."),
-    S!("store-substring", 3, 3, f_store_substring, "Store OBJ into STRING at IDX."),
-    S!("string-aref", 2, 2, f_string_aref, "Return char of STRING at IDX."),
-    S!("make-string", 2, 2, f_make_string, "String of LENGTH copies of INIT char."),
-    S!("string-to-list", 1, 1, f_string_to_list, "List of chars in STRING."),
-    S!("string-to-vector", 1, 1, f_string_to_vector, "Vector of chars in STRING."),
-    S!("string-bytes", 1, 2, f_string_bytes, "Number of bytes in STRING (utf-8)."),
-    S!("subst-char-in-string", 3, 4, f_subst_char_in_string, "Replace FROM with TO in STRING."),
-    S!("compare-strings", 6, 7, f_compare_strings, "Compare string slices."),
+    S!(
+        "clear-string",
+        1,
+        1,
+        f_clear_string,
+        "Make STRING empty (fill with NUL)."
+    ),
+    S!(
+        "store-substring",
+        3,
+        3,
+        f_store_substring,
+        "Store OBJ into STRING at IDX."
+    ),
+    S!(
+        "string-aref",
+        2,
+        2,
+        f_string_aref,
+        "Return char of STRING at IDX."
+    ),
+    S!(
+        "make-string",
+        2,
+        2,
+        f_make_string,
+        "String of LENGTH copies of INIT char."
+    ),
+    S!(
+        "string-to-list",
+        1,
+        1,
+        f_string_to_list,
+        "List of chars in STRING."
+    ),
+    S!(
+        "string-to-vector",
+        1,
+        1,
+        f_string_to_vector,
+        "Vector of chars in STRING."
+    ),
+    S!(
+        "string-bytes",
+        1,
+        2,
+        f_string_bytes,
+        "Number of bytes in STRING (utf-8)."
+    ),
+    S!(
+        "subst-char-in-string",
+        3,
+        4,
+        f_subst_char_in_string,
+        "Replace FROM with TO in STRING."
+    ),
+    S!(
+        "compare-strings",
+        6,
+        7,
+        f_compare_strings,
+        "Compare string slices."
+    ),
     S!("char-width", 1, 1, f_char_width, "Display width of CHAR."),
-    S!("format-spec", 2, 3, f_format_spec, "Format string with %-specs from ALIST."),
-    S!("multibyte-string-p", 1, 1, f_multibyte_string_p, "t if STRING is multibyte (always)."),
+    S!(
+        "format-spec",
+        2,
+        3,
+        f_format_spec,
+        "Format string with %-specs from ALIST."
+    ),
+    S!(
+        "multibyte-string-p",
+        1,
+        1,
+        f_multibyte_string_p,
+        "t if STRING is multibyte (always)."
+    ),
     S!("unibyte-string", many 0, f_unibyte_string, "String from byte values."),
     S!("make-char", 1, 5, f_make_char, "Char for CHARSET + codes."),
-    S!("split-char", 1, 1, f_split_char, "Decompose CHAR into charset/code."),
-    S!("encode-char", 2, 2, f_encode_char, "Code of CH in CODING-SYSTEM (utf-8 identity)."),
-    S!("decode-char", 2, 2, f_decode_char, "Char for CODE in CODING-SYSTEM (utf-8)."),
+    S!(
+        "split-char",
+        1,
+        1,
+        f_split_char,
+        "Decompose CHAR into charset/code."
+    ),
+    S!(
+        "encode-char",
+        2,
+        2,
+        f_encode_char,
+        "Code of CH in CODING-SYSTEM (utf-8 identity)."
+    ),
+    S!(
+        "decode-char",
+        2,
+        2,
+        f_decode_char,
+        "Char for CODE in CODING-SYSTEM (utf-8)."
+    ),
     S!("char-charset", 1, 2, f_char_charset, "Charset of CH."),
 ];
 
@@ -187,18 +511,22 @@ fn f_substring(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     // Emacs: substring works on vectors too (returns a new vector).
     let is_vec = matches!(&args[0], Value::Vec(_));
     let chars: Vec<Value> = match &args[0] {
-        Value::Str(s) => s
-            .borrow()
-            .chars()
-            .map(|c| Value::Int(c as i128))
-            .collect(),
+        Value::Str(s) => s.borrow().chars().map(|c| Value::Int(c as i128)).collect(),
         Value::Vec(v) => v.borrow().clone(),
         Value::Nil => Vec::new(),
         other => return Err(i.wrong_type_mut("sequencep", other)),
     };
     let len = chars.len() as i128;
-    let from = args.get(1).map(|v| want_int(i, v)).transpose()?.unwrap_or(0);
-    let to = args.get(2).map(|v| want_int(i, v)).transpose()?.unwrap_or(len);
+    let from = args
+        .get(1)
+        .map(|v| want_int(i, v))
+        .transpose()?
+        .unwrap_or(0);
+    let to = args
+        .get(2)
+        .map(|v| want_int(i, v))
+        .transpose()?
+        .unwrap_or(len);
     // Emacs allows negative indices counting from the end.
     let f = if from < 0 { len + from } else { from };
     let t = if to < 0 { len + to } else { to };
@@ -210,9 +538,7 @@ fn f_substring(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     }
     let slice: Vec<Value> = chars[f as usize..t as usize].to_vec();
     if is_vec {
-        Ok(Value::Vec(std::rc::Rc::new(std::cell::RefCell::new(
-            slice,
-        ))))
+        Ok(Value::Vec(std::rc::Rc::new(std::cell::RefCell::new(slice))))
     } else {
         Ok(Value::string(
             slice
@@ -305,9 +631,7 @@ fn f_upcase(i: &mut Interp, args: Vec<Value>) -> EvalResult {
         Value::Str(s) => Ok(Value::string(s.borrow().to_uppercase())),
         Value::Int(n) => {
             let c = char::from_u32(*n as u32).unwrap_or('\0');
-            Ok(Value::Int(
-                c.to_uppercase().next().unwrap_or(c) as i128,
-            ))
+            Ok(Value::Int(c.to_uppercase().next().unwrap_or(c) as i128))
         }
         other => Err(i.wrong_type_mut("char-or-string-p", other)),
     }
@@ -317,9 +641,7 @@ fn f_downcase(i: &mut Interp, args: Vec<Value>) -> EvalResult {
         Value::Str(s) => Ok(Value::string(s.borrow().to_lowercase())),
         Value::Int(n) => {
             let c = char::from_u32(*n as u32).unwrap_or('\0');
-            Ok(Value::Int(
-                c.to_lowercase().next().unwrap_or(c) as i128,
-            ))
+            Ok(Value::Int(c.to_lowercase().next().unwrap_or(c) as i128))
         }
         other => Err(i.wrong_type_mut("char-or-string-p", other)),
     }
@@ -346,9 +668,7 @@ fn f_capitalize(i: &mut Interp, args: Vec<Value>) -> EvalResult {
         }
         Value::Int(n) => {
             let c = char::from_u32(*n as u32).unwrap_or('\0');
-            Ok(Value::Int(
-                c.to_uppercase().next().unwrap_or(c) as i128,
-            ))
+            Ok(Value::Int(c.to_uppercase().next().unwrap_or(c) as i128))
         }
         other => Err(i.wrong_type_mut("char-or-string-p", other)),
     }
@@ -379,7 +699,11 @@ fn f_upcase_initials(i: &mut Interp, args: Vec<Value>) -> EvalResult {
 
 fn f_string_to_number(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     let s = want_string(i, &args[0])?;
-    let base = args.get(1).map(|v| want_int(i, v)).transpose()?.unwrap_or(10);
+    let base = args
+        .get(1)
+        .map(|v| want_int(i, v))
+        .transpose()?
+        .unwrap_or(10);
     let t = s.trim();
     if t.is_empty() {
         return Ok(Value::Int(0));
@@ -469,9 +793,7 @@ fn f_number_to_string(i: &mut Interp, args: Vec<Value>) -> EvalResult {
 }
 fn f_string_to_char(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     let s = want_string(i, &args[0])?;
-    Ok(Value::Int(
-        s.chars().next().map(|c| c as i128).unwrap_or(0),
-    ))
+    Ok(Value::Int(s.chars().next().map(|c| c as i128).unwrap_or(0)))
 }
 fn f_char_to_string(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     let n = want_int(i, &args[0])?;
@@ -551,7 +873,11 @@ fn f_string_pad(i: &mut Interp, args: Vec<Value>) -> EvalResult {
 }
 fn f_string_join(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     let items = super::want_list(i, &args[0])?;
-    let sep = args.get(1).map(|v| want_string(i, v)).transpose()?.unwrap_or_default();
+    let sep = args
+        .get(1)
+        .map(|v| want_string(i, v))
+        .transpose()?
+        .unwrap_or_default();
     let mut parts = Vec::new();
     for item in items {
         parts.push(want_string(i, &item)?);
@@ -567,9 +893,14 @@ fn f_split_string(i: &mut Interp, args: Vec<Value>) -> EvalResult {
         .unwrap_or_else(|| "[ \u{0C}\t\n\r\u{0B}]+".into());
     let omit_nulls = args.get(2).map(|v| v.truthy()).unwrap_or(false);
     // If sep is a regex-ish, use our regexp engine; else literal split.
-    let is_regex = sep.contains('\\') || sep.contains('[') || sep.contains('^')
-        || sep.contains('$') || sep.contains('.') || sep.contains('*')
-        || sep.contains('+') || sep.contains('?');
+    let is_regex = sep.contains('\\')
+        || sep.contains('[')
+        || sep.contains('^')
+        || sep.contains('$')
+        || sep.contains('.')
+        || sep.contains('*')
+        || sep.contains('+')
+        || sep.contains('?');
     let parts: Vec<String> = if is_regex {
         match crate::lisp::regexp::compile(&sep) {
             Ok(re) => {
@@ -626,8 +957,14 @@ fn f_string_width(i: &mut Interp, args: Vec<Value>) -> EvalResult {
         other => return Err(i.wrong_type_mut("stringp", other)),
     };
     let (from, to) = (
-        args.get(1).map(|v| want_int(i, v)).transpose()?.unwrap_or(0),
-        args.get(2).map(|v| want_int(i, v)).transpose()?.unwrap_or(-1),
+        args.get(1)
+            .map(|v| want_int(i, v))
+            .transpose()?
+            .unwrap_or(0),
+        args.get(2)
+            .map(|v| want_int(i, v))
+            .transpose()?
+            .unwrap_or(-1),
     );
     let chars: Vec<char> = s.chars().collect();
     let t = if to < 0 { chars.len() } else { to as usize };
@@ -679,8 +1016,16 @@ fn f_char_equal(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     let b = want_int(i, &args[1])?;
     let ic = args.get(2).map(|v| v.truthy()).unwrap_or(false);
     if ic {
-        let ca = char::from_u32(a as u32).unwrap_or('\0').to_lowercase().next().unwrap_or('\0');
-        let cb = char::from_u32(b as u32).unwrap_or('\0').to_lowercase().next().unwrap_or('\0');
+        let ca = char::from_u32(a as u32)
+            .unwrap_or('\0')
+            .to_lowercase()
+            .next()
+            .unwrap_or('\0');
+        let cb = char::from_u32(b as u32)
+            .unwrap_or('\0')
+            .to_lowercase()
+            .next()
+            .unwrap_or('\0');
         Ok(Value::from_bool(ca == cb))
     } else {
         Ok(Value::from_bool(a == b))
@@ -695,7 +1040,11 @@ fn f_char_or_string_p(_i: &mut Interp, args: Vec<Value>) -> EvalResult {
 fn f_string_search(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     let needle = want_string(i, &args[0])?;
     let hay = want_string(i, &args[1])?;
-    let start = args.get(2).map(|v| want_int(i, v)).transpose()?.unwrap_or(0);
+    let start = args
+        .get(2)
+        .map(|v| want_int(i, v))
+        .transpose()?
+        .unwrap_or(0);
     let hchars: Vec<char> = hay.chars().collect();
     let nchars: Vec<char> = needle.chars().collect();
     if nchars.is_empty() {
@@ -940,8 +1289,21 @@ fn f_format(i: &mut Interp, args: Vec<Value>) -> EvalResult {
             ai += 1;
         }
         let piece = match letter {
-            's' => i.princ_to_string(&a),
-            'S' => i.print_to_string(&a),
+            's' => {
+                let s = i.princ_to_string(&a);
+                // Precision truncates the printed argument.
+                match prec {
+                    Some(n) => s.chars().take(n).collect(),
+                    None => s,
+                }
+            }
+            'S' => {
+                let s = i.print_to_string(&a);
+                match prec {
+                    Some(n) => s.chars().take(n).collect(),
+                    None => s,
+                }
+            }
             'd' | 'i' => {
                 let n = match &a {
                     Value::Int(n) => *n,
@@ -992,10 +1354,8 @@ fn f_format(i: &mut Interp, args: Vec<Value>) -> EvalResult {
                 format_g(f, prec)
             }
             _ => {
-                // Unknown spec — emit verbatim like Emacs does.
-                let mut s = String::from("%");
-                s.push(letter);
-                s
+                // Unsupported spec — Emacs signals "Invalid format operation".
+                return Err(i.error(&format!("Invalid format operation %{}", letter)));
             }
         };
         // apply width/alignment
@@ -1030,7 +1390,12 @@ fn format_e(f: f64, prec: usize, upper: bool) -> String {
     if let Some(epos) = s.find('e') {
         let (mant, exp) = s.split_at(epos);
         let exp_num: i128 = exp[1..].parse().unwrap_or(0);
-        let out = format!("{}e{}{:02}", mant, if exp_num < 0 { "-" } else { "+" }, exp_num.abs());
+        let out = format!(
+            "{}e{}{:02}",
+            mant,
+            if exp_num < 0 { "-" } else { "+" },
+            exp_num.abs()
+        );
         if upper { out.to_uppercase() } else { out }
     } else {
         s
@@ -1060,14 +1425,16 @@ fn format_g(f: f64, prec: Option<usize>) -> String {
     }
     let e = f.abs().log10().floor() as i32;
     if e < -4 || e >= p as i32 {
-        let mut s = format!("{:.*e}", p - 1, f);
-        // trim trailing zeros in mantissa
+        let s = format!("{:.*e}", p - 1, f);
+        // trim trailing zeros in mantissa; exponent gets a sign and ≥2 digits
         if let Some(epos) = s.find('e') {
             let (m, ex) = s.split_at(epos);
             let m2 = m.trim_end_matches('0').trim_end_matches('.');
-            s = format!("{}{}", m2, ex);
+            let exp: i32 = ex[1..].parse().unwrap_or(0);
+            format!("{}e{}{:02}", m2, if exp < 0 { "-" } else { "+" }, exp.abs())
+        } else {
+            s
         }
-        s
     } else {
         let decimals = (p as i32 - 1 - e).max(0) as usize;
         let mut s = format!("{:.*}", decimals, f);
@@ -1150,7 +1517,11 @@ fn f_compare_strings(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     let fold = arg(&args, 6).truthy();
     let a: String = v1[b1..e1].iter().collect();
     let b: String = v2[b2..e2].iter().collect();
-    let (a, b) = if fold { (a.to_lowercase(), b.to_lowercase()) } else { (a, b) };
+    let (a, b) = if fold {
+        (a.to_lowercase(), b.to_lowercase())
+    } else {
+        (a, b)
+    };
     // Find first differing position.
     let ac: Vec<char> = a.chars().collect();
     let bc: Vec<char> = b.chars().collect();
@@ -1340,10 +1711,7 @@ fn f_make_char(i: &mut Interp, args: Vec<Value>) -> EvalResult {
 fn f_split_char(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     let ch = want_int(i, &args[0])?;
     let cs = i.intern(if ch < 0x80 { "ascii" } else { "unicode" });
-    Ok(Value::list(vec![
-        Value::Sym(cs),
-        Value::Int(ch),
-    ]))
+    Ok(Value::list(vec![Value::Sym(cs), Value::Int(ch)]))
 }
 
 fn f_encode_char(i: &mut Interp, args: Vec<Value>) -> EvalResult {

@@ -9,7 +9,10 @@ use common::{ev, ev_err};
 #[test]
 fn reader_hash_syntax() {
     // #s(...) records read as a distinct type.
-    assert_eq!(ev("(type-of (car (read-from-string \"#s(a 1 2)\")))"), "record");
+    assert_eq!(
+        ev("(type-of (car (read-from-string \"#s(a 1 2)\")))"),
+        "record"
+    );
     assert_eq!(ev("(car (read-from-string \"#s(a 1 2)\"))"), "#s(a 1 2)");
     // #N= / #N# labels: circular ref is eq to the object itself.
     assert_eq!(
@@ -23,11 +26,20 @@ fn reader_hash_syntax() {
     );
     // #_ reads the next token as an interned symbol.
     assert_eq!(ev("(car (read-from-string \"#_5 7\"))"), "\\5");
-    assert_eq!(ev("(eq 'b (cadr (car (read-from-string \"(a #_b c)\"))))"), "t");
+    assert_eq!(
+        ev("(eq 'b (cadr (car (read-from-string \"(a #_b c)\"))))"),
+        "t"
+    );
     // Bare dot is invalid.
-    assert_eq!(ev_err("(car (read-from-string \".\"))"), "invalid-read-syntax");
+    assert_eq!(
+        ev_err("(car (read-from-string \".\"))"),
+        "invalid-read-syntax"
+    );
     // #(...) is not valid vector syntax in Emacs.
-    assert_eq!(ev_err("(car (read-from-string \"#(1 2)\"))"), "invalid-read-syntax");
+    assert_eq!(
+        ev_err("(car (read-from-string \"#(1 2)\"))"),
+        "invalid-read-syntax"
+    );
 }
 
 #[test]
@@ -52,10 +64,7 @@ fn printer_abbrevs() {
     // Symbol whose name is numeric gets an escape ("50" -> \50).
     assert_eq!(ev("(prin1-to-string (gensym 5))"), "\"\\\\50\"");
     // Strings keep literal newlines.
-    assert_eq!(
-        ev("(prin1-to-string \"a\nb\")"),
-        "\"\\\"a\nb\\\"\""
-    );
+    assert_eq!(ev("(prin1-to-string \"a\nb\")"), "\"\\\"a\nb\\\"\"");
 }
 
 // ---------- sequences ----------
@@ -108,7 +117,7 @@ fn plist_order() {
     assert_eq!(ev("(fboundp 'if)"), "t");
     assert_eq!(ev("(fboundp 'when)"), "t");
     assert_eq!(ev("(subrp 'car)"), "nil");
-    assert_eq!(ev("(subrp #'car)"), "t");
+    assert_eq!(ev("(subrp #'car)"), "nil");
     assert_eq!(ev_err("(unintern \"nope\")"), "wrong-number-of-arguments");
     assert_eq!(ev("(commandp 'next-line)"), "t");
 }
@@ -124,7 +133,10 @@ fn kbd_events() {
     assert_eq!(ev("(text-char-description 27)"), "\"^[\"");
     assert_eq!(ev("(text-char-description 1)"), "\"^A\"");
     assert_eq!(ev("(text-char-description 127)"), "\"^?\"");
-    assert_eq!(ev_err("(text-char-description 134217791)"), "wrong-type-argument");
+    assert_eq!(
+        ev_err("(text-char-description 134217791)"),
+        "wrong-type-argument"
+    );
 }
 
 // ---------- gensym ----------

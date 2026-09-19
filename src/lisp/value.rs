@@ -149,6 +149,9 @@ pub struct Lambda {
     pub interactive: Option<Value>,
     /// Name for display purposes (from defun or set-name).
     pub name: Option<String>,
+    /// Arglist contains extended `(var init)' params — calling it in a
+    /// dynamic (non-macro) context signals `invalid-function' like Emacs.
+    pub bad_arglist: bool,
 }
 
 #[derive(Clone)]
@@ -214,7 +217,8 @@ impl Value {
 
     /// Integer truncated to i64 (for positions/sizes; clamps bignums).
     pub fn int_i64(&self) -> Option<i64> {
-        self.int().map(|n| n.clamp(i64::MIN as i128, i64::MAX as i128) as i64)
+        self.int()
+            .map(|n| n.clamp(i64::MIN as i128, i64::MAX as i128) as i64)
     }
 
     pub fn cons(car: Value, cdr: Value) -> Value {

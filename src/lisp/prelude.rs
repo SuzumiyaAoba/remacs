@@ -19,14 +19,15 @@ pub const PRELUDE: &str = r#"
   "Loop over a list.
 Evaluate BODY with VAR bound to each element of LIST, in turn.
 Then evaluate RESULT (default nil) with VAR bound to nil."
-  (let ((tail (make-symbol "dolist")))
-    (list 'let (list (list tail (nth 1 spec)))
-          (list 'while tail
-                (list 'let (list (list (nth 0 spec) (list 'car tail)))
-                      (cons 'progn body))
-                (list 'setq tail (list 'cdr tail)))
-          (list 'let (list (list (nth 0 spec) nil))
-                (nth 2 spec)))))
+  (let ((tail (make-symbol "tail")))
+    (append
+     (list 'let (list (list tail (nth 1 spec)))
+           (list 'while tail
+                 (append (list 'let (list (list (nth 0 spec)
+                                              (list 'car tail))))
+                         body
+                         (list (list 'setq tail (list 'cdr tail))))))
+     (cdr (cdr spec)))))
 
 (defmacro dotimes (spec &rest body)
   "Loop a certain number of times.
@@ -794,4 +795,36 @@ returning that buffer's contents as a string."
   (define-key m (kbd "C-M-e") 'end-of-defun)
   (define-key m (kbd "C-M-h") 'mark-defun)
   (define-key m (kbd "ESC ESC ESC") 'keyboard-escape-quit))
+
+;; ---------- subr.el-level utilities ----------
+(defalias 'cl-subseq #'seq-subseq)
+
+(defun add-to-list (list-var element &optional append compare-fn)
+  "Add ELEMENT to the list value of LIST-VAR if not already present."
+  (let ((lst (symbol-value list-var)))
+    (if (if compare-fn
+            (let ((found nil) (rest lst))
+              (while (and rest (not found))
+                (if (funcall compare-fn element (car rest))
+                    (setq found t))
+                (setq rest (cdr rest)))
+              found)
+          (member element lst))
+        lst
+      (set list-var
+           (if append (append lst (list element)) (cons element lst))))))
+
+(defmacro bound-and-true-p (var)
+  "Return the value of symbol VAR if bound and non-nil."
+  (list 'and (list 'boundp (list 'quote var)) var))
+
+(defmacro save-match-data (&rest body)
+  "Execute BODY, restoring the match data afterwards."
+  (list 'let (list (list 'match-data '(match-data)))
+        (list 'unwind-protect (cons 'progn body)
+              '(set-match-data match-data))))
+
+(defmacro with-local-quit (&rest body)
+  "Execute BODY with quits allowed."
+  (cons 'let (cons '((inhibit-quit nil)) body)))
 "#;

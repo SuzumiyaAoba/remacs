@@ -9,10 +9,10 @@
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
+use super::Interp;
 use super::error::Flow;
 use super::obarray::sym;
 use super::value::{SymId, Value};
-use super::Interp;
 
 // Emacs modifier bits for char literals (from src/character.h).
 pub const CHAR_ALT: i128 = 0x0040_0000;
@@ -40,10 +40,7 @@ pub struct Reader<'a> {
 
 fn read_err(interp: &mut Interp, msg: &str) -> Flow {
     let sym_id = interp.intern("invalid-read-syntax");
-    Flow::Signal(
-        Value::Sym(sym_id),
-        Value::list(vec![Value::string(msg)]),
-    )
+    Flow::Signal(Value::Sym(sym_id), Value::list(vec![Value::string(msg)]))
 }
 
 fn eof_err(interp: &mut Interp) -> Flow {
@@ -148,9 +145,7 @@ impl<'a> Reader<'a> {
             Some('[') => {
                 self.pos += 1;
                 let items = self.read_seq(']')?;
-                Ok(Value::Vec(std::rc::Rc::new(std::cell::RefCell::new(
-                    items,
-                ))))
+                Ok(Value::Vec(std::rc::Rc::new(std::cell::RefCell::new(items))))
             }
             Some('\'') => {
                 self.pos += 1;
@@ -158,10 +153,7 @@ impl<'a> Reader<'a> {
                     return Err(eof_err(self.interp));
                 }
                 let obj = self.read_object()?;
-                Ok(Value::list(vec![
-                    Value::Sym(sym::QUOTE),
-                    obj,
-                ]))
+                Ok(Value::list(vec![Value::Sym(sym::QUOTE), obj]))
             }
             Some('`') => {
                 self.pos += 1;
@@ -228,6 +220,12 @@ impl<'a> Reader<'a> {
                 if self.skip_layout()? {
                     return Err(eof_err(self.interp));
                 }
+                // A `.' directly before the close paren is the symbol `\.'
+                // (Emacs reads `(a .)' as (a \.)).
+                if self.peek() == Some(close) {
+                    items.push(Value::Sym(self.interp.intern(".")));
+                    continue;
+                }
                 let tail = self.read_object()?;
                 if self.skip_layout()? || self.peek() != Some(close) {
                     return Err(read_err(self.interp, ". in wrong context"));
@@ -255,7 +253,8 @@ impl<'a> Reader<'a> {
         match self.peek_at(1) {
             None => true,
             Some(c) => {
-                c.is_whitespace() || matches!(c, '(' | ')' | '[' | ']' | '"' | '\'' | '`' | ',' | ';')
+                c.is_whitespace()
+                    || matches!(c, '(' | ')' | '[' | ']' | '"' | '\'' | '`' | ',' | ';')
             }
         }
     }
@@ -324,34 +323,22 @@ impl<'a> Reader<'a> {
                 self.pos += 1;
                 let v = self.read_char_literal()?;
                 // Strings hold plain chars: fold C- like ?\C-x (control char).
-                let base = v
-                    & !(CHAR_CTL
-                        | CHAR_META
-                        | CHAR_SHIFT
-                        | CHAR_HYPER
-                        | CHAR_SUPER
-                        | CHAR_ALT);
+                let base =
+                    v & !(CHAR_CTL | CHAR_META | CHAR_SHIFT | CHAR_HYPER | CHAR_SUPER | CHAR_ALT);
                 Ok(char::from_u32(base as u32).map(ctrl_of))
             }
             Some('M') if self.peek() == Some('-') => {
                 self.pos += 1;
                 let v = self.read_char_literal()?;
                 // Meta bits can't live in a Rust char; emit the base char.
-                let base = v
-                    & !(CHAR_CTL
-                        | CHAR_META
-                        | CHAR_SHIFT
-                        | CHAR_HYPER
-                        | CHAR_SUPER
-                        | CHAR_ALT);
+                let base =
+                    v & !(CHAR_CTL | CHAR_META | CHAR_SHIFT | CHAR_HYPER | CHAR_SUPER | CHAR_ALT);
                 Ok(char::from_u32(base as u32))
             }
-            Some('^') => {
-                match self.next() {
-                    None => Err(eof_err(self.interp)),
-                    Some(c) => Ok(Some(ctrl_of(c))),
-                }
-            }
+            Some('^') => match self.next() {
+                None => Err(eof_err(self.interp)),
+                Some(c) => Ok(Some(ctrl_of(c))),
+            },
             Some(c) if c.is_digit(8) => {
                 let mut n = (c as i128) - ('0' as i128);
                 for _ in 0..2 {
@@ -401,12 +388,8 @@ impl<'a> Reader<'a> {
                 // ?\C-a == 1, ?\C-@ == 0, ?\C-? == 127. Chars that can't
                 // fold (e.g. digits, multibyte) keep CHAR_CTL.
                 if bit == CHAR_CTL {
-                    const ALL_MODS: i128 = CHAR_CTL
-                        | CHAR_META
-                        | CHAR_SHIFT
-                        | CHAR_HYPER
-                        | CHAR_SUPER
-                        | CHAR_ALT;
+                    const ALL_MODS: i128 =
+                        CHAR_CTL | CHAR_META | CHAR_SHIFT | CHAR_HYPER | CHAR_SUPER | CHAR_ALT;
                     let base = inner & !ALL_MODS;
                     let mods = inner & (ALL_MODS & !CHAR_CTL);
                     let folded = match base {
@@ -592,9 +575,7 @@ impl<'a> Reader<'a> {
                             None => {
                                 if self.pending_labels.contains(&n) {
                                     if !self.label_markers.contains_key(&n) {
-                                        let m = self
-                                            .interp
-                                            .make_symbol(&format!("#label{}#", n));
+                                        let m = self.interp.make_symbol(&format!("#label{}#", n));
                                         self.label_markers.insert(n, m);
                                     }
                                     Ok(Value::Sym(self.label_markers[&n]))
@@ -663,7 +644,10 @@ impl<'a> Reader<'a> {
     /// (it's a symbol constituent in elisp).
     fn is_terminator(c: char) -> bool {
         c.is_whitespace()
-            || matches!(c, '(' | ')' | '[' | ']' | '"' | '\'' | '`' | ',' | ';' | '#')
+            || matches!(
+                c,
+                '(' | ')' | '[' | ']' | '"' | '\'' | '`' | ',' | ';' | '#'
+            )
     }
 
     /// Read a raw token (symbol constituent chars, `\` escapes included).
@@ -729,7 +713,9 @@ pub fn parse_number(tok: &str) -> Option<Value> {
     // `123.` (digits + trailing dot, no exponent) => integer.
     if let Some(head) = tok.strip_suffix('.') {
         if !head.is_empty()
-            && head.bytes().all(|b| b.is_ascii_digit() || b == b'+' || b == b'-')
+            && head
+                .bytes()
+                .all(|b| b.is_ascii_digit() || b == b'+' || b == b'-')
         {
             if let Ok(i) = head.parse::<i128>() {
                 return Some(Value::Int(i));

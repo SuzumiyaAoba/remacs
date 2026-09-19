@@ -11,8 +11,8 @@ use std::collections::HashMap;
 use std::rc::Rc;
 
 use super::error::{EvalResult, Flow};
-use super::obarray::sym;
 use super::obarray::Obarray;
+use super::obarray::sym;
 use super::reader::Reader;
 use super::value::{Arity, Lambda, SymId, Value};
 
@@ -110,9 +110,8 @@ pub struct Interp {
     /// Interactive input hook installed by the terminal front-end.
     /// Called as (interp, prompt, single_key) -> MinibufInput.
     /// `single_key` reads one event (y-or-n-p, read-char).
-    pub minibuf_reader: Option<
-        std::rc::Rc<dyn Fn(&mut Interp, &str, bool) -> Result<MinibufInput, Flow>>,
-    >,
+    pub minibuf_reader:
+        Option<std::rc::Rc<dyn Fn(&mut Interp, &str, bool) -> Result<MinibufInput, Flow>>>,
 }
 
 /// Result of a minibuffer read from the front-end.
@@ -219,7 +218,21 @@ impl Interp {
     }
 
     /// Global (default) value of a symbol.
+    /// Follow `defvaralias' chains: return the ultimate base symbol.
+    pub fn var_alias_target(&self, id: SymId) -> SymId {
+        let prop = self.obarray.intern_soft("variable-alias").unwrap_or(0);
+        let mut cur = id;
+        for _ in 0..64 {
+            match self.get_prop(cur, prop) {
+                Value::Sym(next) => cur = next,
+                _ => return cur,
+            }
+        }
+        cur
+    }
+
     pub fn symbol_value(&self, id: SymId) -> Value {
+        let id = self.var_alias_target(id);
         // Buffer-local binding in current buffer wins. `try_borrow`:
         // primitives that hold the buffer mutably borrowed may still
         // consult variables (they see the global binding).
@@ -260,6 +273,7 @@ impl Interp {
 
     /// `boundp`: is the effective value non-void?
     pub fn bound_p(&self, id: SymId) -> bool {
+        let id = self.var_alias_target(id);
         // Constants (nil, t, keywords) are always bound.
         if self.obarray.symbol(id).constant {
             return true;
@@ -280,12 +294,10 @@ impl Interp {
     /// Set a variable the way `set`/`setq` does: local binding if the
     /// current buffer has one or the symbol is "automatically local".
     pub fn set_symbol(&mut self, id: SymId, val: Value) -> Result<(), Flow> {
+        let id = self.var_alias_target(id);
         let constant = self.obarray.symbol(id).constant;
         if constant && id != sym::NIL && id != sym::T {
-            return Err(self.signal_data(
-                sym::SETTING_CONSTANT,
-                vec![self.sym(id)],
-            ));
+            return Err(self.signal_data(sym::SETTING_CONSTANT, vec![self.sym(id)]));
         }
         if constant {
             // nil/t can't be set at all.
@@ -374,7 +386,9 @@ impl Interp {
     /// Pop `n` specbind entries, restoring values.
     pub fn unbind(&mut self, n: usize) {
         for _ in 0..n {
-            let Some(sb) = self.specbind.pop() else { return };
+            let Some(sb) = self.specbind.pop() else {
+                return;
+            };
             match sb.buf {
                 Some(buf_id) => {
                     if let Some(b) = self.buffers.get(buf_id) {
@@ -580,11 +594,18 @@ impl Interp {
     fn eval_inner(&mut self, form: &Value) -> EvalResult {
         match form {
             Value::Nil => Ok(Value::Nil),
-            Value::Int(_) | Value::Float(_) | Value::Str(_) | Value::Vec(_)
-            | Value::Hash(_) | Value::Subr(_) | Value::Lambda(_) | Value::Buffer(_)
-            | Value::Record(_) | Value::Marker(_) | Value::Window(_) | Value::Frame(_) => {
-                Ok(form.clone())
-            }
+            Value::Int(_)
+            | Value::Float(_)
+            | Value::Str(_)
+            | Value::Vec(_)
+            | Value::Hash(_)
+            | Value::Subr(_)
+            | Value::Lambda(_)
+            | Value::Buffer(_)
+            | Value::Record(_)
+            | Value::Marker(_)
+            | Value::Window(_)
+            | Value::Frame(_) => Ok(form.clone()),
             Value::Sym(id) => self.eval_symbol(*id),
             Value::Cons(_) => self.eval_form(form),
         }
@@ -635,9 +656,7 @@ impl Interp {
                 let fun = self.symbol_function(id);
                 if let Value::Sym(s) = &fun {
                     if *s == sym::UNBOUND {
-                        return Err(
-                            self.signal_data(sym::VOID_FUNCTION, vec![Value::Sym(id)])
-                        );
+                        return Err(self.signal_data(sym::VOID_FUNCTION, vec![Value::Sym(id)]));
                     }
                 }
                 self.call_function(&fun, &args, Some(id))
@@ -708,10 +727,9 @@ impl Interp {
                     match f {
                         Value::Sym(next) => {
                             if next == sym::UNBOUND {
-                                return Err(self.signal_data(
-                                    sym::VOID_FUNCTION,
-                                    vec![Value::Sym(cur)],
-                                ));
+                                return Err(
+                                    self.signal_data(sym::VOID_FUNCTION, vec![Value::Sym(cur)])
+                                );
                             }
                             cur = next;
                         }
@@ -721,16 +739,14 @@ impl Interp {
                     }
                 }
             }
-            Value::Subr(s) => {
-                match s.arity {
-                    Arity::Unevalled => (s.func)(self, vec![args.clone()]),
-                    _ => {
-                        let argv = self.eval_args(args)?;
-                        self.check_arity_subr(s, &argv)?;
-                        (s.func)(self, argv)
-                    }
+            Value::Subr(s) => match s.arity {
+                Arity::Unevalled => (s.func)(self, vec![args.clone()]),
+                _ => {
+                    let argv = self.eval_args(args)?;
+                    self.check_arity_subr(s, &argv)?;
+                    (s.func)(self, argv)
                 }
-            }
+            },
             Value::Lambda(_) => {
                 // Macro: expand then eval.
                 if fun.as_lambda().map(|l| l.is_macro).unwrap_or(false) {
@@ -772,11 +788,7 @@ impl Interp {
             Arity::Range { min, max } => (min as i128, max as i128),
             Arity::Many { min } => {
                 if n < min as i128 {
-                    return Err(self.wrong_number_of_args(
-                        &Value::Subr(s),
-                        min as i128,
-                        -1,
-                    ));
+                    return Err(self.wrong_number_of_args(&Value::Subr(s), min as i128, -1));
                 }
                 return Ok(());
             }
@@ -803,10 +815,9 @@ impl Interp {
                     match f {
                         Value::Sym(next) => {
                             if next == sym::UNBOUND {
-                                return Err(self.signal_data(
-                                    sym::VOID_FUNCTION,
-                                    vec![Value::Sym(cur)],
-                                ));
+                                return Err(
+                                    self.signal_data(sym::VOID_FUNCTION, vec![Value::Sym(cur)])
+                                );
                             }
                             cur = next;
                         }
@@ -860,6 +871,13 @@ impl Interp {
                     (min + l.optional.len()) as i128
                 },
             ));
+        }
+
+        // Dynamic (non-macro) functions with extended `(var init)'
+        // parameters are invalid to call, like Emacs's interpreted
+        // functions — the arity check above still runs first.
+        if l.bad_arglist && !l.is_macro {
+            return Err(self.signal_data(sym::INVALID_FUNCTION, vec![Value::Lambda(l.clone())]));
         }
 
         if l.env.is_some() {
@@ -1106,6 +1124,7 @@ impl Interp {
         let mut required = Vec::new();
         let mut optional = Vec::new();
         let mut rest = None;
+        let mut bad_arglist = false;
         let mut mode = 0u8; // 0 = required, 1 = optional, 2 = rest done
         let plist = params;
         let mut cur = plist.clone();
@@ -1127,11 +1146,19 @@ impl Interp {
                                 if let Some(s) = self.sym_id(&car) {
                                     required.push(s);
                                 } else {
-                                    return Err(self.error("bad lambda list"));
+                                    // `(var init)' in required position:
+                                    // Emacs counts it toward the arity but
+                                    // calling the function signals
+                                    // invalid-function.
+                                    required.push(self.intern("&bad-param"));
+                                    bad_arglist = true;
                                 }
                             }
                             1 => {
-                                // `sym` or `(sym default)`
+                                // `sym` or `(sym default)` — the extended
+                                // form only works via macros/cl- arglists;
+                                // calling a plain function with it signals
+                                // invalid-function.
                                 match self.sym_id(&car) {
                                     Some(s) => optional.push(super::value::OptParam {
                                         sym: s,
@@ -1147,15 +1174,12 @@ impl Interp {
                                                     sym: s,
                                                     default: pair.get(1).cloned(),
                                                 });
+                                                bad_arglist = true;
                                             } else {
-                                                return Err(
-                                                    self.error("bad &optional parameter")
-                                                );
+                                                return Err(self.error("bad &optional parameter"));
                                             }
                                         } else {
-                                            return Err(
-                                                self.error("bad &optional parameter")
-                                            );
+                                            return Err(self.error("bad &optional parameter"));
                                         }
                                     }
                                 }
@@ -1215,6 +1239,7 @@ impl Interp {
             doc,
             interactive,
             name: name.map(|s| self.symbol_name(s)),
+            bad_arglist,
         })
     }
 
@@ -1222,22 +1247,38 @@ impl Interp {
         let ec = self.intern("error-conditions");
         let put = |interp: &mut Interp, name: &str, conds: &[&str]| {
             let s = interp.intern(name);
-            let list = Value::list(
-                conds.iter()
-                    .map(|c| Value::Sym(interp.intern(c)))
-                    .collect(),
-            );
+            let list = Value::list(conds.iter().map(|c| Value::Sym(interp.intern(c))).collect());
             interp.put_prop(s, ec, list);
         };
         put(self, "error", &["error"]);
         put(self, "quit", &["quit"]);
         put(self, "user-error", &["user-error", "error"]);
         put(self, "arith-error", &["arith-error", "error"]);
-        put(self, "range-error", &["range-error", "arith-error", "error"]);
-        put(self, "domain-error", &["domain-error", "arith-error", "error"]);
-        put(self, "overflow-error", &["overflow-error", "arith-error", "error"]);
-        put(self, "underflow-error", &["underflow-error", "arith-error", "error"]);
-        put(self, "wrong-type-argument", &["wrong-type-argument", "error"]);
+        put(
+            self,
+            "range-error",
+            &["range-error", "arith-error", "error"],
+        );
+        put(
+            self,
+            "domain-error",
+            &["domain-error", "arith-error", "error"],
+        );
+        put(
+            self,
+            "overflow-error",
+            &["overflow-error", "arith-error", "error"],
+        );
+        put(
+            self,
+            "underflow-error",
+            &["underflow-error", "arith-error", "error"],
+        );
+        put(
+            self,
+            "wrong-type-argument",
+            &["wrong-type-argument", "error"],
+        );
         put(
             self,
             "wrong-number-of-arguments",
@@ -1248,24 +1289,52 @@ impl Interp {
         put(self, "void-variable", &["void-variable", "error"]);
         put(self, "setting-constant", &["setting-constant", "error"]);
         put(self, "invalid-function", &["invalid-function", "error"]);
-        put(self, "invalid-read-syntax", &["invalid-read-syntax", "error"]);
+        put(
+            self,
+            "invalid-read-syntax",
+            &["invalid-read-syntax", "error"],
+        );
         put(self, "circular-list", &["circular-list", "error"]);
-        put(self, "beginning-of-buffer", &["beginning-of-buffer", "error"]);
+        put(
+            self,
+            "beginning-of-buffer",
+            &["beginning-of-buffer", "error"],
+        );
         put(self, "end-of-buffer", &["end-of-buffer", "error"]);
         put(self, "buffer-read-only", &["buffer-read-only", "error"]);
-        put(self, "text-read-only", &["text-read-only", "buffer-read-only", "error"]);
+        put(
+            self,
+            "text-read-only",
+            &["text-read-only", "buffer-read-only", "error"],
+        );
         put(self, "mark-inactive", &["mark-inactive", "error"]);
         put(self, "file-error", &["file-error", "error"]);
-        put(self, "file-missing", &["file-missing", "file-error", "error"]);
+        put(
+            self,
+            "file-missing",
+            &["file-missing", "file-error", "error"],
+        );
         put(self, "end-of-file", &["end-of-file", "error"]);
         put(self, "search-failed", &["search-failed", "error"]);
         put(self, "no-catch", &["no-catch", "error"]);
         put(self, "scan-error", &["scan-error", "error"]);
         put(self, "invalid-regexp", &["invalid-regexp", "error"]);
         put(self, "recursion-error", &["recursion-error", "error"]);
-        put(self, "file-already-exists", &["file-already-exists", "file-error", "error"]);
-        put(self, "file-supersession", &["file-supersession", "file-error", "error"]);
-        put(self, "permission-denied", &["permission-denied", "file-error", "error"]);
+        put(
+            self,
+            "file-already-exists",
+            &["file-already-exists", "file-error", "error"],
+        );
+        put(
+            self,
+            "file-supersession",
+            &["file-supersession", "file-error", "error"],
+        );
+        put(
+            self,
+            "permission-denied",
+            &["permission-denied", "file-error", "error"],
+        );
         put(self, "mark-set", &["mark-set"]);
         put(self, "mark-active", &["mark-active"]);
         put(self, "mark-inactive", &["mark-inactive"]);
@@ -1305,7 +1374,10 @@ impl Interp {
             ("file-already-exists", "File already exists"),
             ("file-supersession", "File is already being edited"),
             ("permission-denied", "Permission denied"),
-            ("recursion-error", "Variable binding depth exceeds max-specpdl-size"),
+            (
+                "recursion-error",
+                "Variable binding depth exceeds max-specpdl-size",
+            ),
         ];
         for (name, msg) in msgs {
             let s = self.intern(name);
@@ -1317,117 +1389,282 @@ impl Interp {
         // Variables that are always dynamically bound even under
         // lexical-binding. Real Emacs has hundreds; these cover startup.
         let specials = [
-            "standard-output", "standard-input", "lexical-binding",
-            "inhibit-read-only", "load-path", "features", "command-line-args",
-            "noninteractive", "emacs-version", "system-type", "debug-on-error",
-            "max-lisp-eval-depth", "max-specpdl-size", "gc-cons-threshold",
-            "command-history", "values", "obarray", "deactivate-mark",
-            "transient-mark-mode", "kill-ring", "kill-ring-yank-pointer",
-            "kill-ring-max", "last-command", "this-command",
-            "current-prefix-arg", "prefix-arg", "minibuffer-history",
-            "buffer-name-history", "read-expression-history",
-            "command-line-args-left", "window-system", "global-map",
-            "minibuffer-local-map", "overriding-local-map",
-            "current-load-list", "load-in-progress", "load-file-name",
-            "user-init-file", "print-level", "print-length", "print-circle",
-            "most-positive-fixnum", "most-negative-fixnum",
-            "before-change-functions", "after-change-functions",
-            "first-change-hook", "post-self-insert-hook", "pre-command-hook",
-            "post-command-hook", "kill-emacs-hook", "before-init-hook",
-            "after-init-hook", "emacs-startup-hook", "delay-mode-hooks",
-            "executing-kbd-macro", "defining-kbd-macro", "last-kbd-macro",
-            "system-configuration", "system-name", "emacs-major-version",
-            "emacs-minor-version", "doc-directory", "exec-directory",
-            "exec-path", "process-environment", "path-separator",
-            "null-device", "invocation-name", "invocation-directory",
-            "history-length", "history-delete-duplicates",
-            "history-add-new-input", "minibuffer-completion-table",
-            "minibuffer-completion-predicate", "minibuffer-completion-confirm",
-            "minibuffer-completing-file-name", "completion-ignore-case",
-            "completion-styles", "read-circle", "find-file-hook",
-            "find-file-not-found-hook", "write-file-functions",
-            "write-contents-functions", "after-save-hook",
-            "before-save-hook", "save-buffer-coding-system",
-            "buffer-file-coding-system", "coding-system-for-write",
-            "coding-system-for-read", "auto-mode-alist",
-            "interpreter-mode-alist", "magic-mode-alist",
-            "file-name-handler-alist", "completion-ignored-extensions",
-            "buffer-offer-save", "enable-local-variables",
-            "enable-local-eval", "safe-local-variable-values",
-            "file-local-variables-alist", "permanent-local-variables",
-            "change-major-mode-hook", "after-change-major-mode-hook",
-            "make-backup-files", "backup-by-copying", "version-control",
-            "kept-new-versions", "kept-old-versions", "delete-old-versions",
-            "create-lockfiles", "temporary-file-directory",
-            "revert-buffer-function", "auto-save-default",
-            "auto-save-interval", "auto-save-timeout",
-            "auto-save-file-name-transforms", "delete-auto-save-files",
-            "require-final-newline", "kill-buffer-hook",
-            "kill-buffer-query-functions", "buffer-list-update-hook",
-            "indent-tabs-mode", "tab-width", "fill-column",
-            "standard-indent", "left-margin", "goal-column",
-            "next-screen-context-lines", "scroll-conservatively",
-            "scroll-margin", "scroll-up-aggressively",
-            "scroll-down-aggressively", "scroll-preserve-screen-position",
-            "scroll-error-top-bottom", "echo-keystrokes", "visible-bell",
-            "inhibit-startup-screen", "inhibit-startup-message",
-            "initial-major-mode", "initial-scratch-message",
-            "user-full-name", "user-login-name", "user-mail-address",
-            "user-uid", "kill-read-only-ok", "yank-excluded-properties",
-            "set-mark-command-repeat-pop", "mark-even-if-inactive",
-            "regexp-search-ring", "search-ring", "search-ring-max",
-            "regexp-search-ring-max", "search-upper-case",
-            "search-invisible", "search-whitespace-regexp", "case-replace",
-            "case-fold-search", "isearch-forward", "isearch-regexp",
-            "register-alist", "undo-limit", "undo-strong-limit",
-            "undo-outer-limit", "mark-ring-max", "global-mark-ring-max",
-            "window-min-height", "window-min-width",
-            "split-height-threshold", "split-width-threshold",
-            "resize-mini-windows", "max-mini-window-height",
-            "enable-recursive-minibuffers", "minibuffer-message-timeout",
-            "read-buffer-function", "read-buffer-completion-ignore-case",
-            "read-file-name-completion-ignore-case", "truncate-lines",
-            "comment-start", "comment-end", "comment-start-skip",
-            "comment-end-skip", "comment-column", "comment-padding",
-            "comment-multi-line", "comment-empty-lines", "paragraph-start",
-            "paragraph-separate", "paragraph-ignore-fill-prefix",
-            "page-delimiter", "sentence-end", "sentence-end-double-space",
-            "adaptive-fill-mode", "adaptive-fill-regexp",
-            "adaptive-fill-function", "fill-prefix",
-            "fill-paragraph-function", "fill-nobreak-predicate",
-            "abbrev-mode", "save-abbrevs", "abbrev-file-name",
-            "only-global-abbrevs", "double-click-time", "double-click-fuzz",
-            "shell-file-name", "explicit-shell-file-name", "auto-save-hook",
-            "delete-exited-processes", "process-connection-type",
-            "text-quoting-style", "undo-in-region", "undo-in-progress",
-            "shift-select-mode", "delete-active-region",
-            "yank-handled-properties", "query-replace-history",
-            "auto-mode-case-fold", "use-dialog-box", "menu-prompting",
-            "delayed-warnings-list", "delayed-warnings-hook",
-            "minibuffer-prompt-properties", "eval-expression-print-level",
-            "eval-expression-print-length", "indent-line-function",
-            "comment-indent-function", "major-mode", "mode-name",
-            "minor-mode-alist", "minor-mode-map-alist",
-            "emulation-mode-map-alists", "global-minor-modes",
-            "buffer-read-only", "default-directory", "buffer-file-name",
-            "buffer-file-truename", "buffer-undo-list", "mark-ring",
-            "mark-active", "local-keymap", "list-buffers-directory",
-            "buffer-saved-size", "buffer-display-table",
-            "buffer-invisibility-spec", "selective-display",
-            "overwrite-mode", "local-abbrev-table",
-            "bidi-display-reordering", "header-line-format",
-            "mode-line-format", "default-text-properties",
-            "char-property-alias-alist", "inhibit-point-motion-hooks",
-            "inhibit-field-text-motion", "show-trailing-whitespace",
-            "indicate-empty-lines", "indicate-buffer-boundaries",
-            "fringes-outside-margins", "word-wrap", "wrap-prefix",
-            "line-prefix", "cache-long-line-scans", "cache-long-scans",
-            "display-line-numbers", "line-spacing", "cursor-type",
-            "scroll-bar-width", "left-fringe-width", "right-fringe-width",
-            "left-margin-width", "right-margin-width",
-            "print-gensym", "print-escape-newlines", "print-quoted",
-            "print-unreadable", "print-gensym-alist",
-            "print-continuous-numbering", "print-number-table",
+            "standard-output",
+            "standard-input",
+            "lexical-binding",
+            "inhibit-read-only",
+            "load-path",
+            "features",
+            "command-line-args",
+            "noninteractive",
+            "emacs-version",
+            "system-type",
+            "debug-on-error",
+            "max-lisp-eval-depth",
+            "max-specpdl-size",
+            "gc-cons-threshold",
+            "command-history",
+            "values",
+            "obarray",
+            "deactivate-mark",
+            "transient-mark-mode",
+            "kill-ring",
+            "kill-ring-yank-pointer",
+            "kill-ring-max",
+            "last-command",
+            "this-command",
+            "current-prefix-arg",
+            "prefix-arg",
+            "minibuffer-history",
+            "buffer-name-history",
+            "read-expression-history",
+            "command-line-args-left",
+            "window-system",
+            "global-map",
+            "minibuffer-local-map",
+            "overriding-local-map",
+            "current-load-list",
+            "load-in-progress",
+            "load-file-name",
+            "user-init-file",
+            "print-level",
+            "print-length",
+            "print-circle",
+            "most-positive-fixnum",
+            "most-negative-fixnum",
+            "before-change-functions",
+            "after-change-functions",
+            "first-change-hook",
+            "post-self-insert-hook",
+            "pre-command-hook",
+            "post-command-hook",
+            "kill-emacs-hook",
+            "before-init-hook",
+            "after-init-hook",
+            "emacs-startup-hook",
+            "delay-mode-hooks",
+            "executing-kbd-macro",
+            "defining-kbd-macro",
+            "last-kbd-macro",
+            "system-configuration",
+            "system-name",
+            "emacs-major-version",
+            "emacs-minor-version",
+            "doc-directory",
+            "exec-directory",
+            "exec-path",
+            "process-environment",
+            "path-separator",
+            "null-device",
+            "invocation-name",
+            "invocation-directory",
+            "history-length",
+            "history-delete-duplicates",
+            "history-add-new-input",
+            "minibuffer-completion-table",
+            "minibuffer-completion-predicate",
+            "minibuffer-completion-confirm",
+            "minibuffer-completing-file-name",
+            "completion-ignore-case",
+            "completion-styles",
+            "read-circle",
+            "find-file-hook",
+            "find-file-not-found-hook",
+            "write-file-functions",
+            "write-contents-functions",
+            "after-save-hook",
+            "before-save-hook",
+            "save-buffer-coding-system",
+            "buffer-file-coding-system",
+            "coding-system-for-write",
+            "coding-system-for-read",
+            "auto-mode-alist",
+            "interpreter-mode-alist",
+            "magic-mode-alist",
+            "file-name-handler-alist",
+            "completion-ignored-extensions",
+            "buffer-offer-save",
+            "enable-local-variables",
+            "enable-local-eval",
+            "safe-local-variable-values",
+            "file-local-variables-alist",
+            "permanent-local-variables",
+            "change-major-mode-hook",
+            "after-change-major-mode-hook",
+            "make-backup-files",
+            "backup-by-copying",
+            "version-control",
+            "kept-new-versions",
+            "kept-old-versions",
+            "delete-old-versions",
+            "create-lockfiles",
+            "temporary-file-directory",
+            "revert-buffer-function",
+            "auto-save-default",
+            "auto-save-interval",
+            "auto-save-timeout",
+            "auto-save-file-name-transforms",
+            "delete-auto-save-files",
+            "require-final-newline",
+            "kill-buffer-hook",
+            "kill-buffer-query-functions",
+            "buffer-list-update-hook",
+            "indent-tabs-mode",
+            "tab-width",
+            "fill-column",
+            "standard-indent",
+            "left-margin",
+            "goal-column",
+            "next-screen-context-lines",
+            "scroll-conservatively",
+            "scroll-margin",
+            "scroll-up-aggressively",
+            "scroll-down-aggressively",
+            "scroll-preserve-screen-position",
+            "scroll-error-top-bottom",
+            "echo-keystrokes",
+            "visible-bell",
+            "inhibit-startup-screen",
+            "inhibit-startup-message",
+            "initial-major-mode",
+            "initial-scratch-message",
+            "user-full-name",
+            "user-login-name",
+            "user-mail-address",
+            "user-uid",
+            "kill-read-only-ok",
+            "yank-excluded-properties",
+            "set-mark-command-repeat-pop",
+            "mark-even-if-inactive",
+            "regexp-search-ring",
+            "search-ring",
+            "search-ring-max",
+            "regexp-search-ring-max",
+            "search-upper-case",
+            "search-invisible",
+            "search-whitespace-regexp",
+            "case-replace",
+            "case-fold-search",
+            "isearch-forward",
+            "isearch-regexp",
+            "register-alist",
+            "undo-limit",
+            "undo-strong-limit",
+            "undo-outer-limit",
+            "mark-ring-max",
+            "global-mark-ring-max",
+            "window-min-height",
+            "window-min-width",
+            "split-height-threshold",
+            "split-width-threshold",
+            "resize-mini-windows",
+            "max-mini-window-height",
+            "enable-recursive-minibuffers",
+            "minibuffer-message-timeout",
+            "read-buffer-function",
+            "read-buffer-completion-ignore-case",
+            "read-file-name-completion-ignore-case",
+            "truncate-lines",
+            "comment-start",
+            "comment-end",
+            "comment-start-skip",
+            "comment-end-skip",
+            "comment-column",
+            "comment-padding",
+            "comment-multi-line",
+            "comment-empty-lines",
+            "paragraph-start",
+            "paragraph-separate",
+            "paragraph-ignore-fill-prefix",
+            "page-delimiter",
+            "sentence-end",
+            "sentence-end-double-space",
+            "adaptive-fill-mode",
+            "adaptive-fill-regexp",
+            "adaptive-fill-function",
+            "fill-prefix",
+            "fill-paragraph-function",
+            "fill-nobreak-predicate",
+            "abbrev-mode",
+            "save-abbrevs",
+            "abbrev-file-name",
+            "only-global-abbrevs",
+            "double-click-time",
+            "double-click-fuzz",
+            "shell-file-name",
+            "explicit-shell-file-name",
+            "auto-save-hook",
+            "delete-exited-processes",
+            "process-connection-type",
+            "text-quoting-style",
+            "undo-in-region",
+            "undo-in-progress",
+            "shift-select-mode",
+            "delete-active-region",
+            "yank-handled-properties",
+            "query-replace-history",
+            "auto-mode-case-fold",
+            "use-dialog-box",
+            "menu-prompting",
+            "delayed-warnings-list",
+            "delayed-warnings-hook",
+            "minibuffer-prompt-properties",
+            "eval-expression-print-level",
+            "eval-expression-print-length",
+            "indent-line-function",
+            "comment-indent-function",
+            "major-mode",
+            "mode-name",
+            "minor-mode-alist",
+            "minor-mode-map-alist",
+            "emulation-mode-map-alists",
+            "global-minor-modes",
+            "buffer-read-only",
+            "default-directory",
+            "buffer-file-name",
+            "buffer-file-truename",
+            "buffer-undo-list",
+            "mark-ring",
+            "mark-active",
+            "local-keymap",
+            "list-buffers-directory",
+            "buffer-saved-size",
+            "buffer-display-table",
+            "buffer-invisibility-spec",
+            "selective-display",
+            "overwrite-mode",
+            "local-abbrev-table",
+            "bidi-display-reordering",
+            "header-line-format",
+            "mode-line-format",
+            "default-text-properties",
+            "char-property-alias-alist",
+            "inhibit-point-motion-hooks",
+            "inhibit-field-text-motion",
+            "show-trailing-whitespace",
+            "indicate-empty-lines",
+            "indicate-buffer-boundaries",
+            "fringes-outside-margins",
+            "word-wrap",
+            "wrap-prefix",
+            "line-prefix",
+            "cache-long-line-scans",
+            "cache-long-scans",
+            "display-line-numbers",
+            "line-spacing",
+            "cursor-type",
+            "scroll-bar-width",
+            "left-fringe-width",
+            "right-fringe-width",
+            "left-margin-width",
+            "right-margin-width",
+            "print-gensym",
+            "print-escape-newlines",
+            "print-quoted",
+            "print-unreadable",
+            "print-gensym-alist",
+            "print-continuous-numbering",
+            "print-number-table",
         ];
 
         for name in &specials {
@@ -1601,7 +1838,10 @@ impl Interp {
             ("emacs-version", Value::string("31.1.0 (remacs)")),
             ("system-type", Value::Sym(self.intern("darwin"))),
             ("system-name", Value::string("localhost")),
-            ("system-configuration", Value::string("aarch64-apple-darwin")),
+            (
+                "system-configuration",
+                Value::string("aarch64-apple-darwin"),
+            ),
             ("fill-column", Value::Int(70)),
             ("tab-width", Value::Int(8)),
             ("standard-indent", Value::Int(4)),
@@ -1611,8 +1851,14 @@ impl Interp {
             ("noninteractive", Value::Nil),
             ("standard-output", Value::t()),
             ("standard-input", Value::t()),
-            ("most-positive-fixnum", Value::Int(crate::lisp::value::FIXNUM_MAX)),
-            ("most-negative-fixnum", Value::Int(crate::lisp::value::FIXNUM_MIN)),
+            (
+                "most-positive-fixnum",
+                Value::Int(crate::lisp::value::FIXNUM_MAX),
+            ),
+            (
+                "most-negative-fixnum",
+                Value::Int(crate::lisp::value::FIXNUM_MIN),
+            ),
             ("max-lisp-eval-depth", Value::Int(1600)),
             ("max-specpdl-size", Value::Int(2500)),
             ("gc-cons-threshold", Value::Int(800_000)),
@@ -1691,10 +1937,16 @@ impl Interp {
             ("exec-directory", Value::string("/usr/local/bin/")),
             ("doc-directory", Value::string("/usr/share/emacs/")),
             ("command-line-args", Value::Nil),
-            ("initial-major-mode", Value::Sym(self.intern("lisp-interaction-mode"))),
-            ("initial-scratch-message", Value::string(
-                ";; This buffer is for text that is not saved, and for Lisp evaluation.\n;; To create a file, visit it with C-x C-f and enter text in its buffer.\n\n",
-            )),
+            (
+                "initial-major-mode",
+                Value::Sym(self.intern("lisp-interaction-mode")),
+            ),
+            (
+                "initial-scratch-message",
+                Value::string(
+                    ";; This buffer is for text that is not saved, and for Lisp evaluation.\n;; To create a file, visit it with C-x C-f and enter text in its buffer.\n\n",
+                ),
+            ),
             ("inhibit-startup-screen", Value::Nil),
             ("user-full-name", Value::string("user")),
             ("user-login-name", Value::string("user")),
@@ -1720,9 +1972,10 @@ impl Interp {
             ("delayed-warnings-hook", Value::Nil),
             ("minibuffer-prompt-properties", Value::Nil),
             ("read-buffer-function", Value::Nil),
-            ("completion-styles", Value::list(vec![
-                Value::Sym(self.intern("basic")),
-            ])),
+            (
+                "completion-styles",
+                Value::list(vec![Value::Sym(self.intern("basic"))]),
+            ),
         ];
         for (name, val) in defs {
             let id = self.intern(name);
@@ -1932,7 +2185,11 @@ impl Interp {
     pub fn error_obj(&self, msg: &str, v: &Value) -> Flow {
         self.signal_data(
             sym::ERROR,
-            vec![Value::string(format!("{}: {}", msg, self.princ_to_string(v)))],
+            vec![Value::string(format!(
+                "{}: {}",
+                msg,
+                self.princ_to_string(v)
+            ))],
         )
     }
 
@@ -1956,8 +2213,7 @@ impl Interp {
         if let Value::Subr(s) = &fun {
             if let Some(spec) = subr_interactive(s.name) {
                 let isym = self.intern("interactive");
-                let spec_form =
-                    Value::list(vec![Value::Sym(isym), Value::string(spec)]);
+                let spec_form = Value::list(vec![Value::Sym(isym), Value::string(spec)]);
                 let argv = self.eval_interactive_spec(&spec_form)?;
                 return self.apply(&fun, argv);
             }
@@ -1969,10 +2225,7 @@ impl Interp {
     /// Non-interactive support: `interactive` with no string → no args;
     /// with a string spec we honor the simple codes when input is
     /// pre-supplied in `command_args`.
-    pub fn eval_interactive_spec(
-        &mut self,
-        spec_form: &Value,
-    ) -> Result<Vec<Value>, Flow> {
+    pub fn eval_interactive_spec(&mut self, spec_form: &Value) -> Result<Vec<Value>, Flow> {
         let items = spec_form.list_to_vec().unwrap_or_default();
         let spec = items.get(1).cloned().unwrap_or(Value::Nil);
         match spec {
@@ -2138,12 +2391,9 @@ impl Interp {
                                 out.push(v.clone());
                             } else if self.minibuf_reader.is_some() {
                                 match self.minibuf_input(&prompt, true)? {
-                                    MinibufInput::Key(k) => {
-                                        out.push(Value::Int(k))
-                                    }
+                                    MinibufInput::Key(k) => out.push(Value::Int(k)),
                                     MinibufInput::Text(t) => {
-                                        let n =
-                                            t.chars().next().map(|c| c as i128).unwrap_or(0);
+                                        let n = t.chars().next().map(|c| c as i128).unwrap_or(0);
                                         out.push(Value::Int(n));
                                     }
                                 }
@@ -2302,6 +2552,7 @@ pub struct RestrictionState {
 }
 
 /// `match-data` contents after a successful search.
+#[derive(Clone)]
 pub struct MatchData {
     /// Group start/end pairs (0-based char offsets in the searched text).
     pub regs: Vec<Option<usize>>,
@@ -2396,8 +2647,7 @@ pub fn plist_put(plist: &Value, prop: SymId, val: Value) -> Value {
     // matching Emacs's put/plist-put ordering.
     match last_pair_end {
         Some(cell) => {
-            cell.borrow_mut().cdr =
-                Value::cons(Value::Sym(prop), Value::cons(val, Value::Nil));
+            cell.borrow_mut().cdr = Value::cons(Value::Sym(prop), Value::cons(val, Value::Nil));
             plist.clone()
         }
         None => Value::cons(Value::Sym(prop), Value::cons(val, Value::Nil)),

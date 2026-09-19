@@ -16,14 +16,8 @@ fn plist_ops() {
     assert_eq!(ev("(plist-get '(a 1 b 2) 'c)"), "nil");
     assert_eq!(ev("(plist-get '(a 1 b 2) 'c 'eq)"), "nil");
     // plist-put returns the whole new plist.
-    assert_eq!(
-        ev("(let ((p '(a 1))) (plist-put p 'b 2) p)"),
-        "(a 1 b 2)"
-    );
-    assert_eq!(
-        ev("(let ((p '(a 1))) (plist-put p 'a 9) p)"),
-        "(a 9)"
-    );
+    assert_eq!(ev("(let ((p '(a 1))) (plist-put p 'b 2) p)"), "(a 1 b 2)");
+    assert_eq!(ev("(let ((p '(a 1))) (plist-put p 'a 9) p)"), "(a 9)");
     assert_eq!(ev("(plist-member '(a 1 b 2) 'b)"), "(b 2)");
     assert_eq!(ev("(plist-member '(a 1 b 2) 'z)"), "nil");
 }
@@ -35,15 +29,9 @@ fn take_ntake() {
     assert_eq!(ev("(take 9 '(1 2))"), "(1 2)");
     assert_eq!(ev("(take 2 [1 2 3])"), "[1 2]");
     assert_eq!(ev("(take 2 \"abcd\")"), "\"ab\"");
-    assert_eq!(
-        ev("(let ((l (list 1 2 3 4))) (ntake 2 l))"),
-        "(1 2)"
-    );
+    assert_eq!(ev("(let ((l (list 1 2 3 4))) (ntake 2 l))"), "(1 2)");
     // ntake mutates the original list.
-    assert_eq!(
-        ev("(let ((l (list 1 2 3 4))) (ntake 2 l) l)"),
-        "(1 2)"
-    );
+    assert_eq!(ev("(let ((l (list 1 2 3 4))) (ntake 2 l) l)"), "(1 2)");
 }
 
 #[test]
@@ -64,10 +52,7 @@ fn base64() {
 #[test]
 fn crypto_hash() {
     // Reference digests.
-    assert_eq!(
-        ev("(md5 \"abc\")"),
-        "\"900150983cd24fb0d6963f7d28e17f72\""
-    );
+    assert_eq!(ev("(md5 \"abc\")"), "\"900150983cd24fb0d6963f7d28e17f72\"");
     assert_eq!(
         ev("(secure-hash 'sha1 \"abc\")"),
         "\"a9993e364706816aba3e25717850c26c9cd0d89d\""
@@ -76,10 +61,7 @@ fn crypto_hash() {
         ev("(secure-hash 'sha256 \"abc\")"),
         "\"ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad\""
     );
-    assert_eq!(
-        ev("(md5 \"\")"),
-        "\"d41d8cd98f00b204e9800998ecf8427e\""
-    );
+    assert_eq!(ev("(md5 \"\")"), "\"d41d8cd98f00b204e9800998ecf8427e\"");
 }
 
 #[test]
@@ -88,27 +70,15 @@ fn format_spec() {
         ev("(format-spec \"%a-%b\" '((?a . \"x\") (?b . \"y\")))"),
         "\"x-y\""
     );
-    assert_eq!(
-        ev("(format-spec \"%a\" '((?a . \"1\")))"),
-        "\"1\""
-    );
-    assert_eq!(
-        ev("(format-spec \"%%\" '((?a . \"x\")))"),
-        "\"%\""
-    );
+    assert_eq!(ev("(format-spec \"%a\" '((?a . \"1\")))"), "\"1\"");
+    assert_eq!(ev("(format-spec \"%%\" '((?a . \"x\")))"), "\"%\"");
     // %s/%S style specifiers.
-    assert_eq!(
-        ev("(format-spec \"%s\" '((?s . \"z\")))"),
-        "\"z\""
-    );
+    assert_eq!(ev("(format-spec \"%s\" '((?s . \"z\")))"), "\"z\"");
 }
 
 #[test]
 fn apply_partially() {
-    assert_eq!(
-        ev("(funcall (apply-partially #'+ 1) 2 3)"),
-        "6"
-    );
+    assert_eq!(ev("(funcall (apply-partially #'+ 1) 2 3)"), "6");
     assert_eq!(
         ev("(funcall (apply-partially #'concat \"a\" \"b\") \"c\")"),
         "\"abc\""
@@ -139,14 +109,8 @@ fn assoc_string() {
         ev("(assoc-string \"a\" '((\"a\" . 1) (\"b\" . 2)))"),
         "(\"a\" . 1)"
     );
-    assert_eq!(
-        ev("(assoc-string \"A\" '((\"a\" . 1)) t)"),
-        "(\"a\" . 1)"
-    );
-    assert_eq!(
-        ev("(assoc-string \"z\" '((\"a\" . 1)))"),
-        "nil"
-    );
+    assert_eq!(ev("(assoc-string \"A\" '((\"a\" . 1)) t)"), "(\"a\" . 1)");
+    assert_eq!(ev("(assoc-string \"z\" '((\"a\" . 1)))"), "nil");
 }
 
 #[test]
@@ -160,10 +124,7 @@ fn error_message_string() {
         ev("(error-message-string '(wrong-type-argument integerp \"x\"))"),
         "\"Wrong type argument: integerp, \\\"x\\\"\""
     );
-    assert_eq!(
-        ev("(error-message-string '(error \"oops\"))"),
-        "\"oops\""
-    );
+    assert_eq!(ev("(error-message-string '(error \"oops\"))"), "\"oops\"");
     assert_eq!(
         ev("(error-message-string '(end-of-buffer))"),
         "\"End of buffer\""
@@ -184,10 +145,7 @@ fn error_message_string() {
         ev("(error-message-string '(user-error \"oops\"))"),
         "\"oops\""
     );
-    assert_eq!(
-        ev("(error-message-string '(error))"),
-        "\"peculiar error\""
-    );
+    assert_eq!(ev("(error-message-string '(error))"), "\"peculiar error\"");
 }
 
 #[test]
@@ -213,14 +171,8 @@ fn symbol_misc() {
 fn time_fns() {
     // decode-time of a known time spec: (sec min hour day mon year dow dst zone)
     // (100 . 1) = 100 ticks at hz 1 = 100 seconds after the epoch.
-    assert_eq!(
-        ev("(nth 0 (decode-time '(100 . 1)))"),
-        "40"
-    );
-    assert_eq!(
-        ev("(length (decode-time '(100 . 1)))"),
-        "9"
-    );
+    assert_eq!(ev("(nth 0 (decode-time '(100 . 1)))"), "40");
+    assert_eq!(ev("(length (decode-time '(100 . 1)))"), "9");
     assert_eq!(ev("(type-of (current-time))"), "cons");
     assert_eq!(ev("(stringp (emacs-uptime))"), "t");
     assert_eq!(ev("(type-of (emacs-uptime))"), "string");

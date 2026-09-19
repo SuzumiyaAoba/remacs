@@ -1,82 +1,313 @@
 //! List-manipulation subrs: car, cdr, cons, nth, append, member, etc.
 
-use super::{arg, eq_values, equal_values, want_cons, want_int, want_list, S};
+use super::{S, arg, eq_values, equal_values, want_cons, want_int, want_list};
+use crate::lisp::Interp;
 use crate::lisp::error::{EvalResult, Flow};
 use crate::lisp::obarray::sym;
 use crate::lisp::value::{ListError, Subr, Value};
-use crate::lisp::Interp;
 
 pub(crate) static SUBRS: &[Subr] = &[
     S!("car", 1, 1, f_car, "Return the car of LIST."),
     S!("cdr", 1, 1, f_cdr, "Return the cdr of LIST."),
-    S!("car-safe", 1, 1, f_car_safe, "Return the car of OBJECT if it is a cons."),
-    S!("cdr-safe", 1, 1, f_cdr_safe, "Return the cdr of OBJECT if it is a cons."),
+    S!(
+        "car-safe",
+        1,
+        1,
+        f_car_safe,
+        "Return the car of OBJECT if it is a cons."
+    ),
+    S!(
+        "cdr-safe",
+        1,
+        1,
+        f_cdr_safe,
+        "Return the cdr of OBJECT if it is a cons."
+    ),
     S!("cons", 2, 2, f_cons, "Create a new cons (CAR . CDR)."),
     S!("list", many 0, f_list, "Return a new list of the arguments."),
-    S!("make-list", 2, 2, f_make_list, "Return a list of LENGTH elements all INIT."),
+    S!(
+        "make-list",
+        2,
+        2,
+        f_make_list,
+        "Return a list of LENGTH elements all INIT."
+    ),
     S!("length", 1, 1, f_length, "Return the length of SEQUENCE."),
-    S!("safe-length", 1, 1, f_safe_length, "Return length of LIST, no error on circle."),
-    S!("proper-list-p", 1, 1, f_proper_list_p, "Length of proper list, nil otherwise."),
+    S!(
+        "safe-length",
+        1,
+        1,
+        f_safe_length,
+        "Return length of LIST, no error on circle."
+    ),
+    S!(
+        "proper-list-p",
+        1,
+        1,
+        f_proper_list_p,
+        "Length of proper list, nil otherwise."
+    ),
     S!("nth", 2, 2, f_nth, "Return the Nth element of LIST."),
     S!("nthcdr", 2, 2, f_nthcdr, "Take cdr N times on LIST."),
-    S!("last", 1, 2, f_last, "Return the last K elements of LIST as a list."),
-    S!("butlast", 1, 2, f_butlast, "Return LIST without its last K elements."),
-    S!("nbutlast", 1, 2, f_nbutlast, "Destructively remove last K elements."),
+    S!(
+        "last",
+        1,
+        2,
+        f_last,
+        "Return the last K elements of LIST as a list."
+    ),
+    S!(
+        "butlast",
+        1,
+        2,
+        f_butlast,
+        "Return LIST without its last K elements."
+    ),
+    S!(
+        "nbutlast",
+        1,
+        2,
+        f_nbutlast,
+        "Destructively remove last K elements."
+    ),
     S!("append", many 0, f_append, "Concatenate lists into one list."),
     S!("nconc", many 0, f_nconc, "Destructively concatenate lists."),
-    S!("reverse", 1, 1, f_reverse, "Return a reversed copy of LIST."),
+    S!(
+        "reverse",
+        1,
+        1,
+        f_reverse,
+        "Return a reversed copy of LIST."
+    ),
     S!("nreverse", 1, 1, f_nreverse, "Reverse LIST destructively."),
     S!("setcar", 2, 2, f_setcar, "Set the car of CELL to NEWCAR."),
     S!("setcdr", 2, 2, f_setcdr, "Set the cdr of CELL to NEWCDR."),
-    S!("member", 2, 2, f_member, "Tail of LIST whose car is ELT (equal)."),
+    S!(
+        "member",
+        2,
+        2,
+        f_member,
+        "Tail of LIST whose car is ELT (equal)."
+    ),
     S!("memq", 2, 2, f_memq, "Tail of LIST whose car is ELT (eq)."),
-    S!("memql", 2, 2, f_memql, "Tail of LIST whose car is ELT (eql)."),
-    S!("assq", 2, 2, f_assq, "Element of ALIST whose car is eq KEY."),
-    S!("assoc", 2, 3, f_assoc, "Element of ALIST whose car is equal KEY."),
-    S!("rassq", 2, 2, f_rassq, "Element of ALIST whose cdr is eq KEY."),
-    S!("rassoc", 2, 2, f_rassoc, "Element of ALIST whose cdr is equal KEY."),
-    S!("assoc-default", 2, 4, f_assoc_default, "Element of ALIST whose car matches, eval cdr if fn."),
+    S!(
+        "memql",
+        2,
+        2,
+        f_memql,
+        "Tail of LIST whose car is ELT (eql)."
+    ),
+    S!(
+        "assq",
+        2,
+        2,
+        f_assq,
+        "Element of ALIST whose car is eq KEY."
+    ),
+    S!(
+        "assoc",
+        2,
+        3,
+        f_assoc,
+        "Element of ALIST whose car is equal KEY."
+    ),
+    S!(
+        "rassq",
+        2,
+        2,
+        f_rassq,
+        "Element of ALIST whose cdr is eq KEY."
+    ),
+    S!(
+        "rassoc",
+        2,
+        2,
+        f_rassoc,
+        "Element of ALIST whose cdr is equal KEY."
+    ),
+    S!(
+        "assoc-default",
+        2,
+        4,
+        f_assoc_default,
+        "Element of ALIST whose car matches, eval cdr if fn."
+    ),
     S!("delq", 2, 2, f_delq, "Delete elements eq to ELT from LIST."),
-    S!("delete", 2, 2, f_delete, "Delete elements equal to ELT from SEQ."),
-    S!("copy-alist", 1, 1, f_copy_alist, "Copy ALIST including element conses."),
+    S!(
+        "delete",
+        2,
+        2,
+        f_delete,
+        "Delete elements equal to ELT from SEQ."
+    ),
+    S!(
+        "copy-alist",
+        1,
+        1,
+        f_copy_alist,
+        "Copy ALIST including element conses."
+    ),
     S!("copy-tree", 1, 2, f_copy_tree, "Copy a tree of conses."),
-    S!("list-tail", 2, 2, f_list_tail, "Return the tail of LIST after N elements."),
+    S!(
+        "list-tail",
+        2,
+        2,
+        f_list_tail,
+        "Return the tail of LIST after N elements."
+    ),
     S!("list-length", 1, 1, f_length, "Return the length of LIST."),
-    S!("plist-get", 2, 3, f_plist_get, "Extract value from PLIST for PROP (eq)."),
-    S!("plist-put", 3, 3, f_plist_put, "Set value in PLIST for PROP (eq)."),
-    S!("plist-member", 2, 3, f_plist_member, "Non-nil if PROP in PLIST (eq)."),
-    S!("lax-plist-get", 2, 2, f_lax_plist_get, "plist-get using equal."),
-    S!("lax-plist-put", 3, 3, f_lax_plist_put, "plist-put using equal."),
-    S!("lax-plist-member", 2, 2, f_lax_plist_member, "plist-member using equal."),
-    S!("take", 2, 2, f_take, "First N elements of LIST (or string prefix)."),
-    S!("ntake", 2, 2, f_ntake, "First N elements of LIST, destructively."),
-    S!("flatten-tree", 1, 1, f_flatten_tree, "Flatten nested conses into a list."),
+    S!(
+        "plist-get",
+        2,
+        3,
+        f_plist_get,
+        "Extract value from PLIST for PROP (eq)."
+    ),
+    S!(
+        "plist-put",
+        3,
+        3,
+        f_plist_put,
+        "Set value in PLIST for PROP (eq)."
+    ),
+    S!(
+        "plist-member",
+        2,
+        3,
+        f_plist_member,
+        "Non-nil if PROP in PLIST (eq)."
+    ),
+    S!(
+        "lax-plist-get",
+        2,
+        2,
+        f_lax_plist_get,
+        "plist-get using equal."
+    ),
+    S!(
+        "lax-plist-put",
+        3,
+        3,
+        f_lax_plist_put,
+        "plist-put using equal."
+    ),
+    S!(
+        "lax-plist-member",
+        2,
+        2,
+        f_lax_plist_member,
+        "plist-member using equal."
+    ),
+    S!(
+        "take",
+        2,
+        2,
+        f_take,
+        "First N elements of LIST (or string prefix)."
+    ),
+    S!(
+        "ntake",
+        2,
+        2,
+        f_ntake,
+        "First N elements of LIST, destructively."
+    ),
+    S!(
+        "flatten-tree",
+        1,
+        1,
+        f_flatten_tree,
+        "Flatten nested conses into a list."
+    ),
     S!("apply-partially", many 1, f_apply_partially, "Return closure prepending ARGS."),
-    S!("assoc-string", 2, 3, f_assoc_string, "assoc for string keys."),
-    S!("equal-including-properties", 2, 2, f_equal_incl_props, "equal (text props not modeled: same as equal)."),
-    S!("caar", 1, 1, f_caar, ""), S!("cadr", 1, 1, f_cadr, ""),
-    S!("cdar", 1, 1, f_cdar, ""), S!("cddr", 1, 1, f_cddr, ""),
-    S!("caaar", 1, 1, f_caaar, ""), S!("caadr", 1, 1, f_caadr, ""),
-    S!("cadar", 1, 1, f_cadar, ""), S!("caddr", 1, 1, f_caddr, ""),
-    S!("cdaar", 1, 1, f_cdaar, ""), S!("cdadr", 1, 1, f_cdadr, ""),
-    S!("cddar", 1, 1, f_cddar, ""), S!("cdddr", 1, 1, f_cdddr, ""),
-    S!("caaaar", 1, 1, f_caaaar, ""), S!("caaadr", 1, 1, f_caaadr, ""),
-    S!("caadar", 1, 1, f_caadar, ""), S!("caaddr", 1, 1, f_caaddr, ""),
-    S!("cadaar", 1, 1, f_cadaar, ""), S!("cadadr", 1, 1, f_cadadr, ""),
-    S!("caddar", 1, 1, f_caddar, ""), S!("cadddr", 1, 1, f_cadddr, ""),
-    S!("cdaaar", 1, 1, f_cdaaar, ""), S!("cdaadr", 1, 1, f_cdaadr, ""),
-    S!("cdadar", 1, 1, f_cdadar, ""), S!("cdaddr", 1, 1, f_cdaddr, ""),
-    S!("cddaar", 1, 1, f_cddaar, ""), S!("cddadr", 1, 1, f_cddadr, ""),
-    S!("cdddar", 1, 1, f_cdddar, ""), S!("cddddr", 1, 1, f_cddddr, ""),
-    S!("remove", 2, 2, f_remove, "Copy SEQUENCE with ELT `equal' elements removed."),
-    S!("remq", 2, 2, f_remq, "Copy LIST with ELT `eq' elements removed."),
-    S!("first", 1, 1, f_car, ""), S!("second", 1, 1, f_cadr, ""),
-    S!("third", 1, 1, f_caddr, ""), S!("fourth", 1, 1, f_cadddr, ""),
-    S!("fifth", 1, 1, f_nth4, ""), S!("sixth", 1, 1, f_nth5, ""),
-    S!("seventh", 1, 1, f_nth6, ""), S!("eighth", 1, 1, f_nth7, ""),
-    S!("ninth", 1, 1, f_nth8, ""), S!("tenth", 1, 1, f_nth9, ""),
+    S!(
+        "assoc-string",
+        2,
+        3,
+        f_assoc_string,
+        "assoc for string keys."
+    ),
+    S!(
+        "assq-delete-all",
+        2,
+        2,
+        f_assq_delete_all,
+        "Delete elements whose car is eq KEY."
+    ),
+    S!(
+        "rassq-delete-all",
+        2,
+        2,
+        f_rassq_delete_all,
+        "Delete elements whose cdr is eq KEY."
+    ),
+    S!(
+        "equal-including-properties",
+        2,
+        2,
+        f_equal_incl_props,
+        "equal (text props not modeled: same as equal)."
+    ),
+    S!("caar", 1, 1, f_caar, ""),
+    S!("cadr", 1, 1, f_cadr, ""),
+    S!("cdar", 1, 1, f_cdar, ""),
+    S!("cddr", 1, 1, f_cddr, ""),
+    S!("caaar", 1, 1, f_caaar, ""),
+    S!("caadr", 1, 1, f_caadr, ""),
+    S!("cadar", 1, 1, f_cadar, ""),
+    S!("caddr", 1, 1, f_caddr, ""),
+    S!("cdaar", 1, 1, f_cdaar, ""),
+    S!("cdadr", 1, 1, f_cdadr, ""),
+    S!("cddar", 1, 1, f_cddar, ""),
+    S!("cdddr", 1, 1, f_cdddr, ""),
+    S!("caaaar", 1, 1, f_caaaar, ""),
+    S!("caaadr", 1, 1, f_caaadr, ""),
+    S!("caadar", 1, 1, f_caadar, ""),
+    S!("caaddr", 1, 1, f_caaddr, ""),
+    S!("cadaar", 1, 1, f_cadaar, ""),
+    S!("cadadr", 1, 1, f_cadadr, ""),
+    S!("caddar", 1, 1, f_caddar, ""),
+    S!("cadddr", 1, 1, f_cadddr, ""),
+    S!("cdaaar", 1, 1, f_cdaaar, ""),
+    S!("cdaadr", 1, 1, f_cdaadr, ""),
+    S!("cdadar", 1, 1, f_cdadar, ""),
+    S!("cdaddr", 1, 1, f_cdaddr, ""),
+    S!("cddaar", 1, 1, f_cddaar, ""),
+    S!("cddadr", 1, 1, f_cddadr, ""),
+    S!("cdddar", 1, 1, f_cdddar, ""),
+    S!("cddddr", 1, 1, f_cddddr, ""),
+    S!(
+        "remove",
+        2,
+        2,
+        f_remove,
+        "Copy SEQUENCE with ELT `equal' elements removed."
+    ),
+    S!(
+        "remq",
+        2,
+        2,
+        f_remq,
+        "Copy LIST with ELT `eq' elements removed."
+    ),
+    S!("first", 1, 1, f_car, ""),
+    S!("second", 1, 1, f_cadr, ""),
+    S!("third", 1, 1, f_caddr, ""),
+    S!("fourth", 1, 1, f_cadddr, ""),
+    S!("fifth", 1, 1, f_nth4, ""),
+    S!("sixth", 1, 1, f_nth5, ""),
+    S!("seventh", 1, 1, f_nth6, ""),
+    S!("eighth", 1, 1, f_nth7, ""),
+    S!("ninth", 1, 1, f_nth8, ""),
+    S!("tenth", 1, 1, f_nth9, ""),
     S!("car-or-marker-p", 1, 1, f_car_or_marker_p, ""),
 ];
+
+/// Wrap a computed `Value` in `(quote v)` so `call_function`'s
+/// `eval_args` returns it verbatim.
+fn quoted(v: Value) -> Value {
+    Value::list(vec![Value::Sym(sym::QUOTE), v])
+}
 
 fn f_car(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     match &args[0] {
@@ -117,7 +348,10 @@ fn f_list(_i: &mut Interp, args: Vec<Value>) -> EvalResult {
     Ok(Value::list(args))
 }
 fn f_make_list(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    let n = want_int(i, &args[0])?.max(0);
+    let n = want_int(i, &args[0])?;
+    if n < 0 {
+        return Err(i.wrong_type_mut("wholenump", &args[0]));
+    }
     Ok(Value::list(vec![args[1].clone(); n as usize]))
 }
 fn f_length(i: &mut Interp, args: Vec<Value>) -> EvalResult {
@@ -201,24 +435,67 @@ fn f_nthcdr(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     Ok(nthcdr_of(&args[1], n as usize))
 }
 fn f_last(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    let k = args.get(1).map(|v| want_int(i, v)).transpose()?.unwrap_or(1);
-    let items = want_list(i, &args[0])?;
-    let n = items.len();
-    let start = if k <= 0 { n } else { n.saturating_sub(k as usize) };
-    Ok(Value::list(items[start..].to_vec()))
+    let k = args
+        .get(1)
+        .map(|v| want_int(i, v))
+        .transpose()?
+        .unwrap_or(1);
+    // Emacs: return the last K cons cells, keeping a dotted tail.
+    // Walk conses so (last '(1 . 2)) => (1 . 2).
+    let mut cells: Vec<Value> = Vec::new();
+    let mut cur = args[0].clone();
+    let mut guard = 0usize;
+    loop {
+        guard += 1;
+        if guard > 500_000 {
+            return Err(err_circular(i));
+        }
+        match &cur {
+            Value::Cons(c) => {
+                let next = c.borrow().cdr.clone();
+                cells.push(cur.clone());
+                cur = next;
+            }
+            // A non-list tail just ends the walk (dotted list).
+            _ => break,
+        }
+    }
+    let n = cells.len();
+    let start = if k <= 0 {
+        n
+    } else {
+        n.saturating_sub(k as usize)
+    };
+    Ok(cells.get(start).cloned().unwrap_or(Value::Nil))
 }
 fn f_butlast(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    let k = args.get(1).map(|v| want_int(i, v)).transpose()?.unwrap_or(1);
+    let k = args
+        .get(1)
+        .map(|v| want_int(i, v))
+        .transpose()?
+        .unwrap_or(1);
     let items = want_list(i, &args[0])?;
     let n = items.len();
-    let keep = if k <= 0 { n } else { n.saturating_sub(k as usize) };
+    let keep = if k <= 0 {
+        n
+    } else {
+        n.saturating_sub(k as usize)
+    };
     Ok(Value::list(items[..keep].to_vec()))
 }
 fn f_nbutlast(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    let k = args.get(1).map(|v| want_int(i, v)).transpose()?.unwrap_or(1);
+    let k = args
+        .get(1)
+        .map(|v| want_int(i, v))
+        .transpose()?
+        .unwrap_or(1);
     let items = want_list(i, &args[0])?;
     let n = items.len();
-    let keep = if k <= 0 { n } else { n.saturating_sub(k as usize) };
+    let keep = if k <= 0 {
+        n
+    } else {
+        n.saturating_sub(k as usize)
+    };
     if keep == 0 {
         return Ok(Value::Nil);
     }
@@ -302,9 +579,7 @@ fn f_reverse(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     // Emacs: reverse works on any sequence, preserving its type.
     match &args[0] {
         Value::Str(s) => {
-            return Ok(Value::string(
-                s.borrow().chars().rev().collect::<String>(),
-            ));
+            return Ok(Value::string(s.borrow().chars().rev().collect::<String>()));
         }
         Value::Vec(v) => {
             return Ok(Value::Vec(std::rc::Rc::new(std::cell::RefCell::new(
@@ -324,9 +599,7 @@ fn f_nreverse(i: &mut Interp, args: Vec<Value>) -> EvalResult {
             return Ok(args[0].clone());
         }
         Value::Str(s) => {
-            return Ok(Value::string(
-                s.borrow().chars().rev().collect::<String>(),
-            ));
+            return Ok(Value::string(s.borrow().chars().rev().collect::<String>()));
         }
         _ => {}
     }
@@ -347,8 +620,10 @@ fn f_nreverse(i: &mut Interp, args: Vec<Value>) -> EvalResult {
             _ => break,
         }
     }
-    // For a proper list prev is now the new head.
-    let _ = i;
+    // Emacs requires a proper list; a dotted tail is an error.
+    if !cur.is_nil() {
+        return Err(i.wrong_type_mut("listp", &args[0]));
+    }
     Ok(prev)
 }
 fn f_setcar(i: &mut Interp, args: Vec<Value>) -> EvalResult {
@@ -392,7 +667,9 @@ fn f_member(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     }))
 }
 fn f_memq(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    Ok(member_impl(i, &args[0], &args[1], |_ii, a, b| eq_values(a, b)))
+    Ok(member_impl(i, &args[0], &args[1], |_ii, a, b| {
+        eq_values(a, b)
+    }))
 }
 fn f_memql(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     Ok(member_impl(i, &args[0], &args[1], |_ii, a, b| {
@@ -430,9 +707,59 @@ fn assoc_impl(
 }
 
 fn f_assq(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    Ok(assoc_impl(i, &args[0], &args[1], |_ii, a, b| {
-        eq_values(a, b)
-    }, false))
+    Ok(assoc_impl(
+        i,
+        &args[0],
+        &args[1],
+        |_ii, a, b| eq_values(a, b),
+        false,
+    ))
+}
+
+fn delete_all_by(i: &mut Interp, args: Vec<Value>, on_cdr: bool) -> EvalResult {
+    // Rebuild the alist without elements whose car/cdr is `eq' KEY.
+    let mut cur = args[1].clone();
+    let mut keep = Vec::new();
+    let mut guard = 0usize;
+    loop {
+        guard += 1;
+        if guard > 500_000 {
+            return Err(err_circular(i));
+        }
+        match &cur {
+            Value::Nil => break,
+            Value::Cons(c) => {
+                let (item, rest) = {
+                    let b = c.borrow();
+                    (b.car.clone(), b.cdr.clone())
+                };
+                let drop_it = match &item {
+                    Value::Cons(ic) => {
+                        let part = {
+                            let b = ic.borrow();
+                            if on_cdr { b.cdr.clone() } else { b.car.clone() }
+                        };
+                        eq_values(&part, &args[0])
+                    }
+                    _ => false,
+                };
+                if !drop_it {
+                    keep.push(item);
+                }
+                cur = rest;
+            }
+            other => return Err(i.wrong_type_mut("listp", other)),
+        }
+    }
+    Ok(Value::list(keep))
+}
+
+fn f_assq_delete_all(i: &mut Interp, args: Vec<Value>) -> EvalResult {
+    delete_all_by(i, args, false)
+}
+
+fn f_rassq_delete_all(i: &mut Interp, args: Vec<Value>) -> EvalResult {
+    delete_all_by(i, args, true)
 }
 fn f_assoc(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     // (assoc KEY ALIST &optional TESTFN)
@@ -463,36 +790,86 @@ fn f_assoc(i: &mut Interp, args: Vec<Value>) -> EvalResult {
             }
         }
     }
-    Ok(assoc_impl(i, &args[0], &args[1], |ii, a, b| {
-        equal_values(ii, a, b)
-    }, false))
+    Ok(assoc_impl(
+        i,
+        &args[0],
+        &args[1],
+        |ii, a, b| equal_values(ii, a, b),
+        false,
+    ))
 }
 fn f_rassq(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    Ok(assoc_impl(i, &args[0], &args[1], |_ii, a, b| {
-        eq_values(a, b)
-    }, true))
+    Ok(assoc_impl(
+        i,
+        &args[0],
+        &args[1],
+        |_ii, a, b| eq_values(a, b),
+        true,
+    ))
 }
 fn f_rassoc(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    Ok(assoc_impl(i, &args[0], &args[1], |ii, a, b| {
-        equal_values(ii, a, b)
-    }, true))
+    Ok(assoc_impl(
+        i,
+        &args[0],
+        &args[1],
+        |ii, a, b| equal_values(ii, a, b),
+        true,
+    ))
 }
 fn f_assoc_default(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    let elem = assoc_impl(i, &args[0], &args[1], |ii, a, b| {
-        equal_values(ii, a, b)
-    }, false);
-    match &elem {
-        Value::Cons(c) => {
-            let b = c.borrow();
-            match &b.cdr {
-                Value::Cons(_) => Ok(elem.clone()),
-                _ => {
-                    // (key . value) → if test given use it, else return value
-                    Ok(b.cdr.clone())
+    // (assoc-default KEY ALIST &optional TEST DEFAULT)
+    let test = arg(&args, 2);
+    let elem = if test.is_nil() {
+        assoc_impl(
+            i,
+            &args[0],
+            &args[1],
+            |ii, a, b| equal_values(ii, a, b),
+            false,
+        )
+    } else {
+        let mut cur = args[1].clone();
+        let mut found = Value::Nil;
+        let mut guard = 0usize;
+        loop {
+            guard += 1;
+            if guard > 500_000 {
+                return Err(err_circular(i));
+            }
+            match &cur {
+                Value::Nil => break,
+                Value::Cons(c) => {
+                    let (item, rest) = {
+                        let b = c.borrow();
+                        (b.car.clone(), b.cdr.clone())
+                    };
+                    let key = match &item {
+                        Value::Cons(ic) => ic.borrow().car.clone(),
+                        v => v.clone(),
+                    };
+                    let m = i.call_function(
+                        &test,
+                        &Value::list(vec![quoted(key), quoted(args[0].clone())]),
+                        None,
+                    )?;
+                    if m.truthy() {
+                        found = item;
+                        break;
+                    }
+                    cur = rest;
                 }
+                other => return Err(i.wrong_type_mut("listp", other)),
             }
         }
-        _ => Ok(Value::Nil),
+        found
+    };
+    match &elem {
+        // Matching cons element: return its cdr.
+        Value::Cons(c) => Ok(c.borrow().cdr.clone()),
+        // No match: nil (DEFAULT only applies to non-cons matches).
+        Value::Nil => Ok(Value::Nil),
+        // Non-cons element matched: return DEFAULT.
+        _ => Ok(arg(&args, 3)),
     }
 }
 
@@ -662,14 +1039,16 @@ fn f_nth9(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     f_nth(i, vec![Value::Int(9), args[0].clone()])
 }
 
-
-
 // ---------- plists ----------
 
 /// `plist-get` core with a caller-supplied predicate.
-fn plist_scan(i: &mut Interp, plist: &Value, prop: &Value, lax: bool, want_pair: bool)
-    -> Result<Option<Value>, Flow>
-{
+fn plist_scan(
+    i: &mut Interp,
+    plist: &Value,
+    prop: &Value,
+    lax: bool,
+    want_pair: bool,
+) -> Result<Option<Value>, Flow> {
     let mut cur = plist.clone();
     let mut guard = 0usize;
     loop {
@@ -700,7 +1079,11 @@ fn plist_scan(i: &mut Interp, plist: &Value, prop: &Value, lax: bool, want_pair:
                     eq_values(&k, prop)
                 };
                 if matches {
-                    return Ok(Some(if want_pair { Value::cons(k, Value::cons(v.0, Value::Nil)) } else { v.0 }));
+                    return Ok(Some(if want_pair {
+                        Value::cons(k, Value::cons(v.0, Value::Nil))
+                    } else {
+                        v.0
+                    }));
                 }
                 cur = v.1;
             }
@@ -714,9 +1097,45 @@ fn err_circular(i: &mut Interp) -> Flow {
 }
 
 fn f_plist_get(i: &mut Interp, args: Vec<Value>) -> EvalResult {
+    // Emacs: (plist-get PLIST PROP &optional PREDICATE) — PREDICATE is a
+    // comparison function, default `eq'.
     let pred = arg(&args, 2);
-    let lax = pred.truthy();
-    match plist_scan(i, &args[0], &args[1], lax, false)? {
+    if !pred.is_nil() {
+        let mut cur = args[0].clone();
+        let mut guard = 0usize;
+        loop {
+            guard += 1;
+            if guard > 500_000 {
+                return Err(err_circular(i));
+            }
+            match cur {
+                Value::Nil => return Ok(Value::Nil),
+                Value::Cons(c) => {
+                    let (k, rest) = {
+                        let b = c.borrow();
+                        (b.car.clone(), b.cdr.clone())
+                    };
+                    let m = i.call_function(
+                        &pred,
+                        &Value::list(vec![quoted(k), quoted(args[1].clone())]),
+                        None,
+                    )?;
+                    if m.truthy() {
+                        return Ok(match &rest {
+                            Value::Cons(c2) => c2.borrow().car.clone(),
+                            _ => Value::Nil,
+                        });
+                    }
+                    cur = match &rest {
+                        Value::Cons(c2) => c2.borrow().cdr.clone(),
+                        _ => Value::Nil,
+                    };
+                }
+                other => return Err(i.wrong_type_mut("listp", &other)),
+            }
+        }
+    }
+    match plist_scan(i, &args[0], &args[1], false, false)? {
         Some(v) => Ok(v),
         None => Ok(Value::Nil),
     }
@@ -799,10 +1218,8 @@ fn plist_put(i: &mut Interp, args: Vec<Value>, lax: bool) -> EvalResult {
         match &cur {
             Value::Nil => {
                 // Append (prop val) after the last pair's value cell.
-                let new_pair = Value::cons(
-                    args[1].clone(),
-                    Value::cons(args[2].clone(), Value::Nil),
-                );
+                let new_pair =
+                    Value::cons(args[1].clone(), Value::cons(args[2].clone(), Value::Nil));
                 if let Some(Value::Cons(pc)) = &last_pair_cell {
                     let value_cell = pc.borrow().cdr.clone();
                     if let Value::Cons(vc) = &value_cell {
@@ -942,6 +1359,7 @@ fn f_apply_partially(i: &mut Interp, args: Vec<Value>) -> EvalResult {
         doc: Some("Function created by apply-partially.".into()),
         interactive: None,
         name: None,
+        bad_arglist: false,
     };
     Ok(Value::Lambda(std::rc::Rc::new(lam)))
 }
@@ -1021,9 +1439,7 @@ fn remove_impl(
                 .filter(|x| !cmp(i, elt, x))
                 .cloned()
                 .collect();
-            Ok(Value::Vec(std::rc::Rc::new(std::cell::RefCell::new(
-                kept,
-            ))))
+            Ok(Value::Vec(std::rc::Rc::new(std::cell::RefCell::new(kept))))
         }
         _ => {
             // List (or nil): splice out matching conses, Emacs-style.

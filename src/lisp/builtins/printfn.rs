@@ -1,19 +1,54 @@
 //! Printing subrs: prin1, princ, print, terpri, prin1-to-string, with-output-to-string.
 
-use super::{arg, S};
+use super::{S, arg};
+use crate::lisp::Interp;
 use crate::lisp::error::EvalResult;
 use crate::lisp::value::{Subr, Value};
-use crate::lisp::Interp;
 
 pub(crate) static SUBRS: &[Subr] = &[
-    S!("prin1", 1, 2, f_prin1, "Print OBJECT readably to standard-output."),
-    S!("princ", 1, 2, f_princ, "Print OBJECT human-readably to standard-output."),
-    S!("print", 1, 2, f_print, "Print OBJECT readably, preceded by newline and space."),
+    S!(
+        "prin1",
+        1,
+        2,
+        f_prin1,
+        "Print OBJECT readably to standard-output."
+    ),
+    S!(
+        "princ",
+        1,
+        2,
+        f_princ,
+        "Print OBJECT human-readably to standard-output."
+    ),
+    S!(
+        "print",
+        1,
+        2,
+        f_print,
+        "Print OBJECT readably, preceded by newline and space."
+    ),
     S!("terpri", 0, 1, f_terpri, "Output a newline."),
     S!("write-char", 1, 2, f_write_char, "Output CHARACTER."),
-    S!("prin1-to-string", 1, 2, f_prin1_to_string, "Return printed representation of OBJECT."),
-    S!("princ-to-string", 1, 1, f_princ_to_string, "Return princ representation of OBJECT."),
-    S!("with-output-to-string", raw, f_with_output_to_string, "Capture output as string."),
+    S!(
+        "prin1-to-string",
+        1,
+        2,
+        f_prin1_to_string,
+        "Return printed representation of OBJECT."
+    ),
+    S!(
+        "princ-to-string",
+        1,
+        1,
+        f_princ_to_string,
+        "Return princ representation of OBJECT."
+    ),
+    S!(
+        "with-output-to-string",
+        raw,
+        f_with_output_to_string,
+        "Capture output as string."
+    ),
     // print-escape-newlines / print-gensym / print-quoted are
     // VARIABLES in Emacs, not functions — defined in eval.rs.
     S!("output-switches", many 0, f_noop, ""),

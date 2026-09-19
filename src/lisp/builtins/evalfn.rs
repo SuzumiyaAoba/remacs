@@ -1,39 +1,118 @@
 //! Evaluation-related subrs: eval, apply, funcall, signal, error, throw,
 //! featurep, run-hooks, etc.
 
-use super::{arg, want_list, want_sym, S};
+use super::{S, arg, want_list, want_sym};
+use crate::lisp::Interp;
 use crate::lisp::error::{EvalResult, Flow};
 use crate::lisp::obarray::sym;
 use crate::lisp::value::{Subr, Value};
-use crate::lisp::Interp;
 
 pub(crate) static SUBRS: &[Subr] = &[
     S!("eval", 1, 2, f_eval, "Evaluate FORM and return its value."),
     S!("apply", many 1, f_apply, "Call FUNCTION with args; last arg is a list."),
     S!("funcall", many 1, f_funcall, "Call FUNCTION with the given args."),
     S!("funcall-interactively", many 1, f_funcall_interactively, "Like funcall (for commands)."),
-    S!("function", raw, f_function_raw, "Return the function denoted by ARG."),
-    S!("macroexpand", 1, 2, f_macroexpand, "Expand a macro call FORM."),
-    S!("macroexpand-all", 1, 2, f_macroexpand_all, "Recursively expand all macros in FORM."),
-    S!("macroexpand-1", 1, 2, f_macroexpand_1, "Expand a macro call once."),
-    S!("signal", 2, 2, f_signal, "Signal an error (ERROR-SYMBOL . DATA)."),
+    S!(
+        "function",
+        raw,
+        f_function_raw,
+        "Return the function denoted by ARG."
+    ),
+    S!(
+        "macroexpand",
+        1,
+        2,
+        f_macroexpand,
+        "Expand a macro call FORM."
+    ),
+    S!(
+        "macroexpand-all",
+        1,
+        2,
+        f_macroexpand_all,
+        "Recursively expand all macros in FORM."
+    ),
+    S!(
+        "macroexpand-1",
+        1,
+        2,
+        f_macroexpand_1,
+        "Expand a macro call once."
+    ),
+    S!(
+        "signal",
+        2,
+        2,
+        f_signal,
+        "Signal an error (ERROR-SYMBOL . DATA)."
+    ),
     S!("error", many 1, f_error, "Signal an error with a formatted message."),
     S!("user-error", many 1, f_user_error, "Signal a user-error."),
     S!("throw", 2, 2, f_throw, "Throw to TAG with VALUE."),
-    S!("condition-case", raw, f_condition_case_raw, "Handled by special form dispatch."),
-    S!("ignore-error", raw, f_ignore_error_raw, "Eval body ignoring errors."),
-    S!("with-demoted-errors", raw, f_with_demoted_errors, "Like ignore-error but reports."),
-    S!("ignore-errors", raw, f_ignore_error_raw, "Eval body ignoring errors."),
+    S!(
+        "condition-case",
+        raw,
+        f_condition_case_raw,
+        "Handled by special form dispatch."
+    ),
+    S!(
+        "ignore-error",
+        raw,
+        f_ignore_error_raw,
+        "Eval body ignoring errors."
+    ),
+    S!(
+        "with-demoted-errors",
+        raw,
+        f_with_demoted_errors,
+        "Like ignore-error but reports."
+    ),
+    S!(
+        "ignore-errors",
+        raw,
+        f_ignore_error_raw,
+        "Eval body ignoring errors."
+    ),
     S!("featurep", 1, 2, f_featurep, "t if FEATURE is provided."),
-    S!("provide", 1, 2, f_provide, "Add FEATURE to the features list."),
-    S!("require", 1, 3, f_require, "Require FEATURE (load if needed)."),
+    S!(
+        "provide",
+        1,
+        2,
+        f_provide,
+        "Add FEATURE to the features list."
+    ),
+    S!(
+        "require",
+        1,
+        3,
+        f_require,
+        "Require FEATURE (load if needed)."
+    ),
     S!("run-hooks", many 0, f_run_hooks, "Run each named hook variable."),
     S!("run-hook-with-args", many 1, f_run_hook_with_args, "Run HOOK with ARGS."),
     S!("run-hook-with-args-until-failure", many 1, f_run_hook_until_fail, "Run HOOK until nil."),
     S!("run-hook-with-args-until-success", many 1, f_run_hook_until_success, "Run HOOK until non-nil."),
-    S!("run-hook-wrapped", 4, 4, f_run_hook_wrapped, "Run HOOK with wrapper function."),
-    S!("add-hook", 2, 4, f_add_hook, "Add FUNCTION to HOOK variable."),
-    S!("remove-hook", 2, 3, f_remove_hook, "Remove FUNCTION from HOOK variable."),
+    S!(
+        "run-hook-wrapped",
+        4,
+        4,
+        f_run_hook_wrapped,
+        "Run HOOK with wrapper function."
+    ),
+    S!(
+        "add-hook",
+        2,
+        4,
+        f_add_hook,
+        "Add FUNCTION to HOOK variable."
+    ),
+    S!(
+        "remove-hook",
+        2,
+        3,
+        f_remove_hook,
+        "Remove FUNCTION from HOOK variable."
+    ),
     S!("identity", 1, 1, f_identity, "Return ARG."),
     S!("ignore", many 0, f_ignore, "Do nothing, return nil."),
     S!("always", many 0, f_always, "Do nothing, return t."),
@@ -41,67 +120,279 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!("or", raw, f_or_raw, ""),
     S!("and", raw, f_and_raw, ""),
     S!("values", many 0, f_values, "Return the list of arguments (multiple values stub)."),
-    S!("eval-expression", 1, 2, f_eval_expression, "Eval EXPR like M-:."),
+    S!(
+        "eval-expression",
+        1,
+        2,
+        f_eval_expression,
+        "Eval EXPR like M-:."
+    ),
     S!("load", 1, 5, f_load, "Load a Lisp file."),
     S!("load-file", 1, 1, f_load_file, "Load FILE."),
-    S!("locate-library", 1, 4, f_locate_library, "Find LIBRARY on load-path."),
+    S!(
+        "locate-library",
+        1,
+        4,
+        f_locate_library,
+        "Find LIBRARY on load-path."
+    ),
     S!("autoload", 2, 5, f_autoload, "Declare FUNCTION autoloaded."),
-    S!("autoloadp", 1, 1, f_autoloadp, "t if OBJECT is an autoload object."),
-    S!("eval-buffer", 0, 5, f_eval_buffer, "Eval BUFFER's contents as elisp."),
-    S!("eval-region", 2, 4, f_eval_region, "Eval text between START and END."),
-    S!("command-execute", 1, 4, f_command_execute, "Execute CMD interactively."),
-    S!("called-interactively-p", 0, 1, f_called_interactively_p, "t if called interactively."),
-    S!("funcall-with-delayed-message", 2, 2, f_funcall_with_delayed_message, "Call FUNCTION, show message."),
-    S!("special-variable-p", 1, 1, f_special_variable_p, "t if SYMBOL is special (defvar'd)."),
-    S!("declare-function", raw, f_declare_function, "Declare external function (no-op)."),
+    S!(
+        "autoloadp",
+        1,
+        1,
+        f_autoloadp,
+        "t if OBJECT is an autoload object."
+    ),
+    S!(
+        "eval-buffer",
+        0,
+        5,
+        f_eval_buffer,
+        "Eval BUFFER's contents as elisp."
+    ),
+    S!(
+        "eval-region",
+        2,
+        4,
+        f_eval_region,
+        "Eval text between START and END."
+    ),
+    S!(
+        "command-execute",
+        1,
+        4,
+        f_command_execute,
+        "Execute CMD interactively."
+    ),
+    S!(
+        "called-interactively-p",
+        0,
+        1,
+        f_called_interactively_p,
+        "t if called interactively."
+    ),
+    S!(
+        "funcall-with-delayed-message",
+        2,
+        2,
+        f_funcall_with_delayed_message,
+        "Call FUNCTION, show message."
+    ),
+    S!(
+        "special-variable-p",
+        1,
+        1,
+        f_special_variable_p,
+        "t if SYMBOL is special (defvar'd)."
+    ),
+    S!(
+        "declare-function",
+        raw,
+        f_declare_function,
+        "Declare external function (no-op)."
+    ),
     S!("declare", raw, f_declare, "Declare (no-op)."),
-    S!("eval-and-compile", raw, f_eval_and_compile, "Eval body now and at compile time."),
-    S!("eval-when-compile", raw, f_eval_when_compile, "Eval body at compile time only."),
-    S!("with-no-warnings", raw, f_with_no_warnings, "Eval body without warnings."),
-    S!("display-warning", 2, 4, f_display_warning, "Display a warning message."),
+    S!(
+        "eval-and-compile",
+        raw,
+        f_eval_and_compile,
+        "Eval body now and at compile time."
+    ),
+    S!(
+        "eval-when-compile",
+        raw,
+        f_eval_when_compile,
+        "Eval body at compile time only."
+    ),
+    S!(
+        "with-no-warnings",
+        raw,
+        f_with_no_warnings,
+        "Eval body without warnings."
+    ),
+    S!(
+        "display-warning",
+        2,
+        4,
+        f_display_warning,
+        "Display a warning message."
+    ),
     S!("lwarn", 4, 4, f_lwarn, "Display a warning."),
     S!("warn", many 1, f_warn, "Display a warning."),
     S!("message", many 1, f_message, "Display a message in the echo area."),
     S!("minibuffer-message", many 1, f_minibuffer_message, "Message during minibuffer."),
     S!("ding", 0, 1, f_ding, "Beep."),
     S!("beep", 0, 1, f_ding, "Beep."),
-    S!("sleep-for", 1, 2, f_sleep_for, "Sleep SECONDS (+ MILLISECONDS)."),
+    S!(
+        "sleep-for",
+        1,
+        2,
+        f_sleep_for,
+        "Sleep SECONDS (+ MILLISECONDS)."
+    ),
     S!("sit-for", 1, 3, f_sit_for, "Wait SECONDS or until input."),
-    S!("current-time", 0, 0, f_current_time, "Current time as (HIGH LOW USEC PSEC)."),
-    S!("current-time-string", 0, 1, f_current_time_string, "Current time as a string."),
-    S!("current-time-zone", 0, 2, f_current_time_zone, "Time zone info."),
+    S!(
+        "current-time",
+        0,
+        0,
+        f_current_time,
+        "Current time as (HIGH LOW USEC PSEC)."
+    ),
+    S!(
+        "current-time-string",
+        0,
+        1,
+        f_current_time_string,
+        "Current time as a string."
+    ),
+    S!(
+        "current-time-zone",
+        0,
+        2,
+        f_current_time_zone,
+        "Time zone info."
+    ),
     S!("float-time", 0, 1, f_float_time, "Time as float seconds."),
-    S!("format-time-string", 1, 3, f_format_time_string, "Format time per FORMAT."),
+    S!(
+        "format-time-string",
+        1,
+        3,
+        f_format_time_string,
+        "Format time per FORMAT."
+    ),
     S!("get-internal-run-time", 0, 0, f_current_time, ""),
-    S!("garbage-collect", 0, 0, f_garbage_collect, "GC stats (Rc-based, informational)."),
-    S!("memory-info", 0, 0, f_memory_info, "Memory info (informational)."),
+    S!(
+        "garbage-collect",
+        0,
+        0,
+        f_garbage_collect,
+        "GC stats (Rc-based, informational)."
+    ),
+    S!(
+        "memory-info",
+        0,
+        0,
+        f_memory_info,
+        "Memory info (informational)."
+    ),
     S!("kill-emacs", 0, 2, f_kill_emacs, "Exit remacs."),
-    S!("recursive-edit", 0, 0, f_recursive_edit, "Recursive editing level."),
+    S!(
+        "recursive-edit",
+        0,
+        0,
+        f_recursive_edit,
+        "Recursive editing level."
+    ),
     S!("top-level", 0, 0, f_top_level, "Return to top level."),
-    S!("exit-recursive-edit", 0, 0, f_exit_recursive_edit, "Exit a recursive edit level."),
-    S!("abort-recursive-edit", 0, 0, f_abort_recursive_edit, "Abort a recursive edit level."),
-    S!("recursion-depth", 0, 0, f_recursion_depth, "Current recursive-edit depth."),
+    S!(
+        "exit-recursive-edit",
+        0,
+        0,
+        f_exit_recursive_edit,
+        "Exit a recursive edit level."
+    ),
+    S!(
+        "abort-recursive-edit",
+        0,
+        0,
+        f_abort_recursive_edit,
+        "Abort a recursive edit level."
+    ),
+    S!(
+        "recursion-depth",
+        0,
+        0,
+        f_recursion_depth,
+        "Current recursive-edit depth."
+    ),
     S!("emacs-pid", 0, 0, f_emacs_pid, "Process id."),
     S!("system-name", 0, 0, f_system_name, "Host name."),
     S!("emacs-version", 0, 0, f_emacs_version, "Version string."),
     S!("emacs-build-time", 0, 0, f_emacs_build_time, "Build time."),
     S!("set-message-functions", 0, 0, f_noop, ""),
     S!("set-fill-prefix", 0, 0, f_noop, ""),
-    S!("internal-make-interpreted-closure-function", 3, 3, f_internal_make_closure, "Make a lexical closure."),
+    S!(
+        "internal-make-interpreted-closure-function",
+        3,
+        3,
+        f_internal_make_closure,
+        "Make a lexical closure."
+    ),
     S!("internal--set-subr-doc", 0, 0, f_noop, ""),
-    S!("macroexp-parse-body", 1, 1, f_macroexp_parse_body, "Parse body into (declares . forms)."),
-    S!("macroexp-progn", 1, 1, f_macroexp_progn, "Wrap EXPS in progn if needed."),
+    S!(
+        "macroexp-parse-body",
+        1,
+        1,
+        f_macroexp_parse_body,
+        "Parse body into (declares . forms)."
+    ),
+    S!(
+        "macroexp-progn",
+        1,
+        1,
+        f_macroexp_progn,
+        "Wrap EXPS in progn if needed."
+    ),
     S!("macroexp-let2", 4, 4, f_macroexp_let2, "Build a let form."),
-    S!("macroexp-let*", 2, 2, f_macroexp_let_star, "Build a let* form."),
+    S!(
+        "macroexp-let*",
+        2,
+        2,
+        f_macroexp_let_star,
+        "Build a let* form."
+    ),
     S!("macroexp-if", 3, 3, f_macroexp_if, "Build an if form."),
-    S!("byte-code-function-p", 1, 1, f_byte_code_function_p, "t if OBJECT is byte-compiled."),
-    S!("compiled-function-p", 1, 1, f_compiled_function_p, "t if OBJECT is compiled."),
-    S!("native-comp-available-p", 0, 0, f_native_comp_available_p, "t if native compilation is available."),
-    S!("interactive-p", 0, 0, f_interactive_p, "t if called interactively (obsolete)."),
-    S!("byte-code", 3, 3, f_byte_code, "Execute byte code (not supported — eval form)."),
+    S!(
+        "byte-code-function-p",
+        1,
+        1,
+        f_byte_code_function_p,
+        "t if OBJECT is byte-compiled."
+    ),
+    S!(
+        "compiled-function-p",
+        1,
+        1,
+        f_compiled_function_p,
+        "t if OBJECT is compiled."
+    ),
+    S!(
+        "native-comp-available-p",
+        0,
+        0,
+        f_native_comp_available_p,
+        "t if native compilation is available."
+    ),
+    S!(
+        "interactive-p",
+        0,
+        0,
+        f_interactive_p,
+        "t if called interactively (obsolete)."
+    ),
+    S!(
+        "byte-code",
+        3,
+        3,
+        f_byte_code,
+        "Execute byte code (not supported — eval form)."
+    ),
     S!("make-byte-code", many 0, f_make_byte_code, "Make byte-code object (stub lambda)."),
-    S!("subr-native-lambda-list", 1, 1, f_subr_native_lambda_list, "Subr arglist."),
-    S!("help-function-arglist", 1, 2, f_help_function_arglist, "Return arglist of FUNCTION."),
+    S!(
+        "subr-native-lambda-list",
+        1,
+        1,
+        f_subr_native_lambda_list,
+        "Subr arglist."
+    ),
+    S!(
+        "help-function-arglist",
+        1,
+        2,
+        f_help_function_arglist,
+        "Return arglist of FUNCTION."
+    ),
     S!("help--docstring-quote", 0, 0, f_noop, ""),
     S!("internal-doc-string-p", 0, 0, f_noop, ""),
     S!("declare-functionp", 1, 1, f_declare_functionp, ""),
@@ -146,8 +437,10 @@ fn f_funcall_interactively(i: &mut Interp, args: Vec<Value>) -> EvalResult {
 }
 
 fn f_function_raw(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    crate::lisp::special::special_form(crate::lisp::sym::FUNCTION)
-        .unwrap()(i, args.into_iter().next().unwrap_or(Value::Nil))
+    crate::lisp::special::special_form(crate::lisp::sym::FUNCTION).unwrap()(
+        i,
+        args.into_iter().next().unwrap_or(Value::Nil),
+    )
 }
 
 fn f_macroexpand(i: &mut Interp, args: Vec<Value>) -> EvalResult {
@@ -213,7 +506,18 @@ pub(crate) fn macroexpand_all(i: &mut Interp, form: &Value) -> EvalResult {
     }
 }
 
-fn f_signal(_i: &mut Interp, args: Vec<Value>) -> EvalResult {
+fn f_signal(i: &mut Interp, args: Vec<Value>) -> EvalResult {
+    // Emacs: signaling a symbol with no `error-conditions' property
+    // signals `error' with ("Invalid error symbol" SYM) instead.
+    if let Value::Sym(sid) = &args[0] {
+        let ec = i.intern("error-conditions");
+        if i.get_prop(*sid, ec).is_nil() {
+            return Err(Flow::Signal(
+                Value::Sym(sym::ERROR),
+                Value::list(vec![Value::string("Invalid error symbol"), args[0].clone()]),
+            ));
+        }
+    }
     Err(Flow::Signal(args[0].clone(), args[1].clone()))
 }
 
@@ -313,8 +617,7 @@ fn f_throw(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     // Emacs: Fthrow scans the catch chain; with no matching catch it
     // signals `no-catch' at the throw site (so condition-case can catch
     // it, but an outer matching catch would have won instead).
-    if i
-        .catch_tags
+    if i.catch_tags
         .iter()
         .any(|t| crate::lisp::eq_values(t, &args[0]))
     {
@@ -326,8 +629,10 @@ fn f_throw(i: &mut Interp, args: Vec<Value>) -> EvalResult {
 }
 
 fn f_condition_case_raw(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    crate::lisp::special::special_form(sym::CONDITION_CASE)
-        .unwrap()(i, args.into_iter().next().unwrap_or(Value::Nil))
+    crate::lisp::special::special_form(sym::CONDITION_CASE).unwrap()(
+        i,
+        args.into_iter().next().unwrap_or(Value::Nil),
+    )
 }
 
 /// `(ignore-errors BODY...)` and `(with-demoted-errors BODY...)`.
@@ -379,10 +684,7 @@ fn f_require(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     } else {
         Err(i.signal_data(
             sym::FILE_ERROR,
-            vec![
-                Value::string("Cannot open load file"),
-                Value::string(name),
-            ],
+            vec![Value::string("Cannot open load file"), Value::string(name)],
         ))
     }
 }
@@ -396,6 +698,7 @@ fn hook_fns(i: &Interp, hook: &Value) -> Vec<Value> {
     // A hook var may hold a single function or a list.
     match &v {
         Value::Cons(_) => v.list_to_vec().unwrap_or_default(),
+        Value::Sym(s) if *s == sym::UNBOUND => Vec::new(),
         Value::Nil => Vec::new(),
         other => vec![other.clone()],
     }
@@ -510,16 +813,22 @@ fn f_always(_i: &mut Interp, _args: Vec<Value>) -> EvalResult {
     Ok(Value::t())
 }
 fn f_prog1_raw(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    crate::lisp::special::special_form(sym::PROG1)
-        .unwrap()(i, args.into_iter().next().unwrap_or(Value::Nil))
+    crate::lisp::special::special_form(sym::PROG1).unwrap()(
+        i,
+        args.into_iter().next().unwrap_or(Value::Nil),
+    )
 }
 fn f_or_raw(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    crate::lisp::special::special_form(sym::OR)
-        .unwrap()(i, args.into_iter().next().unwrap_or(Value::Nil))
+    crate::lisp::special::special_form(sym::OR).unwrap()(
+        i,
+        args.into_iter().next().unwrap_or(Value::Nil),
+    )
 }
 fn f_and_raw(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    crate::lisp::special::special_form(sym::AND)
-        .unwrap()(i, args.into_iter().next().unwrap_or(Value::Nil))
+    crate::lisp::special::special_form(sym::AND).unwrap()(
+        i,
+        args.into_iter().next().unwrap_or(Value::Nil),
+    )
 }
 fn f_values(_i: &mut Interp, args: Vec<Value>) -> EvalResult {
     Ok(Value::list(args))
@@ -540,10 +849,7 @@ fn f_load(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     } else {
         Err(i.signal_data(
             sym::FILE_ERROR,
-            vec![
-                Value::string("Cannot open load file"),
-                args[0].clone(),
-            ],
+            vec![Value::string("Cannot open load file"), args[0].clone()],
         ))
     }
 }
@@ -690,10 +996,13 @@ fn f_sleep_for(_i: &mut Interp, args: Vec<Value>) -> EvalResult {
         Value::Int(n) => *n as f64,
         Value::Float(f) => *f,
         _ => 0.0,
-    } + args.get(1).map(|v| match v {
-        Value::Int(n) => *n as f64 / 1000.0,
-        _ => 0.0,
-    }).unwrap_or(0.0);
+    } + args
+        .get(1)
+        .map(|v| match v {
+            Value::Int(n) => *n as f64 / 1000.0,
+            _ => 0.0,
+        })
+        .unwrap_or(0.0);
     if secs > 0.0 {
         std::thread::sleep(std::time::Duration::from_secs_f64(secs.min(3600.0)));
     }
@@ -726,10 +1035,7 @@ fn f_current_time_string(i: &mut Interp, _args: Vec<Value>) -> EvalResult {
     Ok(Value::string("Sat Sep 19 00:00:00 2026"))
 }
 fn f_current_time_zone(_i: &mut Interp, _args: Vec<Value>) -> EvalResult {
-    Ok(Value::list(vec![
-        Value::Int(0),
-        Value::string("UTC"),
-    ]))
+    Ok(Value::list(vec![Value::Int(0), Value::string("UTC")]))
 }
 fn f_float_time(_i: &mut Interp, _args: Vec<Value>) -> EvalResult {
     let now = std::time::SystemTime::now()
@@ -822,10 +1128,7 @@ fn f_recursive_edit(i: &mut Interp, _args: Vec<Value>) -> EvalResult {
     Ok(Value::Nil)
 }
 fn f_top_level(_i: &mut Interp, _args: Vec<Value>) -> EvalResult {
-    Err(Flow::Throw(
-        Value::Sym(sym::TOP_LEVEL),
-        Value::Nil,
-    ))
+    Err(Flow::Throw(Value::Sym(sym::TOP_LEVEL), Value::Nil))
 }
 fn f_exit_recursive_edit(i: &mut Interp, _args: Vec<Value>) -> EvalResult {
     if i.recursion_depth == 0 {
@@ -837,10 +1140,7 @@ fn f_exit_recursive_edit(i: &mut Interp, _args: Vec<Value>) -> EvalResult {
     ))
 }
 fn f_abort_recursive_edit(_i: &mut Interp, _args: Vec<Value>) -> EvalResult {
-    Err(Flow::Throw(
-        Value::Sym(sym::QUIT),
-        Value::Nil,
-    ))
+    Err(Flow::Throw(Value::Sym(sym::QUIT), Value::Nil))
 }
 fn f_recursion_depth(i: &mut Interp, _args: Vec<Value>) -> EvalResult {
     Ok(Value::Int(i.recursion_depth as i128))
@@ -880,10 +1180,7 @@ fn f_internal_make_closure(i: &mut Interp, args: Vec<Value>) -> EvalResult {
 
 /// Convert the alist-ish ENV argument used by byte-compiled closures
 /// into a LexEnv.
-fn parse_lexenv_spec(
-    _i: &mut Interp,
-    _env_v: &Value,
-) -> crate::lisp::LexEnv {
+fn parse_lexenv_spec(_i: &mut Interp, _env_v: &Value) -> crate::lisp::LexEnv {
     None
 }
 fn f_macroexp_parse_body(i: &mut Interp, args: Vec<Value>) -> EvalResult {
@@ -983,11 +1280,7 @@ fn f_help_function_arglist(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     };
     match f.as_lambda() {
         Some(l) => {
-            let mut names: Vec<Value> = l
-                .required
-                .iter()
-                .map(|s| i.sym(*s))
-                .collect();
+            let mut names: Vec<Value> = l.required.iter().map(|s| i.sym(*s)).collect();
             if !l.optional.is_empty() {
                 names.push(Value::Sym(sym::OPTIONAL));
                 for o in &l.optional {

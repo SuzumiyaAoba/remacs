@@ -1,80 +1,364 @@
 //! Type predicates and symbol-manipulation subrs.
 
-use super::{eq_values, equal_values, want_sym, S};
+use super::{S, eq_values, equal_values, want_sym};
+use crate::lisp::Interp;
 use crate::lisp::error::EvalResult;
 use crate::lisp::obarray::sym;
 use crate::lisp::value::{Subr, Value};
-use crate::lisp::Interp;
 
 pub(crate) static SUBRS: &[Subr] = &[
-    S!("eq", 2, 2, f_eq, "t if the two args are the same Lisp object."),
+    S!(
+        "eq",
+        2,
+        2,
+        f_eq,
+        "t if the two args are the same Lisp object."
+    ),
     S!("null", 1, 1, f_null, "t if OBJECT is nil."),
     S!("not", 1, 1, f_null, "t if OBJECT is nil."),
-    S!("equal", 2, 2, f_equal, "t if two args have equal structure and contents."),
+    S!(
+        "equal",
+        2,
+        2,
+        f_equal,
+        "t if two args have equal structure and contents."
+    ),
     S!("consp", 1, 1, f_consp, "t if OBJECT is a cons cell."),
     S!("atom", 1, 1, f_atom, "t if OBJECT is not a cons cell."),
-    S!("listp", 1, 1, f_listp, "t if OBJECT is a list (cons or nil)."),
+    S!(
+        "listp",
+        1,
+        1,
+        f_listp,
+        "t if OBJECT is a list (cons or nil)."
+    ),
     S!("nlistp", 1, 1, f_nlistp, "t if OBJECT is not a list."),
     S!("symbolp", 1, 1, f_symbolp, "t if OBJECT is a symbol."),
     S!("stringp", 1, 1, f_stringp, "t if OBJECT is a string."),
     S!("vectorp", 1, 1, f_vectorp, "t if OBJECT is a vector."),
-    S!("char-table-p", 1, 1, f_char_table_p, "t if OBJECT is a char-table."),
-    S!("bool-vector-p", 1, 1, f_bool_vector_p, "t if OBJECT is a bool-vector."),
-    S!("hash-table-p", 1, 1, f_hash_table_p, "t if OBJECT is a hash table."),
+    S!(
+        "char-table-p",
+        1,
+        1,
+        f_char_table_p,
+        "t if OBJECT is a char-table."
+    ),
+    S!(
+        "bool-vector-p",
+        1,
+        1,
+        f_bool_vector_p,
+        "t if OBJECT is a bool-vector."
+    ),
+    S!(
+        "hash-table-p",
+        1,
+        1,
+        f_hash_table_p,
+        "t if OBJECT is a hash table."
+    ),
     S!("bufferp", 1, 1, f_bufferp, "t if OBJECT is a buffer."),
     S!("markerp", 1, 1, f_markerp, "t if OBJECT is a marker."),
     S!("functionp", 1, 1, f_functionp, "t if OBJECT is a function."),
-    S!("subrp", 1, 1, f_subrp, "t if OBJECT is a built-in function."),
+    S!(
+        "subrp",
+        1,
+        1,
+        f_subrp,
+        "t if OBJECT is a built-in function."
+    ),
     S!("macrop", 1, 1, f_macrop, "t if OBJECT is a macro."),
     S!("keywordp", 1, 1, f_keywordp, "t if OBJECT is a keyword."),
     S!("sequencep", 1, 1, f_sequencep, "t if OBJECT is a sequence."),
     S!("seqp", 1, 1, f_sequencep, "t if OBJECT is a sequence."),
     S!("booleanp", 1, 1, f_booleanp, "t if OBJECT is t or nil."),
-    S!("char-or-string-p", 1, 1, f_char_or_string_p, "t if char or string."),
-    S!("characterp", 1, 1, f_characterp, "t if OBJECT is a character."),
-    S!("integer-or-marker-p", 1, 1, f_integer_or_marker_p, "t if int or marker."),
+    S!(
+        "char-or-string-p",
+        1,
+        1,
+        f_char_or_string_p,
+        "t if char or string."
+    ),
+    S!(
+        "characterp",
+        1,
+        1,
+        f_characterp,
+        "t if OBJECT is a character."
+    ),
+    S!(
+        "integer-or-marker-p",
+        1,
+        1,
+        f_integer_or_marker_p,
+        "t if int or marker."
+    ),
     S!("arrayp", 1, 1, f_arrayp, "t if OBJECT is an array."),
-    S!("user-variable-p", 1, 1, f_user_variable_p, "t if VARIABLE is a user option."),
-    S!("commandp", 1, 2, f_commandp, "t if OBJECT is an interactive command."),
-    S!("special-form-p", 1, 1, f_special_form_p, "t if OBJECT is a special form."),
-    S!("type-of", 1, 1, f_type_of, "Return a symbol naming the type of OBJECT."),
-    S!("symbol-value", 1, 1, f_symbol_value, "Return SYMBOL's value."),
-    S!("symbol-name", 1, 1, f_symbol_name, "Return SYMBOL's name string."),
-    S!("symbol-function", 1, 1, f_symbol_function, "Return SYMBOL's function definition."),
-    S!("symbol-plist", 1, 1, f_symbol_plist, "Return SYMBOL's property list."),
+    S!(
+        "user-variable-p",
+        1,
+        1,
+        f_user_variable_p,
+        "t if VARIABLE is a user option."
+    ),
+    S!(
+        "commandp",
+        1,
+        2,
+        f_commandp,
+        "t if OBJECT is an interactive command."
+    ),
+    S!(
+        "special-form-p",
+        1,
+        1,
+        f_special_form_p,
+        "t if OBJECT is a special form."
+    ),
+    S!(
+        "type-of",
+        1,
+        1,
+        f_type_of,
+        "Return a symbol naming the type of OBJECT."
+    ),
+    S!(
+        "symbol-value",
+        1,
+        1,
+        f_symbol_value,
+        "Return SYMBOL's value."
+    ),
+    S!(
+        "symbol-name",
+        1,
+        1,
+        f_symbol_name,
+        "Return SYMBOL's name string."
+    ),
+    S!(
+        "symbol-function",
+        1,
+        1,
+        f_symbol_function,
+        "Return SYMBOL's function definition."
+    ),
+    S!(
+        "symbol-plist",
+        1,
+        1,
+        f_symbol_plist,
+        "Return SYMBOL's property list."
+    ),
     S!("boundp", 1, 1, f_boundp, "t if SYMBOL's value is not void."),
-    S!("fboundp", 1, 1, f_fboundp, "t if SYMBOL's function definition is not void."),
+    S!(
+        "fboundp",
+        1,
+        1,
+        f_fboundp,
+        "t if SYMBOL's function definition is not void."
+    ),
     S!("set", 2, 2, f_set, "Set SYMBOL's value to NEWVAL."),
-    S!("fset", 2, 2, f_fset, "Set SYMBOL's function definition to DEFINITION."),
-    S!("defalias", 2, 3, f_defalias, "Set SYMBOL's function cell to DEFINITION."),
-    S!("makunbound", 1, 1, f_makunbound, "Make SYMBOL's value void."),
-    S!("fmakunbound", 1, 1, f_fmakunbound, "Make SYMBOL's function definition void."),
+    S!(
+        "fset",
+        2,
+        2,
+        f_fset,
+        "Set SYMBOL's function definition to DEFINITION."
+    ),
+    S!(
+        "defalias",
+        2,
+        3,
+        f_defalias,
+        "Set SYMBOL's function cell to DEFINITION."
+    ),
+    S!(
+        "makunbound",
+        1,
+        1,
+        f_makunbound,
+        "Make SYMBOL's value void."
+    ),
+    S!(
+        "fmakunbound",
+        1,
+        1,
+        f_fmakunbound,
+        "Make SYMBOL's function definition void."
+    ),
     S!("get", 2, 2, f_get, "Return SYMBOL's PROPNAME property."),
-    S!("put", 3, 3, f_put, "Set SYMBOL's PROPNAME property to VALUE."),
-    S!("setplist", 2, 2, f_setplist, "Set SYMBOL's property list to NEWPLIST."),
-    S!("intern", 1, 2, f_intern, "Intern and return the symbol named STRING."),
-    S!("intern-soft", 1, 2, f_intern_soft, "Return symbol named STRING if already interned."),
-    S!("unintern", 2, 2, f_unintern, "Remove SYMBOL from the obarray."),
-    S!("make-symbol", 1, 1, f_make_symbol, "Return a fresh uninterned symbol named NAME."),
-    S!("mapatoms", 1, 2, f_mapatoms, "Map FUNCTION over all symbols in OBARRAY."),
-    S!("indirect-function", 1, 2, f_indirect_function, "Return the function at the end of a symbol chain."),
-    S!("interactive-form", 1, 1, f_interactive_form, "Return interactive spec of OBJECT."),
-    S!("default-boundp", 1, 1, f_default_boundp, "t if SYMBOL has a non-void default value."),
-    S!("default-value", 1, 1, f_default_value, "Return SYMBOL's default value."),
-    S!("set-default", 2, 2, f_set_default, "Set SYMBOL's default value to VALUE."),
-    S!("make-variable-buffer-local", 1, 1, f_make_variable_buffer_local, "Make VARIABLE buffer-local when set."),
-    S!("local-variable-if-set-p", 1, 2, f_local_variable_if_set_p, "t if VARIABLE becomes local when set."),
-    S!("variable-binding-locus", 1, 1, f_variable_binding_locus, "Where VARIABLE's binding lives."),
-    S!("subr-arity", 1, 1, f_subr_arity, "Return (MIN . MAX) arity of a subr."),
+    S!(
+        "put",
+        3,
+        3,
+        f_put,
+        "Set SYMBOL's PROPNAME property to VALUE."
+    ),
+    S!(
+        "setplist",
+        2,
+        2,
+        f_setplist,
+        "Set SYMBOL's property list to NEWPLIST."
+    ),
+    S!(
+        "intern",
+        1,
+        2,
+        f_intern,
+        "Intern and return the symbol named STRING."
+    ),
+    S!(
+        "intern-soft",
+        1,
+        2,
+        f_intern_soft,
+        "Return symbol named STRING if already interned."
+    ),
+    S!(
+        "unintern",
+        2,
+        2,
+        f_unintern,
+        "Remove SYMBOL from the obarray."
+    ),
+    S!(
+        "make-symbol",
+        1,
+        1,
+        f_make_symbol,
+        "Return a fresh uninterned symbol named NAME."
+    ),
+    S!(
+        "mapatoms",
+        1,
+        2,
+        f_mapatoms,
+        "Map FUNCTION over all symbols in OBARRAY."
+    ),
+    S!(
+        "indirect-function",
+        1,
+        2,
+        f_indirect_function,
+        "Return the function at the end of a symbol chain."
+    ),
+    S!(
+        "defvaralias",
+        2,
+        3,
+        f_defvaralias,
+        "Make NEW-ALIAS a variable alias for BASE-VARIABLE."
+    ),
+    S!(
+        "indirect-variable",
+        1,
+        1,
+        f_indirect_variable,
+        "Return the variable at the end of SYMBOL's alias chain."
+    ),
+    S!(
+        "interactive-form",
+        1,
+        1,
+        f_interactive_form,
+        "Return interactive spec of OBJECT."
+    ),
+    S!(
+        "default-boundp",
+        1,
+        1,
+        f_default_boundp,
+        "t if SYMBOL has a non-void default value."
+    ),
+    S!(
+        "default-value",
+        1,
+        1,
+        f_default_value,
+        "Return SYMBOL's default value."
+    ),
+    S!(
+        "set-default",
+        2,
+        2,
+        f_set_default,
+        "Set SYMBOL's default value to VALUE."
+    ),
+    S!(
+        "make-variable-buffer-local",
+        1,
+        1,
+        f_make_variable_buffer_local,
+        "Make VARIABLE buffer-local when set."
+    ),
+    S!(
+        "local-variable-if-set-p",
+        1,
+        2,
+        f_local_variable_if_set_p,
+        "t if VARIABLE becomes local when set."
+    ),
+    S!(
+        "variable-binding-locus",
+        1,
+        1,
+        f_variable_binding_locus,
+        "Where VARIABLE's binding lives."
+    ),
+    S!(
+        "subr-arity",
+        1,
+        1,
+        f_subr_arity,
+        "Return (MIN . MAX) arity of a subr."
+    ),
     S!("subr-name", 1, 1, f_subr_name, "Return the name of a subr."),
     S!("function-equal", 2, 2, f_equal, "Like equal for functions."),
-    S!("apropos-internal", 1, 1, f_apropos_internal, "Symbols whose names contain REGEXP."),
-    S!("function-get", 2, 3, f_function_get, "Property PROP on function SYMBOL."),
-    S!("function-put", 3, 3, f_function_put, "Set property PROP on function SYMBOL."),
-    S!("obarray-make", 0, 1, f_obarray_make, "Make a new obarray (stub: returns vector)."),
+    S!(
+        "apropos-internal",
+        1,
+        1,
+        f_apropos_internal,
+        "Symbols whose names contain REGEXP."
+    ),
+    S!(
+        "function-get",
+        2,
+        3,
+        f_function_get,
+        "Property PROP on function SYMBOL."
+    ),
+    S!(
+        "function-put",
+        3,
+        3,
+        f_function_put,
+        "Set property PROP on function SYMBOL."
+    ),
+    S!(
+        "obarray-make",
+        0,
+        1,
+        f_obarray_make,
+        "Make a new obarray (stub: returns vector)."
+    ),
     S!("obarrayp", 1, 1, f_obarrayp, "t if OBJECT is an obarray."),
-    S!("documentation", 1, 2, f_documentation, "Return documentation string of FUNCTION."),
-    S!("documentation-property", 2, 3, f_documentation_property, "Return doc property of SYMBOL."),
+    S!(
+        "documentation",
+        1,
+        2,
+        f_documentation,
+        "Return documentation string of FUNCTION."
+    ),
+    S!(
+        "documentation-property",
+        2,
+        3,
+        f_documentation_property,
+        "Return doc property of SYMBOL."
+    ),
 ];
 
 fn f_eq(_i: &mut Interp, args: Vec<Value>) -> EvalResult {
@@ -143,7 +427,9 @@ fn f_functionp(i: &mut Interp, args: Vec<Value>) -> EvalResult {
             // (and isn't a macro).
             let f = i.symbol_function(*id);
             match f {
-                Value::Subr(_) => true,
+                // Special forms install pseudo-subrs but are not callable
+                // functions: (functionp #'if) -> nil.
+                Value::Subr(s) => crate::lisp::special::special_form(i.intern(s.name)).is_none(),
                 Value::Lambda(l) => !l.is_macro,
                 Value::Cons(c) => {
                     let b = c.borrow();
@@ -295,9 +581,7 @@ fn f_symbol_function(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     let f = i.symbol_function(id);
     // Present macros as (macro . fn) like Emacs.
     match &f {
-        Value::Lambda(l) if l.is_macro => {
-            Ok(Value::cons(Value::Sym(i.intern("macro")), f))
-        }
+        Value::Lambda(l) if l.is_macro => Ok(Value::cons(Value::Sym(i.intern("macro")), f)),
         _ => Ok(f),
     }
 }
@@ -327,11 +611,27 @@ fn f_fset(i: &mut Interp, args: Vec<Value>) -> EvalResult {
 fn f_defalias(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     let id = want_sym(i, &args[0])?;
     let def = normalize_fn_def(i, args[1].clone());
-    i.fset(id, def.clone());
-    Ok(def)
+    i.fset(id, def);
+    // Emacs returns the aliased symbol, not the definition.
+    Ok(args[0].clone())
 }
+fn f_defvaralias(i: &mut Interp, args: Vec<Value>) -> EvalResult {
+    let newv = want_sym(i, &args[0])?;
+    let _base = want_sym(i, &args[1])?;
+    let prop = i.intern("variable-alias");
+    i.put_prop(newv, prop, args[1].clone());
+    // Emacs returns BASE-VARIABLE.
+    Ok(args[1].clone())
+}
+
+fn f_indirect_variable(i: &mut Interp, args: Vec<Value>) -> EvalResult {
+    let id = want_sym(i, &args[0])?;
+    Ok(i.sym(i.var_alias_target(id)))
+}
+
 fn f_makunbound(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     let id = want_sym(i, &args[0])?;
+    let id = i.var_alias_target(id);
     i.obarray.symbol_mut(id).value = Value::Sym(sym::UNBOUND);
     Ok(args[0].clone())
 }
@@ -415,6 +715,12 @@ fn f_make_symbol(i: &mut Interp, args: Vec<Value>) -> EvalResult {
 }
 fn f_mapatoms(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     let fun = args[0].clone();
+    // A non-nil second arg selects an alternate obarray (our
+    // obarray-make yields an empty Vec placeholder with no symbols).
+    match args.get(1) {
+        Some(Value::Vec(_)) => return Ok(Value::Nil),
+        _ => {}
+    }
     let ids = i.obarray.all_ids();
     for id in ids {
         i.apply(&fun, vec![i.sym(id)])?;
@@ -551,7 +857,9 @@ fn f_obarray_make(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     let _ = i;
     let _ = args;
     // We have a single global obarray; return a placeholder.
-    Ok(Value::Vec(std::rc::Rc::new(std::cell::RefCell::new(vec![]))))
+    Ok(Value::Vec(std::rc::Rc::new(std::cell::RefCell::new(
+        vec![],
+    ))))
 }
 fn f_obarrayp(_i: &mut Interp, args: Vec<Value>) -> EvalResult {
     Ok(Value::from_bool(matches!(&args[0], Value::Vec(_))))
@@ -562,11 +870,7 @@ fn f_documentation(i: &mut Interp, args: Vec<Value>) -> EvalResult {
         other => other.clone(),
     };
     match &f {
-        Value::Lambda(l) => Ok(l
-            .doc
-            .clone()
-            .map(Value::string)
-            .unwrap_or(Value::Nil)),
+        Value::Lambda(l) => Ok(l.doc.clone().map(Value::string).unwrap_or(Value::Nil)),
         Value::Subr(s) => {
             if s.doc.is_empty() {
                 Ok(Value::Nil)
@@ -605,6 +909,7 @@ fn normalize_fn_def(i: &mut Interp, def: Value) -> Value {
                         doc: l.doc.clone(),
                         interactive: l.interactive.clone(),
                         name: l.name.clone(),
+                        bad_arglist: l.bad_arglist,
                     };
                     l2.is_macro = true;
                     return Value::Lambda(std::rc::Rc::new(l2));

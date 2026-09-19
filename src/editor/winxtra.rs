@@ -3,65 +3,221 @@
 //! (internal windows, splits) is a later milestone.
 
 use crate::editor::{frame_of, sel_frame, sel_window, win_of};
-use crate::lisp::builtins::{arg, want_int, S};
+use crate::lisp::Interp;
+use crate::lisp::builtins::{S, arg, want_int};
 use crate::lisp::error::EvalResult;
 use crate::lisp::value::{Subr, Value};
-use crate::lisp::Interp;
 
 pub(crate) static SUBRS: &[Subr] = &[
     // --- tree/shape stubs ---
-    S!("window-valid-p", 1, 1, f_window_valid_p, "t if WINDOW is a live window object."),
-    S!("window-parent", 0, 1, f_nil_win, "Parent window (flat model: nil)."),
-    S!("window-top-child", 0, 1, f_nil_win, "First child (flat: nil)."),
+    S!(
+        "window-valid-p",
+        1,
+        1,
+        f_window_valid_p,
+        "t if WINDOW is a live window object."
+    ),
+    S!(
+        "window-parent",
+        0,
+        1,
+        f_nil_win,
+        "Parent window (flat model: nil)."
+    ),
+    S!(
+        "window-top-child",
+        0,
+        1,
+        f_nil_win,
+        "First child (flat: nil)."
+    ),
     S!("window-left-child", 0, 1, f_nil_win, ""),
-    S!("window-next-sibling", 0, 1, f_next_sibling, "Next window in frame order."),
-    S!("window-prev-sibling", 0, 1, f_prev_sibling, "Previous window in frame order."),
-    S!("window-next-buffers", 0, 1, f_nil, "Recently shown buffers (nil)."),
+    S!(
+        "window-next-sibling",
+        0,
+        1,
+        f_next_sibling,
+        "Next window in frame order."
+    ),
+    S!(
+        "window-prev-sibling",
+        0,
+        1,
+        f_prev_sibling,
+        "Previous window in frame order."
+    ),
+    S!(
+        "window-next-buffers",
+        0,
+        1,
+        f_nil,
+        "Recently shown buffers (nil)."
+    ),
     S!("window-prev-buffers", 0, 1, f_nil, ""),
     S!("window-normal-size", 0, 3, f_one_f, "Normal size (1.0)."),
-    S!("window-new-total", 0, 2, f_window_height2, "Total lines after resize."),
+    S!(
+        "window-new-total",
+        0,
+        2,
+        f_window_height2,
+        "Total lines after resize."
+    ),
     S!("window-new-normal", 0, 2, f_one_f, ""),
     S!("window-new-pixel", 0, 2, f_window_height_px, ""),
-    S!("window-old-point", 0, 1, f_window_point1, "Old point of WINDOW."),
-    S!("window-old-buffer", 0, 1, f_window_buffer1, "Buffer last shown."),
+    S!(
+        "window-old-point",
+        0,
+        1,
+        f_window_point1,
+        "Old point of WINDOW."
+    ),
+    S!(
+        "window-old-buffer",
+        0,
+        1,
+        f_window_buffer1,
+        "Buffer last shown."
+    ),
     S!("window-old-pixel-width", 0, 1, f_window_width_px, ""),
     S!("window-old-pixel-height", 0, 1, f_window_height_px, ""),
     S!("window-old-body-pixel-width", 0, 1, f_window_width_px, ""),
     S!("window-old-body-pixel-height", 0, 1, f_window_height_px, ""),
     S!("window-combination-limit", 0, 2, f_nil, ""),
-    S!("window-combination-p", 1, 2, f_false, "t if WINDOW is internal (no)."),
-    S!("window-has-parameters", 0, 1, f_window_has_params, "t if WINDOW has parameters."),
-    S!("window-deletable-p", 0, 1, f_window_live_t, "t if WINDOW can be deleted."),
-    S!("window-splittable-p", 0, 2, f_t, "t if WINDOW is splittable."),
-    S!("window-min-size", 0, 4, f_win_min_size, "Minimum window size."),
+    S!(
+        "window-combination-p",
+        1,
+        2,
+        f_false,
+        "t if WINDOW is internal (no)."
+    ),
+    S!(
+        "window-has-parameters",
+        0,
+        1,
+        f_window_has_params,
+        "t if WINDOW has parameters."
+    ),
+    S!(
+        "window-deletable-p",
+        0,
+        1,
+        f_window_live_t,
+        "t if WINDOW can be deleted."
+    ),
+    S!(
+        "window-splittable-p",
+        0,
+        2,
+        f_t,
+        "t if WINDOW is splittable."
+    ),
+    S!(
+        "window-min-size",
+        0,
+        4,
+        f_win_min_size,
+        "Minimum window size."
+    ),
     S!("window-max-delta", 0, 5, f_zero, ""),
     S!("window-min-delta", 0, 5, f_zero, ""),
     S!("window-sizable-p", 1, 4, f_t, ""),
     S!("window-size-fixed-p", 0, 2, f_false, ""),
-    S!("window-resize", 3, 5, f_window_resize, "Resize WINDOW by DELTA lines."),
+    S!(
+        "window-resize",
+        3,
+        5,
+        f_window_resize,
+        "Resize WINDOW by DELTA lines."
+    ),
     S!("window-resize-apply", 2, 3, f_true2, ""),
     S!("window-resize-apply-total", 2, 3, f_true2, ""),
     S!("window-resize-no-error", 3, 5, f_window_resize, ""),
-    S!("window-list-1", 0, 4, f_window_list1, "Windows in cyclic order."),
+    S!(
+        "window-list-1",
+        0,
+        4,
+        f_window_list1,
+        "Windows in cyclic order."
+    ),
     S!("window-bump-use-time", 1, 1, f_nil, ""),
     S!("window-discard-buffer-from-window", 2, 2, f_nil, ""),
-    S!("split-window-internal", 4, 4, f_split_window_internal, "Split WINDOW."),
-    S!("delete-window-internal", 1, 1, f_delete_window_internal, "Remove WINDOW."),
+    S!(
+        "split-window-internal",
+        4,
+        4,
+        f_split_window_internal,
+        "Split WINDOW."
+    ),
+    S!(
+        "delete-window-internal",
+        1,
+        1,
+        f_delete_window_internal,
+        "Remove WINDOW."
+    ),
     S!("uncombine-window", 1, 2, f_false, ""),
     S!("combine-windows", 1, 3, f_false, ""),
-    S!("get-lru-window", 0, 3, f_get_lru_window, "Least recently used window."),
+    S!(
+        "get-lru-window",
+        0,
+        3,
+        f_get_lru_window,
+        "Least recently used window."
+    ),
     S!("get-largest-window", 0, 3, f_get_lru_window, ""),
-    S!("other-window-for-scrolling", 0, 0, f_other_window, "Window to scroll."),
+    S!(
+        "other-window-for-scrolling",
+        0,
+        0,
+        f_other_window,
+        "Window to scroll."
+    ),
     S!("coordinates-in-window-p", 2, 2, f_false, ""),
-    S!("posn-at-point", 0, 2, f_posn_at_point, "Position info at POINT."),
+    S!(
+        "posn-at-point",
+        0,
+        2,
+        f_posn_at_point,
+        "Position info at POINT."
+    ),
     S!("posn-at-x-y", 2, 4, f_posn_at_xy, "Position info at X Y."),
-    S!("window-vscroll", 0, 2, f_zero, "Vertical scroll amount (0)."),
+    S!(
+        "window-vscroll",
+        0,
+        2,
+        f_zero,
+        "Vertical scroll amount (0)."
+    ),
     S!("set-window-vscroll", 3, 3, f_set_window_vscroll, ""),
-    S!("scroll-left", 0, 2, f_scroll_left, "Scroll left COUNT columns."),
-    S!("scroll-right", 0, 2, f_scroll_right, "Scroll right COUNT columns."),
-    S!("window-fringes", 0, 2, f_zero4, "(l r w out) fringe widths."),
+    S!(
+        "scroll-left",
+        0,
+        2,
+        f_scroll_left,
+        "Scroll left COUNT columns."
+    ),
+    S!(
+        "scroll-right",
+        0,
+        2,
+        f_scroll_right,
+        "Scroll right COUNT columns."
+    ),
+    S!(
+        "window-fringes",
+        0,
+        2,
+        f_zero4,
+        "(l r w out) fringe widths."
+    ),
     S!("set-window-fringes", 2, 5, f_nil, ""),
-    S!("window-margins", 0, 1, f_window_margins, "(left . right) margin widths."),
+    S!(
+        "window-margins",
+        0,
+        1,
+        f_window_margins,
+        "(left . right) margin widths."
+    ),
     S!("set-window-margins", 2, 3, f_nil, ""),
     S!("window-scroll-bars", 0, 1, f_zero4, ""),
     S!("set-window-scroll-bars", 2, 5, f_nil, ""),
@@ -75,33 +231,99 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!("window-lines-pixel-dimensions", 0, 7, f_zero, ""),
     S!("window-text-pixel-size", 0, 8, f_zero, ""),
     S!("window-absolute-pixel-position", 2, 2, f_posn_pair, ""),
-    S!("window-screen-lines", 0, 1, f_window_screen_lines, "Lines visible."),
+    S!(
+        "window-screen-lines",
+        0,
+        1,
+        f_window_screen_lines,
+        "Lines visible."
+    ),
     S!("truncated-partial-width-window-p", 0, 1, f_false, ""),
     // --- pixel measurements (tty: 1 char = 1 col) ---
-    S!("window-text-height", 0, 2, f_window_height2, "Height in pixels (==lines)."),
-    S!("window-pixel-width", 0, 1, f_window_width_px, "Width in pixels (==cols)."),
+    S!(
+        "window-text-height",
+        0,
+        2,
+        f_window_height2,
+        "Height in pixels (==lines)."
+    ),
+    S!(
+        "window-pixel-width",
+        0,
+        1,
+        f_window_width_px,
+        "Width in pixels (==cols)."
+    ),
     S!("window-pixel-height", 0, 1, f_window_height_px, ""),
     S!("window-pixel-left", 0, 1, f_zero, ""),
     S!("window-pixel-top", 0, 1, f_zero, ""),
-    S!("window-pixel-edges", 0, 1, f_window_edges4, "(l t r b) in pixels."),
+    S!(
+        "window-pixel-edges",
+        0,
+        1,
+        f_window_edges4,
+        "(l t r b) in pixels."
+    ),
     S!("window-inside-pixel-edges", 0, 1, f_window_edges4, ""),
     S!("window-absolute-pixel-edges", 0, 1, f_window_edges4, ""),
-    S!("window-inside-absolute-pixel-edges", 0, 1, f_window_edges4, ""),
+    S!(
+        "window-inside-absolute-pixel-edges",
+        0,
+        1,
+        f_window_edges4,
+        ""
+    ),
     S!("window-body-pixel-edges", 0, 1, f_window_body_edges4, ""),
-    S!("window-absolute-body-pixel-edges", 0, 1, f_window_body_edges4, ""),
-    S!("window-inside-absolute-body-pixel-edges", 0, 1, f_window_body_edges4, ""),
+    S!(
+        "window-absolute-body-pixel-edges",
+        0,
+        1,
+        f_window_body_edges4,
+        ""
+    ),
+    S!(
+        "window-inside-absolute-body-pixel-edges",
+        0,
+        1,
+        f_window_body_edges4,
+        ""
+    ),
     S!("window-safe-min-height", 0, 0, f_one, ""),
     S!("window-safe-min-width", 0, 0, f_two, ""),
     // --- frames ---
-    S!("frame-root-window", 0, 2, f_frame_root_window, "Root window of FRAME."),
-    S!("frame-selected-window", 0, 2, f_frame_sel_window, "Selected window of FRAME."),
+    S!(
+        "frame-root-window",
+        0,
+        2,
+        f_frame_root_window,
+        "Root window of FRAME."
+    ),
+    S!(
+        "frame-selected-window",
+        0,
+        2,
+        f_frame_sel_window,
+        "Selected window of FRAME."
+    ),
     S!("frame-first-window", 0, 2, f_frame_sel_window, ""),
-    S!("minibuffer-window", 0, 1, f_minibuffer_window, "The minibuffer window."),
+    S!(
+        "minibuffer-window",
+        0,
+        1,
+        f_minibuffer_window,
+        "The minibuffer window."
+    ),
     S!("frame-parent", 0, 1, f_nil, ""),
     S!("frame-ancestor-p", 2, 2, f_false, ""),
     S!("frame-old-selected-window", 0, 1, f_frame_sel_window, ""),
     S!("frame-root-frame", 0, 1, f_frame_self, ""),
-    S!("frame-initial-p", 0, 1, f_frame_initial_p, "t if FRAME is the initial frame."),
+    S!(
+        "frame-initial-p",
+        0,
+        1,
+        f_frame_initial_p,
+        "t if FRAME is the initial frame."
+    ),
     S!("frame-focus", 0, 1, f_frame_self, "Frame with input focus."),
     S!("frame-pointer-visible-p", 0, 1, f_false, ""),
     S!("frame-id", 0, 1, f_frame_id, "Opaque frame id."),
@@ -123,8 +345,20 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!("frame-scroll-bar-height", 0, 1, f_zero, ""),
     S!("frame-child-frame-border-width", 0, 1, f_zero, ""),
     S!("frame-scale-factor", 0, 1, f_one_f, ""),
-    S!("set-frame-height", 2, 4, f_set_frame_height, "Set FRAME height."),
-    S!("set-frame-width", 2, 4, f_set_frame_width, "Set FRAME width."),
+    S!(
+        "set-frame-height",
+        2,
+        4,
+        f_set_frame_height,
+        "Set FRAME height."
+    ),
+    S!(
+        "set-frame-width",
+        2,
+        4,
+        f_set_frame_width,
+        "Set FRAME width."
+    ),
     S!("set-frame-size", 3, 4, f_set_frame_size, "Set FRAME size."),
     S!("set-frame-position", 3, 3, f_nil, ""),
     S!("set-frame-size-and-position-pixelwise", 0, 2, f_nil, ""),
@@ -152,7 +386,13 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!("tty-frame-restack", 3, 3, f_nil, ""),
     S!("tty-frame-at", 2, 2, f_frame_self, ""),
     S!("tty-display-color-p", 0, 3, f_t, ""),
-    S!("tty-display-color-cells", 0, 2, f_tty_colors, "Number of tty colors."),
+    S!(
+        "tty-display-color-cells",
+        0,
+        2,
+        f_tty_colors,
+        "Number of tty colors."
+    ),
     S!("tty-display-pixel-width", 0, 1, f_frame_width, ""),
     S!("tty-display-pixel-height", 0, 1, f_frame_height, ""),
     S!("tty-type", 0, 3, f_tty_type, "Terminal type name."),
@@ -364,10 +604,26 @@ fn f_split_window_internal(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         point: wb.point,
         start: wb.start,
         hscroll: wb.hscroll,
-        top: if horizontal { wb.top } else { wb.top + size.max(0) as usize },
-        height: if horizontal { wb.height } else { (wb.height as i128 - size).max(1) as usize },
-        left: if horizontal { wb.left + size.max(0) as usize } else { wb.left },
-        width: if horizontal { (wb.width as i128 - size).max(1) as usize } else { wb.width },
+        top: if horizontal {
+            wb.top
+        } else {
+            wb.top + size.max(0) as usize
+        },
+        height: if horizontal {
+            wb.height
+        } else {
+            (wb.height as i128 - size).max(1) as usize
+        },
+        left: if horizontal {
+            wb.left + size.max(0) as usize
+        } else {
+            wb.left
+        },
+        width: if horizontal {
+            (wb.width as i128 - size).max(1) as usize
+        } else {
+            wb.width
+        },
         dedicated: false,
         minibuffer: false,
         params: Value::Nil,
@@ -510,7 +766,10 @@ fn f_scroll_right(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 fn f_window_margins(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let w = win_of(i, &arg(&a, 0))?;
     let m = w.borrow().margins;
-    Ok(Value::cons(Value::Int(m.0 as i128), Value::Int(m.1 as i128)))
+    Ok(Value::cons(
+        Value::Int(m.0 as i128),
+        Value::Int(m.1 as i128),
+    ))
 }
 
 fn f_window_edges4(i: &mut Interp, a: Vec<Value>) -> EvalResult {
@@ -633,7 +892,10 @@ fn f_tty_type(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
 }
 
 fn f_terminal_live_p(_i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    Ok(Value::from_bool(matches!(&a[0], Value::Sym(_) | Value::Nil)))
+    Ok(Value::from_bool(matches!(
+        &a[0],
+        Value::Sym(_) | Value::Nil
+    )))
 }
 
 fn f_terminal_list(i: &mut Interp, _a: Vec<Value>) -> EvalResult {

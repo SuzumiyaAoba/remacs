@@ -10,13 +10,12 @@ use std::rc::Rc;
 /// (consumed in order; each entry is a Text line or a Key code).
 fn canned(i: &mut Interp, answers: Vec<MinibufInput>) {
     let answers = std::cell::RefCell::new(
-        answers.into_iter().collect::<std::collections::VecDeque<_>>(),
+        answers
+            .into_iter()
+            .collect::<std::collections::VecDeque<_>>(),
     );
     i.minibuf_reader = Some(Rc::new(move |_, _prompt, _single| {
-        answers
-            .borrow_mut()
-            .pop_front()
-            .ok_or(Flow::Quit)
+        answers.borrow_mut().pop_front().ok_or(Flow::Quit)
     }));
 }
 
@@ -69,8 +68,7 @@ fn buffer_string(i: &mut Interp) -> String {
 fn self_insert_via_command_execute() {
     let (mut i, _) = interp();
     set(&mut i, "last-command-event", Value::Int(97));
-    cmd(&mut i, "self-insert-command")
-        .unwrap();
+    cmd(&mut i, "self-insert-command").unwrap();
     assert_eq!(buffer_string(&mut i), "a");
 }
 
@@ -83,8 +81,7 @@ fn self_insert_prefix_repeat() {
         "current-prefix-arg",
         Value::list(vec![Value::Int(4)]),
     );
-    cmd(&mut i, "self-insert-command")
-        .unwrap();
+    cmd(&mut i, "self-insert-command").unwrap();
     assert_eq!(buffer_string(&mut i), "bbbb");
 }
 
@@ -92,9 +89,12 @@ fn self_insert_prefix_repeat() {
 fn forward_char_prefix() {
     let (mut i, _) = interp();
     ev_in(&mut i, "(insert \"0123456789\") (goto-char 5)");
-    set(&mut i, "current-prefix-arg", Value::list(vec![Value::Int(4)]));
-    cmd(&mut i, "forward-char")
-        .unwrap();
+    set(
+        &mut i,
+        "current-prefix-arg",
+        Value::list(vec![Value::Int(4)]),
+    );
+    cmd(&mut i, "forward-char").unwrap();
     assert_eq!(pev(&mut i, "(point)"), "9");
 }
 
@@ -105,8 +105,7 @@ fn kill_region_interactive() {
         &mut i,
         "(insert \"abcdef\") (goto-char 2) (set-mark 2) (goto-char 5)",
     );
-    cmd(&mut i, "kill-region")
-        .unwrap();
+    cmd(&mut i, "kill-region").unwrap();
     assert_eq!(buffer_string(&mut i), "aef");
 }
 
@@ -125,14 +124,12 @@ fn commandp_reports_commands() {
 #[test]
 fn universal_argument_sets_prefix() {
     let (mut i, _) = interp();
-    cmd(&mut i, "universal-argument")
-        .unwrap();
+    cmd(&mut i, "universal-argument").unwrap();
     let pa_id = i.intern("prefix-arg");
     let pa = i.symbol_value(pa_id);
     assert_eq!(i.prin1_to_string(&pa), "(4)");
     // Second C-u squares it.
-    cmd(&mut i, "universal-argument")
-        .unwrap();
+    cmd(&mut i, "universal-argument").unwrap();
     let pa_id = i.intern("prefix-arg");
     let pa = i.symbol_value(pa_id);
     assert_eq!(i.prin1_to_string(&pa), "(16)");
@@ -142,8 +139,7 @@ fn universal_argument_sets_prefix() {
 fn digit_argument_from_event() {
     let (mut i, _) = interp();
     set(&mut i, "last-command-event", Value::Int(51 | 0x800_0000)); // M-3
-    cmd(&mut i, "digit-argument")
-        .unwrap();
+    cmd(&mut i, "digit-argument").unwrap();
     let pa_id = i.intern("prefix-arg");
     let pa = i.symbol_value(pa_id);
     assert_eq!(i.prin1_to_string(&pa), "3");
@@ -243,8 +239,7 @@ fn interactive_list_form() {
 fn eval_expression_interactive() {
     let (mut i, _) = interp();
     canned(&mut i, vec![MinibufInput::Text("(+ 1 2)".into())]);
-    cmd(&mut i, "eval-expression")
-        .unwrap();
+    cmd(&mut i, "eval-expression").unwrap();
     // Result is echoed via `message`; also returned.
 }
 
@@ -253,8 +248,7 @@ fn execute_extended_command_runs_named_command() {
     let (mut i, _) = interp();
     ev_in(&mut i, "(insert \"x\ny\nz\") (goto-char 1)");
     canned(&mut i, vec![MinibufInput::Text("forward-line".into())]);
-    cmd(&mut i, "execute-extended-command")
-        .unwrap();
+    cmd(&mut i, "execute-extended-command").unwrap();
     assert_eq!(pev(&mut i, "(point)"), "3");
 }
 
@@ -301,7 +295,10 @@ fn key_binding_and_define_key() {
     assert_eq!(ev("(key-binding \"a\")"), "self-insert-command");
     assert_eq!(ev("(key-binding \"\\C-u\")"), "universal-argument");
     assert_eq!(ev("(key-binding \"\\C-f\")"), "forward-char");
-    assert_eq!(ev("(key-binding \"\\C-x\\C-c\")"), "save-buffers-kill-emacs");
+    assert_eq!(
+        ev("(key-binding \"\\C-x\\C-c\")"),
+        "save-buffers-kill-emacs"
+    );
     assert_eq!(
         ev("(progn (define-key (current-global-map) [f5] 'ignore) (key-binding [f5]))"),
         "ignore"
@@ -317,10 +314,8 @@ fn where_is_internal_finds_binding() {
 #[test]
 fn describe_key_shape() {
     // describe-key renders into *Help*.
-    let v = ev(
-        "(progn (describe-key \"\\C-f\")
-                (with-current-buffer \"*Help*\" (buffer-string)))",
-    );
+    let v = ev("(progn (describe-key \"\\C-f\")
+                (with-current-buffer \"*Help*\" (buffer-string)))");
     assert!(v.contains("forward-char"), "{}", v);
     assert!(v.contains("C-f"), "{}", v);
 }

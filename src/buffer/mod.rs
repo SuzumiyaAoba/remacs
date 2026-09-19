@@ -2,15 +2,15 @@
 //! variables, markers, undo records — plus the registry (`BufferSet`)
 //! and all buffer primitives installed into the interpreter.
 
-mod gapbuf;
 pub mod extra;
+mod gapbuf;
 pub mod primitives;
 
 pub use primitives::install_primitives;
 
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::{Rc, Weak};
-use std::cell::RefCell;
 
 use crate::lisp::value::{BufferRef, Marker, SymId, Value};
 
@@ -405,9 +405,10 @@ impl BufferSet {
 
     /// The buffer after `id` in the order (for `other-buffer`).
     pub fn other(&self, exclude: usize) -> Option<usize> {
-        self.order.iter().copied().find(|&id| {
-            id != exclude && self.get(id).is_some()
-        })
+        self.order
+            .iter()
+            .copied()
+            .find(|&id| id != exclude && self.get(id).is_some())
     }
 
     /// Generate a unique buffer name based on `base`.

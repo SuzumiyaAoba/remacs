@@ -134,7 +134,11 @@ fn report_flow(i: &mut Interp, flow: Flow) {
             eprintln!("{}\n\nError: {} ({})", msg, name, args);
         }
         Flow::Throw(tag, v) => {
-            eprintln!("uncaught throw: {} {}", i.princ_to_string(&tag), i.princ_to_string(&v));
+            eprintln!(
+                "uncaught throw: {} {}",
+                i.princ_to_string(&tag),
+                i.princ_to_string(&v)
+            );
         }
         Flow::Quit => {
             eprintln!("Quit");

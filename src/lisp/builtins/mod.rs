@@ -14,10 +14,10 @@ pub(crate) mod readfn;
 pub(crate) mod seq;
 pub(crate) mod strfn;
 
+use super::Interp;
 use super::error::Flow;
 use super::obarray::sym;
 use super::value::{Arity, Subr, SymId, Value};
-use super::Interp;
 
 /// Declare a subr entry.
 macro_rules! S {
@@ -53,8 +53,8 @@ macro_rules! S {
     };
 }
 
-pub use misc::error_message;
 pub(crate) use S;
+pub use misc::error_message;
 
 /// All subrs, aggregated from the category modules.
 fn collect() -> Vec<&'static Subr> {
@@ -78,8 +78,191 @@ pub fn install(interp: &mut Interp) {
         let id = interp.intern(s.name);
         interp.fset(id, Value::Subr(s));
     }
+    // Special forms are subrs in Emacs: `symbol-function'/'subrp'/'fboundp'
+    // must see them. Calling one through funcall signals invalid-function.
+    for s in SPECIAL_FORM_SUBRS {
+        let id = interp.intern(s.name);
+        interp.fset(id, Value::Subr(s));
+    }
     install_aliases(interp);
 }
+
+fn sf_cannot_call(i: &mut Interp, a: Vec<Value>) -> super::error::EvalResult {
+    let _ = a;
+    Err(i.signal_data(sym::INVALID_FUNCTION, vec![Value::Nil]))
+}
+
+/// Special forms (dispatch lives in `lisp::special`).
+static SPECIAL_FORM_SUBRS: &[Subr] = &[
+    Subr {
+        name: "quote",
+        arity: Arity::Unevalled,
+        func: sf_cannot_call,
+        doc: "",
+    },
+    Subr {
+        name: "function",
+        arity: Arity::Unevalled,
+        func: sf_cannot_call,
+        doc: "",
+    },
+    Subr {
+        name: "if",
+        arity: Arity::Unevalled,
+        func: sf_cannot_call,
+        doc: "",
+    },
+    Subr {
+        name: "cond",
+        arity: Arity::Unevalled,
+        func: sf_cannot_call,
+        doc: "",
+    },
+    Subr {
+        name: "progn",
+        arity: Arity::Unevalled,
+        func: sf_cannot_call,
+        doc: "",
+    },
+    Subr {
+        name: "prog1",
+        arity: Arity::Unevalled,
+        func: sf_cannot_call,
+        doc: "",
+    },
+    Subr {
+        name: "prog2",
+        arity: Arity::Unevalled,
+        func: sf_cannot_call,
+        doc: "",
+    },
+    Subr {
+        name: "and",
+        arity: Arity::Unevalled,
+        func: sf_cannot_call,
+        doc: "",
+    },
+    Subr {
+        name: "or",
+        arity: Arity::Unevalled,
+        func: sf_cannot_call,
+        doc: "",
+    },
+    Subr {
+        name: "let",
+        arity: Arity::Unevalled,
+        func: sf_cannot_call,
+        doc: "",
+    },
+    Subr {
+        name: "let*",
+        arity: Arity::Unevalled,
+        func: sf_cannot_call,
+        doc: "",
+    },
+    Subr {
+        name: "setq",
+        arity: Arity::Unevalled,
+        func: sf_cannot_call,
+        doc: "",
+    },
+    Subr {
+        name: "setq-default",
+        arity: Arity::Unevalled,
+        func: sf_cannot_call,
+        doc: "",
+    },
+    Subr {
+        name: "defvar",
+        arity: Arity::Unevalled,
+        func: sf_cannot_call,
+        doc: "",
+    },
+    Subr {
+        name: "defconst",
+        arity: Arity::Unevalled,
+        func: sf_cannot_call,
+        doc: "",
+    },
+    Subr {
+        name: "defun",
+        arity: Arity::Unevalled,
+        func: sf_cannot_call,
+        doc: "",
+    },
+    Subr {
+        name: "defmacro",
+        arity: Arity::Unevalled,
+        func: sf_cannot_call,
+        doc: "",
+    },
+    Subr {
+        name: "lambda",
+        arity: Arity::Unevalled,
+        func: sf_cannot_call,
+        doc: "",
+    },
+    Subr {
+        name: "while",
+        arity: Arity::Unevalled,
+        func: sf_cannot_call,
+        doc: "",
+    },
+    Subr {
+        name: "catch",
+        arity: Arity::Unevalled,
+        func: sf_cannot_call,
+        doc: "",
+    },
+    Subr {
+        name: "unwind-protect",
+        arity: Arity::Unevalled,
+        func: sf_cannot_call,
+        doc: "",
+    },
+    Subr {
+        name: "condition-case",
+        arity: Arity::Unevalled,
+        func: sf_cannot_call,
+        doc: "",
+    },
+    Subr {
+        name: "interactive",
+        arity: Arity::Unevalled,
+        func: sf_cannot_call,
+        doc: "",
+    },
+    Subr {
+        name: "save-excursion",
+        arity: Arity::Unevalled,
+        func: sf_cannot_call,
+        doc: "",
+    },
+    Subr {
+        name: "save-current-buffer",
+        arity: Arity::Unevalled,
+        func: sf_cannot_call,
+        doc: "",
+    },
+    Subr {
+        name: "with-current-buffer",
+        arity: Arity::Unevalled,
+        func: sf_cannot_call,
+        doc: "",
+    },
+    Subr {
+        name: "save-restriction",
+        arity: Arity::Unevalled,
+        func: sf_cannot_call,
+        doc: "",
+    },
+    Subr {
+        name: "track-mouse",
+        arity: Arity::Unevalled,
+        func: sf_cannot_call,
+        doc: "",
+    },
+];
 
 /// `defalias`-style alternate names.
 fn install_aliases(interp: &mut Interp) {
@@ -156,10 +339,10 @@ pub fn eq_values(a: &Value, b: &Value) -> bool {
         (Value::Nil, Value::Nil) => true,
         (Value::Nil, Value::Sym(0)) | (Value::Sym(0), Value::Nil) => true,
         (Value::Int(x), Value::Int(y)) => x == y,
-        (Value::Float(x), Value::Float(y)) => {
-            // eq on floats: same bits (Emacs uses eql for value compare;
-            // eq on floats is "same object" — small floats are equal anyway)
-            x.to_bits() == y.to_bits()
+        (Value::Float(_), Value::Float(_)) => {
+            // eq on floats is object identity; two distinct Float values are
+            // never the same object (eql compares by value).
+            false
         }
         (Value::Sym(x), Value::Sym(y)) => x == y,
         (Value::Cons(x), Value::Cons(y)) => std::rc::Rc::ptr_eq(x, y),

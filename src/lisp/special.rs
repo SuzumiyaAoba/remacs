@@ -5,11 +5,11 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 
+use super::Interp;
 use super::error::{EvalResult, Flow};
 use super::eval::LexFrame;
 use super::obarray::sym;
 use super::value::{SymId, Value};
-use super::Interp;
 
 type SpecialFn = fn(&mut Interp, Value) -> EvalResult;
 
@@ -77,8 +77,6 @@ fn nth_arg(v: &Value, n: usize) -> Value {
     car(&cur)
 }
 
-
-
 impl Interp {
     /// Is `lexical-binding` currently in effect?
     pub fn lexical_binding_active(&self) -> bool {
@@ -89,12 +87,7 @@ impl Interp {
     /// `let`/`let*`/`condition-case` variable binding honoring scoping:
     /// binds lexically when lexical-binding is active and the var isn't
     /// special, else specbinds dynamically.
-    pub fn bind_var(
-        &mut self,
-        lex_vars: Option<&Rc<LexFrame>>,
-        sym: SymId,
-        val: Value,
-    ) {
+    pub fn bind_var(&mut self, lex_vars: Option<&Rc<LexFrame>>, sym: SymId, val: Value) {
         let is_special = self.obarray.symbol(sym).special;
         match (lex_vars, is_special) {
             (Some(frame), false) => {
@@ -122,14 +115,8 @@ fn sf_function(i: &mut Interp, args: Value) -> EvalResult {
             }
             Ok(arg)
         }
-        Value::Sym(_) => {
-            // Emacs: #'sym resolves to the symbol's function cell.
-            let f = i.indirect_function_value(&arg);
-            match f {
-                Value::Sym(s) if s == sym::UNBOUND => Ok(arg.clone()),
-                _ => Ok(f),
-            }
-        }
+        // Emacs: #'sym returns the symbol itself (function position is
+        // resolved at call time), like quote.
         _ => Ok(arg),
     }
 }
@@ -253,12 +240,13 @@ fn parse_let_specs(i: &mut Interp, specs: &Value) -> Result<Vec<(SymId, Value)>,
                 match &spec {
                     Value::Sym(id) => out.push((*id, Value::Nil)),
                     Value::Cons(_) => {
-                        let pair = spec.list_to_vec().map_err(|_| {
-                            i.error("Bad binding in `let'")
-                        })?;
-                        let s = pair.first().and_then(|v| i.sym_id(v)).ok_or_else(|| {
-                            i.error("Bad binding in `let'")
-                        })?;
+                        let pair = spec
+                            .list_to_vec()
+                            .map_err(|_| i.error("Bad binding in `let'"))?;
+                        let s = pair
+                            .first()
+                            .and_then(|v| i.sym_id(v))
+                            .ok_or_else(|| i.error("Bad binding in `let'"))?;
                         out.push((s, pair.get(1).cloned().unwrap_or(Value::Nil)));
                     }
                     _ => return Err(i.error("Bad binding in `let'")),
@@ -277,10 +265,11 @@ fn sf_let(i: &mut Interp, args: Value) -> EvalResult {
         // Parallel binding: evaluate all inits in the outer env first.
         let mut evaluated = Vec::with_capacity(specs.len());
         for (s, init) in &specs {
-            let v = if init.is_nil() && matches!(&car(&args), Value::Cons(c) if {
-                let b = c.borrow();
-                matches!(&b.car, Value::Cons(_) | Value::Nil) || b.car.is_nil()
-            }) {
+            let v = if init.is_nil()
+                && matches!(&car(&args), Value::Cons(c) if {
+                    let b = c.borrow();
+                    matches!(&b.car, Value::Cons(_) | Value::Nil) || b.car.is_nil()
+                }) {
                 i.eval(init)?
             } else {
                 i.eval(init)?
@@ -393,9 +382,9 @@ fn setq_pairs(i: &mut Interp, args: &Value, default: bool) -> EvalResult {
                         _ => (Value::Nil, Value::Nil),
                     }
                 };
-                let sid = i.sym_id(&sym_v).ok_or_else(|| {
-                    i.wrong_type_mut("symbolp", &sym_v)
-                })?;
+                let sid = i
+                    .sym_id(&sym_v)
+                    .ok_or_else(|| i.wrong_type_mut("symbolp", &sym_v))?;
                 last = i.eval(&val_f)?;
                 if default {
                     i.set_symbol_default(sid, last.clone())?;
@@ -533,6 +522,11 @@ fn sf_while(i: &mut Interp, args: Value) -> EvalResult {
 fn sf_catch(i: &mut Interp, args: Value) -> EvalResult {
     let tag = i.eval(&car(&args))?;
     let body = cdr(&args);
+    // Emacs: a nil tag catch acts like progn — `(throw nil ...)' finds
+    // no catch and signals no-catch.
+    if tag.is_nil() {
+        return i.eval_progn(&body);
+    }
     i.catch_tags.push(tag.clone());
     let r = i.eval_progn(&body);
     i.catch_tags.pop();
@@ -593,9 +587,7 @@ fn sf_condition_case(i: &mut Interp, args: Value) -> EvalResult {
                                 None
                             };
                             let saved_lex = match &lex_frame {
-                                Some(f) => {
-                                    std::mem::replace(&mut i.lexenv, Some(f.clone()))
-                                }
+                                Some(f) => std::mem::replace(&mut i.lexenv, Some(f.clone())),
                                 None => None,
                             };
                             if let Some(vid) = i.sym_id(&var_v) {
@@ -636,9 +628,9 @@ fn sf_save_current_buffer(i: &mut Interp, args: Value) -> EvalResult {
 
 fn sf_with_current_buffer(i: &mut Interp, args: Value) -> EvalResult {
     let buf_v = i.eval(&car(&args))?;
-    let buf_id = i.buffer_id_of(&buf_v).ok_or_else(|| {
-        i.wrong_type_mut("bufferp", &buf_v)
-    })?;
+    let buf_id = i
+        .buffer_id_of(&buf_v)
+        .ok_or_else(|| i.wrong_type_mut("bufferp", &buf_v))?;
     let old = i.current_buffer;
     i.set_current_buffer(buf_id);
     let body = cdr(&args);
@@ -669,47 +661,55 @@ pub fn backquote_expand(i: &mut Interp, v: &Value, depth: usize) -> Value {
                 let b = c.borrow();
                 (b.car.clone(), b.cdr.clone())
             };
-            // (,x) or (,x . rest)
-            if let Some(inner) = comma_inner(i, &a) {
-                return match d {
-                    Value::Nil => inner,
-                    _ => {
-                        let d_exp = backquote_expand(i, &d, depth);
-                        Value::list(vec![
-                            Value::Sym(i.intern("cons")),
-                            inner,
-                            d_exp,
-                        ])
-                    }
-                };
+            // `(\, x)` as the whole form — evaluate x. (Element-position
+            // commas are intercepted by the parent's comma_inner first.)
+            if depth == 0
+                && (i.sym_is(&a, sym::COMMA)
+                    || i.sym_is(&a, sym::COMMA_AT)
+                    || i.sym_is(&a, sym::COMMA_DOT))
+            {
+                return car(&d);
             }
-            if let Some(inner) = comma_at_inner(i, &a) {
-                let d_exp = backquote_expand(i, &d, depth);
-                return Value::list(vec![
-                    Value::Sym(i.intern("append")),
-                    inner,
-                    d_exp,
-                ]);
+            // (,x) or (,x . rest) — element `,x` contributes x's value
+            // as one list element; tail `,x` is handled by tail_expand.
+            if depth == 0 {
+                if let Some(inner) = comma_inner(i, &a) {
+                    let d_exp = tail_expand(i, &d, depth);
+                    return Value::list(vec![Value::Sym(i.intern("cons")), inner, d_exp]);
+                }
+                if let Some(inner) = comma_at_inner(i, &a) {
+                    let d_exp = tail_expand(i, &d, depth);
+                    return Value::list(vec![Value::Sym(i.intern("append")), inner, d_exp]);
+                }
             }
-            // Nested backquote: `(a `(b ,c)) — inner bq expands first.
+            // Nested backquote: `(a `(b ,c)) — the inner form is preserved
+            // structurally; its commas only expand at their own depth.
             if i.sym_is(&a, sym::BACKQUOTE) {
-                let inner = backquote_expand(i, &cadr(&a), depth + 1);
-                let inner_exp = backquote_expand(i, &inner, depth + 1);
-                let d_exp = backquote_expand(i, &d, depth);
+                // The element is `(backquote X)` — rebuild it as data:
+                // `(list 'backquote <X expanded at depth+1>)`.
+                let inner = backquote_expand(i, &car(&d), depth + 1);
                 return Value::list(vec![
                     Value::Sym(i.intern("list")),
                     Value::list(vec![Value::Sym(sym::QUOTE), Value::Sym(sym::BACKQUOTE)]),
-                    Value::list(vec![
-                        Value::Sym(i.intern("list")),
-                        inner_exp,
-                        d_exp,
-                    ]),
+                    inner,
                 ]);
             }
-            // (,@x . rest) at element position inside list is handled by
-            // comma_at_inner above since `a` is the element.
+            // `(\, X)` / `(\,@ X)` / `(\,. X)` at depth>0: the comma
+            // decrements depth — rebuild `(, <X expanded at depth-1>)`.
+            if depth > 0
+                && (i.sym_is(&a, sym::COMMA)
+                    || i.sym_is(&a, sym::COMMA_AT)
+                    || i.sym_is(&a, sym::COMMA_DOT))
+            {
+                let inner = backquote_expand(i, &car(&d), depth - 1);
+                return Value::list(vec![
+                    Value::Sym(i.intern("list")),
+                    Value::list(vec![Value::Sym(sym::QUOTE), a.clone()]),
+                    inner,
+                ]);
+            }
             let a_exp = backquote_expand(i, &a, depth);
-            let d_exp = backquote_expand(i, &d, depth);
+            let d_exp = tail_expand(i, &d, depth);
             Value::list(vec![Value::Sym(i.intern("cons")), a_exp, d_exp])
         }
         Value::Vec(items) => {
@@ -744,6 +744,20 @@ pub fn backquote_expand(i: &mut Interp, v: &Value, depth: usize) -> Value {
         }
         _ => Value::list(vec![Value::Sym(sym::QUOTE), v.clone()]),
     }
+}
+
+/// Expand the cdr of a backquoted list. At depth 0 a `(\, x)`/`(\,@ x)`
+/// tail means x is evaluated and becomes (or splices into) the tail.
+fn tail_expand(i: &mut Interp, d: &Value, depth: usize) -> Value {
+    if depth == 0 {
+        if let Some(inner) = comma_inner(i, d) {
+            return inner;
+        }
+        if let Some(inner) = comma_at_inner(i, d) {
+            return inner;
+        }
+    }
+    backquote_expand(i, d, depth)
 }
 
 /// If `v` is `(, x)` return `x`.

@@ -2,7 +2,7 @@
 //! and core buffer primitives.
 
 mod common;
-use common::{ev, ev_out, ev_err, ev_result};
+use common::{ev, ev_err, ev_out, ev_result};
 
 #[test]
 fn subst_char_in_region() {
@@ -133,10 +133,12 @@ fn delete_and_extract() {
         "\"el\""
     );
     assert_eq!(
-        ev_out("(with-temp-buffer
+        ev_out(
+            "(with-temp-buffer
                   (insert \"hello\")
                   (delete-and-extract-region 2 4)
-                  (princ (buffer-string)))"),
+                  (princ (buffer-string)))"
+        ),
         "hlo"
     );
 }
@@ -144,17 +146,21 @@ fn delete_and_extract() {
 #[test]
 fn region_encoding() {
     assert_eq!(
-        ev_out("(with-temp-buffer
+        ev_out(
+            "(with-temp-buffer
                   (insert \"hi\")
                   (base64-encode-region 1 3)
-                  (princ (buffer-string)))"),
+                  (princ (buffer-string)))"
+        ),
         "aGk="
     );
     assert_eq!(
-        ev_out("(with-temp-buffer
+        ev_out(
+            "(with-temp-buffer
                   (insert \"aGk=\")
                   (base64-decode-region 1 5)
-                  (princ (buffer-string)))"),
+                  (princ (buffer-string)))"
+        ),
         "hi"
     );
 }
@@ -162,14 +168,16 @@ fn region_encoding() {
 #[test]
 fn buffer_swap_text() {
     assert_eq!(
-        ev_out("(let ((a (generate-new-buffer \"*a*\"))
+        ev_out(
+            "(let ((a (generate-new-buffer \"*a*\"))
                      (b (generate-new-buffer \"*b*\")))
                  (with-current-buffer a (insert \"AAA\"))
                  (with-current-buffer b (insert \"BBB\"))
                  (with-current-buffer a (buffer-swap-text b))
                  (princ (with-current-buffer a (buffer-string)))
                  (princ \"|\")
-                 (princ (with-current-buffer b (buffer-string))))"),
+                 (princ (with-current-buffer b (buffer-string))))"
+        ),
         "BBB|AAA"
     );
 }
@@ -177,10 +185,12 @@ fn buffer_swap_text() {
 #[test]
 fn transpose_regions() {
     assert_eq!(
-        ev_out("(with-temp-buffer
+        ev_out(
+            "(with-temp-buffer
                   (insert \"abcdef\")
                   (transpose-regions 1 3 4 6)
-                  (princ (buffer-string)))"),
+                  (princ (buffer-string)))"
+        ),
         "decabf"
     );
 }
@@ -189,10 +199,12 @@ fn transpose_regions() {
 fn translate_region() {
     // Chars outside the table range are unchanged (matches Emacs).
     assert_eq!(
-        ev_out("(with-temp-buffer
+        ev_out(
+            "(with-temp-buffer
                   (insert \"abcabc\")
                   (translate-region 1 7 \"cba\")
-                  (princ (buffer-string)))"),
+                  (princ (buffer-string)))"
+        ),
         "abcabc"
     );
     // Char code i maps to table[i].

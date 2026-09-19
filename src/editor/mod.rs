@@ -8,11 +8,11 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
+use crate::lisp::Interp;
 use crate::lisp::builtins::eq_values;
 use crate::lisp::error::{EvalResult, Flow};
 use crate::lisp::obarray::sym;
 use crate::lisp::value::{Subr, SymId, Value};
-use crate::lisp::Interp;
 
 pub(crate) mod winxtra;
 
@@ -111,7 +111,10 @@ macro_rules! S {
     ($name:literal, $min:expr, $max:expr, $f:expr, $doc:literal) => {
         crate::lisp::value::Subr {
             name: $name,
-            arity: crate::lisp::value::Arity::Range { min: $min, max: $max },
+            arity: crate::lisp::value::Arity::Range {
+                min: $min,
+                max: $max,
+            },
             func: $f,
             doc: $doc,
         }
@@ -136,65 +139,305 @@ macro_rules! S {
 
 pub(crate) static SUBRS: &[Subr] = &[
     // windows
-    S!("selected-window", 0, 0, f_selected_window, "Currently selected window."),
+    S!(
+        "selected-window",
+        0,
+        0,
+        f_selected_window,
+        "Currently selected window."
+    ),
     S!("windowp", 1, 1, f_windowp, "t if OBJECT is a window."),
-    S!("window-live-p", 1, 1, f_window_live_p, "t if WINDOW is live."),
-    S!("window-buffer", 0, 1, f_window_buffer, "Buffer shown in WINDOW."),
-    S!("set-window-buffer", 2, 3, f_set_window_buffer, "Show BUFFER in WINDOW."),
+    S!(
+        "window-live-p",
+        1,
+        1,
+        f_window_live_p,
+        "t if WINDOW is live."
+    ),
+    S!(
+        "window-buffer",
+        0,
+        1,
+        f_window_buffer,
+        "Buffer shown in WINDOW."
+    ),
+    S!(
+        "set-window-buffer",
+        2,
+        3,
+        f_set_window_buffer,
+        "Show BUFFER in WINDOW."
+    ),
     S!("window-point", 0, 1, f_window_point, "Point in WINDOW."),
-    S!("set-window-point", 2, 2, f_set_window_point, "Set WINDOW's point."),
-    S!("window-start", 0, 1, f_window_start, "First visible position in WINDOW."),
-    S!("set-window-start", 2, 3, f_set_window_start, "Set WINDOW's start."),
-    S!("window-end", 0, 3, f_window_end, "Last visible position in WINDOW."),
-    S!("window-frame", 0, 1, f_window_frame, "Frame containing WINDOW."),
+    S!(
+        "set-window-point",
+        2,
+        2,
+        f_set_window_point,
+        "Set WINDOW's point."
+    ),
+    S!(
+        "window-start",
+        0,
+        1,
+        f_window_start,
+        "First visible position in WINDOW."
+    ),
+    S!(
+        "set-window-start",
+        2,
+        3,
+        f_set_window_start,
+        "Set WINDOW's start."
+    ),
+    S!(
+        "window-end",
+        0,
+        3,
+        f_window_end,
+        "Last visible position in WINDOW."
+    ),
+    S!(
+        "window-frame",
+        0,
+        1,
+        f_window_frame,
+        "Frame containing WINDOW."
+    ),
     S!("window-list", 0, 3, f_window_list, "Windows of FRAME."),
-    S!("window-minibuffer-p", 0, 1, f_window_minibuffer_p, "t if WINDOW is a minibuffer."),
-    S!("minibuffer-window", 0, 1, f_minibuffer_window, "The minibuffer window."),
-    S!("minibuffer-window-active-p", 1, 1, f_minibuffer_window_active_p, "t if WINDOW is an active minibuffer."),
+    S!(
+        "window-minibuffer-p",
+        0,
+        1,
+        f_window_minibuffer_p,
+        "t if WINDOW is a minibuffer."
+    ),
+    S!(
+        "minibuffer-window",
+        0,
+        1,
+        f_minibuffer_window,
+        "The minibuffer window."
+    ),
+    S!(
+        "minibuffer-window-active-p",
+        1,
+        1,
+        f_minibuffer_window_active_p,
+        "t if WINDOW is an active minibuffer."
+    ),
     S!("split-window", 0, 3, f_split_window, "Split WINDOW."),
-    S!("split-window-below", 0, 1, f_split_window_below, "Split below."),
-    S!("split-window-right", 0, 1, f_split_window_right, "Split right."),
+    S!(
+        "split-window-below",
+        0,
+        1,
+        f_split_window_below,
+        "Split below."
+    ),
+    S!(
+        "split-window-right",
+        0,
+        1,
+        f_split_window_right,
+        "Split right."
+    ),
     S!("delete-window", 0, 1, f_delete_window, "Delete WINDOW."),
-    S!("delete-other-windows", 0, 1, f_delete_other_windows, "Delete all but WINDOW."),
-    S!("other-window", 0, 2, f_other_window, "Select the next window."),
-    S!("select-window", 1, 2, f_select_window, "Make WINDOW selected."),
-    S!("one-window-p", 0, 1, f_one_window_p, "t if only one window."),
+    S!(
+        "delete-other-windows",
+        0,
+        1,
+        f_delete_other_windows,
+        "Delete all but WINDOW."
+    ),
+    S!(
+        "other-window",
+        0,
+        2,
+        f_other_window,
+        "Select the next window."
+    ),
+    S!(
+        "select-window",
+        1,
+        2,
+        f_select_window,
+        "Make WINDOW selected."
+    ),
+    S!(
+        "one-window-p",
+        0,
+        1,
+        f_one_window_p,
+        "t if only one window."
+    ),
     S!("next-window", 0, 3, f_next_window, "Next window in cycle."),
-    S!("previous-window", 0, 3, f_previous_window, "Previous window."),
-    S!("walk-windows", 1, 3, f_walk_windows, "Call FN on each window."),
-    S!("get-buffer-window", 0, 2, f_get_buffer_window, "Window displaying BUFFER."),
-    S!("get-buffer-window-list", 0, 3, f_get_buffer_window_list, "Windows displaying BUFFER."),
+    S!(
+        "previous-window",
+        0,
+        3,
+        f_previous_window,
+        "Previous window."
+    ),
+    S!(
+        "walk-windows",
+        1,
+        3,
+        f_walk_windows,
+        "Call FN on each window."
+    ),
+    S!(
+        "get-buffer-window",
+        0,
+        2,
+        f_get_buffer_window,
+        "Window displaying BUFFER."
+    ),
+    S!(
+        "get-buffer-window-list",
+        0,
+        3,
+        f_get_buffer_window_list,
+        "Windows displaying BUFFER."
+    ),
     S!("window-height", 0, 2, f_window_height, "Height of WINDOW."),
-    S!("window-body-height", 0, 2, f_window_body_height, "Body height of WINDOW."),
+    S!(
+        "window-body-height",
+        0,
+        2,
+        f_window_body_height,
+        "Body height of WINDOW."
+    ),
     S!("window-total-height", 0, 2, f_window_height, ""),
     S!("window-width", 0, 2, f_window_width, "Width of WINDOW."),
-    S!("window-body-width", 0, 2, f_window_body_width, "Body width of WINDOW."),
+    S!(
+        "window-body-width",
+        0,
+        2,
+        f_window_body_width,
+        "Body width of WINDOW."
+    ),
     S!("window-total-width", 0, 2, f_window_width, ""),
     S!("window-text-width", 0, 2, f_window_body_width, ""),
-    S!("window-hscroll", 0, 1, f_window_hscroll, "Horizontal scroll of WINDOW."),
-    S!("set-window-hscroll", 2, 2, f_set_window_hscroll, "Set WINDOW hscroll."),
-    S!("window-edges", 0, 4, f_window_edges, "Edge coords of WINDOW."),
+    S!(
+        "window-hscroll",
+        0,
+        1,
+        f_window_hscroll,
+        "Horizontal scroll of WINDOW."
+    ),
+    S!(
+        "set-window-hscroll",
+        2,
+        2,
+        f_set_window_hscroll,
+        "Set WINDOW hscroll."
+    ),
+    S!(
+        "window-edges",
+        0,
+        4,
+        f_window_edges,
+        "Edge coords of WINDOW."
+    ),
     S!("window-inside-edges", 0, 1, f_window_edges, ""),
     S!("window-pixel-edges", 0, 1, f_window_edges, ""),
     S!("window-at", 2, 2, f_window_at, "Window at X,Y."),
-    S!("recenter", 0, 2, f_recenter, "Scroll so point is on line N."),
+    S!(
+        "recenter",
+        0,
+        2,
+        f_recenter,
+        "Scroll so point is on line N."
+    ),
     S!("scroll-up", 0, 1, f_scroll_up, "Scroll text up N lines."),
-    S!("scroll-down", 0, 1, f_scroll_down, "Scroll text down N lines."),
-    S!("scroll-up-command", 0, 1, f_scroll_up_command, "Scroll up a screenful."),
-    S!("scroll-down-command", 0, 1, f_scroll_down_command, "Scroll down a screenful."),
-    S!("scroll-other-window", 0, 1, f_scroll_other_window, "Scroll the other window."),
-    S!("move-to-window-line", 1, 1, f_move_to_window_line, "Move point to window line N."),
-    S!("pos-visible-in-window-p", 0, 3, f_pos_visible_in_window_p, "t if POS is visible."),
-    S!("window-dedicated-p", 0, 1, f_window_dedicated_p, "t if WINDOW is dedicated."),
-    S!("set-window-dedicated-p", 2, 2, f_set_window_dedicated_p, "Set WINDOW dedicated flag."),
-    S!("window-parameter", 2, 2, f_window_parameter, "WINDOW's PARAMETER."),
-    S!("set-window-parameter", 3, 3, f_set_window_parameter, "Set WINDOW parameter."),
-    S!("window-parameters", 0, 1, f_window_parameters, "WINDOW's parameter alist."),
+    S!(
+        "scroll-down",
+        0,
+        1,
+        f_scroll_down,
+        "Scroll text down N lines."
+    ),
+    S!(
+        "scroll-up-command",
+        0,
+        1,
+        f_scroll_up_command,
+        "Scroll up a screenful."
+    ),
+    S!(
+        "scroll-down-command",
+        0,
+        1,
+        f_scroll_down_command,
+        "Scroll down a screenful."
+    ),
+    S!(
+        "scroll-other-window",
+        0,
+        1,
+        f_scroll_other_window,
+        "Scroll the other window."
+    ),
+    S!(
+        "move-to-window-line",
+        1,
+        1,
+        f_move_to_window_line,
+        "Move point to window line N."
+    ),
+    S!(
+        "pos-visible-in-window-p",
+        0,
+        3,
+        f_pos_visible_in_window_p,
+        "t if POS is visible."
+    ),
+    S!(
+        "window-dedicated-p",
+        0,
+        1,
+        f_window_dedicated_p,
+        "t if WINDOW is dedicated."
+    ),
+    S!(
+        "set-window-dedicated-p",
+        2,
+        2,
+        f_set_window_dedicated_p,
+        "Set WINDOW dedicated flag."
+    ),
+    S!(
+        "window-parameter",
+        2,
+        2,
+        f_window_parameter,
+        "WINDOW's PARAMETER."
+    ),
+    S!(
+        "set-window-parameter",
+        3,
+        3,
+        f_set_window_parameter,
+        "Set WINDOW parameter."
+    ),
+    S!(
+        "window-parameters",
+        0,
+        1,
+        f_window_parameters,
+        "WINDOW's parameter alist."
+    ),
     S!("window-left-char", 0, 1, f_window_start, ""),
     S!("window-top-line", 0, 1, f_window_start, ""),
     S!("window-display-table", 0, 1, f_nil, ""),
     S!("set-window-display-table", 2, 2, f_second, ""),
-    S!("window-margins", 0, 1, f_window_margins, "Margins of WINDOW."),
+    S!(
+        "window-margins",
+        0,
+        1,
+        f_window_margins,
+        "Margins of WINDOW."
+    ),
     S!("window-fringes", 0, 2, f_window_fringes, "Fringe widths."),
     S!("window-scroll-bars", 0, 4, f_nil, ""),
     S!("window-new-normal", 0, 1, f_nil, ""),
@@ -208,31 +451,115 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!("window-state-get", 0, 2, f_nil, ""),
     S!("window-state-put", 1, 3, f_nil, ""),
     // frames
-    S!("selected-frame", 0, 0, f_selected_frame, "The selected frame."),
+    S!(
+        "selected-frame",
+        0,
+        0,
+        f_selected_frame,
+        "The selected frame."
+    ),
     S!("framep", 1, 1, f_framep, "t if OBJECT is a frame."),
     S!("frame-live-p", 1, 1, f_frame_live_p, "t if FRAME is live."),
     S!("frame-list", 0, 0, f_frame_list, "All live frames."),
     S!("visible-frame-list", 0, 0, f_frame_list, ""),
     S!("delete-frame", 0, 2, f_delete_frame, "Delete FRAME."),
-    S!("frame-parameter", 2, 2, f_frame_parameter, "FRAME's PARAMETER."),
-    S!("frame-parameters", 0, 1, f_frame_parameters, "FRAME's parameters alist."),
-    S!("modify-frame-parameters", 2, 2, f_modify_frame_parameters, "Set FRAME parameters."),
-    S!("set-frame-parameter", 3, 3, f_set_frame_parameter, "Set FRAME parameter."),
-    S!("frame-first-window", 0, 1, f_frame_first_window, "First window of FRAME."),
-    S!("frame-root-window", 0, 1, f_frame_root_window, "Root window of FRAME."),
-    S!("frame-selected-window", 0, 1, f_frame_selected_window, "Selected window of FRAME."),
-    S!("set-frame-selected-window", 2, 3, f_set_frame_selected_window, "Select WINDOW in FRAME."),
-    S!("frame-width", 0, 1, f_frame_width, "Width of FRAME in chars."),
-    S!("frame-height", 0, 1, f_frame_height, "Height of FRAME in chars."),
+    S!(
+        "frame-parameter",
+        2,
+        2,
+        f_frame_parameter,
+        "FRAME's PARAMETER."
+    ),
+    S!(
+        "frame-parameters",
+        0,
+        1,
+        f_frame_parameters,
+        "FRAME's parameters alist."
+    ),
+    S!(
+        "modify-frame-parameters",
+        2,
+        2,
+        f_modify_frame_parameters,
+        "Set FRAME parameters."
+    ),
+    S!(
+        "set-frame-parameter",
+        3,
+        3,
+        f_set_frame_parameter,
+        "Set FRAME parameter."
+    ),
+    S!(
+        "frame-first-window",
+        0,
+        1,
+        f_frame_first_window,
+        "First window of FRAME."
+    ),
+    S!(
+        "frame-root-window",
+        0,
+        1,
+        f_frame_root_window,
+        "Root window of FRAME."
+    ),
+    S!(
+        "frame-selected-window",
+        0,
+        1,
+        f_frame_selected_window,
+        "Selected window of FRAME."
+    ),
+    S!(
+        "set-frame-selected-window",
+        2,
+        3,
+        f_set_frame_selected_window,
+        "Select WINDOW in FRAME."
+    ),
+    S!(
+        "frame-width",
+        0,
+        1,
+        f_frame_width,
+        "Width of FRAME in chars."
+    ),
+    S!(
+        "frame-height",
+        0,
+        1,
+        f_frame_height,
+        "Height of FRAME in chars."
+    ),
     S!("frame-char-width", 0, 1, f_one, "Char cell width."),
     S!("frame-char-height", 0, 1, f_one, "Char cell height."),
     S!("frame-pixel-width", 0, 1, f_frame_width, ""),
     S!("frame-pixel-height", 0, 1, f_frame_height, ""),
-    S!("frame-position", 0, 1, f_frame_position, "Frame position (0,0)."),
+    S!(
+        "frame-position",
+        0,
+        1,
+        f_frame_position,
+        "Frame position (0,0)."
+    ),
     S!("frame-edges", 0, 2, f_frame_edges, "Frame edges."),
-    S!("make-frame", 0, 1, f_make_frame, "Make a new frame (tty: reuse)."),
+    S!(
+        "make-frame",
+        0,
+        1,
+        f_make_frame,
+        "Make a new frame (tty: reuse)."
+    ),
     S!("display-graphic-p", 0, 1, f_nil, "t on GUI (nil on tty)."),
-    S!("window-system", 0, 1, f_nil, "Window system type (nil on tty)."),
+    S!(
+        "window-system",
+        0,
+        1,
+        f_nil,
+        "Window system type (nil on tty)."
+    ),
     S!("terminal-name", 0, 1, f_terminal_name, "Terminal name."),
     S!("terminal-list", 0, 0, f_terminal_list, "List of terminals."),
     S!("frame-terminal", 0, 1, f_selected_frame, ""),
@@ -250,40 +577,172 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!("visible-p", 0, 0, f_t, ""),
     // keymaps
     S!("make-keymap", 0, 1, f_make_keymap, "Create a full keymap."),
-    S!("make-sparse-keymap", 0, 1, f_make_sparse_keymap, "Create a sparse keymap."),
+    S!(
+        "make-sparse-keymap",
+        0,
+        1,
+        f_make_sparse_keymap,
+        "Create a sparse keymap."
+    ),
     S!("keymapp", 1, 1, f_keymapp, "t if OBJECT is a keymap."),
     S!("keymap-prompt", 1, 1, f_nil, ""),
     S!("copy-keymap", 1, 1, f_copy_keymap, "Copy KEYMAP."),
     S!("keymap-parent", 1, 1, f_keymap_parent, "Parent of KEYMAP."),
-    S!("set-keymap-parent", 2, 2, f_set_keymap_parent, "Set KEYMAP's parent."),
-    S!("define-key", 3, 3, f_define_key, "Bind KEY to DEF in KEYMAP."),
+    S!(
+        "set-keymap-parent",
+        2,
+        2,
+        f_set_keymap_parent,
+        "Set KEYMAP's parent."
+    ),
+    S!(
+        "define-key",
+        3,
+        3,
+        f_define_key,
+        "Bind KEY to DEF in KEYMAP."
+    ),
     S!("lookup-key", 2, 3, f_lookup_key, "Look up KEY in KEYMAP."),
     S!("key-binding", 1, 4, f_key_binding, "Command bound to KEY."),
-    S!("local-key-binding", 1, 2, f_local_key_binding, "Local binding of KEY."),
-    S!("global-key-binding", 1, 2, f_global_key_binding, "Global binding of KEY."),
+    S!(
+        "local-key-binding",
+        1,
+        2,
+        f_local_key_binding,
+        "Local binding of KEY."
+    ),
+    S!(
+        "global-key-binding",
+        1,
+        2,
+        f_global_key_binding,
+        "Global binding of KEY."
+    ),
     S!("minor-mode-key-binding", 1, 1, f_nil, ""),
-    S!("current-local-map", 0, 0, f_current_local_map, "Current buffer's local map."),
-    S!("current-global-map", 0, 0, f_current_global_map, "The global map."),
+    S!(
+        "current-local-map",
+        0,
+        0,
+        f_current_local_map,
+        "Current buffer's local map."
+    ),
+    S!(
+        "current-global-map",
+        0,
+        0,
+        f_current_global_map,
+        "The global map."
+    ),
     S!("current-minor-mode-maps", 0, 0, f_nil, ""),
     S!("use-local-map", 1, 1, f_use_local_map, "Set local map."),
     S!("use-global-map", 1, 1, f_use_global_map, "Set global map."),
-    S!("local-set-key", 2, 2, f_local_set_key, "Bind KEY in local map."),
-    S!("global-set-key", 2, 2, f_global_set_key, "Bind KEY in global map."),
-    S!("local-unset-key", 1, 1, f_local_unset_key, "Unbind KEY in local map."),
-    S!("global-unset-key", 1, 1, f_global_unset_key, "Unbind KEY in global map."),
-    S!("define-prefix-command", 1, 3, f_define_prefix_command, "Define COMMAND as a prefix keymap."),
-    S!("command-remapping", 1, 3, f_command_remapping, "Remapped command for COMMAND."),
-    S!("where-is-internal", 1, 5, f_where_is_internal, "Keys binding COMMAND."),
+    S!(
+        "local-set-key",
+        2,
+        2,
+        f_local_set_key,
+        "Bind KEY in local map."
+    ),
+    S!(
+        "global-set-key",
+        2,
+        2,
+        f_global_set_key,
+        "Bind KEY in global map."
+    ),
+    S!(
+        "local-unset-key",
+        1,
+        1,
+        f_local_unset_key,
+        "Unbind KEY in local map."
+    ),
+    S!(
+        "global-unset-key",
+        1,
+        1,
+        f_global_unset_key,
+        "Unbind KEY in global map."
+    ),
+    S!(
+        "define-prefix-command",
+        1,
+        3,
+        f_define_prefix_command,
+        "Define COMMAND as a prefix keymap."
+    ),
+    S!(
+        "command-remapping",
+        1,
+        3,
+        f_command_remapping,
+        "Remapped command for COMMAND."
+    ),
+    S!(
+        "where-is-internal",
+        1,
+        5,
+        f_where_is_internal,
+        "Keys binding COMMAND."
+    ),
     S!("kbd", 1, 1, f_kbd, "Parse KEYS into a key vector."),
-    S!("key-description", 1, 2, f_key_description, "Human-readable key description."),
-    S!("single-key-description", 1, 2, f_single_key_description, "Describe one key event."),
-    S!("text-char-description", 1, 1, f_text_char_description, "Describe character."),
-    S!("read-key-sequence", 1, 7, f_read_key_sequence, "Read a key sequence."),
-    S!("read-key-sequence-vector", 1, 7, f_read_key_sequence_vector, "Read keys to a vector."),
-    S!("this-command-keys", 0, 0, f_this_command_keys, "Keys for this command."),
-    S!("this-command-keys-vector", 0, 0, f_this_command_keys_vector, ""),
+    S!(
+        "key-description",
+        1,
+        2,
+        f_key_description,
+        "Human-readable key description."
+    ),
+    S!(
+        "single-key-description",
+        1,
+        2,
+        f_single_key_description,
+        "Describe one key event."
+    ),
+    S!(
+        "text-char-description",
+        1,
+        1,
+        f_text_char_description,
+        "Describe character."
+    ),
+    S!(
+        "read-key-sequence",
+        1,
+        7,
+        f_read_key_sequence,
+        "Read a key sequence."
+    ),
+    S!(
+        "read-key-sequence-vector",
+        1,
+        7,
+        f_read_key_sequence_vector,
+        "Read keys to a vector."
+    ),
+    S!(
+        "this-command-keys",
+        0,
+        0,
+        f_this_command_keys,
+        "Keys for this command."
+    ),
+    S!(
+        "this-command-keys-vector",
+        0,
+        0,
+        f_this_command_keys_vector,
+        ""
+    ),
     S!("this-single-command-keys", 0, 0, f_this_command_keys, ""),
-    S!("this-single-command-raw-keys", 0, 0, f_this_command_keys, ""),
+    S!(
+        "this-single-command-raw-keys",
+        0,
+        0,
+        f_this_command_keys,
+        ""
+    ),
     S!("recent-keys", 0, 1, f_nil, ""),
     S!("clear-this-command-keys", 0, 1, f_nil, ""),
     S!("input-pending-p", 0, 1, f_nil, ""),
@@ -291,67 +750,325 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!("last-nonminibuffer-frame", 0, 0, f_selected_frame, ""),
     // kill ring
     S!("kill-new", 1, 2, f_kill_new, "Push STRING onto kill-ring."),
-    S!("kill-append", 1, 2, f_kill_append, "Append STRING to latest kill."),
+    S!(
+        "kill-append",
+        1,
+        2,
+        f_kill_append,
+        "Append STRING to latest kill."
+    ),
     S!("current-kill", 1, 2, f_current_kill, "Nth kill-ring entry."),
-    S!("copy-region-as-kill", 2, 2, f_copy_region_as_kill, "Copy region to kill-ring."),
+    S!(
+        "copy-region-as-kill",
+        2,
+        2,
+        f_copy_region_as_kill,
+        "Copy region to kill-ring."
+    ),
     S!("kill-ring-save", 2, 2, f_copy_region_as_kill, ""),
     S!("yank", 0, 1, f_yank, "Insert the latest kill."),
-    S!("yank-pop", 0, 1, f_yank_pop, "Replace yank with earlier kill."),
-    S!("rotate-yank-pointer", 1, 1, f_rotate_yank_pointer, "Rotate kill-ring pointer."),
-    S!("copy-to-buffer", 4, 4, f_copy_to_buffer, "Copy region to BUFFER."),
+    S!(
+        "yank-pop",
+        0,
+        1,
+        f_yank_pop,
+        "Replace yank with earlier kill."
+    ),
+    S!(
+        "rotate-yank-pointer",
+        1,
+        1,
+        f_rotate_yank_pointer,
+        "Rotate kill-ring pointer."
+    ),
+    S!(
+        "copy-to-buffer",
+        4,
+        4,
+        f_copy_to_buffer,
+        "Copy region to BUFFER."
+    ),
     // file I/O
-    S!("file-exists-p", 1, 1, f_file_exists_p, "t if FILENAME exists."),
-    S!("file-directory-p", 1, 1, f_file_directory_p, "t if FILENAME is a directory."),
-    S!("file-regular-p", 1, 1, f_file_regular_p, "t if FILENAME is a regular file."),
-    S!("file-readable-p", 1, 1, f_file_readable_p, "t if FILENAME is readable."),
-    S!("file-writable-p", 1, 1, f_file_writable_p, "t if FILENAME is writable."),
-    S!("file-executable-p", 1, 1, f_file_executable_p, "t if FILENAME is executable."),
-    S!("file-symlink-p", 1, 1, f_file_symlink_p, "t if FILENAME is a symlink."),
-    S!("file-newer-than-file-p", 2, 2, f_file_newer_than_file_p, "t if FILE1 is newer."),
-    S!("file-attributes", 1, 2, f_file_attributes, "Attributes of FILENAME."),
+    S!(
+        "file-exists-p",
+        1,
+        1,
+        f_file_exists_p,
+        "t if FILENAME exists."
+    ),
+    S!(
+        "file-directory-p",
+        1,
+        1,
+        f_file_directory_p,
+        "t if FILENAME is a directory."
+    ),
+    S!(
+        "file-regular-p",
+        1,
+        1,
+        f_file_regular_p,
+        "t if FILENAME is a regular file."
+    ),
+    S!(
+        "file-readable-p",
+        1,
+        1,
+        f_file_readable_p,
+        "t if FILENAME is readable."
+    ),
+    S!(
+        "file-writable-p",
+        1,
+        1,
+        f_file_writable_p,
+        "t if FILENAME is writable."
+    ),
+    S!(
+        "file-executable-p",
+        1,
+        1,
+        f_file_executable_p,
+        "t if FILENAME is executable."
+    ),
+    S!(
+        "file-symlink-p",
+        1,
+        1,
+        f_file_symlink_p,
+        "t if FILENAME is a symlink."
+    ),
+    S!(
+        "file-newer-than-file-p",
+        2,
+        2,
+        f_file_newer_than_file_p,
+        "t if FILE1 is newer."
+    ),
+    S!(
+        "file-attributes",
+        1,
+        2,
+        f_file_attributes,
+        "Attributes of FILENAME."
+    ),
     S!("file-modes", 1, 2, f_file_modes, "Mode bits of FILENAME."),
     S!("set-file-modes", 2, 3, f_set_file_modes, "Set mode bits."),
-    S!("file-name-absolute-p", 1, 1, f_file_name_absolute_p, "t if FILENAME is absolute."),
-    S!("expand-file-name", 1, 2, f_expand_file_name, "Make FILENAME absolute."),
-    S!("file-name-directory", 1, 1, f_file_name_directory, "Directory part of FILENAME."),
-    S!("file-name-nondirectory", 1, 1, f_file_name_nondirectory, "Nondirectory part."),
-    S!("file-name-extension", 1, 2, f_file_name_extension, "Extension of FILENAME."),
-    S!("file-name-sans-extension", 1, 1, f_file_name_sans_extension, "FILENAME minus extension."),
-    S!("file-name-sans-versions", 1, 2, f_file_name_sans_extension, ""),
-    S!("file-name-sans-directory", 1, 1, f_file_name_nondirectory, ""),
-    S!("file-name-base", 1, 1, f_file_name_base, "FILENAME minus dir and ext."),
-    S!("file-name-as-directory", 1, 1, f_file_name_as_directory, "Ensure trailing slash."),
-    S!("directory-file-name", 1, 1, f_directory_file_name, "Directory as filename (no slash)."),
+    S!(
+        "file-name-absolute-p",
+        1,
+        1,
+        f_file_name_absolute_p,
+        "t if FILENAME is absolute."
+    ),
+    S!(
+        "expand-file-name",
+        1,
+        2,
+        f_expand_file_name,
+        "Make FILENAME absolute."
+    ),
+    S!(
+        "file-name-directory",
+        1,
+        1,
+        f_file_name_directory,
+        "Directory part of FILENAME."
+    ),
+    S!(
+        "file-name-nondirectory",
+        1,
+        1,
+        f_file_name_nondirectory,
+        "Nondirectory part."
+    ),
+    S!(
+        "file-name-extension",
+        1,
+        2,
+        f_file_name_extension,
+        "Extension of FILENAME."
+    ),
+    S!(
+        "file-name-sans-extension",
+        1,
+        1,
+        f_file_name_sans_extension,
+        "FILENAME minus extension."
+    ),
+    S!(
+        "file-name-sans-versions",
+        1,
+        2,
+        f_file_name_sans_extension,
+        ""
+    ),
+    S!(
+        "file-name-sans-directory",
+        1,
+        1,
+        f_file_name_nondirectory,
+        ""
+    ),
+    S!(
+        "file-name-base",
+        1,
+        1,
+        f_file_name_base,
+        "FILENAME minus dir and ext."
+    ),
+    S!(
+        "file-name-as-directory",
+        1,
+        1,
+        f_file_name_as_directory,
+        "Ensure trailing slash."
+    ),
+    S!(
+        "directory-file-name",
+        1,
+        1,
+        f_directory_file_name,
+        "Directory as filename (no slash)."
+    ),
     S!("file-name-concat", many 1, f_file_name_concat, "Join path components."),
-    S!("file-relative-name", 1, 2, f_file_relative_name, "FILENAME relative to DIR."),
-    S!("abbreviate-file-name", 1, 1, f_abbreviate_file_name, "Abbreviate home dir."),
-    S!("substitute-in-file-name", 1, 1, f_substitute_in_file_name, "Expand $VARS."),
-    S!("directory-files", 1, 4, f_directory_files, "Files in DIRECTORY."),
-    S!("directory-files-and-attributes", 1, 5, f_directory_files_and_attributes, ""),
-    S!("file-name-completion", 2, 3, f_file_name_completion, "Complete FILE in DIRECTORY."),
-    S!("file-name-all-completions", 2, 2, f_file_name_all_completions, "All completions of FILE."),
+    S!(
+        "file-relative-name",
+        1,
+        2,
+        f_file_relative_name,
+        "FILENAME relative to DIR."
+    ),
+    S!(
+        "abbreviate-file-name",
+        1,
+        1,
+        f_abbreviate_file_name,
+        "Abbreviate home dir."
+    ),
+    S!(
+        "substitute-in-file-name",
+        1,
+        1,
+        f_substitute_in_file_name,
+        "Expand $VARS."
+    ),
+    S!(
+        "directory-files",
+        1,
+        4,
+        f_directory_files,
+        "Files in DIRECTORY."
+    ),
+    S!(
+        "directory-files-and-attributes",
+        1,
+        5,
+        f_directory_files_and_attributes,
+        ""
+    ),
+    S!(
+        "file-name-completion",
+        2,
+        3,
+        f_file_name_completion,
+        "Complete FILE in DIRECTORY."
+    ),
+    S!(
+        "file-name-all-completions",
+        2,
+        2,
+        f_file_name_all_completions,
+        "All completions of FILE."
+    ),
     S!("make-directory", 1, 2, f_make_directory, "Create DIR."),
     S!("delete-directory", 1, 3, f_delete_directory, "Delete DIR."),
     S!("delete-file", 1, 2, f_delete_file, "Delete FILENAME."),
-    S!("rename-file", 2, 3, f_rename_file, "Rename FILE to NEWNAME."),
+    S!(
+        "rename-file",
+        2,
+        3,
+        f_rename_file,
+        "Rename FILE to NEWNAME."
+    ),
     S!("copy-file", 2, 4, f_copy_file, "Copy FILE to NEWNAME."),
     S!("copy-directory", 2, 4, f_nil, ""),
-    S!("add-name-to-file", 2, 3, f_rename_file, "Hard link FILE to NEWNAME."),
-    S!("insert-file-contents", 1, 7, f_insert_file_contents, "Insert contents of FILENAME."),
-    S!("insert-file-contents-literally", 1, 5, f_insert_file_contents_literally, ""),
-    S!("write-region", 3, 7, f_write_region, "Write region to FILENAME."),
+    S!(
+        "add-name-to-file",
+        2,
+        3,
+        f_rename_file,
+        "Hard link FILE to NEWNAME."
+    ),
+    S!(
+        "insert-file-contents",
+        1,
+        7,
+        f_insert_file_contents,
+        "Insert contents of FILENAME."
+    ),
+    S!(
+        "insert-file-contents-literally",
+        1,
+        5,
+        f_insert_file_contents_literally,
+        ""
+    ),
+    S!(
+        "write-region",
+        3,
+        7,
+        f_write_region,
+        "Write region to FILENAME."
+    ),
     S!("write-region-annotate-functions", 0, 0, f_nil, ""),
     S!("write-region-post-annotation-function", 0, 0, f_nil, ""),
     S!("write-region-charset-for-write", 0, 0, f_nil, ""),
-    S!("car-less-than-car", 2, 2, f_car_less_than_car, "Compare cars."),
-    S!("set-visited-file-name", 0, 2, f_set_visited_file_name, "Set buffer-file-name."),
-    S!("find-file-noselect", 1, 4, f_find_file_noselect, "Read FILENAME into a buffer."),
+    S!(
+        "car-less-than-car",
+        2,
+        2,
+        f_car_less_than_car,
+        "Compare cars."
+    ),
+    S!(
+        "set-visited-file-name",
+        0,
+        2,
+        f_set_visited_file_name,
+        "Set buffer-file-name."
+    ),
+    S!(
+        "find-file-noselect",
+        1,
+        4,
+        f_find_file_noselect,
+        "Read FILENAME into a buffer."
+    ),
     S!("find-file", 1, 2, f_find_file, "Visit FILENAME."),
     S!("find-file-literally", 1, 1, f_find_file, ""),
     S!("save-buffer", 0, 1, f_save_buffer, "Save current buffer."),
-    S!("write-file", 1, 2, f_write_file, "Write buffer to FILENAME."),
-    S!("append-to-file", 3, 4, f_append_to_file, "Append region to FILENAME."),
-    S!("file-truename", 1, 1, f_file_truename, "Canonical name of FILENAME."),
+    S!(
+        "write-file",
+        1,
+        2,
+        f_write_file,
+        "Write buffer to FILENAME."
+    ),
+    S!(
+        "append-to-file",
+        3,
+        4,
+        f_append_to_file,
+        "Append region to FILENAME."
+    ),
+    S!(
+        "file-truename",
+        1,
+        1,
+        f_file_truename,
+        "Canonical name of FILENAME."
+    ),
     S!("file-name-history", 0, 0, f_nil, ""),
     S!("insert-directory-literally", many 0, f_nil, ""),
     S!("insert-directory", many 0, f_nil, ""),
@@ -369,11 +1086,41 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!("file-system-info", 1, 1, f_nil, ""),
     S!("file-equal-p", 2, 2, f_nil, ""),
     // processes
-    S!("call-process", 1, 8, f_call_process, "Run PROGRAM synchronously."),
-    S!("call-process-region", 3, 9, f_call_process_region, "Run PROGRAM on region."),
-    S!("shell-command", 1, 4, f_shell_command, "Run COMMAND in a shell."),
-    S!("shell-command-to-string", 1, 1, f_shell_command_to_string, "Run COMMAND, return output."),
-    S!("start-process", 3, 3, f_start_process_stub, "Start async process (unsupported)."),
+    S!(
+        "call-process",
+        1,
+        8,
+        f_call_process,
+        "Run PROGRAM synchronously."
+    ),
+    S!(
+        "call-process-region",
+        3,
+        9,
+        f_call_process_region,
+        "Run PROGRAM on region."
+    ),
+    S!(
+        "shell-command",
+        1,
+        4,
+        f_shell_command,
+        "Run COMMAND in a shell."
+    ),
+    S!(
+        "shell-command-to-string",
+        1,
+        1,
+        f_shell_command_to_string,
+        "Run COMMAND, return output."
+    ),
+    S!(
+        "start-process",
+        3,
+        3,
+        f_start_process_stub,
+        "Start async process (unsupported)."
+    ),
     S!("processp", 1, 1, f_nil, ""),
     S!("process-status", 1, 1, f_nil, ""),
     S!("process-list", 0, 0, f_nil, ""),
@@ -393,74 +1140,308 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!("process-get", 2, 2, f_nil, ""),
     // editing commands
     S!("kill-line", 0, 1, f_kill_line, "Kill to end of line."),
-    S!("kill-whole-line", 0, 1, f_kill_whole_line, "Kill the whole line."),
+    S!(
+        "kill-whole-line",
+        0,
+        1,
+        f_kill_whole_line,
+        "Kill the whole line."
+    ),
     S!("kill-word", 1, 1, f_kill_word, "Kill N words."),
-    S!("backward-kill-word", 1, 1, f_backward_kill_word, "Kill N words backward."),
-    S!("delete-horizontal-space", 0, 1, f_delete_horizontal_space, "Delete surrounding whitespace."),
-    S!("just-one-space", 0, 1, f_just_one_space, "One space around point."),
-    S!("delete-indentation", 0, 1, f_delete_indentation, "Join this line to previous."),
+    S!(
+        "backward-kill-word",
+        1,
+        1,
+        f_backward_kill_word,
+        "Kill N words backward."
+    ),
+    S!(
+        "delete-horizontal-space",
+        0,
+        1,
+        f_delete_horizontal_space,
+        "Delete surrounding whitespace."
+    ),
+    S!(
+        "just-one-space",
+        0,
+        1,
+        f_just_one_space,
+        "One space around point."
+    ),
+    S!(
+        "delete-indentation",
+        0,
+        1,
+        f_delete_indentation,
+        "Join this line to previous."
+    ),
     S!("join-line", 0, 1, f_delete_indentation, ""),
-    S!("zap-to-char", 2, 3, f_zap_to_char, "Kill up to Nth occurrence of CHAR."),
-    S!("transpose-chars", 1, 1, f_transpose_chars, "Swap chars around point."),
-    S!("transpose-words", 1, 1, f_transpose_words, "Swap words around point."),
-    S!("transpose-lines", 1, 1, f_transpose_lines, "Swap lines around point."),
+    S!(
+        "zap-to-char",
+        2,
+        3,
+        f_zap_to_char,
+        "Kill up to Nth occurrence of CHAR."
+    ),
+    S!(
+        "transpose-chars",
+        1,
+        1,
+        f_transpose_chars,
+        "Swap chars around point."
+    ),
+    S!(
+        "transpose-words",
+        1,
+        1,
+        f_transpose_words,
+        "Swap words around point."
+    ),
+    S!(
+        "transpose-lines",
+        1,
+        1,
+        f_transpose_lines,
+        "Swap lines around point."
+    ),
     S!("upcase-region", 2, 3, f_upcase_region, "Uppercase region."),
-    S!("downcase-region", 2, 3, f_downcase_region, "Lowercase region."),
-    S!("capitalize-region", 2, 3, f_capitalize_region, "Capitalize region."),
-    S!("upcase-word", 1, 1, f_upcase_word, "Uppercase next N words."),
-    S!("downcase-word", 1, 1, f_downcase_word, "Lowercase next N words."),
-    S!("capitalize-word", 1, 1, f_capitalize_word, "Capitalize next N words."),
-    S!("indent-line-to", 1, 1, f_indent_line_to, "Indent line to COLUMN."),
+    S!(
+        "downcase-region",
+        2,
+        3,
+        f_downcase_region,
+        "Lowercase region."
+    ),
+    S!(
+        "capitalize-region",
+        2,
+        3,
+        f_capitalize_region,
+        "Capitalize region."
+    ),
+    S!(
+        "upcase-word",
+        1,
+        1,
+        f_upcase_word,
+        "Uppercase next N words."
+    ),
+    S!(
+        "downcase-word",
+        1,
+        1,
+        f_downcase_word,
+        "Lowercase next N words."
+    ),
+    S!(
+        "capitalize-word",
+        1,
+        1,
+        f_capitalize_word,
+        "Capitalize next N words."
+    ),
+    S!(
+        "indent-line-to",
+        1,
+        1,
+        f_indent_line_to,
+        "Indent line to COLUMN."
+    ),
     S!("indent-to", 1, 2, f_indent_to, "Indent to COLUMN."),
-    S!("indent-rigidly", 3, 4, f_indent_rigidly, "Indent region rigidly."),
+    S!(
+        "indent-rigidly",
+        3,
+        4,
+        f_indent_rigidly,
+        "Indent region rigidly."
+    ),
     S!("tab-to-tab-stop", 0, 0, f_nil, ""),
-    S!("delete-trailing-whitespace", 0, 2, f_delete_trailing_whitespace, ""),
+    S!(
+        "delete-trailing-whitespace",
+        0,
+        2,
+        f_delete_trailing_whitespace,
+        ""
+    ),
     S!("untabify", 0, 2, f_untabify, "Convert tabs to spaces."),
-    S!("tabify", 0, 2, f_tabify, "Convert spaces to tabs (stub keeps)."),
-    S!("move-beginning-of-line", 1, 1, f_move_beginning_of_line, "Command: BOL."),
-    S!("move-end-of-line", 1, 1, f_move_end_of_line, "Command: EOL."),
+    S!(
+        "tabify",
+        0,
+        2,
+        f_tabify,
+        "Convert spaces to tabs (stub keeps)."
+    ),
+    S!(
+        "move-beginning-of-line",
+        1,
+        1,
+        f_move_beginning_of_line,
+        "Command: BOL."
+    ),
+    S!(
+        "move-end-of-line",
+        1,
+        1,
+        f_move_end_of_line,
+        "Command: EOL."
+    ),
     S!("forward-line-command", 0, 1, f_forward_line_cmd, ""),
-    S!("next-line", 0, 1, f_next_line, "Move to next line keeping column."),
-    S!("previous-line", 0, 1, f_previous_line, "Move to previous line."),
+    S!(
+        "next-line",
+        0,
+        1,
+        f_next_line,
+        "Move to next line keeping column."
+    ),
+    S!(
+        "previous-line",
+        0,
+        1,
+        f_previous_line,
+        "Move to previous line."
+    ),
     S!("beginning-of-buffer-other-window", 0, 0, f_nil, ""),
     S!("set-goal-column", 1, 1, f_nil, ""),
     S!("exchange-point-and-mark-inactive", 0, 0, f_nil, ""),
     // minibuffer/echo
-    S!("minibufferp", 0, 1, f_minibufferp, "t if BUFFER is a minibuffer."),
-    S!("minibuffer-contents", 0, 0, f_minibuffer_contents, "Minibuffer text."),
-    S!("minibuffer-contents-no-properties", 0, 0, f_minibuffer_contents, ""),
-    S!("delete-minibuffer-contents", 0, 0, f_delete_minibuffer_contents, "Clear minibuffer."),
-    S!("minibuffer-depth", 0, 0, f_minibuffer_depth, "Minibuffer recursion depth."),
-    S!("minibuffer-prompt", 0, 0, f_minibuffer_prompt, "Minibuffer prompt text."),
+    S!(
+        "minibufferp",
+        0,
+        1,
+        f_minibufferp,
+        "t if BUFFER is a minibuffer."
+    ),
+    S!(
+        "minibuffer-contents",
+        0,
+        0,
+        f_minibuffer_contents,
+        "Minibuffer text."
+    ),
+    S!(
+        "minibuffer-contents-no-properties",
+        0,
+        0,
+        f_minibuffer_contents,
+        ""
+    ),
+    S!(
+        "delete-minibuffer-contents",
+        0,
+        0,
+        f_delete_minibuffer_contents,
+        "Clear minibuffer."
+    ),
+    S!(
+        "minibuffer-depth",
+        0,
+        0,
+        f_minibuffer_depth,
+        "Minibuffer recursion depth."
+    ),
+    S!(
+        "minibuffer-prompt",
+        0,
+        0,
+        f_minibuffer_prompt,
+        "Minibuffer prompt text."
+    ),
     S!("minibuffer-prompt-end", 0, 0, f_one, ""),
     S!("active-minibuffer-window", 0, 0, f_minibuffer_window, ""),
     S!("set-minibuffer-window", 1, 1, f_nil, ""),
     S!("minibuffer-message", many 1, f_minibuffer_message, "Message in minibuffer."),
-    S!("read-from-minibuffer", 1, 8, f_read_from_minibuffer, "Read from minibuffer."),
+    S!(
+        "read-from-minibuffer",
+        1,
+        8,
+        f_read_from_minibuffer,
+        "Read from minibuffer."
+    ),
     S!("read-buffer", 1, 4, f_read_buffer, "Read a buffer name."),
-    S!("read-file-name", 1, 8, f_read_file_name, "Read a file name."),
+    S!(
+        "read-file-name",
+        1,
+        8,
+        f_read_file_name,
+        "Read a file name."
+    ),
     S!("read-directory-name", 1, 7, f_read_file_name, ""),
     S!("read-number", 1, 3, f_read_number, "Read a number."),
     S!("read-regexp", 1, 3, f_read_regexp, "Read a regexp."),
-    S!("completing-read", 2, 8, f_completing_read, "Read with completion."),
-    S!("try-completion", 2, 3, f_try_completion, "Completion of STRING."),
-    S!("all-completions", 2, 4, f_all_completions, "All completions of STRING."),
-    S!("test-completion", 2, 3, f_test_completion, "t if STRING completes."),
+    S!(
+        "completing-read",
+        2,
+        8,
+        f_completing_read,
+        "Read with completion."
+    ),
+    S!(
+        "try-completion",
+        2,
+        3,
+        f_try_completion,
+        "Completion of STRING."
+    ),
+    S!(
+        "all-completions",
+        2,
+        4,
+        f_all_completions,
+        "All completions of STRING."
+    ),
+    S!(
+        "test-completion",
+        2,
+        3,
+        f_test_completion,
+        "t if STRING completes."
+    ),
     S!("completion-boundaries", 0, 0, f_nil, ""),
     S!("internal-complete-buffer", 3, 3, f_nil, ""),
     S!("read-string", 1, 5, f_read_string, "Read a string."),
     S!("read-command", 1, 2, f_read_command, "Read a command name."),
-    S!("read-variable", 1, 2, f_read_variable, "Read a variable name."),
+    S!(
+        "read-variable",
+        1,
+        2,
+        f_read_variable,
+        "Read a variable name."
+    ),
     S!("read-key", 0, 2, f_read_char, "Read one key event."),
     S!("read-event", 0, 3, f_read_char, "Read one input event."),
     S!("read-char", 0, 3, f_read_char, "Read one character."),
-    S!("read-char-exclusive", 0, 3, f_read_char, "Read one character."),
+    S!(
+        "read-char-exclusive",
+        0,
+        3,
+        f_read_char,
+        "Read one character."
+    ),
     S!("y-or-n-p", 1, 1, f_y_or_n_p, "Ask yes/no (batch: t)."),
     S!("yes-or-no-p", 1, 1, f_y_or_n_p, ""),
     // commands/misc
-    S!("commandp", 1, 2, f_commandp, "t if OBJECT is callable interactively."),
-    S!("call-interactively", 1, 3, f_call_interactively, "Call FUNCTION interactively."),
-    S!("execute-extended-command", 1, 2, f_execute_extended_command, "M-x."),
+    S!(
+        "commandp",
+        1,
+        2,
+        f_commandp,
+        "t if OBJECT is callable interactively."
+    ),
+    S!(
+        "call-interactively",
+        1,
+        3,
+        f_call_interactively,
+        "Call FUNCTION interactively."
+    ),
+    S!(
+        "execute-extended-command",
+        1,
+        2,
+        f_execute_extended_command,
+        "M-x."
+    ),
     S!("execute-kbd-macro", 1, 2, f_nil, ""),
     S!("start-kbd-macro", 1, 2, f_nil, ""),
     S!("end-kbd-macro", 0, 1, f_nil, ""),
@@ -470,27 +1451,63 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!("cancel-kbd-macro-events", 0, 0, f_nil, ""),
     S!("store-kbd-macro-event", 1, 1, f_nil, ""),
     S!("kbd-macro-query", 0, 0, f_nil, ""),
-    S!("prefix-numeric-value", 1, 1, f_prefix_numeric_value, "Numeric prefix value."),
+    S!(
+        "prefix-numeric-value",
+        1,
+        1,
+        f_prefix_numeric_value,
+        "Numeric prefix value."
+    ),
     S!("universal-argument", 0, 0, f_universal_argument, "C-u."),
-    S!("digit-argument", 1, 1, f_digit_argument, "Set prefix arg from typed digits."),
+    S!(
+        "digit-argument",
+        1,
+        1,
+        f_digit_argument,
+        "Set prefix arg from typed digits."
+    ),
     S!("negative-argument", 1, 1, f_negative_argument, "M--."),
-    S!("beginning-of-defun", 0, 1, f_beginning_of_defun, "Move to defun start."),
+    S!(
+        "beginning-of-defun",
+        0,
+        1,
+        f_beginning_of_defun,
+        "Move to defun start."
+    ),
     S!("end-of-defun", 0, 1, f_end_of_defun, "Move past defun end."),
     S!("mark-defun", 0, 0, f_mark_defun, "Mark the defun."),
-    S!("narrow-to-defun", 0, 1, f_narrow_to_defun, "Narrow to defun."),
+    S!(
+        "narrow-to-defun",
+        0,
+        1,
+        f_narrow_to_defun,
+        "Narrow to defun."
+    ),
     S!("mark-page", 0, 0, f_nil, ""),
     S!("narrow-to-page", 0, 1, f_nil, ""),
     S!("count-words", 2, 2, f_count_words, "Words in region."),
     S!("count-words-region", 2, 2, f_count_words, ""),
     S!("count-lines-page", 0, 0, f_nil, ""),
-    S!("what-cursor-position", 0, 1, f_what_cursor_position, "Describe point."),
+    S!(
+        "what-cursor-position",
+        0,
+        1,
+        f_what_cursor_position,
+        "Describe point."
+    ),
     S!("what-line", 0, 0, f_what_line, "Show line number."),
     S!("char-syntax", 1, 1, f_char_syntax, "Syntax code of CHAR."),
     S!("modify-syntax-entry", 2, 3, f_nil, ""),
     S!("syntax-table", 0, 0, f_nil, ""),
     S!("set-syntax-table", 1, 1, f_second, ""),
     S!("syntax-table-p", 1, 1, f_nil, ""),
-    S!("make-syntax-table", 0, 1, f_make_syntax_table, "New syntax table."),
+    S!(
+        "make-syntax-table",
+        0,
+        1,
+        f_make_syntax_table,
+        "New syntax table."
+    ),
     S!("copy-syntax-table", 0, 1, f_first, ""),
     S!("syntax-after", 1, 1, f_nil, ""),
     S!("syntax-class", 1, 1, f_zero, ""),
@@ -498,15 +1515,38 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!("string-to-syntax", 1, 1, f_nil, ""),
     S!("syntax-propertize", 1, 1, f_nil, ""),
     S!("internal--syntax-propertize", 0, 0, f_nil, ""),
-    S!("parse-partial-sexp", 2, 8, f_parse_partial_sexp, "Sexp parse state (approx)."),
-    S!("syntax-ppss", 0, 1, f_syntax_ppss, "Sexp parser state at POS."),
+    S!(
+        "parse-partial-sexp",
+        2,
+        8,
+        f_parse_partial_sexp,
+        "Sexp parse state (approx)."
+    ),
+    S!(
+        "syntax-ppss",
+        0,
+        1,
+        f_syntax_ppss,
+        "Sexp parser state at POS."
+    ),
     S!("inside-comment-p", 0, 0, f_nil, ""),
     S!("comment-beginning", 0, 0, f_nil, ""),
     // modes
-    S!("fundamental-mode", 0, 0, f_fundamental_mode, "The default major mode."),
+    S!(
+        "fundamental-mode",
+        0,
+        0,
+        f_fundamental_mode,
+        "The default major mode."
+    ),
     S!("normal-mode", 0, 1, f_normal_mode, "Pick major mode."),
     S!("major-mode-suspend", 0, 0, f_nil, ""),
-    S!("delay-mode-hooks", raw, f_progn_raw, "Eval BODY delaying mode hooks."),
+    S!(
+        "delay-mode-hooks",
+        raw,
+        f_progn_raw,
+        "Eval BODY delaying mode hooks."
+    ),
     S!("run-mode-hooks", many 0, f_run_mode_hooks, "Run mode hooks."),
     S!("set-auto-mode", 0, 1, f_nil, ""),
     S!("set-auto-mode-0", 0, 0, f_nil, ""),
@@ -521,25 +1561,72 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!("cancel-timer", 1, 1, f_nil, ""),
     S!("timerp", 1, 1, f_nil, ""),
     S!("timer-activate", 1, 2, f_nil, ""),
-    S!("with-timeout", raw, f_with_timeout_raw, "Eval body (timeout ignored)."),
+    S!(
+        "with-timeout",
+        raw,
+        f_with_timeout_raw,
+        "Eval body (timeout ignored)."
+    ),
     S!("current-idle-time", 0, 0, f_nil, ""),
     // overlays
-    S!("make-overlay", 2, 5, f_make_overlay, "Create overlay BEG..END."),
+    S!(
+        "make-overlay",
+        2,
+        5,
+        f_make_overlay,
+        "Create overlay BEG..END."
+    ),
     S!("delete-overlay", 1, 1, f_delete_overlay, "Delete OVERLAY."),
-    S!("move-overlay", 3, 4, f_move_overlay, "Move OVERLAY to BEG..END."),
+    S!(
+        "move-overlay",
+        3,
+        4,
+        f_move_overlay,
+        "Move OVERLAY to BEG..END."
+    ),
     S!("overlay-start", 1, 1, f_overlay_start, "Start of OVERLAY."),
     S!("overlay-end", 1, 1, f_overlay_end, "End of OVERLAY."),
-    S!("overlay-buffer", 1, 1, f_overlay_buffer, "Buffer of OVERLAY."),
+    S!(
+        "overlay-buffer",
+        1,
+        1,
+        f_overlay_buffer,
+        "Buffer of OVERLAY."
+    ),
     S!("overlay-put", 3, 3, f_overlay_put, "Set OVERLAY property."),
     S!("overlay-get", 2, 2, f_overlay_get, "Get OVERLAY property."),
-    S!("overlay-properties", 1, 1, f_overlay_properties, "Overlay plist."),
+    S!(
+        "overlay-properties",
+        1,
+        1,
+        f_overlay_properties,
+        "Overlay plist."
+    ),
     S!("overlayp", 1, 1, f_overlayp, "t if OBJECT is an overlay."),
     S!("overlays-at", 1, 2, f_overlays_at, "Overlays at POS."),
-    S!("overlays-in", 2, 2, f_overlays_in, "Overlays between BEG and END."),
+    S!(
+        "overlays-in",
+        2,
+        2,
+        f_overlays_in,
+        "Overlays between BEG and END."
+    ),
     S!("overlays-at-point", 0, 0, f_overlays_at_point, ""),
-    S!("next-overlay-change", 1, 1, f_next_overlay_change, "Next pos with overlay boundary."),
+    S!(
+        "next-overlay-change",
+        1,
+        1,
+        f_next_overlay_change,
+        "Next pos with overlay boundary."
+    ),
     S!("previous-overlay-change", 1, 1, f_prev_overlay_change, ""),
-    S!("remove-overlays", 0, 4, f_remove_overlays, "Remove overlays in region."),
+    S!(
+        "remove-overlays",
+        0,
+        4,
+        f_remove_overlays,
+        "Remove overlays in region."
+    ),
     S!("restore-buffer-modified-p", 1, 1, f_second, ""),
     // faces (stubs — tty has limited support)
     S!("facep", 1, 1, f_nil, ""),
@@ -611,13 +1698,43 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!("x-menu-bar-open-internal", 0, 1, f_nil, ""),
     // echo/help
     S!("describe-bindings-internal", 0, 2, f_nil, ""),
-    S!("documentation-property", 2, 3, f_documentation_property, "Prop on symbol."),
+    S!(
+        "documentation-property",
+        2,
+        3,
+        f_documentation_property,
+        "Prop on symbol."
+    ),
     S!("Snarf-documentation", 1, 1, f_nil, ""),
-    S!("documentation", 1, 2, f_documentation, "Docstring of FUNCTION."),
+    S!(
+        "documentation",
+        1,
+        2,
+        f_documentation,
+        "Docstring of FUNCTION."
+    ),
     S!("keymap-get-key", 0, 0, f_nil, ""),
-    S!("internal-event-symbol-parse-modifiers", 1, 1, f_identity, ""),
-    S!("substitute-command-keys", 1, 1, f_substitute_command_keys, "Substitute key descriptions in STRING."),
-    S!("apropos-internal", 1, 2, f_apropos_internal, "Symbols matching REGEXP."),
+    S!(
+        "internal-event-symbol-parse-modifiers",
+        1,
+        1,
+        f_identity,
+        ""
+    ),
+    S!(
+        "substitute-command-keys",
+        1,
+        1,
+        f_substitute_command_keys,
+        "Substitute key descriptions in STRING."
+    ),
+    S!(
+        "apropos-internal",
+        1,
+        2,
+        f_apropos_internal,
+        "Symbols matching REGEXP."
+    ),
     // indent-according-to-mode etc are Lisp-level
     // dynamic-completion-table skip
     // text-conversion? skip
@@ -690,7 +1807,9 @@ pub(crate) fn sel_frame(i: &Interp) -> Option<FrameRef> {
 }
 
 pub(crate) fn sel_window(i: &Interp) -> Option<WindowRef> {
-    i.selected_frame.as_ref().map(|f| f.borrow().selected.clone())
+    i.selected_frame
+        .as_ref()
+        .map(|f| f.borrow().selected.clone())
 }
 
 pub(crate) fn win_of(i: &mut Interp, v: &Value) -> Result<WindowRef, Flow> {
@@ -1129,7 +2248,9 @@ fn f_recenter(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 
 fn f_scroll_up(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let n = arg(&a, 0).int().unwrap_or_else(|| {
-        sel_window(i).map(|w| w.borrow().height as i128 - 2).unwrap_or(10)
+        sel_window(i)
+            .map(|w| w.borrow().height as i128 - 2)
+            .unwrap_or(10)
     });
     let w = sel_window(i).unwrap();
     let buf = w.borrow().buffer;
@@ -1150,7 +2271,9 @@ fn f_scroll_up(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 
 fn f_scroll_down(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let n = arg(&a, 0).int().unwrap_or_else(|| {
-        sel_window(i).map(|w| w.borrow().height as i128 - 2).unwrap_or(10)
+        sel_window(i)
+            .map(|w| w.borrow().height as i128 - 2)
+            .unwrap_or(10)
     });
     let w = sel_window(i).unwrap();
     let buf = w.borrow().buffer;
@@ -1175,7 +2298,9 @@ fn f_scroll_other_window(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     // Scroll the *next* window.
     let sel = sel_window(i).unwrap();
     if let Some(other) = window_cycle(i, 1, &sel) {
-        let n = arg(&a, 0).int().unwrap_or(other.borrow().height as i128 - 2);
+        let n = arg(&a, 0)
+            .int()
+            .unwrap_or(other.borrow().height as i128 - 2);
         let buf = other.borrow().buffer;
         if let Some(b) = i.buffers.get(buf) {
             let bb = b.borrow();
@@ -1209,9 +2334,9 @@ fn f_move_to_window_line(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 }
 
 fn f_pos_visible_in_window_p(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let pos = arg(&a, 0).int().unwrap_or_else(|| {
-        cur(i).borrow().point() as i128 + 1
-    });
+    let pos = arg(&a, 0)
+        .int()
+        .unwrap_or_else(|| cur(i).borrow().point() as i128 + 1);
     let w = win_of(i, &arg(&a, 1))?;
     let start = w.borrow().start as i128 + 1;
     Ok(Value::from_bool(pos >= start))
@@ -1257,10 +2382,7 @@ fn f_window_margins(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     if l == 0 && r == 0 {
         Ok(Value::Nil)
     } else {
-        Ok(Value::cons(
-            Value::Int(l as i128),
-            Value::Int(r as i128),
-        ))
+        Ok(Value::cons(Value::Int(l as i128), Value::Int(r as i128)))
     }
 }
 fn f_window_fringes(_i: &mut Interp, _a: Vec<Value>) -> EvalResult {
@@ -1429,10 +2551,7 @@ fn is_keymap(i: &Interp, v: &Value) -> bool {
 
 fn f_make_keymap(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let _ = &a;
-    Ok(Value::cons(
-        Value::Sym(i.intern("keymap")),
-        Value::Nil,
-    ))
+    Ok(Value::cons(Value::Sym(i.intern("keymap")), Value::Nil))
 }
 fn f_make_sparse_keymap(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     f_make_keymap(i, a)
@@ -1573,11 +2692,7 @@ fn lookup_in_keymap(i: &Interp, km: &Value, key: i128) -> Value {
             }
         }
     });
-    if found.is_nil() {
-        default
-    } else {
-        found
-    }
+    if found.is_nil() { default } else { found }
 }
 
 fn f_define_key(i: &mut Interp, a: Vec<Value>) -> EvalResult {
@@ -1661,11 +2776,7 @@ fn f_lookup_key(i: &mut Interp, a: Vec<Value>) -> EvalResult {
                     i.princ_to_string(&a[1])
                 )));
             }
-            return Ok(if def.is_nil() {
-                Value::Nil
-            } else {
-                def
-            });
+            return Ok(if def.is_nil() { Value::Nil } else { def });
         }
     }
     if used < keys.len() {
@@ -1917,7 +3028,9 @@ fn f_kbd(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let keys = parse_kbd(i, &s);
     // Emacs: kbd returns a STRING when all events are plain
     // characters, else a vector of events.
-    let all_plain = keys.iter().all(|k| matches!(k, Value::Int(n) if *n >= 0 && *n < 128));
+    let all_plain = keys
+        .iter()
+        .all(|k| matches!(k, Value::Int(n) if *n >= 0 && *n < 128));
     if all_plain {
         let s: String = keys
             .iter()
@@ -1995,9 +3108,11 @@ fn parse_key_token(i: &mut Interp, tok: &str) -> Vec<Value> {
     if rest.starts_with('<') && rest.ends_with('>') && rest.len() > 2 {
         // Named event: <return>, M-<left> → symbols like `M-return`.
         let name = &rest[1..rest.len() - 1];
-        return vec![Value::Sym(
-            i.intern(&format!("{}{}", mods_name, name.to_ascii_lowercase())),
-        )];
+        return vec![Value::Sym(i.intern(&format!(
+            "{}{}",
+            mods_name,
+            name.to_ascii_lowercase()
+        )))];
     }
     // A multi-char token that isn't a known key name is a literal
     // char sequence (Emacs: (kbd "abc") -> "abc"); modifiers apply
@@ -2012,16 +3127,14 @@ fn parse_key_token(i: &mut Interp, tok: &str) -> Vec<Value> {
             "esc" | "escape" => Some(27),
             "del" => Some(127),
             "nul" => Some(0),
-            "backspace" | "delete" | "delchar" | "deletechar" | "home" | "end"
-            | "left" | "right" | "up" | "down" | "prior" | "pageup" | "next"
-            | "pagedown" | "insert" => None,
+            "backspace" | "delete" | "delchar" | "deletechar" | "home" | "end" | "left"
+            | "right" | "up" | "down" | "prior" | "pageup" | "next" | "pagedown" | "insert" => None,
             s if s.starts_with('f') && s[1..].parse::<u32>().is_ok() => None,
             _ => None,
         };
         match rest.to_ascii_lowercase().as_str() {
-            "backspace" | "delete" | "delchar" | "deletechar" | "home" | "end"
-            | "left" | "right" | "up" | "down" | "prior" | "pageup" | "next"
-            | "pagedown" | "insert" => {
+            "backspace" | "delete" | "delchar" | "deletechar" | "home" | "end" | "left"
+            | "right" | "up" | "down" | "prior" | "pageup" | "next" | "pagedown" | "insert" => {
                 let name = rest.to_ascii_lowercase();
                 let canon = match name.as_str() {
                     "delchar" | "deletechar" => "deletechar".to_string(),
@@ -2029,15 +3142,11 @@ fn parse_key_token(i: &mut Interp, tok: &str) -> Vec<Value> {
                     "pagedown" => "next".to_string(),
                     s => s.to_string(),
                 };
-                return vec![Value::Sym(
-                    i.intern(&format!("{}{}", mods_name, canon)),
-                )];
+                return vec![Value::Sym(i.intern(&format!("{}{}", mods_name, canon)))];
             }
             s if s.starts_with('f') && s[1..].parse::<u32>().is_ok() => {
                 let name = rest.to_ascii_lowercase();
-                return vec![Value::Sym(
-                    i.intern(&format!("{}{}", mods_name, name)),
-                )];
+                return vec![Value::Sym(i.intern(&format!("{}{}", mods_name, name)))];
             }
             _ => {}
         }
@@ -2165,8 +3274,7 @@ fn f_substitute_command_keys(i: &mut Interp, a: Vec<Value>) -> EvalResult {
                 '[' => {
                     if let Some((name, next)) = take_until(&chars, pos + 2, ']') {
                         let cmd = Value::Sym(i.intern(&name));
-                        let keys = f_where_is_internal(i, vec![cmd.clone()])
-                            .unwrap_or(Value::Nil);
+                        let keys = f_where_is_internal(i, vec![cmd.clone()]).unwrap_or(Value::Nil);
                         // Restrict to the \<map> context if one was set.
                         let first_key = if let Some(km) = &ctx_map {
                             let mut found = Vec::new();
@@ -2210,9 +3318,7 @@ fn f_substitute_command_keys(i: &mut Interp, a: Vec<Value>) -> EvalResult {
                     // \<map> — select keymap context for following \[cmd].
                     if let Some((name, next)) = take_until(&chars, pos + 2, '>') {
                         let id = i.intern_soft(&name);
-                        ctx_map = id
-                            .filter(|id| i.bound_p(*id))
-                            .map(|id| i.symbol_value(id));
+                        ctx_map = id.filter(|id| i.bound_p(*id)).map(|id| i.symbol_value(id));
                         pos = next;
                         continue;
                     }
@@ -2340,13 +3446,21 @@ fn f_current_kill(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         return Err(i.error("Kill ring is empty"));
     }
     // honor kill-ring-yank-pointer rotation
-    let ptr = i
-        .symbol_value(i.intern_soft("kill-ring-yank-pointer").unwrap_or(0));
+    let ptr = i.symbol_value(i.intern_soft("kill-ring-yank-pointer").unwrap_or(0));
     let mut ordered = items.clone();
     if let Value::Cons(_) = ptr {
         let offset = items
             .iter()
-            .position(|x| eq_values(x, &ptr.list_to_vec().unwrap_or_default().first().cloned().unwrap_or(Value::Nil)))
+            .position(|x| {
+                eq_values(
+                    x,
+                    &ptr.list_to_vec()
+                        .unwrap_or_default()
+                        .first()
+                        .cloned()
+                        .unwrap_or(Value::Nil),
+                )
+            })
             .unwrap_or(0);
         ordered.rotate_left(offset);
     }
@@ -2534,7 +3648,10 @@ fn normalize_path(p: &str) -> String {
 pub(crate) fn default_directory(i: &Interp) -> String {
     if let Some(b) = i.current_buffer_ref() {
         let bb = b.borrow();
-        if let Some(v) = bb.locals.get(&i.intern_soft("default-directory").unwrap_or(u32::MAX)) {
+        if let Some(v) = bb
+            .locals
+            .get(&i.intern_soft("default-directory").unwrap_or(u32::MAX))
+        {
             if let Value::Str(s) = v {
                 return s.borrow().clone();
             }
@@ -2657,10 +3774,7 @@ fn f_set_file_modes(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        let _ = std::fs::set_permissions(
-            &p,
-            std::fs::Permissions::from_mode(mode),
-        );
+        let _ = std::fs::set_permissions(&p, std::fs::Permissions::from_mode(mode));
     }
     Ok(Value::Nil)
 }
@@ -2754,7 +3868,11 @@ fn f_file_relative_name(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         Some(Value::Str(d)) => d.borrow().clone(),
         _ => default_directory(i),
     };
-    let dir = if dir.ends_with('/') { dir } else { format!("{}/", dir) };
+    let dir = if dir.ends_with('/') {
+        dir
+    } else {
+        format!("{}/", dir)
+    };
     if let Some(rel) = name.strip_prefix(&dir) {
         Ok(Value::string(rel))
     } else {
@@ -2781,9 +3899,10 @@ fn f_directory_files(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let re_str = a.get(2).map(|v| want_str(i, v)).transpose()?;
     let nosort = a.get(3).map(|v| v.truthy()).unwrap_or(false);
     let re = match &re_str {
-        Some(p) => Some(crate::lisp::regexp::compile_case(p, false).map_err(|e| {
-            err_sym(i, "invalid-regexp", vec![Value::string(e.0)])
-        })?),
+        Some(p) => Some(
+            crate::lisp::regexp::compile_case(p, false)
+                .map_err(|e| err_sym(i, "invalid-regexp", vec![Value::string(e.0)]))?,
+        ),
         None => None,
     };
     let mut names = Vec::new();
@@ -2811,12 +3930,7 @@ fn f_directory_files(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 
 fn f_directory_files_and_attributes(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     // Simplified: names + nil attributes.
-    let files = f_directory_files(i, vec![
-        a[0].clone(),
-        arg(&a, 1),
-        arg(&a, 2),
-        arg(&a, 3),
-    ])?;
+    let files = f_directory_files(i, vec![a[0].clone(), arg(&a, 1), arg(&a, 2), arg(&a, 3)])?;
     let items = files.list_to_vec().unwrap_or_default();
     Ok(Value::list(
         items
@@ -2883,7 +3997,9 @@ fn f_file_name_all_completions(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         }
     }
     matches.sort();
-    Ok(Value::list(matches.into_iter().map(Value::string).collect()))
+    Ok(Value::list(
+        matches.into_iter().map(Value::string).collect(),
+    ))
 }
 
 fn f_make_directory(i: &mut Interp, a: Vec<Value>) -> EvalResult {
@@ -2970,10 +4086,7 @@ fn f_insert_file_contents(i: &mut Interp, a: Vec<Value>) -> EvalResult {
                 // set default-directory to file's dir
                 if let Some(dir_end) = path.rfind('/') {
                     let dd = i.intern_soft("default-directory").unwrap_or(u32::MAX);
-                    bb.locals.insert(
-                        dd,
-                        Value::string(&path[..=dir_end]),
-                    );
+                    bb.locals.insert(dd, Value::string(&path[..=dir_end]));
                 }
             }
             Ok(Value::list(vec![
@@ -2996,14 +4109,15 @@ fn f_insert_file_contents_literally(i: &mut Interp, a: Vec<Value>) -> EvalResult
 
 fn f_write_region(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     // (write-region START END FILENAME ...) — START may be a string.
-    let filename_arg = if matches!(&a[0], Value::Str(_)) && a.len() >= 2 && matches!(&a[1], Value::Str(_)) {
-        // (write-region STRING FILENAME) isn't Emacs's signature — keep
-        // the standard form: (start end filename). If a[0] is a string
-        // it's the text; a[1] is the filename.
-        &a[1]
-    } else {
-        &a[2]
-    };
+    let filename_arg =
+        if matches!(&a[0], Value::Str(_)) && a.len() >= 2 && matches!(&a[1], Value::Str(_)) {
+            // (write-region STRING FILENAME) isn't Emacs's signature — keep
+            // the standard form: (start end filename). If a[0] is a string
+            // it's the text; a[1] is the filename.
+            &a[1]
+        } else {
+            &a[2]
+        };
     let path = want_filename(i, filename_arg)?;
     if let Value::Str(sv) = &a[0] {
         let s = sv.borrow().clone();
@@ -3036,12 +4150,7 @@ fn region_bounds(i: &mut Interp, s: &Value, e: &Value, len: usize) -> (usize, us
     (s0.min(len), e0.min(len))
 }
 
-fn write_file_string(
-    i: &mut Interp,
-    path: &str,
-    text: &str,
-    _a: &[Value],
-) -> EvalResult {
+fn write_file_string(i: &mut Interp, path: &str, text: &str, _a: &[Value]) -> EvalResult {
     match std::fs::write(path, text) {
         Ok(()) => {
             // Message: Wrote /path
@@ -3121,9 +4230,7 @@ fn f_save_buffer(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
         let bb = b.borrow();
         match &bb.file_name {
             Some(p) => (p.clone(), bb.text.text()),
-            None => {
-                return Err(i.error("No file is associated with this buffer"))
-            }
+            None => return Err(i.error("No file is associated with this buffer")),
         }
     };
     match std::fs::write(&path, &text) {
@@ -3157,7 +4264,11 @@ fn f_append_to_file(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         bb.text.substring(s.min(e), s.max(e))
     };
     use std::io::Write;
-    match std::fs::OpenOptions::new().append(true).create(true).open(&path) {
+    match std::fs::OpenOptions::new()
+        .append(true)
+        .create(true)
+        .open(&path)
+    {
         Ok(mut f) => match f.write_all(text.as_bytes()) {
             Ok(()) => Ok(Value::Nil),
             Err(e) => Err(i.signal_data(sym::FILE_ERROR, vec![Value::string(e.to_string())])),
@@ -3214,7 +4325,7 @@ fn f_call_process(i: &mut Interp, a: Vec<Value>) -> EvalResult {
             return Err(i.signal_data(
                 sym::FILE_ERROR,
                 vec![Value::string(format!("Doing exec: {}", e))],
-            ))
+            ));
         }
     };
     let dest = arg(&a, 2);
@@ -3272,7 +4383,7 @@ fn f_call_process_region(i: &mut Interp, a: Vec<Value>) -> EvalResult {
             return Err(i.signal_data(
                 sym::FILE_ERROR,
                 vec![Value::string(format!("Doing exec: {}", e))],
-            ))
+            ));
         }
     };
     {
@@ -3281,9 +4392,9 @@ fn f_call_process_region(i: &mut Interp, a: Vec<Value>) -> EvalResult {
             let _ = stdin.write_all(text.as_bytes());
         }
     }
-    let output = child.wait_with_output().map_err(|e| {
-        i.signal_data(sym::FILE_ERROR, vec![Value::string(e.to_string())])
-    })?;
+    let output = child
+        .wait_with_output()
+        .map_err(|e| i.signal_data(sym::FILE_ERROR, vec![Value::string(e.to_string())]))?;
     let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
     // DELETE: replace the region.
     if a.get(3).map(|v| v.truthy()).unwrap_or(false) {
@@ -3875,9 +4986,7 @@ fn f_minibufferp(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     match a.get(0) {
         None | Some(Value::Nil) => {
             // current buffer is minibuffer?
-            Ok(Value::from_bool(
-                minibuf_id(i) == Some(i.current_buffer),
-            ))
+            Ok(Value::from_bool(minibuf_id(i) == Some(i.current_buffer)))
         }
         Some(v) => match i.buffer_id_of(v) {
             Some(id) => Ok(Value::from_bool(minibuf_id(i) == Some(id))),
@@ -3925,11 +5034,7 @@ fn f_minibuffer_message(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 
 /// If the front-end input hook is installed, read a line with PROMPT;
 /// otherwise fall back to `fallback` (batch behavior).
-fn minibuf_or(
-    i: &mut Interp,
-    prompt: &Value,
-    fallback: Value,
-) -> Result<Option<String>, Flow> {
+fn minibuf_or(i: &mut Interp, prompt: &Value, fallback: Value) -> Result<Option<String>, Flow> {
     if i.minibuf_reader.is_none() {
         return Ok(None);
     }
@@ -3989,10 +5094,7 @@ fn f_completing_read(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         if cands.iter().any(|c| c == &input) {
             return Ok(Value::string(input));
         }
-        let matches: Vec<&String> = cands
-            .iter()
-            .filter(|c| c.starts_with(&input))
-            .collect();
+        let matches: Vec<&String> = cands.iter().filter(|c| c.starts_with(&input)).collect();
         return Ok(Value::string(match matches.len() {
             1 => matches[0].clone(),
             _ => input,
@@ -4029,11 +5131,7 @@ fn completion_candidates(i: &mut Interp, table: &Value) -> Vec<String> {
                 })
                 .collect()
         }
-        Value::Vec(v) => v
-            .borrow()
-            .iter()
-            .map(|x| i.princ_to_string(x))
-            .collect(),
+        Value::Vec(v) => v.borrow().iter().map(|x| i.princ_to_string(x)).collect(),
         Value::Nil => Vec::new(),
         _ => Vec::new(),
     }
@@ -4046,10 +5144,7 @@ fn f_try_completion(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 
 fn try_completions(i: &mut Interp, s: &str, table: &Value) -> EvalResult {
     let cands = completion_candidates(i, table);
-    let matches: Vec<String> = cands
-        .into_iter()
-        .filter(|c| c.starts_with(s))
-        .collect();
+    let matches: Vec<String> = cands.into_iter().filter(|c| c.starts_with(s)).collect();
     if matches.is_empty() {
         return Ok(Value::Nil);
     }
@@ -4068,7 +5163,8 @@ fn f_all_completions(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let s = want_str(i, &a[0])?;
     let cands = completion_candidates(i, &a[1]);
     Ok(Value::list(
-        cands.into_iter()
+        cands
+            .into_iter()
             .filter(|c| c.starts_with(&s))
             .map(Value::string)
             .collect(),
@@ -4118,13 +5214,11 @@ fn f_y_or_n_p(i: &mut Interp, a: Vec<Value>) -> EvalResult {
                         }
                     }
                 }
-                crate::lisp::eval::MinibufInput::Text(t) => {
-                    match t.chars().next() {
-                        Some('y') => return Ok(Value::t()),
-                        Some('n') => return Ok(Value::Nil),
-                        _ => {}
-                    }
-                }
+                crate::lisp::eval::MinibufInput::Text(t) => match t.chars().next() {
+                    Some('y') => return Ok(Value::t()),
+                    Some('n') => return Ok(Value::Nil),
+                    _ => {}
+                },
             }
         }
     }
@@ -4285,7 +5379,8 @@ fn f_end_of_defun(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         let mut p = bb.point();
         let len = bb.text_len();
         // move to next '(' at col 0 then scan to its close
-        while p < len && !(bb.text.char_at(p) == '(' && (p == 0 || bb.text.char_at(p - 1) == '\n')) {
+        while p < len && !(bb.text.char_at(p) == '(' && (p == 0 || bb.text.char_at(p - 1) == '\n'))
+        {
             p += 1;
         }
         if p >= len {
@@ -4374,9 +5469,7 @@ fn f_what_line(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
 fn f_char_syntax(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let c = want_int(i, &a[0])? as u32;
     match char::from_u32(c) {
-        Some(ch) => Ok(Value::Int(
-            crate::lisp::regexp::syntax_code(ch) as i128,
-        )),
+        Some(ch) => Ok(Value::Int(crate::lisp::regexp::syntax_code(ch) as i128)),
         None => Ok(Value::Nil),
     }
 }
@@ -4449,10 +5542,7 @@ fn f_syntax_ppss(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
 fn f_fundamental_mode(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
     let mm = i.intern("major-mode");
     let fmid = i.intern("fundamental-mode");
-    cur(i)
-        .borrow_mut()
-        .locals
-        .insert(mm, Value::Sym(fmid));
+    cur(i).borrow_mut().locals.insert(mm, Value::Sym(fmid));
     Ok(Value::Sym(fmid))
 }
 
@@ -4497,9 +5587,7 @@ fn f_with_timeout_raw(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     };
     let timeout_sym = i.intern("timeout");
     match i.eval_progn(&body) {
-        Err(Flow::Throw(tag, _)) if i.sym_is(&tag, timeout_sym) => {
-            i.eval_progn(&timeout_forms)
-        }
+        Err(Flow::Throw(tag, _)) if i.sym_is(&tag, timeout_sym) => i.eval_progn(&timeout_forms),
         other => other,
     }
 }
@@ -4513,7 +5601,11 @@ fn f_make_overlay(i: &mut Interp, a: Vec<Value>) -> EvalResult {
             .ok_or_else(|| i.error_obj("No such buffer", v))?,
         _ => i.current_buffer,
     };
-    let len = i.buffers.get(bid).map(|b| b.borrow().text.len()).unwrap_or(0);
+    let len = i
+        .buffers
+        .get(bid)
+        .map(|b| b.borrow().text.len())
+        .unwrap_or(0);
     let s = (want_int(i, &a[0])?.max(1) as usize - 1).min(len);
     let e = (want_int(i, &a[1])?.max(1) as usize - 1).min(len);
     // Overlays are stored on the buffer; a Lisp handle is a cons
@@ -4541,9 +5633,7 @@ fn overlay_of(i: &mut Interp, v: &Value) -> Result<(usize, usize), Flow> {
     if let Value::Vec(vec) = v {
         let vv = vec.borrow();
         if vv.len() == 3 {
-            if let (Value::Sym(tag), Value::Int(bid), Value::Int(idx)) =
-                (&vv[0], &vv[1], &vv[2])
-            {
+            if let (Value::Sym(tag), Value::Int(bid), Value::Int(idx)) = (&vv[0], &vv[1], &vv[2]) {
                 if i.sym_id(&Value::Sym(*tag)) == i.intern_soft("overlay") {
                     return Ok((*bid as usize, *idx as usize));
                 }
@@ -4760,9 +5850,8 @@ fn f_documentation(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 
 fn f_apropos_internal(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let pat = want_str(i, &a[0])?;
-    let re = crate::lisp::regexp::compile_case(&pat, false).map_err(|e| {
-        err_sym(i, "invalid-regexp", vec![Value::string(e.0)])
-    })?;
+    let re = crate::lisp::regexp::compile_case(&pat, false)
+        .map_err(|e| err_sym(i, "invalid-regexp", vec![Value::string(e.0)]))?;
     let mut out = Vec::new();
     for id in i.obarray.all_ids() {
         let name = i.symbol_name(id);
@@ -4828,10 +5917,7 @@ pub fn install_primitives(i: &mut Interp) {
         i.fset(id, Value::Subr(s));
     }
     // Initial frame with one window showing *scratch* + a minibuffer.
-    let scratch = i
-        .buffers
-        .by_name("*scratch*")
-        .unwrap_or(i.current_buffer);
+    let scratch = i.buffers.by_name("*scratch*").unwrap_or(i.current_buffer);
     let mb = i
         .buffers
         .by_name(" *Minibuf-0*")

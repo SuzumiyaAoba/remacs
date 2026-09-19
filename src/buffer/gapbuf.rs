@@ -58,7 +58,8 @@ impl GapBuffer {
         } else {
             // Shift text left into the gap.
             let n = pos - self.gap_start;
-            self.buf.copy_within(self.gap_end..self.gap_end + n, self.gap_start);
+            self.buf
+                .copy_within(self.gap_end..self.gap_end + n, self.gap_start);
             self.gap_start = pos;
             self.gap_end += n;
         }
@@ -120,7 +121,8 @@ impl GapBuffer {
     /// Replace whole contents.
     pub fn set_text(&mut self, s: &str) {
         self.buf.clear();
-        self.buf.resize(GAP_INIT.max(s.chars().count() * 2), 0 as char);
+        self.buf
+            .resize(GAP_INIT.max(s.chars().count() * 2), 0 as char);
         self.gap_start = 0;
         self.gap_end = self.buf.len();
         self.insert(0, s);

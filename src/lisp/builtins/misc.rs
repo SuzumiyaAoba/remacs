@@ -5,69 +5,339 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use super::{arg, want_string, S};
+use super::{S, arg, want_string};
+use crate::lisp::Interp;
 use crate::lisp::error::{EvalResult, Flow};
 use crate::lisp::obarray::sym;
 use crate::lisp::value::{Arity, Lambda, Subr, Value};
-use crate::lisp::Interp;
 
 pub(crate) static SUBRS: &[Subr] = &[
     S!("gensym", 0, 1, f_gensym, "New uninterned symbol gN."),
-    S!("func-arity", 1, 1, f_func_arity, "Return (MIN . MAX) arity of FUNCTION."),
-    S!("subr-arity", 1, 1, f_func_arity, "Return (MIN . MAX) arity of subr."),
+    S!(
+        "func-arity",
+        1,
+        1,
+        f_func_arity,
+        "Return (MIN . MAX) arity of FUNCTION."
+    ),
+    S!(
+        "subr-arity",
+        1,
+        1,
+        f_func_arity,
+        "Return (MIN . MAX) arity of subr."
+    ),
     S!("closurep", 1, 1, f_closurep, "t if OBJECT is a closure."),
-    S!("interpreted-function-p", 1, 1, f_interpreted_function_p, "t if FUNCTION is interpreted."),
-    S!("make-interpreted-closure", 3, 3, f_make_interpreted_closure, "Build a closure from args/env/body."),
-    S!("obarray-clear", 0, 1, f_obarray_clear, "Empty the obarray (keeps core syms)."),
-    S!("getenv-internal", 1, 2, f_getenv_internal, "Environment variable value."),
-    S!("command-modes", 1, 1, f_command_modes, "Modes a command applies to (nil)."),
-    S!("abort-minibuffers", 0, 0, f_abort_minibuffers, "Abort any active minibuffer."),
-    S!("accessible-keymaps", 1, 2, f_accessible_keymaps, "List (PREFIX . KEYMAP) reachable from MAP."),
-    S!("map-keymap", 2, 3, f_map_keymap, "Call FUNCTION on each binding in KEYMAP."),
+    S!(
+        "interpreted-function-p",
+        1,
+        1,
+        f_interpreted_function_p,
+        "t if FUNCTION is interpreted."
+    ),
+    S!(
+        "make-interpreted-closure",
+        3,
+        3,
+        f_make_interpreted_closure,
+        "Build a closure from args/env/body."
+    ),
+    S!(
+        "obarray-clear",
+        0,
+        1,
+        f_obarray_clear,
+        "Empty the obarray (keeps core syms)."
+    ),
+    S!(
+        "getenv-internal",
+        1,
+        2,
+        f_getenv_internal,
+        "Environment variable value."
+    ),
+    S!(
+        "command-modes",
+        1,
+        1,
+        f_command_modes,
+        "Modes a command applies to (nil)."
+    ),
+    S!(
+        "abort-minibuffers",
+        0,
+        0,
+        f_abort_minibuffers,
+        "Abort any active minibuffer."
+    ),
+    S!(
+        "accessible-keymaps",
+        1,
+        2,
+        f_accessible_keymaps,
+        "List (PREFIX . KEYMAP) reachable from MAP."
+    ),
+    S!(
+        "map-keymap",
+        2,
+        3,
+        f_map_keymap,
+        "Call FUNCTION on each binding in KEYMAP."
+    ),
     S!("map-keymap-internal", 2, 2, f_map_keymap, ""),
-    S!("keymap--get-keyelt", 2, 2, f_keymap_get_keyelt, "Return (BINDING . DEF) for OBJECT."),
-    S!("describe-buffer-bindings", 1, 3, f_describe_bindings, "Print key bindings of BUFFER."),
-    S!("set--this-command-keys", 1, 1, f_set_this_command_keys, "Set this-command-keys (stub)."),
-    S!("documentation-stringp", 1, 1, f_documentation_stringp, "t if OBJECT is a docstring."),
-    S!("error-message-string", 1, 1, f_error_message_string, "Format an error data list."),
-    S!("external-debugging-output", 1, 1, f_external_debugging_output, "Write CHAR to stderr."),
-    S!("open-dribble-file", 1, 1, f_open_dribble_file, "Record keystrokes to FILE (stub)."),
-    S!("open-termscript", 1, 1, f_open_termscript, "Record terminal output to FILE (stub)."),
-    S!("send-string-to-terminal", 1, 2, f_send_string_to_terminal, "Send STRING to the terminal."),
-    S!("flush-standard-output", 0, 0, f_flush_stdout, "Flush stdout."),
-    S!("encode-time", 0, 9, f_encode_time, "Convert time components to Lisp time."),
-    S!("decode-time", 0, 3, f_decode_time, "Decompose Lisp time into components."),
+    S!(
+        "keymap--get-keyelt",
+        2,
+        2,
+        f_keymap_get_keyelt,
+        "Return (BINDING . DEF) for OBJECT."
+    ),
+    S!(
+        "describe-buffer-bindings",
+        1,
+        3,
+        f_describe_bindings,
+        "Print key bindings of BUFFER."
+    ),
+    S!(
+        "set--this-command-keys",
+        1,
+        1,
+        f_set_this_command_keys,
+        "Set this-command-keys (stub)."
+    ),
+    S!(
+        "documentation-stringp",
+        1,
+        1,
+        f_documentation_stringp,
+        "t if OBJECT is a docstring."
+    ),
+    S!(
+        "error-message-string",
+        1,
+        1,
+        f_error_message_string,
+        "Format an error data list."
+    ),
+    S!(
+        "external-debugging-output",
+        1,
+        1,
+        f_external_debugging_output,
+        "Write CHAR to stderr."
+    ),
+    S!(
+        "open-dribble-file",
+        1,
+        1,
+        f_open_dribble_file,
+        "Record keystrokes to FILE (stub)."
+    ),
+    S!(
+        "open-termscript",
+        1,
+        1,
+        f_open_termscript,
+        "Record terminal output to FILE (stub)."
+    ),
+    S!(
+        "send-string-to-terminal",
+        1,
+        2,
+        f_send_string_to_terminal,
+        "Send STRING to the terminal."
+    ),
+    S!(
+        "flush-standard-output",
+        0,
+        0,
+        f_flush_stdout,
+        "Flush stdout."
+    ),
+    S!(
+        "encode-time",
+        0,
+        9,
+        f_encode_time,
+        "Convert time components to Lisp time."
+    ),
+    S!(
+        "decode-time",
+        0,
+        3,
+        f_decode_time,
+        "Decompose Lisp time into components."
+    ),
     S!("time-add", 2, 2, f_time_add, "Add two Lisp time values."),
-    S!("time-subtract", 2, 2, f_time_subtract, "Subtract two Lisp time values."),
+    S!(
+        "time-subtract",
+        2,
+        2,
+        f_time_subtract,
+        "Subtract two Lisp time values."
+    ),
     S!("time-less-p", 2, 2, f_time_less_p, "t if TIME1 < TIME2."),
     S!("time-equal-p", 2, 2, f_time_equal_p, "t if TIME1 == TIME2."),
-    S!("time-convert", 1, 3, f_time_convert, "Convert TIME to FORM ticks."),
+    S!(
+        "time-convert",
+        1,
+        3,
+        f_time_convert,
+        "Convert TIME to FORM ticks."
+    ),
     S!("emacs-uptime", 0, 1, f_emacs_uptime, "Process uptime."),
-    S!("current-cpu-time", 0, 0, f_current_cpu_time, "CPU time used by this process."),
-    S!("set-time-zone-rule", 1, 1, f_set_time_zone, "Set TZ (returns t)."),
-    S!("secure-hash", 2, 5, f_secure_hash, "Cryptographic hash of OBJECT."),
+    S!(
+        "current-cpu-time",
+        0,
+        0,
+        f_current_cpu_time,
+        "CPU time used by this process."
+    ),
+    S!(
+        "set-time-zone-rule",
+        1,
+        1,
+        f_set_time_zone,
+        "Set TZ (returns t)."
+    ),
+    S!(
+        "secure-hash",
+        2,
+        5,
+        f_secure_hash,
+        "Cryptographic hash of OBJECT."
+    ),
     S!("md5", 1, 5, f_md5, "MD5 hash of OBJECT."),
-    S!("base64-encode-string", 1, 2, f_b64_encode_string, "Base64 encode STRING."),
-    S!("base64-decode-string", 1, 2, f_b64_decode_string, "Base64 decode STRING."),
-    S!("buffer-hash", 0, 1, f_buffer_hash, "Hash of buffer contents."),
-    S!("make-temp-file-internal", 4, 4, f_make_temp_file_internal, "Create a temp file."),
-    S!("make-symbolic-link", 2, 3, f_make_symbolic_link, "Create symlink FILENAME -> TARGET."),
-    S!("directory-name-p", 1, 1, f_directory_name_p, "t if NAME ends in a slash."),
-    S!("file-name-case-insensitive-p", 1, 1, f_file_name_case_insensitive_p, "t on case-insensitive FS."),
-    S!("file-attributes-lessp", 2, 2, f_file_attributes_lessp, "t if ATTRS1 < ATTRS2 (mtime)."),
-    S!("set-file-times", 1, 3, f_set_file_times, "Set file times (stub)."),
+    S!(
+        "base64-encode-string",
+        1,
+        2,
+        f_b64_encode_string,
+        "Base64 encode STRING."
+    ),
+    S!(
+        "base64-decode-string",
+        1,
+        2,
+        f_b64_decode_string,
+        "Base64 decode STRING."
+    ),
+    S!(
+        "buffer-hash",
+        0,
+        1,
+        f_buffer_hash,
+        "Hash of buffer contents."
+    ),
+    S!(
+        "make-temp-file-internal",
+        4,
+        4,
+        f_make_temp_file_internal,
+        "Create a temp file."
+    ),
+    S!(
+        "make-symbolic-link",
+        2,
+        3,
+        f_make_symbolic_link,
+        "Create symlink FILENAME -> TARGET."
+    ),
+    S!(
+        "directory-name-p",
+        1,
+        1,
+        f_directory_name_p,
+        "t if NAME ends in a slash."
+    ),
+    S!(
+        "file-name-case-insensitive-p",
+        1,
+        1,
+        f_file_name_case_insensitive_p,
+        "t on case-insensitive FS."
+    ),
+    S!(
+        "file-attributes-lessp",
+        2,
+        2,
+        f_file_attributes_lessp,
+        "t if ATTRS1 < ATTRS2 (mtime)."
+    ),
+    S!(
+        "set-file-times",
+        1,
+        3,
+        f_set_file_times,
+        "Set file times (stub)."
+    ),
     S!("file-acl", 1, 1, f_nil, "ACL list (unsupported)."),
-    S!("get-file-buffer", 1, 1, f_get_file_buffer, "Buffer visiting FILENAME."),
+    S!(
+        "get-file-buffer",
+        1,
+        1,
+        f_get_file_buffer,
+        "Buffer visiting FILENAME."
+    ),
     S!("unlock-file", 1, 1, f_nil, "Unlock FILE (no-op)."),
     S!("lock-file", 1, 1, f_nil, "Lock FILE (no-op)."),
-    S!("bare-symbol", 1, 1, f_bare_symbol, "Symbol without position info."),
-    S!("bare-symbol-p", 1, 1, f_bare_symbol_p, "t if OBJECT is a symbol without position."),
-    S!("position-symbol", 2, 2, f_position_symbol, "Symbol with position (ignored)."),
-    S!("remove-pos-from-symbol", 1, 1, f_bare_symbol, "Strip position (ignored)."),
-    S!("symbol-with-pos-p", 1, 1, f_false, "t if OBJECT is a positioned symbol."),
-    S!("symbol-with-pos-pos", 1, 1, f_nil, "Position of a positioned symbol."),
-    S!("internal-make-var-non-special", 1, 1, f_make_var_non_special, "Clear SPECIAL flag."),
-    S!("special-variable-p", 1, 1, f_special_variable_p, "t if SYMBOL is special."),
+    S!(
+        "bare-symbol",
+        1,
+        1,
+        f_bare_symbol,
+        "Symbol without position info."
+    ),
+    S!(
+        "bare-symbol-p",
+        1,
+        1,
+        f_bare_symbol_p,
+        "t if OBJECT is a symbol without position."
+    ),
+    S!(
+        "position-symbol",
+        2,
+        2,
+        f_position_symbol,
+        "Symbol with position (ignored)."
+    ),
+    S!(
+        "remove-pos-from-symbol",
+        1,
+        1,
+        f_bare_symbol,
+        "Strip position (ignored)."
+    ),
+    S!(
+        "symbol-with-pos-p",
+        1,
+        1,
+        f_false,
+        "t if OBJECT is a positioned symbol."
+    ),
+    S!(
+        "symbol-with-pos-pos",
+        1,
+        1,
+        f_nil,
+        "Position of a positioned symbol."
+    ),
+    S!(
+        "internal-make-var-non-special",
+        1,
+        1,
+        f_make_var_non_special,
+        "Clear SPECIAL flag."
+    ),
+    S!(
+        "special-variable-p",
+        1,
+        1,
+        f_special_variable_p,
+        "t if SYMBOL is special."
+    ),
 ];
 
 // ---------- symbols / functions ----------
@@ -88,7 +358,7 @@ fn f_func_arity(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     let arity = match &fun {
         Value::Subr(s) => s.arity,
         Value::Lambda(l) => l.arity(),
-        _ => return Err(i.wrong_type_mut("functionp", &args[0])),
+        _ => return Err(i.signal_data(sym::VOID_FUNCTION, vec![args[0].clone()])),
     };
     let (min, max) = match arity {
         Arity::Range { min, max } => (min, Value::Int(max as i128)),
@@ -99,7 +369,7 @@ fn f_func_arity(i: &mut Interp, args: Vec<Value>) -> EvalResult {
 }
 
 fn f_closurep(_i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    Ok(Value::from_bool(matches!(&args[0], Value::Lambda(l) if l.env.is_some())))
+    Ok(Value::from_bool(matches!(&args[0], Value::Lambda(_))))
 }
 
 fn f_interpreted_function_p(_i: &mut Interp, args: Vec<Value>) -> EvalResult {
@@ -133,7 +403,10 @@ fn f_make_interpreted_closure(i: &mut Interp, args: Vec<Value>) -> EvalResult {
             if mode == 0 {
                 required.push(id);
             } else {
-                optional.push(crate::lisp::value::OptParam { sym: id, default: None });
+                optional.push(crate::lisp::value::OptParam {
+                    sym: id,
+                    default: None,
+                });
             }
         }
     }
@@ -184,6 +457,7 @@ fn f_make_interpreted_closure(i: &mut Interp, args: Vec<Value>) -> EvalResult {
         doc: None,
         interactive: None,
         name: None,
+        bad_arglist: false,
     })))
 }
 
@@ -313,10 +587,7 @@ fn f_error_message_string(i: &mut Interp, args: Vec<Value>) -> EvalResult {
                 let b = d.borrow();
                 (b.car.clone(), b.cdr.clone())
             };
-            if i.sym_id(&car) == Some(sym::ERROR)
-                && matches!(d1, Value::Str(_))
-                && drest.is_nil()
-            {
+            if i.sym_id(&car) == Some(sym::ERROR) && matches!(d1, Value::Str(_)) && drest.is_nil() {
                 return Ok(d1);
             }
         }
@@ -381,9 +652,8 @@ pub fn error_message(i: &mut Interp, obj: &Value) -> String {
         Some(t) if t.is_empty() => sep = None,
         Some(t) => out.push_str(t),
     }
-    let princ_mode = file_error
-        || errname_id == Some(sym::END_OF_FILE)
-        || errname_id == Some(sym::USER_ERROR);
+    let princ_mode =
+        file_error || errname_id == Some(sym::END_OF_FILE) || errname_id == Some(sym::USER_ERROR);
     for item in tail {
         if let Some(s) = sep {
             out.push_str(s);
@@ -407,12 +677,21 @@ fn curve_quotes(s: &str) -> String {
     for (k, &c) in chars.iter().enumerate() {
         match c {
             '\'' => {
-                let prev = if k > 0 { chars.get(k - 1).copied() } else { None };
-                out.push(if prev.map(|p| p.is_alphanumeric() || p == '\'').unwrap_or(false) {
-                    '\u{2019}'
+                let prev = if k > 0 {
+                    chars.get(k - 1).copied()
                 } else {
-                    '\u{2018}'
-                });
+                    None
+                };
+                out.push(
+                    if prev
+                        .map(|p| p.is_alphanumeric() || p == '\'')
+                        .unwrap_or(false)
+                    {
+                        '\u{2019}'
+                    } else {
+                        '\u{2018}'
+                    },
+                );
             }
             '`' => out.push('\u{2018}'),
             _ => out.push(c),
@@ -596,7 +875,6 @@ fn days_from_civil(y: i128, m: i128, d: i128) -> i128 {
     era * 146097 + doe - 719468
 }
 
-
 fn f_encode_time(_i: &mut Interp, args: Vec<Value>) -> EvalResult {
     // (encode-time SECOND MINUTE HOUR DAY MONTH YEAR &rest) or a list.
     let items: Vec<Value> = if args.len() == 1 {
@@ -607,11 +885,8 @@ fn f_encode_time(_i: &mut Interp, args: Vec<Value>) -> EvalResult {
     } else {
         args.clone()
     };
-    let get = |k: usize| -> i128 {
-        items.get(k).and_then(|v| v.int()).unwrap_or(0)
-    };
-    let (sec, min, hour, day, mon, year) =
-        (get(0), get(1), get(2), get(3), get(4), get(5));
+    let get = |k: usize| -> i128 { items.get(k).and_then(|v| v.int()).unwrap_or(0) };
+    let (sec, min, hour, day, mon, year) = (get(0), get(1), get(2), get(3), get(4), get(5));
     let days = days_from_civil(year, mon.max(1).min(12), day.max(1));
     let mut secs = days * 86400 + hour * 3600 + min * 60 + sec;
     // ZONE (index 8) may give an explicit offset in seconds.
@@ -647,7 +922,11 @@ fn f_decode_time(i: &mut Interp, args: Vec<Value>) -> EvalResult {
         Value::Int(tm.tm_mon as i128 + 1),
         Value::Int(tm.tm_year as i128 + 1900),
         Value::Int(tm.tm_wday as i128),
-        if tm.tm_isdst > 0 { Value::t() } else { Value::Nil },
+        if tm.tm_isdst > 0 {
+            Value::t()
+        } else {
+            Value::Nil
+        },
         Value::Int(tm.tm_gmtoff),
     ]))
 }
@@ -703,7 +982,8 @@ fn f_emacs_uptime(i: &mut Interp, a: Vec<Value>) -> EvalResult {
             let fts = i.intern("format-time-string");
             if i.fbound_p(fts) {
                 let t = us_to_lisp_time(start.elapsed().as_micros() as i128);
-                let args = Value::list(vec![fmt.clone(), t]);
+                let q = |v: &Value| Value::list(vec![Value::Sym(sym::QUOTE), v.clone()]);
+                let args = Value::list(vec![q(fmt), q(&t)]);
                 return i.call_function(&Value::Sym(fts), &args, None);
             }
         }
@@ -803,10 +1083,7 @@ fn f_b64_decode_string(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     let cleaned: String = s.chars().filter(|c| !c.is_whitespace()).collect();
     match base64::engine::general_purpose::STANDARD.decode(cleaned.as_bytes()) {
         Ok(bytes) => Ok(Value::string(String::from_utf8_lossy(&bytes).to_string())),
-        Err(_) => Err(i.signal_data(
-            sym::ERROR,
-            vec![Value::string("Invalid base64 data")],
-        )),
+        Err(_) => Err(i.signal_data(sym::ERROR, vec![Value::string("Invalid base64 data")])),
     }
 }
 
@@ -831,11 +1108,15 @@ fn f_make_temp_file_internal(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     let prefix = want_string(i, &args[0])?;
     let dir = std::env::temp_dir();
     for n in 0..1000u32 {
-        let cand = dir.join(format!("{}{}", prefix, if n == 0 {
-            random_suffix()
-        } else {
-            format!("{}{}", random_suffix(), n)
-        }));
+        let cand = dir.join(format!(
+            "{}{}",
+            prefix,
+            if n == 0 {
+                random_suffix()
+            } else {
+                format!("{}{}", random_suffix(), n)
+            }
+        ));
         match std::fs::File::create_new(&cand) {
             Ok(_) => return Ok(Value::string(cand.to_string_lossy().to_string())),
             Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
@@ -846,7 +1127,7 @@ fn f_make_temp_file_internal(i: &mut Interp, args: Vec<Value>) -> EvalResult {
                         Value::string(format!("Creating temp file: {}", e)),
                         Value::string(cand.to_string_lossy().to_string()),
                     ],
-                ))
+                ));
             }
         }
     }
@@ -895,7 +1176,13 @@ fn f_file_name_case_insensitive_p(i: &mut Interp, args: Vec<Value>) -> EvalResul
     // case-flipped name.
     let flipped: String = path
         .chars()
-        .map(|c| if c.is_lowercase() { c.to_ascii_uppercase() } else { c.to_ascii_lowercase() })
+        .map(|c| {
+            if c.is_lowercase() {
+                c.to_ascii_uppercase()
+            } else {
+                c.to_ascii_lowercase()
+            }
+        })
         .collect();
     if flipped == path {
         return Ok(Value::from_bool(std::path::Path::new(&path).exists()));
@@ -923,7 +1210,10 @@ fn f_set_file_times(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     if !std::path::Path::new(&name).exists() {
         return Err(i.signal_data(
             sym::FILE_MISSING,
-            vec![Value::string(format!("Setting file times: no such file {}", name))],
+            vec![Value::string(format!(
+                "Setting file times: no such file {}",
+                name
+            ))],
         ));
     }
     Ok(Value::t())

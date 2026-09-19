@@ -16,8 +16,7 @@ pub mod value;
 pub use builtins::eq_values;
 pub use error::{EvalResult, Flow};
 pub use eval::{
-    ExcursionState, Interp, LexEnv, LexFrame, MatchData, MinibufInput, OutputSink,
-    RestrictionState,
+    ExcursionState, Interp, LexEnv, LexFrame, MatchData, MinibufInput, OutputSink, RestrictionState,
 };
-pub use obarray::{sym, Obarray};
+pub use obarray::{Obarray, sym};
 pub use value::{Arity, Cons, HashTest, Lambda, LispHash, Marker, Subr, SymId, Value};

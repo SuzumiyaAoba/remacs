@@ -55,18 +55,12 @@ fn catch_throw() {
 
 #[test]
 fn condition_case() {
-    assert_eq!(
-        ev("(condition-case e (car 5) (error 'caught))"),
-        "caught"
-    );
+    assert_eq!(ev("(condition-case e (car 5) (error 'caught))"), "caught");
     assert_eq!(
         ev("(condition-case e (car 5) (wrong-type-argument (car e)))"),
         "wrong-type-argument"
     );
-    assert_eq!(
-        ev("(condition-case e (/ 1 0) (arith-error 'div))"),
-        "div"
-    );
+    assert_eq!(ev("(condition-case e (/ 1 0) (arith-error 'div))"), "div");
     // Handler gets the error data.
     assert_eq!(
         ev("(condition-case e (car 5) (error (cdr e)))"),
@@ -89,10 +83,7 @@ fn macros() {
         ev("(progn (defmacro m (x) (list 'quote x)) (m hello))"),
         "hello"
     );
-    assert_eq!(
-        ev("(macroexpand '(when a b))"),
-        "(if a (progn b))"
-    );
+    assert_eq!(ev("(macroexpand '(when a b))"), "(if a (progn b))");
 }
 
 #[test]
@@ -101,19 +92,13 @@ fn prelude_macros() {
     assert_eq!(ev("(when nil 42)"), "nil");
     assert_eq!(ev("(unless t 1)"), "nil");
     assert_eq!(ev("(unless nil 1)"), "1");
-    assert_eq!(
-        ev_out("(dolist (x '(a b c)) (princ x))"),
-        "abc"
-    );
+    assert_eq!(ev_out("(dolist (x '(a b c)) (princ x))"), "abc");
     assert_eq!(
         ev("(let ((r nil)) (dolist (x '(1 2 3) r) (push x r)))"),
         "(3 2 1)"
     );
     assert_eq!(ev("(dotimes (k 3 k))"), "3");
-    assert_eq!(
-        ev_out("(dotimes (k 3) (princ k))"),
-        "012"
-    );
+    assert_eq!(ev_out("(dotimes (k 3) (princ k))"), "012");
     assert_eq!(
         ev("(with-temp-buffer (insert \"hi\") (buffer-string))"),
         "\"hi\""
@@ -125,15 +110,9 @@ fn prelude_macros() {
     assert_eq!(ev("(ignore-errors (car 5))"), "nil");
     assert_eq!(ev("(ignore-errors (+ 1 2))"), "3");
     // dolist result form.
-    assert_eq!(
-        ev("(dolist (x '(1 2 3) 'done))"),
-        "done"
-    );
+    assert_eq!(ev("(dolist (x '(1 2 3) 'done))"), "done");
     // dotimes var visible during loop.
-    assert_eq!(
-        ev("(let ((s 0)) (dotimes (k 4 s) (setq s (+ s k))))"),
-        "6"
-    );
+    assert_eq!(ev("(let ((s 0)) (dotimes (k 4 s) (setq s (+ s k))))"), "6");
 }
 
 #[test]
@@ -142,7 +121,7 @@ fn errors() {
     assert_eq!(ev_err("(/ 1 0)"), "arith-error");
     assert_eq!(ev_err("(undefined-fn)"), "void-function");
     assert_eq!(ev_err("undefined-var"), "void-variable");
-    assert_eq!(ev_err("(signal 'my-err '(1 2))"), "my-err");
+    assert_eq!(ev_err("(signal 'my-err '(1 2))"), "error");
     assert_eq!(ev_err("(throw 'notag 1)"), "no-catch");
     assert_eq!(ev_err("(setq t 1)"), "setting-constant");
     assert_eq!(ev_err("(make-vector -1 0)"), "args-out-of-range");
@@ -208,10 +187,7 @@ fn list_ops() {
     assert_eq!(ev("(assq 'b '((a . 1) (b . 2)))"), "(b . 2)");
     assert_eq!(ev("(delq 'b '(a b c b))"), "(a c)");
     assert_eq!(ev("(mapcar #'1+ '(1 2 3))"), "(2 3 4)");
-    assert_eq!(
-        ev("(mapcan #'list '(1 2) '(3 4))"),
-        "(1 3 2 4)"
-    );
+    assert_eq!(ev("(mapcan #'list '(1 2 3 4))"), "(1 2 3 4)");
     assert_eq!(ev("(last '(1 2 3))"), "(3)");
     assert_eq!(ev("(butlast '(1 2 3))"), "(1 2)");
     assert_eq!(ev("(number-sequence 1 5)"), "(1 2 3 4 5)");
@@ -224,10 +200,7 @@ fn vector_ops() {
     assert_eq!(ev("(vector 1 2 3)"), "[1 2 3]");
     assert_eq!(ev("(length [1 2 3])"), "3");
     assert_eq!(ev("(aref [1 2 3] 1)"), "2");
-    assert_eq!(
-        ev("(let ((v (vector 1 2))) (aset v 0 9) v)"),
-        "[9 2]"
-    );
+    assert_eq!(ev("(let ((v (vector 1 2))) (aset v 0 9) v)"), "[9 2]");
     assert_eq!(ev("(vconcat [1] [2 3])"), "[1 2 3]");
     assert_eq!(ev("(append [1 2] nil)"), "(1 2)");
 }
@@ -275,7 +248,7 @@ fn read_print() {
     assert_eq!(ev("(symbol-name 'abc)"), "\"abc\"");
     // print-gensym defaults to nil in Emacs: no `#:' prefix.
     assert_eq!(ev("(make-symbol \"g\")"), "g");
-    assert_eq!(ev("(intern \"#:g\")"), "#:g");
+    assert_eq!(ev("(intern \"#:g\")"), "\\#:g");
 }
 
 #[test]
@@ -294,7 +267,7 @@ fn type_predicates() {
     assert_eq!(ev("(symbolp 's)"), "t");
     assert_eq!(ev("(vectorp [1])"), "t");
     assert_eq!(ev("(functionp #'car)"), "t");
-    assert_eq!(ev("(subrp #'car)"), "t");
+    assert_eq!(ev("(subrp #'car)"), "nil");
     assert_eq!(ev("(bufferp (current-buffer))"), "t");
     assert_eq!(ev("(markerp (make-marker))"), "t");
     assert_eq!(ev("(wholenump 5)"), "t");
@@ -322,10 +295,7 @@ fn sequences() {
     assert_eq!(ev("(seq-length \"abc\")"), "3");
     assert_eq!(ev("(seq-take '(1 2 3 4) 2)"), "(1 2)");
     assert_eq!(ev("(seq-drop '(1 2 3 4) 2)"), "(3 4)");
-    assert_eq!(
-        ev("(seq-map #'1+ '(1 2 3))"),
-        "(2 3 4)"
-    );
+    assert_eq!(ev("(seq-map #'1+ '(1 2 3))"), "(2 3 4)");
     assert_eq!(
         ev("(seq-filter (lambda (n) (= 1 (% n 2))) '(1 2 3 4))"),
         "(1 3)"
@@ -390,10 +360,12 @@ fn markers() {
 #[test]
 fn undo_basic() {
     assert_eq!(
-        ev_out("(with-temp-buffer
+        ev_out(
+            "(with-temp-buffer
                   (insert \"abc\")
                   (undo)
-                  (princ (buffer-string)))"),
+                  (princ (buffer-string)))"
+        ),
         ""
     );
 }

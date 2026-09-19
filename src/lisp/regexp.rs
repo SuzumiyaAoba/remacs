@@ -7,7 +7,6 @@
 //!   `^` `$` `` \` `` `\'` `\b` `\B` `\<` `\>` `\w` `\W` `\sX` `\SX`
 //!   `\(...\)` `\(?:...\)` `\|` `\1`–`\9` backrefs
 
-
 /// A compiled regexp: instruction list + group count.
 pub struct Regex {
     prog: Vec<Inst>,
@@ -57,8 +56,8 @@ struct CharSet {
 }
 
 impl CharSet {
-    fn contains(&self, c: char, case_fold: bool) -> bool {
-        let mut found = self.singles.contains(&c)
+    fn base_match(&self, c: char) -> bool {
+        self.singles.contains(&c)
             || self.ranges.iter().any(|(lo, hi)| c >= *lo && c <= *hi)
             || self
                 .posix
@@ -67,21 +66,21 @@ impl CharSet {
             || self
                 .syntax
                 .iter()
-                .any(|(code, neg)| syntax_match(*code, c) != *neg);
+                .any(|(code, neg)| syntax_match(*code, c) != *neg)
+    }
+
+    fn contains(&self, c: char, case_fold: bool) -> bool {
+        let mut found = self.base_match(c);
         if !found && case_fold {
             for lc in c.to_lowercase() {
-                if lc != c && (self.singles.contains(&lc)
-                    || self.ranges.iter().any(|(lo, hi)| lc >= *lo && lc <= *hi))
-                {
+                if lc != c && self.base_match(lc) {
                     found = true;
                     break;
                 }
             }
             if !found {
                 for uc in c.to_uppercase() {
-                    if uc != c && (self.singles.contains(&uc)
-                        || self.ranges.iter().any(|(lo, hi)| uc >= *lo && uc <= *hi))
-                    {
+                    if uc != c && self.base_match(uc) {
                         found = true;
                         break;
                     }
@@ -104,8 +103,8 @@ pub fn syntax_code(c: char) -> u8 {
         '\\' => b'/',
         '|' | '!' => b'|',
         c if c.is_alphanumeric() => b'w',
-        '$' | '%' | '&' | '*' | '+' | '-' | '.' | '/' | ':' | '<' | '=' | '>' | '?'
-        | '@' | '^' | '~' | '#' => b'_',
+        '$' | '%' | '&' | '*' | '+' | '-' | '.' | '/' | ':' | '<' | '=' | '>' | '?' | '@' | '^'
+        | '~' | '#' | '_' => b'_',
         _ => b'.',
     }
 }
@@ -116,8 +115,8 @@ fn syntax_match(code: u8, c: char) -> bool {
 
 fn posix_match(name: &str, c: char) -> bool {
     match name {
-        "alnum" | "digit" | "xdigit" | "alpha" | "upper" | "lower" | "space"
-        | "punct" | "graph" | "print" | "cntrl" | "blank" | "word" => {
+        "alnum" | "digit" | "xdigit" | "alpha" | "upper" | "lower" | "space" | "punct"
+        | "graph" | "print" | "cntrl" | "blank" | "word" => {
             let r = match name {
                 "alnum" => c.is_alphanumeric(),
                 "alpha" => c.is_alphabetic(),
@@ -212,12 +211,10 @@ impl Parser {
         loop {
             match self.peek() {
                 None => break,
-                Some('\\') => {
-                    match self.chars.get(self.pos + 1) {
-                        Some('|') | Some(')') => break,
-                        _ => items.push(self.parse_repeat()?),
-                    }
-                }
+                Some('\\') => match self.chars.get(self.pos + 1) {
+                    Some('|') | Some(')') => break,
+                    _ => items.push(self.parse_repeat()?),
+                },
                 _ => items.push(self.parse_repeat()?),
             }
         }
@@ -289,9 +286,7 @@ impl Parser {
                     } else if !min.is_empty() {
                         max = min.parse::<usize>().ok();
                     }
-                    if self.peek() == Some('\\')
-                        && self.chars.get(self.pos + 1) == Some(&'}')
-                    {
+                    if self.peek() == Some('\\') && self.chars.get(self.pos + 1) == Some(&'}') {
                         self.pos += 2;
                         let minv = min.parse::<usize>().unwrap_or(0);
                         node = Ast::Repeat {
@@ -332,9 +327,7 @@ impl Parser {
             None => Err(RegexError("trailing backslash".into())),
             Some('(') => {
                 // \( ... \) group; check for \(?:
-                if self.peek() == Some('?')
-                    && self.chars.get(self.pos + 1) == Some(&':')
-                {
+                if self.peek() == Some('?') && self.chars.get(self.pos + 1) == Some(&':') {
                     self.pos += 2;
                     let inner = self.parse_alt()?;
                     self.expect_close()?;
@@ -423,7 +416,8 @@ impl Parser {
             }
             first = false;
             // Range?
-            if prev_char.is_some() && self.peek() == Some('-')
+            if prev_char.is_some()
+                && self.peek() == Some('-')
                 && self.chars.get(self.pos + 1) != Some(&']')
             {
                 self.pos += 1;
@@ -461,10 +455,7 @@ impl Parser {
                     }
                 }
                 if ok {
-                    set.posix.push((
-                        Box::leak(name.into_boxed_str()),
-                        neg,
-                    ));
+                    set.posix.push((Box::leak(name.into_boxed_str()), neg));
                 } else {
                     self.pos = save;
                     prev_char = Some('[');

@@ -2,61 +2,337 @@
 //! indentation helpers, and encoding on regions.
 
 use crate::buffer::primitives::{check_writable, cur, err_sym, pos_idx};
-use crate::lisp::builtins::{arg, want_int, want_string, S};
+use crate::lisp::Interp;
+use crate::lisp::builtins::{S, arg, want_int, want_string};
 use crate::lisp::error::{EvalResult, Flow};
 use crate::lisp::value::{Subr, Value};
-use crate::lisp::Interp;
 
 pub(crate) static SUBRS: &[Subr] = &[
-    S!("current-indentation", 0, 1, f_current_indentation, "Column of first nonblank char."),
-    S!("mark-whole-buffer", 0, 0, f_mark_whole_buffer, "Point at end, mark at beginning."),
-    S!("sort-lines", 2, 3, f_sort_lines, "Sort lines in region alphabetically."),
-    S!("reverse-region", 2, 2, f_reverse_region, "Reverse line order in region."),
-    S!("how-many", 2, 4, f_how_many, "Count regexp matches in region."),
-    S!("count-matches", 2, 4, f_how_many, "Count regexp matches in region."),
-    S!("count-words-region", 2, 2, f_count_words, "Count words in region."),
-    S!("flush-lines", 1, 4, f_flush_lines, "Delete lines matching REGEXP."),
-    S!("keep-lines", 1, 4, f_keep_lines, "Delete lines not matching REGEXP."),
-    S!("replace-string", 2, 5, f_replace_string, "Replace all FROM with TO."),
-    S!("replace-regexp", 2, 7, f_replace_regexp, "Replace all REGEXP matches with TO."),
-    S!("transpose-regions", 4, 5, f_transpose_regions, "Transpose two regions."),
-    S!("subst-char-in-region", 4, 4, f_subst_char_in_region, "Replace FROMCHAR with TOCHAR in region."),
-    S!("translate-region", 3, 3, f_translate_region, "Translate chars via TABLE."),
-    S!("buffer-swap-text", 1, 1, f_buffer_swap_text, "Swap text with BUFFER."),
-    S!("buffer-last-name", 0, 1, f_buffer_last_name, "Name before last rename (nil)."),
-    S!("buffer-chars-modified-tick", 0, 1, f_buffer_mod_tick, "Modification counter."),
-    S!("buffer-modified-tick", 0, 1, f_buffer_mod_tick, "Modification counter."),
-    S!("store-match-data", 1, 2, f_store_match_data, "Set match data from LIST."),
-    S!("match-data--translate", 2, 2, f_nil2, "Adjust match data (no-op)."),
-    S!("text-property-any", 5, 6, f_text_property_any, "First pos in region where PROP is VALUE."),
-    S!("text-property-not-all", 5, 6, f_text_property_not_all, "First pos where PROP differs from VALUE."),
-    S!("field-beginning", 0, 3, f_field_beginning, "Start of field at POS."),
+    S!(
+        "current-indentation",
+        0,
+        1,
+        f_current_indentation,
+        "Column of first nonblank char."
+    ),
+    S!(
+        "mark-whole-buffer",
+        0,
+        0,
+        f_mark_whole_buffer,
+        "Point at end, mark at beginning."
+    ),
+    S!(
+        "sort-lines",
+        2,
+        3,
+        f_sort_lines,
+        "Sort lines in region alphabetically."
+    ),
+    S!(
+        "reverse-region",
+        2,
+        2,
+        f_reverse_region,
+        "Reverse line order in region."
+    ),
+    S!(
+        "how-many",
+        2,
+        4,
+        f_how_many,
+        "Count regexp matches in region."
+    ),
+    S!(
+        "count-matches",
+        2,
+        4,
+        f_how_many,
+        "Count regexp matches in region."
+    ),
+    S!(
+        "count-words-region",
+        2,
+        2,
+        f_count_words,
+        "Count words in region."
+    ),
+    S!(
+        "flush-lines",
+        1,
+        4,
+        f_flush_lines,
+        "Delete lines matching REGEXP."
+    ),
+    S!(
+        "keep-lines",
+        1,
+        4,
+        f_keep_lines,
+        "Delete lines not matching REGEXP."
+    ),
+    S!(
+        "replace-string",
+        2,
+        5,
+        f_replace_string,
+        "Replace all FROM with TO."
+    ),
+    S!(
+        "replace-regexp",
+        2,
+        7,
+        f_replace_regexp,
+        "Replace all REGEXP matches with TO."
+    ),
+    S!(
+        "transpose-regions",
+        4,
+        5,
+        f_transpose_regions,
+        "Transpose two regions."
+    ),
+    S!(
+        "subst-char-in-region",
+        4,
+        4,
+        f_subst_char_in_region,
+        "Replace FROMCHAR with TOCHAR in region."
+    ),
+    S!(
+        "translate-region",
+        3,
+        3,
+        f_translate_region,
+        "Translate chars via TABLE."
+    ),
+    S!(
+        "buffer-swap-text",
+        1,
+        1,
+        f_buffer_swap_text,
+        "Swap text with BUFFER."
+    ),
+    S!(
+        "buffer-last-name",
+        0,
+        1,
+        f_buffer_last_name,
+        "Name before last rename (nil)."
+    ),
+    S!(
+        "buffer-chars-modified-tick",
+        0,
+        1,
+        f_buffer_mod_tick,
+        "Modification counter."
+    ),
+    S!(
+        "buffer-modified-tick",
+        0,
+        1,
+        f_buffer_mod_tick,
+        "Modification counter."
+    ),
+    S!(
+        "store-match-data",
+        1,
+        2,
+        f_store_match_data,
+        "Set match data from LIST."
+    ),
+    S!(
+        "match-data--translate",
+        2,
+        2,
+        f_nil2,
+        "Adjust match data (no-op)."
+    ),
+    S!(
+        "text-property-any",
+        5,
+        6,
+        f_text_property_any,
+        "First pos in region where PROP is VALUE."
+    ),
+    S!(
+        "text-property-not-all",
+        5,
+        6,
+        f_text_property_not_all,
+        "First pos where PROP differs from VALUE."
+    ),
+    S!(
+        "field-beginning",
+        0,
+        3,
+        f_field_beginning,
+        "Start of field at POS."
+    ),
     S!("field-end", 0, 3, f_field_end, "End of field at POS."),
     S!("field-string", 0, 2, f_field_string, "Field text at POS."),
-    S!("field-string-no-properties", 0, 2, f_field_string, "Field text (no props)."),
+    S!(
+        "field-string-no-properties",
+        0,
+        2,
+        f_field_string,
+        "Field text (no props)."
+    ),
     S!("delete-field", 0, 1, f_delete_field, "Delete field at POS."),
-    S!("constrain-to-field", 2, 5, f_constrain_to_field, "Clamp NEW-POS to field of OLD-POS."),
-    S!("get-pos-property", 2, 3, f_get_pos_property, "Property at POS (0-based-ish)."),
-    S!("get-char-property-and-overlay", 3, 3, f_get_char_prop_and_overlay, "Prop + overlay at POS."),
-    S!("put-char-property", 4, 5, f_put_char_property, "put-text-property (same)."),
-    S!("remove-list-of-text-properties", 3, 4, f_remove_list_of_props, "Remove named props in region."),
-    S!("add-face-text-property", 3, 5, f_add_face_text_property, "Add face property to region."),
-    S!("next-char-property-change", 1, 3, f_next_prop_change_fwd, "Next position where any prop changes."),
-    S!("previous-char-property-change", 1, 3, f_prev_prop_change, "Previous prop boundary."),
-    S!("marker-last-position", 1, 1, f_marker_last_position, "Last known position of MARKER."),
-    S!("compute-motion", 6, 7, f_compute_motion, "Compute motion to TO (simplified)."),
-    S!("vertical-motion", 1, 4, f_vertical_motion, "Move point LINES lines."),
-    S!("line-pixel-height", 0, 0, f_one, "Pixel height of a line (1 col)."),
-    S!("window-line-height", 0, 3, f_win_line_height, "Height of line in window (1)."),
-    S!("backward-prefix-chars", 0, 0, f_backward_prefix_chars, "Skip back over prefix chars."),
-    S!("move-point-visually", 1, 1, f_move_point_visually, "Move point visually (simplified)."),
-    S!("pos-visible-in-window-p", 0, 3, f_pos_visible_p, "t if POS on screen (approx)."),
-    S!("base64-encode-region", 2, 3, f_b64_encode_region, "Base64-encode region."),
-    S!("base64-decode-region", 2, 3, f_b64_decode_region, "Base64-decode region."),
-    S!("base64url-encode-region", 2, 3, f_b64url_encode_region, "Base64url encode region."),
-    S!("secure-hash-region", 3, 3, f_secure_hash_region, "Hash region bytes."),
-    S!("undo-boundary", 0, 0, f_undo_boundary, "Push undo boundary."),
-    S!("narrow-to-defun", 0, 1, f_narrow_to_defun, "Narrow to defun (paragraph approx)."),
+    S!(
+        "constrain-to-field",
+        2,
+        5,
+        f_constrain_to_field,
+        "Clamp NEW-POS to field of OLD-POS."
+    ),
+    S!(
+        "get-pos-property",
+        2,
+        3,
+        f_get_pos_property,
+        "Property at POS (0-based-ish)."
+    ),
+    S!(
+        "get-char-property-and-overlay",
+        3,
+        3,
+        f_get_char_prop_and_overlay,
+        "Prop + overlay at POS."
+    ),
+    S!(
+        "put-char-property",
+        4,
+        5,
+        f_put_char_property,
+        "put-text-property (same)."
+    ),
+    S!(
+        "remove-list-of-text-properties",
+        3,
+        4,
+        f_remove_list_of_props,
+        "Remove named props in region."
+    ),
+    S!(
+        "add-face-text-property",
+        3,
+        5,
+        f_add_face_text_property,
+        "Add face property to region."
+    ),
+    S!(
+        "next-char-property-change",
+        1,
+        3,
+        f_next_prop_change_fwd,
+        "Next position where any prop changes."
+    ),
+    S!(
+        "previous-char-property-change",
+        1,
+        3,
+        f_prev_prop_change,
+        "Previous prop boundary."
+    ),
+    S!(
+        "marker-last-position",
+        1,
+        1,
+        f_marker_last_position,
+        "Last known position of MARKER."
+    ),
+    S!(
+        "compute-motion",
+        6,
+        7,
+        f_compute_motion,
+        "Compute motion to TO (simplified)."
+    ),
+    S!(
+        "vertical-motion",
+        1,
+        4,
+        f_vertical_motion,
+        "Move point LINES lines."
+    ),
+    S!(
+        "line-pixel-height",
+        0,
+        0,
+        f_one,
+        "Pixel height of a line (1 col)."
+    ),
+    S!(
+        "window-line-height",
+        0,
+        3,
+        f_win_line_height,
+        "Height of line in window (1)."
+    ),
+    S!(
+        "backward-prefix-chars",
+        0,
+        0,
+        f_backward_prefix_chars,
+        "Skip back over prefix chars."
+    ),
+    S!(
+        "move-point-visually",
+        1,
+        1,
+        f_move_point_visually,
+        "Move point visually (simplified)."
+    ),
+    S!(
+        "pos-visible-in-window-p",
+        0,
+        3,
+        f_pos_visible_p,
+        "t if POS on screen (approx)."
+    ),
+    S!(
+        "base64-encode-region",
+        2,
+        3,
+        f_b64_encode_region,
+        "Base64-encode region."
+    ),
+    S!(
+        "base64-decode-region",
+        2,
+        3,
+        f_b64_decode_region,
+        "Base64-decode region."
+    ),
+    S!(
+        "base64url-encode-region",
+        2,
+        3,
+        f_b64url_encode_region,
+        "Base64url encode region."
+    ),
+    S!(
+        "secure-hash-region",
+        3,
+        3,
+        f_secure_hash_region,
+        "Hash region bytes."
+    ),
+    S!(
+        "undo-boundary",
+        0,
+        0,
+        f_undo_boundary,
+        "Push undo boundary."
+    ),
+    S!(
+        "narrow-to-defun",
+        0,
+        1,
+        f_narrow_to_defun,
+        "Narrow to defun (paragraph approx)."
+    ),
 ];
 
 fn f_nil2(_i: &mut Interp, _a: Vec<Value>) -> EvalResult {
@@ -67,7 +343,12 @@ fn f_one(_i: &mut Interp, _a: Vec<Value>) -> EvalResult {
     Ok(Value::Int(1))
 }
 
-fn beg_end(i: &mut Interp, a: &[Value], b_idx: usize, e_idx: usize) -> Result<(usize, usize), Flow> {
+fn beg_end(
+    i: &mut Interp,
+    a: &[Value],
+    b_idx: usize,
+    e_idx: usize,
+) -> Result<(usize, usize), Flow> {
     let len = cur(i).borrow().text_len();
     let s = a
         .get(b_idx)
@@ -293,9 +574,10 @@ fn f_replace_regexp(i: &mut Interp, a: Vec<Value>) -> EvalResult {
                 match tc.next() {
                     Some(d @ '1'..='9') => {
                         let g = (d as usize) - ('0' as usize);
-                        if let (Some(gs), Some(ge)) =
-                            (regs.get(2 * g).copied().flatten(), regs.get(2 * g + 1).copied().flatten())
-                        {
+                        if let (Some(gs), Some(ge)) = (
+                            regs.get(2 * g).copied().flatten(),
+                            regs.get(2 * g + 1).copied().flatten(),
+                        ) {
                             out.extend(&region[gs..ge]);
                         }
                     }
@@ -338,11 +620,7 @@ fn f_transpose_regions(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let b = cur(i);
     let mut bb = b.borrow_mut();
     if e1 > s2 {
-        return Err(err_sym(
-            i,
-            "error",
-            vec![Value::string("Regions overlap")],
-        ));
+        return Err(err_sym(i, "error", vec![Value::string("Regions overlap")]));
     }
     let t1 = bb.text.substring(s1, e1);
     let t2 = bb.text.substring(s2, e2);
@@ -402,7 +680,11 @@ fn f_buffer_swap_text(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         Value::Str(s) => {
             let name = s.borrow().clone();
             let id = i.buffers.by_name(&name).ok_or_else(|| {
-                err_sym(i, "error", vec![Value::string(format!("No buffer {}", name))])
+                err_sym(
+                    i,
+                    "error",
+                    vec![Value::string(format!("No buffer {}", name))],
+                )
             })?;
             i.buffers.get(id).unwrap()
         }
@@ -438,9 +720,7 @@ fn f_store_match_data(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let off = base + if in_buffer { 1 } else { 0 };
     let mut k = 0;
     while k < items.len() {
-        let s = items[k]
-            .int()
-            .map(|p| (p as usize).saturating_sub(off));
+        let s = items[k].int().map(|p| (p as usize).saturating_sub(off));
         let e = items
             .get(k + 1)
             .and_then(|v| v.int())
@@ -581,11 +861,7 @@ fn f_constrain_to_field(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         return Ok(Value::Int(new_pos as i128 + 1));
     }
     let _ = bounds;
-    let old_field = prop_at_pos(
-        &cur(i).borrow(),
-        pos_idx(len, a[1].int().unwrap_or(1)),
-        fid,
-    );
+    let old_field = prop_at_pos(&cur(i).borrow(), pos_idx(len, a[1].int().unwrap_or(1)), fid);
     if crate::lisp::builtins::eq_values(&field_at_new, &old_field) {
         return Ok(Value::Int(new_pos as i128 + 1));
     }
@@ -887,8 +1163,7 @@ fn f_b64_encode_region(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 fn f_b64url_encode_region(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     use base64::Engine;
     let (s, e, text) = region_text(i, &a)?;
-    let encoded =
-        base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(text.as_bytes());
+    let encoded = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(text.as_bytes());
     check_writable(i)?;
     let b = cur(i);
     let mut bb = b.borrow_mut();
@@ -929,7 +1204,7 @@ fn f_secure_hash_region(i: &mut Interp, a: Vec<Value>) -> EvalResult {
                 i,
                 "error",
                 vec![Value::string(format!("Unknown algorithm {}", algo))],
-            ))
+            ));
         }
     };
     Ok(Value::string(

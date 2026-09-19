@@ -1,10 +1,10 @@
 //! Arithmetic and numeric comparison subrs.
 
-use super::{arg, want_int, want_num, S};
+use super::{S, arg, want_int, want_num};
+use crate::lisp::Interp;
 use crate::lisp::error::{EvalResult, Flow};
 use crate::lisp::obarray::sym;
 use crate::lisp::value::{Subr, Value};
-use crate::lisp::Interp;
 
 fn arith_err(i: &Interp, msg: &str) -> Flow {
     i.signal_data(sym::ARITH_ERROR, vec![Value::string(msg)])
@@ -35,7 +35,13 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!("*", many 0, f_times, "Return product of any number of arguments."),
     S!("/", many 1, f_div, "Divide numbers (integer division if all ints)."),
     S!("%", 2, 2, f_mod, "Return remainder of X divided by Y."),
-    S!("mod", 2, 2, f_mod_fn, "Return X modulo Y (result has sign of Y)."),
+    S!(
+        "mod",
+        2,
+        2,
+        f_mod_fn,
+        "Return X modulo Y (result has sign of Y)."
+    ),
     S!("1+", 1, 1, f_1plus, "Return NUMBER plus one."),
     S!("1-", 1, 1, f_1minus, "Return NUMBER minus one."),
     S!("abs", 1, 1, f_abs, "Return absolute value of NUMBER."),
@@ -48,20 +54,68 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!(">", many 1, f_gt, "Return t if args are decreasing."),
     S!(">=", many 1, f_ge, "Return t if args are non-increasing."),
     S!("zerop", 1, 1, f_zerop, "Return t if NUMBER is zero."),
-    S!("natnump", 1, 1, f_natnump, "Return t if NUMBER is a nonnegative integer."),
-    S!("wholenump", 1, 1, f_natnump, "Return t if NUMBER is a nonnegative integer."),
-    S!("integerp", 1, 1, f_integerp, "Return t if OBJECT is an integer."),
-    S!("numberp", 1, 1, f_numberp, "Return t if OBJECT is a number."),
+    S!(
+        "natnump",
+        1,
+        1,
+        f_natnump,
+        "Return t if NUMBER is a nonnegative integer."
+    ),
+    S!(
+        "wholenump",
+        1,
+        1,
+        f_natnump,
+        "Return t if NUMBER is a nonnegative integer."
+    ),
+    S!(
+        "integerp",
+        1,
+        1,
+        f_integerp,
+        "Return t if OBJECT is an integer."
+    ),
+    S!(
+        "numberp",
+        1,
+        1,
+        f_numberp,
+        "Return t if OBJECT is a number."
+    ),
     S!("floatp", 1, 1, f_floatp, "Return t if OBJECT is a float."),
-    S!("number-or-marker-p", 1, 1, f_number_or_marker_p, "t if number or marker."),
-    S!("truncate", 1, 2, f_truncate, "Truncate a number to an integer."),
+    S!(
+        "number-or-marker-p",
+        1,
+        1,
+        f_number_or_marker_p,
+        "t if number or marker."
+    ),
+    S!(
+        "truncate",
+        1,
+        2,
+        f_truncate,
+        "Truncate a number to an integer."
+    ),
     S!("floor", 1, 2, f_floor, "Round toward negative infinity."),
-    S!("ceiling", 1, 2, f_ceiling, "Round toward positive infinity."),
+    S!(
+        "ceiling",
+        1,
+        2,
+        f_ceiling,
+        "Round toward positive infinity."
+    ),
     S!("round", 1, 2, f_round, "Round to nearest integer."),
     S!("float", 1, 1, f_float, "Return NUMBER as a float."),
     S!("expt", 2, 2, f_expt, "Return X raised to power Y."),
     S!("sqrt", 1, 1, f_sqrt, "Return square root of NUMBER."),
-    S!("log", 1, 2, f_log, "Return logarithm of NUMBER (base B or e)."),
+    S!(
+        "log",
+        1,
+        2,
+        f_log,
+        "Return logarithm of NUMBER (base B or e)."
+    ),
     S!("exp", 1, 1, f_exp, "Return e raised to NUMBER."),
     S!("sin", 1, 1, f_sin, "Sine of NUMBER."),
     S!("cos", 1, 1, f_cos, "Cosine of NUMBER."),
@@ -73,18 +127,48 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!("logior", many 0, f_logior, "Bitwise inclusive OR."),
     S!("logxor", many 0, f_logxor, "Bitwise exclusive OR."),
     S!("lognot", 1, 1, f_lognot, "Bitwise NOT."),
-    S!("ash", 2, 2, f_ash, "Arithmetic shift VALUE COUNT bits left."),
+    S!(
+        "ash",
+        2,
+        2,
+        f_ash,
+        "Arithmetic shift VALUE COUNT bits left."
+    ),
     S!("lsh", 2, 2, f_lsh, "Logical shift VALUE COUNT bits."),
     S!("random", 0, 1, f_random, "Random integer below LIMIT."),
     S!("eql", 2, 2, f_eql, "t if objects are eq or equal numbers."),
     S!("cl-plus", many 0, f_plus, ""),
     S!("cl-minus", many 1, f_minus, ""),
     S!("cl-times", many 0, f_times, ""),
-    S!("frexp", 1, 1, f_frexp, "Split float into fraction and exponent (FRAC . EXP)."),
+    S!(
+        "frexp",
+        1,
+        1,
+        f_frexp,
+        "Split float into fraction and exponent (FRAC . EXP)."
+    ),
     S!("ldexp", 1, 2, f_ldexp, "SGNFCAND * 2**EXPONENT."),
-    S!("fround", 1, 1, f_fround, "Round X to nearest integral float."),
-    S!("ftruncate", 1, 1, f_ftruncate, "Truncate X toward zero as a float."),
-    S!("fceiling", 1, 1, f_fceiling, "Smallest integral float >= X."),
+    S!(
+        "fround",
+        1,
+        1,
+        f_fround,
+        "Round X to nearest integral float."
+    ),
+    S!(
+        "ftruncate",
+        1,
+        1,
+        f_ftruncate,
+        "Truncate X toward zero as a float."
+    ),
+    S!(
+        "fceiling",
+        1,
+        1,
+        f_fceiling,
+        "Smallest integral float >= X."
+    ),
     S!("ffloor", 1, 1, f_ffloor, "Largest integral float <= X."),
     S!("copysign", 2, 2, f_copysign, "X1 with the sign of X2."),
     S!("logb", 1, 1, f_logb, "Binary exponent of float X."),
@@ -122,7 +206,11 @@ fn f_plus(i: &mut Interp, args: Vec<Value>) -> EvalResult {
             None => return Err(i.wrong_type_mut("number-or-marker-p", a)),
         }
     }
-    Ok(if is_float { Value::Float(acc_f) } else { Value::Int(acc_i) })
+    Ok(if is_float {
+        Value::Float(acc_f)
+    } else {
+        Value::Int(acc_i)
+    })
 }
 
 fn f_minus(i: &mut Interp, args: Vec<Value>) -> EvalResult {
@@ -162,7 +250,11 @@ fn f_minus(i: &mut Interp, args: Vec<Value>) -> EvalResult {
             None => return Err(i.wrong_type_mut("number-or-marker-p", a)),
         }
     }
-    Ok(if is_float { Value::Float(acc_f) } else { Value::Int(acc_i) })
+    Ok(if is_float {
+        Value::Float(acc_f)
+    } else {
+        Value::Int(acc_i)
+    })
 }
 
 fn f_times(i: &mut Interp, args: Vec<Value>) -> EvalResult {
@@ -188,7 +280,11 @@ fn f_times(i: &mut Interp, args: Vec<Value>) -> EvalResult {
             None => return Err(i.wrong_type_mut("number-or-marker-p", a)),
         }
     }
-    Ok(if is_float { Value::Float(acc_f) } else { Value::Int(acc_i) })
+    Ok(if is_float {
+        Value::Float(acc_f)
+    } else {
+        Value::Int(acc_i)
+    })
 }
 
 fn f_div(i: &mut Interp, args: Vec<Value>) -> EvalResult {
@@ -233,7 +329,11 @@ fn f_div(i: &mut Interp, args: Vec<Value>) -> EvalResult {
             None => return Err(i.wrong_type_mut("number-or-marker-p", a)),
         }
     }
-    Ok(if is_float { Value::Float(acc_f) } else { Value::Int(acc_i) })
+    Ok(if is_float {
+        Value::Float(acc_f)
+    } else {
+        Value::Int(acc_i)
+    })
 }
 
 /// `%` — integer remainder only (floats are a type error in Emacs).
@@ -394,7 +494,9 @@ fn f_zerop(i: &mut Interp, args: Vec<Value>) -> EvalResult {
 }
 
 fn f_natnump(_i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    Ok(Value::from_bool(matches!(&args[0], Value::Int(n) if *n >= 0)))
+    Ok(Value::from_bool(
+        matches!(&args[0], Value::Int(n) if *n >= 0),
+    ))
 }
 
 fn f_integerp(_i: &mut Interp, args: Vec<Value>) -> EvalResult {
@@ -561,11 +663,7 @@ fn f_ash(i: &mut Interp, args: Vec<Value>) -> EvalResult {
             None => return Err(overflow_err(i, &args[0])),
         }
     } else if c <= -128 {
-        if v < 0 {
-            -1
-        } else {
-            0
-        }
+        if v < 0 { -1 } else { 0 }
     } else {
         v >> (-c) as u32
     }))
@@ -595,11 +693,7 @@ fn f_lsh(i: &mut Interp, args: Vec<Value>) -> EvalResult {
                 (((v as u64) & U62) >> k as u32) as i128
             }
         } else if k >= 128 {
-            if v < 0 {
-                -1
-            } else {
-                0
-            }
+            if v < 0 { -1 } else { 0 }
         } else {
             v >> k as u32
         }
@@ -687,9 +781,7 @@ fn f_copysign(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     // Emacs requires both args to be floats.
     let (x, y) = match (&args[0], &args[1]) {
         (Value::Float(a), Value::Float(b)) => (*a, *b),
-        (Value::Float(_), other) | (other, _) => {
-            return Err(i.wrong_type_mut("floatp", other))
-        }
+        (Value::Float(_), other) | (other, _) => return Err(i.wrong_type_mut("floatp", other)),
     };
     Ok(Value::Float(x.copysign(y)))
 }
@@ -716,7 +808,11 @@ fn f_isnan(i: &mut Interp, args: Vec<Value>) -> EvalResult {
 fn f_logcount(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     let n = want_int(i, &args[0])?;
     // Emacs counts 1-bits for nonneg, 0-bits for negative.
-    let c = if n >= 0 { n.count_ones() } else { (!n).count_ones() };
+    let c = if n >= 0 {
+        n.count_ones()
+    } else {
+        (!n).count_ones()
+    };
     Ok(Value::Int(c as i128))
 }
 

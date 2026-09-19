@@ -67,7 +67,7 @@ pub mod sym {
     pub const SAVE_RESTRICTION: SymId = 28;
     pub const TRACK_MOUSE: SymId = 29;
     pub const OPTIONAL: SymId = 30; // &optional
-    pub const REST: SymId = 31;     // &rest
+    pub const REST: SymId = 31; // &rest
     pub const BACKQUOTE: SymId = 32;
     pub const COMMA: SymId = 33;
     pub const COMMA_AT: SymId = 34;

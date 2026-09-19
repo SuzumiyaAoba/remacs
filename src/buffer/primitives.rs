@@ -6,11 +6,11 @@
 //! `Buffer` uses 0-based char indices. `pt` = `bb.point + 1`.
 
 use crate::buffer::TextProp;
+use crate::lisp::Interp;
 use crate::lisp::error::{EvalResult, Flow};
 use crate::lisp::eval::MatchData;
 use crate::lisp::obarray::sym;
 use crate::lisp::value::{Marker, Subr, Value};
-use crate::lisp::Interp;
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -18,7 +18,10 @@ macro_rules! S {
     ($name:literal, $min:expr, $max:expr, $f:expr, $doc:literal) => {
         crate::lisp::value::Subr {
             name: $name,
-            arity: crate::lisp::value::Arity::Range { min: $min, max: $max },
+            arity: crate::lisp::value::Arity::Range {
+                min: $min,
+                max: $max,
+            },
             func: $f,
             doc: $doc,
         }
@@ -43,182 +46,851 @@ macro_rules! S {
 
 pub(crate) static SUBRS: &[Subr] = &[
     // --- buffer objects ---
-    S!("current-buffer", 0, 0, f_current_buffer, "Return the current buffer."),
+    S!(
+        "current-buffer",
+        0,
+        0,
+        f_current_buffer,
+        "Return the current buffer."
+    ),
     S!("bufferp", 1, 1, f_bufferp, "t if OBJECT is a live buffer."),
-    S!("buffer-name", 0, 1, f_buffer_name, "Return the name of BUFFER."),
-    S!("get-buffer", 1, 1, f_get_buffer, "Return buffer named NAME."),
-    S!("get-buffer-create", 1, 1, f_get_buffer_create, "Return or create buffer NAME."),
-    S!("generate-new-buffer", 1, 1, f_generate_new_buffer, "Create a fresh buffer."),
-    S!("generate-new-buffer-name", 1, 2, f_generate_new_buffer_name, "Unique buffer name."),
-    S!("buffer-live-p", 1, 1, f_buffer_live_p, "t if OBJECT is a live buffer."),
+    S!(
+        "buffer-name",
+        0,
+        1,
+        f_buffer_name,
+        "Return the name of BUFFER."
+    ),
+    S!(
+        "get-buffer",
+        1,
+        1,
+        f_get_buffer,
+        "Return buffer named NAME."
+    ),
+    S!(
+        "get-buffer-create",
+        1,
+        1,
+        f_get_buffer_create,
+        "Return or create buffer NAME."
+    ),
+    S!(
+        "generate-new-buffer",
+        1,
+        1,
+        f_generate_new_buffer,
+        "Create a fresh buffer."
+    ),
+    S!(
+        "generate-new-buffer-name",
+        1,
+        2,
+        f_generate_new_buffer_name,
+        "Unique buffer name."
+    ),
+    S!(
+        "buffer-live-p",
+        1,
+        1,
+        f_buffer_live_p,
+        "t if OBJECT is a live buffer."
+    ),
     S!("kill-buffer", 0, 1, f_kill_buffer, "Kill BUFFER."),
     S!("buffer-list", 0, 1, f_buffer_list, "List of live buffers."),
-    S!("other-buffer", 0, 3, f_other_buffer, "Return another buffer."),
+    S!(
+        "other-buffer",
+        0,
+        3,
+        f_other_buffer,
+        "Return another buffer."
+    ),
     S!("set-buffer", 1, 1, f_set_buffer, "Make BUFFER current."),
-    S!("rename-buffer", 0, 2, f_rename_buffer, "Rename current buffer."),
-    S!("bury-buffer", 0, 1, f_bury_buffer, "Move BUFFER to the end of the list."),
-    S!("unbury-buffer", 0, 1, f_unbury_buffer, "Last buffer in the list."),
-    S!("buffer-size", 0, 1, f_buffer_size, "Number of chars in BUFFER."),
-    S!("buffer-modified-p", 0, 1, f_buffer_modified_p, "t if BUFFER was modified."),
-    S!("set-buffer-modified-p", 1, 1, f_set_buffer_modified_p, "Set modified flag."),
-    S!("buffer-modified-tick", 0, 1, f_buffer_modified_tick, "Modification counter."),
-    S!("restore-buffer-modified-p", 1, 1, f_set_buffer_modified_p, "Set modified flag."),
-    S!("buffer-file-name", 0, 1, f_buffer_file_name, "Visited file name."),
-    S!("buffer-base-buffer", 0, 1, f_buffer_base_buffer, "Base buffer (nil)."),
-    S!("buffer-local-variables", 0, 1, f_buffer_local_variables, "Alist of local vars."),
-    S!("buffer-local-value", 2, 2, f_buffer_local_value, "Value of SYMBOL in BUFFER."),
-    S!("make-local-variable", 1, 1, f_make_local_variable, "Make VARIABLE buffer-local."),
-    S!("make-variable-buffer-local", 1, 1, f_make_variable_buffer_local, "Make VARIABLE always local."),
-    S!("kill-local-variable", 1, 1, f_kill_local_variable, "Remove local binding."),
-    S!("kill-all-local-variables", 0, 0, f_kill_all_local_variables, "Remove all local bindings."),
-    S!("local-variable-p", 1, 2, f_local_variable_p, "t if VARIABLE is local in BUFFER."),
-    S!("local-variable-if-set-p", 1, 2, f_local_variable_if_set_p, "t if VARIABLE is auto-local."),
-    S!("default-value", 1, 1, f_default_value, "Default value of SYMBOL."),
-    S!("set-default", 2, 2, f_set_default, "Set default value of SYMBOL."),
+    S!(
+        "rename-buffer",
+        0,
+        2,
+        f_rename_buffer,
+        "Rename current buffer."
+    ),
+    S!(
+        "bury-buffer",
+        0,
+        1,
+        f_bury_buffer,
+        "Move BUFFER to the end of the list."
+    ),
+    S!(
+        "unbury-buffer",
+        0,
+        1,
+        f_unbury_buffer,
+        "Last buffer in the list."
+    ),
+    S!(
+        "buffer-size",
+        0,
+        1,
+        f_buffer_size,
+        "Number of chars in BUFFER."
+    ),
+    S!(
+        "buffer-modified-p",
+        0,
+        1,
+        f_buffer_modified_p,
+        "t if BUFFER was modified."
+    ),
+    S!(
+        "set-buffer-modified-p",
+        1,
+        1,
+        f_set_buffer_modified_p,
+        "Set modified flag."
+    ),
+    S!(
+        "buffer-modified-tick",
+        0,
+        1,
+        f_buffer_modified_tick,
+        "Modification counter."
+    ),
+    S!(
+        "restore-buffer-modified-p",
+        1,
+        1,
+        f_set_buffer_modified_p,
+        "Set modified flag."
+    ),
+    S!(
+        "buffer-file-name",
+        0,
+        1,
+        f_buffer_file_name,
+        "Visited file name."
+    ),
+    S!(
+        "buffer-base-buffer",
+        0,
+        1,
+        f_buffer_base_buffer,
+        "Base buffer (nil)."
+    ),
+    S!(
+        "buffer-local-variables",
+        0,
+        1,
+        f_buffer_local_variables,
+        "Alist of local vars."
+    ),
+    S!(
+        "buffer-local-value",
+        2,
+        2,
+        f_buffer_local_value,
+        "Value of SYMBOL in BUFFER."
+    ),
+    S!(
+        "make-local-variable",
+        1,
+        1,
+        f_make_local_variable,
+        "Make VARIABLE buffer-local."
+    ),
+    S!(
+        "make-variable-buffer-local",
+        1,
+        1,
+        f_make_variable_buffer_local,
+        "Make VARIABLE always local."
+    ),
+    S!(
+        "kill-local-variable",
+        1,
+        1,
+        f_kill_local_variable,
+        "Remove local binding."
+    ),
+    S!(
+        "kill-all-local-variables",
+        0,
+        0,
+        f_kill_all_local_variables,
+        "Remove all local bindings."
+    ),
+    S!(
+        "local-variable-p",
+        1,
+        2,
+        f_local_variable_p,
+        "t if VARIABLE is local in BUFFER."
+    ),
+    S!(
+        "local-variable-if-set-p",
+        1,
+        2,
+        f_local_variable_if_set_p,
+        "t if VARIABLE is auto-local."
+    ),
+    S!(
+        "default-value",
+        1,
+        1,
+        f_default_value,
+        "Default value of SYMBOL."
+    ),
+    S!(
+        "set-default",
+        2,
+        2,
+        f_set_default,
+        "Set default value of SYMBOL."
+    ),
     S!("set-default-toplevel-value", 2, 2, f_set_default, ""),
-    S!("default-boundp", 1, 1, f_default_boundp, "t if SYMBOL has a default value."),
-    S!("get-buffer-window", 0, 2, f_nil, "Window displaying BUFFER (editor)."),
-    S!("buffer-disable-undo", 0, 1, f_buffer_disable_undo, "Stop recording undo."),
-    S!("buffer-enable-undo", 0, 1, f_buffer_enable_undo, "Start recording undo."),
+    S!(
+        "default-boundp",
+        1,
+        1,
+        f_default_boundp,
+        "t if SYMBOL has a default value."
+    ),
+    S!(
+        "get-buffer-window",
+        0,
+        2,
+        f_nil,
+        "Window displaying BUFFER (editor)."
+    ),
+    S!(
+        "buffer-disable-undo",
+        0,
+        1,
+        f_buffer_disable_undo,
+        "Stop recording undo."
+    ),
+    S!(
+        "buffer-enable-undo",
+        0,
+        1,
+        f_buffer_enable_undo,
+        "Start recording undo."
+    ),
     // --- point & motion ---
     S!("point", 0, 0, f_point, "Current point (1-based)."),
-    S!("point-min", 0, 0, f_point_min, "Minimum accessible position."),
-    S!("point-max", 0, 0, f_point_max, "Maximum accessible position."),
+    S!(
+        "point-min",
+        0,
+        0,
+        f_point_min,
+        "Minimum accessible position."
+    ),
+    S!(
+        "point-max",
+        0,
+        0,
+        f_point_max,
+        "Maximum accessible position."
+    ),
     S!("goto-char", 1, 1, f_goto_char, "Move point to POSITION."),
-    S!("forward-char", 0, 1, f_forward_char, "Move point N chars forward."),
-    S!("backward-char", 0, 1, f_backward_char, "Move point N chars backward."),
-    S!("forward-word", 0, 1, f_forward_word, "Move point N words forward."),
-    S!("backward-word", 0, 1, f_backward_word, "Move point N words backward."),
-    S!("forward-line", 0, 1, f_forward_line, "Move point N lines forward."),
-    S!("beginning-of-line", 0, 1, f_beginning_of_line, "Move to start of line."),
+    S!(
+        "forward-char",
+        0,
+        1,
+        f_forward_char,
+        "Move point N chars forward."
+    ),
+    S!(
+        "backward-char",
+        0,
+        1,
+        f_backward_char,
+        "Move point N chars backward."
+    ),
+    S!(
+        "forward-word",
+        0,
+        1,
+        f_forward_word,
+        "Move point N words forward."
+    ),
+    S!(
+        "backward-word",
+        0,
+        1,
+        f_backward_word,
+        "Move point N words backward."
+    ),
+    S!(
+        "forward-line",
+        0,
+        1,
+        f_forward_line,
+        "Move point N lines forward."
+    ),
+    S!(
+        "beginning-of-line",
+        0,
+        1,
+        f_beginning_of_line,
+        "Move to start of line."
+    ),
     S!("end-of-line", 0, 1, f_end_of_line, "Move to end of line."),
-    S!("beginning-of-buffer", 0, 0, f_beginning_of_buffer, "Move to point-min."),
+    S!(
+        "beginning-of-buffer",
+        0,
+        0,
+        f_beginning_of_buffer,
+        "Move to point-min."
+    ),
     S!("end-of-buffer", 0, 0, f_end_of_buffer, "Move to point-max."),
     S!("bobp", 0, 0, f_bobp, "t at beginning of accessible text."),
     S!("eobp", 0, 0, f_eobp, "t at end of accessible text."),
     S!("bolp", 0, 0, f_bolp, "t at beginning of line."),
     S!("eolp", 0, 0, f_eolp, "t at end of line."),
     S!("point-marker", 0, 0, f_point_marker, "Marker at point."),
-    S!("point-min-marker", 0, 0, f_point_min_marker, "Marker at point-min."),
-    S!("point-max-marker", 0, 0, f_point_max_marker, "Marker at point-max."),
+    S!(
+        "point-min-marker",
+        0,
+        0,
+        f_point_min_marker,
+        "Marker at point-min."
+    ),
+    S!(
+        "point-max-marker",
+        0,
+        0,
+        f_point_max_marker,
+        "Marker at point-max."
+    ),
     S!("char-after", 0, 1, f_char_after, "Char at POSITION."),
     S!("char-before", 0, 1, f_char_before, "Char before POSITION."),
-    S!("following-char", 0, 0, f_following_char, "Char after point."),
-    S!("preceding-char", 0, 0, f_preceding_char, "Char before point."),
+    S!(
+        "following-char",
+        0,
+        0,
+        f_following_char,
+        "Char after point."
+    ),
+    S!(
+        "preceding-char",
+        0,
+        0,
+        f_preceding_char,
+        "Char before point."
+    ),
     S!("pos-bol", 0, 1, f_pos_bol, "Line start of POSITION."),
     S!("pos-eol", 0, 1, f_pos_eol, "Line end of POSITION."),
-    S!("line-beginning-position", 0, 1, f_line_beginning_position, "Start of Nth line."),
-    S!("line-end-position", 0, 1, f_line_end_position, "End of Nth line."),
-    S!("line-number-at-pos", 0, 2, f_line_number_at_pos, "Line number of POSITION."),
-    S!("count-lines", 2, 2, f_count_lines, "Lines between START and END."),
+    S!(
+        "line-beginning-position",
+        0,
+        1,
+        f_line_beginning_position,
+        "Start of Nth line."
+    ),
+    S!(
+        "line-end-position",
+        0,
+        1,
+        f_line_end_position,
+        "End of Nth line."
+    ),
+    S!(
+        "line-number-at-pos",
+        0,
+        2,
+        f_line_number_at_pos,
+        "Line number of POSITION."
+    ),
+    S!(
+        "count-lines",
+        2,
+        2,
+        f_count_lines,
+        "Lines between START and END."
+    ),
     S!("current-column", 0, 0, f_current_column, "Column of point."),
-    S!("move-to-column", 1, 2, f_move_to_column, "Move to COLUMN on this line."),
-    S!("forward-comment", 1, 1, f_forward_comment, "Skip comments (approx: whitespace)."),
-    S!("skip-chars-forward", 1, 2, f_skip_chars_forward, "Skip chars in SET."),
-    S!("skip-chars-backward", 1, 2, f_skip_chars_backward, "Skip chars in SET backward."),
-    S!("skip-syntax-forward", 1, 2, f_skip_syntax_forward, "Skip chars of syntax classes."),
-    S!("skip-syntax-backward", 1, 2, f_skip_syntax_backward, "Backward syntax skip."),
-    S!("forward-sexp", 0, 1, f_forward_sexp, "Move across a balanced expression."),
-    S!("backward-sexp", 0, 1, f_backward_sexp, "Move back across a balanced expression."),
+    S!(
+        "move-to-column",
+        1,
+        2,
+        f_move_to_column,
+        "Move to COLUMN on this line."
+    ),
+    S!(
+        "forward-comment",
+        1,
+        1,
+        f_forward_comment,
+        "Skip comments (approx: whitespace)."
+    ),
+    S!(
+        "skip-chars-forward",
+        1,
+        2,
+        f_skip_chars_forward,
+        "Skip chars in SET."
+    ),
+    S!(
+        "skip-chars-backward",
+        1,
+        2,
+        f_skip_chars_backward,
+        "Skip chars in SET backward."
+    ),
+    S!(
+        "skip-syntax-forward",
+        1,
+        2,
+        f_skip_syntax_forward,
+        "Skip chars of syntax classes."
+    ),
+    S!(
+        "skip-syntax-backward",
+        1,
+        2,
+        f_skip_syntax_backward,
+        "Backward syntax skip."
+    ),
+    S!(
+        "forward-sexp",
+        0,
+        1,
+        f_forward_sexp,
+        "Move across a balanced expression."
+    ),
+    S!(
+        "backward-sexp",
+        0,
+        1,
+        f_backward_sexp,
+        "Move back across a balanced expression."
+    ),
     S!("scan-lists", 3, 3, f_scan_lists, "Scan lists (approx)."),
     // --- insertion & deletion ---
     S!("insert", many 0, f_insert, "Insert args (strings/chars) at point."),
     S!("insert-and-inherit", many 0, f_insert, "Insert with inherited props."),
     S!("insert-before-markers", many 0, f_insert_before_markers, "Insert before markers."),
     S!("insert-before-markers-and-inherit", many 0, f_insert_before_markers, ""),
-    S!("insert-char", 1, 3, f_insert_char, "Insert CHAR COUNT times."),
-    S!("insert-buffer-substring", 1, 3, f_insert_buffer_substring, "Insert text from BUFFER."),
-    S!("self-insert-command", 1, 2, f_self_insert_command, "Insert the last typed char N times."),
+    S!(
+        "insert-char",
+        1,
+        3,
+        f_insert_char,
+        "Insert CHAR COUNT times."
+    ),
+    S!(
+        "insert-buffer-substring",
+        1,
+        3,
+        f_insert_buffer_substring,
+        "Insert text from BUFFER."
+    ),
+    S!(
+        "self-insert-command",
+        1,
+        2,
+        f_self_insert_command,
+        "Insert the last typed char N times."
+    ),
     S!("newline", 0, 2, f_newline, "Insert a newline."),
-    S!("newline-and-indent", 0, 0, f_newline, "Insert newline (indent later)."),
-    S!("open-line", 0, 1, f_open_line, "Insert newline without moving point."),
-    S!("delete-char", 0, 2, f_delete_char, "Delete N chars after point."),
-    S!("delete-backward-char", 0, 2, f_delete_backward_char, "Delete N chars before point."),
-    S!("delete-and-extract-region", 2, 2, f_delete_and_extract_region, "Delete region, return text."),
-    S!("delete-region", 2, 2, f_delete_region, "Delete text between START and END."),
+    S!(
+        "newline-and-indent",
+        0,
+        0,
+        f_newline,
+        "Insert newline (indent later)."
+    ),
+    S!(
+        "open-line",
+        0,
+        1,
+        f_open_line,
+        "Insert newline without moving point."
+    ),
+    S!(
+        "delete-char",
+        0,
+        2,
+        f_delete_char,
+        "Delete N chars after point."
+    ),
+    S!(
+        "delete-backward-char",
+        0,
+        2,
+        f_delete_backward_char,
+        "Delete N chars before point."
+    ),
+    S!(
+        "delete-and-extract-region",
+        2,
+        2,
+        f_delete_and_extract_region,
+        "Delete region, return text."
+    ),
+    S!(
+        "delete-region",
+        2,
+        2,
+        f_delete_region,
+        "Delete text between START and END."
+    ),
     S!("erase-buffer", 0, 0, f_erase_buffer, "Delete all text."),
-    S!("kill-region", 2, 2, f_kill_region, "Kill text between START and END."),
-    S!("delete-blank-lines", 0, 0, f_noop, "Delete blank lines (todo)."),
+    S!(
+        "kill-region",
+        2,
+        2,
+        f_kill_region,
+        "Kill text between START and END."
+    ),
+    S!(
+        "delete-blank-lines",
+        0,
+        0,
+        f_noop,
+        "Delete blank lines (todo)."
+    ),
     S!("combine-after-change-calls", raw, f_progn_raw, ""),
     S!("combine-change-calls", raw, f_second_form_raw, ""),
     // --- buffer text access ---
-    S!("buffer-substring", 2, 2, f_buffer_substring, "Text between START and END."),
-    S!("buffer-substring-no-properties", 2, 2, f_buffer_substring, "Text without props."),
-    S!("buffer-string", 0, 0, f_buffer_string, "Whole accessible text."),
+    S!(
+        "buffer-substring",
+        2,
+        2,
+        f_buffer_substring,
+        "Text between START and END."
+    ),
+    S!(
+        "buffer-substring-no-properties",
+        2,
+        2,
+        f_buffer_substring,
+        "Text without props."
+    ),
+    S!(
+        "buffer-string",
+        0,
+        0,
+        f_buffer_string,
+        "Whole accessible text."
+    ),
     S!("buffer-word-at-point", 0, 0, f_word_at_point, ""),
     S!("current-word", 0, 3, f_current_word, "Word at point."),
-    S!("thing-at-point", 1, 2, f_thing_at_point, "Thing at point (word/symbol/line)."),
+    S!(
+        "thing-at-point",
+        1,
+        2,
+        f_thing_at_point,
+        "Thing at point (word/symbol/line)."
+    ),
     S!("word-at-point", 0, 0, f_word_at_point, "Word at point."),
-    S!("symbol-at-point", 0, 0, f_symbol_at_point, "Symbol at point."),
+    S!(
+        "symbol-at-point",
+        0,
+        0,
+        f_symbol_at_point,
+        "Symbol at point."
+    ),
     // --- mark & region ---
     S!("mark", 0, 1, f_mark, "The mark position (or nil)."),
     S!("set-mark", 1, 1, f_set_mark, "Set the mark to POSITION."),
     S!("mark-marker", 0, 0, f_mark_marker, "Marker at the mark."),
     S!("push-mark", 0, 3, f_push_mark, "Push mark onto mark-ring."),
     S!("pop-mark", 0, 0, f_pop_mark, "Pop mark-ring."),
-    S!("region-beginning", 0, 0, f_region_beginning, "Start of region."),
+    S!(
+        "region-beginning",
+        0,
+        0,
+        f_region_beginning,
+        "Start of region."
+    ),
     S!("region-end", 0, 0, f_region_end, "End of region."),
-    S!("region-active-p", 0, 0, f_region_active_p, "t if mark is active."),
-    S!("deactivate-mark", 0, 1, f_deactivate_mark, "Deactivate the mark."),
+    S!(
+        "region-active-p",
+        0,
+        0,
+        f_region_active_p,
+        "t if mark is active."
+    ),
+    S!(
+        "deactivate-mark",
+        0,
+        1,
+        f_deactivate_mark,
+        "Deactivate the mark."
+    ),
     S!("activate-mark", 0, 0, f_activate_mark, "Activate the mark."),
-    S!("exchange-point-and-mark", 0, 1, f_exchange_point_and_mark, "Swap point and mark."),
-    S!("use-region-p", 0, 0, f_use_region_p, "t if the region is active."),
+    S!(
+        "exchange-point-and-mark",
+        0,
+        1,
+        f_exchange_point_and_mark,
+        "Swap point and mark."
+    ),
+    S!(
+        "use-region-p",
+        0,
+        0,
+        f_use_region_p,
+        "t if the region is active."
+    ),
     // --- narrowing ---
-    S!("narrow-to-region", 2, 2, f_narrow_to_region, "Restrict editing to START..END."),
-    S!("narrow-to-page", 0, 1, f_narrow_to_page, "Narrow to page (approx whole)."),
+    S!(
+        "narrow-to-region",
+        2,
+        2,
+        f_narrow_to_region,
+        "Restrict editing to START..END."
+    ),
+    S!(
+        "narrow-to-page",
+        0,
+        1,
+        f_narrow_to_page,
+        "Narrow to page (approx whole)."
+    ),
     S!("widen", 0, 0, f_widen, "Remove narrowing."),
     // --- markers ---
     S!("markerp", 1, 1, f_markerp, "t if OBJECT is a marker."),
-    S!("make-marker", 0, 0, f_make_marker, "Create a marker pointing nowhere."),
+    S!(
+        "make-marker",
+        0,
+        0,
+        f_make_marker,
+        "Create a marker pointing nowhere."
+    ),
     S!("copy-marker", 1, 2, f_copy_marker, "Copy MARKER."),
-    S!("set-marker", 2, 3, f_set_marker, "Point MARKER at POSITION in BUFFER."),
-    S!("marker-position", 1, 1, f_marker_position, "Position of MARKER."),
+    S!(
+        "set-marker",
+        2,
+        3,
+        f_set_marker,
+        "Point MARKER at POSITION in BUFFER."
+    ),
+    S!(
+        "marker-position",
+        1,
+        1,
+        f_marker_position,
+        "Position of MARKER."
+    ),
     S!("marker-buffer", 1, 1, f_marker_buffer, "Buffer of MARKER."),
-    S!("marker-insertion-type", 1, 1, f_marker_insertion_type, "Insertion type of MARKER."),
-    S!("set-marker-insertion-type", 2, 2, f_set_marker_insertion_type, "Set insertion type."),
+    S!(
+        "marker-insertion-type",
+        1,
+        1,
+        f_marker_insertion_type,
+        "Insertion type of MARKER."
+    ),
+    S!(
+        "set-marker-insertion-type",
+        2,
+        2,
+        f_set_marker_insertion_type,
+        "Set insertion type."
+    ),
     S!("move-marker", 2, 3, f_set_marker, "Move MARKER."),
     // --- searching ---
-    S!("looking-at", 1, 2, f_looking_at, "t if text at point matches REGEXP."),
+    S!(
+        "looking-at",
+        1,
+        2,
+        f_looking_at,
+        "t if text at point matches REGEXP."
+    ),
     S!("looking-at-p", 1, 1, f_looking_at, "Predicate version."),
-    S!("string-match", 2, 4, f_string_match, "Match REGEXP in STRING."),
+    S!(
+        "string-match",
+        2,
+        4,
+        f_string_match,
+        "Match REGEXP in STRING."
+    ),
     S!("string-match-p", 2, 4, f_string_match, "Predicate version."),
-    S!("re-search-forward", 1, 4, f_re_search_forward, "Regexp search forward."),
-    S!("re-search-backward", 1, 4, f_re_search_backward, "Regexp search backward."),
-    S!("search-forward", 1, 4, f_search_forward, "Literal search forward."),
-    S!("search-backward", 1, 4, f_search_backward, "Literal search backward."),
+    S!(
+        "re-search-forward",
+        1,
+        4,
+        f_re_search_forward,
+        "Regexp search forward."
+    ),
+    S!(
+        "re-search-backward",
+        1,
+        4,
+        f_re_search_backward,
+        "Regexp search backward."
+    ),
+    S!(
+        "search-forward",
+        1,
+        4,
+        f_search_forward,
+        "Literal search forward."
+    ),
+    S!(
+        "search-backward",
+        1,
+        4,
+        f_search_backward,
+        "Literal search backward."
+    ),
     S!("search-forward-regexp", 1, 4, f_re_search_forward, ""),
     S!("search-backward-regexp", 1, 4, f_re_search_backward, ""),
-    S!("match-beginning", 1, 1, f_match_beginning, "Start of match group N."),
+    S!(
+        "match-beginning",
+        1,
+        1,
+        f_match_beginning,
+        "Start of match group N."
+    ),
     S!("match-end", 1, 1, f_match_end, "End of match group N."),
-    S!("match-data", 0, 3, f_match_data, "Match registers as a list."),
-    S!("set-match-data", 1, 2, f_set_match_data, "Set match registers."),
-    S!("match-string", 1, 2, f_match_string, "Matched text of group N."),
+    S!(
+        "match-data",
+        0,
+        3,
+        f_match_data,
+        "Match registers as a list."
+    ),
+    S!(
+        "set-match-data",
+        1,
+        2,
+        f_set_match_data,
+        "Set match registers."
+    ),
+    S!(
+        "match-string",
+        1,
+        2,
+        f_match_string,
+        "Matched text of group N."
+    ),
     S!("match-string-no-properties", 1, 2, f_match_string, ""),
-    S!("replace-match", 1, 5, f_replace_match, "Replace match with NEWTEXT."),
-    S!("regexp-quote", 1, 1, f_regexp_quote, "Quote STRING for literal regexp match."),
+    S!(
+        "replace-match",
+        1,
+        5,
+        f_replace_match,
+        "Replace match with NEWTEXT."
+    ),
+    S!(
+        "match-substitute-replacement",
+        1,
+        5,
+        f_match_substitute_replacement,
+        "Return NEWTEXT with \\&/\\N escapes substituted from match data."
+    ),
+    S!(
+        "regexp-opt",
+        1,
+        2,
+        f_regexp_opt,
+        "Optimal regexp matching any of STRINGS."
+    ),
+    S!(
+        "regexp-opt-depth",
+        1,
+        1,
+        f_regexp_opt_depth,
+        "Number of parenthesized groups in REGEXP."
+    ),
+    S!(
+        "regexp-quote",
+        1,
+        1,
+        f_regexp_quote,
+        "Quote STRING for literal regexp match."
+    ),
     S!("posix-looking-at", 1, 1, f_looking_at, ""),
     S!("posix-string-match", 2, 3, f_string_match, ""),
     S!("word-search-forward", 1, 4, f_search_forward, ""),
     S!("word-search-backward", 1, 4, f_search_backward, ""),
     // --- text properties ---
-    S!("put-text-property", 4, 5, f_put_text_property, "Set PROPERTY to VALUE in region."),
-    S!("add-text-properties", 3, 4, f_add_text_properties, "Add plist props to region."),
-    S!("remove-text-properties", 3, 4, f_remove_text_properties, "Remove props in region."),
-    S!("set-text-properties", 3, 4, f_set_text_properties, "Set plist props in region."),
-    S!("get-text-property", 2, 3, f_get_text_property, "Get PROPERTY at POSITION."),
-    S!("text-properties-at", 1, 2, f_text_properties_at, "Plist at POSITION."),
+    S!(
+        "put-text-property",
+        4,
+        5,
+        f_put_text_property,
+        "Set PROPERTY to VALUE in region."
+    ),
+    S!(
+        "add-text-properties",
+        3,
+        4,
+        f_add_text_properties,
+        "Add plist props to region."
+    ),
+    S!(
+        "remove-text-properties",
+        3,
+        4,
+        f_remove_text_properties,
+        "Remove props in region."
+    ),
+    S!(
+        "set-text-properties",
+        3,
+        4,
+        f_set_text_properties,
+        "Set plist props in region."
+    ),
+    S!(
+        "get-text-property",
+        2,
+        3,
+        f_get_text_property,
+        "Get PROPERTY at POSITION."
+    ),
+    S!(
+        "text-properties-at",
+        1,
+        2,
+        f_text_properties_at,
+        "Plist at POSITION."
+    ),
     S!("get-char-property", 2, 3, f_get_text_property, ""),
-    S!("next-property-change", 1, 3, f_next_property_change, "Next pos with different props."),
-    S!("next-single-property-change", 2, 4, f_next_single_property_change, "Next pos where PROP changes."),
+    S!(
+        "next-property-change",
+        1,
+        3,
+        f_next_property_change,
+        "Next pos with different props."
+    ),
+    S!(
+        "next-single-property-change",
+        2,
+        4,
+        f_next_single_property_change,
+        "Next pos where PROP changes."
+    ),
     S!("previous-property-change", 1, 3, f_prev_property_change, ""),
-    S!("previous-single-property-change", 2, 4, f_prev_single_property_change, ""),
+    S!(
+        "previous-single-property-change",
+        2,
+        4,
+        f_prev_single_property_change,
+        ""
+    ),
     S!("propertize", many 1, f_propertize, "Return STRING (props ignored)."),
     S!("text-props-copy", 1, 1, f_identity, ""),
     S!("object-intervals", 0, 0, f_nil, ""),
     // --- undo ---
     S!("undo", 0, 1, f_undo, "Undo some changes."),
-    S!("primitive-undo", 2, 2, f_primitive_undo, "Apply undo entries."),
-    S!("undo-boundary", 0, 0, f_undo_boundary, "Mark an undo boundary."),
+    S!(
+        "primitive-undo",
+        2,
+        2,
+        f_primitive_undo,
+        "Apply undo entries."
+    ),
+    S!(
+        "undo-boundary",
+        0,
+        0,
+        f_undo_boundary,
+        "Mark an undo boundary."
+    ),
     S!("undo-start", 0, 0, f_noop, ""),
     S!("undo-more", 1, 1, f_undo, ""),
     S!("undo-auto-amalgamate", 0, 0, f_noop, ""),
@@ -227,13 +899,43 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!("handle-change-group", 0, 0, f_noop, ""),
     S!("undo-outer-limit-truncate", 0, 0, f_noop, ""),
     // --- gap/position misc ---
-    S!("gap-position", 0, 0, f_gap_position, "Gap position (internal)."),
+    S!(
+        "gap-position",
+        0,
+        0,
+        f_gap_position,
+        "Gap position (internal)."
+    ),
     S!("gap-size", 0, 0, f_gap_size, "Gap size (internal)."),
-    S!("position-bytes", 1, 1, f_position_bytes, "Byte position (chars == bytes here)."),
-    S!("byte-to-position", 1, 1, f_byte_to_position, "Char position from byte."),
+    S!(
+        "position-bytes",
+        1,
+        1,
+        f_position_bytes,
+        "Byte position (chars == bytes here)."
+    ),
+    S!(
+        "byte-to-position",
+        1,
+        1,
+        f_byte_to_position,
+        "Char position from byte."
+    ),
     S!("max-char", 0, 0, f_max_char, "Max character code."),
-    S!("char-equal", 2, 3, f_char_equal_buf, "t if chars equal (dup ok)."),
-    S!("barf-if-buffer-read-only", 0, 2, f_barf_if_buffer_read_only, "Signal if read-only."),
+    S!(
+        "char-equal",
+        2,
+        3,
+        f_char_equal_buf,
+        "t if chars equal (dup ok)."
+    ),
+    S!(
+        "barf-if-buffer-read-only",
+        0,
+        2,
+        f_barf_if_buffer_read_only,
+        "Signal if read-only."
+    ),
     S!("verify-visited-file-modtime", 0, 1, f_t, ""),
     S!("clear-visited-file-modtime", 0, 0, f_nil, ""),
     S!("visited-file-modtime", 0, 0, f_zero, ""),
@@ -296,7 +998,10 @@ pub(crate) fn want_sym(i: &mut Interp, v: &Value) -> Result<u32, Flow> {
 }
 
 /// Resolve optional buffer arg (Value::Buffer/Str/nil) to a shared ref.
-pub(crate) fn buf_of(i: &mut Interp, v: &Value) -> Result<Rc<RefCell<crate::buffer::Buffer>>, Flow> {
+pub(crate) fn buf_of(
+    i: &mut Interp,
+    v: &Value,
+) -> Result<Rc<RefCell<crate::buffer::Buffer>>, Flow> {
     match v {
         Value::Nil => i
             .current_buffer_ref()
@@ -426,7 +1131,11 @@ fn f_kill_buffer(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         return Ok(Value::Nil);
     }
     if i.current_buffer == id {
-        if let Some(next) = i.buffers.other(id).or_else(|| i.buffers.list().first().copied()) {
+        if let Some(next) = i
+            .buffers
+            .other(id)
+            .or_else(|| i.buffers.list().first().copied())
+        {
             i.current_buffer = next;
         }
     }
@@ -436,9 +1145,7 @@ fn f_kill_buffer(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 fn f_buffer_list(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
     let ids = i.buffers.list();
     Ok(Value::list(
-        ids.iter()
-            .filter_map(|id| i.buffer_value(*id))
-            .collect(),
+        ids.iter().filter_map(|id| i.buffer_value(*id)).collect(),
     ))
 }
 
@@ -512,7 +1219,9 @@ fn f_buffer_size(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let b = buf_of(i, &arg(&a, 0))?;
     // Emacs: ZV - BEGV (accessible portion under narrowing).
     let bb = b.borrow();
-    Ok(Value::Int(bb.zv.saturating_sub(bb.begv).min(bb.size()) as i128))
+    Ok(Value::Int(
+        bb.zv.saturating_sub(bb.begv).min(bb.size()) as i128
+    ))
 }
 
 fn f_buffer_modified_p(i: &mut Interp, a: Vec<Value>) -> EvalResult {
@@ -791,7 +1500,10 @@ fn f_end_of_line(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let mut bb = b.borrow_mut();
     let cur_line = bb.text.line_of_pos(bb.point());
     let target = cur_line + (n - 1) as usize;
-    let p = bb.text.line_end(bb.text.line_start(target)).min(bb.text_len());
+    let p = bb
+        .text
+        .line_end(bb.text.line_start(target))
+        .min(bb.text_len());
     bb.set_point(p);
     Ok(Value::Nil)
 }
@@ -968,7 +1680,9 @@ fn f_line_number_at_pos(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         _ => bb.point(),
     };
     // Emacs counts lines in the whole buffer unless narrowed-absolute.
-    Ok(Value::Int(bb.text.line_of_pos(p.min(bb.text.len())) as i128 + 1))
+    Ok(Value::Int(
+        bb.text.line_of_pos(p.min(bb.text.len())) as i128 + 1,
+    ))
 }
 
 fn f_count_lines(i: &mut Interp, a: Vec<Value>) -> EvalResult {
@@ -1002,7 +1716,11 @@ fn f_current_column(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
         match bb.text.char_at(k) {
             '\t' => col = (col / tab_width + 1) * tab_width,
             c if (c as u32) < 0x20 || c == '\x7f' => col += 2,
-            c => col += unicode_width::UnicodeWidthChar::width(c).unwrap_or(1).max(1) as i128,
+            c => {
+                col += unicode_width::UnicodeWidthChar::width(c)
+                    .unwrap_or(1)
+                    .max(1) as i128
+            }
         }
         k += 1;
     }
@@ -1027,7 +1745,11 @@ fn f_move_to_column(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         match bb.text.char_at(k) {
             '\t' => col = (col / tab_width + 1) * tab_width,
             c if (c as u32) < 0x20 || c == '\x7f' => col += 2,
-            c => col += unicode_width::UnicodeWidthChar::width(c).unwrap_or(1).max(1) as i128,
+            c => {
+                col += unicode_width::UnicodeWidthChar::width(c)
+                    .unwrap_or(1)
+                    .max(1) as i128
+            }
         }
         k += 1;
     }
@@ -1096,7 +1818,9 @@ fn f_skip_chars_forward(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     };
     let (ranges, singles, neg) = char_set_pred(&spec);
     let mut p = bb.point();
-    while p < lim.min(bb.text.len()) && char_set_contains(&ranges, &singles, neg, bb.text.char_at(p)) {
+    while p < lim.min(bb.text.len())
+        && char_set_contains(&ranges, &singles, neg, bb.text.char_at(p))
+    {
         p += 1;
     }
     let moved = p as i128 - bb.point() as i128;
@@ -1228,13 +1952,17 @@ fn f_forward_sexp(i: &mut Interp, a: Vec<Value>) -> EvalResult {
                 k += 1;
             }
             if depth != 0 {
-                return Err(err_sym(i, "scan-error",
+                return Err(err_sym(
+                    i,
+                    "scan-error",
                     vec![Value::string("Unbalanced parentheses")],
                 ));
             }
             bb.set_point(k + 1);
         } else if c == ')' || c == ']' || c == '}' {
-            return Err(err_sym(i, "scan-error",
+            return Err(err_sym(
+                i,
+                "scan-error",
                 vec![Value::string("Unbalanced parentheses")],
             ));
         } else if c == '"' {
@@ -1254,7 +1982,9 @@ fn f_forward_sexp(i: &mut Interp, a: Vec<Value>) -> EvalResult {
                 k += 1;
             }
             if !closed {
-                return Err(err_sym(i, "scan-error",
+                return Err(err_sym(
+                    i,
+                    "scan-error",
                     vec![Value::string("Unbalanced parentheses")],
                 ));
             }
@@ -1285,7 +2015,9 @@ fn f_backward_sexp(i: &mut Interp, a: Vec<Value>) -> EvalResult {
             p -= 1;
         }
         if p <= bb.begv {
-            return Err(err_sym(i, "scan-error",
+            return Err(err_sym(
+                i,
+                "scan-error",
                 vec![Value::string("Unbalanced parentheses")],
             ));
         }
@@ -1308,7 +2040,9 @@ fn f_backward_sexp(i: &mut Interp, a: Vec<Value>) -> EvalResult {
                 k -= 1;
             }
             if depth != 0 {
-                return Err(err_sym(i, "scan-error",
+                return Err(err_sym(
+                    i,
+                    "scan-error",
                     vec![Value::string("Unbalanced parentheses")],
                 ));
             }
@@ -1389,8 +2123,9 @@ fn f_insert_before_markers(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 
 fn f_insert_char(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let c = match &a[0] {
-        Value::Int(n) => char::from_u32(*n as u32)
-            .ok_or_else(|| i.wrong_type_mut("characterp", &a[0]))?,
+        Value::Int(n) => {
+            char::from_u32(*n as u32).ok_or_else(|| i.wrong_type_mut("characterp", &a[0]))?
+        }
         other => return Err(i.wrong_type_mut("characterp", other)),
     };
     let count = a.get(1).and_then(|v| v.int()).unwrap_or(1).max(0);
@@ -1406,8 +2141,16 @@ fn f_insert_buffer_substring(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         let bb = src.borrow();
         (bb.text.text(), bb.text.len())
     };
-    let s = a.get(1).and_then(|v| v.int()).map(|p| pos_idx(len, p)).unwrap_or(0);
-    let e = a.get(2).and_then(|v| v.int()).map(|p| pos_idx(len, p)).unwrap_or(len);
+    let s = a
+        .get(1)
+        .and_then(|v| v.int())
+        .map(|p| pos_idx(len, p))
+        .unwrap_or(0);
+    let e = a
+        .get(2)
+        .and_then(|v| v.int())
+        .map(|p| pos_idx(len, p))
+        .unwrap_or(len);
     let chars: Vec<char> = text.chars().collect();
     let sub: String = chars[s.min(e)..e.max(s)].iter().collect();
     check_writable(i)?;
@@ -1472,7 +2215,10 @@ fn f_delete_char(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 
 fn f_delete_backward_char(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let n = a.get(0).and_then(|v| v.int()).unwrap_or(1);
-    f_delete_char(i, vec![Value::Int(-n), a.get(1).cloned().unwrap_or(Value::Nil)])
+    f_delete_char(
+        i,
+        vec![Value::Int(-n), a.get(1).cloned().unwrap_or(Value::Nil)],
+    )
 }
 
 fn f_delete_and_extract_region(i: &mut Interp, a: Vec<Value>) -> EvalResult {
@@ -1620,8 +2366,8 @@ fn f_thing_at_point(i: &mut Interp, a: Vec<Value>) -> EvalResult {
             Ok(Value::string(bb.text.substring(ls, le)))
         }
         "number" => f_current_word(i, vec![]),
-        "filename" | "url" | "email" | "sexp" | "sentence" | "defun" | "list"
-        | "whitespace" | "page" => Ok(Value::Nil),
+        "filename" | "url" | "email" | "sexp" | "sentence" | "defun" | "list" | "whitespace"
+        | "page" => Ok(Value::Nil),
         _ => Ok(Value::Nil),
     }
 }
@@ -1640,7 +2386,9 @@ fn f_mark(i: &mut Interp, a: Vec<Value>) -> EvalResult {
             } else {
                 Err(i.signal_data(
                     sym::ERROR,
-                    vec![Value::string("The mark is not set now, so there is no region")],
+                    vec![Value::string(
+                        "The mark is not set now, so there is no region",
+                    )],
                 ))
             }
         }
@@ -1679,11 +2427,7 @@ fn f_push_mark(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     bb.mark = Some(p);
     // push onto mark-ring (a buffer-local list var)
     let ring_sym = i.intern_soft("mark-ring").unwrap_or(0);
-    let cur_ring = bb
-        .locals
-        .get(&ring_sym)
-        .cloned()
-        .unwrap_or(Value::Nil);
+    let cur_ring = bb.locals.get(&ring_sym).cloned().unwrap_or(Value::Nil);
     let mut items = cur_ring.list_to_vec().unwrap_or_default();
     let m = Rc::new(RefCell::new(Marker {
         buffer: Some(bb.id),
@@ -1753,7 +2497,9 @@ fn f_region_active_p(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
     let tmm = i
         .symbol_value(i.intern_soft("transient-mark-mode").unwrap_or(0))
         .truthy();
-    Ok(Value::from_bool(bb.mark.is_some() && (bb.mark_active || !tmm)))
+    Ok(Value::from_bool(
+        bb.mark.is_some() && (bb.mark_active || !tmm),
+    ))
 }
 
 fn f_deactivate_mark(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
@@ -1858,18 +2604,10 @@ fn f_copy_marker(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         Value::Int(_) | Value::Nil => {
             let itype = a.get(1).map(|v| v.truthy()).unwrap_or(false);
             let bid = i.current_buffer;
-            let len = i
-                .buffers
-                .get(bid)
-                .map(|b| b.borrow().size())
-                .unwrap_or(0);
+            let len = i.buffers.get(bid).map(|b| b.borrow().size()).unwrap_or(0);
             let pos = match &a[0] {
                 Value::Int(n) => pos_idx(len, *n),
-                _ => i
-                    .buffers
-                    .get(bid)
-                    .map(|b| b.borrow().point())
-                    .unwrap_or(0),
+                _ => i.buffers.get(bid).map(|b| b.borrow().point()).unwrap_or(0),
             };
             let r = Rc::new(RefCell::new(Marker {
                 buffer: Some(bid),
@@ -1968,7 +2706,10 @@ fn f_set_marker_insertion_type(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 
 // ---------- searching ----------
 
-pub(crate) fn regexp_compile(i: &mut Interp, pattern: &Value) -> Result<crate::lisp::regexp::Regex, Flow> {
+pub(crate) fn regexp_compile(
+    i: &mut Interp,
+    pattern: &Value,
+) -> Result<crate::lisp::regexp::Regex, Flow> {
     let pat = match pattern {
         Value::Str(s) => s.borrow().clone(),
         other => return Err(i.wrong_type_mut("stringp", other)),
@@ -1976,11 +2717,8 @@ pub(crate) fn regexp_compile(i: &mut Interp, pattern: &Value) -> Result<crate::l
     let case_fold = i
         .symbol_value(i.intern_soft("case-fold-search").unwrap_or(0))
         .truthy();
-    crate::lisp::regexp::compile_case(&pat, case_fold).map_err(|e| {
-        err_sym(i, "invalid-regexp",
-            vec![Value::string(e.0)],
-        )
-    })
+    crate::lisp::regexp::compile_case(&pat, case_fold)
+        .map_err(|e| err_sym(i, "invalid-regexp", vec![Value::string(e.0)]))
 }
 
 fn f_looking_at(i: &mut Interp, a: Vec<Value>) -> EvalResult {
@@ -2022,9 +2760,8 @@ fn f_string_match(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let case_fold = i
         .symbol_value(i.intern_soft("case-fold-search").unwrap_or(0))
         .truthy();
-    let re = crate::lisp::regexp::compile_case(&pat, case_fold).map_err(|e| {
-        err_sym(i, "invalid-regexp", vec![Value::string(e.0)])
-    })?;
+    let re = crate::lisp::regexp::compile_case(&pat, case_fold)
+        .map_err(|e| err_sym(i, "invalid-regexp", vec![Value::string(e.0)]))?;
     let chars: Vec<char> = text.chars().collect();
     match crate::lisp::regexp::search_full(&re, &chars, start.min(chars.len())) {
         Some(regs) => {
@@ -2122,14 +2859,13 @@ pub(crate) fn search_common(
             if noerror {
                 if let Some(b) = bound {
                     let idx = b.max(1) as usize - 1;
-                    cur(i).borrow_mut().set_point(idx.min(cur(i).borrow().text_len()));
+                    cur(i)
+                        .borrow_mut()
+                        .set_point(idx.min(cur(i).borrow().text_len()));
                 }
                 Ok(Value::Nil)
             } else {
-                Err(i.signal_data(
-                    sym::SEARCH_FAILED,
-                    vec![a[0].clone()],
-                ))
+                Err(i.signal_data(sym::SEARCH_FAILED, vec![a[0].clone()]))
             }
         }
     }
@@ -2199,7 +2935,9 @@ fn f_match_beginning(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let n = want_int(i, &a[0])?.max(0) as usize;
     match &i.match_data {
         Some(md) => match md.regs.get(2 * n).copied().flatten() {
-            Some(p) => Ok(Value::Int((p + md.base + if md.in_buffer { 1 } else { 0 }) as i128)),
+            Some(p) => Ok(Value::Int(
+                (p + md.base + if md.in_buffer { 1 } else { 0 }) as i128,
+            )),
             None => Ok(Value::Nil),
         },
         None => Ok(Value::Nil),
@@ -2210,7 +2948,9 @@ fn f_match_end(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let n = want_int(i, &a[0])?.max(0) as usize;
     match &i.match_data {
         Some(md) => match md.regs.get(2 * n + 1).copied().flatten() {
-            Some(p) => Ok(Value::Int((p + md.base + if md.in_buffer { 1 } else { 0 }) as i128)),
+            Some(p) => Ok(Value::Int(
+                (p + md.base + if md.in_buffer { 1 } else { 0 }) as i128,
+            )),
             None => Ok(Value::Nil),
         },
         None => Ok(Value::Nil),
@@ -2246,22 +2986,25 @@ fn f_match_data(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 fn f_set_match_data(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let items = a[0].list_to_vec().unwrap_or_default();
     let mut regs = Vec::new();
-    let in_buffer = i
-        .match_data
-        .as_ref()
-        .map(|m| m.in_buffer)
-        .unwrap_or(true);
+    let in_buffer = i.match_data.as_ref().map(|m| m.in_buffer).unwrap_or(true);
     let base = i.match_data.as_ref().map(|m| m.base).unwrap_or(0);
     let off = base + if in_buffer { 1 } else { 0 };
     let mut k = 0;
     while k < items.len() {
         let s = items[k].int().map(|p| (p as usize).saturating_sub(off));
-        let e = items.get(k + 1).and_then(|v| v.int()).map(|p| (p as usize).saturating_sub(off));
+        let e = items
+            .get(k + 1)
+            .and_then(|v| v.int())
+            .map(|p| (p as usize).saturating_sub(off));
         regs.push(s);
         regs.push(e);
         k += 2;
     }
-    i.match_data = Some(MatchData { regs, in_buffer, base });
+    i.match_data = Some(MatchData {
+        regs,
+        in_buffer,
+        base,
+    });
     Ok(Value::Nil)
 }
 
@@ -2299,6 +3042,54 @@ fn f_match_string(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     }
 }
 
+/// Expand `\&`, `\N`, `\\` escapes in a replacement string using `regs`
+/// indexed into `src` (a char-indexed source text).
+fn expand_replacement(
+    i: &mut Interp,
+    rep: &str,
+    literal: bool,
+    md: &MatchData,
+    src: &[char],
+) -> Result<String, Flow> {
+    if literal {
+        return Ok(rep.to_string());
+    }
+    let mut out = String::new();
+    let mut it = rep.chars().peekable();
+    while let Some(c) = it.next() {
+        if c != '\\' {
+            out.push(c);
+            continue;
+        }
+        match it.next() {
+            None => out.push('\\'),
+            Some('\\') => out.push('\\'),
+            Some('&') => {
+                out.push_str(&group_text(i, md, src, 0)?);
+            }
+            Some(d @ '1'..='9') => {
+                let n = d as usize - '0' as usize;
+                out.push_str(&group_text(i, md, src, n)?);
+            }
+            Some(other) => {
+                out.push('\\');
+                out.push(other);
+            }
+        }
+    }
+    Ok(out)
+}
+
+fn group_text(i: &mut Interp, md: &MatchData, src: &[char], n: usize) -> Result<String, Flow> {
+    match (
+        md.regs.get(2 * n).copied().flatten(),
+        md.regs.get(2 * n + 1).copied().flatten(),
+    ) {
+        (Some(s), Some(e)) => Ok(src[s.min(src.len())..e.min(src.len())].iter().collect()),
+        _ => Err(err_sym(i, "args-out-of-range", vec![Value::Int(n as i128)])),
+    }
+}
+
 fn f_replace_match(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let newtext = match &a[0] {
         Value::Str(s) => s.borrow().clone(),
@@ -2306,12 +3097,40 @@ fn f_replace_match(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         other => return Err(i.wrong_type_mut("stringp", other)),
     };
     let fixedcase = a.get(1).map(|v| v.truthy()).unwrap_or(false);
-    let _literal = a.get(2).map(|v| v.truthy()).unwrap_or(false);
+    let literal = a.get(2).map(|v| v.truthy()).unwrap_or(false);
+    let str_arg = match a.get(3) {
+        Some(Value::Str(s)) => Some(s.borrow().clone()),
+        _ => None,
+    };
     let subexp = a.get(4).and_then(|v| v.int()).unwrap_or(0).max(0) as usize;
     let md = match &i.match_data {
-        Some(m) => m,
-        None => return Err(i.error("replace-match called before any match")),
+        Some(m) => m.clone(),
+        None => {
+            return Err(err_sym(i, "args-out-of-range", vec![]));
+        }
     };
+    // STRING path: substitute within the given string's match registers.
+    if let Some(text) = str_arg {
+        let src: Vec<char> = text.chars().collect();
+        let rep = expand_replacement(i, &newtext, literal, &md, &src)?;
+        let (s, e) = match (
+            md.regs.get(2 * subexp).copied().flatten(),
+            md.regs.get(2 * subexp + 1).copied().flatten(),
+        ) {
+            (Some(s), Some(e)) => (s, e),
+            _ => {
+                return Err(err_sym(
+                    i,
+                    "args-out-of-range",
+                    vec![Value::Int(subexp as i128)],
+                ));
+            }
+        };
+        let mut out: String = src[..s.min(src.len())].iter().collect();
+        out.push_str(&rep);
+        out.extend(src[e.min(src.len())..].iter());
+        return Ok(Value::string(out));
+    }
     if !md.in_buffer {
         return Ok(Value::Nil);
     }
@@ -2322,23 +3141,48 @@ fn f_replace_match(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         (Some(s), Some(e)) => (s, e),
         _ => return Err(i.error("match subexp did not match")),
     };
-    // Case-replacement: match the case of the replaced text.
+    // Buffer path: build replacement against buffer text.
     let b = cur(i);
     let mut bb = b.borrow_mut();
     let start = md.base + s;
     let end = md.base + e;
     let old = bb.text.substring(start, end.min(bb.text.len()));
-    let mut rep = newtext;
+    let src: Vec<char> = bb.text.substring(bb.begv, bb.text.len()).chars().collect();
+    let mut rep = expand_replacement(i, &newtext, literal, &md, &src)?;
     if !fixedcase {
         rep = match_case(&old, &rep);
     }
-    let p = bb.point();
     let tlen = bb.text.len();
     bb.delete_region(start, end.min(tlen));
     bb.insert_at(start, &rep);
     bb.set_point(start + rep.chars().count());
-    let _ = p;
     Ok(Value::Nil)
+}
+
+fn f_match_substitute_replacement(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let newtext = match &a[0] {
+        Value::Str(s) => s.borrow().clone(),
+        other => return Err(i.wrong_type_mut("stringp", other)),
+    };
+    let literal = a.get(2).map(|v| v.truthy()).unwrap_or(false);
+    let src: Vec<char> = match a.get(3) {
+        Some(Value::Str(s)) => s.borrow().chars().collect(),
+        _ => {
+            let b = cur(i);
+            let bb = b.borrow();
+            bb.text.substring(bb.begv, bb.text.len()).chars().collect()
+        }
+    };
+    let md = match &i.match_data {
+        // Without a STRING arg the match must have been against a
+        // buffer; a string-match's data is args-out-of-range here.
+        Some(m) if m.in_buffer || a.get(3).is_some() => m.clone(),
+        _ => {
+            return Err(err_sym(i, "args-out-of-range", vec![]));
+        }
+    };
+    let rep = expand_replacement(i, &newtext, literal, &md, &src)?;
+    Ok(Value::string(rep))
 }
 
 /// Case-matching for `replace-match`: if OLD is all-caps/capitalized,
@@ -2370,12 +3214,187 @@ fn f_regexp_quote(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     };
     let mut out = String::with_capacity(s.len() * 2);
     for c in s.chars() {
-        if ".*+?[]^$\\".contains(c) {
+        // Emacs does not escape ']' (an unmatched ] is already literal).
+        if ".*+?[^$\\".contains(c) {
             out.push('\\');
         }
         out.push(c);
     }
     Ok(Value::string(out))
+}
+
+// ---------- regexp-opt ----------
+
+/// Trie node for `regexp-opt`.
+#[derive(Default)]
+struct OptTrie {
+    terminal: bool,
+    children: Vec<(char, OptTrie)>,
+}
+
+impl OptTrie {
+    fn insert(&mut self, s: &[char]) {
+        if s.is_empty() {
+            self.terminal = true;
+            return;
+        }
+        let c = s[0];
+        let idx = match self.children.iter().position(|(k, _)| *k == c) {
+            Some(p) => p,
+            None => {
+                self.children.push((c, OptTrie::default()));
+                self.children.sort_by_key(|(k, _)| *k);
+                self.children.len() - 1
+            }
+        };
+        self.children[idx].1.insert(&s[1..]);
+    }
+
+    /// All children are single-char terminal leaves → emit `[chars]`.
+    fn all_char_leaves(&self) -> bool {
+        self.children.len() > 1
+            && self
+                .children
+                .iter()
+                .all(|(_, t)| t.terminal && t.children.is_empty())
+    }
+
+    fn emit(&self) -> String {
+        let mut parts: Vec<String> = Vec::new();
+        for (c, t) in &self.children {
+            let mut p = String::new();
+            push_regexp_quoted(*c, &mut p);
+            p.push_str(&t.emit());
+            parts.push(p);
+        }
+        if parts.is_empty() {
+            return String::new();
+        }
+        if self.all_char_leaves() {
+            let mut s = String::from("[");
+            for (c, _) in &self.children {
+                // Emacs sorts charset contents; escape class specials.
+                match c {
+                    ']' | '\\' | '^' | '-' => {
+                        s.push('\\');
+                        s.push(*c);
+                    }
+                    _ => s.push(*c),
+                }
+            }
+            s.push(']');
+            return s;
+        }
+        let inner = if parts.len() == 1 {
+            parts.into_iter().next().unwrap()
+        } else {
+            format!("\\(?:{}\\)", parts.join("\\|"))
+        };
+        if self.terminal {
+            // This node also ends a string → the whole remainder is optional.
+            if parts_single_char(&inner) || inner.starts_with("\\(?") {
+                format!("{}?", inner)
+            } else {
+                format!("\\(?:{}\\)?", inner)
+            }
+        } else {
+            inner
+        }
+    }
+}
+
+fn parts_single_char(s: &str) -> bool {
+    s.chars().count() == 1 || (s.len() == 2 && s.starts_with('\\'))
+}
+
+fn push_regexp_quoted(c: char, out: &mut String) {
+    if ".*+?[^$\\".contains(c) {
+        out.push('\\');
+    }
+    out.push(c);
+}
+
+fn f_regexp_opt(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let strings: Vec<String> = match a[0].list_to_vec() {
+        Ok(items) => {
+            let mut v = Vec::new();
+            for it in items {
+                match &it {
+                    Value::Str(s) => v.push(s.borrow().clone()),
+                    other => return Err(i.wrong_type_mut("stringp", other)),
+                }
+            }
+            v
+        }
+        Err(_) => Vec::new(),
+    };
+    let paren = &a.get(1).cloned().unwrap_or(Value::Nil);
+    if strings.is_empty() {
+        // Emacs quirk: (regexp-opt nil) => "\\(?:\\`a\\`\\)".
+        return Ok(Value::string("\\(?:\\`a\\`\\)"));
+    }
+    let mut sorted = strings.clone();
+    sorted.sort();
+    sorted.dedup();
+    let mut trie = OptTrie::default();
+    for s in &sorted {
+        trie.insert(&s.chars().collect::<Vec<_>>());
+    }
+    // Emit the root without group wrapping so top-level alternatives join
+    // with \| under the requested parens.
+    let body = if trie.all_char_leaves() {
+        trie.emit()
+    } else {
+        let mut parts: Vec<String> = Vec::new();
+        for (c, t) in &trie.children {
+            let mut p = String::new();
+            push_regexp_quoted(*c, &mut p);
+            p.push_str(&t.emit());
+            parts.push(p);
+        }
+        let inner = parts.join("\\|");
+        if trie.terminal {
+            format!("\\(?:{}\\)?", inner)
+        } else {
+            inner
+        }
+    };
+    let (open, close) = if paren.truthy() {
+        ("\\(", "\\)")
+    } else {
+        ("\\(?:", "\\)")
+    };
+    // Wrap when the body has top-level alternation or an inner group, or
+    // when parens were explicitly requested.
+    let need_wrap = paren.truthy() || body.contains("\\|") || body.contains("\\(?");
+    let out = if need_wrap && !body.starts_with("\\(?") {
+        format!("{}{}{}", open, body, close)
+    } else if need_wrap && paren.truthy() {
+        format!("{}{}{}", open, body, close)
+    } else {
+        body
+    };
+    Ok(Value::string(out))
+}
+
+fn f_regexp_opt_depth(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let pat = match &a[0] {
+        Value::Str(s) => s.borrow().clone(),
+        other => return Err(i.wrong_type_mut("stringp", other)),
+    };
+    let chars: Vec<char> = pat.chars().collect();
+    let mut depth = 0i128;
+    let mut k = 0;
+    while k + 1 < chars.len() {
+        if chars[k] == '\\' && chars[k + 1] == '(' {
+            let is_shy = k + 2 < chars.len() && chars[k + 2] == '?';
+            if !is_shy {
+                depth += 1;
+            }
+        }
+        k += if chars[k] == '\\' { 2 } else { 1 };
+    }
+    Ok(Value::Int(depth))
 }
 
 // ---------- text properties ----------
@@ -2698,8 +3717,7 @@ fn f_char_equal_buf(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         .truthy();
     let eq = if fold {
         x == y
-            || char::from_u32(x as u32)
-                .and_then(|c| c.to_lowercase().next())
+            || char::from_u32(x as u32).and_then(|c| c.to_lowercase().next())
                 == char::from_u32(y as u32).and_then(|c| c.to_lowercase().next())
     } else {
         x == y

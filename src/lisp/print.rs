@@ -3,16 +3,47 @@
 use std::fmt::Write;
 use std::rc::Rc;
 
-use super::value::Value;
 use super::Interp;
+use super::value::Value;
 
 /// Escape a character inside a printed string. Emacs escapes only
-/// `"` and `\` — newlines and other control chars print literally.
-fn escape_char_for_string(c: char, out: &mut String) {
+/// `"` and `\` — newlines and other control chars print literally
+/// unless `print-escape-newlines`/`print-escape-multibyte` are set.
+fn escape_char_for_string(c: char, out: &mut String, nl: bool, mb: bool) {
     match c {
         '"' => out.push_str("\\\""),
         '\\' => out.push_str("\\\\"),
+        '\n' if nl => out.push_str("\\n"),
+        c if mb && (c as u32) > 0x7f => {
+            let _ = write!(out, "\\x{:x}", c as u32);
+        }
         c => out.push(c),
+    }
+}
+
+/// Does `c` need a backslash escape inside a printed symbol name?
+/// Emacs escapes the chars that would otherwise terminate or
+/// re-interpret the symbol token.
+fn sym_char_needs_escape(c: char) -> bool {
+    matches!(
+        c,
+        '(' | ')' | '[' | ']' | '\'' | '"' | '`' | ',' | ';' | '#' | '\\'
+    ) || c.is_whitespace()
+        || (c as u32) < 0x20
+        || c == '\u{7f}'
+}
+
+/// Print a symbol name, backslash-escaping special chars (`a\ b`, `\,`).
+fn push_sym_name(name: &str, out: &mut String) {
+    if name.is_empty() {
+        out.push_str("##");
+        return;
+    }
+    for c in name.chars() {
+        if sym_char_needs_escape(c) {
+            out.push('\\');
+        }
+        out.push(c);
     }
 }
 
@@ -20,7 +51,7 @@ impl Interp {
     /// `prin1` representation: readable, escaped.
     pub fn print_to_string(&self, v: &Value) -> String {
         let mut s = String::new();
-        self.prin1_inner(v, &mut s, 0);
+        self.prin1_inner(v, &mut s, 0, false);
         s
     }
 
@@ -32,14 +63,26 @@ impl Interp {
     /// `princ` representation: human-readable (strings unquoted).
     pub fn princ_to_string(&self, v: &Value) -> String {
         let mut s = String::new();
-        self.princ_inner(v, &mut s, 0);
+        self.princ_inner(v, &mut s, 0, false);
         s
     }
 
-    fn prin1_inner(&self, v: &Value, out: &mut String, depth: usize) {
+    fn prin1_inner(&self, v: &Value, out: &mut String, depth: usize, bq: bool) {
         if depth > 64 {
             out.push_str("##");
             return;
+        }
+        // print-level: nested structure deeper than the limit prints "...".
+        if let Some(level) = self.print_level_limit() {
+            if depth >= level {
+                match v {
+                    Value::Cons(_) | Value::Vec(_) | Value::Record(_) | Value::Hash(_) => {
+                        out.push_str("...");
+                        return;
+                    }
+                    _ => {}
+                }
+            }
         }
         match v {
             Value::Nil => out.push_str("nil"),
@@ -55,27 +98,42 @@ impl Interp {
                 }
                 let name = self.symbol_name(*id);
                 // Emacs escapes a symbol whose name would read back
-                // as a number (`\52' for the symbol "52").
-                if super::reader::parse_number(&name).is_some() {
+                // as a number (`\52') or a bare dot (`\.').
+                if super::reader::parse_number(&name).is_some() || name == "." {
                     out.push('\\');
                 }
-                out.push_str(&name);
+                push_sym_name(&name, out);
             }
             Value::Str(s) => {
+                let nl = self.print_escape_newlines();
+                let mb = self.print_escape_multibyte();
                 out.push('"');
                 for c in s.borrow().chars() {
-                    escape_char_for_string(c, out);
+                    escape_char_for_string(c, out, nl, mb);
                 }
                 out.push('"');
             }
-            Value::Cons(_) => self.print_list(v, out, depth),
+            Value::Cons(_) => self.print_list(v, out, depth, bq),
             Value::Vec(items) => {
+                let limit = self.print_length_limit();
                 out.push('[');
-                for (i, item) in items.borrow().iter().enumerate() {
-                    if i > 0 {
+                let mut n = 0usize;
+                let mut truncated = false;
+                for item in items.borrow().iter() {
+                    if let Some(l) = limit {
+                        if n >= l {
+                            truncated = true;
+                            break;
+                        }
+                    }
+                    if n > 0 {
                         out.push(' ');
                     }
-                    self.prin1_inner(item, out, depth + 1);
+                    self.prin1_inner(item, out, depth + 1, bq);
+                    n += 1;
+                }
+                if truncated {
+                    out.push_str(if n == 0 { "..." } else { " ..." });
                 }
                 out.push(']');
             }
@@ -85,7 +143,7 @@ impl Interp {
                     if i > 0 {
                         out.push(' ');
                     }
-                    self.prin1_inner(item, out, depth + 1);
+                    self.prin1_inner(item, out, depth + 1, bq);
                 }
                 out.push(')');
             }
@@ -96,13 +154,27 @@ impl Interp {
                 let _ = write!(out, "#<subr {}>", s.name);
             }
             Value::Lambda(l) => {
-                if let Some(name) = &l.name {
-                    let _ = write!(out, "#<function {}>", name);
+                // Emacs 31 prints interpreted functions like
+                // #[(x) (x) nil] — arglist, body forms, environment.
+                out.push_str("#[");
+                self.print_lambda_list(l, out);
+                out.push(' ');
+                // An empty body is a single implicit nil form.
+                let body = if l.body.is_empty() {
+                    Value::list(vec![Value::Nil])
                 } else {
-                    out.push_str("(lambda ");
-                    self.print_lambda_list(l, out);
-                    out.push_str(" ...)");
+                    Value::list(l.body.clone())
+                };
+                self.prin1_inner(&body, out, depth + 1, bq);
+                out.push(' ');
+                match &l.env {
+                    None => out.push_str("nil"),
+                    Some(frame) => {
+                        let env = lex_frame_to_value(self, frame);
+                        self.prin1_inner(&env, out, depth + 1, bq);
+                    }
                 }
+                out.push(']');
             }
             Value::Buffer(b) => {
                 let _ = write!(out, "#<buffer {}>", b.borrow().name);
@@ -122,7 +194,13 @@ impl Interp {
                 }
             }
             Value::Window(w) => {
-                let _ = write!(out, "#<window {}>", w.borrow().id);
+                let b = w.borrow();
+                let _ = write!(
+                    out,
+                    "#<window {} on {}>",
+                    b.id,
+                    self.buffer_name_by_id(b.buffer)
+                );
             }
             Value::Frame(f) => {
                 let _ = write!(out, "#<frame {}>", f.borrow().name);
@@ -130,25 +208,42 @@ impl Interp {
         }
     }
 
-    fn princ_inner(&self, v: &Value, out: &mut String, depth: usize) {
+    fn princ_inner(&self, v: &Value, out: &mut String, depth: usize, bq: bool) {
+        if let Some(level) = self.print_level_limit() {
+            if depth >= level {
+                match v {
+                    Value::Cons(_) | Value::Vec(_) | Value::Record(_) | Value::Hash(_) => {
+                        out.push_str("...");
+                        return;
+                    }
+                    _ => {}
+                }
+            }
+        }
         match v {
             Value::Str(s) => out.push_str(&s.borrow()),
-            Value::Cons(_) => self.print_list_princ(v, out, depth),
+            // princ prints symbol names raw — no backslash escapes.
+            Value::Sym(id) => out.push_str(&self.symbol_name(*id)),
+            Value::Cons(_) => self.print_list_princ(v, out, depth, bq),
             Value::Vec(items) => {
                 out.push('[');
                 for (i, item) in items.borrow().iter().enumerate() {
                     if i > 0 {
                         out.push(' ');
                     }
-                    self.princ_inner(item, out, depth + 1);
+                    self.princ_inner(item, out, depth + 1, bq);
                 }
                 out.push(']');
             }
-            _ => self.prin1_inner(v, out, depth),
+            _ => self.prin1_inner(v, out, depth, bq),
         }
     }
 
     fn print_lambda_list(&self, l: &super::value::Lambda, out: &mut String) {
+        if l.required.is_empty() && l.optional.is_empty() && l.rest.is_none() {
+            out.push_str("nil");
+            return;
+        }
         out.push('(');
         let mut first = true;
         let mut names: Vec<String> = l
@@ -194,9 +289,40 @@ impl Interp {
             .unwrap_or(true)
     }
 
+    fn print_var(&self, name: &str) -> Value {
+        self.intern_soft(name)
+            .filter(|id| self.bound_p(*id))
+            .map(|id| self.symbol_value(id))
+            .unwrap_or(Value::Nil)
+    }
+
+    /// `print-length` (default nil): max elements printed per sequence.
+    fn print_length_limit(&self) -> Option<usize> {
+        self.print_var("print-length")
+            .int()
+            .map(|n| n.max(0) as usize)
+    }
+
+    /// `print-level` (default nil): max nesting depth before "...".
+    fn print_level_limit(&self) -> Option<usize> {
+        self.print_var("print-level")
+            .int()
+            .map(|n| n.max(0) as usize)
+    }
+
+    /// `print-escape-newlines` (default nil): escape `\n` in strings.
+    fn print_escape_newlines(&self) -> bool {
+        self.print_var("print-escape-newlines").truthy()
+    }
+
+    /// `print-escape-multibyte` (default nil): hex-escape non-ASCII.
+    fn print_escape_multibyte(&self) -> bool {
+        self.print_var("print-escape-multibyte").truthy()
+    }
+
     /// If `v` is a 2-element list (QUOTE x), (FUNCTION x), (\` x),
     /// (\, x) etc., return the abbreviated prefix for `print_quoted`.
-    fn quote_abbrev(&self, v: &Value) -> Option<(&'static str, Value)> {
+    fn quote_abbrev(&self, v: &Value, bq: bool) -> Option<(&'static str, Value, bool)> {
         use super::obarray::sym;
         if !self.print_quoted() {
             return None;
@@ -206,13 +332,15 @@ impl Interp {
                 let b = c.borrow();
                 (b.car.clone(), b.cdr.clone())
             };
-            let prefix = match car {
-                Value::Sym(sym::QUOTE) => "'",
-                Value::Sym(sym::FUNCTION) => "#'",
-                Value::Sym(sym::BACKQUOTE) => "`",
-                Value::Sym(sym::COMMA) => ",",
-                Value::Sym(sym::COMMA_AT) => ",@",
-                Value::Sym(sym::COMMA_DOT) => ",.",
+            // `(\, x)` sugar only inside a `` ` `` context; outside the
+            // comma symbol prints escaped as `\,`.
+            let (prefix, inner_bq) = match car {
+                Value::Sym(sym::QUOTE) => ("'", bq),
+                Value::Sym(sym::FUNCTION) => ("#'", bq),
+                Value::Sym(sym::BACKQUOTE) => ("`", true),
+                Value::Sym(sym::COMMA) if bq => (",", bq),
+                Value::Sym(sym::COMMA_AT) if bq => (",@", bq),
+                Value::Sym(sym::COMMA_DOT) if bq => (",.", bq),
                 _ => return None,
             };
             if let Value::Cons(c2) = &cdr {
@@ -221,7 +349,7 @@ impl Interp {
                     (b.car.clone(), b.cdr.clone())
                 };
                 if cddr.is_nil() {
-                    return Some((prefix, cadr));
+                    return Some((prefix, cadr, inner_bq));
                 }
             }
         }
@@ -229,12 +357,13 @@ impl Interp {
     }
 
     /// Print a (possibly dotted) list.
-    fn print_list(&self, v: &Value, out: &mut String, depth: usize) {
-        if let Some((prefix, inner)) = self.quote_abbrev(v) {
+    fn print_list(&self, v: &Value, out: &mut String, depth: usize, bq: bool) {
+        if let Some((prefix, inner, inner_bq)) = self.quote_abbrev(v, bq) {
             out.push_str(prefix);
-            self.prin1_inner(&inner, out, depth + 1);
+            self.prin1_inner(&inner, out, depth + 1, inner_bq);
             return;
         }
+        let limit = self.print_length_limit();
         out.push('(');
         let mut cur = v.clone();
         let mut first = true;
@@ -246,15 +375,23 @@ impl Interp {
                         let b = c.borrow();
                         (b.car.clone(), b.cdr.clone())
                     };
+                    if let Some(l) = limit {
+                        if n >= l {
+                            out.push_str(if n == 0 { "..." } else { " ..." });
+                            out.push(')');
+                            return;
+                        }
+                    }
                     if !first {
                         out.push(' ');
                     }
                     first = false;
-                    self.prin1_inner(&car, out, depth + 1);
+                    self.prin1_inner(&car, out, depth + 1, bq);
                     cur = next;
                     n += 1;
                     if n > 1000 {
                         out.push_str(" ...");
+                        out.push(')');
                         return;
                     }
                 }
@@ -264,7 +401,7 @@ impl Interp {
                 }
                 other => {
                     out.push_str(" . ");
-                    self.prin1_inner(&other, out, depth + 1);
+                    self.prin1_inner(&other, out, depth + 1, bq);
                     out.push(')');
                     return;
                 }
@@ -272,15 +409,17 @@ impl Interp {
         }
     }
 
-    fn print_list_princ(&self, v: &Value, out: &mut String, depth: usize) {
-        if let Some((prefix, inner)) = self.quote_abbrev(v) {
+    fn print_list_princ(&self, v: &Value, out: &mut String, depth: usize, bq: bool) {
+        if let Some((prefix, inner, inner_bq)) = self.quote_abbrev(v, bq) {
             out.push_str(prefix);
-            self.princ_inner(&inner, out, depth + 1);
+            self.princ_inner(&inner, out, depth + 1, inner_bq);
             return;
         }
+        let limit = self.print_length_limit();
         out.push('(');
         let mut cur = v.clone();
         let mut first = true;
+        let mut n = 0usize;
         loop {
             match cur {
                 Value::Cons(c) => {
@@ -288,12 +427,20 @@ impl Interp {
                         let b = c.borrow();
                         (b.car.clone(), b.cdr.clone())
                     };
+                    if let Some(l) = limit {
+                        if n >= l {
+                            out.push_str(if n == 0 { "..." } else { " ..." });
+                            out.push(')');
+                            return;
+                        }
+                    }
                     if !first {
                         out.push(' ');
                     }
                     first = false;
-                    self.princ_inner(&car, out, depth + 1);
+                    self.princ_inner(&car, out, depth + 1, bq);
                     cur = next;
+                    n += 1;
                 }
                 Value::Nil => {
                     out.push(')');
@@ -301,7 +448,7 @@ impl Interp {
                 }
                 other => {
                     out.push_str(" . ");
-                    self.princ_inner(&other, out, depth + 1);
+                    self.princ_inner(&other, out, depth + 1, bq);
                     out.push(')');
                     return;
                 }
@@ -313,6 +460,29 @@ impl Interp {
         self.buffer_name(id)
             .unwrap_or_else(|| "*killed buffer*".into())
     }
+}
+
+/// Convert a lexical environment chain to a printable alist-of-frames.
+fn lex_frame_to_value(i: &Interp, frame: &Rc<crate::lisp::eval::LexFrame>) -> Value {
+    let mut frames: Vec<Value> = Vec::new();
+    let mut cur = Some(frame.clone());
+    while let Some(f) = cur {
+        let mut pairs: Vec<Value> = Vec::new();
+        for (sym_id, val) in f.vars.borrow().iter() {
+            pairs.push(Value::cons(Value::Sym(*sym_id), val.clone()));
+        }
+        pairs.sort_by_key(|v| {
+            if let Value::Cons(c) = v {
+                if let Value::Sym(s) = &c.borrow().car {
+                    return i.symbol_name(*s).to_string();
+                }
+            }
+            String::new()
+        });
+        frames.push(Value::list(pairs));
+        cur = f.parent.clone();
+    }
+    Value::list(frames)
 }
 
 /// C `%.{prec}g` formatting: `prec` significant digits, scientific

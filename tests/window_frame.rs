@@ -49,24 +49,30 @@ fn window_sizes() {
 #[test]
 fn split_and_delete() {
     assert_eq!(
-        ev("(let ((w2 (split-window-internal (selected-window) 10 'right nil)))
+        ev(
+            "(let ((w2 (split-window-internal (selected-window) 10 'right nil)))
               (list (length (window-list-1))
                     (window-edges (selected-window))
-                    (window-edges w2)))"),
+                    (window-edges w2)))"
+        ),
         "(2 (0 0 10 24) (10 0 80 24))"
     );
     assert_eq!(
-        ev("(let ((w2 (split-window-internal (selected-window) 8 'below nil)))
+        ev(
+            "(let ((w2 (split-window-internal (selected-window) 8 'below nil)))
               (list (window-edges (selected-window))
-                    (window-edges w2)))"),
+                    (window-edges w2)))"
+        ),
         "((0 0 80 8) (0 8 80 24))"
     );
     // Deleting the new window leaves the original.
     assert_eq!(
-        ev("(let ((w2 (split-window-internal (selected-window) 10 'right nil)))
+        ev(
+            "(let ((w2 (split-window-internal (selected-window) 10 'right nil)))
               (delete-window-internal w2)
               (list (length (window-list-1))
-                    (window-live-p w2)))"),
+                    (window-live-p w2)))"
+        ),
         "(1 nil)"
     );
 }
@@ -94,14 +100,8 @@ fn window_navigation() {
                     (eq (window-prev-sibling w2) w)))"),
         "(t t)"
     );
-    assert_eq!(
-        ev("(eq (frame-root-window) (car (window-list-1)))"),
-        "t"
-    );
-    assert_eq!(
-        ev("(eq (frame-selected-window) (selected-window))"),
-        "t"
-    );
+    assert_eq!(ev("(eq (frame-root-window) (car (window-list-1)))"), "t");
+    assert_eq!(ev("(eq (frame-selected-window) (selected-window))"), "t");
 }
 
 #[test]
@@ -143,18 +143,12 @@ fn window_params_and_margins() {
 #[test]
 fn posn_at_point() {
     // posn-at-point returns a posn list; just check it's a list.
-    assert_eq!(
-        ev("(consp (posn-at-point 1))"),
-        "t"
-    );
+    assert_eq!(ev("(consp (posn-at-point 1))"), "t");
 }
 
 #[test]
 fn scroll_lr() {
-    assert_eq!(
-        ev("(progn (scroll-left 5) (window-hscroll))"),
-        "5"
-    );
+    assert_eq!(ev("(progn (scroll-left 5) (window-hscroll))"), "5");
     assert_eq!(
         ev("(progn (scroll-left 5) (scroll-right 3) (window-hscroll))"),
         "2"

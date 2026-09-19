@@ -1,11 +1,11 @@
 //! Hash table subrs.
 
-use super::{arg, S};
+use super::{S, arg};
+use crate::lisp::Interp;
 use crate::lisp::error::EvalResult;
 use crate::lisp::value::{HashKey, HashTest, LispHash, Subr, Value};
-use crate::lisp::Interp;
-use std::rc::Rc;
 use std::cell::RefCell;
+use std::rc::Rc;
 
 pub(crate) static SUBRS: &[Subr] = &[
     S!("make-hash-table", many 0, f_make_hash_table, "Create a hash table."),
@@ -13,16 +13,70 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!("puthash", 3, 3, f_puthash, "Set KEY in TABLE to VALUE."),
     S!("remhash", 2, 2, f_remhash, "Remove KEY from TABLE."),
     S!("clrhash", 1, 1, f_clrhash, "Remove all entries from TABLE."),
-    S!("hash-table-count", 1, 1, f_hash_table_count, "Number of entries in TABLE."),
-    S!("hash-table-keys", 1, 1, f_hash_table_keys, "Keys of TABLE as a list."),
-    S!("hash-table-values", 1, 1, f_hash_table_values, "Values of TABLE as a list."),
-    S!("hash-table-test", 1, 1, f_hash_table_test, "Test function of TABLE."),
-    S!("hash-table-weakness", 1, 1, f_hash_table_weakness, "Weakness of TABLE."),
-    S!("hash-table-rehash-size", 1, 1, f_hash_table_rehash_size, "Rehash size."),
-    S!("hash-table-rehash-threshold", 1, 1, f_hash_table_rehash_threshold, "Rehash threshold."),
-    S!("hash-table-size", 1, 1, f_hash_table_size, "Current size of TABLE."),
+    S!(
+        "hash-table-count",
+        1,
+        1,
+        f_hash_table_count,
+        "Number of entries in TABLE."
+    ),
+    S!(
+        "hash-table-keys",
+        1,
+        1,
+        f_hash_table_keys,
+        "Keys of TABLE as a list."
+    ),
+    S!(
+        "hash-table-values",
+        1,
+        1,
+        f_hash_table_values,
+        "Values of TABLE as a list."
+    ),
+    S!(
+        "hash-table-test",
+        1,
+        1,
+        f_hash_table_test,
+        "Test function of TABLE."
+    ),
+    S!(
+        "hash-table-weakness",
+        1,
+        1,
+        f_hash_table_weakness,
+        "Weakness of TABLE."
+    ),
+    S!(
+        "hash-table-rehash-size",
+        1,
+        1,
+        f_hash_table_rehash_size,
+        "Rehash size."
+    ),
+    S!(
+        "hash-table-rehash-threshold",
+        1,
+        1,
+        f_hash_table_rehash_threshold,
+        "Rehash threshold."
+    ),
+    S!(
+        "hash-table-size",
+        1,
+        1,
+        f_hash_table_size,
+        "Current size of TABLE."
+    ),
     S!("copy-hash-table", 1, 1, f_copy_hash_table, "Copy TABLE."),
-    S!("define-hash-table-test", 3, 3, f_define_hash_table_test, "Define a new test (ignored)."),
+    S!(
+        "define-hash-table-test",
+        3,
+        3,
+        f_define_hash_table_test,
+        "Define a new test (ignored)."
+    ),
 ];
 
 /// Normalize a key for the table's test.
@@ -167,18 +221,14 @@ fn f_hash_table_count(i: &mut Interp, args: Vec<Value>) -> EvalResult {
 
 fn f_hash_table_keys(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     match &args[0] {
-        Value::Hash(h) => Ok(Value::list(
-            h.borrow().keys.values().cloned().collect(),
-        )),
+        Value::Hash(h) => Ok(Value::list(h.borrow().keys.values().cloned().collect())),
         other => Err(i.wrong_type_mut("hash-table-p", other)),
     }
 }
 
 fn f_hash_table_values(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     match &args[0] {
-        Value::Hash(h) => Ok(Value::list(
-            h.borrow().map.values().cloned().collect(),
-        )),
+        Value::Hash(h) => Ok(Value::list(h.borrow().map.values().cloned().collect())),
         other => Err(i.wrong_type_mut("hash-table-p", other)),
     }
 }

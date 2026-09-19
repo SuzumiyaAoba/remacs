@@ -18,8 +18,8 @@ use crossterm::{
 };
 
 use crate::editor::{CHAR_CTL, CHAR_HYPER, CHAR_META, CHAR_SHIFT, CHAR_SUPER};
-use crate::lisp::value::Value;
 use crate::lisp::Interp;
+use crate::lisp::value::Value;
 
 /// The terminal screen.
 pub struct Terminal {
@@ -131,11 +131,7 @@ impl Terminal {
             for row in 0..text_rows {
                 queue!(self.out, cursor::MoveTo(0, (top + row) as u16))?;
                 let line = text_lines.get(row).cloned().unwrap_or_default();
-                let vis: String = line
-                    .chars()
-                    .skip(hscroll)
-                    .take(width)
-                    .collect::<String>();
+                let vis: String = line.chars().skip(hscroll).take(width).collect::<String>();
                 let _ = write!(self.out, "{:<width$}", vis, width = width);
             }
             // Mode line (inverted).
@@ -158,7 +154,13 @@ impl Terminal {
                 name,
                 point_line,
                 point_col,
-                if wi == fb.windows.iter().position(|x| std::rc::Rc::ptr_eq(x, &fb.selected)).unwrap_or(usize::MAX) {
+                if wi
+                    == fb
+                        .windows
+                        .iter()
+                        .position(|x| std::rc::Rc::ptr_eq(x, &fb.selected))
+                        .unwrap_or(usize::MAX)
+                {
                     "  [sel]"
                 } else {
                     ""
@@ -189,13 +191,12 @@ impl Terminal {
             }
         }
         // Minibuffer / echo area (last line).
-        queue!(
-            self.out,
-            cursor::MoveTo(0, height.saturating_sub(1) as u16)
-        )?;
-        let mini_text = match fb.minibuffer.as_ref().and_then(|w| {
-            i.buffers.get(w.borrow().buffer)
-        }) {
+        queue!(self.out, cursor::MoveTo(0, height.saturating_sub(1) as u16))?;
+        let mini_text = match fb
+            .minibuffer
+            .as_ref()
+            .and_then(|w| i.buffers.get(w.borrow().buffer))
+        {
             Some(b) => b.borrow().text.text(),
             None => String::new(),
         };
@@ -261,11 +262,7 @@ fn key_event_to_code(k: KeyEvent) -> Option<i128> {
             if mods & CHAR_CTL != 0 && (c as i128) < 128 {
                 // Emacs folds C-<ascii> to the control char (C-u → 21).
                 mods &= !CHAR_CTL;
-                if c == '?' {
-                    127
-                } else {
-                    (c as i128) & 0x1f
-                }
+                if c == '?' { 127 } else { (c as i128) & 0x1f }
             } else {
                 c as i128
             }
@@ -339,7 +336,11 @@ pub fn run_editor(i: &mut Interp) -> io::Result<()> {
             if digit || minus || cu {
                 let lce = i.intern("last-command-event");
                 let _ = i.set_symbol(lce, Value::Int(key));
-                let name = if cu { "universal-argument" } else { "digit-argument" };
+                let name = if cu {
+                    "universal-argument"
+                } else {
+                    "digit-argument"
+                };
                 let id = i.intern(name);
                 let _ = i.command_execute(&Value::Sym(id));
                 continue;
@@ -392,10 +393,7 @@ pub fn run_editor(i: &mut Interp) -> io::Result<()> {
                         i.message(&msg);
                     }
                     Err(crate::lisp::error::Flow::Throw(tag, v)) => {
-                        i.message(&format!(
-                            "No catch for tag: {}",
-                            i.princ_to_string(&tag)
-                        ));
+                        i.message(&format!("No catch for tag: {}", i.princ_to_string(&tag)));
                         let _ = v;
                     }
                 }
@@ -661,9 +659,9 @@ mod tests {
     fn lookup_routes_to_bindings() {
         let mut i = crate::lisp::Interp::new();
         let seq = |k: i128| {
-            Value::Vec(std::rc::Rc::new(std::cell::RefCell::new(vec![
-                Value::Int(k),
-            ])))
+            Value::Vec(std::rc::Rc::new(std::cell::RefCell::new(vec![Value::Int(
+                k,
+            )])))
         };
         // 'a' -> t default -> self-insert-command
         match lookup_command(&mut i, &seq(97)) {
@@ -680,7 +678,10 @@ mod tests {
             _ => panic!("C-u should resolve to universal-argument"),
         }
         // C-x alone -> prefix keymap
-        assert!(matches!(lookup_command(&mut i, &seq(24)), LookupResult::Prefix));
+        assert!(matches!(
+            lookup_command(&mut i, &seq(24)),
+            LookupResult::Prefix
+        ));
         // C-x C-c -> save-buffers-kill-emacs
         let two = Value::Vec(std::rc::Rc::new(std::cell::RefCell::new(vec![
             Value::Int(24),

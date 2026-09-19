@@ -73,7 +73,7 @@
   (ignore-errors (signal 'wrong-type-argument '(stringp 5)))
   (ignore-errors (signal 'void-function '(nosuch)))
   (ignore-errors (signal 'args-out-of-range '(1 2 3)))
-  (condition-case v (signal 'my-custom-error '(a b)) (my-custom-error v))
+  (ignore-errors (condition-case v (signal 'my-custom-error '(a b)) (my-custom-error v)))
   ;; error/warn/message
   (ignore-errors (error "fmt %s" 'x)) (ignore-errors (error "%d %d" 1 2))
   (ignore-errors (error nil)) (ignore-errors (user-error "uerr"))

@@ -1,11 +1,11 @@
 //! Sequence subrs: elt, aref, aset, copy-sequence, mapcar, sort, etc.
 
 use super::listfn::nthcdr_of;
-use super::{arg, equal_values, want_int, want_list, want_string, S};
+use super::{S, arg, equal_values, want_int, want_list, want_string};
+use crate::lisp::Interp;
 use crate::lisp::error::EvalResult;
 use crate::lisp::obarray::sym;
 use crate::lisp::value::{Subr, Value};
-use crate::lisp::Interp;
 
 pub(crate) static SUBRS: &[Subr] = &[
     S!("elt", 2, 2, f_elt, "Return element of SEQUENCE at index N."),
@@ -13,43 +13,175 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!("aset", 3, 3, f_aset, "Set element of ARRAY at index N."),
     S!("copy-sequence", 1, 1, f_copy_sequence, "Copy a sequence."),
     S!("copy-seq", 1, 1, f_copy_sequence, "Copy a sequence."),
-    S!("mapcar", 2, 3, f_mapcar, "Map FUNCTION over SEQUENCE, collect results."),
-    S!("mapc", 2, 3, f_mapc, "Map FUNCTION over SEQUENCE for side effects."),
-    S!("mapcan", 2, 3, f_mapcan, "Mapcar + nconc."),
-    S!("mapconcat", 3, 4, f_mapconcat, "Map FUNCTION over SEQUENCE, join results."),
-    S!("maphash", 2, 2, f_maphash, "Map FUNCTION over hash table entries."),
+    S!(
+        "mapcar",
+        2,
+        2,
+        f_mapcar,
+        "Map FUNCTION over SEQUENCE, collect results."
+    ),
+    S!(
+        "mapc",
+        2,
+        2,
+        f_mapc,
+        "Map FUNCTION over SEQUENCE for side effects."
+    ),
+    S!("mapcan", 2, 2, f_mapcan, "Mapcar + nconc."),
+    S!(
+        "mapconcat",
+        3,
+        4,
+        f_mapconcat,
+        "Map FUNCTION over SEQUENCE, join results."
+    ),
+    S!(
+        "maphash",
+        2,
+        2,
+        f_maphash,
+        "Map FUNCTION over hash table entries."
+    ),
     S!("sort", 2, 2, f_sort, "Sort SEQ destructively by PREDICATE."),
-    S!("string-to-sequence", 1, 2, f_string_to_sequence, "Convert string to list/vector."),
+    S!(
+        "string-to-sequence",
+        1,
+        2,
+        f_string_to_sequence,
+        "Convert string to list/vector."
+    ),
     S!("seq", many 0, f_seq, "Return SEQUENCE unchanged."),
     S!("sequence", many 0, f_seq, "Return SEQUENCE unchanged."),
-    S!("append-to-list", 2, 2, f_append_to_list, "Append element to list (list + elt)."),
+    S!(
+        "append-to-list",
+        2,
+        2,
+        f_append_to_list,
+        "Append element to list (list + elt)."
+    ),
     S!("fillarray", 2, 2, f_fillarray, "Fill ARRAY with ITEM."),
-    S!("make-vector", 2, 2, f_make_vector, "Make a vector of LENGTH with INIT."),
+    S!(
+        "make-vector",
+        2,
+        2,
+        f_make_vector,
+        "Make a vector of LENGTH with INIT."
+    ),
     S!("vector", many 0, f_vector, "Make a vector of the arguments."),
     S!("bool-vector", many 0, f_vector, "Make a vector (bool-vec approx)."),
     S!("purecopy", 1, 1, f_purecopy, "Return OBJECT unchanged."),
-    S!("nreverse", 1, 1, f_nreverse_seq, "Reverse SEQUENCE destructively (seq version)."),
-    S!("clear-vector", 2, 2, f_clear_vector, "Set all elements of VECTOR to nil."),
-    S!("seq-concatenate", 3, 3, f_seq_concatenate, "Concatenate SEQS into TYPE."),
+    S!(
+        "nreverse",
+        1,
+        1,
+        f_nreverse_seq,
+        "Reverse SEQUENCE destructively (seq version)."
+    ),
+    S!(
+        "clear-vector",
+        2,
+        2,
+        f_clear_vector,
+        "Set all elements of VECTOR to nil."
+    ),
+    S!(
+        "seq-concatenate",
+        3,
+        3,
+        f_seq_concatenate,
+        "Concatenate SEQS into TYPE."
+    ),
     S!("seq-subseq", 2, 3, f_seq_subseq, "Subsequence of SEQ."),
     S!("seq-take", 2, 2, f_seq_take, "First N elements of SEQ."),
-    S!("seq-drop", 2, 2, f_seq_drop, "SEQ without first N elements."),
+    S!(
+        "seq-drop",
+        2,
+        2,
+        f_seq_drop,
+        "SEQ without first N elements."
+    ),
     S!("seq-elt", 2, 2, f_elt, "seq.el elt."),
     S!("seq-length", 1, 1, f_seq_length, "Length of SEQ."),
-    S!("seq-do", 2, 2, f_seq_do, "Apply FUNCTION to each element of SEQ."),
-    S!("seq-map", 2, 2, f_seq_map, "Map FUNCTION over SEQ, return list."),
-    S!("seq-filter", 2, 2, f_seq_filter, "Elements of SEQ satisfying PRED."),
+    S!(
+        "seq-do",
+        2,
+        2,
+        f_seq_do,
+        "Apply FUNCTION to each element of SEQ."
+    ),
+    S!(
+        "seq-map",
+        2,
+        2,
+        f_seq_map,
+        "Map FUNCTION over SEQ, return list."
+    ),
+    S!(
+        "seq-filter",
+        2,
+        2,
+        f_seq_filter,
+        "Elements of SEQ satisfying PRED."
+    ),
     S!("seq-contains-p", 2, 3, f_seq_contains_p, "Is ELT in SEQ?"),
     S!("seq-position", 2, 3, f_seq_position, "Index of ELT in SEQ."),
-    S!("seq-count", 2, 2, f_seq_count, "Count elements satisfying PRED."),
+    S!(
+        "seq-count",
+        2,
+        2,
+        f_seq_count,
+        "Count elements satisfying PRED."
+    ),
     S!("seq-reverse", 1, 1, f_seq_reverse, "Reversed copy of SEQ."),
-    S!("seq-some", 2, 2, f_seq_some, "First non-nil result of PRED on SEQ."),
-    S!("seq-every-p", 2, 2, f_seq_every_p, "t if PRED holds for all of SEQ."),
-    S!("seq-find", 2, 3, f_seq_find, "First element of SEQ satisfying PRED."),
-    S!("seq-remove", 2, 2, f_seq_remove, "Remove elements satisfying PRED."),
-    S!("seq-reduce", 3, 3, f_seq_reduce, "Reduce SEQ with FUNCTION and INIT."),
-    S!("seq-take-while", 2, 2, f_seq_take_while, "Take while PRED holds."),
-    S!("seq-drop-while", 2, 2, f_seq_drop_while, "Drop while PRED holds."),
+    S!(
+        "seq-some",
+        2,
+        2,
+        f_seq_some,
+        "First non-nil result of PRED on SEQ."
+    ),
+    S!(
+        "seq-every-p",
+        2,
+        2,
+        f_seq_every_p,
+        "t if PRED holds for all of SEQ."
+    ),
+    S!(
+        "seq-find",
+        2,
+        3,
+        f_seq_find,
+        "First element of SEQ satisfying PRED."
+    ),
+    S!(
+        "seq-remove",
+        2,
+        2,
+        f_seq_remove,
+        "Remove elements satisfying PRED."
+    ),
+    S!(
+        "seq-reduce",
+        3,
+        3,
+        f_seq_reduce,
+        "Reduce SEQ with FUNCTION and INIT."
+    ),
+    S!(
+        "seq-take-while",
+        2,
+        2,
+        f_seq_take_while,
+        "Take while PRED holds."
+    ),
+    S!(
+        "seq-drop-while",
+        2,
+        2,
+        f_seq_drop_while,
+        "Drop while PRED holds."
+    ),
     S!("seq-copy", 1, 1, f_copy_sequence, ""),
     S!("seq-into", 2, 2, f_seq_into, "Convert SEQ to TYPE."),
     S!("seq-empty-p", 1, 1, f_seq_empty_p, "t if SEQ is empty."),
@@ -59,9 +191,20 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!("seq-min", 1, 1, f_seq_min, "Smallest element of SEQ."),
     S!("seq-max", 1, 1, f_seq_max, "Largest element of SEQ."),
     S!("seq-uniq", 1, 2, f_seq_uniq, "SEQ with duplicates removed."),
-    S!("seq-let", raw, f_seq_let_raw, "seq-let is a macro in lisp/."),
+    S!(
+        "seq-let",
+        raw,
+        f_seq_let_raw,
+        "seq-let is a macro in lisp/."
+    ),
     S!("char-table", many 0, f_vector, ""),
-    S!("make-char-table", 1, 3, f_make_char_table, "Make a char-table (approx: vector)."),
+    S!(
+        "make-char-table",
+        1,
+        3,
+        f_make_char_table,
+        "Make a char-table (approx: vector)."
+    ),
 ];
 
 fn f_seq_let_raw(i: &mut Interp, _args: Vec<Value>) -> EvalResult {
@@ -276,7 +419,11 @@ fn f_mapconcat(i: &mut Interp, args: Vec<Value>) -> EvalResult {
         parts.push(r);
         Ok(())
     })?;
-    let sep = args.get(2).map(|v| want_string(i, v)).transpose()?.unwrap_or_default();
+    let sep = args
+        .get(2)
+        .map(|v| want_string(i, v))
+        .transpose()?
+        .unwrap_or_default();
     let mut out = String::new();
     for (k, p) in parts.iter().enumerate() {
         if k > 0 {
@@ -374,9 +521,9 @@ fn f_string_to_sequence(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     let ty = arg(&args, 1);
     match i.sym_id(&ty) {
         Some(s) if s == i.intern("list") || s == 0 => Ok(Value::list(items)),
-        Some(s) if s == i.intern("vector") => Ok(Value::Vec(std::rc::Rc::new(
-            std::cell::RefCell::new(items),
-        ))),
+        Some(s) if s == i.intern("vector") => {
+            Ok(Value::Vec(std::rc::Rc::new(std::cell::RefCell::new(items))))
+        }
         Some(s) if s == i.intern("string") => Ok(args[0].clone()),
         _ => Ok(Value::list(items)),
     }
@@ -440,6 +587,10 @@ fn f_nreverse_seq(i: &mut Interp, args: Vec<Value>) -> EvalResult {
                     }
                     _ => break,
                 }
+            }
+            // Emacs requires a proper list; a dotted tail is an error.
+            if !cur.is_nil() {
+                return Err(i.wrong_type_mut("listp", &args[0]));
             }
             Ok(prev)
         }
@@ -506,13 +657,18 @@ fn f_seq_subseq(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     let items = seq_to_vec(i, &args[0])?;
     let len = items.len() as i128;
     let start = want_int(i, &args[1])?.max(0).min(len) as usize;
-    let end = args.get(2).map(|v| want_int(i, v)).transpose()?.unwrap_or(len);
-    let e = if end < 0 { (len + end).max(0) } else { end.min(len) } as usize;
+    let end = args
+        .get(2)
+        .map(|v| want_int(i, v))
+        .transpose()?
+        .unwrap_or(len);
+    let e = if end < 0 {
+        (len + end).max(0)
+    } else {
+        end.min(len)
+    } as usize;
     if start > e {
-        return Err(i.signal_data(
-            sym::ARGS_OUT_OF_RANGE,
-            vec![args[0].clone()],
-        ));
+        return Err(i.signal_data(sym::ARGS_OUT_OF_RANGE, vec![args[0].clone()]));
     }
     Ok(seq_from_like(i, &args[0], items[start..e].to_vec()))
 }
@@ -520,12 +676,20 @@ fn f_seq_subseq(i: &mut Interp, args: Vec<Value>) -> EvalResult {
 fn f_seq_take(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     let items = seq_to_vec(i, &args[0])?;
     let n = want_int(i, &args[1])?.max(0) as usize;
-    Ok(seq_from_like(i, &args[0], items.into_iter().take(n).collect()))
+    Ok(seq_from_like(
+        i,
+        &args[0],
+        items.into_iter().take(n).collect(),
+    ))
 }
 fn f_seq_drop(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     let items = seq_to_vec(i, &args[0])?;
     let n = want_int(i, &args[1])?.max(0) as usize;
-    Ok(seq_from_like(i, &args[0], items.into_iter().skip(n).collect()))
+    Ok(seq_from_like(
+        i,
+        &args[0],
+        items.into_iter().skip(n).collect(),
+    ))
 }
 fn f_seq_length(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     Ok(Value::Int(seq_to_vec(i, &args[0])?.len() as i128))
