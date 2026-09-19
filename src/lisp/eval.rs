@@ -1989,13 +1989,16 @@ impl Interp {
                         // no argument.
                         '*' | '^' | '@' | '\n' => {}
                         'r' => {
-                            let (beg, end) = self
+                            let (p, m) = self
                                 .current_buffer_ref()
                                 .map(|b| {
                                     let bb = b.borrow();
                                     (bb.point, bb.mark.unwrap_or(bb.point))
                                 })
                                 .unwrap_or((0, 0));
+                            // `r' yields region-beginning/region-end
+                            // (ordered) like Emacs.
+                            let (beg, end) = if p <= m { (p, m) } else { (m, p) };
                             out.push(Value::Int(beg as i128 + 1));
                             out.push(Value::Int(end as i128 + 1));
                         }
@@ -2029,7 +2032,7 @@ impl Interp {
                                     }
                                 });
                             } else if numeric {
-                                out.push(prefix_numeric(&pa));
+                                out.push(prefix_numeric(self, &pa));
                             } else {
                                 out.push(pa);
                             }
@@ -2039,7 +2042,7 @@ impl Interp {
                             let prompt = take_prompt(&chars, &mut pos);
                             let pa = self.prefix_arg();
                             if !pa.is_nil() {
-                                out.push(prefix_numeric(&pa));
+                                out.push(prefix_numeric(self, &pa));
                             } else if let Some(v) = self.command_args.first() {
                                 out.push(v.clone());
                             } else if self.minibuf_reader.is_some() {
@@ -2229,7 +2232,7 @@ pub(crate) fn subr_interactive(name: &str) -> Option<&'static str> {
 }
 
 /// Numeric value of a prefix-arg value: (4)→4, (16)→16, (-)→-1, nil→1.
-fn prefix_numeric(v: &Value) -> Value {
+fn prefix_numeric(i: &Interp, v: &Value) -> Value {
     match v {
         Value::Nil => Value::Int(1),
         Value::Int(n) => Value::Int(*n),
@@ -2237,6 +2240,14 @@ fn prefix_numeric(v: &Value) -> Value {
             Value::Int(n) => Value::Int(*n),
             _ => Value::Int(-1),
         },
+        Value::Sym(_) => {
+            // A bare `-` prefix means -1 (Emacs `prefix-numeric-value`).
+            if i.sym_is(v, i.intern_soft("-").unwrap_or(SymId::MAX)) {
+                Value::Int(-1)
+            } else {
+                Value::Int(1)
+            }
+        }
         _ => Value::Int(1),
     }
 }
