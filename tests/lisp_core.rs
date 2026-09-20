@@ -359,14 +359,15 @@ fn markers() {
 
 #[test]
 fn undo_basic() {
+    // GNU: with-temp-buffer buffers (space-prefixed names) start with
+    // undo disabled, so `undo` signals user-error.
     assert_eq!(
-        ev_out(
+        ev(
             "(with-temp-buffer
                   (insert \"abc\")
-                  (undo)
-                  (princ (buffer-string)))"
+                  (condition-case e (undo) (error (car e))))"
         ),
-        ""
+        ev("'user-error")
     );
 }
 

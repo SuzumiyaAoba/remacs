@@ -177,7 +177,12 @@ impl Interp {
                 out.push(']');
             }
             Value::Buffer(b) => {
-                let _ = write!(out, "#<buffer {}>", b.borrow().name);
+                let bb = b.borrow();
+                if bb.live {
+                    let _ = write!(out, "#<buffer {}>", bb.name);
+                } else {
+                    out.push_str("#<killed buffer>");
+                }
             }
             Value::Marker(m) => {
                 let b = m.borrow();

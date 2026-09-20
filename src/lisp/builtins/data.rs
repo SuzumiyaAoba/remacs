@@ -530,6 +530,24 @@ fn f_commandp(i: &mut Interp, args: Vec<Value>) -> EvalResult {
             .map(|l| l.interactive.is_some())
             .unwrap_or(false),
         Value::Lambda(l) => l.interactive.is_some(),
+        // `(lambda (x) (interactive ...) ...)' as data.
+        Value::Cons(_) => {
+            let items: Vec<Value> = args[0].list_to_vec().unwrap_or_default();
+            items
+                .first()
+                .and_then(|h| i.sym_id(h))
+                .map(|h| h == sym::LAMBDA)
+                .unwrap_or(false)
+                && items.iter().skip(2).any(|el| match el {
+                    Value::Cons(ec) => {
+                        let b = ec.borrow();
+                        i.sym_is(&b.car, sym::INTERACTIVE)
+                    }
+                    _ => false,
+                })
+        }
+        // strings and vectors are keyboard macros — commands.
+        Value::Str(_) | Value::Vec(_) => true,
         _ => false,
     };
     Ok(Value::from_bool(r))
@@ -553,7 +571,13 @@ fn f_type_of(i: &mut Interp, args: Vec<Value>) -> EvalResult {
         Value::Frame(_) => "frame",
         Value::Str(_) => "string",
         Value::Vec(_) => "vector",
-        Value::Record(_) => "record",
+        Value::Record(r) => {
+            let rr = r.borrow();
+            if let Some(Value::Sym(tag)) = rr.first() {
+                return Ok(Value::Sym(*tag));
+            }
+            "record"
+        }
         Value::Hash(_) => "hash-table",
         Value::Subr(_) => "subr",
         Value::Lambda(_) => "interpreted-function",

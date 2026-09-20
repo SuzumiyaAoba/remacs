@@ -465,7 +465,15 @@ pub(crate) static SUBRS: &[Subr] = &[
         f_backward_sexp,
         "Move back across a balanced expression."
     ),
-    S!("scan-lists", 3, 3, f_scan_lists, "Scan lists (approx)."),
+    S!("scan-lists", 3, 3, f_scan_lists, "Scan lists."),
+    S!("down-list", 0, 1, f_down_list, "Move down into a list."),
+    S!("up-list", 0, 1, f_up_list, "Move out of a list."),
+    S!("forward-list", 0, 1, f_forward_list, "Move across a list."),
+    S!("backward-list", 0, 1, f_backward_list, "Move back across a list."),
+    S!("backward-up-list", 0, 1, f_backward_up_list, "Move up out of a list."),
+    S!("syntax-after", 1, 1, f_syntax_after, "Syntax of char at POS."),
+    S!("looking-back", 1, 3, f_looking_back, "Match regexp before point."),
+    S!("last-buffer", 0, 3, f_last_buffer, "Last buffer in order."),
     // --- insertion & deletion ---
     S!("insert", many 0, f_insert, "Insert args (strings/chars) at point."),
     S!("insert-and-inherit", many 0, f_insert, "Insert with inherited props."),
@@ -547,8 +555,8 @@ pub(crate) static SUBRS: &[Subr] = &[
         "delete-blank-lines",
         0,
         0,
-        f_noop,
-        "Delete blank lines (todo)."
+        f_delete_blank_lines,
+        "Delete blank lines around point."
     ),
     S!("combine-after-change-calls", raw, f_progn_raw, ""),
     S!("combine-change-calls", raw, f_second_form_raw, ""),
@@ -891,7 +899,7 @@ pub(crate) static SUBRS: &[Subr] = &[
         f_undo_boundary,
         "Mark an undo boundary."
     ),
-    S!("undo-start", 0, 0, f_noop, ""),
+    S!("undo-start", 0, 0, f_undo_start, ""),
     S!("undo-more", 1, 1, f_undo, ""),
     S!("undo-auto-amalgamate", 0, 0, f_noop, ""),
     S!("cancel-change-group", 0, 0, f_noop, ""),
@@ -1278,6 +1286,8 @@ fn f_make_local_variable(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let b = cur(i);
     let mut bb = b.borrow_mut();
     if !bb.locals.contains_key(&sid) {
+        // The local binding starts with the default value, or void
+        // (the unbound sentinel) when the variable is unbound.
         bb.locals.insert(sid, i.obarray.symbol(sid).value.clone());
     }
     Ok(a[0].clone())
@@ -1688,8 +1698,15 @@ fn f_line_number_at_pos(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 fn f_count_lines(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let b = cur(i);
     let bb = b.borrow();
-    let s = pos_idx(bb.text.len(), want_int(i, &a[0])?);
-    let e = pos_idx(bb.text.len(), want_int(i, &a[1])?);
+    let (s_arg, e_arg) = (want_int(i, &a[0])?, want_int(i, &a[1])?);
+    let (lo, hi) = (bb.begv as i128 + 1, bb.zv as i128 + 1);
+    if s_arg < lo || s_arg > hi || e_arg < lo || e_arg > hi {
+        drop(bb);
+        let sym = i.intern("args-out-of-range");
+        return Err(i.signal_data(sym, vec![a[0].clone(), a[1].clone()]));
+    }
+    let s = pos_idx(bb.text.len(), s_arg);
+    let e = pos_idx(bb.text.len(), e_arg);
     let (s, e) = (s.min(e), s.max(e));
     let mut n = 0;
     for k in s..e {
@@ -2061,8 +2078,310 @@ fn f_backward_sexp(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     Ok(Value::Nil)
 }
 
-fn f_scan_lists(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
-    Err(i.error("scan-lists not implemented"))
+fn sexp_is_open(c: char) -> bool {
+    matches!(c, '(' | '[' | '{')
+}
+fn sexp_is_close(c: char) -> bool {
+    matches!(c, ')' | ']' | '}')
+}
+
+/// Index of the close matching the open at `open` (0-based).
+fn sexp_match_close(text: &[char], open: usize) -> Option<usize> {
+    let mut d = 0i32;
+    for (j, c) in text.iter().enumerate().skip(open) {
+        if sexp_is_open(*c) {
+            d += 1;
+        } else if sexp_is_close(*c) {
+            d -= 1;
+            if d == 0 {
+                return Some(j);
+            }
+        }
+    }
+    None
+}
+
+/// (complete pairs, unmatched opens) for the text before `pos`.
+fn sexp_pairs_before(text: &[char], pos: usize) -> (Vec<(usize, usize)>, Vec<usize>) {
+    let mut stack = Vec::new();
+    let mut pairs = Vec::new();
+    for (j, c) in text.iter().enumerate().take(pos.min(text.len())) {
+        if sexp_is_open(*c) {
+            stack.push(j);
+        } else if sexp_is_close(*c) {
+            if let Some(o) = stack.pop() {
+                pairs.push((o, j));
+            }
+        }
+    }
+    (pairs, stack)
+}
+
+/// Core of `scan-lists`: returns the 0-based landing position, None
+/// for "stays put", Err for scan-error.
+fn scan_lists_impl(
+    text: &[char],
+    pos: usize,
+    count: i128,
+    depth: i128,
+) -> Result<Option<usize>, ()> {
+    let len = text.len();
+    if count > 0 {
+        let mut p = pos;
+        for _ in 0..count {
+            let mut i = p;
+            let mut landed = None;
+            while i < len {
+                if sexp_is_open(text[i]) {
+                    match sexp_match_close(text, i) {
+                        Some(c) => {
+                            landed = Some(c + 1);
+                            break;
+                        }
+                        None => return Err(()),
+                    }
+                } else if sexp_is_close(text[i]) {
+                    landed = Some(i + 1);
+                    break;
+                }
+                i += 1;
+            }
+            match landed {
+                Some(np) => p = np,
+                None => return Ok(None),
+            }
+        }
+        Ok(Some(p))
+    } else if count < 0 {
+        let mut bound = pos;
+        let mut last = None;
+        for _ in 0..-count {
+            let (pairs, stack) = sexp_pairs_before(text, bound);
+            let best = pairs.iter().max_by_key(|(_, c)| *c).copied();
+            match best {
+                Some((o, _)) => {
+                    last = Some(o);
+                    bound = o;
+                }
+                None => {
+                    if !stack.is_empty() {
+                        return Err(());
+                    }
+                    return Ok(last);
+                }
+            }
+        }
+        Ok(last)
+    } else if depth > 0 {
+        // Descend: land at the open paren reaching target depth.
+        let mut i = pos;
+        let mut remaining = depth;
+        while i < len && remaining > 0 {
+            if sexp_is_open(text[i]) {
+                remaining -= 1;
+                if remaining == 0 {
+                    return Ok(Some(i));
+                }
+            }
+            i += 1;
+        }
+        Ok(None)
+    } else {
+        // Ascend: land just inside the enclosing open paren.
+        let (_, stack) = sexp_pairs_before(text, pos);
+        let levels = -depth;
+        if stack.len() < levels as usize {
+            return Ok(None);
+        }
+        Ok(Some(stack[stack.len() - levels as usize] + 1))
+    }
+}
+
+fn f_scan_lists(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let from = want_int(i, &a[0])?;
+    let count = want_int(i, &a[1])?;
+    let depth = want_int(i, &a[2])?;
+    let text: Vec<char> = {
+        let b = cur(i);
+        let bb = b.borrow();
+        bb.text.text().chars().collect()
+    };
+    let pos = pos_idx(text.len(), from);
+    match scan_lists_impl(&text, pos, count, depth) {
+        Ok(Some(p)) => Ok(Value::Int(p as i128 + 1)),
+        Ok(None) => Ok(Value::Nil),
+        Err(()) => Err(scan_error(i)),
+    }
+}
+
+fn scan_error(i: &mut Interp) -> Flow {
+    let sym = i.intern("scan-error");
+    i.signal_data(sym, Vec::new())
+}
+
+fn nav_text(i: &Interp) -> (Vec<char>, usize) {
+    let b = i.buffers.get(i.current_buffer).unwrap();
+    let bb = b.borrow();
+    (bb.text.text().chars().collect(), bb.point())
+}
+
+fn f_down_list(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let n = a.get(0).and_then(|v| v.int()).unwrap_or(1).max(1);
+    let (text, mut p) = nav_text(i);
+    for _ in 0..n {
+        let mut j = p;
+        while j < text.len() && !sexp_is_open(text[j]) {
+            j += 1;
+        }
+        if j >= text.len() {
+            return Err(scan_error(i));
+        }
+        p = j + 1;
+    }
+    cur(i).borrow_mut().set_point(p);
+    Ok(Value::Nil)
+}
+
+fn f_up_list(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let n = a.get(0).and_then(|v| v.int()).unwrap_or(1).max(1);
+    let (text, mut p) = nav_text(i);
+    for _ in 0..n {
+        let (_, stack) = sexp_pairs_before(&text, p);
+        match stack.last() {
+            Some(&o) => match sexp_match_close(&text, o) {
+                Some(c) => p = c + 1,
+                None => return Err(scan_error(i)),
+            },
+            None => return Err(scan_error(i)),
+        }
+    }
+    cur(i).borrow_mut().set_point(p);
+    Ok(Value::Nil)
+}
+
+fn f_forward_list(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let n = a.get(0).and_then(|v| v.int()).unwrap_or(1).max(1);
+    let (text, p) = nav_text(i);
+    match scan_lists_impl(&text, p, n, 0) {
+        Ok(Some(np)) => {
+            cur(i).borrow_mut().set_point(np);
+            Ok(Value::Nil)
+        }
+        Ok(None) => Ok(Value::Nil),
+        Err(()) => Err(scan_error(i)),
+    }
+}
+
+fn f_backward_list(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let n = a.get(0).and_then(|v| v.int()).unwrap_or(1).max(1);
+    let (text, p) = nav_text(i);
+    match scan_lists_impl(&text, p, -n, 0) {
+        Ok(Some(np)) => {
+            cur(i).borrow_mut().set_point(np);
+            Ok(Value::Nil)
+        }
+        Ok(None) => Ok(Value::Nil),
+        Err(()) => Err(scan_error(i)),
+    }
+}
+
+fn f_backward_up_list(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let n = a.get(0).and_then(|v| v.int()).unwrap_or(1).max(1);
+    let (text, mut p) = nav_text(i);
+    for _ in 0..n {
+        let (_, stack) = sexp_pairs_before(&text, p);
+        match stack.last() {
+            Some(&o) => p = o,
+            None => return Err(scan_error(i)),
+        }
+    }
+    cur(i).borrow_mut().set_point(p);
+    Ok(Value::Nil)
+}
+
+pub(crate) fn f_syntax_after(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let pos = want_int(i, &a[0])?;
+    let b = cur(i);
+    let bb = b.borrow();
+    let idx = pos_idx(bb.text_len(), pos);
+    if idx >= bb.text_len() {
+        return Ok(Value::Nil);
+    }
+    let c = bb.text.char_at(idx);
+    // GNU syntax classes: 0 ws, 1 punct, 2 word, 3 symbol, 4 open,
+    // 5 close, 6 expr-prefix, 7 string-quote, 8 paired-delim,
+    // 9 escape, 10 charquote, 11 comment-start, 12 comment-end.
+    let (cls, matching): (i128, Option<char>) = match c {
+        ' ' | '\t' | '\n' | '\x0b' | '\x0c' | '\r' => (0, None),
+        'a'..='z' | 'A'..='Z' | '0'..='9' => (2, None),
+        '(' | '[' | '{' => {
+            (4, Some(match c { '(' => ')', '[' => ']', _ => '}' }))
+        }
+        ')' | ']' | '}' => {
+            (5, Some(match c { ')' => '(', ']' => '[', _ => '{' }))
+        }
+        '"' | '|' => (7, None),
+        '\\' => (9, None),
+        ';' => (11, None),
+        '\'' | '`' | ',' | '#' => (6, None),
+        '_' | '$' | '%' | '&' | '*' | '+' | '-' | '/' | '<' | '=' | '>' => {
+            (3, None)
+        }
+        _ => (1, None),
+    };
+    // GNU returns a dotted pair (CLASS . MATCHING-CHAR) for
+    // open/close classes, a singleton list otherwise.
+    Ok(match matching {
+        Some(m) => Value::cons(Value::Int(cls), Value::Int(m as i128)),
+        None => Value::list(vec![Value::Int(cls)]),
+    })
+}
+
+fn f_looking_back(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let re = regexp_compile(i, &a[0])?;
+    let limit = a.get(1).and_then(|v| v.int());
+    let greedy = a.get(2).map(|v| v.truthy()).unwrap_or(false);
+    let (text, pos, base) = {
+        let b = cur(i);
+        let bb = b.borrow();
+        (
+            bb.text
+                .substring(bb.begv, bb.text_len())
+                .chars()
+                .collect::<Vec<char>>(),
+            bb.point() - bb.begv,
+            bb.begv,
+        )
+    };
+    let lo = limit.map(|l| (l.max(1) as usize - 1).saturating_sub(base)).unwrap_or(0);
+    // Non-greedy: shortest match ending at point (nearest start).
+    // Greedy: longest (smallest start wins).
+    let order: Vec<usize> = if greedy {
+        (lo..=pos).collect()
+    } else {
+        (lo..=pos).rev().collect()
+    };
+    for start in order {
+        if let Some(regs) = crate::lisp::regexp::match_at(&re, &text, start)
+        {
+            if regs[1] == Some(pos) {
+                i.match_data = Some(MatchData {
+                    regs,
+                    in_buffer: true,
+                    base,
+                });
+                return Ok(Value::t());
+            }
+        }
+    }
+    Ok(Value::Nil)
+}
+
+fn f_last_buffer(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
+    match i.buffers.order.last().copied() {
+        Some(id) => Ok(i.buffer_value(id).unwrap_or(Value::Nil)),
+        None => Ok(Value::Nil),
+    }
 }
 
 // ---------- insertion & deletion ----------
@@ -3601,13 +3920,97 @@ fn f_undo(i: &mut Interp, a: Vec<Value>) -> EvalResult {
             group.push(e);
         }
         if group.is_empty() {
-            break;
+            // Nothing left to undo.
+            drop(bb);
+            let sym = i.intern("user-error");
+            return Err(i.signal_data(
+                sym,
+                vec![Value::string("No further undo information")],
+            ));
         }
         // Apply in reverse.
         for e in group.into_iter().rev() {
             apply_undo(&mut bb, &e);
         }
     }
+    Ok(Value::Nil)
+}
+
+fn f_delete_blank_lines(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
+    // Emacs: on a blank line, delete all contiguous blank lines
+    // (leaving just one when there are several). On a nonblank line,
+    // delete all blank lines following it.
+    let _ = i;
+    let b = cur(i);
+    let mut bb = b.borrow_mut();
+    let len = bb.text.len();
+    let blank_at = |bb: &crate::buffer::Buffer, start: usize, end: usize| {
+        bb.text.substring(start, end).trim().is_empty()
+    };
+    // (start, end) of the line containing char-pos p, with end
+    // including the trailing newline when present.
+    let line_span = |bb: &crate::buffer::Buffer, p: usize| {
+        let l = bb.text.line_of_pos(p);
+        let s = bb.text.line_start(l);
+        let mut e = bb.text.line_end(s);
+        if e < len {
+            e += 1;
+        }
+        (s, e)
+    };
+    let p = bb.point().min(len);
+    let (ls, le) = line_span(&bb, p);
+    let mut s = ls;
+    let mut e = le;
+    if blank_at(&bb, ls, le) {
+        // Extend over the whole contiguous blank region.
+        while s > 0 {
+            let (ps, pe) = line_span(&bb, s - 1);
+            if !blank_at(&bb, ps, pe) {
+                break;
+            }
+            s = ps;
+        }
+        while e < len {
+            let (ns, ne) = line_span(&bb, e);
+            if !blank_at(&bb, ns, ne) {
+                break;
+            }
+            e = ne;
+        }
+        // Keep one blank line if the region spans several: delete
+        // from the end of the first blank line onward.
+        let (fs, fe) = line_span(&bb, s);
+        if e - s > fe - fs {
+            s = fe;
+        }
+    } else {
+        // Delete following blank lines only (after the current
+        // line's terminating newline).
+        s = le;
+        while e < len {
+            let (ns, ne) = line_span(&bb, e);
+            if !blank_at(&bb, ns, ne) {
+                break;
+            }
+            e = ne;
+        }
+        if e == le {
+            return Ok(Value::Nil);
+        }
+    }
+    bb.delete_region(s, e);
+    let np = s.min(bb.text.len());
+    bb.set_point(np);
+    Ok(Value::Nil)
+}
+
+fn f_undo_start(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
+    // Push an undo boundary so the next `undo` treats preceding
+    // records as one group (like Emacs's undo-start).
+    let b = cur(i);
+    b.borrow_mut().undo.push(crate::buffer::UndoEntry::Boundary);
+    let _ = i;
     Ok(Value::Nil)
 }
 

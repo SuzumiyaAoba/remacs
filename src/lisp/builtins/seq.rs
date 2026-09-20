@@ -940,10 +940,17 @@ fn f_seq_uniq(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     }
     Ok(seq_from_like(i, &args[0], out))
 }
-fn f_make_char_table(_i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    // Approximate char-tables with a 256-element vector.
+fn f_make_char_table(i: &mut Interp, args: Vec<Value>) -> EvalResult {
+    // Char-table = #s(char-table SUBTYPE [256 slots]) — a Record so
+    // `char-table-p'/`char-table-subtype' are exact.
+    let subtype = arg(&args, 0);
     let init = arg(&args, 1);
-    Ok(Value::Vec(std::rc::Rc::new(std::cell::RefCell::new(
+    let vec = Value::Vec(std::rc::Rc::new(std::cell::RefCell::new(
         vec![init; 256],
-    ))))
+    )));
+    Ok(Value::Record(std::rc::Rc::new(std::cell::RefCell::new(vec![
+        Value::Sym(i.intern("char-table")),
+        subtype,
+        vec,
+    ]))))
 }

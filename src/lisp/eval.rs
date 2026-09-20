@@ -112,6 +112,8 @@ pub struct Interp {
     /// `single_key` reads one event (y-or-n-p, read-char).
     pub minibuf_reader:
         Option<std::rc::Rc<dyn Fn(&mut Interp, &str, bool) -> Result<MinibufInput, Flow>>>,
+    /// Nesting depth of active minibuffer reads (`minibuffer-depth').
+    pub minibuf_level: i32,
 }
 
 /// Result of a minibuffer read from the front-end.
@@ -126,13 +128,14 @@ impl Interp {
     pub fn new() -> Interp {
         let mut obarray = Obarray::new();
         let standard_output_sym = obarray.intern("standard-output");
+        let emacs_sym = obarray.intern("emacs");
         let mut interp = Interp {
             obarray,
             specbind: Vec::new(),
             lexenv: None,
             buffers: crate::buffer::BufferSet::new(),
             current_buffer: 0,
-            features: Vec::new(),
+            features: vec![emacs_sym],
             output: None,
             echo_message: String::new(),
             max_lisp_eval_depth: 1600,
@@ -155,17 +158,21 @@ impl Interp {
             selected_frame: None,
             quit_editor: false,
             minibuf_reader: None,
+            minibuf_level: 0,
         };
         crate::lisp::builtins::install(&mut interp);
         crate::buffer::install_primitives(&mut interp);
         interp.define_error_conditions();
         interp.define_special_variables();
-        // The initial buffers every Emacs session has.
+        // The initial buffers every Emacs session has, in GNU's
+        // buffer-list order: (scratch Minibuf-0 Messages load
+        // Warnings). New buffers append at the end of the order.
         let scratch = interp.buffers.create_exact("*scratch*");
         interp.current_buffer = scratch;
         interp.buffers.create_exact(" *Minibuf-0*");
-        interp.buffers.create_exact(" *Echo Area 0*");
-        interp.buffers.create_exact(" *Messages*");
+        interp.buffers.create_exact("*Messages*");
+        interp.buffers.create_exact(" *load*");
+        interp.buffers.create_exact("*Warnings*");
         crate::editor::install_primitives(&mut interp);
         // Load the Lisp prelude (subr.el subset). Errors here indicate a
         // broken prelude, but don't abort startup.
@@ -280,8 +287,10 @@ impl Interp {
         }
         if let Some(b) = self.buffers.get(self.current_buffer) {
             if let Ok(bb) = b.try_borrow() {
-                if bb.locals.contains_key(&id) {
-                    return true;
+                if let Some(v) = bb.locals.get(&id) {
+                    // A void local binding (make-local-variable on an
+                    // unbound variable) counts as unbound.
+                    return !matches!(v, Value::Sym(s) if *s == sym::UNBOUND);
                 }
             }
         }
@@ -1335,6 +1344,16 @@ impl Interp {
             "permission-denied",
             &["permission-denied", "file-error", "error"],
         );
+        put(
+            self,
+            "coding-system-error",
+            &["coding-system-error", "error"],
+        );
+        put(
+            self,
+            "coding-conversion-error",
+            &["coding-conversion-error", "error"],
+        );
         put(self, "mark-set", &["mark-set"]);
         put(self, "mark-active", &["mark-active"]);
         put(self, "mark-inactive", &["mark-inactive"]);
@@ -1371,6 +1390,11 @@ impl Interp {
             ("no-catch", "No catch for tag"),
             ("scan-error", "Scan error"),
             ("invalid-regexp", "Invalid regexp"),
+            ("coding-system-error", "Invalid coding system"),
+            (
+                "coding-conversion-error",
+                "Coding conversion error",
+            ),
             ("file-already-exists", "File already exists"),
             ("file-supersession", "File is already being edited"),
             ("permission-denied", "Permission denied"),
@@ -1912,7 +1936,10 @@ impl Interp {
             ("truncate-lines", Value::Nil),
             ("enable-multibyte-characters", Value::t()),
             ("obarray", Value::Nil), // TODO: real obarray object
-            ("features", Value::Nil),
+            (
+                "features",
+                Value::list(vec![Value::Sym(self.intern("emacs"))]),
+            ),
             ("current-load-list", Value::Nil),
             ("load-in-progress", Value::Nil),
             ("command-history", Value::Nil),
@@ -2165,7 +2192,10 @@ impl Interp {
 
     /// Read a full input line via the front-end hook.
     pub fn minibuf_line(&mut self, prompt: &str) -> Result<String, Flow> {
-        match self.minibuf_input(prompt, false)? {
+        self.minibuf_level += 1;
+        let r = self.minibuf_input(prompt, false);
+        self.minibuf_level -= 1;
+        match r? {
             MinibufInput::Text(t) => Ok(t),
             MinibufInput::Key(k) => Ok(char::from_u32(k as u32)
                 .map(|c| c.to_string())

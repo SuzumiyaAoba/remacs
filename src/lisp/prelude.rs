@@ -618,6 +618,52 @@ returning that buffer's contents as a string."
 (defvar buffer-file-name nil
   "Name of file visited in the current buffer.")
 
+;; ---------- named-function-key commands ----------
+(defun left-char (&optional n)
+  "Move point N characters to the left (to the right if N is negative)."
+  (interactive "^p")
+  (forward-char (- (prefix-numeric-value n))))
+
+(defun right-char (&optional n)
+  "Move point N characters to the right (to the left if N is negative)."
+  (interactive "^p")
+  (forward-char (prefix-numeric-value n)))
+
+(defun delete-forward-char (&optional n killflag)
+  "Delete the following N characters (previous if N is negative)."
+  (interactive "p\nP")
+  (delete-char (prefix-numeric-value n) killflag))
+
+(defun overwrite-mode (&optional arg)
+  "Placeholder for Emacs compatibility; no-op in this editor."
+  (interactive "P")
+  nil)
+
+(defun help-command (key &optional flag)
+  "Placeholder help dispatcher."
+  (interactive "KHelp: \np")
+  nil)
+
+(defun menu-bar-open (&optional frame)
+  "Placeholder menu-bar opener."
+  (interactive "i\nF")
+  nil)
+
+(defun mouse-set-point (event &optional promote-to-region)
+  "Move point to the position clicked on with the mouse."
+  (interactive "e\np")
+  nil)
+
+(defun mouse-set-region (click)
+  "Set the region to the interval dragged over."
+  (interactive "e")
+  nil)
+
+(defun mwheel-scroll (event &optional arg)
+  "Scroll up or down according to the EVENT."
+  (interactive "e\nP")
+  nil)
+
 ;; ---------- default global-map bindings ----------
 
 (let ((m (current-global-map)))
@@ -647,6 +693,25 @@ returning that buffer's contents as a string."
   (define-key m (kbd "C-z") 'suspend-emacs)
   (define-key m (kbd "TAB") 'indent-for-tab-command)
   (define-key m (kbd "DEL") 'delete-backward-char)
+  (define-key m [down] 'next-line)
+  (define-key m [up] 'previous-line)
+  (define-key m [left] 'left-char)
+  (define-key m [right] 'right-char)
+  (define-key m [prior] 'scroll-down-command)
+  (define-key m [next] 'scroll-up-command)
+  (define-key m [home] 'beginning-of-buffer)
+  (define-key m [end] 'end-of-buffer)
+  (define-key m [deletechar] 'delete-forward-char)
+  (define-key m [insert] 'overwrite-mode)
+  (define-key m [insertchar] 'overwrite-mode)
+  (define-key m [mouse-1] 'mouse-set-point)
+  (define-key m [drag-mouse-1] 'mouse-set-region)
+  (define-key m [double-mouse-1] 'mouse-set-region)
+  (define-key m [triple-mouse-1] 'mouse-set-region)
+  (define-key m [wheel-up] 'mwheel-scroll)
+  (define-key m [wheel-down] 'mwheel-scroll)
+  (define-key m [f1] 'help-command)
+  (define-key m [f10] 'menu-bar-open)
   (define-key m (kbd "C-_") 'undo)
   (define-key m (kbd "C-/") 'undo)
   ;; ESC-prefix map (ESC x = M-x).
@@ -827,4 +892,26 @@ returning that buffer's contents as a string."
 (defmacro with-local-quit (&rest body)
   "Execute BODY with quits allowed."
   (cons 'let (cons '((inhibit-quit nil)) body)))
+
+;; ---------- mode keymaps ----------
+(defvar lisp-interaction-mode-map
+  (let ((m (make-sparse-keymap))
+        (menu (make-sparse-keymap)))
+    (define-key m [menu-bar] menu)
+    (define-key menu [lisp-interaction]
+      (list 'menu-item "Lisp-Interaction" (make-sparse-keymap)))
+    (define-key m "\C-j" 'eval-print-last-sexp)
+    m)
+  "Keymap for Lisp Interaction mode.")
+
+(defvar emacs-lisp-mode-map
+  (let ((m (make-sparse-keymap)))
+    (define-key m "\C-j" 'eval-print-last-sexp)
+    m)
+  "Keymap for Emacs Lisp mode.")
+
+;; *scratch* starts in lisp-interaction-mode.
+(when (get-buffer "*scratch*")
+  (with-current-buffer "*scratch*"
+    (use-local-map lisp-interaction-mode-map)))
 "#;

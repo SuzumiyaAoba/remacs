@@ -50,6 +50,9 @@ pub struct Buffer {
     /// Read-only regions aren't modeled; `read-only` text prop is checked
     /// at edit time in primitives.
     pub overlays: Vec<Overlay>,
+    /// False once the buffer has been killed (the object may still be
+    /// referenced by variables, markers, or window configurations).
+    pub live: bool,
 }
 
 /// One text-property interval.
@@ -84,6 +87,7 @@ pub enum UndoEntry {
 
 impl Buffer {
     pub fn new(id: usize, name: String) -> Buffer {
+        let undo_enabled = !name.starts_with(' ');
         Buffer {
             id,
             name,
@@ -98,10 +102,15 @@ impl Buffer {
             file_name: None,
             modified: false,
             undo: Vec::new(),
-            undo_enabled: true,
-            mod_tick: 0,
+            // Buffers with space-prefixed (internal) names start with
+            // undo disabled, like GNU get-buffer-create.
+            undo_enabled,
+            // Creation counts as the first modification (Emacs's
+            // fresh buffers report buffer-modified-tick = 1).
+            mod_tick: 1,
             text_props: Vec::new(),
             overlays: Vec::new(),
+            live: true,
         }
     }
 
@@ -327,7 +336,7 @@ impl BufferSet {
         let buf = Buffer::new(id, final_name.clone());
         self.bufs.push(Some(Rc::new(RefCell::new(buf))));
         self.name_map.insert(final_name, id);
-        self.order.insert(0, id);
+        self.order.push(id);
         self.counter += 1;
         id
     }
@@ -338,7 +347,7 @@ impl BufferSet {
         let buf = Buffer::new(id, name.to_string());
         self.bufs.push(Some(Rc::new(RefCell::new(buf))));
         self.name_map.insert(name.to_string(), id);
-        self.order.insert(0, id);
+        self.order.push(id);
         id
     }
 
@@ -354,6 +363,17 @@ impl BufferSet {
     pub fn kill(&mut self, id: usize) -> bool {
         if id >= self.bufs.len() || self.bufs[id].is_none() {
             return false;
+        }
+        {
+            let mut bb = self.bufs[id].as_ref().unwrap().borrow_mut();
+            bb.live = false;
+            // Emacs unchains markers on kill: they point nowhere.
+            for w in &bb.markers {
+                if let Some(m) = w.upgrade() {
+                    m.borrow_mut().buffer = None;
+                }
+            }
+            bb.markers.clear();
         }
         let name = self.bufs[id].as_ref().unwrap().borrow().name.clone();
         self.name_map.remove(&name);
@@ -403,12 +423,17 @@ impl BufferSet {
             .collect()
     }
 
-    /// The buffer after `id` in the order (for `other-buffer`).
+    /// The next non-internal buffer in the order (for
+    /// `other-buffer`; Emacs skips buffers with space-prefixed
+    /// names).
     pub fn other(&self, exclude: usize) -> Option<usize> {
-        self.order
-            .iter()
-            .copied()
-            .find(|&id| id != exclude && self.get(id).is_some())
+        self.order.iter().copied().find(|&id| {
+            id != exclude
+                && self
+                    .get(id)
+                    .map(|b| !b.borrow().name.starts_with(' '))
+                    .unwrap_or(false)
+        })
     }
 
     /// Generate a unique buffer name based on `base`.

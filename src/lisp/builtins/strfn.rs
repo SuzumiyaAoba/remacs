@@ -1678,7 +1678,10 @@ fn f_format_spec(i: &mut Interp, args: Vec<Value>) -> EvalResult {
 
 fn f_multibyte_string_p(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     let _ = i;
-    Ok(Value::from_bool(matches!(&args[0], Value::Str(_))))
+    Ok(Value::from_bool(match &args[0] {
+        Value::Str(s) => s.borrow().chars().any(|c| (c as u32) > 0x7f),
+        _ => false,
+    }))
 }
 
 fn f_unibyte_string(i: &mut Interp, args: Vec<Value>) -> EvalResult {

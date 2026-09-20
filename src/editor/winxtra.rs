@@ -325,7 +325,7 @@ pub(crate) static SUBRS: &[Subr] = &[
         "t if FRAME is the initial frame."
     ),
     S!("frame-focus", 0, 1, f_frame_self, "Frame with input focus."),
-    S!("frame-pointer-visible-p", 0, 1, f_false, ""),
+    S!("frame-pointer-visible-p", 0, 1, f_frame_pointer_visible_p, ""),
     S!("frame-id", 0, 1, f_frame_id, "Opaque frame id."),
     S!("frame-native-width", 0, 1, f_frame_width, ""),
     S!("frame-native-height", 0, 1, f_frame_height, ""),
@@ -375,7 +375,7 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!("old-selected-window", 0, 0, f_sel_window, ""),
     S!("raise-frame", 0, 1, f_nil, ""),
     S!("lower-frame", 0, 1, f_nil, ""),
-    S!("make-frame-visible", 0, 1, f_nil, ""),
+    S!("make-frame-visible", 0, 1, f_make_frame_visible, ""),
     S!("make-frame-invisible", 0, 2, f_nil, ""),
     S!("iconify-frame", 0, 1, f_nil, ""),
     S!("x-focus-frame", 1, 2, f_nil, ""),
@@ -916,4 +916,18 @@ fn f_set_window_new_total(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let n = want_int(i, &a[1])?;
     w.borrow_mut().height = n.max(1) as usize;
     Ok(Value::Nil)
+}
+
+fn f_frame_pointer_visible_p(_i: &mut Interp, _a: Vec<Value>) -> EvalResult {
+    Ok(Value::t())
+}
+
+fn f_make_frame_visible(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    match &arg(&a, 0) {
+        Value::Frame(_) => Ok(a[0].clone()),
+        _ => match crate::editor::sel_frame(i) {
+            Some(f) => Ok(Value::Frame(f)),
+            None => Ok(Value::Nil),
+        },
+    }
 }

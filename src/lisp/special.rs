@@ -49,6 +49,19 @@ pub fn special_form(id: SymId) -> Option<SpecialFn> {
     })
 }
 
+/// Minimum required args for a special form, for `func-arity'.
+/// Emacs reports `(min . unevalled)' — e.g. (func-arity 'if) = (2 . unevalled).
+pub fn special_form_min_args(id: SymId) -> u16 {
+    match id {
+        sym::QUOTE | sym::FUNCTION | sym::PROG1 | sym::DEFVAR
+        | sym::DEFCONST | sym::LAMBDA | sym::WHILE | sym::CATCH
+        | sym::UNWIND_PROTECT | sym::LET | sym::LET_STAR | sym::BACKQUOTE => 1,
+        sym::IF | sym::PROG2 | sym::DEFUN | sym::DEFMACRO
+        | sym::CONDITION_CASE => 2,
+        _ => 0,
+    }
+}
+
 // ---------- arg access helpers ----------
 
 fn car(v: &Value) -> Value {

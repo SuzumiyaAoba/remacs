@@ -735,15 +735,21 @@ pub(crate) static SUBRS: &[Subr] = &[
         f_this_command_keys_vector,
         ""
     ),
-    S!("this-single-command-keys", 0, 0, f_this_command_keys, ""),
+    S!(
+        "this-single-command-keys",
+        0,
+        0,
+        f_this_command_keys_vector,
+        ""
+    ),
     S!(
         "this-single-command-raw-keys",
         0,
         0,
-        f_this_command_keys,
+        f_this_command_keys_vector,
         ""
     ),
-    S!("recent-keys", 0, 1, f_nil, ""),
+    S!("recent-keys", 0, 1, f_this_command_keys_vector, ""),
     S!("clear-this-command-keys", 0, 1, f_nil, ""),
     S!("input-pending-p", 0, 1, f_nil, ""),
     S!("discard-input", 0, 0, f_nil, ""),
@@ -1348,7 +1354,13 @@ pub(crate) static SUBRS: &[Subr] = &[
         "Minibuffer prompt text."
     ),
     S!("minibuffer-prompt-end", 0, 0, f_one, ""),
-    S!("active-minibuffer-window", 0, 0, f_minibuffer_window, ""),
+    S!(
+        "active-minibuffer-window",
+        0,
+        0,
+        f_active_minibuffer_window,
+        ""
+    ),
     S!("set-minibuffer-window", 1, 1, f_nil, ""),
     S!("minibuffer-message", many 1, f_minibuffer_message, "Message in minibuffer."),
     S!(
@@ -1498,9 +1510,9 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!("what-line", 0, 0, f_what_line, "Show line number."),
     S!("char-syntax", 1, 1, f_char_syntax, "Syntax code of CHAR."),
     S!("modify-syntax-entry", 2, 3, f_nil, ""),
-    S!("syntax-table", 0, 0, f_nil, ""),
-    S!("set-syntax-table", 1, 1, f_second, ""),
-    S!("syntax-table-p", 1, 1, f_nil, ""),
+    S!("syntax-table", 0, 0, f_syntax_table, ""),
+    S!("set-syntax-table", 1, 1, f_set_syntax_table, ""),
+    S!("syntax-table-p", 1, 1, f_syntax_table_p, ""),
     S!(
         "make-syntax-table",
         0,
@@ -1508,10 +1520,10 @@ pub(crate) static SUBRS: &[Subr] = &[
         f_make_syntax_table,
         "New syntax table."
     ),
-    S!("copy-syntax-table", 0, 1, f_first, ""),
-    S!("syntax-after", 1, 1, f_nil, ""),
+    S!("copy-syntax-table", 0, 1, f_copy_syntax_table, ""),
+    S!("syntax-after", 1, 1, crate::buffer::primitives::f_syntax_after, ""),
     S!("syntax-class", 1, 1, f_zero, ""),
-    S!("standard-syntax-table", 0, 0, f_nil, ""),
+    S!("standard-syntax-table", 0, 0, f_standard_syntax_table, ""),
     S!("string-to-syntax", 1, 1, f_nil, ""),
     S!("syntax-propertize", 1, 1, f_nil, ""),
     S!("internal--syntax-propertize", 0, 0, f_nil, ""),
@@ -1649,7 +1661,7 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!("internal-lisp-face-attribute-values", 1, 1, f_nil, ""),
     S!("internal-merge-in-global-face", 2, 2, f_nil, ""),
     S!("face-attrs-more-relative-p", 2, 2, f_nil, ""),
-    S!("display-color-p", 0, 1, f_t, ""),
+    S!("display-color-p", 0, 1, f_display_color_p, ""),
     S!("display-grayscale-p", 0, 1, f_nil, ""),
     S!("display-mouse-p", 0, 1, f_nil, ""),
     S!("color-defined-p", 1, 1, f_nil, ""),
@@ -1992,6 +2004,14 @@ fn f_minibuffer_window(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         Some(w) => Ok(Value::Window(w.clone())),
         None => Ok(Value::Nil),
     }
+}
+
+fn f_active_minibuffer_window(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    // nil unless a minibuffer is currently active.
+    if i.minibuf_level == 0 {
+        return Ok(Value::Nil);
+    }
+    f_minibuffer_window(i, a)
 }
 
 fn f_minibuffer_window_active_p(i: &mut Interp, a: Vec<Value>) -> EvalResult {
@@ -2396,6 +2416,11 @@ fn f_window_fringes(_i: &mut Interp, _a: Vec<Value>) -> EvalResult {
 
 // ---------- frames ----------
 
+fn f_display_color_p(_i: &mut Interp, _a: Vec<Value>) -> EvalResult {
+    // TTY batch session: no color.
+    Ok(Value::Nil)
+}
+
 fn f_selected_frame(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
     match &i.selected_frame {
         Some(f) => Ok(Value::Frame(f.clone())),
@@ -2431,16 +2456,72 @@ fn f_delete_frame(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 fn f_frame_parameter(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let f = frame_of(i, &arg(&a, 0))?;
     let ps = want_sym(i, &a[1])?;
-    Ok(crate::lisp::eval::plist_get(&f.borrow().params, ps))
+    let v = crate::lisp::eval::plist_get(&f.borrow().params, ps);
+    if !v.is_nil() {
+        return Ok(v);
+    }
+    let name = i.symbol_name(ps);
+    let ff = f.borrow();
+    Ok(match name.as_str() {
+        "name" => Value::string(ff.name.clone()),
+        "width" => Value::Int(ff.width as i128),
+        "height" => Value::Int(ff.height as i128),
+        "modeline" => Value::t(),
+        "visibility" => Value::t(),
+        "minibuffer" => {
+            if ff.minibuffer.is_some() {
+                Value::t()
+            } else {
+                Value::Nil
+            }
+        }
+        "unsplittable" | "no-accept-focus" | "tab-bar-lines"
+        | "menu-bar-lines" | "buried-buffer-list" | "buffer-list" => {
+            Value::Nil
+        }
+        _ => Value::Nil,
+    })
 }
 fn f_frame_parameters(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let f = frame_of(i, &arg(&a, 0))?;
-    let items = f.borrow().params.list_to_vec().unwrap_or_default();
-    let mut out = Vec::new();
-    let mut k = 0;
-    while k + 1 < items.len() {
-        out.push(Value::cons(items[k].clone(), items[k + 1].clone()));
-        k += 2;
+    let (mut out, name, w, h, mbuf, bufv) = {
+        let ff = f.borrow();
+        let items = ff.params.list_to_vec().unwrap_or_default();
+        let mut out = Vec::new();
+        let mut k = 0;
+        while k + 1 < items.len() {
+            out.push(Value::cons(items[k].clone(), items[k + 1].clone()));
+            k += 2;
+        }
+        let bufv = i
+            .buffer_value(ff.windows.first().map(|w| w.borrow().buffer).unwrap_or(0))
+            .unwrap_or(Value::Nil);
+        (out, ff.name.clone(), ff.width, ff.height, ff.minibuffer.is_some(), bufv)
+    };
+    let ids: Vec<SymId> = ["name", "width", "height", "modeline", "minibuffer", "buffer-list"]
+        .iter()
+        .map(|k| i.intern(k))
+        .collect();
+    let have = |kid: SymId, out: &Vec<Value>| {
+        out.iter().any(|v| matches!(v, Value::Cons(c) if matches!(c.borrow().car, Value::Sym(s) if s == kid)))
+    };
+    if !have(ids[0], &out) {
+        out.push(Value::cons(Value::Sym(ids[0]), Value::string(name)));
+    }
+    if !have(ids[1], &out) {
+        out.push(Value::cons(Value::Sym(ids[1]), Value::Int(w as i128)));
+    }
+    if !have(ids[2], &out) {
+        out.push(Value::cons(Value::Sym(ids[2]), Value::Int(h as i128)));
+    }
+    if !have(ids[3], &out) {
+        out.push(Value::cons(Value::Sym(ids[3]), Value::t()));
+    }
+    if !have(ids[4], &out) {
+        out.push(Value::cons(Value::Sym(ids[4]), Value::from_bool(mbuf)));
+    }
+    if !have(ids[5], &out) {
+        out.push(Value::cons(Value::Sym(ids[5]), Value::list(vec![bufv])));
     }
     Ok(Value::list(out))
 }
@@ -2496,6 +2577,7 @@ fn f_frame_height(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let f = frame_of(i, &arg(&a, 0))?;
     Ok(Value::Int(f.borrow().height as i128))
 }
+
 fn f_frame_position(_i: &mut Interp, _a: Vec<Value>) -> EvalResult {
     Ok(Value::cons(Value::Int(0), Value::Int(0)))
 }
@@ -2512,7 +2594,7 @@ fn f_frame_edges(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 fn f_make_frame(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
     // On a tty, a "new frame" is a new full-screen view sharing the tty.
     let buf = i.current_buffer;
-    let f = Frame::new_tty(buf, buf, 80, 24);
+    let f = Frame::new_tty(buf, buf, 80, 25);
     i.frames.push(f.clone());
     Ok(Value::Frame(f))
 }
@@ -2540,7 +2622,7 @@ fn f_select_frame(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 // `\[mods... key\]`? We support the simple `(char . def)` and nested
 // keymaps for multi-key sequences via define-key descending.
 
-fn is_keymap(i: &Interp, v: &Value) -> bool {
+pub(crate) fn is_keymap(i: &Interp, v: &Value) -> bool {
     if let Value::Cons(c) = v {
         let b = c.borrow();
         i.sym_is(&b.car, i.obarray.intern_soft("keymap").unwrap_or(u32::MAX))
@@ -2575,36 +2657,53 @@ fn f_copy_keymap(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     ))
 }
 
-fn keymap_bindings(km: &Value) -> Value {
+pub(crate) fn keymap_bindings(km: &Value) -> Value {
     match km {
         Value::Cons(c) => c.borrow().cdr.clone(),
         _ => Value::Nil,
     }
 }
 
-fn f_keymap_parent(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    // Parent stored as `keymap` plist on the map's head cons? Emacs stores
-    // it in the keymap structure. We store it in a `(keymap . bindings)`
-    // where the last cons's cdr is the parent. Simplest: a separate
-    // property — store parent under the tail cell.
-    // Model: (keymap BINDING-ALIST . PARENT-KEYMAP)
-    match &a[0] {
-        Value::Cons(c) => {
-            let mut cur = c.borrow().cdr.clone();
-            // walk to last cons cell; its cdr is the parent
-            let parent = loop {
-                match cur {
-                    Value::Cons(cc) => {
-                        let next = cc.borrow().cdr.clone();
-                        cur = next;
+/// Parent keymaps of KM: elements that are themselves keymaps or a
+/// proper list of keymaps (composed maps from `make-composed-keymap').
+pub(crate) fn keymap_parents(i: &Interp, km: &Value) -> Vec<Value> {
+    let mut out = Vec::new();
+    // Improper tail: (keymap P1 . P2) chains in composed maps.
+    if let Value::Cons(c) = km {
+        let mut cur = c.borrow().cdr.clone();
+        loop {
+            match cur {
+                Value::Cons(cc) => cur = cc.borrow().cdr.clone(),
+                tail => {
+                    if is_keymap(i, &tail) {
+                        out.push(tail);
                     }
-                    other => break other,
+                    break;
                 }
-            };
-            Ok(parent)
+            }
         }
-        other => Err(i.wrong_type_mut("keymapp", other)),
     }
+    for el in keymap_bindings(km).list_to_vec().unwrap_or_default() {
+        if is_keymap(i, &el) {
+            out.push(el);
+        } else if let Value::Cons(_) = &el {
+            let items = el.list_to_vec().unwrap_or_default();
+            if !items.is_empty() && items.iter().all(|v| is_keymap(i, v)) {
+                out.extend(items);
+            }
+        }
+    }
+    out
+}
+
+fn f_keymap_parent(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    if !is_keymap(i, &a[0]) {
+        return Ok(Value::Nil);
+    }
+    Ok(keymap_parents(i, &a[0])
+        .into_iter()
+        .next()
+        .unwrap_or(Value::Nil))
 }
 
 fn f_set_keymap_parent(i: &mut Interp, a: Vec<Value>) -> EvalResult {
@@ -2616,26 +2715,36 @@ fn f_set_keymap_parent(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         return Err(i.wrong_type_mut("keymapp", &parent));
     }
     if let Value::Cons(c) = &a[0] {
-        // Find last cons in bindings list and set its cdr.
-        let mut cur = c.borrow().cdr.clone();
-        let mut last = c.clone();
-        loop {
-            match cur {
-                Value::Cons(cc) => {
-                    let next = cc.borrow().cdr.clone();
-                    last = cc.clone();
-                    cur = next;
+        // Rebuild bindings without parent elements; the parent is the
+        // first element of the map (Emacs keeps it in the head slot).
+        let kept: Vec<Value> = keymap_bindings(&a[0])
+            .list_to_vec()
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|el| {
+                if is_keymap(i, el) {
+                    return false;
                 }
-                _ => break,
-            }
-        }
-        last.borrow_mut().cdr = parent.clone();
+                if let Value::Cons(_) = el {
+                    let items = el.list_to_vec().unwrap_or_default();
+                    if !items.is_empty() && items.iter().all(|v| is_keymap(i, v)) {
+                        return false;
+                    }
+                }
+                true
+            })
+            .collect();
+        c.borrow_mut().cdr = if parent.is_nil() {
+            Value::list(kept)
+        } else {
+            Value::cons(parent.clone(), Value::list(kept))
+        };
     }
     Ok(a[1].clone())
 }
 
 /// Parse a key sequence (string or vector) into event codes.
-fn key_seq(i: &mut Interp, v: &Value) -> Result<Vec<i128>, Flow> {
+pub(crate) fn key_seq(i: &mut Interp, v: &Value) -> Result<Vec<i128>, Flow> {
     match v {
         Value::Str(s) => Ok(s.borrow().chars().map(|c| c as i128).collect()),
         Value::Vec(vec) => Ok(vec
@@ -2648,6 +2757,16 @@ fn key_seq(i: &mut Interp, v: &Value) -> Result<Vec<i128>, Flow> {
             })
             .collect()),
         Value::Int(n) => Ok(vec![*n]),
+        Value::Cons(_) => Ok(v
+            .list_to_vec()
+            .unwrap_or_default()
+            .iter()
+            .filter_map(|x| match x {
+                Value::Int(n) => Some(*n),
+                Value::Sym(s) => Some(event_code_for(&i.symbol_name(*s))),
+                _ => None,
+            })
+            .collect()),
         Value::Sym(id) => {
             // A symbol key like `quit` or `f1`.
             let name = i.symbol_name(*id);
@@ -2657,9 +2776,13 @@ fn key_seq(i: &mut Interp, v: &Value) -> Result<Vec<i128>, Flow> {
     }
 }
 
-/// Named-function-key codes (arbitrary base above CHAR_META).
+/// Named-function-key codes. The base sits above CHAR_META and the
+/// hash is masked to the low 21 bits so codes never collide with the
+/// modifier bits (CHAR_ALT and above).
+pub(crate) const NAMED_KEY_BASE: i128 = 0x4000_0000;
+pub(crate) const NAMED_KEY_MASK: i128 = 0x1f_ffff;
+
 pub(crate) fn event_code_for(name: &str) -> i128 {
-    const BASE: i128 = 0x4000_0000;
     let h = {
         let mut h = 0usize;
         for b in name.bytes() {
@@ -2667,12 +2790,81 @@ pub(crate) fn event_code_for(name: &str) -> i128 {
         }
         h as i128
     };
-    BASE + (h & 0x3fff_ffff)
+    let code = NAMED_KEY_BASE + (h & NAMED_KEY_MASK);
+    // Register the code → name mapping so the printer/key-describer
+    // can recover event names like `down` or `S-f5`.
+    if let Ok(mut g) = named_key_names().lock() {
+        g.get_or_insert_with(Default::default)
+            .entry(code)
+            .or_insert_with(|| name.to_string());
+    }
+    code
 }
 
-fn lookup_in_keymap(i: &Interp, km: &Value, key: i128) -> Value {
+fn named_key_names()
+    -> &'static std::sync::Mutex<Option<std::collections::HashMap<i128, String>>>
+{
+    static NAMES: std::sync::Mutex<
+        Option<std::collections::HashMap<i128, String>>,
+    > = std::sync::Mutex::new(None);
+    &NAMES
+}
+
+/// Reverse map: named event codes → event names. Used when printing
+/// key descriptions and `where-is` results, so `[down]` prints as
+/// `down` rather than a raw integer.
+pub(crate) const NAMED_KEYS: &[&str] = &[
+    "up", "down", "left", "right", "home", "end", "prior", "next",
+    "begin", "insert", "insertchar", "delete", "deletechar", "backspace",
+    "return", "tab", "escape", "space", "kp-enter", "kp-add",
+    "kp-subtract", "kp-multiply", "kp-divide", "kp-decimal", "kp-equal",
+    "kp-0", "kp-1", "kp-2", "kp-3", "kp-4", "kp-5", "kp-6", "kp-7",
+    "kp-8", "kp-9", "kp-home", "kp-end", "kp-prior", "kp-next",
+    "kp-left", "kp-right", "kp-up", "kp-down", "kp-begin", "kp-insert",
+    "kp-delete", "kp-space", "kp-tab",
+    "mouse-1", "mouse-2", "mouse-3", "mouse-4", "mouse-5", "mouse-6",
+    "mouse-7", "down-mouse-1", "down-mouse-2", "down-mouse-3",
+    "drag-mouse-1", "drag-mouse-2", "drag-mouse-3",
+    "double-mouse-1", "double-mouse-2", "double-mouse-3",
+    "triple-mouse-1", "triple-mouse-2", "triple-mouse-3",
+    "double-down-mouse-1", "double-down-mouse-2", "double-down-mouse-3",
+    "double-drag-mouse-1", "double-drag-mouse-2", "double-drag-mouse-3",
+    "triple-down-mouse-1", "triple-down-mouse-2", "triple-down-mouse-3",
+    "triple-drag-mouse-1", "triple-drag-mouse-2", "triple-drag-mouse-3",
+    "wheel-up", "wheel-down", "wheel-left", "wheel-right",
+    "pinch", "touchscreen-begin", "touchscreen-update", "touchscreen-end",
+    "f1", "f2", "f3", "f4", "f5", "f6", "f7", "f8", "f9", "f10",
+    "f11", "f12", "f13", "f14", "f15", "f16", "f17", "f18", "f19",
+    "f20", "f21", "f22", "f23", "f24", "f25", "f26", "f27", "f28",
+    "f29", "f30", "f31", "f32", "f33", "f34", "f35",
+    "help", "undo", "redo", "print", "find", "execute", "select",
+    "menu", "open", "close", "cancel", "clear", "again", "props",
+    "copy", "cut", "paste", "begin", "end", "home", "insert-line",
+    "delete-line", "mail", "mute-volume", "volume-up", "volume-down",
+    "scroll-up", "scroll-down", "tab-line", "left-fringe",
+    "right-fringe", "mode-line", "header-line", "header-line-prefix",
+    "left-margin", "right-margin", "vertical-line", "vertical-scroll-bar",
+    "horizontal-scroll-bar", "menu-bar", "tool-bar", "tab-bar",
+    "C-home", "C-end", "C-prior", "C-next", "C-left", "C-right",
+    "C-up", "C-down", "S-left", "S-right", "S-up", "S-down",
+    "M-left", "M-right", "M-up", "M-down",
+];
+
+/// Return the event name for a named-key code, if registered.
+pub(crate) fn key_name_for(code: i128) -> Option<String> {
+    if code < NAMED_KEY_BASE || code > NAMED_KEY_BASE + NAMED_KEY_MASK {
+        return None;
+    }
+    named_key_names()
+        .lock()
+        .ok()
+        .and_then(|g| g.as_ref().and_then(|m| m.get(&code).cloned()))
+}
+
+pub(crate) fn lookup_in_keymap(i: &Interp, km: &Value, key: i128) -> Value {
     // Binding cell is (KEY . DEF) or a vector-ish char-table; alist model.
     // A `t` key is the default binding for otherwise-unbound events.
+    // Order: exact binding > default (t) binding > parent keymaps.
     let bindings = keymap_bindings(km);
     let t_code = event_code_for("t");
     let mut found = Value::Nil;
@@ -2692,7 +2884,19 @@ fn lookup_in_keymap(i: &Interp, km: &Value, key: i128) -> Value {
             }
         }
     });
-    if found.is_nil() { default } else { found }
+    if !found.is_nil() {
+        return found;
+    }
+    if !default.is_nil() {
+        return default;
+    }
+    for p in keymap_parents(i, km) {
+        let v = lookup_in_keymap(i, &p, key);
+        if !v.is_nil() {
+            return v;
+        }
+    }
+    Value::Nil
 }
 
 fn f_define_key(i: &mut Interp, a: Vec<Value>) -> EvalResult {
@@ -2721,7 +2925,7 @@ fn f_define_key(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 }
 
 /// Set (KEY . DEF) in keymap's alist (prepend or replace).
-fn set_binding(i: &mut Interp, km: &Value, key: i128, def: Value) {
+pub(crate) fn set_binding(i: &mut Interp, km: &Value, key: i128, def: Value) {
     if let Value::Cons(head) = km {
         // find existing binding
         let bindings = head.borrow().cdr.clone();
@@ -2749,8 +2953,12 @@ fn set_binding(i: &mut Interp, km: &Value, key: i128, def: Value) {
                 _ => break,
             }
         }
-        // Not found: prepend (KEY . DEF).
-        let pair = Value::cons(Value::Int(key), def);
+        // Not found: prepend (KEY . DEF). Named events store the
+        // event symbol so printed maps show `down`, `menu-bar`, etc.
+        let kv = key_name_for(key)
+            .map(|n| Value::Sym(i.intern(&n)))
+            .unwrap_or(Value::Int(key));
+        let pair = Value::cons(kv, def);
         let old = head.borrow().cdr.clone();
         head.borrow_mut().cdr = Value::cons(pair, old);
     }
@@ -2961,8 +3169,9 @@ fn args0(a: &[Value]) -> Value {
 }
 
 fn f_command_remapping(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let _ = i;
-    Ok(arg(&a, 0))
+    // No remapping table yet: nil (not the command itself).
+    let _ = (i, a);
+    Ok(Value::Nil)
 }
 
 fn f_where_is_internal(i: &mut Interp, a: Vec<Value>) -> EvalResult {
@@ -2977,6 +3186,22 @@ fn f_where_is_internal(i: &mut Interp, a: Vec<Value>) -> EvalResult {
             collect_keys_for(i, &km_v, cmd, &mut Vec::new(), &mut found);
         }
     }
+    // Emacs reports bindings in increasing key order (chars before
+    // named events); our alist prepends, so sort for parity.
+    let key_rank = |v: &Value| -> i128 {
+        match v {
+            Value::Vec(rc) => rc
+                .borrow()
+                .first()
+                .map(|e| match e {
+                    Value::Int(n) => *n,
+                    _ => i128::MAX,
+                })
+                .unwrap_or(i128::MAX),
+            _ => i128::MAX,
+        }
+    };
+    found.sort_by_key(|v| key_rank(v));
     if let Some(first) = found.first() {
         if a.get(3).map(|v| v.truthy()).unwrap_or(false) {
             return Ok(first.clone());
@@ -2986,7 +3211,7 @@ fn f_where_is_internal(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 }
 
 fn collect_keys_for(
-    i: &Interp,
+    i: &mut Interp,
     km: &Value,
     cmd: &Value,
     prefix: &mut Vec<i128>,
@@ -3000,13 +3225,33 @@ fn collect_keys_for(
                 let b = c.borrow();
                 (b.car.clone(), b.cdr.clone())
             };
+            // A keymap element is a parent slot, not a binding.
+            if is_keymap(i, &k) {
+                continue;
+            }
             let key = match &k {
                 Value::Int(n) => *n,
-                Value::Sym(s) => event_code_for(&i.symbol_name(*s)),
+                Value::Sym(s) => {
+                    let name = i.symbol_name(*s);
+                    if name == "keymap" {
+                        continue;
+                    }
+                    event_code_for(&name)
+                }
                 _ => continue,
             };
-            // `t` is the default binding, not a real key.
+            // `t` is the default binding, not a real key. Emacs
+            // reports it as char ranges for self-insert-command.
             if key == event_code_for("t") {
+                if eq_values(&d, cmd) {
+                    for range in [(32i128, 126i128), (128i128, 4194303i128)] {
+                        let cell = Value::cons(
+                            Value::Int(range.0),
+                            Value::Int(range.1),
+                        );
+                        out.push(Value::Vec(Rc::new(RefCell::new(vec![cell]))));
+                    }
+                }
                 continue;
             }
             prefix.push(key);
@@ -3014,7 +3259,14 @@ fn collect_keys_for(
                 collect_keys_for(i, &d, cmd, prefix, out);
             } else if eq_values(&d, cmd) {
                 out.push(Value::Vec(Rc::new(RefCell::new(
-                    prefix.iter().map(|k| Value::Int(*k)).collect(),
+                    prefix
+                        .iter()
+                        .map(|k| {
+                            key_name_for(*k)
+                                .map(|n| Value::Sym(i.intern(&n)))
+                                .unwrap_or(Value::Int(*k))
+                        })
+                        .collect(),
                 ))));
             }
             prefix.pop();
@@ -3065,7 +3317,7 @@ pub(crate) const CHAR_ALT: i128 = 0x0040_0000;
 /// modifiers as bits) or `Value::Sym` for named/function-key
 /// events (`return`, `M-left`). A multi-char literal like `abc`
 /// yields one event per char with modifiers on the first.
-fn parse_key_token(i: &mut Interp, tok: &str) -> Vec<Value> {
+pub(crate) fn parse_key_token(i: &mut Interp, tok: &str) -> Vec<Value> {
     let mut mods = 0i128;
     let mut rest = tok;
     loop {
@@ -3129,7 +3381,6 @@ fn parse_key_token(i: &mut Interp, tok: &str) -> Vec<Value> {
             "nul" => Some(0),
             "backspace" | "delete" | "delchar" | "deletechar" | "home" | "end" | "left"
             | "right" | "up" | "down" | "prior" | "pageup" | "next" | "pagedown" | "insert" => None,
-            s if s.starts_with('f') && s[1..].parse::<u32>().is_ok() => None,
             _ => None,
         };
         match rest.to_ascii_lowercase().as_str() {
@@ -3143,10 +3394,6 @@ fn parse_key_token(i: &mut Interp, tok: &str) -> Vec<Value> {
                     s => s.to_string(),
                 };
                 return vec![Value::Sym(i.intern(&format!("{}{}", mods_name, canon)))];
-            }
-            s if s.starts_with('f') && s[1..].parse::<u32>().is_ok() => {
-                let name = rest.to_ascii_lowercase();
-                return vec![Value::Sym(i.intern(&format!("{}{}", mods_name, name)))];
             }
             _ => {}
         }
@@ -3169,7 +3416,7 @@ fn parse_key_token(i: &mut Interp, tok: &str) -> Vec<Value> {
 }
 
 /// Apply remaining modifier bits to a character code.
-fn apply_mods(c: i128, mods: i128) -> i128 {
+pub(crate) fn apply_mods(c: i128, mods: i128) -> i128 {
     let mut m = mods;
     let mut c = c;
     if m & CHAR_CTL != 0 && (0..128).contains(&c) {
@@ -3193,7 +3440,7 @@ pub(crate) fn describe_key_pub(k: i128) -> String {
     describe_key(k)
 }
 
-fn describe_key(k: i128) -> String {
+pub(crate) fn describe_key(k: i128) -> String {
     let mut out = String::new();
     if k & CHAR_META != 0 {
         out.push_str("M-");
@@ -3214,7 +3461,34 @@ fn describe_key(k: i128) -> String {
         out.push_str("A-");
     }
     let base = k & 0x3f_ffff;
-    if k & 0x7fff_0000 != 0 && base == 0 {
+    let modmask = CHAR_META | CHAR_CTL | CHAR_SHIFT | CHAR_SUPER | CHAR_HYPER | CHAR_ALT;
+    let bare = k & !modmask;
+    let name = if bare >= NAMED_KEY_BASE {
+        key_name_for(bare)
+    } else if out.is_empty() {
+        key_name_for(k)
+    } else {
+        None
+    };
+    if let Some(name) = name {
+        // A name like `C-down` carries embedded modifiers: print in
+        // Emacs's `C-<down>` style.
+        let (mods, rest) = match name.rsplit_once('-') {
+            Some((m, r)) => (m, r),
+            None => ("", name.as_str()),
+        };
+        let has_mod = !mods.is_empty()
+            && mods
+                .split('-')
+                .all(|m| matches!(m, "C" | "M" | "S" | "H" | "s" | "A"));
+        if has_mod {
+            out.push_str(mods);
+            out.push('-');
+            out.push_str(&format!("<{}>", rest));
+        } else {
+            out.push_str(&format!("<{}>", name));
+        }
+    } else if k & 0x7fff_0000 != 0 && base == 0 {
         out.push_str("<key>");
     } else {
         match base {
@@ -4476,6 +4750,12 @@ fn f_kill_line(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let le = bb.text.line_end(p);
     let killed;
     if p == le {
+        if p >= bb.text.len() {
+            // Point at the very end of the buffer: nothing to kill.
+            drop(bb);
+            let sym = i.intern("end-of-buffer");
+            return Err(i.signal_data(sym, Vec::new()));
+        }
         // at EOL: kill the newline(s)
         let end = (p + n.max(1) as usize).min(bb.text.len());
         killed = bb.delete_region(p, end);
@@ -5015,8 +5295,7 @@ fn f_delete_minibuffer_contents(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
 }
 
 fn f_minibuffer_depth(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
-    let _ = i;
-    Ok(Value::Int(0))
+    Ok(Value::Int(i.minibuf_level as i128))
 }
 fn f_minibuffer_prompt(_i: &mut Interp, _a: Vec<Value>) -> EvalResult {
     Ok(Value::string(""))
@@ -5229,6 +5508,25 @@ fn f_y_or_n_p(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 
 fn f_commandp(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let v = &a[0];
+    // `(lambda (x) (interactive ...) ...)' as data — no resolution.
+    if let Value::Cons(_) = v {
+        let items: Vec<Value> = v.list_to_vec().unwrap_or_default();
+        if items
+            .first()
+            .and_then(|h| i.sym_id(h))
+            .map(|h| h == crate::lisp::obarray::sym::LAMBDA)
+            .unwrap_or(false)
+        {
+            let has_interactive = items.iter().skip(2).any(|el| match el {
+                Value::Cons(ec) => {
+                    let b = ec.borrow();
+                    i.sym_is(&b.car, crate::lisp::obarray::sym::INTERACTIVE)
+                }
+                _ => false,
+            });
+            return Ok(Value::from_bool(has_interactive));
+        }
+    }
     let cmd = match v {
         Value::Sym(id) => i.symbol_function(*id),
         other => other.clone(),
@@ -5236,6 +5534,8 @@ fn f_commandp(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     Ok(Value::from_bool(match &cmd {
         Value::Lambda(l) => l.interactive.is_some(),
         Value::Subr(s) => crate::lisp::eval::subr_interactive(s.name).is_some(),
+        // strings and vectors are keyboard macros — commands.
+        Value::Str(_) | Value::Vec(_) => true,
         _ => false,
     }))
 }
@@ -5474,8 +5774,91 @@ fn f_char_syntax(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     }
 }
 
-fn f_make_syntax_table(_i: &mut Interp, _a: Vec<Value>) -> EvalResult {
-    Ok(Value::Nil)
+/// A syntax table is a char-table (#s(char-table syntax-table VEC)).
+fn new_syntax_table(i: &mut Interp) -> Value {
+    let vec = Value::Vec(Rc::new(RefCell::new(vec![Value::Nil; 256])));
+    Value::Record(Rc::new(RefCell::new(vec![
+        Value::Sym(i.intern("char-table")),
+        Value::Sym(i.intern("syntax-table")),
+        vec,
+    ])))
+}
+
+fn is_syntax_table(i: &Interp, v: &Value) -> bool {
+    match v {
+        Value::Record(r) => {
+            let rr = r.borrow();
+            matches!(rr.first(), Some(Value::Sym(s)) if i.symbol_name(*s) == "char-table")
+                && matches!(rr.get(1), Some(Value::Sym(s)) if i.symbol_name(*s) == "syntax-table")
+        }
+        _ => false,
+    }
+}
+
+fn f_make_syntax_table(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
+    Ok(new_syntax_table(i))
+}
+
+fn f_syntax_table_p(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    Ok(Value::from_bool(is_syntax_table(i, &a[0])))
+}
+
+fn f_standard_syntax_table(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
+    let sid = i.intern("remacs--standard-syntax-table");
+    let cur = i.symbol_value(sid);
+    if is_syntax_table(i, &cur) {
+        return Ok(cur);
+    }
+    let t = new_syntax_table(i);
+    let _ = i.set_symbol(sid, t.clone());
+    Ok(t)
+}
+
+fn f_syntax_table(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
+    // Buffer-local `syntax-table' variable wins over the standard one.
+    let sid = i.intern("syntax-table");
+    let cur = i.symbol_value(sid);
+    if is_syntax_table(i, &cur) {
+        return Ok(cur);
+    }
+    f_standard_syntax_table(i, vec![])
+}
+
+fn f_set_syntax_table(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    if !is_syntax_table(i, &a[0]) {
+        return Err(i.wrong_type_mut("syntax-table-p", &a[0]));
+    }
+    let sid = i.intern("syntax-table");
+    // Force buffer-local.
+    if let Some(b) = i.buffers.get(i.current_buffer) {
+        if let Ok(mut bb) = b.try_borrow_mut() {
+            bb.locals.insert(sid, a[0].clone());
+            return Ok(a[0].clone());
+        }
+    }
+    let _ = i.set_symbol(sid, a[0].clone());
+    Ok(a[0].clone())
+}
+
+fn f_copy_syntax_table(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let src_t = match &arg(&a, 0) {
+        Value::Nil => f_syntax_table(i, vec![])?,
+        v if is_syntax_table(i, v) => v.clone(),
+        other => return Err(i.wrong_type_mut("syntax-table-p", other)),
+    };
+    if let Value::Record(r) = &src_t {
+        let rr = r.borrow();
+        if let Some(Value::Vec(v)) = rr.get(2) {
+            let new_vec =
+                Value::Vec(Rc::new(RefCell::new(v.borrow().clone())));
+            return Ok(Value::Record(Rc::new(RefCell::new(vec![
+                Value::Sym(i.intern("char-table")),
+                Value::Sym(i.intern("syntax-table")),
+                new_vec,
+            ]))));
+        }
+    }
+    Ok(src_t)
 }
 
 fn f_parse_partial_sexp(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
@@ -5921,8 +6304,9 @@ pub fn install_primitives(i: &mut Interp) {
     let mb = i
         .buffers
         .by_name(" *Minibuf-0*")
-        .unwrap_or(i.buffers.create(" *Minibuf-0*"));
-    let frame = Frame::new_tty(scratch, mb, 80, 24);
+        .or_else(|| i.buffers.by_name(" *Minibuf-0*"))
+        .unwrap_or_else(|| i.buffers.create(" *Minibuf-0*"));
+    let frame = Frame::new_tty(scratch, mb, 80, 25);
     // Wire the frame's window buffer linkage.
     i.selected_frame = Some(frame.clone());
     i.frames.push(frame);

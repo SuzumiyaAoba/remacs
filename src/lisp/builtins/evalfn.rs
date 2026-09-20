@@ -651,11 +651,42 @@ fn f_with_demoted_errors(i: &mut Interp, args: Vec<Value>) -> EvalResult {
 
 fn f_featurep(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     let id = want_sym(i, &args[0])?;
-    Ok(Value::from_bool(i.features.contains(&id)))
+    // consult the `features' variable (seeded with `emacs')
+    let fid = i.intern("features");
+    let in_list = match i.symbol_value(fid) {
+        Value::Cons(_) | Value::Nil => i
+            .symbol_value(fid)
+            .list_to_vec()
+            .map(|items| {
+                items.iter().any(|v| matches!(v, Value::Sym(s) if *s == id))
+            })
+            .unwrap_or(false),
+        _ => false,
+    };
+    Ok(Value::from_bool(in_list || i.features.contains(&id)))
 }
 
 fn f_provide(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     let id = want_sym(i, &args[0])?;
+    // SUBFEATURES must be a list of symbols.
+    if let Some(sub) = args.get(1) {
+        match sub {
+            Value::Nil => {}
+            Value::Cons(_) => {
+                // must be a proper list of symbols
+                let mut ok = matches!(sub.list_to_vec(), Ok(_));
+                if ok {
+                    if let Ok(items) = sub.list_to_vec() {
+                        ok = items.iter().all(|v| matches!(v, Value::Sym(_)));
+                    }
+                }
+                if !ok {
+                    return Err(i.wrong_type_mut("listp", sub));
+                }
+            }
+            other => return Err(i.wrong_type_mut("listp", other)),
+        }
+    }
     if !i.features.contains(&id) {
         i.features.push(id);
     }
@@ -1015,45 +1046,71 @@ fn f_sit_for(_i: &mut Interp, args: Vec<Value>) -> EvalResult {
     }
     Ok(Value::t())
 }
-fn f_current_time(_i: &mut Interp, _args: Vec<Value>) -> EvalResult {
-    let now = std::time::SystemTime::now()
+fn f_current_time(i: &mut Interp, _args: Vec<Value>) -> EvalResult {
+    let us = super::misc::lisp_time_to_us(i, &Value::Nil)?;
+    Ok(super::misc::us_to_lisp_time(us))
+}
+fn f_current_time_string(i: &mut Interp, args: Vec<Value>) -> EvalResult {
+    let t = match args.get(0) {
+        Some(v) => super::misc::lisp_time_to_us(i, v)?,
+        None => super::misc::lisp_time_to_us(i, &Value::Nil)?,
+    };
+    let secs = (t / 1_000_000) as i64;
+    let tm = super::misc::local_tm(secs);
+    let wday = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
+        [tm.tm_wday.clamp(0, 6) as usize];
+    let mon = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug",
+        "Sep", "Oct", "Nov", "Dec"][tm.tm_mon.clamp(0, 11) as usize];
+    Ok(Value::string(format!(
+        "{} {} {:02} {:02}:{:02}:{:02} {}",
+        wday,
+        mon,
+        tm.tm_mday,
+        tm.tm_hour,
+        tm.tm_min,
+        tm.tm_sec,
+        tm.tm_year + 1900
+    )))
+}
+fn f_current_time_zone(i: &mut Interp, _args: Vec<Value>) -> EvalResult {
+    let secs = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default();
-    let ticks = now.as_secs() * 1_000_000 + now.subsec_micros() as u64;
-    let high = (ticks >> 32) as i128;
-    let low = ((ticks >> 16) & 0xffff) as i128;
-    let usec = (ticks & 0xffff) as i128;
+        .unwrap_or_default()
+        .as_secs() as i64;
+    let tm = super::misc::local_tm(secs);
+    let zone = if tm.tm_zone.is_null() {
+        String::new()
+    } else {
+        unsafe { std::ffi::CStr::from_ptr(tm.tm_zone as *const i8) }
+            .to_string_lossy()
+            .into_owned()
+    };
     Ok(Value::list(vec![
-        Value::Int(high),
-        Value::Int(low),
-        Value::Int(usec),
-        Value::Int(0),
+        Value::Int(tm.tm_gmtoff as i128),
+        Value::string(zone),
     ]))
 }
-fn f_current_time_string(i: &mut Interp, _args: Vec<Value>) -> EvalResult {
-    let _ = i;
-    Ok(Value::string("Sat Sep 19 00:00:00 2026"))
-}
-fn f_current_time_zone(_i: &mut Interp, _args: Vec<Value>) -> EvalResult {
-    Ok(Value::list(vec![Value::Int(0), Value::string("UTC")]))
-}
-fn f_float_time(_i: &mut Interp, _args: Vec<Value>) -> EvalResult {
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default();
-    Ok(Value::Float(now.as_secs_f64()))
+fn f_float_time(i: &mut Interp, args: Vec<Value>) -> EvalResult {
+    let t = match args.get(0) {
+        Some(v) => super::misc::lisp_time_to_us(i, v)?,
+        None => super::misc::lisp_time_to_us(i, &Value::Nil)?,
+    };
+    Ok(Value::Float(t as f64 / 1e6))
 }
 fn f_format_time_string(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     let fmt = match &args[0] {
         Value::Str(s) => s.borrow().clone(),
         _ => String::new(),
     };
-    // Minimal: %Y %m %d %H %M %S %s %z
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default();
-    let secs = now.as_secs();
-    let (y, mo, d, h, mi, s) = epoch_to_ymd(secs);
+    let t = match args.get(1) {
+        Some(v) => super::misc::lisp_time_to_us(i, v)?,
+        None => super::misc::lisp_time_to_us(i, &Value::Nil)?,
+    };
+    // %z needs the local offset — format in local time.
+    let secs = (t / 1_000_000) as i64;
+    let tm = super::misc::local_tm(secs);
+    let (y, mo, d) = (tm.tm_year as i128 + 1900, (tm.tm_mon + 1) as u64, tm.tm_mday as u64);
+    let (h, mi, s) = (tm.tm_hour as u64, tm.tm_min as u64, tm.tm_sec as u64);
     let mut out = String::new();
     let mut ch = fmt.chars().peekable();
     while let Some(c) = ch.next() {
@@ -1062,12 +1119,37 @@ fn f_format_time_string(i: &mut Interp, args: Vec<Value>) -> EvalResult {
                 Some('Y') => out.push_str(&format!("{}", y)),
                 Some('m') => out.push_str(&format!("{:02}", mo)),
                 Some('d') => out.push_str(&format!("{:02}", d)),
+                Some('e') => out.push_str(&format!("{}", d)),
                 Some('H') => out.push_str(&format!("{:02}", h)),
                 Some('M') => out.push_str(&format!("{:02}", mi)),
                 Some('S') => out.push_str(&format!("{:02}", s)),
                 Some('s') => out.push_str(&format!("{}", secs)),
                 Some('F') => out.push_str(&format!("{}-{:02}-{:02}", y, mo, d)),
                 Some('T') => out.push_str(&format!("{:02}:{:02}:{:02}", h, mi, s)),
+                Some('a') => out.push_str(["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
+                    [tm.tm_wday.clamp(0, 6) as usize]),
+                Some('A') => out.push_str(["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"]
+                    [tm.tm_wday.clamp(0, 6) as usize]),
+                Some('b') | Some('h') => out.push_str(["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug",
+                    "Sep", "Oct", "Nov", "Dec"][tm.tm_mon.clamp(0, 11) as usize]),
+                Some('B') => out.push_str(["January", "February", "March", "April", "May", "June", "July", "August",
+                    "September", "October", "November", "December"][tm.tm_mon.clamp(0, 11) as usize]),
+                Some('j') => out.push_str(&format!("{:03}", tm.tm_yday + 1)),
+                Some('w') => out.push_str(&format!("{}", tm.tm_wday)),
+                Some('u') => out.push_str(&format!("{}", if tm.tm_wday == 0 { 7 } else { tm.tm_wday })),
+                Some('y') => out.push_str(&format!("{:02}", (tm.tm_year + 1900) % 100)),
+                Some('Z') => {
+                    let z = if tm.tm_zone.is_null() { String::new() } else {
+                        unsafe { std::ffi::CStr::from_ptr(tm.tm_zone as *const i8) }.to_string_lossy().into_owned()
+                    };
+                    out.push_str(&z);
+                }
+                Some('z') => {
+                    let off = tm.tm_gmtoff;
+                    let sign = if off < 0 { '-' } else { '+' };
+                    let a = off.abs();
+                    out.push_str(&format!("{}{:02}{:02}", sign, a / 3600, (a % 3600) / 60));
+                }
                 Some('%') => out.push('%'),
                 Some(o) => {
                     out.push('%');

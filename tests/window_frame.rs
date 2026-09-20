@@ -21,7 +21,8 @@ fn frame_basics() {
     assert_eq!(ev("(framep (selected-frame))"), "t");
     assert_eq!(ev("(frame-live-p (selected-frame))"), "t");
     assert_eq!(ev("(frame-width)"), "80");
-    assert_eq!(ev("(frame-height)"), "24");
+    // Emacs -Q batch frame: 25 rows (24 window + echo area).
+    assert_eq!(ev("(frame-height)"), "25");
     assert_eq!(ev("(length (frame-list))"), "1");
     assert_eq!(ev("(frame-char-width)"), "1");
     assert_eq!(ev("(frame-char-height)"), "1");
