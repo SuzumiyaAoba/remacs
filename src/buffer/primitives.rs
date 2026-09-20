@@ -148,7 +148,6 @@ pub(crate) static SUBRS: &[Subr] = &[
         f_set_buffer_modified_p,
         "Set modified flag."
     ),
-
     S!(
         "buffer-file-name",
         0,
@@ -241,7 +240,6 @@ pub(crate) static SUBRS: &[Subr] = &[
         f_default_boundp,
         "t if SYMBOL has a default value."
     ),
-
     S!(
         "buffer-disable-undo",
         0,
@@ -316,14 +314,6 @@ pub(crate) static SUBRS: &[Subr] = &[
         "Move to start of line."
     ),
     S!("end-of-line", 0, 1, f_end_of_line, "Move to end of line."),
-    S!(
-        "beginning-of-buffer",
-        0,
-        0,
-        f_beginning_of_buffer,
-        "Move to point-min."
-    ),
-    S!("end-of-buffer", 0, 0, f_end_of_buffer, "Move to point-max."),
     S!("bobp", 0, 0, f_bobp, "t at beginning of accessible text."),
     S!("eobp", 0, 0, f_eobp, "t at end of accessible text."),
     S!("bolp", 0, 0, f_bolp, "t at beginning of line."),
@@ -450,10 +440,27 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!("down-list", 0, 1, f_down_list, "Move down into a list."),
     S!("up-list", 0, 1, f_up_list, "Move out of a list."),
     S!("forward-list", 0, 1, f_forward_list, "Move across a list."),
-    S!("backward-list", 0, 1, f_backward_list, "Move back across a list."),
-    S!("backward-up-list", 0, 1, f_backward_up_list, "Move up out of a list."),
-
-    S!("looking-back", 1, 3, f_looking_back, "Match regexp before point."),
+    S!(
+        "backward-list",
+        0,
+        1,
+        f_backward_list,
+        "Move back across a list."
+    ),
+    S!(
+        "backward-up-list",
+        0,
+        1,
+        f_backward_up_list,
+        "Move up out of a list."
+    ),
+    S!(
+        "looking-back",
+        1,
+        3,
+        f_looking_back,
+        "Match regexp before point."
+    ),
     S!("last-buffer", 0, 3, f_last_buffer, "Last buffer in order."),
     // --- insertion & deletion ---
     S!("insert", many 0, f_insert, "Insert args (strings/chars) at point."),
@@ -482,13 +489,6 @@ pub(crate) static SUBRS: &[Subr] = &[
         "Insert the last typed char N times."
     ),
     S!("newline", 0, 2, f_newline, "Insert a newline."),
-    S!(
-        "newline-and-indent",
-        0,
-        0,
-        f_newline,
-        "Insert newline (indent later)."
-    ),
     S!(
         "open-line",
         0,
@@ -631,7 +631,6 @@ pub(crate) static SUBRS: &[Subr] = &[
         f_narrow_to_region,
         "Restrict editing to START..END."
     ),
-
     S!("widen", 0, 0, f_widen, "Remove narrowing."),
     // --- markers ---
     S!("markerp", 1, 1, f_markerp, "t if OBJECT is a marker."),
@@ -867,7 +866,6 @@ pub(crate) static SUBRS: &[Subr] = &[
         f_primitive_undo,
         "Apply undo entries."
     ),
-
     S!("undo-start", 0, 0, f_undo_start, ""),
     S!("undo-more", 1, 1, f_undo, ""),
     S!("undo-auto-amalgamate", 0, 0, f_noop, ""),
@@ -899,7 +897,6 @@ pub(crate) static SUBRS: &[Subr] = &[
         "Char position from byte."
     ),
     S!("max-char", 0, 0, f_max_char, "Max character code."),
-
     S!(
         "barf-if-buffer-read-only",
         0,
@@ -1473,22 +1470,6 @@ fn f_end_of_line(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         .line_end(bb.text.line_start(target))
         .min(bb.text_len());
     bb.set_point(p);
-    Ok(Value::Nil)
-}
-
-fn f_beginning_of_buffer(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
-    let b = cur(i);
-    let mut bb = b.borrow_mut();
-    let bv = bb.begv;
-    bb.set_point(bv);
-    Ok(Value::Nil)
-}
-
-fn f_end_of_buffer(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
-    let b = cur(i);
-    let mut bb = b.borrow_mut();
-    let tl = bb.text_len();
-    bb.set_point(tl);
     Ok(Value::Nil)
 }
 
@@ -2272,19 +2253,27 @@ pub(crate) fn f_syntax_after(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let (cls, matching): (i128, Option<char>) = match c {
         ' ' | '\t' | '\n' | '\x0b' | '\x0c' | '\r' => (0, None),
         'a'..='z' | 'A'..='Z' | '0'..='9' => (2, None),
-        '(' | '[' | '{' => {
-            (4, Some(match c { '(' => ')', '[' => ']', _ => '}' }))
-        }
-        ')' | ']' | '}' => {
-            (5, Some(match c { ')' => '(', ']' => '[', _ => '{' }))
-        }
+        '(' | '[' | '{' => (
+            4,
+            Some(match c {
+                '(' => ')',
+                '[' => ']',
+                _ => '}',
+            }),
+        ),
+        ')' | ']' | '}' => (
+            5,
+            Some(match c {
+                ')' => '(',
+                ']' => '[',
+                _ => '{',
+            }),
+        ),
         '"' | '|' => (7, None),
         '\\' => (9, None),
         ';' => (11, None),
         '\'' | '`' | ',' | '#' => (6, None),
-        '_' | '$' | '%' | '&' | '*' | '+' | '-' | '/' | '<' | '=' | '>' => {
-            (3, None)
-        }
+        '_' | '$' | '%' | '&' | '*' | '+' | '-' | '/' | '<' | '=' | '>' => (3, None),
         _ => (1, None),
     };
     // GNU returns a dotted pair (CLASS . MATCHING-CHAR) for
@@ -2311,7 +2300,9 @@ fn f_looking_back(i: &mut Interp, a: Vec<Value>) -> EvalResult {
             bb.begv,
         )
     };
-    let lo = limit.map(|l| (l.max(1) as usize - 1).saturating_sub(base)).unwrap_or(0);
+    let lo = limit
+        .map(|l| (l.max(1) as usize - 1).saturating_sub(base))
+        .unwrap_or(0);
     // Non-greedy: shortest match ending at point (nearest start).
     // Greedy: longest (smallest start wins).
     let order: Vec<usize> = if greedy {
@@ -2320,8 +2311,7 @@ fn f_looking_back(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         (lo..=pos).rev().collect()
     };
     for start in order {
-        if let Some(regs) = crate::lisp::regexp::match_at(&re, &text, start)
-        {
+        if let Some(regs) = crate::lisp::regexp::match_at(&re, &text, start) {
             if regs[1] == Some(pos) {
                 i.match_data = Some(MatchData {
                     regs,
@@ -3877,10 +3867,7 @@ fn f_undo(i: &mut Interp, a: Vec<Value>) -> EvalResult {
             // Nothing left to undo.
             drop(bb);
             let sym = i.intern("user-error");
-            return Err(i.signal_data(
-                sym,
-                vec![Value::string("No further undo information")],
-            ));
+            return Err(i.signal_data(sym, vec![Value::string("No further undo information")]));
         }
         // Apply in reverse.
         for e in group.into_iter().rev() {

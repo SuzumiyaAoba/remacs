@@ -56,7 +56,6 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!("sequencep", 1, 1, f_sequencep, "t if OBJECT is a sequence."),
     S!("seqp", 1, 1, f_sequencep, "t if OBJECT is a sequence."),
     S!("booleanp", 1, 1, f_booleanp, "t if OBJECT is t or nil."),
-
     S!(
         "characterp",
         1,
@@ -707,6 +706,8 @@ fn normalize_fn_def(i: &mut Interp, def: Value) -> Value {
                         interactive: l.interactive.clone(),
                         name: l.name.clone(),
                         bad_arglist: l.bad_arglist,
+                        arglist: l.arglist.clone(),
+                        plain: l.plain,
                     };
                     l2.is_macro = true;
                     return Value::Lambda(std::rc::Rc::new(l2));

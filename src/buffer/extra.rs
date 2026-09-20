@@ -16,13 +16,6 @@ pub(crate) static SUBRS: &[Subr] = &[
         "Column of first nonblank char."
     ),
     S!(
-        "mark-whole-buffer",
-        0,
-        0,
-        f_mark_whole_buffer,
-        "Point at end, mark at beginning."
-    ),
-    S!(
         "sort-lines",
         2,
         3,
@@ -50,7 +43,6 @@ pub(crate) static SUBRS: &[Subr] = &[
         f_how_many,
         "Count regexp matches in region."
     ),
-
     S!(
         "flush-lines",
         1,
@@ -278,7 +270,6 @@ pub(crate) static SUBRS: &[Subr] = &[
         f_move_point_visually,
         "Move point visually (simplified)."
     ),
-
     S!(
         "base64-encode-region",
         2,
@@ -372,18 +363,6 @@ fn f_current_indentation(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
         p += 1;
     }
     Ok(Value::Int(col))
-}
-
-fn f_mark_whole_buffer(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
-    check_writable(i)?;
-    let b = cur(i);
-    let mut bb = b.borrow_mut();
-    let beg = bb.begv;
-    let end = bb.text_len();
-    bb.mark = Some(beg);
-    bb.mark_active = true;
-    bb.set_point(end);
-    Ok(Value::Nil)
 }
 
 fn f_sort_lines(i: &mut Interp, a: Vec<Value>) -> EvalResult {
@@ -1180,5 +1159,3 @@ fn f_undo_boundary(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
     bb.undo.push(crate::buffer::UndoEntry::Boundary);
     Ok(Value::Nil)
 }
-
-

@@ -971,12 +971,8 @@ fn f_make_char_table(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     // `char-table-p'/`char-table-subtype' are exact.
     let subtype = arg(&args, 0);
     let init = arg(&args, 1);
-    let vec = Value::Vec(std::rc::Rc::new(std::cell::RefCell::new(
-        vec![init; 256],
-    )));
-    Ok(Value::Record(std::rc::Rc::new(std::cell::RefCell::new(vec![
-        Value::Sym(i.intern("char-table")),
-        subtype,
-        vec,
-    ]))))
+    let vec = Value::Vec(std::rc::Rc::new(std::cell::RefCell::new(vec![init; 256])));
+    Ok(Value::Record(std::rc::Rc::new(std::cell::RefCell::new(
+        vec![Value::Sym(i.intern("char-table")), subtype, vec],
+    ))))
 }

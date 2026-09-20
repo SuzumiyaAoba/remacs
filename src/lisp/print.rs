@@ -202,7 +202,10 @@ impl Interp {
                 self.prin1_inner(&body, out, depth + 1, bq);
                 out.push(' ');
                 match &l.env {
-                    None => out.push_str("nil"),
+                    // Plain function objects print `nil'; evaluated
+                    // dynamic closures print `(t)'.
+                    None if l.plain => out.push_str("nil"),
+                    None => out.push_str("(t)"),
                     Some(frame) => {
                         let env = lex_frame_to_value(self, frame);
                         self.prin1_inner(&env, out, depth + 1, bq);
@@ -279,6 +282,10 @@ impl Interp {
     }
 
     fn print_lambda_list(&self, l: &super::value::Lambda, out: &mut String) {
+        if let Some(raw) = &l.arglist {
+            self.prin1_inner(raw, out, 1, false);
+            return;
+        }
         if l.required.is_empty() && l.optional.is_empty() && l.rest.is_none() {
             out.push_str("nil");
             return;

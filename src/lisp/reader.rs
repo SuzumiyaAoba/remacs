@@ -43,6 +43,24 @@ fn read_err(interp: &mut Interp, msg: &str) -> Flow {
     Flow::Signal(Value::Sym(sym_id), Value::list(vec![Value::string(msg)]))
 }
 
+/// `invalid-read-syntax' with a symbol argument, like Emacs's `#|', `#z'.
+fn read_err_sym(interp: &mut Interp, name: &str) -> Flow {
+    let sym_id = interp.intern("invalid-read-syntax");
+    let data = Value::list(vec![Value::Sym(interp.intern(name))]);
+    Flow::Signal(Value::Sym(sym_id), data)
+}
+
+/// `invalid-read-syntax' for radix integers: `(integer, radix N)'.
+fn read_err_radix(interp: &mut Interp, radix: u32) -> Flow {
+    let sym_id = interp.intern("invalid-read-syntax");
+    let data = Value::list(vec![
+        Value::Sym(interp.intern("integer,")),
+        Value::Sym(interp.intern("radix")),
+        Value::Int(radix as i128),
+    ]);
+    Flow::Signal(Value::Sym(sym_id), data)
+}
+
 fn eof_err(interp: &mut Interp) -> Flow {
     let sym_id = interp.intern("end-of-file");
     Flow::Signal(Value::Sym(sym_id), Value::Nil)
@@ -228,7 +246,13 @@ impl<'a> Reader<'a> {
                 }
                 let tail = self.read_object()?;
                 if self.skip_layout()? || self.peek() != Some(close) {
-                    return Err(read_err(self.interp, ". in wrong context"));
+                    // Emacs: (invalid-read-syntax expected \))
+                    let sym_id = self.interp.intern("invalid-read-syntax");
+                    let data = Value::list(vec![
+                        Value::Sym(self.interp.intern("expected")),
+                        Value::Sym(self.interp.intern(")")),
+                    ]);
+                    return Err(Flow::Signal(Value::Sym(sym_id), data));
                 }
                 // A `. nil' tail is just a proper list end.
                 let tail = if tail.is_nil() { Value::Nil } else { tail };
@@ -498,7 +522,7 @@ impl<'a> Reader<'a> {
                     }
                 }
                 if self.next() != Some('"') {
-                    return Err(read_err(self.interp, "#&"));
+                    return Err(read_err_sym(self.interp, "#&"));
                 }
                 let s = self.read_string()?;
                 let bytes: Vec<u32> = match &s {
@@ -517,13 +541,13 @@ impl<'a> Reader<'a> {
             }
             Some('(') => {
                 // `#(' is not Emacs read syntax (vectors are `[...]').
-                Err(read_err(self.interp, "#"))
+                Err(read_err_sym(self.interp, "#"))
             }
             Some('s') => {
                 // `#s(...)' — record object.
                 self.pos += 2;
                 if self.peek() != Some('(') {
-                    return Err(read_err(self.interp, "#s"));
+                    return Err(read_err_sym(self.interp, "#s "));
                 }
                 self.pos += 1;
                 let items = self.read_seq(')')?;
@@ -538,10 +562,11 @@ impl<'a> Reader<'a> {
                 let tok = self.read_symbol_token();
                 Ok(Value::Sym(self.interp.intern(&tok)))
             }
-            Some('|') => Err(read_err(self.interp, "#")),
+            Some('|') => Err(read_err_sym(self.interp, "#|")),
+            Some('<') => Err(read_err_sym(self.interp, "#<")),
             Some('$') => {
                 // #$ — the name of the file being loaded
-                // (Emacs substitutes load-file-name).
+                // (Emacs substitutes load-file-name, nil outside load).
                 self.pos += 2;
                 let name = self
                     .interp
@@ -550,7 +575,7 @@ impl<'a> Reader<'a> {
                     .map(|id| self.interp.symbol_value(id));
                 match name {
                     Some(Value::Str(_)) => Ok(name.unwrap()),
-                    _ => Err(read_err(self.interp, "#$")),
+                    _ => Ok(Value::Nil),
                 }
             }
             Some('x') | Some('X') => {
@@ -616,10 +641,16 @@ impl<'a> Reader<'a> {
                             }
                         }
                     }
-                    _ => Err(read_err(self.interp, "#<n> without r/=/#")),
+                    other => {
+                        let c = other.unwrap_or(' ');
+                        Err(read_err_sym(self.interp, &format!("#{n}{c}")))
+                    }
                 }
             }
-            _ => Err(read_err(self.interp, "#")),
+            other => {
+                let c = other.unwrap_or(' ');
+                Err(read_err_sym(self.interp, &format!("#{c}")))
+            }
         }
     }
 
@@ -658,14 +689,14 @@ impl<'a> Reader<'a> {
                         any = true;
                         self.pos += 1;
                     }
-                    None => return Err(read_err(self.interp, "invalid radix digit")),
+                    None => return Err(read_err_radix(self.interp, radix)),
                 }
             } else {
                 break;
             }
         }
         if !any {
-            return Err(read_err(self.interp, "empty radix number"));
+            return Err(read_err_radix(self.interp, radix));
         }
         Ok(if neg { -n } else { n })
     }

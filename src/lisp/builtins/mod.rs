@@ -329,7 +329,7 @@ pub(crate) fn want_list(i: &mut Interp, v: &Value) -> Result<Vec<Value>, Flow> {
         Err(super::value::ListError::Circular) => {
             Err(i.signal_data(sym::CIRCULAR_LIST, vec![v.clone()]))
         }
-        Err(_) => Err(i.wrong_type_mut("listp", v)),
+        Err(super::value::ListError::Dotted(tail)) => Err(i.wrong_type_mut("listp", &tail)),
     }
 }
 

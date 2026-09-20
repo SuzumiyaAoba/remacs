@@ -325,7 +325,13 @@ pub(crate) static SUBRS: &[Subr] = &[
         "t if FRAME is the initial frame."
     ),
     S!("frame-focus", 0, 1, f_frame_self, "Frame with input focus."),
-    S!("frame-pointer-visible-p", 0, 1, f_frame_pointer_visible_p, ""),
+    S!(
+        "frame-pointer-visible-p",
+        0,
+        1,
+        f_frame_pointer_visible_p,
+        ""
+    ),
     S!("frame-id", 0, 1, f_frame_id, "Opaque frame id."),
     S!("frame-native-width", 0, 1, f_frame_width, ""),
     S!("frame-native-height", 0, 1, f_frame_height, ""),

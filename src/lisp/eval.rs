@@ -73,6 +73,9 @@ pub struct Interp {
     /// Read position for `read` from a buffer/stream — kept simple.
     pub max_lisp_eval_depth: usize,
     pub eval_depth: usize,
+    /// Depth of explicit `(eval ...)' calls — lambdas built inside get a
+    /// `nil' environment marker like Emacs.
+    pub explicit_eval_depth: usize,
     /// C-g sets this; eval checks it between forms.
     pub quit_flag: bool,
     /// Values pushed by `throw` for debugging — not needed.
@@ -140,6 +143,7 @@ impl Interp {
             echo_message: String::new(),
             max_lisp_eval_depth: 1600,
             eval_depth: 0,
+            explicit_eval_depth: 0,
             quit_flag: false,
             catch_tags: Vec::new(),
             undo_list: Vec::new(),
@@ -466,10 +470,11 @@ impl Interp {
         )
     }
 
-    pub fn wrong_number_of_args(&self, fun: &Value, min: i128, max: i128) -> Flow {
+    /// `wrong-number-of-arguments' — Emacs signals `(FUN ARGC)'.
+    pub fn wrong_number_of_args(&self, fun: &Value, argc: i128) -> Flow {
         self.signal_data(
             sym::WRONG_NUMBER_OF_ARGUMENTS,
-            vec![fun.clone(), Value::Int(min), Value::Int(max)],
+            vec![fun.clone(), Value::Int(argc)],
         )
     }
 
@@ -743,7 +748,9 @@ impl Interp {
                             cur = next;
                         }
                         other => {
-                            return self.call_function(&other, args, Some(cur));
+                            // Emacs reports the originally called symbol
+                            // in arity errors, not the resolved one.
+                            return self.call_function(&other, args, sym_name);
                         }
                     }
                 }
@@ -752,7 +759,7 @@ impl Interp {
                 Arity::Unevalled => (s.func)(self, vec![args.clone()]),
                 _ => {
                     let argv = self.eval_args(args)?;
-                    self.check_arity_subr(s, &argv)?;
+                    self.check_arity_subr(s, &argv, sym_name)?;
                     (s.func)(self, argv)
                 }
             },
@@ -791,20 +798,28 @@ impl Interp {
         }
     }
 
-    fn check_arity_subr(&self, s: &'static super::value::Subr, argv: &[Value]) -> Result<(), Flow> {
+    fn check_arity_subr(
+        &self,
+        s: &'static super::value::Subr,
+        argv: &[Value],
+        name: Option<SymId>,
+    ) -> Result<(), Flow> {
+        // Emacs reports the calling symbol for eval'd calls, the subr
+        // object itself for `funcall'/`apply'.
+        let who = name.map_or(Value::Subr(s), Value::Sym);
         let n = argv.len() as i128;
         let (min, max) = match s.arity {
             Arity::Range { min, max } => (min as i128, max as i128),
             Arity::Many { min } => {
                 if n < min as i128 {
-                    return Err(self.wrong_number_of_args(&Value::Subr(s), min as i128, -1));
+                    return Err(self.wrong_number_of_args(&who, n));
                 }
                 return Ok(());
             }
             Arity::Unevalled => return Ok(()),
         };
         if n < min || n > max {
-            return Err(self.wrong_number_of_args(&Value::Subr(s), min, max));
+            return Err(self.wrong_number_of_args(&who, n));
         }
         Ok(())
     }
@@ -842,7 +857,7 @@ impl Interp {
                     (s.func)(self, vec![list])
                 }
                 _ => {
-                    self.check_arity_subr(s, &argv)?;
+                    self.check_arity_subr(s, &argv, None)?;
                     (s.func)(self, argv)
                 }
             },
@@ -871,15 +886,7 @@ impl Interp {
         // Arity.
         let (min, max_ok) = (l.required.len(), l.rest.is_some());
         if argv.len() < min || (!max_ok && argv.len() > min + l.optional.len()) {
-            return Err(self.wrong_number_of_args(
-                &Value::Lambda(l.clone()),
-                min as i128,
-                if l.rest.is_some() {
-                    -1
-                } else {
-                    (min + l.optional.len()) as i128
-                },
-            ));
+            return Err(self.wrong_number_of_args(&Value::Lambda(l.clone()), argv.len() as i128));
         }
 
         // Dynamic (non-macro) functions with extended `(var init)'
@@ -1249,6 +1256,8 @@ impl Interp {
             interactive,
             name: name.map(|s| self.symbol_name(s)),
             bad_arglist,
+            arglist: Some(params.clone()),
+            plain: self.explicit_eval_depth > 0,
         })
     }
 
@@ -1390,10 +1399,7 @@ impl Interp {
             ("scan-error", "Scan error"),
             ("invalid-regexp", "Invalid regexp"),
             ("coding-system-error", "Invalid coding system"),
-            (
-                "coding-conversion-error",
-                "Coding conversion error",
-            ),
+            ("coding-conversion-error", "Coding conversion error"),
             ("file-already-exists", "File already exists"),
             ("file-supersession", "File is already being edited"),
             ("permission-denied", "Permission denied"),

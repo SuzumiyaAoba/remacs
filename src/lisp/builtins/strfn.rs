@@ -1012,8 +1012,14 @@ fn f_string_equal_ignore_case(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     Ok(Value::from_bool(a.to_lowercase() == b.to_lowercase()))
 }
 fn f_char_equal(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    let a = want_int(i, &args[0])?;
-    let b = want_int(i, &args[1])?;
+    let a = match &args[0] {
+        Value::Int(n) => *n,
+        v => return Err(i.wrong_type_mut("characterp", v)),
+    };
+    let b = match &args[1] {
+        Value::Int(n) => *n,
+        v => return Err(i.wrong_type_mut("characterp", v)),
+    };
     // Emacs consults `case-fold-search' (default t in -Q).
     let fold = i
         .symbol_value(i.intern_soft("case-fold-search").unwrap_or(0))

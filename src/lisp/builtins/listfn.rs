@@ -79,7 +79,6 @@ pub(crate) static SUBRS: &[Subr] = &[
         f_reverse,
         "Return a reversed copy of LIST."
     ),
-
     S!("setcar", 2, 2, f_setcar, "Set the car of CELL to NEWCAR."),
     S!("setcdr", 2, 2, f_setcdr, "Set the cdr of CELL to NEWCDR."),
     S!(
@@ -1325,6 +1324,8 @@ fn f_apply_partially(i: &mut Interp, args: Vec<Value>) -> EvalResult {
         interactive: None,
         name: None,
         bad_arglist: false,
+        arglist: None,
+        plain: false,
     };
     Ok(Value::Lambda(std::rc::Rc::new(lam)))
 }

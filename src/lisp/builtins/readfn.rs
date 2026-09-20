@@ -85,5 +85,3 @@ fn f_read_from_string(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     let (v, end) = i.read_from_string(&src, start)?;
     Ok(Value::cons(v, Value::Int(end as i128)))
 }
-
-

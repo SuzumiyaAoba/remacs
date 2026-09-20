@@ -9,10 +9,7 @@ use common::{ev, ev_err};
 #[test]
 fn reader_hash_syntax() {
     // #s(...) records read as a distinct type; type-of reports the tag.
-    assert_eq!(
-        ev("(type-of (car (read-from-string \"#s(a 1 2)\")))"),
-        "a"
-    );
+    assert_eq!(ev("(type-of (car (read-from-string \"#s(a 1 2)\")))"), "a");
     assert_eq!(ev("(car (read-from-string \"#s(a 1 2)\"))"), "#s(a 1 2)");
     // #N= / #N# labels: circular ref is eq to the object itself.
     assert_eq!(

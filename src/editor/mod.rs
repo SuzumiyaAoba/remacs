@@ -212,7 +212,6 @@ pub(crate) static SUBRS: &[Subr] = &[
         f_window_minibuffer_p,
         "t if WINDOW is a minibuffer."
     ),
-
     S!(
         "minibuffer-window-active-p",
         1,
@@ -334,7 +333,6 @@ pub(crate) static SUBRS: &[Subr] = &[
         "Edge coords of WINDOW."
     ),
     S!("window-inside-edges", 0, 1, f_window_edges, ""),
-
     S!("window-at", 2, 2, f_window_at, "Window at X,Y."),
     S!(
         "recenter",
@@ -371,13 +369,6 @@ pub(crate) static SUBRS: &[Subr] = &[
         1,
         f_scroll_other_window,
         "Scroll the other window."
-    ),
-    S!(
-        "move-to-window-line",
-        1,
-        1,
-        f_move_to_window_line,
-        "Move point to window line N."
     ),
     S!(
         "pos-visible-in-window-p",
@@ -432,7 +423,6 @@ pub(crate) static SUBRS: &[Subr] = &[
         f_window_margins,
         "Margins of WINDOW."
     ),
-
     S!("window-use-time", 0, 1, f_zero, ""),
     S!("window-cursor-type", 0, 1, f_t, ""),
     S!("window-safe-p", 0, 0, f_t, ""),
@@ -482,7 +472,6 @@ pub(crate) static SUBRS: &[Subr] = &[
         f_set_frame_parameter,
         "Set FRAME parameter."
     ),
-
     S!(
         "set-frame-selected-window",
         2,
@@ -504,7 +493,6 @@ pub(crate) static SUBRS: &[Subr] = &[
         f_frame_height,
         "Height of FRAME in chars."
     ),
-
     S!("frame-pixel-width", 0, 1, f_frame_width, ""),
     S!("frame-pixel-height", 0, 1, f_frame_height, ""),
     S!(
@@ -1162,13 +1150,6 @@ pub(crate) static SUBRS: &[Subr] = &[
         "Swap chars around point."
     ),
     S!(
-        "transpose-words",
-        1,
-        1,
-        f_transpose_words,
-        "Swap words around point."
-    ),
-    S!(
         "transpose-lines",
         1,
         1,
@@ -1257,20 +1238,6 @@ pub(crate) static SUBRS: &[Subr] = &[
         "Command: EOL."
     ),
     S!("forward-line-command", 0, 1, f_forward_line_cmd, ""),
-    S!(
-        "next-line",
-        0,
-        1,
-        f_next_line,
-        "Move to next line keeping column."
-    ),
-    S!(
-        "previous-line",
-        0,
-        1,
-        f_previous_line,
-        "Move to previous line."
-    ),
     S!("beginning-of-buffer-other-window", 0, 0, f_nil, ""),
     S!("set-goal-column", 1, 1, f_nil, ""),
     S!("exchange-point-and-mark-inactive", 0, 0, f_nil, ""),
@@ -1459,7 +1426,6 @@ pub(crate) static SUBRS: &[Subr] = &[
         f_narrow_to_defun,
         "Narrow to defun."
     ),
-    S!("mark-page", 0, 0, f_nil, ""),
     S!("narrow-to-page", 0, 1, f_nil, ""),
     S!("count-words", 2, 2, f_count_words, "Words in region."),
     S!("count-words-region", 2, 2, f_count_words, ""),
@@ -1485,7 +1451,13 @@ pub(crate) static SUBRS: &[Subr] = &[
         "New syntax table."
     ),
     S!("copy-syntax-table", 0, 1, f_copy_syntax_table, ""),
-    S!("syntax-after", 1, 1, crate::buffer::primitives::f_syntax_after, ""),
+    S!(
+        "syntax-after",
+        1,
+        1,
+        crate::buffer::primitives::f_syntax_after,
+        ""
+    ),
     S!("syntax-class", 1, 1, f_zero, ""),
     S!("standard-syntax-table", 0, 0, f_standard_syntax_table, ""),
     S!("string-to-syntax", 1, 1, f_nil, ""),
@@ -1623,7 +1595,6 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!("copy-face", 2, 2, f_first, ""),
     S!("face-equal", 2, 2, f_nil, ""),
     S!("face-id", 1, 2, f_zero, ""),
-
     S!("internal-lisp-face-p", 1, 2, f_nil, ""),
     S!("internal-lisp-face-empty-p", 1, 2, f_nil, ""),
     S!("internal-lisp-face-equal-p", 2, 3, f_t, ""),
@@ -2310,21 +2281,6 @@ fn f_scroll_other_window(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     Ok(Value::Nil)
 }
 
-fn f_move_to_window_line(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let n = want_int(i, &a[0])?;
-    let w = sel_window(i).unwrap();
-    let buf = w.borrow().buffer;
-    if let Some(b) = i.buffers.get(buf) {
-        let bb = b.borrow();
-        let line = bb.text.line_of_pos(w.borrow().start);
-        let target = (line as i128 + n).max(0) as usize;
-        let p = bb.text.line_start(target);
-        drop(bb);
-        b.borrow_mut().set_point(p);
-    }
-    Ok(Value::Nil)
-}
-
 fn f_pos_visible_in_window_p(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let pos = arg(&a, 0)
         .int()
@@ -2438,10 +2394,8 @@ fn f_frame_parameter(i: &mut Interp, a: Vec<Value>) -> EvalResult {
                 Value::Nil
             }
         }
-        "unsplittable" | "no-accept-focus" | "tab-bar-lines"
-        | "menu-bar-lines" | "buried-buffer-list" | "buffer-list" => {
-            Value::Nil
-        }
+        "unsplittable" | "no-accept-focus" | "tab-bar-lines" | "menu-bar-lines"
+        | "buried-buffer-list" | "buffer-list" => Value::Nil,
         _ => Value::Nil,
     })
 }
@@ -2459,14 +2413,30 @@ fn f_frame_parameters(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         let bufv = i
             .buffer_value(ff.windows.first().map(|w| w.borrow().buffer).unwrap_or(0))
             .unwrap_or(Value::Nil);
-        (out, ff.name.clone(), ff.width, ff.height, ff.minibuffer.is_some(), bufv)
+        (
+            out,
+            ff.name.clone(),
+            ff.width,
+            ff.height,
+            ff.minibuffer.is_some(),
+            bufv,
+        )
     };
-    let ids: Vec<SymId> = ["name", "width", "height", "modeline", "minibuffer", "buffer-list"]
-        .iter()
-        .map(|k| i.intern(k))
-        .collect();
+    let ids: Vec<SymId> = [
+        "name",
+        "width",
+        "height",
+        "modeline",
+        "minibuffer",
+        "buffer-list",
+    ]
+    .iter()
+    .map(|k| i.intern(k))
+    .collect();
     let have = |kid: SymId, out: &Vec<Value>| {
-        out.iter().any(|v| matches!(v, Value::Cons(c) if matches!(c.borrow().car, Value::Sym(s) if s == kid)))
+        out.iter().any(
+            |v| matches!(v, Value::Cons(c) if matches!(c.borrow().car, Value::Sym(s) if s == kid)),
+        )
     };
     if !have(ids[0], &out) {
         out.push(Value::cons(Value::Sym(ids[0]), Value::string(name)));
@@ -2741,12 +2711,9 @@ pub(crate) fn event_code_for(name: &str) -> i128 {
     code
 }
 
-fn named_key_names()
-    -> &'static std::sync::Mutex<Option<std::collections::HashMap<i128, String>>>
-{
-    static NAMES: std::sync::Mutex<
-        Option<std::collections::HashMap<i128, String>>,
-    > = std::sync::Mutex::new(None);
+fn named_key_names() -> &'static std::sync::Mutex<Option<std::collections::HashMap<i128, String>>> {
+    static NAMES: std::sync::Mutex<Option<std::collections::HashMap<i128, String>>> =
+        std::sync::Mutex::new(None);
     &NAMES
 }
 
@@ -3148,10 +3115,7 @@ fn collect_keys_for(
             if key == event_code_for("t") {
                 if eq_values(&d, cmd) {
                     for range in [(32i128, 126i128), (128i128, 4194303i128)] {
-                        let cell = Value::cons(
-                            Value::Int(range.0),
-                            Value::Int(range.1),
-                        );
+                        let cell = Value::cons(Value::Int(range.0), Value::Int(range.1));
                         out.push(Value::Vec(Rc::new(RefCell::new(vec![cell]))));
                     }
                 }
@@ -4864,43 +4828,6 @@ fn f_transpose_chars(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     Ok(Value::Nil)
 }
 
-fn f_transpose_words(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let n = arg(&a, 0).int().unwrap_or(1);
-    let _ = n;
-    // Find word before and word after point.
-    let b = cur(i);
-    let mut bb = b.borrow_mut();
-    let p = bb.point();
-    let len = bb.text.len();
-    // word1 = word ending around p, word2 = word starting around p
-    let mut w2s = p;
-    while w2s < len && !bb.text.char_at(w2s).is_alphanumeric() {
-        w2s += 1;
-    }
-    let mut w2e = w2s;
-    while w2e < len && bb.text.char_at(w2e).is_alphanumeric() {
-        w2e += 1;
-    }
-    let mut w1e = if w2s > 0 { w2s - 1 } else { 0 };
-    while w1e > 0 && !bb.text.char_at(w1e).is_alphanumeric() {
-        w1e -= 1;
-    }
-    let mut w1s = w1e;
-    while w1s > 0 && bb.text.char_at(w1s - 1).is_alphanumeric() {
-        w1s -= 1;
-    }
-    if w1s >= w2e || w2s >= len {
-        return Err(i.error("Don't have two things to transpose"));
-    }
-    let w1 = bb.text.substring(w1s, w1e + 1);
-    let mid = bb.text.substring(w1e + 1, w2s);
-    let w2 = bb.text.substring(w2s, w2e);
-    bb.text.delete(w1s, w2e);
-    bb.text.insert(w1s, &format!("{}{}{}", w2, mid, w1));
-    bb.set_point(w2e);
-    Ok(Value::Nil)
-}
-
 fn f_transpose_lines(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let n = arg(&a, 0).int().unwrap_or(1);
     let _ = n;
@@ -5155,25 +5082,6 @@ fn f_forward_line_cmd(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let p = bb.text.line_start(target);
     bb.set_point(p);
     Ok(Value::Nil)
-}
-
-fn f_next_line(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let n = arg(&a, 0).int().unwrap_or(1);
-    let b = cur(i);
-    let mut bb = b.borrow_mut();
-    let line = bb.text.line_of_pos(bb.point());
-    let ls = bb.text.line_start(line);
-    let col = bb.point() - ls;
-    let target = line + n.max(0) as usize;
-    let ts = bb.text.line_start(target);
-    let te = bb.text.line_end(ts);
-    bb.set_point((ts + col).min(te));
-    Ok(Value::Nil)
-}
-
-fn f_previous_line(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let n = arg(&a, 0).int().unwrap_or(1);
-    f_next_line(i, vec![Value::Int(-n)])
 }
 
 // ---------- minibuffer ----------
@@ -5772,8 +5680,7 @@ fn f_copy_syntax_table(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     if let Value::Record(r) = &src_t {
         let rr = r.borrow();
         if let Some(Value::Vec(v)) = rr.get(2) {
-            let new_vec =
-                Value::Vec(Rc::new(RefCell::new(v.borrow().clone())));
+            let new_vec = Value::Vec(Rc::new(RefCell::new(v.borrow().clone())));
             return Ok(Value::Record(Rc::new(RefCell::new(vec![
                 Value::Sym(i.intern("char-table")),
                 Value::Sym(i.intern("syntax-table")),

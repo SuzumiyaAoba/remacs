@@ -339,17 +339,47 @@ pub(crate) static SUBRS: &[Subr] = &[
         "t if SYMBOL is special."
     ),
     // ---------- environment / user ----------
-    S!("getenv", 1, 2, f_getenv_internal, "Value of environment VARIABLE."),
-    S!("setenv", 1, 3, f_setenv, "Set environment VARIABLE to VALUE."),
+    S!(
+        "getenv",
+        1,
+        2,
+        f_getenv_internal,
+        "Value of environment VARIABLE."
+    ),
+    S!(
+        "setenv",
+        1,
+        3,
+        f_setenv,
+        "Set environment VARIABLE to VALUE."
+    ),
     S!("user-login-name", 0, 1, f_user_login_name, "Login name."),
-    S!("user-real-login-name", 0, 0, f_user_login_name, "Real login name."),
+    S!(
+        "user-real-login-name",
+        0,
+        0,
+        f_user_login_name,
+        "Real login name."
+    ),
     S!("user-full-name", 0, 1, f_user_full_name, "Full name."),
     S!("user-uid", 0, 0, f_user_uid, "Effective uid."),
     S!("user-real-uid", 0, 0, f_user_uid, "Real uid."),
     S!("system-groups", 0, 0, f_system_groups, "Group names."),
-    S!("invocation-name", 0, 0, f_invocation_name, "Program invocation name."),
+    S!(
+        "invocation-name",
+        0,
+        0,
+        f_invocation_name,
+        "Program invocation name."
+    ),
     // ---------- version ----------
-    S!("version-to-list", 1, 1, f_version_to_list, "Version string to int list."),
+    S!(
+        "version-to-list",
+        1,
+        1,
+        f_version_to_list,
+        "Version string to int list."
+    ),
     S!("version<", 2, 2, f_version_lt, "t if V1 < V2."),
     S!("version<=", 2, 2, f_version_le, "t if V1 <= V2."),
     S!("version=", 2, 2, f_version_eq, "t if V1 == V2."),
@@ -374,8 +404,20 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!("bool-vector-union", 2, 3, f_bool_vector_union, ""),
     S!("bool-vector-intersection", 2, 3, f_bool_vector_inter, ""),
     S!("bool-vector-set-difference", 2, 3, f_bool_vector_diff, ""),
-    S!("bool-vector-count-population", 1, 2, f_bool_vector_count, ""),
-    S!("bool-vector-count-consecutive", 2, 2, f_bool_vector_consec, ""),
+    S!(
+        "bool-vector-count-population",
+        1,
+        2,
+        f_bool_vector_count,
+        ""
+    ),
+    S!(
+        "bool-vector-count-consecutive",
+        2,
+        2,
+        f_bool_vector_consec,
+        ""
+    ),
     // ---------- events ----------
     S!("eventp", 1, 1, f_eventp, ""),
     S!("event-basic-type", 1, 1, f_event_basic_type, ""),
@@ -385,9 +427,27 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!("key-valid-p", 1, 1, f_key_valid_p, ""),
     S!("key-parse", 1, 1, f_key_parse, ""),
     // ---------- misc ----------
-    S!("days-between", 2, 2, f_days_between, "Days between two dates."),
-    S!("date-to-time", 1, 1, f_date_to_time, "Parse an RFC822-ish date."),
-    S!("memory-limit", 0, 0, f_memory_limit, "Most-positive-fixnum."),
+    S!(
+        "days-between",
+        2,
+        2,
+        f_days_between,
+        "Days between two dates."
+    ),
+    S!(
+        "date-to-time",
+        1,
+        1,
+        f_date_to_time,
+        "Parse an RFC822-ish date."
+    ),
+    S!(
+        "memory-limit",
+        0,
+        0,
+        f_memory_limit,
+        "Most-positive-fixnum."
+    ),
     S!("help-function-arglist", 1, 1, f_help_function_arglist, ""),
     S!("function-documentation", 1, 1, f_function_documentation, ""),
     S!("command-error-default-function", 3, 3, f_nil, ""),
@@ -402,11 +462,29 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!("coding-system-plist", 1, 1, f_coding_system_plist, ""),
     S!("coding-system-get", 2, 2, f_coding_system_get, ""),
     S!("coding-system-put", 3, 3, f_coding_system_put, ""),
-    S!("coding-system-priority-list", 0, 1, f_coding_system_list, ""),
+    S!(
+        "coding-system-priority-list",
+        0,
+        1,
+        f_coding_system_list,
+        ""
+    ),
     S!("terminal-coding-system", 0, 1, f_terminal_coding_system, ""),
     S!("keyboard-coding-system", 0, 1, f_terminal_coding_system, ""),
-    S!("file-name-coding-system", 0, 0, f_terminal_coding_system, ""),
-    S!("default-terminal-coding-system", 0, 0, f_terminal_coding_system, ""),
+    S!(
+        "file-name-coding-system",
+        0,
+        0,
+        f_terminal_coding_system,
+        ""
+    ),
+    S!(
+        "default-terminal-coding-system",
+        0,
+        0,
+        f_terminal_coding_system,
+        ""
+    ),
     S!("encode-coding-string", 2, 4, f_encode_coding_string, ""),
     S!("decode-coding-string", 2, 4, f_decode_coding_string, ""),
     S!("encode-coding-char", 1, 2, f_encode_coding_char, ""),
@@ -416,7 +494,13 @@ pub(crate) static SUBRS: &[Subr] = &[
     // ---------- multibyte ----------
     // ---------- display/frame ----------
     S!("frame-configuration-p", 1, 1, f_frame_configuration_p, ""),
-    S!("current-frame-configuration", 0, 0, f_current_frame_configuration, ""),
+    S!(
+        "current-frame-configuration",
+        0,
+        0,
+        f_current_frame_configuration,
+        ""
+    ),
     S!("mouse-position", 0, 0, f_mouse_position, ""),
     S!("mouse-pixel-position", 0, 0, f_mouse_position, ""),
     S!("set-mouse-position", 3, 3, f_nil, ""),
@@ -529,9 +613,7 @@ fn f_func_arity(i: &mut Interp, args: Vec<Value>) -> EvalResult {
             // `(2 . unevalled)' for `if' — min from the special-form table.
             let min = match &args[0] {
                 Value::Sym(id) => crate::lisp::special::special_form_min_args(*id),
-                Value::Subr(s) => {
-                    crate::lisp::special::special_form_min_args(i.intern(s.name))
-                }
+                Value::Subr(s) => crate::lisp::special::special_form_min_args(i.intern(s.name)),
                 _ => 0,
             };
             (min, Value::Sym(i.intern("unevalled")))
@@ -630,6 +712,8 @@ fn f_make_interpreted_closure(i: &mut Interp, args: Vec<Value>) -> EvalResult {
         interactive: None,
         name: None,
         bad_arglist: false,
+        arglist: None,
+        plain: false,
     })))
 }
 
@@ -743,8 +827,7 @@ fn f_map_keymap(i: &mut Interp, args: Vec<Value>) -> EvalResult {
                     }
                     _ => continue,
                 };
-                if matches!(&k, Value::Sym(s) if i.symbol_name(*s) == "keymap")
-                {
+                if matches!(&k, Value::Sym(s) if i.symbol_name(*s) == "keymap") {
                     continue;
                 }
                 let fnv = args[0].clone();
@@ -1456,7 +1539,6 @@ fn f_get_file_buffer(i: &mut Interp, args: Vec<Value>) -> EvalResult {
 
 // ---------- environment / user ----------
 
-
 fn f_setenv(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     let name = want_string(i, &args[0])?;
     let val = match args.get(1) {
@@ -1574,9 +1656,7 @@ fn version_cmp(a: &[i128], b: &[i128]) -> std::cmp::Ordering {
 
 fn f_version_cmp(i: &mut Interp, a: &[Value]) -> Result<std::cmp::Ordering, Flow> {
     let (x, y) = match (&a[0], &a[1]) {
-        (Value::Str(_), Value::Str(_)) => {
-            (version_list_of(i, &a[0])?, version_list_of(i, &a[1])?)
-        }
+        (Value::Str(_), Value::Str(_)) => (version_list_of(i, &a[0])?, version_list_of(i, &a[1])?),
         _ => (
             a[0].list_to_vec()
                 .unwrap_or_default()
@@ -1771,11 +1851,7 @@ fn f_bool_vector_not(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     Ok(make_bool_vector(i, out))
 }
 
-fn bv_binop(
-    i: &mut Interp,
-    a: &[Value],
-    f: fn(bool, bool) -> bool,
-) -> EvalResult {
+fn bv_binop(i: &mut Interp, a: &[Value], f: fn(bool, bool) -> bool) -> EvalResult {
     let x = bool_vec_of(i, &a[0])?;
     let y = bool_vec_of(i, &a[1])?;
     if x.len() != y.len() {
@@ -1822,16 +1898,14 @@ fn f_bool_vector_count(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 fn f_bool_vector_consec(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let x = bool_vec_of(i, &a[0])?;
     let b = !a[1].is_nil();
-    Ok(Value::Int(
-        x.iter().take_while(|v| **v == b).count() as i128,
-    ))
+    Ok(Value::Int(x.iter().take_while(|v| **v == b).count() as i128))
 }
 
 // ---------- events ----------
 
 use crate::editor::{
-    apply_mods, is_keymap, key_seq, parse_key_token, sel_frame, sel_window,
-    WindowRef, CHAR_ALT, CHAR_CTL, CHAR_HYPER, CHAR_META, CHAR_SHIFT, CHAR_SUPER,
+    CHAR_ALT, CHAR_CTL, CHAR_HYPER, CHAR_META, CHAR_SHIFT, CHAR_SUPER, WindowRef, apply_mods,
+    is_keymap, key_seq, parse_key_token, sel_frame, sel_window,
 };
 
 fn f_eventp(_i: &mut Interp, a: Vec<Value>) -> EvalResult {
@@ -1929,9 +2003,7 @@ fn event_mod_list(i: &Interp, ev: &Value) -> Vec<String> {
 fn f_event_modifiers(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let mods = event_mod_list(i, &a[0]);
     Ok(Value::list(
-        mods.iter()
-            .map(|m| Value::Sym(i.intern(m)))
-            .collect(),
+        mods.iter().map(|m| Value::Sym(i.intern(m))).collect(),
     ))
 }
 
@@ -1961,8 +2033,8 @@ fn event_basic(i: &mut Interp, ev: &Value) -> Value {
             loop {
                 let mut hit = false;
                 for p in [
-                    "A-", "C-", "H-", "M-", "S-", "s-", "down-", "drag-",
-                    "double-", "triple-", "click-",
+                    "A-", "C-", "H-", "M-", "S-", "s-", "down-", "drag-", "double-", "triple-",
+                    "click-",
                 ] {
                     if let Some(r) = name.strip_prefix(p) {
                         name = r.to_string();
@@ -1988,12 +2060,43 @@ fn event_basic(i: &mut Interp, ev: &Value) -> Value {
 /// Is NAME a key-event symbol (has event-symbol-elements in Emacs)?
 fn eventish(name: &str) -> bool {
     const NAMED: &[&str] = &[
-        "return", "tab", "escape", "space", "backspace", "delete",
-        "deletechar", "home", "end", "left", "right", "up", "down",
-        "prior", "next", "insert", "menu", "kanji", "redo", "undo",
-        "clear", "insertchar", "deleteline", "insertline", "select",
-        "print", "find", "execute", "help", "menu", "begin", "break",
-        "pause", "printscreen", "scrollock", "numlock", "capslock",
+        "return",
+        "tab",
+        "escape",
+        "space",
+        "backspace",
+        "delete",
+        "deletechar",
+        "home",
+        "end",
+        "left",
+        "right",
+        "up",
+        "down",
+        "prior",
+        "next",
+        "insert",
+        "menu",
+        "kanji",
+        "redo",
+        "undo",
+        "clear",
+        "insertchar",
+        "deleteline",
+        "insertline",
+        "select",
+        "print",
+        "find",
+        "execute",
+        "help",
+        "menu",
+        "begin",
+        "break",
+        "pause",
+        "printscreen",
+        "scrollock",
+        "numlock",
+        "capslock",
     ];
     NAMED.contains(&name)
         || name.starts_with("mouse-")
@@ -2065,10 +2168,31 @@ fn f_key_valid_p(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         return Ok(Value::Nil);
     }
     const NAMED: &[&str] = &[
-        "ret", "return", "tab", "lfd", "spc", "space", "esc", "escape",
-        "del", "nul", "backspace", "delete", "delchar", "deletechar",
-        "home", "end", "left", "right", "up", "down", "prior", "pageup",
-        "next", "pagedown", "insert",
+        "ret",
+        "return",
+        "tab",
+        "lfd",
+        "spc",
+        "space",
+        "esc",
+        "escape",
+        "del",
+        "nul",
+        "backspace",
+        "delete",
+        "delchar",
+        "deletechar",
+        "home",
+        "end",
+        "left",
+        "right",
+        "up",
+        "down",
+        "prior",
+        "pageup",
+        "next",
+        "pagedown",
+        "insert",
     ];
     for tok in s.split(' ').filter(|t| !t.is_empty()) {
         // Strip modifiers.
@@ -2107,7 +2231,6 @@ fn f_key_parse(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 
 // ---------- misc ----------
 
-
 fn parse_date_ymd(s: &str) -> Option<(i64, i64, i64)> {
     // Accept "YYYY-MM-DD" or "YYYY/MM/DD" (with optional trailing time).
     let date = s.split([' ', 'T']).next()?;
@@ -2127,12 +2250,10 @@ fn f_days_between(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let s2 = want_string(i, &a[1])?;
     match (parse_date_ymd(&s1), parse_date_ymd(&s2)) {
         (Some((y1, m1, d1)), Some((y2, m2, d2))) => Ok(Value::Int(
-            (days_from_civil(y1 as i128, m1 as i128, d1 as i128) - days_from_civil(y2 as i128, m2 as i128, d2 as i128)) as i128,
+            (days_from_civil(y1 as i128, m1 as i128, d1 as i128)
+                - days_from_civil(y2 as i128, m2 as i128, d2 as i128)) as i128,
         )),
-        _ => Err(i.signal_data(
-            sym::ERROR,
-            vec![Value::string("Invalid date")],
-        )),
+        _ => Err(i.signal_data(sym::ERROR, vec![Value::string("Invalid date")])),
     }
 }
 
@@ -2161,8 +2282,7 @@ fn f_memory_limit(_i: &mut Interp, _a: Vec<Value>) -> EvalResult {
 fn f_help_function_arglist(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     match i.indirect_function_value(&a[0]) {
         Value::Lambda(l) => {
-            let mut v: Vec<Value> =
-                l.required.iter().map(|s| Value::Sym(*s)).collect();
+            let mut v: Vec<Value> = l.required.iter().map(|s| Value::Sym(*s)).collect();
             if !l.optional.is_empty() {
                 v.push(Value::Sym(i.intern("&optional")));
                 for o in &l.optional {
@@ -2189,9 +2309,10 @@ fn f_help_function_arglist(i: &mut Interp, a: Vec<Value>) -> EvalResult {
                 }
                 Value::list(v)
             }
-            Arity::Many { .. } | Arity::Unevalled => {
-                Value::list(vec![Value::Sym(i.intern("&rest")), Value::Sym(i.intern("args"))])
-            }
+            Arity::Many { .. } | Arity::Unevalled => Value::list(vec![
+                Value::Sym(i.intern("&rest")),
+                Value::Sym(i.intern("args")),
+            ]),
         }),
         _ => Ok(Value::Nil),
     }
@@ -2320,9 +2441,11 @@ fn f_coding_system_get(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     };
     match (coding_known(i, &a[0]), prop.as_str()) {
         (Some(n), ":name") => Ok(Value::Sym(i.intern(&n))),
-        (Some(n), ":coding-type") => Ok(Value::Sym(i.intern(
-            if n.starts_with("utf-8") { "utf-8" } else { "charset" },
-        ))),
+        (Some(n), ":coding-type") => Ok(Value::Sym(i.intern(if n.starts_with("utf-8") {
+            "utf-8"
+        } else {
+            "charset"
+        }))),
         (Some(_), ":eol-type") => f_coding_system_eol_type(i, a),
         _ => Ok(Value::Nil),
     }
@@ -2369,12 +2492,9 @@ fn f_encode_coding_region(_i: &mut Interp, _a: Vec<Value>) -> EvalResult {
 
 // ---------- multibyte ----------
 
-
 fn f_identity(_i: &mut Interp, a: Vec<Value>) -> EvalResult {
     Ok(a[0].clone())
 }
-
-
 
 // ---------- display / frames ----------
 
@@ -2408,7 +2528,6 @@ fn f_mouse_position(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
     // Emacs: (FRAME nil) on a tty with no mouse.
     Ok(Value::list(vec![fr, Value::Nil]))
 }
-
 
 fn f_display_pixel_width(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
     // TTY: "pixels" are char cells (Emacs reports frame width).
@@ -2454,7 +2573,6 @@ fn f_color_gray_p(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     Ok(Value::from_bool(ok))
 }
 
-
 // ---------- windows ----------
 
 fn win_dims(i: &Interp, v: &Value) -> (usize, usize) {
@@ -2485,19 +2603,13 @@ fn f_window_sizable(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let (w, h) = win_dims(i, &a[0]);
     let lim = if horiz { 10 } else { 4 };
     let dim = if horiz { w } else { h };
-    Ok(Value::from_bool(
-        (dim as i128 + delta) >= lim as i128,
-    ))
+    Ok(Value::from_bool((dim as i128 + delta) >= lim as i128))
 }
 
 fn f_window_max_chars(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let (w, _) = win_dims(i, &a[0]);
     Ok(Value::Int(w as i128))
 }
-
-
-
-
 
 fn f_pos_visible(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let pos = match arg(&a, 0) {
@@ -2544,7 +2656,10 @@ fn f_window_normalize(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 
 fn f_window_norm_buffer(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     match &a[0] {
-        Value::Nil => Ok(i.current_buffer_ref().map(Value::Buffer).unwrap_or(Value::Nil)),
+        Value::Nil => Ok(i
+            .current_buffer_ref()
+            .map(Value::Buffer)
+            .unwrap_or(Value::Nil)),
         other => Ok(other.clone()),
     }
 }
@@ -2565,11 +2680,7 @@ fn f_get_window_pred(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         let wins: Vec<WindowRef> = f.borrow().windows.clone();
         for w in wins {
             let wv = Value::Window(w.clone());
-            let r = i.call_function(
-                &pred,
-                &Value::list(vec![quoted(wv.clone())]),
-                None,
-            )?;
+            let r = i.call_function(&pred, &Value::list(vec![quoted(wv.clone())]), None)?;
             if !r.is_nil() {
                 return Ok(wv);
             }
@@ -2577,7 +2688,6 @@ fn f_get_window_pred(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     }
     Ok(Value::Nil)
 }
-
 
 // ---------- keymaps ----------
 
@@ -2709,10 +2819,7 @@ fn f_map_char_table(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         for (k, val) in items.iter().enumerate() {
             i.call_function(
                 &a[0],
-                &Value::list(vec![
-                    quoted(Value::Int(k as i128)),
-                    quoted(val.clone()),
-                ]),
+                &Value::list(vec![quoted(Value::Int(k as i128)), quoted(val.clone())]),
                 None,
             )?;
         }

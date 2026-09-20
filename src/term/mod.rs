@@ -518,7 +518,9 @@ fn isearch_search(
     // +1 for the point→char offset used by these primitives.
     let src = format!(
         "(progn (goto-char (min {} (point-max))) ({} \"{}\" nil t))",
-        from + 1, fn_name, esc
+        from + 1,
+        fn_name,
+        esc
     );
     match i.eval_str(&src) {
         Ok(v) if !v.is_nil() => i.current_buffer_ref().map(|b| b.borrow().point()),
@@ -621,9 +623,14 @@ impl Isearch {
                 }
                 // Extend the current match; fall back to a fresh
                 // search from the entry point when it no longer hits.
-                let from = if self.positions.len() > 1 { cur } else { self.start };
-                let hit = isearch_search(i, &self.query, self.backward, self.regexp, from)
-                    .or_else(|| isearch_search(i, &self.query, self.backward, self.regexp, self.start));
+                let from = if self.positions.len() > 1 {
+                    cur
+                } else {
+                    self.start
+                };
+                let hit = isearch_search(i, &self.query, self.backward, self.regexp, from).or_else(
+                    || isearch_search(i, &self.query, self.backward, self.regexp, self.start),
+                );
                 match hit {
                     Some(p) => {
                         self.positions.push(p);
@@ -676,9 +683,9 @@ fn isearch_loop(
             IsearchAction::Continue => {}
             IsearchAction::Abort | IsearchAction::Done => break,
             IsearchAction::ReDispatch(other) => {
-                let seq = Value::Vec(std::rc::Rc::new(std::cell::RefCell::new(vec![
-                    Value::Int(other),
-                ])));
+                let seq = Value::Vec(std::rc::Rc::new(std::cell::RefCell::new(vec![Value::Int(
+                    other,
+                )])));
                 if let LookupResult::Command(cmd) = lookup_command(i, &seq) {
                     let _ = i.command_execute(&cmd);
                 }
@@ -827,11 +834,13 @@ mod tests {
         {
             let b = i.buffers.get(buf_id).unwrap();
             b.borrow_mut().insert(text);
+            b.borrow_mut().set_point(0);
         }
         let mb_id = i.buffers.create(" *Minibuf-0*");
         let frame = crate::editor::Frame::new_tty(buf_id, mb_id, 80, 25);
         i.selected_frame = Some(frame.clone());
         i.frames.push(frame);
+        i.current_buffer = buf_id;
         i
     }
 
@@ -913,11 +922,7 @@ mod tests {
         let buf_id = i.buffers.create("s");
         i.current_buffer = buf_id;
         i.buffers.get(buf_id).unwrap().borrow_mut().insert(text);
-        i.buffers
-            .get(buf_id)
-            .unwrap()
-            .borrow_mut()
-            .set_point(0);
+        i.buffers.get(buf_id).unwrap().borrow_mut().set_point(0);
         i
     }
 
@@ -929,9 +934,18 @@ mod tests {
     fn isearch_chars_move_point_to_match() {
         let mut i = isearch_interp("one two one\n");
         let mut st = Isearch::new(&i, false, false);
-        assert!(matches!(st.step(&mut i, 't' as i128), IsearchAction::Continue));
-        assert!(matches!(st.step(&mut i, 'w' as i128), IsearchAction::Continue));
-        assert!(matches!(st.step(&mut i, 'o' as i128), IsearchAction::Continue));
+        assert!(matches!(
+            st.step(&mut i, 't' as i128),
+            IsearchAction::Continue
+        ));
+        assert!(matches!(
+            st.step(&mut i, 'w' as i128),
+            IsearchAction::Continue
+        ));
+        assert!(matches!(
+            st.step(&mut i, 'o' as i128),
+            IsearchAction::Continue
+        ));
         // "two" ends at index 7.
         assert_eq!(point(&i), 7);
         assert!(!st.failing);
@@ -1008,6 +1022,162 @@ mod tests {
         st.step(&mut i, 127); // DEL pops one char
         st.step(&mut i, 127);
         assert_eq!(st.query, "");
+    }
+
+    // ---------- key translation ----------
+
+    #[test]
+    fn key_event_to_code_plain_and_modified_chars() {
+        assert_eq!(
+            key_event_to_code(ev(KeyCode::Char('a'), KeyModifiers::NONE)),
+            Some('a' as i128)
+        );
+        // C-u folds to 21.
+        assert_eq!(
+            key_event_to_code(ev(KeyCode::Char('u'), KeyModifiers::CONTROL)),
+            Some(21)
+        );
+        // C-? folds to 127 (DEL).
+        assert_eq!(
+            key_event_to_code(ev(KeyCode::Char('?'), KeyModifiers::CONTROL)),
+            Some(127)
+        );
+        // Meta sets CHAR_META on the char.
+        let m = key_event_to_code(ev(KeyCode::Char('x'), KeyModifiers::ALT)).unwrap();
+        assert_eq!(m & !0x3f_ffff, CHAR_META);
+        // Shift on a printable char is folded into the character.
+        let s = key_event_to_code(ev(KeyCode::Char('A'), KeyModifiers::SHIFT)).unwrap();
+        assert_eq!(s, 'A' as i128);
+        // C-M-a keeps meta + folds control.
+        let cm = key_event_to_code(ev(
+            KeyCode::Char('a'),
+            KeyModifiers::CONTROL | KeyModifiers::ALT,
+        ))
+        .unwrap();
+        assert_eq!(cm & !0x3f_ffff, CHAR_META);
+        assert_eq!(cm & 0x3f_ffff, 1);
+        // Super/hyper pass through as modifier bits.
+        let sup = key_event_to_code(ev(KeyCode::Char('a'), KeyModifiers::SUPER)).unwrap();
+        assert_eq!(sup & !0x3f_ffff, CHAR_SUPER);
+        let hyp = key_event_to_code(ev(KeyCode::Char('a'), KeyModifiers::HYPER)).unwrap();
+        assert_eq!(hyp & !0x3f_ffff, CHAR_HYPER);
+    }
+
+    #[test]
+    fn key_event_to_code_named_keys() {
+        assert_eq!(
+            key_event_to_code(ev(KeyCode::Enter, KeyModifiers::NONE)),
+            Some(13)
+        );
+        assert_eq!(
+            key_event_to_code(ev(KeyCode::Tab, KeyModifiers::NONE)),
+            Some(9)
+        );
+        assert_eq!(
+            key_event_to_code(ev(KeyCode::Backspace, KeyModifiers::NONE)),
+            Some(127)
+        );
+        assert_eq!(
+            key_event_to_code(ev(KeyCode::Esc, KeyModifiers::NONE)),
+            Some(27)
+        );
+        for code in [
+            KeyCode::Up,
+            KeyCode::Down,
+            KeyCode::Left,
+            KeyCode::Right,
+            KeyCode::Home,
+            KeyCode::End,
+            KeyCode::PageUp,
+            KeyCode::PageDown,
+            KeyCode::Delete,
+            KeyCode::Insert,
+        ] {
+            assert!(key_event_to_code(ev(code, KeyModifiers::NONE)).is_some());
+        }
+        assert!(key_event_to_code(ev(KeyCode::F(5), KeyModifiers::NONE)).is_some());
+        // Unmapped codes yield None.
+        assert_eq!(
+            key_event_to_code(ev(KeyCode::Null, KeyModifiers::NONE)),
+            None
+        );
+    }
+
+    // ---------- input loops ----------
+
+    #[test]
+    fn minibuf_loop_reads_text() {
+        let (t, _out) = test_term(20, 5);
+        let term = Rc::new(RefCell::new(t));
+        for k in [b'a' as i128, b'b' as i128, 13] {
+            term.borrow_mut().unread(k);
+        }
+        // pending is a stack — reverse order.
+        term.borrow_mut().pending.reverse();
+        let mut i = crate::lisp::Interp::new();
+        match minibuf_loop(&term, &mut i, "P: ", false) {
+            Ok(crate::lisp::eval::MinibufInput::Text(s)) => assert_eq!(s, "ab"),
+            other => panic!("expected Text, got {:?}", other.map(|_| ())),
+        }
+    }
+
+    #[test]
+    fn minibuf_loop_del_and_cg() {
+        let (t, _out) = test_term(20, 5);
+        let term = Rc::new(RefCell::new(t));
+        // type 'x', DEL, then C-g abort.
+        for k in [b'x' as i128, 127, 7] {
+            term.borrow_mut().unread(k);
+        }
+        term.borrow_mut().pending.reverse();
+        let mut i = crate::lisp::Interp::new();
+        assert!(minibuf_loop(&term, &mut i, "", false).is_err());
+    }
+
+    #[test]
+    fn minibuf_loop_single_key_mode() {
+        let (t, _out) = test_term(20, 5);
+        let term = Rc::new(RefCell::new(t));
+        term.borrow_mut().unread(b'y' as i128);
+        let mut i = crate::lisp::Interp::new();
+        match minibuf_loop(&term, &mut i, "y/n ", true) {
+            Ok(crate::lisp::eval::MinibufInput::Key(k)) => assert_eq!(k, b'y' as i128),
+            _ => panic!("expected Key"),
+        }
+    }
+
+    #[test]
+    fn isearch_loop_end_to_end() {
+        let (t, _out) = test_term(20, 5);
+        let term = Rc::new(RefCell::new(t));
+        // Type 'y', then RET to finish.
+        for k in [b'y' as i128, 13] {
+            term.borrow_mut().unread(k);
+        }
+        term.borrow_mut().pending.reverse();
+        let mut i = interp_with_frame("xx yy\n");
+        isearch_loop(&term, &mut i, false, false).unwrap();
+        let b = i.current_buffer_ref().unwrap();
+        assert_eq!(b.borrow().point(), 4); // after the first "y" match
+    }
+
+    #[test]
+    fn isearch_loop_abort_restores() {
+        let (t, _out) = test_term(20, 5);
+        let term = Rc::new(RefCell::new(t));
+        for k in [b'y' as i128, 7] {
+            term.borrow_mut().unread(k);
+        }
+        term.borrow_mut().pending.reverse();
+        let mut i = interp_with_frame("xx yy\n");
+        isearch_loop(&term, &mut i, false, false).unwrap();
+        assert_eq!(i.current_buffer_ref().unwrap().borrow().point(), 0);
+    }
+
+    #[test]
+    fn nonblocking_sleep_short() {
+        let mut i = crate::lisp::Interp::new();
+        nonblocking_sleep(&mut i, Duration::from_millis(1)).unwrap();
     }
 
     fn ev(code: KeyCode, mods: KeyModifiers) -> KeyEvent {

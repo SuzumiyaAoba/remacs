@@ -152,6 +152,13 @@ pub struct Lambda {
     /// Arglist contains extended `(var init)' params — calling it in a
     /// dynamic (non-macro) context signals `invalid-function' like Emacs.
     pub bad_arglist: bool,
+    /// The raw lambda-list form, kept so the `#[args body env]' printer
+    /// shows exactly what the user wrote (like Emacs).
+    pub arglist: Option<Value>,
+    /// True when built by wrapping a raw `(lambda ...)' list for
+    /// `funcall'/direct call rather than evaluating a lambda form — the
+    /// printer shows `nil' as the environment for these.
+    pub plain: bool,
 }
 
 #[derive(Clone)]
@@ -274,7 +281,7 @@ impl Value {
                     drop(b);
                     cur = next;
                 }
-                _ => return Err(ListError::Dotted),
+                other => return Err(ListError::Dotted(other)),
             }
             steps += 1;
             if steps % 2 == 0 {
@@ -293,10 +300,10 @@ impl Value {
 }
 
 /// Errors traversing a list.
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug)]
 pub enum ListError {
-    /// List ended in a non-nil non-cons (dotted pair).
-    Dotted,
+    /// List ended in a non-nil non-cons (dotted pair); carries the tail.
+    Dotted(Value),
     /// Circular list detected.
     Circular,
 }

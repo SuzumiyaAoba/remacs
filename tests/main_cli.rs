@@ -49,7 +49,11 @@ fn eval_error_exits_nonzero() {
 fn eval_uncaught_throw_reports() {
     let (_o, e, code) = remacs(&["--eval", "(throw 'x 1)"], "");
     assert_ne!(code, 0);
-    assert!(e.contains("no-catch") || e.contains("throw"), "stderr: {}", e);
+    assert!(
+        e.contains("no-catch") || e.contains("throw"),
+        "stderr: {}",
+        e
+    );
 }
 
 #[test]
@@ -95,5 +99,46 @@ fn no_window_flag_is_accepted() {
 fn quit_flow_reports() {
     let (_o, e, code) = remacs(&["--eval", "(signal 'quit nil)"], "");
     assert_ne!(code, 0);
+    let _ = e;
+}
+
+#[test]
+fn interactive_without_tty_errors() {
+    // No tty in test env → run_editor fails cleanly.
+    let (_o, e, code) = remacs(&[], "");
+    assert_ne!(code, 0);
+    assert!(
+        e.contains("terminal") || e.contains("error"),
+        "stderr: {}",
+        e
+    );
+}
+
+#[test]
+fn file_arg_enters_interactive_path() {
+    let dir = std::env::temp_dir().join("remacs-cli-visit.txt");
+    std::fs::write(&dir, "hello").unwrap();
+    let (_o, _e, code) = remacs(&[dir.to_str().unwrap()], "");
+    assert_ne!(code, 0); // still fails at run_editor without a tty
+    let _ = std::fs::remove_file(&dir);
+}
+
+#[test]
+fn execute_alias_works() {
+    let (o, _e, code) = remacs(&["--execute", "(princ 7)"], "");
+    assert_eq!(o, "7");
+    assert_eq!(code, 0);
+}
+
+#[test]
+fn load_missing_file_errors() {
+    let (_o, _e, code) = remacs(&["--batch", "-l", "/nonexistent/x.el"], "");
+    assert_ne!(code, 0);
+}
+
+#[test]
+fn quit_flow_via_throw() {
+    let (_o, e, code) = remacs(&["--eval", "(catch 'zz (throw 'zz 5))"], "");
+    assert_eq!(code, 0);
     let _ = e;
 }

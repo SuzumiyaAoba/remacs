@@ -179,7 +179,6 @@ pub(crate) static SUBRS: &[Subr] = &[
         f_funcall_with_delayed_message,
         "Call FUNCTION, show message."
     ),
-
     S!(
         "declare-function",
         raw,
@@ -215,7 +214,6 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!("lwarn", 4, 4, f_lwarn, "Display a warning."),
     S!("warn", many 1, f_warn, "Display a warning."),
     S!("message", many 1, f_message, "Display a message in the echo area."),
-
     S!("ding", 0, 1, f_ding, "Beep."),
     S!("beep", 0, 1, f_ding, "Beep."),
     S!(
@@ -380,7 +378,6 @@ pub(crate) static SUBRS: &[Subr] = &[
         f_subr_native_lambda_list,
         "Subr arglist."
     ),
-
     S!("help--docstring-quote", 0, 0, f_noop, ""),
     S!("internal-doc-string-p", 0, 0, f_noop, ""),
     S!("declare-functionp", 1, 1, f_declare_functionp, ""),
@@ -389,7 +386,8 @@ pub(crate) static SUBRS: &[Subr] = &[
 fn f_eval(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     // (eval FORM &optional LEXICAL) — lexical arg binds lexical-binding.
     let lex = arg(&args, 1).truthy();
-    if lex {
+    i.explicit_eval_depth += 1;
+    let r = if lex {
         let id = i.intern("lexical-binding");
         i.specbind(id, Value::t());
         let r = i.eval(&args[0]);
@@ -397,25 +395,34 @@ fn f_eval(i: &mut Interp, args: Vec<Value>) -> EvalResult {
         r
     } else {
         i.eval(&args[0])
-    }
+    };
+    i.explicit_eval_depth -= 1;
+    r
 }
 
 fn f_apply(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    if args.len() < 2 {
-        return Err(i.wrong_number_of_args(&args[0], 1, -1));
+    if args.is_empty() {
+        let s = Value::Sym(i.intern("apply"));
+        return Err(i.wrong_number_of_args(&s, 0));
     }
     let fun = args[0].clone();
-    let mut argv: Vec<Value> = args[1..args.len() - 1].to_vec();
-    // Last arg must be a list (or atom for tail).
-    match args.last().unwrap() {
-        Value::Nil => {}
-        Value::Cons(_) => argv.extend(want_list(i, args.last().unwrap())?),
-        last => argv.push(last.clone()),
+    let mut argv: Vec<Value> = if args.len() > 1 {
+        args[1..args.len() - 1].to_vec()
+    } else {
+        Vec::new()
+    };
+    // Last arg must be a list.
+    if !matches!(args.last(), Some(Value::Nil)) {
+        argv.extend(want_list(i, args.last().unwrap())?);
     }
     i.apply(&fun, argv)
 }
 
 fn f_funcall(i: &mut Interp, args: Vec<Value>) -> EvalResult {
+    if args.is_empty() {
+        let s = Value::Sym(i.intern("funcall"));
+        return Err(i.wrong_number_of_args(&s, 0));
+    }
     let fun = args[0].clone();
     i.apply(&fun, args[1..].to_vec())
 }
@@ -645,9 +652,7 @@ fn f_featurep(i: &mut Interp, args: Vec<Value>) -> EvalResult {
         Value::Cons(_) | Value::Nil => i
             .symbol_value(fid)
             .list_to_vec()
-            .map(|items| {
-                items.iter().any(|v| matches!(v, Value::Sym(s) if *s == id))
-            })
+            .map(|items| items.iter().any(|v| matches!(v, Value::Sym(s) if *s == id)))
             .unwrap_or(false),
         _ => false,
     };
@@ -1038,10 +1043,10 @@ fn f_current_time_string(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     };
     let secs = (t / 1_000_000) as i64;
     let tm = super::misc::local_tm(secs);
-    let wday = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
-        [tm.tm_wday.clamp(0, 6) as usize];
-    let mon = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug",
-        "Sep", "Oct", "Nov", "Dec"][tm.tm_mon.clamp(0, 11) as usize];
+    let wday = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][tm.tm_wday.clamp(0, 6) as usize];
+    let mon = [
+        "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+    ][tm.tm_mon.clamp(0, 11) as usize];
     Ok(Value::string(format!(
         "{} {} {:02} {:02}:{:02}:{:02} {}",
         wday,
@@ -1090,7 +1095,11 @@ fn f_format_time_string(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     // %z needs the local offset — format in local time.
     let secs = (t / 1_000_000) as i64;
     let tm = super::misc::local_tm(secs);
-    let (y, mo, d) = (tm.tm_year as i128 + 1900, (tm.tm_mon + 1) as u64, tm.tm_mday as u64);
+    let (y, mo, d) = (
+        tm.tm_year as i128 + 1900,
+        (tm.tm_mon + 1) as u64,
+        tm.tm_mday as u64,
+    );
     let (h, mi, s) = (tm.tm_hour as u64, tm.tm_min as u64, tm.tm_sec as u64);
     let mut out = String::new();
     let mut ch = fmt.chars().peekable();
@@ -1107,21 +1116,56 @@ fn f_format_time_string(i: &mut Interp, args: Vec<Value>) -> EvalResult {
                 Some('s') => out.push_str(&format!("{}", secs)),
                 Some('F') => out.push_str(&format!("{}-{:02}-{:02}", y, mo, d)),
                 Some('T') => out.push_str(&format!("{:02}:{:02}:{:02}", h, mi, s)),
-                Some('a') => out.push_str(["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
-                    [tm.tm_wday.clamp(0, 6) as usize]),
-                Some('A') => out.push_str(["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"]
-                    [tm.tm_wday.clamp(0, 6) as usize]),
-                Some('b') | Some('h') => out.push_str(["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug",
-                    "Sep", "Oct", "Nov", "Dec"][tm.tm_mon.clamp(0, 11) as usize]),
-                Some('B') => out.push_str(["January", "February", "March", "April", "May", "June", "July", "August",
-                    "September", "October", "November", "December"][tm.tm_mon.clamp(0, 11) as usize]),
+                Some('a') => out.push_str(
+                    ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
+                        [tm.tm_wday.clamp(0, 6) as usize],
+                ),
+                Some('A') => out.push_str(
+                    [
+                        "Sunday",
+                        "Monday",
+                        "Tuesday",
+                        "Wednesday",
+                        "Thursday",
+                        "Friday",
+                        "Saturday",
+                    ][tm.tm_wday.clamp(0, 6) as usize],
+                ),
+                Some('b') | Some('h') => out.push_str(
+                    [
+                        "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct",
+                        "Nov", "Dec",
+                    ][tm.tm_mon.clamp(0, 11) as usize],
+                ),
+                Some('B') => out.push_str(
+                    [
+                        "January",
+                        "February",
+                        "March",
+                        "April",
+                        "May",
+                        "June",
+                        "July",
+                        "August",
+                        "September",
+                        "October",
+                        "November",
+                        "December",
+                    ][tm.tm_mon.clamp(0, 11) as usize],
+                ),
                 Some('j') => out.push_str(&format!("{:03}", tm.tm_yday + 1)),
                 Some('w') => out.push_str(&format!("{}", tm.tm_wday)),
-                Some('u') => out.push_str(&format!("{}", if tm.tm_wday == 0 { 7 } else { tm.tm_wday })),
+                Some('u') => {
+                    out.push_str(&format!("{}", if tm.tm_wday == 0 { 7 } else { tm.tm_wday }))
+                }
                 Some('y') => out.push_str(&format!("{:02}", (tm.tm_year + 1900) % 100)),
                 Some('Z') => {
-                    let z = if tm.tm_zone.is_null() { String::new() } else {
-                        unsafe { std::ffi::CStr::from_ptr(tm.tm_zone as *const i8) }.to_string_lossy().into_owned()
+                    let z = if tm.tm_zone.is_null() {
+                        String::new()
+                    } else {
+                        unsafe { std::ffi::CStr::from_ptr(tm.tm_zone as *const i8) }
+                            .to_string_lossy()
+                            .into_owned()
                     };
                     out.push_str(&z);
                 }
