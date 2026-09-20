@@ -2164,8 +2164,33 @@ fn sexp_pairs_before(text: &[char], pos: usize) -> (Vec<(usize, usize)>, Vec<usi
     (pairs, stack)
 }
 
+/// Index of the open matching the close at `close` (0-based).
+fn sexp_match_open(text: &[char], close: usize) -> Option<usize> {
+    let mut d = 0i32;
+    for j in (0..=close.min(text.len().saturating_sub(1))).rev() {
+        let c = text[j];
+        if sexp_is_close(c) {
+            d += 1;
+        } else if sexp_is_open(c) {
+            d -= 1;
+            if d == 0 {
+                return Some(j);
+            }
+        }
+    }
+    None
+}
+
 /// Core of `scan-lists`: returns the 0-based landing position, None
 /// for "stays put", Err for scan-error.
+///
+/// GNU semantics: DEPTH is the assumed paren-level at FROM.  Each step
+/// scans forward (COUNT>0) or backward (COUNT<0) for the paren that
+/// brings the level back to 0, landing just outside it (after `)' /
+/// before `(').  At level 0 a step skips a whole balanced pair; a
+/// mismatched paren (close going forward, open going backward) or an
+/// unbalanced group signals scan-error; running out of text at level 0
+/// returns nil.
 fn scan_lists_impl(
     text: &[char],
     pos: usize,
@@ -2173,74 +2198,85 @@ fn scan_lists_impl(
     depth: i128,
 ) -> Result<Option<usize>, ()> {
     let len = text.len();
+    let mut level = depth;
+    let mut p = pos;
+    let mut remaining = count.unsigned_abs();
     if count > 0 {
-        let mut p = pos;
-        for _ in 0..count {
+        while remaining > 0 {
             let mut i = p;
             let mut landed = None;
             while i < len {
-                if sexp_is_open(text[i]) {
-                    match sexp_match_close(text, i) {
-                        Some(c) => {
-                            landed = Some(c + 1);
-                            break;
+                let c = text[i];
+                if sexp_is_open(c) {
+                    if level == 0 {
+                        match sexp_match_close(text, i) {
+                            Some(cl) => {
+                                landed = Some(cl + 1);
+                                break;
+                            }
+                            None => return Err(()),
                         }
-                        None => return Err(()),
                     }
-                } else if sexp_is_close(text[i]) {
-                    landed = Some(i + 1);
-                    break;
+                    level += 1;
+                } else if sexp_is_close(c) {
+                    if level == 0 {
+                        return Err(());
+                    }
+                    level -= 1;
+                    if level == 0 {
+                        landed = Some(i + 1);
+                        break;
+                    }
                 }
                 i += 1;
             }
             match landed {
                 Some(np) => p = np,
-                None => return Ok(None),
+                // Ran out of text: nil at level 0, error if still inside.
+                None => return if level == 0 { Ok(None) } else { Err(()) },
             }
+            remaining -= 1;
         }
         Ok(Some(p))
     } else if count < 0 {
-        let mut bound = pos;
-        let mut last = None;
-        for _ in 0..-count {
-            let (pairs, stack) = sexp_pairs_before(text, bound);
-            let best = pairs.iter().max_by_key(|(_, c)| *c).copied();
-            match best {
-                Some((o, _)) => {
-                    last = Some(o);
-                    bound = o;
-                }
-                None => {
-                    if !stack.is_empty() {
+        while remaining > 0 {
+            let mut i = p as i64 - 1;
+            let mut landed = None;
+            while i >= 0 {
+                let c = text[i as usize];
+                if sexp_is_close(c) {
+                    if level == 0 {
+                        match sexp_match_open(text, i as usize) {
+                            Some(o) => {
+                                landed = Some(o);
+                                break;
+                            }
+                            None => return Err(()),
+                        }
+                    }
+                    level += 1;
+                } else if sexp_is_open(c) {
+                    if level == 0 {
                         return Err(());
                     }
-                    return Ok(last);
+                    level -= 1;
+                    if level == 0 {
+                        landed = Some(i as usize);
+                        break;
+                    }
                 }
+                i -= 1;
             }
-        }
-        Ok(last)
-    } else if depth > 0 {
-        // Descend: land at the open paren reaching target depth.
-        let mut i = pos;
-        let mut remaining = depth;
-        while i < len && remaining > 0 {
-            if sexp_is_open(text[i]) {
-                remaining -= 1;
-                if remaining == 0 {
-                    return Ok(Some(i));
-                }
+            match landed {
+                Some(np) => p = np,
+                // Ran out of text: nil at level 0, error if still inside.
+                None => return if level == 0 { Ok(None) } else { Err(()) },
             }
-            i += 1;
+            remaining -= 1;
         }
-        Ok(None)
+        Ok(Some(p))
     } else {
-        // Ascend: land just inside the enclosing open paren.
-        let (_, stack) = sexp_pairs_before(text, pos);
-        let levels = -depth;
-        if stack.len() < levels as usize {
-            return Ok(None);
-        }
-        Ok(Some(stack[stack.len() - levels as usize] + 1))
+        Ok(Some(pos))
     }
 }
 

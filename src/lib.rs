@@ -57,5 +57,58 @@ mod coverage_tests {
     probe!(u_probe_eval5, "probe_eval5.el");
     probe!(u_probe_eval6, "probe_eval6.el");
     probe!(u_probe_eval7, "probe_eval7.el");
+    probe!(u_probe_eval8, "probe_eval8.el");
     probe!(u_probe_format, "probe_format.el");
+
+    #[test]
+    fn u_output_sinks() {
+        use crate::lisp::OutputSink;
+        use std::cell::RefCell;
+        use std::rc::Rc;
+
+        // Buffer sink captures princ and message output.
+        let mut i = Interp::new();
+        i.noninteractive = false;
+        let sink = Rc::new(RefCell::new(String::new()));
+        i.output = Some(OutputSink::Buffer(sink.clone()));
+        i.eval_str("(princ \"into-sink\")").unwrap();
+        i.eval_str("(get-buffer-create \" *Messages*\")").unwrap();
+        i.message("logged-msg");
+        let got = sink.borrow().clone();
+        assert!(got.contains("into-sink"), "{}", got);
+        assert!(got.contains("logged-msg"), "{}", got);
+        assert_eq!(i.echo_message, "logged-msg");
+
+        // Function sink is invoked with each printed string.
+        let mut i2 = Interp::new();
+        i2.eval_str("(setq seen \"\")").unwrap();
+        i2.eval_str("(defun collect-s (s) (setq seen (concat seen s)))")
+            .unwrap();
+        let sid = i2.intern("collect-s");
+        let f = i2.symbol_function(sid);
+        i2.output = Some(OutputSink::Function(f));
+        i2.eval_str("(princ \"via-fn\")").unwrap();
+        let vsym = i2.intern("seen");
+        let seen = i2.symbol_value(vsym);
+        assert_eq!(i2.princ_to_string(&seen), "via-fn");
+
+        // Stdout sink prints (can't capture; just exercise the path).
+        let mut i3 = Interp::new();
+        i3.output = Some(OutputSink::Stdout);
+        i3.eval_str("(princ \"to-stdout\")").unwrap();
+    }
+
+    #[test]
+    fn u_uptime_text() {
+        use crate::lisp::builtins::misc::uptime_text;
+        assert_eq!(uptime_text(0), "0 seconds");
+        assert_eq!(uptime_text(1), "1 second");
+        assert_eq!(uptime_text(59), "59 seconds");
+        assert_eq!(uptime_text(86400), "1 day, 00:00:00");
+        assert_eq!(uptime_text(90061), "1 day, 01:01:01");
+        assert_eq!(
+            uptime_text(2 * 86400 + 3 * 3600 + 4 * 60 + 5),
+            "2 days, 03:04:05"
+        );
+    }
 }

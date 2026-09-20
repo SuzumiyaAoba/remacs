@@ -1535,8 +1535,13 @@ fn f_emacs_uptime(i: &mut Interp, a: Vec<Value>) -> EvalResult {
             }
         }
     }
+    Ok(Value::string(uptime_text(secs)))
+}
+
+/// `emacs-uptime` default format: "N seconds" / "N days, HH:MM:SS".
+pub(crate) fn uptime_text(secs: i128) -> String {
     let days = secs / 86400;
-    let s = if days <= 0 {
+    if days <= 0 {
         format!("{} second{}", secs, if secs == 1 { "" } else { "s" })
     } else {
         let rem = secs % 86400;
@@ -1548,8 +1553,7 @@ fn f_emacs_uptime(i: &mut Interp, a: Vec<Value>) -> EvalResult {
             (rem % 3600) / 60,
             rem % 60
         )
-    };
-    Ok(Value::string(s))
+    }
 }
 
 fn f_current_cpu_time(_i: &mut Interp, _a: Vec<Value>) -> EvalResult {
@@ -2101,18 +2105,22 @@ fn f_bool_vector_not(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let out: Vec<bool> = x.iter().map(|b| !*b).collect();
     let target = arg(&a, 1);
     if !target.is_nil() {
-        if is_bool_vector(i, &target) {
-            if let Value::Record(r) = &target {
-                let rr = r.borrow();
-                if let Some(Value::Vec(b)) = rr.get(1) {
-                    let mut bb = b.borrow_mut();
-                    if bb.len() == out.len() {
-                        for (k, v) in bb.iter_mut().zip(&out) {
-                            *k = Value::Int(if *v { 1 } else { 0 });
-                        }
-                        return Ok(target.clone());
-                    }
+        // GNU: B must be a bool-vector of the same length.
+        if !is_bool_vector(i, &target) {
+            return Err(i.wrong_type_mut("bool-vector-p", &target));
+        }
+        if let Value::Record(r) = &target {
+            let rr = r.borrow();
+            if let Some(Value::Vec(b)) = rr.get(1) {
+                let mut bb = b.borrow_mut();
+                if bb.len() != out.len() {
+                    let s = i.intern("args-out-of-range");
+                    return Err(i.signal_data(s, vec![target.clone()]));
                 }
+                for (k, v) in bb.iter_mut().zip(&out) {
+                    *k = Value::Int(if *v { 1 } else { 0 });
+                }
+                return Ok(target.clone());
             }
         }
     }

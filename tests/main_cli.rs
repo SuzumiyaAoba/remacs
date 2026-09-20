@@ -178,7 +178,11 @@ fn pty_editor_smoke() {
         b"\x13el",                 // C-s el (isearch, stay in search)
         b"\x13",                   // C-s again (repeat-forward dispatch)
         b"\x7f",                   // DEL (isearch pop)
+        b"\x06",                   // C-f inside isearch (ReDispatch path)
+        b"\x13z",                  // C-s z (re-enter isearch)
         b"\r",                     // RET exits isearch
+        "あ".as_bytes(),           // unbound multibyte char → self-insert
+        b"\x1e",                   // C-^ (unbound control char)
         b"\x07",                   // C-g
         b"\x0b",                   // C-k (kill-line)
         b"\x19",                   // C-y (yank)

@@ -430,11 +430,13 @@ fn f_funcall_interactively(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     f_funcall(i, args)
 }
 
-fn f_function_raw(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    crate::lisp::special::special_form(crate::lisp::sym::FUNCTION).unwrap()(
-        i,
-        args.into_iter().next().unwrap_or(Value::Nil),
-    )
+fn f_function_raw(i: &mut Interp, _args: Vec<Value>) -> EvalResult {
+    f_special_form_via_apply(i, Vec::new())
+}
+
+/// Special forms are not funcallable (GNU signals `invalid-function').
+fn f_special_form_via_apply(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
+    Err(i.signal_data(sym::INVALID_FUNCTION, vec![Value::Nil]))
 }
 
 fn f_macroexpand(i: &mut Interp, args: Vec<Value>) -> EvalResult {
@@ -622,11 +624,8 @@ fn f_throw(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     }
 }
 
-fn f_condition_case_raw(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    crate::lisp::special::special_form(sym::CONDITION_CASE).unwrap()(
-        i,
-        args.into_iter().next().unwrap_or(Value::Nil),
-    )
+fn f_condition_case_raw(i: &mut Interp, _args: Vec<Value>) -> EvalResult {
+    f_special_form_via_apply(i, Vec::new())
 }
 
 /// `(ignore-errors BODY...)` and `(with-demoted-errors BODY...)`.
@@ -838,23 +837,14 @@ fn f_ignore(_i: &mut Interp, _args: Vec<Value>) -> EvalResult {
 fn f_always(_i: &mut Interp, _args: Vec<Value>) -> EvalResult {
     Ok(Value::t())
 }
-fn f_prog1_raw(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    crate::lisp::special::special_form(sym::PROG1).unwrap()(
-        i,
-        args.into_iter().next().unwrap_or(Value::Nil),
-    )
+fn f_prog1_raw(i: &mut Interp, _args: Vec<Value>) -> EvalResult {
+    f_special_form_via_apply(i, Vec::new())
 }
-fn f_or_raw(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    crate::lisp::special::special_form(sym::OR).unwrap()(
-        i,
-        args.into_iter().next().unwrap_or(Value::Nil),
-    )
+fn f_or_raw(i: &mut Interp, _args: Vec<Value>) -> EvalResult {
+    f_special_form_via_apply(i, Vec::new())
 }
-fn f_and_raw(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    crate::lisp::special::special_form(sym::AND).unwrap()(
-        i,
-        args.into_iter().next().unwrap_or(Value::Nil),
-    )
+fn f_and_raw(i: &mut Interp, _args: Vec<Value>) -> EvalResult {
+    f_special_form_via_apply(i, Vec::new())
 }
 fn f_values(_i: &mut Interp, args: Vec<Value>) -> EvalResult {
     Ok(Value::list(args))

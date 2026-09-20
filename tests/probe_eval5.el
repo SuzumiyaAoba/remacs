@@ -111,7 +111,7 @@
   ;; ---- scan-lists depth cases ----------------------------------------
   (with-temp-buffer
     (insert "(a (b c) d)")
-    (prin1 (scan-lists 1 1 1))
+    (prin1 (condition-case v (scan-lists 1 1 1) (error (car v))))
     (prin1 (scan-lists 1 -1 0))
     (prin1 (scan-lists 2 1 0)))
   ;; ---- scan-sexps ----------------------------------------------------

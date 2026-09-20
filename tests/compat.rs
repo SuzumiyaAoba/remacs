@@ -115,7 +115,9 @@ fn plist_order() {
     assert_eq!(ev("(fboundp 'when)"), "t");
     assert_eq!(ev("(subrp 'car)"), "nil");
     assert_eq!(ev("(subrp #'car)"), "nil");
-    assert_eq!(ev_err("(unintern \"nope\")"), "wrong-number-of-arguments");
+    // GNU: (unintern "nope") → nil (no such symbol interned).
+    assert_eq!(ev("(unintern \"nope\")"), "nil");
+    assert_eq!(ev("(progn (intern \"qq1\") (unintern \"qq1\"))"), "t");
     assert_eq!(ev("(commandp 'next-line)"), "t");
 }
 

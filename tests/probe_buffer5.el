@@ -16,7 +16,7 @@
   (with-temp-buffer
     (insert "(a (b (c) d) e)")
     (goto-char (point-min))
-    (prin1 (scan-lists (point) 1 1))
+    (prin1 (condition-case e (scan-lists (point) 1 1) (error (car e))))
     (prin1 (scan-lists (point) 1 0))
     (prin1 (scan-lists (point) -1 0))
     (condition-case e (scan-lists 2 1 1) (error (prin1 (car e)))))

@@ -188,7 +188,7 @@ pub(crate) static SUBRS: &[Subr] = &[
     ),
     S!(
         "unintern",
-        2,
+        1,
         2,
         f_unintern,
         "Remove SYMBOL from the obarray."

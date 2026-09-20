@@ -826,10 +826,8 @@ impl Interp {
             }
             Value::Subr(s) => match s.arity {
                 Arity::Unevalled => {
-                    // Special form via apply: args are already values;
-                    // rebuild a list and call raw (e.g. (apply 'if ...)).
-                    let list = Value::list(argv);
-                    (s.func)(self, vec![list])
+                    // GNU: special forms cannot be funcalled/applied.
+                    Err(self.signal_data(sym::INVALID_FUNCTION, vec![fun.clone()]))
                 }
                 _ => {
                     self.check_arity_subr(s, &argv, None)?;

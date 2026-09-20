@@ -10,7 +10,7 @@
     (prin1 (bool-vector-subsetp a b))
     (prin1 (bool-vector-subsetp b a))
     (prin1 (bool-vector-not a))
-    (prin1 (bool-vector-not a t))
+    (prin1 (condition-case e (bool-vector-not a t) (error (car e))))
     (condition-case e (bool-vector-union a "s") (error (prin1 (car e)))))
   ;; ---- make-temp-file-internal ------------------------------------
   (let ((f (make-temp-file-internal "mti" nil ".x" nil)))
