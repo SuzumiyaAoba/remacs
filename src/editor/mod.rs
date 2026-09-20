@@ -767,7 +767,14 @@ pub(crate) static SUBRS: &[Subr] = &[
         3,
         3,
         f_copy_to_buffer,
-        "Copy region to BUFFER."
+        "Copy region to BUFFER, replacing its contents."
+    ),
+    S!(
+        "append-to-buffer",
+        3,
+        3,
+        f_append_to_buffer,
+        "Append region to BUFFER at its point."
     ),
     // file I/O
     S!(
@@ -2169,9 +2176,11 @@ fn f_walk_windows(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 fn f_get_buffer_window(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let bid = match a.get(0) {
         None => i.current_buffer,
-        Some(v) => i
-            .buffer_id_of(v)
-            .ok_or_else(|| i.error(format!("No buffer named {}", i.princ_to_string(&v))))?,
+        // Nonexistent buffer name → nil.
+        Some(v) => match i.buffer_id_of(v) {
+            Some(b) => b,
+            None => return Ok(Value::Nil),
+        },
     };
     for f in &i.frames {
         for w in &f.borrow().windows {
@@ -2186,9 +2195,11 @@ fn f_get_buffer_window(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 fn f_get_buffer_window_list(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let bid = match a.get(0) {
         None => i.current_buffer,
-        Some(v) => i
-            .buffer_id_of(v)
-            .ok_or_else(|| i.error(format!("No buffer named {}", i.princ_to_string(&v))))?,
+        // Nonexistent buffer name → empty list.
+        Some(v) => match i.buffer_id_of(v) {
+            Some(b) => b,
+            None => return Ok(Value::Nil),
+        },
     };
     let mut out = Vec::new();
     for f in &i.frames {
@@ -3525,6 +3536,57 @@ fn f_single_key_description(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     }
 }
 
+fn describe_keymap_into(
+    i: &mut Interp,
+    km: &Value,
+    prefix: &mut Vec<Value>,
+    rows: &mut Vec<(Vec<Value>, String)>,
+) {
+    let bindings = keymap_bindings(km);
+    let cells = bindings.list_to_vec().unwrap_or_default();
+    for cell in cells {
+        if let Value::Cons(c) = &cell {
+            let (k, d) = {
+                let b = c.borrow();
+                (b.car.clone(), b.cdr.clone())
+            };
+            // A keymap element is a parent slot, not a binding.
+            if is_keymap(i, &k) {
+                continue;
+            }
+            match &k {
+                Value::Int(_) | Value::Sym(_) => {
+                    if matches!(&k, Value::Sym(s) if i.symbol_name(*s) == "keymap") {
+                        continue;
+                    }
+                }
+                _ => continue,
+            }
+            // `t` is the default binding, not a real key.
+            if matches!(&k, Value::Sym(s) if i.symbol_name(*s) == "t") {
+                continue;
+            }
+            prefix.push(k);
+            if is_keymap(i, &d) {
+                describe_keymap_into(i, &d, prefix, rows);
+            } else {
+                rows.push((prefix.clone(), i.princ_to_string(&d)));
+            }
+            prefix.pop();
+        }
+    }
+}
+
+fn keymap_sort_key(i: &Interp, keys: &[Value]) -> Vec<(u8, i128, String)> {
+    keys.iter()
+        .map(|k| match k {
+            Value::Int(n) => (0, *n, String::new()),
+            Value::Sym(s) => (1, 0, i.symbol_name(*s)),
+            _ => (2, 0, String::new()),
+        })
+        .collect()
+}
+
 /// `substitute-command-keys` — expand `\[cmd]`, `\{map}`, `\<map>`,
 /// `\=` escapes, and `'` → `’' quoting (Emacs curve style).
 fn f_substitute_command_keys(i: &mut Interp, a: Vec<Value>) -> EvalResult {
@@ -3586,8 +3648,55 @@ fn f_substitute_command_keys(i: &mut Interp, a: Vec<Value>) -> EvalResult {
                 }
                 '{' => {
                     // \{map} — insert the map's description.
-                    if let Some((_name, next)) = take_until(&chars, pos + 2, '}') {
-                        // Keymap listing not yet implemented; emits nothing.
+                    if let Some((name, next)) = take_until(&chars, pos + 2, '}') {
+                        let id = i.intern_soft(&name);
+                        let kmv = id
+                            .filter(|id| i.bound_p(*id))
+                            .map(|id| i.symbol_value(id));
+                        match kmv.filter(|v| is_keymap(i, v)) {
+                            Some(km) => {
+                                let mut rows = Vec::new();
+                                describe_keymap_into(i, &km, &mut Vec::new(), &mut rows);
+                                // GNU order: char keys by code, then symbols.
+                                rows.sort_by(|a, b| {
+                                    keymap_sort_key(i, &a.0).cmp(&keymap_sort_key(i, &b.0))
+                                });
+                                out.push_str("\nKey             Binding\n");
+                                out.push_str(&"-".repeat(79));
+                                out.push('\n');
+                                for (keys, def) in rows {
+                                    let mut desc = String::new();
+                                    for kv in &keys {
+                                        if !desc.is_empty() {
+                                            desc.push(' ');
+                                        }
+                                        let v = Value::Vec(Rc::new(RefCell::new(
+                                            vec![kv.clone()],
+                                        )));
+                                        if let Ok(Value::Str(s)) =
+                                            f_key_description(i, vec![v])
+                                        {
+                                            desc.push_str(&s.borrow());
+                                        }
+                                    }
+                                    out.push_str(&desc);
+                                    out.push_str(if desc.chars().count() >= 8 {
+                                        "\t"
+                                    } else {
+                                        "\t\t"
+                                    });
+                                    out.push_str(&def);
+                                    out.push('\n');
+                                }
+                            }
+                            None => {
+                                out.push_str(&format!(
+                                    "Uses keymap \u{2018}{}\u{2019}, which is not \
+                                     currently defined.",
+                                    name
+                                ));
+                            }
+                        }
                         pos = next;
                         continue;
                     }
@@ -3853,6 +3962,31 @@ fn f_rotate_yank_pointer(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 }
 
 fn f_copy_to_buffer(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let bid = i
+        .buffer_id_of(&a[0])
+        .ok_or_else(|| i.error(format!("No buffer named {}", i.princ_to_string(&a[0]))))?;
+    let text = {
+        let b = cur(i);
+        let bb = b.borrow();
+        let len = bb.text.len();
+        let s = (want_int(i, &a[1])?.max(1) as usize - 1).min(len);
+        let e = (want_int(i, &a[2])?.max(1) as usize - 1).min(len);
+        bb.text.substring(s.min(e), s.max(e))
+    };
+    if let Some(b) = i.buffers.get(bid) {
+        // copy-to-buffer replaces the target's entire contents.
+        let mut bb = b.borrow_mut();
+        let len = bb.text.len();
+        bb.text.delete(0, len);
+        bb.set_point(0);
+        bb.insert(&text);
+    }
+    Ok(Value::Nil)
+}
+
+fn f_append_to_buffer(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    // (append-to-buffer BUFFER START END) — insert region text at BUFFER's
+    // point; returns nil.
     let bid = i
         .buffer_id_of(&a[0])
         .ok_or_else(|| i.error(format!("No buffer named {}", i.princ_to_string(&a[0]))))?;
@@ -4557,17 +4691,9 @@ fn f_insert_file_contents_literally(i: &mut Interp, a: Vec<Value>) -> EvalResult
 }
 
 fn f_write_region(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    // (write-region START END FILENAME ...) — START may be a string.
-    let filename_arg =
-        if matches!(&a[0], Value::Str(_)) && a.len() >= 2 && matches!(&a[1], Value::Str(_)) {
-            // (write-region STRING FILENAME) isn't Emacs's signature — keep
-            // the standard form: (start end filename). If a[0] is a string
-            // it's the text; a[1] is the filename.
-            &a[1]
-        } else {
-            &a[2]
-        };
-    let path = want_filename(i, filename_arg)?;
+    // (write-region START END FILENAME &optional APPEND VISIT LOCKNAME
+    // MUSTBENEW) — START may be a string, in which case END is ignored.
+    let path = want_filename(i, &a[2])?;
     if let Value::Str(sv) = &a[0] {
         let s = sv.borrow().clone();
         return write_file_string(i, &path, &s, &a);
@@ -4599,8 +4725,29 @@ fn region_bounds(i: &mut Interp, s: &Value, e: &Value, len: usize) -> (usize, us
     (s0.min(len), e0.min(len))
 }
 
-fn write_file_string(i: &mut Interp, path: &str, text: &str, _a: &[Value]) -> EvalResult {
-    match std::fs::write(path, text) {
+fn write_file_string(i: &mut Interp, path: &str, text: &str, a: &[Value]) -> EvalResult {
+    let append = a.get(3).map(|v| v.truthy()).unwrap_or(false);
+    let excl = matches!(a.get(6), Some(Value::Sym(s)) if *s == i.intern("excl"));
+    if excl && std::path::Path::new(path).exists() {
+        // MUSTBENEW = 'excl: fail if the file exists.
+        return Err(i.signal_data(
+            sym::FILE_ERROR,
+            vec![
+                Value::string("File already exists"),
+                Value::string(path),
+            ],
+        ));
+    }
+    let r = if append {
+        std::fs::OpenOptions::new()
+            .append(true)
+            .create(true)
+            .open(path)
+            .and_then(|mut f| std::io::Write::write_all(&mut f, text.as_bytes()))
+    } else {
+        std::fs::write(path, text)
+    };
+    match r {
         Ok(()) => {
             // Message: Wrote /path
             i.message(&format!("Wrote {}", path));
@@ -4779,30 +4926,41 @@ fn f_call_process(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     };
     let dest = arg(&a, 2);
     let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
-    match &dest {
-        Value::Nil => {}
-        Value::Int(0) => {}
-        Value::Cons(_) => {
-            // (BUFFER . INSERT?) — insert into BUFFER.
-            if let Value::Cons(c) = &dest {
-                let target = c.borrow().car.clone();
-                let bid = i
-                    .buffer_id_of(&target)
-                    .ok_or_else(|| i.error(format!("No buffer named {}", i.princ_to_string(&target))))?;
-                if let Some(b) = i.buffers.get(bid) {
-                    b.borrow_mut().insert(&stdout);
+    // A cons dest is (REALDEST . STDERR); recurse on REALDEST only.
+    let real_dest = match &dest {
+        Value::Cons(c) => c.borrow().car.clone(),
+        other => other.clone(),
+    };
+    // (:file FILE) — write stdout to FILE.
+    let mut file_dest: Option<String> = None;
+    if let Value::Cons(c) = &real_dest {
+        let cb = c.borrow();
+        if let (Value::Sym(s), Value::Cons(inner)) = (&cb.car, &cb.cdr) {
+            if i.symbol_name(*s) == ":file" {
+                if let Value::Str(p) = &inner.borrow().car {
+                    file_dest = Some(p.borrow().clone());
                 }
             }
         }
-        _ => {
-            // t or buffer → insert at point in current/that buffer.
-            let bid = if dest.truthy() && !i.sym_id(&dest).map(|s| s == sym::T).unwrap_or(false) {
-                i.buffer_id_of(&dest).unwrap_or(i.current_buffer)
-            } else {
-                i.current_buffer
-            };
-            if let Some(b) = i.buffers.get(bid) {
-                b.borrow_mut().insert(&stdout);
+    }
+    if let Some(path) = file_dest {
+        let _ = std::fs::write(&path, &stdout);
+    } else {
+        match &real_dest {
+            Value::Nil => {}
+            Value::Int(0) => {}
+            _ => {
+                // t or buffer → insert at point in current/that buffer.
+                let bid = if real_dest.truthy()
+                    && !i.sym_id(&real_dest).map(|s| s == sym::T).unwrap_or(false)
+                {
+                    i.buffer_id_of(&real_dest).unwrap_or(i.current_buffer)
+                } else {
+                    i.current_buffer
+                };
+                if let Some(b) = i.buffers.get(bid) {
+                    b.borrow_mut().insert(&stdout);
+                }
             }
         }
     }

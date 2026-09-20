@@ -2553,7 +2553,20 @@ fn f_memory_limit(_i: &mut Interp, _a: Vec<Value>) -> EvalResult {
 }
 
 fn f_help_function_arglist(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    match i.indirect_function_value(&a[0]) {
+    // A (lambda PARAMS . BODY) form: extract PARAMS directly.
+    let mut v = i.indirect_function_value(&a[0]);
+    if let Value::Cons(_) = v {
+        if let Ok(items) = v.list_to_vec() {
+            let head_lam = matches!(items.first(), Some(Value::Sym(s))
+                if *s == i.intern("lambda") || *s == i.intern("closure"));
+            if head_lam {
+                if let Ok(l) = i.lambda_from_form(&v, None) {
+                    v = Value::Lambda(std::rc::Rc::new(l));
+                }
+            }
+        }
+    }
+    match v {
         Value::Lambda(l) => {
             let mut v: Vec<Value> = l.required.iter().map(|s| Value::Sym(*s)).collect();
             if !l.optional.is_empty() {
