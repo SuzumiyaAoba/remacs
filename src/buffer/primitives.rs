@@ -679,6 +679,229 @@ pub(crate) static SUBRS: &[Subr] = &[
         f_deactivate_mark,
         "Deactivate the mark."
     ),
+    S!(
+        "set-register",
+        2,
+        2,
+        f_set_register,
+        "Set register REGISTER to VALUE."
+    ),
+    S!(
+        "get-register",
+        1,
+        1,
+        f_get_register,
+        "Return the value of register REGISTER."
+    ),
+    S!(
+        "number-to-register",
+        2,
+        2,
+        f_number_to_register,
+        "Store NUMBER in register REGISTER."
+    ),
+    S!(
+        "increment-register",
+        2,
+        2,
+        f_increment_register,
+        "Add NUMBER to register REGISTER."
+    ),
+    S!(
+        "point-to-register",
+        1,
+        2,
+        f_point_to_register,
+        "Store the location of point in register REGISTER."
+    ),
+    S!(
+        "jump-to-register",
+        1,
+        2,
+        f_jump_to_register,
+        "Move point to the position stored in register REGISTER."
+    ),
+    S!(
+        "insert-register",
+        1,
+        2,
+        f_insert_register,
+        "Insert the contents of register REGISTER."
+    ),
+    S!(
+        "copy-to-register",
+        3,
+        5,
+        f_copy_to_register,
+        "Copy region into register REGISTER."
+    ),
+    S!(
+        "window-configuration-to-register",
+        1,
+        2,
+        f_window_configuration_to_register,
+        "Store the window configuration in register REGISTER."
+    ),
+    S!(
+        "frame-configuration-to-register",
+        1,
+        2,
+        f_frame_configuration_to_register,
+        "Store the frame configuration in register REGISTER."
+    ),
+    S!(
+        "kill-rectangle",
+        2,
+        3,
+        f_kill_rectangle,
+        "Delete the region-rectangle, saving it as the last killed one."
+    ),
+    S!(
+        "delete-rectangle",
+        2,
+        3,
+        f_delete_rectangle,
+        "Delete the text in the region-rectangle."
+    ),
+    S!(
+        "clear-rectangle",
+        2,
+        3,
+        f_clear_rectangle,
+        "Blank out the region-rectangle."
+    ),
+    S!(
+        "open-rectangle",
+        2,
+        3,
+        f_open_rectangle,
+        "Blank out the region-rectangle, shifting text right."
+    ),
+    S!(
+        "string-rectangle",
+        3,
+        3,
+        f_string_rectangle,
+        "Replace rectangle contents with STRING on each line."
+    ),
+    S!(
+        "string-insert-rectangle",
+        3,
+        3,
+        f_string_insert_rectangle,
+        "Insert STRING on each line of region-rectangle."
+    ),
+    S!(
+        "copy-rectangle-as-kill",
+        2,
+        2,
+        f_copy_rectangle_as_kill,
+        "Copy the region-rectangle as the last killed one."
+    ),
+    S!(
+        "extract-rectangle",
+        2,
+        2,
+        f_extract_rectangle,
+        "Return the contents of the rectangle as a list of strings."
+    ),
+    S!(
+        "delete-extract-rectangle",
+        2,
+        3,
+        f_delete_extract_rectangle,
+        "Delete the rectangle, returning its contents as a list."
+    ),
+    S!(
+        "yank-rectangle",
+        0,
+        0,
+        f_yank_rectangle,
+        "Yank the last killed rectangle at point."
+    ),
+    S!(
+        "insert-rectangle",
+        1,
+        1,
+        f_insert_rectangle,
+        "Insert RECTANGLE (list of strings) with upper left corner at point."
+    ),
+    S!(
+        "rectangle-number-lines",
+        3,
+        4,
+        f_rectangle_number_lines,
+        "Insert numbers in front of the region-rectangle."
+    ),
+    S!(
+        "delete-whitespace-rectangle",
+        2,
+        3,
+        f_delete_whitespace_rectangle,
+        "Delete all whitespace following a column in each line."
+    ),
+    S!(
+        "close-rectangle",
+        2,
+        3,
+        f_delete_whitespace_rectangle,
+        "Obsolete alias for `delete-whitespace-rectangle'."
+    ),
+    S!(
+        "replace-rectangle",
+        3,
+        3,
+        f_string_rectangle,
+        "Obsolete alias for `string-rectangle'."
+    ),
+    S!(
+        "spaces-string",
+        1,
+        1,
+        f_spaces_string,
+        "Return a string of N spaces."
+    ),
+    S!(
+        "rectangle-dimensions",
+        2,
+        2,
+        f_rectangle_dimensions,
+        "Return (WIDTH . HEIGHT) of the rectangle with corners START END."
+    ),
+    S!(
+        "rectangle-position-as-coordinates",
+        1,
+        1,
+        f_rectangle_position_as_coordinates,
+        "Return (COLUMN . LINE) of POSITION."
+    ),
+    S!(
+        "rectangle-intersect-p",
+        4,
+        4,
+        f_rectangle_intersect_p,
+        "Return non-nil if two rectangles intersect."
+    ),
+    S!(
+        "extract-rectangle-bounds",
+        2,
+        2,
+        f_extract_rectangle_bounds,
+        "Return (START . END) bounds for each line of the rectangle."
+    ),
+    S!(
+        "apply-on-rectangle",
+        many 3,
+        f_apply_on_rectangle,
+        "Call FUNCTION for each line of rectangle START..END."
+    ),
+    S!(
+        "operate-on-rectangle",
+        4,
+        4,
+        f_operate_on_rectangle,
+        "Call FUNCTION for each line segment of rectangle START..END."
+    ),
     S!("activate-mark", 0, 0, f_activate_mark, "Activate the mark."),
     S!(
         "exchange-point-and-mark",
@@ -3098,12 +3321,13 @@ fn f_push_mark(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         items.remove(0);
     }
     bb.locals.insert(ring_sym, Value::list(items));
-    if a.get(1).map(|v| v.truthy()).unwrap_or(false) {
+    if a.get(2).map(|v| v.truthy()).unwrap_or(false) {
         bb.mark_active = true;
     }
-    let msg = a.get(2).map(|v| v.truthy()).unwrap_or(false);
+    // GNU (push-mark LOCATION NOMSG ACTIVATE): messages unless NOMSG.
+    let nomsg = a.get(1).map(|v| v.truthy()).unwrap_or(false);
     drop(bb);
-    if msg {
+    if !nomsg {
         i.message("Mark set");
     }
     Ok(Value::Nil)
@@ -3124,6 +3348,918 @@ fn f_pop_mark(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
         bb.mark = None;
     }
     bb.locals.insert(ring_sym, Value::list(items));
+    Ok(Value::Nil)
+}
+
+// --- Registers ---------------------------------------------------------
+// `register-alist' holds (KEY . VALUE) cells; keys are compared with
+// `equal' (conventionally character codes, but any object works).
+
+fn reg_alist(i: &mut Interp) -> (crate::lisp::value::SymId, Value) {
+    let sym = i.intern("register-alist");
+    let v = i.symbol_value(sym);
+    (sym, v)
+}
+
+fn reg_set(i: &mut Interp, key: Value, val: Value) -> Result<(), Flow> {
+    let (sym, alist) = reg_alist(i);
+    let mut items = alist.list_to_vec().unwrap_or_default();
+    let mut found = false;
+    for it in &mut items {
+        if let Value::Cons(c) = it {
+            if crate::lisp::builtins::equal_values(i, &c.borrow().car, &key) {
+                c.borrow_mut().cdr = val.clone();
+                found = true;
+                break;
+            }
+        }
+    }
+    if !found {
+        // GNU prepends new cells to register-alist.
+        items.insert(0, Value::cons(key, val));
+    }
+    i.set_symbol(sym, Value::list(items))
+}
+
+fn reg_get(i: &mut Interp, key: &Value) -> Value {
+    let (_, alist) = reg_alist(i);
+    for it in alist.list_to_vec().unwrap_or_default() {
+        if let Value::Cons(c) = &it {
+            if crate::lisp::builtins::equal_values(i, &c.borrow().car, key) {
+                return c.borrow().cdr.clone();
+            }
+        }
+    }
+    Value::Nil
+}
+
+fn f_set_register(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    // GNU keeps the (key) cell even when VALUE is nil.
+    reg_set(i, a[0].clone(), a[1].clone())?;
+    Ok(a[1].clone())
+}
+
+fn f_get_register(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    Ok(reg_get(i, &a[0]))
+}
+
+fn f_number_to_register(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    match &a[0] {
+        Value::Int(_) | Value::Float(_) => {}
+        other => return Err(i.wrong_type_mut("numberp", other)),
+    }
+    reg_set(i, a[1].clone(), a[0].clone())?;
+    Ok(a[0].clone())
+}
+
+/// The "mark is not set" error GNU signals when register commands need
+/// the region but no mark exists.
+fn no_mark_err(i: &mut Interp) -> Flow {
+    i.signal_data(
+        sym::ERROR,
+        vec![Value::string(
+            "The mark is not set now, so there is no region",
+        )],
+    )
+}
+
+fn region_bounds(i: &mut Interp) -> Result<(usize, usize), Flow> {
+    let b = cur(i);
+    let bb = b.borrow();
+    match bb.mark {
+        Some(m) => {
+            let p = bb.point();
+            Ok((m.min(p), m.max(p)))
+        }
+        None => Err(no_mark_err(i)),
+    }
+}
+
+fn f_increment_register(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    // GNU rounds the increment up (42+0.5 → 43, 50+0.5 → 51).
+    let nf = match &a[0] {
+        Value::Int(x) => *x as f64,
+        Value::Float(f) => f.ceil(),
+        other => return Err(i.wrong_type_mut("numberp", other)),
+    };
+    let reg = a[1].clone();
+    let val = reg_get(i, &reg);
+    if let Value::Int(old) = &val {
+        let nv = Value::Int(old + nf as i128);
+        reg_set(i, reg, nv.clone())?;
+        return Ok(nv);
+    }
+    if let Value::Float(old) = &val {
+        let nv = Value::Float(old + nf);
+        reg_set(i, reg, nv.clone())?;
+        return Ok(nv);
+    }
+    // Anything else (string, nil, unset) appends the active region's
+    // text to the register, erroring when no mark is set.
+    let (lo, hi) = region_bounds(i)?;
+    let text = {
+        let b = cur(i);
+        let bb = b.borrow();
+        bb.text.substring(lo, hi)
+    };
+    let prefix = match &val {
+        Value::Str(s) => s.borrow().clone(),
+        Value::Nil => String::new(),
+        other => return Err(i.wrong_type_mut("stringp", other)),
+    };
+    reg_set(i, reg, Value::string(format!("{prefix}{text}")))?;
+    Ok(Value::Nil)
+}
+
+fn f_point_to_register(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let (buf, pos) = {
+        let b = cur(i);
+        let bb = b.borrow();
+        (bb.id, bb.point())
+    };
+    let m = new_marker_at(i, buf, pos);
+    reg_set(i, a[0].clone(), m.clone())?;
+    Ok(m)
+}
+
+fn f_jump_to_register(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let val = reg_get(i, &a[0]);
+    match &val {
+        Value::Marker(m) => {
+            let (pos, buf) = {
+                let mm = m.borrow();
+                (mm.position, mm.buffer)
+            };
+            if let Some(bid) = buf {
+                i.set_current_buffer(bid);
+            }
+            cur(i).borrow_mut().set_point(pos);
+            Ok(val.clone())
+        }
+        Value::Cons(c) => {
+            let (head, rest) = {
+                let cc = c.borrow();
+                (cc.car.clone(), cc.cdr.clone())
+            };
+            let head_name = match &head {
+                Value::Sym(s) => i.symbol_name(*s),
+                _ => String::new(),
+            };
+            match head_name.as_str() {
+                "window-configuration" | "frame-configuration" => {
+                    // Register value is (head marker); GNU jumps to the
+                    // marker and returns it.
+                    let items = val.list_to_vec().unwrap_or_default();
+                    Ok(items.into_iter().nth(1).unwrap_or(rest))
+                }
+                "buffer" => {
+                    let name = match &rest {
+                        Value::Str(s) => Value::Str(s.clone()),
+                        v => v.clone(),
+                    };
+                    f_set_buffer(i, vec![name]).map(|_| val.clone())
+                }
+                "file" | "file-query" => {
+                    let target = rest.list_to_vec().ok().and_then(|v| v.into_iter().next());
+                    match target {
+                        Some(name) => {
+                            let find = Value::Sym(i.intern("find-file"));
+                            i.call_function(&find, &Value::list(vec![name]), None)?;
+                            Ok(val.clone())
+                        }
+                        None => Err(reg_no_pos_err(i)),
+                    }
+                }
+                _ => Err(reg_no_pos_err(i)),
+            }
+        }
+        _ => Err(reg_no_pos_err(i)),
+    }
+}
+
+fn reg_no_pos_err(i: &mut Interp) -> Flow {
+    err_sym(
+        i,
+        "user-error",
+        vec![Value::string(
+            "Register doesn’t contain a buffer position or configuration",
+        )],
+    )
+}
+
+fn f_insert_register(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let val = reg_get(i, &a[0]);
+    let before = a.get(1).map(|v| v.truthy()).unwrap_or(false);
+    match &val {
+        Value::Str(s) => {
+            let t = s.borrow().clone();
+            insert_str_at_point(i, &t, false)?;
+            if before {
+                let b = cur(i);
+                let mut bb = b.borrow_mut();
+                let p = bb.point();
+                bb.set_point(p.saturating_sub(t.chars().count()));
+            }
+            Ok(Value::Nil)
+        }
+        Value::Int(_) | Value::Float(_) => {
+            let t = i.princ_to_string(&val);
+            insert_str_at_point(i, &t, false)?;
+            if before {
+                let b = cur(i);
+                let mut bb = b.borrow_mut();
+                let p = bb.point();
+                bb.set_point(p.saturating_sub(t.chars().count()));
+            }
+            Ok(Value::Nil)
+        }
+        // A position/marker register inserts nothing and returns nil.
+        Value::Marker(_) => Ok(Value::Nil),
+        _ => Err(err_sym(
+            i,
+            "user-error",
+            vec![Value::string("Register does not contain text")],
+        )),
+    }
+}
+
+fn f_copy_to_register(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    // REGION non-nil means START/END are ignored and the marked region
+    // is used (GNU's 5th arg).
+    let (lo, hi) = if a.get(4).map(|v| v.truthy()).unwrap_or(false) {
+        region_bounds(i)?
+    } else {
+        let b = cur(i);
+        let bb = b.borrow();
+        let len = bb.text.len();
+        let s = pos_idx(len, want_int(i, &a[1])?);
+        let e = pos_idx(len, want_int(i, &a[2])?);
+        drop(bb);
+        (s.min(e), s.max(e))
+    };
+    let delete = a.get(3).map(|v| v.truthy()).unwrap_or(false);
+    let text = {
+        let b = cur(i);
+        let bb = b.borrow();
+        bb.text.substring(lo, hi)
+    };
+    if delete {
+        let b = cur(i);
+        let mut bb = b.borrow_mut();
+        bb.delete_region(lo, hi);
+    }
+    reg_set(i, a[0].clone(), Value::string(text))?;
+    Ok(Value::Nil)
+}
+
+fn f_window_configuration_to_register(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    // GNU stores (config marker); our config object is stubbed, so the
+    // value is (window-configuration marker) — jump-to-register
+    // dispatches on the head and returns the marker.
+    let head = Value::Sym(i.intern("window-configuration"));
+    let (buf, pos) = {
+        let b = cur(i);
+        let bb = b.borrow();
+        (bb.id, bb.point())
+    };
+    let cell = Value::list(vec![head, new_marker_at(i, buf, pos)]);
+    reg_set(i, a[0].clone(), cell.clone())?;
+    Ok(cell)
+}
+
+fn f_frame_configuration_to_register(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let head = Value::Sym(i.intern("frame-configuration"));
+    let (buf, pos) = {
+        let b = cur(i);
+        let bb = b.borrow();
+        (bb.id, bb.point())
+    };
+    let cell = Value::list(vec![head, new_marker_at(i, buf, pos)]);
+    reg_set(i, a[0].clone(), cell.clone())?;
+    Ok(cell)
+}
+
+// --- Rectangles ----------------------------------------------------------
+// Faithful port of GNU rect.el: rectangles live in *display* columns.
+// move-to-column semantics by FORCE:
+//   nil    — land on a char boundary (overshooting wide chars), no EOL pad
+//   coerce — additionally split tabs (insert spaces before them);
+//            still no EOL pad, still overshoots other wide chars
+//   t      — like coerce, plus pads short lines with spaces
+// The per-line functions combine these exactly like rect.el.
+
+#[derive(Clone, Copy, PartialEq)]
+enum RectForce {
+    Nil,
+    Coerce,
+    T,
+}
+
+/// Display width of one char (same rules as `current-column`).
+fn rect_char_width(c: char, tab: i128) -> i128 {
+    let _ = tab;
+    if (c as u32) < 0x20 || c == '\x7f' {
+        2
+    } else {
+        unicode_width::UnicodeWidthChar::width(c).unwrap_or(1).max(1) as i128
+    }
+}
+
+fn rect_tab_width(i: &Interp) -> i128 {
+    i.symbol_value(i.intern_soft("tab-width").unwrap_or(0))
+        .int()
+        .unwrap_or(8)
+        .max(1)
+}
+
+/// Column of char index P on the line starting at LS.
+fn rect_col_at(text: &crate::buffer::gapbuf::GapBuffer, ls: usize, p: usize, tab: i128) -> i128 {
+    let mut col = 0i128;
+    let mut k = ls;
+    while k < p {
+        let ch = text.char_at(k);
+        col += if ch == '\t' { (col / tab + 1) * tab - col } else { rect_char_width(ch, tab) };
+        k += 1;
+    }
+    col
+}
+
+/// (char index, column reached) for `move-to-column COL force` on the
+/// line [LS, LE). With force this may mutate the buffer (split a tab /
+/// pad the EOL); LE must be the current line end.
+fn rect_move_to(bb: &mut Buffer, ls: usize, le: usize, col: i128, tab: i128, force: RectForce) -> (usize, i128) {
+    let mut c = 0i128;
+    let mut k = ls;
+    while k < le {
+        let ch = bb.text.char_at(k);
+        let w = if ch == '\t' { (c / tab + 1) * tab - c } else { rect_char_width(ch, tab) };
+        if c + w > col {
+            if c == col {
+                return (k, col);
+            }
+            if ch == '\t' && force != RectForce::Nil {
+                // Split the tab: insert (col - c) spaces before it.
+                let pad = (col - c) as usize;
+                bb.insert_at(k, &" ".repeat(pad));
+                return (k + pad, col);
+            }
+            return (k + 1, c + w); // overshoot: point lands after the char
+        }
+        c += w;
+        k += 1;
+    }
+    if force == RectForce::T && c < col {
+        let pad = (col - c) as usize;
+        bb.insert_at(le, &" ".repeat(pad));
+        return (le + pad, col);
+    }
+    (le, c)
+}
+
+/// (start-line, end-line, c0, c1, tab): normalized corners like
+/// apply-on-rectangle (columns swapped when END is left of START).
+fn rect_corners(i: &mut Interp, a: &[Value]) -> Result<(usize, usize, i128, i128, i128), Flow> {
+    let tab = rect_tab_width(i);
+    let b = cur(i);
+    let bb = b.borrow();
+    let len = bb.text.len();
+    let sp = pos_idx(len, want_int(i, &a[0])?);
+    let ep = pos_idx(len, want_int(i, &a[1])?);
+    let sl = bb.text.line_of_pos(sp);
+    let el = bb.text.line_of_pos(ep);
+    let c0 = rect_col_at(&bb.text, bb.text.line_start(sl), sp, tab);
+    let c1 = rect_col_at(&bb.text, bb.text.line_start(el), ep, tab);
+    Ok(if c0 <= c1 { (sl, el, c0, c1, tab) } else { (sl, el, c1, c0, tab) })
+}
+
+/// Line numbers GNU's apply-on-rectangle visits: the start line always,
+/// then following lines through END's line.
+fn rect_line_range(i: &mut Interp, a: &[Value]) -> Result<(usize, usize, i128, i128, i128), Flow> {
+    let (sl, el, c0, c1, tab) = rect_corners(i, a)?;
+    let last = {
+        let b = cur(i);
+        let bb = b.borrow();
+        bb.text.line_of_pos(bb.text.len())
+    };
+    let hi = if el > sl { el.min(last) } else { sl };
+    Ok((sl, hi, c0, c1, tab))
+}
+
+/// Visit each rectangle line. Line bounds are recomputed per line since
+/// per-line ops shift positions within their own line only.
+fn rect_apply(
+    i: &mut Interp,
+    a: &[Value],
+    mut f: impl FnMut(&mut Buffer, usize, usize, i128, i128, i128) -> Result<(), Flow>,
+) -> EvalResult {
+    check_writable(i)?;
+    let (sl, hi, c0, c1, tab) = rect_line_range(i, a)?;
+    let b = cur(i);
+    for ln in sl..=hi {
+        let (ls, le) = {
+            let bb = b.borrow();
+            let ls = bb.text.line_start(ln);
+            (ls, bb.text.line_end(ls))
+        };
+        f(&mut b.borrow_mut(), ls, le, c0, c1, tab)?;
+    }
+    Ok(Value::Nil)
+}
+
+/// GNU delete-rectangle-line; returns the position of column SC.
+fn rect_delete_line(bb: &mut Buffer, ls: usize, le: usize, sc: i128, ec: i128, fill: bool, tab: i128) -> usize {
+    let (p0, reached) = rect_move_to(bb, ls, le, sc, tab, if fill { RectForce::T } else { RectForce::Coerce });
+    if reached >= sc {
+        let le2 = bb.text.line_end(ls);
+        let (p1, _) = rect_move_to(bb, ls, le2, ec, tab, RectForce::Coerce);
+        if p1 > p0 {
+            bb.delete_region(p0, p1);
+        }
+    }
+    p0
+}
+
+/// GNU delete-extract-rectangle-line: kill the span, return the segment.
+fn rect_extract_delete_line(bb: &mut Buffer, ls: usize, le: usize, sc: i128, ec: i128, fill: bool, tab: i128) -> String {
+    let (p0, reached) = rect_move_to(bb, ls, le, sc, tab, if fill { RectForce::T } else { RectForce::Coerce });
+    if reached < sc {
+        // Line ends before the rectangle's left edge: GNU stores blanks
+        // and leaves the line untouched.
+        return " ".repeat((ec - sc).max(0) as usize);
+    }
+    let le2 = bb.text.line_end(ls);
+    let (p1, _) = rect_move_to(bb, ls, le2, ec, tab, RectForce::T);
+    bb.delete_region(p0, p1)
+}
+
+/// GNU extract-rectangle-line: non-destructive, padded with spaces.
+fn rect_extract_line(text: &crate::buffer::gapbuf::GapBuffer, ls: usize, le: usize, sc: i128, ec: i128, tab: i128) -> String {
+    // move-to-column without force: no pad, no split.
+    let reach = |col: i128| -> (usize, i128) {
+        let mut c = 0i128;
+        let mut k = ls;
+        while k < le {
+            let ch = text.char_at(k);
+            let w = if ch == '\t' { (c / tab + 1) * tab - c } else { rect_char_width(ch, tab) };
+            if c + w > col {
+                return if c == col { (k, col) } else { (k + 1, c + w) };
+            }
+            c += w;
+            k += 1;
+        }
+        (le, c)
+    };
+    let (p0, r0) = reach(sc);
+    let (p1, r1) = reach(ec);
+    // Tabs inside the span expand to their display width.
+    let mut seg = String::new();
+    let mut col = rect_col_at(text, ls, p0, tab);
+    for k in p0..p1.min(le) {
+        let ch = text.char_at(k);
+        if ch == '\t' {
+            let w = (col / tab + 1) * tab - col;
+            seg.extend(std::iter::repeat(' ').take(w as usize));
+            col += w;
+        } else {
+            seg.push(ch);
+            col += rect_char_width(ch, tab);
+        }
+    }
+    let mut begextra = r0 - sc;
+    let mut endextra = ec - r1;
+    if begextra < 0 {
+        endextra += begextra;
+        begextra = 0;
+    }
+    if endextra < 0 {
+        endextra = 0;
+    }
+    format!("{}{}{}", " ".repeat(begextra as usize), seg, " ".repeat(endextra as usize))
+}
+
+fn rect_set_killed(i: &mut Interp, segs: Vec<String>) {
+    let sym = i.intern("killed-rectangle");
+    let _ = i.set_symbol(sym, Value::list(segs.into_iter().map(Value::string).collect()));
+}
+
+fn rect_extract_span(i: &mut Interp, a: &[Value], delete: bool, fill: bool) -> Result<Vec<String>, Flow> {
+    let (sl, hi, c0, c1, tab) = rect_line_range(i, a)?;
+    let b = cur(i);
+    let mut segs = Vec::new();
+    for ln in sl..=hi {
+        let (ls, le) = {
+            let bb = b.borrow();
+            let ls = bb.text.line_start(ln);
+            (ls, bb.text.line_end(ls))
+        };
+        if delete {
+            let mut bb = b.borrow_mut();
+            segs.push(rect_extract_delete_line(&mut bb, ls, le, c0, c1, fill, tab));
+        } else {
+            let bb = b.borrow();
+            segs.push(rect_extract_line(&bb.text, ls, le, c0, c1, tab));
+        }
+    }
+    Ok(segs)
+}
+
+fn f_kill_rectangle(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    check_writable(i)?;
+    let fill = a.get(2).map(|v| v.truthy()).unwrap_or(false);
+    let segs = rect_extract_span(i, &a, true, fill)?;
+    rect_set_killed(i, segs);
+    Ok(Value::Nil)
+}
+
+fn f_delete_extract_rectangle(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    check_writable(i)?;
+    let fill = a.get(2).map(|v| v.truthy()).unwrap_or(false);
+    let segs = rect_extract_span(i, &a, true, fill)?;
+    Ok(Value::list(segs.into_iter().map(Value::string).collect()))
+}
+
+fn f_extract_rectangle(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let segs = rect_extract_span(i, &a, false, false)?;
+    Ok(Value::list(segs.into_iter().map(Value::string).collect()))
+}
+
+fn f_copy_rectangle_as_kill(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let segs = rect_extract_span(i, &a, false, false)?;
+    rect_set_killed(i, segs);
+    Ok(Value::Nil)
+}
+
+fn f_delete_rectangle(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let fill = a.get(2).map(|v| v.truthy()).unwrap_or(false);
+    rect_apply(i, &a, |bb, ls, le, c0, c1, tab| {
+        rect_delete_line(bb, ls, le, c0, c1, fill, tab);
+        Ok(())
+    })
+}
+
+fn f_clear_rectangle(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let fill = a.get(2).map(|v| v.truthy()).unwrap_or(false);
+    rect_apply(i, &a, |bb, ls, le, c0, c1, tab| {
+        // GNU clear-rectangle-line.
+        let eol_col = rect_col_at(&bb.text, ls, le, tab);
+        let (p0, reached) = rect_move_to(bb, ls, le, c0, tab, if fill { RectForce::T } else { RectForce::Coerce });
+        if reached == c0 {
+            if !fill && eol_col <= c1 {
+                bb.delete_region(p0, le);
+            } else {
+                let le2 = bb.text.line_end(ls);
+                let (p1, _) = rect_move_to(bb, ls, le2, c1, tab, RectForce::T);
+                bb.delete_region(p0, p1);
+                let cur = rect_col_at(&bb.text, ls, p0, tab);
+                if c1 > cur {
+                    bb.insert_at(p0, &" ".repeat((c1 - cur) as usize));
+                }
+            }
+        }
+        Ok(())
+    })
+}
+
+fn f_open_rectangle(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let fill = a.get(2).map(|v| v.truthy()).unwrap_or(false);
+    rect_apply(i, &a, |bb, ls, le, c0, c1, tab| {
+        // GNU open-rectangle-line.
+        let (p0, reached) = rect_move_to(bb, ls, le, c0, tab, if fill { RectForce::T } else { RectForce::Coerce });
+        if reached == c0 && (fill || p0 != bb.text.line_end(ls)) {
+            let cur = rect_col_at(&bb.text, ls, p0, tab);
+            if c1 > cur {
+                bb.insert_at(p0, &" ".repeat((c1 - cur) as usize));
+            }
+        }
+        Ok(())
+    })
+}
+
+fn f_delete_whitespace_rectangle(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let fill = a.get(2).map(|v| v.truthy()).unwrap_or(false);
+    rect_apply(i, &a, |bb, ls, le, c0, _c1, tab| {
+        // GNU delete-whitespace-rectangle-line (close-rectangle).
+        let (p0, reached) = rect_move_to(bb, ls, le, c0, tab, if fill { RectForce::T } else { RectForce::Coerce });
+        if reached == c0 && p0 != bb.text.line_end(ls) {
+            let mut p1 = p0;
+            while p1 < le && matches!(bb.text.char_at(p1), ' ' | '\t') {
+                p1 += 1;
+            }
+            if p1 > p0 {
+                bb.delete_region(p0, p1);
+            }
+        }
+        Ok(())
+    })
+}
+
+fn rect_string_lines(i: &mut Interp, a: &[Value], s: &str, delete: bool) -> EvalResult {
+    rect_apply(i, a, |bb, ls, le, c0, c1, tab| {
+        // GNU string-rectangle-line.
+        rect_move_to(bb, ls, le, c0, tab, RectForce::T);
+        let p0 = if delete {
+            rect_delete_line(bb, ls, le, c0, c1, false, tab)
+        } else {
+            let le2 = bb.text.line_end(ls);
+            rect_move_to(bb, ls, le2, c0, tab, RectForce::Nil).0
+        };
+        bb.insert_at(p0, s);
+        Ok(())
+    })
+}
+
+fn f_string_rectangle(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let s = match &a[2] {
+        Value::Str(s) => s.borrow().clone(),
+        other => return Err(i.wrong_type_mut("stringp", other)),
+    };
+    rect_string_lines(i, &a, &s, true)
+}
+
+fn f_string_insert_rectangle(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let s = match &a[2] {
+        Value::Str(s) => s.borrow().clone(),
+        other => return Err(i.wrong_type_mut("stringp", other)),
+    };
+    rect_string_lines(i, &a, &s, false)
+}
+
+/// Shared body of yank-rectangle / insert-rectangle: GNU's
+/// insert-rectangle — first line at point, following lines at the same
+/// column (coerced with `t`), creating lines at EOF.
+fn rect_insert_segs(i: &mut Interp, segs: Vec<String>) -> EvalResult {
+    check_writable(i)?;
+    if segs.is_empty() {
+        return Ok(Value::Nil);
+    }
+    f_push_mark(i, vec![])?; // GNU pushes the mark at the upper-left corner
+    let tab = rect_tab_width(i);
+    let b = cur(i);
+    let mut bb = b.borrow_mut();
+    let c0 = {
+        let p = bb.point();
+        let ls = bb.text.line_start(bb.text.line_of_pos(p));
+        rect_col_at(&bb.text, ls, p, tab)
+    };
+    let mut ls = bb.text.line_start(bb.text.line_of_pos(bb.point()));
+    for (n, seg) in segs.iter().enumerate() {
+        let ins_at = if n == 0 {
+            bb.point()
+        } else {
+            // forward-line: next line start, creating the line at EOF.
+            let le = bb.text.line_end(ls);
+            ls = if le < bb.text.len() {
+                le + 1
+            } else {
+                bb.insert_at(le, "\n");
+                le + 1
+            };
+            let le2 = bb.text.line_end(ls);
+            rect_move_to(&mut bb, ls, le2, c0, tab, RectForce::T).0
+        };
+        bb.insert_at(ins_at, seg);
+        bb.set_point(ins_at + seg.chars().count()); // lower-right corner
+        if n == 0 {
+            ls = bb.text.line_start(bb.text.line_of_pos(ins_at));
+        }
+    }
+    Ok(Value::Nil)
+}
+
+fn f_yank_rectangle(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
+    let sym = i.intern("killed-rectangle");
+    let kr = i.symbol_value(sym);
+    let segs: Vec<String> = kr
+        .list_to_vec()
+        .unwrap_or_default()
+        .iter()
+        .filter_map(|v| match v {
+            Value::Str(s) => Some(s.borrow().clone()),
+            _ => None,
+        })
+        .collect();
+    rect_insert_segs(i, segs)
+}
+
+fn f_insert_rectangle(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let segs: Vec<String> = a[0]
+        .list_to_vec()
+        .unwrap_or_default()
+        .iter()
+        .filter_map(|v| match v {
+            Value::Str(s) => Some(s.borrow().clone()),
+            _ => None,
+        })
+        .collect();
+    rect_insert_segs(i, segs)
+}
+
+/// Minimal %d / %Nd formatter for rectangle-number-lines.
+fn rect_format(fmt: &str, n: i128) -> String {
+    let mut out = String::new();
+    let mut it = fmt.chars().peekable();
+    while let Some(c) = it.next() {
+        if c == '%' {
+            let mut w = String::new();
+            while let Some(&d) = it.peek() {
+                if d.is_ascii_digit() {
+                    w.push(d);
+                    it.next();
+                } else {
+                    break;
+                }
+            }
+            match it.next() {
+                Some('d') => {
+                    let s = n.to_string();
+                    let width: usize = w.parse().unwrap_or(0);
+                    if s.len() < width {
+                        out.extend(std::iter::repeat(' ').take(width - s.len()));
+                    }
+                    out.push_str(&s);
+                }
+                Some('%') => out.push('%'),
+                Some(other) => {
+                    out.push('%');
+                    out.push_str(&w);
+                    out.push(other);
+                }
+                None => out.push('%'),
+            }
+        } else {
+            out.push(c);
+        }
+    }
+    out
+}
+
+fn f_rectangle_number_lines(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let start_at = match &a[2] {
+        Value::Int(n) => *n,
+        Value::Nil => 1,
+        other => return Err(i.wrong_type_mut("integerp", other)),
+    };
+    let (sl, hi, c0, _c1, _tab) = rect_line_range(i, &a)?;
+    let fmt = match a.get(3) {
+        Some(Value::Str(s)) => s.borrow().clone(),
+        _ => {
+            // "%Nd " where N = width of (count-lines + start-at).
+            let w = ((hi - sl) as i128 + start_at).to_string().len();
+            format!("%{}d ", w)
+        }
+    };
+    let mut n = start_at;
+    rect_apply(i, &a, |bb, ls, le, c0, _c1, tab| {
+        let (p0, _) = rect_move_to(bb, ls, le, c0, tab, RectForce::T);
+        let s = rect_format(&fmt, n);
+        n += 1;
+        bb.insert_at(p0, &s);
+        Ok(())
+    })?;
+    let _ = (sl, hi, c0);
+    Ok(Value::Nil)
+}
+
+
+fn f_spaces_string(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let n = want_int(i, &a[0])?.max(0) as usize;
+    Ok(Value::string(" ".repeat(n)))
+}
+
+fn f_rectangle_dimensions(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let b = cur(i);
+    let bb = b.borrow();
+    let len = bb.text.len();
+    let sp = pos_idx(len, want_int(i, &a[0])?);
+    let ep = pos_idx(len, want_int(i, &a[1])?);
+    let (sl, el) = (bb.text.line_of_pos(sp), bb.text.line_of_pos(ep));
+    let tab = rect_tab_width(i);
+    let c0 = rect_col_at(&bb.text, bb.text.line_start(sl), sp, tab);
+    let c1 = rect_col_at(&bb.text, bb.text.line_start(el), ep, tab);
+    let width = (c1 - c0).abs();
+    let height = (el as i128 - sl as i128).abs() + 1;
+    Ok(Value::cons(Value::Int(width), Value::Int(height)))
+}
+
+fn f_rectangle_position_as_coordinates(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let b = cur(i);
+    let bb = b.borrow();
+    let len = bb.text.len();
+    let p = pos_idx(len, want_int(i, &a[0])?);
+    let line = bb.text.line_of_pos(p) as i128 + 1;
+    let tab = rect_tab_width(i);
+    let col = rect_col_at(&bb.text, bb.text.line_start(bb.text.line_of_pos(p)), p, tab);
+    Ok(Value::cons(Value::Int(col), Value::Int(line)))
+}
+
+fn f_rectangle_intersect_p(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let mut get = |v: &Value, what: &str| -> Result<(i128, i128), Flow> {
+        match v {
+            Value::Cons(c) => {
+                let cb = c.borrow();
+                match (cb.car.int(), cb.cdr.int()) {
+                    (Some(x), Some(y)) => Ok((x, y)),
+                    _ => Err(i.wrong_type_mut("integerp", v)),
+                }
+            }
+            other => Err(i.wrong_type_mut(what, other)),
+        }
+    };
+    let (x1, y1) = get(&a[0], "consp")?;
+    let (w1, h1) = get(&a[1], "consp")?;
+    let (x2, y2) = get(&a[2], "consp")?;
+    let (w2, h2) = get(&a[3], "consp")?;
+    Ok(Value::from_bool(!(x1 + w1 <= x2 || x2 + w2 <= x1 || y1 + h1 <= y2 || y2 + h2 <= y1)))
+}
+
+fn f_extract_rectangle_bounds(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let (sl, hi, c0, c1, tab) = rect_line_range(i, &a)?;
+    let b = cur(i);
+    let bb = b.borrow();
+    let mut out = Vec::new();
+    for ln in sl..=hi {
+        let ls = bb.text.line_start(ln);
+        let le = bb.text.line_end(ls);
+        // move-to-column without force, like GNU's bounds extraction.
+        let reach = |col: i128| -> usize {
+            let mut c = 0i128;
+            let mut k = ls;
+            while k < le {
+                let ch = bb.text.char_at(k);
+                let w = if ch == '\t' { (c / tab + 1) * tab - c } else { rect_char_width(ch, tab) };
+                if c + w > col {
+                    return if c == col { k } else { k + 1 };
+                }
+                c += w;
+                k += 1;
+            }
+            le
+        };
+        out.push(Value::cons(
+            Value::Int(reach(c0) as i128 + 1),
+            Value::Int(reach(c1) as i128 + 1),
+        ));
+    }
+    Ok(Value::list(out))
+}
+
+/// GNU apply-on-rectangle: call FUNCTION (startcol endcol . ARGS) per
+/// line with point at the line's beginning; return the final point.
+fn f_apply_on_rectangle(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let func = a[0].clone();
+    let extra: Vec<Value> = a[3..].to_vec();
+    let (sl, hi, c0, c1, _tab) = rect_line_range(i, &[a[1].clone(), a[2].clone()])?;
+    let b = cur(i);
+    for ln in sl..=hi {
+        let ls = {
+            let bb = b.borrow();
+            bb.text.line_start(ln)
+        };
+        b.borrow_mut().set_point(ls);
+        let mut argv = vec![Value::Int(c0), Value::Int(c1)];
+        argv.extend(extra.iter().cloned());
+        i.apply(&func, argv)?;
+    }
+    Ok(Value::Nil)
+}
+
+/// GNU operate-on-rectangle: call FUNCTION (startpos begextra endextra)
+/// per line with point at the end of that line's segment.
+fn f_operate_on_rectangle(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let func = a[0].clone();
+    let coerce_tabs = a[3].truthy();
+    let (sl, hi, c0, c1, tab) = rect_line_range(i, &[a[1].clone(), a[2].clone()])?;
+    let b = cur(i);
+    // GNU passes coerce-tabs straight to move-to-column: t pads + splits.
+    let mode = if coerce_tabs { RectForce::T } else { RectForce::Nil };
+    for ln in sl..=hi {
+        let (ls, le) = {
+            let bb = b.borrow();
+            let ls = bb.text.line_start(ln);
+            (ls, bb.text.line_end(ls))
+        };
+        let (p0, startpos, begextra, endextra) = {
+            let mut bb = b.borrow_mut();
+            let (p0, r0) = rect_move_to(&mut bb, ls, le, c0, tab, mode);
+            let mut begextra = r0 - c0;
+            let le2 = bb.text.line_end(ls);
+            let (mut p1, mut r1) = rect_move_to(&mut bb, ls, le2, c1, tab, mode);
+            if !coerce_tabs && r1 > c1 {
+                // Overshot a wide char: step back so endextra is positive.
+                p1 -= 1;
+                r1 = rect_col_at(&bb.text, ls, p1, tab);
+            }
+            let mut endextra = c1 - r1;
+            if begextra < 0 {
+                endextra += begextra;
+                begextra = 0;
+            }
+            bb.set_point(p1);
+            (p0, p0 as i128 + 1, begextra, endextra)
+        };
+        let _ = p0;
+        i.apply(&func, vec![Value::Int(startpos), Value::Int(begextra), Value::Int(endextra)])?;
+    }
     Ok(Value::Nil)
 }
 

@@ -1,0 +1,141 @@
+# remacs task definitions for cargo-make (makers).
+#
+#   makers                 build (debug)
+#   makers run             run the gpui GUI          [files...]
+#   makers run-nw          run the terminal UI       [files...]
+#   makers eval "(+ 1 2)"  evaluate a Lisp form and exit
+#   makers script foo.el   run a Lisp file and exit
+#   makers probe f.txt     diff remacs vs GNU Emacs on a corpus file
+#
+# Extra args after the task name are forwarded to remacs, e.g.
+#   makers run-nw src/main.rs README.md
+# List everything: makers --list-all-steps
+
+[tasks.default]
+description = "Default: build the debug binary."
+alias = "build"
+
+# ---------------------------------------------------------------- build
+
+[tasks.build]
+description = "Build remacs (debug)."
+command = "cargo"
+args = ["build"]
+
+[tasks.build-release]
+description = "Build remacs (release)."
+command = "cargo"
+args = ["build", "--release"]
+
+[tasks.check]
+description = "Type-check without building."
+command = "cargo"
+args = ["check"]
+
+[tasks.clean]
+description = "Remove build artifacts."
+command = "cargo"
+args = ["clean"]
+
+# ------------------------------------------------------------------ run
+
+[tasks.run]
+description = "Run the gpui GUI (debug). Extra args open files."
+script = '''
+set --
+old_ifs=$IFS; IFS=';'
+for a in $CARGO_MAKE_TASK_ARGS; do set -- "$@" "$a"; done
+IFS=$old_ifs
+exec cargo run -- "$@"
+'''
+
+[tasks.run-release]
+description = "Run the gpui GUI (release). Extra args open files."
+script = '''
+set --
+old_ifs=$IFS; IFS=';'
+for a in $CARGO_MAKE_TASK_ARGS; do set -- "$@" "$a"; done
+IFS=$old_ifs
+exec cargo run --release -- "$@"
+'''
+
+[tasks.run-nw]
+description = "Run the terminal UI (-nw, debug). Extra args open files."
+script = '''
+set --
+old_ifs=$IFS; IFS=';'
+for a in $CARGO_MAKE_TASK_ARGS; do set -- "$@" "$a"; done
+IFS=$old_ifs
+exec cargo run -- -nw "$@"
+'''
+
+[tasks.run-nw-release]
+description = "Run the terminal UI (-nw, release). Extra args open files."
+script = '''
+set --
+old_ifs=$IFS; IFS=';'
+for a in $CARGO_MAKE_TASK_ARGS; do set -- "$@" "$a"; done
+IFS=$old_ifs
+exec cargo run --release -- -nw "$@"
+'''
+
+[tasks.eval]
+description = "Evaluate a Lisp form in batch mode: makers eval \"(message \\\"hi\\\")\""
+script = '''
+exec cargo run --quiet -- --eval "${CARGO_MAKE_TASK_ARGS}"
+'''
+
+[tasks.load]
+description = "Load a Lisp file in batch mode: makers load file.el"
+script = '''
+exec cargo run --quiet -- --load "${CARGO_MAKE_TASK_ARGS}"
+'''
+
+[tasks.script]
+description = "Run a Lisp file and exit: makers script file.el"
+script = '''
+exec cargo run --quiet -- --script "${CARGO_MAKE_TASK_ARGS}"
+'''
+
+# ----------------------------------------------------------------- test
+
+[tasks.test]
+description = "Run the test suite."
+command = "cargo"
+args = ["test"]
+
+[tasks.probe]
+description = "Diff remacs vs GNU Emacs on a corpus file: makers probe corpus/arith.txt [-v]"
+dependencies = ["build"]
+script = '''
+old_ifs=$IFS; IFS=';'
+set -- $CARGO_MAKE_TASK_ARGS
+IFS=$old_ifs
+if [ $# -lt 1 ]; then
+    echo "usage: makers probe <exprfile> [-v]" >&2
+    exit 1
+fi
+file=$1; shift
+exec python3 tools/probe_gen.py "$file" target/debug/remacs "$@"
+'''
+
+# ----------------------------------------------------------------- lint
+
+[tasks.fmt]
+description = "Format the code."
+command = "cargo"
+args = ["fmt"]
+
+[tasks.fmt-check]
+description = "Check formatting without changing files."
+command = "cargo"
+args = ["fmt", "--", "--check"]
+
+[tasks.clippy]
+description = "Lint with clippy."
+command = "cargo"
+args = ["clippy", "--all-targets"]
+
+[tasks.verify]
+description = "fmt-check + clippy + test."
+dependencies = ["fmt-check", "clippy", "test"]

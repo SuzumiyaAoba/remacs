@@ -52,3 +52,4 @@ probe!(probe_process_charset10, "probe_eval10.el");
 probe!(probe_process_charset11, "probe_eval11.el");
 probe!(probe_process_cov12, "probe_eval12.el");
 probe!(probe_eval13_misc, "probe_eval13.el");
+probe!(probe_registers, "probe_registers.el");

@@ -107,6 +107,9 @@ pub struct Interp {
     pub match_data: Option<MatchData>,
     /// True in `--batch`: `princ` goes to stdout, `message` to stderr.
     pub noninteractive: bool,
+    /// GNU's `noninteractive_need_newline`: set when batch stdout was
+    /// written, so the next stderr message is preceded by a newline.
+    pub stderr_need_newline: bool,
     /// All frames (the first is the initial tty frame).
     pub frames: Vec<crate::editor::FrameRef>,
     /// The selected frame.
@@ -180,6 +183,7 @@ impl Interp {
             capture_output: false,
             match_data: None,
             noninteractive: false,
+            stderr_need_newline: false,
             frames: Vec::new(),
             selected_frame: None,
             quit_editor: false,
@@ -1589,6 +1593,7 @@ impl Interp {
             "isearch-forward",
             "isearch-regexp",
             "register-alist",
+            "killed-rectangle",
             "undo-limit",
             "undo-strong-limit",
             "undo-outer-limit",
@@ -1988,6 +1993,7 @@ impl Interp {
             ("regexp-search-ring", Value::Nil),
             ("search-ring", Value::Nil),
             ("register-alist", Value::Nil),
+            ("killed-rectangle", Value::Nil),
             ("global-map", Value::Nil), // set up by editor init
             ("minibuffer-local-map", Value::Nil),
             ("lexical-binding", Value::Sym(sym::T)),
@@ -2667,6 +2673,7 @@ impl Interp {
                         print!("{}", s);
                         use std::io::Write;
                         let _ = std::io::stdout().flush();
+                        self.stderr_need_newline = true;
                     }
                     None => self.echo_message.push_str(s),
                 }
@@ -2677,6 +2684,10 @@ impl Interp {
     /// `message` — show a string in the echo area (and log to *Messages*).
     pub fn message(&mut self, s: &str) {
         if self.noninteractive {
+            if self.stderr_need_newline {
+                eprintln!();
+            }
+            self.stderr_need_newline = false;
             eprintln!("{}", s);
             return;
         }

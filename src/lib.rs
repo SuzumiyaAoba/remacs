@@ -71,6 +71,8 @@ mod coverage_tests {
     probe!(u_probe_eval12, "probe_eval12.el");
     probe!(u_probe_eval13, "probe_eval13.el");
     probe!(u_probe_format, "probe_format.el");
+    probe!(u_probe_registers, "probe_registers.el");
+    probe!(u_probe_rect, "probe_rect.el");
 
     #[test]
     fn u_output_sinks() {
