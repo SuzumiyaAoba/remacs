@@ -484,6 +484,37 @@ impl<'a> Reader<'a> {
                 }
                 Ok(Value::Sym(self.interp.make_symbol(&tok)))
             }
+            Some('&') => {
+                // `#&N"..."' — bool vector literal: N bits packed
+                // LSB-first within each string byte.
+                self.pos += 2;
+                let mut n: u32 = 0;
+                while let Some(d) = self.peek() {
+                    if d.is_ascii_digit() {
+                        n = n * 10 + d.to_digit(10).unwrap();
+                        self.pos += 1;
+                    } else {
+                        break;
+                    }
+                }
+                if self.next() != Some('"') {
+                    return Err(read_err(self.interp, "#&"));
+                }
+                let s = self.read_string()?;
+                let bytes: Vec<u32> = match &s {
+                    Value::Str(s) => s.borrow().chars().map(|c| c as u32).collect(),
+                    _ => vec![],
+                };
+                let mut bits = Vec::with_capacity(n as usize);
+                for k in 0..n as usize {
+                    let byte = bytes.get(k / 8).copied().unwrap_or(0);
+                    bits.push(byte >> (k % 8) & 1 != 0);
+                }
+                Ok(crate::lisp::builtins::misc::make_bool_vector(
+                    self.interp,
+                    bits,
+                ))
+            }
             Some('(') => {
                 // `#(' is not Emacs read syntax (vectors are `[...]').
                 Err(read_err(self.interp, "#"))

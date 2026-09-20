@@ -1677,7 +1677,7 @@ fn quoted(v: Value) -> Value {
 // Represented as a Record `#s(bool-vector [bits])' so `bool-vector-p'
 // is exact while element access stays cheap.
 
-fn is_bool_vector(i: &Interp, v: &Value) -> bool {
+pub(crate) fn is_bool_vector(i: &Interp, v: &Value) -> bool {
     match v {
         Value::Record(r) => {
             let rr = r.borrow();
@@ -1688,7 +1688,7 @@ fn is_bool_vector(i: &Interp, v: &Value) -> bool {
     }
 }
 
-fn bool_vec_of(i: &mut Interp, v: &Value) -> Result<Vec<bool>, Flow> {
+pub(crate) fn bool_vec_of(i: &mut Interp, v: &Value) -> Result<Vec<bool>, Flow> {
     if !is_bool_vector(i, v) {
         return Err(i.wrong_type_mut("bool-vector-p", v));
     }
@@ -1705,7 +1705,7 @@ fn bool_vec_of(i: &mut Interp, v: &Value) -> Result<Vec<bool>, Flow> {
     Err(i.wrong_type_mut("bool-vector-p", v))
 }
 
-fn make_bool_vector(i: &mut Interp, bits: Vec<bool>) -> Value {
+pub(crate) fn make_bool_vector(i: &mut Interp, bits: Vec<bool>) -> Value {
     let data = Value::Vec(Rc::new(RefCell::new(
         bits.into_iter()
             .map(|b| Value::Int(if b { 1 } else { 0 }))

@@ -1356,7 +1356,6 @@ impl Interp {
         );
         put(self, "mark-set", &["mark-set"]);
         put(self, "mark-active", &["mark-active"]);
-        put(self, "mark-inactive", &["mark-inactive"]);
 
         // `error-message` property strings (as in Emacs's data.c put_error).
         let em = self.intern("error-message");

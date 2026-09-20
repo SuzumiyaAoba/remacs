@@ -25,7 +25,7 @@ use crate::lisp::value::Value;
 pub struct Terminal {
     pub width: usize,
     pub height: usize,
-    out: io::Stdout,
+    out: Box<dyn io::Write>,
     /// Pending key events read but not yet consumed (for unread-command-events).
     pending: Vec<i128>,
 }
@@ -43,7 +43,7 @@ impl Terminal {
         Ok(Terminal {
             width: w as usize,
             height: h as usize,
-            out,
+            out: Box::new(out),
             pending: Vec::new(),
         })
     }
@@ -479,157 +479,203 @@ pub fn run_editor(i: &mut Interp) -> io::Result<()> {
 /// `point` semantics follow Emacs: forward searches leave point after
 /// the match, backward searches leave it at the match start. C-g
 /// restores the entry position; RET exits and sets the mark there.
-fn isearch_loop(
-    term: &std::rc::Rc<std::cell::RefCell<Terminal>>,
-    i: &mut Interp,
+/// Live state of an incremental search.
+struct Isearch {
+    query: String,
+    /// History of match positions; last is the current match.
+    positions: Vec<usize>,
+    failing: bool,
+    start: usize,
     backward: bool,
     regexp: bool,
-) -> io::Result<()> {
-    let start = i
-        .current_buffer_ref()
-        .map(|b| b.borrow().point())
-        .unwrap_or(0);
-    let mut query = String::new();
-    // History of match positions so DEL can unwind.
-    let mut positions: Vec<usize> = vec![start];
-    let mut failing = false;
+}
 
-    fn search(
-        i: &mut Interp,
-        query: &str,
-        backward: bool,
-        regexp: bool,
-        from: usize,
-    ) -> Option<usize> {
-        if query.is_empty() {
-            return Some(from);
+/// Run one search; returns the new match point (or None when the
+/// query doesn't match from `from`). `from` is 0-based.
+fn isearch_search(
+    i: &mut Interp,
+    query: &str,
+    backward: bool,
+    regexp: bool,
+    from: usize,
+) -> Option<usize> {
+    if query.is_empty() {
+        return Some(from);
+    }
+    let mut esc = String::new();
+    for c in query.chars() {
+        if c == '\\' || c == '"' {
+            esc.push('\\');
         }
-        let mut esc = String::new();
-        for c in query.chars() {
-            if c == '\\' || c == '"' {
-                esc.push('\\');
-            }
-            esc.push(c);
-        }
-        let fn_name = match (backward, regexp) {
-            (false, false) => "search-forward",
-            (true, false) => "search-backward",
-            (false, true) => "re-search-forward",
-            (true, true) => "re-search-backward",
-        };
-        // +1 for the point→char offset used by these primitives.
-        let src = format!(
-            "(progn (goto-char (min {} (point-max))) ({} \"{}\" nil t))",
-            from + 1, fn_name, esc
-        );
-        match i.eval_str(&src) {
-            Ok(v) if !v.is_nil() => {
-                i.current_buffer_ref().map(|b| b.borrow().point())
-            }
-            _ => None,
+        esc.push(c);
+    }
+    let fn_name = match (backward, regexp) {
+        (false, false) => "search-forward",
+        (true, false) => "search-backward",
+        (false, true) => "re-search-forward",
+        (true, true) => "re-search-backward",
+    };
+    // +1 for the point→char offset used by these primitives.
+    let src = format!(
+        "(progn (goto-char (min {} (point-max))) ({} \"{}\" nil t))",
+        from + 1, fn_name, esc
+    );
+    match i.eval_str(&src) {
+        Ok(v) if !v.is_nil() => i.current_buffer_ref().map(|b| b.borrow().point()),
+        _ => None,
+    }
+}
+
+/// What the isearch driver should do after a key.
+enum IsearchAction {
+    /// Keep reading keys.
+    Continue,
+    /// Exit, restoring point to the entry position (C-g).
+    Abort,
+    /// Exit, keeping point and pushing the mark at entry (RET).
+    Done,
+    /// Exit and re-dispatch this key as a command.
+    ReDispatch(i128),
+}
+
+impl Isearch {
+    fn new(i: &Interp, backward: bool, regexp: bool) -> Isearch {
+        let start = i
+            .current_buffer_ref()
+            .map(|b| b.borrow().point())
+            .unwrap_or(0);
+        Isearch {
+            query: String::new(),
+            positions: vec![start],
+            failing: false,
+            start,
+            backward,
+            regexp,
         }
     }
 
-    loop {
-        {
-            let mut t = term.borrow_mut();
-            let _ = t.render(i);
-            let dir = if backward { " backward" } else { "" };
-            let re = if regexp { " regexp" } else { "" };
-            let status = if failing { "Failing " } else { "" };
-            let _ = t.draw_echo(&format!("{}I-search{}{}: {}", status, dir, re, query));
+    fn cur(&self) -> usize {
+        *self.positions.last().unwrap_or(&self.start)
+    }
+
+    fn go_to(&self, i: &Interp, p: usize) {
+        if let Some(b) = i.current_buffer_ref() {
+            b.borrow_mut().set_point(p);
         }
-        let key = term
-            .borrow_mut()
-            .poll_key(Duration::from_secs(86400))?
-            .unwrap_or(0);
-        let cur = *positions.last().unwrap();
+    }
+
+    /// Handle one key event; updates query/point/failing state.
+    fn step(&mut self, i: &mut Interp, key: i128) -> IsearchAction {
+        let cur = self.cur();
         match key {
             // C-g: abort, restore entry position.
             7 => {
-                if let Some(b) = i.current_buffer_ref() {
-                    b.borrow_mut().set_point(start);
-                }
-                break;
+                self.go_to(i, self.start);
+                IsearchAction::Abort
             }
             // RET: accept; mark goes at the entry position.
             13 => {
                 if let Some(b) = i.current_buffer_ref() {
-                    b.borrow_mut().mark = Some(start);
+                    b.borrow_mut().mark = Some(self.start);
                 }
-                break;
+                IsearchAction::Done
             }
             // C-s / C-r: repeat search in that direction from just
             // past (before) the current match.
             19 | 18 => {
                 let back = key == 18;
                 let from = if back { cur.saturating_sub(1) } else { cur + 1 };
-                match search(i, &query, back, regexp, from) {
+                match isearch_search(i, &self.query, back, self.regexp, from) {
                     Some(p) => {
-                        positions.push(p);
-                        failing = false;
-                        if let Some(b) = i.current_buffer_ref() {
-                            b.borrow_mut().set_point(p);
-                        }
+                        self.positions.push(p);
+                        self.failing = false;
+                        self.go_to(i, p);
                     }
-                    None => failing = true,
+                    None => self.failing = true,
                 }
+                IsearchAction::Continue
             }
             // DEL: unwind one step of the search.
             127 => {
-                if positions.len() > 1 {
-                    positions.pop();
+                if self.positions.len() > 1 {
+                    self.positions.pop();
                     // If the tail of query grew since the last repeat,
                     // pop a char too.
-                    if !query.is_empty() {
-                        query.pop();
+                    if !self.query.is_empty() {
+                        self.query.pop();
                     }
-                    let p = *positions.last().unwrap();
-                    if let Some(b) = i.current_buffer_ref() {
-                        b.borrow_mut().set_point(p);
-                    }
-                    failing = false;
-                } else if !query.is_empty() {
-                    query.pop();
-                    failing = false;
+                    self.go_to(i, self.cur());
+                    self.failing = false;
+                } else if !self.query.is_empty() {
+                    self.query.pop();
+                    self.failing = false;
                 }
+                IsearchAction::Continue
             }
-            c if c >= 32 && c < 0x110000 && c & (CHAR_META | CHAR_CTL | CHAR_SHIFT | CHAR_SUPER | CHAR_HYPER) == 0 => {
+            c if c >= 32
+                && c < 0x110000
+                && c & (CHAR_META | CHAR_CTL | CHAR_SHIFT | CHAR_SUPER | CHAR_HYPER) == 0 =>
+            {
                 if let Some(ch) = char::from_u32(c as u32) {
-                    query.push(ch);
+                    self.query.push(ch);
                 }
-                // Emacs searches from the current match position for
-                // extensions: re-find from the search start when the
-                // query no longer matches in place is approximated by
-                // searching from the entry point.
-                match search(i, &query, backward, regexp, if positions.len() > 1 { cur } else { start }) {
+                // Extend the current match; fall back to a fresh
+                // search from the entry point when it no longer hits.
+                let from = if self.positions.len() > 1 { cur } else { self.start };
+                let hit = isearch_search(i, &self.query, self.backward, self.regexp, from)
+                    .or_else(|| isearch_search(i, &self.query, self.backward, self.regexp, self.start));
+                match hit {
                     Some(p) => {
-                        positions.push(p);
-                        failing = false;
-                        if let Some(b) = i.current_buffer_ref() {
-                            b.borrow_mut().set_point(p);
-                        }
+                        self.positions.push(p);
+                        self.failing = false;
+                        self.go_to(i, p);
                     }
-                    None => {
-                        // Retry from the entry point: query may match
-                        // only from the start.
-                        match search(i, &query, backward, regexp, start) {
-                            Some(p) => {
-                                positions.push(p);
-                                if let Some(b) = i.current_buffer_ref() {
-                                    b.borrow_mut().set_point(p);
-                                }
-                            }
-                            None => failing = true,
-                        }
-                    }
+                    None => self.failing = true,
                 }
+                IsearchAction::Continue
             }
             other => {
-                // Exit isearch; re-dispatch the terminating key.
                 if let Some(b) = i.current_buffer_ref() {
-                    b.borrow_mut().mark = Some(start);
+                    b.borrow_mut().mark = Some(self.start);
                 }
+                IsearchAction::ReDispatch(other)
+            }
+        }
+    }
+
+    /// Echo-area label, e.g. `Failing I-search backward: foo`.
+    fn label(&self) -> String {
+        let dir = if self.backward { " backward" } else { "" };
+        let re = if self.regexp { " regexp" } else { "" };
+        let status = if self.failing { "Failing " } else { "" };
+        format!("{}I-search{}{}: {}", status, dir, re, self.query)
+    }
+}
+
+/// Incremental search loop (C-s / C-r). Reads keys directly until the
+/// search exits via RET, C-g, or a non-search key (which is then
+/// re-dispatched as a command, like Emacs).
+fn isearch_loop(
+    term: &std::rc::Rc<std::cell::RefCell<Terminal>>,
+    i: &mut Interp,
+    backward: bool,
+    regexp: bool,
+) -> io::Result<()> {
+    let mut st = Isearch::new(i, backward, regexp);
+    loop {
+        {
+            let mut t = term.borrow_mut();
+            let _ = t.render(i);
+            let _ = t.draw_echo(&st.label());
+        }
+        let key = term
+            .borrow_mut()
+            .poll_key(Duration::from_secs(86400))?
+            .unwrap_or(0);
+        match st.step(i, key) {
+            IsearchAction::Continue => {}
+            IsearchAction::Abort | IsearchAction::Done => break,
+            IsearchAction::ReDispatch(other) => {
                 let seq = Value::Vec(std::rc::Rc::new(std::cell::RefCell::new(vec![
                     Value::Int(other),
                 ])));
@@ -745,6 +791,224 @@ fn minibuf_loop(
 mod tests {
     use super::*;
     use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyEventState, KeyModifiers};
+    use std::cell::RefCell;
+    use std::rc::Rc;
+
+    /// A `Write` sink over a shared buffer so tests can inspect what
+    /// `render`/`draw_echo` emitted.
+    struct SharedBuf(Rc<RefCell<Vec<u8>>>);
+    impl io::Write for SharedBuf {
+        fn write(&mut self, b: &[u8]) -> io::Result<usize> {
+            self.0.borrow_mut().extend_from_slice(b);
+            Ok(b.len())
+        }
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    fn test_term(w: usize, h: usize) -> (Terminal, Rc<RefCell<Vec<u8>>>) {
+        let buf = Rc::new(RefCell::new(Vec::new()));
+        (
+            Terminal {
+                width: w,
+                height: h,
+                out: Box::new(SharedBuf(buf.clone())),
+                pending: Vec::new(),
+            },
+            buf,
+        )
+    }
+
+    /// An Interp with a tty frame displaying a buffer holding `text`.
+    fn interp_with_frame(text: &str) -> crate::lisp::Interp {
+        let mut i = crate::lisp::Interp::new();
+        let buf_id = i.buffers.create("test-buf");
+        {
+            let b = i.buffers.get(buf_id).unwrap();
+            b.borrow_mut().insert(text);
+        }
+        let mb_id = i.buffers.create(" *Minibuf-0*");
+        let frame = crate::editor::Frame::new_tty(buf_id, mb_id, 80, 25);
+        i.selected_frame = Some(frame.clone());
+        i.frames.push(frame);
+        i
+    }
+
+    #[test]
+    fn render_draws_buffer_and_mode_line() {
+        let (mut t, out) = test_term(80, 25);
+        let mut i = interp_with_frame("hello\nworld");
+        t.render(&i).unwrap();
+        let s = String::from_utf8_lossy(&out.borrow()).to_string();
+        assert!(s.contains("hello"), "render should show buffer text");
+        assert!(s.contains("test-buf"), "mode line shows buffer name");
+        assert!(s.contains("\x1b[7m"), "mode line is reverse-video");
+        let _ = i;
+    }
+
+    #[test]
+    fn render_shows_echo_message_when_minibuf_empty() {
+        let (mut t, out) = test_term(40, 10);
+        let mut i = interp_with_frame("x");
+        i.message("a message");
+        t.render(&i).unwrap();
+        let s = String::from_utf8_lossy(&out.borrow()).to_string();
+        assert!(s.contains("a message"));
+    }
+
+    #[test]
+    fn render_minibuffer_text_wins_over_echo() {
+        let (mut t, out) = test_term(40, 10);
+        let mut i = interp_with_frame("x");
+        i.message("echo-msg");
+        let mb = {
+            let f = i.selected_frame.as_ref().unwrap().borrow();
+            f.minibuffer.clone().unwrap().borrow().buffer
+        };
+        i.buffers.get(mb).unwrap().borrow_mut().insert("mini-text");
+        t.render(&i).unwrap();
+        let s = String::from_utf8_lossy(&out.borrow()).to_string();
+        assert!(s.contains("mini-text"));
+        assert!(!s.contains("echo-msg"));
+    }
+
+    #[test]
+    fn draw_echo_pads_and_positions_cursor() {
+        let (mut t, out) = test_term(20, 6);
+        t.draw_echo("Prompt: abc").unwrap();
+        let s = String::from_utf8_lossy(&out.borrow()).to_string();
+        assert!(s.contains("Prompt: abc"));
+        assert!(s.contains("\x1b["), "uses cursor-move escapes");
+    }
+
+    #[test]
+    fn unread_key_is_returned_by_poll() {
+        let (mut t, _) = test_term(10, 4);
+        t.unread(97);
+        assert_eq!(t.pending.pop(), Some(97));
+    }
+
+    #[test]
+    fn render_handles_multi_window_frame() {
+        let (mut t, out) = test_term(80, 10);
+        let mut i = interp_with_frame("w1");
+        // Split the frame's window in two.
+        let f = i.selected_frame.as_ref().unwrap().clone();
+        let buf2 = i.buffers.create("buf2");
+        i.buffers.get(buf2).unwrap().borrow_mut().insert("w2");
+        let w2 = crate::editor::Window::new(buf2);
+        {
+            let mut fb = f.borrow_mut();
+            fb.windows.push(w2);
+        }
+        t.render(&i).unwrap();
+        let s = String::from_utf8_lossy(&out.borrow()).to_string();
+        assert!(s.contains("w1") && s.contains("w2"));
+    }
+
+    /// Interp whose current buffer holds `text`, point at start.
+    fn isearch_interp(text: &str) -> crate::lisp::Interp {
+        let mut i = crate::lisp::Interp::new();
+        let buf_id = i.buffers.create("s");
+        i.current_buffer = buf_id;
+        i.buffers.get(buf_id).unwrap().borrow_mut().insert(text);
+        i.buffers
+            .get(buf_id)
+            .unwrap()
+            .borrow_mut()
+            .set_point(0);
+        i
+    }
+
+    fn point(i: &Interp) -> usize {
+        i.current_buffer_ref().unwrap().borrow().point()
+    }
+
+    #[test]
+    fn isearch_chars_move_point_to_match() {
+        let mut i = isearch_interp("one two one\n");
+        let mut st = Isearch::new(&i, false, false);
+        assert!(matches!(st.step(&mut i, 't' as i128), IsearchAction::Continue));
+        assert!(matches!(st.step(&mut i, 'w' as i128), IsearchAction::Continue));
+        assert!(matches!(st.step(&mut i, 'o' as i128), IsearchAction::Continue));
+        // "two" ends at index 7.
+        assert_eq!(point(&i), 7);
+        assert!(!st.failing);
+        assert!(st.label().contains("I-search: two"));
+    }
+
+    #[test]
+    fn isearch_cs_repeats_and_del_unwinds() {
+        let mut i = isearch_interp("aa aa\n");
+        let mut st = Isearch::new(&i, false, false);
+        st.step(&mut i, 'a' as i128);
+        let first = point(&i);
+        st.step(&mut i, 19); // C-s → next match
+        assert!(point(&i) > first);
+        st.step(&mut i, 19); // no third match → failing
+        assert!(st.failing);
+        st.step(&mut i, 127); // DEL unwinds
+        assert_eq!(point(&i), first);
+    }
+
+    #[test]
+    fn isearch_cg_restores_entry() {
+        let mut i = isearch_interp("xx yy\n");
+        let mut st = Isearch::new(&i, false, false);
+        st.step(&mut i, 'y' as i128);
+        assert!(point(&i) > 0);
+        assert!(matches!(st.step(&mut i, 7), IsearchAction::Abort));
+        assert_eq!(point(&i), 0);
+    }
+
+    #[test]
+    fn isearch_ret_sets_mark() {
+        let mut i = isearch_interp("xx yy\n");
+        let mut st = Isearch::new(&i, false, false);
+        st.step(&mut i, 'y' as i128);
+        assert!(matches!(st.step(&mut i, 13), IsearchAction::Done));
+        let b = i.current_buffer_ref().unwrap();
+        let bb = b.borrow();
+        assert_eq!(bb.mark, Some(0));
+        assert!(bb.point() > 0);
+    }
+
+    #[test]
+    fn isearch_backward_searches_backward() {
+        let mut i = isearch_interp("aa bb aa\n");
+        // Point at end.
+        i.current_buffer_ref().unwrap().borrow_mut().set_point(8);
+        let mut st = Isearch::new(&i, true, false);
+        st.step(&mut i, 'a' as i128);
+        // Backward match puts point at match start (index 7).
+        assert_eq!(point(&i), 7);
+        assert!(st.label().contains("backward"));
+    }
+
+    #[test]
+    fn isearch_other_key_redispatches() {
+        let mut i = isearch_interp("text\n");
+        let mut st = Isearch::new(&i, false, false);
+        st.step(&mut i, 'x' as i128);
+        match st.step(&mut i, 24) {
+            IsearchAction::ReDispatch(k) => assert_eq!(k, 24),
+            _ => panic!("C-x should re-dispatch"),
+        }
+    }
+
+    #[test]
+    fn isearch_failing_then_empty_query() {
+        let mut i = isearch_interp("abc\n");
+        let mut st = Isearch::new(&i, false, false);
+        st.step(&mut i, 'z' as i128);
+        st.step(&mut i, 'z' as i128);
+        assert!(st.failing);
+        assert!(st.label().starts_with("Failing"));
+        st.step(&mut i, 127); // DEL pops one char
+        st.step(&mut i, 127);
+        assert_eq!(st.query, "");
+    }
 
     fn ev(code: KeyCode, mods: KeyModifiers) -> KeyEvent {
         KeyEvent {

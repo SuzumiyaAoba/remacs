@@ -20,10 +20,3 @@ pub enum Flow {
 
 /// `eval`/`apply` result.
 pub type EvalResult = Result<Value, Flow>;
-
-impl Flow {
-    /// `(signal 'sym 'data)` shorthand.
-    pub fn signal(sym: Value, data: Value) -> Flow {
-        Flow::Signal(sym, data)
-    }
-}

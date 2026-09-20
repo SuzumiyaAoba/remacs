@@ -138,8 +138,42 @@ impl Interp {
                 out.push(']');
             }
             Value::Record(items) => {
+                let rr = items.borrow();
+                // Bool vectors print `#&N"bytes"' with bits packed
+                // LSB-first per byte.
+                let is_bv = matches!(rr.first(), Some(Value::Sym(t))
+                    if self.symbol_name(*t) == "bool-vector");
+                if is_bv {
+                    if let Some(Value::Vec(bits)) = rr.get(1) {
+                        let bits = bits.borrow();
+                        let n = bits.len();
+                        let _ = write!(out, "#&{}\"", n);
+                        for k in 0..n.div_ceil(8) {
+                            let mut byte: u32 = 0;
+                            for j in 0..8 {
+                                if let Some(Value::Int(b)) = bits.get(k * 8 + j) {
+                                    if *b != 0 {
+                                        byte |= 1 << j;
+                                    }
+                                }
+                            }
+                            match byte {
+                                34 => out.push_str("\\\""),
+                                92 => out.push_str("\\\\"),
+                                0..=127 => out.push(byte as u8 as char),
+                                _ => {
+                                    let _ = write!(out, "\\{:03o}", byte);
+                                }
+                            }
+                        }
+                        out.push('"');
+                        return;
+                    }
+                }
+                drop(rr);
+                let rr = items.borrow();
                 out.push_str("#s(");
-                for (i, item) in items.borrow().iter().enumerate() {
+                for (i, item) in rr.iter().enumerate() {
                     if i > 0 {
                         out.push(' ');
                     }

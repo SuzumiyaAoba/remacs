@@ -74,3 +74,53 @@ fn probe_lisp_deep() {
         Err(f) => panic!("probe failed: {:?}", f),
     }
 }
+
+#[test]
+fn probe_misc_builtins() {
+    let (mut i, _) = interp();
+    let src = include_str!("probe_misc2.el");
+    match i.eval_str(src) {
+        Ok(_) => {}
+        Err(f) => panic!("probe failed: {:?}", f),
+    }
+}
+
+#[test]
+fn probe_print_read() {
+    let (mut i, _) = interp();
+    let src = include_str!("probe_printread.el");
+    match i.eval_str(src) {
+        Ok(_) => {}
+        Err(f) => panic!("probe failed: {:?}", f),
+    }
+}
+
+#[test]
+fn probe_eval_data() {
+    let (mut i, _) = interp();
+    let src = include_str!("probe_eval2.el");
+    match i.eval_str(src) {
+        Ok(_) => {}
+        Err(f) => panic!("probe failed: {:?}", f),
+    }
+}
+
+#[test]
+fn probe_editor_ops() {
+    let (mut i, _) = interp();
+    let src = include_str!("probe_editor2.el");
+    match i.eval_str(src) {
+        Ok(_) => {}
+        Err(f) => panic!("probe failed: {:?}", f),
+    }
+}
+
+#[test]
+fn probe_buffer_deep() {
+    let (mut i, _) = interp();
+    let src = include_str!("probe_buffer3.el");
+    match i.eval_str(src) {
+        Ok(_) => {}
+        Err(f) => panic!("probe failed: {:?}", f),
+    }
+}

@@ -281,6 +281,16 @@ fn f_elt(i: &mut Interp, args: Vec<Value>) -> EvalResult {
             }
             Ok(items[n as usize].clone())
         }
+        Value::Record(_) if super::misc::is_bool_vector(i, &args[0]) => {
+            let bits = super::misc::bool_vec_of(i, &args[0])?;
+            if n < 0 || n as usize >= bits.len() {
+                return Err(i.signal_data(
+                    sym::ARGS_OUT_OF_RANGE,
+                    vec![args[0].clone(), args[1].clone()],
+                ));
+            }
+            Ok(Value::from_bool(bits[n as usize]))
+        }
         other => Err(i.wrong_type_mut("sequencep", other)),
     }
 }
@@ -319,6 +329,22 @@ fn f_aset(i: &mut Interp, args: Vec<Value>) -> EvalResult {
             }
             chars[n as usize] = c;
             *s.borrow_mut() = chars.into_iter().collect();
+            Ok(args[2].clone())
+        }
+        Value::Record(r) if super::misc::is_bool_vector(i, &args[0]) => {
+            let rr = r.borrow();
+            let Value::Vec(bits) = rr[1].clone() else {
+                return Err(i.wrong_type_mut("bool-vector-p", &args[0]));
+            };
+            drop(rr);
+            let mut bits = bits.borrow_mut();
+            if n < 0 || n as usize >= bits.len() {
+                return Err(i.signal_data(
+                    sym::ARGS_OUT_OF_RANGE,
+                    vec![args[0].clone(), args[1].clone()],
+                ));
+            }
+            bits[n as usize] = Value::Int(if args[2].is_nil() { 0 } else { 1 });
             Ok(args[2].clone())
         }
         other => Err(i.wrong_type_mut("arrayp", other)),
