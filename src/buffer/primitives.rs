@@ -533,6 +533,13 @@ pub(crate) static SUBRS: &[Subr] = &[
         "Kill text between START and END."
     ),
     S!(
+        "append-next-kill",
+        0,
+        0,
+        f_append_next_kill,
+        "Make the next kill append to the last kill-ring entry."
+    ),
+    S!(
         "delete-blank-lines",
         0,
         0,
@@ -2542,6 +2549,15 @@ pub(crate) fn push_kill_ring(i: &mut Interp, s: String) {
     let kr = i.intern("kill-ring");
     let cur = i.symbol_value(kr);
     let mut items = cur.list_to_vec().unwrap_or_default();
+    // `append-next-kill' concatenates onto the newest entry.
+    if i.append_next_kill {
+        i.append_next_kill = false;
+        if let Some(Value::Str(prev)) = items.first_mut() {
+            prev.borrow_mut().push_str(&s);
+            i.obarray.symbol_mut(kr).value = Value::list(items);
+            return;
+        }
+    }
     items.insert(0, Value::string(s));
     let max = i
         .symbol_value(i.intern_soft("kill-ring-max").unwrap_or(0))
@@ -2549,6 +2565,12 @@ pub(crate) fn push_kill_ring(i: &mut Interp, s: String) {
         .unwrap_or(120) as usize;
     items.truncate(max);
     i.obarray.symbol_mut(kr).value = Value::list(items);
+}
+
+fn f_append_next_kill(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
+    i.append_next_kill = true;
+    i.message("If the next command is a kill, it will append");
+    Ok(Value::Nil)
 }
 
 // ---------- buffer text access ----------

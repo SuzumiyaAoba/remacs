@@ -82,6 +82,9 @@ pub struct Interp {
     pub catch_tags: Vec<Value>,
     /// True while evaluating a function call's arguments.
     pub undo_list: Vec<crate::buffer::UndoEntry>,
+    /// Set by `append-next-kill': the next kill appends to the last
+    /// kill-ring entry.
+    pub append_next_kill: bool,
     /// `inhibit-read-only` dynamic override.
     pub standard_output_sym: SymId,
     /// Command-loop state used by `interactive` specs.
@@ -147,6 +150,7 @@ impl Interp {
             quit_flag: false,
             catch_tags: Vec::new(),
             undo_list: Vec::new(),
+            append_next_kill: false,
             standard_output_sym,
             command_args: Vec::new(),
             defining_symbol: None,

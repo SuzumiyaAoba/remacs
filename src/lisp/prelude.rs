@@ -812,6 +812,11 @@ returning that buffer's contents as a string."
     (define-key cx (kbd "C-q") 'read-only-mode)
     (define-key cx (kbd "=") 'what-cursor-position)
     (define-key cx (kbd "ESC") 'keyboard-escape-quit)
+    (define-key cx "z" 'repeat)
+    (define-key cx (kbd "C-t") 'transpose-lines)
+    (define-key cx (kbd "C-v") 'find-alternate-file)
+    (define-key cx (kbd "C-n") 'set-goal-column)
+    (define-key cx (kbd "DEL") 'backward-kill-sentence)
     ;; C-x n — narrowing prefix.
     (let ((n (make-sparse-keymap)))
       (define-key cx "n" n)
@@ -856,7 +861,6 @@ returning that buffer's contents as a string."
   (define-key m (kbd "M-{") 'backward-paragraph)
   (define-key m (kbd "M-}") 'forward-paragraph)
   (define-key m (kbd "M-r") 'move-to-window-line)
-  (define-key m (kbd "M-s") 'center-line)
   (define-key m (kbd "M--") 'negative-argument)
   (define-key m (kbd "M-0") 'digit-argument)
   (define-key m (kbd "M-1") 'digit-argument)
@@ -875,7 +879,74 @@ returning that buffer's contents as a string."
   (define-key m (kbd "C-M-a") 'beginning-of-defun)
   (define-key m (kbd "C-M-e") 'end-of-defun)
   (define-key m (kbd "C-M-h") 'mark-defun)
+  (define-key m (kbd "C-M-t") 'transpose-sexps)
+  (define-key m (kbd "C-M-u") 'backward-up-list)
+  (define-key m (kbd "C-M-d") 'down-list)
+  (define-key m (kbd "C-M-n") 'forward-list)
+  (define-key m (kbd "C-M-p") 'backward-list)
+  (define-key m (kbd "C-M-v") 'scroll-other-window)
+  (define-key m (kbd "C-M-w") 'append-next-kill)
+  (define-key m (kbd "M-=") 'count-words-region)
+  (define-key m (kbd "M-^") 'delete-indentation)
+  ;; M-g goto map.
+  (let ((g (make-sparse-keymap)))
+    (define-key m (kbd "M-g") g)
+    (define-key g "g" 'goto-line)
+    (define-key g (kbd "M-g") 'goto-line))
+  ;; M-s search map.
+  (let ((s (make-sparse-keymap)))
+    (define-key m (kbd "M-s") s)
+    (define-key s "o" 'occur))
   (define-key m (kbd "ESC ESC ESC") 'keyboard-escape-quit))
+
+;; ---------- interactive commands ----------
+
+(defun repeat (&optional arg)
+  "Re-execute the last command, like Emacs's C-x z."
+  (interactive "P")
+  (let ((cmd last-command))
+    (when (and cmd (not (eq cmd 'repeat)))
+      (command-execute cmd))))
+
+(defun find-alternate-file (filename)
+  "Visit FILENAME, replacing the current buffer's contents (C-x C-v)."
+  (interactive "fFind alternate file: ")
+  (kill-buffer (current-buffer))
+  (find-file filename))
+
+(defun occur (regexp &optional nlines)
+  "Show all lines in the current buffer matching REGEXP in *Occur*."
+  (interactive "sList lines matching: \nP")
+  (let ((src (current-buffer))
+        (hits '()))
+    (save-excursion
+      (goto-char (point-min))
+      (let ((ln 1))
+        (while (not (eobp))
+          (let ((line (buffer-substring (line-beginning-position)
+                                        (line-end-position))))
+            (when (string-match regexp line)
+              (push (format "%7d:%s" ln line) hits)))
+          (forward-line 1)
+          (setq ln (1+ ln)))))
+    (let ((ob (get-buffer-create "*Occur*"))
+          (n (length hits)))
+      (with-current-buffer ob
+        (erase-buffer)
+        (insert (format "%d %s for \"%s\" in buffer: %s\n"
+                        n (if (= n 1) "match" "matches") regexp
+                        (buffer-name src)))
+        (dolist (l (nreverse hits))
+          (insert l "\n")))
+      (message "Searched 1 buffer; %d %s for \"%s\""
+               n (if (= n 1) "match" "matches") regexp)
+      (display-buffer ob))))
+
+(defun display-buffer (buffer &optional action)
+  "Make BUFFER visible in a window without selecting it."
+  (let ((w (or (get-buffer-window buffer) (selected-window))))
+    (set-window-buffer w buffer))
+  buffer)
 
 ;; ---------- subr.el-level utilities ----------
 (defalias 'cl-subseq #'seq-subseq)

@@ -3307,8 +3307,18 @@ pub(crate) fn apply_mods(c: i128, mods: i128) -> i128 {
     let mut m = mods;
     let mut c = c;
     if m & CHAR_CTL != 0 && (0..128).contains(&c) {
-        c = if c == 63 { 127 } else { c & 0x1f };
-        m &= !CHAR_CTL;
+        // Only the ASCII control set folds: @ A-Z [ \ ] ^ _ ? and
+        // lowercase a-z. Other chars keep the control bit (C-/ is
+        // (control /), not 15, like Emacs).
+        let folded = match c {
+            63 => Some(127),
+            64..=95 | 97..=122 => Some(c & 0x1f),
+            _ => None,
+        };
+        if let Some(f) = folded {
+            c = f;
+            m &= !CHAR_CTL;
+        }
     }
     if m & CHAR_SHIFT != 0 && (97..123).contains(&c) {
         c -= 32;
