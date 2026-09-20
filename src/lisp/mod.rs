@@ -8,6 +8,7 @@ pub mod load;
 pub mod obarray;
 pub mod prelude;
 pub mod print;
+pub mod process;
 pub mod reader;
 pub mod regexp;
 pub mod special;

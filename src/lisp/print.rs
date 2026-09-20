@@ -247,6 +247,9 @@ impl Interp {
             Value::Frame(f) => {
                 let _ = write!(out, "#<frame {}>", f.borrow().name);
             }
+            Value::Process(p) => {
+                let _ = write!(out, "#<process {}>", p.borrow().name);
+            }
         }
     }
 
@@ -266,6 +269,9 @@ impl Interp {
             Value::Str(s) => out.push_str(&s.borrow()),
             // princ prints symbol names raw — no backslash escapes.
             Value::Sym(id) => out.push_str(&self.symbol_name(*id)),
+            // princ prints buffers and processes as their bare names.
+            Value::Buffer(b) => out.push_str(&b.borrow().name),
+            Value::Process(p) => out.push_str(&p.borrow().name),
             Value::Cons(_) => self.print_list_princ(v, out, depth, bq),
             Value::Vec(items) => {
                 out.push('[');

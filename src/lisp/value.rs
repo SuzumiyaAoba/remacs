@@ -25,6 +25,7 @@ pub type BufferRef = Rc<RefCell<Buffer>>;
 pub type MarkerRef = Rc<RefCell<Marker>>;
 pub type WindowRef = Rc<RefCell<Window>>;
 pub type FrameRef = Rc<RefCell<Frame>>;
+pub type ProcessRef = Rc<RefCell<crate::lisp::process::Proc>>;
 
 /// Emacs fixnum range on 64-bit builds: 62 bits (2 tag bits in C).
 /// Integers outside this range are bignums — we represent all integers
@@ -50,6 +51,7 @@ pub enum Value {
     Marker(MarkerRef),
     Window(WindowRef),
     Frame(FrameRef),
+    Process(ProcessRef),
 }
 
 /// A cons cell. `cdr` may be any value (dotted pair).
@@ -316,6 +318,7 @@ impl fmt::Debug for Value {
             Value::Marker(_) => write!(f, "Marker(..)"),
             Value::Window(_) => write!(f, "Window(..)"),
             Value::Frame(_) => write!(f, "Frame(..)"),
+            Value::Process(_) => write!(f, "Process(..)"),
         }
     }
 }

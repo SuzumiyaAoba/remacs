@@ -123,6 +123,21 @@ pub struct Interp {
     /// User-defined faces: name → plist of attribute keywords.
     /// Built-in faces (default, bold, italic, …) live in a static table.
     pub face_table: Vec<(String, Value)>,
+    /// Live process objects (`Value::Process`), including finished ones
+    /// until `delete-process`.
+    pub processes: Vec<crate::lisp::value::ProcessRef>,
+    /// Charset name → plist (`define-charset` / `set-charset-plist`).
+    pub charsets: Vec<(String, Value)>,
+    /// Charset alias → canonical name (`define-charset-alias`).
+    pub charset_aliases: Vec<(String, String)>,
+    /// char-code property name → per-char entries (`put-char-code-property`).
+    pub char_code_props: Vec<(String, Vec<(i64, Value)>)>,
+    /// char-code property name → char-table backing store.
+    pub char_code_prop_tables: Vec<(String, Value)>,
+    /// Cycle phase for `move-to-window-line-top-bottom' repeats.
+    pub mtwlb_phase: u8,
+    /// Path of the dribble file opened by `open-dribble-file'.
+    pub dribble_file: Option<String>,
 }
 
 /// Result of a minibuffer read from the front-end.
@@ -171,6 +186,13 @@ impl Interp {
             minibuf_reader: None,
             minibuf_level: 0,
             face_table: Vec::new(),
+            processes: Vec::new(),
+            charsets: Vec::new(),
+            charset_aliases: Vec::new(),
+            char_code_props: Vec::new(),
+            char_code_prop_tables: Vec::new(),
+            mtwlb_phase: 0,
+            dribble_file: None,
         };
         crate::lisp::builtins::install(&mut interp);
         crate::buffer::install_primitives(&mut interp);
@@ -598,7 +620,8 @@ impl Interp {
             | Value::Record(_)
             | Value::Marker(_)
             | Value::Window(_)
-            | Value::Frame(_) => Ok(form.clone()),
+            | Value::Frame(_)
+            | Value::Process(_) => Ok(form.clone()),
             Value::Sym(id) => self.eval_symbol(*id),
             Value::Cons(_) => self.eval_form(form),
         }
@@ -1683,6 +1706,7 @@ impl Interp {
             "print-gensym-alist",
             "print-continuous-numbering",
             "print-number-table",
+            "filter-buffer-substring-function",
         ];
 
         for name in &specials {
@@ -1695,6 +1719,9 @@ impl Interp {
             let id = self.intern(name);
             self.obarray.symbol_mut(id).value = Value::t();
         }
+        // defvar'd to nil in GNU (simple.el).
+        let id = self.intern("filter-buffer-substring-function");
+        self.obarray.symbol_mut(id).value = Value::Nil;
         for name in ["print-gensym", "print-escape-newlines", "print-circle"] {
             let id = self.intern(name);
             self.obarray.symbol_mut(id).value = Value::Nil;
@@ -2250,8 +2277,8 @@ impl Interp {
             ("system-configuration", Value::string("aarch64-apple-darwin")),
             ("emacs-copyright", Value::string("Copyright (C) 2025 Free Software Foundation, Inc.")),
             ("emacs-build-time", Value::Nil),
-            ("emacs-build-system", Value::string("Darwin")),
-            ("emacs-repository-version", Value::Nil),
+            ("emacs-build-system", Value::Nil),
+            ("emacs-repository-version", Value::string("emacs-31.1")),
             ("emacs-repository-branch", Value::Nil),
             ("internal-initialization-file", Value::Nil),
             ("site-run-file", Value::string("site-start")),
@@ -2266,6 +2293,17 @@ impl Interp {
             ("initial-window-system", Value::Nil),
             ("daemon-socket", Value::Nil),
             ("glyph-table", Value::Nil),
+            ("charset-list", Value::list(
+                [
+                    "ascii", "unicode", "emacs", "eight-bit", "ucs",
+                    "iso-8859-1", "latin-iso8859-1", "eight-bit-control",
+                    "eight-bit-graphic", "control-1", "mule-unicode-0100-24ff",
+                    "mule-unicode-2500-33ff", "mule-unicode-e000-ffff",
+                ]
+                .iter()
+                .map(|n| Value::Sym(self.intern(n)))
+                .collect(),
+            )),
             ("charset-map-path", Value::Nil),
             ("char-code-property-alist", Value::Nil),
             ("unicode-category-table", Value::Nil),
@@ -2284,7 +2322,17 @@ impl Interp {
             ("file-coding-system-alist", Value::Nil),
             ("process-coding-system-alist", Value::Nil),
             ("network-coding-system-alist", Value::Nil),
-            ("file-name-coding-system", Value::Nil),
+            ("file-name-coding-system", Value::Sym(self.intern("utf-8-hfs-unix"))),
+            ("default-file-name-coding-system", Value::Sym(self.intern("utf-8-unix"))),
+            ("file-name-shadow-mode", Value::Sym(sym::T)),
+            ("show-help-function", Value::Sym(self.intern("tooltip-show-help"))),
+            ("delete-trailing-lines", Value::Sym(sym::T)),
+            ("keyboard-coding-system", Value::Sym(self.intern("utf-8-unix"))),
+            ("default-process-coding-system", Value::cons(
+                Value::Sym(self.intern("utf-8-unix")),
+                Value::Sym(self.intern("utf-8-unix")),
+            )),
+            ("emacs-basic-display", Value::Nil),
             ("auto-coding-alist", Value::Nil),
             ("auto-coding-functions", Value::Nil),
             ("auto-coding-regexp-alist", Value::Nil),

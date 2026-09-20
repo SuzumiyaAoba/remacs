@@ -4,6 +4,7 @@
 //! arity, and a `fn(&mut Interp, Vec<Value>) -> EvalResult`.
 
 pub(crate) mod arith;
+pub(crate) mod charset;
 pub(crate) mod data;
 pub(crate) mod evalfn;
 pub(crate) mod hashfn;
@@ -69,6 +70,8 @@ fn collect() -> Vec<&'static Subr> {
     v.extend(readfn::SUBRS);
     v.extend(seq::SUBRS);
     v.extend(strfn::SUBRS);
+    v.extend(charset::SUBRS);
+    v.extend(crate::lisp::process::SUBRS);
     v
 }
 
@@ -356,6 +359,7 @@ pub fn eq_values(a: &Value, b: &Value) -> bool {
         (Value::Marker(x), Value::Marker(y)) => std::rc::Rc::ptr_eq(x, y),
         (Value::Window(x), Value::Window(y)) => std::rc::Rc::ptr_eq(x, y),
         (Value::Frame(x), Value::Frame(y)) => std::rc::Rc::ptr_eq(x, y),
+        (Value::Process(x), Value::Process(y)) => std::rc::Rc::ptr_eq(x, y),
         _ => false,
     }
 }

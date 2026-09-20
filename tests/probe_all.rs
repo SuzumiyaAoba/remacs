@@ -48,3 +48,5 @@ probe!(probe_reader_data6, "probe_eval6.el");
 probe!(probe_eval_misc7, "probe_eval7.el");
 probe!(probe_eval_misc8, "probe_eval8.el");
 probe!(probe_eval_misc9, "probe_eval9.el");
+probe!(probe_process_charset10, "probe_eval10.el");
+probe!(probe_process_charset11, "probe_eval11.el");

@@ -586,6 +586,13 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!("combine-change-calls", raw, f_second_form_raw, ""),
     // --- buffer text access ---
     S!(
+        "filter-buffer-substring",
+        2,
+        3,
+        f_filter_buffer_substring,
+        "buffer-substring with optional deletion + filter."
+    ),
+    S!(
         "buffer-substring",
         2,
         2,
@@ -2863,6 +2870,38 @@ fn f_buffer_substring(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let e = pos_idx(len, want_int(i, &a[1])?);
     let (s, e) = (s.min(e), s.max(e));
     Ok(Value::string(bb.text.substring(s, e)))
+}
+
+fn f_filter_buffer_substring(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let delete = a.get(2).map(|v| v.truthy()).unwrap_or(false);
+    // `filter-buffer-substring-function' hook: GNU delegates the whole
+    // operation — call3(FUN, BEG, END, DELETE) returns the substring.
+    let f = i
+        .intern_soft("filter-buffer-substring-function")
+        .map(|h| i.symbol_value(h))
+        .filter(|v| !matches!(v, Value::Sym(s) if *s == sym::UNBOUND))
+        .unwrap_or(Value::Nil);
+    if f.truthy() {
+        let args = Value::list(vec![
+            a[0].clone(),
+            a[1].clone(),
+            Value::from_bool(delete),
+        ]);
+        return i.call_function(&f, &args, None);
+    }
+    let text = f_buffer_substring(i, a[..2].to_vec())?;
+    if delete {
+        let b = cur(i);
+        let (s, e) = {
+            let bb = b.borrow();
+            let len = bb.text.len();
+            let s = pos_idx(len, want_int(i, &a[0])?);
+            let e = pos_idx(len, want_int(i, &a[1])?);
+            (s.min(e), s.max(e))
+        };
+        b.borrow_mut().delete_region(s, e);
+    }
+    Ok(text)
 }
 
 fn f_buffer_string(i: &mut Interp, _a: Vec<Value>) -> EvalResult {

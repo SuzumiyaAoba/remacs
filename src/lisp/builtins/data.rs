@@ -443,6 +443,7 @@ fn f_type_of(i: &mut Interp, args: Vec<Value>) -> EvalResult {
         Value::Lambda(_) => "interpreted-function",
         Value::Buffer(_) => "buffer",
         Value::Marker(_) => "marker",
+        Value::Process(_) => "process",
     };
     Ok(Value::Sym(i.intern(name)))
 }

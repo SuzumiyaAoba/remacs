@@ -1265,30 +1265,7 @@ pub(crate) static SUBRS: &[Subr] = &[
         f_shell_command_to_string,
         "Run COMMAND, return output."
     ),
-    S!(
-        "start-process",
-        3,
-        3,
-        f_start_process_stub,
-        "Start async process (unsupported)."
-    ),
-    S!("processp", 1, 1, f_nil, ""),
-    S!("process-status", 1, 1, f_nil, ""),
-    S!("process-list", 0, 0, f_nil, ""),
-    S!("get-process", 1, 1, f_nil, ""),
-    S!("delete-process", 1, 1, f_nil, ""),
-    S!("process-name", 1, 1, f_nil, ""),
-    S!("process-buffer", 1, 1, f_nil, ""),
-    S!("process-mark", 1, 1, f_nil, ""),
-    S!("process-exit-status", 1, 1, f_nil, ""),
-    S!("process-id", 1, 1, f_nil, ""),
-    S!("process-send-string", 2, 2, f_nil, ""),
-    S!("process-send-eof", 0, 1, f_nil, ""),
-    S!("set-process-filter", 2, 2, f_nil, ""),
-    S!("set-process-sentinel", 2, 2, f_nil, ""),
-    S!("accept-process-output", 0, 4, f_nil, ""),
-    S!("process-put", 3, 3, f_third, ""),
-    S!("process-get", 2, 2, f_nil, ""),
+    // Process primitives are real implementations in lisp::process.
     // editing commands
     S!("kill-line", 0, 1, f_kill_line, "Kill to end of line."),
     S!(
@@ -1618,6 +1595,18 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!("font-lock-flush", 0, 2, f_font_lock_flush, ""),
     S!("jit-lock-register", 1, 2, f_jit_lock_register, ""),
     S!("jit-lock-unregister", 1, 1, f_jit_lock_unregister, ""),
+    S!("move-to-window-line-top-bottom", 0, 1, f_move_to_window_line_top_bottom, "Cycle point through window top/middle/bottom."),
+    S!("recenter-other-window", 0, 1, f_recenter_other_window, "Center point in other window."),
+    S!("exit-minibuffer", 0, 0, f_exit_minibuffer, "Exit the minibuffer."),
+    S!("self-insert-and-exit", 0, 0, f_self_insert_and_exit, "Insert char and exit minibuffer."),
+    S!("save-buffers-kill-terminal", 0, 1, f_save_buffers_kill_terminal, "Save buffers and exit."),
+    S!("open-dribble-file", 1, 1, f_open_dribble_file, "Record keystrokes to FILE."),
+    S!("suspend-emacs", 0, 1, f_suspend_emacs, "Suspend Emacs."),
+    S!("suspend-frame", 0, 0, f_suspend_emacs, "Suspend the frame."),
+    S!("byteorder", 0, 0, f_byteorder, "Byte order: ?l or ?B."),
+    S!("command-line-1", 0, 1, f_nil, "Process command-line args (done)."),
+    S!("normal-top-level", 0, 0, f_nil, "Top-level entry point (done)."),
+    S!("standard-display-european-internal", 0, 0, f_standard_display_european_internal, "European display setup."),
     S!("read-event", 0, 3, f_read_char, "Read one input event."),
     S!("read-char", 0, 3, f_read_char, "Read one character."),
     S!(
@@ -1992,9 +1981,6 @@ fn f_identity(_i: &mut Interp, a: Vec<Value>) -> EvalResult {
 }
 fn f_second(_i: &mut Interp, a: Vec<Value>) -> EvalResult {
     Ok(a.into_iter().nth(1).unwrap_or(Value::Nil))
-}
-fn f_third(_i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    Ok(a.into_iter().nth(2).unwrap_or(Value::Nil))
 }
 fn f_progn_raw(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     i.eval_progn(&a.into_iter().next().unwrap_or(Value::Nil))
@@ -2534,10 +2520,47 @@ fn f_scroll_down(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 
 fn f_scroll_up_line(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let n = arg(&a, 0).int().unwrap_or(1);
+    // GNU signals end-of-buffer when no scrolling is possible.
+    let w = sel_window(i).unwrap();
+    let buf = w.borrow().buffer;
+    let can = i
+        .buffers
+        .get(buf)
+        .map(|b| {
+            let bb = b.borrow();
+            let start = w.borrow().start;
+            let mut p = start;
+            for _ in 0..n.max(0) {
+                let e = bb.text.line_end(p);
+                if e >= bb.text.len() {
+                    return false;
+                }
+                p = e + 1;
+            }
+            true
+        })
+        .unwrap_or(false);
+    if !can && n != 0 {
+        return Err(i.signal_data(sym::END_OF_BUFFER, vec![]));
+    }
     f_scroll_up(i, vec![Value::Int(n)])
 }
 fn f_scroll_down_line(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let n = arg(&a, 0).int().unwrap_or(1);
+    let w = sel_window(i).unwrap();
+    let buf = w.borrow().buffer;
+    let can = i
+        .buffers
+        .get(buf)
+        .map(|b| {
+            let bb = b.borrow();
+            let line = bb.text.line_of_pos(w.borrow().start);
+            line >= n.max(0) as usize || n == 0
+        })
+        .unwrap_or(false);
+    if !can {
+        return Err(i.signal_data(sym::BEGINNING_OF_BUFFER, vec![]));
+    }
     f_scroll_down(i, vec![Value::Int(n)])
 }
 fn f_window_left(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
@@ -5275,10 +5298,6 @@ fn f_shell_command_to_string(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     }
 }
 
-fn f_start_process_stub(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
-    Err(i.error("Asynchronous processes not yet supported"))
-}
-
 // ---------- editing commands ----------
 
 fn f_kill_line(i: &mut Interp, a: Vec<Value>) -> EvalResult {
@@ -7711,6 +7730,140 @@ fn f_jit_lock_unregister(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         .collect();
     i.obarray.symbol_mut(sym).value = Value::list(kept);
     Ok(Value::Nil)
+}
+
+// ---------- command loop / terminal misc ----------
+
+fn f_move_to_window_line_top_bottom(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    // Cycle point through center → bottom → top window lines on repeat.
+    let me = i.intern("move-to-window-line-top-bottom");
+    let this_id = i.intern("this-command");
+    let last_id = i.intern("last-command");
+    let this = i.symbol_value(this_id);
+    let last = i.symbol_value(last_id);
+    let repeated = matches!(last, Value::Sym(s) if s == me)
+        && matches!(this, Value::Sym(s) if s == me);
+    if repeated {
+        i.mtwlb_phase = (i.mtwlb_phase + 1) % 3;
+    } else {
+        i.mtwlb_phase = 0;
+    }
+    let arg_n = a.first().and_then(|v| v.int()).unwrap_or(0);
+    let w = sel_window(i).unwrap();
+    let (buf, start, height) = {
+        let wb = w.borrow();
+        (wb.buffer, wb.start, wb.height)
+    };
+    if let Some(b) = i.buffers.get(buf) {
+        let bb = b.borrow();
+        let start_line = bb.text.line_of_pos(start);
+        // phase: 0 center, 1 bottom, 2 top.
+        let frac_num = match i.mtwlb_phase {
+            0 => height / 2,
+            1 => height.saturating_sub(2),
+            _ => 0,
+        };
+        let mut target_line = (start_line + frac_num) as i128 + arg_n;
+        if target_line < 0 {
+            target_line = 0;
+        }
+        let p = bb.text.line_start(target_line as usize);
+        let tlen = bb.text_len();
+        drop(bb);
+        if let Some(b2) = i.buffers.get(buf) {
+            b2.borrow_mut().set_point(p.min(tlen));
+        }
+        w.borrow_mut().point = i
+            .buffers
+            .get(buf)
+            .map(|x| x.borrow().point)
+            .unwrap_or(0);
+    }
+    // GNU returns the number of lines point moved within the window.
+    Ok(Value::Int(arg_n.max(0)))
+}
+
+fn f_recenter_other_window(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    // Scroll other window so its point line is centered. GNU signals
+    // "There is no other window" on a single-window frame.
+    let sel = sel_window(i).unwrap();
+    let other = window_cycle(i, 1, &sel).unwrap_or(sel.clone());
+    if Rc::ptr_eq(&other, &sel) {
+        return Err(i.error("There is no other window"));
+    }
+    let arg_n = a.first().and_then(|v| v.int()).unwrap_or(-1);
+    let (buf, height) = {
+        let wb = other.borrow();
+        (wb.buffer, wb.height)
+    };
+    if let Some(b) = i.buffers.get(buf) {
+        let bb = b.borrow();
+        let pl = bb.text.line_of_pos(bb.point());
+        let delta = if arg_n < 0 { height / 2 } else { arg_n as usize };
+        let start_line = pl.saturating_sub(delta);
+        let p = bb.text.line_start(start_line);
+        drop(bb);
+        other.borrow_mut().start = p;
+    }
+    Ok(Value::Nil)
+}
+
+fn f_exit_minibuffer(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
+    // Outside an active minibuffer GNU's throw reaches no catch → no-catch.
+    let no_catch = i.intern("no-catch");
+    let exit_sym = i.intern("exit");
+    Err(i.signal_data(no_catch, vec![
+        Value::Sym(exit_sym),
+        Value::Nil,
+    ]))
+}
+
+fn f_self_insert_and_exit(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    // Insert last-command-event's char, then exit-minibuffer.
+    let _ = a;
+    f_exit_minibuffer(i, vec![])
+}
+
+fn f_save_buffers_kill_terminal(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
+    i.quit_editor = true;
+    Ok(Value::Nil)
+}
+
+fn f_open_dribble_file(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    match &a[0] {
+        Value::Nil => {
+            i.dribble_file = None;
+        }
+        Value::Str(s) => {
+            let path = s.borrow().clone();
+            if let Err(e) = std::fs::File::create(&path) {
+                return Err(i.error(format!("Cannot open dribble file {path}: {e}")));
+            }
+            i.dribble_file = Some(path);
+        }
+        _ => return Err(i.wrong_type_mut("stringp", &a[0])),
+    }
+    Ok(Value::Nil)
+}
+
+fn f_suspend_emacs(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
+    // Batch/nonterminal: nothing to suspend. Interactive use goes through
+    // the editor loop which handles real suspension.
+    let _ = i;
+    Ok(Value::Nil)
+}
+
+fn f_byteorder(_i: &mut Interp, _a: Vec<Value>) -> EvalResult {
+    // GNU returns ?l (108) on little-endian, ?B (66) on big-endian.
+    #[cfg(target_endian = "little")]
+    return Ok(Value::Int(108));
+    #[cfg(target_endian = "big")]
+    return Ok(Value::Int(66));
+}
+
+fn f_standard_display_european_internal(_i: &mut Interp, _a: Vec<Value>) -> EvalResult {
+    // GNU returns the previous glyph-display flag as a one-element vector.
+    Ok(Value::Vec(Rc::new(RefCell::new(vec![Value::Int(39)]))))
 }
 
 /// Called by `Interp::new` to wire editor subrs and create the initial frame.

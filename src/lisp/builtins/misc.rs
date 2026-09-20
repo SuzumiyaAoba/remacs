@@ -2016,6 +2016,7 @@ fn f_cl_type_of(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         Value::Marker(_) => "marker",
         Value::Window(_) => "window",
         Value::Frame(_) => "frame",
+        Value::Process(_) => "process",
     };
     Ok(Value::Sym(i.intern(name)))
 }
@@ -2621,20 +2622,64 @@ fn f_function_documentation(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 
 // ---------- coding systems ----------
 
-const CODING_SYSTEMS: &[&str] = &[
-    "utf-8",
-    "utf-8-unix",
-    "utf-8-dos",
-    "utf-8-mac",
-    "no-conversion",
-    "undecided",
-    "undecided-unix",
-    "raw-text",
-    "iso-latin-1",
-    "us-ascii",
+/// Coding systems defined by GNU Emacs batch startup.
+pub(crate) const CODING_SYSTEMS: &[&str] = &[
+    "adobe-standard-encoding", "alternativnyj", "ascii", "big5", "big5-hkscs",
+    "binary", "chinese-big5", "chinese-big5-hkscs", "chinese-gb18030",
+    "chinese-gbk", "chinese-hz", "chinese-iso-7bit", "chinese-iso-8bit",
+    "cn-big5", "cn-big5-hkscs", "cn-gb", "cn-gb-2312", "compound-text",
+    "compound-text-with-extensions", "cp038", "cp1047", "cp1125", "cp1250",
+    "cp1251", "cp1252", "cp1253", "cp1254", "cp1255", "cp1256", "cp1257",
+    "cp1258", "cp256", "cp273", "cp274", "cp275", "cp277", "cp278", "cp280",
+    "cp281", "cp284", "cp285", "cp290", "cp297", "cp437", "cp65001", "cp737",
+    "cp775", "cp850", "cp851", "cp852", "cp855", "cp857", "cp858", "cp860",
+    "cp861", "cp862", "cp863", "cp865", "cp866", "cp866u", "cp869", "cp874",
+    "cp878", "cp932", "cp936", "cp949", "cp950", "ctext",
+    "ctext-no-compositions", "ctext-with-extensions", "cyrillic-alternativnyj",
+    "cyrillic-iso-8bit", "cyrillic-koi8", "devanagari", "ebcdic-be",
+    "ebcdic-br", "ebcdic-cp-dk", "ebcdic-cp-es", "ebcdic-cp-fi", "ebcdic-cp-fr",
+    "ebcdic-cp-gb", "ebcdic-cp-it", "ebcdic-cp-no", "ebcdic-cp-se",
+    "ebcdic-int", "ebcdic-int1", "ebcdic-jp-e", "ebcdic-jp-kana", "ebcdic-uk",
+    "ebcdic-us", "emacs-mule", "euc-china", "euc-cn", "euc-japan",
+    "euc-japan-1990", "euc-jis-2004", "euc-jisx0213", "euc-jp", "euc-korea",
+    "euc-kr", "euc-taiwan", "euc-tw", "eucjp-ms", "gb18030", "gb2312", "gbk",
+    "georgian-academy", "georgian-ps", "greek-iso-8bit", "hebrew-iso-8bit",
+    "hp-roman8", "hz", "hz-gb-2312", "ibm038", "ibm1047", "ibm256", "ibm273",
+    "ibm274", "ibm275", "ibm277", "ibm278", "ibm280", "ibm281", "ibm284",
+    "ibm285", "ibm290", "ibm297", "ibm437", "ibm775", "ibm850", "ibm851",
+    "ibm852", "ibm855", "ibm857", "ibm860", "ibm861", "ibm862", "ibm863",
+    "ibm865", "ibm869", "ibm874", "in-is13194-devanagari", "iso-2022-7bit",
+    "iso-2022-7bit-lock", "iso-2022-7bit-lock-ss2", "iso-2022-7bit-ss2",
+    "iso-2022-8bit-ss2", "iso-2022-cjk", "iso-2022-cn", "iso-2022-cn-ext",
+    "iso-2022-int-1", "iso-2022-jp", "iso-2022-jp-1978-irv", "iso-2022-jp-2",
+    "iso-2022-jp-2004", "iso-2022-jp-3", "iso-2022-kr", "iso-8859-1",
+    "iso-8859-10", "iso-8859-11", "iso-8859-13", "iso-8859-14", "iso-8859-15",
+    "iso-8859-16", "iso-8859-2", "iso-8859-3", "iso-8859-4", "iso-8859-5",
+    "iso-8859-6", "iso-8859-7", "iso-8859-8", "iso-8859-8-e", "iso-8859-8-i",
+    "iso-8859-9", "iso-latin-1", "iso-latin-10", "iso-latin-2", "iso-latin-3",
+    "iso-latin-4", "iso-latin-5", "iso-latin-6", "iso-latin-7", "iso-latin-8",
+    "iso-latin-9", "iso-safe", "japanese-cp932", "japanese-iso-7bit-1978-irv",
+    "japanese-iso-8bit", "japanese-shift-jis", "japanese-shift-jis-2004",
+    "junet", "koi8", "koi8-r", "koi8-t", "koi8-u", "korean-cp949",
+    "korean-iso-7bit-lock", "korean-iso-8bit", "ks_c_5601-1987", "lao",
+    "latin-0", "latin-1", "latin-10", "latin-2", "latin-3", "latin-4",
+    "latin-5", "latin-6", "latin-7", "latin-8", "latin-9", "mac-roman",
+    "macintosh", "mik", "mule-utf-8", "next", "no-conversion",
+    "no-conversion-multibyte", "old-jis", "prefer-utf-8", "pt154", "raw-text",
+    "roman8", "ruscii", "shift_jis", "shift_jis-2004", "sjis", "tcvn",
+    "tcvn-5712", "th-tis620", "thai-tis620", "tibetan", "tibetan-iso-8bit",
+    "tis-620", "tis620", "undecided", "us-ascii", "utf-16", "utf-16-be",
+    "utf-16-le", "utf-16be", "utf-16be-with-signature", "utf-16le",
+    "utf-16le-with-signature", "utf-7", "utf-7-imap", "utf-8", "utf-8-auto",
+    "utf-8-emacs", "utf-8-hfs", "utf-8-nfd", "utf-8-with-signature",
+    "vietnamese-tcvn", "vietnamese-viqr", "vietnamese-viscii",
+    "vietnamese-vscii", "viqr", "viscii", "vscii", "windows-1250",
+    "windows-1251", "windows-1252", "windows-1253", "windows-1254",
+    "windows-1255", "windows-1256", "windows-1257", "windows-1258",
+    "windows-936", "x-ctext", "x-ctext-with-extensions",
 ];
 
-fn coding_known(i: &Interp, v: &Value) -> Option<String> {
+pub(crate) fn coding_known(i: &Interp, v: &Value) -> Option<String> {
     let name = match v {
         Value::Sym(s) => i.symbol_name(*s).to_string(),
         _ => return None,
@@ -3040,7 +3085,7 @@ fn f_set_transient_map(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 // ---------- char tables (vec-approximated like seq::make-char-table)
 
 /// The slot vector of a char-table (Record form or legacy bare Vec).
-fn char_table_vec(v: &Value) -> Option<Rc<RefCell<Vec<Value>>>> {
+pub(crate) fn char_table_vec(v: &Value) -> Option<Rc<RefCell<Vec<Value>>>> {
     match v {
         Value::Vec(v) => Some(v.clone()),
         Value::Record(r) => {
