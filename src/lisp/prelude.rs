@@ -60,6 +60,20 @@ inclusive, to COUNT, exclusive."
                             (list 'buffer-name temp-buffer)
                             (list 'kill-buffer temp-buffer)))))))
 
+(defmacro with-temp-file (file &rest body)
+  "Create a temporary buffer, evaluate BODY, write it to FILE."
+  (let ((temp-buffer (make-symbol "temp-buffer"))
+        (temp-file (make-symbol "temp-file")))
+    (list 'let (list (list temp-file file)
+                     (list temp-buffer '(generate-new-buffer " *temp file*")))
+          (list 'with-current-buffer temp-buffer
+                (list 'unwind-protect
+                      (list 'prog1 (cons 'progn body)
+                            (list 'write-region nil nil temp-file nil 0))
+                      (list 'and
+                            (list 'buffer-name temp-buffer)
+                            (list 'kill-buffer temp-buffer)))))))
+
 (defmacro save-current-buffer (&rest body)
   "Save the current buffer; execute BODY; restore the current buffer."
   (let ((old-buf (make-symbol "old-buffer")))
@@ -682,6 +696,170 @@ returning that buffer's contents as a string."
   "Arguments supplied to the current command interactively.")
 (defvar buffer-file-name nil
   "Name of file visited in the current buffer.")
+(defvar left-margin 0
+  "Column for the default `indent-line-function' to indent to.")
+(defvar comment-column 32
+  "Column to indent right-margin comments to.")
+(defvar comment-start nil
+  "String to insert to start a new comment, or nil if none.")
+(defvar tab-stop-list '(8 16 24 32 40 48 56 64 72 80 88 96 104 112 120)
+  "List of tab stop positions used by `tab-to-tab-stop'.")
+(defvar indent-line-function 'indent-relative-first-indent-point
+  "Function to be used to indent the current line.")
+
+;; ---------- indentation commands ----------
+
+(defun indent-to-column (col &optional minimum)
+  "Indent to column COL, or to MINIMUM if already past COL."
+  (interactive "NIndent to column: ")
+  (indent-to col minimum))
+
+(defun indent-rigidly-left (start end &optional count)
+  "Indent all lines between START and END leftward by COUNT spaces."
+  (interactive "r\nP")
+  (indent-rigidly start end (- (or count 4))))
+
+(defun indent-rigidly-right (start end &optional count)
+  "Indent all lines between START and END rightward by COUNT spaces."
+  (interactive "r\nP")
+  (indent-rigidly start end (or count 4)))
+
+(defun indent-code-rigidly (start end arg &optional nochange-regexp)
+  "Indent the region between START and END rigidly by ARG columns."
+  (interactive "r\nP")
+  (indent-rigidly start end (prefix-numeric-value arg)))
+
+(defun indent-relative (&optional unindented-ok first-only)
+  "Space out to under next indent point in previous nonblank line."
+  (interactive "P")
+  (let ((stops (save-excursion
+                 (beginning-of-line)
+                 (when (re-search-backward "^[^\n]" nil t)
+                   (end-of-line)
+                   (let ((eol (point)) (pos nil) (in-run nil))
+                     (beginning-of-line)
+                     (while (< (point) eol)
+                       (let ((c (char-after)))
+                         (cond ((memq c '(?\s ?\t))
+                                (setq in-run t))
+                               (in-run
+                                (push (current-column) pos)
+                                (setq in-run nil))))
+                       (forward-char 1))
+                     (nreverse pos))))))
+    (let* ((col (current-column))
+           (beyond (delq nil (mapcar (lambda (c) (and (> c col) c)) stops)))
+           (target (or (car beyond)
+                       (and stops (if first-only (car stops) (car stops))))))
+      (cond (target (indent-to target))
+            (unindented-ok (indent-to 0))
+            (t (tab-to-tab-stop))))))
+
+(defun indent-relative-first-indent-point ()
+  "Indent to the first indent stop of the previous nonblank line."
+  (interactive)
+  (indent-relative nil t))
+
+(defun indent-relative-maybe ()
+  "Indent like `indent-relative', defaulting to unindented."
+  (interactive)
+  (indent-relative t))
+
+(defun indent-according-to-mode ()
+  "Indent line in proper way for current major mode."
+  (interactive)
+  (funcall indent-line-function))
+
+(defun indent-region (start end &optional column)
+  "Indent each nonblank line in the region using `indent-line-function'."
+  (interactive "r")
+  (save-excursion
+    (goto-char start)
+    (setq end (copy-marker end))
+    (while (< (point) end)
+      (or (and (bolp) (eolp))
+          (if column
+              (indent-to-column column)
+            (indent-according-to-mode)))
+      (forward-line 1))))
+
+(defun indent-sexp (&optional endpos)
+  "Indent each line of the list starting just after point."
+  (interactive "P")
+  (let ((e (or endpos (save-excursion (forward-sexp 1) (point)))))
+    (indent-region (point) e)))
+
+(defun move-to-left-margin (&optional n force)
+  "Move to column LEFT-MARGIN of current line."
+  (interactive "p\nP")
+  (beginning-of-line n)
+  (move-to-column left-margin force))
+
+(defun delete-to-left-margin (&optional from to)
+  "Delete left margin indentation of each line between FROM and TO."
+  (interactive "r")
+  (let ((from (or from (point)))
+        (to (or to (point))))
+    (save-excursion
+      (goto-char from)
+      (while (< (point) to)
+        (beginning-of-line)
+        (let ((col (current-indentation)))
+          (when (> col left-margin)
+            (let ((beg (point)))
+              (move-to-column left-margin t)
+              (delete-region beg (point)))))
+        (forward-line 1)))))
+
+(defun center-region (from to &optional nlates)
+  "Center each nonblank line between FROM and TO."
+  (interactive "r\nP")
+  (save-excursion
+    (goto-char from)
+    (while (< (point) to)
+      (unless (and (bolp) (eolp))
+        (center-line nlates))
+      (forward-line 1))))
+
+(defun indent-for-comment (&optional insert)
+  "Indent this line's comment to `comment-column', or insert a comment."
+  (interactive)
+  (end-of-line)
+  (or (eq (preceding-char) ?\s)
+      (insert " "))
+  (let ((comment-start (or comment-start ";")))
+    (delete-horizontal-space)
+    (indent-to comment-column 1)
+    (insert comment-start)))
+
+(defun insert-parentheses (&optional arg)
+  "Enclose following ARG sexps in parentheses."
+  (interactive "P")
+  (or arg (setq arg 0))
+  (insert ?\()
+  (save-excursion
+    (or (eq arg 0)
+        (forward-sexp arg))
+    (insert ?\))))
+
+(defun beginning-of-line-text (&optional n)
+  "Move to the beginning of the text on this line.
+This is like `beginning-of-line', but skips past a comment prefix."
+  (interactive "^p")
+  (beginning-of-line n)
+  (skip-chars-forward " \t"))
+
+(defun fixup-whitespace ()
+  "Fixup white space between objects around point.
+Leave one space or none, according to the context."
+  (interactive "*")
+  (save-excursion
+    (delete-horizontal-space)
+    (if (or (looking-at "^\\|\\s)")
+            (save-excursion (forward-char -1)
+                            (looking-at "\\\|$\\|\\s(\\|\\s'")))
+        nil
+      (insert ?\s))))
 
 ;; ---------- named-function-key commands ----------
 (defun left-char (&optional n)

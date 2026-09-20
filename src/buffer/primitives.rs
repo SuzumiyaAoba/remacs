@@ -437,6 +437,7 @@ pub(crate) static SUBRS: &[Subr] = &[
         "Move back across a balanced expression."
     ),
     S!("scan-lists", 3, 3, f_scan_lists, "Scan lists."),
+    S!("scan-sexps", 2, 2, f_scan_sexps, "Scan COUNT sexps from FROM."),
     S!("down-list", 0, 1, f_down_list, "Move down into a list."),
     S!("up-list", 0, 1, f_up_list, "Move out of a list."),
     S!("forward-list", 0, 1, f_forward_list, "Move across a list."),
@@ -562,6 +563,13 @@ pub(crate) static SUBRS: &[Subr] = &[
         2,
         f_buffer_substring,
         "Text without props."
+    ),
+    S!(
+        "buffer-substring-with-properties",
+        2,
+        2,
+        f_buffer_substring,
+        "Text between START and END, with properties."
     ),
     S!(
         "buffer-string",
@@ -2240,6 +2248,52 @@ fn f_scan_lists(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     }
 }
 
+fn f_scan_sexps(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let from = want_int(i, &a[0])?;
+    let count = want_int(i, &a[1])?;
+    let b = cur(i);
+    let mut bb = b.borrow_mut();
+    let saved = bb.point();
+    let pos = pos_idx(bb.text_len(), from);
+    bb.set_point(pos);
+    let mut result = pos;
+    let mut steps = 0i128;
+    let mut failed = false;
+    let mut flow = None;
+    while steps < count.abs() {
+        let before = bb.point();
+        let r = if count < 0 {
+            backward_sexp_once(i, &mut bb)
+        } else {
+            forward_sexp_once(i, &mut bb)
+        };
+        match r {
+            Ok(()) => {
+                let after = bb.point();
+                if after == before {
+                    failed = true;
+                    break;
+                }
+                result = after;
+                steps += 1;
+            }
+            Err(e) => {
+                flow = Some(e);
+                break;
+            }
+        }
+    }
+    bb.set_point(saved);
+    drop(bb);
+    if let Some(e) = flow {
+        return Err(e);
+    }
+    if failed || steps < count.abs() {
+        return Ok(Value::Nil);
+    }
+    Ok(Value::Int(result as i128 + 1))
+}
+
 fn scan_error(i: &mut Interp) -> Flow {
     let sym = i.intern("scan-error");
     i.signal_data(sym, Vec::new())
@@ -3556,13 +3610,13 @@ fn f_match_substitute_replacement(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         // buffer; a string-match's data is args-out-of-range here.
         Some(m) if m.in_buffer || a.get(3).is_some() => m.clone(),
         _ => {
-            // Emacs: (args-out-of-range BUFFER 0 ZV).
+            // Emacs: (args-out-of-range BUFFER 0 SCHARS(replacement)).
             let b = cur(i);
-            let zv = b.borrow().text.len() as i128;
+            let n = newtext.chars().count() as i128;
             return Err(err_sym(
                 i,
                 "args-out-of-range",
-                vec![Value::Buffer(b), Value::Int(0), Value::Int(zv)],
+                vec![Value::Buffer(b), Value::Int(0), Value::Int(n)],
             ));
         }
     };

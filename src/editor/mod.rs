@@ -342,6 +342,28 @@ pub(crate) static SUBRS: &[Subr] = &[
         "Scroll so point is on line N."
     ),
     S!("scroll-up", 0, 1, f_scroll_up, "Scroll text up N lines."),
+    S!("scroll-up-line", 0, 1, f_scroll_up_line, "Scroll up one line."),
+    S!(
+        "scroll-down-line",
+        0,
+        1,
+        f_scroll_down_line,
+        "Scroll down one line."
+    ),
+    S!(
+        "window-left",
+        0,
+        1,
+        f_window_left,
+        "Window to the left of WINDOW."
+    ),
+    S!(
+        "window-right",
+        0,
+        1,
+        f_window_right,
+        "Window to the right of WINDOW."
+    ),
     S!(
         "scroll-down",
         0,
@@ -940,6 +962,41 @@ pub(crate) static SUBRS: &[Subr] = &[
         "All completions of FILE."
     ),
     S!("make-directory", 1, 2, f_make_directory, "Create DIR."),
+    S!(
+        "make-directory-internal",
+        1,
+        1,
+        f_make_directory_internal,
+        "Create DIR (no parents)."
+    ),
+    S!(
+        "make-temp-name",
+        1,
+        1,
+        f_make_temp_name,
+        "Unique name with PREFIX."
+    ),
+    S!(
+        "make-temp-file",
+        1,
+        5,
+        f_make_temp_file,
+        "Create a new temp file."
+    ),
+    S!(
+        "file-local-copy",
+        1,
+        1,
+        f_file_local_copy,
+        "Copy remote file locally (nil for local)."
+    ),
+    S!(
+        "file-in-directory-p",
+        2,
+        2,
+        f_file_in_directory_p,
+        "Is FILE under DIRECTORY?"
+    ),
     S!("delete-directory", 1, 3, f_delete_directory, "Delete DIR."),
     S!("delete-file", 1, 2, f_delete_file, "Delete FILENAME."),
     S!(
@@ -1340,7 +1397,13 @@ pub(crate) static SUBRS: &[Subr] = &[
         f_test_completion,
         "t if STRING completes."
     ),
-    S!("completion-boundaries", 0, 0, f_nil, ""),
+    S!(
+        "completion-boundaries",
+        4,
+        4,
+        f_completion_boundaries,
+        "Return the boundaries of the completions."
+    ),
     S!("internal-complete-buffer", 3, 3, f_nil, ""),
     S!("read-string", 1, 5, f_read_string, "Read a string."),
     S!("read-command", 1, 2, f_read_command, "Read a command name."),
@@ -2251,6 +2314,28 @@ fn f_scroll_down(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     Ok(Value::Nil)
 }
 
+fn f_scroll_up_line(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let n = arg(&a, 0).int().unwrap_or(1);
+    f_scroll_up(i, vec![Value::Int(n)])
+}
+fn f_scroll_down_line(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let n = arg(&a, 0).int().unwrap_or(1);
+    f_scroll_down(i, vec![Value::Int(n)])
+}
+fn f_window_left(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
+    let sel = sel_window(i).unwrap();
+    match window_cycle(i, -1, &sel) {
+        Some(w) => Ok(Value::Window(w)),
+        None => Ok(Value::Nil),
+    }
+}
+fn f_window_right(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
+    let sel = sel_window(i).unwrap();
+    match window_cycle(i, 1, &sel) {
+        Some(w) => Ok(Value::Window(w)),
+        None => Ok(Value::Nil),
+    }
+}
 fn f_scroll_up_command(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     f_scroll_up(i, a)
 }
@@ -4079,7 +4164,10 @@ fn f_substitute_in_file_name(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 fn f_directory_files(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let dir = want_filename(i, &a[0])?;
     let full = a.get(1).map(|v| v.truthy()).unwrap_or(false);
-    let re_str = a.get(2).map(|v| want_str(i, v)).transpose()?;
+    let re_str = match a.get(2) {
+        Some(v) if v.truthy() => Some(want_str(i, v)?),
+        _ => None,
+    };
     let nosort = a.get(3).map(|v| v.truthy()).unwrap_or(false);
     let re = match &re_str {
         Some(p) => Some(
@@ -4088,18 +4176,38 @@ fn f_directory_files(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         ),
         None => None,
     };
+    let base = if dir.ends_with('/') {
+        dir.clone()
+    } else {
+        format!("{}/", dir)
+    };
+    let matches = |name: &str| -> bool {
+        match &re {
+            Some(r) => {
+                let chars: Vec<char> = name.chars().collect();
+                crate::lisp::regexp::search(r, &chars, 0).is_some()
+            }
+            None => true,
+        }
+    };
     let mut names = Vec::new();
+    for dot in [".", ".."] {
+        if matches(dot) {
+            names.push(if full {
+                format!("{}{}", base, dot)
+            } else {
+                dot.to_string()
+            });
+        }
+    }
     if let Ok(rd) = std::fs::read_dir(&dir) {
         for ent in rd.flatten() {
             let name = ent.file_name().to_string_lossy().into_owned();
-            if let Some(r) = &re {
-                let chars: Vec<char> = name.chars().collect();
-                if crate::lisp::regexp::search(r, &chars, 0).is_none() {
-                    continue;
-                }
+            if !matches(&name) {
+                continue;
             }
             names.push(if full {
-                format!("{}{}", dir, name)
+                format!("{}{}", base, name)
             } else {
                 name
             });
@@ -4112,15 +4220,29 @@ fn f_directory_files(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 }
 
 fn f_directory_files_and_attributes(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    // Simplified: names + nil attributes.
     let files = f_directory_files(i, vec![a[0].clone(), arg(&a, 1), arg(&a, 2), arg(&a, 3)])?;
+    let dir = want_filename(i, &a[0])?;
+    let full = a.get(1).map(|v| v.truthy()).unwrap_or(false);
     let items = files.list_to_vec().unwrap_or_default();
-    Ok(Value::list(
-        items
-            .into_iter()
-            .map(|n| Value::cons(n, Value::Nil))
-            .collect(),
-    ))
+    let mut out = Vec::with_capacity(items.len());
+    for n in items {
+        let attrs = match &n {
+            Value::Str(s) => {
+                let name = s.borrow().clone();
+                let path = if full {
+                    name.clone()
+                } else if dir.ends_with('/') {
+                    format!("{}{}", dir, name)
+                } else {
+                    format!("{}/{}", dir, name)
+                };
+                f_file_attributes(i, vec![Value::string(path)])?
+            }
+            _ => Value::Nil,
+        };
+        out.push(Value::cons(n, attrs));
+    }
+    Ok(Value::list(out))
 }
 
 fn f_file_name_completion(i: &mut Interp, a: Vec<Value>) -> EvalResult {
@@ -4201,6 +4323,107 @@ fn f_make_directory(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         )),
     }
 }
+fn f_make_directory_internal(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let dir = want_filename(i, &a[0])?;
+    match std::fs::create_dir(&dir) {
+        Ok(()) => Ok(Value::Nil),
+        Err(e) => Err(i.signal_data(
+            sym::FILE_ERROR,
+            vec![Value::string(format!("Creating directory: {}", e))],
+        )),
+    }
+}
+
+fn temp_name_seed() -> String {
+    const ALPHA: &[u8] = b"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+    let mut x = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos() as u64)
+        .unwrap_or(0x9e3779b97f4a7c15)
+        ^ (std::process::id() as u64) << 32;
+    let mut out = String::with_capacity(6);
+    for _ in 0..6 {
+        x ^= x << 13;
+        x ^= x >> 7;
+        x ^= x << 17;
+        out.push(ALPHA[(x % 62) as usize] as char);
+    }
+    out
+}
+
+fn f_make_temp_name(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let prefix = want_filename(i, &a[0])?;
+    for _ in 0..64 {
+        let name = format!("{}{}", prefix, temp_name_seed());
+        if !std::path::Path::new(&name).exists() {
+            return Ok(Value::string(name));
+        }
+    }
+    Ok(Value::string(format!("{}{}", prefix, temp_name_seed())))
+}
+
+fn f_make_temp_file(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let prefix = want_filename(i, &a[0])?;
+    let dir_flag = a.get(1).map(|v| v.truthy()).unwrap_or(false);
+    for _ in 0..64 {
+        let name = format!("{}{}", prefix, temp_name_seed());
+        let r = if dir_flag {
+            std::fs::create_dir(&name)
+        } else {
+            std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&name)
+                .map(|_| ())
+        };
+        match r {
+            Ok(()) => {
+                if let Some(text) = a.get(2) {
+                    if text.truthy() {
+                        let s = want_str(i, text)?;
+                        let _ = std::fs::write(&name, s);
+                    }
+                }
+                return Ok(Value::string(name));
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(e) => {
+                return Err(i.signal_data(
+                    sym::FILE_ERROR,
+                    vec![Value::string(format!("Creating temp file: {}", e))],
+                ))
+            }
+        }
+    }
+    Err(i.signal_data(
+        sym::FILE_ERROR,
+        vec![Value::string("Creating temp file: cannot find unique name")],
+    ))
+}
+
+fn f_file_local_copy(_i: &mut Interp, _a: Vec<Value>) -> EvalResult {
+    // All our files are local; remote handlers would copy here.
+    Ok(Value::Nil)
+}
+
+fn f_file_in_directory_p(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let file = want_filename(i, &a[0])?;
+    let dir = want_filename(i, &a[1])?;
+    let canon = |p: &str| {
+        std::fs::canonicalize(p)
+            .map(|c| c.to_string_lossy().into_owned())
+            .unwrap_or_else(|_| p.to_string())
+    };
+    let f = canon(&file);
+    let d = canon(&dir);
+    let d = if d.ends_with('/') { d } else { format!("{}/", d) };
+    Ok(if f.starts_with(&d) {
+        Value::t()
+    } else {
+        Value::Nil
+    })
+}
+
 fn f_delete_directory(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let dir = want_filename(i, &a[0])?;
     let recursive = a.get(1).map(|v| v.truthy()).unwrap_or(false);
@@ -5307,6 +5530,18 @@ fn f_test_completion(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let s = want_str(i, &a[0])?;
     let cands = completion_candidates(i, &a[1]);
     Ok(Value::from_bool(cands.iter().any(|c| c == &s)))
+}
+
+fn f_completion_boundaries(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    // (STRING TABLE PRED SUFFIX) → (START . END): the start boundary
+    // inside STRING is 0 and END counts SUFFIX chars (GNU's plain
+    // completion style has no field separator).
+    let _ = want_str(i, &a[0])?;
+    let end = match &a[3] {
+        Value::Str(s) => s.borrow().chars().count() as i128,
+        _ => 0,
+    };
+    Ok(Value::cons(Value::Int(0), Value::Int(end)))
 }
 
 fn f_read_string(i: &mut Interp, a: Vec<Value>) -> EvalResult {

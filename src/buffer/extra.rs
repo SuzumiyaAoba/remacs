@@ -136,15 +136,15 @@ pub(crate) static SUBRS: &[Subr] = &[
     ),
     S!(
         "text-property-any",
+        4,
         5,
-        6,
         f_text_property_any,
         "First pos in region where PROP is VALUE."
     ),
     S!(
         "text-property-not-all",
+        4,
         5,
-        6,
         f_text_property_not_all,
         "First pos where PROP differs from VALUE."
     ),
@@ -702,7 +702,7 @@ fn f_text_property_any(i: &mut Interp, a: Vec<Value>) -> EvalResult {
             return Ok(Value::Int(p as i128 + 1));
         }
     }
-    Ok(arg(&a, 4))
+    Ok(Value::Nil)
 }
 
 fn f_text_property_not_all(i: &mut Interp, a: Vec<Value>) -> EvalResult {
@@ -717,7 +717,7 @@ fn f_text_property_not_all(i: &mut Interp, a: Vec<Value>) -> EvalResult {
             return Ok(Value::Int(p as i128 + 1));
         }
     }
-    Ok(arg(&a, 4))
+    Ok(Value::Nil)
 }
 
 fn prop_at_pos(bb: &crate::buffer::Buffer, pos: usize, prop: u32) -> Value {
