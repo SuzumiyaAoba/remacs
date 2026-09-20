@@ -2158,6 +2158,19 @@ fn scan_error(i: &mut Interp) -> Flow {
     i.signal_data(sym, Vec::new())
 }
 
+/// Emacs's `(scan-error "Unbalanced parentheses" BEG END)' — 1-based.
+fn scan_error_at(i: &mut Interp, beg0: usize, end0: usize) -> Flow {
+    let sym = i.intern("scan-error");
+    i.signal_data(
+        sym,
+        vec![
+            Value::string("Unbalanced parentheses"),
+            Value::Int(beg0 as i128 + 1),
+            Value::Int(end0 as i128 + 1),
+        ],
+    )
+}
+
 fn nav_text(i: &Interp) -> (Vec<char>, usize) {
     let b = i.buffers.get(i.current_buffer).unwrap();
     let bb = b.borrow();
@@ -2173,7 +2186,7 @@ fn f_down_list(i: &mut Interp, a: Vec<Value>) -> EvalResult {
             j += 1;
         }
         if j >= text.len() {
-            return Err(scan_error(i));
+            return Err(scan_error_at(i, p, text.len()));
         }
         p = j + 1;
     }
@@ -2189,9 +2202,9 @@ fn f_up_list(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         match stack.last() {
             Some(&o) => match sexp_match_close(&text, o) {
                 Some(c) => p = c + 1,
-                None => return Err(scan_error(i)),
+                None => return Err(scan_error_at(i, o, text.len())),
             },
-            None => return Err(scan_error(i)),
+            None => return Err(scan_error_at(i, p, text.len())),
         }
     }
     cur(i).borrow_mut().set_point(p);
@@ -2207,7 +2220,7 @@ fn f_forward_list(i: &mut Interp, a: Vec<Value>) -> EvalResult {
             Ok(Value::Nil)
         }
         Ok(None) => Ok(Value::Nil),
-        Err(()) => Err(scan_error(i)),
+        Err(()) => Err(scan_error_at(i, p, text.len())),
     }
 }
 
@@ -2220,7 +2233,7 @@ fn f_backward_list(i: &mut Interp, a: Vec<Value>) -> EvalResult {
             Ok(Value::Nil)
         }
         Ok(None) => Ok(Value::Nil),
-        Err(()) => Err(scan_error(i)),
+        Err(()) => Err(scan_error_at(i, p, 0)),
     }
 }
 
@@ -2231,7 +2244,7 @@ fn f_backward_up_list(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         let (_, stack) = sexp_pairs_before(&text, p);
         match stack.last() {
             Some(&o) => p = o,
-            None => return Err(scan_error(i)),
+            None => return Err(scan_error_at(i, p, 0)),
         }
     }
     cur(i).borrow_mut().set_point(p);
@@ -3441,7 +3454,14 @@ fn f_match_substitute_replacement(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         // buffer; a string-match's data is args-out-of-range here.
         Some(m) if m.in_buffer || a.get(3).is_some() => m.clone(),
         _ => {
-            return Err(err_sym(i, "args-out-of-range", vec![]));
+            // Emacs: (args-out-of-range BUFFER 0 ZV).
+            let b = cur(i);
+            let zv = b.borrow().text.len() as i128;
+            return Err(err_sym(
+                i,
+                "args-out-of-range",
+                vec![Value::Buffer(b), Value::Int(0), Value::Int(zv)],
+            ));
         }
     };
     let rep = expand_replacement(i, &newtext, literal, &md, &src)?;
@@ -3865,9 +3885,14 @@ fn f_undo(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         }
         if group.is_empty() {
             // Nothing left to undo.
+            let msg = if bb.undo_enabled {
+                "No further undo information"
+            } else {
+                "No undo information in this buffer"
+            };
             drop(bb);
             let sym = i.intern("user-error");
-            return Err(i.signal_data(sym, vec![Value::string("No further undo information")]));
+            return Err(i.signal_data(sym, vec![Value::string(msg)]));
         }
         // Apply in reverse.
         for e in group.into_iter().rev() {
