@@ -140,9 +140,11 @@ fn dynamic_scope() {
     // lexical-binding defaults to t (Emacs 31): a non-special let is
     // lexical, so get-x sees an unbound dynamic variable.
     assert_eq!(
-        ev_err("(progn
+        ev_err(
+            "(progn
              (defun get-x () x)
-             (let ((x 7)) (get-x)))"),
+             (let ((x 7)) (get-x)))"
+        ),
         "void-variable"
     );
 }

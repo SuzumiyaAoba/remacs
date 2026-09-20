@@ -58,7 +58,13 @@ pub fn render_grid(i: &Interp, width: usize, height: usize) -> Grid {
     let mut cursor_pos: Option<(usize, usize)> = None;
     let frame = match &i.selected_frame {
         Some(f) => f.clone(),
-        None => return Grid { rows, mode_rows, cursor: cursor_pos },
+        None => {
+            return Grid {
+                rows,
+                mode_rows,
+                cursor: cursor_pos,
+            };
+        }
     };
     let fb = frame.borrow();
     let n_windows = fb.windows.len();
@@ -66,7 +72,11 @@ pub fn render_grid(i: &Interp, width: usize, height: usize) -> Grid {
     let body_height = height.saturating_sub(mini_height);
 
     for (wi, w) in fb.windows.iter().enumerate() {
-        let per = if n_windows == 0 { 0 } else { body_height / n_windows };
+        let per = if n_windows == 0 {
+            0
+        } else {
+            body_height / n_windows
+        };
         let top = wi * per;
         let wh = if wi == n_windows - 1 {
             body_height.saturating_sub(per * wi)

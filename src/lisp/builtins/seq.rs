@@ -315,9 +315,7 @@ fn f_aref(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     // aref works on arrays including plain records (unlike elt, which
     // rejects them — matching GNU).
     if let Value::Record(r) = &args[0] {
-        if !super::misc::is_bool_vector(i, &args[0])
-            && !super::misc::is_char_table(i, &args[0])
-        {
+        if !super::misc::is_bool_vector(i, &args[0]) && !super::misc::is_char_table(i, &args[0]) {
             let n = want_int(i, &args[1])?;
             let items = r.borrow();
             if n < 0 || n as usize >= items.len() {

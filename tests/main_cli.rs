@@ -169,31 +169,31 @@ fn pty_editor_smoke() {
     let mut stdin = child.stdin.take().unwrap();
     let keys: Vec<&[u8]> = vec![
         b"hello",
-        b"\x15\x35z",              // C-u 5 z (universal/digit-argument path)
-        b"\x1b-\x33x",             // M-- 3 x (negative-argument path)
-        b"\x182",                  // C-x 2 (split-window-below)
-        b"\x18o",                  // C-x o (other-window)
-        b"\x18bbb\r",              // C-x b bb RET (switch-to-buffer)
-        b"\x1b:(+ 1 2)\r",         // M-: eval-expression
-        b"\x13el",                 // C-s el (isearch, stay in search)
-        b"\x13",                   // C-s again (repeat-forward dispatch)
-        b"\x7f",                   // DEL (isearch pop)
-        b"\x06",                   // C-f inside isearch (ReDispatch path)
-        b"\x13z",                  // C-s z (re-enter isearch)
-        b"\r",                     // RET exits isearch
-        "あ".as_bytes(),           // unbound multibyte char → self-insert
-        b"\x1e",                   // C-^ (unbound control char)
-        b"\x07",                   // C-g
-        b"\x0b",                   // C-k (kill-line)
-        b"\x19",                   // C-y (yank)
-        b"\x1by",                  // M-y (yank-pop)
-        b"\x1f",                   // C-/ (undo)
-        b"\x0c",                   // C-l (recenter-top-bottom)
-        b"\x08k\x06",              // C-h k C-f (describe-key)
-        b"\x15\x07",               // C-u C-g (abort prefix arg)
-        b"\x1bxxdescrib\r",        // M-x with partial completion
+        b"\x15\x35z",                // C-u 5 z (universal/digit-argument path)
+        b"\x1b-\x33x",               // M-- 3 x (negative-argument path)
+        b"\x182",                    // C-x 2 (split-window-below)
+        b"\x18o",                    // C-x o (other-window)
+        b"\x18bbb\r",                // C-x b bb RET (switch-to-buffer)
+        b"\x1b:(+ 1 2)\r",           // M-: eval-expression
+        b"\x13el",                   // C-s el (isearch, stay in search)
+        b"\x13",                     // C-s again (repeat-forward dispatch)
+        b"\x7f",                     // DEL (isearch pop)
+        b"\x06",                     // C-f inside isearch (ReDispatch path)
+        b"\x13z",                    // C-s z (re-enter isearch)
+        b"\r",                       // RET exits isearch
+        "あ".as_bytes(),             // unbound multibyte char → self-insert
+        b"\x1e",                     // C-^ (unbound control char)
+        b"\x07",                     // C-g
+        b"\x0b",                     // C-k (kill-line)
+        b"\x19",                     // C-y (yank)
+        b"\x1by",                    // M-y (yank-pop)
+        b"\x1f",                     // C-/ (undo)
+        b"\x0c",                     // C-l (recenter-top-bottom)
+        b"\x08k\x06",                // C-h k C-f (describe-key)
+        b"\x15\x07",                 // C-u C-g (abort prefix arg)
+        b"\x1bxxdescrib\r",          // M-x with partial completion
         b"\x1bxdescribe-bindings\r", // M-x describe-bindings RET
-        b"\x18\x03",               // C-x C-c
+        b"\x18\x03",                 // C-x C-c
     ];
     for k in keys {
         stdin.write_all(k).unwrap();

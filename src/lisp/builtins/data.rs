@@ -266,7 +266,13 @@ pub(crate) static SUBRS: &[Subr] = &[
         "Make a new obarray (stub: returns vector)."
     ),
     S!("obarrayp", 1, 1, f_obarrayp, "t if OBJECT is an obarray."),
-    S!("obarray-size", 1, 1, f_obarray_size, "Number of slots in OBARRAY."),
+    S!(
+        "obarray-size",
+        1,
+        1,
+        f_obarray_size,
+        "Number of slots in OBARRAY."
+    ),
 ];
 
 fn f_eq(_i: &mut Interp, args: Vec<Value>) -> EvalResult {
@@ -706,13 +712,15 @@ fn f_obarray_make(i: &mut Interp, args: Vec<Value>) -> EvalResult {
         Some(v) => want_int(i, v)?.max(0) as usize,
         None => 0,
     };
-    Ok(Value::Record(std::rc::Rc::new(std::cell::RefCell::new(vec![
-        obarray_tag(i),
-        Value::Vec(std::rc::Rc::new(std::cell::RefCell::new(vec![
-            Value::Nil;
-            n
-        ]))),
-    ]))))
+    Ok(Value::Record(std::rc::Rc::new(std::cell::RefCell::new(
+        vec![
+            obarray_tag(i),
+            Value::Vec(std::rc::Rc::new(std::cell::RefCell::new(vec![
+                Value::Nil;
+                n
+            ]))),
+        ],
+    ))))
 }
 fn f_obarrayp(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     Ok(Value::from_bool(is_obarray(i, &args[0])))

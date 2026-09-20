@@ -180,25 +180,16 @@ fn list_navigation() {
 #[test]
 fn circular_member_assoc_error() {
     let circ = "(let ((l (list 1 2 3))) (setcdr (cddr l) l) %s)";
-    assert_eq!(
-        ev_err(&circ.replace("%s", "(member 9 l)")),
-        "circular-list"
-    );
+    assert_eq!(ev_err(&circ.replace("%s", "(member 9 l)")), "circular-list");
     assert_eq!(ev_err(&circ.replace("%s", "(memq 9 l)")), "circular-list");
     assert_eq!(ev_err(&circ.replace("%s", "(assoc 9 l)")), "circular-list");
     assert_eq!(ev_err(&circ.replace("%s", "(assq 9 l)")), "circular-list");
-    assert_eq!(
-        ev_err(&circ.replace("%s", "(rassoc 9 l)")),
-        "circular-list"
-    );
+    assert_eq!(ev_err(&circ.replace("%s", "(rassoc 9 l)")), "circular-list");
     assert_eq!(
         ev_err(&circ.replace("%s", "(assoc 9 l (lambda (a b) nil))")),
         "circular-list"
     );
-    assert_eq!(
-        ev_err(&circ.replace("%s", "(nreverse l)")),
-        "circular-list"
-    );
+    assert_eq!(ev_err(&circ.replace("%s", "(nreverse l)")), "circular-list");
 }
 
 #[test]

@@ -633,4 +633,3 @@ pub fn format_float(f: f64) -> String {
     }
     s
 }
-

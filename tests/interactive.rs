@@ -418,10 +418,7 @@ fn completing_read_paths() {
 fn y_or_n_p_reprompt_and_quit() {
     let (mut i, _) = interp();
     // A non-y/n key re-prompts, then 'y' answers.
-    canned(
-        &mut i,
-        vec![MinibufInput::Key(120), MinibufInput::Key(121)],
-    );
+    canned(&mut i, vec![MinibufInput::Key(120), MinibufInput::Key(121)]);
     let v = ev_in(&mut i, "(y-or-n-p \"Q? \")");
     assert_eq!(i.prin1_to_string(&v), "t");
     // C-g/C-c quits.
@@ -456,7 +453,11 @@ fn read_key_sequence_paths() {
 fn digit_argument_minus_and_accumulate() {
     let (mut i, _) = interp();
     // M-- starts negative.
-    set(&mut i, "last-command-event", Value::Int('-' as i128 | 0x800_0000));
+    set(
+        &mut i,
+        "last-command-event",
+        Value::Int('-' as i128 | 0x800_0000),
+    );
     cmd(&mut i, "digit-argument").unwrap();
     let pa = i.symbol_value(i.intern_soft("prefix-arg").unwrap());
     assert_eq!(i.prin1_to_string(&pa), "(-)");
@@ -488,10 +489,7 @@ fn describe_key_undefined() {
 #[test]
 fn current_kill_and_yank_paths() {
     let (mut i, _) = interp();
-    ev_in(
-        &mut i,
-        "(insert \"hello world\") (kill-region 1 6)",
-    );
+    ev_in(&mut i, "(insert \"hello world\") (kill-region 1 6)");
     let v = ev_in(&mut i, "(current-kill 0)");
     assert_eq!(i.prin1_to_string(&v), "\"hello\"");
     // current-kill rotates.
@@ -517,7 +515,11 @@ fn interactive_spec_codes_batch() {
     );
     assert_eq!(i.prin1_to_string(&v), "(2 1 1)");
     // 'P' → raw prefix arg.
-    set(&mut i, "current-prefix-arg", Value::list(vec![Value::Int(4)]));
+    set(
+        &mut i,
+        "current-prefix-arg",
+        Value::list(vec![Value::Int(4)]),
+    );
     let v = ev_in(
         &mut i,
         "(defun f (p) (interactive \"P\") p) (call-interactively 'f)",
@@ -738,10 +740,7 @@ fn lambda_optional_rest_bindings() {
     let v = ev_in(&mut i, "(dm 9)");
     assert_eq!(i.prin1_to_string(&v), "(9 t)");
     // &rest collects the tail.
-    let v = ev_in(
-        &mut i,
-        "(funcall (lambda (a &rest r) (list a r)) 1 2 3 4)",
-    );
+    let v = ev_in(&mut i, "(funcall (lambda (a &rest r) (list a r)) 1 2 3 4)");
     assert_eq!(i.prin1_to_string(&v), "(1 (2 3 4))");
     // Too many args → error.
     assert_eq!(
@@ -764,19 +763,13 @@ fn lambda_optional_rest_bindings() {
 fn macroexpand_forms() {
     let (mut i, _) = interp();
     // (macro lambda) form expands.
-    let v = ev_in(
-        &mut i,
-        "(defmacro dm (x) `(+ ,x 1)) (macroexpand '(dm 5))",
-    );
+    let v = ev_in(&mut i, "(defmacro dm (x) `(+ ,x 1)) (macroexpand '(dm 5))");
     assert!(i.prin1_to_string(&v).contains("+"));
     // macroexpand-all on nested macros.
     let v = ev_in(&mut i, "(macroexpand-all '(dm (dm 5)))");
     let _ = v;
     // Raw lambda list as function → invalid-function.
-    assert_eq!(
-        ev_err_in(&mut i, "(funcall '(a b) 1)"),
-        "invalid-function"
-    );
+    assert_eq!(ev_err_in(&mut i, "(funcall '(a b) 1)"), "invalid-function");
     // read-from-string with START/END.
     let v = ev_in(&mut i, "(read-from-string \"xy(1 2)z\" 2 6)");
     assert!(i.prin1_to_string(&v).contains("(1 2)"));

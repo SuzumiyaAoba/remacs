@@ -444,7 +444,13 @@ pub(crate) static SUBRS: &[Subr] = &[
         "Move back across a balanced expression."
     ),
     S!("scan-lists", 3, 3, f_scan_lists, "Scan lists."),
-    S!("scan-sexps", 2, 2, f_scan_sexps, "Scan COUNT sexps from FROM."),
+    S!(
+        "scan-sexps",
+        2,
+        2,
+        f_scan_sexps,
+        "Scan COUNT sexps from FROM."
+    ),
     S!("down-list", 0, 1, f_down_list, "Move down into a list."),
     S!("up-list", 0, 1, f_up_list, "Move out of a list."),
     S!("forward-list", 0, 1, f_forward_list, "Move across a list."),
@@ -1210,11 +1216,82 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!("file-locked-p", 1, 1, f_nil, ""),
     S!("ask-user-about-lock", many 0, f_nil, ""),
     S!("internal-set-alist", 0, 0, f_nil, ""),
-    S!("compare-buffer-substrings", many 0, f_nil, ""),
+    S!(
+        "compare-buffer-substrings",
+        6,
+        6,
+        f_compare_buffer_substrings,
+        "Compare two buffer substrings."
+    ),
 ];
 
 fn f_nil(_i: &mut Interp, _a: Vec<Value>) -> EvalResult {
     Ok(Value::Nil)
+}
+
+/// GNU: 0 when equal, else +/-(1 + number of matching leading chars).
+/// Honors `case-fold-search`.
+fn f_compare_buffer_substrings(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let b1 = buf_of(i, &a[0])?;
+    let b2 = buf_of(i, &a[3])?;
+    let (s1, s2) = {
+        let bb1 = b1.borrow();
+        let bb2 = b2.borrow();
+        let (b, e) = (
+            pos_idx(bb1.text.len(), want_int(i, &a[1])?),
+            pos_idx(bb1.text.len(), want_int(i, &a[2])?),
+        );
+        let (b2x, e2x) = (
+            pos_idx(bb2.text.len(), want_int(i, &a[4])?),
+            pos_idx(bb2.text.len(), want_int(i, &a[5])?),
+        );
+        (
+            bb1.text.substring(b.min(e), b.max(e)),
+            bb2.text.substring(b2x.min(e2x), b2x.max(e2x)),
+        )
+    };
+    let fold = i
+        .symbol_value(i.intern_soft("case-fold-search").unwrap_or(0))
+        .truthy();
+    let n = cmp_common_prefix(&s1, &s2, fold);
+    let eq = n == s1.chars().count() && s1.chars().count() == s2.chars().count();
+    if eq {
+        return Ok(Value::Int(0));
+    }
+    let less = if n == s1.chars().count() {
+        true
+    } else if n == s2.chars().count() {
+        false
+    } else {
+        let c1 = fold_char(s1.chars().nth(n).unwrap(), fold);
+        let c2 = fold_char(s2.chars().nth(n).unwrap(), fold);
+        c1 < c2
+    };
+    Ok(Value::Int(if less {
+        -(n as i128) - 1
+    } else {
+        n as i128 + 1
+    }))
+}
+
+fn fold_char(c: char, fold: bool) -> char {
+    if fold {
+        c.to_lowercase().next().unwrap_or(c)
+    } else {
+        c
+    }
+}
+
+/// Length of the common leading character prefix of `a` and `b`.
+fn cmp_common_prefix(a: &str, b: &str, fold: bool) -> usize {
+    let mut n = 0;
+    for (x, y) in a.chars().zip(b.chars()) {
+        if fold_char(x, fold) != fold_char(y, fold) {
+            break;
+        }
+        n += 1;
+    }
+    n
 }
 fn f_t(_i: &mut Interp, _a: Vec<Value>) -> EvalResult {
     Ok(Value::t())
@@ -3105,11 +3182,7 @@ fn f_filter_buffer_substring(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         .filter(|v| !matches!(v, Value::Sym(s) if *s == sym::UNBOUND))
         .unwrap_or(Value::Nil);
     if f.truthy() {
-        let args = Value::list(vec![
-            a[0].clone(),
-            a[1].clone(),
-            Value::from_bool(delete),
-        ]);
+        let args = Value::list(vec![a[0].clone(), a[1].clone(), Value::from_bool(delete)]);
         return i.call_function(&f, &args, None);
     }
     let text = f_buffer_substring(i, a[..2].to_vec())?;
@@ -3146,7 +3219,9 @@ fn f_buffer_substring_with_bidi_context(i: &mut Interp, a: Vec<Value>) -> EvalRe
         drop(bb);
         return Err(i.signal_data(sym, args));
     }
-    Ok(Value::string(bb.text.substring((s - 1) as usize, (e - 1) as usize)))
+    Ok(Value::string(
+        bb.text.substring((s - 1) as usize, (e - 1) as usize),
+    ))
 }
 
 fn f_bounds_of_thing_at_point(i: &mut Interp, a: Vec<Value>) -> EvalResult {
@@ -3661,7 +3736,9 @@ fn rect_char_width(c: char, tab: i128) -> i128 {
     if (c as u32) < 0x20 || c == '\x7f' {
         2
     } else {
-        unicode_width::UnicodeWidthChar::width(c).unwrap_or(1).max(1) as i128
+        unicode_width::UnicodeWidthChar::width(c)
+            .unwrap_or(1)
+            .max(1) as i128
     }
 }
 
@@ -3678,7 +3755,11 @@ fn rect_col_at(text: &crate::buffer::gapbuf::GapBuffer, ls: usize, p: usize, tab
     let mut k = ls;
     while k < p {
         let ch = text.char_at(k);
-        col += if ch == '\t' { (col / tab + 1) * tab - col } else { rect_char_width(ch, tab) };
+        col += if ch == '\t' {
+            (col / tab + 1) * tab - col
+        } else {
+            rect_char_width(ch, tab)
+        };
         k += 1;
     }
     col
@@ -3687,12 +3768,23 @@ fn rect_col_at(text: &crate::buffer::gapbuf::GapBuffer, ls: usize, p: usize, tab
 /// (char index, column reached) for `move-to-column COL force` on the
 /// line [LS, LE). With force this may mutate the buffer (split a tab /
 /// pad the EOL); LE must be the current line end.
-fn rect_move_to(bb: &mut Buffer, ls: usize, le: usize, col: i128, tab: i128, force: RectForce) -> (usize, i128) {
+fn rect_move_to(
+    bb: &mut Buffer,
+    ls: usize,
+    le: usize,
+    col: i128,
+    tab: i128,
+    force: RectForce,
+) -> (usize, i128) {
     let mut c = 0i128;
     let mut k = ls;
     while k < le {
         let ch = bb.text.char_at(k);
-        let w = if ch == '\t' { (c / tab + 1) * tab - c } else { rect_char_width(ch, tab) };
+        let w = if ch == '\t' {
+            (c / tab + 1) * tab - c
+        } else {
+            rect_char_width(ch, tab)
+        };
         if c + w > col {
             if c == col {
                 return (k, col);
@@ -3729,7 +3821,11 @@ fn rect_corners(i: &mut Interp, a: &[Value]) -> Result<(usize, usize, i128, i128
     let el = bb.text.line_of_pos(ep);
     let c0 = rect_col_at(&bb.text, bb.text.line_start(sl), sp, tab);
     let c1 = rect_col_at(&bb.text, bb.text.line_start(el), ep, tab);
-    Ok(if c0 <= c1 { (sl, el, c0, c1, tab) } else { (sl, el, c1, c0, tab) })
+    Ok(if c0 <= c1 {
+        (sl, el, c0, c1, tab)
+    } else {
+        (sl, el, c1, c0, tab)
+    })
 }
 
 /// Line numbers GNU's apply-on-rectangle visits: the start line always,
@@ -3774,8 +3870,27 @@ fn rect_apply(
 }
 
 /// GNU delete-rectangle-line; returns the position of column SC.
-fn rect_delete_line(bb: &mut Buffer, ls: usize, le: usize, sc: i128, ec: i128, fill: bool, tab: i128) -> usize {
-    let (p0, reached) = rect_move_to(bb, ls, le, sc, tab, if fill { RectForce::T } else { RectForce::Coerce });
+fn rect_delete_line(
+    bb: &mut Buffer,
+    ls: usize,
+    le: usize,
+    sc: i128,
+    ec: i128,
+    fill: bool,
+    tab: i128,
+) -> usize {
+    let (p0, reached) = rect_move_to(
+        bb,
+        ls,
+        le,
+        sc,
+        tab,
+        if fill {
+            RectForce::T
+        } else {
+            RectForce::Coerce
+        },
+    );
     if reached >= sc {
         let le2 = bb.text.line_end(ls);
         let (p1, _) = rect_move_to(bb, ls, le2, ec, tab, RectForce::Coerce);
@@ -3787,8 +3902,27 @@ fn rect_delete_line(bb: &mut Buffer, ls: usize, le: usize, sc: i128, ec: i128, f
 }
 
 /// GNU delete-extract-rectangle-line: kill the span, return the segment.
-fn rect_extract_delete_line(bb: &mut Buffer, ls: usize, le: usize, sc: i128, ec: i128, fill: bool, tab: i128) -> String {
-    let (p0, reached) = rect_move_to(bb, ls, le, sc, tab, if fill { RectForce::T } else { RectForce::Coerce });
+fn rect_extract_delete_line(
+    bb: &mut Buffer,
+    ls: usize,
+    le: usize,
+    sc: i128,
+    ec: i128,
+    fill: bool,
+    tab: i128,
+) -> String {
+    let (p0, reached) = rect_move_to(
+        bb,
+        ls,
+        le,
+        sc,
+        tab,
+        if fill {
+            RectForce::T
+        } else {
+            RectForce::Coerce
+        },
+    );
     if reached < sc {
         // Line ends before the rectangle's left edge: GNU stores blanks
         // and leaves the line untouched.
@@ -3800,14 +3934,25 @@ fn rect_extract_delete_line(bb: &mut Buffer, ls: usize, le: usize, sc: i128, ec:
 }
 
 /// GNU extract-rectangle-line: non-destructive, padded with spaces.
-fn rect_extract_line(text: &crate::buffer::gapbuf::GapBuffer, ls: usize, le: usize, sc: i128, ec: i128, tab: i128) -> String {
+fn rect_extract_line(
+    text: &crate::buffer::gapbuf::GapBuffer,
+    ls: usize,
+    le: usize,
+    sc: i128,
+    ec: i128,
+    tab: i128,
+) -> String {
     // move-to-column without force: no pad, no split.
     let reach = |col: i128| -> (usize, i128) {
         let mut c = 0i128;
         let mut k = ls;
         while k < le {
             let ch = text.char_at(k);
-            let w = if ch == '\t' { (c / tab + 1) * tab - c } else { rect_char_width(ch, tab) };
+            let w = if ch == '\t' {
+                (c / tab + 1) * tab - c
+            } else {
+                rect_char_width(ch, tab)
+            };
             if c + w > col {
                 return if c == col { (k, col) } else { (k + 1, c + w) };
             }
@@ -3841,15 +3986,28 @@ fn rect_extract_line(text: &crate::buffer::gapbuf::GapBuffer, ls: usize, le: usi
     if endextra < 0 {
         endextra = 0;
     }
-    format!("{}{}{}", " ".repeat(begextra as usize), seg, " ".repeat(endextra as usize))
+    format!(
+        "{}{}{}",
+        " ".repeat(begextra as usize),
+        seg,
+        " ".repeat(endextra as usize)
+    )
 }
 
 fn rect_set_killed(i: &mut Interp, segs: Vec<String>) {
     let sym = i.intern("killed-rectangle");
-    let _ = i.set_symbol(sym, Value::list(segs.into_iter().map(Value::string).collect()));
+    let _ = i.set_symbol(
+        sym,
+        Value::list(segs.into_iter().map(Value::string).collect()),
+    );
 }
 
-fn rect_extract_span(i: &mut Interp, a: &[Value], delete: bool, fill: bool) -> Result<Vec<String>, Flow> {
+fn rect_extract_span(
+    i: &mut Interp,
+    a: &[Value],
+    delete: bool,
+    fill: bool,
+) -> Result<Vec<String>, Flow> {
     let (sl, hi, c0, c1, tab) = rect_line_range(i, a)?;
     let b = cur(i);
     let mut segs = Vec::new();
@@ -3910,7 +4068,18 @@ fn f_clear_rectangle(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     rect_apply(i, &a, |bb, ls, le, c0, c1, tab| {
         // GNU clear-rectangle-line.
         let eol_col = rect_col_at(&bb.text, ls, le, tab);
-        let (p0, reached) = rect_move_to(bb, ls, le, c0, tab, if fill { RectForce::T } else { RectForce::Coerce });
+        let (p0, reached) = rect_move_to(
+            bb,
+            ls,
+            le,
+            c0,
+            tab,
+            if fill {
+                RectForce::T
+            } else {
+                RectForce::Coerce
+            },
+        );
         if reached == c0 {
             if !fill && eol_col <= c1 {
                 bb.delete_region(p0, le);
@@ -3936,7 +4105,18 @@ fn f_open_rectangle(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let fill = a.get(2).map(|v| v.truthy()).unwrap_or(false);
     rect_apply(i, &a, |bb, ls, le, c0, c1, tab| {
         // GNU open-rectangle-line.
-        let (p0, reached) = rect_move_to(bb, ls, le, c0, tab, if fill { RectForce::T } else { RectForce::Coerce });
+        let (p0, reached) = rect_move_to(
+            bb,
+            ls,
+            le,
+            c0,
+            tab,
+            if fill {
+                RectForce::T
+            } else {
+                RectForce::Coerce
+            },
+        );
         if reached == c0 && (fill || p0 != bb.text.line_end(ls)) {
             let cur = rect_col_at(&bb.text, ls, p0, tab);
             if c1 > cur {
@@ -3952,7 +4132,18 @@ fn f_delete_whitespace_rectangle(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let fill = a.get(2).map(|v| v.truthy()).unwrap_or(false);
     rect_apply(i, &a, |bb, ls, le, c0, _c1, tab| {
         // GNU delete-whitespace-rectangle-line (close-rectangle).
-        let (p0, reached) = rect_move_to(bb, ls, le, c0, tab, if fill { RectForce::T } else { RectForce::Coerce });
+        let (p0, reached) = rect_move_to(
+            bb,
+            ls,
+            le,
+            c0,
+            tab,
+            if fill {
+                RectForce::T
+            } else {
+                RectForce::Coerce
+            },
+        );
         if reached == c0 && p0 != bb.text.line_end(ls) {
             let mut p1 = p0;
             while p1 < le && matches!(bb.text.char_at(p1), ' ' | '\t') {
@@ -4150,7 +4341,6 @@ fn f_rectangle_number_lines(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     Ok(Value::Nil)
 }
 
-
 fn f_spaces_string(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let n = match &a[0] {
         Value::Int(n) => *n,
@@ -4203,7 +4393,9 @@ fn f_rectangle_intersect_p(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let (w1, h1) = get(&a[1], "listp")?;
     let (x2, y2) = get(&a[2], "listp")?;
     let (w2, h2) = get(&a[3], "listp")?;
-    Ok(Value::from_bool(!(x1 + w1 <= x2 || x2 + w2 <= x1 || y1 + h1 <= y2 || y2 + h2 <= y1)))
+    Ok(Value::from_bool(
+        !(x1 + w1 <= x2 || x2 + w2 <= x1 || y1 + h1 <= y2 || y2 + h2 <= y1),
+    ))
 }
 
 fn f_extract_rectangle_bounds(i: &mut Interp, a: Vec<Value>) -> EvalResult {
@@ -4220,7 +4412,11 @@ fn f_extract_rectangle_bounds(i: &mut Interp, a: Vec<Value>) -> EvalResult {
             let mut k = ls;
             while k < le {
                 let ch = bb.text.char_at(k);
-                let w = if ch == '\t' { (c / tab + 1) * tab - c } else { rect_char_width(ch, tab) };
+                let w = if ch == '\t' {
+                    (c / tab + 1) * tab - c
+                } else {
+                    rect_char_width(ch, tab)
+                };
                 if c + w > col {
                     return if c == col { k } else { k + 1 };
                 }
@@ -4265,7 +4461,11 @@ fn f_operate_on_rectangle(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let (sl, hi, c0, c1, tab) = rect_line_range(i, &[a[1].clone(), a[2].clone()])?;
     let b = cur(i);
     // GNU passes coerce-tabs straight to move-to-column: t pads + splits.
-    let mode = if coerce_tabs { RectForce::T } else { RectForce::Nil };
+    let mode = if coerce_tabs {
+        RectForce::T
+    } else {
+        RectForce::Nil
+    };
     for ln in sl..=hi {
         let (ls, le) = {
             let bb = b.borrow();
@@ -4292,7 +4492,14 @@ fn f_operate_on_rectangle(i: &mut Interp, a: Vec<Value>) -> EvalResult {
             (p0, p0 as i128 + 1, begextra, endextra)
         };
         let _ = p0;
-        i.apply(&func, vec![Value::Int(startpos), Value::Int(begextra), Value::Int(endextra)])?;
+        i.apply(
+            &func,
+            vec![
+                Value::Int(startpos),
+                Value::Int(begextra),
+                Value::Int(endextra),
+            ],
+        )?;
     }
     Ok(Value::Nil)
 }

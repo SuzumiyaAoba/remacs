@@ -290,10 +290,7 @@ impl<'a> Reader<'a> {
         debug_assert_eq!(self.peek(), Some('.'));
         match self.peek_at(1) {
             None => true,
-            Some(c) => {
-                c.is_whitespace()
-                    || matches!(c, '(' | '[' | '"' | '\'' | '`' | ',' | ';')
-            }
+            Some(c) => c.is_whitespace() || matches!(c, '(' | '[' | '"' | '\'' | '`' | ',' | ';'),
         }
     }
 

@@ -344,14 +344,8 @@ mod tests {
             (Value::Sym(7), "Sym(7)"),
             (Value::cons(Value::Nil, Value::Nil), "Cons(..)"),
             (Value::string("hi"), "\"hi\""),
-            (
-                Value::Vec(Rc::new(RefCell::new(vec![]))),
-                "Vec(..)",
-            ),
-            (
-                Value::Record(Rc::new(RefCell::new(vec![]))),
-                "Record(..)",
-            ),
+            (Value::Vec(Rc::new(RefCell::new(vec![]))), "Vec(..)"),
+            (Value::Record(Rc::new(RefCell::new(vec![]))), "Record(..)"),
             (
                 Value::Hash(Rc::new(RefCell::new(LispHash::new(HashTest::Eq)))),
                 "Hash(..)",
@@ -373,9 +367,7 @@ mod tests {
         assert_eq!(format!("{w:?}"), "Window(..)");
         let f = i.eval_str("(selected-frame)").unwrap();
         assert_eq!(format!("{f:?}"), "Frame(..)");
-        let p = i
-            .eval_str("(make-process :name \"pdbg\")")
-            .unwrap();
+        let p = i.eval_str("(make-process :name \"pdbg\")").unwrap();
         assert_eq!(format!("{p:?}"), "Process(..)");
     }
 }

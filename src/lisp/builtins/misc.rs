@@ -187,11 +187,29 @@ pub(crate) static SUBRS: &[Subr] = &[
         "Convert TIME to FORM ticks."
     ),
     S!("emacs-uptime", 0, 1, f_emacs_uptime, "Process uptime."),
-    S!("load-average", 0, 1, f_load_average, "System load averages."),
+    S!(
+        "load-average",
+        0,
+        1,
+        f_load_average,
+        "System load averages."
+    ),
     S!("daemonp", 0, 0, f_nil, "t when running as a daemon."),
     S!("invocation-name", 0, 0, f_invocation_name, "Program name."),
-    S!("invocation-directory", 0, 0, f_invocation_dir, "Program directory."),
-    S!("internal--build-binding", 2, 3, f_build_binding, "Make a binding object."),
+    S!(
+        "invocation-directory",
+        0,
+        0,
+        f_invocation_dir,
+        "Program directory."
+    ),
+    S!(
+        "internal--build-binding",
+        2,
+        3,
+        f_build_binding,
+        "Make a binding object."
+    ),
     S!(
         "current-cpu-time",
         0,
@@ -411,8 +429,20 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!("bool-vector-union", 2, 3, f_bool_vector_union, ""),
     S!("bool-vector-intersection", 2, 3, f_bool_vector_inter, ""),
     S!("bool-vector-set-difference", 2, 3, f_bool_vector_diff, ""),
-    S!("bool-vector-count-population", 1, 1, f_bool_vector_count, ""),
-    S!("bool-vector-count-consecutive", 3, 3, f_bool_vector_consec, ""),
+    S!(
+        "bool-vector-count-population",
+        1,
+        1,
+        f_bool_vector_count,
+        ""
+    ),
+    S!(
+        "bool-vector-count-consecutive",
+        3,
+        3,
+        f_bool_vector_consec,
+        ""
+    ),
     // ---------- events ----------
     S!("eventp", 1, 1, f_eventp, ""),
     S!("event-basic-type", 1, 1, f_event_basic_type, ""),
@@ -601,13 +631,49 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!("char-table-subtype", 1, 1, f_char_table_subtype, ""),
     S!("char-table-p", 1, 1, f_char_table_p, ""),
     // ---------- GNU subrs present on a terminal build ----------
-    S!("length<", 2, 2, f_length_lt, "Is SEQUENCE shorter than LENGTH?"),
-    S!("length>", 2, 2, f_length_gt, "Is SEQUENCE longer than LENGTH?"),
+    S!(
+        "length<",
+        2,
+        2,
+        f_length_lt,
+        "Is SEQUENCE shorter than LENGTH?"
+    ),
+    S!(
+        "length>",
+        2,
+        2,
+        f_length_gt,
+        "Is SEQUENCE longer than LENGTH?"
+    ),
     S!("length=", 2, 2, f_length_eq, "Is SEQUENCE exactly LENGTH?"),
-    S!("value<", 2, 2, f_value_lt, "Is A less than B (internal order)?"),
-    S!("seconds-to-time", 1, 1, f_seconds_to_time, "SECS as a time value."),
-    S!("time-since", 1, 1, f_time_since, "Seconds elapsed since TIME."),
-    S!("time-to-days", 1, 1, f_time_to_days, "Days since epoch of TIME."),
+    S!(
+        "value<",
+        2,
+        2,
+        f_value_lt,
+        "Is A less than B (internal order)?"
+    ),
+    S!(
+        "seconds-to-time",
+        1,
+        1,
+        f_seconds_to_time,
+        "SECS as a time value."
+    ),
+    S!(
+        "time-since",
+        1,
+        1,
+        f_time_since,
+        "Seconds elapsed since TIME."
+    ),
+    S!(
+        "time-to-days",
+        1,
+        1,
+        f_time_to_days,
+        "Days since epoch of TIME."
+    ),
     S!(
         "time-to-day-in-year",
         1,
@@ -615,8 +681,20 @@ pub(crate) static SUBRS: &[Subr] = &[
         f_time_to_day_in_year,
         "Day of year of TIME."
     ),
-    S!("days-to-time", 1, 1, f_days_to_time, "DAYS as a time value."),
-    S!("date-leap-year-p", 1, 1, f_date_leap_year_p, "Is YEAR a leap year?"),
+    S!(
+        "days-to-time",
+        1,
+        1,
+        f_days_to_time,
+        "DAYS as a time value."
+    ),
+    S!(
+        "date-leap-year-p",
+        1,
+        1,
+        f_date_leap_year_p,
+        "Is YEAR a leap year?"
+    ),
     S!(
         "version-list-not-zero",
         1,
@@ -624,7 +702,13 @@ pub(crate) static SUBRS: &[Subr] = &[
         f_version_list_not_zero,
         "Drop leading zero components."
     ),
-    S!("memory-use-counts", 0, 0, f_memory_use_counts, "Object counts."),
+    S!(
+        "memory-use-counts",
+        0,
+        0,
+        f_memory_use_counts,
+        "Object counts."
+    ),
     S!("group-gid", 0, 0, f_group_gid, "Effective group id."),
     S!("group-real-gid", 0, 0, f_group_real_gid, "Real group id."),
     S!("system-users", 0, 0, f_system_users, "List of user names."),
@@ -674,7 +758,13 @@ pub(crate) static SUBRS: &[Subr] = &[
     ),
     S!("primitive-function-p", 1, 1, f_primitive_function_p, ""),
     S!("setenv-internal", 2, 3, f_setenv, ""),
-    S!("read--expression", 0, 2, f_read_expression, "Read one form."),
+    S!(
+        "read--expression",
+        0,
+        2,
+        f_read_expression,
+        "Read one form."
+    ),
     S!("read-positioning-symbols", 0, 1, f_nil, ""),
     S!("describe-vector", 1, 2, f_nil, ""),
     S!("locale-info", 1, 1, f_locale_info, "Locale data for ITEM."),
@@ -754,7 +844,13 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!("x-get-resource", 2, 4, f_nil, ""),
     S!("x-get-selection", 2, 4, f_nil, ""),
     S!("x-hide-tip", 0, 0, f_nil, ""),
-    S!("x-parse-geometry", 1, 1, f_x_parse_geometry, "Parse GEOMETRY."),
+    S!(
+        "x-parse-geometry",
+        1,
+        1,
+        f_x_parse_geometry,
+        "Parse GEOMETRY."
+    ),
     S!("x-server-max-request-size", 0, 1, f_nil, ""),
     S!("x-server-vendor", 0, 1, f_nil, ""),
     S!("x-server-version", 0, 1, f_nil, ""),
@@ -2179,7 +2275,10 @@ fn f_bool_vector_consec(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     };
     let b = !a[2].is_nil();
     Ok(Value::Int(
-        x.iter().skip(at.max(0) as usize).take_while(|v| **v == b).count() as i128,
+        x.iter()
+            .skip(at.max(0) as usize)
+            .take_while(|v| **v == b)
+            .count() as i128,
     ))
 }
 
@@ -2624,59 +2723,277 @@ fn f_function_documentation(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 
 /// Coding systems defined by GNU Emacs batch startup.
 pub(crate) const CODING_SYSTEMS: &[&str] = &[
-    "adobe-standard-encoding", "alternativnyj", "ascii", "big5", "big5-hkscs",
-    "binary", "chinese-big5", "chinese-big5-hkscs", "chinese-gb18030",
-    "chinese-gbk", "chinese-hz", "chinese-iso-7bit", "chinese-iso-8bit",
-    "cn-big5", "cn-big5-hkscs", "cn-gb", "cn-gb-2312", "compound-text",
-    "compound-text-with-extensions", "cp038", "cp1047", "cp1125", "cp1250",
-    "cp1251", "cp1252", "cp1253", "cp1254", "cp1255", "cp1256", "cp1257",
-    "cp1258", "cp256", "cp273", "cp274", "cp275", "cp277", "cp278", "cp280",
-    "cp281", "cp284", "cp285", "cp290", "cp297", "cp437", "cp65001", "cp737",
-    "cp775", "cp850", "cp851", "cp852", "cp855", "cp857", "cp858", "cp860",
-    "cp861", "cp862", "cp863", "cp865", "cp866", "cp866u", "cp869", "cp874",
-    "cp878", "cp932", "cp936", "cp949", "cp950", "ctext",
-    "ctext-no-compositions", "ctext-with-extensions", "cyrillic-alternativnyj",
-    "cyrillic-iso-8bit", "cyrillic-koi8", "devanagari", "ebcdic-be",
-    "ebcdic-br", "ebcdic-cp-dk", "ebcdic-cp-es", "ebcdic-cp-fi", "ebcdic-cp-fr",
-    "ebcdic-cp-gb", "ebcdic-cp-it", "ebcdic-cp-no", "ebcdic-cp-se",
-    "ebcdic-int", "ebcdic-int1", "ebcdic-jp-e", "ebcdic-jp-kana", "ebcdic-uk",
-    "ebcdic-us", "emacs-mule", "euc-china", "euc-cn", "euc-japan",
-    "euc-japan-1990", "euc-jis-2004", "euc-jisx0213", "euc-jp", "euc-korea",
-    "euc-kr", "euc-taiwan", "euc-tw", "eucjp-ms", "gb18030", "gb2312", "gbk",
-    "georgian-academy", "georgian-ps", "greek-iso-8bit", "hebrew-iso-8bit",
-    "hp-roman8", "hz", "hz-gb-2312", "ibm038", "ibm1047", "ibm256", "ibm273",
-    "ibm274", "ibm275", "ibm277", "ibm278", "ibm280", "ibm281", "ibm284",
-    "ibm285", "ibm290", "ibm297", "ibm437", "ibm775", "ibm850", "ibm851",
-    "ibm852", "ibm855", "ibm857", "ibm860", "ibm861", "ibm862", "ibm863",
-    "ibm865", "ibm869", "ibm874", "in-is13194-devanagari", "iso-2022-7bit",
-    "iso-2022-7bit-lock", "iso-2022-7bit-lock-ss2", "iso-2022-7bit-ss2",
-    "iso-2022-8bit-ss2", "iso-2022-cjk", "iso-2022-cn", "iso-2022-cn-ext",
-    "iso-2022-int-1", "iso-2022-jp", "iso-2022-jp-1978-irv", "iso-2022-jp-2",
-    "iso-2022-jp-2004", "iso-2022-jp-3", "iso-2022-kr", "iso-8859-1",
-    "iso-8859-10", "iso-8859-11", "iso-8859-13", "iso-8859-14", "iso-8859-15",
-    "iso-8859-16", "iso-8859-2", "iso-8859-3", "iso-8859-4", "iso-8859-5",
-    "iso-8859-6", "iso-8859-7", "iso-8859-8", "iso-8859-8-e", "iso-8859-8-i",
-    "iso-8859-9", "iso-latin-1", "iso-latin-10", "iso-latin-2", "iso-latin-3",
-    "iso-latin-4", "iso-latin-5", "iso-latin-6", "iso-latin-7", "iso-latin-8",
-    "iso-latin-9", "iso-safe", "japanese-cp932", "japanese-iso-7bit-1978-irv",
-    "japanese-iso-8bit", "japanese-shift-jis", "japanese-shift-jis-2004",
-    "junet", "koi8", "koi8-r", "koi8-t", "koi8-u", "korean-cp949",
-    "korean-iso-7bit-lock", "korean-iso-8bit", "ks_c_5601-1987", "lao",
-    "latin-0", "latin-1", "latin-10", "latin-2", "latin-3", "latin-4",
-    "latin-5", "latin-6", "latin-7", "latin-8", "latin-9", "mac-roman",
-    "macintosh", "mik", "mule-utf-8", "next", "no-conversion",
-    "no-conversion-multibyte", "old-jis", "prefer-utf-8", "pt154", "raw-text",
-    "roman8", "ruscii", "shift_jis", "shift_jis-2004", "sjis", "tcvn",
-    "tcvn-5712", "th-tis620", "thai-tis620", "tibetan", "tibetan-iso-8bit",
-    "tis-620", "tis620", "undecided", "us-ascii", "utf-16", "utf-16-be",
-    "utf-16-le", "utf-16be", "utf-16be-with-signature", "utf-16le",
-    "utf-16le-with-signature", "utf-7", "utf-7-imap", "utf-8", "utf-8-auto",
-    "utf-8-emacs", "utf-8-hfs", "utf-8-nfd", "utf-8-with-signature",
-    "vietnamese-tcvn", "vietnamese-viqr", "vietnamese-viscii",
-    "vietnamese-vscii", "viqr", "viscii", "vscii", "windows-1250",
-    "windows-1251", "windows-1252", "windows-1253", "windows-1254",
-    "windows-1255", "windows-1256", "windows-1257", "windows-1258",
-    "windows-936", "x-ctext", "x-ctext-with-extensions",
+    "adobe-standard-encoding",
+    "alternativnyj",
+    "ascii",
+    "big5",
+    "big5-hkscs",
+    "binary",
+    "chinese-big5",
+    "chinese-big5-hkscs",
+    "chinese-gb18030",
+    "chinese-gbk",
+    "chinese-hz",
+    "chinese-iso-7bit",
+    "chinese-iso-8bit",
+    "cn-big5",
+    "cn-big5-hkscs",
+    "cn-gb",
+    "cn-gb-2312",
+    "compound-text",
+    "compound-text-with-extensions",
+    "cp038",
+    "cp1047",
+    "cp1125",
+    "cp1250",
+    "cp1251",
+    "cp1252",
+    "cp1253",
+    "cp1254",
+    "cp1255",
+    "cp1256",
+    "cp1257",
+    "cp1258",
+    "cp256",
+    "cp273",
+    "cp274",
+    "cp275",
+    "cp277",
+    "cp278",
+    "cp280",
+    "cp281",
+    "cp284",
+    "cp285",
+    "cp290",
+    "cp297",
+    "cp437",
+    "cp65001",
+    "cp737",
+    "cp775",
+    "cp850",
+    "cp851",
+    "cp852",
+    "cp855",
+    "cp857",
+    "cp858",
+    "cp860",
+    "cp861",
+    "cp862",
+    "cp863",
+    "cp865",
+    "cp866",
+    "cp866u",
+    "cp869",
+    "cp874",
+    "cp878",
+    "cp932",
+    "cp936",
+    "cp949",
+    "cp950",
+    "ctext",
+    "ctext-no-compositions",
+    "ctext-with-extensions",
+    "cyrillic-alternativnyj",
+    "cyrillic-iso-8bit",
+    "cyrillic-koi8",
+    "devanagari",
+    "ebcdic-be",
+    "ebcdic-br",
+    "ebcdic-cp-dk",
+    "ebcdic-cp-es",
+    "ebcdic-cp-fi",
+    "ebcdic-cp-fr",
+    "ebcdic-cp-gb",
+    "ebcdic-cp-it",
+    "ebcdic-cp-no",
+    "ebcdic-cp-se",
+    "ebcdic-int",
+    "ebcdic-int1",
+    "ebcdic-jp-e",
+    "ebcdic-jp-kana",
+    "ebcdic-uk",
+    "ebcdic-us",
+    "emacs-mule",
+    "euc-china",
+    "euc-cn",
+    "euc-japan",
+    "euc-japan-1990",
+    "euc-jis-2004",
+    "euc-jisx0213",
+    "euc-jp",
+    "euc-korea",
+    "euc-kr",
+    "euc-taiwan",
+    "euc-tw",
+    "eucjp-ms",
+    "gb18030",
+    "gb2312",
+    "gbk",
+    "georgian-academy",
+    "georgian-ps",
+    "greek-iso-8bit",
+    "hebrew-iso-8bit",
+    "hp-roman8",
+    "hz",
+    "hz-gb-2312",
+    "ibm038",
+    "ibm1047",
+    "ibm256",
+    "ibm273",
+    "ibm274",
+    "ibm275",
+    "ibm277",
+    "ibm278",
+    "ibm280",
+    "ibm281",
+    "ibm284",
+    "ibm285",
+    "ibm290",
+    "ibm297",
+    "ibm437",
+    "ibm775",
+    "ibm850",
+    "ibm851",
+    "ibm852",
+    "ibm855",
+    "ibm857",
+    "ibm860",
+    "ibm861",
+    "ibm862",
+    "ibm863",
+    "ibm865",
+    "ibm869",
+    "ibm874",
+    "in-is13194-devanagari",
+    "iso-2022-7bit",
+    "iso-2022-7bit-lock",
+    "iso-2022-7bit-lock-ss2",
+    "iso-2022-7bit-ss2",
+    "iso-2022-8bit-ss2",
+    "iso-2022-cjk",
+    "iso-2022-cn",
+    "iso-2022-cn-ext",
+    "iso-2022-int-1",
+    "iso-2022-jp",
+    "iso-2022-jp-1978-irv",
+    "iso-2022-jp-2",
+    "iso-2022-jp-2004",
+    "iso-2022-jp-3",
+    "iso-2022-kr",
+    "iso-8859-1",
+    "iso-8859-10",
+    "iso-8859-11",
+    "iso-8859-13",
+    "iso-8859-14",
+    "iso-8859-15",
+    "iso-8859-16",
+    "iso-8859-2",
+    "iso-8859-3",
+    "iso-8859-4",
+    "iso-8859-5",
+    "iso-8859-6",
+    "iso-8859-7",
+    "iso-8859-8",
+    "iso-8859-8-e",
+    "iso-8859-8-i",
+    "iso-8859-9",
+    "iso-latin-1",
+    "iso-latin-10",
+    "iso-latin-2",
+    "iso-latin-3",
+    "iso-latin-4",
+    "iso-latin-5",
+    "iso-latin-6",
+    "iso-latin-7",
+    "iso-latin-8",
+    "iso-latin-9",
+    "iso-safe",
+    "japanese-cp932",
+    "japanese-iso-7bit-1978-irv",
+    "japanese-iso-8bit",
+    "japanese-shift-jis",
+    "japanese-shift-jis-2004",
+    "junet",
+    "koi8",
+    "koi8-r",
+    "koi8-t",
+    "koi8-u",
+    "korean-cp949",
+    "korean-iso-7bit-lock",
+    "korean-iso-8bit",
+    "ks_c_5601-1987",
+    "lao",
+    "latin-0",
+    "latin-1",
+    "latin-10",
+    "latin-2",
+    "latin-3",
+    "latin-4",
+    "latin-5",
+    "latin-6",
+    "latin-7",
+    "latin-8",
+    "latin-9",
+    "mac-roman",
+    "macintosh",
+    "mik",
+    "mule-utf-8",
+    "next",
+    "no-conversion",
+    "no-conversion-multibyte",
+    "old-jis",
+    "prefer-utf-8",
+    "pt154",
+    "raw-text",
+    "roman8",
+    "ruscii",
+    "shift_jis",
+    "shift_jis-2004",
+    "sjis",
+    "tcvn",
+    "tcvn-5712",
+    "th-tis620",
+    "thai-tis620",
+    "tibetan",
+    "tibetan-iso-8bit",
+    "tis-620",
+    "tis620",
+    "undecided",
+    "us-ascii",
+    "utf-16",
+    "utf-16-be",
+    "utf-16-le",
+    "utf-16be",
+    "utf-16be-with-signature",
+    "utf-16le",
+    "utf-16le-with-signature",
+    "utf-7",
+    "utf-7-imap",
+    "utf-8",
+    "utf-8-auto",
+    "utf-8-emacs",
+    "utf-8-hfs",
+    "utf-8-nfd",
+    "utf-8-with-signature",
+    "vietnamese-tcvn",
+    "vietnamese-viqr",
+    "vietnamese-viscii",
+    "vietnamese-vscii",
+    "viqr",
+    "viscii",
+    "vscii",
+    "windows-1250",
+    "windows-1251",
+    "windows-1252",
+    "windows-1253",
+    "windows-1254",
+    "windows-1255",
+    "windows-1256",
+    "windows-1257",
+    "windows-1258",
+    "windows-936",
+    "x-ctext",
+    "x-ctext-with-extensions",
 ];
 
 pub(crate) fn coding_known(i: &Interp, v: &Value) -> Option<String> {
@@ -3453,10 +3770,7 @@ fn f_read_expression(i: &mut Interp, a: Vec<Value>) -> EvalResult {
             Some(Value::Str(s)) => s.borrow().clone(),
             _ => {
                 let eof = i.intern("end-of-file");
-                return Err(i.signal_data(
-                    eof,
-                    vec![Value::string("End of file during parsing")],
-                ));
+                return Err(i.signal_data(eof, vec![Value::string("End of file during parsing")]));
             }
         }
     };
@@ -3540,10 +3854,7 @@ fn f_color_distance(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         (Some(x), Some(y)) => (x, y),
         _ => {
             let err = i.intern("error");
-            return Err(i.signal_data(
-                err,
-                vec![Value::string("Invalid color"), a[0].clone()],
-            ));
+            return Err(i.signal_data(err, vec![Value::string("Invalid color"), a[0].clone()]));
         }
     };
     let r = c1.0 - c2.0;
@@ -3611,7 +3922,8 @@ fn f_locale_info(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let lang = |n: i32| -> Option<String> {
         unsafe extern "C" {
             fn nl_langinfo(item: i32) -> *const std::ffi::c_char;
-            fn setlocale(category: i32, locale: *const std::ffi::c_char) -> *const std::ffi::c_char;
+            fn setlocale(category: i32, locale: *const std::ffi::c_char)
+            -> *const std::ffi::c_char;
         }
         // GNU calls setlocale(LC_ALL, "") at startup; do it lazily here.
         // LC_ALL is 6 on glibc, 0 on BSD/macOS.
@@ -3627,16 +3939,20 @@ fn f_locale_info(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         let s = unsafe { std::ffi::CStr::from_ptr(p) }
             .to_string_lossy()
             .into_owned();
-        if s.is_empty() {
-            None
-        } else {
-            Some(s)
-        }
+        if s.is_empty() { None } else { Some(s) }
     };
     // nl_item constants differ between glibc and BSD/macOS.
     let codeset: i32 = if cfg!(target_os = "linux") { 14 } else { 0 };
-    let day1: i32 = if cfg!(target_os = "linux") { 0x20007 } else { 7 };
-    let mon1: i32 = if cfg!(target_os = "linux") { 0x2000e } else { 21 };
+    let day1: i32 = if cfg!(target_os = "linux") {
+        0x20007
+    } else {
+        7
+    };
+    let mon1: i32 = if cfg!(target_os = "linux") {
+        0x2000e
+    } else {
+        21
+    };
     match item.as_str() {
         "codeset" => Ok(lang(codeset).map(Value::string).unwrap_or(Value::Nil)),
         "days" => Ok(Value::Vec(Rc::new(RefCell::new(

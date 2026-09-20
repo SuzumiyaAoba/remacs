@@ -357,20 +357,8 @@ pub(crate) static SUBRS: &[Subr] = &[
         ""
     ),
     S!("quit-window", 0, 2, f_quit_window, "Quit WINDOW."),
-    S!(
-        "quit-restore-window",
-        0,
-        2,
-        f_quit_restore_window,
-        ""
-    ),
-    S!(
-        "kill-buffer-and-window",
-        0,
-        0,
-        f_kill_buffer_and_window,
-        ""
-    ),
+    S!("quit-restore-window", 0, 2, f_quit_restore_window, ""),
+    S!("kill-buffer-and-window", 0, 0, f_kill_buffer_and_window, ""),
     S!(
         "replace-buffer-in-windows",
         0,
@@ -471,7 +459,13 @@ pub(crate) static SUBRS: &[Subr] = &[
         "Scroll so point is on line N."
     ),
     S!("scroll-up", 0, 1, f_scroll_up, "Scroll text up N lines."),
-    S!("scroll-up-line", 0, 1, f_scroll_up_line, "Scroll up one line."),
+    S!(
+        "scroll-up-line",
+        0,
+        1,
+        f_scroll_up_line,
+        "Scroll up one line."
+    ),
     S!(
         "scroll-down-line",
         0,
@@ -1532,7 +1526,13 @@ pub(crate) static SUBRS: &[Subr] = &[
         f_completing_read_multiple,
         ""
     ),
-    S!("minibuffer-completion-help", 0, 0, f_minibuffer_completion_help, ""),
+    S!(
+        "minibuffer-completion-help",
+        0,
+        0,
+        f_minibuffer_completion_help,
+        ""
+    ),
     S!("read-string", 1, 5, f_read_string, "Read a string."),
     S!("read-command", 1, 2, f_read_command, "Read a command name."),
     S!(
@@ -1546,7 +1546,13 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!("read-coding-system", 1, 2, f_read_coding_system, ""),
     S!("read-color", 0, 6, f_read_color, "Read a color name."),
     S!("read-passwd", 1, 3, f_read_passwd, "Read a password."),
-    S!("read-kbd-macro", 1, 1, f_read_kbd_macro, "Read a kbd macro."),
+    S!(
+        "read-kbd-macro",
+        1,
+        1,
+        f_read_kbd_macro,
+        "Read a kbd macro."
+    ),
     S!(
         "momentary-string-display",
         2,
@@ -1562,25 +1568,13 @@ pub(crate) static SUBRS: &[Subr] = &[
         ""
     ),
     S!("redisplay", 0, 1, f_redisplay, "Redisplay."),
-    S!(
-        "force-mode-line-update",
-        0,
-        1,
-        f_force_mode_line_update,
-        ""
-    ),
+    S!("force-mode-line-update", 0, 1, f_force_mode_line_update, ""),
     S!("tooltip-show", 1, 4, f_tooltip_show, ""),
     S!("tooltip-hide", 0, 1, f_tooltip_hide, ""),
     S!("timer-event-handler", 1, 1, f_timer_event_handler, ""),
     S!("invisible-p", 1, 1, f_invisible_p, "t if POS invisible."),
     S!("fringe-bitmaps-at-pos", 0, 2, f_fringe_bitmaps_at_pos, ""),
-    S!(
-        "binary-overwrite-mode",
-        0,
-        1,
-        f_binary_overwrite_mode,
-        ""
-    ),
+    S!("binary-overwrite-mode", 0, 1, f_binary_overwrite_mode, ""),
     S!("scroll-lock-mode", 0, 1, f_scroll_lock_mode, ""),
     S!("pixel-scroll-mode", 0, 1, f_pixel_scroll_mode, ""),
     S!(
@@ -1595,18 +1589,72 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!("font-lock-flush", 0, 2, f_font_lock_flush, ""),
     S!("jit-lock-register", 1, 2, f_jit_lock_register, ""),
     S!("jit-lock-unregister", 1, 1, f_jit_lock_unregister, ""),
-    S!("move-to-window-line-top-bottom", 0, 1, f_move_to_window_line_top_bottom, "Cycle point through window top/middle/bottom."),
-    S!("recenter-other-window", 0, 1, f_recenter_other_window, "Center point in other window."),
-    S!("exit-minibuffer", 0, 0, f_exit_minibuffer, "Exit the minibuffer."),
-    S!("self-insert-and-exit", 0, 0, f_self_insert_and_exit, "Insert char and exit minibuffer."),
-    S!("save-buffers-kill-terminal", 0, 1, f_save_buffers_kill_terminal, "Save buffers and exit."),
-    S!("open-dribble-file", 1, 1, f_open_dribble_file, "Record keystrokes to FILE."),
+    S!(
+        "move-to-window-line-top-bottom",
+        0,
+        1,
+        f_move_to_window_line_top_bottom,
+        "Cycle point through window top/middle/bottom."
+    ),
+    S!(
+        "recenter-other-window",
+        0,
+        1,
+        f_recenter_other_window,
+        "Center point in other window."
+    ),
+    S!(
+        "exit-minibuffer",
+        0,
+        0,
+        f_exit_minibuffer,
+        "Exit the minibuffer."
+    ),
+    S!(
+        "self-insert-and-exit",
+        0,
+        0,
+        f_self_insert_and_exit,
+        "Insert char and exit minibuffer."
+    ),
+    S!(
+        "save-buffers-kill-terminal",
+        0,
+        1,
+        f_save_buffers_kill_terminal,
+        "Save buffers and exit."
+    ),
+    S!(
+        "open-dribble-file",
+        1,
+        1,
+        f_open_dribble_file,
+        "Record keystrokes to FILE."
+    ),
     S!("suspend-emacs", 0, 1, f_suspend_emacs, "Suspend Emacs."),
     S!("suspend-frame", 0, 0, f_suspend_emacs, "Suspend the frame."),
     S!("byteorder", 0, 0, f_byteorder, "Byte order: ?l or ?B."),
-    S!("command-line-1", 0, 1, f_nil, "Process command-line args (done)."),
-    S!("normal-top-level", 0, 0, f_nil, "Top-level entry point (done)."),
-    S!("standard-display-european-internal", 0, 0, f_standard_display_european_internal, "European display setup."),
+    S!(
+        "command-line-1",
+        0,
+        1,
+        f_nil,
+        "Process command-line args (done)."
+    ),
+    S!(
+        "normal-top-level",
+        0,
+        0,
+        f_nil,
+        "Top-level entry point (done)."
+    ),
+    S!(
+        "standard-display-european-internal",
+        0,
+        0,
+        f_standard_display_european_internal,
+        "European display setup."
+    ),
     S!("read-event", 0, 3, f_read_char, "Read one input event."),
     S!("read-char", 0, 3, f_read_char, "Read one character."),
     S!(
@@ -1848,7 +1896,13 @@ pub(crate) static SUBRS: &[Subr] = &[
     ),
     // faces (minimal tty model)
     S!("facep", 1, 1, f_facep, ""),
-    S!("internal-get-lisp-face-attribute", 2, 3, f_face_attribute, ""),
+    S!(
+        "internal-get-lisp-face-attribute",
+        2,
+        3,
+        f_face_attribute,
+        ""
+    ),
     S!("set-face-attribute", many 2, f_set_face_attribute, ""),
     S!("face-attribute", 2, 4, f_face_attribute, ""),
     S!("face-attribute-relative-p", 2, 2, f_nil, ""),
@@ -1867,7 +1921,13 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!("internal-lisp-face-p", 1, 2, f_facep, ""),
     S!("internal-lisp-face-empty-p", 1, 2, f_nil, ""),
     S!("internal-lisp-face-equal-p", 2, 3, f_face_equal, ""),
-    S!("internal-set-lisp-face-attribute", 3, 4, f_internal_set_lisp_face_attribute, ""),
+    S!(
+        "internal-set-lisp-face-attribute",
+        3,
+        4,
+        f_internal_set_lisp_face_attribute,
+        ""
+    ),
     S!("internal-lisp-face-attribute-values", 1, 1, f_nil, ""),
     S!("internal-merge-in-global-face", 2, 2, f_nil, ""),
     S!("face-attrs-more-relative-p", 2, 2, f_nil, ""),
@@ -3879,9 +3939,7 @@ fn f_substitute_command_keys(i: &mut Interp, a: Vec<Value>) -> EvalResult {
                     // \{map} — insert the map's description.
                     if let Some((name, next)) = take_until(&chars, pos + 2, '}') {
                         let id = i.intern_soft(&name);
-                        let kmv = id
-                            .filter(|id| i.bound_p(*id))
-                            .map(|id| i.symbol_value(id));
+                        let kmv = id.filter(|id| i.bound_p(*id)).map(|id| i.symbol_value(id));
                         match kmv.filter(|v| is_keymap(i, v)) {
                             Some(km) => {
                                 let mut rows = Vec::new();
@@ -3899,12 +3957,8 @@ fn f_substitute_command_keys(i: &mut Interp, a: Vec<Value>) -> EvalResult {
                                         if !desc.is_empty() {
                                             desc.push(' ');
                                         }
-                                        let v = Value::Vec(Rc::new(RefCell::new(
-                                            vec![kv.clone()],
-                                        )));
-                                        if let Ok(Value::Str(s)) =
-                                            f_key_description(i, vec![v])
-                                        {
+                                        let v = Value::Vec(Rc::new(RefCell::new(vec![kv.clone()])));
+                                        if let Ok(Value::Str(s)) = f_key_description(i, vec![v]) {
                                             desc.push_str(&s.borrow());
                                         }
                                     }
@@ -4290,7 +4344,11 @@ fn expand_file_name_str(i: &mut Interp, name: &str) -> String {
     // absolute?
     if !s.starts_with('/') {
         let dir = default_directory(i);
-        let sep = if dir.ends_with('/') || dir.is_empty() { "" } else { "/" };
+        let sep = if dir.ends_with('/') || dir.is_empty() {
+            ""
+        } else {
+            "/"
+        };
         s = format!("{}{}{}", dir, sep, s);
     }
     // Collapse /./ and /../
@@ -4459,7 +4517,11 @@ fn f_expand_file_name(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let s = match a.get(1) {
         Some(Value::Str(d)) if !name.starts_with('/') && !name.starts_with('~') => {
             let d = d.borrow().clone();
-            let sep = if d.ends_with('/') || d.is_empty() { "" } else { "/" };
+            let sep = if d.ends_with('/') || d.is_empty() {
+                ""
+            } else {
+                "/"
+            };
             normalize_path(&format!("{}{}{}", d, sep, name))
         }
         _ => expand_file_name_str(i, &name),
@@ -4797,7 +4859,7 @@ fn f_make_temp_file(i: &mut Interp, a: Vec<Value>) -> EvalResult {
                 return Err(i.signal_data(
                     sym::FILE_ERROR,
                     vec![Value::string(format!("Creating temp file: {}", e))],
-                ))
+                ));
             }
         }
     }
@@ -4822,7 +4884,11 @@ fn f_file_in_directory_p(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     };
     let f = canon(&file);
     let d = canon(&dir);
-    let d = if d.ends_with('/') { d } else { format!("{}/", d) };
+    let d = if d.ends_with('/') {
+        d
+    } else {
+        format!("{}/", d)
+    };
     Ok(if f.starts_with(&d) {
         Value::t()
     } else {
@@ -4961,10 +5027,7 @@ fn write_file_string(i: &mut Interp, path: &str, text: &str, a: &[Value]) -> Eva
         // MUSTBENEW = 'excl: fail if the file exists.
         return Err(i.signal_data(
             sym::FILE_ERROR,
-            vec![
-                Value::string("File already exists"),
-                Value::string(path),
-            ],
+            vec![Value::string("File already exists"), Value::string(path)],
         ));
     }
     let r = if append {
@@ -6927,12 +6990,7 @@ fn face_attr(i: &mut Interp, name: &str, attr: &str) -> Value {
         ("default", ":foreground") => Value::string("unspecified-fg"),
         (
             "default",
-            ":underline"
-            | ":overline"
-            | ":strike-through"
-            | ":box"
-            | ":inverse-video"
-            | ":stipple"
+            ":underline" | ":overline" | ":strike-through" | ":box" | ":inverse-video" | ":stipple"
             | ":extend",
         ) => Value::Nil,
         ("bold", ":weight") | ("bold-italic", ":weight") => Value::Sym(i.intern("bold")),
@@ -7107,7 +7165,10 @@ fn f_face_bold_p(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let weights = ["semi-bold", "bold", "extra-bold", "ultra-bold"];
     match weights.iter().position(|x| *x == wname) {
         Some(p) => Ok(Value::list(
-            weights[p..].iter().map(|s| Value::Sym(i.intern(s))).collect(),
+            weights[p..]
+                .iter()
+                .map(|s| Value::Sym(i.intern(s)))
+                .collect(),
         )),
         None => Ok(Value::Nil),
     }
@@ -7122,7 +7183,10 @@ fn f_face_italic_p(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let slants = ["italic", "oblique"];
     match slants.iter().position(|x| *x == wname) {
         Some(p) => Ok(Value::list(
-            slants[p..].iter().map(|s| Value::Sym(i.intern(s))).collect(),
+            slants[p..]
+                .iter()
+                .map(|s| Value::Sym(i.intern(s)))
+                .collect(),
         )),
         None => Ok(Value::Nil),
     }
@@ -7318,7 +7382,14 @@ fn f_switch_to_buffer_other_window(i: &mut Interp, a: Vec<Value>) -> EvalResult 
     let f = sel_frame(i).ok_or_else(|| i.error("No frame"))?;
     // Pick or make another window.
     let sel = sel_window(i).ok_or_else(|| i.error("No window"))?;
-    let target = if f.borrow().windows.iter().filter(|w| !w.borrow().dead).count() > 1 {
+    let target = if f
+        .borrow()
+        .windows
+        .iter()
+        .filter(|w| !w.borrow().dead)
+        .count()
+        > 1
+    {
         window_cycle(i, 1, &sel).unwrap_or_else(|| sel.clone())
     } else {
         match f_split_window(i, vec![Value::Nil, Value::Nil])? {
@@ -7371,10 +7442,7 @@ fn f_quit_restore_window(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     // (quit-restore-window &optional WINDOW BURY-OR-KILL)
     let w = win_of(i, &arg(&a, 0))?;
     let bok = arg(&a, 1);
-    let bok_name = i
-        .sym_id(&bok)
-        .map(|s| i.symbol_name(s))
-        .unwrap_or_default();
+    let bok_name = i.sym_id(&bok).map(|s| i.symbol_name(s)).unwrap_or_default();
     let kill = bok.truthy() && bok_name != "bury" && bok_name != "append";
     f_quit_window(i, vec![Value::from_bool(kill), Value::Window(w)])
 }
@@ -7393,7 +7461,11 @@ fn f_kill_buffer_and_window(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
     let bid = i.current_buffer;
     i.buffers.kill(bid);
     f_delete_window(i, vec![Value::Nil])?;
-    if let Some(next) = i.buffers.other(bid).or_else(|| i.buffers.list().first().copied()) {
+    if let Some(next) = i
+        .buffers
+        .other(bid)
+        .or_else(|| i.buffers.list().first().copied())
+    {
         i.set_current_buffer(next);
     }
     Ok(Value::Nil)
@@ -7650,10 +7722,7 @@ fn f_invisible_p(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     // Check the `invisible' text property at POS.
     let pos = want_int(i, &a[0])?;
     let inv = i.intern("invisible");
-    crate::buffer::primitives::f_get_text_property(
-        i,
-        vec![Value::Int(pos), Value::Sym(inv)],
-    )
+    crate::buffer::primitives::f_get_text_property(i, vec![Value::Int(pos), Value::Sym(inv)])
 }
 
 fn f_fringe_bitmaps_at_pos(_i: &mut Interp, _a: Vec<Value>) -> EvalResult {
@@ -7695,7 +7764,10 @@ fn f_font_lock_mode(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 fn f_font_lock_ensure(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let b = cur(i);
     let bb = b.borrow();
-    let beg = a.get(0).and_then(|v| v.int()).unwrap_or(bb.begv as i128 + 1);
+    let beg = a
+        .get(0)
+        .and_then(|v| v.int())
+        .unwrap_or(bb.begv as i128 + 1);
     let end = a
         .get(1)
         .and_then(|v| v.int())
@@ -7724,10 +7796,7 @@ fn f_jit_lock_unregister(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let sym = i.intern("jit-lock-functions");
     let cur = i.symbol_value(sym);
     let items = cur.list_to_vec().unwrap_or_default();
-    let kept: Vec<Value> = items
-        .into_iter()
-        .filter(|v| !eq_values(v, &a[0]))
-        .collect();
+    let kept: Vec<Value> = items.into_iter().filter(|v| !eq_values(v, &a[0])).collect();
     i.obarray.symbol_mut(sym).value = Value::list(kept);
     Ok(Value::Nil)
 }
@@ -7741,8 +7810,8 @@ fn f_move_to_window_line_top_bottom(i: &mut Interp, a: Vec<Value>) -> EvalResult
     let last_id = i.intern("last-command");
     let this = i.symbol_value(this_id);
     let last = i.symbol_value(last_id);
-    let repeated = matches!(last, Value::Sym(s) if s == me)
-        && matches!(this, Value::Sym(s) if s == me);
+    let repeated =
+        matches!(last, Value::Sym(s) if s == me) && matches!(this, Value::Sym(s) if s == me);
     if repeated {
         i.mtwlb_phase = (i.mtwlb_phase + 1) % 3;
     } else {
@@ -7773,11 +7842,7 @@ fn f_move_to_window_line_top_bottom(i: &mut Interp, a: Vec<Value>) -> EvalResult
         if let Some(b2) = i.buffers.get(buf) {
             b2.borrow_mut().set_point(p.min(tlen));
         }
-        w.borrow_mut().point = i
-            .buffers
-            .get(buf)
-            .map(|x| x.borrow().point)
-            .unwrap_or(0);
+        w.borrow_mut().point = i.buffers.get(buf).map(|x| x.borrow().point).unwrap_or(0);
     }
     // GNU returns the number of lines point moved within the window.
     Ok(Value::Int(arg_n.max(0)))
@@ -7799,7 +7864,11 @@ fn f_recenter_other_window(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     if let Some(b) = i.buffers.get(buf) {
         let bb = b.borrow();
         let pl = bb.text.line_of_pos(bb.point());
-        let delta = if arg_n < 0 { height / 2 } else { arg_n as usize };
+        let delta = if arg_n < 0 {
+            height / 2
+        } else {
+            arg_n as usize
+        };
         let start_line = pl.saturating_sub(delta);
         let p = bb.text.line_start(start_line);
         drop(bb);
@@ -7812,10 +7881,7 @@ fn f_exit_minibuffer(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
     // Outside an active minibuffer GNU's throw reaches no catch → no-catch.
     let no_catch = i.intern("no-catch");
     let exit_sym = i.intern("exit");
-    Err(i.signal_data(no_catch, vec![
-        Value::Sym(exit_sym),
-        Value::Nil,
-    ]))
+    Err(i.signal_data(no_catch, vec![Value::Sym(exit_sym), Value::Nil]))
 }
 
 fn f_self_insert_and_exit(i: &mut Interp, a: Vec<Value>) -> EvalResult {

@@ -73,6 +73,7 @@ mod coverage_tests {
     probe!(u_probe_format, "probe_format.el");
     probe!(u_probe_registers, "probe_registers.el");
     probe!(u_probe_rect, "probe_rect.el");
+    probe!(u_probe_sort, "probe_sort.el");
 
     #[test]
     fn u_output_sinks() {

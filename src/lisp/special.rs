@@ -762,12 +762,7 @@ pub fn backquote_expand(i: &mut Interp, v: &Value, depth: usize) -> Value {
 }
 
 /// Flush accumulated vector elements into `(vector e1' e2' ...)`.
-fn flush_vec_segment(
-    i: &mut Interp,
-    cur: &mut Vec<Value>,
-    segs: &mut Vec<Value>,
-    depth: usize,
-) {
+fn flush_vec_segment(i: &mut Interp, cur: &mut Vec<Value>, segs: &mut Vec<Value>, depth: usize) {
     if cur.is_empty() {
         return;
     }

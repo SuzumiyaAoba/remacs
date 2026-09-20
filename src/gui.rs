@@ -257,8 +257,7 @@ impl Render for EditorView {
                 },
                 move |bounds, (lines, grid), window, _cx| {
                     for (y, line) in lines.iter().enumerate() {
-                        let origin =
-                            point(bounds.left(), bounds.top() + line_height * (y as f32));
+                        let origin = point(bounds.left(), bounds.top() + line_height * (y as f32));
                         if grid.mode_rows.contains(&y) {
                             window.paint_quad(fill(
                                 Bounds {
@@ -385,7 +384,7 @@ fn build_editor_view(
 
 #[cfg(test)]
 mod tests {
-    use super::{build_editor_view, keystroke_to_code, start_logic, ChanIo, EditorView, GuiEvent};
+    use super::{ChanIo, EditorView, GuiEvent, build_editor_view, keystroke_to_code, start_logic};
     use crate::editor::{CHAR_CTL, CHAR_META, CHAR_SHIFT, CHAR_SUPER};
     use crate::lisp::Interp;
     use crate::term::{Grid, KeyIo};
@@ -416,10 +415,19 @@ mod tests {
 
     #[test]
     fn keystroke_plain_chars() {
-        assert_eq!(keystroke_to_code(&ks("a", Some("a"), false, false, false, false)), Some(97));
-        assert_eq!(keystroke_to_code(&ks("z", None, false, false, false, false)), Some(122));
+        assert_eq!(
+            keystroke_to_code(&ks("a", Some("a"), false, false, false, false)),
+            Some(97)
+        );
+        assert_eq!(
+            keystroke_to_code(&ks("z", None, false, false, false, false)),
+            Some(122)
+        );
         // Digits and punctuation pass through.
-        assert_eq!(keystroke_to_code(&ks("5", Some("5"), false, false, false, false)), Some(53));
+        assert_eq!(
+            keystroke_to_code(&ks("5", Some("5"), false, false, false, false)),
+            Some(53)
+        );
     }
 
     #[test]
@@ -436,12 +444,24 @@ mod tests {
     #[test]
     fn keystroke_ctrl_folds_to_control_char() {
         // C-x → 24 like a tty.
-        assert_eq!(keystroke_to_code(&ks("x", Some("x"), true, false, false, false)), Some(24));
+        assert_eq!(
+            keystroke_to_code(&ks("x", Some("x"), true, false, false, false)),
+            Some(24)
+        );
         // C-u → 21, C-g → 7.
-        assert_eq!(keystroke_to_code(&ks("u", None, true, false, false, false)), Some(21));
-        assert_eq!(keystroke_to_code(&ks("g", None, true, false, false, false)), Some(7));
+        assert_eq!(
+            keystroke_to_code(&ks("u", None, true, false, false, false)),
+            Some(21)
+        );
+        assert_eq!(
+            keystroke_to_code(&ks("g", None, true, false, false, false)),
+            Some(7)
+        );
         // C-? folds to DEL.
-        assert_eq!(keystroke_to_code(&ks("?", None, true, false, false, false)), Some(127));
+        assert_eq!(
+            keystroke_to_code(&ks("?", None, true, false, false, false)),
+            Some(127)
+        );
     }
 
     #[test]
@@ -460,11 +480,26 @@ mod tests {
     #[test]
     fn keystroke_named_keys() {
         use crate::editor::event_code_for;
-        assert_eq!(keystroke_to_code(&ks("return", None, false, false, false, false)), Some(13));
-        assert_eq!(keystroke_to_code(&ks("tab", None, false, false, false, false)), Some(9));
-        assert_eq!(keystroke_to_code(&ks("backspace", None, false, false, false, false)), Some(127));
-        assert_eq!(keystroke_to_code(&ks("escape", None, false, false, false, false)), Some(27));
-        assert_eq!(keystroke_to_code(&ks("space", Some(" "), false, false, false, false)), Some(32));
+        assert_eq!(
+            keystroke_to_code(&ks("return", None, false, false, false, false)),
+            Some(13)
+        );
+        assert_eq!(
+            keystroke_to_code(&ks("tab", None, false, false, false, false)),
+            Some(9)
+        );
+        assert_eq!(
+            keystroke_to_code(&ks("backspace", None, false, false, false, false)),
+            Some(127)
+        );
+        assert_eq!(
+            keystroke_to_code(&ks("escape", None, false, false, false, false)),
+            Some(27)
+        );
+        assert_eq!(
+            keystroke_to_code(&ks("space", Some(" "), false, false, false, false)),
+            Some(32)
+        );
         assert_eq!(
             keystroke_to_code(&ks("up", None, false, false, false, false)),
             Some(event_code_for("up"))
@@ -494,7 +529,10 @@ mod tests {
         let c = keystroke_to_code(&ks("right", None, true, false, false, false)).unwrap();
         assert_eq!(c, event_code_for("right") | CHAR_CTL);
         // Unknown named keys produce no event.
-        assert_eq!(keystroke_to_code(&ks("capslock", None, false, false, false, false)), None);
+        assert_eq!(
+            keystroke_to_code(&ks("capslock", None, false, false, false, false)),
+            None
+        );
     }
 
     fn chan_pair() -> (ChanIo, Sender<GuiEvent>, smol::channel::Receiver<Grid>) {
@@ -557,7 +595,11 @@ mod tests {
         let grid = grx.try_recv().unwrap();
         assert_eq!(grid.rows.len(), 24);
         assert!(grid.rows[0].starts_with("hello"));
-        assert!(grid.mode_rows.iter().any(|&r| grid.rows[r].contains("scratch")));
+        assert!(
+            grid.mode_rows
+                .iter()
+                .any(|&r| grid.rows[r].contains("scratch"))
+        );
         // draw_echo patches only the last row and moves the cursor.
         io.draw_echo("M-x find-").unwrap();
         let grid = grx.try_recv().unwrap();
@@ -570,13 +612,28 @@ mod tests {
     fn chanio_send_grid_latest_wins_and_closed() {
         let (mut io, _tx, grx) = chan_pair();
         // Bounded(1) + force_send: newest displaces the queued frame.
-        io.send_grid(Grid { rows: vec!["old".into()], mode_rows: vec![], cursor: None }).unwrap();
-        io.send_grid(Grid { rows: vec!["new".into()], mode_rows: vec![], cursor: None }).unwrap();
+        io.send_grid(Grid {
+            rows: vec!["old".into()],
+            mode_rows: vec![],
+            cursor: None,
+        })
+        .unwrap();
+        io.send_grid(Grid {
+            rows: vec!["new".into()],
+            mode_rows: vec![],
+            cursor: None,
+        })
+        .unwrap();
         assert_eq!(grx.try_recv().unwrap().rows[0], "new");
         drop(grx);
-        assert!(io
-            .send_grid(Grid { rows: vec![], mode_rows: vec![], cursor: None })
-            .is_err());
+        assert!(
+            io.send_grid(Grid {
+                rows: vec![],
+                mode_rows: vec![],
+                cursor: None
+            })
+            .is_err()
+        );
     }
 
     #[test]
@@ -634,9 +691,7 @@ mod tests {
         let mut app_cx = gpui::TestAppContext::single();
         let (tx, _rx) = mpsc::channel::<GuiEvent>();
         let (gtx, grx) = smol::channel::bounded::<Grid>(1);
-        let handle = app_cx.add_window(|window, cx| {
-            build_editor_view(window, cx, tx, grx)
-        });
+        let handle = app_cx.add_window(|window, cx| build_editor_view(window, cx, tx, grx));
         // A grid pushed through the channel is applied by the pump.
         gtx.force_send(Grid {
             rows: vec!["pumped".to_string()],
@@ -654,4 +709,3 @@ mod tests {
         app_cx.run_until_parked();
     }
 }
-

@@ -417,15 +417,18 @@ returning that buffer's contents as a string."
   (interactive "^p")
   (let ((n (or arg 1)))
     (while (> n 0)
+      ;; Skip separator lines (test at BOL without moving point back).
       (while (and (< (point) (point-max))
-                  (or (eobp)
-                      (progn (beginning-of-line)
-                             (looking-at "^[ \t]*$"))))
+                  (save-excursion
+                    (beginning-of-line)
+                    (looking-at paragraph-separate)))
         (forward-line 1))
-      (while (and (< (point) (point-max)) (not (eobp)))
-        (forward-line 1)
-        (beginning-of-line)
-        (when (looking-at "^[ \t]*$") (setq n 0)))
+      ;; Scan to the start of the next separator line (or eob).
+      (while (and (< (point) (point-max))
+                  (save-excursion
+                    (beginning-of-line)
+                    (not (looking-at paragraph-separate))))
+        (forward-line 1))
       (setq n (1- n)))
     (while (< n 0)
       (forward-line -1)
@@ -463,8 +466,8 @@ returning that buffer's contents as a string."
   "Move forward to page boundary."
   (interactive "^p")
   (skip-chars-forward "\n")
-  (if (re-search-forward "\f" nil t (or count 1))
-      (goto-char (match-beginning 0))
+  (if (re-search-forward page-delimiter nil t (or count 1))
+      (goto-char (match-end 0))
     (goto-char (point-max))))
 
 (defun backward-page (&optional count)

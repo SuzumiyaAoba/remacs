@@ -1728,8 +1728,7 @@ fn f_decode_char(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     };
     let max: i128 = match cs_name.as_str() {
         "ascii" => 127,
-        "iso-8859-1" | "latin-iso8859-1" | "eight-bit-graphic"
-        | "eight-bit-control" => 255,
+        "iso-8859-1" | "latin-iso8859-1" | "eight-bit-graphic" | "eight-bit-control" => 255,
         _ => i128::MAX,
     };
     if code >= 0 && code <= max {
@@ -1823,10 +1822,7 @@ fn charset_restriction(i: &mut Interp, v: &Value) -> Result<Vec<String>, Flow> {
             Value::Sym(s) => i.symbol_name(*s),
             _ => return Err(i.wrong_type_mut("charsetp", item)),
         };
-        if CHARSET_PRIORITY.contains(&name.as_str())
-            || name == "emacs"
-            || name == "eight-bit"
-        {
+        if CHARSET_PRIORITY.contains(&name.as_str()) || name == "emacs" || name == "eight-bit" {
             out.push(name);
         } else if let Some(cs) = super::misc::coding_known(i, item) {
             // A coding system restricts to its charset list.
@@ -1854,7 +1850,8 @@ fn charset_restriction(i: &mut Interp, v: &Value) -> Result<Vec<String>, Flow> {
 fn coding_charsets(name: &str) -> Vec<&'static str> {
     if name.starts_with("utf-8") || name.starts_with("undecided") {
         vec!["unicode"]
-    } else if name.starts_with("iso-8859") || name.starts_with("iso-latin")
+    } else if name.starts_with("iso-8859")
+        || name.starts_with("iso-latin")
         || name.starts_with("latin")
     {
         vec!["iso-8859-1"]

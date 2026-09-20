@@ -53,7 +53,9 @@ impl Drop for ProcIo {
     /// suite runs hundreds of procs in one OS process.
     fn drop(&mut self) {
         match self {
-            ProcIo::Child { child, master_fd, .. } => {
+            ProcIo::Child {
+                child, master_fd, ..
+            } => {
                 let _ = child.kill();
                 let _ = child.wait();
                 if *master_fd >= 0 {
@@ -61,7 +63,11 @@ impl Drop for ProcIo {
                     *master_fd = -1;
                 }
             }
-            ProcIo::Pipe { read_fd, child_wfd, sink_fd } => {
+            ProcIo::Pipe {
+                read_fd,
+                child_wfd,
+                sink_fd,
+            } => {
                 for fd in [*read_fd, *child_wfd, *sink_fd] {
                     if fd >= 0 {
                         unsafe { libc::close(fd) };
@@ -189,7 +195,12 @@ fn decode(bytes: &[u8]) -> String {
 // ---------- output / status engine ----------
 
 /// Feed process output to its filter or buffer (no borrow held).
-fn deliver_output(i: &mut Interp, pref: &ProcessRef, out: Vec<u8>, to_stderr_dest: bool) -> Result<(), Flow> {
+fn deliver_output(
+    i: &mut Interp,
+    pref: &ProcessRef,
+    out: Vec<u8>,
+    to_stderr_dest: bool,
+) -> Result<(), Flow> {
     if out.is_empty() {
         return Ok(());
     }
@@ -232,7 +243,10 @@ fn deliver_output(i: &mut Interp, pref: &ProcessRef, out: Vec<u8>, to_stderr_des
             .as_ref()
             .map(|m| m.borrow().position)
             .unwrap_or_else(|| {
-                i.buffers.get(bid).map(|b| b.borrow().text_len()).unwrap_or(0)
+                i.buffers
+                    .get(bid)
+                    .map(|b| b.borrow().text_len())
+                    .unwrap_or(0)
             });
         let n = text.chars().count();
         insert_into_buffer(i, bid, Some(pos), &text);
@@ -298,9 +312,21 @@ fn run_sentinel(i: &mut Interp, pref: &ProcessRef, status: &str, code: i32) -> R
         // GNU's internal-default-process-sentinel skips routine
         // status transitions; only abnormal/final events get a
         // "Process NAME EVENT" message.
-        "open", "run", "listen", "connect", "closed", "deleted", "signal",
-        "hangup", "killed", "terminated", "accept", "failed", "stop",
-        "continued", "interrupt",
+        "open",
+        "run",
+        "listen",
+        "connect",
+        "closed",
+        "deleted",
+        "signal",
+        "hangup",
+        "killed",
+        "terminated",
+        "accept",
+        "failed",
+        "stop",
+        "continued",
+        "interrupt",
     ]
     .iter()
     .any(|p| event.starts_with(p))
@@ -329,9 +355,8 @@ fn poll_proc(i: &mut Interp, pref: &ProcessRef) -> Result<bool, Flow> {
             } => {
                 let mut buf = [0u8; 8192];
                 loop {
-                    let n = unsafe {
-                        libc::read(*master_fd, buf.as_mut_ptr() as *mut _, buf.len())
-                    };
+                    let n =
+                        unsafe { libc::read(*master_fd, buf.as_mut_ptr() as *mut _, buf.len()) };
                     if n > 0 {
                         events.push(Ev::Out(buf[..n as usize].to_vec(), false));
                     } else {
@@ -369,7 +394,9 @@ fn poll_proc(i: &mut Interp, pref: &ProcessRef) -> Result<bool, Flow> {
                     _ => {}
                 }
             }
-            ProcIo::Pipe { read_fd, child_wfd, .. } => {
+            ProcIo::Pipe {
+                read_fd, child_wfd, ..
+            } => {
                 let mut buf = [0u8; 8192];
                 loop {
                     let n = unsafe { libc::read(*read_fd, buf.as_mut_ptr() as *mut _, buf.len()) };
@@ -552,7 +579,11 @@ fn finish_setup(
         };
         p.buffer = Some(bid);
         // Process mark sits at end of buffer.
-        let end = i.buffers.get(bid).map(|r| r.borrow().text_len()).unwrap_or(0);
+        let end = i
+            .buffers
+            .get(bid)
+            .map(|r| r.borrow().text_len())
+            .unwrap_or(0);
         p.mark = Some(Rc::new(RefCell::new(Marker {
             buffer: Some(bid),
             position: end,
@@ -700,8 +731,13 @@ fn f_make_process(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let (master_fd, slave_fd, tty_name) = unsafe {
         let mut master: libc::c_int = -1;
         let mut slave: libc::c_int = -1;
-        if libc::openpty(&mut master, &mut slave, std::ptr::null_mut(),
-                         std::ptr::null_mut(), std::ptr::null_mut()) != 0
+        if libc::openpty(
+            &mut master,
+            &mut slave,
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+        ) != 0
         {
             return Err(i.error("Process not started: openpty failed"));
         }
@@ -709,7 +745,9 @@ fn f_make_process(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         let name = if name.is_null() {
             String::new()
         } else {
-            std::ffi::CStr::from_ptr(name).to_string_lossy().into_owned()
+            std::ffi::CStr::from_ptr(name)
+                .to_string_lossy()
+                .into_owned()
         };
         // GNU puts the subprocess pty into a raw-ish mode: no echo, no
         // canonical input, no output post-processing (so \n stays \n).
@@ -787,11 +825,15 @@ fn f_make_process(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         }
     }
     let pid = child.id() as i32;
-    let mut p = base_proc(name, "real", ProcIo::Child {
-        child,
-        master_fd,
-        stderr,
-    });
+    let mut p = base_proc(
+        name,
+        "real",
+        ProcIo::Child {
+            child,
+            master_fd,
+            stderr,
+        },
+    );
     p.tty_name = Value::string(tty_name);
     p.pid = pid;
     let pref = finish_setup(i, p, &args, true)?;
@@ -827,11 +869,15 @@ fn f_make_pipe_process(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     nonblock_fd(fds[0]);
     nonblock_fd(fds[1]);
     nonblock_fd(wfds[1]);
-    let mut p = base_proc(name, "pipe", ProcIo::Pipe {
-        read_fd: fds[0],
-        child_wfd: fds[1],
-        sink_fd: wfds[1],
-    });
+    let mut p = base_proc(
+        name,
+        "pipe",
+        ProcIo::Pipe {
+            read_fd: fds[0],
+            child_wfd: fds[1],
+            sink_fd: wfds[1],
+        },
+    );
     p.status = "open";
     // GNU's `process-contact' returns the creation plist.
     p.contact = args.clone();
@@ -910,7 +956,11 @@ fn f_make_network_process(i: &mut Interp, a: Vec<Value>) -> EvalResult {
             return Err(i.error("‘:server’ is incompatible with ‘:nowait’"));
         }
         let port = service_port(i, &service)?;
-        let bind_host = if kw(i, &args, ":family").truthy() { "0.0.0.0".to_string() } else { host.clone() };
+        let bind_host = if kw(i, &args, ":family").truthy() {
+            "0.0.0.0".to_string()
+        } else {
+            host.clone()
+        };
         let listener = std::net::TcpListener::bind((bind_host.as_str(), port)).map_err(|e| {
             // GNU reports bind failures via the errno-derived condition:
             // EACCES → permission-denied, others → file-error, with data
@@ -922,7 +972,13 @@ fn f_make_network_process(i: &mut Interp, a: Vec<Value>) -> EvalResult {
             });
             let msg = e.to_string();
             let msg = msg.split(" (os error").next().unwrap_or(&msg).to_string();
-            i.signal_data(sig, vec![Value::string("Cannot bind server socket"), Value::string(msg)])
+            i.signal_data(
+                sig,
+                vec![
+                    Value::string("Cannot bind server socket"),
+                    Value::string(msg),
+                ],
+            )
         })?;
         let _ = listener.set_nonblocking(true);
         let local_port = listener.local_addr().map(|a| a.port()).unwrap_or(port);
@@ -949,7 +1005,7 @@ fn f_make_network_process(i: &mut Interp, a: Vec<Value>) -> EvalResult {
             return Err(i.signal_data(fe, data));
         }
     };
-        let _ = stream.set_nonblocking(true);
+    let _ = stream.set_nonblocking(true);
     let local_port = stream.local_addr().map(|a| a.port()).unwrap_or(0);
     let mut p = base_proc(name, "network", ProcIo::Net(stream));
     p.status = "open";
@@ -1145,7 +1201,9 @@ fn f_list_processes(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     // buffer and return nil like GNU.
     let _ = a;
     let bid = i.buffers.create("*Process List*");
-    let mut lines = String::from("Proc         Status   Buffer         Tty         Command\n----         ------   ------         ---         -------\n");
+    let mut lines = String::from(
+        "Proc         Status   Buffer         Tty         Command\n----         ------   ------         ---         -------\n",
+    );
     let procs = i.processes.clone();
     for p in procs {
         let pb = p.borrow();
@@ -1192,7 +1250,9 @@ fn f_set_process_buffer(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     };
     let mut pb = p.borrow_mut();
     pb.buffer = bid;
-    let end = bid.and_then(|b| i.buffers.get(b)).map(|r| r.borrow().text_len());
+    let end = bid
+        .and_then(|b| i.buffers.get(b))
+        .map(|r| r.borrow().text_len());
     if let (Some(b), Some(e)) = (bid, end) {
         match &pb.mark {
             Some(m) => m.borrow_mut().position = e,
@@ -1396,13 +1456,29 @@ fn f_set_process_coding_system(i: &mut Interp, a: Vec<Value>) -> EvalResult {
             Some(Value::Sym(s)) => {
                 let name = i.symbol_name(*s);
                 let mut pb = p.borrow_mut();
-                let slot = if side { &mut pb.coding.1 } else { &mut pb.coding.0 };
-                *slot = if side { coding_canonical_unix(&name) } else { name };
+                let slot = if side {
+                    &mut pb.coding.1
+                } else {
+                    &mut pb.coding.0
+                };
+                *slot = if side {
+                    coding_canonical_unix(&name)
+                } else {
+                    name
+                };
             }
             Some(Value::Nil) | None => {
                 let mut pb = p.borrow_mut();
-                let slot = if side { &mut pb.coding.1 } else { &mut pb.coding.0 };
-                *slot = if side { "raw-text-unix".into() } else { "nil".into() };
+                let slot = if side {
+                    &mut pb.coding.1
+                } else {
+                    &mut pb.coding.0
+                };
+                *slot = if side {
+                    "raw-text-unix".into()
+                } else {
+                    "nil".into()
+                };
             }
             Some(v) => {
                 let v = v.clone();
@@ -1462,7 +1538,9 @@ fn f_get_buffer_process(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         Value::Nil => Some(i.current_buffer),
         v => i.buffer_id_of(v),
     };
-    let Some(bid) = bid else { return Ok(Value::Nil) };
+    let Some(bid) = bid else {
+        return Ok(Value::Nil);
+    };
     for p in &i.processes {
         let pb = p.borrow();
         if !pb.dead && pb.buffer == Some(bid) {
@@ -1570,7 +1648,12 @@ fn f_process_send_region(i: &mut Interp, a: Vec<Value>) -> EvalResult {
             let s = ((s - 1).max(0) as usize).min(bb.text_len());
             let e = ((e - 1).max(0) as usize).min(bb.text_len());
             let (lo, hi) = if s <= e { (s, e) } else { (e, s) };
-            bb.text.text().chars().skip(lo).take(hi - lo).collect::<String>()
+            bb.text
+                .text()
+                .chars()
+                .skip(lo)
+                .take(hi - lo)
+                .collect::<String>()
         })
         .unwrap_or_default();
     proc_write(i, &p, text.as_bytes())
@@ -1738,7 +1821,9 @@ fn f_delete_process(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         let mut pb = p.borrow_mut();
         pb.dead = true;
         ev = match &mut pb.io {
-            ProcIo::Child { child, master_fd, .. } => {
+            ProcIo::Child {
+                child, master_fd, ..
+            } => {
                 let _ = child.kill();
                 // Reap the child and release the pty — otherwise fds and
                 // zombies accumulate until openpty starts failing.
@@ -1751,7 +1836,11 @@ fn f_delete_process(i: &mut Interp, a: Vec<Value>) -> EvalResult {
                 pb.exit_status = libc::SIGKILL;
                 ("signal", libc::SIGKILL)
             }
-            ProcIo::Pipe { read_fd, child_wfd, sink_fd } => {
+            ProcIo::Pipe {
+                read_fd,
+                child_wfd,
+                sink_fd,
+            } => {
                 unsafe {
                     libc::close(*read_fd);
                     if *child_wfd >= 0 {
@@ -1805,7 +1894,10 @@ fn f_process_running_child_p(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         v => want_proc(i, v)?,
     };
     let pb = p.borrow();
-    if let ProcIo::Child { child, master_fd, .. } = &pb.io {
+    if let ProcIo::Child {
+        child, master_fd, ..
+    } = &pb.io
+    {
         if pb.status == "run" || pb.status == "stop" {
             let fg = unsafe { libc::tcgetpgrp(*master_fd) };
             if fg > 0 && fg != child.id() as i32 {
@@ -1848,16 +1940,17 @@ fn run_lines(i: &mut Interp, prog: &str, args: &[String], ignore_status: bool) -
     match out {
         Ok(o) => {
             if !o.status.success() && !ignore_status {
-                return Err(i.error(format!("{prog} exited with status {}", o.status.code().unwrap_or(-1))));
+                return Err(i.error(format!(
+                    "{prog} exited with status {}",
+                    o.status.code().unwrap_or(-1)
+                )));
             }
             let text = decode(&o.stdout);
             let mut lines: Vec<&str> = text.split('\n').collect();
             if matches!(lines.last(), Some(l) if l.is_empty()) {
                 lines.pop();
             }
-            Ok(Value::list(
-                lines.into_iter().map(Value::string).collect(),
-            ))
+            Ok(Value::list(lines.into_iter().map(Value::string).collect()))
         }
         Err(ref e) if e.kind() == std::io::ErrorKind::NotFound => Err(i.signal_data(
             sym::FILE_MISSING,
@@ -1917,8 +2010,7 @@ fn f_process_attributes(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     // as (hi lo usec psec) lists.
     // args goes last so all space-free fields split cleanly. macOS ps
     // has no egid/thcount/majflt keywords — gid/uid are effective ids.
-    let fields =
-        "rss=,vsz=,etime=,nice=,utime=,stime=,time=,ppid=,pgid=,state=,ucomm=,gid=,uid=,user=,args=";
+    let fields = "rss=,vsz=,etime=,nice=,utime=,stime=,time=,ppid=,pgid=,state=,ucomm=,gid=,uid=,user=,args=";
     let out = std::process::Command::new("ps")
         .args(["-p", &pid.to_string(), "-o", fields])
         .output();
@@ -2049,7 +2141,9 @@ unsafe fn sockaddr_to_value(sa: *const libc::sockaddr) -> Option<Value> {
             let b = sin6.sin6_addr.s6_addr;
             let mut elems: Vec<Value> = Vec::with_capacity(9);
             for pair in b.chunks(2) {
-                elems.push(Value::Int((((pair[0] as u16) << 8) | pair[1] as u16) as i128));
+                elems.push(Value::Int(
+                    (((pair[0] as u16) << 8) | pair[1] as u16) as i128,
+                ));
             }
             elems.push(Value::Int(u16::from_be(sin6.sin6_port) as i128));
             Some(Value::Vec(Rc::new(RefCell::new(elems))))
@@ -2118,9 +2212,7 @@ fn f_format_network_address(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         Value::Vec(v) => {
             let v = v.borrow();
             let nums: Vec<i128> = v.iter().filter_map(|x| x.int()).collect();
-            let dotted = |b: &[i128]| {
-                format!("{}.{}.{}.{}", b[0], b[1], b[2], b[3])
-            };
+            let dotted = |b: &[i128]| format!("{}.{}.{}.{}", b[0], b[1], b[2], b[3]);
             let s = match nums.len() {
                 4 => dotted(&nums),
                 5 if !omit_port => format!("{}:{}", dotted(&nums), nums[4]),
@@ -2166,59 +2258,353 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!("serial-process-configure", many 0, f_serial_process_configure, "Configure serial port parameters."),
     S!("start-process", many 3, f_start_process, "Start PROGRAM in BUFFER (returns process)."),
     S!("processp", 1, 1, f_processp, "t if OBJECT is a process."),
-    S!("get-process", 1, 1, f_get_process, "Process named NAME or PROCESS itself."),
-    S!("process-list", 0, 0, f_process_list, "List of live processes."),
-    S!("list-processes", 0, 1, f_list_processes, "Show a process list buffer."),
+    S!(
+        "get-process",
+        1,
+        1,
+        f_get_process,
+        "Process named NAME or PROCESS itself."
+    ),
+    S!(
+        "process-list",
+        0,
+        0,
+        f_process_list,
+        "List of live processes."
+    ),
+    S!(
+        "list-processes",
+        0,
+        1,
+        f_list_processes,
+        "Show a process list buffer."
+    ),
     S!("process-name", 1, 1, f_process_name, "Process name string."),
-    S!("process-buffer", 1, 1, f_process_buffer, "Buffer associated with PROCESS."),
-    S!("set-process-buffer", 2, 2, f_set_process_buffer, "Set the process buffer."),
-    S!("get-buffer-process", 1, 1, f_get_buffer_process, "Process whose buffer is BUFFER."),
-    S!("process-command", 1, 1, f_process_command, "Command list of PROCESS."),
-    S!("process-type", 1, 1, f_process_type, "Type symbol: real/network/serial/pipe."),
+    S!(
+        "process-buffer",
+        1,
+        1,
+        f_process_buffer,
+        "Buffer associated with PROCESS."
+    ),
+    S!(
+        "set-process-buffer",
+        2,
+        2,
+        f_set_process_buffer,
+        "Set the process buffer."
+    ),
+    S!(
+        "get-buffer-process",
+        1,
+        1,
+        f_get_buffer_process,
+        "Process whose buffer is BUFFER."
+    ),
+    S!(
+        "process-command",
+        1,
+        1,
+        f_process_command,
+        "Command list of PROCESS."
+    ),
+    S!(
+        "process-type",
+        1,
+        1,
+        f_process_type,
+        "Type symbol: real/network/serial/pipe."
+    ),
     S!("process-id", 1, 1, f_process_id, "OS pid of PROCESS."),
-    S!("process-status", 1, 1, f_process_status, "Status symbol of PROCESS."),
-    S!("process-exit-status", 1, 1, f_process_exit_status, "Exit code or signal of PROCESS."),
-    S!("process-mark", 1, 1, f_process_mark, "Marker at process-buffer insertion point."),
-    S!("process-contact", 1, 2, f_process_contact, "Contact info of PROCESS."),
-    S!("process-plist", 1, 1, f_process_plist, "Property list of PROCESS."),
-    S!("set-process-plist", 2, 2, f_set_process_plist, "Set process property list."),
-    S!("process-get", 2, 2, f_process_get, "Get PROP from process plist."),
-    S!("process-put", 3, 3, f_process_put, "Set PROP on process plist."),
-    S!("process-query-on-exit-flag", 1, 1, f_process_query_on_exit_flag, "t if Emacs queries on exit."),
-    S!("set-process-query-on-exit-flag", 2, 2, f_set_process_query_on_exit_flag, "Set query-on-exit flag."),
-    S!("process-filter", 1, 1, f_process_filter, "Filter function of PROCESS."),
-    S!("set-process-filter", 2, 2, f_set_process_filter, "Set process filter."),
-    S!("process-sentinel", 1, 1, f_process_sentinel, "Sentinel of PROCESS."),
-    S!("set-process-sentinel", 2, 2, f_set_process_sentinel, "Set process sentinel."),
-    S!("process-tty-name", 1, 1, f_process_tty_name, "Controlling tty name or nil."),
-    S!("process-coding-system", 1, 1, f_process_coding_system, "(DECODE . ENCODE) coding systems."),
-    S!("set-process-coding-system", 1, 3, f_set_process_coding_system, "Set process coding systems."),
-    S!("process-inherit-coding-system-flag", 1, 1, f_process_inherit_coding_system_flag, "Inherit-coding flag."),
-    S!("set-process-inherit-coding-system-flag", 2, 2, f_set_process_inherit_coding_system_flag, "Set inherit-coding flag."),
-    S!("set-process-window-size", 3, 3, f_set_process_window_size, "Tell PROCESS its window size."),
-    S!("process-datagram-address", 1, 1, f_process_datagram_address, "Datagram address or nil."),
-    S!("set-process-datagram-address", 2, 2, f_set_process_datagram_address, "Set datagram address."),
-    S!("accept-process-output", 0, 4, f_accept_process_output, "Read pending process output."),
-    S!("process-send-string", 2, 2, f_process_send_string, "Send STRING to PROCESS."),
-    S!("process-send-region", 3, 3, f_process_send_region, "Send region text to PROCESS."),
-    S!("process-send-eof", 1, 1, f_process_send_eof, "Send EOF to PROCESS."),
-    S!("delete-process", 1, 1, f_delete_process, "Delete PROCESS (kill if live)."),
-    S!("signal-process", 2, 2, f_signal_process, "Send SIGNAL to process or pid."),
-    S!("interrupt-process", 0, 2, f_interrupt_process, "Send SIGINT to PROCESS."),
-    S!("kill-process", 0, 2, f_kill_process, "Send SIGKILL to PROCESS."),
-    S!("quit-process", 0, 2, f_quit_process, "Send SIGQUIT to PROCESS."),
-    S!("stop-process", 0, 2, f_stop_process, "Suspend PROCESS (SIGTSTP)."),
-    S!("continue-process", 0, 2, f_continue_process, "Resume PROCESS (SIGCONT)."),
-    S!("process-running-child-p", 0, 1, f_process_running_child_p, "Whether PROCESS has a running child."),
-    S!("internal-default-process-filter", 2, 2, f_internal_default_process_filter, "Default filter: insert into buffer."),
-    S!("internal-default-process-sentinel", 2, 2, f_nil2, "Default sentinel (no-op)."),
+    S!(
+        "process-status",
+        1,
+        1,
+        f_process_status,
+        "Status symbol of PROCESS."
+    ),
+    S!(
+        "process-exit-status",
+        1,
+        1,
+        f_process_exit_status,
+        "Exit code or signal of PROCESS."
+    ),
+    S!(
+        "process-mark",
+        1,
+        1,
+        f_process_mark,
+        "Marker at process-buffer insertion point."
+    ),
+    S!(
+        "process-contact",
+        1,
+        2,
+        f_process_contact,
+        "Contact info of PROCESS."
+    ),
+    S!(
+        "process-plist",
+        1,
+        1,
+        f_process_plist,
+        "Property list of PROCESS."
+    ),
+    S!(
+        "set-process-plist",
+        2,
+        2,
+        f_set_process_plist,
+        "Set process property list."
+    ),
+    S!(
+        "process-get",
+        2,
+        2,
+        f_process_get,
+        "Get PROP from process plist."
+    ),
+    S!(
+        "process-put",
+        3,
+        3,
+        f_process_put,
+        "Set PROP on process plist."
+    ),
+    S!(
+        "process-query-on-exit-flag",
+        1,
+        1,
+        f_process_query_on_exit_flag,
+        "t if Emacs queries on exit."
+    ),
+    S!(
+        "set-process-query-on-exit-flag",
+        2,
+        2,
+        f_set_process_query_on_exit_flag,
+        "Set query-on-exit flag."
+    ),
+    S!(
+        "process-filter",
+        1,
+        1,
+        f_process_filter,
+        "Filter function of PROCESS."
+    ),
+    S!(
+        "set-process-filter",
+        2,
+        2,
+        f_set_process_filter,
+        "Set process filter."
+    ),
+    S!(
+        "process-sentinel",
+        1,
+        1,
+        f_process_sentinel,
+        "Sentinel of PROCESS."
+    ),
+    S!(
+        "set-process-sentinel",
+        2,
+        2,
+        f_set_process_sentinel,
+        "Set process sentinel."
+    ),
+    S!(
+        "process-tty-name",
+        1,
+        1,
+        f_process_tty_name,
+        "Controlling tty name or nil."
+    ),
+    S!(
+        "process-coding-system",
+        1,
+        1,
+        f_process_coding_system,
+        "(DECODE . ENCODE) coding systems."
+    ),
+    S!(
+        "set-process-coding-system",
+        1,
+        3,
+        f_set_process_coding_system,
+        "Set process coding systems."
+    ),
+    S!(
+        "process-inherit-coding-system-flag",
+        1,
+        1,
+        f_process_inherit_coding_system_flag,
+        "Inherit-coding flag."
+    ),
+    S!(
+        "set-process-inherit-coding-system-flag",
+        2,
+        2,
+        f_set_process_inherit_coding_system_flag,
+        "Set inherit-coding flag."
+    ),
+    S!(
+        "set-process-window-size",
+        3,
+        3,
+        f_set_process_window_size,
+        "Tell PROCESS its window size."
+    ),
+    S!(
+        "process-datagram-address",
+        1,
+        1,
+        f_process_datagram_address,
+        "Datagram address or nil."
+    ),
+    S!(
+        "set-process-datagram-address",
+        2,
+        2,
+        f_set_process_datagram_address,
+        "Set datagram address."
+    ),
+    S!(
+        "accept-process-output",
+        0,
+        4,
+        f_accept_process_output,
+        "Read pending process output."
+    ),
+    S!(
+        "process-send-string",
+        2,
+        2,
+        f_process_send_string,
+        "Send STRING to PROCESS."
+    ),
+    S!(
+        "process-send-region",
+        3,
+        3,
+        f_process_send_region,
+        "Send region text to PROCESS."
+    ),
+    S!(
+        "process-send-eof",
+        1,
+        1,
+        f_process_send_eof,
+        "Send EOF to PROCESS."
+    ),
+    S!(
+        "delete-process",
+        1,
+        1,
+        f_delete_process,
+        "Delete PROCESS (kill if live)."
+    ),
+    S!(
+        "signal-process",
+        2,
+        2,
+        f_signal_process,
+        "Send SIGNAL to process or pid."
+    ),
+    S!(
+        "interrupt-process",
+        0,
+        2,
+        f_interrupt_process,
+        "Send SIGINT to PROCESS."
+    ),
+    S!(
+        "kill-process",
+        0,
+        2,
+        f_kill_process,
+        "Send SIGKILL to PROCESS."
+    ),
+    S!(
+        "quit-process",
+        0,
+        2,
+        f_quit_process,
+        "Send SIGQUIT to PROCESS."
+    ),
+    S!(
+        "stop-process",
+        0,
+        2,
+        f_stop_process,
+        "Suspend PROCESS (SIGTSTP)."
+    ),
+    S!(
+        "continue-process",
+        0,
+        2,
+        f_continue_process,
+        "Resume PROCESS (SIGCONT)."
+    ),
+    S!(
+        "process-running-child-p",
+        0,
+        1,
+        f_process_running_child_p,
+        "Whether PROCESS has a running child."
+    ),
+    S!(
+        "internal-default-process-filter",
+        2,
+        2,
+        f_internal_default_process_filter,
+        "Default filter: insert into buffer."
+    ),
+    S!(
+        "internal-default-process-sentinel",
+        2,
+        2,
+        f_nil2,
+        "Default sentinel (no-op)."
+    ),
     S!("process-lines", many 1, f_process_lines, "Run PROGRAM, return output lines."),
     S!("process-lines-ignore-status", many 1, f_process_lines_ignore_status, "process-lines ignoring exit status."),
-    S!("list-system-processes", 0, 0, f_list_system_processes, "Pids of all system processes."),
-    S!("process-attributes", 1, 1, f_process_attributes, "Alist of attributes of PID."),
-    S!("network-interface-list", 0, 0, f_network_interface_list, "Network interfaces and addresses."),
-    S!("network-interface-info", 1, 1, f_network_interface_info, "(ADDR BCAST MASK HW) for IFNAME."),
-    S!("format-network-address", 1, 2, f_format_network_address, "Format ADDRESS vector as string."),
+    S!(
+        "list-system-processes",
+        0,
+        0,
+        f_list_system_processes,
+        "Pids of all system processes."
+    ),
+    S!(
+        "process-attributes",
+        1,
+        1,
+        f_process_attributes,
+        "Alist of attributes of PID."
+    ),
+    S!(
+        "network-interface-list",
+        0,
+        0,
+        f_network_interface_list,
+        "Network interfaces and addresses."
+    ),
+    S!(
+        "network-interface-info",
+        1,
+        1,
+        f_network_interface_info,
+        "(ADDR BCAST MASK HW) for IFNAME."
+    ),
+    S!(
+        "format-network-address",
+        1,
+        2,
+        f_format_network_address,
+        "Format ADDRESS vector as string."
+    ),
 ];
 
 fn f_nil2(_i: &mut Interp, _a: Vec<Value>) -> EvalResult {

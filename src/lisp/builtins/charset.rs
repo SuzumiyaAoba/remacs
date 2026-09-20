@@ -132,21 +132,35 @@ fn f_charset_plist(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 fn default_charset_plist(i: &mut Interp, name: &str) -> Value {
     let kv: Vec<Value> = match name {
         "ascii" => vec![
-            symv(i, ":name"), symv(i, "ascii"),
-            symv(i, ":dimension"), Value::Int(1),
-            symv(i, ":code-space"), Value::Vec(Rc::new(RefCell::new(vec![
-                Value::Int(0), Value::Int(127),
-                Value::Int(0), Value::Int(0),
-                Value::Int(0), Value::Int(0),
-                Value::Int(0), Value::Int(0),
+            symv(i, ":name"),
+            symv(i, "ascii"),
+            symv(i, ":dimension"),
+            Value::Int(1),
+            symv(i, ":code-space"),
+            Value::Vec(Rc::new(RefCell::new(vec![
+                Value::Int(0),
+                Value::Int(127),
+                Value::Int(0),
+                Value::Int(0),
+                Value::Int(0),
+                Value::Int(0),
+                Value::Int(0),
+                Value::Int(0),
             ]))),
-            symv(i, ":iso-final-char"), Value::Int(66),
-            symv(i, ":emacs-mule-id"), Value::Int(0),
-            symv(i, ":ascii-compatible-p"), Value::Sym(i.intern("t")),
-            symv(i, ":code-offset"), Value::Int(0),
-            symv(i, ":docstring"), Value::string("ASCII (ISO646 IRV)"),
-            symv(i, ":short-name"), Value::string("ASCII"),
-            symv(i, ":long-name"), Value::string("ASCII (ISO646 IRV)"),
+            symv(i, ":iso-final-char"),
+            Value::Int(66),
+            symv(i, ":emacs-mule-id"),
+            Value::Int(0),
+            symv(i, ":ascii-compatible-p"),
+            Value::Sym(i.intern("t")),
+            symv(i, ":code-offset"),
+            Value::Int(0),
+            symv(i, ":docstring"),
+            Value::string("ASCII (ISO646 IRV)"),
+            symv(i, ":short-name"),
+            Value::string("ASCII"),
+            symv(i, ":long-name"),
+            Value::string("ASCII (ISO646 IRV)"),
         ],
         _ => vec![symv(i, ":name"), symv(i, name)],
     };
@@ -261,7 +275,10 @@ fn f_find_charset_region(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         .get(bid)
         .map(|b| b.borrow().text.text())
         .unwrap_or_default();
-    let (lo, hi) = match (a.first().and_then(|v| v.int()), a.get(1).and_then(|v| v.int())) {
+    let (lo, hi) = match (
+        a.first().and_then(|v| v.int()),
+        a.get(1).and_then(|v| v.int()),
+    ) {
         (Some(s), Some(e)) => ((s - 1).max(0) as usize, (e - 1).max(0) as usize),
         _ => (0, text.chars().count()),
     };
@@ -300,8 +317,7 @@ fn f_define_char_code_property(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         v if char_table_vec(v).is_some() => {
             // Keep the char-table as the property's backing store.
             prop_table(i, &name);
-            i.char_code_prop_tables
-                .retain(|(n, _)| n != &name);
+            i.char_code_prop_tables.retain(|(n, _)| n != &name);
             i.char_code_prop_tables.push((name, v.clone()));
             Ok(Value::Nil)
         }
@@ -309,8 +325,7 @@ fn f_define_char_code_property(i: &mut Interp, a: Vec<Value>) -> EvalResult {
             // File-based property table. GNU keeps the file name as the
             // backing; any put/get then signals char-table-p — mirror that
             // by registering the string as the backing table.
-            i.char_code_prop_tables
-                .retain(|(n, _)| n != &name);
+            i.char_code_prop_tables.retain(|(n, _)| n != &name);
             i.char_code_prop_tables.push((name, a[1].clone()));
             Ok(Value::Nil)
         }
@@ -566,10 +581,7 @@ fn f_make_translation_table_from_vector(i: &mut Interp, a: Vec<Value>) -> EvalRe
             let v = v.borrow();
             if v.len() != 256 {
                 let s = i.intern("args-out-of-range");
-                return Err(i.signal_data(
-                    s,
-                    vec![a[0].clone(), Value::Int(v.len() as i128)],
-                ));
+                return Err(i.signal_data(s, vec![a[0].clone(), Value::Int(v.len() as i128)]));
             }
             v.clone()
         }
@@ -667,7 +679,8 @@ fn f_coding_system_charset_list(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     }
     let list: Vec<&str> = if name.starts_with("utf-8") || name.starts_with("undecided") {
         vec!["unicode"]
-    } else if name.starts_with("iso-8859") || name.starts_with("iso-latin")
+    } else if name.starts_with("iso-8859")
+        || name.starts_with("iso-latin")
         || name.starts_with("latin")
     {
         vec!["iso-8859-1"]
@@ -701,10 +714,7 @@ fn f_find_coding_systems_region_internal(i: &mut Interp, a: Vec<Value>) -> EvalR
         .unwrap_or(1);
     if s > max || e > max || s > e {
         let sid = i.intern("args-out-of-range");
-        return Err(i.signal(
-            sid,
-            Value::list(vec![a[0].clone(), a[1].clone()]),
-        ));
+        return Err(i.signal(sid, Value::list(vec![a[0].clone(), a[1].clone()])));
     }
     // GNU returns t for regions any coding system can encode.
     Ok(Value::t())
@@ -713,27 +723,159 @@ fn f_find_coding_systems_region_internal(i: &mut Interp, a: Vec<Value>) -> EvalR
 pub(crate) static SUBRS: &[Subr] = &[
     S!("charsetp", 1, 1, f_charsetp, "t if OBJECT names a charset."),
     S!("define-charset", many 2, f_define_charset, "Define a new charset."),
-    S!("charset-plist", 1, 1, f_charset_plist, "Property list of CHARSET."),
-    S!("set-charset-plist", 2, 2, f_set_charset_plist, "Set charset plist."),
-    S!("get-charset-property", 2, 2, f_get_charset_property, "Get PROP of CHARSET."),
-    S!("put-charset-property", 3, 3, f_put_charset_property, "Set PROP of CHARSET."),
-    S!("define-charset-alias", 2, 2, f_define_charset_alias, "Make ALIAS refer to CHARSET."),
-    S!("unify-charset", 1, 3, f_unify_charset, "Unify CHARSET per MAP."),
-    S!("charset-after", 0, 1, f_charset_after, "Charset of char after POS."),
-    S!("find-charset-string", 1, 1, f_find_charset_string, "Charsets needed for STRING."),
-    S!("find-charset-region", 0, 2, f_find_charset_region, "Charsets needed for region."),
-    S!("char-resolve-modifiers", 1, 1, f_char_resolve_modifiers, "Base char of CHAR with modifiers."),
-    S!("define-char-code-property", 2, 2, f_define_char_code_property, "Define a char-code property."),
-    S!("get-char-code-property", 2, 2, f_get_char_code_property, "Property PROP of CHAR."),
-    S!("put-char-code-property", 3, 3, f_put_char_code_property, "Set PROP of CHAR to VALUE."),
-    S!("char-code-property-description", 2, 2, f_char_code_property_description, "Description of property value."),
-    S!("make-translation-table", 0, 2, f_make_translation_table, "Make a translation table."),
-    S!("define-translation-table", 1, 3, f_define_translation_table, "Define SYMBOL as translation table."),
-    S!("make-translation-table-from-vector", 1, 1, f_make_translation_table_from_vector, "Make a translation table from a 256-vector."),
-    S!("set-translation-table", 1, 3, f_set_translation_table, "Set current translation table."),
-    S!("coding-system-type", 1, 1, f_coding_system_type, "Base type of CODING-SYSTEM."),
-    S!("coding-system-charset-list", 1, 1, f_coding_system_charset_list, "Charsets of CODING-SYSTEM."),
+    S!(
+        "charset-plist",
+        1,
+        1,
+        f_charset_plist,
+        "Property list of CHARSET."
+    ),
+    S!(
+        "set-charset-plist",
+        2,
+        2,
+        f_set_charset_plist,
+        "Set charset plist."
+    ),
+    S!(
+        "get-charset-property",
+        2,
+        2,
+        f_get_charset_property,
+        "Get PROP of CHARSET."
+    ),
+    S!(
+        "put-charset-property",
+        3,
+        3,
+        f_put_charset_property,
+        "Set PROP of CHARSET."
+    ),
+    S!(
+        "define-charset-alias",
+        2,
+        2,
+        f_define_charset_alias,
+        "Make ALIAS refer to CHARSET."
+    ),
+    S!(
+        "unify-charset",
+        1,
+        3,
+        f_unify_charset,
+        "Unify CHARSET per MAP."
+    ),
+    S!(
+        "charset-after",
+        0,
+        1,
+        f_charset_after,
+        "Charset of char after POS."
+    ),
+    S!(
+        "find-charset-string",
+        1,
+        1,
+        f_find_charset_string,
+        "Charsets needed for STRING."
+    ),
+    S!(
+        "find-charset-region",
+        0,
+        2,
+        f_find_charset_region,
+        "Charsets needed for region."
+    ),
+    S!(
+        "char-resolve-modifiers",
+        1,
+        1,
+        f_char_resolve_modifiers,
+        "Base char of CHAR with modifiers."
+    ),
+    S!(
+        "define-char-code-property",
+        2,
+        2,
+        f_define_char_code_property,
+        "Define a char-code property."
+    ),
+    S!(
+        "get-char-code-property",
+        2,
+        2,
+        f_get_char_code_property,
+        "Property PROP of CHAR."
+    ),
+    S!(
+        "put-char-code-property",
+        3,
+        3,
+        f_put_char_code_property,
+        "Set PROP of CHAR to VALUE."
+    ),
+    S!(
+        "char-code-property-description",
+        2,
+        2,
+        f_char_code_property_description,
+        "Description of property value."
+    ),
+    S!(
+        "make-translation-table",
+        0,
+        2,
+        f_make_translation_table,
+        "Make a translation table."
+    ),
+    S!(
+        "define-translation-table",
+        1,
+        3,
+        f_define_translation_table,
+        "Define SYMBOL as translation table."
+    ),
+    S!(
+        "make-translation-table-from-vector",
+        1,
+        1,
+        f_make_translation_table_from_vector,
+        "Make a translation table from a 256-vector."
+    ),
+    S!(
+        "set-translation-table",
+        1,
+        3,
+        f_set_translation_table,
+        "Set current translation table."
+    ),
+    S!(
+        "coding-system-type",
+        1,
+        1,
+        f_coding_system_type,
+        "Base type of CODING-SYSTEM."
+    ),
+    S!(
+        "coding-system-charset-list",
+        1,
+        1,
+        f_coding_system_charset_list,
+        "Charsets of CODING-SYSTEM."
+    ),
     S!("set-coding-system-priority", many 0, f_set_coding_system_priority, "Set coding system priority."),
-    S!("set-keyboard-coding-system-internal", 1, 1, f_set_keyboard_coding_system_internal, "Set keyboard coding system."),
-    S!("find-coding-systems-region-internal", 2, 2, f_find_coding_systems_region_internal, "Coding systems covering region."),
+    S!(
+        "set-keyboard-coding-system-internal",
+        1,
+        1,
+        f_set_keyboard_coding_system_internal,
+        "Set keyboard coding system."
+    ),
+    S!(
+        "find-coding-systems-region-internal",
+        2,
+        2,
+        f_find_coding_systems_region_internal,
+        "Coding systems covering region."
+    ),
 ];

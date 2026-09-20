@@ -709,9 +709,7 @@ fn f_random(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     }
     let is_t = args
         .get(0)
-        .map(|v| {
-            matches!(v, Value::Sym(_)) && i.sym_is(v, i.intern_soft("t").unwrap_or(u32::MAX))
-        })
+        .map(|v| matches!(v, Value::Sym(_)) && i.sym_is(v, i.intern_soft("t").unwrap_or(u32::MAX)))
         .unwrap_or(false);
     if is_t {
         let t = std::time::SystemTime::now()
