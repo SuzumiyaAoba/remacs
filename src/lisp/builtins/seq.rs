@@ -312,6 +312,23 @@ fn f_elt(i: &mut Interp, args: Vec<Value>) -> EvalResult {
 }
 
 fn f_aref(i: &mut Interp, args: Vec<Value>) -> EvalResult {
+    // aref works on arrays including plain records (unlike elt, which
+    // rejects them — matching GNU).
+    if let Value::Record(r) = &args[0] {
+        if !super::misc::is_bool_vector(i, &args[0])
+            && !super::misc::is_char_table(i, &args[0])
+        {
+            let n = want_int(i, &args[1])?;
+            let items = r.borrow();
+            if n < 0 || n as usize >= items.len() {
+                return Err(i.signal_data(
+                    sym::ARGS_OUT_OF_RANGE,
+                    vec![args[0].clone(), args[1].clone()],
+                ));
+            }
+            return Ok(items[n as usize].clone());
+        }
+    }
     f_elt(i, args)
 }
 
@@ -373,6 +390,19 @@ fn f_aset(i: &mut Interp, args: Vec<Value>) -> EvalResult {
                 }
             };
             let mut items = vec.borrow_mut();
+            if n < 0 || n as usize >= items.len() {
+                return Err(i.signal_data(
+                    sym::ARGS_OUT_OF_RANGE,
+                    vec![args[0].clone(), args[1].clone()],
+                ));
+            }
+            items[n as usize] = args[2].clone();
+            Ok(args[2].clone())
+        }
+        Value::Record(r) => {
+            // Ordinary records: GNU allows writing any slot (even the
+            // tag at index 0).
+            let mut items = r.borrow_mut();
             if n < 0 || n as usize >= items.len() {
                 return Err(i.signal_data(
                     sym::ARGS_OUT_OF_RANGE,

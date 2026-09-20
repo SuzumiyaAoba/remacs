@@ -2264,21 +2264,7 @@ impl Interp {
         let items = spec_form.list_to_vec().unwrap_or_default();
         let spec = items.get(1).cloned().unwrap_or(Value::Nil);
         match spec {
-            Value::Nil => {
-                // (interactive) or (interactive (list ...))
-                if items.len() > 1 {
-                    if let Value::Cons(c) = &items[1] {
-                        let b = c.borrow();
-                        if self.sym_is(&b.car, self.intern_soft("list").unwrap_or(SymId::MAX)) {
-                            let list_expr = b.cdr.clone();
-                            drop(b);
-                            let v = self.eval(&list_expr)?;
-                            return Ok(v.list_to_vec().unwrap_or_default());
-                        }
-                    }
-                }
-                Ok(Vec::new())
-            }
+            Value::Nil => Ok(Vec::new()),
             Value::Str(s) => {
                 // Parse letter codes. A code's prompt is the text after
                 // the code up to the next newline (Emacs spec syntax).

@@ -598,6 +598,81 @@ fn interactive_spec_codes_batch() {
     let _ = v;
 }
 
+// ---------- lambda arg binding paths ----------
+
+#[test]
+fn optional_args_dynamic_binding() {
+    let (mut i, _) = interp();
+    // Dynamic scope exercises the specbind path for optional/rest
+    // binding (bare optional vars; init/supplied-p triples are only
+    // legal in macro arglists, as in GNU).
+    set(&mut i, "lexical-binding", Value::Nil);
+    let v = ev_in(
+        &mut i,
+        "(funcall (lambda (a &optional b &rest r) (list a b r)) 1 2 3 4)",
+    );
+    assert_eq!(i.prin1_to_string(&v), "(1 2 (3 4))");
+    let v = ev_in(
+        &mut i,
+        "(funcall (lambda (a &optional b &rest r) (list a b r)) 1)",
+    );
+    assert_eq!(i.prin1_to_string(&v), "(1 nil nil)");
+    // Macro arglists accept (var init supplied-p) under dynamic scope.
+    ev_in(
+        &mut i,
+        "(defmacro mopt (&optional (p 10) (q 20 s)) `(list ',p ',q ',s))",
+    );
+    let v = ev_in(&mut i, "(mopt)");
+    assert_eq!(i.prin1_to_string(&v), "(10 20 nil)");
+    let v = ev_in(&mut i, "(mopt 1)");
+    assert_eq!(i.prin1_to_string(&v), "(1 20 nil)");
+    let v = ev_in(&mut i, "(mopt 1 2)");
+    assert_eq!(i.prin1_to_string(&v), "(1 2 t)");
+}
+
+#[test]
+fn command_args_supply_spec_values() {
+    let (mut i, _) = interp();
+    // Pre-supplied command args feed spec codes without a reader.
+    i.command_args = vec![Value::Int(42)];
+    let v = ev_in(
+        &mut i,
+        "(defun f (n) (interactive \"nNum: \") n) (call-interactively 'f)",
+    );
+    assert_eq!(i.prin1_to_string(&v), "42");
+    let v = ev_in(
+        &mut i,
+        "(defun f (s) (interactive \"sIn: \") s) (call-interactively 'f)",
+    );
+    assert_eq!(i.prin1_to_string(&v), "42");
+    let v = ev_in(
+        &mut i,
+        "(defun f (a) (interactive \"aSym: \") a) (call-interactively 'f)",
+    );
+    assert_eq!(i.prin1_to_string(&v), "42");
+    let v = ev_in(
+        &mut i,
+        "(defun f (k) (interactive \"kKey: \") k) (call-interactively 'f)",
+    );
+    assert_eq!(i.prin1_to_string(&v), "42");
+    let v = ev_in(
+        &mut i,
+        "(defun f (x) (interactive \"xEval: \") x) (call-interactively 'f)",
+    );
+    assert_eq!(i.prin1_to_string(&v), "42");
+    let v = ev_in(
+        &mut i,
+        "(defun f (c) (interactive \"cChar: \") c) (call-interactively 'f)",
+    );
+    assert_eq!(i.prin1_to_string(&v), "42");
+    // 'P' also takes the raw prefix from command_args.
+    let v = ev_in(
+        &mut i,
+        "(defun f (p) (interactive \"P\") p) (call-interactively 'f)",
+    );
+    assert_eq!(i.prin1_to_string(&v), "42");
+}
+
 // ---------- standard-output destinations ----------
 
 #[test]
