@@ -58,6 +58,7 @@ mod coverage_tests {
     probe!(u_probe_eval6, "probe_eval6.el");
     probe!(u_probe_eval7, "probe_eval7.el");
     probe!(u_probe_eval8, "probe_eval8.el");
+    probe!(u_probe_eval9, "probe_eval9.el");
     probe!(u_probe_format, "probe_format.el");
 
     #[test]

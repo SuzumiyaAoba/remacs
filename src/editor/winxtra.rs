@@ -82,7 +82,7 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!("window-old-pixel-height", 0, 1, f_window_height_px, ""),
     S!("window-old-body-pixel-width", 0, 1, f_window_width_px, ""),
     S!("window-old-body-pixel-height", 0, 1, f_window_height_px, ""),
-    S!("window-combination-limit", 0, 2, f_nil, ""),
+
     S!(
         "window-combination-p",
         1,

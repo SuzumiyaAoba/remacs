@@ -519,6 +519,34 @@ pub(crate) static SUBRS: &[Subr] = &[
         "Delete N chars before point."
     ),
     S!(
+        "backward-delete-char-untabify",
+        1,
+        2,
+        f_backward_delete_char_untabify,
+        "Delete N chars backward, untabifying."
+    ),
+    S!(
+        "beginning-of-visual-line",
+        0,
+        1,
+        f_beginning_of_visual_line,
+        "Move to visual beginning of line."
+    ),
+    S!(
+        "end-of-visual-line",
+        0,
+        1,
+        f_end_of_visual_line,
+        "Move to visual end of line."
+    ),
+    S!(
+        "forward-visible-line",
+        1,
+        1,
+        f_forward_visible_line,
+        "Move N visible lines forward."
+    ),
+    S!(
         "delete-and-extract-region",
         2,
         2,
@@ -579,6 +607,13 @@ pub(crate) static SUBRS: &[Subr] = &[
         "Text between START and END, with properties."
     ),
     S!(
+        "buffer-substring-with-bidi-context",
+        2,
+        3,
+        f_buffer_substring_with_bidi_context,
+        "Text between START and END."
+    ),
+    S!(
         "buffer-string",
         0,
         0,
@@ -593,6 +628,13 @@ pub(crate) static SUBRS: &[Subr] = &[
         2,
         f_thing_at_point,
         "Thing at point (word/symbol/line)."
+    ),
+    S!(
+        "bounds-of-thing-at-point",
+        1,
+        2,
+        f_bounds_of_thing_at_point,
+        "Bounds of thing at point."
     ),
     S!("word-at-point", 0, 0, f_word_at_point, "Word at point."),
     S!(
@@ -895,6 +937,7 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!("undo-auto-amalgamate", 0, 0, f_noop, ""),
     S!("cancel-change-group", 0, 0, f_noop, ""),
     S!("activate-change-group", 0, 0, f_noop, ""),
+    S!("accept-change-group", 1, 1, f_accept_change_group, ""),
     S!("handle-change-group", 0, 0, f_noop, ""),
     S!("undo-outer-limit-truncate", 0, 0, f_noop, ""),
     // --- gap/position misc ---
@@ -952,6 +995,14 @@ fn f_zero(_i: &mut Interp, _a: Vec<Value>) -> EvalResult {
 fn f_identity(_i: &mut Interp, a: Vec<Value>) -> EvalResult {
     Ok(a.into_iter().next().unwrap_or(Value::Nil))
 }
+fn f_accept_change_group(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    // GNU validates the handle is a change-group cons; accept = drop it.
+    if !matches!(a[0], Value::Cons(_)) && !matches!(a[0], Value::Nil) {
+        return Err(i.wrong_type_mut("listp", &a[0]));
+    }
+    Ok(Value::Nil)
+}
+
 fn f_noop(_i: &mut Interp, _a: Vec<Value>) -> EvalResult {
     Ok(Value::Nil)
 }
@@ -2691,6 +2742,48 @@ fn f_delete_backward_char(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     )
 }
 
+fn f_backward_delete_char_untabify(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    // Untabify: when deleting a single char that lands inside a tab,
+    // GNU converts the tab to spaces first. Our buffer stores '\t'
+    // literally; deleting the tab char is the closest equivalent.
+    let n = want_int(i, &a[0])?;
+    f_delete_char(
+        i,
+        vec![Value::Int(-n), a.get(1).cloned().unwrap_or(Value::Nil)],
+    )
+}
+
+fn f_beginning_of_visual_line(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    // tty: visual lines == logical lines.
+    let n = a.get(0).and_then(|v| v.int()).unwrap_or(0);
+    let b = cur(i);
+    let mut bb = b.borrow_mut();
+    let cur_line = bb.text.line_of_pos(bb.point());
+    let target = (cur_line as i128 + n).max(0) as usize;
+    let p = bb.text.line_start(target).max(bb.begv);
+    bb.set_point(p);
+    Ok(Value::Nil)
+}
+
+fn f_end_of_visual_line(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let n = a.get(0).and_then(|v| v.int()).unwrap_or(0);
+    let b = cur(i);
+    let mut bb = b.borrow_mut();
+    let cur_line = bb.text.line_of_pos(bb.point());
+    let target = (cur_line as i128 + n).max(0) as usize;
+    let p = bb
+        .text
+        .line_end(bb.text.line_start(target))
+        .min(bb.text_len());
+    bb.set_point(p);
+    Ok(Value::Nil)
+}
+
+fn f_forward_visible_line(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let _ = f_forward_line(i, vec![arg(&a, 0)])?;
+    Ok(Value::Nil)
+}
+
 fn f_delete_and_extract_region(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     check_writable(i)?;
     let b = cur(i);
@@ -2776,6 +2869,39 @@ fn f_buffer_string(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
     let b = cur(i);
     let bb = b.borrow();
     Ok(Value::string(bb.text.substring(bb.begv, bb.text_len())))
+}
+
+fn f_buffer_substring_with_bidi_context(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let s = want_int(i, &a[0])?;
+    let e = want_int(i, &a[1])?;
+    let (s, e) = (s.min(e), s.max(e));
+    let b = cur(i);
+    let bb = b.borrow();
+    let len = bb.text_len();
+    if s < bb.begv as i128 + 1 || e > len as i128 + 1 {
+        let sym = i.intern("args-out-of-range");
+        let args = vec![a[0].clone(), a[1].clone()];
+        drop(bb);
+        return Err(i.signal_data(sym, args));
+    }
+    Ok(Value::string(bb.text.substring((s - 1) as usize, (e - 1) as usize)))
+}
+
+fn f_bounds_of_thing_at_point(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let sym_id = want_sym(i, &a[0])?;
+    let name = i.symbol_name(sym_id);
+    let pred: fn(char) -> bool = match name.as_str() {
+        "word" | "number" => |c| c.is_alphanumeric() || c == '_',
+        "symbol" => |c| c.is_alphanumeric() || "_-?!*+/<>=:$%&~^.".contains(c),
+        _ => return Ok(Value::Nil),
+    };
+    match thing_bounds(i, pred) {
+        Some((s, e)) => Ok(Value::cons(
+            Value::Int(s as i128 + 1),
+            Value::Int(e as i128 + 1),
+        )),
+        None => Ok(Value::Nil),
+    }
 }
 
 fn thing_bounds(i: &mut Interp, pred: fn(char) -> bool) -> Option<(usize, usize)> {

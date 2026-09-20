@@ -235,6 +235,20 @@ pub(crate) static SUBRS: &[Subr] = &[
         f_split_window_right,
         "Split right."
     ),
+    S!(
+        "split-window-vertically",
+        0,
+        2,
+        f_split_window_vertically,
+        "Split vertically."
+    ),
+    S!(
+        "split-window-horizontally",
+        0,
+        2,
+        f_split_window_horizontally,
+        "Split horizontally."
+    ),
     S!("delete-window", 0, 1, f_delete_window, "Delete WINDOW."),
     S!(
         "delete-other-windows",
@@ -265,6 +279,120 @@ pub(crate) static SUBRS: &[Subr] = &[
         "t if only one window."
     ),
     S!("next-window", 0, 3, f_next_window, "Next window in cycle."),
+    S!(
+        "enlarge-window",
+        1,
+        2,
+        f_enlarge_window,
+        "Make selected window taller."
+    ),
+    S!(
+        "shrink-window",
+        1,
+        2,
+        f_shrink_window,
+        "Make selected window shorter."
+    ),
+    S!(
+        "enlarge-window-horizontally",
+        1,
+        1,
+        f_enlarge_window_horizontally,
+        ""
+    ),
+    S!(
+        "shrink-window-horizontally",
+        1,
+        1,
+        f_shrink_window_horizontally,
+        ""
+    ),
+    S!(
+        "balance-windows",
+        0,
+        1,
+        f_balance_windows,
+        "Equalize window heights."
+    ),
+    S!(
+        "maximize-window",
+        0,
+        1,
+        f_maximize_window,
+        "Make window as tall as possible."
+    ),
+    S!(
+        "minimize-window",
+        0,
+        1,
+        f_minimize_window,
+        "Make window as short as possible."
+    ),
+    S!(
+        "adjust-window-trailing-edge",
+        2,
+        4,
+        f_adjust_window_trailing_edge,
+        ""
+    ),
+    S!(
+        "switch-to-buffer-other-window",
+        1,
+        2,
+        f_switch_to_buffer_other_window,
+        ""
+    ),
+    S!(
+        "switch-to-buffer-other-frame",
+        1,
+        2,
+        f_switch_to_buffer_other_frame,
+        ""
+    ),
+    S!(
+        "display-buffer-other-frame",
+        1,
+        1,
+        f_display_buffer_other_frame,
+        ""
+    ),
+    S!("quit-window", 0, 2, f_quit_window, "Quit WINDOW."),
+    S!(
+        "quit-restore-window",
+        0,
+        2,
+        f_quit_restore_window,
+        ""
+    ),
+    S!(
+        "kill-buffer-and-window",
+        0,
+        0,
+        f_kill_buffer_and_window,
+        ""
+    ),
+    S!(
+        "replace-buffer-in-windows",
+        0,
+        1,
+        f_replace_buffer_in_windows,
+        ""
+    ),
+    S!("window-tree", 0, 1, f_window_tree, "Window layout tree."),
+    S!(
+        "window-combination-limit",
+        1,
+        1,
+        f_window_combination_limit,
+        ""
+    ),
+    S!(
+        "scroll-other-window-down",
+        0,
+        1,
+        f_scroll_other_window_down,
+        ""
+    ),
     S!(
         "previous-window",
         0,
@@ -1413,6 +1541,21 @@ pub(crate) static SUBRS: &[Subr] = &[
         "Return the boundaries of the completions."
     ),
     S!("internal-complete-buffer", 3, 3, f_nil, ""),
+    S!(
+        "completing-read-default",
+        2,
+        8,
+        f_completing_read_default,
+        ""
+    ),
+    S!(
+        "completing-read-multiple",
+        2,
+        8,
+        f_completing_read_multiple,
+        ""
+    ),
+    S!("minibuffer-completion-help", 0, 0, f_minibuffer_completion_help, ""),
     S!("read-string", 1, 5, f_read_string, "Read a string."),
     S!("read-command", 1, 2, f_read_command, "Read a command name."),
     S!(
@@ -1423,6 +1566,58 @@ pub(crate) static SUBRS: &[Subr] = &[
         "Read a variable name."
     ),
     S!("read-key", 0, 2, f_read_char, "Read one key event."),
+    S!("read-coding-system", 1, 2, f_read_coding_system, ""),
+    S!("read-color", 0, 6, f_read_color, "Read a color name."),
+    S!("read-passwd", 1, 3, f_read_passwd, "Read a password."),
+    S!("read-kbd-macro", 1, 1, f_read_kbd_macro, "Read a kbd macro."),
+    S!(
+        "momentary-string-display",
+        2,
+        4,
+        f_momentary_string_display,
+        ""
+    ),
+    S!(
+        "display-message-or-buffer",
+        1,
+        4,
+        f_display_message_or_buffer,
+        ""
+    ),
+    S!("redisplay", 0, 1, f_redisplay, "Redisplay."),
+    S!(
+        "force-mode-line-update",
+        0,
+        1,
+        f_force_mode_line_update,
+        ""
+    ),
+    S!("tooltip-show", 1, 4, f_tooltip_show, ""),
+    S!("tooltip-hide", 0, 1, f_tooltip_hide, ""),
+    S!("timer-event-handler", 1, 1, f_timer_event_handler, ""),
+    S!("invisible-p", 1, 1, f_invisible_p, "t if POS invisible."),
+    S!("fringe-bitmaps-at-pos", 0, 2, f_fringe_bitmaps_at_pos, ""),
+    S!(
+        "binary-overwrite-mode",
+        0,
+        1,
+        f_binary_overwrite_mode,
+        ""
+    ),
+    S!("scroll-lock-mode", 0, 1, f_scroll_lock_mode, ""),
+    S!("pixel-scroll-mode", 0, 1, f_pixel_scroll_mode, ""),
+    S!(
+        "pixel-scroll-precision-mode",
+        0,
+        1,
+        f_pixel_scroll_precision_mode,
+        ""
+    ),
+    S!("font-lock-mode", 0, 1, f_font_lock_mode, ""),
+    S!("font-lock-ensure", 0, 2, f_font_lock_ensure, ""),
+    S!("font-lock-flush", 0, 2, f_font_lock_flush, ""),
+    S!("jit-lock-register", 1, 2, f_jit_lock_register, ""),
+    S!("jit-lock-unregister", 1, 1, f_jit_lock_unregister, ""),
     S!("read-event", 0, 3, f_read_char, "Read one input event."),
     S!("read-char", 0, 3, f_read_char, "Read one character."),
     S!(
@@ -1646,6 +1841,15 @@ pub(crate) static SUBRS: &[Subr] = &[
         f_remove_overlays,
         "Remove overlays in region."
     ),
+    S!("copy-overlay", 1, 1, f_copy_overlay, "Copy overlay."),
+    S!(
+        "overlay-lists",
+        0,
+        0,
+        f_overlay_lists,
+        "Overlays before/after point."
+    ),
+    S!("overlay-recenter", 1, 1, f_overlay_recenter, ""),
     S!(
         "restore-buffer-modified-p",
         1,
@@ -1653,23 +1857,28 @@ pub(crate) static SUBRS: &[Subr] = &[
         crate::buffer::primitives::f_set_buffer_modified_p,
         ""
     ),
-    // faces (stubs — tty has limited support)
-    S!("facep", 1, 1, f_nil, ""),
-    S!("internal-get-lisp-face-attribute", 2, 3, f_nil, ""),
-    S!("set-face-attribute", many 2, f_nil, ""),
-    S!("face-attribute", 2, 4, f_nil, ""),
+    // faces (minimal tty model)
+    S!("facep", 1, 1, f_facep, ""),
+    S!("internal-get-lisp-face-attribute", 2, 3, f_face_attribute, ""),
+    S!("set-face-attribute", many 2, f_set_face_attribute, ""),
+    S!("face-attribute", 2, 4, f_face_attribute, ""),
     S!("face-attribute-relative-p", 2, 2, f_nil, ""),
     S!("merge-face-attribute", 3, 3, f_nil, ""),
-    S!("face-all-attributes", 1, 2, f_nil, ""),
-    S!("face-list", 0, 0, f_nil, ""),
-    S!("make-face", 1, 1, f_first, ""),
-    S!("copy-face", 2, 2, f_first, ""),
-    S!("face-equal", 2, 2, f_nil, ""),
-    S!("face-id", 1, 2, f_zero, ""),
-    S!("internal-lisp-face-p", 1, 2, f_nil, ""),
+    S!("face-all-attributes", 1, 2, f_face_all_attributes, ""),
+    S!("face-list", 0, 0, f_face_list, ""),
+    S!("make-face", 1, 1, f_make_face, ""),
+    S!("copy-face", 2, 4, f_copy_face, ""),
+    S!("face-equal", 2, 2, f_face_equal, ""),
+    S!("face-id", 1, 2, f_face_id, ""),
+    S!("face-background", 1, 3, f_face_background, ""),
+    S!("face-foreground", 1, 3, f_face_foreground, ""),
+    S!("face-bold-p", 1, 3, f_face_bold_p, ""),
+    S!("face-italic-p", 1, 3, f_face_italic_p, ""),
+    S!("face-underline-p", 1, 3, f_face_underline_p, ""),
+    S!("internal-lisp-face-p", 1, 2, f_facep, ""),
     S!("internal-lisp-face-empty-p", 1, 2, f_nil, ""),
-    S!("internal-lisp-face-equal-p", 2, 3, f_t, ""),
-    S!("internal-set-lisp-face-attribute", 3, 4, f_nil, ""),
+    S!("internal-lisp-face-equal-p", 2, 3, f_face_equal, ""),
+    S!("internal-set-lisp-face-attribute", 3, 4, f_internal_set_lisp_face_attribute, ""),
     S!("internal-lisp-face-attribute-values", 1, 1, f_nil, ""),
     S!("internal-merge-in-global-face", 2, 2, f_nil, ""),
     S!("face-attrs-more-relative-p", 2, 2, f_nil, ""),
@@ -1779,9 +1988,6 @@ fn f_one(_i: &mut Interp, _a: Vec<Value>) -> EvalResult {
     Ok(Value::Int(1))
 }
 fn f_identity(_i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    Ok(a.into_iter().next().unwrap_or(Value::Nil))
-}
-fn f_first(_i: &mut Interp, a: Vec<Value>) -> EvalResult {
     Ok(a.into_iter().next().unwrap_or(Value::Nil))
 }
 fn f_second(_i: &mut Interp, a: Vec<Value>) -> EvalResult {
@@ -6575,6 +6781,936 @@ pub(crate) fn lookup_command_in_maps(i: &mut Interp, keys: &[Value]) -> Option<V
         }
     }
     None
+}
+
+// ---------- faces (minimal tty model) ----------
+
+/// Face names GNU binds in a batch session (a subset of face-list;
+/// enough for facep/face-list lookups).
+const KNOWN_FACES: &[&str] = &[
+    "default",
+    "bold",
+    "italic",
+    "bold-italic",
+    "underline",
+    "fixed-pitch",
+    "fixed-pitch-serif",
+    "variable-pitch",
+    "shadow",
+    "link",
+    "link-visited",
+    "highlight",
+    "region",
+    "secondary-selection",
+    "trailing-whitespace",
+    "escape-glyph",
+    "homoglyph",
+    "nobreak-space",
+    "nobreak-hyphen",
+    "mode-line",
+    "mode-line-active",
+    "mode-line-inactive",
+    "mode-line-highlight",
+    "mode-line-emphasis",
+    "mode-line-buffer-id",
+    "header-line",
+    "header-line-highlight",
+    "tab-line",
+    "tab-line-tab",
+    "tab-line-tab-current",
+    "tab-line-tab-inactive",
+    "tab-line-highlight",
+    "tool-bar",
+    "fringe",
+    "border",
+    "cursor",
+    "mouse",
+    "scroll-bar",
+    "vertical-border",
+    "window-divider",
+    "window-divider-first-pixel",
+    "window-divider-last-pixel",
+    "minibuffer-prompt",
+    "completions-annotations",
+    "completions-common-part",
+    "completions-first-difference",
+    "font-lock-builtin-face",
+    "font-lock-comment-face",
+    "font-lock-comment-delimiter-face",
+    "font-lock-constant-face",
+    "font-lock-doc-face",
+    "font-lock-function-name-face",
+    "font-lock-keyword-face",
+    "font-lock-negation-char-face",
+    "font-lock-preprocessor-face",
+    "font-lock-regexp-grouping-backslash",
+    "font-lock-regexp-grouping-construct",
+    "font-lock-string-face",
+    "font-lock-type-face",
+    "font-lock-variable-name-face",
+    "font-lock-warning-face",
+    "isearch",
+    "isearch-fail",
+    "lazy-highlight",
+    "match",
+    "error",
+    "warning",
+    "success",
+    "show-paren-match",
+    "show-paren-mismatch",
+    "show-paren-match-expression",
+    "read-multiple-choice-face",
+    "question",
+    "help-key-binding",
+    "help-argument-name",
+    "glyphless-char",
+    "line-number",
+    "line-number-current-line",
+    "line-number-major-tick",
+    "line-number-minor-tick",
+];
+
+fn face_known(i: &Interp, name: &str) -> bool {
+    KNOWN_FACES.contains(&name) || i.face_table.iter().any(|(n, _)| n == name)
+}
+
+fn face_name_of(i: &mut Interp, v: &Value) -> Result<String, Flow> {
+    let name = match v {
+        Value::Sym(s) => i.symbol_name(*s),
+        Value::Str(s) => s.borrow().clone(),
+        other => return Err(i.wrong_type_mut("symbolp", other)),
+    };
+    if !face_known(i, &name) {
+        return Err(i.error(format!("Invalid face: {}", name)));
+    }
+    Ok(name)
+}
+
+/// One attribute of a face, GNU-style (`unspecified' when unset).
+fn face_attr(i: &mut Interp, name: &str, attr: &str) -> Value {
+    if let Some((_, plist)) = i.face_table.iter().find(|(n, _)| n == name) {
+        if let Value::Cons(_) = plist {
+            if let Some(v) = plist.list_to_vec().ok().and_then(|items| {
+                items.chunks(2).find_map(|kv| match (&kv[0], kv.get(1)) {
+                    (Value::Sym(k), Some(v)) if i.symbol_name(*k) == attr => Some(v.clone()),
+                    _ => None,
+                })
+            }) {
+                return v;
+            }
+        }
+    }
+    match (name, attr) {
+        ("default", ":weight") | ("default", ":slant") | ("default", ":width") => {
+            Value::Sym(i.intern("normal"))
+        }
+        ("default", ":background") => Value::string("unspecified-bg"),
+        ("default", ":foreground") => Value::string("unspecified-fg"),
+        (
+            "default",
+            ":underline"
+            | ":overline"
+            | ":strike-through"
+            | ":box"
+            | ":inverse-video"
+            | ":stipple"
+            | ":extend",
+        ) => Value::Nil,
+        ("bold", ":weight") | ("bold-italic", ":weight") => Value::Sym(i.intern("bold")),
+        ("italic", ":slant") | ("bold-italic", ":slant") => Value::Sym(i.intern("italic")),
+        ("underline", ":underline") => Value::t(),
+        _ => Value::Sym(i.intern("unspecified")),
+    }
+}
+
+fn f_face_attribute(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let name = face_name_of(i, &a[0])?;
+    let attr = match &a[1] {
+        Value::Sym(s) => i.symbol_name(*s),
+        other => return Err(i.wrong_type_mut("symbolp", other)),
+    };
+    Ok(face_attr(i, &name, &attr))
+}
+
+fn f_facep(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let name = match face_name_of(i, &a[0]) {
+        Ok(n) => n,
+        Err(_) => return Ok(Value::Nil),
+    };
+    let mut v = Vec::with_capacity(20);
+    v.push(a[0].clone());
+    let un = Value::Sym(i.intern("unspecified"));
+    v.resize(20, un);
+    let _ = name;
+    Ok(Value::Vec(Rc::new(RefCell::new(v))))
+}
+
+fn f_face_list(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
+    let mut names: Vec<String> = KNOWN_FACES.iter().map(|s| s.to_string()).collect();
+    for (n, _) in &i.face_table {
+        if !names.contains(n) {
+            names.push(n.clone());
+        }
+    }
+    Ok(Value::list(
+        names.iter().map(|n| Value::Sym(i.intern(n))).collect(),
+    ))
+}
+
+fn f_face_id(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let name = face_name_of(i, &a[0])?;
+    let idx = KNOWN_FACES
+        .iter()
+        .position(|n| *n == name)
+        .unwrap_or(KNOWN_FACES.len());
+    Ok(Value::Int(idx as i128))
+}
+
+fn f_face_equal(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let n1 = face_name_of(i, &a[0])?;
+    let n2 = face_name_of(i, &a[1])?;
+    Ok(Value::from_bool(n1 == n2))
+}
+
+fn f_make_face(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let name = match &a[0] {
+        Value::Sym(s) => i.symbol_name(*s),
+        other => return Err(i.wrong_type_mut("symbolp", other)),
+    };
+    if !face_known(i, &name) {
+        i.face_table.push((name, Value::Nil));
+    }
+    Ok(a[0].clone())
+}
+
+fn f_copy_face(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let from = face_name_of(i, &a[0])?;
+    let to = match &a[1] {
+        Value::Sym(s) => i.symbol_name(*s),
+        other => return Err(i.wrong_type_mut("symbolp", other)),
+    };
+    // Copy each attr into the destination face.
+    for attr in [
+        ":family",
+        ":foundry",
+        ":width",
+        ":height",
+        ":weight",
+        ":slant",
+        ":foreground",
+        ":distant-foreground",
+        ":background",
+        ":underline",
+        ":overline",
+        ":strike-through",
+        ":box",
+        ":inverse-video",
+        ":stipple",
+        ":font",
+        ":fontset",
+        ":extend",
+        ":inherit",
+    ] {
+        let v = face_attr(i, &from, attr);
+        set_face_attr(i, &to, attr, v);
+    }
+    Ok(a[1].clone())
+}
+
+fn set_face_attr(i: &mut Interp, name: &str, attr: &str, val: Value) {
+    let kw = i.intern(attr);
+    if !face_known(i, name) {
+        i.face_table.push((name.to_string(), Value::Nil));
+    }
+    if let Some((_, plist)) = i.face_table.iter_mut().find(|(n, _)| n == name) {
+        *plist = crate::lisp::eval::plist_put(plist, kw, val);
+    }
+}
+
+fn f_internal_set_lisp_face_attribute(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let name = match &a[0] {
+        Value::Sym(s) => i.symbol_name(*s),
+        Value::Str(s) => s.borrow().clone(),
+        other => return Err(i.wrong_type_mut("symbolp", other)),
+    };
+    let attr = match &a[1] {
+        Value::Sym(s) => i.symbol_name(*s),
+        other => return Err(i.wrong_type_mut("symbolp", other)),
+    };
+    if !face_known(i, &name) {
+        i.face_table.push((name.clone(), Value::Nil));
+    }
+    set_face_attr(i, &name, &attr, a[2].clone());
+    Ok(Value::Nil)
+}
+
+fn f_set_face_attribute(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    // (set-face-attribute FACE FRAME &rest ARGS)
+    let name = match &a[0] {
+        Value::Sym(s) => i.symbol_name(*s),
+        other => return Err(i.wrong_type_mut("symbolp", other)),
+    };
+    if !face_known(i, &name) {
+        i.face_table.push((name.clone(), Value::Nil));
+    }
+    for kv in a[2..].chunks(2) {
+        if let (Value::Sym(k), Some(v)) = (&kv[0], kv.get(1)) {
+            let attr = i.symbol_name(*k);
+            set_face_attr(i, &name, &attr, v.clone());
+        }
+    }
+    Ok(Value::Nil)
+}
+
+fn f_face_background(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let name = face_name_of(i, &a[0])?;
+    match face_attr(i, &name, ":background") {
+        Value::Sym(s) if i.symbol_name(s) == "unspecified" => Ok(Value::Nil),
+        v => Ok(v),
+    }
+}
+fn f_face_foreground(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let name = face_name_of(i, &a[0])?;
+    match face_attr(i, &name, ":foreground") {
+        Value::Sym(s) if i.symbol_name(s) == "unspecified" => Ok(Value::Nil),
+        v => Ok(v),
+    }
+}
+
+/// (memq WEIGHT '(semi-bold bold extra-bold ultra-bold)) like GNU.
+fn f_face_bold_p(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let name = face_name_of(i, &a[0])?;
+    let w = face_attr(i, &name, ":weight");
+    let wname = match &w {
+        Value::Sym(s) => i.symbol_name(*s),
+        _ => String::new(),
+    };
+    let weights = ["semi-bold", "bold", "extra-bold", "ultra-bold"];
+    match weights.iter().position(|x| *x == wname) {
+        Some(p) => Ok(Value::list(
+            weights[p..].iter().map(|s| Value::Sym(i.intern(s))).collect(),
+        )),
+        None => Ok(Value::Nil),
+    }
+}
+fn f_face_italic_p(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let name = face_name_of(i, &a[0])?;
+    let w = face_attr(i, &name, ":slant");
+    let wname = match &w {
+        Value::Sym(s) => i.symbol_name(*s),
+        _ => String::new(),
+    };
+    let slants = ["italic", "oblique"];
+    match slants.iter().position(|x| *x == wname) {
+        Some(p) => Ok(Value::list(
+            slants[p..].iter().map(|s| Value::Sym(i.intern(s))).collect(),
+        )),
+        None => Ok(Value::Nil),
+    }
+}
+fn f_face_underline_p(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let name = face_name_of(i, &a[0])?;
+    Ok(match face_attr(i, &name, ":underline") {
+        Value::Sym(s) if i.symbol_name(s) == "unspecified" => Value::Nil,
+        v => v,
+    })
+}
+
+fn f_face_all_attributes(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let name = face_name_of(i, &a[0])?;
+    let attrs = [
+        ":family",
+        ":foundry",
+        ":width",
+        ":height",
+        ":weight",
+        ":slant",
+        ":foreground",
+        ":distant-foreground",
+        ":background",
+        ":underline",
+        ":overline",
+        ":strike-through",
+        ":box",
+        ":inverse-video",
+        ":stipple",
+        ":font",
+        ":fontset",
+        ":extend",
+        ":inherit",
+    ];
+    Ok(Value::list(
+        attrs
+            .iter()
+            .map(|at| {
+                let v = face_attr(i, &name, at);
+                Value::cons(Value::Sym(i.intern(at)), v)
+            })
+            .collect(),
+    ))
+}
+
+// ---------- window resizing & layout ----------
+
+const WINDOW_MIN_HEIGHT: usize = 4;
+const WINDOW_MIN_WIDTH: usize = 10;
+
+/// Adjust WINDOW's height (or width when HORIZ) by DELTA cells,
+/// taking/giving space from another window in the frame.
+fn window_resize(i: &mut Interp, w: &WindowRef, delta: i128, horiz: bool) -> Result<(), Flow> {
+    let f = sel_frame(i).ok_or_else(|| i.error("No frame"))?;
+    let wid = w.borrow().id;
+    let others: Vec<WindowRef> = {
+        let ff = f.borrow();
+        ff.windows
+            .iter()
+            .filter(|o| o.borrow().id != wid && !o.borrow().dead && !o.borrow().minibuffer)
+            .cloned()
+            .collect()
+    };
+    if delta > 0 && others.is_empty() {
+        return Err(i.error("Cannot resize window"));
+    }
+    if horiz {
+        let mut ww = w.borrow_mut();
+        let new = (ww.width as i128 + delta).max(WINDOW_MIN_WIDTH as i128) as usize;
+        let actual = new as i128 - ww.width as i128;
+        ww.width = new;
+        drop(ww);
+        if let Some(o) = others.first() {
+            let mut oo = o.borrow_mut();
+            oo.width = (oo.width as i128 - actual).max(WINDOW_MIN_WIDTH as i128) as usize;
+        }
+    } else {
+        let mut ww = w.borrow_mut();
+        let new = (ww.height as i128 + delta).max(WINDOW_MIN_HEIGHT as i128) as usize;
+        let actual = new as i128 - ww.height as i128;
+        ww.height = new;
+        drop(ww);
+        if let Some(o) = others.first() {
+            let mut oo = o.borrow_mut();
+            oo.height = (oo.height as i128 - actual).max(WINDOW_MIN_HEIGHT as i128) as usize;
+        }
+    }
+    Ok(())
+}
+
+fn f_enlarge_window(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let w = sel_window(i).ok_or_else(|| i.error("No window"))?;
+    let delta = want_int(i, &a[0])?;
+    let horiz = a.get(1).map(|v| v.truthy()).unwrap_or(false);
+    window_resize(i, &w, delta, horiz)?;
+    Ok(Value::t())
+}
+fn f_shrink_window(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let w = sel_window(i).ok_or_else(|| i.error("No window"))?;
+    let delta = want_int(i, &a[0])?;
+    let horiz = a.get(1).map(|v| v.truthy()).unwrap_or(false);
+    window_resize(i, &w, -delta, horiz)?;
+    Ok(Value::t())
+}
+fn f_enlarge_window_horizontally(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    f_enlarge_window(i, vec![a[0].clone(), Value::t()])
+}
+fn f_shrink_window_horizontally(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    f_shrink_window(i, vec![a[0].clone(), Value::t()])
+}
+fn f_adjust_window_trailing_edge(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let w = win_of(i, &a[0])?;
+    let delta = want_int(i, &a[1])?;
+    let horiz = a.get(2).map(|v| v.truthy()).unwrap_or(false);
+    window_resize(i, &w, delta, horiz)?;
+    Ok(Value::Nil)
+}
+
+fn f_balance_windows(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
+    let f = sel_frame(i).ok_or_else(|| i.error("No frame"))?;
+    let ff = f.borrow();
+    let wins: Vec<WindowRef> = ff
+        .windows
+        .iter()
+        .filter(|w| !w.borrow().dead && !w.borrow().minibuffer)
+        .cloned()
+        .collect();
+    if wins.len() > 1 {
+        let total: usize = wins.iter().map(|w| w.borrow().height).sum();
+        let each = total / wins.len();
+        for (k, w) in wins.iter().enumerate() {
+            // Give the remainder to the first window.
+            w.borrow_mut().height = each + if k == 0 { total % wins.len() } else { 0 };
+        }
+    }
+    Ok(Value::t())
+}
+
+fn f_maximize_window(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let w = win_of(i, &arg(&a, 0))?;
+    let f = sel_frame(i).ok_or_else(|| i.error("No frame"))?;
+    let fh = f.borrow().height;
+    let delta = fh as i128 - w.borrow().height as i128 - 1;
+    if delta <= 0 {
+        return Ok(Value::t());
+    }
+    window_resize(i, &w, delta, false)?;
+    Ok(Value::t())
+}
+fn f_minimize_window(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let w = win_of(i, &arg(&a, 0))?;
+    let cur = w.borrow().height;
+    if cur <= WINDOW_MIN_HEIGHT {
+        return Ok(Value::t());
+    }
+    window_resize(i, &w, WINDOW_MIN_HEIGHT as i128 - cur as i128, false)?;
+    Ok(Value::t())
+}
+
+fn f_split_window_vertically(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    // GNU order: (split-window-vertically &optional SIZE WINDOW-TO-SPLIT).
+    let win_v = arg(&a, 1);
+    let w = win_of(i, &win_v)?;
+    let total = w.borrow().height;
+    let new = f_split_window(i, vec![win_v.clone(), Value::Nil])?;
+    if let Value::Int(size) = arg(&a, 0) {
+        let size = size.max(0) as usize;
+        w.borrow_mut().height = total.saturating_sub(size).max(WINDOW_MIN_HEIGHT);
+        if let Value::Window(nw) = &new {
+            nw.borrow_mut().height = size.max(WINDOW_MIN_HEIGHT).min(total);
+        }
+    }
+    Ok(new)
+}
+fn f_split_window_horizontally(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let new = f_split_window_vertically(i, a)?;
+    // Our model splits vertically; mark the intent via the side param.
+    Ok(new)
+}
+
+fn f_switch_to_buffer_other_window(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let bid = match i.buffer_id_of(&a[0]) {
+        Some(id) => id,
+        None => {
+            let name = match &a[0] {
+                Value::Str(s) => s.borrow().clone(),
+                _ => return Err(i.wrong_type_mut("bufferp", &a[0])),
+            };
+            i.buffers.create(&name)
+        }
+    };
+    let f = sel_frame(i).ok_or_else(|| i.error("No frame"))?;
+    // Pick or make another window.
+    let sel = sel_window(i).ok_or_else(|| i.error("No window"))?;
+    let target = if f.borrow().windows.iter().filter(|w| !w.borrow().dead).count() > 1 {
+        window_cycle(i, 1, &sel).unwrap_or_else(|| sel.clone())
+    } else {
+        match f_split_window(i, vec![Value::Nil, Value::Nil])? {
+            Value::Window(w) => w,
+            _ => sel.clone(),
+        }
+    };
+    target.borrow_mut().buffer = bid;
+    f.borrow_mut().selected = target.clone();
+    i.set_current_buffer(bid);
+    i.buffers.touch(bid);
+    Ok(i.buffer_value(bid).unwrap_or(Value::Nil))
+}
+
+fn f_switch_to_buffer_other_frame(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
+    Err(i.error("Cannot switch to a different frame"))
+}
+fn f_display_buffer_other_frame(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
+    Err(i.error("Cannot switch to a different frame"))
+}
+
+fn f_quit_window(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let w = win_of(i, &arg(&a, 1))?;
+    let kill = arg(&a, 0).truthy();
+    if kill {
+        let bid = w.borrow().buffer;
+        i.buffers.kill(bid);
+    }
+    let f = sel_frame(i).ok_or_else(|| i.error("No frame"))?;
+    let live = f
+        .borrow()
+        .windows
+        .iter()
+        .filter(|x| !x.borrow().dead)
+        .count();
+    if live > 1 {
+        f_delete_window(i, vec![a.get(1).cloned().unwrap_or(Value::Nil)])?;
+    } else {
+        // Sole window: show another buffer instead.
+        let cur = w.borrow().buffer;
+        if let Some(other) = i.buffers.other(cur) {
+            w.borrow_mut().buffer = other;
+            i.set_current_buffer(other);
+        }
+    }
+    Ok(Value::Nil)
+}
+
+fn f_quit_restore_window(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    // (quit-restore-window &optional WINDOW BURY-OR-KILL)
+    let w = win_of(i, &arg(&a, 0))?;
+    let bok = arg(&a, 1);
+    let bok_name = i
+        .sym_id(&bok)
+        .map(|s| i.symbol_name(s))
+        .unwrap_or_default();
+    let kill = bok.truthy() && bok_name != "bury" && bok_name != "append";
+    f_quit_window(i, vec![Value::from_bool(kill), Value::Window(w)])
+}
+
+fn f_kill_buffer_and_window(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
+    let f = sel_frame(i).ok_or_else(|| i.error("No frame"))?;
+    let live = f
+        .borrow()
+        .windows
+        .iter()
+        .filter(|x| !x.borrow().dead)
+        .count();
+    if live <= 1 {
+        return Err(i.error("Attempt to delete the only window"));
+    }
+    let bid = i.current_buffer;
+    i.buffers.kill(bid);
+    f_delete_window(i, vec![Value::Nil])?;
+    if let Some(next) = i.buffers.other(bid).or_else(|| i.buffers.list().first().copied()) {
+        i.set_current_buffer(next);
+    }
+    Ok(Value::Nil)
+}
+
+fn f_replace_buffer_in_windows(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let bid = match arg(&a, 0) {
+        Value::Nil => i.current_buffer,
+        v => match i.buffer_id_of(&v) {
+            Some(id) => id,
+            None => return Err(i.error("No such buffer")),
+        },
+    };
+    let other = i.buffers.other(bid).unwrap_or(bid);
+    let f = sel_frame(i).ok_or_else(|| i.error("No frame"))?;
+    for w in &f.borrow().windows {
+        if w.borrow().buffer == bid && !w.borrow().dead {
+            w.borrow_mut().buffer = other;
+        }
+    }
+    if i.current_buffer == bid && bid != other {
+        i.set_current_buffer(other);
+    }
+    Ok(Value::Nil)
+}
+
+fn f_window_tree(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let f = frame_of(i, &arg(&a, 0))?;
+    let ff = f.borrow();
+    let (w, h) = (ff.width, ff.height);
+    let wins: Vec<Value> = ff
+        .windows
+        .iter()
+        .filter(|x| !x.borrow().dead && !x.borrow().minibuffer)
+        .map(|x| Value::Window(x.clone()))
+        .collect();
+    // Node = (VERTICAL-P EDGES CHILD...) where EDGES = (LEFT TOP RIGHT BOTTOM).
+    // A lone window appears directly, like GNU's root.
+    let root = if wins.len() == 1 {
+        wins[0].clone()
+    } else {
+        let mut node = vec![
+            Value::t(),
+            Value::list(vec![
+                Value::Int(0),
+                Value::Int(1),
+                Value::Int(w as i128),
+                Value::Int(h as i128),
+            ]),
+        ];
+        node.extend(wins);
+        Value::list(node)
+    };
+    let mut top = vec![root];
+    if let Some(mb) = &ff.minibuffer {
+        top.push(Value::Window(mb.clone()));
+    }
+    Ok(Value::list(top))
+}
+
+fn f_window_combination_limit(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
+    // All our windows are leaves — GNU errors on non-internal windows.
+    Err(i.error("Window is not a combination window"))
+}
+
+fn f_scroll_other_window_down(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let f = sel_frame(i).ok_or_else(|| i.error("No frame"))?;
+    let live = f
+        .borrow()
+        .windows
+        .iter()
+        .filter(|x| !x.borrow().dead && !x.borrow().minibuffer)
+        .count();
+    if live < 2 {
+        return Err(i.error("There is no other window"));
+    }
+    let n = arg(&a, 0).int().unwrap_or(1);
+    f_scroll_other_window(i, vec![Value::Int(-n)])
+}
+
+// ---------- overlays (missing pieces) ----------
+
+fn f_copy_overlay(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let (bid, idx) = overlay_of(i, &a[0])?;
+    let ov = match i.buffers.get(bid) {
+        Some(b) => match b.borrow().overlays.get(idx) {
+            Some(o) => o.clone(),
+            None => return Err(i.wrong_type_mut("overlayp", &a[0])),
+        },
+        None => return Err(i.wrong_type_mut("overlayp", &a[0])),
+    };
+    let b = i.buffers.get(bid).unwrap();
+    let mut bb = b.borrow_mut();
+    bb.overlays.push(ov);
+    let new_idx = bb.overlays.len() - 1;
+    Ok(Value::Vec(Rc::new(RefCell::new(vec![
+        Value::Sym(i.intern("overlay")),
+        Value::Int(bid as i128),
+        Value::Int(new_idx as i128),
+    ]))))
+}
+
+fn f_overlay_lists(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
+    let b = cur(i);
+    let bb = b.borrow();
+    let bid = bb.id;
+    let pt = bb.point();
+    let ov_sym = i.intern("overlay");
+    let mk = |idx: usize| {
+        Value::Vec(Rc::new(RefCell::new(vec![
+            Value::Sym(ov_sym),
+            Value::Int(bid as i128),
+            Value::Int(idx as i128),
+        ])))
+    };
+    let mut before: Vec<Value> = Vec::new();
+    let mut after: Vec<Value> = Vec::new();
+    for (idx, ov) in bb.overlays.iter().enumerate() {
+        if ov.start <= pt {
+            before.push(mk(idx));
+        } else {
+            after.push(mk(idx));
+        }
+    }
+    before.reverse();
+    Ok(Value::cons(Value::list(before), Value::list(after)))
+}
+
+fn f_overlay_recenter(_i: &mut Interp, _a: Vec<Value>) -> EvalResult {
+    Ok(Value::Nil)
+}
+
+// ---------- readers & redisplay ----------
+
+fn f_completing_read_default(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    f_completing_read(i, a)
+}
+
+fn f_completing_read_multiple(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let prompt = match &a[0] {
+        Value::Str(s) => format!("{}[comma-separated list] ", s.borrow()),
+        _ => String::new(),
+    };
+    let mut args = a.clone();
+    args[0] = Value::string(prompt);
+    match f_completing_read(i, args)? {
+        Value::Str(s) => Ok(Value::list(
+            s.borrow()
+                .split(',')
+                .map(|p| Value::string(p.trim().to_string()))
+                .filter(|v| match v {
+                    Value::Str(t) => !t.borrow().is_empty(),
+                    _ => true,
+                })
+                .collect(),
+        )),
+        _ => Ok(Value::Nil),
+    }
+}
+
+fn f_read_coding_system(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let prompt = match &a[0] {
+        Value::Str(s) => s.borrow().clone(),
+        _ => String::new(),
+    };
+    let input = if i.minibuf_reader.is_some() {
+        i.minibuf_line(&prompt)?
+    } else {
+        String::new()
+    };
+    let def = match a.get(1) {
+        Some(Value::Sym(s)) => i.symbol_name(*s),
+        _ => "undecided".to_string(),
+    };
+    let name = if input.is_empty() { def } else { input };
+    Ok(Value::Sym(i.intern(&name)))
+}
+
+fn f_read_color(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let prompt = match a.first() {
+        Some(Value::Str(s)) => s.borrow().clone(),
+        _ => "Color name: ".to_string(),
+    };
+    let input = if i.minibuf_reader.is_some() {
+        i.minibuf_line(&prompt)?
+    } else {
+        String::new()
+    };
+    if input.is_empty() && !a.get(2).map(|v| v.truthy()).unwrap_or(false) {
+        return Ok(Value::string(""));
+    }
+    Ok(Value::string(input))
+}
+
+fn f_read_passwd(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let prompt = match &a[0] {
+        Value::Str(s) => s.borrow().clone(),
+        _ => String::new(),
+    };
+    let input = if i.minibuf_reader.is_some() {
+        i.minibuf_line(&prompt)?
+    } else {
+        String::new()
+    };
+    Ok(Value::string(input))
+}
+
+fn f_read_kbd_macro(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    // GNU's read-kbd-macro always returns a vector (unlike `kbd').
+    let s = want_str(i, &a[0])?;
+    let keys = parse_kbd(i, &s);
+    Ok(Value::Vec(Rc::new(RefCell::new(keys))))
+}
+
+fn f_momentary_string_display(_i: &mut Interp, _a: Vec<Value>) -> EvalResult {
+    Ok(Value::Nil)
+}
+
+fn f_minibuffer_completion_help(_i: &mut Interp, _a: Vec<Value>) -> EvalResult {
+    Ok(Value::Nil)
+}
+
+fn f_display_message_or_buffer(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    // Small messages go to the echo area; multi-line would pop to a
+    // buffer — we always echo and return the message.
+    if let Value::Str(s) = &a[0] {
+        i.echo_message = s.borrow().clone();
+    }
+    Ok(a[0].clone())
+}
+
+fn f_redisplay(_i: &mut Interp, _a: Vec<Value>) -> EvalResult {
+    Ok(Value::t())
+}
+
+fn f_force_mode_line_update(_i: &mut Interp, _a: Vec<Value>) -> EvalResult {
+    Ok(Value::Nil)
+}
+
+fn f_tooltip_show(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    // tty: no tooltip — GNU returns the text.
+    let _ = i;
+    Ok(a[0].clone())
+}
+fn f_tooltip_hide(_i: &mut Interp, _a: Vec<Value>) -> EvalResult {
+    Ok(Value::Nil)
+}
+
+fn f_timer_event_handler(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    Err(i.wrong_type_mut("timerp", &a[0]))
+}
+
+fn f_invisible_p(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    // Check the `invisible' text property at POS.
+    let pos = want_int(i, &a[0])?;
+    let inv = i.intern("invisible");
+    crate::buffer::primitives::f_get_text_property(
+        i,
+        vec![Value::Int(pos), Value::Sym(inv)],
+    )
+}
+
+fn f_fringe_bitmaps_at_pos(_i: &mut Interp, _a: Vec<Value>) -> EvalResult {
+    Ok(Value::Nil)
+}
+
+// ---------- modes & jit/font-lock ----------
+
+fn mode_toggle(i: &mut Interp, a: &[Value], var: &str) -> EvalResult {
+    let sym = i.intern(var);
+    let cur = i.symbol_value(sym).truthy();
+    let new = match a.first().and_then(|v| v.int()) {
+        Some(n) => n > 0,
+        None => match a.first() {
+            Some(Value::Nil) | None => !cur,
+            Some(v) => v.truthy(),
+        },
+    };
+    i.obarray.symbol_mut(sym).value = Value::from_bool(new);
+    Ok(Value::from_bool(new))
+}
+
+fn f_binary_overwrite_mode(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
+    Ok(Value::Sym(i.intern("overwrite-mode-binary")))
+}
+fn f_scroll_lock_mode(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    mode_toggle(i, &a, "scroll-lock-mode")
+}
+fn f_pixel_scroll_mode(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    mode_toggle(i, &a, "pixel-scroll-mode")
+}
+fn f_pixel_scroll_precision_mode(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    mode_toggle(i, &a, "pixel-scroll-precision-mode")
+}
+fn f_font_lock_mode(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let _ = mode_toggle(i, &a, "font-lock-mode")?;
+    Ok(Value::Nil)
+}
+fn f_font_lock_ensure(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let b = cur(i);
+    let bb = b.borrow();
+    let beg = a.get(0).and_then(|v| v.int()).unwrap_or(bb.begv as i128 + 1);
+    let end = a
+        .get(1)
+        .and_then(|v| v.int())
+        .unwrap_or(bb.text_len() as i128 + 1);
+    Ok(Value::cons(
+        Value::Sym(i.intern("jit-lock-bounds")),
+        Value::cons(Value::Int(beg), Value::Int(end)),
+    ))
+}
+fn f_font_lock_flush(_i: &mut Interp, _a: Vec<Value>) -> EvalResult {
+    Ok(Value::Nil)
+}
+fn f_jit_lock_register(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let sym = i.intern("jit-lock-functions");
+    let cur = i.symbol_value(sym);
+    let cur = if cur.truthy() { cur } else { Value::Nil };
+    let items = cur.list_to_vec().unwrap_or_default();
+    if !items.iter().any(|v| eq_values(v, &a[0])) {
+        i.obarray.symbol_mut(sym).value = Value::cons(a[0].clone(), Value::list(items));
+    }
+    // GNU returns the value of `jit-lock-stealth-fontify' → list of the
+    // default fontification function.
+    Ok(Value::list(vec![Value::Sym(i.intern("jit-lock-function"))]))
+}
+fn f_jit_lock_unregister(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let sym = i.intern("jit-lock-functions");
+    let cur = i.symbol_value(sym);
+    let items = cur.list_to_vec().unwrap_or_default();
+    let kept: Vec<Value> = items
+        .into_iter()
+        .filter(|v| !eq_values(v, &a[0]))
+        .collect();
+    i.obarray.symbol_mut(sym).value = Value::list(kept);
+    Ok(Value::Nil)
 }
 
 /// Called by `Interp::new` to wire editor subrs and create the initial frame.
