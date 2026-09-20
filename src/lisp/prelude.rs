@@ -276,28 +276,79 @@ returning that buffer's contents as a string."
   (interactive "*p")
   (transpose-subr 'forward-word arg))
 
-(defun transpose-sexps (arg)
-  "Interchange the sexp at point with the previous one ARG times."
-  (interactive "*p")
-  (transpose-subr 'forward-sexp arg))
+(defun transpose-sexps-default-function (arg)
+  "Default method to locate a pair of points for `transpose-sexps'."
+  (if (if (> arg 0)
+          (looking-at "\\sw\\|\\s_")
+        (and (not (bobp))
+             (save-excursion
+               (forward-char -1)
+               (looking-at "\\sw\\|\\s_"))))
+      ;; Jumping over a symbol.  We might be inside it, mind you.
+      (progn (funcall (if (> arg 0)
+                          #'skip-syntax-backward #'skip-syntax-forward)
+                      "w_")
+             (cons (save-excursion (forward-sexp arg) (point)) (point)))
+    ;; Otherwise, we're between sexps.  Take a step back before jumping
+    ;; to make sure we'll obey the same precedence no matter which
+    ;; direction we're going.
+    (funcall (if (> arg 0) #'skip-syntax-backward #'skip-syntax-forward)
+             " .")
+    (cons (save-excursion (forward-sexp arg) (point))
+          (progn (while (or (forward-comment (if (> arg 0) 1 -1))
+                            (not (zerop (funcall (if (> arg 0)
+                                                     #'skip-syntax-forward
+                                                   #'skip-syntax-backward)
+                                                 ".")))))
+                 (point)))))
 
-(defun transpose-subr (mover arg)
-  (let ((n (prefix-numeric-value arg)))
-    (when (not (zerop n))
-      (let ((pos1 (save-excursion (funcall mover -1) (point)))
-            (pos2 (save-excursion (funcall mover 1) (point))))
-        (when (and pos1 pos2 (< pos1 pos2))
-          (let* ((end1 (save-excursion (goto-char pos1) (funcall mover 1) (point)))
-                 (end2 (save-excursion (goto-char pos2) (funcall mover 1) (point)))
-                 (w1 (buffer-substring pos1 end1))
-                 (w2 (buffer-substring pos2 end2)))
-            (goto-char pos2)
-            (delete-region pos2 end2)
-            (insert w1)
-            (goto-char pos1)
-            (delete-region pos1 end1)
-            (insert w2)
-            (goto-char end2)))))))
+(defun transpose-sexps (arg)
+  "Like \\[transpose-chars] (`transpose-chars'), but applies to sexps."
+  (interactive "*p")
+  (transpose-subr 'transpose-sexps-default-function arg 'special))
+
+(defun transpose-subr-1 (pos1 pos2)
+  (unless (and pos1 pos2)
+    (error "Don't have two things to transpose"))
+  (when (> (car pos1) (cdr pos1)) (setq pos1 (cons (cdr pos1) (car pos1))))
+  (when (> (car pos2) (cdr pos2)) (setq pos2 (cons (cdr pos2) (car pos2))))
+  (when (> (car pos1) (car pos2))
+    (let ((swap pos1))
+      (setq pos1 pos2 pos2 swap)))
+  (if (> (cdr pos1) (car pos2)) (error "Don't have two things to transpose"))
+  (let* ((a (buffer-substring (car pos1) (cdr pos1)))
+         (m (buffer-substring (cdr pos1) (car pos2)))
+         (b (buffer-substring (car pos2) (cdr pos2))))
+    (delete-region (car pos1) (cdr pos2))
+    (goto-char (car pos1))
+    (insert b m a)))
+
+(defun transpose-subr (mover arg &optional special)
+  "Subroutine to do the work of transposing objects."
+  (let ((aux (if special mover
+               (lambda (x)
+                 (cons (progn (funcall mover x) (point))
+                       (progn (funcall mover (- x)) (point))))))
+        pos1 pos2)
+    (cond
+     ((= arg 0)
+      (save-excursion
+        (setq pos1 (funcall aux 1))
+        (goto-char (or (mark) (error "No mark set in this buffer")))
+        (setq pos2 (funcall aux 1))
+        (transpose-subr-1 pos1 pos2))
+      (exchange-point-and-mark))
+     ((> arg 0)
+      (setq pos1 (funcall aux -1))
+      (setq pos2 (funcall aux arg))
+      (transpose-subr-1 pos1 pos2)
+      (goto-char (car pos2)))
+     (t
+      (setq pos1 (funcall aux -1))
+      (goto-char (car pos1))
+      (setq pos2 (funcall aux arg))
+      (transpose-subr-1 pos1 pos2)
+      (goto-char (+ (car pos2) (- (cdr pos1) (car pos1))))))))
 
 (defun undo-only (&optional arg)
   "Undo some previous changes (no redo)."

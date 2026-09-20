@@ -396,6 +396,8 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!("condition-variable-p", 1, 1, f_false, ""),
     S!("cl-type-of", 1, 1, f_cl_type_of, ""),
     S!("bool-vector-p", 1, 1, f_bool_vector_p, ""),
+    S!("record", many 0, f_record, "Create a record of TYPE with SLOTS."),
+    S!("recordp", 1, 1, f_recordp, "t if OBJECT is a record."),
     S!("make-bool-vector", 2, 2, f_make_bool_vector, ""),
     S!("bool-vector-length", 1, 1, f_bool_vector_length, ""),
     S!("bool-vector-subsetp", 2, 2, f_bool_vector_subsetp, ""),
@@ -2837,4 +2839,12 @@ fn f_suppress_keymap(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 
 fn f_char_table_subtype(_i: &mut Interp, a: Vec<Value>) -> EvalResult {
     Ok(char_table_subtype_of(&a[0]))
+}
+
+fn f_record(_i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    Ok(Value::Record(Rc::new(RefCell::new(a))))
+}
+
+fn f_recordp(_i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    Ok(Value::from_bool(matches!(a[0], Value::Record(_))))
 }

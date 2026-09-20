@@ -346,18 +346,28 @@ impl<'a> Reader<'a> {
             Some('C') if self.peek() == Some('-') => {
                 self.pos += 1;
                 let v = self.read_char_literal()?;
-                // Strings hold plain chars: fold C- like ?\C-x (control char).
+                // Strings hold plain chars: fold C- like ?\C-x (control
+                // char); a meta bit survives as base+128 (GNU 8-bit char).
                 let base =
                     v & !(CHAR_CTL | CHAR_META | CHAR_SHIFT | CHAR_HYPER | CHAR_SUPER | CHAR_ALT);
-                Ok(char::from_u32(base as u32).map(ctrl_of))
+                let mut ch = ctrl_of(char::from_u32(base as u32).unwrap_or('\0')) as i128;
+                if v & CHAR_META != 0 && ch < 0x80 {
+                    ch |= 0x80;
+                }
+                Ok(char::from_u32(ch as u32))
             }
             Some('M') if self.peek() == Some('-') => {
                 self.pos += 1;
                 let v = self.read_char_literal()?;
-                // Meta bits can't live in a Rust char; emit the base char.
+                // Meta chars live in strings as base+128 (like GNU's
+                // 8-bit metafied chars), so key lookup sees M-x.
                 let base =
                     v & !(CHAR_CTL | CHAR_META | CHAR_SHIFT | CHAR_HYPER | CHAR_SUPER | CHAR_ALT);
-                Ok(char::from_u32(base as u32))
+                Ok(char::from_u32(if base < 0x80 {
+                    base as u32 | 0x80
+                } else {
+                    base as u32
+                }))
             }
             Some('^') => match self.next() {
                 None => Err(eof_err(self.interp)),

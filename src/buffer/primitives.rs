@@ -5,7 +5,7 @@
 //! Position convention: Emacs positions are 1-based; internally the
 //! `Buffer` uses 0-based char indices. `pt` = `bb.point + 1`.
 
-use crate::buffer::TextProp;
+use crate::buffer::{Buffer, TextProp};
 use crate::lisp::Interp;
 use crate::lisp::error::{EvalResult, Flow};
 use crate::lisp::eval::MatchData;
@@ -1100,7 +1100,7 @@ fn f_kill_buffer(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         None => i.current_buffer,
         Some(v) => i
             .buffer_id_of(v)
-            .ok_or_else(|| i.error_obj("No such buffer", v))?,
+            .ok_or_else(|| i.error(format!("No buffer named {}", i.princ_to_string(&v))))?,
     };
     if !i.buffers.kill(id) {
         return Ok(Value::Nil);
@@ -1138,7 +1138,7 @@ fn f_other_buffer(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 fn f_set_buffer(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let id = i
         .buffer_id_of(&a[0])
-        .ok_or_else(|| i.error_obj("No such buffer", &a[0]))?;
+        .ok_or_else(|| i.error(format!("No buffer named {}", i.princ_to_string(&a[0]))))?;
     i.set_current_buffer(id);
     Ok(a[0].clone())
 }
@@ -1175,7 +1175,7 @@ fn f_bury_buffer(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let id = match a.get(0) {
         Some(v) if v.truthy() => i
             .buffer_id_of(v)
-            .ok_or_else(|| i.error_obj("No such buffer", v))?,
+            .ok_or_else(|| i.error(format!("No buffer named {}", i.princ_to_string(&v))))?,
         _ => i.current_buffer,
     };
     i.buffers.bury(id);
@@ -1735,8 +1735,61 @@ fn f_move_to_column(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     Ok(Value::Int(goal))
 }
 
-fn f_forward_comment(_i: &mut Interp, _a: Vec<Value>) -> EvalResult {
-    Ok(Value::Nil)
+fn f_forward_comment(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let count = a.get(0).and_then(|v| v.int()).unwrap_or(1);
+    let b = cur(i);
+    let mut bb = b.borrow_mut();
+    let len = bb.text_len();
+    let mut p = bb.point();
+    let mut comments = 0i128;
+    if count >= 0 {
+        loop {
+            while p < len && bb.text.char_at(p).is_whitespace() {
+                p += 1;
+            }
+            // A `;' comment runs to end of line.
+            if p < len && bb.text.char_at(p) == ';' {
+                while p < len && bb.text.char_at(p) != '\n' {
+                    p += 1;
+                }
+                comments += 1;
+            } else {
+                break;
+            }
+        }
+    } else {
+        loop {
+            while p > bb.begv && bb.text.char_at(p - 1).is_whitespace() {
+                p -= 1;
+            }
+            // If the preceding text on this line is a `;' comment
+            // reaching p, jump back over it.
+            let mut ls = p;
+            while ls > bb.begv && bb.text.char_at(ls - 1) != '\n' {
+                ls -= 1;
+            }
+            let mut semi = None;
+            for k in ls..p {
+                if bb.text.char_at(k) == ';' {
+                    semi = Some(k);
+                    break;
+                }
+            }
+            match semi {
+                Some(k) => {
+                    p = k;
+                    comments += 1;
+                }
+                None => break,
+            }
+        }
+    }
+    bb.set_point(p);
+    Ok(if comments >= count.abs() && comments > 0 {
+        Value::Sym(sym::T)
+    } else {
+        Value::Nil
+    })
 }
 
 /// Parse a skip-chars spec like " \t\n" or "^a-z" into a predicate set.
@@ -1828,7 +1881,12 @@ fn f_skip_syntax_forward(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         _ => bb.text_len(),
     };
     let neg = spec.starts_with('^');
-    let codes: Vec<u8> = spec.trim_start_matches('^').bytes().collect();
+    // `-` is an alias for the whitespace class, like in regexps.
+    let codes: Vec<u8> = spec
+        .trim_start_matches('^')
+        .bytes()
+        .map(|c| if c == b'-' { b' ' } else { c })
+        .collect();
     let mut p = bb.point();
     while p < lim.min(bb.text.len()) {
         let hit = codes.contains(&syntax_char_of(bb.text.char_at(p)));
@@ -1854,7 +1912,11 @@ fn f_skip_syntax_backward(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         _ => bb.begv,
     };
     let neg = spec.starts_with('^');
-    let codes: Vec<u8> = spec.trim_start_matches('^').bytes().collect();
+    let codes: Vec<u8> = spec
+        .trim_start_matches('^')
+        .bytes()
+        .map(|c| if c == b'-' { b' ' } else { c })
+        .collect();
     let mut p = bb.point();
     while p > lim {
         let hit = codes.contains(&syntax_char_of(bb.text.char_at(p - 1)));
@@ -1868,131 +1930,41 @@ fn f_skip_syntax_backward(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     Ok(Value::Int(moved))
 }
 
-fn f_forward_sexp(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let n = a.get(0).and_then(|v| v.int()).unwrap_or(1);
-    let b = cur(i);
-    let mut bb = b.borrow_mut();
-    for _ in 0..n.max(0) {
-        let mut p = bb.point();
-        let len = bb.text_len();
-        // skip whitespace
-        while p < len && bb.text.char_at(p).is_whitespace() {
-            p += 1;
-        }
-        if p >= len {
-            return Err(err_sym(i, "scan-error", vec![]));
-        }
-        let c = bb.text.char_at(p);
-        if c == '(' || c == '[' || c == '{' {
-            // scan balanced
-            let mut depth = 0i128;
-            let mut in_str = false;
-            let mut esc = false;
-            let mut k = p;
-            while k < len {
-                let ch = bb.text.char_at(k);
-                if in_str {
-                    if esc {
-                        esc = false;
-                    } else if ch == '\\' {
-                        esc = true;
-                    } else if ch == '"' {
-                        in_str = false;
-                    }
-                } else {
-                    match ch {
-                        '"' => in_str = true,
-                        '(' | '[' | '{' => depth += 1,
-                        ')' | ']' | '}' => {
-                            depth -= 1;
-                            if depth == 0 {
-                                break;
-                            }
-                        }
-                        _ => {}
-                    }
-                }
-                k += 1;
-            }
-            if depth != 0 {
-                return Err(err_sym(
-                    i,
-                    "scan-error",
-                    vec![Value::string("Unbalanced parentheses")],
-                ));
-            }
-            bb.set_point(k + 1);
-        } else if c == ')' || c == ']' || c == '}' {
-            return Err(err_sym(
-                i,
-                "scan-error",
-                vec![Value::string("Unbalanced parentheses")],
-            ));
-        } else if c == '"' {
-            let mut k = p + 1;
-            let mut esc = false;
-            let mut closed = false;
-            while k < len {
-                let ch = bb.text.char_at(k);
+/// Move point forward over one sexp.  Like GNU: at EOB outside any
+/// sexp, stop silently instead of signaling.
+fn forward_sexp_once(i: &mut Interp, bb: &mut Buffer) -> Result<(), Flow> {
+    let mut p = bb.point();
+    let len = bb.text_len();
+    // skip whitespace
+    while p < len && bb.text.char_at(p).is_whitespace() {
+        p += 1;
+    }
+    if p >= len {
+        bb.set_point(len);
+        return Ok(());
+    }
+    let c = bb.text.char_at(p);
+    if c == '(' || c == '[' || c == '{' {
+        // scan balanced
+        let mut depth = 0i128;
+        let mut in_str = false;
+        let mut esc = false;
+        let mut k = p;
+        while k < len {
+            let ch = bb.text.char_at(k);
+            if in_str {
                 if esc {
                     esc = false;
                 } else if ch == '\\' {
                     esc = true;
                 } else if ch == '"' {
-                    closed = true;
-                    break;
+                    in_str = false;
                 }
-                k += 1;
-            }
-            if !closed {
-                return Err(err_sym(
-                    i,
-                    "scan-error",
-                    vec![Value::string("Unbalanced parentheses")],
-                ));
-            }
-            bb.set_point(k + 1);
-        } else {
-            // atom: symbol chars
-            while p < len {
-                let ch = bb.text.char_at(p);
-                if ch.is_whitespace() || "()[]{}\"'`,;".contains(ch) {
-                    break;
-                }
-                p += 1;
-            }
-            bb.set_point(p);
-        }
-    }
-    Ok(Value::Nil)
-}
-
-fn f_backward_sexp(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    // Simplified: scan backwards over balanced close-paren or atom.
-    let n = a.get(0).and_then(|v| v.int()).unwrap_or(1);
-    let b = cur(i);
-    let mut bb = b.borrow_mut();
-    for _ in 0..n.max(0) {
-        let mut p = bb.point();
-        while p > bb.begv && bb.text.char_at(p - 1).is_whitespace() {
-            p -= 1;
-        }
-        if p <= bb.begv {
-            return Err(err_sym(
-                i,
-                "scan-error",
-                vec![Value::string("Unbalanced parentheses")],
-            ));
-        }
-        let c = bb.text.char_at(p - 1);
-        if matches!(c, ')' | ']' | '}') {
-            let mut depth = 0i128;
-            let mut k = p;
-            while k > bb.begv {
-                let ch = bb.text.char_at(k - 1);
+            } else {
                 match ch {
-                    ')' | ']' | '}' => depth += 1,
-                    '(' | '[' | '{' => {
+                    '"' => in_str = true,
+                    '(' | '[' | '{' => depth += 1,
+                    ')' | ']' | '}' => {
                         depth -= 1;
                         if depth == 0 {
                             break;
@@ -2000,25 +1972,133 @@ fn f_backward_sexp(i: &mut Interp, a: Vec<Value>) -> EvalResult {
                     }
                     _ => {}
                 }
-                k -= 1;
             }
-            if depth != 0 {
-                return Err(err_sym(
-                    i,
-                    "scan-error",
-                    vec![Value::string("Unbalanced parentheses")],
-                ));
+            k += 1;
+        }
+        if depth != 0 {
+            return Err(err_sym(
+                i,
+                "scan-error",
+                vec![Value::string("Unbalanced parentheses")],
+            ));
+        }
+        bb.set_point(k + 1);
+    } else if c == ')' || c == ']' || c == '}' {
+        return Err(err_sym(
+            i,
+            "scan-error",
+            vec![Value::string("Unbalanced parentheses")],
+        ));
+    } else if c == '"' {
+        let mut k = p + 1;
+        let mut esc = false;
+        let mut closed = false;
+        while k < len {
+            let ch = bb.text.char_at(k);
+            if esc {
+                esc = false;
+            } else if ch == '\\' {
+                esc = true;
+            } else if ch == '"' {
+                closed = true;
+                break;
             }
-            bb.set_point(k - 1);
-        } else {
-            while p > bb.begv {
-                let ch = bb.text.char_at(p - 1);
-                if ch.is_whitespace() || "()[]{}\"'`,;".contains(ch) {
-                    break;
+            k += 1;
+        }
+        if !closed {
+            return Err(err_sym(
+                i,
+                "scan-error",
+                vec![Value::string("Unbalanced parentheses")],
+            ));
+        }
+        bb.set_point(k + 1);
+    } else {
+        // atom: symbol chars
+        while p < len {
+            let ch = bb.text.char_at(p);
+            if ch.is_whitespace() || "()[]{}\"'`,;".contains(ch) {
+                break;
+            }
+            p += 1;
+        }
+        bb.set_point(p);
+    }
+    Ok(())
+}
+
+/// Move point backward over one sexp.  At BOB, stop silently (GNU).
+fn backward_sexp_once(i: &mut Interp, bb: &mut Buffer) -> Result<(), Flow> {
+    let mut p = bb.point();
+    while p > bb.begv && bb.text.char_at(p - 1).is_whitespace() {
+        p -= 1;
+    }
+    if p <= bb.begv {
+        bb.set_point(bb.begv);
+        return Ok(());
+    }
+    let c = bb.text.char_at(p - 1);
+    if matches!(c, ')' | ']' | '}') {
+        let mut depth = 0i128;
+        let mut k = p;
+        while k > bb.begv {
+            let ch = bb.text.char_at(k - 1);
+            match ch {
+                ')' | ']' | '}' => depth += 1,
+                '(' | '[' | '{' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        break;
+                    }
                 }
-                p -= 1;
+                _ => {}
             }
-            bb.set_point(p);
+            k -= 1;
+        }
+        if depth != 0 {
+            return Err(err_sym(
+                i,
+                "scan-error",
+                vec![Value::string("Unbalanced parentheses")],
+            ));
+        }
+        bb.set_point(k - 1);
+    } else {
+        while p > bb.begv {
+            let ch = bb.text.char_at(p - 1);
+            if ch.is_whitespace() || "()[]{}\"'`,;".contains(ch) {
+                break;
+            }
+            p -= 1;
+        }
+        bb.set_point(p);
+    }
+    Ok(())
+}
+
+fn f_forward_sexp(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let n = a.get(0).and_then(|v| v.int()).unwrap_or(1);
+    let b = cur(i);
+    let mut bb = b.borrow_mut();
+    for _ in 0..n.abs() {
+        if n < 0 {
+            backward_sexp_once(i, &mut *bb)?;
+        } else {
+            forward_sexp_once(i, &mut *bb)?;
+        }
+    }
+    Ok(Value::Nil)
+}
+
+fn f_backward_sexp(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let n = a.get(0).and_then(|v| v.int()).unwrap_or(1);
+    let b = cur(i);
+    let mut bb = b.borrow_mut();
+    for _ in 0..n.abs() {
+        if n < 0 {
+            forward_sexp_once(i, &mut *bb)?;
+        } else {
+            backward_sexp_once(i, &mut *bb)?;
         }
     }
     Ok(Value::Nil)
@@ -2929,7 +3009,7 @@ fn f_set_marker(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let buf_id = match a.get(2) {
         Some(v) if v.truthy() => i
             .buffer_id_of(v)
-            .ok_or_else(|| i.error_obj("No such buffer", v))?,
+            .ok_or_else(|| i.error(format!("No buffer named {}", i.princ_to_string(&v))))?,
         _ => match &a[1] {
             Value::Marker(mm) => mm.borrow().buffer.unwrap_or(i.current_buffer),
             _ => i.current_buffer,

@@ -794,6 +794,7 @@ fn f_add_hook(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     let cur = i.symbol_value(hook_id);
     let mut list = match &cur {
         Value::Cons(_) => cur.list_to_vec().unwrap_or_default(),
+        Value::Sym(s) if *s == sym::UNBOUND => Vec::new(),
         Value::Nil => Vec::new(),
         other => vec![other.clone()],
     };
@@ -806,7 +807,6 @@ fn f_add_hook(i: &mut Interp, args: Vec<Value>) -> EvalResult {
         }
     }
     i.obarray.symbol_mut(hook_id).value = Value::list(list);
-    i.obarray.symbol_mut(hook_id).special = true;
     Ok(Value::Nil)
 }
 

@@ -628,7 +628,3 @@ pub fn format_float(f: f64) -> String {
     s
 }
 
-/// Compare two `Rc` targets for `eq` identity.
-pub fn rc_ptr_eq<T>(a: &Rc<T>, b: &Rc<T>) -> bool {
-    Rc::ptr_eq(a, b)
-}

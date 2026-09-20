@@ -447,25 +447,6 @@ impl Interp {
     }
 
     /// `wrong-type-argument` signal: pred, value.
-    pub fn wrong_type(&self, pred: &str, val: &Value) -> Flow {
-        let pred_id = self.obarray.intern_soft(pred).unwrap_or_else(|| {
-            // intern_soft needs &mut; fallback path used only when pred
-            // is somehow not yet interned — intern it via a raw path.
-            sym::ERROR
-        });
-        if pred_id == sym::ERROR {
-            return self.signal_data(
-                sym::WRONG_TYPE_ARGUMENT,
-                vec![Value::string(pred), val.clone()],
-            );
-        }
-        self.signal_data(
-            sym::WRONG_TYPE_ARGUMENT,
-            vec![Value::Sym(pred_id), val.clone()],
-        )
-    }
-
-    /// Same but usable from `&mut self` contexts (pred interned on demand).
     pub fn wrong_type_mut(&mut self, pred: &str, val: &Value) -> Flow {
         let pred_id = self.intern(pred);
         self.signal_data(
@@ -574,16 +555,6 @@ impl Interp {
                 None => return Ok(last),
             }
         }
-    }
-
-    /// Read all top-level forms (for tests / loading).
-    pub fn read_all(&mut self, src: &str) -> Result<Vec<Value>, Flow> {
-        let mut reader = Reader::new(self, src);
-        let mut forms = Vec::new();
-        while let Some(f) = reader.read()? {
-            forms.push(f);
-        }
-        Ok(forms)
     }
 
     /// `read-from-string` core: read one object, return it + end position.
@@ -1957,7 +1928,7 @@ impl Interp {
             ("register-alist", Value::Nil),
             ("global-map", Value::Nil), // set up by editor init
             ("minibuffer-local-map", Value::Nil),
-            ("lexical-binding", Value::Nil),
+            ("lexical-binding", Value::Sym(sym::T)),
             ("overriding-local-map", Value::Nil),
             ("auto-mode-alist", Value::Nil),
             ("interpreter-mode-alist", Value::Nil),

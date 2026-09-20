@@ -91,26 +91,28 @@ impl CharSet {
     }
 }
 
-/// Syntax class codes (elisp standard syntax table, approximated).
+/// GNU `char-syntax` values for the standard syntax table.
 pub fn syntax_code(c: char) -> u8 {
     match c {
-        ' ' | '\t' | '\n' | '\x0c' | '\r' => b'-',
-        '(' | '[' | '{' => b'(',
-        ')' | ']' | '}' => b')',
+        ' ' | '\t' | '\x0c' => b' ',
+        '\n' => b'>',
+        '(' | '[' => b'(',
+        ')' | ']' => b')',
         '"' => b'"',
-        '\'' | '`' | ',' => b'\'',
+        '\'' | '`' | ',' | '#' => b'\'',
         ';' => b'<',
-        '\\' => b'/',
-        '|' | '!' => b'|',
+        '\\' => b'\\',
         c if c.is_alphanumeric() => b'w',
-        '$' | '%' | '&' | '*' | '+' | '-' | '.' | '/' | ':' | '<' | '=' | '>' | '?' | '@' | '^'
-        | '~' | '#' | '_' => b'_',
+        c if c.is_ascii() => b'_',
+        c if c.is_whitespace() => b' ',
         _ => b'.',
     }
 }
 
 fn syntax_match(code: u8, c: char) -> bool {
-    syntax_code(c) == code
+    let sc = syntax_code(c);
+    // GNU accepts `-` as an alias for the whitespace class.
+    sc == code || (code == b'-' && sc == b' ')
 }
 
 fn posix_match(name: &str, c: char) -> bool {

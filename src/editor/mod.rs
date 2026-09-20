@@ -1822,7 +1822,7 @@ fn f_set_window_buffer(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let w = win_of(i, &arg(&a, 0))?;
     let bid = i
         .buffer_id_of(&a[1])
-        .ok_or_else(|| i.error_obj("No such buffer", &a[1]))?;
+        .ok_or_else(|| i.error(format!("No buffer named {}", i.princ_to_string(&a[1]))))?;
     w.borrow_mut().buffer = bid;
     w.borrow_mut().point = 0;
     w.borrow_mut().start = 0;
@@ -2107,7 +2107,7 @@ fn f_get_buffer_window(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         None => i.current_buffer,
         Some(v) => i
             .buffer_id_of(v)
-            .ok_or_else(|| i.error_obj("No such buffer", v))?,
+            .ok_or_else(|| i.error(format!("No buffer named {}", i.princ_to_string(&v))))?,
     };
     for f in &i.frames {
         for w in &f.borrow().windows {
@@ -2124,7 +2124,7 @@ fn f_get_buffer_window_list(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         None => i.current_buffer,
         Some(v) => i
             .buffer_id_of(v)
-            .ok_or_else(|| i.error_obj("No such buffer", v))?,
+            .ok_or_else(|| i.error(format!("No buffer named {}", i.princ_to_string(&v))))?,
     };
     let mut out = Vec::new();
     for f in &i.frames {
@@ -2656,7 +2656,19 @@ fn f_set_keymap_parent(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 /// Parse a key sequence (string or vector) into event codes.
 pub(crate) fn key_seq(i: &mut Interp, v: &Value) -> Result<Vec<i128>, Flow> {
     match v {
-        Value::Str(s) => Ok(s.borrow().chars().map(|c| c as i128).collect()),
+        Value::Str(s) => Ok(s
+            .borrow()
+            .chars()
+            .map(|c| {
+                let c = c as i128;
+                // Chars 128-255 are metafied (like GNU's 8-bit string chars).
+                if (0x80..0x100).contains(&c) {
+                    CHAR_META | (c - 0x80)
+                } else {
+                    c
+                }
+            })
+            .collect()),
         Value::Vec(vec) => Ok(vec
             .borrow()
             .iter()
@@ -3718,7 +3730,7 @@ fn f_rotate_yank_pointer(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 fn f_copy_to_buffer(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let bid = i
         .buffer_id_of(&a[0])
-        .ok_or_else(|| i.error_obj("No such buffer", &a[0]))?;
+        .ok_or_else(|| i.error(format!("No buffer named {}", i.princ_to_string(&a[0]))))?;
     let text = {
         let b = cur(i);
         let bb = b.borrow();
@@ -4510,7 +4522,7 @@ fn f_call_process(i: &mut Interp, a: Vec<Value>) -> EvalResult {
                 let target = c.borrow().car.clone();
                 let bid = i
                     .buffer_id_of(&target)
-                    .ok_or_else(|| i.error_obj("No such buffer", &target))?;
+                    .ok_or_else(|| i.error(format!("No buffer named {}", i.princ_to_string(&target))))?;
                 if let Some(b) = i.buffers.get(bid) {
                     b.borrow_mut().insert(&stdout);
                 }
@@ -5821,7 +5833,7 @@ fn f_make_overlay(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let bid = match a.get(2) {
         Some(v) if v.truthy() => i
             .buffer_id_of(v)
-            .ok_or_else(|| i.error_obj("No such buffer", v))?,
+            .ok_or_else(|| i.error(format!("No buffer named {}", i.princ_to_string(&v))))?,
         _ => i.current_buffer,
     };
     let len = i
