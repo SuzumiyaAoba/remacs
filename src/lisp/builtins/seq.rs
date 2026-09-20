@@ -68,7 +68,7 @@ pub(crate) static SUBRS: &[Subr] = &[
         "Make a vector of LENGTH with INIT."
     ),
     S!("vector", many 0, f_vector, "Make a vector of the arguments."),
-    S!("bool-vector", many 0, f_vector, "Make a vector (bool-vec approx)."),
+    S!("bool-vector", many 0, f_bool_vector, "Make a bool-vector of the arguments."),
     S!("purecopy", 1, 1, f_purecopy, "Return OBJECT unchanged."),
     S!(
         "nreverse",
@@ -591,6 +591,13 @@ fn f_make_vector(i: &mut Interp, args: Vec<Value>) -> EvalResult {
 
 fn f_vector(_i: &mut Interp, args: Vec<Value>) -> EvalResult {
     Ok(Value::Vec(std::rc::Rc::new(std::cell::RefCell::new(args))))
+}
+
+fn f_bool_vector(i: &mut Interp, args: Vec<Value>) -> EvalResult {
+    Ok(super::misc::make_bool_vector(
+        i,
+        args.iter().map(|v| !v.is_nil()).collect(),
+    ))
 }
 
 fn f_purecopy(_i: &mut Interp, args: Vec<Value>) -> EvalResult {

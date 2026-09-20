@@ -1902,6 +1902,18 @@ impl Interp {
             ("print-length", Value::Nil),
             ("print-circle", Value::Nil),
             ("load-path", Value::Nil),
+            (
+                "default-directory",
+                Value::string({
+                    let mut d = std::env::current_dir()
+                        .map(|p| p.to_string_lossy().into_owned())
+                        .unwrap_or_else(|_| "/".to_string());
+                    if !d.ends_with('/') {
+                        d.push('/');
+                    }
+                    d
+                }),
+            ),
             ("buffer-undo-list", Value::Nil),
             ("mark-ring", Value::Nil),
             ("text-quoting-style", Value::Sym(self.intern("grave"))),

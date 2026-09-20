@@ -149,6 +149,13 @@ pub(crate) static SUBRS: &[Subr] = &[
         "Set modified flag."
     ),
     S!(
+        "not-modified",
+        0,
+        1,
+        f_not_modified,
+        "Mark current buffer unmodified; with ARG mark it modified."
+    ),
+    S!(
         "buffer-file-name",
         0,
         1,
@@ -1216,6 +1223,12 @@ pub(crate) fn f_set_buffer_modified_p(i: &mut Interp, a: Vec<Value>) -> EvalResu
     let flag = a[0].truthy();
     cur(i).borrow_mut().modified = flag;
     Ok(a[0].clone())
+}
+
+fn f_not_modified(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let flag = arg(&a, 0).truthy();
+    cur(i).borrow_mut().modified = flag;
+    Ok(Value::Nil)
 }
 
 fn f_buffer_file_name(i: &mut Interp, a: Vec<Value>) -> EvalResult {

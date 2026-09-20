@@ -763,8 +763,8 @@ pub(crate) static SUBRS: &[Subr] = &[
     ),
     S!(
         "copy-to-buffer",
-        4,
-        4,
+        3,
+        3,
         f_copy_to_buffer,
         "Copy region to BUFFER."
     ),
@@ -3509,8 +3509,19 @@ pub(crate) fn describe_key(k: i128) -> String {
 }
 
 fn f_single_key_description(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let k = want_int(i, &a[0])?;
-    Ok(Value::string(describe_key(k)))
+    let no_angles = matches!(a.get(1), Some(v) if !v.is_nil());
+    match &a[0] {
+        Value::Int(k) => Ok(Value::string(describe_key(*k))),
+        Value::Sym(s) => {
+            let name = i.symbol_name(*s);
+            Ok(Value::string(if no_angles {
+                name
+            } else {
+                format!("<{}>", name)
+            }))
+        }
+        other => Err(i.wrong_type_mut("integer-or-marker-p", other)),
+    }
 }
 
 /// `substitute-command-keys` — expand `\[cmd]`, `\{map}`, `\<map>`,

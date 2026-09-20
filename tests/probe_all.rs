@@ -33,5 +33,6 @@ probe!(probe_editor_ops, "probe_editor2.el");
 probe!(probe_buffer_deep, "probe_buffer3.el");
 probe!(probe_buffer_props, "probe_buffer4.el");
 probe!(probe_editor_files, "probe_editor4.el");
+probe!(probe_editor_branches, "probe_editor5.el");
 probe!(probe_editor_deep, "probe_editor3.el");
 probe!(probe_uncovered_subrs, "probe_gap.el");

@@ -406,20 +406,8 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!("bool-vector-union", 2, 3, f_bool_vector_union, ""),
     S!("bool-vector-intersection", 2, 3, f_bool_vector_inter, ""),
     S!("bool-vector-set-difference", 2, 3, f_bool_vector_diff, ""),
-    S!(
-        "bool-vector-count-population",
-        1,
-        2,
-        f_bool_vector_count,
-        ""
-    ),
-    S!(
-        "bool-vector-count-consecutive",
-        2,
-        2,
-        f_bool_vector_consec,
-        ""
-    ),
+    S!("bool-vector-count-population", 1, 1, f_bool_vector_count, ""),
+    S!("bool-vector-count-consecutive", 3, 3, f_bool_vector_consec, ""),
     // ---------- events ----------
     S!("eventp", 1, 1, f_eventp, ""),
     S!("event-basic-type", 1, 1, f_event_basic_type, ""),
@@ -2119,8 +2107,13 @@ fn f_bool_vector_count(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 
 fn f_bool_vector_consec(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let x = bool_vec_of(i, &a[0])?;
-    let b = !a[1].is_nil();
-    Ok(Value::Int(x.iter().take_while(|v| **v == b).count() as i128))
+    let Value::Int(at) = a[1] else {
+        return Err(i.wrong_type_mut("integerp", &a[1]));
+    };
+    let b = !a[2].is_nil();
+    Ok(Value::Int(
+        x.iter().skip(at.max(0) as usize).take_while(|v| **v == b).count() as i128,
+    ))
 }
 
 // ---------- events ----------

@@ -188,7 +188,7 @@ pub(crate) static SUBRS: &[Subr] = &[
         f_zero,
         "Vertical scroll amount (0)."
     ),
-    S!("set-window-vscroll", 3, 3, f_set_window_vscroll, ""),
+    S!("set-window-vscroll", 2, 4, f_set_window_vscroll, ""),
     S!(
         "scroll-left",
         0,
