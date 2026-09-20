@@ -1664,8 +1664,8 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!("display-color-p", 0, 1, f_display_color_p, ""),
     S!("display-grayscale-p", 0, 1, f_nil, ""),
     S!("display-mouse-p", 0, 1, f_nil, ""),
-    S!("color-defined-p", 1, 1, f_nil, ""),
-    S!("defined-colors", 0, 1, f_nil, ""),
+    S!("color-defined-p", 1, 1, f_color_defined_p, ""),
+    S!("defined-colors", 0, 1, f_defined_colors, ""),
     S!("color-values", 1, 1, f_nil, ""),
     S!("x-color-values", 1, 1, f_nil, ""),
     S!("xw-color-values", 1, 1, f_nil, ""),
@@ -1679,7 +1679,8 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!("clear-font-cache", 0, 0, f_nil, ""),
     S!("list-fonts", 3, 3, f_nil, ""),
     // cursor/display misc
-    S!("cursor-type", 0, 0, f_t, ""),
+    // `cursor-type` is a variable in Emacs, not a function —
+    // calling it signals void-function like GNU.
     S!("blink-cursor-mode", 0, 1, f_nil, ""),
     S!("internal-show-cursor", 2, 2, f_nil, ""),
     S!("internal-show-cursor-p", 0, 1, f_t, ""),
@@ -2813,43 +2814,6 @@ fn named_key_names()
 /// Reverse map: named event codes → event names. Used when printing
 /// key descriptions and `where-is` results, so `[down]` prints as
 /// `down` rather than a raw integer.
-pub(crate) const NAMED_KEYS: &[&str] = &[
-    "up", "down", "left", "right", "home", "end", "prior", "next",
-    "begin", "insert", "insertchar", "delete", "deletechar", "backspace",
-    "return", "tab", "escape", "space", "kp-enter", "kp-add",
-    "kp-subtract", "kp-multiply", "kp-divide", "kp-decimal", "kp-equal",
-    "kp-0", "kp-1", "kp-2", "kp-3", "kp-4", "kp-5", "kp-6", "kp-7",
-    "kp-8", "kp-9", "kp-home", "kp-end", "kp-prior", "kp-next",
-    "kp-left", "kp-right", "kp-up", "kp-down", "kp-begin", "kp-insert",
-    "kp-delete", "kp-space", "kp-tab",
-    "mouse-1", "mouse-2", "mouse-3", "mouse-4", "mouse-5", "mouse-6",
-    "mouse-7", "down-mouse-1", "down-mouse-2", "down-mouse-3",
-    "drag-mouse-1", "drag-mouse-2", "drag-mouse-3",
-    "double-mouse-1", "double-mouse-2", "double-mouse-3",
-    "triple-mouse-1", "triple-mouse-2", "triple-mouse-3",
-    "double-down-mouse-1", "double-down-mouse-2", "double-down-mouse-3",
-    "double-drag-mouse-1", "double-drag-mouse-2", "double-drag-mouse-3",
-    "triple-down-mouse-1", "triple-down-mouse-2", "triple-down-mouse-3",
-    "triple-drag-mouse-1", "triple-drag-mouse-2", "triple-drag-mouse-3",
-    "wheel-up", "wheel-down", "wheel-left", "wheel-right",
-    "pinch", "touchscreen-begin", "touchscreen-update", "touchscreen-end",
-    "f1", "f2", "f3", "f4", "f5", "f6", "f7", "f8", "f9", "f10",
-    "f11", "f12", "f13", "f14", "f15", "f16", "f17", "f18", "f19",
-    "f20", "f21", "f22", "f23", "f24", "f25", "f26", "f27", "f28",
-    "f29", "f30", "f31", "f32", "f33", "f34", "f35",
-    "help", "undo", "redo", "print", "find", "execute", "select",
-    "menu", "open", "close", "cancel", "clear", "again", "props",
-    "copy", "cut", "paste", "begin", "end", "home", "insert-line",
-    "delete-line", "mail", "mute-volume", "volume-up", "volume-down",
-    "scroll-up", "scroll-down", "tab-line", "left-fringe",
-    "right-fringe", "mode-line", "header-line", "header-line-prefix",
-    "left-margin", "right-margin", "vertical-line", "vertical-scroll-bar",
-    "horizontal-scroll-bar", "menu-bar", "tool-bar", "tab-bar",
-    "C-home", "C-end", "C-prior", "C-next", "C-left", "C-right",
-    "C-up", "C-down", "S-left", "S-right", "S-up", "S-down",
-    "M-left", "M-right", "M-up", "M-down",
-];
-
 /// Return the event name for a named-key code, if registered.
 pub(crate) fn key_name_for(code: i128) -> Option<String> {
     if code < NAMED_KEY_BASE || code > NAMED_KEY_BASE + NAMED_KEY_MASK {
@@ -3275,6 +3239,26 @@ fn collect_keys_for(
 }
 
 /// `kbd` — parse "C-x", "M-f", "S-<return>" etc.
+/// The eight standard tty colors GNU reports for defined-colors.
+const TTY_COLORS: &[&str] = &[
+    "black", "red", "green", "yellow", "blue", "magenta", "cyan", "white",
+];
+
+fn f_defined_colors(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
+    let _ = i;
+    Ok(Value::list(
+        TTY_COLORS.iter().map(|c| Value::string(*c)).collect(),
+    ))
+}
+
+fn f_color_defined_p(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let s = want_str(i, &a[0])?;
+    let _ = i;
+    Ok(Value::from_bool(
+        TTY_COLORS.iter().any(|c| s.eq_ignore_ascii_case(c)),
+    ))
+}
+
 fn f_kbd(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let s = want_str(i, &a[0])?;
     let keys = parse_kbd(i, &s);

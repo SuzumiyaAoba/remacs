@@ -370,6 +370,23 @@ pub fn run_editor(i: &mut Interp) -> io::Result<()> {
                 // Consume prefix-arg BEFORE executing so commands that
                 // set it (C-u, digit-argument) affect the NEXT command.
                 let _ = i.set_symbol(pa, Value::Nil);
+                // isearch commands enter a dedicated incremental loop
+                // rather than running once through command_execute.
+                let isearch = if let Value::Sym(id) = &cmd {
+                    match i.symbol_name(*id).as_str() {
+                        "isearch-forward" => Some((false, false)),
+                        "isearch-backward" => Some((true, false)),
+                        "isearch-forward-regexp" => Some((false, true)),
+                        "isearch-backward-regexp" => Some((true, true)),
+                        _ => None,
+                    }
+                } else {
+                    None
+                };
+                if let Some((back, re)) = isearch {
+                    isearch_loop(&term, i, back, re)?;
+                    continue;
+                }
                 match i.command_execute(&cmd) {
                     Ok(_) => {}
                     Err(crate::lisp::error::Flow::Quit) => {
@@ -449,6 +466,177 @@ pub fn run_editor(i: &mut Interp) -> io::Result<()> {
                         .join(" ")
                 ));
                 keys.clear();
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Incremental search loop (C-s / C-r). Reads keys directly until the
+/// search exits via RET, C-g, or a non-search key (which is then
+/// re-dispatched as a command, like Emacs).
+///
+/// `point` semantics follow Emacs: forward searches leave point after
+/// the match, backward searches leave it at the match start. C-g
+/// restores the entry position; RET exits and sets the mark there.
+fn isearch_loop(
+    term: &std::rc::Rc<std::cell::RefCell<Terminal>>,
+    i: &mut Interp,
+    backward: bool,
+    regexp: bool,
+) -> io::Result<()> {
+    let start = i
+        .current_buffer_ref()
+        .map(|b| b.borrow().point())
+        .unwrap_or(0);
+    let mut query = String::new();
+    // History of match positions so DEL can unwind.
+    let mut positions: Vec<usize> = vec![start];
+    let mut failing = false;
+
+    fn search(
+        i: &mut Interp,
+        query: &str,
+        backward: bool,
+        regexp: bool,
+        from: usize,
+    ) -> Option<usize> {
+        if query.is_empty() {
+            return Some(from);
+        }
+        let mut esc = String::new();
+        for c in query.chars() {
+            if c == '\\' || c == '"' {
+                esc.push('\\');
+            }
+            esc.push(c);
+        }
+        let fn_name = match (backward, regexp) {
+            (false, false) => "search-forward",
+            (true, false) => "search-backward",
+            (false, true) => "re-search-forward",
+            (true, true) => "re-search-backward",
+        };
+        // +1 for the point→char offset used by these primitives.
+        let src = format!(
+            "(progn (goto-char (min {} (point-max))) ({} \"{}\" nil t))",
+            from + 1, fn_name, esc
+        );
+        match i.eval_str(&src) {
+            Ok(v) if !v.is_nil() => {
+                i.current_buffer_ref().map(|b| b.borrow().point())
+            }
+            _ => None,
+        }
+    }
+
+    loop {
+        {
+            let mut t = term.borrow_mut();
+            let _ = t.render(i);
+            let dir = if backward { " backward" } else { "" };
+            let re = if regexp { " regexp" } else { "" };
+            let status = if failing { "Failing " } else { "" };
+            let _ = t.draw_echo(&format!("{}I-search{}{}: {}", status, dir, re, query));
+        }
+        let key = term
+            .borrow_mut()
+            .poll_key(Duration::from_secs(86400))?
+            .unwrap_or(0);
+        let cur = *positions.last().unwrap();
+        match key {
+            // C-g: abort, restore entry position.
+            7 => {
+                if let Some(b) = i.current_buffer_ref() {
+                    b.borrow_mut().set_point(start);
+                }
+                break;
+            }
+            // RET: accept; mark goes at the entry position.
+            13 => {
+                if let Some(b) = i.current_buffer_ref() {
+                    b.borrow_mut().mark = Some(start);
+                }
+                break;
+            }
+            // C-s / C-r: repeat search in that direction from just
+            // past (before) the current match.
+            19 | 18 => {
+                let back = key == 18;
+                let from = if back { cur.saturating_sub(1) } else { cur + 1 };
+                match search(i, &query, back, regexp, from) {
+                    Some(p) => {
+                        positions.push(p);
+                        failing = false;
+                        if let Some(b) = i.current_buffer_ref() {
+                            b.borrow_mut().set_point(p);
+                        }
+                    }
+                    None => failing = true,
+                }
+            }
+            // DEL: unwind one step of the search.
+            127 => {
+                if positions.len() > 1 {
+                    positions.pop();
+                    // If the tail of query grew since the last repeat,
+                    // pop a char too.
+                    if !query.is_empty() {
+                        query.pop();
+                    }
+                    let p = *positions.last().unwrap();
+                    if let Some(b) = i.current_buffer_ref() {
+                        b.borrow_mut().set_point(p);
+                    }
+                    failing = false;
+                } else if !query.is_empty() {
+                    query.pop();
+                    failing = false;
+                }
+            }
+            c if c >= 32 && c < 0x110000 && c & (CHAR_META | CHAR_CTL | CHAR_SHIFT | CHAR_SUPER | CHAR_HYPER) == 0 => {
+                if let Some(ch) = char::from_u32(c as u32) {
+                    query.push(ch);
+                }
+                // Emacs searches from the current match position for
+                // extensions: re-find from the search start when the
+                // query no longer matches in place is approximated by
+                // searching from the entry point.
+                match search(i, &query, backward, regexp, if positions.len() > 1 { cur } else { start }) {
+                    Some(p) => {
+                        positions.push(p);
+                        failing = false;
+                        if let Some(b) = i.current_buffer_ref() {
+                            b.borrow_mut().set_point(p);
+                        }
+                    }
+                    None => {
+                        // Retry from the entry point: query may match
+                        // only from the start.
+                        match search(i, &query, backward, regexp, start) {
+                            Some(p) => {
+                                positions.push(p);
+                                if let Some(b) = i.current_buffer_ref() {
+                                    b.borrow_mut().set_point(p);
+                                }
+                            }
+                            None => failing = true,
+                        }
+                    }
+                }
+            }
+            other => {
+                // Exit isearch; re-dispatch the terminating key.
+                if let Some(b) = i.current_buffer_ref() {
+                    b.borrow_mut().mark = Some(start);
+                }
+                let seq = Value::Vec(std::rc::Rc::new(std::cell::RefCell::new(vec![
+                    Value::Int(other),
+                ])));
+                if let LookupResult::Command(cmd) = lookup_command(i, &seq) {
+                    let _ = i.command_execute(&cmd);
+                }
+                break;
             }
         }
     }

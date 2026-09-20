@@ -578,6 +578,20 @@ returning that buffer's contents as a string."
       (search-backward string nil t)))
   string)
 
+(defun isearch-forward-regexp (string)
+  "Incremental regexp search forward (line-input fallback)."
+  (interactive "sI-search regexp: ")
+  (when (> (length string) 0)
+    (re-search-forward string nil t))
+  string)
+
+(defun isearch-backward-regexp (string)
+  "Incremental regexp search backward (line-input fallback)."
+  (interactive "sI-search backward regexp: ")
+  (when (> (length string) 0)
+    (re-search-backward string nil t))
+  string)
+
 (defun query-replace (from-string to-string &optional delimited)
   "Replace occurrences of FROM-STRING with TO-STRING, asking."
   (interactive "sQuery replace: \nsQuery replace %s with: ")
@@ -685,6 +699,8 @@ returning that buffer's contents as a string."
   (define-key m (kbd "C-q") 'quoted-insert)
   (define-key m (kbd "C-r") 'isearch-backward)
   (define-key m (kbd "C-s") 'isearch-forward)
+  (define-key m (kbd "C-M-s") 'isearch-forward-regexp)
+  (define-key m (kbd "C-M-r") 'isearch-backward-regexp)
   (define-key m (kbd "C-t") 'transpose-chars)
   (define-key m (kbd "C-u") 'universal-argument)
   (define-key m (kbd "C-v") 'scroll-up-command)

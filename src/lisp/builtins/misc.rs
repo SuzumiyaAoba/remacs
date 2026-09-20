@@ -419,6 +419,8 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!("current-frame-configuration", 0, 0, f_current_frame_configuration, ""),
     S!("mouse-position", 0, 0, f_mouse_position, ""),
     S!("mouse-pixel-position", 0, 0, f_mouse_position, ""),
+    S!("set-mouse-position", 3, 3, f_nil, ""),
+    S!("set-mouse-pixel-position", 3, 3, f_nil, ""),
     S!("display-images-p", 0, 1, f_false, ""),
     S!("display-pixel-width", 0, 1, f_display_pixel_width, ""),
     S!("display-pixel-height", 0, 1, f_display_pixel_height, ""),

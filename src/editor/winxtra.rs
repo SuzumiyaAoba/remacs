@@ -378,7 +378,7 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!("make-frame-visible", 0, 1, f_make_frame_visible, ""),
     S!("make-frame-invisible", 0, 2, f_nil, ""),
     S!("iconify-frame", 0, 1, f_nil, ""),
-    S!("x-focus-frame", 1, 2, f_nil, ""),
+    S!("x-focus-frame", 1, 2, f_x_focus_frame, ""),
     S!("redirect-frame-focus", 1, 2, f_nil, ""),
     S!("reconsider-frame-fonts", 0, 1, f_nil, ""),
     S!("frame--list-z-order", 0, 1, f_frame_list, ""),
@@ -920,6 +920,14 @@ fn f_set_window_new_total(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 
 fn f_frame_pointer_visible_p(_i: &mut Interp, _a: Vec<Value>) -> EvalResult {
     Ok(Value::t())
+}
+
+fn f_x_focus_frame(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    // GNU errors "Cannot switch to an invisible frame" etc. in batch;
+    // on a lone tty frame any arg raises `error'.
+    let _ = a;
+    let sym = i.intern("error");
+    Err(i.signal_data(sym, Vec::new()))
 }
 
 fn f_make_frame_visible(i: &mut Interp, a: Vec<Value>) -> EvalResult {
