@@ -1720,12 +1720,145 @@ fn f_encode_char(i: &mut Interp, args: Vec<Value>) -> EvalResult {
 }
 
 fn f_decode_char(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    want_int(i, &args[1])?;
-    Ok(args[1].clone())
+    let code = want_int(i, &args[1])?;
+    // GNU returns nil when CODE exceeds the charset's code space.
+    let cs_name = match &args[0] {
+        Value::Sym(s) => i.symbol_name(*s),
+        _ => String::new(),
+    };
+    let max: i128 = match cs_name.as_str() {
+        "ascii" => 127,
+        "iso-8859-1" | "latin-iso8859-1" | "eight-bit-graphic"
+        | "eight-bit-control" => 255,
+        _ => i128::MAX,
+    };
+    if code >= 0 && code <= max {
+        Ok(args[1].clone())
+    } else {
+        Ok(Value::Nil)
+    }
+}
+
+/// Charsets we model, in GNU's `charset-priority-list` order.
+pub(crate) const CHARSET_PRIORITY: &[&str] = &[
+    "japanese-jisx0208",
+    "japanese-jisx0212",
+    "japanese-jisx0213.2004-1",
+    "ascii",
+    "latin-iso8859-1",
+    "iso-8859-1",
+    "unicode",
+    "eight-bit-control",
+    "eight-bit-graphic",
+];
+
+/// Does GNU charset `name` contain code point `ch`? Approximates the
+/// ranges of the charsets we model.
+pub(crate) fn charset_contains(name: &str, ch: i128) -> bool {
+    let u = ch as u32;
+    match name {
+        "japanese-jisx0208" => matches!(
+            u,
+            0x3000..=0x30FF | 0x3400..=0x9FFF | 0xF900..=0xFAFF | 0xFF00..=0xFFEF
+        ),
+        // JIS X 0212 covers most Latin supplement letters (é, ü, ...).
+        "japanese-jisx0212" => matches!(u, 0xA0..=0x24F),
+        "japanese-jisx0213.2004-1" => u == 0x20AC,
+        "ascii" => u < 0x80,
+        "latin-iso8859-1" | "iso-8859-1" => u <= 0xFF,
+        "unicode" => true,
+        "eight-bit-control" => (0x80..=0x9F).contains(&u),
+        "eight-bit-graphic" => (0xA0..=0xFF).contains(&u),
+        _ => false,
+    }
+}
+
+/// Canonical emission order for charset lists — GNU sorts `char-charset`
+/// results by internal charset id (ascii first, then the JIS tables).
+pub(crate) const CHARSET_ID_ORDER: &[&str] = &[
+    "ascii",
+    "japanese-jisx0208",
+    "japanese-jisx0212",
+    "japanese-jisx0213.2004-1",
+    "latin-iso8859-1",
+    "iso-8859-1",
+    "eight-bit-control",
+    "eight-bit-graphic",
+    "unicode",
+];
+
+/// Highest-priority charset containing `ch`, restricted to `allowed`
+/// (empty = GNU's full priority list).
+pub(crate) fn char_charset_in<'a>(ch: i128, allowed: &'a [&'a str]) -> Option<&'a str> {
+    let order: &[&str] = if allowed.is_empty() {
+        CHARSET_PRIORITY
+    } else {
+        allowed
+    };
+    order
+        .iter()
+        .copied()
+        .find(|name| charset_contains(name, ch))
 }
 
 fn f_char_charset(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     let ch = want_int(i, &args[0])?;
-    let name = if ch < 0x80 { "ascii" } else { "unicode" };
-    Ok(Value::Sym(i.intern(name)))
+    let restriction = match args.get(1) {
+        None | Some(Value::Nil) => Vec::new(),
+        Some(v) => charset_restriction(i, v)?,
+    };
+    let refs: Vec<&str> = restriction.iter().map(String::as_str).collect();
+    match char_charset_in(ch, &refs) {
+        Some(name) => Ok(Value::Sym(i.intern(name))),
+        None => Ok(Value::Nil),
+    }
+}
+
+/// Resolve a `char-charset` RESTRICTION arg to charset names. Entries may
+/// be charset names or coding-system names (mapped to their charsets).
+fn charset_restriction(i: &mut Interp, v: &Value) -> Result<Vec<String>, Flow> {
+    let mut out = Vec::new();
+    let mut add = |i: &mut Interp, item: &Value| -> Result<(), Flow> {
+        let name = match item {
+            Value::Sym(s) => i.symbol_name(*s),
+            _ => return Err(i.wrong_type_mut("charsetp", item)),
+        };
+        if CHARSET_PRIORITY.contains(&name.as_str())
+            || name == "emacs"
+            || name == "eight-bit"
+        {
+            out.push(name);
+        } else if let Some(cs) = super::misc::coding_known(i, item) {
+            // A coding system restricts to its charset list.
+            for cs in coding_charsets(&cs) {
+                out.push(cs.to_string());
+            }
+        } else {
+            let cs = i.intern("coding-system-error");
+            return Err(i.signal_data(cs, vec![item.clone()]));
+        }
+        Ok(())
+    };
+    match v {
+        Value::Cons(_) => {
+            for item in v.list_to_vec().unwrap_or_default() {
+                add(i, &item)?;
+            }
+        }
+        _ => add(i, v)?,
+    }
+    Ok(out)
+}
+
+/// Charset list of a coding system, mirroring `coding-system-charset-list`.
+fn coding_charsets(name: &str) -> Vec<&'static str> {
+    if name.starts_with("utf-8") || name.starts_with("undecided") {
+        vec!["unicode"]
+    } else if name.starts_with("iso-8859") || name.starts_with("iso-latin")
+        || name.starts_with("latin")
+    {
+        vec!["iso-8859-1"]
+    } else {
+        vec!["ascii"]
+    }
 }

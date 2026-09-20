@@ -15,6 +15,7 @@ fn main() {
     let mut i = Interp::new();
 
     let mut batch = false;
+    let mut no_window = false;
     let mut files: Vec<String> = Vec::new();
     let mut idx = 0;
     let mut exit = 0i32;
@@ -57,7 +58,7 @@ fn main() {
                 }
             }
             "-nw" | "--no-window-system" => {
-                // tty is the only frontend anyway
+                no_window = true;
             }
             other => files.push(other.to_string()),
         }
@@ -68,7 +69,19 @@ fn main() {
         std::process::exit(exit);
     }
 
-    // Interactive: visit files, run the editor loop.
+    if !no_window {
+        // Graphical front-end: the evaluator boots on a logic thread
+        // inside run_gui (Interp is !Send, AppKit needs main).
+        return match remacs::gui::run_gui(&files) {
+            Ok(()) => {}
+            Err(e) => {
+                eprintln!("remacs: gui error: {}", e);
+                std::process::exit(1);
+            }
+        };
+    }
+
+    // Interactive terminal: visit files, run the editor loop.
     for f in &files {
         let form = format!("(find-file {:?})", f);
         let _ = i.eval_str(&form);

@@ -47,6 +47,32 @@ pub enum ProcIo {
     None,
 }
 
+impl Drop for ProcIo {
+    /// Close leaked fds and reap children so an Interp (or dropped
+    /// process object) can't exhaust the system's pty table — the unit
+    /// suite runs hundreds of procs in one OS process.
+    fn drop(&mut self) {
+        match self {
+            ProcIo::Child { child, master_fd, .. } => {
+                let _ = child.kill();
+                let _ = child.wait();
+                if *master_fd >= 0 {
+                    unsafe { libc::close(*master_fd) };
+                    *master_fd = -1;
+                }
+            }
+            ProcIo::Pipe { read_fd, child_wfd, sink_fd } => {
+                for fd in [*read_fd, *child_wfd, *sink_fd] {
+                    if fd >= 0 {
+                        unsafe { libc::close(fd) };
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
 /// A live (or finished) process object.
 pub struct Proc {
     pub name: String,
@@ -326,6 +352,9 @@ fn poll_proc(i: &mut Interp, pref: &ProcessRef) -> Result<bool, Flow> {
                 // arrived this poll the exit is picked up next round.
                 match child.try_wait() {
                     Ok(Some(st)) if events.is_empty() => {
+                        // Child is reaped; release the pty master.
+                        unsafe { libc::close(*master_fd) };
+                        *master_fd = -1;
                         if let Some(sig) = std::os::unix::process::ExitStatusExt::signal(&st) {
                             p.status = "signal";
                             p.exit_status = sig;
@@ -532,7 +561,11 @@ fn finish_setup(
     }
     p.filter = kw(i, args, ":filter");
     p.sentinel = kw(i, args, ":sentinel");
-    p.plist = kw(i, args, ":plist");
+    // GNU ignores :plist on `make-process' (child procs) but applies it
+    // for pipe, network, and serial processes.
+    if !want_command {
+        p.plist = kw(i, args, ":plist");
+    }
     if kw(i, args, ":noquery").truthy() {
         p.query_on_exit = false;
     }
@@ -603,6 +636,29 @@ fn f_make_process(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         let pred = i.intern("null");
         let wta = i.intern("wrong-type-argument");
         return Err(i.signal_data(wta, vec![Value::Sym(pred), stop_v]));
+    }
+    // GNU validates :connection-type early; anything but pty/pipe is a
+    // file-missing error naming the offending value.
+    let ct_v = kw(i, &args, ":connection-type");
+    if ct_v.truthy() {
+        let ok = match &ct_v {
+            Value::Sym(s) => {
+                let n = i.symbol_name(*s);
+                n == "pty" || n == "pipe"
+            }
+            _ => false,
+        };
+        if !ok {
+            let fm = i.intern("file-missing");
+            return Err(i.signal_data(
+                fm,
+                vec![
+                    Value::string("Unknown connection type"),
+                    Value::string("No such file or directory"),
+                    ct_v,
+                ],
+            ));
+        }
     }
     let command = kw(i, &args, ":command");
     let cmd: Vec<String> = match &command {
@@ -808,7 +864,9 @@ fn service_port(i: &mut Interp, v: &Value) -> Result<u16, Flow> {
             };
             Ok(port)
         }
-        _ => Err(i.wrong_type_mut("integerp", v)),
+        // GNU accepts integers or strings; anything else gets a
+        // stringp type error.
+        _ => Err(i.wrong_type_mut("stringp", v)),
     }
 }
 
@@ -848,10 +906,24 @@ fn f_make_network_process(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         Value::list(items)
     };
     if server {
+        if kw(i, &args, ":nowait").truthy() {
+            return Err(i.error("‘:server’ is incompatible with ‘:nowait’"));
+        }
         let port = service_port(i, &service)?;
         let bind_host = if kw(i, &args, ":family").truthy() { "0.0.0.0".to_string() } else { host.clone() };
-        let listener = std::net::TcpListener::bind((bind_host.as_str(), port))
-            .map_err(|e| i.error(format!("make-network-process: {e}")))?;
+        let listener = std::net::TcpListener::bind((bind_host.as_str(), port)).map_err(|e| {
+            // GNU reports bind failures via the errno-derived condition:
+            // EACCES → permission-denied, others → file-error, with data
+            // ("Cannot bind server socket" <strerror>).
+            let sig = i.intern(if e.kind() == std::io::ErrorKind::PermissionDenied {
+                "permission-denied"
+            } else {
+                "file-error"
+            });
+            let msg = e.to_string();
+            let msg = msg.split(" (os error").next().unwrap_or(&msg).to_string();
+            i.signal_data(sig, vec![Value::string("Cannot bind server socket"), Value::string(msg)])
+        })?;
         let _ = listener.set_nonblocking(true);
         let local_port = listener.local_addr().map(|a| a.port()).unwrap_or(port);
         let mut p = base_proc(name, "network", ProcIo::Listen(listener));
@@ -1315,15 +1387,27 @@ fn f_process_coding_system(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 
 fn f_set_process_coding_system(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let p = want_proc(i, &a[0])?;
-    let mut pb = p.borrow_mut();
-    // GNU stores the decode side verbatim; the encode side gets the
-    // canonical name with the -unix eol variant.
-    if let Value::Sym(s) = &a[1] {
-        pb.coding.0 = i.symbol_name(*s);
-    }
-    if a.len() > 2 {
-        if let Value::Sym(s) = &a[2] {
-            pb.coding.1 = coding_canonical_unix(&i.symbol_name(*s));
+    // GNU requires symbol args (wrong-type-argument symbolp otherwise);
+    // the decode side is stored verbatim while the encode side gets the
+    // canonical name with the -unix eol variant. Omitted args default
+    // to nil / raw-text-unix.
+    for (arg, side) in [(a.get(1), false), (a.get(2), true)] {
+        match arg {
+            Some(Value::Sym(s)) => {
+                let name = i.symbol_name(*s);
+                let mut pb = p.borrow_mut();
+                let slot = if side { &mut pb.coding.1 } else { &mut pb.coding.0 };
+                *slot = if side { coding_canonical_unix(&name) } else { name };
+            }
+            Some(Value::Nil) | None => {
+                let mut pb = p.borrow_mut();
+                let slot = if side { &mut pb.coding.1 } else { &mut pb.coding.0 };
+                *slot = if side { "raw-text-unix".into() } else { "nil".into() };
+            }
+            Some(v) => {
+                let v = v.clone();
+                return Err(i.wrong_type_mut("symbolp", &v));
+            }
         }
     }
     Ok(Value::Nil)
@@ -1541,7 +1625,9 @@ fn signal_number(i: &mut Interp, v: &Value) -> Result<i32, Flow> {
                 "STOP" => libc::SIGSTOP,
                 "TSTP" => libc::SIGTSTP,
                 "CONT" => libc::SIGCONT,
-                "CHLD" | "CLD" => libc::SIGCHLD,
+                // GNU's darwin sigcode table lacks the SysV SIGCLD
+                // alias; it errors through internal-default-signal-process.
+                "CHLD" => libc::SIGCHLD,
                 "TTIN" => libc::SIGTTIN,
                 "TTOU" => libc::SIGTTOU,
                 "IO" => libc::SIGIO,
@@ -1563,8 +1649,18 @@ fn signal_number(i: &mut Interp, v: &Value) -> Result<i32, Flow> {
 fn f_signal_process(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let pid = match &a[0] {
         Value::Int(n) => *n as i32,
-        // GNU accepts a process object or a process name.
-        _ => want_proc(i, &a[0])?.borrow().pid,
+        // GNU accepts a process object or a process name — but only real
+        // subprocesses may be signalled (a pipe/network process has pid 0,
+        // and kill(0, …) would hit our own process group).
+        _ => {
+            let p = want_proc(i, &a[0])?;
+            let pb = p.borrow();
+            if !matches!(pb.io, ProcIo::Child { .. }) {
+                let name = pb.name.clone();
+                return Err(i.error(format!("Process {name} is not a subprocess")));
+            }
+            pb.pid
+        }
     };
     let sig = signal_number(i, &a[1])?;
     let r = unsafe { libc::kill(pid, sig) };
@@ -1642,8 +1738,15 @@ fn f_delete_process(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         let mut pb = p.borrow_mut();
         pb.dead = true;
         ev = match &mut pb.io {
-            ProcIo::Child { child, .. } => {
+            ProcIo::Child { child, master_fd, .. } => {
                 let _ = child.kill();
+                // Reap the child and release the pty — otherwise fds and
+                // zombies accumulate until openpty starts failing.
+                let _ = child.wait();
+                if *master_fd >= 0 {
+                    unsafe { libc::close(*master_fd) };
+                    *master_fd = -1;
+                }
                 pb.status = "signal";
                 pb.exit_status = libc::SIGKILL;
                 ("signal", libc::SIGKILL)
@@ -2009,7 +2112,7 @@ fn f_network_interface_info(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     }
 }
 
-fn f_format_network_address(_i: &mut Interp, a: Vec<Value>) -> EvalResult {
+fn f_format_network_address(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let omit_port = a.get(1).map(|v| v.truthy()).unwrap_or(false);
     match &a[0] {
         Value::Vec(v) => {
@@ -2039,11 +2142,16 @@ fn f_format_network_address(_i: &mut Interp, a: Vec<Value>) -> EvalResult {
             Ok(Value::string(s))
         }
         Value::Cons(_) => {
-            // GNU prints "<Family FAMILY>" for non-vector addresses.
+            // GNU prints "<Family FAMILY>" for non-vector addresses; the
+            // family must be an integer (formatted with %d in C).
             let items = a[0].list_to_vec().unwrap_or_default();
-            let fam = items.first().and_then(|v| v.int()).unwrap_or(0);
-            Ok(Value::string(format!("<Family {fam}>")))
+            match items.first().and_then(|v| v.int()) {
+                Some(fam) => Ok(Value::string(format!("<Family {fam}>"))),
+                None => Err(i.error("Format specifier doesn't match argument type")),
+            }
         }
+        // AF_LOCAL socket paths are plain strings.
+        Value::Str(_) => Ok(a[0].clone()),
         _ => Ok(Value::Nil),
     }
 }

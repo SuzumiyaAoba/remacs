@@ -76,7 +76,8 @@ fn f_princ(i: &mut Interp, args: Vec<Value>) -> EvalResult {
 
 fn f_print(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     let s = i.print_to_string(&args[0]);
-    i.write_output(&format!("\n{} ", s));
+    // GNU's print emits a newline before and after the object.
+    i.write_output(&format!("\n{}\n", s));
     Ok(args[0].clone())
 }
 

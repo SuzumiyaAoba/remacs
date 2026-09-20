@@ -322,3 +322,60 @@ impl fmt::Debug for Value {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::cell::RefCell;
+    use std::rc::Rc;
+
+    #[test]
+    fn debug_fmt_covers_every_variant() {
+        static SUBR: Subr = Subr {
+            name: "x",
+            arity: Arity::Many { min: 0 },
+            func: |_, _| Ok(Value::Nil),
+            doc: "",
+        };
+        let cases: Vec<(Value, &str)> = vec![
+            (Value::Nil, "nil"),
+            (Value::Int(3), "3"),
+            (Value::Float(1.5), "1.5"),
+            (Value::Sym(7), "Sym(7)"),
+            (Value::cons(Value::Nil, Value::Nil), "Cons(..)"),
+            (Value::string("hi"), "\"hi\""),
+            (
+                Value::Vec(Rc::new(RefCell::new(vec![]))),
+                "Vec(..)",
+            ),
+            (
+                Value::Record(Rc::new(RefCell::new(vec![]))),
+                "Record(..)",
+            ),
+            (
+                Value::Hash(Rc::new(RefCell::new(LispHash::new(HashTest::Eq)))),
+                "Hash(..)",
+            ),
+            (Value::Subr(&SUBR), "#<subr x>"),
+        ];
+        for (v, want) in cases {
+            assert_eq!(format!("{v:?}"), want);
+        }
+        // Rc-backed variants: build via an Interp where needed.
+        let mut i = crate::lisp::Interp::new();
+        let lam = i.eval_str("(lambda (x) x)").unwrap();
+        assert_eq!(format!("{lam:?}"), "Lambda(..)");
+        let buf = i.eval_str("(current-buffer)").unwrap();
+        assert_eq!(format!("{buf:?}"), "Buffer(..)");
+        let m = i.eval_str("(point-marker)").unwrap();
+        assert_eq!(format!("{m:?}"), "Marker(..)");
+        let w = i.eval_str("(selected-window)").unwrap();
+        assert_eq!(format!("{w:?}"), "Window(..)");
+        let f = i.eval_str("(selected-frame)").unwrap();
+        assert_eq!(format!("{f:?}"), "Frame(..)");
+        let p = i
+            .eval_str("(make-process :name \"pdbg\")")
+            .unwrap();
+        assert_eq!(format!("{p:?}"), "Process(..)");
+    }
+}

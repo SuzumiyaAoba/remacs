@@ -21,6 +21,151 @@ use crate::editor::{CHAR_CTL, CHAR_HYPER, CHAR_META, CHAR_SHIFT, CHAR_SUPER};
 use crate::lisp::Interp;
 use crate::lisp::value::Value;
 
+/// Frontend-agnostic key/render interface used by the command loop
+/// and the nested minibuffer/isearch loops. The crossterm `Terminal`
+/// implements it directly; the gpui front-end implements it over a
+/// channel to the UI thread.
+pub trait KeyIo {
+    /// Poll for a key event, waiting at most `dur`. Returns an Emacs
+    /// key code (char + modifier bits).
+    fn poll_key(&mut self, dur: Duration) -> io::Result<Option<i128>>;
+    /// Push a key back onto the pending queue.
+    fn unread(&mut self, k: i128);
+    /// Repaint the whole frame.
+    fn render(&mut self, i: &Interp) -> io::Result<()>;
+    /// Show TEXT in the echo area (minibuffer prompt/status).
+    fn draw_echo(&mut self, text: &str) -> io::Result<()>;
+    /// Current frame size in text cells.
+    fn size(&self) -> (usize, usize);
+}
+
+/// A text-mode screen snapshot produced by `render_grid`: one string
+/// per row, which rows are mode lines (drawn inverted), and the
+/// hardware cursor position. Both front-ends share it — the terminal
+/// writes it, gpui draws it.
+#[derive(Clone)]
+pub struct Grid {
+    pub rows: Vec<String>,
+    pub mode_rows: Vec<usize>,
+    pub cursor: Option<(usize, usize)>,
+}
+
+/// Compute the screen contents for the selected frame at `width` ×
+/// `height` text cells. Pure — reads Interp state only.
+pub fn render_grid(i: &Interp, width: usize, height: usize) -> Grid {
+    let mut rows = vec![String::new(); height];
+    let mut mode_rows = Vec::new();
+    let mut cursor_pos: Option<(usize, usize)> = None;
+    let frame = match &i.selected_frame {
+        Some(f) => f.clone(),
+        None => return Grid { rows, mode_rows, cursor: cursor_pos },
+    };
+    let fb = frame.borrow();
+    let n_windows = fb.windows.len();
+    let mini_height = 1usize;
+    let body_height = height.saturating_sub(mini_height);
+
+    for (wi, w) in fb.windows.iter().enumerate() {
+        let per = if n_windows == 0 { 0 } else { body_height / n_windows };
+        let top = wi * per;
+        let wh = if wi == n_windows - 1 {
+            body_height.saturating_sub(per * wi)
+        } else {
+            per
+        };
+        let wh = wh.max(2);
+        let (buf_id, start, hscroll) = {
+            let wb = w.borrow();
+            (wb.buffer, wb.start, wb.hscroll)
+        };
+        let text_lines: Vec<String> = match i.buffers.get(buf_id) {
+            Some(b) => {
+                let bb = b.borrow();
+                let text = bb.text.substring(start, bb.text_len());
+                text.split('\n').map(|s| s.to_string()).collect()
+            }
+            None => vec![String::new()],
+        };
+        let text_rows = wh.saturating_sub(1);
+        for row in 0..text_rows {
+            let y = top + row;
+            if y >= body_height {
+                break;
+            }
+            let line = text_lines.get(row).cloned().unwrap_or_default();
+            let vis: String = line.chars().skip(hscroll).take(width).collect();
+            rows[y] = format!("{vis:<width$}", width = width);
+        }
+        // Mode line.
+        let my = top + text_rows;
+        if my < body_height {
+            let (name, modified, point_line, point_col) = match i.buffers.get(buf_id) {
+                Some(b) => {
+                    let bb = b.borrow();
+                    (
+                        bb.name.clone(),
+                        bb.modified,
+                        bb.text.line_of_pos(bb.point()) + 1,
+                        bb.point() - bb.text.line_start(bb.text.line_of_pos(bb.point())),
+                    )
+                }
+                None => ("???".into(), false, 0, 0),
+            };
+            let mode = format!(
+                "--{}- {}   L{} C{}{}",
+                if modified { "**" } else { "--" },
+                name,
+                point_line,
+                point_col,
+                if std::rc::Rc::ptr_eq(w, &fb.selected) {
+                    "  [sel]"
+                } else {
+                    ""
+                }
+            );
+            rows[my] = format!("{mode:<width$}", width = width);
+            mode_rows.push(my);
+        }
+        // Cursor for the selected window.
+        if std::rc::Rc::ptr_eq(w, &fb.selected) {
+            if let Some(b) = i.buffers.get(buf_id) {
+                let bb = b.borrow();
+                let p = bb.point();
+                let line = bb.text.line_of_pos(p);
+                let ls = bb.text.line_start(line);
+                let start_line = bb.text.line_of_pos(start);
+                let row = line.saturating_sub(start_line);
+                let col = (p - ls).saturating_sub(hscroll);
+                if row < text_rows && col < width {
+                    cursor_pos = Some((col, top + row));
+                }
+            }
+        }
+    }
+    // Minibuffer / echo area (last row).
+    let mini_text = match fb
+        .minibuffer
+        .as_ref()
+        .and_then(|w| i.buffers.get(w.borrow().buffer))
+    {
+        Some(b) => b.borrow().text.text(),
+        None => String::new(),
+    };
+    let msg = if mini_text.is_empty() {
+        i.echo_message.clone()
+    } else {
+        mini_text
+    };
+    if let Some(last) = rows.last_mut() {
+        *last = format!("{msg:<width$}", width = width);
+    }
+    Grid {
+        rows,
+        mode_rows,
+        cursor: cursor_pos,
+    }
+}
+
 /// The terminal screen.
 pub struct Terminal {
     pub width: usize,
@@ -59,10 +204,12 @@ impl Terminal {
         let _ = self.out.flush();
         let _ = terminal::disable_raw_mode();
     }
+}
 
+impl KeyIo for Terminal {
     /// Poll for a key event, waiting at most `dur`.
     /// Returns an Emacs key code (char + modifier bits).
-    pub fn poll_key(&mut self, dur: Duration) -> io::Result<Option<i128>> {
+    fn poll_key(&mut self, dur: Duration) -> io::Result<Option<i128>> {
         if let Some(k) = self.pending.pop() {
             return Ok(Some(k));
         }
@@ -81,139 +228,31 @@ impl Terminal {
     }
 
     /// Push a key back to the pending queue.
-    pub fn unread(&mut self, k: i128) {
+    fn unread(&mut self, k: i128) {
         self.pending.push(k);
     }
 
     /// Draw the frame: each window's buffer, mode lines, minibuffer line.
-    pub fn render(&mut self, i: &Interp) -> io::Result<()> {
-        let frame = match &i.selected_frame {
-            Some(f) => f.clone(),
-            None => return Ok(()),
-        };
+    fn render(&mut self, i: &Interp) -> io::Result<()> {
         let (width, height) = (self.width, self.height);
-        let fb = frame.borrow();
-        let n_windows = fb.windows.len();
-        let mini_height = 1usize;
-        let body_height = height.saturating_sub(mini_height);
-
+        let grid = render_grid(i, width, height);
         queue!(self.out, cursor::MoveTo(0, 0))?;
-
-        // Lay out windows vertically.
-        let per = if n_windows == 0 {
-            body_height
-        } else {
-            body_height / n_windows
-        };
-        let mut cursor_pos: Option<(usize, usize)> = None;
-        for (wi, w) in fb.windows.iter().enumerate() {
-            let top = wi * per;
-            let wh = if wi == n_windows - 1 {
-                body_height - per * wi
+        for (y, row) in grid.rows.iter().enumerate() {
+            queue!(self.out, cursor::MoveTo(0, y as u16))?;
+            if grid.mode_rows.contains(&y) {
+                let _ = write!(self.out, "\x1b[7m{}\x1b[0m", row);
             } else {
-                per
-            };
-            let wh = wh.max(2);
-            let (buf_id, start, hscroll) = {
-                let wb = w.borrow();
-                (wb.buffer, wb.start, wb.hscroll)
-            };
-            let text_lines: Vec<String> = match i.buffers.get(buf_id) {
-                Some(b) => {
-                    let bb = b.borrow();
-                    let text = bb.text.substring(start, bb.text_len());
-                    text.split('\n').map(|s| s.to_string()).collect()
-                }
-                None => vec![String::new()],
-            };
-            // Text area: wh-1 lines; last line is the mode line.
-            let text_rows = wh.saturating_sub(1);
-            for row in 0..text_rows {
-                queue!(self.out, cursor::MoveTo(0, (top + row) as u16))?;
-                let line = text_lines.get(row).cloned().unwrap_or_default();
-                let vis: String = line.chars().skip(hscroll).take(width).collect::<String>();
-                let _ = write!(self.out, "{:<width$}", vis, width = width);
-            }
-            // Mode line (inverted).
-            queue!(self.out, cursor::MoveTo(0, (top + text_rows) as u16))?;
-            let (name, modified, point_line, point_col) = match i.buffers.get(buf_id) {
-                Some(b) => {
-                    let bb = b.borrow();
-                    (
-                        bb.name.clone(),
-                        bb.modified,
-                        bb.text.line_of_pos(bb.point()) + 1,
-                        bb.point() - bb.text.line_start(bb.text.line_of_pos(bb.point())),
-                    )
-                }
-                None => ("???".into(), false, 0, 0),
-            };
-            let mode = format!(
-                "--{}- {}   L{} C{}{}",
-                if modified { "**" } else { "--" },
-                name,
-                point_line,
-                point_col,
-                if wi
-                    == fb
-                        .windows
-                        .iter()
-                        .position(|x| std::rc::Rc::ptr_eq(x, &fb.selected))
-                        .unwrap_or(usize::MAX)
-                {
-                    "  [sel]"
-                } else {
-                    ""
-                }
-            );
-            let _ = write!(
-                self.out,
-                "{}{:<width$}{}",
-                "\x1b[7m",
-                mode,
-                "\x1b[0m",
-                width = width
-            );
-            // Track cursor for the selected window.
-            if std::rc::Rc::ptr_eq(w, &fb.selected) {
-                if let Some(b) = i.buffers.get(buf_id) {
-                    let bb = b.borrow();
-                    let p = bb.point();
-                    let line = bb.text.line_of_pos(p);
-                    let ls = bb.text.line_start(line);
-                    let start_line = bb.text.line_of_pos(start);
-                    let row = line.saturating_sub(start_line);
-                    let col = (p - ls).saturating_sub(hscroll);
-                    if row < text_rows && col < width {
-                        cursor_pos = Some((col, top + row));
-                    }
-                }
+                let _ = write!(self.out, "{row}");
             }
         }
-        // Minibuffer / echo area (last line).
-        queue!(self.out, cursor::MoveTo(0, height.saturating_sub(1) as u16))?;
-        let mini_text = match fb
-            .minibuffer
-            .as_ref()
-            .and_then(|w| i.buffers.get(w.borrow().buffer))
-        {
-            Some(b) => b.borrow().text.text(),
-            None => String::new(),
-        };
-        let msg = if mini_text.is_empty() {
-            i.echo_message.clone()
-        } else {
-            mini_text
-        };
-        let _ = write!(self.out, "{:<width$}", msg, width = width);
-        if let Some((x, y)) = cursor_pos {
+        if let Some((x, y)) = grid.cursor {
             queue!(self.out, cursor::MoveTo(x as u16, y as u16), cursor::Show)?;
         }
         self.out.flush()
     }
 
     /// Draw the echo-area line with TEXT, cursor at its end.
-    pub fn draw_echo(&mut self, text: &str) -> io::Result<()> {
+    fn draw_echo(&mut self, text: &str) -> io::Result<()> {
         let y = self.height.saturating_sub(1) as u16;
         queue!(
             self.out,
@@ -225,6 +264,10 @@ impl Terminal {
         let cx = text.chars().count().min(width.saturating_sub(1));
         queue!(self.out, cursor::MoveTo(cx as u16, y), cursor::Show)?;
         self.out.flush()
+    }
+
+    fn size(&self) -> (usize, usize) {
+        (self.width, self.height)
     }
 }
 
@@ -295,19 +338,26 @@ fn named_code(name: &str) -> i128 {
 
 /// Run the editor until `C-x C-c` (or `kill-emacs`).
 pub fn run_editor(i: &mut Interp) -> io::Result<()> {
-    let term = std::rc::Rc::new(std::cell::RefCell::new(Terminal::enter()?));
+    run_editor_with(Terminal::enter()?, i)
+}
+
+/// The editor command loop, parameterized over a front-end. Also
+/// used by the gpui front-end, which supplies a channel-backed KeyIo
+/// and runs this on a dedicated logic thread (Interp is !Send).
+pub fn run_editor_with<T: KeyIo + 'static>(frontend: T, i: &mut Interp) -> io::Result<()> {
+    let term = std::rc::Rc::new(std::cell::RefCell::new(frontend));
     // Install the interactive input hook so read-from-minibuffer,
     // M-x, y-or-n-p, read-char, and `interactive' spec codes can read
     // input from inside the evaluator.
     {
         let t = term.clone();
         i.minibuf_reader = Some(std::rc::Rc::new(move |interp, prompt, single| {
-            minibuf_loop(&t, interp, prompt, single)
+            minibuf_loop::<T>(&t, interp, prompt, single)
         }));
     }
     // Sync frame geometry.
     {
-        let (w, h) = (term.borrow().width, term.borrow().height);
+        let (w, h) = term.borrow().size();
         if let Some(f) = &i.selected_frame {
             f.borrow_mut().width = w;
             f.borrow_mut().height = h;
@@ -329,7 +379,23 @@ pub fn run_editor(i: &mut Interp) -> io::Result<()> {
             Some(k) => k,
             None => continue,
         };
-        if arg_mode {
+        dispatch_key(&term, i, key, &mut keys, &mut arg_mode)?;
+    }
+    Ok(())
+}
+
+/// Process one key event: extend the key sequence, look up the
+/// binding, and execute the command (or self-insert / enter isearch).
+/// Shared by every front-end via `run_editor_with`.
+fn dispatch_key<T: KeyIo>(
+    term: &std::rc::Rc<std::cell::RefCell<T>>,
+    i: &mut Interp,
+    key: i128,
+    keys: &mut Vec<i128>,
+    arg_mode: &mut bool,
+) -> io::Result<()> {
+    {
+        if *arg_mode {
             let digit = (48..58).contains(&key);
             let minus = key == 45;
             let cu = key == 21;
@@ -343,9 +409,9 @@ pub fn run_editor(i: &mut Interp) -> io::Result<()> {
                 };
                 let id = i.intern(name);
                 let _ = i.command_execute(&Value::Sym(id));
-                continue;
+                return Ok(());
             }
-            arg_mode = false;
+            *arg_mode = false;
         }
         keys.push(key);
         let seq = Value::Vec(std::rc::Rc::new(std::cell::RefCell::new(
@@ -384,8 +450,8 @@ pub fn run_editor(i: &mut Interp) -> io::Result<()> {
                     None
                 };
                 if let Some((back, re)) = isearch {
-                    isearch_loop(&term, i, back, re)?;
-                    continue;
+                    isearch_loop(term, i, back, re)?;
+                    return Ok(());
                 }
                 match i.command_execute(&cmd) {
                     Ok(_) => {}
@@ -417,7 +483,7 @@ pub fn run_editor(i: &mut Interp) -> io::Result<()> {
                 // Continue arg entry after C-u / M-digit / M--.
                 if let Value::Sym(id) = &cmd {
                     let n = i.symbol_name(*id);
-                    arg_mode = matches!(
+                    *arg_mode = matches!(
                         n.as_str(),
                         "universal-argument" | "digit-argument" | "negative-argument"
                     );
@@ -436,14 +502,14 @@ pub fn run_editor(i: &mut Interp) -> io::Result<()> {
                                 b.borrow_mut().insert(&ch.to_string());
                             }
                             keys.clear();
-                            continue;
+                            return Ok(());
                         }
                         if k == b'\r' as i128 {
                             if let Some(b) = i.current_buffer_ref() {
                                 b.borrow_mut().insert("\n");
                             }
                             keys.clear();
-                            continue;
+                            return Ok(());
                         }
                         if k == 127 {
                             if let Some(b) = i.current_buffer_ref() {
@@ -454,7 +520,7 @@ pub fn run_editor(i: &mut Interp) -> io::Result<()> {
                                 }
                             }
                             keys.clear();
-                            continue;
+                            return Ok(());
                         }
                     }
                 }
@@ -662,8 +728,8 @@ impl Isearch {
 /// Incremental search loop (C-s / C-r). Reads keys directly until the
 /// search exits via RET, C-g, or a non-search key (which is then
 /// re-dispatched as a command, like Emacs).
-fn isearch_loop(
-    term: &std::rc::Rc<std::cell::RefCell<Terminal>>,
+fn isearch_loop<T: KeyIo>(
+    term: &std::rc::Rc<std::cell::RefCell<T>>,
     i: &mut Interp,
     backward: bool,
     regexp: bool,
@@ -746,8 +812,8 @@ pub fn nonblocking_sleep(i: &mut Interp, dur: Duration) -> io::Result<()> {
 
 /// Nested input loop for minibuffer reads. Runs while the outer
 /// command loop is suspended inside `command_execute`.
-fn minibuf_loop(
-    term: &std::rc::Rc<std::cell::RefCell<Terminal>>,
+fn minibuf_loop<T: KeyIo>(
+    term: &std::rc::Rc<std::cell::RefCell<T>>,
     i: &mut Interp,
     prompt: &str,
     single: bool,

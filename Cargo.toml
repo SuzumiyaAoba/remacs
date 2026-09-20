@@ -6,8 +6,13 @@ edition = "2024"
 [dependencies]
 base64 = "0.22.1"
 crossterm = "0.29.0"
+gpui = { version = "0.2.2", features = ["runtime_shaders"] }
 libc = "0.2.189"
 md-5 = "0.10.6"
 sha1 = "0.10.6"
 sha2 = "0.10.8"
+smol = "2.0.2"
 unicode-width = "0.2.2"
+
+[dev-dependencies]
+gpui = { version = "0.2.2", features = ["runtime_shaders", "test-support"] }

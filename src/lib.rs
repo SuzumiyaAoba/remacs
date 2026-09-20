@@ -7,6 +7,7 @@
 
 pub mod buffer;
 pub mod editor;
+pub mod gui;
 pub mod lisp;
 pub mod term;
 
@@ -17,10 +18,16 @@ mod coverage_tests {
     //! here too for coverage to count.
     use crate::lisp::Interp;
 
+    // Probes that spawn child/pipe/network/serial processes compete for
+    // ptys and ports; serialize them so a parallel burst can't exhaust
+    // the system.
+    static PROBE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     macro_rules! probe {
         ($name:ident, $file:literal) => {
             #[test]
             fn $name() {
+                let _lock = PROBE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
                 let mut i = Interp::new();
                 match i.eval_str(include_str!(concat!("../tests/", $file))) {
                     Ok(_) => {}
@@ -62,6 +69,7 @@ mod coverage_tests {
     probe!(u_probe_eval10, "probe_eval10.el");
     probe!(u_probe_eval11, "probe_eval11.el");
     probe!(u_probe_eval12, "probe_eval12.el");
+    probe!(u_probe_eval13, "probe_eval13.el");
     probe!(u_probe_format, "probe_format.el");
 
     #[test]

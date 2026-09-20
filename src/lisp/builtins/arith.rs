@@ -361,7 +361,10 @@ fn f_mod_fn(i: &mut Interp, args: Vec<Value>) -> EvalResult {
             if y == 0 {
                 Err(arith_err(i, "Division by zero"))
             } else {
-                Ok(Value::Int(x.rem_euclid(y)))
+                // GNU's mod takes the sign of the divisor:
+                // rem_euclid is non-negative, so adjust when y < 0.
+                let r = x.rem_euclid(y);
+                Ok(Value::Int(if y < 0 && r != 0 { r + y } else { r }))
             }
         }
         (Some(x), Some(y)) => {
@@ -371,11 +374,10 @@ fn f_mod_fn(i: &mut Interp, args: Vec<Value>) -> EvalResult {
                 (Num::F(a), Num::I(b)) => (a, b as f64),
                 (Num::F(a), Num::F(b)) => (a, b),
             };
-            if yf == 0.0 {
-                Err(arith_err(i, "Division by zero"))
-            } else {
-                Ok(Value::Float(xf.rem_euclid(yf)))
-            }
+            // GNU computes fmod directly: a zero float divisor yields
+            // NaN, and the result takes the divisor's sign.
+            let r = xf.rem_euclid(yf);
+            Ok(Value::Float(if yf < 0.0 && r != 0.0 { r + yf } else { r }))
         }
         _ => Err(i.wrong_type_mut("number-or-marker-p", &args[0])),
     }
@@ -705,7 +707,13 @@ fn f_random(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     thread_local! {
         static SEED: Cell<u64> = const { Cell::new(0x9e3779b97f4a7c15) };
     }
-    if args.get(0).map(|v| v.truthy()).unwrap_or(false) {
+    let is_t = args
+        .get(0)
+        .map(|v| {
+            matches!(v, Value::Sym(_)) && i.sym_is(v, i.intern_soft("t").unwrap_or(u32::MAX))
+        })
+        .unwrap_or(false);
+    if is_t {
         let t = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.subsec_nanos() as u64 ^ (d.as_secs() << 16))
@@ -722,6 +730,11 @@ fn f_random(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     });
     let limit = match args.get(0) {
         None => crate::lisp::value::FIXNUM_MAX,
+        // (random t) reseeds and returns a full-range fixnum.
+        Some(v @ Value::Sym(_)) if i.sym_is(v, i.intern_soft("t").unwrap_or(u32::MAX)) => {
+            crate::lisp::value::FIXNUM_MAX
+        }
+        Some(v @ Value::Sym(_)) => return Err(i.wrong_type_mut("integerp", v)),
         Some(Value::Int(n)) if *n > 0 => *n,
         Some(Value::Int(_)) => {
             let s = i.intern("args-out-of-range");
@@ -757,23 +770,31 @@ fn f_ldexp(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     Ok(Value::Float(x * 2f64.powi(e)))
 }
 
+/// GNU's ffloor/fceiling/fround/ftruncate require a FLOAT argument.
+fn want_float(i: &mut Interp, v: &Value) -> Result<f64, Flow> {
+    match v {
+        Value::Float(x) => Ok(*x),
+        other => Err(i.wrong_type_mut("floatp", other)),
+    }
+}
+
 fn f_fround(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    let x = want_num(i, &args[0])?;
+    let x = want_float(i, &args[0])?;
     Ok(Value::Float(x.round_ties_even()))
 }
 
 fn f_ftruncate(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    let x = want_num(i, &args[0])?;
+    let x = want_float(i, &args[0])?;
     Ok(Value::Float(x.trunc()))
 }
 
 fn f_fceiling(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    let x = want_num(i, &args[0])?;
+    let x = want_float(i, &args[0])?;
     Ok(Value::Float(x.ceil()))
 }
 
 fn f_ffloor(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    let x = want_num(i, &args[0])?;
+    let x = want_float(i, &args[0])?;
     Ok(Value::Float(x.floor()))
 }
 
@@ -789,7 +810,7 @@ fn f_copysign(i: &mut Interp, args: Vec<Value>) -> EvalResult {
 fn f_logb(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     let x = want_num(i, &args[0])?;
     if x == 0.0 {
-        return Err(arith_err(i, "Arithmetic error"));
+        return Ok(Value::Float(f64::NEG_INFINITY));
     }
     if x.is_nan() {
         return Ok(Value::Float(f64::NAN));

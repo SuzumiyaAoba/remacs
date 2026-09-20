@@ -105,7 +105,7 @@ fn quit_flow_reports() {
 #[test]
 fn interactive_without_tty_errors() {
     // No tty in test env → run_editor fails cleanly.
-    let (_o, e, code) = remacs(&[], "");
+    let (_o, e, code) = remacs(&["-nw"], "");
     assert_ne!(code, 0);
     assert!(
         e.contains("terminal") || e.contains("error"),
@@ -118,7 +118,7 @@ fn interactive_without_tty_errors() {
 fn file_arg_enters_interactive_path() {
     let dir = std::env::temp_dir().join("remacs-cli-visit.txt");
     std::fs::write(&dir, "hello").unwrap();
-    let (_o, _e, code) = remacs(&[dir.to_str().unwrap()], "");
+    let (_o, _e, code) = remacs(&["-nw", dir.to_str().unwrap()], "");
     assert_ne!(code, 0); // still fails at run_editor without a tty
     let _ = std::fs::remove_file(&dir);
 }
@@ -161,7 +161,7 @@ fn pty_editor_smoke() {
         return;
     }
     let mut cmd = Command::new("script");
-    cmd.args(["-q", "/dev/null", env!("CARGO_BIN_EXE_remacs")])
+    cmd.args(["-q", "/dev/null", env!("CARGO_BIN_EXE_remacs"), "-nw"])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::null());
