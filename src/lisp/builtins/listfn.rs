@@ -4,7 +4,7 @@ use super::{S, arg, eq_values, equal_values, want_cons, want_int, want_list};
 use crate::lisp::Interp;
 use crate::lisp::error::{EvalResult, Flow};
 use crate::lisp::obarray::sym;
-use crate::lisp::value::{ListError, Subr, Value};
+use crate::lisp::value::{Subr, Value};
 
 pub(crate) static SUBRS: &[Subr] = &[
     S!("car", 1, 1, f_car, "Return the car of LIST."),
@@ -395,7 +395,7 @@ fn f_safe_length(_i: &mut Interp, args: Vec<Value>) -> EvalResult {
     }
     Ok(Value::Int(n))
 }
-fn f_proper_list_p(i: &mut Interp, args: Vec<Value>) -> EvalResult {
+fn f_proper_list_p(_i: &mut Interp, args: Vec<Value>) -> EvalResult {
     match &args[0] {
         Value::Nil => Ok(Value::Int(0)),
         Value::Cons(_) => match args[0].list_to_vec() {

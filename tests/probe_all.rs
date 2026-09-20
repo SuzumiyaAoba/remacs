@@ -5,162 +5,33 @@ mod common;
 
 use common::*;
 
-#[test]
-fn probe_all_subrs_no_panic() {
-    let (mut i, _) = interp();
-    let src = include_str!("probe_all.el");
-    match i.eval_str(src) {
-        Ok(_) => {}
-        Err(f) => panic!("probe failed: {:?}", f),
-    }
+macro_rules! probe {
+    ($name:ident, $file:literal) => {
+        #[test]
+        fn $name() {
+            let (mut i, _) = interp();
+            match i.eval_str(include_str!($file)) {
+                Ok(_) => {}
+                Err(f) => panic!("probe failed: {:?}", f),
+            }
+        }
+    };
 }
 
-#[test]
-fn probe_deep_editing_session() {
-    let (mut i, _) = interp();
-    let src = include_str!("probe_deep.el");
-    match i.eval_str(src) {
-        Ok(_) => {}
-        Err(f) => panic!("probe failed: {:?}", f),
-    }
-}
-
-#[test]
-fn probe_edge_typed_args() {
-    let (mut i, _) = interp();
-    let src = include_str!("probe_edge.el");
-    match i.eval_str(src) {
-        Ok(_) => {}
-        Err(f) => panic!("probe failed: {:?}", f),
-    }
-}
-
-#[test]
-fn probe_runtime_semantics() {
-    let (mut i, _) = interp();
-    let src = include_str!("probe_runtime.el");
-    match i.eval_str(src) {
-        Ok(_) => {}
-        Err(f) => panic!("probe failed: {:?}", f),
-    }
-}
-
-#[test]
-fn probe_editor_module() {
-    let (mut i, _) = interp();
-    let src = include_str!("probe_editor.el");
-    match i.eval_str(src) {
-        Ok(_) => {}
-        Err(f) => panic!("probe failed: {:?}", f),
-    }
-}
-
-#[test]
-fn probe_buffer_ops() {
-    let (mut i, _) = interp();
-    let src = include_str!("probe_buffer2.el");
-    match i.eval_str(src) {
-        Ok(_) => {}
-        Err(f) => panic!("probe failed: {:?}", f),
-    }
-}
-
-#[test]
-fn probe_lisp_deep() {
-    let (mut i, _) = interp();
-    let src = include_str!("probe_lisp2.el");
-    match i.eval_str(src) {
-        Ok(_) => {}
-        Err(f) => panic!("probe failed: {:?}", f),
-    }
-}
-
-#[test]
-fn probe_misc_builtins() {
-    let (mut i, _) = interp();
-    let src = include_str!("probe_misc2.el");
-    match i.eval_str(src) {
-        Ok(_) => {}
-        Err(f) => panic!("probe failed: {:?}", f),
-    }
-}
-
-#[test]
-fn probe_print_read() {
-    let (mut i, _) = interp();
-    let src = include_str!("probe_printread.el");
-    match i.eval_str(src) {
-        Ok(_) => {}
-        Err(f) => panic!("probe failed: {:?}", f),
-    }
-}
-
-#[test]
-fn probe_eval_data() {
-    let (mut i, _) = interp();
-    let src = include_str!("probe_eval2.el");
-    match i.eval_str(src) {
-        Ok(_) => {}
-        Err(f) => panic!("probe failed: {:?}", f),
-    }
-}
-
-#[test]
-fn probe_editor_ops() {
-    let (mut i, _) = interp();
-    let src = include_str!("probe_editor2.el");
-    match i.eval_str(src) {
-        Ok(_) => {}
-        Err(f) => panic!("probe failed: {:?}", f),
-    }
-}
-
-#[test]
-fn probe_buffer_deep() {
-    let (mut i, _) = interp();
-    let src = include_str!("probe_buffer3.el");
-    match i.eval_str(src) {
-        Ok(_) => {}
-        Err(f) => panic!("probe failed: {:?}", f),
-    }
-}
-
-#[test]
-fn probe_buffer_props() {
-    let (mut i, _) = interp();
-    let src = include_str!("probe_buffer4.el");
-    match i.eval_str(src) {
-        Ok(_) => {}
-        Err(f) => panic!("probe failed: {:?}", f),
-    }
-}
-
-#[test]
-fn probe_editor_files() {
-    let (mut i, _) = interp();
-    let src = include_str!("probe_editor4.el");
-    match i.eval_str(src) {
-        Ok(_) => {}
-        Err(f) => panic!("probe failed: {:?}", f),
-    }
-}
-
-#[test]
-fn probe_editor_deep() {
-    let (mut i, _) = interp();
-    let src = include_str!("probe_editor3.el");
-    match i.eval_str(src) {
-        Ok(_) => {}
-        Err(f) => panic!("probe failed: {:?}", f),
-    }
-}
-
-#[test]
-fn probe_uncovered_subrs() {
-    let (mut i, _) = interp();
-    let src = include_str!("probe_gap.el");
-    match i.eval_str(src) {
-        Ok(_) => {}
-        Err(f) => panic!("probe failed: {:?}", f),
-    }
-}
+probe!(probe_all_subrs_no_panic, "probe_all.el");
+probe!(probe_deep_editing_session, "probe_deep.el");
+probe!(probe_edge_typed_args, "probe_edge.el");
+probe!(probe_runtime_semantics, "probe_runtime.el");
+probe!(probe_editor_module, "probe_editor.el");
+probe!(probe_buffer_ops, "probe_buffer2.el");
+probe!(probe_lisp_deep, "probe_lisp2.el");
+probe!(probe_misc_builtins, "probe_misc2.el");
+probe!(probe_misc_builtins2, "probe_misc3.el");
+probe!(probe_print_read, "probe_printread.el");
+probe!(probe_eval_data, "probe_eval2.el");
+probe!(probe_editor_ops, "probe_editor2.el");
+probe!(probe_buffer_deep, "probe_buffer3.el");
+probe!(probe_buffer_props, "probe_buffer4.el");
+probe!(probe_editor_files, "probe_editor4.el");
+probe!(probe_editor_deep, "probe_editor3.el");
+probe!(probe_uncovered_subrs, "probe_gap.el");

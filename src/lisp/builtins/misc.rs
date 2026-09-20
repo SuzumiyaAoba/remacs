@@ -517,10 +517,22 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!("display-planes", 0, 1, f_display_planes, ""),
     S!("display-color-cells", 0, 1, f_display_color_cells, ""),
     S!("display-save-under", 0, 1, f_not_useful, ""),
-    S!("display-monitor-attributes-list", 0, 1, f_nil, ""),
+    S!(
+        "display-monitor-attributes-list",
+        0,
+        1,
+        f_display_monitor_attributes_list,
+        ""
+    ),
     S!("tool-bar-height", 0, 2, f_zero, ""),
     S!("tool-bar-pixel-width", 0, 1, f_zero, ""),
-    S!("frame-monitor-attributes", 0, 1, f_nil, ""),
+    S!(
+        "frame-monitor-attributes",
+        0,
+        1,
+        f_frame_monitor_attributes,
+        ""
+    ),
     S!("display-mm-dimensions-alist", 0, 1, f_nil, ""),
     S!("x-synchronize", 0, 2, f_nil, ""),
     S!("x-open-connection", 1, 2, f_nil, ""),
@@ -576,8 +588,14 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!("text-mode-map", 0, 0, f_nil, ""),
     // ---------- tables ----------
     S!("buffer-display-table", 0, 0, f_nil, ""),
-    S!("char-table-extra-slot", 3, 3, f_nil, ""),
-    S!("set-char-table-extra-slot", 4, 4, f_nil, ""),
+    S!("char-table-extra-slot", 2, 2, f_char_table_extra_slot, ""),
+    S!(
+        "set-char-table-extra-slot",
+        3,
+        3,
+        f_set_char_table_extra_slot,
+        ""
+    ),
     S!("char-table-range", 2, 2, f_char_table_range, ""),
     S!("set-char-table-range", 3, 3, f_set_char_table_range, ""),
     S!("char-table-parent", 1, 1, f_nil, ""),
@@ -586,6 +604,166 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!("optimize-char-table", 1, 2, f_nil, ""),
     S!("char-table-subtype", 1, 1, f_char_table_subtype, ""),
     S!("char-table-p", 1, 1, f_char_table_p, ""),
+    // ---------- GNU subrs present on a terminal build ----------
+    S!("length<", 2, 2, f_length_lt, "Is SEQUENCE shorter than LENGTH?"),
+    S!("length>", 2, 2, f_length_gt, "Is SEQUENCE longer than LENGTH?"),
+    S!("length=", 2, 2, f_length_eq, "Is SEQUENCE exactly LENGTH?"),
+    S!("value<", 2, 2, f_value_lt, "Is A less than B (internal order)?"),
+    S!("seconds-to-time", 1, 1, f_seconds_to_time, "SECS as a time value."),
+    S!("time-since", 1, 1, f_time_since, "Seconds elapsed since TIME."),
+    S!("time-to-days", 1, 1, f_time_to_days, "Days since epoch of TIME."),
+    S!(
+        "time-to-day-in-year",
+        1,
+        1,
+        f_time_to_day_in_year,
+        "Day of year of TIME."
+    ),
+    S!("days-to-time", 1, 1, f_days_to_time, "DAYS as a time value."),
+    S!("date-leap-year-p", 1, 1, f_date_leap_year_p, "Is YEAR a leap year?"),
+    S!(
+        "version-list-not-zero",
+        1,
+        1,
+        f_version_list_not_zero,
+        "Drop leading zero components."
+    ),
+    S!("memory-use-counts", 0, 0, f_memory_use_counts, "Object counts."),
+    S!("group-gid", 0, 0, f_group_gid, "Effective group id."),
+    S!("group-real-gid", 0, 0, f_group_real_gid, "Real group id."),
+    S!("system-users", 0, 0, f_system_users, "List of user names."),
+    S!(
+        "bufferpos-to-filepos",
+        1,
+        2,
+        f_bufferpos_to_filepos,
+        "Char POSITION to byte offset."
+    ),
+    S!(
+        "filepos-to-bufferpos",
+        1,
+        2,
+        f_filepos_to_bufferpos,
+        "Byte offset to char position."
+    ),
+    S!(
+        "find-buffer-visiting",
+        1,
+        2,
+        f_get_file_buffer,
+        "Buffer visiting FILENAME."
+    ),
+    S!(
+        "set-buffer-multibyte",
+        1,
+        1,
+        f_set_buffer_multibyte,
+        "Set the multibyte flag."
+    ),
+    S!(
+        "window-with-parameter",
+        1,
+        3,
+        f_window_with_parameter,
+        "Window whose PARAMETER is VALUE."
+    ),
+    S!("message-box", many 1, f_message_box, "Like `message'."),
+    S!("message-or-box", many 1, f_message_box, "Like `message'."),
+    S!(
+        "secure-hash-algorithms",
+        0,
+        0,
+        f_secure_hash_algorithms,
+        "List of hash algorithm names."
+    ),
+    S!("primitive-function-p", 1, 1, f_primitive_function_p, ""),
+    S!("setenv-internal", 2, 3, f_setenv, ""),
+    S!("read--expression", 0, 2, f_read_expression, "Read one form."),
+    S!("read-positioning-symbols", 0, 1, f_nil, ""),
+    S!("describe-vector", 1, 2, f_nil, ""),
+    S!("locale-info", 1, 1, f_locale_info, "Locale data for ITEM."),
+    S!("locale-translate", 1, 1, f_nil, ""),
+    S!("mapbacktrace", 1, 2, f_nil, ""),
+    S!("internal-timer-start-idle", 0, 0, f_nil, ""),
+    S!("internal-describe-syntax-value", 0, 0, f_nil, ""),
+    S!("internal-copy-lisp-face", 4, 4, f_nil, ""),
+    S!("internal-make-lisp-face", 1, 2, f_nil, ""),
+    S!("frame-or-buffer-changed-p", 0, 1, f_nil, ""),
+    S!("scroll-bar-scale", 2, 2, f_nil, ""),
+    S!("popup-menu", 1, 2, f_nil, ""),
+    S!("set-frame-font", 1, 3, f_nil, ""),
+    S!("set-keyboard-coding-system", 1, 2, f_nil, ""),
+    S!("set-terminal-coding-system", 1, 2, f_nil, ""),
+    S!("set-mouse-absolute-pixel-position", 2, 2, f_nil, ""),
+    S!("tooltip-mode", 0, 1, f_nil, ""),
+    S!("keymap-of", 1, 1, f_keymap_of, ""),
+    // ---------- display/font/image stubs (no GUI) ----------
+    S!("default-font-width", 0, 0, f_one, "Char cell width."),
+    S!("default-font-height", 0, 0, f_one, "Char cell height."),
+    S!("window-font-width", 0, 1, f_one, "Char cell width."),
+    S!("window-font-height", 0, 1, f_one, "Char cell height."),
+    S!("color-distance", 2, 4, f_color_distance, "RGB distance."),
+    S!(
+        "frame-geometry",
+        0,
+        1,
+        f_nil,
+        "Frame geometry; nil on a tty."
+    ),
+    S!("frame-inner-width", 0, 1, f_frame_width_val, ""),
+    S!("frame-inner-height", 0, 1, f_frame_height_val, ""),
+    S!("frame-outer-width", 0, 1, f_frame_width_val, ""),
+    S!("frame-outer-height", 0, 1, f_frame_height_val, ""),
+    S!("glyph-char", 0, 1, f_nil, ""),
+    S!("glyph-face", 0, 1, f_nil, ""),
+    S!("font-at", 1, 3, f_nil, ""),
+    S!("font-get-glyphs", 3, 4, f_nil, ""),
+    S!("font-info", 1, 2, f_nil, ""),
+    S!("font-match-p", 2, 2, f_nil, ""),
+    S!("font-family-list", 0, 1, f_nil, ""),
+    S!("font-face-attributes", 1, 2, f_nil, ""),
+    S!("font-spec", many 0, f_nil, ""),
+    S!("face-font", 1, 2, f_nil, ""),
+    S!("face-documentation", 1, 1, f_nil, ""),
+    S!("face-attributes-as-vector", 1, 1, f_nil, ""),
+    S!("image-flush", 1, 2, f_nil, ""),
+    S!("image-mask-p", 1, 2, f_nil, ""),
+    S!("image-metadata", 1, 2, f_nil, ""),
+    S!("image-size", 1, 3, f_nil, ""),
+    S!("image-transforms-p", 0, 0, f_nil, ""),
+    S!("image-type", 0, 1, f_nil, ""),
+    S!("image-type-available-p", 1, 1, f_nil, ""),
+    S!("init-image-library", 1, 1, f_nil, ""),
+    S!("put-image", 2, 3, f_nil, ""),
+    S!("remove-images", 0, 3, f_nil, ""),
+    S!("display-popup-menus-p", 0, 1, f_nil, ""),
+    S!("display-screens", 0, 1, f_nil, ""),
+    S!("display-selections-p", 0, 1, f_nil, ""),
+    // ---------- X stubs (no X) ----------
+    S!("gui-get-selection", 1, 3, f_nil, ""),
+    S!("gui-set-selection", 2, 3, f_nil, ""),
+    S!("x-begin-drag", 1, 4, f_nil, ""),
+    S!("x-display-backing-store", 0, 1, f_nil, ""),
+    S!("x-display-color-cells", 0, 1, f_nil, ""),
+    S!("x-display-grayscale-p", 0, 1, f_nil, ""),
+    S!("x-display-mm-height", 0, 1, f_nil, ""),
+    S!("x-display-mm-width", 0, 1, f_nil, ""),
+    S!("x-display-pixel-height", 0, 1, f_nil, ""),
+    S!("x-display-pixel-width", 0, 1, f_nil, ""),
+    S!("x-display-planes", 0, 1, f_nil, ""),
+    S!("x-display-save-under", 0, 1, f_nil, ""),
+    S!("x-display-screens", 0, 1, f_nil, ""),
+    S!("x-display-visual-class", 0, 1, f_nil, ""),
+    S!("x-get-clipboard", 0, 0, f_nil, ""),
+    S!("x-get-resource", 2, 4, f_nil, ""),
+    S!("x-get-selection", 2, 4, f_nil, ""),
+    S!("x-hide-tip", 0, 0, f_nil, ""),
+    S!("x-parse-geometry", 1, 1, f_x_parse_geometry, "Parse GEOMETRY."),
+    S!("x-server-max-request-size", 0, 1, f_nil, ""),
+    S!("x-server-vendor", 0, 1, f_nil, ""),
+    S!("x-server-version", 0, 1, f_nil, ""),
+    S!("x-set-selection", 2, 4, f_nil, ""),
+    S!("x-show-tip", 1, 6, f_nil, ""),
 ];
 
 // ---------- symbols / functions ----------
@@ -603,10 +781,52 @@ fn f_gensym(i: &mut Interp, args: Vec<Value>) -> EvalResult {
 
 fn f_func_arity(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     let fun = i.indirect_function_value(&args[0]);
+    // A `(lambda ARGLIST ...)' or `(closure ENV ARGLIST ...)' list.
+    let mut list_arity = |v: &Value| -> Option<Arity> {
+        let cells = v.list_to_vec().ok()?;
+        let head = i.sym_id(&cells[0])?;
+        let name = i.symbol_name(head);
+        if name != "lambda" && name != "closure" {
+            return None;
+        }
+        let arglist_idx = if name == "closure" { 2 } else { 1 };
+        let mut min = 0u16;
+        let mut max = 0u16;
+        let mut many = false;
+        let mut mode = 0;
+        let opt_sym = i.intern("&optional");
+        let rest_sym = i.intern("&rest");
+        for a in cells
+            .get(arglist_idx)
+            .map(|v| v.list_to_vec().unwrap_or_default())
+            .unwrap_or_default()
+        {
+            let Some(id) = i.sym_id(&a) else { continue };
+            if id == opt_sym {
+                mode = 1;
+            } else if id == rest_sym {
+                many = true;
+                mode = 2;
+            } else if mode == 0 {
+                min += 1;
+                max += 1;
+            } else if mode == 1 {
+                max += 1;
+            }
+        }
+        Some(if many {
+            Arity::Many { min }
+        } else {
+            Arity::Range { min, max }
+        })
+    };
     let arity = match &fun {
         Value::Subr(s) => s.arity,
         Value::Lambda(l) => l.arity(),
-        _ => return Err(i.signal_data(sym::VOID_FUNCTION, vec![args[0].clone()])),
+        v => match list_arity(v) {
+            Some(a) => a,
+            None => return Err(i.signal_data(sym::VOID_FUNCTION, vec![args[0].clone()])),
+        },
     };
     let (min, max) = match arity {
         Arity::Range { min, max } => (min, Value::Int(max as i128)),
@@ -2841,10 +3061,541 @@ fn f_char_table_subtype(_i: &mut Interp, a: Vec<Value>) -> EvalResult {
     Ok(char_table_subtype_of(&a[0]))
 }
 
+fn f_char_table_extra_slot(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let Value::Record(r) = &a[0] else {
+        return Err(i.wrong_type_mut("char-table-p", &a[0]));
+    };
+    let n = match &a[1] {
+        Value::Int(n) if *n >= 0 => *n as usize,
+        other => return Err(i.wrong_type_mut("wholenump", other)),
+    };
+    Ok(r.borrow().get(3 + n).cloned().unwrap_or(Value::Nil))
+}
+
+fn f_set_char_table_extra_slot(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let Value::Record(r) = &a[0] else {
+        return Err(i.wrong_type_mut("char-table-p", &a[0]));
+    };
+    let n = match &a[1] {
+        Value::Int(n) if *n >= 0 => *n as usize,
+        other => return Err(i.wrong_type_mut("wholenump", other)),
+    };
+    let mut rr = r.borrow_mut();
+    while rr.len() <= 3 + n {
+        rr.push(Value::Nil);
+    }
+    rr[3 + n] = a[2].clone();
+    Ok(a[2].clone())
+}
+
 fn f_record(_i: &mut Interp, a: Vec<Value>) -> EvalResult {
     Ok(Value::Record(Rc::new(RefCell::new(a))))
 }
 
 fn f_recordp(_i: &mut Interp, a: Vec<Value>) -> EvalResult {
     Ok(Value::from_bool(matches!(a[0], Value::Record(_))))
+}
+
+// ---------- added GNU compat subrs ----------
+
+fn seq_len(i: &mut Interp, v: &Value) -> Result<i128, Flow> {
+    Ok(match v {
+        Value::Nil => 0,
+        Value::Cons(_) => v.list_to_vec().map(|x| x.len() as i128).unwrap_or(-1),
+        Value::Str(s) => s.borrow().chars().count() as i128,
+        Value::Vec(x) | Value::Record(x) => x.borrow().len() as i128,
+        Value::Hash(h) => h.borrow().map.len() as i128,
+        _ => return Err(i.wrong_type_mut("sequencep", v)),
+    })
+}
+
+fn length_cmp(i: &mut Interp, a: &[Value], cmp: i8) -> EvalResult {
+    let n = seq_len(i, &a[0])?;
+    let len = match &a[1] {
+        Value::Int(x) => *x,
+        other => return Err(i.wrong_type_mut("integerp", other)),
+    };
+    Ok(Value::from_bool(match cmp {
+        -1 => n < len,
+        1 => n > len,
+        _ => n == len,
+    }))
+}
+
+fn f_length_lt(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    length_cmp(i, &a, -1)
+}
+fn f_length_gt(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    length_cmp(i, &a, 1)
+}
+fn f_length_eq(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    length_cmp(i, &a, 0)
+}
+
+/// Type rank for `value<'.
+fn value_rank(v: &Value) -> u8 {
+    match v {
+        Value::Int(_) | Value::Float(_) => 0,
+        Value::Sym(_) => 1,
+        Value::Str(_) => 2,
+        Value::Cons(_) => 3,
+        Value::Vec(_) | Value::Record(_) => 4,
+        Value::Hash(_) => 5,
+        _ => 6,
+    }
+}
+
+fn f_value_lt(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let (x, y) = (&a[0], &a[1]);
+    let (rx, ry) = (value_rank(x), value_rank(y));
+    let lt = if rx != ry {
+        rx < ry
+    } else {
+        match (x, y) {
+            (Value::Int(p), Value::Int(q)) => p < q,
+            (Value::Int(p), Value::Float(q)) => (*p as f64) < *q,
+            (Value::Float(p), Value::Int(q)) => *p < (*q as f64),
+            (Value::Float(p), Value::Float(q)) => p < q,
+            (Value::Sym(p), Value::Sym(q)) => i.symbol_name(*p) < i.symbol_name(*q),
+            (Value::Str(p), Value::Str(q)) => *p.borrow() < *q.borrow(),
+            _ => false,
+        }
+    };
+    Ok(Value::from_bool(lt))
+}
+
+fn f_seconds_to_time(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let us = lisp_time_to_us(i, &a[0])?;
+    Ok(us_to_lisp_time(us))
+}
+
+fn f_time_since(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let from = lisp_time_to_us(i, &a[0])?;
+    let now = lisp_time_to_us(i, &Value::Nil)?;
+    Ok(us_to_lisp_time(now - from))
+}
+
+fn f_time_to_days(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let us = lisp_time_to_us(i, &a[0])?;
+    // Absolute date: days since 1 Jan 1 AD. 719163 is the day number
+    // of the Unix epoch (1970-01-01).
+    Ok(Value::Int((us / 1_000_000) / 86400 + 719163))
+}
+
+fn f_time_to_day_in_year(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let us = lisp_time_to_us(i, &a[0])?;
+    let tm = local_tm((us / 1_000_000) as i64);
+    Ok(Value::Int(tm.tm_yday as i128 + 1))
+}
+
+fn f_days_to_time(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let days = match &a[0] {
+        Value::Int(n) => *n,
+        Value::Float(f) => *f as i128,
+        other => return Err(i.wrong_type_mut("numberp", other)),
+    };
+    // GNU returns the (HIGH LOW) seconds form, not a full time value.
+    let secs = days * 86400;
+    Ok(Value::list(vec![
+        Value::Int(secs.div_euclid(65536)),
+        Value::Int(secs.rem_euclid(65536)),
+    ]))
+}
+
+fn f_date_leap_year_p(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let y = match &a[0] {
+        Value::Int(n) => *n,
+        other => return Err(i.wrong_type_mut("integerp", other)),
+    };
+    Ok(Value::from_bool(
+        y % 4 == 0 && (y % 100 != 0 || y % 400 == 0),
+    ))
+}
+
+fn f_version_list_not_zero(_i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    // GNU returns the first non-zero element, or 0 when all are zero.
+    Ok(a[0]
+        .list_to_vec()
+        .unwrap_or_default()
+        .into_iter()
+        .find(|v| !matches!(v, Value::Int(0)))
+        .unwrap_or(Value::Int(0)))
+}
+
+fn f_memory_use_counts(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
+    // (CONSES FLOATS VECTOR-CELLS SYMBOLS STRING-CHARS INTERVALS STRINGS)
+    let bufs = i.buffers.list().len() as i128;
+    Ok(Value::list(vec![
+        Value::Int(0),
+        Value::Int(0),
+        Value::Int(0),
+        Value::Int(0),
+        Value::Int(0),
+        Value::Int(0),
+        Value::Int(bufs),
+    ]))
+}
+
+fn f_group_gid(_i: &mut Interp, _a: Vec<Value>) -> EvalResult {
+    unsafe extern "C" {
+        fn getegid() -> u32;
+    }
+    Ok(Value::Int(unsafe { getegid() } as i128))
+}
+
+fn f_group_real_gid(_i: &mut Interp, _a: Vec<Value>) -> EvalResult {
+    unsafe extern "C" {
+        fn getgid() -> u32;
+    }
+    Ok(Value::Int(unsafe { getgid() } as i128))
+}
+
+fn f_system_users(_i: &mut Interp, _a: Vec<Value>) -> EvalResult {
+    // User names from the passwd database (like GNU's getpwent walk).
+    let names: Vec<Value> = std::fs::read_to_string("/etc/passwd")
+        .map(|txt| {
+            txt.lines()
+                .filter_map(|l| l.split(':').next())
+                .filter(|n| !n.is_empty() && !n.starts_with('#'))
+                .map(Value::string)
+                .collect()
+        })
+        .unwrap_or_default();
+    Ok(Value::list(names))
+}
+
+fn f_bufferpos_to_filepos(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let pos = match &a[0] {
+        Value::Int(n) => *n,
+        other => return Err(i.wrong_type_mut("integerp", other)),
+    };
+    // Unibyte buffers: file byte = (clamped position) - 1.
+    let zv = i
+        .current_buffer_ref()
+        .map(|b| b.borrow().text_len())
+        .unwrap_or(0) as i128
+        + 1;
+    Ok(Value::Int((pos.clamp(1, zv)) - 1))
+}
+
+fn f_filepos_to_bufferpos(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let pos = match &a[0] {
+        Value::Int(n) => *n,
+        other => return Err(i.wrong_type_mut("integerp", other)),
+    };
+    let zv = i
+        .current_buffer_ref()
+        .map(|b| b.borrow().text_len())
+        .unwrap_or(0) as i128
+        + 1;
+    Ok(if pos + 1 <= zv {
+        Value::Int(pos + 1)
+    } else {
+        Value::Nil
+    })
+}
+
+fn f_set_buffer_multibyte(_i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    // Buffers are unibyte-capable; return the flag like Emacs does.
+    Ok(a[0].clone())
+}
+
+fn f_window_with_parameter(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let _ = (i, a);
+    // Windows carry no parameters in this build.
+    Ok(Value::Nil)
+}
+
+fn f_message_box(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    crate::lisp::builtins::evalfn::f_message(i, a)
+}
+
+fn f_secure_hash_algorithms(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
+    let names = ["md5", "sha1", "sha224", "sha256", "sha384", "sha512"];
+    Ok(Value::list(
+        names.iter().map(|n| Value::Sym(i.intern(n))).collect(),
+    ))
+}
+
+fn f_primitive_function_p(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let f = i.indirect_function_value(&a[0]);
+    Ok(Value::from_bool(matches!(f, Value::Subr(_))))
+}
+
+fn f_read_expression(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    // (read--expression PROMPT &optional INITIAL-CONTENTS) — read a
+    // string from the minibuffer, then `read' one form from it.
+    let prompt = match a.get(0) {
+        Some(Value::Str(s)) => s.borrow().clone(),
+        _ => String::new(),
+    };
+    let input = if i.minibuf_reader.is_some() {
+        i.minibuf_line(&prompt)?
+    } else {
+        match a.get(1) {
+            Some(Value::Str(s)) => s.borrow().clone(),
+            _ => {
+                let eof = i.intern("end-of-file");
+                return Err(i.signal_data(
+                    eof,
+                    vec![Value::string("End of file during parsing")],
+                ));
+            }
+        }
+    };
+    let mut r = crate::lisp::reader::Reader::new(i, &input);
+    match r.read() {
+        Ok(Some(v)) => Ok(v),
+        Ok(None) => {
+            let eof = i.intern("end-of-file");
+            Err(i.signal_data(eof, vec![Value::string("End of file during parsing")]))
+        }
+        Err(f) => Err(f),
+    }
+}
+
+fn f_keymap_of(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    if is_keymap(i, &a[0]) {
+        Ok(a[0].clone())
+    } else {
+        Ok(Value::Nil)
+    }
+}
+
+fn f_one(_i: &mut Interp, _a: Vec<Value>) -> EvalResult {
+    Ok(Value::Int(1))
+}
+
+/// Parse a color to 16-bit (0-65535) RGB like GNU: "#rgb"/"#rrggbb"
+/// strings, the 8 standard color names, or a (R G B) list.
+fn parse_color_16(v: &Value) -> Option<(i64, i64, i64)> {
+    if let Value::Str(s) = v {
+        let t = s.borrow().clone();
+        let h = t.trim_start_matches('#');
+        if t.starts_with('#') && h.len() == 6 {
+            let r = i64::from_str_radix(&h[0..2], 16).ok()? * 257;
+            let g = i64::from_str_radix(&h[2..4], 16).ok()? * 257;
+            let b = i64::from_str_radix(&h[4..6], 16).ok()? * 257;
+            return Some((r, g, b));
+        }
+        if t.starts_with('#') && h.len() == 3 {
+            let mut it = h.chars().filter_map(|c| c.to_digit(16));
+            let (r, g, b) = (it.next()?, it.next()?, it.next()?);
+            return Some((
+                (r * 65535 / 15) as i64,
+                (g * 65535 / 15) as i64,
+                (b * 65535 / 15) as i64,
+            ));
+        }
+        // Standard color names (tty-color-standard-values).
+        let rgb = match t.as_str() {
+            "black" => (0, 0, 0),
+            "red" => (65535, 0, 0),
+            "green" => (0, 65535, 0),
+            "yellow" => (65535, 65535, 0),
+            "blue" => (0, 0, 65535),
+            "magenta" => (65535, 0, 65535),
+            "cyan" => (0, 65535, 65535),
+            "white" => (65535, 65535, 65535),
+            _ => return None,
+        };
+        return Some(rgb);
+    }
+    if let Value::Cons(_) = v {
+        let items = v.list_to_vec().ok()?;
+        if items.len() == 3 {
+            let mut out = [0i64; 3];
+            for (k, item) in items.iter().enumerate() {
+                out[k] = match item {
+                    Value::Int(n) => (*n).clamp(0, 65535) as i64,
+                    _ => return None,
+                };
+            }
+            return Some((out[0], out[1], out[2]));
+        }
+    }
+    None
+}
+
+fn f_color_distance(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    // Riemersma's "colour metric" on 16-bit components, as in GNU.
+    let (c1, c2) = match (parse_color_16(&a[0]), parse_color_16(&a[1])) {
+        (Some(x), Some(y)) => (x, y),
+        _ => {
+            let err = i.intern("error");
+            return Err(i.signal_data(
+                err,
+                vec![Value::string("Invalid color"), a[0].clone()],
+            ));
+        }
+    };
+    let r = c1.0 - c2.0;
+    let g = c1.1 - c2.1;
+    let b = c1.2 - c2.2;
+    let r_mean = (c1.0 + c2.0) >> 1;
+    let d = ((((2 * 65536 + r_mean) * r * r) >> 16)
+        + 4 * g * g
+        + (((2 * 65536 + 65535 - r_mean) * b * b) >> 16))
+        >> 16;
+    Ok(Value::Int(d as i128))
+}
+
+fn sel_frame_dims(i: &Interp) -> (i128, i128) {
+    match &i.selected_frame {
+        Some(f) => {
+            let ff = f.borrow();
+            (ff.width as i128, ff.height as i128)
+        }
+        None => (80, 25),
+    }
+}
+
+/// One monitor's attribute alist, shaped like GNU's tty result.
+fn monitor_attributes(i: &mut Interp) -> Value {
+    let (w, h) = sel_frame_dims(i);
+    let fr = match sel_frame(i) {
+        Some(f) => Value::Frame(f),
+        None => Value::Nil,
+    };
+    let mut rect = |k: &str| -> Value {
+        Value::list(vec![
+            Value::Sym(i.intern(k)),
+            Value::Int(0),
+            Value::Int(0),
+            Value::Int(w),
+            Value::Int(h),
+        ])
+    };
+    Value::list(vec![
+        rect("geometry"),
+        rect("workarea"),
+        Value::list(vec![
+            Value::Sym(i.intern("mm-size")),
+            Value::Nil,
+            Value::Nil,
+        ]),
+        Value::list(vec![Value::Sym(i.intern("frames")), fr]),
+    ])
+}
+
+fn f_frame_monitor_attributes(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
+    Ok(monitor_attributes(i))
+}
+
+fn f_display_monitor_attributes_list(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
+    Ok(Value::list(vec![monitor_attributes(i)]))
+}
+
+fn f_locale_info(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let item = match &a[0] {
+        Value::Sym(s) => i.symbol_name(*s),
+        _ => return Ok(Value::Nil),
+    };
+    let lang = |n: i32| -> Option<String> {
+        unsafe extern "C" {
+            fn nl_langinfo(item: i32) -> *const std::ffi::c_char;
+            fn setlocale(category: i32, locale: *const std::ffi::c_char) -> *const std::ffi::c_char;
+        }
+        // GNU calls setlocale(LC_ALL, "") at startup; do it lazily here.
+        // LC_ALL is 6 on glibc, 0 on BSD/macOS.
+        static ONCE: std::sync::Once = std::sync::Once::new();
+        let lc_all: i32 = if cfg!(target_os = "linux") { 6 } else { 0 };
+        ONCE.call_once(|| unsafe {
+            setlocale(lc_all, c"".as_ptr());
+        });
+        let p = unsafe { nl_langinfo(n) };
+        if p.is_null() {
+            return None;
+        }
+        let s = unsafe { std::ffi::CStr::from_ptr(p) }
+            .to_string_lossy()
+            .into_owned();
+        if s.is_empty() {
+            None
+        } else {
+            Some(s)
+        }
+    };
+    // nl_item constants differ between glibc and BSD/macOS.
+    let codeset: i32 = if cfg!(target_os = "linux") { 14 } else { 0 };
+    let day1: i32 = if cfg!(target_os = "linux") { 0x20007 } else { 7 };
+    let mon1: i32 = if cfg!(target_os = "linux") { 0x2000e } else { 21 };
+    match item.as_str() {
+        "codeset" => Ok(lang(codeset).map(Value::string).unwrap_or(Value::Nil)),
+        "days" => Ok(Value::Vec(Rc::new(RefCell::new(
+            (0..7)
+                .map(|d| lang(day1 + d).map(Value::string).unwrap_or(Value::Nil))
+                .collect(),
+        )))),
+        "months" => Ok(Value::Vec(Rc::new(RefCell::new(
+            (0..12)
+                .map(|m| lang(mon1 + m).map(Value::string).unwrap_or(Value::Nil))
+                .collect(),
+        )))),
+        _ => Ok(Value::Nil),
+    }
+}
+
+fn f_frame_width_val(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
+    Ok(Value::Int(sel_frame_dims(i).0))
+}
+fn f_frame_height_val(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
+    Ok(Value::Int(sel_frame_dims(i).1))
+}
+
+fn f_x_parse_geometry(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    // GNU returns an alist ((height . H) (width . W) (top . Y) (left . X)).
+    let s = match &a[0] {
+        Value::Str(s) => s.borrow().clone(),
+        other => return Err(i.wrong_type_mut("stringp", other)),
+    };
+    let mut left = None;
+    let mut top = None;
+    let mut w = None;
+    let mut h = None;
+    // The first sign starts the position part; sizes are digits and 'x'.
+    let split_at = s.find(['+', '-']).unwrap_or(s.len());
+    let (size, pos) = s.split_at(split_at);
+    let mut it = size.split('x');
+    if let Some(t) = it.next() {
+        w = t.parse().ok();
+    }
+    if let Some(t) = it.next() {
+        h = t.parse().ok();
+    }
+    // Position part is [+-]N[+-]N — left then top.
+    let bytes = pos.as_bytes();
+    let mut idx = 0;
+    let mut k = 0;
+    while idx < bytes.len() && k < 2 {
+        let sign = match bytes[idx] {
+            b'-' => -1i32,
+            _ => 1i32,
+        };
+        if matches!(bytes[idx], b'+' | b'-') {
+            idx += 1;
+        }
+        let start = idx;
+        while idx < bytes.len() && bytes[idx].is_ascii_digit() {
+            idx += 1;
+        }
+        if let Ok(n) = pos[start..idx].parse::<i32>() {
+            if k == 0 {
+                left = Some(sign * n);
+            } else {
+                top = Some(sign * n);
+            }
+            k += 1;
+        }
+    }
+    let mut items: Vec<Value> = Vec::new();
+    for (name, v) in [("height", h), ("width", w), ("top", top), ("left", left)] {
+        if let Some(n) = v {
+            items.push(Value::cons(
+                Value::Sym(i.intern(name)),
+                Value::Int(n as i128),
+            ));
+        }
+    }
+    Ok(Value::list(items))
 }

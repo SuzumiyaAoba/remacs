@@ -995,7 +995,7 @@ fn f_warn(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     i.message(&format!("Warning: {}", msg));
     Ok(Value::Nil)
 }
-fn f_message(i: &mut Interp, args: Vec<Value>) -> EvalResult {
+pub(crate) fn f_message(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     let fmt = match &args[0] {
         Value::Str(s) => s.borrow().clone(),
         Value::Nil => return Ok(Value::Nil),
