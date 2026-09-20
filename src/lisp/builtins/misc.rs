@@ -441,6 +441,9 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!("help-function-arglist", 1, 1, f_help_function_arglist, ""),
     S!("function-documentation", 1, 1, f_function_documentation, ""),
     S!("command-error-default-function", 3, 3, f_nil, ""),
+    S!("command-line", 0, 0, f_nil, ""),
+    S!("recursion-depth", 0, 0, f_zero, ""),
+    S!("minibuffer-depth", 0, 0, f_zero, ""),
     S!("detect-coding-string", 1, 2, f_detect_coding_string, ""),
     S!("detect-coding-region", 1, 3, f_detect_coding_region, ""),
     S!("coding-system-list", 0, 0, f_coding_system_list, ""),
@@ -870,6 +873,7 @@ fn f_make_interpreted_closure(i: &mut Interp, args: Vec<Value>) -> EvalResult {
                 optional.push(crate::lisp::value::OptParam {
                     sym: id,
                     default: None,
+                    supplied: None,
                 });
             }
         }

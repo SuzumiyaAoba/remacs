@@ -5453,8 +5453,8 @@ fn f_completing_read(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         let cands = completion_candidates(i, &a[1]);
         let input = i.minibuf_line(&prompt)?;
         if input.is_empty() {
-            // Empty input → default (arg 3) or "".
-            return Ok(arg(&a, 3));
+            // Empty input → DEF (arg 6) or "".
+            return Ok(arg(&a, 6));
         }
         // Complete: exact match, else unique prefix completion.
         if cands.iter().any(|c| c == &input) {
@@ -5475,7 +5475,7 @@ fn f_completing_read(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     // TABLE: list, alist, obarray, or function.
     match try_completions(i, "", &a[1]) {
         Ok(v) => Ok(v),
-        Err(_) => Ok(arg(&a, 4)),
+        Err(_) => Ok(arg(&a, 6)),
     }
 }
 
@@ -5600,7 +5600,7 @@ fn f_y_or_n_p(i: &mut Interp, a: Vec<Value>) -> EvalResult {
             }
         }
     }
-    Ok(Value::t())
+    Ok(Value::Nil)
 }
 
 // ---------- commands ----------

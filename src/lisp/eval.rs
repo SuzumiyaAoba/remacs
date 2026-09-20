@@ -939,7 +939,8 @@ impl Interp {
             i += 1;
         }
         for opt in &l.optional {
-            let v = if i < argv.len() {
+            let given = i < argv.len();
+            let v = if given {
                 argv[i].clone()
             } else {
                 // Evaluate default at call time — needs eval; handled by
@@ -947,6 +948,9 @@ impl Interp {
                 opt.default.clone().unwrap_or(Value::Nil)
             };
             f(opt.sym, v);
+            if let Some(sp) = opt.supplied {
+                f(sp, Value::from_bool(given));
+            }
             i += 1;
         }
         if let Some(rest) = l.rest {
@@ -967,7 +971,8 @@ impl Interp {
             i += 1;
         }
         for opt in &l.optional {
-            let v = if i < argv.len() {
+            let given = i < argv.len();
+            let v = if given {
                 argv[i].clone()
             } else {
                 match &opt.default {
@@ -976,6 +981,9 @@ impl Interp {
                 }
             };
             self.specbind(opt.sym, v);
+            if let Some(sp) = opt.supplied {
+                self.specbind(sp, Value::from_bool(given));
+            }
             i += 1;
         }
         if let Some(rest) = l.rest {
@@ -1154,6 +1162,7 @@ impl Interp {
                                     Some(s) => optional.push(super::value::OptParam {
                                         sym: s,
                                         default: None,
+                                        supplied: None,
                                     }),
                                     None => {
                                         if let Value::Cons(_) = car {
@@ -1164,6 +1173,9 @@ impl Interp {
                                                 optional.push(super::value::OptParam {
                                                     sym: s,
                                                     default: pair.get(1).cloned(),
+                                                    supplied: pair
+                                                        .get(2)
+                                                        .and_then(|v| self.sym_id(v)),
                                                 });
                                                 bad_arglist = true;
                                             } else {
@@ -2396,11 +2408,13 @@ impl Interp {
                                 let s = self.minibuf_line(&prompt)?;
                                 match self.read_from_string(&s, 0) {
                                     Ok((form, _)) => {
-                                        if c == 'x' {
-                                            out.push(self.eval(&form)?);
-                                        } else {
-                                            out.push(form);
+                                        let v = self.eval(&form)?;
+                                        if c == 'X' {
+                                            // 'X' also prints the result.
+                                            let pr = self.prin1_to_string(&v);
+                                            self.message(&pr);
                                         }
+                                        out.push(v);
                                     }
                                     Err(_) => out.push(Value::Nil),
                                 }

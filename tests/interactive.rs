@@ -378,3 +378,331 @@ fn substitute_command_keys_basic() {
         "\"[not-a-key]\""
     );
 }
+
+// ---------- reader-dependent editor paths ----------
+
+#[test]
+fn completing_read_paths() {
+    let (mut i, _) = interp();
+    // Exact match returns input.
+    canned(&mut i, vec![MinibufInput::Text("beta".into())]);
+    let v = ev_in(&mut i, "(completing-read \"P: \" '(\"alpha\" \"beta\"))");
+    assert_eq!(i.prin1_to_string(&v), "\"beta\"");
+    // Unique prefix completes.
+    canned(&mut i, vec![MinibufInput::Text("alp".into())]);
+    let v = ev_in(&mut i, "(completing-read \"P: \" '(\"alpha\" \"beta\"))");
+    assert_eq!(i.prin1_to_string(&v), "\"alpha\"");
+    // Empty input → default (4th arg position: INITIAL-INPUT then DEF).
+    canned(&mut i, vec![MinibufInput::Text(String::new())]);
+    let v = ev_in(
+        &mut i,
+        "(completing-read \"P: \" '(\"alpha\" \"beta\") nil nil nil nil \"DEF\")",
+    );
+    assert_eq!(i.prin1_to_string(&v), "\"DEF\"");
+    // Ambiguous prefix returns input as typed.
+    canned(&mut i, vec![MinibufInput::Text("a".into())]);
+    let v = ev_in(&mut i, "(completing-read \"P: \" '(\"a1\" \"a2\"))");
+    assert_eq!(i.prin1_to_string(&v), "\"a\"");
+    // Batch: no reader → falls back to table/default resolution.
+    let (mut j, _) = interp();
+    let v = ev_in(&mut j, "(completing-read \"P: \" '(\"alpha\" \"beta\"))");
+    let _ = v; // any non-panic result is acceptable in batch
+    let v = ev_in(
+        &mut j,
+        "(completing-read \"P: \" '(\"alpha\") nil nil \"init\")",
+    );
+    assert_eq!(i.prin1_to_string(&v), "\"init\"");
+}
+
+#[test]
+fn y_or_n_p_reprompt_and_quit() {
+    let (mut i, _) = interp();
+    // A non-y/n key re-prompts, then 'y' answers.
+    canned(
+        &mut i,
+        vec![MinibufInput::Key(120), MinibufInput::Key(121)],
+    );
+    let v = ev_in(&mut i, "(y-or-n-p \"Q? \")");
+    assert_eq!(i.prin1_to_string(&v), "t");
+    // C-g/C-c quits.
+    canned(&mut i, vec![MinibufInput::Key(7)]);
+    assert_eq!(ev_err_in(&mut i, "(y-or-n-p \"Q? \")"), "quit");
+    // Batch default path (no reader): returns nil without hanging.
+    let (mut j, _) = interp();
+    let v = ev_in(&mut j, "(y-or-n-p \"Q? \")");
+    assert_eq!(i.prin1_to_string(&v), "nil");
+}
+
+#[test]
+fn read_key_sequence_paths() {
+    let (mut i, _) = interp();
+    canned(&mut i, vec![MinibufInput::Key(97)]);
+    let v = ev_in(&mut i, "(read-key-sequence \"K: \")");
+    assert_eq!(i.prin1_to_string(&v), "\"a\"");
+    // Meta char ≥128 → vector.
+    canned(&mut i, vec![MinibufInput::Key(0x800_0061)]);
+    let v = ev_in(&mut i, "(read-key-sequence \"K: \")");
+    assert!(i.prin1_to_string(&v).starts_with('['));
+    // Vector variant returns a vector.
+    let v = ev_in(&mut i, "(read-key-sequence-vector \"K: \")");
+    assert!(i.prin1_to_string(&v).starts_with('['));
+    // Batch (no reader): empty string.
+    let (mut j, _) = interp();
+    let v = ev_in(&mut j, "(read-key-sequence \"K: \")");
+    assert_eq!(j.prin1_to_string(&v), "\"\"");
+}
+
+#[test]
+fn digit_argument_minus_and_accumulate() {
+    let (mut i, _) = interp();
+    // M-- starts negative.
+    set(&mut i, "last-command-event", Value::Int('-' as i128 | 0x800_0000));
+    cmd(&mut i, "digit-argument").unwrap();
+    let pa = i.symbol_value(i.intern_soft("prefix-arg").unwrap());
+    assert_eq!(i.prin1_to_string(&pa), "(-)");
+    // Digit after list-form prefix → plain int.
+    set(&mut i, "last-command-event", Value::Int('5' as i128));
+    cmd(&mut i, "digit-argument").unwrap();
+    let pa = i.symbol_value(i.intern_soft("prefix-arg").unwrap());
+    assert_eq!(i.prin1_to_string(&pa), "5");
+    // Accumulate digits.
+    set(&mut i, "last-command-event", Value::Int('2' as i128));
+    cmd(&mut i, "digit-argument").unwrap();
+    let pa = i.symbol_value(i.intern_soft("prefix-arg").unwrap());
+    assert_eq!(i.prin1_to_string(&pa), "52");
+    // '-' on an int prefix negates.
+    set(&mut i, "prefix-arg", Value::Int(7));
+    set(&mut i, "last-command-event", Value::Int('-' as i128));
+    cmd(&mut i, "digit-argument").unwrap();
+    let pa = i.symbol_value(i.intern_soft("prefix-arg").unwrap());
+    assert_eq!(i.prin1_to_string(&pa), "-7");
+}
+
+#[test]
+fn describe_key_undefined() {
+    let (mut i, _) = interp();
+    // An unbound key renders into *Help* without panic.
+    let _ = ev_in(&mut i, "(describe-key [f17])");
+}
+
+#[test]
+fn current_kill_and_yank_paths() {
+    let (mut i, _) = interp();
+    ev_in(
+        &mut i,
+        "(insert \"hello world\") (kill-region 1 6)",
+    );
+    let v = ev_in(&mut i, "(current-kill 0)");
+    assert_eq!(i.prin1_to_string(&v), "\"hello\"");
+    // current-kill rotates.
+    let v = ev_in(&mut i, "(current-kill 0 t)");
+    let _ = v;
+    // kill-new pushes and returns the string.
+    let v = ev_in(&mut i, "(kill-new \"xyz\")");
+    assert_eq!(i.prin1_to_string(&v), "\"xyz\"");
+    let v = ev_in(&mut i, "(current-kill 0)");
+    assert_eq!(i.prin1_to_string(&v), "\"xyz\"");
+}
+
+// ---------- more interactive spec codes ----------
+
+#[test]
+fn interactive_spec_codes_batch() {
+    let (mut i, _) = interp();
+    // 'd' → point, 'm' → mark, 'i' → nil-ish, 'P' → raw prefix, 'n' reads a number.
+    ev_in(&mut i, "(insert \"ab\") (goto-char 2) (set-mark 1)");
+    let v = ev_in(
+        &mut i,
+        "(defun f (d m p) (interactive \"d\\nm\\np\") (list d m p)) (call-interactively 'f)",
+    );
+    assert_eq!(i.prin1_to_string(&v), "(2 1 1)");
+    // 'P' → raw prefix arg.
+    set(&mut i, "current-prefix-arg", Value::list(vec![Value::Int(4)]));
+    let v = ev_in(
+        &mut i,
+        "(defun f (p) (interactive \"P\") p) (call-interactively 'f)",
+    );
+    assert_eq!(i.prin1_to_string(&v), "(4)");
+    // 'n' numeric prefix via reader-less fallback.
+    let v = ev_in(
+        &mut i,
+        "(defun f (n) (interactive \"nNum: \") n) (call-interactively 'f)",
+    );
+    let _ = v; // batch fallback: prefix or 1
+    // 'c' char, 'e' event via canned key.
+    canned(&mut i, vec![MinibufInput::Key(65)]);
+    let v = ev_in(
+        &mut i,
+        "(defun f (c) (interactive \"cChar: \") c) (call-interactively 'f)",
+    );
+    assert_eq!(i.prin1_to_string(&v), "65");
+    // 'k' key sequence via canned key.
+    canned(&mut i, vec![MinibufInput::Key(98)]);
+    let v = ev_in(
+        &mut i,
+        "(defun f (k) (interactive \"kKey: \") k) (call-interactively 'f)",
+    );
+    let _ = v;
+    // 'S' symbol, 'C' command, 'v' variable via text.
+    canned(&mut i, vec![MinibufInput::Text("somename".into())]);
+    let v = ev_in(
+        &mut i,
+        "(defun f (s) (interactive \"SSym: \") s) (call-interactively 'f)",
+    );
+    assert_eq!(i.prin1_to_string(&v), "somename");
+    canned(&mut i, vec![MinibufInput::Text("forward-char".into())]);
+    let v = ev_in(
+        &mut i,
+        "(defun f (c) (interactive \"CCmd: \") c) (call-interactively 'f)",
+    );
+    assert_eq!(i.prin1_to_string(&v), "forward-char");
+    // 'X' eval + print.
+    canned(&mut i, vec![MinibufInput::Text("(+ 1 2)".into())]);
+    let v = ev_in(
+        &mut i,
+        "(defun f (x) (interactive \"XEval: \") x) (call-interactively 'f)",
+    );
+    assert_eq!(i.prin1_to_string(&v), "3");
+    // 'B' existing buffer name.
+    canned(&mut i, vec![MinibufInput::Text(String::new())]);
+    let v = ev_in(
+        &mut i,
+        "(defun f (b) (interactive \"BBuf: \") b) (call-interactively 'f)",
+    );
+    let _ = v;
+    // 'f'/'F' file names.
+    canned(&mut i, vec![MinibufInput::Text("/tmp/f.el".into())]);
+    let v = ev_in(
+        &mut i,
+        "(defun f (x) (interactive \"fFile: \") x) (call-interactively 'f)",
+    );
+    assert_eq!(i.prin1_to_string(&v), "\"/tmp/f.el\"");
+    canned(&mut i, vec![MinibufInput::Text("/tmp/d".into())]);
+    let v = ev_in(
+        &mut i,
+        "(defun f (x) (interactive \"DDir: \") x) (call-interactively 'f)",
+    );
+    assert_eq!(i.prin1_to_string(&v), "\"/tmp/d\"");
+    // 'z'/'Z' coding system.
+    canned(&mut i, vec![MinibufInput::Text("utf-8".into())]);
+    let v = ev_in(
+        &mut i,
+        "(defun f (x) (interactive \"zCoding: \") x) (call-interactively 'f)",
+    );
+    let _ = v;
+    // 'U' unused code shouldn't crash.
+    let v = ev_in(
+        &mut i,
+        "(defun f (u) (interactive \"U\") u) (call-interactively 'f)",
+    );
+    let _ = v;
+}
+
+// ---------- standard-output destinations ----------
+
+#[test]
+fn standard_output_dests() {
+    let (mut i, _) = interp();
+    // Buffer destination.
+    ev_in(
+        &mut i,
+        "(let ((standard-output (get-buffer-create \"so-buf\")))
+           (princ \"HELLO\"))
+         (with-current-buffer \"so-buf\" (buffer-string))",
+    );
+    let v = ev_in(&mut i, "(with-current-buffer \"so-buf\" (buffer-string))");
+    assert!(i.prin1_to_string(&v).contains("HELLO"));
+    // Marker destination.
+    ev_in(
+        &mut i,
+        "(let ((m (set-marker (make-marker) 1 \"so-buf\")))
+           (let ((standard-output m)) (princ \"MM\")))",
+    );
+    // Function destination.
+    ev_in(
+        &mut i,
+        "(setq out-acc nil)
+         (let ((standard-output (lambda (s) (setq out-acc (cons s out-acc)))))
+           (princ \"F1\") (princ \"F2\"))",
+    );
+    let v = ev_in(&mut i, "(length out-acc)");
+    assert_eq!(i.prin1_to_string(&v), "2");
+    // Symbol naming a function.
+    ev_in(
+        &mut i,
+        "(defun my-sink (s) (setq out-acc2 (cons s out-acc2)))
+         (setq out-acc2 nil)
+         (let ((standard-output 'my-sink)) (princ \"Q\"))",
+    );
+    let v = ev_in(&mut i, "out-acc2");
+    assert_eq!(i.prin1_to_string(&v), "(\"Q\")");
+    // kill the helper buffer.
+    ev_in(&mut i, "(kill-buffer \"so-buf\")");
+}
+
+// ---------- lambda arg binding ----------
+
+#[test]
+fn lambda_optional_rest_bindings() {
+    let (mut i, _) = interp();
+    // (var init) in a *lambda* arglist → invalid-function (GNU agrees);
+    // the extended form is legal in macro arglists.
+    assert_eq!(
+        ev_err_in(
+            &mut i,
+            "(funcall (lambda (a &optional (b 10)) (list a b)) 1)"
+        ),
+        "invalid-function"
+    );
+    // defmacro supports (var init) and (var init supplied-p).
+    let v = ev_in(
+        &mut i,
+        "(defmacro dm (&optional (a 5 ap)) (list 'list a ap)) (dm)",
+    );
+    assert_eq!(i.prin1_to_string(&v), "(5 nil)");
+    let v = ev_in(&mut i, "(dm 9)");
+    assert_eq!(i.prin1_to_string(&v), "(9 t)");
+    // &rest collects the tail.
+    let v = ev_in(
+        &mut i,
+        "(funcall (lambda (a &rest r) (list a r)) 1 2 3 4)",
+    );
+    assert_eq!(i.prin1_to_string(&v), "(1 (2 3 4))");
+    // Too many args → error.
+    assert_eq!(
+        ev_err_in(&mut i, "(funcall (lambda (a) a) 1 2)"),
+        "wrong-number-of-arguments"
+    );
+    // Too few args → error.
+    assert_eq!(
+        ev_err_in(&mut i, "(funcall (lambda (a b) a) 1)"),
+        "wrong-number-of-arguments"
+    );
+    // apply spreads the last list arg.
+    let v = ev_in(&mut i, "(apply (lambda (a b) (list a b)) 1 '(2))");
+    assert_eq!(i.prin1_to_string(&v), "(1 2)");
+}
+
+// ---------- macroexpand edge cases ----------
+
+#[test]
+fn macroexpand_forms() {
+    let (mut i, _) = interp();
+    // (macro lambda) form expands.
+    let v = ev_in(
+        &mut i,
+        "(defmacro dm (x) `(+ ,x 1)) (macroexpand '(dm 5))",
+    );
+    assert!(i.prin1_to_string(&v).contains("+"));
+    // macroexpand-all on nested macros.
+    let v = ev_in(&mut i, "(macroexpand-all '(dm (dm 5)))");
+    let _ = v;
+    // Raw lambda list as function → invalid-function.
+    assert_eq!(
+        ev_err_in(&mut i, "(funcall '(a b) 1)"),
+        "invalid-function"
+    );
+    // read-from-string with START/END.
+    let v = ev_in(&mut i, "(read-from-string \"xy(1 2)z\" 2 6)");
+    assert!(i.prin1_to_string(&v).contains("(1 2)"));
+}

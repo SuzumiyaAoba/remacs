@@ -71,7 +71,7 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!(
         "get-buffer-create",
         1,
-        1,
+        2,
         f_get_buffer_create,
         "Return or create buffer NAME."
     ),

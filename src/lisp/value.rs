@@ -159,6 +159,8 @@ pub struct Lambda {
 pub struct OptParam {
     pub sym: SymId,
     pub default: Option<Value>,
+    /// `(var init supplied-p)' triple — bound to t when the arg was given.
+    pub supplied: Option<SymId>,
 }
 
 impl Lambda {

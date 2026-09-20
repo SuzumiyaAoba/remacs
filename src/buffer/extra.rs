@@ -93,6 +93,13 @@ pub(crate) static SUBRS: &[Subr] = &[
         "Translate chars via TABLE."
     ),
     S!(
+        "make-translation-table-from-alist",
+        1,
+        1,
+        f_make_translation_table_from_alist,
+        "Build a char-table translation table from ALIST."
+    ),
+    S!(
         "buffer-swap-text",
         1,
         1,
@@ -181,7 +188,7 @@ pub(crate) static SUBRS: &[Subr] = &[
     ),
     S!(
         "get-char-property-and-overlay",
-        3,
+        2,
         3,
         f_get_char_prop_and_overlay,
         "Prop + overlay at POS."
@@ -608,6 +615,22 @@ fn f_translate_region(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     // Simple version: treat a string as a lookup table indexed by char.
     let table: Vec<char> = match &a[2] {
         Value::Str(t) => t.borrow().chars().collect(),
+        Value::Record(r) => {
+            // Char-table (e.g. from make-translation-table-from-alist):
+            // aref[c] gives the replacement char.
+            let rr = r.borrow();
+            match rr.get(2) {
+                Some(Value::Vec(v)) => v
+                    .borrow()
+                    .iter()
+                    .map(|x| match x {
+                        Value::Int(n) => char::from_u32(*n as u32).unwrap_or('\0'),
+                        _ => '\0',
+                    })
+                    .collect(),
+                _ => Vec::new(),
+            }
+        }
         _ => Vec::new(),
     };
     if table.is_empty() {
@@ -618,11 +641,42 @@ fn f_translate_region(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let region = bb.text.substring(s, e);
     let out: String = region
         .chars()
-        .map(|c| table.get(c as usize).copied().unwrap_or(c))
+        .map(|c| {
+            table
+                .get(c as usize)
+                .copied()
+                .filter(|t| *t != '\0')
+                .unwrap_or(c)
+        })
         .collect();
     bb.delete_region(s, e);
     bb.insert_at(s, &out);
     Ok(Value::Nil)
+}
+
+fn f_make_translation_table_from_alist(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let items = a[0].list_to_vec().unwrap_or_default();
+    let mut vec = vec![Value::Nil; 256];
+    for item in items {
+        if let Value::Cons(c) = &item {
+            let (from, to) = {
+                let b = c.borrow();
+                (b.car.clone(), b.cdr.clone())
+            };
+            if let (Value::Int(f), Value::Int(t)) = (from, to) {
+                if (0..256).contains(&f) {
+                    vec[f as usize] = Value::Int(t);
+                }
+            }
+        }
+    }
+    Ok(Value::Record(std::rc::Rc::new(std::cell::RefCell::new(
+        vec![
+            Value::Sym(i.intern("char-table")),
+            Value::Sym(i.intern("translation-table")),
+            Value::Vec(std::rc::Rc::new(std::cell::RefCell::new(vec))),
+        ],
+    ))))
 }
 
 fn f_buffer_swap_text(i: &mut Interp, a: Vec<Value>) -> EvalResult {
