@@ -414,9 +414,16 @@ impl Interp {
         let mut cur = v.clone();
         let mut first = true;
         let mut n = 0usize;
+        let mut seen = std::collections::HashSet::new();
         loop {
             match cur {
                 Value::Cons(c) => {
+                    let ptr = std::rc::Rc::as_ptr(&c) as usize;
+                    if !seen.insert(ptr) {
+                        out.push_str(" . #0");
+                        out.push(')');
+                        return;
+                    }
                     let (car, next) = {
                         let b = c.borrow();
                         (b.car.clone(), b.cdr.clone())
@@ -466,9 +473,16 @@ impl Interp {
         let mut cur = v.clone();
         let mut first = true;
         let mut n = 0usize;
+        let mut seen = std::collections::HashSet::new();
         loop {
             match cur {
                 Value::Cons(c) => {
+                    let ptr = std::rc::Rc::as_ptr(&c) as usize;
+                    if !seen.insert(ptr) {
+                        out.push_str(" . #0");
+                        out.push(')');
+                        return;
+                    }
                     let (car, next) = {
                         let b = c.borrow();
                         (b.car.clone(), b.cdr.clone())

@@ -366,22 +366,29 @@ fn f_length(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     }
 }
 fn f_safe_length(_i: &mut Interp, args: Vec<Value>) -> EvalResult {
+    // GNU safe_length: tortoise advances every other step; stop when the
+    // walk lands back on it (covers circular lists without error).
     let mut n = 0i128;
     let mut cur = args[0].clone();
-    let mut guard = 0usize;
+    let mut halftail = args[0].clone();
     loop {
-        guard += 1;
-        if guard > 1_000_000 {
-            break;
-        }
-        match cur {
+        match &cur {
             Value::Cons(c) => {
+                if n > 0 && eq_values(&cur, &halftail) {
+                    break;
+                }
                 let next = {
                     let b = c.borrow();
                     b.cdr.clone()
                 };
                 n += 1;
                 cur = next;
+                if n % 2 == 0 {
+                    if let Value::Cons(h) = &halftail {
+                        let hnext = h.borrow().cdr.clone();
+                        halftail = hnext;
+                    }
+                }
             }
             _ => break,
         }
@@ -393,9 +400,6 @@ fn f_proper_list_p(i: &mut Interp, args: Vec<Value>) -> EvalResult {
         Value::Nil => Ok(Value::Int(0)),
         Value::Cons(_) => match args[0].list_to_vec() {
             Ok(v) => Ok(Value::Int(v.len() as i128)),
-            Err(ListError::Circular) => {
-                Err(i.signal_data(sym::CIRCULAR_LIST, vec![args[0].clone()]))
-            }
             Err(_) => Ok(Value::Nil),
         },
         _ => Ok(Value::Nil),
@@ -602,56 +606,71 @@ fn f_setcdr(i: &mut Interp, args: Vec<Value>) -> EvalResult {
 }
 
 fn member_impl(
-    i: &Interp,
+    i: &mut Interp,
     elt: &Value,
     list: &Value,
     cmp: fn(&Interp, &Value, &Value) -> bool,
-) -> Value {
+) -> EvalResult {
     let mut cur = list.clone();
+    let mut tortoise = list.clone();
+    let mut guard = 0usize;
     loop {
         match &cur {
             Value::Cons(c) => {
+                guard += 1;
+                if guard > 500_000 {
+                    return Err(err_circular(i));
+                }
                 let (car, next) = {
                     let b = c.borrow();
                     (b.car.clone(), b.cdr.clone())
                 };
                 if cmp(i, elt, &car) {
-                    return cur;
+                    return Ok(cur);
                 }
                 cur = next;
+                if guard % 2 == 0 {
+                    if let Value::Cons(tc) = &tortoise {
+                        let tnext = tc.borrow().cdr.clone();
+                        tortoise = tnext;
+                    }
+                }
+                if guard > 1 && eq_values(&cur, &tortoise) {
+                    return Err(err_circular(i));
+                }
             }
-            _ => return Value::Nil,
+            _ => return Ok(Value::Nil),
         }
     }
 }
 
 fn f_member(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    Ok(member_impl(i, &args[0], &args[1], |ii, a, b| {
-        equal_values(ii, a, b)
-    }))
+    member_impl(i, &args[0], &args[1], |ii, a, b| equal_values(ii, a, b))
 }
 fn f_memq(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    Ok(member_impl(i, &args[0], &args[1], |_ii, a, b| {
-        eq_values(a, b)
-    }))
+    member_impl(i, &args[0], &args[1], |_ii, a, b| eq_values(a, b))
 }
 fn f_memql(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    Ok(member_impl(i, &args[0], &args[1], |_ii, a, b| {
-        super::eql_values(a, b)
-    }))
+    member_impl(i, &args[0], &args[1], |_ii, a, b| super::eql_values(a, b))
 }
 
 fn assoc_impl(
-    i: &Interp,
+    i: &mut Interp,
     key: &Value,
     list: &Value,
     cmp: fn(&Interp, &Value, &Value) -> bool,
     cdr_cmp: bool,
-) -> Value {
+) -> EvalResult {
     let mut cur = list.clone();
+    let mut tortoise = list.clone();
+    let mut guard = 0usize;
     loop {
         match &cur {
             Value::Cons(c) => {
+                guard += 1;
+                if guard > 500_000 {
+                    return Err(err_circular(i));
+                }
                 let (elem, next) = {
                     let b = c.borrow();
                     (b.car.clone(), b.cdr.clone())
@@ -660,24 +679,27 @@ fn assoc_impl(
                     let eb = ec.borrow();
                     let probe = if cdr_cmp { &eb.cdr } else { &eb.car };
                     if cmp(i, key, probe) {
-                        return elem.clone();
+                        return Ok(elem.clone());
                     }
                 }
                 cur = next;
+                if guard % 2 == 0 {
+                    if let Value::Cons(tc) = &tortoise {
+                        let tnext = tc.borrow().cdr.clone();
+                        tortoise = tnext;
+                    }
+                }
+                if guard > 1 && eq_values(&cur, &tortoise) {
+                    return Err(err_circular(i));
+                }
             }
-            _ => return Value::Nil,
+            _ => return Ok(Value::Nil),
         }
     }
 }
 
 fn f_assq(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    Ok(assoc_impl(
-        i,
-        &args[0],
-        &args[1],
-        |_ii, a, b| eq_values(a, b),
-        false,
-    ))
+    assoc_impl(i, &args[0], &args[1], |_ii, a, b| eq_values(a, b), false)
 }
 
 fn delete_all_by(i: &mut Interp, args: Vec<Value>, on_cdr: bool) -> EvalResult {
@@ -730,9 +752,15 @@ fn f_assoc(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     if let Some(testfn) = args.get(2) {
         if testfn.truthy() {
             let mut cur = args[1].clone();
+            let mut tortoise = args[1].clone();
+            let mut guard = 0usize;
             loop {
                 match &cur {
                     Value::Cons(c) => {
+                        guard += 1;
+                        if guard > 500_000 {
+                            return Err(err_circular(i));
+                        }
                         let (elem, next) = {
                             let b = c.borrow();
                             (b.car.clone(), b.cdr.clone())
@@ -748,37 +776,40 @@ fn f_assoc(i: &mut Interp, args: Vec<Value>) -> EvalResult {
                             }
                         }
                         cur = next;
+                        if guard % 2 == 0 {
+                            if let Value::Cons(tc) = &tortoise {
+                                let tnext = tc.borrow().cdr.clone();
+                                tortoise = tnext;
+                            }
+                        }
+                        if guard > 1 && eq_values(&cur, &tortoise) {
+                            return Err(err_circular(i));
+                        }
                     }
                     _ => return Ok(Value::Nil),
                 }
             }
         }
     }
-    Ok(assoc_impl(
+    assoc_impl(
         i,
         &args[0],
         &args[1],
         |ii, a, b| equal_values(ii, a, b),
         false,
-    ))
+    )
 }
 fn f_rassq(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    Ok(assoc_impl(
-        i,
-        &args[0],
-        &args[1],
-        |_ii, a, b| eq_values(a, b),
-        true,
-    ))
+    assoc_impl(i, &args[0], &args[1], |_ii, a, b| eq_values(a, b), true)
 }
 fn f_rassoc(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    Ok(assoc_impl(
+    assoc_impl(
         i,
         &args[0],
         &args[1],
         |ii, a, b| equal_values(ii, a, b),
         true,
-    ))
+    )
 }
 fn f_assoc_default(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     // (assoc-default KEY ALIST &optional TEST DEFAULT)
@@ -790,7 +821,7 @@ fn f_assoc_default(i: &mut Interp, args: Vec<Value>) -> EvalResult {
             &args[1],
             |ii, a, b| equal_values(ii, a, b),
             false,
-        )
+        )?
     } else {
         let mut cur = args[1].clone();
         let mut found = Value::Nil;
@@ -1056,7 +1087,7 @@ fn plist_scan(
     }
 }
 
-fn err_circular(i: &mut Interp) -> Flow {
+pub(crate) fn err_circular(i: &mut Interp) -> Flow {
     i.signal_data(sym::CIRCULAR_LIST, vec![Value::Nil])
 }
 

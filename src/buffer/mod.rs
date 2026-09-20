@@ -124,11 +124,6 @@ impl Buffer {
         self.zv.max(self.begv).min(self.size())
     }
 
-    /// Clamp a 0-based position into `[begv, zv]`.
-    pub fn clip(&self, pos: usize) -> usize {
-        pos.max(self.begv).min(self.text_len())
-    }
-
     /// `point` is stored 0-based.
     pub fn point(&self) -> usize {
         self.point.max(self.begv).min(self.text_len())
@@ -289,15 +284,6 @@ impl Buffer {
     pub fn register_marker(&mut self, m: &Rc<RefCell<Marker>>) {
         self.markers.push(Rc::downgrade(m));
     }
-
-    /// Drop dead marker entries occasionally.
-    pub fn sweep_markers(&mut self) {
-        self.markers.retain(|w| {
-            w.upgrade()
-                .map(|m| m.borrow().buffer == Some(self.id))
-                .unwrap_or(false)
-        });
-    }
 }
 
 fn before_markers_flag(_pos: usize, _point: usize) -> bool {
@@ -448,10 +434,6 @@ impl BufferSet {
             }
         }
         unreachable!()
-    }
-
-    pub fn len(&self) -> usize {
-        self.order.len()
     }
 }
 

@@ -124,3 +124,13 @@ fn probe_buffer_deep() {
         Err(f) => panic!("probe failed: {:?}", f),
     }
 }
+
+#[test]
+fn probe_uncovered_subrs() {
+    let (mut i, _) = interp();
+    let src = include_str!("probe_gap.el");
+    match i.eval_str(src) {
+        Ok(_) => {}
+        Err(f) => panic!("probe failed: {:?}", f),
+    }
+}

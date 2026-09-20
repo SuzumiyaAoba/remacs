@@ -1,7 +1,7 @@
 //! Sequence subrs: elt, aref, aset, copy-sequence, mapcar, sort, etc.
 
-use super::listfn::nthcdr_of;
-use super::{S, arg, equal_values, want_int, want_list, want_string};
+use super::listfn::{err_circular, nthcdr_of};
+use super::{S, arg, eq_values, equal_values, want_int, want_list, want_string};
 use crate::lisp::Interp;
 use crate::lisp::error::EvalResult;
 use crate::lisp::obarray::sym;
@@ -600,6 +600,38 @@ fn f_purecopy(_i: &mut Interp, args: Vec<Value>) -> EvalResult {
 fn f_nreverse_seq(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     match &args[0] {
         Value::Cons(_) => {
+            // GNU signals circular-list before mutating; detect the
+            // cycle with a tortoise/hare walk first.
+            let mut tortoise = args[0].clone();
+            let mut hare = args[0].clone();
+            let mut guard = 0usize;
+            loop {
+                guard += 1;
+                if guard > 500_000 {
+                    return Err(err_circular(i));
+                }
+                match &hare {
+                    Value::Cons(c) => {
+                        let n1 = c.borrow().cdr.clone();
+                        match &n1 {
+                            Value::Cons(c2) => {
+                                let n2 = c2.borrow().cdr.clone();
+                                hare = n2;
+                            }
+                            Value::Nil => break,
+                            _ => break,
+                        }
+                        if let Value::Cons(tc) = &tortoise {
+                            let tnext = tc.borrow().cdr.clone();
+                            tortoise = tnext;
+                        }
+                        if eq_values(&hare, &tortoise) {
+                            return Err(err_circular(i));
+                        }
+                    }
+                    _ => break,
+                }
+            }
             // delegate to list version semantics
             let mut prev = Value::Nil;
             let mut cur = args[0].clone();

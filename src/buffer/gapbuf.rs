@@ -24,10 +24,6 @@ impl GapBuffer {
         self.buf.len() - (self.gap_end - self.gap_start)
     }
 
-    pub fn is_empty(&self) -> bool {
-        self.len() == 0
-    }
-
     /// Char at logical index `i` (0-based).
     pub fn char_at(&self, i: usize) -> char {
         debug_assert!(i < self.len());

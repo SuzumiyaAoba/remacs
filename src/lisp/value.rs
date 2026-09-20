@@ -107,12 +107,6 @@ pub enum HashKey {
     Vec(Vec<HashKey>),
 }
 
-impl HashKey {
-    pub fn ptr_of<T>(r: &Rc<RefCell<T>>) -> HashKey {
-        HashKey::Ptr(Rc::as_ptr(r) as usize)
-    }
-}
-
 /// Max argument count for a subr: fixed or unlimited.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Arity {
@@ -220,12 +214,6 @@ impl Value {
     /// `fixnump`: integer in Emacs's fixnum range.
     pub fn fixnump(&self) -> bool {
         matches!(self, Value::Int(n) if (FIXNUM_MIN..=FIXNUM_MAX).contains(n))
-    }
-
-    /// Integer truncated to i64 (for positions/sizes; clamps bignums).
-    pub fn int_i64(&self) -> Option<i64> {
-        self.int()
-            .map(|n| n.clamp(i64::MIN as i128, i64::MAX as i128) as i64)
     }
 
     pub fn cons(car: Value, cdr: Value) -> Value {
