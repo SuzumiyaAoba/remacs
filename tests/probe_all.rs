@@ -43,3 +43,4 @@ probe!(probe_misc_builtins3, "probe_misc4.el");
 probe!(probe_eval_branches, "probe_eval3.el");
 probe!(probe_format_specs, "probe_format.el");
 probe!(probe_evalfn_arith, "probe_eval4.el");
+probe!(probe_eval_misc5, "probe_eval5.el");

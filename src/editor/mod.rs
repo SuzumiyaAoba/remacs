@@ -3927,7 +3927,8 @@ fn expand_file_name_str(i: &mut Interp, name: &str) -> String {
     // absolute?
     if !s.starts_with('/') {
         let dir = default_directory(i);
-        s = format!("{}{}", dir, s);
+        let sep = if dir.ends_with('/') || dir.is_empty() { "" } else { "/" };
+        s = format!("{}{}{}", dir, sep, s);
     }
     // Collapse /./ and /../
     normalize_path(&s)
@@ -4094,7 +4095,9 @@ fn f_expand_file_name(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let name = want_str(i, &a[0])?;
     let s = match a.get(1) {
         Some(Value::Str(d)) if !name.starts_with('/') && !name.starts_with('~') => {
-            normalize_path(&format!("{}{}", d.borrow(), name))
+            let d = d.borrow().clone();
+            let sep = if d.ends_with('/') || d.is_empty() { "" } else { "/" };
+            normalize_path(&format!("{}{}{}", d, sep, name))
         }
         _ => expand_file_name_str(i, &name),
     };

@@ -1962,7 +1962,13 @@ impl Interp {
             ("shell-file-name", Value::string("/bin/sh")),
             ("path-separator", Value::string(":")),
             ("null-device", Value::string("/dev/null")),
-            ("temporary-file-directory", Value::string("/tmp")),
+            (
+                "temporary-file-directory",
+                Value::string({
+                    let d = std::env::var("TMPDIR").unwrap_or_else(|_| "/tmp".into());
+                    if d.ends_with('/') { d } else { format!("{d}/") }
+                }),
+            ),
             ("invocation-name", Value::string("remacs")),
             ("invocation-directory", Value::string("/usr/local/bin/")),
             ("exec-directory", Value::string("/usr/local/bin/")),

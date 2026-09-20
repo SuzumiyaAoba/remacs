@@ -532,7 +532,7 @@ fn f_replace_regexp(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     while let Some(regs) = crate::lisp::regexp::search_full(&re, &region, pos) {
         let (ms, me) = (regs[0].unwrap_or(0), regs[1].unwrap_or(0));
         out.extend(&region[pos..ms]);
-        expand_rep(&to, &regs, &region, &mut out, false);
+        expand_rep(i, &to, &regs, &region, &mut out, false)?;
         pos = if me > ms { me } else { me + 1 };
         n += 1;
         if pos > region.len() || n > 1_000_000 {
@@ -547,16 +547,21 @@ fn f_replace_regexp(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 
 /// Expand `\1..\9' and `\&' in REP against match registers REGS over
 /// REGION, appending to OUT. LITERAL inserts REP unchanged.
+/// Expand `\\&`, `\\N` and `\\\\` in a regexp replacement for
+/// `replace-regexp-in-string'.  GNU keeps `\?' literal and signals
+/// "Invalid use of `\\' in replacement text" for anything else; a group
+/// that did not match expands to the empty string.
 fn expand_rep(
+    i: &mut Interp,
     rep: &str,
     regs: &[Option<usize>],
     region: &[char],
     out: &mut String,
     literal: bool,
-) {
+) -> Result<(), Flow> {
     if literal {
         out.push_str(rep);
-        return;
+        return Ok(());
     }
     let (ms, me) = (regs[0].unwrap_or(0), regs[1].unwrap_or(0));
     let mut tc = rep.chars().peekable();
@@ -573,17 +578,20 @@ fn expand_rep(
                     }
                 }
                 Some('&') => out.extend(&region[ms..me]),
-                Some('n') => out.push('\n'),
-                Some(other) => {
-                    out.push('\\');
-                    out.push(other);
+                Some('?') => out.push_str("\\?"),
+                _ => {
+                    return Err(err_sym(
+                        i,
+                        "error",
+                        vec![Value::string("Invalid use of `\\' in replacement text")],
+                    ));
                 }
-                None => out.push('\\'),
             }
         } else {
             out.push(c);
         }
     }
+    Ok(())
 }
 
 fn f_replace_regexp_in_string(i: &mut Interp, a: Vec<Value>) -> EvalResult {
@@ -612,7 +620,8 @@ fn f_replace_regexp_in_string(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         .truthy();
     let re = crate::lisp::regexp::compile_case(&pat, case_fold)
         .map_err(|e| err_sym(i, "invalid-regexp", vec![Value::string(e.0)]))?;
-    let mut out: String = chars[..start].iter().collect();
+    // GNU: when START is non-nil the result excludes STRING's prefix.
+    let mut out = String::new();
     let mut pos = start;
     let mut n = 0usize;
     while let Some(regs) = crate::lisp::regexp::search_full(&re, &chars, pos) {
@@ -625,13 +634,13 @@ fn f_replace_regexp_in_string(i: &mut Interp, a: Vec<Value>) -> EvalResult {
                 regs.get(2 * subexp + 1).copied().flatten(),
             ) {
                 out.extend(&chars[ms..gs]);
-                expand_rep(&rep, &regs, &chars, &mut out, literal);
+                expand_rep(i, &rep, &regs, &chars, &mut out, literal)?;
                 out.extend(&chars[ge..me]);
             } else {
                 out.extend(&chars[ms..me]);
             }
         } else {
-            expand_rep(&rep, &regs, &chars, &mut out, literal);
+            expand_rep(i, &rep, &regs, &chars, &mut out, literal)?;
         }
         pos = if me > ms { me } else { me + 1 };
         n += 1;

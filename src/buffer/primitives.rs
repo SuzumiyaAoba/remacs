@@ -1739,10 +1739,8 @@ fn f_move_to_column(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         }
         k += 1;
     }
-    // Step back if we overshot a wide char.
-    if col > goal && k > ls {
-        k -= 1;
-    }
+    // GNU lands on the first char boundary where col >= goal (a char is
+    // never split), then returns the column actually reached.
     if col < goal && force {
         // Extend with spaces.
         let pad = (goal - col) as usize;
@@ -1751,11 +1749,11 @@ fn f_move_to_column(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         bb.text.insert(at, &s);
         bb.zv += pad;
         bb.set_point(at + pad);
+        Ok(Value::Int(goal))
     } else {
         bb.set_point(k);
+        Ok(Value::Int(col))
     }
-    let _ = force;
-    Ok(Value::Int(goal))
 }
 
 fn f_forward_comment(i: &mut Interp, a: Vec<Value>) -> EvalResult {
@@ -3513,18 +3511,26 @@ fn expand_replacement(
             continue;
         }
         match it.next() {
-            None => out.push('\\'),
             Some('\\') => out.push('\\'),
             Some('&') => {
                 out.push_str(&group_text(i, md, src, 0)?);
             }
             Some(d @ '1'..='9') => {
                 let n = d as usize - '0' as usize;
-                out.push_str(&group_text(i, md, src, n)?);
+                // GNU substitutes an empty string for a group that did
+                // not match or does not exist.
+                if let Ok(t) = group_text(i, md, src, n) {
+                    out.push_str(&t);
+                }
             }
-            Some(other) => {
-                out.push('\\');
-                out.push(other);
+            // GNU errors "Invalid use of `\\' in replacement text" for a
+            // trailing backslash or any other escaped char.
+            _ => {
+                return Err(err_sym(
+                    i,
+                    "error",
+                    vec![Value::string("Invalid use of `\\' in replacement text")],
+                ));
             }
         }
     }

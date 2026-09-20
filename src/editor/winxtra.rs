@@ -772,10 +772,14 @@ fn f_scroll_right(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 fn f_window_margins(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let w = win_of(i, &arg(&a, 0))?;
     let m = w.borrow().margins;
-    Ok(Value::cons(
-        Value::Int(m.0 as i128),
-        Value::Int(m.1 as i128),
-    ))
+    if m.0 == 0 && m.1 == 0 {
+        Ok(Value::Nil)
+    } else {
+        Ok(Value::cons(
+            Value::Int(m.0 as i128),
+            Value::Int(m.1 as i128),
+        ))
+    }
 }
 
 fn f_window_edges4(i: &mut Interp, a: Vec<Value>) -> EvalResult {

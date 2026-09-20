@@ -135,7 +135,7 @@ fn frame_params() {
 
 #[test]
 fn window_params_and_margins() {
-    assert_eq!(ev("(window-margins)"), "(0 . 0)");
+    assert_eq!(ev("(window-margins)"), "nil");
     assert_eq!(ev("(window-vscroll)"), "0");
     assert_eq!(ev("(window-has-parameters)"), "nil");
     assert_eq!(ev("(window-scroll-bars)"), "(0 0 0 nil)");
