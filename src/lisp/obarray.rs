@@ -209,6 +209,7 @@ impl Obarray {
         // `unbound` is an ordinary interned symbol and `boundp` doesn't
         // treat it specially — the real marker is internal.
         ob.map.remove("unbound");
+        ob.symbols[sym::UNBOUND as usize].uninterned = true;
         // nil and t are self-evaluating constants.
         ob.symbols[sym::NIL as usize].constant = true;
         ob.symbols[sym::NIL as usize].special = true;
@@ -297,9 +298,12 @@ impl Obarray {
         self.map.remove(name);
     }
 
-    /// Every symbol id (for `mapatoms`).
+    /// Every interned symbol id (for `mapatoms`); uninterned symbols
+    /// (gensyms, the `unbound` marker) are skipped like in Emacs.
     pub fn all_ids(&self) -> Vec<SymId> {
-        (0..self.symbols.len() as SymId).collect()
+        (0..self.symbols.len() as SymId)
+            .filter(|id| !self.symbols[*id as usize].uninterned)
+            .collect()
     }
 
     pub fn len(&self) -> usize {

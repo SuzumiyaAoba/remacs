@@ -1,6 +1,6 @@
 //! Type predicates and symbol-manipulation subrs.
 
-use super::{S, eq_values, equal_values, want_sym};
+use super::{S, eq_values, equal_values, want_int, want_sym};
 use crate::lisp::Interp;
 use crate::lisp::error::EvalResult;
 use crate::lisp::obarray::sym;
@@ -266,6 +266,7 @@ pub(crate) static SUBRS: &[Subr] = &[
         "Make a new obarray (stub: returns vector)."
     ),
     S!("obarrayp", 1, 1, f_obarrayp, "t if OBJECT is an obarray."),
+    S!("obarray-size", 1, 1, f_obarray_size, "Number of slots in OBARRAY."),
 ];
 
 fn f_eq(_i: &mut Interp, args: Vec<Value>) -> EvalResult {
@@ -673,15 +674,24 @@ fn f_function_put(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     Ok(args[2].clone())
 }
 fn f_obarray_make(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    let _ = i;
-    let _ = args;
-    // We have a single global obarray; return a placeholder.
+    // We have a single global obarray; a fresh one is an empty vector
+    // whose length honors the optional SIZE arg (GNU's bucket count).
+    let n = match args.first() {
+        Some(v) => want_int(i, v)?.max(0) as usize,
+        None => 0,
+    };
     Ok(Value::Vec(std::rc::Rc::new(std::cell::RefCell::new(
-        vec![],
+        vec![Value::Int(0); n],
     ))))
 }
 fn f_obarrayp(_i: &mut Interp, args: Vec<Value>) -> EvalResult {
     Ok(Value::from_bool(matches!(&args[0], Value::Vec(_))))
+}
+fn f_obarray_size(i: &mut Interp, args: Vec<Value>) -> EvalResult {
+    match &args[0] {
+        Value::Vec(v) => Ok(Value::Int(v.borrow().len() as i128)),
+        other => Err(i.wrong_type_mut("vectorp", other)),
+    }
 }
 /// Normalize a function definition for `fset`/`defalias`: `(macro . f)`
 /// becomes a macro Lambda when f is a lambda.

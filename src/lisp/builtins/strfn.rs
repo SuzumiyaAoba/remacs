@@ -884,11 +884,10 @@ fn f_string_join(i: &mut Interp, args: Vec<Value>) -> EvalResult {
 }
 fn f_split_string(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     let s = want_string(i, &args[0])?;
-    let sep = args
-        .get(1)
-        .map(|v| want_string(i, v))
-        .transpose()?
-        .unwrap_or_else(|| "[ \u{0C}\t\n\r\u{0B}]+".into());
+    let sep = match args.get(1) {
+        None | Some(Value::Nil) => "[ \u{0C}\t\n\r\u{0B}]+".into(),
+        Some(v) => want_string(i, v)?,
+    };
     let omit_nulls = args.get(2).map(|v| v.truthy()).unwrap_or(false);
     // If sep is a regex-ish, use our regexp engine; else literal split.
     let is_regex = sep.contains('\\')
