@@ -28,8 +28,15 @@ pub enum ProcIo {
         master_fd: i32,
         stderr: Option<std::process::ChildStderr>,
     },
-    /// An Emacs-internal pipe (self-connected).
-    Pipe { read_fd: i32, write_fd: i32 },
+    /// An Emacs-internal pipe. `read_fd` is polled for data a child
+    /// writes into `child_wfd` (used as a `:stderr` destination);
+    /// `sink_fd` swallows `process-send-string` output (GNU doesn't
+    /// loop it back).
+    Pipe {
+        read_fd: i32,
+        child_wfd: i32,
+        sink_fd: i32,
+    },
     /// A connected TCP stream.
     Net(std::net::TcpStream),
     /// A listening server socket.
@@ -91,6 +98,34 @@ impl Proc {
 fn want_proc(i: &mut Interp, v: &Value) -> Result<ProcessRef, Flow> {
     match v {
         Value::Process(p) => Ok(p.clone()),
+        // GNU's `get_process' accepts a process name string, and nil
+        // means the current buffer's process.
+        Value::Str(s) => {
+            let name = s.borrow().clone();
+            i.processes
+                .iter()
+                .find(|p| !p.borrow().dead && p.borrow().name == name)
+                .cloned()
+                .ok_or_else(|| i.wrong_type_mut("processp", v))
+        }
+        Value::Nil => {
+            let bid = i.current_buffer;
+            match i
+                .processes
+                .iter()
+                .find(|p| !p.borrow().dead && p.borrow().buffer == Some(bid))
+            {
+                Some(p) => Ok(p.clone()),
+                None => {
+                    let name = i
+                        .buffers
+                        .get(bid)
+                        .map(|b| b.borrow().name.clone())
+                        .unwrap_or_default();
+                    Err(i.error(format!("Buffer {} has no process", name)))
+                }
+            }
+        }
         _ => Err(i.wrong_type_mut("processp", v)),
     }
 }
@@ -260,9 +295,6 @@ fn poll_proc(i: &mut Interp, pref: &ProcessRef) -> Result<bool, Flow> {
     let mut events = Vec::new();
     {
         let mut p = pref.borrow_mut();
-        if let Some(s) = p.pending_status.take() {
-            p.status = s;
-        }
         match &mut p.io {
             ProcIo::Child {
                 child,
@@ -308,13 +340,20 @@ fn poll_proc(i: &mut Interp, pref: &ProcessRef) -> Result<bool, Flow> {
                     _ => {}
                 }
             }
-            ProcIo::Pipe { read_fd, .. } => {
+            ProcIo::Pipe { read_fd, child_wfd, .. } => {
                 let mut buf = [0u8; 8192];
                 loop {
                     let n = unsafe { libc::read(*read_fd, buf.as_mut_ptr() as *mut _, buf.len()) };
                     if n > 0 {
                         events.push(Ev::Out(buf[..n as usize].to_vec(), false));
                     } else {
+                        // EOF once every writer (a child's stderr dup)
+                        // is gone — GNU marks the pipe "closed".
+                        if n == 0 && *child_wfd < 0 && p.status != "closed" {
+                            p.status = "closed";
+                            p.exit_status = 0;
+                            events.push(Ev::Exit("finished", 0));
+                        }
                         break;
                     }
                 }
@@ -499,6 +538,7 @@ fn finish_setup(
     }
     if kw(i, args, ":stop").truthy() {
         p.start_stopped = true;
+        p.pending_status = Some(p.status);
         p.status = "stop";
     }
     let ct = kw(i, args, ":connection-type");
@@ -589,8 +629,15 @@ fn f_make_process(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         return Ok(Value::Process(pr));
     }
     // GNU merges stderr into the pty by default; a non-nil :stderr
-    // gives stderr its own pipe.
+    // gives stderr its own pipe. As a destination GNU accepts a buffer
+    // or a pipe process — anything else errors "Process is not a pipe
+    // process".
     let stderr_dest = kw(i, &args, ":stderr");
+    if let Value::Process(sp) = &stderr_dest {
+        if !matches!(sp.borrow().io, ProcIo::Pipe { .. }) {
+            return Err(i.error("Process is not a pipe process"));
+        }
+    }
     let split_stderr = stderr_dest.truthy();
     // GNU connects child processes through a pty: stdout/stdin share the
     // slave side, we keep the master.
@@ -608,8 +655,28 @@ fn f_make_process(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         } else {
             std::ffi::CStr::from_ptr(name).to_string_lossy().into_owned()
         };
+        // GNU puts the subprocess pty into a raw-ish mode: no echo, no
+        // canonical input, no output post-processing (so \n stays \n).
+        let mut tio: libc::termios = std::mem::zeroed();
+        if libc::tcgetattr(slave, &mut tio) == 0 {
+            tio.c_lflag &= !(libc::ECHO | libc::ICANON);
+            tio.c_oflag &= !libc::OPOST;
+            libc::tcsetattr(slave, libc::TCSANOW, &tio);
+        }
         (master, slave, name)
     };
+    // A pipe-process :stderr gets the pipe's write end dup'd straight
+    // onto the child's stderr (GNU wires the fd, it doesn't route
+    // bytes), then relinquishes the parent's copy.
+    let mut stderr_pipe_wfd: Option<i32> = None;
+    if let Value::Process(sp) = &stderr_dest {
+        let mut spb = sp.borrow_mut();
+        if let ProcIo::Pipe { child_wfd, .. } = &mut spb.io {
+            if *child_wfd >= 0 {
+                stderr_pipe_wfd = Some(std::mem::replace(child_wfd, -1));
+            }
+        }
+    }
     let mut command = std::process::Command::new(&cmd[0]);
     command.args(&cmd[1..]);
     {
@@ -619,7 +686,10 @@ fn f_make_process(i: &mut Interp, a: Vec<Value>) -> EvalResult {
             let out_f = std::fs::File::from_raw_fd(libc::dup(slave_fd));
             command.stdin(std::process::Stdio::from(in_f));
             command.stdout(std::process::Stdio::from(out_f));
-            if split_stderr {
+            if let Some(wfd) = stderr_pipe_wfd {
+                let err_f = std::fs::File::from_raw_fd(wfd);
+                command.stderr(std::process::Stdio::from(err_f));
+            } else if split_stderr {
                 command.stderr(std::process::Stdio::piped());
             } else {
                 let err_f = std::fs::File::from_raw_fd(libc::dup(slave_fd));
@@ -699,13 +769,16 @@ fn f_make_pipe_process(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         return Err(i.error("Cannot create pipe"));
     }
     nonblock_fd(fds[0]);
+    nonblock_fd(fds[1]);
     nonblock_fd(wfds[1]);
     let mut p = base_proc(name, "pipe", ProcIo::Pipe {
         read_fd: fds[0],
-        write_fd: wfds[1],
+        child_wfd: fds[1],
+        sink_fd: wfds[1],
     });
     p.status = "open";
-    p.contact = Value::t();
+    // GNU's `process-contact' returns the creation plist.
+    p.contact = args.clone();
     let pref = finish_setup(i, p, &args, false)?;
     i.processes.push(pref.clone());
     Ok(Value::Process(pref))
@@ -896,7 +969,10 @@ fn f_make_serial_process(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         nonblock_fd(fd);
     }
     let mut p = base_proc(name, "serial", ProcIo::Serial(file));
-    p.contact = Value::string(path);
+    // GNU serial status is "open"; contact is the creation plist, with
+    // (PORT SPEED) derived for the no-key form.
+    p.status = "open";
+    p.contact = args.clone();
     p.connection_type = symv(i, "serial");
     let pref = finish_setup(i, p, &args, false)?;
     if let Value::Int(speed) = kw(i, &args, ":speed") {
@@ -971,6 +1047,9 @@ fn f_get_process(i: &mut Interp, a: Vec<Value>) -> EvalResult {
             }
             Ok(Value::Nil)
         }
+        // GNU's `get_process' resolves nil to the current buffer's
+        // process, signalling "Buffer %s has no process" when none.
+        Value::Nil => want_proc(i, &a[0]).map(|p| Value::Process(p)),
         _ => Ok(Value::Nil),
     }
 }
@@ -1019,10 +1098,8 @@ fn f_list_processes(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 }
 
 fn f_process_name(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    match &a[0] {
-        Value::Process(p) => Ok(Value::string(p.borrow().name.clone())),
-        _ => Err(i.wrong_type_mut("processp", &a[0])),
-    }
+    let p = want_proc(i, &a[0])?;
+    Ok(Value::string(p.borrow().name.clone()))
 }
 
 fn f_process_buffer(i: &mut Interp, a: Vec<Value>) -> EvalResult {
@@ -1078,11 +1155,8 @@ fn f_process_id(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 fn f_process_status(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     // GNU reads the cached status — updated only by status notification
     // during waits (accept-process-output et al), not by this query.
-    if let Value::Process(p) = &a[0] {
-        let s = p.borrow().status;
-        return Ok(symv(i, s));
-    }
-    Err(i.wrong_type_mut("processp", &a[0]))
+    let p = want_proc(i, &a[0])?;
+    Ok(symv(i, p.borrow().status))
 }
 
 fn f_process_exit_status(i: &mut Interp, a: Vec<Value>) -> EvalResult {
@@ -1092,16 +1166,15 @@ fn f_process_exit_status(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 
 fn f_process_mark(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let p = want_proc(i, &a[0])?;
-    // GNU lazily creates the process buffer (named after the process)
-    // and the mark when they're missing.
+    // GNU lazily creates the mark in the current buffer when the
+    // process has none, and adopts that buffer as the process buffer.
     let bid = {
         let pb = p.borrow();
         match pb.buffer {
             Some(b) => Some(b),
             None => {
-                let name = pb.name.clone();
                 drop(pb);
-                let bid = i.buffers.create(&name);
+                let bid = i.current_buffer;
                 p.borrow_mut().buffer = Some(bid);
                 Some(bid)
             }
@@ -1135,12 +1208,21 @@ fn f_process_contact(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     }
     let key = a.get(1).cloned().unwrap_or(Value::Nil);
     match &key {
-        Value::Nil => {
+        Value::Nil => match kind {
             // (host service) list — :local for servers, :remote for clients.
-            let host = crate::lisp::eval::plist_get(&c, i.intern(":host"));
-            let service = crate::lisp::eval::plist_get(&c, i.intern(":service"));
-            Ok(Value::list(vec![host, service]))
-        }
+            "network" => {
+                let host = crate::lisp::eval::plist_get(&c, i.intern(":host"));
+                let service = crate::lisp::eval::plist_get(&c, i.intern(":service"));
+                Ok(Value::list(vec![host, service]))
+            }
+            // serial: (PORT SPEED)
+            "serial" => {
+                let port = crate::lisp::eval::plist_get(&c, i.intern(":port"));
+                let speed = crate::lisp::eval::plist_get(&c, i.intern(":speed"));
+                Ok(Value::list(vec![port, speed]))
+            }
+            _ => Ok(Value::Nil),
+        },
         Value::Sym(id) if i.symbol_name(*id) == "t" => Ok(c),
         Value::Sym(id) => {
             let v = crate::lisp::eval::plist_get(&c, *id);
@@ -1375,8 +1457,8 @@ fn proc_write(i: &mut Interp, p: &ProcessRef, bytes: &[u8]) -> EvalResult {
             let n = unsafe { libc::write(*master_fd, bytes.as_ptr() as *const _, bytes.len()) };
             if n < 0 { Err(()) } else { Ok(()) }
         }
-        ProcIo::Pipe { write_fd, .. } => {
-            let n = unsafe { libc::write(*write_fd, bytes.as_ptr() as *const _, bytes.len()) };
+        ProcIo::Pipe { sink_fd, .. } => {
+            let n = unsafe { libc::write(*sink_fd, bytes.as_ptr() as *const _, bytes.len()) };
             if n < 0 { Err(()) } else { Ok(()) }
         }
         ProcIo::Net(s) => s.write_all(bytes).map_err(|_| ()),
@@ -1419,9 +1501,9 @@ fn f_process_send_eof(i: &mut Interp, a: Vec<Value>) -> EvalResult {
             ProcIo::Child { master_fd, .. } => unsafe {
                 libc::write(*master_fd, b"\x04".as_ptr() as *const _, 1);
             },
-            ProcIo::Pipe { write_fd, .. } => unsafe {
-                libc::close(*write_fd);
-                *write_fd = -1;
+            ProcIo::Pipe { sink_fd, .. } => unsafe {
+                libc::close(*sink_fd);
+                *sink_fd = -1;
             },
             _ => {}
         }
@@ -1480,9 +1562,9 @@ fn signal_number(i: &mut Interp, v: &Value) -> Result<i32, Flow> {
 
 fn f_signal_process(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let pid = match &a[0] {
-        Value::Process(p) => p.borrow().pid,
         Value::Int(n) => *n as i32,
-        _ => return Err(i.wrong_type_mut("processp", &a[0])),
+        // GNU accepts a process object or a process name.
+        _ => want_proc(i, &a[0])?.borrow().pid,
     };
     let sig = signal_number(i, &a[1])?;
     let r = unsafe { libc::kill(pid, sig) };
@@ -1499,12 +1581,20 @@ fn signal_proc_arg(i: &mut Interp, a: &[Value], sig: i32) -> Result<ProcessRef, 
             .cloned()
             .ok_or_else(|| i.error("Current buffer has no process"))?,
     };
-    // GNU's signal functions only apply to real subprocesses; stop and
-    // continue are allowed on all live processes.
-    let is_child = matches!(target.borrow().io, ProcIo::Child { .. });
-    if !is_child && !matches!(sig, libc::SIGTSTP | libc::SIGCONT) {
-        let name = target.borrow().name.clone();
-        return Err(i.error(format!("Process {name} is not a subprocess")));
+    {
+        let pb = target.borrow();
+        // GNU: "Process %s is not active" on a dead/exited process.
+        if pb.dead || matches!(pb.status, "exit" | "signal" | "closed" | "failed") {
+            let name = pb.name.clone();
+            return Err(i.error(format!("Process {name} is not active")));
+        }
+        // GNU's signal functions only apply to real subprocesses; stop
+        // and continue are allowed on all live processes.
+        let is_child = matches!(pb.io, ProcIo::Child { .. });
+        if !is_child && !matches!(sig, libc::SIGTSTP | libc::SIGCONT) {
+            let name = pb.name.clone();
+            return Err(i.error(format!("Process {name} is not a subprocess")));
+        }
     }
     let pid = target.borrow().pid;
     if pid > 0 {
@@ -1525,15 +1615,24 @@ fn f_quit_process(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 }
 fn f_stop_process(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let p = signal_proc_arg(i, &a, libc::SIGTSTP)?;
-    // GNU updates the status only when the SIGCHLD notification
-    // is processed; immediate queries still see "run".
-    p.borrow_mut().pending_status = Some("stop");
-    Ok(Value::Process(p))
+    // GNU's `stop` status is flow-control for non-subprocesses; a real
+    // subprocess just gets SIGTSTP and stays "run".
+    let mut pb = p.borrow_mut();
+    if !matches!(pb.io, ProcIo::Child { .. }) {
+        pb.pending_status = Some(pb.status);
+        pb.status = "stop";
+    }
+    Ok(Value::Process(p.clone()))
 }
 fn f_continue_process(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let p = signal_proc_arg(i, &a, libc::SIGCONT)?;
-    p.borrow_mut().pending_status = Some("run");
-    Ok(Value::Process(p))
+    let mut pb = p.borrow_mut();
+    if !matches!(pb.io, ProcIo::Child { .. }) {
+        if let Some(prev) = pb.pending_status.take() {
+            pb.status = prev;
+        }
+    }
+    Ok(Value::Process(p.clone()))
 }
 
 fn f_delete_process(i: &mut Interp, a: Vec<Value>) -> EvalResult {
@@ -1549,10 +1648,15 @@ fn f_delete_process(i: &mut Interp, a: Vec<Value>) -> EvalResult {
                 pb.exit_status = libc::SIGKILL;
                 ("signal", libc::SIGKILL)
             }
-            ProcIo::Pipe { read_fd, write_fd } => {
+            ProcIo::Pipe { read_fd, child_wfd, sink_fd } => {
                 unsafe {
                     libc::close(*read_fd);
-                    libc::close(*write_fd);
+                    if *child_wfd >= 0 {
+                        libc::close(*child_wfd);
+                    }
+                    if *sink_fd >= 0 {
+                        libc::close(*sink_fd);
+                    }
                 }
                 pb.status = "closed";
                 ("deleted", 0)
@@ -1573,25 +1677,40 @@ fn f_delete_process(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 }
 
 fn f_process_running_child_p(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    // GNU: signal "Buffer %s has no process" when the buffer has none.
-    let bid = match &a[0] {
-        Value::Nil => i.current_buffer,
-        v => i.buffer_id_of(v).unwrap_or(i.current_buffer),
+    // GNU takes a PROCESS (default: the current buffer's process) and
+    // returns non-nil when its pty's foreground process group differs
+    // from the direct child — i.e. the child spawned grandchildren.
+    let p = match a.first().unwrap_or(&Value::Nil) {
+        Value::Nil => {
+            let bid = i.current_buffer;
+            match i
+                .processes
+                .iter()
+                .find(|p| !p.borrow().dead && p.borrow().buffer == Some(bid))
+            {
+                Some(p) => p.clone(),
+                None => {
+                    let name = i
+                        .buffers
+                        .get(bid)
+                        .map(|b| b.borrow().name.clone())
+                        .unwrap_or_default();
+                    return Err(i.error(format!("Buffer {} has no process", name)));
+                }
+            }
+        }
+        v => want_proc(i, v)?,
     };
-    let has = i
-        .processes
-        .iter()
-        .any(|p| !p.borrow().dead && p.borrow().buffer == Some(bid));
-    if has {
-        Ok(Value::Nil)
-    } else {
-        let name = i
-            .buffers
-            .get(bid)
-            .map(|b| b.borrow().name.clone())
-            .unwrap_or_default();
-        Err(i.error(format!("Buffer {} has no process", name)))
+    let pb = p.borrow();
+    if let ProcIo::Child { child, master_fd, .. } = &pb.io {
+        if pb.status == "run" || pb.status == "stop" {
+            let fg = unsafe { libc::tcgetpgrp(*master_fd) };
+            if fg > 0 && fg != child.id() as i32 {
+                return Ok(Value::Int(fg as i128));
+            }
+        }
     }
+    Ok(Value::Nil)
 }
 
 fn f_internal_default_process_filter(i: &mut Interp, a: Vec<Value>) -> EvalResult {
