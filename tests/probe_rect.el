@@ -75,3 +75,50 @@
   (let ((hits nil))
     (operate-on-rectangle (lambda (sp be ee) (push (list sp be ee (point)) hits)) 6 15 t)
     (princ (format "opont=%s\n" (nreverse hits)))))
+
+;; --- error paths and edge branches ---
+(with-current-buffer "*r*"
+  (erase-buffer) (insert "ab\ncd\n")
+  (princ (format "e1=%s\n" (condition-case x (string-rectangle 1 4 7) (error x))))
+  (princ (format "e2=%s\n" (condition-case x (string-insert-rectangle 1 4 'sym) (error x))))
+  (princ (format "e3=%s\n" (condition-case x (rectangle-number-lines 1 4 "x") (error x))))
+  (princ (format "e4=%s\n" (condition-case x (rectangle-intersect-p 1 '(1 . 1) '(0 . 0) '(1 . 1)) (error x))))
+  (princ (format "e5=%s\n" (condition-case x (rectangle-intersect-p '(a . 1) '(1 . 1) '(0 . 0) '(1 . 1)) (error x))))
+  (princ (format "e6=%s\n" (condition-case x (rectangle-intersect-p '(0 . 0) 'bad '(0 . 0) '(1 . 1)) (error x))))
+  (princ (format "e7=%s\n" (condition-case x (spaces-string 's) (error x))))
+  ;; yank with nil killed-rectangle
+  (let ((killed-rectangle nil)) (princ (format "yn=%s\n" (yank-rectangle))))
+  ;; insert-rectangle directly + non-list
+  (goto-char 1) (insert-rectangle '("X" "Y"))
+  (princ (format "insr=<%s>\n" (buffer-string)))
+  ;; aliases
+  (erase-buffer) (insert "ab   cd\n")
+  (close-rectangle 3 8)
+  (princ (format "close=<%s>\n" (buffer-string)))
+  (erase-buffer) (insert "ab\ncd\n")
+  (replace-rectangle 1 4 "ZZ")
+  (princ (format "repl=<%s>\n" (buffer-string)))
+  ;; clear/open/delete with fill on short lines
+  (erase-buffer) (insert "x\nabcdefgh\nyz\n")
+  (open-rectangle 6 15 t)
+  (princ (format "opnfill=<%s>\n" (buffer-string)))
+  (erase-buffer) (insert "x\nabcdefgh\nyz\n")
+  (delete-rectangle 6 15 t)
+  (princ (format "delfill=<%s>\n" (buffer-string)))
+  (erase-buffer) (insert "x\nabcdefgh\nyz\n")
+  (clear-rectangle 6 15 t)
+  (princ (format "clrfill=<%s>\n" (buffer-string)))
+  ;; copy-rectangle-as-kill + yank roundtrip on odd cols
+  (erase-buffer) (insert "abcdef\nghijkl\n")
+  (copy-rectangle-as-kill 2 9)
+  (princ (format "copykr=%s\n" killed-rectangle))
+  ;; delete-whitespace with fill on short line
+  (erase-buffer) (insert "a\nbcdef\n")
+  (delete-whitespace-rectangle 3 8 t)
+  (princ (format "dwsfill=<%s>\n" (buffer-string)))
+  ;; rectangle-number-lines without format (default width grows)
+  (erase-buffer) (insert "p\nq\nr\ns\nt\nu\nv\nw\nx\ny\nz\n")
+  (princ (format "numerr=%s\n" (condition-case x (rectangle-number-lines 1 30 5) (error x))))
+  (erase-buffer) (insert "p\nq\nr\ns\nt\nu\nv\nw\nx\ny\nz\n")
+  (rectangle-number-lines 1 23 5)
+  (princ (format "numwide=<%s>\n" (buffer-string))))

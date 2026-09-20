@@ -3755,15 +3755,22 @@ fn rect_apply(
     check_writable(i)?;
     let (sl, hi, c0, c1, tab) = rect_line_range(i, a)?;
     let b = cur(i);
+    let orig = b.borrow().point();
+    let mut final_point = orig;
     for ln in sl..=hi {
         let (ls, le) = {
             let bb = b.borrow();
             let ls = bb.text.line_start(ln);
             (ls, bb.text.line_end(ls))
         };
-        f(&mut b.borrow_mut(), ls, le, c0, c1, tab)?;
+        let mut bb = b.borrow_mut();
+        f(&mut bb, ls, le, c0, c1, tab)?;
+        final_point = bb.point();
     }
-    Ok(Value::Nil)
+    // GNU wraps apply-on-rectangle in save-excursion.
+    let restore = orig.min(b.borrow().text.len());
+    b.borrow_mut().set_point(restore);
+    Ok(Value::Int(final_point as i128 + 1))
 }
 
 /// GNU delete-rectangle-line; returns the position of column SC.
@@ -3892,7 +3899,8 @@ fn f_copy_rectangle_as_kill(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 fn f_delete_rectangle(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let fill = a.get(2).map(|v| v.truthy()).unwrap_or(false);
     rect_apply(i, &a, |bb, ls, le, c0, c1, tab| {
-        rect_delete_line(bb, ls, le, c0, c1, fill, tab);
+        let p0 = rect_delete_line(bb, ls, le, c0, c1, fill, tab);
+        bb.set_point(p0);
         Ok(())
     })
 }
@@ -3906,6 +3914,7 @@ fn f_clear_rectangle(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         if reached == c0 {
             if !fill && eol_col <= c1 {
                 bb.delete_region(p0, le);
+                bb.set_point(p0);
             } else {
                 let le2 = bb.text.line_end(ls);
                 let (p1, _) = rect_move_to(bb, ls, le2, c1, tab, RectForce::T);
@@ -3913,6 +3922,9 @@ fn f_clear_rectangle(i: &mut Interp, a: Vec<Value>) -> EvalResult {
                 let cur = rect_col_at(&bb.text, ls, p0, tab);
                 if c1 > cur {
                     bb.insert_at(p0, &" ".repeat((c1 - cur) as usize));
+                    bb.set_point(p0 + (c1 - cur) as usize);
+                } else {
+                    bb.set_point(p0);
                 }
             }
         }
@@ -3930,6 +3942,7 @@ fn f_open_rectangle(i: &mut Interp, a: Vec<Value>) -> EvalResult {
             if c1 > cur {
                 bb.insert_at(p0, &" ".repeat((c1 - cur) as usize));
             }
+            bb.set_point(p0 + (c1 - cur).max(0) as usize);
         }
         Ok(())
     })
@@ -3948,6 +3961,7 @@ fn f_delete_whitespace_rectangle(i: &mut Interp, a: Vec<Value>) -> EvalResult {
             if p1 > p0 {
                 bb.delete_region(p0, p1);
             }
+            bb.set_point(p0);
         }
         Ok(())
     })
@@ -3964,23 +3978,30 @@ fn rect_string_lines(i: &mut Interp, a: &[Value], s: &str, delete: bool) -> Eval
             rect_move_to(bb, ls, le2, c0, tab, RectForce::Nil).0
         };
         bb.insert_at(p0, s);
+        bb.set_point(p0 + s.chars().count());
         Ok(())
     })
 }
 
+/// GNU accepts a char-or-string for the rectangle text (insert handles
+/// both): an integer inserts as that character.
+fn rect_string_arg(i: &mut Interp, v: &Value) -> Result<String, Flow> {
+    match v {
+        Value::Str(s) => Ok(s.borrow().clone()),
+        Value::Int(n) => char::from_u32(*n as u32)
+            .map(|c| c.to_string())
+            .ok_or_else(|| i.wrong_type_mut("char-or-string-p", v)),
+        other => Err(i.wrong_type_mut("char-or-string-p", other)),
+    }
+}
+
 fn f_string_rectangle(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let s = match &a[2] {
-        Value::Str(s) => s.borrow().clone(),
-        other => return Err(i.wrong_type_mut("stringp", other)),
-    };
+    let s = rect_string_arg(i, &a[2])?;
     rect_string_lines(i, &a, &s, true)
 }
 
 fn f_string_insert_rectangle(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let s = match &a[2] {
-        Value::Str(s) => s.borrow().clone(),
-        other => return Err(i.wrong_type_mut("stringp", other)),
-    };
+    let s = rect_string_arg(i, &a[2])?;
     rect_string_lines(i, &a, &s, false)
 }
 
@@ -3989,10 +4010,11 @@ fn f_string_insert_rectangle(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 /// column (coerced with `t`), creating lines at EOF.
 fn rect_insert_segs(i: &mut Interp, segs: Vec<String>) -> EvalResult {
     check_writable(i)?;
+    // GNU pushes the mark at the upper-left corner unconditionally.
+    f_push_mark(i, vec![])?;
     if segs.is_empty() {
         return Ok(Value::Nil);
     }
-    f_push_mark(i, vec![])?; // GNU pushes the mark at the upper-left corner
     let tab = rect_tab_width(i);
     let b = cur(i);
     let mut bb = b.borrow_mut();
@@ -4096,24 +4118,32 @@ fn rect_format(fmt: &str, n: i128) -> String {
 fn f_rectangle_number_lines(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let start_at = match &a[2] {
         Value::Int(n) => *n,
+        Value::Marker(m) => m.borrow().position as i128 + 1,
         Value::Nil => 1,
-        other => return Err(i.wrong_type_mut("integerp", other)),
+        other => return Err(i.wrong_type_mut("number-or-marker-p", other)),
     };
     let (sl, hi, c0, _c1, _tab) = rect_line_range(i, &a)?;
     let fmt = match a.get(3) {
         Some(Value::Str(s)) => s.borrow().clone(),
         _ => {
-            // "%Nd " where N = width of (count-lines + start-at).
-            let w = ((hi - sl) as i128 + start_at).to_string().len();
+            // GNU: "%Nd ", N = width of (count-lines start end) + start-at.
+            // count-lines signals args-out-of-range on out-of-bounds pos.
+            let nlines = match f_count_lines(i, vec![a[0].clone(), a[1].clone()])? {
+                Value::Int(n) => n,
+                _ => 0,
+            };
+            let w = (nlines + start_at).to_string().len();
             format!("%{}d ", w)
         }
     };
+    let _ = (sl, hi);
     let mut n = start_at;
     rect_apply(i, &a, |bb, ls, le, c0, _c1, tab| {
         let (p0, _) = rect_move_to(bb, ls, le, c0, tab, RectForce::T);
         let s = rect_format(&fmt, n);
         n += 1;
         bb.insert_at(p0, &s);
+        bb.set_point(p0 + s.len());
         Ok(())
     })?;
     let _ = (sl, hi, c0);
@@ -4122,8 +4152,12 @@ fn f_rectangle_number_lines(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 
 
 fn f_spaces_string(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let n = want_int(i, &a[0])?.max(0) as usize;
-    Ok(Value::string(" ".repeat(n)))
+    let n = match &a[0] {
+        Value::Int(n) => *n,
+        Value::Marker(m) => m.borrow().position as i128 + 1,
+        other => return Err(i.wrong_type_mut("number-or-marker-p", other)),
+    };
+    Ok(Value::string(" ".repeat(n.max(0) as usize)))
 }
 
 fn f_rectangle_dimensions(i: &mut Interp, a: Vec<Value>) -> EvalResult {
@@ -4153,22 +4187,22 @@ fn f_rectangle_position_as_coordinates(i: &mut Interp, a: Vec<Value>) -> EvalRes
 }
 
 fn f_rectangle_intersect_p(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let mut get = |v: &Value, what: &str| -> Result<(i128, i128), Flow> {
+    let mut get = |v: &Value, _what: &str| -> Result<(i128, i128), Flow> {
         match v {
             Value::Cons(c) => {
                 let cb = c.borrow();
                 match (cb.car.int(), cb.cdr.int()) {
                     (Some(x), Some(y)) => Ok((x, y)),
-                    _ => Err(i.wrong_type_mut("integerp", v)),
+                    _ => Err(i.wrong_type_mut("number-or-marker-p", &cb.car)),
                 }
             }
-            other => Err(i.wrong_type_mut(what, other)),
+            other => Err(i.wrong_type_mut("listp", other)),
         }
     };
-    let (x1, y1) = get(&a[0], "consp")?;
-    let (w1, h1) = get(&a[1], "consp")?;
-    let (x2, y2) = get(&a[2], "consp")?;
-    let (w2, h2) = get(&a[3], "consp")?;
+    let (x1, y1) = get(&a[0], "listp")?;
+    let (w1, h1) = get(&a[1], "listp")?;
+    let (x2, y2) = get(&a[2], "listp")?;
+    let (w2, h2) = get(&a[3], "listp")?;
     Ok(Value::from_bool(!(x1 + w1 <= x2 || x2 + w2 <= x1 || y1 + h1 <= y2 || y2 + h2 <= y1)))
 }
 
