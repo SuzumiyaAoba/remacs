@@ -1,7 +1,7 @@
 //! Tests for the misc subrs (src/lisp/builtins/misc.rs).
 
 mod common;
-use common::{ev, ev_err, ev_result};
+use common::ev;
 
 #[test]
 fn make_string() {

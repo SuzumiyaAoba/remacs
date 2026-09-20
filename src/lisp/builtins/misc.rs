@@ -443,7 +443,7 @@ pub(crate) static SUBRS: &[Subr] = &[
         f_memory_limit,
         "Most-positive-fixnum."
     ),
-    S!("help-function-arglist", 1, 1, f_help_function_arglist, ""),
+    S!("help-function-arglist", 1, 2, f_help_function_arglist, ""),
     S!("function-documentation", 1, 1, f_function_documentation, ""),
     S!("command-error-default-function", 3, 3, f_nil, ""),
     S!("command-line", 0, 0, f_nil, ""),
@@ -1653,18 +1653,36 @@ fn f_buffer_hash(i: &mut Interp, args: Vec<Value>) -> EvalResult {
 
 fn f_make_temp_file_internal(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     let prefix = want_string(i, &args[0])?;
+    let dir_flag = !arg(&args, 1).is_nil();
+    let suffix = match arg(&args, 2) {
+        Value::Str(s) => s.borrow().clone(),
+        _ => String::new(),
+    };
+    let text = match arg(&args, 3) {
+        Value::Str(s) => s.borrow().clone(),
+        _ => String::new(),
+    };
     let dir = std::env::temp_dir();
     for n in 0..1000u32 {
         let cand = dir.join(format!(
-            "{}{}",
+            "{}{}{}",
             prefix,
             if n == 0 {
                 random_suffix()
             } else {
                 format!("{}{}", random_suffix(), n)
-            }
+            },
+            suffix
         ));
-        match std::fs::File::create_new(&cand) {
+        let res = if dir_flag {
+            std::fs::create_dir(&cand)
+        } else {
+            std::fs::File::create_new(&cand).map(|mut f| {
+                use std::io::Write;
+                let _ = f.write_all(text.as_bytes());
+            })
+        };
+        match res {
             Ok(_) => return Ok(Value::string(cand.to_string_lossy().to_string())),
             Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
             Err(e) => {

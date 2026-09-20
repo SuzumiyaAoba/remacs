@@ -1,7 +1,7 @@
 //! Core evaluator semantics + prelude macros.
 
 mod common;
-use common::{ev, ev_err, ev_out, ev_result};
+use common::{ev, ev_err, ev_out};
 
 #[test]
 fn arith() {

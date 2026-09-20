@@ -37,3 +37,7 @@ probe!(probe_editor_branches, "probe_editor5.el");
 probe!(probe_editor_deep, "probe_editor3.el");
 probe!(probe_uncovered_subrs, "probe_gap.el");
 probe!(probe_lisp_edges, "probe_lisp3.el");
+probe!(probe_editor_kill_files, "probe_editor6.el");
+probe!(probe_buffer_motion, "probe_buffer5.el");
+probe!(probe_misc_builtins3, "probe_misc4.el");
+probe!(probe_eval_branches, "probe_eval3.el");

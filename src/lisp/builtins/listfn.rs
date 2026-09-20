@@ -362,6 +362,15 @@ fn f_length(i: &mut Interp, args: Vec<Value>) -> EvalResult {
         }
         Value::Str(s) => Ok(Value::Int(s.borrow().chars().count() as i128)),
         Value::Vec(v) => Ok(Value::Int(v.borrow().len() as i128)),
+        other if crate::lisp::builtins::misc::is_bool_vector(i, other) => {
+            // Bool-vectors are sequences of bit length.
+            if let Value::Record(r) = other {
+                if let Some(Value::Vec(b)) = r.borrow().get(1) {
+                    return Ok(Value::Int(b.borrow().len() as i128));
+                }
+            }
+            Ok(Value::Int(0))
+        }
         other => Err(i.wrong_type_mut("sequencep", other)),
     }
 }

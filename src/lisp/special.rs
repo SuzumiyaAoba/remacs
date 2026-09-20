@@ -734,28 +734,22 @@ pub fn backquote_expand(i: &mut Interp, v: &Value, depth: usize) -> Value {
             Value::list(vec![Value::Sym(i.intern("cons")), a_exp, d_exp])
         }
         Value::Vec(items) => {
-            // `[a ,b ,@c] -> (vconcat [...] x [...])
+            // `[a ,b ,@c] -> (vconcat (vector 'a b) c ...)
+            // `,x' inside a vector contributes one element; `,@x' splices.
             let parts: Vec<Value> = items.borrow().clone();
             let mut segments: Vec<Value> = Vec::new();
             let mut cur_list: Vec<Value> = Vec::new();
             for p in parts {
-                if let Some(inner) = comma_at_inner(i, &p) {
-                    if !cur_list.is_empty() {
-                        let lit = Value::Vec(Rc::new(RefCell::new(cur_list.clone())));
-                        let exp = backquote_expand(i, &lit, depth);
-                        segments.push(exp);
-                        cur_list.clear();
+                if depth == 0 {
+                    if let Some(inner) = comma_at_inner(i, &p) {
+                        flush_vec_segment(i, &mut cur_list, &mut segments, depth);
+                        segments.push(inner);
+                        continue;
                     }
-                    segments.push(inner);
-                } else {
-                    cur_list.push(p);
                 }
+                cur_list.push(p);
             }
-            if !cur_list.is_empty() {
-                let lit = Value::Vec(Rc::new(RefCell::new(cur_list.clone())));
-                let exp = backquote_expand(i, &lit, depth);
-                segments.push(exp);
-            }
+            flush_vec_segment(i, &mut cur_list, &mut segments, depth);
             if segments.len() == 1 {
                 return segments.pop().unwrap();
             }
@@ -765,6 +759,23 @@ pub fn backquote_expand(i: &mut Interp, v: &Value, depth: usize) -> Value {
         }
         _ => Value::list(vec![Value::Sym(sym::QUOTE), v.clone()]),
     }
+}
+
+/// Flush accumulated vector elements into `(vector e1' e2' ...)`.
+fn flush_vec_segment(
+    i: &mut Interp,
+    cur: &mut Vec<Value>,
+    segs: &mut Vec<Value>,
+    depth: usize,
+) {
+    if cur.is_empty() {
+        return;
+    }
+    let mut form = vec![Value::Sym(i.intern("vector"))];
+    for e in cur.drain(..) {
+        form.push(backquote_expand(i, &e, depth));
+    }
+    segs.push(Value::list(form));
 }
 
 /// Expand the cdr of a backquoted list. At depth 0 a `(\, x)`/`(\,@ x)`

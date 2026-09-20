@@ -1,7 +1,7 @@
 //! Tests for window/frame primitives (src/editor/{mod,winxtra}.rs).
 
 mod common;
-use common::{ev, ev_out};
+use common::ev;
 
 #[test]
 fn window_basics() {

@@ -72,6 +72,13 @@ pub(crate) static SUBRS: &[Subr] = &[
         "Replace all REGEXP matches with TO."
     ),
     S!(
+        "replace-regexp-in-string",
+        3,
+        7,
+        f_replace_regexp_in_string,
+        "Replace REGEXP matches in STRING."
+    ),
+    S!(
         "transpose-regions",
         4,
         5,
@@ -525,34 +532,7 @@ fn f_replace_regexp(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     while let Some(regs) = crate::lisp::regexp::search_full(&re, &region, pos) {
         let (ms, me) = (regs[0].unwrap_or(0), regs[1].unwrap_or(0));
         out.extend(&region[pos..ms]);
-        // Expand \1..\9 and \& in the replacement.
-        let mut tc = to.chars().peekable();
-        while let Some(c) = tc.next() {
-            if c == '\\' {
-                match tc.next() {
-                    Some(d @ '1'..='9') => {
-                        let g = (d as usize) - ('0' as usize);
-                        if let (Some(gs), Some(ge)) = (
-                            regs.get(2 * g).copied().flatten(),
-                            regs.get(2 * g + 1).copied().flatten(),
-                        ) {
-                            out.extend(&region[gs..ge]);
-                        }
-                    }
-                    Some('&') => out.extend(&region[ms..me]),
-                    Some('n') => out.push('\n'),
-                    Some(other) => {
-                        out.push('\\');
-                        out.push(other);
-                    }
-                    None => out.push('\\'),
-                }
-            } else if c == '&' && false {
-                // bare & only in old-style replace-string
-            } else {
-                out.push(c);
-            }
-        }
+        expand_rep(&to, &regs, &region, &mut out, false);
         pos = if me > ms { me } else { me + 1 };
         n += 1;
         if pos > region.len() || n > 1_000_000 {
@@ -563,6 +543,104 @@ fn f_replace_regexp(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     bb.delete_region(s, e);
     bb.insert_at(s, &out);
     Ok(Value::Nil)
+}
+
+/// Expand `\1..\9' and `\&' in REP against match registers REGS over
+/// REGION, appending to OUT. LITERAL inserts REP unchanged.
+fn expand_rep(
+    rep: &str,
+    regs: &[Option<usize>],
+    region: &[char],
+    out: &mut String,
+    literal: bool,
+) {
+    if literal {
+        out.push_str(rep);
+        return;
+    }
+    let (ms, me) = (regs[0].unwrap_or(0), regs[1].unwrap_or(0));
+    let mut tc = rep.chars().peekable();
+    while let Some(c) = tc.next() {
+        if c == '\\' {
+            match tc.next() {
+                Some(d @ '1'..='9') => {
+                    let g = (d as usize) - ('0' as usize);
+                    if let (Some(gs), Some(ge)) = (
+                        regs.get(2 * g).copied().flatten(),
+                        regs.get(2 * g + 1).copied().flatten(),
+                    ) {
+                        out.extend(&region[gs..ge]);
+                    }
+                }
+                Some('&') => out.extend(&region[ms..me]),
+                Some('n') => out.push('\n'),
+                Some(other) => {
+                    out.push('\\');
+                    out.push(other);
+                }
+                None => out.push('\\'),
+            }
+        } else {
+            out.push(c);
+        }
+    }
+}
+
+fn f_replace_regexp_in_string(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let pat = want_string(i, &a[0])?;
+    let rep = want_string(i, &a[1])?;
+    let s = want_string(i, &a[2])?;
+    let literal = !arg(&a, 4).is_nil();
+    let subexp = match arg(&a, 5) {
+        Value::Int(n) => n.max(0) as usize,
+        _ => 0,
+    };
+    let chars: Vec<char> = s.chars().collect();
+    let start = match arg(&a, 6) {
+        Value::Int(n) => n.max(0) as usize,
+        _ => 0,
+    };
+    if start > chars.len() {
+        let e = i.intern("args-out-of-range");
+        return Err(i.signal_data(
+            e,
+            vec![Value::string(s.clone()), Value::Int(start as i128)],
+        ));
+    }
+    let case_fold = i
+        .symbol_value(i.intern_soft("case-fold-search").unwrap_or(0))
+        .truthy();
+    let re = crate::lisp::regexp::compile_case(&pat, case_fold)
+        .map_err(|e| err_sym(i, "invalid-regexp", vec![Value::string(e.0)]))?;
+    let mut out: String = chars[..start].iter().collect();
+    let mut pos = start;
+    let mut n = 0usize;
+    while let Some(regs) = crate::lisp::regexp::search_full(&re, &chars, pos) {
+        let (ms, me) = (regs[0].unwrap_or(0), regs[1].unwrap_or(0));
+        out.extend(&chars[pos..ms]);
+        if subexp > 0 {
+            // Replace only the SUBEXP group inside the match.
+            if let (Some(gs), Some(ge)) = (
+                regs.get(2 * subexp).copied().flatten(),
+                regs.get(2 * subexp + 1).copied().flatten(),
+            ) {
+                out.extend(&chars[ms..gs]);
+                expand_rep(&rep, &regs, &chars, &mut out, literal);
+                out.extend(&chars[ge..me]);
+            } else {
+                out.extend(&chars[ms..me]);
+            }
+        } else {
+            expand_rep(&rep, &regs, &chars, &mut out, literal);
+        }
+        pos = if me > ms { me } else { me + 1 };
+        n += 1;
+        if pos > chars.len() || n > 1_000_000 {
+            break;
+        }
+    }
+    out.extend(&chars[pos.min(chars.len())..]);
+    Ok(Value::string(out))
 }
 
 fn f_transpose_regions(i: &mut Interp, a: Vec<Value>) -> EvalResult {
@@ -696,6 +774,11 @@ fn f_buffer_swap_text(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         other => return Err(i.wrong_type_mut("bufferp", other)),
     };
     let cur_b = cur(i);
+    // Swapping a buffer with itself is a no-op (and avoids a double
+    // borrow_mut on the same RefCell).
+    if std::rc::Rc::ptr_eq(&cur_b, &other) {
+        return Ok(Value::Nil);
+    }
     let (mut mine, mut theirs) = (cur_b.borrow_mut(), other.borrow_mut());
     std::mem::swap(&mut mine.text, &mut theirs.text);
     std::mem::swap(&mut mine.begv, &mut theirs.begv);

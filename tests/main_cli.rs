@@ -142,3 +142,54 @@ fn quit_flow_via_throw() {
     assert_eq!(code, 0);
     let _ = e;
 }
+
+/// Drive the real interactive loop through a pseudo-terminal (the
+/// `script` utility allocates one). Types text, runs M-x, searches
+/// with isearch, then quits with C-x C-c. Skipped when `script` is
+/// unavailable.
+#[test]
+fn pty_editor_smoke() {
+    let script = match Command::new("script")
+        .args(["-q", "/dev/null", "true"])
+        .output()
+    {
+        Ok(_) => true,
+        Err(_) => false,
+    };
+    if !script {
+        eprintln!("skipping: `script` unavailable");
+        return;
+    }
+    let mut cmd = Command::new("script");
+    cmd.args(["-q", "/dev/null", env!("CARGO_BIN_EXE_remacs")])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null());
+    let mut child = cmd.spawn().expect("spawn script");
+    let mut stdin = child.stdin.take().unwrap();
+    let keys: Vec<&[u8]> = vec![
+        b"hello",
+        b"\x15\x35z",              // C-u 5 z (universal/digit-argument path)
+        b"\x182",                  // C-x 2 (split-window-below)
+        b"\x18o",                  // C-x o (other-window)
+        b"\x18bbb\r",              // C-x b bb RET (switch-to-buffer)
+        b"\x1b:(+ 1 2)\r",         // M-: eval-expression
+        b"\x13el\r",               // C-s el RET (isearch)
+        b"\x07",                   // C-g
+        b"\x1bxdescribe-bindings\r", // M-x describe-bindings RET
+        b"\x18\x03",               // C-x C-c
+    ];
+    for k in keys {
+        stdin.write_all(k).unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(150));
+    }
+    drop(stdin);
+    let out = child.wait_with_output().unwrap();
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        text.contains("scratch"),
+        "expected a rendered frame, got: {}",
+        &text[..text.len().min(400)]
+    );
+    assert!(out.status.success());
+}

@@ -808,6 +808,8 @@ pub(crate) static SUBRS: &[Subr] = &[
     ),
     S!("posix-looking-at", 1, 1, f_looking_at, ""),
     S!("posix-string-match", 2, 3, f_string_match, ""),
+    S!("posix-search-forward", 1, 4, f_re_search_forward, ""),
+    S!("posix-search-backward", 1, 4, f_re_search_backward, ""),
     S!("word-search-forward", 1, 4, f_search_forward, ""),
     S!("word-search-backward", 1, 4, f_search_backward, ""),
     // --- text properties ---
@@ -2712,6 +2714,10 @@ pub(crate) fn push_kill_ring(i: &mut Interp, s: String) {
         .unwrap_or(120) as usize;
     items.truncate(max);
     i.obarray.symbol_mut(kr).value = Value::list(items);
+    // GNU resets the yank pointer to the ring head on each kill.
+    let ring = i.symbol_value(kr);
+    let ptr = i.intern("kill-ring-yank-pointer");
+    let _ = i.set_symbol(ptr, ring);
 }
 
 fn f_append_next_kill(i: &mut Interp, _a: Vec<Value>) -> EvalResult {

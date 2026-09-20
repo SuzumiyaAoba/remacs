@@ -847,7 +847,7 @@ mod tests {
     #[test]
     fn render_draws_buffer_and_mode_line() {
         let (mut t, out) = test_term(80, 25);
-        let mut i = interp_with_frame("hello\nworld");
+        let i = interp_with_frame("hello\nworld");
         t.render(&i).unwrap();
         let s = String::from_utf8_lossy(&out.borrow()).to_string();
         assert!(s.contains("hello"), "render should show buffer text");

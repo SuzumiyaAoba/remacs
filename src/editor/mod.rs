@@ -10,6 +10,7 @@ use std::rc::Rc;
 
 use crate::lisp::Interp;
 use crate::lisp::builtins::eq_values;
+use crate::lisp::builtins::listfn::nthcdr_of;
 use crate::lisp::error::{EvalResult, Flow};
 use crate::lisp::obarray::sym;
 use crate::lisp::value::{Subr, SymId, Value};
@@ -3717,34 +3718,49 @@ fn f_kill_append(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     Ok(Value::Nil)
 }
 
+/// Position of `kill-ring-yank-pointer' inside `kill-ring': the pointer
+/// is a tail cons of the ring (as in GNU), located by identity.
+fn yank_ptr_pos(i: &Interp, ring: &Value, len: usize) -> usize {
+    let ptr = i.symbol_value(i.intern_soft("kill-ring-yank-pointer").unwrap_or(0));
+    if !matches!(ptr, Value::Cons(_)) {
+        return 0;
+    }
+    let mut tail = ring.clone();
+    for idx in 0..len {
+        if eq_values(&tail, &ptr) {
+            return idx;
+        }
+        tail = nthcdr_of(&tail, 1);
+        if !matches!(tail, Value::Cons(_)) {
+            break;
+        }
+    }
+    0
+}
+
+/// Move `kill-ring-yank-pointer' to the tail at `pos'.
+fn set_yank_ptr(i: &mut Interp, ring: &Value, pos: usize) {
+    let new_ptr = nthcdr_of(ring, pos);
+    let ptrsym = i.intern("kill-ring-yank-pointer");
+    let _ = i.set_symbol(ptrsym, new_ptr);
+}
+
 fn f_current_kill(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let n = want_int(i, &a[0])?.max(0) as usize;
+    let n = want_int(i, &a[0])?;
+    let do_not_move = !arg(&a, 1).is_nil();
     let kr = i.intern("kill-ring");
-    let items = i.symbol_value(kr).list_to_vec().unwrap_or_default();
+    let ring = i.symbol_value(kr);
+    let items = ring.list_to_vec().unwrap_or_default();
     if items.is_empty() {
         return Err(i.error("Kill ring is empty"));
     }
-    // honor kill-ring-yank-pointer rotation
-    let ptr = i.symbol_value(i.intern_soft("kill-ring-yank-pointer").unwrap_or(0));
-    let mut ordered = items.clone();
-    if let Value::Cons(_) = ptr {
-        let offset = items
-            .iter()
-            .position(|x| {
-                eq_values(
-                    x,
-                    &ptr.list_to_vec()
-                        .unwrap_or_default()
-                        .first()
-                        .cloned()
-                        .unwrap_or(Value::Nil),
-                )
-            })
-            .unwrap_or(0);
-        ordered.rotate_left(offset);
+    let len = items.len();
+    let base = yank_ptr_pos(i, &ring, len);
+    let pos = (((base as i128 + n) % len as i128) + len as i128) as usize % len;
+    if !do_not_move {
+        set_yank_ptr(i, &ring, pos);
     }
-    let idx = n % ordered.len();
-    match &ordered[idx] {
+    match &items[pos] {
         Value::Str(s) => Ok(Value::string(s.borrow().clone())),
         other => Ok(other.clone()),
     }
@@ -3767,13 +3783,19 @@ fn f_copy_region_as_kill(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 }
 
 fn f_yank(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let n = arg(&a, 0).int().unwrap_or(1).max(1) as usize;
+    let n = arg(&a, 0).int().unwrap_or(1);
     let kr = i.intern("kill-ring");
-    let items = i.symbol_value(kr).list_to_vec().unwrap_or_default();
+    let ring = i.symbol_value(kr);
+    let items = ring.list_to_vec().unwrap_or_default();
     if items.is_empty() {
         return Err(i.error("Kill ring is empty"));
     }
-    let s = match &items[(n - 1) % items.len()] {
+    let len = items.len();
+    // GNU: yank N = current-kill (N-1) then insert at the new pointer.
+    let base = yank_ptr_pos(i, &ring, len);
+    let pos = (((base as i128 + n - 1) % len as i128) + len as i128) as usize % len;
+    set_yank_ptr(i, &ring, pos);
+    let s = match &items[pos] {
         Value::Str(s) => s.borrow().clone(),
         _ => String::new(),
     };
@@ -3785,9 +3807,10 @@ fn f_yank(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 }
 
 fn f_yank_pop(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let n = arg(&a, 0).int().unwrap_or(1).max(1) as usize;
+    let n = arg(&a, 0).int().unwrap_or(1);
     let kr = i.intern("kill-ring");
-    let items = i.symbol_value(kr).list_to_vec().unwrap_or_default();
+    let ring = i.symbol_value(kr);
+    let items = ring.list_to_vec().unwrap_or_default();
     if items.is_empty() {
         return Err(i.error("Kill ring is empty"));
     }
@@ -3795,14 +3818,18 @@ fn f_yank_pop(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let b = cur(i);
     let mut bb = b.borrow_mut();
     if let Some(m) = bb.mark {
+        let len = items.len();
+        let base = yank_ptr_pos(i, &ring, len);
+        let pos = (((base as i128 + n) % len as i128) + len as i128) as usize % len;
         let p = bb.point();
         let (s, e) = (m.min(p), m.max(p));
         bb.delete_region(s, e);
         bb.set_point(s);
-        let text = match &items[n % items.len()] {
+        let text = match &items[pos] {
             Value::Str(s) => s.borrow().clone(),
             _ => String::new(),
         };
+        set_yank_ptr(i, &ring, pos);
         bb.mark = Some(s);
         bb.insert(&text);
         Ok(Value::Nil)
@@ -3814,11 +3841,13 @@ fn f_yank_pop(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 fn f_rotate_yank_pointer(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let n = arg(&a, 0).int().unwrap_or(1);
     let kr = i.intern("kill-ring");
-    let mut items = i.symbol_value(kr).list_to_vec().unwrap_or_default();
+    let ring = i.symbol_value(kr);
+    let items = ring.list_to_vec().unwrap_or_default();
     if !items.is_empty() {
-        let k = ((n % items.len() as i128) + items.len() as i128) as usize % items.len();
-        items.rotate_left(k);
-        i.obarray.symbol_mut(kr).value = Value::list(items);
+        let len = items.len();
+        let base = yank_ptr_pos(i, &ring, len);
+        let pos = (((base as i128 + n) % len as i128) + len as i128) as usize % len;
+        set_yank_ptr(i, &ring, pos);
     }
     Ok(Value::Nil)
 }
