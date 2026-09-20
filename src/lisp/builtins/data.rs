@@ -37,28 +37,12 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!("stringp", 1, 1, f_stringp, "t if OBJECT is a string."),
     S!("vectorp", 1, 1, f_vectorp, "t if OBJECT is a vector."),
     S!(
-        "char-table-p",
-        1,
-        1,
-        f_char_table_p,
-        "t if OBJECT is a char-table."
-    ),
-    S!(
-        "bool-vector-p",
-        1,
-        1,
-        f_bool_vector_p,
-        "t if OBJECT is a bool-vector."
-    ),
-    S!(
         "hash-table-p",
         1,
         1,
         f_hash_table_p,
         "t if OBJECT is a hash table."
     ),
-    S!("bufferp", 1, 1, f_bufferp, "t if OBJECT is a buffer."),
-    S!("markerp", 1, 1, f_markerp, "t if OBJECT is a marker."),
     S!("functionp", 1, 1, f_functionp, "t if OBJECT is a function."),
     S!(
         "subrp",
@@ -72,13 +56,7 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!("sequencep", 1, 1, f_sequencep, "t if OBJECT is a sequence."),
     S!("seqp", 1, 1, f_sequencep, "t if OBJECT is a sequence."),
     S!("booleanp", 1, 1, f_booleanp, "t if OBJECT is t or nil."),
-    S!(
-        "char-or-string-p",
-        1,
-        1,
-        f_char_or_string_p,
-        "t if char or string."
-    ),
+
     S!(
         "characterp",
         1,
@@ -100,13 +78,6 @@ pub(crate) static SUBRS: &[Subr] = &[
         1,
         f_user_variable_p,
         "t if VARIABLE is a user option."
-    ),
-    S!(
-        "commandp",
-        1,
-        2,
-        f_commandp,
-        "t if OBJECT is an interactive command."
     ),
     S!(
         "special-form-p",
@@ -266,63 +237,14 @@ pub(crate) static SUBRS: &[Subr] = &[
         "Return interactive spec of OBJECT."
     ),
     S!(
-        "default-boundp",
-        1,
-        1,
-        f_default_boundp,
-        "t if SYMBOL has a non-void default value."
-    ),
-    S!(
-        "default-value",
-        1,
-        1,
-        f_default_value,
-        "Return SYMBOL's default value."
-    ),
-    S!(
-        "set-default",
-        2,
-        2,
-        f_set_default,
-        "Set SYMBOL's default value to VALUE."
-    ),
-    S!(
-        "make-variable-buffer-local",
-        1,
-        1,
-        f_make_variable_buffer_local,
-        "Make VARIABLE buffer-local when set."
-    ),
-    S!(
-        "local-variable-if-set-p",
-        1,
-        2,
-        f_local_variable_if_set_p,
-        "t if VARIABLE becomes local when set."
-    ),
-    S!(
         "variable-binding-locus",
         1,
         1,
         f_variable_binding_locus,
         "Where VARIABLE's binding lives."
     ),
-    S!(
-        "subr-arity",
-        1,
-        1,
-        f_subr_arity,
-        "Return (MIN . MAX) arity of a subr."
-    ),
     S!("subr-name", 1, 1, f_subr_name, "Return the name of a subr."),
     S!("function-equal", 2, 2, f_equal, "Like equal for functions."),
-    S!(
-        "apropos-internal",
-        1,
-        1,
-        f_apropos_internal,
-        "Symbols whose names contain REGEXP."
-    ),
     S!(
         "function-get",
         2,
@@ -345,20 +267,6 @@ pub(crate) static SUBRS: &[Subr] = &[
         "Make a new obarray (stub: returns vector)."
     ),
     S!("obarrayp", 1, 1, f_obarrayp, "t if OBJECT is an obarray."),
-    S!(
-        "documentation",
-        1,
-        2,
-        f_documentation,
-        "Return documentation string of FUNCTION."
-    ),
-    S!(
-        "documentation-property",
-        2,
-        3,
-        f_documentation_property,
-        "Return doc property of SYMBOL."
-    ),
 ];
 
 fn f_eq(_i: &mut Interp, args: Vec<Value>) -> EvalResult {
@@ -403,20 +311,8 @@ fn f_stringp(_i: &mut Interp, args: Vec<Value>) -> EvalResult {
 fn f_vectorp(_i: &mut Interp, args: Vec<Value>) -> EvalResult {
     Ok(Value::from_bool(matches!(&args[0], Value::Vec(_))))
 }
-fn f_char_table_p(_i: &mut Interp, _args: Vec<Value>) -> EvalResult {
-    Ok(Value::Nil)
-}
-fn f_bool_vector_p(_i: &mut Interp, _args: Vec<Value>) -> EvalResult {
-    Ok(Value::Nil)
-}
 fn f_hash_table_p(_i: &mut Interp, args: Vec<Value>) -> EvalResult {
     Ok(Value::from_bool(matches!(&args[0], Value::Hash(_))))
-}
-fn f_bufferp(_i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    Ok(Value::from_bool(matches!(&args[0], Value::Buffer(_))))
-}
-fn f_markerp(_i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    Ok(Value::from_bool(matches!(&args[0], Value::Marker(_))))
 }
 fn f_functionp(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     let v = &args[0];
@@ -487,12 +383,6 @@ fn f_booleanp(_i: &mut Interp, args: Vec<Value>) -> EvalResult {
         Value::Nil | Value::Sym(1) // t
     )))
 }
-fn f_char_or_string_p(_i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    Ok(Value::from_bool(matches!(
-        &args[0],
-        Value::Int(_) | Value::Str(_)
-    )))
-}
 fn f_characterp(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     let _ = i;
     Ok(Value::from_bool(match &args[0] {
@@ -521,36 +411,6 @@ fn f_user_variable_p(i: &mut Interp, args: Vec<Value>) -> EvalResult {
         }
         _ => Ok(Value::Nil),
     }
-}
-fn f_commandp(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    let r = match &args[0] {
-        Value::Sym(id) => i
-            .symbol_function(*id)
-            .as_lambda()
-            .map(|l| l.interactive.is_some())
-            .unwrap_or(false),
-        Value::Lambda(l) => l.interactive.is_some(),
-        // `(lambda (x) (interactive ...) ...)' as data.
-        Value::Cons(_) => {
-            let items: Vec<Value> = args[0].list_to_vec().unwrap_or_default();
-            items
-                .first()
-                .and_then(|h| i.sym_id(h))
-                .map(|h| h == sym::LAMBDA)
-                .unwrap_or(false)
-                && items.iter().skip(2).any(|el| match el {
-                    Value::Cons(ec) => {
-                        let b = ec.borrow();
-                        i.sym_is(&b.car, sym::INTERACTIVE)
-                    }
-                    _ => false,
-                })
-        }
-        // strings and vectors are keyboard macros — commands.
-        Value::Str(_) | Value::Vec(_) => true,
-        _ => false,
-    };
-    Ok(Value::from_bool(r))
 }
 fn f_special_form_p(_i: &mut Interp, args: Vec<Value>) -> EvalResult {
     match &args[0] {
@@ -786,38 +646,6 @@ fn f_interactive_form(i: &mut Interp, args: Vec<Value>) -> EvalResult {
         None => Ok(Value::Nil),
     }
 }
-fn f_default_boundp(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    let id = want_sym(i, &args[0])?;
-    Ok(Value::from_bool(!matches!(
-        i.obarray.symbol(id).value,
-        Value::Sym(s) if s == sym::UNBOUND
-    )))
-}
-fn f_default_value(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    let id = want_sym(i, &args[0])?;
-    let v = i.obarray.symbol(id).value.clone();
-    if let Value::Sym(s) = &v {
-        if *s == sym::UNBOUND {
-            return Err(i.signal_data(sym::VOID_VARIABLE, vec![args[0].clone()]));
-        }
-    }
-    Ok(v)
-}
-fn f_set_default(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    let id = want_sym(i, &args[0])?;
-    i.set_symbol_default(id, args[1].clone())?;
-    Ok(args[1].clone())
-}
-fn f_make_variable_buffer_local(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    let id = want_sym(i, &args[0])?;
-    i.obarray.symbol_mut(id).make_local_if_set = true;
-    i.obarray.symbol_mut(id).special = true;
-    Ok(args[0].clone())
-}
-fn f_local_variable_if_set_p(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    let id = want_sym(i, &args[0])?;
-    Ok(Value::from_bool(i.obarray.symbol(id).make_local_if_set))
-}
 fn f_variable_binding_locus(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     let id = want_sym(i, &args[0])?;
     if let Some(b) = i.buffers.get(i.current_buffer) {
@@ -828,43 +656,11 @@ fn f_variable_binding_locus(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     }
     Ok(Value::Nil)
 }
-fn f_subr_arity(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    match &args[0] {
-        Value::Subr(s) => {
-            let (min, max) = match s.arity {
-                super::Arity::Range { min, max } => (min as i128, max as i128),
-                super::Arity::Many { min } => (min as i128, -1),
-                super::Arity::Unevalled => (0, -1),
-            };
-            let maxv = if max < 0 {
-                Value::Sym(i.intern("many"))
-            } else {
-                Value::Int(max)
-            };
-            Ok(Value::cons(Value::Int(min), maxv))
-        }
-        _ => Err(i.wrong_type_mut("subrp", &args[0])),
-    }
-}
 fn f_subr_name(_i: &mut Interp, args: Vec<Value>) -> EvalResult {
     match &args[0] {
         Value::Subr(s) => Ok(Value::string(s.name)),
         _ => Err(_i.wrong_type_mut("subrp", &args[0])),
     }
-}
-fn f_apropos_internal(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    let pat = match &args[0] {
-        Value::Str(s) => s.borrow().clone(),
-        _ => return Err(i.wrong_type_mut("stringp", &args[0])),
-    };
-    let mut out = Vec::new();
-    for id in i.obarray.all_ids() {
-        let name = i.symbol_name(id);
-        if name.contains(&pat) {
-            out.push(i.sym(id));
-        }
-    }
-    Ok(Value::list(out))
 }
 fn f_function_get(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     let id = want_sym(i, &args[0])?;
@@ -888,29 +684,6 @@ fn f_obarray_make(i: &mut Interp, args: Vec<Value>) -> EvalResult {
 fn f_obarrayp(_i: &mut Interp, args: Vec<Value>) -> EvalResult {
     Ok(Value::from_bool(matches!(&args[0], Value::Vec(_))))
 }
-fn f_documentation(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    let f = match &args[0] {
-        Value::Sym(id) => i.symbol_function(*id),
-        other => other.clone(),
-    };
-    match &f {
-        Value::Lambda(l) => Ok(l.doc.clone().map(Value::string).unwrap_or(Value::Nil)),
-        Value::Subr(s) => {
-            if s.doc.is_empty() {
-                Ok(Value::Nil)
-            } else {
-                Ok(Value::string(s.doc))
-            }
-        }
-        _ => Ok(Value::Nil),
-    }
-}
-fn f_documentation_property(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    let id = want_sym(i, &args[0])?;
-    let prop = want_sym(i, &args[1])?;
-    Ok(i.get_prop(id, prop))
-}
-
 /// Normalize a function definition for `fset`/`defalias`: `(macro . f)`
 /// becomes a macro Lambda when f is a lambda.
 fn normalize_fn_def(i: &mut Interp, def: Value) -> Value {

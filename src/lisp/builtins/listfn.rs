@@ -79,7 +79,7 @@ pub(crate) static SUBRS: &[Subr] = &[
         f_reverse,
         "Return a reversed copy of LIST."
     ),
-    S!("nreverse", 1, 1, f_nreverse, "Reverse LIST destructively."),
+
     S!("setcar", 2, 2, f_setcar, "Set the car of CELL to NEWCAR."),
     S!("setcdr", 2, 2, f_setcdr, "Set the cdr of CELL to NEWCDR."),
     S!(
@@ -590,41 +590,6 @@ fn f_reverse(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     }
     let items = want_list(i, &args[0])?;
     Ok(Value::list(items.into_iter().rev().collect()))
-}
-fn f_nreverse(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    // Emacs: nreverse also accepts vectors and strings.
-    match &args[0] {
-        Value::Vec(v) => {
-            v.borrow_mut().reverse();
-            return Ok(args[0].clone());
-        }
-        Value::Str(s) => {
-            return Ok(Value::string(s.borrow().chars().rev().collect::<String>()));
-        }
-        _ => {}
-    }
-    // Reverse by rewriting cdrs.
-    let mut prev = Value::Nil;
-    let mut cur = args[0].clone();
-    loop {
-        match &cur {
-            Value::Cons(c) => {
-                let next = {
-                    let b = c.borrow();
-                    b.cdr.clone()
-                };
-                c.borrow_mut().cdr = prev;
-                prev = cur;
-                cur = next;
-            }
-            _ => break,
-        }
-    }
-    // Emacs requires a proper list; a dotted tail is an error.
-    if !cur.is_nil() {
-        return Err(i.wrong_type_mut("listp", &args[0]));
-    }
-    Ok(prev)
 }
 fn f_setcar(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     let c = want_cons(i, &args[0])?;

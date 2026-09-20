@@ -50,13 +50,7 @@ pub(crate) static SUBRS: &[Subr] = &[
         f_how_many,
         "Count regexp matches in region."
     ),
-    S!(
-        "count-words-region",
-        2,
-        2,
-        f_count_words,
-        "Count words in region."
-    ),
+
     S!(
         "flush-lines",
         1,
@@ -284,13 +278,7 @@ pub(crate) static SUBRS: &[Subr] = &[
         f_move_point_visually,
         "Move point visually (simplified)."
     ),
-    S!(
-        "pos-visible-in-window-p",
-        0,
-        3,
-        f_pos_visible_p,
-        "t if POS on screen (approx)."
-    ),
+
     S!(
         "base64-encode-region",
         2,
@@ -325,13 +313,6 @@ pub(crate) static SUBRS: &[Subr] = &[
         0,
         f_undo_boundary,
         "Push undo boundary."
-    ),
-    S!(
-        "narrow-to-defun",
-        0,
-        1,
-        f_narrow_to_defun,
-        "Narrow to defun (paragraph approx)."
     ),
 ];
 
@@ -479,15 +460,6 @@ fn f_how_many(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         i.message(&format!("{} occurrences", count));
     }
     Ok(Value::Int(count))
-}
-
-fn f_count_words(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let (s, e) = beg_end(i, &a, 0, 1)?;
-    let b = cur(i);
-    let bb = b.borrow();
-    let text = bb.text.substring(s, e);
-    let n = text.split_whitespace().count() as i128;
-    Ok(Value::Int(n))
 }
 
 fn delete_lines_matching(i: &mut Interp, a: &[Value], keep_match: bool) -> EvalResult {
@@ -1111,16 +1083,6 @@ fn f_move_point_visually(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     f_vertical_motion(i, a).map(|_| Value::Nil)
 }
 
-fn f_pos_visible_p(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    // pos visible iff between window start and end; use begv..zv as
-    // approximation.
-    let pos = a.get(0).and_then(|v| v.int()).unwrap_or(1);
-    let b = cur(i);
-    let bb = b.borrow();
-    let vis = (pos as usize) >= bb.begv + 1 && (pos as usize) <= bb.zv.max(bb.text_len()) + 1;
-    Ok(Value::from_bool(vis))
-}
-
 // ---------- region encode/decode ----------
 
 fn region_text(i: &Interp, a: &[Value]) -> Result<(usize, usize, String), Flow> {
@@ -1219,37 +1181,4 @@ fn f_undo_boundary(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
     Ok(Value::Nil)
 }
 
-fn f_narrow_to_defun(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
-    // Approximate: narrow to the enclosing blank-line-delimited block.
-    let b = cur(i);
-    let mut bb = b.borrow_mut();
-    let len = bb.text_len();
-    let pos = bb.point();
-    // Scan backward for a blank line or buffer start.
-    let mut s = 0usize;
-    let mut p = pos;
-    while p >= 2 {
-        if bb.text.char_at(p - 1) == '\n' && bb.text.char_at(p - 2) == '\n' {
-            s = p;
-            break;
-        }
-        p -= 1;
-        if p == 0 {
-            break;
-        }
-    }
-    let mut e = len;
-    let mut q = pos;
-    while q + 1 < len {
-        if bb.text.char_at(q) == '\n' && bb.text.char_at(q + 1) == '\n' {
-            e = q + 1;
-            break;
-        }
-        q += 1;
-    }
-    bb.begv = s;
-    bb.zv = e;
-    let pt = bb.point().clamp(s, e);
-    bb.set_point(pt);
-    Ok(Value::Nil)
-}
+

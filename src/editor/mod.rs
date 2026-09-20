@@ -212,13 +212,7 @@ pub(crate) static SUBRS: &[Subr] = &[
         f_window_minibuffer_p,
         "t if WINDOW is a minibuffer."
     ),
-    S!(
-        "minibuffer-window",
-        0,
-        1,
-        f_minibuffer_window,
-        "The minibuffer window."
-    ),
+
     S!(
         "minibuffer-window-active-p",
         1,
@@ -340,7 +334,7 @@ pub(crate) static SUBRS: &[Subr] = &[
         "Edge coords of WINDOW."
     ),
     S!("window-inside-edges", 0, 1, f_window_edges, ""),
-    S!("window-pixel-edges", 0, 1, f_window_edges, ""),
+
     S!("window-at", 2, 2, f_window_at, "Window at X,Y."),
     S!(
         "recenter",
@@ -438,10 +432,7 @@ pub(crate) static SUBRS: &[Subr] = &[
         f_window_margins,
         "Margins of WINDOW."
     ),
-    S!("window-fringes", 0, 2, f_window_fringes, "Fringe widths."),
-    S!("window-scroll-bars", 0, 4, f_nil, ""),
-    S!("window-new-normal", 0, 1, f_nil, ""),
-    S!("window-new-total", 0, 2, f_nil, ""),
+
     S!("window-use-time", 0, 1, f_zero, ""),
     S!("window-cursor-type", 0, 1, f_t, ""),
     S!("window-safe-p", 0, 0, f_t, ""),
@@ -491,27 +482,7 @@ pub(crate) static SUBRS: &[Subr] = &[
         f_set_frame_parameter,
         "Set FRAME parameter."
     ),
-    S!(
-        "frame-first-window",
-        0,
-        1,
-        f_frame_first_window,
-        "First window of FRAME."
-    ),
-    S!(
-        "frame-root-window",
-        0,
-        1,
-        f_frame_root_window,
-        "Root window of FRAME."
-    ),
-    S!(
-        "frame-selected-window",
-        0,
-        1,
-        f_frame_selected_window,
-        "Selected window of FRAME."
-    ),
+
     S!(
         "set-frame-selected-window",
         2,
@@ -533,8 +504,7 @@ pub(crate) static SUBRS: &[Subr] = &[
         f_frame_height,
         "Height of FRAME in chars."
     ),
-    S!("frame-char-width", 0, 1, f_one, "Char cell width."),
-    S!("frame-char-height", 0, 1, f_one, "Char cell height."),
+
     S!("frame-pixel-width", 0, 1, f_frame_width, ""),
     S!("frame-pixel-height", 0, 1, f_frame_height, ""),
     S!(
@@ -560,17 +530,11 @@ pub(crate) static SUBRS: &[Subr] = &[
         f_nil,
         "Window system type (nil on tty)."
     ),
-    S!("terminal-name", 0, 1, f_terminal_name, "Terminal name."),
-    S!("terminal-list", 0, 0, f_terminal_list, "List of terminals."),
     S!("frame-terminal", 0, 1, f_selected_frame, ""),
-    S!("tty-type", 0, 1, f_tty_type, "Terminal type."),
-    S!("tty-top-frame", 0, 1, f_selected_frame, ""),
     S!("select-frame", 1, 2, f_select_frame, "Select FRAME."),
     S!("handle-switch-frame", 1, 1, f_nil, ""),
     S!("frame-focus-state", 0, 1, f_t, ""),
-    S!("iconify-frame", 0, 1, f_nil, ""),
     S!("suspend-emacs", 0, 1, f_nil, ""),
-    S!("frame-or-buffer-changed-p", 0, 1, f_nil, ""),
     S!("redraw-frame", 0, 1, f_nil, ""),
     S!("redraw-display", 0, 0, f_nil, ""),
     S!("frame-visible-p", 1, 1, f_t, ""),
@@ -1639,7 +1603,13 @@ pub(crate) static SUBRS: &[Subr] = &[
         f_remove_overlays,
         "Remove overlays in region."
     ),
-    S!("restore-buffer-modified-p", 1, 1, f_second, ""),
+    S!(
+        "restore-buffer-modified-p",
+        1,
+        1,
+        crate::buffer::primitives::f_set_buffer_modified_p,
+        ""
+    ),
     // faces (stubs — tty has limited support)
     S!("facep", 1, 1, f_nil, ""),
     S!("internal-get-lisp-face-attribute", 2, 3, f_nil, ""),
@@ -1653,7 +1623,7 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!("copy-face", 2, 2, f_first, ""),
     S!("face-equal", 2, 2, f_nil, ""),
     S!("face-id", 1, 2, f_zero, ""),
-    S!("display-supports-face-attributes-p", 1, 2, f_nil, ""),
+
     S!("internal-lisp-face-p", 1, 2, f_nil, ""),
     S!("internal-lisp-face-empty-p", 1, 2, f_nil, ""),
     S!("internal-lisp-face-equal-p", 2, 3, f_t, ""),
@@ -1692,7 +1662,6 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!("describe-display-table", 1, 1, f_nil, ""),
     S!("standard-display-table", 0, 0, f_nil, ""),
     S!("dump-glyph-matrix", 0, 0, f_nil, ""),
-    S!("frame-or-buffer-changed-p", 0, 1, f_nil, ""),
     S!("open-font", 1, 3, f_nil, ""),
     S!("query-font", 1, 1, f_nil, ""),
     S!("font-get", 2, 2, f_nil, ""),
@@ -1886,6 +1855,8 @@ fn f_set_window_buffer(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     w.borrow_mut().buffer = bid;
     w.borrow_mut().point = 0;
     w.borrow_mut().start = 0;
+    // Displaying a buffer makes it most-recent in buffer-list order.
+    i.buffers.touch(bid);
     Ok(Value::Nil)
 }
 
@@ -2406,15 +2377,6 @@ fn f_window_margins(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         Ok(Value::cons(Value::Int(l as i128), Value::Int(r as i128)))
     }
 }
-fn f_window_fringes(_i: &mut Interp, _a: Vec<Value>) -> EvalResult {
-    Ok(Value::list(vec![
-        Value::Int(0),
-        Value::Int(0),
-        Value::Nil,
-        Value::Nil,
-    ]))
-}
-
 // ---------- frames ----------
 
 fn f_display_color_p(_i: &mut Interp, _a: Vec<Value>) -> EvalResult {
@@ -2550,20 +2512,7 @@ fn f_set_frame_parameter(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     f.borrow_mut().params = new;
     Ok(Value::Nil)
 }
-fn f_frame_first_window(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let f = frame_of(i, &arg(&a, 0))?;
-    match f.borrow().windows.first() {
-        Some(w) => Ok(Value::Window(w.clone())),
-        None => Ok(Value::Nil),
-    }
-}
-fn f_frame_root_window(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    f_frame_first_window(i, a)
-}
-fn f_frame_selected_window(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let f = frame_of(i, &arg(&a, 0))?;
-    Ok(Value::Window(f.borrow().selected.clone()))
-}
+
 fn f_set_frame_selected_window(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let f = frame_of(i, &arg(&a, 0))?;
     let w = win_of(i, &a[1])?;
@@ -2599,17 +2548,7 @@ fn f_make_frame(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
     i.frames.push(f.clone());
     Ok(Value::Frame(f))
 }
-fn f_terminal_name(_i: &mut Interp, _a: Vec<Value>) -> EvalResult {
-    Ok(Value::string("tty"))
-}
-fn f_terminal_list(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    f_frame_list(i, a)
-}
-fn f_tty_type(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
-    let t = std::env::var("TERM").unwrap_or_else(|_| "dumb".into());
-    let _ = i;
-    Ok(Value::string(t))
-}
+
 fn f_select_frame(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let f = frame_of(i, &arg(&a, 0))?;
     i.selected_frame = Some(f);

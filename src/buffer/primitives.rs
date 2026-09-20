@@ -148,20 +148,7 @@ pub(crate) static SUBRS: &[Subr] = &[
         f_set_buffer_modified_p,
         "Set modified flag."
     ),
-    S!(
-        "buffer-modified-tick",
-        0,
-        1,
-        f_buffer_modified_tick,
-        "Modification counter."
-    ),
-    S!(
-        "restore-buffer-modified-p",
-        1,
-        1,
-        f_set_buffer_modified_p,
-        "Set modified flag."
-    ),
+
     S!(
         "buffer-file-name",
         0,
@@ -254,13 +241,7 @@ pub(crate) static SUBRS: &[Subr] = &[
         f_default_boundp,
         "t if SYMBOL has a default value."
     ),
-    S!(
-        "get-buffer-window",
-        0,
-        2,
-        f_nil,
-        "Window displaying BUFFER (editor)."
-    ),
+
     S!(
         "buffer-disable-undo",
         0,
@@ -471,7 +452,7 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!("forward-list", 0, 1, f_forward_list, "Move across a list."),
     S!("backward-list", 0, 1, f_backward_list, "Move back across a list."),
     S!("backward-up-list", 0, 1, f_backward_up_list, "Move up out of a list."),
-    S!("syntax-after", 1, 1, f_syntax_after, "Syntax of char at POS."),
+
     S!("looking-back", 1, 3, f_looking_back, "Match regexp before point."),
     S!("last-buffer", 0, 3, f_last_buffer, "Last buffer in order."),
     // --- insertion & deletion ---
@@ -650,13 +631,7 @@ pub(crate) static SUBRS: &[Subr] = &[
         f_narrow_to_region,
         "Restrict editing to START..END."
     ),
-    S!(
-        "narrow-to-page",
-        0,
-        1,
-        f_narrow_to_page,
-        "Narrow to page (approx whole)."
-    ),
+
     S!("widen", 0, 0, f_widen, "Remove narrowing."),
     // --- markers ---
     S!("markerp", 1, 1, f_markerp, "t if OBJECT is a marker."),
@@ -892,13 +867,7 @@ pub(crate) static SUBRS: &[Subr] = &[
         f_primitive_undo,
         "Apply undo entries."
     ),
-    S!(
-        "undo-boundary",
-        0,
-        0,
-        f_undo_boundary,
-        "Mark an undo boundary."
-    ),
+
     S!("undo-start", 0, 0, f_undo_start, ""),
     S!("undo-more", 1, 1, f_undo, ""),
     S!("undo-auto-amalgamate", 0, 0, f_noop, ""),
@@ -930,13 +899,7 @@ pub(crate) static SUBRS: &[Subr] = &[
         "Char position from byte."
     ),
     S!("max-char", 0, 0, f_max_char, "Max character code."),
-    S!(
-        "char-equal",
-        2,
-        3,
-        f_char_equal_buf,
-        "t if chars equal (dup ok)."
-    ),
+
     S!(
         "barf-if-buffer-read-only",
         0,
@@ -1237,15 +1200,10 @@ fn f_buffer_modified_p(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     Ok(Value::from_bool(b.borrow().modified))
 }
 
-fn f_set_buffer_modified_p(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+pub(crate) fn f_set_buffer_modified_p(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let flag = a[0].truthy();
     cur(i).borrow_mut().modified = flag;
     Ok(a[0].clone())
-}
-
-fn f_buffer_modified_tick(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let b = buf_of(i, &arg(&a, 0))?;
-    Ok(Value::Int(b.borrow().mod_tick as i128))
 }
 
 fn f_buffer_file_name(i: &mut Interp, a: Vec<Value>) -> EvalResult {
@@ -2876,10 +2834,6 @@ fn f_narrow_to_region(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     Ok(Value::Nil)
 }
 
-fn f_narrow_to_page(_i: &mut Interp, _a: Vec<Value>) -> EvalResult {
-    Ok(Value::Nil)
-}
-
 fn f_widen(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
     let b = cur(i);
     let mut bb = b.borrow_mut();
@@ -4086,15 +4040,6 @@ fn f_primitive_undo(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     Ok(Value::list(rest))
 }
 
-fn f_undo_boundary(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
-    let b = cur(i);
-    let mut bb = b.borrow_mut();
-    if !matches!(bb.undo.last(), Some(crate::buffer::UndoEntry::Boundary)) {
-        bb.undo.push(crate::buffer::UndoEntry::Boundary);
-    }
-    Ok(Value::Nil)
-}
-
 // ---------- misc ----------
 
 fn f_gap_position(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
@@ -4113,21 +4058,6 @@ fn f_byte_to_position(_i: &mut Interp, a: Vec<Value>) -> EvalResult {
 fn f_max_char(_i: &mut Interp, _a: Vec<Value>) -> EvalResult {
     Ok(Value::Int(0x3fffff))
 }
-fn f_char_equal_buf(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let (x, y) = (want_int(i, &a[0])?, want_int(i, &a[1])?);
-    let fold = i
-        .symbol_value(i.intern_soft("case-fold-search").unwrap_or(0))
-        .truthy();
-    let eq = if fold {
-        x == y
-            || char::from_u32(x as u32).and_then(|c| c.to_lowercase().next())
-                == char::from_u32(y as u32).and_then(|c| c.to_lowercase().next())
-    } else {
-        x == y
-    };
-    Ok(Value::from_bool(eq))
-}
-
 fn f_barf_if_buffer_read_only(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
     check_writable(i)?;
     Ok(Value::Nil)

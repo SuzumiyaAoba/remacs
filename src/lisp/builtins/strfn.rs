@@ -263,7 +263,7 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!(
         "char-equal",
         2,
-        3,
+        2,
         f_char_equal,
         "t if two chars are equal (case-fold-aware)."
     ),
@@ -1014,22 +1014,15 @@ fn f_string_equal_ignore_case(i: &mut Interp, args: Vec<Value>) -> EvalResult {
 fn f_char_equal(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     let a = want_int(i, &args[0])?;
     let b = want_int(i, &args[1])?;
-    let ic = args.get(2).map(|v| v.truthy()).unwrap_or(false);
-    if ic {
-        let ca = char::from_u32(a as u32)
-            .unwrap_or('\0')
-            .to_lowercase()
-            .next()
-            .unwrap_or('\0');
-        let cb = char::from_u32(b as u32)
-            .unwrap_or('\0')
-            .to_lowercase()
-            .next()
-            .unwrap_or('\0');
-        Ok(Value::from_bool(ca == cb))
-    } else {
-        Ok(Value::from_bool(a == b))
-    }
+    // Emacs consults `case-fold-search' (default t in -Q).
+    let fold = i
+        .symbol_value(i.intern_soft("case-fold-search").unwrap_or(0))
+        .truthy();
+    let eq = a == b
+        || (fold
+            && char::from_u32(a as u32).and_then(|c| c.to_lowercase().next())
+                == char::from_u32(b as u32).and_then(|c| c.to_lowercase().next()));
+    Ok(Value::from_bool(eq))
 }
 fn f_char_or_string_p(_i: &mut Interp, args: Vec<Value>) -> EvalResult {
     Ok(Value::from_bool(matches!(

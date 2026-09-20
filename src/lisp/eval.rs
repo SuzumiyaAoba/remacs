@@ -2035,9 +2035,10 @@ impl Interp {
     }
 
     pub fn set_current_buffer(&mut self, id: usize) {
+        // Emacs: `set-buffer'/`with-current-buffer' do not update
+        // buffer-list recency — only window selection/display does.
         if self.buffers.get(id).is_some() {
             self.current_buffer = id;
-            self.buffers.touch(id);
         }
     }
 

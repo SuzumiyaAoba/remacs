@@ -179,13 +179,7 @@ pub(crate) static SUBRS: &[Subr] = &[
         f_funcall_with_delayed_message,
         "Call FUNCTION, show message."
     ),
-    S!(
-        "special-variable-p",
-        1,
-        1,
-        f_special_variable_p,
-        "t if SYMBOL is special (defvar'd)."
-    ),
+
     S!(
         "declare-function",
         raw,
@@ -221,7 +215,7 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!("lwarn", 4, 4, f_lwarn, "Display a warning."),
     S!("warn", many 1, f_warn, "Display a warning."),
     S!("message", many 1, f_message, "Display a message in the echo area."),
-    S!("minibuffer-message", many 1, f_minibuffer_message, "Message during minibuffer."),
+
     S!("ding", 0, 1, f_ding, "Beep."),
     S!("beep", 0, 1, f_ding, "Beep."),
     S!(
@@ -386,13 +380,7 @@ pub(crate) static SUBRS: &[Subr] = &[
         f_subr_native_lambda_list,
         "Subr arglist."
     ),
-    S!(
-        "help-function-arglist",
-        1,
-        2,
-        f_help_function_arglist,
-        "Return arglist of FUNCTION."
-    ),
+
     S!("help--docstring-quote", 0, 0, f_noop, ""),
     S!("internal-doc-string-p", 0, 0, f_noop, ""),
     S!("declare-functionp", 1, 1, f_declare_functionp, ""),
@@ -964,10 +952,6 @@ fn f_called_interactively_p(_i: &mut Interp, _args: Vec<Value>) -> EvalResult {
 fn f_funcall_with_delayed_message(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     i.apply(&args[1], vec![])
 }
-fn f_special_variable_p(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    let id = want_sym(i, &args[0])?;
-    Ok(Value::from_bool(i.obarray.symbol(id).special))
-}
 fn f_declare_function(i: &mut Interp, _args: Vec<Value>) -> EvalResult {
     let _ = i;
     Ok(Value::Nil)
@@ -1015,9 +999,6 @@ fn f_message(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     let msg = apply_format_simple(i, &fmt, &args[1..]);
     i.message(&msg);
     Ok(Value::string(msg))
-}
-fn f_minibuffer_message(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    f_message(i, args)
 }
 fn f_ding(_i: &mut Interp, _args: Vec<Value>) -> EvalResult {
     Ok(Value::Nil)
@@ -1336,29 +1317,6 @@ fn f_make_byte_code(_i: &mut Interp, _args: Vec<Value>) -> EvalResult {
 }
 fn f_subr_native_lambda_list(_i: &mut Interp, _args: Vec<Value>) -> EvalResult {
     Ok(Value::Nil)
-}
-fn f_help_function_arglist(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    let f = match &args[0] {
-        Value::Sym(id) => i.symbol_function(*id),
-        other => other.clone(),
-    };
-    match f.as_lambda() {
-        Some(l) => {
-            let mut names: Vec<Value> = l.required.iter().map(|s| i.sym(*s)).collect();
-            if !l.optional.is_empty() {
-                names.push(Value::Sym(sym::OPTIONAL));
-                for o in &l.optional {
-                    names.push(i.sym(o.sym));
-                }
-            }
-            if let Some(r) = l.rest {
-                names.push(Value::Sym(sym::REST));
-                names.push(i.sym(r));
-            }
-            Ok(Value::list(names))
-        }
-        None => Ok(Value::Nil),
-    }
 }
 fn f_declare_functionp(_i: &mut Interp, _args: Vec<Value>) -> EvalResult {
     Ok(Value::Nil)

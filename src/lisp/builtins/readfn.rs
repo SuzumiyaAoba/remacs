@@ -15,20 +15,6 @@ pub(crate) static SUBRS: &[Subr] = &[
         f_read_from_string,
         "Read one object from STRING."
     ),
-    S!(
-        "read-string",
-        1,
-        5,
-        f_read_string,
-        "Read a string (minibuffer stub)."
-    ),
-    S!(
-        "read-from-minibuffer",
-        1,
-        8,
-        f_read_from_minibuffer,
-        "Read from minibuffer (stub)."
-    ),
 ];
 
 fn f_read(i: &mut Interp, args: Vec<Value>) -> EvalResult {
@@ -100,11 +86,4 @@ fn f_read_from_string(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     Ok(Value::cons(v, Value::Int(end as i128)))
 }
 
-fn f_read_string(_i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    // Non-interactive stub: use INITIAL-INPUT if provided, else "".
-    Ok(args.get(1).cloned().unwrap_or(Value::string("")))
-}
 
-fn f_read_from_minibuffer(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    f_read_string(i, args)
-}
