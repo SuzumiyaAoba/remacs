@@ -2,7 +2,7 @@
 
 use super::{S, eq_values, equal_values, want_int, want_sym};
 use crate::lisp::Interp;
-use crate::lisp::error::EvalResult;
+use crate::lisp::error::{EvalResult, Flow};
 use crate::lisp::obarray::sym;
 use crate::lisp::value::{Subr, Value};
 
@@ -541,6 +541,7 @@ fn f_setplist(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     Ok(args[1].clone())
 }
 fn f_intern(i: &mut Interp, args: Vec<Value>) -> EvalResult {
+    want_obarray(i, args.get(1))?;
     match &args[0] {
         Value::Str(s) => {
             let name = s.borrow().clone();
@@ -552,6 +553,7 @@ fn f_intern(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     }
 }
 fn f_intern_soft(i: &mut Interp, args: Vec<Value>) -> EvalResult {
+    want_obarray(i, args.get(1))?;
     match &args[0] {
         Value::Str(s) => {
             let name = s.borrow().clone();
@@ -565,6 +567,7 @@ fn f_intern_soft(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     }
 }
 fn f_unintern(i: &mut Interp, args: Vec<Value>) -> EvalResult {
+    want_obarray(i, args.get(1))?;
     match &args[0] {
         Value::Sym(id) => {
             // Our obarray can't physically remove (indices are stable),
@@ -597,14 +600,38 @@ fn f_make_symbol(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     };
     Ok(Value::Sym(i.make_symbol(&name)))
 }
+/// An obarray is represented as a record whose slot 0 is the symbol
+/// `obarray` and whose slot 1 is a vector of buckets; GNU's obarrays
+/// are a distinct type (vectorp → nil), which the record gives us.
+fn obarray_tag(i: &Interp) -> Value {
+    Value::Sym(i.intern_soft("obarray").unwrap_or(0))
+}
+
+fn is_obarray(i: &Interp, v: &Value) -> bool {
+    match v {
+        Value::Record(r) => {
+            let rr = r.borrow();
+            rr.first()
+                .map(|t| eq_values(t, &obarray_tag(i)))
+                .unwrap_or(false)
+        }
+        _ => false,
+    }
+}
+
+/// Check an optional OBARRAY argument: nil means the default obarray,
+/// a tagged record is an obarray, anything else is a type error.
+fn want_obarray(i: &mut Interp, v: Option<&Value>) -> Result<(), Flow> {
+    match v {
+        None | Some(Value::Nil) => Ok(()),
+        Some(v) if is_obarray(i, v) => Ok(()),
+        Some(v) => Err(i.wrong_type_mut("obarrayp", v)),
+    }
+}
+
 fn f_mapatoms(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     let fun = args[0].clone();
-    // A non-nil second arg selects an alternate obarray (our
-    // obarray-make yields an empty Vec placeholder with no symbols).
-    match args.get(1) {
-        Some(Value::Vec(_)) => return Ok(Value::Nil),
-        _ => {}
-    }
+    want_obarray(i, args.get(1))?;
     let ids = i.obarray.all_ids();
     for id in ids {
         i.apply(&fun, vec![i.sym(id)])?;
@@ -674,23 +701,38 @@ fn f_function_put(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     Ok(args[2].clone())
 }
 fn f_obarray_make(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    // We have a single global obarray; a fresh one is an empty vector
-    // whose length honors the optional SIZE arg (GNU's bucket count).
     let n = match args.first() {
         Some(v) => want_int(i, v)?.max(0) as usize,
         None => 0,
     };
-    Ok(Value::Vec(std::rc::Rc::new(std::cell::RefCell::new(
-        vec![Value::Int(0); n],
-    ))))
+    Ok(Value::Record(std::rc::Rc::new(std::cell::RefCell::new(vec![
+        obarray_tag(i),
+        Value::Vec(std::rc::Rc::new(std::cell::RefCell::new(vec![
+            Value::Nil;
+            n
+        ]))),
+    ]))))
 }
-fn f_obarrayp(_i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    Ok(Value::from_bool(matches!(&args[0], Value::Vec(_))))
+fn f_obarrayp(i: &mut Interp, args: Vec<Value>) -> EvalResult {
+    Ok(Value::from_bool(is_obarray(i, &args[0])))
 }
 fn f_obarray_size(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     match &args[0] {
-        Value::Vec(v) => Ok(Value::Int(v.borrow().len() as i128)),
-        other => Err(i.wrong_type_mut("vectorp", other)),
+        Value::Record(r) => {
+            let rr = r.borrow();
+            if !rr
+                .first()
+                .map(|t| eq_values(t, &obarray_tag(i)))
+                .unwrap_or(false)
+            {
+                return Err(i.wrong_type_mut("obarrayp", &args[0]));
+            }
+            match rr.get(1) {
+                Some(Value::Vec(v)) => Ok(Value::Int(v.borrow().len() as i128)),
+                _ => Ok(Value::Int(0)),
+            }
+        }
+        other => Err(i.wrong_type_mut("obarrayp", other)),
     }
 }
 /// Normalize a function definition for `fset`/`defalias`: `(macro . f)`

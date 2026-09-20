@@ -1939,7 +1939,16 @@ impl Interp {
             ("buffer-read-only", Value::Nil),
             ("truncate-lines", Value::Nil),
             ("enable-multibyte-characters", Value::t()),
-            ("obarray", Value::Nil), // TODO: real obarray object
+            (
+                "obarray",
+                Value::Record(std::rc::Rc::new(std::cell::RefCell::new(vec![
+                    Value::Sym(self.intern("obarray")),
+                    Value::Vec(std::rc::Rc::new(std::cell::RefCell::new(vec![
+                        Value::Nil;
+                        4
+                    ]))),
+                ]))),
+            ),
             (
                 "features",
                 Value::list(vec![Value::Sym(self.intern("emacs"))]),

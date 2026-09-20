@@ -233,16 +233,27 @@ impl<'a> Reader<'a> {
                 }
                 return Ok(tail);
             }
+            // A `.' directly before the close paren is the symbol `\.'
+            // (Emacs reads `(a .)' as (a \.), `[a .]' as [a \.]).
+            if c == '.' && self.peek_at(1) == Some(close) {
+                self.pos += 1;
+                items.push(Value::Sym(self.interp.intern(".")));
+                continue;
+            }
             if c == '.' && self.at_dot_token() {
+                // GNU: a dotting token as the first element is illegal
+                // ("." in wrong context → invalid-read-syntax).
+                if items.is_empty() {
+                    return Err(read_err(self.interp, "."));
+                }
                 self.pos += 1;
                 if self.skip_layout()? {
                     return Err(eof_err(self.interp));
                 }
-                // A `.' directly before the close paren is the symbol `\.'
-                // (Emacs reads `(a .)' as (a \.)).
+                // GNU: `(a . )' is invalid — the dot must be followed
+                // by an object, not the close paren.
                 if self.peek() == Some(close) {
-                    items.push(Value::Sym(self.interp.intern(".")));
-                    continue;
+                    return Err(read_err(self.interp, ")"));
                 }
                 let tail = self.read_object()?;
                 if self.skip_layout()? || self.peek() != Some(close) {
@@ -271,14 +282,17 @@ impl<'a> Reader<'a> {
         }
     }
 
-    /// True if positioned at a `.` token (dot followed by a delimiter).
+    /// True if positioned at a `.` dotting token.  GNU reads a `.`
+    /// directly before `)' or `]' as the symbol `\.', and a `.'
+    /// followed by any other delimiter (whitespace, quotes, openers) as
+    /// the dotted-tail token.
     fn at_dot_token(&self) -> bool {
         debug_assert_eq!(self.peek(), Some('.'));
         match self.peek_at(1) {
             None => true,
             Some(c) => {
                 c.is_whitespace()
-                    || matches!(c, '(' | ')' | '[' | ']' | '"' | '\'' | '`' | ',' | ';')
+                    || matches!(c, '(' | '[' | '"' | '\'' | '`' | ',' | ';')
             }
         }
     }
@@ -293,6 +307,13 @@ impl<'a> Reader<'a> {
             if self.peek() == Some(close) {
                 self.pos += 1;
                 return Ok(items);
+            }
+            // `.' directly before `]' reads as the symbol `\.'
+            // (Emacs: `[a .]' → [a \.]).
+            if self.peek() == Some('.') && self.peek_at(1) == Some(close) {
+                self.pos += 1;
+                items.push(Value::Sym(self.interp.intern(".")));
+                continue;
             }
             items.push(self.read_object()?);
         }
@@ -755,6 +776,8 @@ impl<'a> Reader<'a> {
         match tok.as_str() {
             // `nil' reads as the nil object, not a symbol cell.
             "nil" => return Ok(Value::Nil),
+            // `.' is only a symbol when `)' or `]' follows directly.
+            "." if matches!(self.peek(), Some(')') | Some(']')) => {}
             "." => return Err(read_err(self.interp, ".")),
             _ => {}
         }
