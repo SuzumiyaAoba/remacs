@@ -94,8 +94,7 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!("run-hook-with-args-until-success", many 1, f_run_hook_until_success, "Run HOOK until non-nil."),
     S!(
         "run-hook-wrapped",
-        4,
-        4,
+        many 2,
         f_run_hook_wrapped,
         "Run HOOK with wrapper function."
     ),
@@ -699,17 +698,20 @@ fn f_require(i: &mut Interp, args: Vec<Value>) -> EvalResult {
         Some(Value::Str(s)) => s.borrow().clone(),
         _ => i.symbol_name(id),
     };
-    let loaded = crate::lisp::load::load_library(i, &name)?;
-    if loaded {
-        if !i.features.contains(&id) {
-            i.features.push(id);
+    let noerror = args.get(2).map(|v| v.truthy()).unwrap_or(false);
+    match crate::lisp::load::load_library(i, &name) {
+        Ok(true) => {
+            if !i.features.contains(&id) {
+                i.features.push(id);
+            }
+            Ok(args[0].clone())
         }
-        Ok(args[0].clone())
-    } else {
-        Err(i.signal_data(
+        Ok(false) | Err(_) if noerror => Ok(Value::Nil),
+        Ok(false) => Err(i.signal_data(
             sym::FILE_ERROR,
             vec![Value::string("Cannot open load file"), Value::string(name)],
-        ))
+        )),
+        Err(e) => Err(e),
     }
 }
 

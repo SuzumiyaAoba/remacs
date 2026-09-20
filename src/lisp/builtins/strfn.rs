@@ -517,16 +517,14 @@ fn f_substring(i: &mut Interp, args: Vec<Value>) -> EvalResult {
         other => return Err(i.wrong_type_mut("sequencep", other)),
     };
     let len = chars.len() as i128;
-    let from = args
-        .get(1)
-        .map(|v| want_int(i, v))
-        .transpose()?
-        .unwrap_or(0);
-    let to = args
-        .get(2)
-        .map(|v| want_int(i, v))
-        .transpose()?
-        .unwrap_or(len);
+    let mut int_or = |v: Option<&Value>, d: i128| -> Result<i128, Flow> {
+        match v {
+            None | Some(Value::Nil) => Ok(d),
+            Some(v) => want_int(i, v),
+        }
+    };
+    let from = int_or(args.get(1), 0)?;
+    let to = int_or(args.get(2), len)?;
     // Emacs allows negative indices counting from the end.
     let f = if from < 0 { len + from } else { from };
     let t = if to < 0 { len + to } else { to };

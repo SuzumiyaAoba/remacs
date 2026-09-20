@@ -187,6 +187,11 @@ pub(crate) static SUBRS: &[Subr] = &[
         "Convert TIME to FORM ticks."
     ),
     S!("emacs-uptime", 0, 1, f_emacs_uptime, "Process uptime."),
+    S!("load-average", 0, 1, f_load_average, "System load averages."),
+    S!("daemonp", 0, 0, f_nil, "t when running as a daemon."),
+    S!("invocation-name", 0, 0, f_invocation_name, "Program name."),
+    S!("invocation-directory", 0, 0, f_invocation_dir, "Program directory."),
+    S!("internal--build-binding", 2, 3, f_build_binding, "Make a binding object."),
     S!(
         "current-cpu-time",
         0,
@@ -1482,6 +1487,37 @@ fn f_time_convert(i: &mut Interp, args: Vec<Value>) -> EvalResult {
         Some(Value::Int(h)) => Ok(Value::Int((us * *h as i128 / 1_000_000) as i128)),
         _ => Ok(us_to_lisp_time(us)),
     }
+}
+
+fn f_load_average(_i: &mut Interp, _a: Vec<Value>) -> EvalResult {
+    // getloadavg(3): 1/5/15-minute averages, scaled like Emacs (*100).
+    unsafe extern "C" {
+        fn getloadavg(loadavg: *mut f64, nelem: i32) -> i32;
+    }
+    let mut v = [0.0f64; 3];
+    let n = unsafe { getloadavg(v.as_mut_ptr(), 3) };
+    let items: Vec<Value> = (0..n.max(0) as usize)
+        .map(|k| Value::Float((v[k] * 100.0) as i64 as f64))
+        .collect();
+    Ok(Value::list(items))
+}
+
+fn f_invocation_dir(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
+    let dir = std::env::args()
+        .next()
+        .and_then(|p| {
+            std::path::Path::new(&p)
+                .parent()
+                .map(|s| s.to_string_lossy().into_owned())
+        })
+        .unwrap_or_default();
+    let _ = i;
+    Ok(Value::string(dir))
+}
+
+fn f_build_binding(_i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    // (VAR VALUE &optional BUFFER) — lexical binding object.
+    Ok(Value::cons(a[0].clone(), a[1].clone()))
 }
 
 fn f_emacs_uptime(i: &mut Interp, a: Vec<Value>) -> EvalResult {
@@ -2979,7 +3015,7 @@ fn char_table_vec(v: &Value) -> Option<Rc<RefCell<Vec<Value>>>> {
     }
 }
 
-fn is_char_table(i: &Interp, v: &Value) -> bool {
+pub(crate) fn is_char_table(i: &Interp, v: &Value) -> bool {
     match v {
         Value::Record(r) => {
             let rr = r.borrow();

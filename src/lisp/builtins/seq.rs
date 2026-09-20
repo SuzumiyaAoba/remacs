@@ -86,8 +86,7 @@ pub(crate) static SUBRS: &[Subr] = &[
     ),
     S!(
         "seq-concatenate",
-        3,
-        3,
+        many 1,
         f_seq_concatenate,
         "Concatenate SEQS into TYPE."
     ),
@@ -291,6 +290,23 @@ fn f_elt(i: &mut Interp, args: Vec<Value>) -> EvalResult {
             }
             Ok(Value::from_bool(bits[n as usize]))
         }
+        Value::Record(r) if super::misc::is_char_table(i, &args[0]) => {
+            // Char-table: elt/aref index into the data vector.
+            let rr = r.borrow();
+            match rr.get(2) {
+                Some(Value::Vec(v)) => {
+                    let items = v.borrow();
+                    if n < 0 || n as usize >= items.len() {
+                        return Err(i.signal_data(
+                            sym::ARGS_OUT_OF_RANGE,
+                            vec![args[0].clone(), args[1].clone()],
+                        ));
+                    }
+                    Ok(items[n as usize].clone())
+                }
+                _ => Err(i.wrong_type_mut("char-table-p", &args[0])),
+            }
+        }
         other => Err(i.wrong_type_mut("sequencep", other)),
     }
 }
@@ -345,6 +361,25 @@ fn f_aset(i: &mut Interp, args: Vec<Value>) -> EvalResult {
                 ));
             }
             bits[n as usize] = Value::Int(if args[2].is_nil() { 0 } else { 1 });
+            Ok(args[2].clone())
+        }
+        Value::Record(r) if super::misc::is_char_table(i, &args[0]) => {
+            // Char-table: (aset CT CHAR VALUE) writes the data vector.
+            let vec = {
+                let rr = r.borrow();
+                match rr.get(2) {
+                    Some(Value::Vec(v)) => v.clone(),
+                    _ => return Err(i.wrong_type_mut("char-table-p", &args[0])),
+                }
+            };
+            let mut items = vec.borrow_mut();
+            if n < 0 || n as usize >= items.len() {
+                return Err(i.signal_data(
+                    sym::ARGS_OUT_OF_RANGE,
+                    vec![args[0].clone(), args[1].clone()],
+                ));
+            }
+            items[n as usize] = args[2].clone();
             Ok(args[2].clone())
         }
         other => Err(i.wrong_type_mut("arrayp", other)),
@@ -688,17 +723,13 @@ fn f_clear_vector(i: &mut Interp, args: Vec<Value>) -> EvalResult {
 fn f_seq_concatenate(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     let ty = i.sym_id(&args[0]).unwrap_or(0);
     let mut items = Vec::new();
-    if let Value::Cons(_) = &args[1] {
-        let seqs = want_list(i, &args[1])?;
-        for s in seqs {
-            items.extend(seq_to_vec(i, &s)?);
-        }
-    } else {
-        items.extend(seq_to_vec(i, &args[1])?);
+    for s in &args[1..] {
+        items.extend(seq_to_vec(i, s)?);
     }
     let list_id = i.intern("list");
     let vec_id = i.intern("vector");
     let str_id = i.intern("string");
+    let bv_id = i.intern("bool-vector");
     Ok(if ty == list_id {
         Value::list(items)
     } else if ty == vec_id {
@@ -713,6 +744,8 @@ fn f_seq_concatenate(i: &mut Interp, args: Vec<Value>) -> EvalResult {
             }
         }
         Value::string(s)
+    } else if ty == bv_id {
+        super::misc::make_bool_vector(i, items.iter().map(|v| !v.is_nil()).collect())
     } else {
         Value::list(items)
     })
