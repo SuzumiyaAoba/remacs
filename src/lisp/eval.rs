@@ -182,6 +182,12 @@ pub struct Interp {
     /// `profiler-memory-running-p' state — our memory profiler is a
     /// bookkeeping-only stub, but start/stop toggle it like GNU.
     pub memory_profiler: bool,
+    /// `advice-add' registry: SYM → ordered (WHERE . (FUN . NAME))
+    /// entries. Consulted by `apply' when calling SYM.
+    pub advices: Vec<(SymId, Vec<(SymId, Value, Value)>)>,
+    /// Generated trampolines for advice composition: index →
+    /// (WHERE . (ADVICE-FUN . NEXT-CALLABLE)) as a flat triple.
+    pub advice_links: Vec<(Value, Value, Value)>,
 }
 
 /// Result of a minibuffer read from the front-end.
@@ -262,6 +268,8 @@ impl Interp {
             ccl_program_count: 0,
             code_conv_map_count: 0,
             memory_profiler: false,
+            advices: Vec::new(),
+            advice_links: Vec::new(),
         };
         crate::lisp::builtins::install(&mut interp);
         crate::buffer::install_primitives(&mut interp);
@@ -900,6 +908,14 @@ impl Interp {
                         return Err(self.signal_data(sym::VOID_FUNCTION, vec![Value::Sym(id)]));
                     }
                 }
+                if self
+                    .advices
+                    .iter()
+                    .any(|(s, a)| *s == id && !a.is_empty())
+                {
+                    let argv = self.eval_args(&args)?;
+                    return self.apply_adviced(id, &fun, argv);
+                }
                 self.call_function(&fun, &args, Some(id))
             }
             Value::Cons(_) => {
@@ -958,11 +974,20 @@ impl Interp {
             Value::Sym(id) => {
                 // Function alias chain: chase.
                 let mut cur = *id;
+                let mut advised = None;
                 let mut hops = 0;
                 loop {
                     hops += 1;
                     if hops > 64 {
                         return Err(self.error("Function alias loop"));
+                    }
+                    if advised.is_none()
+                        && self
+                            .advices
+                            .iter()
+                            .any(|(s, a)| *s == cur && !a.is_empty())
+                    {
+                        advised = Some(cur);
                     }
                     let f = self.symbol_function(cur);
                     match f {
@@ -975,6 +1000,10 @@ impl Interp {
                             cur = next;
                         }
                         other => {
+                            if let Some(s) = advised {
+                                let argv = self.eval_args(args)?;
+                                return self.apply_adviced(s, &other, argv);
+                            }
                             // Emacs reports the originally called symbol
                             // in arity errors, not the resolved one.
                             return self.call_function(&other, args, sym_name);
@@ -1067,11 +1096,20 @@ impl Interp {
         match fun {
             Value::Sym(id) => {
                 let mut cur = *id;
+                let mut advised = None;
                 let mut hops = 0;
                 loop {
                     hops += 1;
                     if hops > 64 {
                         return Err(self.error("Function alias loop"));
+                    }
+                    if advised.is_none()
+                        && self
+                            .advices
+                            .iter()
+                            .any(|(s, a)| *s == cur && !a.is_empty())
+                    {
+                        advised = Some(cur);
                     }
                     let f = self.symbol_function(cur);
                     match f {
@@ -1083,7 +1121,10 @@ impl Interp {
                             }
                             cur = next;
                         }
-                        other => return self.apply(&other, argv),
+                        other => match advised {
+                            Some(s) => return self.apply_adviced(s, &other, argv),
+                            None => return self.apply(&other, argv),
+                        },
                     }
                 }
             }
@@ -1124,6 +1165,44 @@ impl Interp {
             }
             _ => Err(self.signal_data(sym::INVALID_FUNCTION, vec![fun.clone()])),
         }
+    }
+
+    /// Copy of SYM's `advice-add' entries: (WHERE FUN . NAME) triples.
+    pub fn advice_list(&self, sym: SymId) -> Vec<(SymId, Value, Value)> {
+        self.advices
+            .iter()
+            .find(|(s, _)| *s == sym)
+            .map(|(_, a)| a.clone())
+            .unwrap_or_default()
+    }
+
+    /// Synthesize `(lambda (&rest a) (apply 'SUBR IDX a))'.
+    fn advice_trampoline(&mut self, idx: usize) -> EvalResult {
+        let src = format!(
+            "(lambda (&rest cl--args) (apply (function cl--advice--apply) {} cl--args))",
+            idx
+        );
+        let (form, _) = self.read_from_string(&src, 0)?;
+        let lam = self.lambda_from_form(&form, None)?;
+        Ok(Value::Lambda(Rc::new(lam)))
+    }
+
+    /// Call SYM's adviced function.  GNU's nadvice composes advices in
+    /// reverse add order — the most recently added piece is outermost —
+    /// each wrapping the inner thunk per its WHERE class.
+    fn apply_adviced(&mut self, sym: SymId, base: &Value, argv: Vec<Value>) -> EvalResult {
+        let advs = self.advice_list(sym);
+        if advs.is_empty() {
+            return self.apply(base, argv);
+        }
+        let mut next = base.clone();
+        for (w, f, _) in &advs {
+            let idx = self.advice_links.len();
+            self.advice_links
+                .push((Value::Sym(*w), f.clone(), next));
+            next = self.advice_trampoline(idx)?;
+        }
+        self.apply(&next, argv)
     }
 
     /// Call an interpreted lambda with evaluated args.

@@ -3118,6 +3118,606 @@ Accumulation refers to the `cl--loop-list-acc' and
         (setq count (1+ count)))
       count)))
 
+;; ---------- more subr.el / simple.el helpers ----------
+
+(defun alist-get (key alist &optional default remove testfn)
+  "Return the value associated with KEY in ALIST."
+  (let ((x (if testfn
+               (cl-assoc key alist :test testfn)
+             (assoc key alist))))
+    (if x (cdr x) default)))
+
+(defun flatten-list (list)
+  "Flatten LIST: return a list of all non-nil atoms."
+  (let ((res nil) (stack (list list)))
+    (while stack
+      (let ((x (pop stack)))
+        (cond
+         ((null x) nil)
+         ((consp x)
+          (push (cdr x) stack)
+          (push (car x) stack))
+         (t (push x res)))))
+    (nreverse res)))
+
+(defun buffer-narrowed-p (&optional buffer)
+  "Return t if BUFFER is narrowed."
+  (with-current-buffer (or buffer (current-buffer))
+    (or (/= (point-min) 1)
+        (/= (point-max) (1+ (buffer-size))))))
+
+(defun shell-quote-argument (arg)
+  "Quote ARG for use as a shell argument (POSIX style)."
+  (if (equal arg "")
+      "''"
+    (let ((res nil))
+      (dolist (c (append arg nil))
+        (push (if (string-match-p "[-a-zA-Z0-9_@%+=:,./~]"
+                                  (char-to-string c))
+                  (char-to-string c)
+                (concat "\\" (char-to-string c)))
+              res))
+      (apply #'concat (nreverse res)))))
+
+(defun combine-and-quote-strings (strings &optional separator)
+  "Join STRINGS with SEPARATOR (default space), quoting strings
+containing whitespace or quotes with double quotes."
+  (mapconcat
+   (lambda (st)
+     (if (string-match "[\"\\ 	
+]" st)
+         (concat "\"" (string-replace "\"" "\\\"" st) "\"")
+       st))
+   strings
+   (or separator " ")))
+
+(defun split-string-and-unquote (string &optional separator)
+  "Split STRING at SEPARATOR (default whitespace) respecting
+double-quoted spans; the quotes are removed."
+  (let ((seps (if separator (append separator nil)
+                '(?\s ?\t ?\n ?\r ?\f ?\v)))
+        (res nil) (cur nil) (inq nil) (i 0) (n (length string)))
+    (while (< i n)
+      (let ((c (aref string i)))
+        (cond
+         ((and (not inq) (memq c seps))
+          (when cur (push (apply #'concat (nreverse cur)) res))
+          (setq cur nil i (1+ i)))
+         ((eq c ?\") (setq inq (not inq) i (1+ i)))
+         (t (push (char-to-string c) cur) (setq i (1+ i))))))
+    (when cur (push (apply #'concat (nreverse cur)) res))
+    (nreverse res)))
+
+(defun time-to-seconds (&optional time)
+  "Convert TIME (a Lisp time value) to seconds."
+  (float-time time))
+
+(defvar emacs--start-time (float-time))
+
+(defun emacs-init-time ()
+  "Return a string describing the Emacs startup time."
+  (format "%.1f seconds" (- (float-time) emacs--start-time)))
+
+(defun function-alias-p (func &optional _noerror)
+  "Return non-nil if FUNC's function cell is another symbol."
+  (let ((d (and (symbolp func) (symbol-function func))))
+    (and (symbolp d) (list d))))
+
+(defun symbol-file (symbol &optional type)
+  "Return the file where SYMBOL was defined (nil if unknown)."
+  nil)
+
+(defun find-lisp-object-file-name (object &optional type)
+  "Return the file where OBJECT was defined (nil if unknown)."
+  nil)
+
+(defun pop-to-buffer-same-window (buffer &optional norecord)
+  "Display BUFFER in the selected window."
+  (pop-to-buffer buffer nil norecord))
+
+(defun field-at-pos (pos)
+  "Return the `field' property at POS."
+  (get-char-property pos 'field))
+
+(defun completion-try-completion (string table pred point
+                                         &optional metadata)
+  "Try to complete STRING using TABLE."
+  (let ((r (try-completion string table pred)))
+    (if (stringp r) (cons r (or point (length r))) r)))
+
+(defun completion-all-completions (string table pred point
+                                          &optional metadata)
+  "All completions of STRING in TABLE."
+  (all-completions string table pred))
+
+(defun completion--action (action table string pred)
+  "Perform completion ACTION on TABLE for STRING and PRED."
+  (cond
+   ((functionp table) (funcall table string pred action))
+   ((or (eq action 'metadata) (eq action 'boundaries)
+        (eq (car-safe action) 'boundaries)) nil)
+   ((eq action nil) (try-completion string table pred))
+   ((eq action 'lambda) (test-completion string table pred))
+   (t (all-completions string table pred))))
+
+(defun completion-table-dynamic (fun &optional switch-buffer)
+  "Use FUN as a dynamic completion table: FUN is called with the
+string to complete and returns the list of completions."
+  ;; `',fun': dynamic scope means no closures — embed the value.
+  (list 'lambda '(string pred action)
+        (list 'completion--action 'action
+              (list 'funcall (list 'quote fun) 'string)
+              'string 'pred)))
+
+(defun completion-table-merge (&rest tables)
+  "Return a completion table merging the candidates of all TABLES."
+  (list 'lambda '(string pred action)
+        `(if (eq action 'lambda)
+             (cl-some
+              (lambda (tab) (completion--action action tab string pred))
+              ',tables)
+           (completion--action
+            action
+            (apply #'append
+                   (mapcar (lambda (tab) (all-completions string tab pred))
+                           ',tables))
+            string pred))))
+
+(defun completion-table-in-turn (&rest tables)
+  "Return a completion table trying each of TABLES in turn."
+  (list 'lambda '(string pred action)
+        `(if (eq (car-safe action) 'boundaries)
+             (completion--action action (car ',tables) string pred)
+           (cl-some
+            (lambda (tab) (completion--action action tab string pred))
+            ',tables))))
+
+(defun completion-table-with-cache (fun &optional bound)
+  "Return a dynamic completion table caching FUN's last result.
+The cache is reused while STRING still starts with the string the
+cache was computed for."
+  (let ((cell (cons nil nil)))
+    (list 'lambda '(string pred action)
+          `(let ((cache ',cell))
+             (unless (and (car cache)
+                          (string-prefix-p (car cache) string)
+                          (or (null ,bound)
+                              (<= (length string)
+                                  (+ ,bound (length (car cache))))))
+               (setcar cache string)
+               (setcdr cache (funcall ',fun string)))
+             (completion--action action (cdr cache) string pred)))))
+
+(defun completion-table-with-context (prefix table string pred action)
+  "Complete STRING in TABLE as if PREFIX preceded it.
+For action nil the returned completion includes PREFIX; for t the
+candidates are returned without it."
+  (cond
+   ((or (eq action 'metadata) (eq action 'boundaries)
+        (eq (car-safe action) 'boundaries)) nil)
+   (t
+    (let ((comp (completion--action action table string pred)))
+      (if (and (eq action nil) (stringp comp))
+          (concat prefix comp)
+        comp)))))
+
+(defmacro macroexp-quote (v)
+  "Return the argument V converted to a form that will \"quote\" it."
+  (if (or (consp v)
+          (and (symbolp v) (not (keywordp v))))
+      (list 'quote v)
+    v))
+
+(defun substitute-key-definition (olddef newdef keymap
+                                  &optional oldmap prefix)
+  "In KEYMAP, rebind every key bound to OLDDEF in OLDMAP to NEWDEF."
+  (map-keymap
+   (lambda (key def)
+     (when (eq def olddef)
+       (define-key keymap (vector key) newdef)))
+   (or oldmap (current-global-map))))
+
+(defun add-to-ordered-list (list-var element &optional order)
+  "Add ELEMENT to the value of LIST-VAR if it isn't there yet.
+The test for presence of ELEMENT is done with `eq'.  Numeric ORDER
+is recorded as the element's rank; elements with ranks sort before
+those without.  LIST-VAR cannot refer to a lexical variable."
+  (let ((ordering (get list-var 'list-order)))
+    (unless ordering
+      (put list-var 'list-order
+           (setq ordering (make-hash-table :weakness 'key :test 'eq))))
+    (when order
+      (puthash element (and (numberp order) order) ordering))
+    (unless (memq element (symbol-value list-var))
+      (set list-var (cons element (symbol-value list-var))))
+    (set list-var
+         (sort (symbol-value list-var)
+               (lambda (a b)
+                 (let ((oa (gethash a ordering))
+                       (ob (gethash b ordering)))
+                   (if (and oa ob) (< oa ob) oa)))))
+    (symbol-value list-var)))
+
+(defvar history-length 60)
+(defvar history-delete-duplicates nil
+  "Non-nil means `add-to-history' removes duplicate entries.")
+
+(defun add-to-history (history-var newelt &optional maxelt keep-all)
+  "Add NEWELT to the history list stored in the variable HISTORY-VAR.
+MAXELT bounds the length (default: the `history-length' property of
+HISTORY-VAR, else the `history-length' variable).  Empty strings and
+entries equal to the most recent element are skipped unless KEEP-ALL.
+HISTORY-VAR cannot refer to a lexical variable."
+  (unless maxelt
+    (setq maxelt (or (get history-var 'history-length)
+                     history-length)))
+  (let ((history (symbol-value history-var))
+        tail)
+    (when (and (listp history)
+               (or keep-all (not (stringp newelt))
+                   (plusp (length newelt)))
+               (or keep-all (not (equal (car history) newelt))))
+      (if history-delete-duplicates
+          (setq history (delete newelt history)))
+      (setq history (cons newelt history))
+      (when (integerp maxelt)
+        (if (>= 0 maxelt)
+            (setq history nil)
+          (setq tail (nthcdr (1- maxelt) history))
+          (when (consp tail)
+            (setcdr tail nil)))))
+    (set history-var history)))
+
+(defun cl--take (n list)
+  (let ((res nil))
+    (while (and (> n 0) list)
+      (push (pop list) res) (setq n (1- n)))
+    (nreverse res)))
+
+(defvar buffer-invisibility-spec t
+  "If t, all invisible text is invisible; if a list, only listed
+symbols (and (sym . t) entries) make text invisible.")
+
+(defun add-to-invisibility-spec (element)
+  "Add ELEMENT to `buffer-invisibility-spec'.
+See documentation for `buffer-invisibility-spec' for the kind of
+elements that can be added."
+  (if (eq buffer-invisibility-spec t)
+      (setq buffer-invisibility-spec (list t)))
+  (add-to-list 'buffer-invisibility-spec element))
+
+(defun remove-from-invisibility-spec (element)
+  "Remove ELEMENT from `buffer-invisibility-spec'."
+  (if (consp buffer-invisibility-spec)
+      (setq buffer-invisibility-spec
+            (delete element buffer-invisibility-spec))))
+
+(defun add-minor-mode (toggle name &optional keymap after lighter)
+  "Register a minor mode in `minor-mode-alist'."
+  (let ((existing (assq toggle minor-mode-alist))
+        (entry (list toggle (or lighter name))))
+    (if existing
+        (setcdr existing (cdr entry))
+      (setq minor-mode-alist (cons entry minor-mode-alist)))
+    (when keymap
+      (setq minor-mode-map-alist
+            (cons (cons toggle keymap) minor-mode-map-alist)))))
+
+(defun event--posn-at-point ()
+  (if (fboundp 'posn-at-point) (posn-at-point)))
+
+(defun event-start (event)
+  "Return the starting position of EVENT, a click or drag event.
+If EVENT is nil, the value of `posn-at-point' is used instead."
+  (if (and (consp event)
+           (memq (car event) '(touchscreen-begin touchscreen-end)))
+      (cdr (car-safe (cdr event)))
+    (or (and (consp event)
+             (not (eq (car event) 'touchscreen-update))
+             (nth 1 event))
+        (event--posn-at-point))))
+
+(defun event-end (event)
+  "Return the ending position of EVENT.
+See `event-start' for a description of the value returned."
+  (if (and (consp event)
+           (memq (car event) '(touchscreen-begin touchscreen-end)))
+      (cdr (car-safe (cdr event)))
+    (or (and (consp event)
+             (not (eq (car event) 'touchscreen-update))
+             (nth (if (consp (nth 2 event)) 2 1) event))
+        (event--posn-at-point))))
+
+(defsubst event-click-count (event)
+  "Return the multi-click count of EVENT, a click or drag event."
+  (if (and (consp event) (integerp (nth 2 event))) (nth 2 event) 1))
+
+(defsubst event-line-count (event)
+  "Return the line count of EVENT, a mousewheel event."
+  (if (and (consp event) (integerp (nth 3 event))) (nth 3 event) 1))
+
+(defun posnp (obj)
+  "Return non-nil if OBJ appears to be a valid posn object."
+  (and (windowp (car-safe obj))
+       (atom (car-safe (car-safe (cdr obj))))
+       (integerp (car-safe (car-safe (cdr (cdr obj)))))
+       (integerp (car-safe (cdr (cdr (cdr obj)))))))
+
+(defun posn-window (position) "Return the window in POSITION."
+  (nth 0 position))
+
+(defun posn-area (position)
+  "Return the window area recorded in POSITION, or nil for the text area."
+  (let ((area (if (consp (nth 1 position))
+                  (car (nth 1 position))
+                (nth 1 position))))
+    (and (symbolp area) area)))
+
+(defun posn-point (position)
+  "Return the buffer location in POSITION."
+  (or (nth 5 position)
+      (let ((pt (nth 1 position)))
+        (or (car-safe pt)
+            (if (integerp pt) pt)))))
+
+(defsubst posn-x-y (position)
+  "Return the x and y coordinates in POSITION as (X . Y)."
+  (nth 2 position))
+
+(defun posn-actual-col-row (position)
+  "Return the window row number and character number in POSITION."
+  (nth 6 position))
+
+(defun posn-col-row (position &optional use-window)
+  "Return the nominal column and row in POSITION, in characters."
+  (let* ((pair (posn-x-y position))
+         (frame-or-window (posn-window position))
+         (window (and (windowp frame-or-window) frame-or-window))
+         (area (posn-area position)))
+    (cond
+     ((null frame-or-window) '(0 . 0))
+     ((eq area 'vertical-scroll-bar)
+      (cons 0 (scroll-bar-scale pair (1- (window-height window)))))
+     ((eq area 'horizontal-scroll-bar)
+      (cons (scroll-bar-scale pair (window-width window)) 0))
+     (t (if use-window
+            (cons (/ (car pair) (window-font-width window))
+                  (/ (cdr pair) (window-font-height window)))
+          (cons (/ (car pair)
+                   (frame-char-width
+                    (if (framep frame-or-window) frame-or-window
+                      (window-frame frame-or-window))))
+                (/ (cdr pair)
+                   (frame-char-height
+                    (if (framep frame-or-window) frame-or-window
+                      (window-frame frame-or-window))))))))))
+
+(defsubst posn-timestamp (position)
+  "Return the timestamp of POSITION."
+  (nth 3 position))
+
+(defun posn-string (position)
+  "Return the string object of POSITION: a cons (STRING . POS) or nil."
+  (let ((x (nth 4 position)))
+    (when (consp x) x)))
+
+(defsubst posn-image (position)
+  "Return the image object of POSITION, or nil if not an image."
+  (nth 7 position))
+
+(defsubst posn-object (position)
+  "Return the object (image or string) of POSITION."
+  (or (posn-image position) (posn-string position)))
+
+(defsubst posn-object-x-y (position)
+  "Return the (DX . DY) offset of the object glyph in POSITION."
+  (nth 8 position))
+
+(defsubst posn-object-width-height (position)
+  "Return the (WIDTH . HEIGHT) of the object glyph in POSITION."
+  (nth 9 position))
+
+(defun posn-set-point (position)
+  "Move point to POSITION; select the corresponding window."
+  (if (framep (posn-window position))
+      (progn
+        (unless (windowp (frame-selected-window (posn-window position)))
+          (error "Position not in text area of window"))
+        (select-window (frame-selected-window (posn-window position))))
+    (unless (windowp (posn-window position))
+      (error "Position not in text area of window"))
+    (select-window (posn-window position)))
+  (if (numberp (posn-point position))
+      (goto-char (posn-point position))))
+
+;; ---------- mode machinery ----------
+
+(defmacro define-derived-mode (variant parent name &optional docstring
+                                       &rest body)
+  "Define VARIANT as a major mode derived from PARENT (subset)."
+  (let* ((map-sym (intern (concat (symbol-name variant) "-map")))
+         (hook-sym (intern (concat (symbol-name variant) "-hook")))
+         (syntax-sym (intern (concat (symbol-name variant)
+                                     "-syntax-table"))))
+    `(progn
+       (defvar ,map-sym
+               ,(if parent
+                    `(let ((m (make-sparse-keymap))
+                           (pmsym ',(intern
+                                     (concat (symbol-name parent)
+                                             "-map"))))
+                       (when (boundp pmsym)
+                         (set-keymap-parent m (symbol-value pmsym)))
+                       m)
+                  '(make-sparse-keymap))
+               ,(concat "Keymap for `" (symbol-name variant) "'."))
+       (defvar ,syntax-sym (copy-syntax-table))
+       (defvar ,hook-sym nil)
+       (defun ,variant ()
+         ,@(when docstring (list docstring))
+         (interactive)
+         ,@(when parent `((when (fboundp ',parent) (,parent))))
+         (kill-all-local-variables)
+         (setq major-mode ',variant
+               mode-name ,name)
+         (use-local-map ,map-sym)
+         ,@body
+         (run-mode-hooks ',hook-sym))
+       ,@(when parent
+           `((derived-mode-set-parent ',variant ',parent)))
+       ',variant)))
+
+(defun merge-ordered-lists (lists &optional error-function)
+  "Merge LISTS in a consistent order (C3 linearization).
+Equality is tested with `eql'.  On inconsistency, ERROR-FUNCTION is
+called with the remaining lists; by default the head of the first
+list is used."
+  (let ((result nil))
+    (setq lists (remq nil lists))
+    (while (cdr lists)
+      (let* ((find-next
+              (lambda (lists)
+                (let ((next nil)
+                      (tail lists))
+                  (while tail
+                    (let ((candidate (caar tail))
+                          (other-lists lists))
+                      (while other-lists
+                        (if (not (memql candidate (cdr (car other-lists))))
+                            (setq other-lists (cdr other-lists))
+                          (setq candidate nil)
+                          (setq other-lists nil)))
+                      (if (not candidate)
+                          (setq tail (cdr tail))
+                        (setq next candidate)
+                        (setq tail nil))))
+                  next)))
+             (next (funcall find-next lists)))
+        (unless next
+          (let ((tail lists))
+            (while (and (cdr tail) (null (funcall find-next (cdr tail))))
+              (setq tail (cdr tail)))
+            (setq next
+                  (funcall (or error-function
+                               (lambda (remaining-lists)
+                                 (message "Inconsistent hierarchy: %S"
+                                          remaining-lists)
+                                 (caar remaining-lists)))
+                           tail))
+            (unless (assoc next lists #'eql)
+              (error "Invalid candidate returned by error-function: %S"
+                     next))
+            (dolist (list lists) (setcdr list (remq next (cdr list))))))
+        (push next result)
+        (setq lists
+              (delq nil
+                    (mapcar (lambda (l) (if (eql (car l) next) (cdr l) l))
+                            lists)))))
+    (if (null result) (car lists)
+      (append (nreverse result) (car lists)))))
+
+(defun derived-mode-all-parents (mode &optional known-children)
+  "Return all the parents of MODE, starting with MODE."
+  (let ((ps (get mode 'derived-mode--all-parents)))
+    (cond
+     (ps ps)
+     ((memq mode known-children)
+      (memq mode (reverse known-children)))
+     (t
+      (let* ((new-children (cons mode known-children))
+             (parent (or (get mode 'derived-mode-parent)
+                         (let ((alias (symbol-function mode)))
+                           (and (symbolp alias) alias))))
+             (extras (get mode 'derived-mode-extra-parents))
+             (all-parents
+              (merge-ordered-lists
+               (cons (if (and parent (not (memq parent extras)))
+                         (derived-mode-all-parents parent new-children))
+                     (mapcar (lambda (p)
+                               (derived-mode-all-parents p new-children))
+                             extras)))))
+        (if (and (memq mode all-parents) known-children)
+            (cons mode (remq mode all-parents))
+          (put mode 'derived-mode--all-parents (cons mode all-parents))))))))
+
+(defun provided-mode-derived-p (mode &optional modes &rest old-modes)
+  "Non-nil if MODE is derived from a member of MODES."
+  (cond
+   (old-modes (setq modes (cons modes old-modes)))
+   ((not (listp modes)) (setq modes (list modes))))
+  (let ((ps (derived-mode-all-parents mode)))
+    (while (and modes (not (memq (car modes) ps)))
+      (setq modes (cdr modes)))
+    (car modes)))
+
+(defun derived-mode-p (&optional modes &rest old-modes)
+  "Return non-nil if the current major mode is derived from one of MODES."
+  (provided-mode-derived-p major-mode (if old-modes (cons modes old-modes)
+                                        modes)))
+
+(defun derived-mode--flush (mode)
+  (put mode 'derived-mode--all-parents nil)
+  (let ((followers (get mode 'derived-mode--followers)))
+    (when followers
+      (put mode 'derived-mode--followers nil)
+      (mapc #'derived-mode--flush followers))))
+
+(defun derived-mode-set-parent (mode parent)
+  "Declare PARENT to be the parent of MODE."
+  (put mode 'derived-mode-parent parent)
+  (derived-mode--flush mode))
+
+(defun derived-mode-add-parents (mode extra-parents)
+  "Add EXTRA-PARENTS to the parents of MODE."
+  (put mode 'derived-mode-extra-parents extra-parents)
+  (derived-mode--flush mode))
+
+(defun modify-face (face &optional foreground background stipple bold-p
+                         italic-p underline-p inverse-p frame)
+  "Change the display attributes of FACE.
+Obsolete: use `set-face-attribute' instead."
+  (declare (obsolete set-face-attribute "22.1"))
+  (unless (memq face (face-list))
+    (signal 'error (list 'Invalid 'face face)))
+  (when foreground
+    (set-face-attribute face frame :foreground foreground))
+  (when background
+    (set-face-attribute face frame :background background))
+  (when stipple
+    (set-face-attribute face frame :stipple stipple))
+  (when bold-p
+    (set-face-attribute face frame :weight (if bold-p 'bold 'normal)))
+  (when italic-p
+    (set-face-attribute face frame :slant (if italic-p 'italic 'normal)))
+  (when underline-p
+    (set-face-attribute face frame :underline underline-p))
+  (when inverse-p
+    (set-face-attribute face frame :inverse-video inverse-p)))
+
+(defmacro defface (face spec doc &rest args)
+  "Define FACE (subset: registers the name and applies SPEC's
+`default'/`t' entry attributes)."
+  (declare (indent 1))
+  (let* ((specv (if (and (consp spec) (eq (car spec) 'quote))
+                    (cadr spec)
+                  spec))
+         (plist (cadr (or (assq t specv) (car specv)))))
+    `(progn
+       (set-face-attribute ',face nil
+         ,@(mapcan (lambda (kw)
+                     (let ((v (plist-get plist kw)))
+                       (if v (list kw (list 'quote v)) nil)))
+                   '(:foreground :background :weight :slant
+                                 :underline :inverse-video
+                                 :stipple :height)))
+       ',face)))
+
+(defmacro define-generic-mode (&rest args)
+  "Define a generic mode (subset: aliases define-derived-mode)."
+  (declare (indent 1))
+  `(define-derived-mode ,(car args) fundamental-mode ,(cadr args)
+                        ,(caddr args)))
+
 ;; ---------- eval-after-load plumbing is in load.rs ----------
 
 (defmacro with-buffer-unmodified-if-unchanged (&rest body)

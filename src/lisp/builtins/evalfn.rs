@@ -174,6 +174,47 @@ pub(crate) static SUBRS: &[Subr] = &[
         "Load FUNDEF's autoload file, return the new definition."
     ),
     S!(
+        "advice-add",
+        3,
+        4,
+        f_advice_add,
+        "Add FUNCTION to SYMBOL's advices in the WHERE class."
+    ),
+    S!(
+        "advice-remove",
+        2,
+        2,
+        f_advice_remove,
+        "Remove FUNCTION (or the named advice) from SYMBOL."
+    ),
+    S!(
+        "advice-member-p",
+        2,
+        2,
+        f_advice_member_p,
+        "Non-nil if FUNCTION was added to SYMBOL."
+    ),
+    S!(
+        "advice-function-member-p",
+        2,
+        2,
+        f_advice_member_p,
+        "Non-nil if ADVICE is among FUNCTION-DEF's advices."
+    ),
+    S!(
+        "advice-function-mapc",
+        2,
+        2,
+        f_advice_function_mapc,
+        "Apply FUNCTION to each advice of FUNCTION-DEF."
+    ),
+    S!(
+        "cl--advice--apply",
+        many 1,
+        f_advice_apply_link,
+        "Internal trampoline applying one advice wrapper."
+    ),
+    S!(
         "handler-bind-1",
         many 1,
         f_handler_bind_1,
@@ -1597,4 +1638,192 @@ fn f_smae_restore(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         }
     }
     Ok(Value::Nil)
+}
+
+const ADVICE_WHERES: &[&str] = &[
+    ":around",
+    ":before",
+    ":after",
+    ":override",
+    ":before-until",
+    ":before-while",
+    ":after-until",
+    ":after-while",
+    ":filter-args",
+    ":filter-return",
+];
+
+/// The `name' property of an advice PROPS alist.
+fn advice_name(i: &mut Interp, props: &Value) -> Value {
+    let name_kw = i.intern("name");
+    let mut cur = props.clone();
+    while let Value::Cons(c) = cur {
+        let (car, cdr) = {
+            let b = c.borrow();
+            (b.car.clone(), b.cdr.clone())
+        };
+        if let Value::Cons(e) = &car {
+            let (k, v) = {
+                let b = e.borrow();
+                (b.car.clone(), b.cdr.clone())
+            };
+            if let Value::Sym(s) = k {
+                if s == name_kw {
+                    return v;
+                }
+            }
+        }
+        cur = cdr;
+    }
+    Value::Nil
+}
+
+/// Match an advice entry against `advice-remove'/`advice-member-p''s
+/// FUNCTION argument: the function value itself or a non-nil :name.
+fn advice_entry_matches(fun: &Value, name: &Value, sel: &Value) -> bool {
+    super::eq_values(fun, sel) || (!name.is_nil() && super::eq_values(name, sel))
+}
+
+fn f_advice_add(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let sym = want_sym(i, &a[0])?;
+    let w = want_sym(i, &a[1])?;
+    if !ADVICE_WHERES
+        .iter()
+        .any(|n| i.symbol_name(w).as_str() == *n)
+    {
+        return Err(i.signal_data(
+            sym::ERROR,
+            vec![Value::string(format!(
+                "Unknown add-function location ‘{}’",
+                i.symbol_name(w)
+            ))],
+        ));
+    }
+    let name = advice_name(i, &arg(&a, 3));
+    let entry = (w, a[2].clone(), name.clone());
+    let pos = i.advices.iter().position(|(s, _)| *s == sym);
+    let list = match pos {
+        Some(p) => &mut i.advices[p].1,
+        None => {
+            i.advices.push((sym, Vec::new()));
+            &mut i.advices.last_mut().unwrap().1
+        }
+    };
+    if !name.is_nil() {
+        list.retain(|(_, _, n)| !super::eq_values(n, &name));
+    }
+    list.retain(|(_, f, _)| !super::eq_values(f, &a[2]));
+    list.push(entry);
+    Ok(Value::Nil)
+}
+
+fn f_advice_remove(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let sym = want_sym(i, &a[0])?;
+    if let Some((_, list)) = i.advices.iter_mut().find(|(s, _)| *s == sym) {
+        list.retain(|(_, f, n)| !advice_entry_matches(f, n, &a[1]));
+    }
+    Ok(Value::Nil)
+}
+
+fn f_advice_member_p(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let sym = match &a[1] {
+        Value::Sym(s) => *s,
+        _ => return Ok(Value::Nil),
+    };
+    let hit = i
+        .advice_list(sym)
+        .iter()
+        .any(|(_, f, n)| advice_entry_matches(f, n, &a[0]));
+    Ok(Value::from_bool(hit))
+}
+
+fn f_advice_function_mapc(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let sym = match &a[1] {
+        Value::Sym(s) => *s,
+        _ => return Ok(Value::Nil),
+    };
+    for (w, f, n) in i.advice_list(sym) {
+        let name_kw = i.intern("name");
+        let props = if n.is_nil() {
+            Value::Nil
+        } else {
+            Value::list(vec![Value::cons(Value::Sym(name_kw), n)])
+        };
+        i.apply(&a[0], vec![f, props])?;
+        let _ = w;
+    }
+    Ok(Value::Nil)
+}
+
+/// `(cl--advice--apply IDX ARGS...)` — apply advice wrapper IDX:
+/// entry = (WHERE FUN NEXT).
+fn f_advice_apply_link(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let idx = match &a[0] {
+        Value::Int(n) => *n as usize,
+        _ => return Err(i.wrong_type_mut("fixnump", &a[0])),
+    };
+    let (w, f, next) = match i.advice_links.get(idx) {
+        Some(p) => p.clone(),
+        None => return Err(i.error("Invalid advice link")),
+    };
+    let args: Vec<Value> = a[1..].to_vec();
+    let wname = match &w {
+        Value::Sym(s) => i.symbol_name(*s),
+        _ => return Err(i.wrong_type_mut("symbolp", &w)),
+    };
+    match wname.as_str() {
+        ":around" => {
+            let mut argv = vec![next];
+            argv.extend(args);
+            i.apply(&f, argv)
+        }
+        ":override" => i.apply(&f, args),
+        ":before" => {
+            i.apply(&f, args.clone())?;
+            i.apply(&next, args)
+        }
+        ":before-until" => {
+            let r = i.apply(&f, args.clone())?;
+            if r.truthy() {
+                Ok(r)
+            } else {
+                i.apply(&next, args)
+            }
+        }
+        ":before-while" => {
+            if i.apply(&f, args.clone())?.truthy() {
+                i.apply(&next, args)
+            } else {
+                Ok(Value::Nil)
+            }
+        }
+        ":after" => {
+            let r = i.apply(&next, args.clone())?;
+            i.apply(&f, args)?;
+            Ok(r)
+        }
+        ":after-until" => {
+            let r = i.apply(&next, args.clone())?;
+            let r2 = i.apply(&f, args)?;
+            Ok(if r2.truthy() { r2 } else { r })
+        }
+        ":after-while" => {
+            let r = i.apply(&next, args.clone())?;
+            Ok(if i.apply(&f, args)?.truthy() {
+                r
+            } else {
+                Value::Nil
+            })
+        }
+        ":filter-args" => {
+            let r = i.apply(&f, vec![Value::list(args)])?;
+            let argv = r.list_to_vec().unwrap_or_else(|_| vec![r]);
+            i.apply(&next, argv)
+        }
+        ":filter-return" => {
+            let r = i.apply(&next, args)?;
+            i.apply(&f, vec![r])
+        }
+        _ => Err(i.error("Invalid advice class")),
+    }
 }

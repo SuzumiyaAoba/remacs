@@ -6157,7 +6157,7 @@ fn f_completing_read(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         }
     }
     // TABLE: list, alist, obarray, or function.
-    match try_completions(i, "", &a[1]) {
+    match try_completions(i, "", &a[1], &Value::Nil) {
         Ok(v) => Ok(v),
         Err(_) => Ok(arg(&a, 6)),
     }
@@ -6187,12 +6187,34 @@ fn completion_candidates(i: &mut Interp, table: &Value) -> Vec<String> {
     }
 }
 
-fn f_try_completion(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let s = want_str(i, &a[0])?;
-    try_completions(i, &s, &a[1])
+/// Whether TABLE is a function-style completion table (a callable).
+fn table_is_callable(i: &mut Interp, table: &Value) -> bool {
+    match table {
+        Value::Lambda(_) | Value::Subr(_) => true,
+        Value::Sym(s) => {
+            let f = i.symbol_function(*s);
+            !matches!(f, Value::Sym(u) if u == crate::lisp::obarray::sym::UNBOUND)
+        }
+        Value::Cons(c) => {
+            let car = c.borrow().car.clone();
+            i.sym_is(&car, crate::lisp::obarray::sym::LAMBDA)
+        }
+        _ => false,
+    }
 }
 
-fn try_completions(i: &mut Interp, s: &str, table: &Value) -> EvalResult {
+fn f_try_completion(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let s = want_str(i, &a[0])?;
+    try_completions(i, &s, &a[1], &arg(&a, 2))
+}
+
+fn try_completions(i: &mut Interp, s: &str, table: &Value, pred: &Value) -> EvalResult {
+    if table_is_callable(i, table) {
+        return i.apply(
+            table,
+            vec![Value::string(s), pred.clone(), Value::Nil],
+        );
+    }
     let cands = completion_candidates(i, table);
     let matches: Vec<String> = cands.into_iter().filter(|c| c.starts_with(s)).collect();
     if matches.is_empty() {
@@ -6211,6 +6233,12 @@ fn try_completions(i: &mut Interp, s: &str, table: &Value) -> EvalResult {
 
 fn f_all_completions(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let s = want_str(i, &a[0])?;
+    if table_is_callable(i, &a[1]) {
+        return i.apply(
+            &a[1],
+            vec![Value::string(s), arg(&a, 2), Value::t()],
+        );
+    }
     let cands = completion_candidates(i, &a[1]);
     Ok(Value::list(
         cands
@@ -6223,6 +6251,14 @@ fn f_all_completions(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 
 fn f_test_completion(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let s = want_str(i, &a[0])?;
+    if table_is_callable(i, &a[1]) {
+        let lambda_kw = i.intern("lambda");
+        let r = i.apply(
+            &a[1],
+            vec![Value::string(s), arg(&a, 2), Value::Sym(lambda_kw)],
+        )?;
+        return Ok(Value::from_bool(r.truthy()));
+    }
     let cands = completion_candidates(i, &a[1]);
     Ok(Value::from_bool(cands.iter().any(|c| c == &s)))
 }
@@ -6246,7 +6282,7 @@ fn f_internal_complete_buffer(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let table = Value::list(names);
     let flag = arg(&a, 2);
     match &flag {
-        Value::Nil => try_completions(i, &s, &table),
+        Value::Nil => try_completions(i, &s, &table, &Value::Nil),
         Value::Sym(sym) if i.symbol_name(*sym) == "lambda" => {
             let cands = completion_candidates(i, &table);
             Ok(Value::from_bool(cands.iter().any(|c| c == &s)))
@@ -6261,15 +6297,40 @@ fn f_internal_complete_buffer(i: &mut Interp, a: Vec<Value>) -> EvalResult {
                     .collect(),
             ))
         }
-        _ => try_completions(i, &s, &table),
+        _ => try_completions(i, &s, &table, &Value::Nil),
     }
 }
 
 fn f_completion_boundaries(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     // (STRING TABLE PRED SUFFIX) → (START . END): the start boundary
     // inside STRING is 0 and END counts SUFFIX chars (GNU's plain
-    // completion style has no field separator).
-    let _ = want_str(i, &a[0])?;
+    // completion style has no field separator). A function table may
+    // override via the `boundaries' action.
+    let s = want_str(i, &a[0])?;
+    if table_is_callable(i, &a[1]) {
+        let bw = i.intern("boundaries");
+        let r = i.apply(
+            &a[1],
+            vec![Value::string(s.clone()), arg(&a, 2), Value::Sym(bw)],
+        )?;
+        if let Value::Cons(c) = &r {
+            let (car, cdr) = {
+                let b = c.borrow();
+                (b.car.clone(), b.cdr.clone())
+            };
+            if let Value::Sym(k) = &car {
+                if i.symbol_name(*k) == "boundaries" {
+                    if let Value::Cons(c2) = &cdr {
+                        let (start, end) = {
+                            let b = c2.borrow();
+                            (b.car.clone(), b.cdr.clone())
+                        };
+                        return Ok(Value::cons(start, end));
+                    }
+                }
+            }
+        }
+    }
     let end = match &a[3] {
         Value::Str(s) => s.borrow().chars().count() as i128,
         _ => 0,
