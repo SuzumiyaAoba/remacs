@@ -1787,7 +1787,7 @@ places where expressions are evaluated and inserted or spliced in."
 ;; The reader produces (` STRUCTURE) — GNU binds ` to the same macro.
 (fset (intern "`") (symbol-function 'backquote))
 
-;; ---------- autoloaded libraries ----------
+
 
 (defvar minor-mode-alist nil
   "Alist of (MODE . LIGHTER-STRINGS) for minor modes.")
@@ -1831,6 +1831,1294 @@ places where expressions are evaluated and inserted or spliced in."
 
 (defmacro defsubst (name arglist &rest body)
   (cons 'defun (cons name (cons arglist body))))
+
+;; ---------- subr.el / subr-x.el cluster (GNU-dumped) ----------
+
+(defsubst xor (cond1 cond2)
+  "Return the non-nil argument if exactly one of COND1, COND2 is non-nil."
+  (if cond1 (unless cond2 cond1) cond2))
+
+(defmacro if-let* (varlist then &rest else)
+  "Bind each VAR in VARLIST to VAL; eval THEN when all non-nil, else ELSE.
+Each binding spec is (VAR VAL), (VAR) (binds nil), or a bare VAR
+\(tests VAR's current value)."
+  (if (null varlist)
+      `(progn ,then)
+    (let ((spec (car varlist)))
+      (cond
+       ((symbolp spec) (setq spec (list spec spec)))
+       ((null (cdr spec)) (setq spec (list (car spec) nil))))
+      `(let* (,spec)
+         (if ,(car spec)
+             (if-let* ,(cdr varlist) ,then ,@else)
+           ,@(if else `((progn ,@else)) '(nil)))))))
+
+(defmacro when-let* (varlist &rest body)
+  "Bind each VAR in VARLIST; when all non-nil, eval BODY."
+  `(if-let* ,varlist (progn ,@body)))
+
+;; The non-* variants take a single (VAR VAL) spec or legacy [VAR VAL].
+(defmacro if-let (varlist then &rest else)
+  "Like `if-let*' for a single binding (obsolete shape)."
+  (let ((spec (if (and (consp varlist) (cdr varlist)
+                       (symbolp (car varlist)) (not (consp (car varlist))))
+                  (list varlist)          ; legacy (var val)
+                varlist)))
+    `(if-let* ,spec ,then ,@else)))
+
+(defmacro when-let (varlist &rest body)
+  "Like `when-let*' for a single binding (obsolete shape)."
+  `(if-let ,varlist (progn ,@body)))
+
+(defmacro and-let* (varlist &rest body)
+  "Bind (VAR VAL) specs in sequence; eval BODY when all yield non-nil.
+A (FORM) spec evaluates FORM for truth without binding; a bare
+VAR spec tests VAR's current value."
+  (if (null varlist)
+      `(progn ,@body)
+    (let ((spec (car varlist))
+          (rest (cdr varlist)))
+      (cond
+       ((and (consp spec) (symbolp (car spec)) (cdr spec))
+        `(let* ((,(car spec) (and t ,(cadr spec))))
+           (and ,(car spec) (and-let* ,rest ,@body))))
+       ((consp spec)
+        (let ((tmp (gensym)))
+          `(let* ((,tmp (and t ,(car spec))))
+             (and ,tmp (and-let* ,rest ,@body)))))
+       (t
+        `(and ,spec (and-let* ,rest ,@body)))))))
+
+(defun cl--thread-expand (x forms last)
+  (if (null forms)
+      x
+    (let ((f (car forms)))
+      (cl--thread-expand
+       (if (consp f)
+           (if last
+               `(,(car f) ,@(cdr f) ,x)
+             `(,(car f) ,x ,@(cdr f)))
+         (list f x))
+       (cdr forms) last))))
+
+(defmacro thread-first (&rest forms)
+  "Thread X through FORMS as the first argument."
+  (cl--thread-expand (car forms) (cdr forms) nil))
+
+(defmacro thread-last (&rest forms)
+  "Thread X through FORMS as the last argument."
+  (cl--thread-expand (car forms) (cdr forms) t))
+
+(defmacro dlet (spec &rest body)
+  "Like `let*' with dynamic binding (ours is already dynamic)."
+  `(let* ,spec ,@body))
+
+(defun define-error (name message &optional parent)
+  "Define NAME as an error with MESSAGE inheriting from PARENT."
+  (let* ((parent (or parent 'error))
+         (conds (cons name (or (get parent 'error-conditions)
+                               (list 'error)))))
+    (put name 'error-conditions conds)
+    (put name 'error-message message)))
+
+(defvar after-load-alist nil
+  "Alist of (FILE . FORMS) to eval after FILE is loaded.")
+
+(defun eval-after-load (file form)
+  "Arrange that FORM is evaluated after FILE is loaded.
+String FILEs become a regexp matching the file name at the end of
+any path, with optional .so/.dylib/.elc/.el/.gz extension."
+  (let ((key (if (stringp file)
+                 (concat "\\(\\`\\|/\\)" (regexp-quote file)
+                         "\\(\\.so\\|\\.dylib\\|\\.elc\\|\\.el\\)?\\(\\.gz\\)?\\'")
+               file)))
+    (setq after-load-alist
+          (cons (list key `(lambda () ,form)) after-load-alist)))
+  nil)
+
+(defmacro with-eval-after-load (file &rest body)
+  "Arrange that BODY runs after FILE is loaded."
+  `(eval-after-load ,file (function (lambda () ,@body))))
+
+(defun load-library (library)
+  "Load the Emacs Lisp library named LIBRARY."
+  (interactive "sLoad library: ")
+  (load library))
+
+(defun delete-consecutive-dups (list &optional circular)
+  "Destructively remove consecutive `equal' duplicates from LIST."
+  (when (and circular (consp list) (consp (cdr list))
+             (equal (car list) (car (last list))))
+    (setcdr (nthcdr (- (length list) 2) list) nil))
+  (let ((tail list))
+    (while (cdr-safe tail)
+      (if (equal (car tail) (cadr tail))
+          (setcdr tail (cddr tail))
+        (setq tail (cdr tail)))))
+  list)
+
+(defun assoc-delete-all (key alist &optional testfn)
+  "Delete from ALIST all elements whose car matches KEY via TESTFN."
+  (let ((test (or testfn #'equal)))
+    (while (and alist (funcall test key (caar alist)))
+      (setq alist (cdr alist)))
+    (let ((tail alist))
+      (while (cdr tail)
+        (if (funcall test key (car (cadr tail)))
+            (setcdr tail (cddr tail))
+          (setq tail (cdr tail)))))
+    alist))
+
+(defun string-limit (string &optional length coding-system)
+  "Return STRING truncated to LENGTH characters."
+  (let ((n (length string)))
+    (if (or (null length) (>= length n))
+        string
+      (substring string 0 (max 0 length)))))
+
+(defun string-clean-whitespace (string)
+  "Collapse whitespace runs in STRING to single spaces; trim ends."
+  (string-trim
+   (if (fboundp 'replace-regexp-in-string)
+       (replace-regexp-in-string "[\\s-]+" " " string)
+     (string-replace "\n" " " string))))
+
+(defun forward-thing (thing &optional n)
+  "Move point forward N THINGs."
+  (or n (setq n 1))
+  (cond
+   ((memq thing '(symbol)) (forward-symbol n))
+   ((memq thing '(word)) (forward-word n))
+   ((memq thing '(sexp)) (forward-sexp n))
+   ((memq thing '(list)) (forward-list n))
+   ((memq thing '(line)) (forward-line n))
+   ((memq thing '(sentence)) (forward-sentence n))
+   ((memq thing '(paragraph)) (forward-paragraph n))
+   ((memq thing '(defun)) (beginning-of-defun (- n)))
+   ((memq thing '(char)) (forward-char n))
+   (t (error "Unknown thing: %s" thing))))
+
+(defun locate-file (filename path &optional suffixes predicate)
+  "Search PATH (a directory or list of directories) for FILENAME,
+trying SUFFIXES; PREDICATE (default `file-exists-p') must pass."
+  (let ((dirs (if (listp path) path (list path)))
+        (sufs (or suffixes '("")))
+        (pred (or predicate #'file-exists-p))
+        (found nil))
+    (while (and dirs (not found))
+      (let ((ss sufs))
+        (while ss
+          (let ((f (expand-file-name (concat filename (car ss)) (car dirs))))
+            (when (funcall pred f)
+              (setq found f ss nil)))
+          (setq ss (cdr ss))))
+      (setq dirs (cdr dirs)))
+    found))
+
+(defun file-name-parent-directory (file)
+  "Return the parent directory of directory FILE, or nil."
+  (let ((dir (directory-file-name file)))
+    (file-name-directory dir)))
+
+(defun file-name-with-extension (file extension)
+  "Return FILE with its extension changed to EXTENSION."
+  (concat (file-name-sans-extension file)
+          (if (string-prefix-p "." extension)
+              extension
+            (concat "." extension))))
+
+(defun keymap-set (keymap key def)
+  "In KEYMAP, bind KEY (a `kbd' string or vector) to DEF."
+  (define-key keymap (if (stringp key) (kbd key) key) def))
+
+(defun keymap-global-set (key def)
+  "Bind KEY globally to DEF."
+  (global-set-key (if (stringp key) (kbd key) key) def))
+
+(defun keymap-local-set (key def)
+  "Bind KEY in the current buffer's local map to DEF."
+  (local-set-key (if (stringp key) (kbd key) key) def))
+
+(defun keymap-unset (keymap key &optional remove)
+  "Remove KEY's binding from KEYMAP."
+  (define-key keymap (if (stringp key) (kbd key) key)
+              (if remove 'remove nil)))
+
+(defmacro define-keymap (&rest pairs)
+  "Define a new keymap; PAIRS is :option vals then alternating keys/defs."
+  (let ((parent nil) (name nil) (full nil) (dense nil)
+        (defs '()) (suppress nil))
+    (while pairs
+      (let ((p (car pairs)))
+        (if (keywordp p)
+            (progn
+              (setq pairs (cdr pairs))
+              (cond
+               ((eq p :parent) (setq parent (car pairs) pairs (cdr pairs)))
+               ((eq p :name) (setq name (car pairs) pairs (cdr pairs)))
+               ((eq p :doc) (setq pairs (cdr pairs)))
+               ((eq p :full) (setq full (car pairs) pairs (cdr pairs)))
+               ((eq p :dense) (setq dense (car pairs) pairs (cdr pairs)))
+               ((eq p :suppress) (setq suppress (car pairs) pairs (cdr pairs)))
+               (t (setq pairs (cdr pairs)))))
+          (push (list p (cadr pairs)) defs)
+          (setq pairs (cddr pairs)))))
+    `(let ((m (,(if (or full (not dense)) 'make-keymap 'make-sparse-keymap))))
+       ,@(when parent `((set-keymap-parent m ,parent)))
+       ,@(mapcar (lambda (kv) `(keymap-set m ,(car kv) ,(cadr kv)))
+                 (nreverse defs))
+       m)))
+
+(defmacro defvar-keymap (name &rest pairs)
+  "Define NAME as a keymap variable."
+  (let ((doc (when (and pairs (keywordp (car pairs)) (eq (car pairs) :doc))
+               (prog1 (cadr pairs) (setq pairs (cddr pairs))))))
+    `(progn
+       (defvar ,name nil ,doc)
+       (setq ,name (define-keymap ,@pairs))
+       ,name)))
+
+;; ---------- minimal setf/generalized-place machinery ----------
+
+(defun cl--setf-pair (place val)
+  "Return a form evaluating to `(setf PLACE VAL)' for common places."
+  (cond
+   ((symbolp place) (list 'setq place val))
+   ((consp place)
+    (let ((op (car place)))
+      (cond
+       ((eq op 'car) `(setcar ,(cadr place) ,val))
+       ((eq op 'cdr) `(setcdr ,(cadr place) ,val))
+       ((eq op 'caar) `(setcar (car ,(cadr place)) ,val))
+       ((eq op 'cadr) `(setcar (cdr ,(cadr place)) ,val))
+       ((eq op 'cddr) `(setcdr (cdr ,(cadr place)) ,val))
+       ((eq op 'nth) `(setcar (nthcdr ,(cadr place) ,(caddr place)) ,val))
+       ((eq op 'elt) `(setcar (nthcdr ,(caddr place) ,(cadr place)) ,val))
+       ((eq op 'nthcdr)
+        `(setcdr (nthcdr ,(caddr place) ,(cadr place)) ,val))
+       ((eq op 'aref) `(aset ,(cadr place) ,(caddr place) ,val))
+       ((eq op 'get) `(put ,(cadr place) ,(caddr place) ,val))
+       ((eq op 'gethash) `(puthash ,(caddr place) ,val ,(cadr place)))
+       ((eq op 'symbol-value) `(set ,(cadr place) ,val))
+       ((eq op 'symbol-function) `(fset ,(cadr place) ,val))
+       ((eq op 'symbol-plist) `(setplist ,(cadr place) ,val))
+       ((eq op 'plist-get)
+        `(progn (setq ,(cadr place)
+                      (plist-put ,(cadr place) ,(caddr place) ,val))
+                ,(caddr place)))
+       ((eq op 'alist-get)
+        `(setf (cdr (assoc ,(caddr place) ,(cadr place))) ,val))
+       (t (error "setf: unsupported place %s" place)))))
+   (t (error "setf: unsupported place %s" place))))
+
+(defmacro setf (&rest args)
+  "Set each generalized PLACE to VALUE.  Supports symbol, car, cdr,
+nth, elt, aref, get, gethash, plist-get, symbol-* places."
+  (cons 'progn
+        (let ((out nil) (rest args))
+          (while rest
+            (push (cl--setf-pair (car rest) (cadr rest)) out)
+            (setq rest (cddr rest)))
+          (nreverse out))))
+
+(defmacro psetf (&rest args)
+  "Like `setf' but evaluate all values before assigning."
+  (let ((temps nil) (sets nil) (rest args))
+    (while rest
+      (let ((tmp (gensym)))
+        (push (list tmp (cadr rest)) temps)
+        (push (cl--setf-pair (car rest) tmp) sets))
+      (setq rest (cddr rest)))
+    `(let ,(nreverse temps) ,@(nreverse sets))))
+
+(defalias 'cl-psetf 'psetf)
+
+(defmacro incf (place &optional delta)
+  "Increment PLACE by DELTA (default 1)."
+  `(setf ,place (+ ,place ,(or delta 1))))
+
+(defmacro decf (place &optional delta)
+  "Decrement PLACE by DELTA (default 1)."
+  `(setf ,place (- ,place ,(or delta 1))))
+
+(defalias 'cl-incf 'incf)
+(defalias 'cl-decf 'decf)
+
+(defmacro cl-pushnew (val place &rest keys)
+  "Push VAL onto PLACE's list unless already `eql' to a member."
+  `(let ((v ,val))
+     (unless (apply #'cl-member v ,place (list ,@keys))
+       (setf ,place (cons v ,place)))))
+
+(defmacro cl-remf (place item)
+  "Remove the first element `eql' to ITEM from the list in PLACE."
+  `(setf ,place (cl--do-remf ,place ,item)))
+
+(defun cl--do-remf (list item)
+  (if (and (consp list) (eql (car list) item))
+      (cdr list)
+    (let ((tail list))
+      (while (and (cdr tail) (not (eql (cadr tail) item)))
+        (setq tail (cdr tail)))
+      (when (cdr tail) (setcdr tail (cddr tail)))
+      list)))
+
+(defmacro cl-rotatef (&rest args)
+  "Rotate the values of ARGS leftward."
+  (let ((tmps (mapcar (lambda (_) (gensym)) args))
+        (sets nil) (i 0) (n (length args)))
+    (while (< i n)
+      (push (cl--setf-pair (nth (mod (1+ i) n) args) (nth i tmps)) sets)
+      (setq i (1+ i)))
+    `(let ,(cl--zip tmps args) ,@(nreverse sets) nil)))
+
+(defmacro cl-shiftf (&rest args)
+  "Shift each ARG left: (cl-shiftf a b ... v) sets a←b ... returns old a."
+  (let ((tmps (mapcar (lambda (_) (gensym)) args))
+        (sets nil) (i 0) (n (length args)))
+    (while (< (1+ i) n)
+      (push (cl--setf-pair (nth i args) (nth (1+ i) tmps)) sets)
+      (setq i (1+ i)))
+    `(let ,(cl--zip tmps args) ,@(nreverse sets) ,(car tmps))))
+
+;; ---------- cl-lib / cl-seq subset ----------
+
+(defun cl-gensym (&optional prefix)
+  "Generate a new uninterned symbol with PREFIX (default \"G\")."
+  (gensym (or prefix "G")))
+
+(defun cl-gentemp (&optional prefix)
+  "Generate a new interned symbol with PREFIX (default \"t\")."
+  (let ((n 0) sym)
+    (while (progn
+             (setq sym (intern (format "%s%d" (or prefix "t")
+                                       (setq n (1+ n)))))
+             (fboundp sym)))
+    sym))
+
+(defsubst cl-minusp (n) "Return t if N is negative." (< n 0))
+(defsubst cl-plusp (n) "Return t if N is positive." (> n 0))
+(defsubst cl-oddp (n) "Return t if N is odd." (eq (logand n 1) 1))
+(defsubst cl-evenp (n) "Return t if N is even." (eq (logand n 1) 0))
+
+(defun cl-signum (n) "Return 1, 0 or -1 depending on N's sign."
+  (cond ((> n 0) 1) ((< n 0) -1) (t 0)))
+
+(defun cl-gcd (&rest args)
+  "Greatest common divisor of ARGS."
+  (let ((a 0))
+    (dolist (x args (abs a))
+      (setq x (abs x))
+      (while (not (zerop x))
+        (let ((r (% a x))) (setq a x x r))))))
+
+(defun cl-lcm (&rest args)
+  "Least common multiple of ARGS."
+  (let ((l 1))
+    (dolist (x args (abs l))
+      (setq l (if (or (zerop l) (zerop x)) 0
+                (/ (* l (abs x)) (cl-gcd l x)))))))
+
+(defun cl-isqrt (n)
+  "Integer square root of N."
+  (if (fboundp 'isqrt)
+      (isqrt n)
+    (floor (sqrt (float n)))))
+
+(defvar cl-most-positive-float 1.7976931348623157e308)
+(defvar cl-most-negative-float -1.7976931348623157e308)
+(defvar cl-least-positive-float 5e-324)
+(defvar cl-least-negative-float -5e-324)
+(defvar cl-least-positive-normalized-float 2.2250738585072014e-308)
+(defvar cl-least-negative-normalized-float -2.2250738585072014e-308)
+(defvar cl-float-epsilon 2.220446049250313e-16)
+(defvar cl-float-negative-epsilon 1.1102230246251565e-16)
+
+(defun cl-random (lim &optional state)
+  "Random number < LIM (STATE ignored)."
+  (random lim))
+
+(defun cl-equalp (x y)
+  "Like `equal' but case-insensitive for strings/chars and number
+equivalence ignoring int/float distinction."
+  (cond
+   ((and (numberp x) (numberp y)) (= x y))
+   ((and (stringp x) (stringp y)) (equal (downcase x) (downcase y)))
+   ((and (characterp x) (characterp y))
+    (= (downcase x) (downcase y)))
+   (t (equal x y))))
+
+(defun cl-copy-list (list) "Return a copy of LIST's spine."
+  (copy-sequence list))
+
+(defun cl-tailp (sublist list)
+  "Return t if SUBLIST is a tail (eq) of LIST."
+  (let ((tail list))
+    (while (and (consp tail) (not (eq tail sublist)))
+      (setq tail (cdr tail)))
+    (eq tail sublist)))
+
+(defun cl-ldiff (list sublist)
+  "Return a copy of the part of LIST before SUBLIST."
+  (let ((res nil) (tail list))
+    (while (and (consp tail) (not (eq tail sublist)))
+      (push (car tail) res)
+      (setq tail (cdr tail)))
+    (nreverse res)))
+
+(defun cl-pairlis (keys values &optional alist)
+  "Prepend (KEY . VALUE) pairs to ALIST."
+  (while keys
+    (push (cons (pop keys) (pop values)) alist))
+  alist)
+
+(defun cl--keyfn (keys)
+  "The :key function from KEYS (default `identity')."
+  (or (plist-get keys :key) #'identity))
+
+(defun cl-member (item list &rest keys)
+  "Like `member' with :test/:key support."
+  (let ((test (plist-get keys :test))
+        (key (cl--keyfn keys)))
+    (while (and list
+                (not (if test
+                         (funcall test item (funcall key (car list)))
+                       (equal item (funcall key (car list))))))
+      (setq list (cdr list)))
+    list))
+
+(defun cl-assoc (item alist &rest keys)
+  "Like `assoc' with :test/:key support."
+  (let ((test (plist-get keys :test))
+        (key (cl--keyfn keys))
+        (tail alist))
+    (while (and tail
+                (let ((pair (car tail)))
+                  (not (and (consp pair)
+                            (if test
+                                (funcall test item
+                                         (funcall key (car pair)))
+                              (eql item (funcall key (car pair))))))))
+      (setq tail (cdr tail)))
+    (car tail)))
+
+(defun cl-rassoc (item alist &rest keys)
+  "Like `rassoc' with :test/:key support."
+  (let ((test (plist-get keys :test))
+        (key (cl--keyfn keys))
+        (tail alist))
+    (while (and tail
+                (let ((pair (car tail)))
+                  (not (and (consp pair)
+                            (if test
+                                (funcall test item
+                                         (funcall key (cdr pair)))
+                              (eql item (funcall key (cdr pair))))))))
+      (setq tail (cdr tail)))
+    (car tail)))
+
+(defun cl-adjoin (item list &rest keys)
+  "Add ITEM to LIST unless already `equal' to a member."
+  (if (apply #'cl-member item list keys) list (cons item list)))
+
+(defun cl-union (list1 list2 &rest keys)
+  "Elements of LIST2 not already in LIST1 prepended to LIST1."
+  (dolist (x list2 list1)
+    (unless (apply #'cl-member x list1 keys)
+      (push x list1))))
+
+(defun cl-intersection (list1 list2 &rest keys)
+  "Elements of LIST1 that are also in LIST2."
+  (let ((res nil))
+    (dolist (x list1 res)
+      (when (apply #'cl-member x list2 keys)
+        (push x res)))))
+
+(defun cl-set-difference (list1 list2 &rest keys)
+  "Elements of LIST1 not in LIST2."
+  (let ((res nil))
+    (dolist (x list1 (nreverse res))
+      (unless (apply #'cl-member x list2 keys)
+        (push x res)))))
+
+(defun cl-subsetp (list1 list2 &rest keys)
+  "Return t if every element of LIST1 is in LIST2."
+  (let ((ok t))
+    (dolist (x list1 ok)
+      (unless (apply #'cl-member x list2 keys)
+        (setq ok nil)))))
+
+(defun cl-position (item seq &rest keys)
+  "Position of ITEM in SEQ, or nil."
+  (let ((test (plist-get keys :test))
+        (key (cl--keyfn keys))
+        (from-end (plist-get keys :from-end))
+        (l (append seq nil))
+        (i 0) (found nil))
+    (if from-end
+        (let ((n (length l)) (r (nreverse (copy-sequence l))))
+          (catch 'done
+            (dolist (x r)
+              (setq n (1- n))
+              (when (if test
+                        (funcall test item (funcall key x))
+                      (eql item (funcall key x)))
+                (throw 'done n)))))
+      (while (and l (not found))
+        (if (if test
+                (funcall test item (funcall key (car l)))
+              (eql item (funcall key (car l))))
+            (setq found i)
+          (setq l (cdr l) i (1+ i))))
+      found)))
+
+(defun cl-count (item seq &rest keys)
+  "Number of elements equal to ITEM in SEQ."
+  (let ((test (plist-get keys :test)) (key (cl--keyfn keys)) (n 0))
+    (dolist (x (append seq nil) n)
+      (when (if test (funcall test item (funcall key x))
+              (eql item (funcall key x)))
+        (setq n (1+ n))))))
+
+(defun cl-find (item seq &rest keys)
+  "First element of SEQ equal to ITEM, or nil."
+  (let ((test (plist-get keys :test))
+        (key (cl--keyfn keys))
+        (tail (append seq nil)))
+    (while (and tail
+                (not (if test
+                         (funcall test item (funcall key (car tail)))
+                       (eql item (funcall key (car tail))))))
+      (setq tail (cdr tail)))
+    (car tail)))
+
+(defun cl-remove (item seq &rest keys)
+  "Copy of SEQ with elements equal to ITEM removed."
+  (let ((test (plist-get keys :test)) (key (cl--keyfn keys)) (res nil))
+    (dolist (x (append seq nil) (nreverse res))
+      (unless (if test (funcall test item (funcall key x))
+                (eql item (funcall key x)))
+        (push x res)))))
+
+(defun cl-delete (item seq &rest keys)
+  "Like `cl-remove' (non-destructive for our lists)."
+  (apply #'cl-remove item seq keys))
+
+(defun cl-remove-if (pred seq &rest _keys)
+  "Copy of SEQ with elements satisfying PRED removed."
+  (let ((res nil))
+    (dolist (x (append seq nil) (nreverse res))
+      (unless (funcall pred x) (push x res)))))
+
+(defun cl-delete-if (pred seq &rest keys)
+  (apply #'cl-remove-if pred seq keys))
+
+(defun cl-substitute (new old seq &rest keys)
+  "Copy of SEQ with OLD replaced by NEW."
+  (let ((test (plist-get keys :test)) (key (cl--keyfn keys)) (res nil))
+    (dolist (x (append seq nil) (nreverse res))
+      (push (if (if test (funcall test old (funcall key x))
+                  (eql old (funcall key x)))
+                new x)
+            res))))
+
+(defun cl-nsubstitute (new old seq &rest keys)
+  (apply #'cl-substitute new old seq keys))
+
+(defun cl-reduce (func seq &rest keys)
+  "Reduce SEQ by FUNC (left-associative); empty SEQ → (func)."
+  (let* ((from-end (plist-get keys :from-end))
+         (l (append seq nil))
+         (l (if from-end (nreverse l) l))
+         (init (plist-get keys :initial-value)))
+    (cond
+     ((null l) (if init init (funcall func)))
+     (t
+      (let ((acc (if init (funcall func init (car l))
+                   (pop l))))
+        (while l
+          (setq acc (if from-end
+                        (funcall func (car l) acc)
+                      (funcall func acc (car l))))
+          (setq l (cdr l)))
+        acc)))))
+
+(defun cl-coerce (seq type)
+  "Convert SEQ to TYPE (list, vector, string)."
+  (cond
+   ((eq type 'list) (append seq nil))
+   ((eq type 'vector) (vconcat seq))
+   ((eq type 'string)
+    (cond ((stringp seq) seq)
+          ((or (listp seq) (vectorp seq)) (concat seq))))
+   (t (error "cl-coerce: unsupported type %s" type))))
+
+(defun cl-typep (val type)
+  "Return t if VAL is of TYPE (subset of CL type specifiers)."
+  (cond
+   ((consp type)
+    (let ((op (car type)))
+      (cond
+       ((eq op 'or) (cl-some (lambda (tp) (cl-typep val tp)) (cdr type)))
+       ((eq op 'and) (cl-every (lambda (tp) (cl-typep val tp)) (cdr type)))
+       ((eq op 'not) (not (cl-typep val (cadr type))))
+       ((eq op 'member) (memql val (cdr type)))
+       (t (funcall op val)))))
+   (t
+    (funcall
+     (or (cdr (assq type '((integer . integerp) (number . numberp)
+                           (float . floatp) (string . stringp)
+                           (symbol . symbolp) (cons . consp)
+                           (list . listp) (vector . vectorp)
+                           (hash-table . hash-table-p) (function . functionp)
+                           (character . characterp) (boolean . booleanp)
+                           (sequence . sequencep) (array . arrayp)
+                           (atom . atom) (keyword . keywordp)
+                           (fixnum . fixnump) (buffer . bufferp)
+                           (window . windowp) (process . processp)
+                           (frame . framep) (marker . markerp))))
+         (error "cl-typep: unknown type %s" type))
+     val))))
+
+(defun cl-some (pred seq &rest _keys)
+  "First non-nil (PRED X) for X in SEQ."
+  (let ((res nil) (tail (append seq nil)))
+    (while (and tail (not res))
+      (let ((r (funcall pred (car tail))))
+        (when r (setq res r)))
+      (setq tail (cdr tail)))
+    res))
+
+(defun cl-every (pred seq)
+  "t if PRED holds for every element of SEQ."
+  (let ((ok t))
+    (dolist (x (append seq nil) ok)
+      (unless (funcall pred x) (setq ok nil)))))
+
+(defun cl-check-type (val type &optional string)
+  "Signal `wrong-type-argument' unless VAL is of TYPE."
+  (unless (cl-typep val type)
+    (signal 'wrong-type-argument (list type val string))))
+
+(defmacro cl-assert (form &optional show-args string &rest args)
+  "Signal an error unless FORM is non-nil."
+  `(or ,form
+       (signal 'cl-assertion-failed
+               (list ',form ,show-args ,string ,@args))))
+
+;; ---------- cl-macs subset ----------
+
+(defun cl--zip (xs ys)
+  "Zip XS and YS into a list of two-element lists."
+  (let ((res nil))
+    (while xs
+      (push (list (pop xs) (pop ys)) res))
+    (nreverse res)))
+
+(defmacro cl-defun (name args &rest body)
+  "Like `defun' with CL arglist support (subset: &key handled)."
+  (cl--defun-1 'defun name args body))
+
+(defmacro cl-defmacro (name args &rest body)
+  "Like `defmacro' with CL arglist support (subset)."
+  (cl--defun-1 'defmacro name args body))
+
+(defun cl--defun-1 (kind name args body)
+  (if (not (memq '&key args))
+      `(,kind ,name ,args ,@body)
+    ;; Convert &key params into a &rest plist extraction.
+    (let ((plain nil) (keys nil) (rest nil) (state 'req)
+          (kws nil))
+      (dolist (a args)
+        (cond
+         ((eq a '&key) (setq state 'key))
+         ((eq a '&rest) (setq state 'rest))
+         ((eq a '&optional) (setq state 'opt))
+         ((eq a '&aux) (setq state 'aux))
+         ((eq a '&allow-other-keys) nil)
+         ((eq state 'key)
+          (let* ((v (if (consp a) (car a) a))
+                 (def (if (consp a) (cadr a) nil))
+                 (kw (intern (concat ":" (symbol-name v)))))
+            (push kw kws)
+            (push `(,v (car (cdr (or (plist-member cl--keys ,kw)
+                                     (list nil ,def)))))
+                  keys)))
+         ((eq state 'rest) (push a rest) (setq state 'done))
+         ((eq state 'aux)
+          (push (if (consp a) a (list a nil)) keys))
+         (t (push a plain))))
+      `(,kind ,name
+              ,(append (nreverse plain)
+                       '(&rest cl--keys))
+              (let ,(nreverse keys)
+                (cl--check-keys cl--keys ',(nreverse kws))
+                ,@body)))))
+
+(defun cl--check-keys (plist allowed)
+  "Validate keyword PLIST against ALLOWED keyword list."
+  (let ((ks plist))
+    (while ks
+      (unless (memq (car ks) allowed)
+        (error "Keyword argument %S not one of %s" (car ks)
+               allowed))
+      (setq ks (cddr ks)))))
+
+(defmacro cl-case (expr &rest clauses)
+  "Evaluate CLAUSES matching EXPR (each (KEYS . BODY))."
+  (let ((v (gensym)) (default nil) (cases nil))
+    (dolist (cl clauses)
+      (if (memq (car cl) '(t otherwise))
+          (setq default `(progn ,@(cdr cl)))
+        (let ((k (car cl)))
+          (push (list (if (consp k) `(memql ,v ',k) `(eql ,v ',k))
+                      `(progn ,@(cdr cl)))
+                cases))))
+    `(let ((,v ,expr))
+       (cond ,@(nreverse cases) (t ,default)))))
+
+(defmacro cl-ecase (expr &rest clauses)
+  "Like `cl-case' but signals an error when no clause matches."
+  (let ((v (gensym)) (cases nil) (allkeys nil))
+    (dolist (cl clauses)
+      (let ((k (car cl)))
+        (setq allkeys (append allkeys (if (consp k) k (list k))))
+        (push (list (if (consp k) `(memql ,v ',k) `(eql ,v ',k))
+                    `(progn ,@(cdr cl)))
+              cases)))
+    `(let ((,v ,expr))
+       (cond ,@(nreverse cases)
+             (t (error "cl-ecase failed: %s, %s" ,v
+                       ',allkeys))))))
+
+;; ---------- seq additions ----------
+
+(defun seq-sort (predicate sequence)
+  "Return SEQUENCE sorted by PREDICATE (non-destructive)."
+  (let ((l (append sequence nil)))
+    (setq l (sort l predicate))
+    (if (vectorp sequence) (vconcat l) l)))
+
+(defun seq-partition (seq n)
+  "Return a list of N-element subsequences of SEQ."
+  (let ((l (append seq nil)) (res nil) part)
+    (while l
+      (setq part nil)
+      (dotimes (_ n) (when l (push (pop l) part)))
+      (push (nreverse part) res))
+    (nreverse res)))
+
+(defun seq-group-by (function sequence)
+  "Alist grouping SEQUENCE elements by (FUNCTION elt), in first-seen order."
+  (let ((res nil))
+    (dolist (x (append sequence nil) (nreverse res))
+      (let* ((k (funcall function x))
+             (cell (cl-assoc k res)))
+        (if cell
+            (setcdr cell (append (cdr cell) (list x)))
+          (push (list k x) res))))))
+
+(defun seq-mapn (function seq &rest seqs)
+  "Map FUNCTION over SEQ and SEQS in parallel."
+  (let ((lists (cons (append seq nil)
+                     (mapcar (lambda (s) (append s nil)) seqs)))
+        (res nil))
+    (while (cl-every #'consp lists)
+      (push (apply function (mapcar #'car lists)) res)
+      (setq lists (mapcar #'cdr lists)))
+    (nreverse res)))
+
+(defalias 'cl-dolist 'dolist)
+(defalias 'cl-dotimes 'dotimes)
+
+(defmacro cl-typecase (expr &rest clauses)
+  "Evaluate CLAUSES matching the type of EXPR (each (TYPE . BODY))."
+  (let ((v (gensym)) (default nil) (cases nil))
+    (dolist (cl clauses)
+      (if (memq (car cl) '(t otherwise))
+          (setq default `(progn ,@(cdr cl)))
+        (push (list `(cl-typep ,v ',(car cl))
+                    `(progn ,@(cdr cl)))
+              cases)))
+    `(let ((,v ,expr))
+       (cond ,@(nreverse cases) (t ,default)))))
+
+(defmacro cl-etypecase (expr &rest clauses)
+  "Like `cl-typecase' but signals an error when no clause matches."
+  (let ((v (gensym)) (cases nil) (types nil))
+    (dolist (cl clauses)
+      (push (car cl) types)
+      (push (list `(cl-typep ,v ',(car cl)) `(progn ,@(cdr cl))) cases))
+    `(let ((,v ,expr))
+       (cond ,@(nreverse cases)
+             (t (error "cl-etypecase failed: %s, %s" ,v
+                       ',(nreverse types)))))))
+
+(defmacro cl-destructuring-bind (args expr &rest body)
+  "Bind ARGS (a list pattern) to elements of EXPR.
+Subset: flat patterns with &optional/&rest support."
+  (let ((vals (gensym)) (binds nil) (rest-sym nil)
+        (i 0) (state 'req))
+    (dolist (a args)
+      (cond
+       ((eq a '&optional) (setq state 'opt))
+       ((eq a '&rest) (setq state 'rest))
+       ((memq a '(&key &aux &allow-other-keys)) (setq state 'skip))
+       ((eq state 'rest)
+        (setq rest-sym a state 'done))
+       ((eq state 'skip) nil)
+       (t
+        (let ((v (if (consp a) (car a) a))
+              (def (and (consp a) (cadr a))))
+          (push (list v `(or (nth ,i ,vals) ,def)) binds)
+          (setq i (1+ i))))))
+    (when rest-sym
+      (push (list rest-sym `(nthcdr ,i ,vals)) binds))
+    `(let ((,vals ,expr))
+       (let ,(nreverse binds) ,@body))))
+
+(defmacro cl-letf (bindings &rest body)
+  "Bind generalized PLACEs temporarily (subset: symbols and
+\=(symbol-function SYM) places)."
+  (let ((saves nil) (sets nil) (rests nil))
+    (dolist (b bindings)
+      (let ((place (car b)) (val (cadr b)) (tmp (gensym)))
+        (cond
+         ((and (consp place) (eq (car place) 'symbol-function))
+          (push (list tmp `(symbol-function ,(cadr place))) saves)
+          (push `(fset ,(cadr place) ,tmp) rests)
+          (push `(fset ,(cadr place) ,val) sets))
+         ((symbolp place)
+          (push (list tmp place) saves)
+          (push `(setq ,place ,tmp) rests)
+          (push `(setq ,place ,val) sets))
+         (t (error "cl-letf: unsupported place %s" place)))))
+    `(let ,(nreverse saves)
+       (unwind-protect
+           (progn ,@(nreverse sets) ,@body)
+         ,@(nreverse rests)))))
+
+(defmacro cl-letf* (bindings &rest body)
+  "Like `cl-letf' but bindings are made sequentially."
+  (if (null bindings)
+      `(progn ,@body)
+    `(cl-letf (,(car bindings))
+       (cl-letf* ,(cdr bindings) ,@body))))
+
+(defmacro cl-flet (bindings &rest body)
+  "Bind function names locally (dynamic extent)."
+  (let ((lets nil))
+    (dolist (b bindings)
+      (push (list `(symbol-function ',(car b))
+                  `(lambda ,@(cdr b)))
+            lets))
+    `(cl-letf ,(nreverse lets) ,@body)))
+
+(defmacro cl-labels (bindings &rest body)
+  "Like `cl-flet' (labels are dynamically scoped in this dialect)."
+  `(cl-flet ,bindings ,@body))
+
+(defmacro cl-macrolet (bindings &rest body)
+  "Bind macro names locally."
+  (let ((lets nil))
+    (dolist (b bindings)
+      (push (list `(symbol-function ',(car b))
+                  `(cons 'macro (lambda ,@(cdr b))))
+            lets))
+    `(cl-letf ,(nreverse lets) ,@body)))
+
+(defmacro cl-defstruct (name &rest slots)
+  "Define a structure type NAME with SLOTS (subset: no options).
+Creates make-NAME, NAME-p, and NAME-SLOT accessors; objects are
+records whose first element is NAME."
+  (let* ((n (if (consp name) (car name) name))
+         (ctor (intern (concat "make-" (symbol-name n))))
+         (pred (intern (concat (symbol-name n) "-p")))
+         (slots (mapcar (lambda (x) (if (consp x) (car x) x)) slots))
+         (defs nil) (i 1))
+    (push `(defun ,ctor (&rest cl--keys)
+             (apply #'record ',n
+                    (mapcar (lambda (s)
+                              (plist-get cl--keys
+                                         (intern (concat ":"
+                                                         (symbol-name s)))))
+                            ',slots)))
+          defs)
+    (push `(defun ,pred (ob)
+             (and (recordp ob) (eq (aref ob 0) ',n)))
+          defs)
+    (dolist (slot slots)
+      (let* ((sn (if (consp slot) (car slot) slot))
+             (acc (intern (concat (symbol-name n) "-"
+                                  (symbol-name sn)))))
+        (push `(defun ,acc (ob) (aref ob ,i)) defs))
+      (setq i (1+ i)))
+    `(progn ,@(nreverse defs) ',n)))
+
+;; ---------- registers / misc ----------
+
+(defun register-read-with-preview (prompt)
+  "Read a register name, showing PROMPT."
+  (read-char prompt))
+
+(defun append-to-register (register start end &optional delete-flag)
+  "Append region text to REGISTER."
+  (let ((text (buffer-substring start end)))
+    (set-register register
+                  (concat (or (get-register register) "") text))
+    (when delete-flag (delete-region start end))))
+
+(defun prepend-to-register (register start end &optional delete-flag)
+  "Prepend region text to REGISTER."
+  (let ((text (buffer-substring start end)))
+    (set-register register
+                  (concat text (or (get-register register) "")))
+    (when delete-flag (delete-region start end))))
+
+(defun set-file-extended-attributes (filename attributes)
+  "Set extended ATTRIBUTES on FILENAME (best effort; returns nil)."
+  nil)
+
+(defmacro with-suppressed-warnings (_warnings &rest body)
+  "Eval BODY with byte-compile WARNINGS suppressed."
+  `(progn ,@body))
+
+(defmacro gv-ref (place)
+  "Return a cons of a getter and a setter closure for PLACE."
+  `(cons (lambda () ,place)
+         (lambda (gv--newval) (setf ,place gv--newval))))
+
+(defun exec-path ()
+  "Return `exec-path'."
+  exec-path)
+
+(defun path-separator ()
+  "Return `path-separator'."
+  path-separator)
+
+(defun cl-float-limits ()
+  "Initialize the cl-float-* variables (already set)."
+  nil)
+
+;; ---------- cl-loop (subset) ----------
+
+(defmacro cl-loop (&rest clauses)
+  "Common Lisp `loop' macro subset: for/in/on/across/=,/from..to,
+with, while, until, repeat, if/when/unless, do, collect, append,
+nconc, sum, count, maximize, minimize, return, initially, finally."
+  (cl--loop-expand clauses))
+
+(defconst cl--loop-keywords
+  '(for as with if when unless else end do doing collect collecting
+    append appending nconc nconcing sum counting count maximize
+    maximizing minimize minimizing return while until repeat
+    initially finally from to upto below downto above upfrom
+    downfrom in on across by = then and it being the elements
+    hash-key hash-keys hash-value hash-values of each))
+
+(defun cl--loop-action (clauses i)
+  "Parse one action clause at index I; return (FORMS KINDS NEW-I).
+Accumulation refers to the `cl--loop-list-acc' and
+`cl--loop-num-acc' variables bound by the generated code."
+  (let ((kw (nth i clauses)) (forms nil) (kinds nil))
+    (cond
+     ((memq kw '(do doing))
+      (setq i (1+ i))
+      (while (and (< i (length clauses))
+                  (not (memq (nth i clauses) cl--loop-keywords)))
+        (push (nth i clauses) forms)
+        (setq i (1+ i)))
+      (setq forms (list (cons 'progn (nreverse forms)))))
+     ((memq kw '(collect collecting append appending nconc nconcing
+                 sum counting count maximize maximizing minimize
+                 minimizing))
+      (let* ((e (nth (1+ i) clauses))
+             (kind (cond ((memq kw '(collect collecting)) 'collect)
+                         ((memq kw '(append appending)) 'append)
+                         ((memq kw '(nconc nconcing)) 'nconc)
+                         ((memq kw '(sum counting)) 'sum)
+                         ((eq kw 'count) 'count)
+                         ((memq kw '(maximize maximizing)) 'max)
+                         (t 'min))))
+        (setq i (+ i 2))
+        (when (eq (nth i clauses) 'into) (setq i (+ i 2)))
+        (push kind kinds)
+        (push
+         (cond
+          ((eq kind 'collect) `(push ,e cl--loop-list-acc))
+          ((eq kind 'append)
+           `(setq cl--loop-list-acc
+                  (nconc cl--loop-list-acc (append ,e nil))))
+          ((eq kind 'nconc)
+           `(setq cl--loop-list-acc (nconc cl--loop-list-acc ,e)))
+          ((eq kind 'sum)
+           `(setq cl--loop-num-acc (+ cl--loop-num-acc ,e)))
+          ((eq kind 'count)
+           `(when ,e (setq cl--loop-num-acc (1+ cl--loop-num-acc))))
+          (t `(setq cl--loop-ext-acc
+                    (if cl--loop-ext-acc
+                        (,(if (eq kind 'max) 'max 'min)
+                         cl--loop-ext-acc ,e)
+                      ,e))))
+         forms)))
+     ((eq kw 'return)
+      (push `(throw 'cl--loop ,(nth (1+ i) clauses)) forms)
+      (setq i (+ i 2)))
+     (t (error "cl-loop: bad action clause %s" kw)))
+    (list forms kinds i)))
+
+(defun cl--loop-expand (clauses)
+  (let ((inits nil) (initially nil) (pretests nil) (pre nil)
+        (steps nil) (body nil) (finally nil) (finret nil)
+        (kinds nil) (i 0) (n (length clauses)))
+    (while (< i n)
+      (let ((kw (nth i clauses)))
+        (cond
+         ((memq kw '(for as))
+          ;; for VAR <iter> [and VAR <iter>]*
+          (let ((var nil))
+            (setq i (1+ i))
+            (let ((more t))
+              (while more
+                (setq var (nth i clauses) i (1+ i))
+                (let ((op (nth i clauses)))
+                  (setq i (1+ i))
+                  (cond
+                   ((memq op '(in on))
+                    (let ((tl (gensym)) (src (nth i clauses)) (by nil))
+                      (setq i (1+ i))
+                      (when (eq (nth i clauses) 'by)
+                        (setq by (nth (1+ i) clauses) i (+ i 2)))
+                      (setq inits (append inits
+                                          (list (list tl src)
+                                                (list var nil))))
+                      (push `(consp ,tl) pretests)
+                      (push (if (eq op 'on) `(setq ,var ,tl)
+                              `(setq ,var (car ,tl)))
+                            pre)
+                      (push (if by `(setq ,tl (funcall ,by ,tl))
+                              `(setq ,tl (cdr ,tl)))
+                            steps)))
+                   ((eq op 'across)
+                    (let ((v (gensym)) (ix (gensym)))
+                      (setq inits (append inits
+                                          (list (list v (nth i clauses))
+                                                (list ix 0)
+                                                (list var nil))))
+                      (push `(< ,ix (length ,v)) pretests)
+                      (push `(setq ,var (aref ,v ,ix)) pre)
+                      (push `(setq ,ix (1+ ,ix)) steps)
+                      (setq i (1+ i))))
+                   ((eq op '=)
+                    (let ((e (nth i clauses)) (then nil))
+                      (setq i (1+ i))
+                      (when (eq (nth i clauses) 'then)
+                        (setq then (nth (1+ i) clauses) i (+ i 2)))
+                      (setq inits (append inits (list (list var e))))
+                      (push `(setq ,var ,(or then e)) steps)))
+                   ((eq op 'being)
+                    (when (eq (nth i clauses) 'the) (setq i (1+ i)))
+                    (when (memq (nth i clauses) '(elements element))
+                      (setq i (1+ i))
+                      (when (eq (nth i clauses) 'of) (setq i (1+ i)))
+                      (let ((v (gensym)) (ix (gensym)))
+                        (setq inits
+                              (append inits (list (list v (nth i clauses))
+                                                  (list ix 0)
+                                                  (list var nil))))
+                        (push `(< ,ix (length ,v)) pretests)
+                        (push `(setq ,var (aref ,v ,ix)) pre)
+                        (push `(setq ,ix (1+ ,ix)) steps)
+                        (setq i (1+ i)))))
+                   ((memq op '(from upfrom downfrom below above
+                                  to upto downto))
+                    (let ((down (memq op '(downfrom downto)))
+                          (init-e (if (memq op '(from upfrom downfrom))
+                                      (prog1 (nth i clauses)
+                                        (setq i (1+ i)))
+                                    (if (memq op '(below to upto)) 0
+                                      0)))
+                          (bound nil) (cmp nil) (step 1))
+                      (when (memq op '(below above to upto downto))
+                        ;; Bound was consumed as the "op" itself.
+                        (let ((e2 (nth i clauses)))
+                          (setq i (1+ i))
+                          (cond
+                           ((eq op 'below) (setq bound e2 cmp '<))
+                           ((eq op 'above) (setq bound e2 cmp '> down t))
+                           ((memq op '(to upto)) (setq bound e2 cmp '<=))
+                           ((eq op 'downto)
+                            (setq bound e2 cmp '>= down t init-e
+                                  e2)))))
+                      (while (memq (nth i clauses)
+                                   '(to upto below downto above by))
+                        (let ((k2 (nth i clauses))
+                              (e2 (nth (1+ i) clauses)))
+                          (cond
+                           ((memq k2 '(to upto))
+                            (setq bound e2 cmp '<=))
+                           ((eq k2 'below)
+                            (setq bound e2 cmp '<))
+                           ((eq k2 'downto)
+                            (setq bound e2 cmp '>= down t))
+                           ((eq k2 'above)
+                            (setq bound e2 cmp '> down t))
+                           ((eq k2 'by) (setq step e2)))
+                          (setq i (+ i 2))))
+                      (setq inits
+                            (append inits (list (list var init-e))))
+                      (when bound
+                        (push (list cmp var bound) pretests))
+                      (push `(setq ,var (,(if down '- '+) ,var ,step))
+                            steps)))
+                   (t (error "cl-loop: bad for clause %s" op))))
+                (setq more (eq (nth i clauses) 'and))
+                (when more (setq i (1+ i)))))))
+         ((eq kw 'with)
+          (let ((more t))
+            (setq i (1+ i))
+            (while more
+              (let ((v (nth i clauses)) (e nil))
+                (setq i (1+ i))
+                (when (eq (nth i clauses) '=)
+                  (setq e (nth (1+ i) clauses) i (+ i 2)))
+                (setq inits (append inits (list (list v e))))
+                (setq more (eq (nth i clauses) 'and))
+                (when more (setq i (1+ i)))))))
+         ((eq kw 'repeat)
+          (let ((c (gensym)))
+            (setq inits
+                  (append inits (list (list c (nth (1+ i) clauses)))))
+            (push `(> ,c 0) pretests)
+            (push `(setq ,c (1- ,c)) steps)
+            (setq i (+ i 2))))
+         ((eq kw 'while)
+          (push (nth (1+ i) clauses) pretests) (setq i (+ i 2)))
+         ((eq kw 'until)
+          (push `(not ,(nth (1+ i) clauses)) pretests) (setq i (+ i 2)))
+         ((memq kw '(if when unless))
+          (let* ((raw (nth (1+ i) clauses))
+                 (cnd (if (eq kw 'unless) `(not ,raw) raw))
+                 (a (cl--loop-action clauses (+ i 2)))
+                 (then-forms (car a)) (j (nth 2 a)) (else-forms nil))
+            (setq kinds (append kinds (cadr a)))
+            (when (eq (nth j clauses) 'else)
+              (let ((b (cl--loop-action clauses (1+ j))))
+                (setq else-forms (car b) j (nth 2 b)
+                      kinds (append kinds (cadr b)))))
+            (when (eq (nth j clauses) 'end) (setq j (1+ j)))
+            (push `(if ,cnd (progn ,@then-forms)
+                     ,@(when else-forms `((progn ,@else-forms))))
+                  body)
+            (setq i j)))
+         ((eq kw 'initially)
+          (setq i (1+ i))
+          (while (and (< i n)
+                      (not (memq (nth i clauses) cl--loop-keywords)))
+            (push (nth i clauses) initially)
+            (setq i (1+ i))))
+         ((eq kw 'finally)
+          (setq i (1+ i))
+          (when (memq (nth i clauses) '(do doing)) (setq i (1+ i)))
+          (if (eq (nth i clauses) 'return)
+              (setq finret (nth (1+ i) clauses) i (+ i 2))
+            (while (and (< i n)
+                        (not (memq (nth i clauses) cl--loop-keywords)))
+              (push (nth i clauses) finally)
+              (setq i (1+ i)))))
+         ((memq kw '(do doing collect collecting append appending
+                    nconc nconcing sum counting count maximize
+                    maximizing minimize minimizing return))
+          (let ((a (cl--loop-action clauses i)))
+            (setq body (append body (car a))
+                  kinds (append kinds (cadr a))
+                  i (nth 2 a))))
+         (t (error "cl-loop: unknown clause %s" kw)))))
+    `(let ,(append (nreverse inits)
+                   '((cl--loop-list-acc nil) (cl--loop-num-acc 0)
+                     (cl--loop-ext-acc nil)))
+       (catch 'cl--loop
+         ,@(nreverse initially)
+         (while (and ,@(nreverse pretests))
+           ,@(nreverse pre)
+           ,@body
+           ,@(nreverse steps))
+         ,@(nreverse finally)
+         ,(or finret
+              (cond
+               ((memq 'collect kinds) '(nreverse cl--loop-list-acc))
+               ((or (memq 'append kinds) (memq 'nconc kinds))
+                'cl--loop-list-acc)
+               ((or (memq 'sum kinds) (memq 'count kinds))
+                'cl--loop-num-acc)
+               ((or (memq 'max kinds) (memq 'min kinds))
+                'cl--loop-ext-acc)
+               (t nil)))))))
+
+(defun cl--sm-subst (form bindings)
+  "Substitute symbol-macrolet BINDINGS ((SYM FORM)...) in FORM tree."
+  (cond
+   ((symbolp form)
+    (let ((b (assq form bindings)))
+      (if b (cadr b) form)))
+   ((consp form)
+    (if (memq (car form) '(quote function))
+        form
+      (cons (cl--sm-subst (car form) bindings)
+            (cl--sm-subst (cdr form) bindings))))
+   (t form)))
+
+(defmacro cl-symbol-macrolet (bindings &rest body)
+  "Bind symbols as macros expanding to their forms (subset)."
+  `(progn ,@(cl--sm-subst body bindings)))
+
+;; ---------- occur / replace subset ----------
+
+(defun list-matching-lines (regexp &optional nlines buffer)
+  "Show lines matching REGEXP in BUFFER (subset: *Occur* buffer)."
+  (interactive "sList lines matching: ")
+  (let ((buf (or buffer (current-buffer))) (matches nil))
+    (with-current-buffer buf
+      (save-excursion
+        (goto-char (point-min))
+        (while (re-search-forward regexp nil t)
+          (push (buffer-substring (line-beginning-position)
+                                  (line-end-position))
+                matches)
+          (forward-line 1))))
+    (setq matches (nreverse matches))
+    (if (null matches)
+        (message "Searched %d buffer%s; no matches for \"%s\""
+                 1 "" regexp)
+      (let ((obuf (get-buffer-create "*Occur*")))
+        (with-current-buffer obuf
+          (erase-buffer)
+          (insert (format "%d match%s for \"%s\" in buffer: %s\n"
+                          (length matches)
+                          (if (= (length matches) 1) "" "es")
+                          regexp (buffer-name buf)))
+          (dolist (m matches) (insert m "\n")))
+        (display-buffer obuf)))
+    t))
+
+(defun perform-replace (from-string replacements query-flag
+                        regexp-flag delimited-flag
+                        &optional repeat-count map start end
+                        backward region-noncontiguous-p)
+  "Replace FROM-STRING with REPLACEMENTS (subset: non-query only)."
+  (save-excursion
+    (goto-char (or start (point-min)))
+    (let ((count 0) (limit (or repeat-count most-positive-fixnum)))
+      (while (and (< count limit)
+                  (if regexp-flag
+                      (re-search-forward from-string end t)
+                    (search-forward from-string end t)))
+        (replace-match replacements (not regexp-flag)
+                       (not regexp-flag))
+        (setq count (1+ count)))
+      count)))
+
+;; ---------- eval-after-load plumbing is in load.rs ----------
 
 (defmacro with-buffer-unmodified-if-unchanged (&rest body)
   (let ((doc (if (stringp (car body)) (pop body))))

@@ -2288,10 +2288,14 @@ impl Interp {
                         .unwrap_or_default()
                         .split(':')
                         .filter(|s| !s.is_empty())
-                        .map(|d| Value::string(d.to_string()))
-                        .chain(std::iter::once(Value::string(
-                            "/usr/local/bin/".to_string(),
-                        )))
+                        .map(|d| {
+                            Value::string(d.trim_end_matches('/').to_string()
+                                + if d.trim_end_matches('/').is_empty() {
+                                    "/"
+                                } else {
+                                    ""
+                                })
+                        })
                         .collect(),
                 ),
             ),

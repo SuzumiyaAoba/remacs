@@ -98,7 +98,7 @@ pub fn eval_file(i: &mut Interp, path: &str) -> EvalResult {
     let lip = i.intern("load-in-progress");
     let cll = i.intern("current-load-list");
     let mark = i.specbind_depth();
-    i.specbind(lfn, Value::string(canon))?;
+    i.specbind(lfn, Value::string(canon.clone()))?;
     i.specbind(lip, Value::t())?;
     // Emacs: `load' honors a `lexical-binding' file cookie on the first
     // line (or the second, after a `#!' line); absent → dynamic eval.
@@ -110,9 +110,49 @@ pub fn eval_file(i: &mut Interp, path: &str) -> EvalResult {
         // Push the file onto current-load-list's default? Emacs pushes
         // each loaded file; we keep it simple.
         let _ = cll;
+        run_after_load(i, &canon);
     }
     i.unbind_to(mark)?;
     r
+}
+
+/// Fire `after-load-alist' entries whose regexp/symbol key matches FILE
+/// (GNU's `load' runs `eval-after-load' hooks this way).
+fn run_after_load(i: &mut Interp, file: &str) {
+    let alist_sym = i.intern("after-load-alist");
+    let sm_sym = i.intern("string-match");
+    let entries = i
+        .symbol_value(alist_sym)
+        .list_to_vec()
+        .unwrap_or_default();
+    for entry in entries {
+        let mut parts = entry.list_to_vec().unwrap_or_default();
+        if parts.is_empty() {
+            continue;
+        }
+        let key = parts.remove(0);
+        let matches = match key {
+            Value::Str(_) => i
+                .call_function(
+                    &Value::Sym(sm_sym),
+                    &Value::list(vec![key.clone(), Value::string(file)]),
+                    Some(sm_sym),
+                )
+                .map(|v| !v.is_nil())
+                .unwrap_or(false),
+            Value::Sym(s) => {
+                // Feature-name keys match the file's basename feature.
+                file.ends_with(&format!("{}.el", i.symbol_name(s)))
+            }
+            _ => false,
+        };
+        if matches {
+            for form in parts {
+                // Entries store 0-arg functions (lambdas or closures).
+                let _ = i.apply(&form, vec![]);
+            }
+        }
+    }
 }
 
 /// Read and eval each top-level form, eagerly expanding macros the way
