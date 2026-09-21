@@ -181,8 +181,29 @@ impl Interp {
                 }
                 out.push(')');
             }
-            Value::Hash(_) => {
-                out.push_str("#s(hash-table)");
+            Value::Hash(h) => {
+                // GNU: #s(hash-table test equal data (k v ...)).
+                let hh = h.borrow();
+                let test = match hh.test {
+                    crate::lisp::value::HashTest::Eq => "eq",
+                    crate::lisp::value::HashTest::Eql => "eql",
+                    crate::lisp::value::HashTest::Equal => "equal",
+                };
+                let _ = write!(out, "#s(hash-table test {} data (", test);
+                let mut first = true;
+                for (hk, k) in hh.keys.iter() {
+                    let Some(v) = hh.map.get(hk) else {
+                        continue;
+                    };
+                    if !first {
+                        out.push(' ');
+                    }
+                    first = false;
+                    self.prin1_inner(k, out, depth + 1, bq);
+                    out.push(' ');
+                    self.prin1_inner(v, out, depth + 1, bq);
+                }
+                out.push_str("))");
             }
             Value::Subr(s) => {
                 let _ = write!(out, "#<subr {}>", s.name);

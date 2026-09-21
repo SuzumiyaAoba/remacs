@@ -8,6 +8,7 @@ pub(crate) mod charset;
 pub(crate) mod data;
 pub(crate) mod evalfn;
 pub(crate) mod hashfn;
+pub(crate) mod json;
 pub(crate) mod listfn;
 pub mod misc;
 pub(crate) mod printfn;
@@ -64,6 +65,7 @@ fn collect() -> Vec<&'static Subr> {
     v.extend(data::SUBRS);
     v.extend(evalfn::SUBRS);
     v.extend(hashfn::SUBRS);
+    v.extend(json::SUBRS);
     v.extend(listfn::SUBRS);
     v.extend(misc::SUBRS);
     v.extend(printfn::SUBRS);

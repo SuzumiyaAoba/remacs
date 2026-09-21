@@ -166,6 +166,9 @@ pub struct Interp {
     pub ccl_program_count: usize,
     /// `register-code-conversion-map' registration counter.
     pub code_conv_map_count: usize,
+    /// `profiler-memory-running-p' state — our memory profiler is a
+    /// bookkeeping-only stub, but start/stop toggle it like GNU.
+    pub memory_profiler: bool,
 }
 
 /// Result of a minibuffer read from the front-end.
@@ -240,6 +243,7 @@ impl Interp {
             standard_category_table: None,
             ccl_program_count: 0,
             code_conv_map_count: 0,
+            memory_profiler: false,
         };
         crate::lisp::builtins::install(&mut interp);
         crate::buffer::install_primitives(&mut interp);
@@ -1577,6 +1581,18 @@ impl Interp {
             self,
             "coding-conversion-error",
             &["coding-conversion-error", "error"],
+        );
+        // JSON errors (json.c): a `json-error' parent under `error'.
+        put(self, "json-error", &["json-error", "error"]);
+        put(
+            self,
+            "json-parse-error",
+            &["json-parse-error", "json-error", "error"],
+        );
+        put(
+            self,
+            "json-end-of-file",
+            &["json-end-of-file", "json-parse-error", "json-error", "error"],
         );
         put(self, "mark-set", &["mark-set"]);
         put(self, "mark-active", &["mark-active"]);

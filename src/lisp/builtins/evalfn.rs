@@ -5,7 +5,9 @@ use super::{S, arg, want_list, want_sym};
 use crate::lisp::Interp;
 use crate::lisp::error::{EvalResult, Flow};
 use crate::lisp::obarray::sym;
-use crate::lisp::value::{Subr, Value};
+use crate::lisp::value::{Marker, Subr, Value};
+use std::cell::RefCell;
+use std::rc::Rc;
 
 pub(crate) static SUBRS: &[Subr] = &[
     S!("eval", 1, 2, f_eval, "Evaluate FORM and return its value."),
@@ -49,6 +51,27 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!("error", many 1, f_error, "Signal an error with a formatted message."),
     S!("user-error", many 1, f_user_error, "Signal a user-error."),
     S!("throw", 2, 2, f_throw, "Throw to TAG with VALUE."),
+    S!(
+        "internal--track-mouse",
+        1,
+        1,
+        f_internal_track_mouse,
+        "Call BODYFN with mouse-motion tracking enabled."
+    ),
+    S!(
+        "save-mark-and-excursion--save",
+        0,
+        0,
+        f_smae_save,
+        "Save the mark state; used by `save-mark-and-excursion'."
+    ),
+    S!(
+        "save-mark-and-excursion--restore",
+        1,
+        1,
+        f_smae_restore,
+        "Restore the mark state saved by --save."
+    ),
     S!(
         "condition-case",
         raw,
@@ -1511,5 +1534,57 @@ fn f_subr_native_lambda_list(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     }
 }
 fn f_declare_functionp(_i: &mut Interp, _args: Vec<Value>) -> EvalResult {
+    Ok(Value::Nil)
+}
+
+/// `internal--track-mouse` — GNU enters mouse-tracking mode then calls
+/// BODYFN; tracking is a no-op without a window system, so just apply.
+fn f_internal_track_mouse(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    i.apply(&a[0], vec![])
+}
+
+/// `save-mark-and-excursion--save` → (MARKER . ACTIVE) — `(nil)' when
+/// the mark isn't set, like GNU.
+fn f_smae_save(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
+    let buf = i.current_buffer;
+    let Some(b) = i.buffers.get(buf) else {
+        return Ok(Value::cons(Value::Nil, Value::Nil));
+    };
+    let (mark, active) = {
+        let bb = b.borrow();
+        (bb.mark, bb.mark_active)
+    };
+    let m = match mark {
+        Some(pos) => {
+            let mk = Rc::new(RefCell::new(Marker {
+                buffer: Some(buf),
+                position: pos,
+                insertion_type: false,
+            }));
+            b.borrow_mut().register_marker(&mk);
+            Value::Marker(mk)
+        }
+        None => Value::Nil,
+    };
+    Ok(Value::cons(m, if active { Value::t() } else { Value::Nil }))
+}
+
+/// `save-mark-and-excursion--restore` — restore mark position (when the
+/// saved cons's car is a marker) and activation flag.
+fn f_smae_restore(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    if let Value::Cons(c) = &a[0] {
+        let (mk, act) = {
+            let b = c.borrow();
+            (b.car.clone(), b.cdr.clone())
+        };
+        let buf = i.current_buffer;
+        if let Some(b) = i.buffers.get(buf) {
+            let mut bb = b.borrow_mut();
+            if let Value::Marker(m) = &mk {
+                bb.mark = Some(m.borrow().position.min(bb.text.len()));
+            }
+            bb.mark_active = act.truthy();
+        }
+    }
     Ok(Value::Nil)
 }

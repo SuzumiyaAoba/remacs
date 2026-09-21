@@ -188,10 +188,6 @@ impl<'a> Reader<'a> {
                         self.pos += 1;
                         sym::COMMA_AT
                     }
-                    Some('.') => {
-                        self.pos += 1;
-                        sym::COMMA_DOT
-                    }
                     _ => sym::COMMA,
                 };
                 if self.skip_layout()? {

@@ -821,13 +821,7 @@ See `forward-sentence' for more information."
   (interactive "P")
   nlines)
 
-(defun move-to-window-line (arg)
-  "Position point relative to the window (approximate)."
-  (interactive "P")
-  arg
-  (beginning-of-line)
-  ;; GNU returns the window line moved to (0 on a single-line batch tty).
-  0)
+;; `move-to-window-line' is a real subr now (see builtins/misc.rs).
 
 ;; ---------- help commands ----------
 
@@ -1621,6 +1615,177 @@ uncaught (at debugger-entry time, in the raising dynamic context)."
   "Like `condition-case' (we have no debugger, so equivalent here)."
   (cons 'condition-case
         (cons var (cons bodyform handlers))))
+
+;; GNU implements these three as Lisp macros (their `symbol-function'
+;; is `(macro . ...)', not a subr); eval still dispatches them via the
+;; special-form table, so the cells exist for `macroexpand'/introspection.
+(defmacro save-mark-and-excursion (&rest body)
+  "Like `save-excursion', but also save and restore the mark state."
+  (list 'let (list (list 'saved-marker '(save-mark-and-excursion--save)))
+        (list 'unwind-protect (cons 'save-excursion body)
+              '(save-mark-and-excursion--restore saved-marker))))
+
+(defmacro track-mouse (&rest body)
+  "Evaluate BODY with mouse movement events enabled."
+  (list 'internal--track-mouse (cons 'lambda (cons nil body))))
+
+;; ---------- backquote (port of GNU emacs-lisp/backquote.el) ----------
+;; `backquote-process' returns (TAG . FORM): TAG 0 => constant, 1 =>
+;; evaluates to the structure, 2 => produces a list to be spliced in.
+
+(defvar backquote-backquote-symbol (intern "`"))
+(defvar backquote-unquote-symbol (intern ","))
+(defvar backquote-splice-symbol (intern ",@"))
+
+(defun backquote-list*-function (first &rest list)
+  "Like `list' but the last argument is the tail of the new list."
+  (if list (cons first (apply #'backquote-list*-function list)) first))
+
+;; GNU defines this via `backquote-list*-macro': one expansion step
+;; folds the whole spine into a cons chain (list* semantics).
+(defmacro backquote-list* (first &rest list)
+  "Like `list' but the last argument is the tail of the new list."
+  (let ((r (car (last (cons first list)))))
+    (dolist (x (cdr (nreverse (cons first list))))
+      (setq r (list 'cons x r)))
+    r))
+
+(defun backquote-delay-process (s level)
+  "Process a (un|back|splice)quote inside a backquote.
+This simply recurses through the body."
+  (let ((exp (backquote-listify (list (cons 0 (list 'quote (car s))))
+                                (backquote-process (cdr s) level))))
+    (cons (if (eq (car-safe exp) 'quote) 0 1) exp)))
+
+(defun backquote-process (s &optional level)
+  "Process the body of a backquote.
+S is the body.  Returns a cons cell whose cdr is piece of code which
+is the macro-expansion of S, and whose car is a small integer whose value
+can either indicate that the code is constant (0), or not (1), or returns
+a list which should be spliced into its environment (2).
+LEVEL is only used internally and indicates the nesting level:
+0 (the default) is for the toplevel nested inside a single backquote."
+  (unless level (setq level 0))
+  (cond
+   ((vectorp s)
+    (let ((n (backquote-process (append s nil) level)))
+      (if (= (car n) 0)
+	  (cons 0 s)
+	(cons 1 (cond
+		 ((not (listp (cdr n)))
+		  (list 'vconcat (cdr n)))
+		 ((eq (nth 1 n) 'list)
+		  (cons 'vector (nthcdr 2 n)))
+		 ((eq (nth 1 n) 'append)
+		  (cons 'vconcat (nthcdr 2 n)))
+		 (t
+		  (list 'apply '(function vector) (cdr n))))))))
+   ((atom s)
+    (cons 0 (if (or (null s) (eq s t) (not (symbolp s)))
+		s
+	      (list 'quote s))))
+   ((eq (car s) backquote-unquote-symbol)
+    (if (<= level 0)
+        (cond
+         ((> (length s) 2)
+          (error "Multiple args to , are not supported: %S" s))
+         (t (cons (if (eq (car-safe (nth 1 s)) 'quote) 0 1)
+                  (nth 1 s))))
+      (backquote-delay-process s (1- level))))
+   ((eq (car s) backquote-splice-symbol)
+    (if (<= level 0)
+        (if (> (length s) 2)
+            (error "Multiple args to ,@ are not supported: %S" s)
+          (cons 2 (nth 1 s)))
+      (backquote-delay-process s (1- level))))
+   ((eq (car s) backquote-backquote-symbol)
+      (backquote-delay-process s (1+ level)))
+   (t
+    (let ((rest s)
+	  item firstlist list lists expression)
+      ;; Scan this list-level, setting LISTS to a list of forms,
+      ;; each of which produces a list of elements
+      ;; that should go in this level.
+      ;; The order of LISTS is backwards.
+      ;; If there are non-splicing elements (constant or variable)
+      ;; at the beginning, put them in FIRSTLIST,
+      ;; as a list of tagged values (TAG . FORM).
+      ;; If there are any at the end, they go in LIST, likewise.
+      (while (and (consp rest)
+                  ;; Stop if the cdr is an expression inside a backquote or
+                  ;; unquote since this needs to go recursively through
+                  ;; backquote-process.
+                  (not (or (eq (car rest) backquote-unquote-symbol)
+                           (eq (car rest) backquote-backquote-symbol))))
+	(setq item (backquote-process (car rest) level))
+	(cond
+	 ((= (car item) 2)
+	  ;; Put the nonspliced items before the first spliced item
+	  ;; into FIRSTLIST.
+	  (if (null lists)
+	      (setq firstlist list
+		    list nil))
+	  ;; Otherwise, put any preceding nonspliced items into LISTS.
+	  (if list
+	      (push (backquote-listify list '(0 . nil)) lists))
+	  (push (cdr item) lists)
+	  (setq list nil))
+	 (t
+	  (setq list (cons item list))))
+	(setq rest (cdr rest)))
+      ;; Handle nonsplicing final elements, and the tail of the list
+      ;; (which remains in REST).
+      (if (or rest list)
+	  (push (backquote-listify list (backquote-process rest level))
+                lists))
+      ;; Turn LISTS into a form that produces the combined list.
+      (setq expression
+	    (if (or (cdr lists)
+		    (eq (car-safe (car lists)) backquote-splice-symbol))
+		(cons 'append (nreverse lists))
+	      (car lists)))
+      ;; Tack on any initial elements.
+      (if firstlist
+	  (setq expression (backquote-listify firstlist (cons 1 expression))))
+      (cons (if (eq (car-safe expression) 'quote) 0 1) expression)))))
+
+;; backquote-listify takes (tag . structure) pairs from backquote-process
+;; and decides between append, list, backquote-list*, and cons depending
+;; on which tags are in the list.
+
+(defun backquote-listify (list old-tail)
+  (let ((heads nil) (tail (cdr old-tail)) (list-tail list) (item nil))
+    (if (= (car old-tail) 0)
+	(setq tail (eval tail)
+	      old-tail nil))
+    (while (consp list-tail)
+      (setq item (car list-tail))
+      (setq list-tail (cdr list-tail))
+      (if (or heads old-tail (/= (car item) 0))
+	  (setq heads (cons (cdr item) heads))
+	(setq tail (cons (eval (cdr item)) tail))))
+    (cond
+     (tail
+      (if (null old-tail)
+	  (setq tail (list 'quote tail)))
+      (if heads
+	  (let ((use-list* (or (cdr heads)
+			       (and (consp (car heads))
+				    (eq (car (car heads))
+					backquote-splice-symbol)))))
+	    (cons (if use-list* 'backquote-list* 'cons)
+		  (append heads (list tail))))
+	tail))
+     (t (cons 'list heads)))))
+
+(defmacro backquote (structure)
+  "Argument STRUCTURE describes a template to build.
+The whole structure acts as if it were quoted except for certain
+places where expressions are evaluated and inserted or spliced in."
+  (cdr (backquote-process structure)))
+
+;; The reader produces (` STRUCTURE) — GNU binds ` to the same macro.
+(fset (intern "`") (symbol-function 'backquote))
 
 ;; ---------- mode keymaps ----------
 

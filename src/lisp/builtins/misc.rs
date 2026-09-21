@@ -5,7 +5,7 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use super::{S, arg, want_int, want_string, want_sym};
+use super::{S, arg, want_int, want_list, want_string, want_sym};
 use crate::lisp::Interp;
 use crate::lisp::error::{EvalResult, Flow};
 use crate::lisp::obarray::sym;
@@ -1279,6 +1279,228 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!("internal-stack-stats", 0, 0, f_nil, ""),
     S!("pdumper-stats", 0, 0, f_nil, ""),
     S!("profiler-cpu-running-p", 0, 0, f_nil, ""),
+    S!(
+        "move-to-window-line",
+        1,
+        1,
+        f_move_to_window_line,
+        "Position point relative to window (no window system: 0)."
+    ),
+    S!(
+        "network-lookup-address-info",
+        1,
+        3,
+        f_network_lookup_address_info,
+        "Look up IP addresses for HOST via getaddrinfo."
+    ),
+    S!(
+        "color-values-from-color-spec",
+        1,
+        1,
+        f_color_values_from_color_spec,
+        "Parse a color spec into (R G B) 16-bit values."
+    ),
+    S!(
+        "file-selinux-context",
+        1,
+        1,
+        f_file_selinux_context,
+        "Return SELinux context of FILE."
+    ),
+    S!(
+        "set-file-selinux-context",
+        2,
+        2,
+        f_nil,
+        "Set SELinux context of FILE."
+    ),
+    S!("set-file-acl", 2, 2, f_nil, "Set ACL of FILE."),
+    S!(
+        "garbage-collect-heapsize",
+        0,
+        0,
+        f_gc_heapsize,
+        "Return heap size statistics."
+    ),
+    S!(
+        "garbage-collect-maybe",
+        1,
+        1,
+        f_nil,
+        "GC if allocation count warrants it."
+    ),
+    S!(
+        "make-closure",
+        many 1,
+        f_make_closure,
+        "Wrap a byte-code prototype into a closure."
+    ),
+    S!("do-auto-save", 0, 2, f_nil, "Auto-save all buffers."),
+    S!("sqlitep", 1, 1, f_nil, "t if OBJECT is a SQLite handle."),
+    S!(
+        "bidi-find-overridden-directionality",
+        3,
+        4,
+        f_bidi_find_overridden,
+        "Find overridden directionality in STRING."
+    ),
+    S!(
+        "bidi-resolved-levels",
+        0,
+        1,
+        f_bidi_resolved_levels,
+        "Return resolved bidi levels."
+    ),
+    S!(
+        "composition-get-gstring",
+        4,
+        4,
+        f_nil,
+        "Get gstring for composition."
+    ),
+    S!(
+        "composition-sort-rules",
+        1,
+        1,
+        f_composition_sort_rules,
+        "Sort composition rules."
+    ),
+    S!(
+        "find-composition-internal",
+        4,
+        4,
+        f_nil,
+        "Find composition at position."
+    ),
+    S!(
+        "remember-mouse-glyph",
+        3,
+        3,
+        f_remember_mouse_glyph,
+        "Record glyph under mouse."
+    ),
+    S!(
+        "set-terminal-coding-system-internal",
+        1,
+        2,
+        f_set_terminal_coding,
+        "Set terminal coding system."
+    ),
+    S!(
+        "set-safe-terminal-coding-system-internal",
+        1,
+        1,
+        f_nil,
+        "Set safe terminal coding system."
+    ),
+    S!("window-cursor-info", 0, 1, f_nil, "Cursor info for WINDOW."),
+    S!("profiler-cpu-log", 0, 0, f_nil, "CPU profiler log."),
+    S!("profiler-cpu-stop", 0, 0, f_nil, "Stop CPU profiler."),
+    S!(
+        "profiler-memory-log",
+        0,
+        0,
+        f_profiler_memory_log,
+        "Memory profiler log."
+    ),
+    S!(
+        "profiler-memory-running-p",
+        0,
+        0,
+        f_profiler_memory_running_p,
+        "t if memory profiler is running."
+    ),
+    S!(
+        "profiler-memory-start",
+        0,
+        0,
+        f_profiler_memory_start,
+        "Start memory profiler."
+    ),
+    S!(
+        "profiler-memory-stop",
+        0,
+        0,
+        f_profiler_memory_stop,
+        "Stop memory profiler."
+    ),
+    S!(
+        "module-load",
+        1,
+        1,
+        f_module_load,
+        "Load a dynamic module FILE."
+    ),
+    S!(
+        "native-elisp-load",
+        1,
+        2,
+        f_native_elisp_load,
+        "Load a native-compiled .eln FILE."
+    ),
+    S!(
+        "dump-emacs-portable",
+        1,
+        2,
+        f_nil,
+        "Dump a portable Emacs image."
+    ),
+    S!(
+        "dump-emacs-portable--sort-predicate",
+        2,
+        2,
+        f_nil,
+        "Dump-time ordering predicate."
+    ),
+    S!(
+        "dump-emacs-portable--sort-predicate-copied",
+        2,
+        2,
+        f_nil,
+        "Dump-time ordering predicate for copied objects."
+    ),
+    S!(
+        "backtrace--frames-from-thread",
+        1,
+        1,
+        f_backtrace_frames_from_thread,
+        "Backtrace frames of THREAD."
+    ),
+    S!(
+        "backtrace--locals",
+        1,
+        2,
+        f_backtrace_locals,
+        "Locals of backtrace frame N."
+    ),
+    S!(
+        "backtrace-debug",
+        2,
+        3,
+        f_nil,
+        "Enter debugger for backtrace frame."
+    ),
+    S!(
+        "backtrace-eval",
+        2,
+        3,
+        f_nil,
+        "Evaluate FORM in backtrace frame."
+    ),
+    S!(
+        "backtrace-frame--internal",
+        3,
+        3,
+        f_backtrace_frame_internal,
+        "Describe backtrace frame N of THREAD."
+    ),
+    S!(
+        "completion--flex-cost-gotoh",
+        2,
+        2,
+        f_flex_cost_gotoh,
+        "Flex completion cost via Gotoh alignment."
+    ),
     S!("profiler-cpu-start", 1, 1, f_t, ""),
     S!("redirect-debugging-output", 1, 2, f_nil, ""),
     S!("make-terminal-frame", 1, 1, f_make_terminal_frame, ""),
@@ -5667,5 +5889,310 @@ fn f_move_file_to_trash(i: &mut Interp, a: Vec<Value>) -> EvalResult {
             format!("[Trash Info]\nPath={}\nDeletionDate=0\n", path),
         );
     }
+    Ok(Value::Nil)
+}
+
+/// `move-to-window-line` — with no window system GNU returns 0 without
+/// even type-checking ARG (observed: `(move-to-window-line 'x)` → 0).
+fn f_move_to_window_line(_i: &mut Interp, _a: Vec<Value>) -> EvalResult {
+    Ok(Value::Int(0))
+}
+
+/// `network-lookup-address-info` — real getaddrinfo; GNU shape:
+/// IPv4 → [A B C D 0], IPv6 → [S0..S7 0]; nil on lookup failure.
+fn f_network_lookup_address_info(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let host = want_string(i, &a[0])?;
+    let mut want4 = true;
+    let mut want6 = true;
+    if let Some(fam) = a.get(1) {
+        if !fam.is_nil() {
+            match i.sym_id(fam).map(|s| i.symbol_name(s).to_string()).as_deref() {
+                Some("ipv4") => want6 = false,
+                Some("ipv6") => want4 = false,
+                _ => {
+                    let e = i.intern("error");
+                    return Err(i.signal_data(
+                        e,
+                        vec![Value::string("Unsupported family")],
+                    ));
+                }
+            }
+        }
+    }
+    use std::net::ToSocketAddrs;
+    let addrs: Vec<std::net::SocketAddr> = (host.as_str(), 0u16)
+        .to_socket_addrs()
+        .map(|it| it.collect())
+        .unwrap_or_default();
+    // GNU dedupes; keep first occurrences in order.
+    let mut seen = std::collections::HashSet::new();
+    let mut out = Vec::new();
+    for sa in addrs {
+        if !seen.insert(sa) {
+            continue;
+        }
+        match sa {
+            std::net::SocketAddr::V4(v4) if want4 => {
+                let o = v4.ip().octets();
+                out.push(Value::Vec(Rc::new(RefCell::new(vec![
+                    Value::Int(o[0] as i128),
+                    Value::Int(o[1] as i128),
+                    Value::Int(o[2] as i128),
+                    Value::Int(o[3] as i128),
+                    Value::Int(0),
+                ]))));
+            }
+            std::net::SocketAddr::V6(v6) if want6 => {
+                let mut elts: Vec<Value> = v6
+                    .ip()
+                    .segments()
+                    .iter()
+                    .map(|s| Value::Int(*s as i128))
+                    .collect();
+                elts.push(Value::Int(0));
+                out.push(Value::Vec(Rc::new(RefCell::new(elts))));
+            }
+            _ => {}
+        }
+    }
+    Ok(Value::list(out))
+}
+
+/// `color-values-from-color-spec` — parse #RGB/#RRGGBB/#RRRGGGBBB/
+/// #RRRRGGGGBBBB into 16-bit channel values; named colors need a
+/// display (nil in batch), non-strings get stringp.
+fn f_color_values_from_color_spec(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let s = want_string(i, &a[0])?;
+    let hex = s.strip_prefix('#').unwrap_or("");
+    if !s.starts_with('#') || ![3, 4, 6, 9, 12].contains(&hex.len()) || !hex.chars().all(|c| c.is_ascii_hexdigit()) {
+        return Ok(Value::Nil);
+    }
+    let n = hex.len() / 3;
+    let scale = |chunk: &str| -> i128 {
+        let v = i128::from_str_radix(chunk, 16).unwrap_or(0);
+        // Scale N-digit channel to 16 bits: v * 65535 / (16^n - 1).
+        v * 65535 / ((1i128 << (4 * n)) - 1)
+    };
+    Ok(Value::list(vec![
+        Value::Int(scale(&hex[0..n])),
+        Value::Int(scale(&hex[n..2 * n])),
+        Value::Int(scale(&hex[2 * n..3 * n])),
+    ]))
+}
+
+/// `file-selinux-context` — no SELinux: GNU shape (nil nil nil nil).
+fn f_file_selinux_context(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    want_string(i, &a[0])?;
+    Ok(Value::list(vec![
+        Value::Nil,
+        Value::Nil,
+        Value::Nil,
+        Value::Nil,
+    ]))
+}
+
+/// `garbage-collect-heapsize` — GNU-shaped stats alist; we don't track
+/// per-type counts, so report what we know and zeros elsewhere.
+fn f_gc_heapsize(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
+    let syms = i.obarray.all_ids().len() as i128;
+    let bufs = i.buffers.list().len() as i128;
+    let names: Vec<crate::lisp::value::SymId> = [
+        "conses",
+        "symbols",
+        "strings",
+        "string-bytes",
+        "vectors",
+        "vector-slots",
+        "floats",
+        "intervals",
+        "buffers",
+    ]
+    .iter()
+    .map(|n| i.intern(n))
+    .collect();
+    let mk = |idx: usize, unit: i128, used: i128| {
+        Value::list(vec![
+            Value::Sym(names[idx]),
+            Value::Int(unit),
+            Value::Int(used),
+            Value::Int(0),
+        ])
+    };
+    Ok(Value::list(vec![
+        mk(0, 16, 0),
+        mk(1, 48, syms),
+        mk(2, 32, 0),
+        Value::list(vec![Value::Sym(names[3]), Value::Int(1), Value::Int(0)]),
+        mk(4, 16, 0),
+        mk(5, 8, 0),
+        mk(6, 8, 0),
+        mk(7, 56, 0),
+        Value::list(vec![Value::Sym(names[8]), Value::Int(1064), Value::Int(bufs)]),
+    ]))
+}
+
+/// `make-closure` — only valid on byte-code prototypes, which we don't
+/// have; GNU signals wrong-type-argument byte-code-function-p.
+fn f_make_closure(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    Err(i.wrong_type_mut("byte-code-function-p", &a[0]))
+}
+
+/// `bidi-find-overridden-directionality` — STRING is arg 2 (GNU
+/// stringp-checks it); no bidi support → nil.
+fn f_bidi_find_overridden(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    want_string(i, &a[2])?;
+    Ok(Value::Nil)
+}
+
+/// `bidi-resolved-levels` — GNU fixnump-checks its arg; nil without bidi.
+fn f_bidi_resolved_levels(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    if let Some(v) = a.first() {
+        if !v.is_nil() && !matches!(v, Value::Int(_)) {
+            return Err(i.wrong_type_mut("fixnump", v));
+        }
+    }
+    Ok(Value::Nil)
+}
+
+/// `composition-sort-rules` — GNU listp-checks RULES; nil.
+fn f_composition_sort_rules(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    want_list(i, &a[0])?;
+    Ok(Value::Nil)
+}
+
+/// `remember-mouse-glyph` — GNU checks arg 0: nil selects the current
+/// frame then fails the window-system check; a live frame → nil.
+fn f_remember_mouse_glyph(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    match &a[0] {
+        Value::Nil => Err(i.error("Window system frame should be used")),
+        Value::Frame(_) => Ok(Value::Nil),
+        other => Err(i.wrong_type_mut("frame-live-p", other)),
+    }
+}
+
+/// `set-terminal-coding-system-internal` — GNU terminal-live_p-checks
+/// the optional TERMINAL arg.
+fn f_set_terminal_coding(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    if let Some(t) = a.get(1) {
+        match t {
+            Value::Nil | Value::Frame(_) => {}
+            other => return Err(i.wrong_type_mut("terminal-live-p", other)),
+        }
+    }
+    Ok(Value::Nil)
+}
+
+/// `module-load` — no dynamic-module support; GNU signals error with
+/// the dlopen message as data.
+fn f_module_load(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let f = want_string(i, &a[0])?;
+    let e = i.intern("error");
+    Err(i.signal_data(
+        e,
+        vec![
+            Value::string(f.clone()),
+            Value::string(format!("dlopen({}): module support not in this build", f)),
+        ],
+    ))
+}
+
+/// `native-elisp-load` — no native compiler; GNU errors when the file
+/// is absent (message literally says "does not exists").
+fn f_native_elisp_load(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let f = want_string(i, &a[0])?;
+    let e = i.intern("error");
+    if !std::path::Path::new(&f).exists() {
+        return Err(i.signal_data(
+            e,
+            vec![Value::string("file does not exists"), Value::string(f)],
+        ));
+    }
+    Err(i.signal_data(
+        e,
+        vec![Value::string("native compilation not in this build")],
+    ))
+}
+
+/// `backtrace--frames-from-thread` — threadp-checks its arg; we keep
+/// no suspended frames, so nil for a real thread.
+fn f_backtrace_frames_from_thread(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    want_thread(i, &a[0])?;
+    Ok(Value::Nil)
+}
+
+/// `backtrace--locals` — wholenump-checks arg 0; nil (no frame info).
+fn f_backtrace_locals(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    match &a[0] {
+        Value::Int(n) if *n >= 0 => Ok(Value::Nil),
+        other => Err(i.wrong_type_mut("wholenump", other)),
+    }
+}
+
+/// `backtrace-frame--internal` — GNU errors when no such frame exists.
+fn f_backtrace_frame_internal(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let e = i.intern("error");
+    Err(i.signal_data(e, vec![a[0].clone()]))
+}
+
+/// `completion--flex-cost-gotoh` — GNU's affine-gap flex cost:
+/// (COST POS1 POS2 ...) or nil when NEEDLE isn't a subsequence of
+/// STRING. Empirical model: 5 if the match doesn't start at 0, plus
+/// 9 + gap-len per interior gap; trailing text is free.
+fn f_flex_cost_gotoh(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let needle = want_string(i, &a[0])?;
+    let hay = want_string(i, &a[1])?;
+    if needle.is_empty() || hay.is_empty() {
+        return Ok(Value::Nil);
+    }
+    let hc: Vec<char> = hay.chars().collect();
+    let mut pos: Vec<usize> = Vec::new();
+    let mut from = 0usize;
+    for nc in needle.chars() {
+        match hc[from..].iter().position(|c| *c == nc) {
+            Some(off) => {
+                pos.push(from + off);
+                from += off + 1;
+            }
+            None => return Ok(Value::Nil),
+        }
+    }
+    let mut cost: i128 = if pos[0] > 0 { 5 } else { 0 };
+    for w in pos.windows(2) {
+        let gap = w[1] - w[0] - 1;
+        if gap > 0 {
+            cost += 9 + gap as i128;
+        }
+    }
+    let mut out = vec![Value::Int(cost)];
+    out.extend(pos.iter().map(|p| Value::Int(*p as i128)));
+    Ok(Value::list(out))
+}
+
+/// `profiler-memory-start` — GNU returns t and toggles the flag; our
+/// memory profiler is bookkeeping-only.
+fn f_profiler_memory_start(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
+    i.memory_profiler = true;
+    Ok(Value::t())
+}
+
+/// `profiler-memory-running-p` — whether the memory profiler is on.
+fn f_profiler_memory_running_p(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
+    Ok(if i.memory_profiler {
+        Value::t()
+    } else {
+        Value::Nil
+    })
+}
+
+/// `profiler-memory-stop` — GNU returns whether it was running.
+fn f_profiler_memory_stop(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
+    let was = i.memory_profiler;
+    i.memory_profiler = false;
+    Ok(if was { Value::t() } else { Value::Nil })
+}
+
+/// `profiler-memory-log` — nil when not running.
+fn f_profiler_memory_log(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
+    let _ = i;
     Ok(Value::Nil)
 }

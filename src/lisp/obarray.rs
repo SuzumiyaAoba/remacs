@@ -144,7 +144,7 @@ const CORE_SYMBOLS: &[&str] = &[
     "track-mouse",
     "&optional",
     "&rest",
-    "\\`",
+    "`",
     ",",
     ",@",
     ",.",

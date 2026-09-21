@@ -581,8 +581,9 @@ fn f_symbol_name(i: &mut Interp, args: Vec<Value>) -> EvalResult {
 fn f_symbol_function(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     let id = want_sym(i, &args[0])?;
     let f = i.symbol_function(id);
-    // Present macros as (macro . fn) like Emacs.
+    // Present macros as (macro . fn) like Emacs; unbound cells read nil.
     match &f {
+        Value::Sym(s) if *s == sym::UNBOUND => Ok(Value::Nil),
         Value::Lambda(l) if l.is_macro => Ok(Value::cons(Value::Sym(i.intern("macro")), f)),
         _ => Ok(f),
     }
