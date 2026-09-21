@@ -8089,6 +8089,8 @@ Called with two arguments (START END) covering the text to propertize.")
   "Non-nil means a regexp to skip before a defun's opening paren.")
 (defvar open-paren-in-column-0-is-defun-start t
   "Non-nil means an open paren in column 0 starts a defun.")
+(defvar comment-use-syntax-ppss t
+  "Non-nil means comment-related functions use `syntax-ppss'.")
 (defvar indent-region-function nil
   "Function to indent a region, or nil to indent each line.")
 

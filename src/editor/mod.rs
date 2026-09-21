@@ -6799,6 +6799,13 @@ pub(crate) struct Syn {
     /// `comment-end-can-be-escaped' — buffer-local, nil default in GNU.
     /// When non-nil, an escaped comment-ender does not end the comment.
     pub(crate) end_escaped: bool,
+    /// `open-paren-in-column-0-is-defun-start' — buffer-local, t by
+    /// default.  When nil (and `comment-use-syntax-ppss' is nil), GNU's
+    /// find_defun_start falls back to BEGV instead of a col-0 open.
+    pub(crate) open_paren_defun: bool,
+    /// `comment-use-syntax-ppss' — t by default in GNU; selects the
+    /// ppss-based find_defun_start path in `back_comment'.
+    pub(crate) comment_use_ppss: bool,
     /// `syntax-table' text-property overrides (start, end, cons-value)
     /// collected when `parse-sexp-lookup-properties' is non-nil.
     prop_ranges: Vec<(usize, usize, Value)>,
@@ -6818,6 +6825,14 @@ impl Syn {
             .intern_soft("parse-sexp-lookup-properties")
             .map(|sid| !i.symbol_value(sid).is_nil())
             .unwrap_or(false);
+        let open_paren_defun = i
+            .intern_soft("open-paren-in-column-0-is-defun-start")
+            .map(|sid| !i.symbol_value(sid).is_nil())
+            .unwrap_or(true);
+        let comment_use_ppss = i
+            .intern_soft("comment-use-syntax-ppss")
+            .map(|sid| !i.symbol_value(sid).is_nil())
+            .unwrap_or(true);
         let mut prop_ranges = Vec::new();
         if lookup {
             // GNU propertizes lazily inside the scan; propertize the
@@ -6850,6 +6865,8 @@ impl Syn {
             entries: syntax_table_entries(i),
             ignore_comments: ignore,
             end_escaped,
+            open_paren_defun,
+            comment_use_ppss,
             prop_ranges,
         }
     }

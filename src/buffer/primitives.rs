@@ -2565,6 +2565,49 @@ fn forw_comment(
 /// comment ender (or first char of a two-char ender).  Scans back for
 /// the matching starter, tracking string-quote parity.  Returns the
 /// index of the comment's first starter char on success.
+/// GNU `find_defun_start': a syntactically safe point at or before POS
+/// from which a forward scan reproduces the correct comment/string
+/// state.  With `comment-use-syntax-ppss' (GNU's default) it is the
+/// start of the innermost enclosing comment/string per a fresh
+/// `parse-partial-sexp' scan; else the last col-0 open paren when
+/// `open-paren-in-column-0-is-defun-start'; else BEGV (STOP).
+fn find_defun_start(
+    syn: &crate::editor::Syn,
+    text: &[char],
+    stop: usize,
+    pos: usize,
+) -> usize {
+    if syn.comment_use_ppss {
+        let mut st = ParseState::fresh();
+        scan_sexps_fwd(syn, text, stop, stop, pos, &mut st, i128::MIN, false, 0);
+        if st.comstr_start >= 0 {
+            return st.comstr_start as usize;
+        }
+        return pos;
+    }
+    if !syn.open_paren_defun {
+        return stop;
+    }
+    // Scan backward for an open paren at column 0, requiring Sopen in
+    // both the global and property-overridden tables (as GNU does).
+    let mut p = pos.min(text.len());
+    while p > stop && text[p - 1] != '\n' {
+        p -= 1;
+    }
+    while p > stop {
+        let c = text[p];
+        if syn.with_flags(c) & 0xff == OPEN && syn.with_flags_at(p, c) & 0xff == OPEN {
+            return p;
+        }
+        // Move to the start of the previous line.
+        p -= 1;
+        while p > stop && text[p - 1] != '\n' {
+            p -= 1;
+        }
+    }
+    stop
+}
+
 fn back_comment(
     syn: &crate::editor::Syn,
     text: &[char],
@@ -2579,6 +2622,10 @@ fn back_comment(
     let mut comment_lossage = false;
     let comment_end = from;
     let mut comstart_pos: Option<usize> = None;
+    // Position of the last col-0 open paren seen (only tracked when
+    // `comment-use-syntax-ppss' is nil and the col-0 heuristic is on).
+    let mut defun_start: Option<usize> = None;
+    let mut lossage = false;
     let mut nesting: i64 = 1;
     let mut syntax: i128 = 0;
     while from != stop {
@@ -2593,9 +2640,8 @@ fn back_comment(
             && (fl_nested(prev_syntax) || fl_nested(syntax)) == comnested;
         let mut com2end = fl_comend_first(syntax) && fl_comend_second(prev_syntax);
         let comstart = com2start || code == COMMENT;
-        // Overlapping two-char comment markers: GNU re-scans forward
-        // from a safe position; approximate by preferring the last
-        // recorded comment starter.
+        // If a 2-char comment sequence partly overlaps with another,
+        // fall back to a forward rescan (GNU's `lossage').
         if from > stop && (com2end || comstart) {
             let next_syntax = wf(syn, text, from - 1);
             if ((comstart || comnested) && fl_comend_second(syntax) && fl_comend_first(next_syntax))
@@ -2604,10 +2650,8 @@ fn back_comment(
                     && comstyle == fl_style(syntax, prev_syntax)
                     && fl_comstart_first(next_syntax))
             {
-                return match comstart_pos {
-                    Some(p) => (p, true),
-                    None => (comment_end, false),
-                };
+                lossage = true;
+                break;
             }
         }
         if com2start && comstart_pos.is_none() {
@@ -2653,10 +2697,9 @@ fn back_comment(
             }
             COMMENT => {
                 if string_style != -1 || comment_lossage || string_lossage {
-                    return match comstart_pos {
-                        Some(p) => (p, true),
-                        None => (comment_end, false),
-                    };
+                    // Odd string quotes involved — rescan forward.
+                    lossage = true;
+                    break;
                 }
                 if !comnested {
                     comstart_pos = Some(from);
@@ -2690,17 +2733,49 @@ fn back_comment(
                 // An open paren in column 0 is a defun start — a safe
                 // place outside strings and comments (GNU's
                 // defun_start heuristic; the loop simply stops).
-                if from == stop || text[from - 1] == '\n' {
+                if syn.open_paren_defun
+                    && !syn.comment_use_ppss
+                    && (from == stop || text[from - 1] == '\n')
+                {
+                    defun_start = Some(from);
                     break;
                 }
             }
             _ => {}
         }
     }
-    match comstart_pos {
-        Some(p) => (p, true),
-        None => (comment_end, false),
+    if let Some(p) = comstart_pos {
+        return (p, true);
     }
+    if !lossage {
+        return (comment_end, false);
+    }
+    // `lossage': mixed string delimiters or overlapping two-char
+    // markers — decode by rescanning forward from a safe point with
+    // the full state machine (GNU's back_comment lossage path).
+    let mut ds = match defun_start {
+        Some(d) => d,
+        None => find_defun_start(syn, text, stop, comment_end),
+    };
+    loop {
+        let mut st = ParseState::fresh();
+        scan_sexps_fwd(syn, text, stop, ds, comment_end, &mut st, i128::MIN, false, 0);
+        ds = comment_end;
+        if st.incomment == if comnested { 1 } else { -1 } && st.comstyle == comstyle {
+            from = st.comstr_start.max(0) as usize;
+        } else {
+            from = comment_end;
+            if st.incomment != 0 {
+                // comment_end sits inside some other comment — maybe
+                // ours is nested; retry from within the outer one.
+                ds = (st.comstr_start + 2) as usize;
+            }
+        }
+        if ds >= comment_end {
+            break;
+        }
+    }
+    (from, from != comment_end)
 }
 
 /// What a failed `scan_lists' reports.
