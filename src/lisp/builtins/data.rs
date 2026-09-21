@@ -461,22 +461,30 @@ fn f_subr_type(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     }
 }
 fn f_macrop(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    let r = match &args[0] {
-        Value::Sym(id) => match i.symbol_function(*id) {
-            Value::Lambda(l) => l.is_macro,
-            Value::Cons(c) => {
-                let b = c.borrow();
-                i.sym_is(&b.car, sym::MACRO)
-            }
-            _ => false,
-        },
+    let fun = match &args[0] {
+        Value::Sym(id) => i.symbol_function(*id),
+        other => other.clone(),
+    };
+    match &fun {
+        Value::Lambda(l) => return Ok(Value::from_bool(l.is_macro)),
         Value::Cons(c) => {
             let b = c.borrow();
-            i.sym_is(&b.car, sym::MACRO)
+            if i.sym_is(&b.car, sym::MACRO) {
+                return Ok(Value::t());
+            }
+            let auto_id = i.intern("autoload");
+            if i.sym_is(&b.car, auto_id) {
+                // GNU: TYPE field is `t' for macro autoloads; the
+                // return value is its tail, e.g. (t).
+                let items = fun.list_to_vec().unwrap_or_default();
+                if items.get(4).map(|v| v.truthy()).unwrap_or(false) {
+                    return Ok(Value::list(vec![Value::t()]));
+                }
+            }
         }
-        _ => false,
-    };
-    Ok(Value::from_bool(r))
+        _ => {}
+    }
+    Ok(Value::Nil)
 }
 fn f_keywordp(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     match &args[0] {

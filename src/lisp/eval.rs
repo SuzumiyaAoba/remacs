@@ -135,6 +135,17 @@ pub struct Interp {
     pub charset_aliases: Vec<(String, String)>,
     /// Coding systems defined via `define-coding-system-internal`.
     pub extra_coding_systems: Vec<String>,
+    /// Key events queued by `execute-kbd-macro`; the key loop replays
+    /// them ahead of real input.
+    pub macro_replay: std::collections::VecDeque<i128>,
+    /// Whether the key currently being dispatched came from macro
+    /// replay (replayed keys are not re-recorded).
+    pub macro_replaying: bool,
+    /// Events recorded for the keyboard macro being defined.
+    pub kbd_macro_events: Vec<Value>,
+    /// `kbd_macro_events` length at the last command boundary; used by
+    /// `cancel-kbd-macro-events`.
+    pub kbd_macro_mark: usize,
     /// char-code property name → per-char entries (`put-char-code-property`).
     pub char_code_props: Vec<(String, Vec<(i64, Value)>)>,
     /// char-code property name → char-table backing store.
@@ -224,6 +235,10 @@ impl Interp {
             charsets: Vec::new(),
             charset_aliases: Vec::new(),
             extra_coding_systems: Vec::new(),
+            macro_replay: std::collections::VecDeque::new(),
+            macro_replaying: false,
+            kbd_macro_events: Vec::new(),
+            kbd_macro_mark: 0,
             char_code_props: Vec::new(),
             char_code_prop_tables: Vec::new(),
             mtwlb_phase: 0,
@@ -1004,6 +1019,17 @@ impl Interp {
                     let argv = self.eval_args(args)?;
                     return self.apply(&Value::Lambda(Rc::new(lambda)), argv);
                 }
+                let auto_id = self.intern("autoload");
+                if self.sym_is(&car, auto_id) {
+                    // (autoload FILE ...) — load, then re-dispatch on
+                    // the real definition (macro autoloads expand).
+                    let newdef = crate::lisp::builtins::evalfn::autoload_do_load(
+                        self,
+                        fun.clone(),
+                        false,
+                    )?;
+                    return self.call_function(&newdef, args, sym_name);
+                }
                 Err(self.signal_data(sym::INVALID_FUNCTION, vec![fun.clone()]))
             }
             _ => Err(self.signal_data(sym::INVALID_FUNCTION, vec![fun.clone()])),
@@ -1084,6 +1110,15 @@ impl Interp {
                 if self.sym_is(&car, sym::LAMBDA) {
                     let lambda = self.lambda_from_form(fun, None)?;
                     return self.call_lambda(&Rc::new(lambda), argv);
+                }
+                let auto_id = self.intern("autoload");
+                if self.sym_is(&car, auto_id) {
+                    let newdef = crate::lisp::builtins::evalfn::autoload_do_load(
+                        self,
+                        fun.clone(),
+                        false,
+                    )?;
+                    return self.apply(&newdef, argv);
                 }
                 Err(self.signal_data(sym::INVALID_FUNCTION, vec![fun.clone()]))
             }
@@ -1311,7 +1346,32 @@ impl Interp {
                     };
                     match car {
                         Value::Sym(id) => {
-                            let f = self.symbol_function(id);
+                            let mut f = self.symbol_function(id);
+                            // Autoload cell: resolve macro autoloads
+                            // (TYPE non-nil); others stop expansion.
+                            let auto_id = self.intern("autoload");
+                            let is_auto = match &f {
+                                Value::Cons(cc) => {
+                                    self.sym_is(&cc.borrow().car, auto_id)
+                                }
+                                _ => false,
+                            };
+                            if is_auto {
+                                f = crate::lisp::builtins::evalfn::autoload_do_load(
+                                    self,
+                                    f,
+                                    true,
+                                )?;
+                                let still_auto = match &f {
+                                    Value::Cons(cc) => {
+                                        self.sym_is(&cc.borrow().car, auto_id)
+                                    }
+                                    _ => false,
+                                };
+                                if still_auto {
+                                    return Ok(cur);
+                                }
+                            }
                             let is_mac = match &f {
                                 Value::Lambda(l) => l.is_macro,
                                 Value::Cons(cc) => {

@@ -1715,15 +1715,55 @@ pub(crate) static SUBRS: &[Subr] = &[
         f_execute_extended_command,
         "M-x."
     ),
-    S!("execute-kbd-macro", 1, 2, f_nil, ""),
-    S!("start-kbd-macro", 1, 2, f_nil, ""),
-    S!("end-kbd-macro", 0, 1, f_nil, ""),
-    S!("call-last-kbd-macro", 0, 2, f_nil, ""),
-    S!("kmacro-exec-ring-item", 2, 2, f_nil, ""),
-    S!("defining-kbd-macro", 0, 1, f_nil, ""),
-    S!("cancel-kbd-macro-events", 0, 0, f_nil, ""),
-    S!("store-kbd-macro-event", 1, 1, f_nil, ""),
-    S!("kbd-macro-query", 0, 0, f_nil, ""),
+    S!(
+        "execute-kbd-macro",
+        1,
+        3,
+        f_execute_kbd_macro,
+        "Execute MACRO (string or vector of events) COUNT times."
+    ),
+    S!(
+        "start-kbd-macro",
+        1,
+        2,
+        f_start_kbd_macro,
+        "Record subsequent input, defining a keyboard macro."
+    ),
+    S!(
+        "end-kbd-macro",
+        0,
+        2,
+        f_end_kbd_macro,
+        "Finish defining a keyboard macro."
+    ),
+    S!(
+        "call-last-kbd-macro",
+        0,
+        2,
+        f_call_last_kbd_macro,
+        "Call the last keyboard macro."
+    ),
+    S!(
+        "defining-kbd-macro",
+        1,
+        2,
+        f_defining_kbd_macro,
+        "Record subsequent keyboard input, defining a keyboard macro."
+    ),
+    S!(
+        "cancel-kbd-macro-events",
+        0,
+        0,
+        f_cancel_kbd_macro_events,
+        "Cancel events recorded for this command."
+    ),
+    S!(
+        "store-kbd-macro-event",
+        1,
+        1,
+        f_store_kbd_macro_event,
+        "Store EVENT into the keyboard macro being defined."
+    ),
     S!(
         "prefix-numeric-value",
         1,
@@ -6345,6 +6385,155 @@ fn f_execute_extended_command(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         return i.command_execute(&tc);
     }
     Ok(Value::Nil)
+}
+
+// ---------- keyboard macros ----------
+
+fn kbd_var(i: &mut Interp, name: &str) -> SymId {
+    i.intern(name)
+}
+
+/// GNU's `make_event_array`: string when every event is a character,
+/// vector otherwise.
+fn macro_events_value(events: &[Value]) -> Value {
+    // GNU's `make_event_array`: nil count → empty vector; all
+    // characters → string; otherwise a vector.
+    if events.is_empty() {
+        return Value::Vec(std::rc::Rc::new(std::cell::RefCell::new(Vec::new())));
+    }
+    if events.iter().all(|e| matches!(e, Value::Int(n) if *n >= 0 && *n < 0x400000)) {
+        let s: String = events
+            .iter()
+            .filter_map(|e| match e {
+                Value::Int(n) => char::from_u32(*n as u32),
+                _ => None,
+            })
+            .collect();
+        Value::string(s)
+    } else {
+        Value::Vec(std::rc::Rc::new(std::cell::RefCell::new(
+            events.to_vec(),
+        )))
+    }
+}
+
+/// Events of a string/vector macro as key codes.
+fn macro_event_codes(v: &Value) -> Vec<i128> {
+    match v {
+        Value::Str(s) => s.borrow().chars().map(|c| c as i128).collect(),
+        Value::Vec(v) => v
+            .borrow()
+            .iter()
+            .filter_map(|e| match e {
+                Value::Int(n) => Some(*n),
+                _ => None,
+            })
+            .collect(),
+        _ => Vec::new(),
+    }
+}
+
+fn f_defining_kbd_macro(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    // (defining-kbd-macro APPEND &optional NO-EXEC) — APPEND non-nil
+    // continues the last macro; `defining-kbd-macro` the variable holds
+    // the state.
+    let defining = kbd_var(i, "defining-kbd-macro");
+    if a[0].truthy() {
+        if !i.symbol_value(defining).truthy() {
+            // Seed from `last-kbd-macro`; GNU errors arrayp on nil.
+            let lk = i.intern("last-kbd-macro");
+            let last = i.symbol_value(lk);
+            match &last {
+                Value::Str(_) | Value::Vec(_) => {
+                    i.kbd_macro_events = macro_event_codes(&last)
+                        .iter()
+                        .map(|c| Value::Int(*c))
+                        .collect();
+                }
+                other => return Err(i.wrong_type_mut("arrayp", other)),
+            }
+            i.message("Appending to kbd macro...");
+        }
+    } else {
+        i.kbd_macro_events.clear();
+        if !i.symbol_value(defining).truthy() {
+            i.message("Defining kbd macro...");
+        }
+    }
+    i.kbd_macro_mark = 0;
+    let _ = i.set_symbol(defining, Value::t());
+    Ok(Value::Nil)
+}
+
+fn f_start_kbd_macro(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    f_defining_kbd_macro(i, a)
+}
+
+fn f_end_kbd_macro(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let defining = kbd_var(i, "defining-kbd-macro");
+    if !i.symbol_value(defining).truthy() {
+        return Err(i.error("Not defining kbd macro"));
+    }
+    let _ = i.set_symbol(defining, Value::Nil);
+    // GNU's batch kboard yields [] regardless of stored events; keep
+    // real events for interactive sessions.
+    let events: Vec<Value> = if i.noninteractive {
+        Vec::new()
+    } else {
+        std::mem::take(&mut i.kbd_macro_events)
+    };
+    let last = macro_events_value(&events);
+    let lk = i.intern("last-kbd-macro");
+    let _ = i.set_symbol(lk, last);
+    i.message("Keyboard macro defined");
+    // Optional REPEAT: run the macro that many times.
+    if arg(&a, 0).truthy() {
+        return f_call_last_kbd_macro(i, a);
+    }
+    Ok(Value::Nil)
+}
+
+fn f_store_kbd_macro_event(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let defining = kbd_var(i, "defining-kbd-macro");
+    if !i.symbol_value(defining).truthy() {
+        return Err(i.error("Not defining kbd macro"));
+    }
+    i.kbd_macro_events.push(a[0].clone());
+    Ok(Value::Nil)
+}
+
+fn f_cancel_kbd_macro_events(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
+    i.kbd_macro_events.truncate(i.kbd_macro_mark);
+    Ok(Value::Nil)
+}
+
+fn f_execute_kbd_macro(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    // (execute-kbd-macro MACRO &optional COUNT BUFFER)
+    let count = match &arg(&a, 1) {
+        Value::Nil => 1,
+        Value::Int(0) => 1000, // "until error" — bounded for safety.
+        Value::Int(n) => (*n).max(0) as usize,
+        other => return Err(i.wrong_type_mut("integerp", other)),
+    };
+    let events = macro_event_codes(&a[0]);
+    for _ in 0..count {
+        for k in &events {
+            i.macro_replay.push_back(*k);
+        }
+    }
+    let ek = i.intern("executing-kbd-macro");
+    let _ = i.set_symbol(ek, if i.macro_replay.is_empty() { Value::Nil } else { a[0].clone() });
+    Ok(Value::Nil)
+}
+
+fn f_call_last_kbd_macro(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let lk = i.intern("last-kbd-macro");
+    let last = i.symbol_value(lk);
+    if last.is_nil() {
+        return Err(i.error("No kbd macro has been defined"));
+    }
+    let count = f_prefix_numeric_value(i, vec![arg(&a, 0)])?;
+    f_execute_kbd_macro(i, vec![last, count, arg(&a, 1)])
 }
 
 fn f_prefix_numeric_value(_i: &mut Interp, a: Vec<Value>) -> EvalResult {

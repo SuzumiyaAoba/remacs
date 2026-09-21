@@ -539,8 +539,12 @@ pub(crate) fn macroexpand_all(i: &mut Interp, form: &Value) -> EvalResult {
             if i.sym_is(&car, sym::QUOTE) {
                 return Ok(expanded);
             }
-            // Rebuild with expanded elements.
-            let items = want_list(i, &expanded)?;
+            // Rebuild with expanded elements; improper lists pass
+            // through unexpanded rather than failing.
+            let items = match want_list(i, &expanded) {
+                Ok(v) => v,
+                Err(_) => return Ok(expanded),
+            };
             let mut out = Vec::with_capacity(items.len());
             for it in items {
                 out.push(macroexpand_all(i, &it)?);
@@ -954,15 +958,12 @@ fn f_autoload(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     let fid = want_sym(i, &args[0])?;
     let file = args[1].clone();
     if !i.fbound_p(fid) {
-        // Build a lambda that loads the file and re-dispatches.
-        let fname = i.symbol_name(fid);
-        let _ = file;
-        let _ = fname;
-        // Store (autoload file interactive) on the function cell as a
-        // cons — call_function will resolve it later. For now, mark as
-        // defined-but-autoload via a small lambda wrapper symbol.
+        // Store GNU's autoload cell shape:
+        // (autoload FILE &optional DOCSTRING INTERACTIVE TYPE).
         let auto_id = i.intern("autoload");
-        i.fset(fid, Value::list(vec![Value::Sym(auto_id), file]));
+        let mut cell = vec![Value::Sym(auto_id), file];
+        cell.extend(args[2..].iter().cloned());
+        i.fset(fid, Value::list(cell));
     }
     Ok(Value::Nil)
 }
@@ -978,9 +979,19 @@ fn f_autoloadp(i: &mut Interp, args: Vec<Value>) -> EvalResult {
 }
 
 fn f_autoload_do_load(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    // (autoload-do-load FUNDEF &optional MACRO-ONLY) — load the file for
-    // an autoload cell and return the resulting function definition.
     let fundef = args[0].clone();
+    let macro_only = args.get(1).map(|v| v.truthy()).unwrap_or(false);
+    autoload_do_load(i, fundef, macro_only)
+}
+
+/// `autoload-do-load` FUNDEF MACRO-ONLY — load the file for an autoload
+/// cell and return the resulting function definition. Shared with the
+/// evaluator's autoload dispatch.
+pub(crate) fn autoload_do_load(
+    i: &mut Interp,
+    fundef: Value,
+    macro_only: bool,
+) -> EvalResult {
     let auto_id = i.intern("autoload");
     let is_auto = match &fundef {
         Value::Cons(c) => i.sym_is(&c.borrow().car, auto_id),
@@ -993,7 +1004,6 @@ fn f_autoload_do_load(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     let file = cell.get(1).cloned().unwrap_or(Value::Nil);
     // (autoload FILE DOC INTERACTIVE TYPE) — TYPE non-nil = macro.
     let is_macro_autoload = cell.get(4).map(|v| v.truthy()).unwrap_or(false);
-    let macro_only = args.get(1).map(|v| v.truthy()).unwrap_or(false);
     if macro_only && !is_macro_autoload {
         return Ok(fundef);
     }

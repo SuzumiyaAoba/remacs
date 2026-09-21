@@ -105,7 +105,7 @@ pub fn eval_file(i: &mut Interp, path: &str) -> EvalResult {
     let lex_id = i.intern("lexical-binding");
     let lex_on = file_lexical_binding(&src);
     i.specbind(lex_id, if lex_on { Value::t() } else { Value::Nil })?;
-    let r = i.eval_str(&src);
+    let r = eval_str_for_load(i, &src);
     if r.is_ok() {
         // Push the file onto current-load-list's default? Emacs pushes
         // each loaded file; we keep it simple.
@@ -113,6 +113,40 @@ pub fn eval_file(i: &mut Interp, path: &str) -> EvalResult {
     }
     i.unbind_to(mark)?;
     r
+}
+
+/// Read and eval each top-level form, eagerly expanding macros the way
+/// GNU's `internal-macroexpand-for-load' does during `load'.  This is
+/// what resolves macro autoloads (e.g. `define-minor-mode') at load
+/// time rather than first call.
+fn eval_str_for_load(i: &mut Interp, src: &str) -> EvalResult {
+    let mut pos = 0usize;
+    let mut last = Value::Nil;
+    loop {
+        let next = {
+            let mut reader = crate::lisp::reader::Reader::new(i, src);
+            reader.set_position(pos);
+            match reader.read()? {
+                Some(f) => Some((f, reader.position())),
+                None => None,
+            }
+        };
+        match next {
+            Some((form, end)) => {
+                pos = end;
+                let expanded = crate::lisp::builtins::evalfn::macroexpand_all(i, &form)?;
+                match i.eval(&expanded) {
+                    Ok(v) => last = v,
+                    Err(crate::lisp::Flow::Throw(tag, val)) => {
+                        let nc = i.intern("no-catch");
+                        return Err(i.signal_data(nc, vec![tag, val]));
+                    }
+                    Err(f) => return Err(f),
+                }
+            }
+            None => return Ok(last),
+        }
+    }
 }
 
 /// True when the file declares `-*- lexical-binding: t -*-' (or the

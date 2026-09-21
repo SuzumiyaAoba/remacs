@@ -383,13 +383,28 @@ pub fn run_editor_with<T: KeyIo + 'static>(frontend: T, i: &mut Interp) -> io::R
             break;
         }
         term.borrow_mut().render(i)?;
-        // Poll input. Sleep deadlines keep the UI responsive.
-        let timeout = Duration::from_millis(50);
-        let key = match term.borrow_mut().poll_key(timeout)? {
-            Some(k) => k,
-            None => continue,
+        // Replayed macro events take priority over real input;
+        // `executing-kbd-macro` clears once the queue drains.
+        let key = match i.macro_replay.pop_front() {
+            Some(k) => {
+                i.macro_replaying = true;
+                k
+            }
+            None => {
+                let ek = i.intern("executing-kbd-macro");
+                if i.symbol_value(ek).truthy() {
+                    let _ = i.set_symbol(ek, Value::Nil);
+                }
+                // Poll input. Sleep deadlines keep the UI responsive.
+                let timeout = Duration::from_millis(50);
+                match term.borrow_mut().poll_key(timeout)? {
+                    Some(k) => k,
+                    None => continue,
+                }
+            }
         };
         dispatch_key(&term, i, key, &mut keys, &mut arg_mode)?;
+        i.macro_replaying = false;
     }
     Ok(())
 }
@@ -424,6 +439,14 @@ fn dispatch_key<T: KeyIo>(
             *arg_mode = false;
         }
         keys.push(key);
+        // Record the event when defining a keyboard macro (replayed
+        // keys are not re-recorded, matching GNU).
+        if !i.macro_replaying {
+            let dm = i.intern("defining-kbd-macro");
+            if i.symbol_value(dm).truthy() {
+                i.kbd_macro_events.push(Value::Int(key));
+            }
+        }
         let seq = Value::Vec(std::rc::Rc::new(std::cell::RefCell::new(
             keys.iter().map(|k| Value::Int(*k)).collect(),
         )));
@@ -498,6 +521,9 @@ fn dispatch_key<T: KeyIo>(
                         "universal-argument" | "digit-argument" | "negative-argument"
                     );
                 }
+                // Command boundary: `cancel-kbd-macro-events` truncates
+                // back to this mark.
+                i.kbd_macro_mark = i.kbd_macro_events.len();
             }
             LookupResult::Prefix => {
                 // keep reading keys

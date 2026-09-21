@@ -1787,6 +1787,33 @@ places where expressions are evaluated and inserted or spliced in."
 ;; The reader produces (` STRUCTURE) — GNU binds ` to the same macro.
 (fset (intern "`") (symbol-function 'backquote))
 
+;; ---------- autoloaded libraries ----------
+
+(defvar minor-mode-alist nil
+  "Alist of (MODE . LIGHTER-STRINGS) for minor modes.")
+
+;; GNU registers these as autoload cells; calling them loads the
+;; library from lisp/ (see load-path handling in load.rs).
+(autoload 'define-minor-mode "easy-mmode"
+  "Define a new minor mode MODE." nil t)
+(autoload 'kbd-macro-query "macros"
+  "Query user during kbd macro execution." t)
+(autoload 'insert-kbd-macro "macros"
+  "Insert in buffer the Lisp definition of kbd macro MACRONAME." t)
+(autoload 'kmacro-start-macro "kmacro"
+  "Record subsequent keyboard input, defining a keyboard macro." t)
+(autoload 'kmacro-end-macro "kmacro"
+  "Finish defining a keyboard macro." t)
+(autoload 'kmacro-start-macro-or-insert-counter "kmacro" nil t)
+(autoload 'kmacro-end-or-call-macro "kmacro" nil t)
+(autoload 'kmacro-end-or-call-macro-repeat "kmacro" nil t)
+(autoload 'kmacro-name-last-macro "kmacro"
+  "Assign a name to the last keyboard macro defined." t)
+
+;; GNU aliases (resolve immediately, before the library loads).
+(defalias 'kmacro-exec-ring-item 'funcall)
+(defalias 'name-last-kbd-macro 'kmacro-name-last-macro)
+
 ;; ---------- mode keymaps ----------
 
 
