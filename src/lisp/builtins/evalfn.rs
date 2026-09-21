@@ -1241,7 +1241,84 @@ pub(crate) fn f_message(i: &mut Interp, args: Vec<Value>) -> EvalResult {
 fn f_ding(_i: &mut Interp, _args: Vec<Value>) -> EvalResult {
     Ok(Value::Nil)
 }
-fn f_sleep_for(_i: &mut Interp, args: Vec<Value>) -> EvalResult {
+/// keyboard.c `timer_check': run each due, untriggered timer on
+/// `timer-list' through `timer-event-handler' (which reschedules
+/// repeat timers and swallows handler errors itself).  GNU never
+/// fires idle timers without an input loop, so `timer-idle-list' is
+/// intentionally not consulted here.
+pub(crate) fn timer_check(i: &mut Interp) -> EvalResult {
+    let tl = i.intern("timer-list");
+    let list = i.symbol_value(tl);
+    // Snapshot: the handler mutates `timer-list' while running.
+    let timers = list.list_to_vec().unwrap_or_default();
+    if timers.is_empty() {
+        return Ok(Value::Nil);
+    }
+    let handler = i.intern("timer-event-handler");
+    if let Value::Sym(s) = i.symbol_function(handler) {
+        if s == crate::lisp::sym::UNBOUND {
+            return Ok(Value::Nil);
+        }
+    }
+    let now = super::misc::lisp_time_to_ns(i, &Value::Nil)?;
+    for timer in timers {
+        // Slots: [triggered high low usec repeat function args idle psec
+        //         integral-multiple]
+        let when = match &timer {
+            Value::Vec(v) => {
+                let v = v.borrow();
+                if v.len() < 9 || v[0].truthy() || v[5].is_nil() {
+                    None
+                } else {
+                    Some(Value::list(vec![
+                        v[1].clone(),
+                        v[2].clone(),
+                        v[3].clone(),
+                        v[8].clone(),
+                    ]))
+                }
+            }
+            _ => None,
+        };
+        let due = match when {
+            Some(t) => super::misc::lisp_time_to_ns(i, &t)
+                .map(|ns| ns <= now)
+                .unwrap_or(false),
+            None => false,
+        };
+        if due {
+            // GNU marks the timer triggered when queueing its
+            // timer-event, before `timer-event-handler' runs.
+            if let Value::Vec(v) = &timer {
+                v.borrow_mut()[0] = Value::t();
+            }
+            i.call_function(&Value::Sym(handler), &Value::list(vec![timer]), None)?;
+        }
+    }
+    Ok(Value::Nil)
+}
+
+/// Sleep for SECS seconds, firing due timers during the wait like
+/// GNU's `wait_reading_process_output'.
+fn sleep_firing_timers(i: &mut Interp, secs: f64) -> EvalResult {
+    if secs <= 0.0 {
+        return timer_check(i).map(|_| Value::Nil);
+    }
+    let deadline =
+        std::time::Instant::now() + std::time::Duration::from_secs_f64(secs.min(3600.0));
+    loop {
+        timer_check(i)?;
+        let rest = deadline.saturating_duration_since(std::time::Instant::now());
+        if rest.is_zero() {
+            break;
+        }
+        std::thread::sleep(rest.min(std::time::Duration::from_millis(20)));
+    }
+    timer_check(i)?;
+    Ok(Value::Nil)
+}
+
+fn f_sleep_for(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     let secs = match &args[0] {
         Value::Int(n) => *n as f64,
         Value::Float(f) => *f,
@@ -1253,16 +1330,16 @@ fn f_sleep_for(_i: &mut Interp, args: Vec<Value>) -> EvalResult {
             _ => 0.0,
         })
         .unwrap_or(0.0);
-    if secs > 0.0 {
-        std::thread::sleep(std::time::Duration::from_secs_f64(secs.min(3600.0)));
-    }
-    Ok(Value::Nil)
+    sleep_firing_timers(i, secs)
 }
-fn f_sit_for(_i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    // In the editor loop this polls input; standalone → sleep briefly.
-    if let Some(Value::Int(n)) = args.get(0) {
-        std::thread::sleep(std::time::Duration::from_secs((*n).min(10) as u64));
-    }
+fn f_sit_for(i: &mut Interp, args: Vec<Value>) -> EvalResult {
+    // Batch: no input to wait for — GNU sleeps the full time, firing timers.
+    let secs = match args.get(0) {
+        Some(Value::Int(n)) => *n as f64,
+        Some(Value::Float(f)) => *f,
+        _ => 0.0,
+    };
+    sleep_firing_timers(i, secs)?;
     Ok(Value::t())
 }
 fn f_current_time(i: &mut Interp, _args: Vec<Value>) -> EvalResult {
@@ -1311,10 +1388,10 @@ fn f_current_time_zone(_i: &mut Interp, _args: Vec<Value>) -> EvalResult {
 }
 fn f_float_time(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     let t = match args.get(0) {
-        Some(v) => super::misc::lisp_time_to_us(i, v)?,
-        None => super::misc::lisp_time_to_us(i, &Value::Nil)?,
+        Some(v) => super::misc::lisp_time_to_ps(i, v)?,
+        None => super::misc::lisp_time_to_ps(i, &Value::Nil)?,
     };
-    Ok(Value::Float(t as f64 / 1e6))
+    Ok(Value::Float(t as f64 / 1e12))
 }
 fn f_format_time_string(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     let fmt = match &args[0] {

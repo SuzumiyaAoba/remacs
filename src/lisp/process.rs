@@ -12,6 +12,7 @@ use std::cell::RefCell;
 use std::io::{Read, Write};
 use std::rc::Rc;
 
+use super::builtins::evalfn::timer_check;
 use super::builtins::S;
 use super::error::Flow;
 use super::eval::plist_get;
@@ -1586,6 +1587,8 @@ fn f_accept_process_output(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     };
     while !got && std::time::Instant::now() < deadline {
         std::thread::sleep(std::time::Duration::from_millis(5));
+        // wait_reading_process_output runs timer_check each iteration.
+        timer_check(i)?;
         got = match &target {
             Some(p) => poll_proc(i, p)?,
             None => poll_all(i)?,

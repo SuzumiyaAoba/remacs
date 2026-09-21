@@ -9,11 +9,20 @@ macro_rules! probe {
     ($name:ident, $file:literal) => {
         #[test]
         fn $name() {
-            let (mut i, _) = interp();
-            match i.eval_str(include_str!($file)) {
-                Ok(_) => {}
-                Err(f) => panic!("probe failed: {:?}", f),
-            }
+            // Prelude eval + deep probes exceed the default test-thread
+            // stack; run on a dedicated big-stack thread.
+            std::thread::Builder::new()
+                .stack_size(64 * 1024 * 1024)
+                .spawn(|| {
+                    let (mut i, _) = interp();
+                    match i.eval_str(include_str!($file)) {
+                        Ok(_) => {}
+                        Err(f) => panic!("probe failed: {:?}", f),
+                    }
+                })
+                .unwrap()
+                .join()
+                .unwrap();
         }
     };
 }
@@ -40,6 +49,7 @@ probe!(probe_lisp_edges, "probe_lisp3.el");
 probe!(probe_editor_kill_files, "probe_editor6.el");
 probe!(probe_file_locking, "probe_filelock.el");
 probe!(probe_json, "probe_json.el");
+probe!(probe_timer, "probe_timer.el");
 probe!(probe_buffer_motion, "probe_buffer5.el");
 probe!(probe_misc_builtins3, "probe_misc4.el");
 probe!(probe_eval_branches, "probe_eval3.el");

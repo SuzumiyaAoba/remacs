@@ -1130,7 +1130,7 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!("locale-info", 1, 1, f_locale_info, "Locale data for ITEM."),
     S!("locale-translate", 1, 1, f_nil, ""),
     S!("mapbacktrace", 1, 2, f_nil, ""),
-    S!("internal-timer-start-idle", 0, 0, f_nil, ""),
+    // `internal-timer-start-idle' is Lisp (prelude timer.el port).
     S!("internal-describe-syntax-value", 0, 0, f_nil, ""),
     S!("internal-copy-lisp-face", 4, 4, f_nil, ""),
     S!("internal-make-lisp-face", 1, 2, f_nil, ""),
@@ -2227,6 +2227,73 @@ pub(crate) fn ns_to_lisp_time(ns: i128) -> Value {
     ])
 }
 
+/// Like `lisp_time_to_ns`, but picosecond precision — GNU's native
+/// tick unit (hz = 10^12).
+pub(crate) fn lisp_time_to_ps(i: &mut Interp, v: &Value) -> Result<i128, Flow> {
+    match v {
+        Value::Cons(_) => {
+            let mut elems: Vec<i128> = Vec::new();
+            let mut tail = v.clone();
+            let mut dotted_hz = false;
+            loop {
+                let step = match &tail {
+                    Value::Cons(c) => {
+                        let (car, cdr) = {
+                            let b = c.borrow();
+                            (b.car.clone(), b.cdr.clone())
+                        };
+                        if let Value::Int(n) = car {
+                            elems.push(n as i128);
+                        }
+                        Some(cdr)
+                    }
+                    Value::Int(n) => {
+                        elems.push(*n as i128);
+                        dotted_hz = true;
+                        None
+                    }
+                    _ => None,
+                };
+                match step {
+                    Some(cdr) => tail = cdr,
+                    None => break,
+                }
+                if elems.len() > 4 {
+                    break;
+                }
+            }
+            if dotted_hz && elems.len() == 2 {
+                let ticks = elems[0];
+                let hz = elems[1];
+                return Ok(ticks * 1_000_000_000_000 / hz.max(1));
+            }
+            let n = |k: usize| elems.get(k).copied().unwrap_or(0);
+            let ticks = match elems.len() {
+                0 => 0,
+                1 => n(0),
+                _ => n(0) * 65536 + n(1),
+            };
+            Ok(ticks * 1_000_000_000_000 + n(2) * 1_000_000 + n(3))
+        }
+        Value::Float(f) => Ok((*f * 1e12) as i128),
+        _ => Ok(lisp_time_to_us(i, v)? * 1_000_000),
+    }
+}
+
+/// GNU (hi lo us ps) timestamp from picoseconds since the epoch.
+pub(crate) fn ps_to_lisp_time(ps: i128) -> Value {
+    let secs = ps.div_euclid(1_000_000_000_000);
+    let rem = ps.rem_euclid(1_000_000_000_000);
+    let hi = secs.div_euclid(65536);
+    let lo = secs.rem_euclid(65536);
+    Value::list(vec![
+        Value::Int(hi as i128),
+        Value::Int(lo as i128),
+        Value::Int(rem / 1_000_000),
+        Value::Int(rem % 1_000_000),
+    ])
+}
+
 /// Minimal POSIX tm for `localtime_r` (macOS/Linux layout).
 #[repr(C)]
 pub(crate) struct Tm {
@@ -2325,9 +2392,9 @@ fn time_arith(i: &mut Interp, a: &[Value], sub: bool) -> EvalResult {
     if let (Value::Int(x), Value::Int(y)) = (&a[0], &a[1]) {
         return Ok(Value::Int(if sub { x - y } else { x + y }));
     }
-    let x = lisp_time_to_us(i, &a[0])?;
-    let y = lisp_time_to_us(i, &a[1])?;
-    Ok(us_to_lisp_time(if sub { x - y } else { x + y }))
+    let x = lisp_time_to_ps(i, &a[0])?;
+    let y = lisp_time_to_ps(i, &a[1])?;
+    Ok(ps_to_lisp_time(if sub { x - y } else { x + y }))
 }
 
 fn f_time_add(i: &mut Interp, args: Vec<Value>) -> EvalResult {
@@ -2339,32 +2406,39 @@ fn f_time_subtract(i: &mut Interp, args: Vec<Value>) -> EvalResult {
 }
 
 fn f_time_less_p(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    let a = lisp_time_to_us(i, &args[0])?;
-    let b = lisp_time_to_us(i, &args[1])?;
+    let a = lisp_time_to_ps(i, &args[0])?;
+    let b = lisp_time_to_ps(i, &args[1])?;
     Ok(Value::from_bool(a < b))
 }
 
 fn f_time_equal_p(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    let a = lisp_time_to_us(i, &args[0])?;
-    let b = lisp_time_to_us(i, &args[1])?;
+    let a = lisp_time_to_ps(i, &args[0])?;
+    let b = lisp_time_to_ps(i, &args[1])?;
     Ok(Value::from_bool(a == b))
 }
 
 fn f_time_convert(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    let us = lisp_time_to_us(i, &args[0])?;
-    let form = args.get(1);
-    let hz = args.get(2).and_then(|v| v.int()).unwrap_or(1_000_000);
-    match form {
+    // GNU timefns.c: internal representation is (TICKS . HZ); `t'
+    // yields ps ticks (hz = 10^12), an integer FORM yields
+    // (TICKS . FORM), `integer' truncates to whole seconds, `list'
+    // (the default) yields (HI LO US PS).
+    let ps = lisp_time_to_ps(i, &args[0])?;
+    match args.get(1) {
+        Some(Value::Int(hz)) if *hz > 0 => Ok(Value::cons(
+            Value::Int(ps * *hz / 1_000_000_000_000),
+            Value::Int(*hz),
+        )),
         Some(Value::Sym(_)) => {
             let name = i.symbol_name(i.sym_id(&args[1]).unwrap_or(0));
             if name == "integer" {
-                Ok(Value::Int((us * hz as i128 / 1_000_000) as i128))
+                Ok(Value::Int(ps / 1_000_000_000_000))
+            } else if name == "t" {
+                Ok(Value::cons(Value::Int(ps), Value::Int(1_000_000_000_000)))
             } else {
-                Ok(us_to_lisp_time(us))
+                Ok(ps_to_lisp_time(ps))
             }
         }
-        Some(Value::Int(h)) => Ok(Value::Int((us * *h as i128 / 1_000_000) as i128)),
-        _ => Ok(us_to_lisp_time(us)),
+        _ => Ok(ps_to_lisp_time(ps)),
     }
 }
 

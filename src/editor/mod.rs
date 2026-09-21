@@ -1860,19 +1860,10 @@ pub(crate) static SUBRS: &[Subr] = &[
     // hack-local-variables / hack-dir-local-variables /
     // dir-locals-set-class-variables are Lisp (prelude files.el port),
     // like GNU.
-    // timers
-    S!("run-at-time", 2, 7, f_nil, ""),
-    S!("run-with-timer", 2, 5, f_nil, ""),
-    S!("run-with-idle-timer", 2, 8, f_nil, ""),
-    S!("cancel-timer", 1, 1, f_nil, ""),
-    S!("timerp", 1, 1, f_nil, ""),
-    S!("timer-activate", 1, 2, f_nil, ""),
-    S!(
-        "with-timeout",
-        raw,
-        f_with_timeout_raw,
-        "Eval body (timeout ignored)."
-    ),
+    // timers: run-at-time / run-with-timer / run-with-idle-timer /
+    // cancel-timer / timerp / timer-activate / with-timeout are Lisp
+    // (prelude timer.el port), like GNU.  `current-idle-time' stays
+    // nil — batch Emacs is never idle.
     S!("current-idle-time", 0, 0, f_nil, ""),
     // overlays
     S!(
@@ -7745,29 +7736,6 @@ fn f_fundamental_mode(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
     let hook = i.intern("fundamental-mode-hook");
     i.apply(&Value::Sym(rmh), vec![Value::Sym(hook)])?;
     Ok(Value::Sym(fmid))
-}
-
-fn f_with_timeout_raw(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    // (with-timeout (SECONDS FORMS...) BODY...) — run body; timeout not
-    // enforced yet (single-threaded eval can't preempt itself).
-    let args = a.into_iter().next().unwrap_or(Value::Nil);
-    let spec = match &args {
-        Value::Cons(c) => c.borrow().car.clone(),
-        _ => Value::Nil,
-    };
-    let timeout_forms = match &spec {
-        Value::Cons(c) => c.borrow().cdr.clone(),
-        _ => Value::Nil,
-    };
-    let body = match &args {
-        Value::Cons(c) => c.borrow().cdr.clone(),
-        _ => Value::Nil,
-    };
-    let timeout_sym = i.intern("timeout");
-    match i.eval_progn(&body) {
-        Err(Flow::Throw(tag, _)) if i.sym_is(&tag, timeout_sym) => i.eval_progn(&timeout_forms),
-        other => other,
-    }
 }
 
 // ---------- overlays ----------
