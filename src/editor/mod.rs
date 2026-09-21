@@ -1532,7 +1532,13 @@ pub(crate) static SUBRS: &[Subr] = &[
         f_completion_boundaries,
         "Return the boundaries of the completions."
     ),
-    S!("internal-complete-buffer", 3, 3, f_nil, ""),
+    S!(
+        "internal-complete-buffer",
+        3,
+        3,
+        f_internal_complete_buffer,
+        "Complete STRING over buffer names."
+    ),
     S!(
         "completing-read-default",
         2,
@@ -6179,6 +6185,44 @@ fn f_test_completion(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let s = want_str(i, &a[0])?;
     let cands = completion_candidates(i, &a[1]);
     Ok(Value::from_bool(cands.iter().any(|c| c == &s)))
+}
+
+fn f_internal_complete_buffer(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    // (STRING PRED FLAG): complete STRING over live buffer names.
+    // FLAG nil → try-completion, t → all-completions, lambda → test.
+    let s = want_str(i, &a[0])?;
+    // GNU hides space-prefixed (internal) buffers unless STRING starts
+    // with a space.
+    let show_hidden = s.starts_with(' ');
+    let names: Vec<Value> = i
+        .buffers
+        .list()
+        .iter()
+        .filter_map(|id| i.buffers.get(*id))
+        .map(|b| b.borrow().name.clone())
+        .filter(|n| show_hidden || !n.starts_with(' '))
+        .map(Value::string)
+        .collect();
+    let table = Value::list(names);
+    let flag = arg(&a, 2);
+    match &flag {
+        Value::Nil => try_completions(i, &s, &table),
+        Value::Sym(sym) if i.symbol_name(*sym) == "lambda" => {
+            let cands = completion_candidates(i, &table);
+            Ok(Value::from_bool(cands.iter().any(|c| c == &s)))
+        }
+        Value::Sym(sym) if i.symbol_name(*sym) == "t" => {
+            let cands = completion_candidates(i, &table);
+            Ok(Value::list(
+                cands
+                    .into_iter()
+                    .filter(|c| c.starts_with(&s))
+                    .map(Value::string)
+                    .collect(),
+            ))
+        }
+        _ => try_completions(i, &s, &table),
+    }
 }
 
 fn f_completion_boundaries(i: &mut Interp, a: Vec<Value>) -> EvalResult {

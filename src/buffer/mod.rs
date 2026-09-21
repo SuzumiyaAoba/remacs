@@ -63,6 +63,10 @@ pub struct Buffer {
     /// Buffer-local category table (`category-table'), or None for the
     /// standard table.
     pub category_table: Option<crate::lisp::value::Value>,
+    /// Stack of (previous begv, previous zv, label) pushed by
+    /// `internal--labeled-narrow-to-region' so `internal--labeled-widen'
+    /// can restore the bounds it replaced.
+    pub narrow_labels: Vec<(usize, usize, crate::lisp::value::Value)>,
 }
 
 /// One text-property interval.
@@ -124,6 +128,7 @@ impl Buffer {
             base_buffer: None,
             case_table: None,
             category_table: None,
+            narrow_labels: Vec::new(),
         }
     }
 

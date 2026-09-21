@@ -981,6 +981,42 @@ pub(crate) static SUBRS: &[Subr] = &[
         "Restrict editing to START..END."
     ),
     S!("widen", 0, 0, f_widen, "Remove narrowing."),
+    S!(
+        "internal--labeled-narrow-to-region",
+        3,
+        3,
+        f_labeled_narrow_to_region,
+        "Internal: labeled narrow."
+    ),
+    S!(
+        "internal--labeled-widen",
+        1,
+        1,
+        f_labeled_widen,
+        "Internal: widen matching LABEL."
+    ),
+    S!(
+        "internal--set-buffer-modified-tick",
+        1,
+        2,
+        f_set_buffer_modified_tick,
+        "Internal: set buffer tick."
+    ),
+    S!("recent-auto-save-p", 0, 0, f_nil, "t if recently auto-saved."),
+    S!(
+        "set-buffer-auto-saved",
+        0,
+        0,
+        f_nil,
+        "Mark buffer auto-saved."
+    ),
+    S!(
+        "clear-buffer-auto-save-failure",
+        0,
+        0,
+        f_nil,
+        "Clear auto-save failure."
+    ),
     // --- markers ---
     S!("markerp", 1, 1, f_markerp, "t if OBJECT is a marker."),
     S!(
@@ -4830,6 +4866,60 @@ fn f_widen(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
     let mut bb = b.borrow_mut();
     bb.begv = 0;
     bb.zv = bb.text.len();
+    Ok(Value::Nil)
+}
+
+fn f_labeled_narrow_to_region(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    // (BEG END LABEL): narrow like narrow-to-region, recording the
+    // previous bounds under LABEL for internal--labeled-widen.
+    let b = cur(i);
+    let mut bb = b.borrow_mut();
+    let len = bb.text.len();
+    let s = pos_idx(len, want_int(i, &a[0])?);
+    let e = pos_idx(len, want_int(i, &a[1])?);
+    let (s, e) = (s.min(e), s.max(e));
+    let (pb, pz) = (bb.begv, bb.zv);
+    bb.begv = s;
+    bb.zv = e;
+    if bb.point < s || bb.point > e {
+        bb.point = s;
+    }
+    bb.narrow_labels.push((pb, pz, a[2].clone()));
+    Ok(Value::Nil)
+}
+
+fn f_labeled_widen(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    // Restore the bounds captured by the matching labeled narrow. A
+    // non-matching label still widens (like `widen').
+    let b = cur(i);
+    let mut bb = b.borrow_mut();
+    if let Some(pos) = bb
+        .narrow_labels
+        .iter()
+        .rposition(|(_, _, l)| crate::lisp::builtins::equal_values(i, l, &a[0]))
+    {
+        let (pb, pz, _) = bb.narrow_labels.remove(pos);
+        bb.narrow_labels.truncate(pos);
+        bb.begv = pb.min(bb.text.len());
+        bb.zv = pz.min(bb.text.len());
+        if bb.point < bb.begv || bb.point > bb.zv {
+            bb.point = bb.begv;
+        }
+    } else {
+        bb.begv = 0;
+        bb.zv = bb.text.len();
+    }
+    Ok(Value::Nil)
+}
+
+fn f_set_buffer_modified_tick(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    // (TICK &optional BUFFER)
+    let tick = match &a[0] {
+        Value::Int(n) if *n >= 0 => *n as u64,
+        _ => return Err(i.wrong_type_mut("wholenump", &a[0])),
+    };
+    let b = buf_of(i, &crate::lisp::builtins::arg(&a, 1))?;
+    b.borrow_mut().mod_tick = tick;
     Ok(Value::Nil)
 }
 

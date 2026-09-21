@@ -2565,7 +2565,7 @@ pub(crate) static SUBRS: &[Subr] = &[
         "internal-default-process-sentinel",
         2,
         2,
-        f_nil2,
+        f_internal_default_process_sentinel,
         "Default sentinel (no-op)."
     ),
     S!("process-lines", many 1, f_process_lines, "Run PROGRAM, return output lines."),
@@ -2607,6 +2607,10 @@ pub(crate) static SUBRS: &[Subr] = &[
     ),
 ];
 
-fn f_nil2(_i: &mut Interp, _a: Vec<Value>) -> EvalResult {
-    Ok(Value::Nil)
+fn f_internal_default_process_sentinel(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    // GNU validates PROCESS is a process object before no-oping.
+    match &a[0] {
+        Value::Process(_) => Ok(Value::Nil),
+        other => Err(i.wrong_type_mut("processp", other)),
+    }
 }

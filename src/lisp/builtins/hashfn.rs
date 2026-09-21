@@ -77,6 +77,27 @@ pub(crate) static SUBRS: &[Subr] = &[
         f_define_hash_table_test,
         "Define a new test (ignored)."
     ),
+    S!(
+        "internal--hash-table-buckets",
+        1,
+        1,
+        f_hash_table_buckets,
+        "Internal: bucket vector of TABLE."
+    ),
+    S!(
+        "internal--hash-table-index-size",
+        1,
+        1,
+        f_hash_table_index_size,
+        "Internal: index size of TABLE."
+    ),
+    S!(
+        "internal--hash-table-histogram",
+        1,
+        1,
+        f_hash_table_histogram,
+        "Internal: bucket histogram."
+    ),
 ];
 
 /// Normalize a key for the table's test.
@@ -281,4 +302,62 @@ fn f_copy_hash_table(i: &mut Interp, args: Vec<Value>) -> EvalResult {
 }
 fn f_define_hash_table_test(_i: &mut Interp, _args: Vec<Value>) -> EvalResult {
     Ok(Value::Nil)
+}
+
+/// GNU returns a list of buckets; each bucket is a list of
+/// (KEY . HASH) conses. Our HashMap has no buckets — expose one bucket
+/// per key with a stand-in hash code.
+fn f_hash_table_buckets(i: &mut Interp, args: Vec<Value>) -> EvalResult {
+    match &args[0] {
+        Value::Hash(h) => {
+            let hh = h.borrow();
+            if hh.keys.is_empty() {
+                return Ok(Value::Nil);
+            }
+            let buckets: Vec<Value> = hh
+                .keys
+                .values()
+                .enumerate()
+                .map(|(n, k)| {
+                    Value::list(vec![Value::cons(
+                        k.clone(),
+                        Value::Int(1000 + n as i128),
+                    )])
+                })
+                .collect();
+            Ok(Value::list(buckets))
+        }
+        other => Err(i.wrong_type_mut("hash-table-p", other)),
+    }
+}
+
+fn f_hash_table_index_size(i: &mut Interp, args: Vec<Value>) -> EvalResult {
+    match &args[0] {
+        Value::Hash(h) => {
+            // GNU: empty table → 1, otherwise smallest power-of-2 >= 8.
+            let n = h.borrow().keys.len();
+            if n == 0 {
+                return Ok(Value::Int(1));
+            }
+            Ok(Value::Int(n.next_power_of_two().max(8) as i128))
+        }
+        other => Err(i.wrong_type_mut("hash-table-p", other)),
+    }
+}
+
+fn f_hash_table_histogram(i: &mut Interp, args: Vec<Value>) -> EvalResult {
+    match &args[0] {
+        Value::Hash(h) => {
+            let n = h.borrow().keys.len();
+            if n == 0 {
+                return Ok(Value::Nil);
+            }
+            // One key per bucket → ((1 . N)).
+            Ok(Value::list(vec![Value::cons(
+                Value::Int(1),
+                Value::Int(n as i128),
+            )]))
+        }
+        other => Err(i.wrong_type_mut("hash-table-p", other)),
+    }
 }

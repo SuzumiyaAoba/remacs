@@ -1216,6 +1216,140 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!("x-server-version", 0, 1, f_nil, ""),
     S!("x-set-selection", 2, 4, f_nil, ""),
     S!("x-show-tip", 1, 6, f_nil, ""),
+    // ---------- optional-library availability ----------
+    S!("gnutls-available-p", 0, 0, f_nil, ""),
+    S!("sqlite-available-p", 0, 0, f_nil, ""),
+    S!("libxml-available-p", 0, 0, f_nil, ""),
+    S!("treesit-available-p", 0, 0, f_nil, ""),
+    S!("imagep", 1, 1, f_nil, ""),
+    S!("long-line-optimizations-p", 0, 0, f_nil, ""),
+    // ---------- input/display mode internals ----------
+    S!("current-input-mode", 0, 0, f_current_input_mode, ""),
+    S!("set-input-mode", 3, 4, f_nil, ""),
+    S!("set-input-interrupt-mode", 1, 1, f_nil, ""),
+    S!("set-input-meta-mode", 1, 2, f_nil, ""),
+    S!(
+        "current-bidi-paragraph-direction",
+        0,
+        1,
+        f_current_bidi_paragraph_direction,
+        ""
+    ),
+    S!(
+        "read-non-nil-coding-system",
+        1,
+        1,
+        f_read_non_nil_coding_system,
+        ""
+    ),
+    S!(
+        "find-operation-coding-system",
+        many 1,
+        f_find_operation_coding_system,
+        ""
+    ),
+    S!(
+        "define-coding-system-alias",
+        2,
+        2,
+        f_define_coding_system_alias,
+        ""
+    ),
+    S!("next-read-file-uses-dialog-p", 0, 0, f_nil, ""),
+    S!("lossage-size", 0, 1, f_lossage_size, ""),
+    S!("mouse-position-in-root-frame", 0, 0, f_mouse_position_root, ""),
+    S!("window-scroll-bar-width", 0, 1, f_zero, ""),
+    S!("window-scroll-bar-height", 0, 1, f_zero, ""),
+    S!("line-number-display-width", 0, 1, f_zero, ""),
+    // `move-to-window-line' is a Lisp-level defun in GNU, not a subr.
+    S!(
+        "window-configuration-equal-p",
+        2,
+        2,
+        f_window_config_pred_err,
+        ""
+    ),
+    S!(
+        "window-configuration-frame",
+        1,
+        1,
+        f_window_config_pred_err,
+        ""
+    ),
+    S!("internal-stack-stats", 0, 0, f_nil, ""),
+    S!("pdumper-stats", 0, 0, f_nil, ""),
+    S!("profiler-cpu-running-p", 0, 0, f_nil, ""),
+    S!("profiler-cpu-start", 1, 1, f_t, ""),
+    S!("redirect-debugging-output", 1, 2, f_nil, ""),
+    S!("make-terminal-frame", 1, 1, f_make_terminal_frame, ""),
+    S!("tty-frame-edges", 0, 2, f_nil, ""),
+    S!("tty-frame-geometry", 0, 1, f_nil, ""),
+    // ---------- native compilation / module stubs ----------
+    S!("comp-libgccjit-version", 0, 0, f_nil, ""),
+    S!("subr-native-comp-unit", 1, 1, f_subr_native_comp_unit, ""),
+    S!("native-comp-function-p", 1, 1, f_nil, ""),
+    S!("module-function-p", 1, 1, f_nil, ""),
+    S!(
+        "comp-el-to-eln-filename",
+        1,
+        2,
+        f_comp_el_to_eln_filename,
+        ""
+    ),
+    // ---------- thread/process internals ----------
+    S!("thread-buffer-disposition", 1, 1, f_thread_buffer_disposition, ""),
+    S!(
+        "thread-set-buffer-disposition",
+        2,
+        2,
+        f_thread_set_buffer_disposition,
+        ""
+    ),
+    S!(
+        "internal-default-signal-process",
+        2,
+        3,
+        f_internal_default_signal_process,
+        ""
+    ),
+    S!("internal-default-interrupt-process", 0, 2, f_nil, ""),
+    S!("set-network-process-option", 3, 4, f_process_arg_err, ""),
+    S!("set-process-thread", 2, 2, f_process_arg_err, ""),
+    S!("process-thread", 1, 1, f_process_arg_err, ""),
+    // ---------- reader/printer/composition internals ----------
+    S!("lread--substitute-object-in-subtree", 3, 3, f_nil, ""),
+    S!("print--preprocess", 1, 1, f_nil, ""),
+    S!("clear-composition-cache", 0, 0, f_nil, ""),
+    S!("help--describe-vector", 7, 7, f_nil, ""),
+    S!("re--describe-compiled", 1, 2, f_re_describe_compiled, ""),
+    S!("system-move-file-to-trash", 1, 1, f_move_file_to_trash, ""),
+    // ---------- display/font internals (no GUI) ----------
+    S!("get-display-property", 2, 4, f_nil, ""),
+    S!("lookup-image-map", 3, 3, f_nil, ""),
+    S!("clear-image-cache", 0, 2, f_clear_image_cache, ""),
+    S!("image-cache-size", 0, 0, f_zero, ""),
+    S!("display--line-is-continued-p", 0, 0, f_nil, ""),
+    S!("display--update-for-mouse-movement", 3, 3, f_nil, ""),
+    S!("internal-handle-focus-in", 1, 1, f_internal_handle_focus_in, ""),
+    S!("internal-face-x-get-resource", 2, 3, f_nil, ""),
+    S!("internal-set-alternative-font-family-alist", 1, 1, f_nil, ""),
+    S!("internal-set-alternative-font-registry-alist", 1, 1, f_nil, ""),
+    S!(
+        "internal-set-font-selection-order",
+        1,
+        1,
+        f_set_font_selection_order,
+        ""
+    ),
+    S!("internal-set-lisp-face-attribute-from-resource", 3, 4, f_nil, ""),
+    S!("close-font", 1, 2, f_close_font, ""),
+    S!("font-has-char-p", 2, 3, f_nil, ""),
+    S!("font-shape-gstring", 2, 2, f_nil, ""),
+    S!("font-variation-glyphs", 2, 2, f_nil, ""),
+    S!("query-fontset", 1, 2, f_query_fontset, ""),
+    S!("define-fringe-bitmap", 2, 5, f_define_fringe_bitmap, ""),
+    S!("destroy-fringe-bitmap", 1, 1, f_nil, ""),
+    S!("set-fringe-bitmap-face", 1, 2, f_nil, ""),
 ];
 
 // ---------- symbols / functions ----------
@@ -5294,4 +5428,244 @@ fn f_x_parse_geometry(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         }
     }
     Ok(Value::list(items))
+}
+
+// ---------- internals & platform stubs (probe-matched arities) ----------
+
+fn f_current_input_mode(_i: &mut Interp, _a: Vec<Value>) -> EvalResult {
+    // GNU batch: (INTERRUPT FLOW META QUIT) = (t nil t 7).
+    Ok(Value::list(vec![
+        Value::t(),
+        Value::Nil,
+        Value::t(),
+        Value::Int(7),
+    ]))
+}
+
+fn f_current_bidi_paragraph_direction(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
+    Ok(Value::Sym(i.intern("left-to-right")))
+}
+
+fn f_read_non_nil_coding_system(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
+    // Batch read returns the default coding system.
+    Ok(Value::Sym(i.intern("utf-8")))
+}
+
+fn f_find_operation_coding_system(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
+    // GNU batch resolves to (undecided) for generic operations.
+    Ok(Value::list(vec![Value::Sym(i.intern("undecided"))]))
+}
+
+fn f_lossage_size(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    if let Some(v) = a.first() {
+        match v {
+            Value::Int(n) if *n >= 100 => {}
+            _ => {
+                return Err(i.signal_data(
+                    sym::USER_ERROR,
+                    vec![Value::string("Value must be >= 100")],
+                ));
+            }
+        }
+    }
+    Ok(Value::Int(300))
+}
+
+fn f_mouse_position_root(_i: &mut Interp, _a: Vec<Value>) -> EvalResult {
+    Ok(Value::cons(Value::Int(0), Value::Int(0)))
+}
+
+fn f_window_config_pred_err(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    // We have no window-configuration objects; every argument fails the
+    // type check like GNU's window-configuration-p.
+    let v = a.first().cloned().unwrap_or(Value::Nil);
+    Err(i.wrong_type_mut("window-configuration-p", &v))
+}
+
+fn f_make_terminal_frame(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
+    Err(i.error("Don't know how to create a terminal frame"))
+}
+
+fn f_subr_native_comp_unit(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    // GNU: arg must satisfy `subrp'; a C subr without a comp unit → nil.
+    match &a[0] {
+        Value::Subr(_) => Ok(Value::Nil),
+        other => Err(i.wrong_type_mut("subrp", other)),
+    }
+}
+
+fn f_define_coding_system_alias(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let _ = want_sym(i, &a[0])?;
+    let _ = want_sym(i, &a[1])?;
+    if coding_known(i, &a[1]).is_none() {
+        let cs_err = i.intern("coding-system-error");
+        return Err(i.signal_data(cs_err, vec![a[0].clone(), a[1].clone()]));
+    }
+    Ok(Value::Nil)
+}
+
+fn f_comp_el_to_eln_filename(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let path = want_string(i, &a[0])?;
+    if !std::path::Path::new(&path).exists() {
+        return Err(i.signal_data(
+            sym::FILE_MISSING,
+            vec![
+                Value::string("Applying native-compiler to missing file"),
+                a[0].clone(),
+            ],
+        ));
+    }
+    let base = std::path::Path::new(&path)
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or("anon.el")
+        .trim_end_matches(".el")
+        .to_string();
+    let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
+    Ok(Value::string(format!(
+        "{}/.emacs.d/eln-cache/remacs/{}-{:x}.eln",
+        home,
+        base,
+        path.len()
+    )))
+}
+
+fn f_thread_buffer_disposition(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    match a.first() {
+        Some(Value::Thread(_)) => Ok(Value::Nil),
+        other => Err(i.wrong_type_mut("threadp", other.unwrap_or(&Value::Nil))),
+    }
+}
+
+fn f_thread_set_buffer_disposition(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    match a.first() {
+        Some(Value::Thread(_)) => {}
+        other => {
+            return Err(i.wrong_type_mut("threadp", other.unwrap_or(&Value::Nil)));
+        }
+    }
+    // GNU only accepts nil as the disposition.
+    if !a[1].is_nil() {
+        return Err(i.wrong_type_mut("null", &a[1]));
+    }
+    Ok(Value::Nil)
+}
+
+fn f_internal_default_signal_process(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    // Accepts a pid (int); nothing to signal here → -1 like GNU.
+    let _ = want_int(i, &a[0])?;
+    Ok(Value::Int(-1))
+}
+
+fn f_process_arg_err(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let v = a.first().cloned().unwrap_or(Value::Nil);
+    Err(i.wrong_type_mut("processp", &v))
+}
+
+fn f_internal_handle_focus_in(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    // GNU validates EVENT is a (focus-in/out LIVE-FRAME) cons.
+    let ok = match &a[0] {
+        Value::Cons(c) => {
+            let (car, cadr) = {
+                let cc = c.borrow();
+                let cadr = match &cc.cdr {
+                    Value::Cons(d) => d.borrow().car.clone(),
+                    _ => Value::Nil,
+                };
+                (cc.car.clone(), cadr)
+            };
+            let head_ok = match &car {
+                Value::Sym(s) => {
+                    let n = i.symbol_name(*s);
+                    n == "focus-in" || n == "focus-out"
+                }
+                _ => false,
+            };
+            head_ok && matches!(cadr, Value::Frame(_))
+        }
+        _ => false,
+    };
+    if ok {
+        Ok(Value::Nil)
+    } else {
+        Err(i.error("Invalid focus-in event"))
+    }
+}
+
+fn f_set_font_selection_order(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    // GNU requires a proper list of font-driver symbols.
+    let ok = match a[0].list_to_vec() {
+        Ok(items) => !items.is_empty() && items.iter().all(|v| matches!(v, Value::Sym(_))),
+        Err(_) => false,
+    };
+    if ok {
+        Ok(Value::Nil)
+    } else {
+        Err(i.error("Invalid font sort order"))
+    }
+}
+
+fn f_clear_image_cache(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
+    // GNU requires a window-system frame; our batch/tty has none.
+    Err(i.error("Window system frame should be used"))
+}
+
+fn f_query_fontset(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
+    // GNU batch: fontsets need a window system.
+    Err(i.error("Window system is not in use or not initialized"))
+}
+
+fn f_close_font(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    // No font objects exist; GNU type-checks arg0 as font-object.
+    Err(i.wrong_type_mut("font-object", &a[0]))
+}
+
+fn f_define_fringe_bitmap(_i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    // GNU returns the bitmap name symbol.
+    Ok(a[0].clone())
+}
+
+fn f_re_describe_compiled(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    match &a[0] {
+        Value::Str(_) | Value::Nil => Ok(Value::Nil),
+        other => Err(i.wrong_type_mut("stringp", other)),
+    }
+}
+
+fn f_move_file_to_trash(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let path = want_string(i, &a[0])?;
+    let src = std::path::Path::new(&path);
+    if !src.exists() {
+        return Err(i.signal_data(
+            sym::FILE_MISSING,
+            vec![Value::string("Removing old name"), a[0].clone()],
+        ));
+    }
+    // freedesktop trash: ~/.local/share/Trash/{files,info}
+    let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
+    let trash = std::path::Path::new(&home).join(".local/share/Trash");
+    let files = trash.join("files");
+    let info = trash.join("info");
+    let _ = std::fs::create_dir_all(&files);
+    let _ = std::fs::create_dir_all(&info);
+    let name = src
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or("unnamed");
+    let mut dest = files.join(name);
+    let mut n = 1;
+    while dest.exists() {
+        dest = files.join(format!("{}.{}", name, n));
+        n += 1;
+    }
+    if let Err(e) = std::fs::rename(src, &dest) {
+        return Err(i.error(format!("Trashing {}: {}", path, e)));
+    }
+    if let Some(stem) = dest.file_name().and_then(|s| s.to_str()) {
+        let _ = std::fs::write(
+            info.join(format!("{}.trashinfo", stem)),
+            format!("[Trash Info]\nPath={}\nDeletionDate=0\n", path),
+        );
+    }
+    Ok(Value::Nil)
 }

@@ -825,7 +825,9 @@ See `forward-sentence' for more information."
   "Position point relative to the window (approximate)."
   (interactive "P")
   arg
-  (beginning-of-line))
+  (beginning-of-line)
+  ;; GNU returns the window line moved to (0 on a single-line batch tty).
+  0)
 
 ;; ---------- help commands ----------
 

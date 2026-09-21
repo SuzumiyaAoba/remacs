@@ -8,8 +8,8 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use super::S;
-use super::misc::{char_table_vec, coding_known};
+use super::{S, arg, eq_values};
+use super::misc::{char_table_vec, coding_known, is_char_table};
 use crate::lisp::error::Flow;
 use crate::lisp::value::{Subr, Value};
 use crate::lisp::{EvalResult, Interp};
@@ -720,6 +720,189 @@ fn f_find_coding_systems_region_internal(i: &mut Interp, a: Vec<Value>) -> EvalR
     Ok(Value::t())
 }
 
+// ---------- charset ids / priority / unicode property tables ----------
+
+/// GNU's built-in charset ids (init order in charset.c); user-defined
+/// charsets get ids >= 40 by registration order.
+fn charset_id(i: &Interp, name: &str) -> i128 {
+    match name {
+        "ascii" => 0,
+        "iso-8859-1" | "latin-iso8859-1" => 1,
+        "unicode" | "ucs" => 2,
+        "emacs" => 3,
+        "eight-bit-control" => 4,
+        "eight-bit-graphic" => 5,
+        "eight-bit" => 6,
+        "control-1" => 7,
+        _ => i
+            .charsets
+            .iter()
+            .position(|(n, _)| n == name)
+            .map(|p| 40 + p as i128)
+            .unwrap_or(-1),
+    }
+}
+
+fn f_charset_id_internal(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    // GNU: nil/missing arg or unknown name → wrong-type-argument charsetp.
+    let name = want_charset(i, &arg(&a, 0))?;
+    Ok(Value::Int(charset_id(i, &name)))
+}
+
+fn f_charset_priority_list(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
+    // Ordered by descending priority: unicode first, like GNU.
+    let mut names: Vec<String> = vec!["unicode".to_string()];
+    names.extend(
+        BUILTIN_CHARSETS
+            .iter()
+            .filter(|n| **n != "unicode")
+            .map(|n| n.to_string()),
+    );
+    for (n, _) in &i.charsets {
+        if !names.contains(n) {
+            names.push(n.clone());
+        }
+    }
+    Ok(Value::list(
+        names.iter().map(|n| symv(i, n)).collect(),
+    ))
+}
+
+fn f_sort_charsets(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    // GNU sorts by ascending charset id.
+    let mut items = super::want_list(i, &a[0])?;
+    let mut keyed: Vec<(i128, Value)> = Vec::with_capacity(items.len());
+    for v in items.drain(..) {
+        let id = match &v {
+            Value::Sym(s) => {
+                let n = i.symbol_name(*s);
+                if charset_defined(i, &n) {
+                    charset_id(i, &canonical_charset(i, &n))
+                } else {
+                    i128::MAX
+                }
+            }
+            _ => i128::MAX,
+        };
+        keyed.push((id, v));
+    }
+    keyed.sort_by_key(|(id, _)| *id);
+    Ok(Value::list(keyed.into_iter().map(|(_, v)| v).collect()))
+}
+
+fn f_set_charset_priority(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    // GNU validates each arg is a charset.
+    for v in &a {
+        let _ = want_charset(i, v)?;
+    }
+    Ok(Value::Nil)
+}
+
+fn f_get_unused_iso_final_char(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
+    Err(i.error("No unused ISO final char available"))
+}
+
+fn f_iso_charset(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    // (iso-charset CODING-SYSTEM DIMENSION FINAL-CHAR)
+    if coding_known(i, &a[0]).is_none() {
+        return Err(i.wrong_type_mut("coding-system-p", &a[0]));
+    }
+    Ok(Value::Nil)
+}
+
+fn f_map_charset_chars(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    // (map-charset-chars FUNCTION CHARSET &optional ARG FROM TO)
+    let _ = want_charset(i, &a[1])?;
+    for v in a.iter().skip(3) {
+        if !v.is_nil() {
+            match v {
+                Value::Int(n) if *n >= 0 => {}
+                _ => return Err(i.wrong_type_mut("wholenump", v)),
+            }
+        }
+    }
+    // Our charsets carry no per-char ranges to map over.
+    Ok(Value::Nil)
+}
+
+fn f_declare_equiv_charset(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let _ = want_charset(i, &a[0])?;
+    // GNU checks the FINAL-CHAR arg as fixnum, then as charset.
+    match &a[3] {
+        Value::Int(_) => {}
+        other => return Err(i.wrong_type_mut("fixnump", other)),
+    }
+    let _ = want_charset(i, &a[3])?;
+    Ok(Value::Nil)
+}
+
+fn f_clear_charset_maps(_i: &mut Interp, _a: Vec<Value>) -> EvalResult {
+    Ok(Value::Nil)
+}
+
+/// char-table for PROP, created lazily like GNU's on-demand tables.
+fn unicode_prop_table(i: &mut Interp, prop: &str) -> Value {
+    if let Some((_, t)) = i.char_code_prop_tables.iter().find(|(n, _)| n == prop) {
+        return t.clone();
+    }
+    let vec = Value::Vec(Rc::new(RefCell::new(vec![Value::Nil; 256])));
+    let t = Value::Record(Rc::new(RefCell::new(vec![
+        Value::Sym(i.intern("char-table")),
+        symv(i, "char-code-property-table"),
+        vec,
+    ])));
+    i.char_code_prop_tables.push((prop.to_string(), t.clone()));
+    t
+}
+
+fn f_unicode_property_table_internal(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let pid = want_sym(i, &a[0])?;
+    let prop = i.symbol_name(pid);
+    Ok(unicode_prop_table(i, &prop))
+}
+
+/// Property name a table was registered under (identity match).
+fn unicode_table_prop(i: &Interp, tbl: &Value) -> Option<String> {
+    i.char_code_prop_tables
+        .iter()
+        .find(|(_, t)| eq_values(t, tbl))
+        .map(|(n, _)| n.clone())
+}
+
+fn f_get_unicode_property_internal(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    if !is_char_table(i, &a[0]) {
+        return Err(i.wrong_type_mut("char-table-p", &a[0]));
+    }
+    let ch = match &a[1] {
+        Value::Int(n) => *n as i64,
+        _ => return Err(i.wrong_type_mut("characterp", &a[1])),
+    };
+    if let Some(prop) = unicode_table_prop(i, &a[0]) {
+        // Route through get_char_prop so built-in defaults (e.g. ASCII
+        // general-category) still show through unset slots.
+        return Ok(get_char_prop(i, ch, &prop));
+    }
+    let v = char_table_vec(&a[0]).unwrap();
+    Ok(v.borrow().get(ch.max(0) as usize).cloned().unwrap_or(Value::Nil))
+}
+
+fn f_put_unicode_property_internal(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    if !is_char_table(i, &a[0]) {
+        return Err(i.wrong_type_mut("char-table-p", &a[0]));
+    }
+    let ch = match &a[1] {
+        Value::Int(n) if *n >= 0 => *n as usize,
+        _ => return Err(i.wrong_type_mut("characterp", &a[1])),
+    };
+    let v = char_table_vec(&a[0]).unwrap();
+    let mut vv = v.borrow_mut();
+    if ch >= vv.len() {
+        vv.resize(ch + 1, Value::Nil);
+    }
+    vv[ch] = a[2].clone();
+    Ok(Value::Nil)
+}
+
 pub(crate) static SUBRS: &[Subr] = &[
     S!("charsetp", 1, 1, f_charsetp, "t if OBJECT names a charset."),
     S!("define-charset", many 2, f_define_charset, "Define a new charset."),
@@ -877,5 +1060,88 @@ pub(crate) static SUBRS: &[Subr] = &[
         2,
         f_find_coding_systems_region_internal,
         "Coding systems covering region."
+    ),
+    S!(
+        "charset-id-internal",
+        0,
+        1,
+        f_charset_id_internal,
+        "Internal: id of CHARSET."
+    ),
+    S!(
+        "charset-priority-list",
+        0,
+        1,
+        f_charset_priority_list,
+        "Charsets in priority order."
+    ),
+    S!(
+        "sort-charsets",
+        1,
+        1,
+        f_sort_charsets,
+        "Sort CHARSETS by id."
+    ),
+    S!(
+        "set-charset-priority",
+        many 1,
+        f_set_charset_priority,
+        "Set charset priority order."
+    ),
+    S!(
+        "get-unused-iso-final-char",
+        2,
+        2,
+        f_get_unused_iso_final_char,
+        "Internal: unused ISO final char."
+    ),
+    S!(
+        "iso-charset",
+        3,
+        3,
+        f_iso_charset,
+        "Internal: ISO charset for CODING-SYSTEM."
+    ),
+    S!(
+        "map-charset-chars",
+        2,
+        5,
+        f_map_charset_chars,
+        "Call FUNCTION over CHARSET's ranges."
+    ),
+    S!(
+        "declare-equiv-charset",
+        4,
+        4,
+        f_declare_equiv_charset,
+        "Declare equivalent charset."
+    ),
+    S!(
+        "clear-charset-maps",
+        0,
+        0,
+        f_clear_charset_maps,
+        "Clear internal charset maps."
+    ),
+    S!(
+        "unicode-property-table-internal",
+        1,
+        1,
+        f_unicode_property_table_internal,
+        "Char-table for unicode PROP."
+    ),
+    S!(
+        "get-unicode-property-internal",
+        2,
+        2,
+        f_get_unicode_property_internal,
+        "PROP-TABLE value at CHAR."
+    ),
+    S!(
+        "put-unicode-property-internal",
+        3,
+        3,
+        f_put_unicode_property_internal,
+        "Set PROP-TABLE value at CHAR."
     ),
 ];

@@ -208,6 +208,27 @@ pub(crate) static SUBRS: &[Subr] = &[
         "Docstring of a primitive subr."
     ),
     S!("defvar-1", 1, 3, f_defvar_1, "Internal defvar helper."),
+    S!(
+        "internal--define-uninitialized-variable",
+        1,
+        2,
+        f_define_uninitialized_variable,
+        "Mark SYMBOL special, unbound."
+    ),
+    S!(
+        "internal-delete-indirect-variable",
+        1,
+        1,
+        f_delete_indirect_variable,
+        "Delete an indirect variable."
+    ),
+    S!(
+        "internal--obarray-buckets",
+        1,
+        1,
+        f_obarray_buckets,
+        "Internal: obarray bucket vector."
+    ),
     S!("defconst-1", 2, 3, f_defconst_1, "Internal defconst helper."),
     S!(
         "make-record",
@@ -713,6 +734,39 @@ fn f_defconst_1(i: &mut Interp, args: Vec<Value>) -> EvalResult {
         i.obarray.symbol_mut(id).variable_documentation = Some(doc);
     }
     Ok(args[0].clone())
+}
+
+fn f_define_uninitialized_variable(i: &mut Interp, args: Vec<Value>) -> EvalResult {
+    // (internal--define-uninitialized-variable SYM &optional DOC): mark
+    // SYM special without giving it a value; optional doc is stored.
+    let id = want_sym(i, &args[0])?;
+    i.obarray.symbol_mut(id).special = true;
+    if let Some(Value::Str(s)) = args.get(1) {
+        let doc = s.borrow().clone();
+        i.obarray.symbol_mut(id).variable_documentation = Some(doc);
+    }
+    Ok(Value::Nil)
+}
+
+fn f_delete_indirect_variable(i: &mut Interp, args: Vec<Value>) -> EvalResult {
+    // We don't create indirect variable bindings, so this always fails.
+    let _ = want_sym(i, &args[0])?;
+    Err(i.error("Cannot undeclare a variable that is not an alias"))
+}
+
+fn f_obarray_buckets(i: &mut Interp, args: Vec<Value>) -> EvalResult {
+    // GNU returns a list of buckets, each a list of interned symbols.
+    // Our obarray isn't bucketed; expose one bucket holding all symbols
+    // of the named obarray (only `obarray' itself is meaningful).
+    let _ = &args;
+    let names: Vec<Value> = i
+        .obarray
+        .all_ids()
+        .into_iter()
+        .filter(|id| !i.obarray.symbol(*id).uninterned)
+        .map(Value::Sym)
+        .collect();
+    Ok(Value::list(vec![Value::list(names)]))
 }
 
 fn f_make_record(i: &mut Interp, args: Vec<Value>) -> EvalResult {
