@@ -1647,11 +1647,8 @@ uncaught (at debugger-entry time, in the raising dynamic context)."
          ,@body
          (restore-buffer-modified-p modp)))))
 
-;; Character categories are not implemented; an empty table makes
-;; `aref' lookups uniformly nil, matching the no-categories behavior.
-(defvar char-category-set--empty-table (make-char-table nil))
-(defun char-category-set (_char)
-  char-category-set--empty-table)
+;; Character categories are implemented as bool-vector sets in
+;; category tables (see `make-category-table').
 
 (defvar text-property-default-nonsticky nil)
 

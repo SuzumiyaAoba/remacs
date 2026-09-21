@@ -686,6 +686,97 @@ pub(crate) static SUBRS: &[Subr] = &[
         f_nil,
         "Trap into the debugger."
     ),
+    S!(
+        "make-category-table",
+        0,
+        0,
+        f_make_category_table,
+        "Create a fresh category table."
+    ),
+    S!(
+        "category-table-p",
+        1,
+        1,
+        f_category_table_p,
+        "t if OBJECT is a category table."
+    ),
+    S!(
+        "standard-category-table",
+        0,
+        0,
+        f_standard_category_table,
+        "Return the standard category table."
+    ),
+    S!(
+        "category-table",
+        0,
+        0,
+        f_category_table,
+        "Return the current buffer's category table."
+    ),
+    S!(
+        "set-category-table",
+        1,
+        1,
+        f_set_category_table,
+        "Select TABLE as the current buffer's category table."
+    ),
+    S!(
+        "copy-category-table",
+        0,
+        1,
+        f_copy_category_table,
+        "Copy TABLE (default: current) and return the copy."
+    ),
+    S!(
+        "define-category",
+        2,
+        3,
+        f_define_category,
+        "Define CATEGORY as a category with DOCSTRING in TABLE."
+    ),
+    S!(
+        "category-docstring",
+        1,
+        2,
+        f_category_docstring,
+        "Return the docstring of CATEGORY in TABLE."
+    ),
+    S!(
+        "get-unused-category",
+        0,
+        1,
+        f_get_unused_category,
+        "Return a still-unused category label in TABLE."
+    ),
+    S!(
+        "modify-category-entry",
+        2,
+        4,
+        f_modify_category_entry,
+        "Add CATEGORY to the category set of CHAR in TABLE."
+    ),
+    S!(
+        "char-category-set",
+        1,
+        1,
+        f_char_category_set,
+        "Return the category set of CH in the current table."
+    ),
+    S!(
+        "category-set-mnemonics",
+        1,
+        1,
+        f_category_set_mnemonics,
+        "Return a string of category labels present in CATEGORY-SET."
+    ),
+    S!(
+        "make-category-set",
+        1,
+        1,
+        f_make_category_set,
+        "Make a category set from a mnemonic string."
+    ),
     S!("cl-type-of", 1, 1, f_cl_type_of, ""),
     S!("bool-vector-p", 1, 1, f_bool_vector_p, ""),
     S!("record", many 0, f_record, "Create a record of TYPE with SLOTS."),
@@ -2563,6 +2654,320 @@ fn f_buffer_text_pixel_size(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 fn f_format_mode_line(_i: &mut Interp, _a: Vec<Value>) -> EvalResult {
     // No mode-line machinery; batch GNU likewise yields "".
     Ok(Value::string(""))
+}
+
+// ---------- category tables ----------
+// Record layout: [char-table, 'category-table, Vec contents, Vec
+// docstrings(128)]. GNU stores one extra slot (the docstring table);
+// ours is a plain Vec for simplicity.
+
+/// Build a category table value. `standard` populates GNU's ASCII
+/// membership and label docstrings.
+pub(crate) fn make_category_table_value(i: &mut Interp, standard: bool) -> Value {
+    let slots = Rc::new(RefCell::new(vec![Value::Nil; 256]));
+    let docs = Rc::new(RefCell::new(vec![Value::Nil; 128]));
+    let t = Value::Record(Rc::new(RefCell::new(vec![
+        Value::Sym(i.intern("char-table")),
+        Value::Sym(i.intern("category-table")),
+        Value::Vec(slots.clone()),
+        Value::Vec(docs.clone()),
+    ])));
+    if standard {
+        // GNU's standard-category-table ASCII defaults.
+        const DOCS: &[(usize, &str)] = &[
+            (32, "space for indent\nThis character counts as a space for indentation purposes."),
+            (46, "Base\nBase characters (Unicode General Category L,N,P,S,Zs)"),
+            (48, "consonant"),
+            (49, "base vowel\nBase (independent) vowel"),
+            (50, "upper diacritic\nUpper diacritical mark (including upper vowel)"),
+            (51, "lower diacritic\nLower diacritical mark (including lower vowel)"),
+            (52, "combining tone\nCombining tone mark"),
+            (53, "symbol"),
+            (54, "digit"),
+            (55, "vowel diacritic\nVowel-modifying diacritical mark"),
+            (56, "vowel-signs"),
+            (57, "semivowel lower"),
+            (60, "Not at eol\nA character which can't be placed at end of line."),
+            (62, "Not at bol\nA character which can't be placed at beginning of line."),
+            (65, "2-byte alnum\nAlphanumeric characters of 2-byte character sets"),
+            (67, "2-byte han\nChinese (Han) characters of 2-byte character sets"),
+            (71, "2-byte Greek\nGreek characters of 2-byte character sets"),
+            (72, "2-byte Hiragana\nJapanese Hiragana characters of 2-byte character sets"),
+            (73, "Indian Glyphs"),
+            (75, "2-byte Katakana\nJapanese Katakana characters of 2-byte character sets"),
+            (76, "Strong L2R\nCharacters with \"strong\" left-to-right directionality, i.e.\nwith L, LRE, or LRO Unicode bidi character type."),
+            (78, "2-byte Korean\nKorean Hangul characters of 2-byte character sets"),
+            (82, "Strong R2L\nCharacters with \"strong\" right-to-left directionality, i.e.\nwith R, AL, RLE, or RLO Unicode bidi character type."),
+            (89, "2-byte Cyrillic\nCyrillic characters of 2-byte character sets"),
+            (94, "Combining\nCombining diacritic or mark (Unicode General Category M)"),
+            (97, "ASCII\nASCII graphic characters 32-126 (ISO646 IRV:1983[4/0])"),
+            (98, "Arabic"),
+            (99, "Chinese"),
+            (101, "Ethiopic\nEthiopic (Ge'ez)"),
+            (103, "Greek"),
+            (104, "Korean"),
+            (105, "Indian"),
+            (106, "Japanese"),
+            (107, "Katakana\nJapanese katakana"),
+            (111, "Lao"),
+            (113, "Tibetan"),
+            (114, "Roman\nJapanese roman"),
+            (116, "Thai"),
+            (118, "Viet\nVietnamese"),
+            (119, "Hebrew"),
+            (121, "Cyrillic"),
+            (124, "line breakable\nWhile filling, we can break a line at this character."),
+        ];
+        {
+            let mut d = docs.borrow_mut();
+            for &(label, doc) in DOCS {
+                d[label] = Value::string(doc);
+            }
+        }
+        let mut sv = slots.borrow_mut();
+        for ch in 32usize..=126 {
+            let mut bits = vec![false; 128];
+            for b in [46usize, 97, 108] {
+                bits[b] = true;
+            }
+            if ch != 32 && ch != 92 && ch != 126 {
+                bits[114] = true;
+            }
+            let c = char::from_u32(ch as u32).unwrap();
+            if c.is_ascii_alphabetic() {
+                bits[76] = true;
+            }
+            if c.is_ascii_digit() {
+                bits[54] = true;
+            }
+            sv[ch] = make_bool_vector(i, bits);
+        }
+    }
+    t
+}
+
+fn is_category_table(i: &Interp, v: &Value) -> bool {
+    is_char_table(i, v)
+        && matches!(char_table_subtype_of(v), Value::Sym(s) if i.symbol_name(s) == "category-table")
+}
+
+fn want_category_table(i: &mut Interp, v: &Value) -> Result<Rc<RefCell<Vec<Value>>>, Flow> {
+    match v {
+        Value::Nil => Ok(match i
+            .current_buffer_ref()
+            .and_then(|b| b.borrow().category_table.clone())
+        {
+            Some(t) => match t {
+                Value::Record(r) => r,
+                _ => return Err(i.wrong_type_mut("category-table-p", &Value::Nil)),
+            },
+            None => match i.standard_category_table() {
+                Value::Record(r) => r,
+                _ => unreachable!(),
+            },
+        }),
+        Value::Record(r) if is_category_table(i, v) => Ok(r.clone()),
+        other => Err(i.wrong_type_mut("category-table-p", other)),
+    }
+}
+
+/// The docstring vec of a category table (record slot 3).
+fn cat_docs(v: &Rc<RefCell<Vec<Value>>>) -> Rc<RefCell<Vec<Value>>> {
+    let rr = v.borrow();
+    match rr.get(3) {
+        Some(Value::Vec(d)) => d.clone(),
+        _ => Rc::new(RefCell::new(vec![Value::Nil; 128])),
+    }
+}
+
+fn f_make_category_table(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
+    Ok(make_category_table_value(i, false))
+}
+
+fn f_category_table_p(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    Ok(Value::from_bool(is_category_table(i, &a[0])))
+}
+
+fn f_standard_category_table(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
+    Ok(i.standard_category_table())
+}
+
+fn f_category_table(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
+    let v = i
+        .current_buffer_ref()
+        .and_then(|b| b.borrow().category_table.clone())
+        .unwrap_or_else(|| i.standard_category_table());
+    Ok(v)
+}
+
+fn f_set_category_table(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    if !is_category_table(i, &a[0]) {
+        return Err(i.wrong_type_mut("category-table-p", &a[0]));
+    }
+    if let Some(b) = i.current_buffer_ref() {
+        b.borrow_mut().category_table = Some(a[0].clone());
+    }
+    Ok(a[0].clone())
+}
+
+fn f_copy_category_table(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let src = want_category_table(i, &arg(&a, 0))?;
+    let rr = src.borrow();
+    let contents = match rr.get(2) {
+        Some(Value::Vec(v)) => v.clone(),
+        _ => Rc::new(RefCell::new(vec![Value::Nil; 256])),
+    };
+    let docs = cat_docs(&src);
+    drop(rr);
+    // Fcopy_sequence-style: share the per-char category sets and the
+    // docstring table, copy the top-level vec.
+    Ok(Value::Record(Rc::new(RefCell::new(vec![
+        Value::Sym(i.intern("char-table")),
+        Value::Sym(i.intern("category-table")),
+        Value::Vec(Rc::new(RefCell::new(contents.borrow().clone()))),
+        Value::Vec(docs),
+    ]))))
+}
+
+fn f_define_category(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let cat = want_int(i, &a[0])?;
+    if !(32..=126).contains(&cat) {
+        return Err(i.wrong_type_mut("categoryp", &a[0]));
+    }
+    let doc = want_string(i, &a[1])?;
+    let t = want_category_table(i, &arg(&a, 2))?;
+    let docs = cat_docs(&t);
+    if !docs.borrow()[cat as usize].is_nil() {
+        return Err(i.signal_data(
+            sym::ERROR,
+            vec![Value::string(format!(
+                "Category `{}' is already defined",
+                char::from_u32(cat as u32).unwrap_or('?')
+            ))],
+        ));
+    }
+    docs.borrow_mut()[cat as usize] = Value::string(doc);
+    Ok(Value::Nil)
+}
+
+fn f_category_docstring(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let cat = want_int(i, &a[0])?;
+    if !(32..=126).contains(&cat) {
+        return Err(i.wrong_type_mut("categoryp", &a[0]));
+    }
+    let t = want_category_table(i, &arg(&a, 1))?;
+    Ok(cat_docs(&t).borrow()[cat as usize].clone())
+}
+
+fn f_get_unused_category(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let t = want_category_table(i, &arg(&a, 0))?;
+    let docs = cat_docs(&t);
+    let dd = docs.borrow();
+    for c in 32usize..=126 {
+        if dd[c].is_nil() {
+            return Ok(Value::Int(c as i128));
+        }
+    }
+    Ok(Value::Nil)
+}
+
+fn f_modify_category_entry(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    // CHAR may be a char or a (MIN . MAX) cons.
+    let (lo, hi) = match &a[0] {
+        Value::Int(c) => (*c, *c),
+        Value::Cons(c) => {
+            let r = c.borrow();
+            match (&r.car, &r.cdr) {
+                (Value::Int(l), Value::Int(h)) => (*l, *h),
+                _ => return Err(i.wrong_type_mut("characterp", &a[0])),
+            }
+        }
+        other => return Err(i.wrong_type_mut("characterp", other)),
+    };
+    let cat = want_int(i, &a[1])?;
+    if !(32..=126).contains(&cat) {
+        return Err(i.wrong_type_mut("categoryp", &a[1]));
+    }
+    let reset = !arg(&a, 3).is_nil();
+    let t = want_category_table(i, &arg(&a, 2))?;
+    if cat_docs(&t).borrow()[cat as usize].is_nil() {
+        return Err(i.signal_data(
+            sym::ERROR,
+            vec![Value::string(format!(
+                "Undefined category: {}",
+                char::from_u32(cat as u32).unwrap_or('?')
+            ))],
+        ));
+    }
+    let contents = match char_table_vec(&Value::Record(t.clone())) {
+        Some(v) => v,
+        None => return Ok(Value::Nil),
+    };
+    for ch in lo..=hi {
+        if !(0..256).contains(&ch) {
+            continue;
+        }
+        let mut bits = vec![false; 128];
+        let mut cv = contents.borrow_mut();
+        if !reset {
+            if let Some(old) = cv.get(ch as usize) {
+                if let Ok(b) = bool_vec_of(i, old) {
+                    for (k, v) in b.iter().enumerate() {
+                        if k < 128 {
+                            bits[k] = *v;
+                        }
+                    }
+                }
+            }
+        }
+        bits[cat as usize] = true;
+        cv[ch as usize] = make_bool_vector(i, bits);
+    }
+    Ok(Value::Nil)
+}
+
+fn f_char_category_set(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let ch = want_int(i, &a[0])?;
+    let t = want_category_table(i, &Value::Nil)?;
+    let contents = match char_table_vec(&Value::Record(t)) {
+        Some(v) => v,
+        None => return Ok(Value::Nil),
+    };
+    let cv = contents.borrow();
+    Ok(match cv.get(ch as usize) {
+        Some(v) if !v.is_nil() => v.clone(),
+        _ => make_bool_vector(i, vec![false; 128]),
+    })
+}
+
+fn f_category_set_mnemonics(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let bits = bool_vec_of_cat(i, &a[0])?;
+    let s: String = bits
+        .iter()
+        .enumerate()
+        .filter(|(_, b)| **b)
+        .filter_map(|(k, _)| char::from_u32(k as u32))
+        .collect();
+    Ok(Value::string(s))
+}
+
+fn bool_vec_of_cat(i: &mut Interp, v: &Value) -> Result<Vec<bool>, Flow> {
+    if !is_bool_vector(i, v) {
+        return Err(i.wrong_type_mut("categorysetp", v));
+    }
+    bool_vec_of(i, v)
+}
+
+fn f_make_category_set(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let s = want_string(i, &a[0])?;
+    let mut bits = vec![false; 128];
+    for c in s.chars() {
+        let k = c as usize;
+        if k < 128 {
+            bits[k] = true;
+        }
+    }
+    Ok(make_bool_vector(i, bits))
 }
 
 fn f_invocation_name(_i: &mut Interp, _a: Vec<Value>) -> EvalResult {

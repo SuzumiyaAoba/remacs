@@ -2171,7 +2171,8 @@ fn f_char_after(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         Some(v) if v.truthy() => pos_idx(bb.text.len(), want_int(i, v)?),
         _ => bb.point(),
     };
-    if p >= bb.text_len() || p >= bb.text.len() {
+    // nil outside the accessible portion (GNU checks BEGV <= p < ZV).
+    if p < bb.begv || p >= bb.text_len() || p >= bb.text.len() {
         return Ok(Value::Nil);
     }
     Ok(Value::Int(bb.text.char_at(p) as i128))
@@ -2185,7 +2186,7 @@ fn f_char_before(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         Some(v) if v.truthy() => pos_idx(bb.text.len(), want_int(i, v)?),
         _ => bb.point(),
     };
-    if p == 0 || p > bb.text.len() {
+    if p <= bb.begv || p > bb.text_len() || p > bb.text.len() {
         return Ok(Value::Nil);
     }
     Ok(Value::Int(bb.text.char_at(p - 1) as i128))
@@ -2195,8 +2196,9 @@ fn f_following_char(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
     let b = cur(i);
     let bb = b.borrow();
     let p = bb.point();
+    // GNU returns 0 (not nil) at the end of the accessible portion.
     if p >= bb.text_len() {
-        return Ok(Value::Nil);
+        return Ok(Value::Int(0));
     }
     Ok(Value::Int(bb.text.char_at(p) as i128))
 }
@@ -2205,7 +2207,7 @@ fn f_preceding_char(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
     let b = cur(i);
     let bb = b.borrow();
     let p = bb.point();
-    if p == 0 {
+    if p <= bb.begv {
         return Ok(Value::Int(0));
     }
     Ok(Value::Int(bb.text.char_at(p - 1) as i128))

@@ -159,6 +159,9 @@ pub struct Interp {
     pub thread_last_error: Value,
     /// The standard case table (`standard-case-table'), built lazily.
     pub standard_case_table: Option<Value>,
+    /// The standard category table (`standard-category-table'), built
+    /// lazily with GNU's ASCII defaults.
+    pub standard_category_table: Option<Value>,
     /// `register-ccl-program' registration counter.
     pub ccl_program_count: usize,
     /// `register-code-conversion-map' registration counter.
@@ -234,6 +237,7 @@ impl Interp {
             current_thread: 0,
             thread_last_error: Value::Nil,
             standard_case_table: None,
+            standard_category_table: None,
             ccl_program_count: 0,
             code_conv_map_count: 0,
         };
@@ -2889,6 +2893,17 @@ impl Interp {
             Value::Vec(slots),
         ])));
         self.standard_case_table = Some(t.clone());
+        t
+    }
+
+    /// `standard-category-table': the shared category table, with
+    /// GNU's ASCII membership and label docstrings.
+    pub fn standard_category_table(&mut self) -> Value {
+        if let Some(v) = &self.standard_category_table {
+            return v.clone();
+        }
+        let t = crate::lisp::builtins::misc::make_category_table_value(self, true);
+        self.standard_category_table = Some(t.clone());
         t
     }
 

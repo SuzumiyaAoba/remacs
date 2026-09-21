@@ -60,6 +60,9 @@ pub struct Buffer {
     /// Buffer-local case table (`current-case-table'), or None for the
     /// standard table.
     pub case_table: Option<crate::lisp::value::Value>,
+    /// Buffer-local category table (`category-table'), or None for the
+    /// standard table.
+    pub category_table: Option<crate::lisp::value::Value>,
 }
 
 /// One text-property interval.
@@ -120,6 +123,7 @@ impl Buffer {
             live: true,
             base_buffer: None,
             case_table: None,
+            category_table: None,
         }
     }
 
