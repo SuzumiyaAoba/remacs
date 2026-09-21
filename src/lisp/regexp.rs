@@ -91,19 +91,20 @@ impl CharSet {
     }
 }
 
-/// GNU `char-syntax` values for the standard syntax table.
+/// GNU `char-syntax` values for the *standard* syntax table (dumped from
+/// GNU Emacs: `;` is punctuation there, `\n` is whitespace, `$`/`%` word,
+/// `&` `*` `+` `-` `/` `<` `=` `>` `|` `_` symbol, `{[`/`]}` paren).
 pub fn syntax_code(c: char) -> u8 {
     match c {
-        ' ' | '\t' | '\x0c' => b' ',
-        '\n' => b'>',
-        '(' | '[' => b'(',
-        ')' | ']' => b')',
+        ' ' | '\t' | '\n' | '\x0c' | '\r' => b' ',
+        '(' | '[' | '{' => b'(',
+        ')' | ']' | '}' => b')',
         '"' => b'"',
-        '\'' | '`' | ',' | '#' => b'\'',
-        ';' => b'<',
         '\\' => b'\\',
+        '$' | '%' => b'w',
+        '&' | '*' | '+' | '-' | '/' | '<' | '=' | '>' | '|' | '_' => b'_',
         c if c.is_alphanumeric() => b'w',
-        c if c.is_ascii() => b'_',
+        c if c.is_ascii() => b'.',
         c if c.is_whitespace() => b' ',
         _ => b'.',
     }

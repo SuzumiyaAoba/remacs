@@ -1763,7 +1763,7 @@ pub(crate) static SUBRS: &[Subr] = &[
     ),
     S!("syntax-class", 1, 1, f_zero, ""),
     S!("standard-syntax-table", 0, 0, f_standard_syntax_table, ""),
-    S!("string-to-syntax", 1, 1, f_nil, ""),
+    S!("string-to-syntax", 1, 1, f_string_to_syntax, ""),
     S!("syntax-propertize", 1, 1, f_nil, ""),
     S!("internal--syntax-propertize", 0, 0, f_nil, ""),
     S!(
@@ -5690,17 +5690,45 @@ fn f_indent_line_to(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 }
 
 fn f_indent_to(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let col = want_int(i, &a[0])?.max(0) as usize;
+    let col = want_int(i, &a[0])?.max(0);
+    let minimum = match a.get(1) {
+        Some(v) if v.truthy() => want_int(i, v)?,
+        _ => 0,
+    };
+    let tab = i
+        .symbol_value(i.intern_soft("tab-width").unwrap_or(0))
+        .int()
+        .unwrap_or(8)
+        .max(1);
+    let tabs_on = i
+        .symbol_value(i.intern_soft("indent-tabs-mode").unwrap_or(0))
+        .truthy();
     let b = cur(i);
     let mut bb = b.borrow_mut();
     let p = bb.point();
-    // Column of point.
     let ls = bb.text.line_start(bb.text.line_of_pos(p));
-    let cur_col = p - ls;
-    if cur_col < col {
-        bb.insert(&" ".repeat(col - cur_col));
+    let fromcol = crate::buffer::primitives::rect_col_at(&bb.text, ls, p, tab);
+    let mincol = (fromcol + minimum).max(col);
+    if fromcol < mincol {
+        let mut s = String::new();
+        let mut c = fromcol;
+        if tabs_on {
+            loop {
+                let next = (c / tab + 1) * tab;
+                if next > mincol {
+                    break;
+                }
+                s.push('\t');
+                c = next;
+            }
+        }
+        while c < mincol {
+            s.push(' ');
+            c += 1;
+        }
+        bb.insert(&s);
     }
-    Ok(Value::Int(col as i128))
+    Ok(Value::Int(mincol))
 }
 
 fn f_indent_rigidly(i: &mut Interp, a: Vec<Value>) -> EvalResult {
@@ -6391,6 +6419,55 @@ fn f_syntax_table_p(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     Ok(Value::from_bool(is_syntax_table(i, &a[0])))
 }
 
+/// `string-to-syntax`: parse a syntax descriptor string like "w", "()",
+/// or "  4" into (CODE|FLAGS . MATCHING-CHAR), matching GNU.
+fn f_string_to_syntax(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let s = match &a[0] {
+        Value::Str(s) => s.borrow().clone(),
+        other => return Err(i.wrong_type_mut("stringp", other)),
+    };
+    let chars: Vec<char> = s.chars().collect();
+    if chars.is_empty() {
+        return Err(i.signal_data(sym::ARGS_OUT_OF_RANGE, vec![a[0].clone(), Value::Int(0)]));
+    }
+    let code: i128 = match chars[0] {
+        ' ' => 0,
+        '.' => 1,
+        'w' => 2,
+        '_' => 3,
+        '(' => 4,
+        ')' => 5,
+        '\'' => 6,
+        '"' => 7,
+        '$' => 8,
+        '\\' => 9,
+        '/' => 10,
+        '<' => 11,
+        '>' => 12,
+        '@' => return Ok(Value::Nil),
+        '!' => 14,
+        '|' => 15,
+        other => {
+            return Err(i.error(format!("Invalid syntax description letter: {}", other)));
+        }
+    };
+    // Second char is the matching character (a space means none).
+    let mut matching = Value::Nil;
+    if let Some(&m) = chars.get(1) {
+        if m != ' ' {
+            matching = Value::Int(m as i128);
+        }
+    }
+    // Remaining chars are flag digits '1'..'4' → bits 16..19.
+    let mut flags: i128 = 0;
+    for &f in chars.iter().skip(2) {
+        if ('1'..='4').contains(&f) {
+            flags |= 1i128 << (15 + f as i128 - '0' as i128);
+        }
+    }
+    Ok(Value::cons(Value::Int(code | flags), matching))
+}
+
 fn f_standard_syntax_table(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
     let sid = i.intern("remacs--standard-syntax-table");
     let cur = i.symbol_value(sid);
@@ -6462,25 +6539,26 @@ fn f_parse_partial_sexp(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
         let mut esc = false;
         while k < end.min(bb.text.len()) {
             let c = bb.text.char_at(k);
+            let sc = crate::lisp::regexp::syntax_code(c);
             if esc {
                 esc = false;
             } else if in_comment {
-                if c == '\n' {
+                if sc == b'>' {
                     in_comment = false;
                 }
             } else if in_str {
-                if c == '\\' {
+                if sc == b'\\' {
                     esc = true;
-                } else if c == '"' {
+                } else if sc == b'"' {
                     in_str = false;
                 }
             } else {
-                match c {
-                    ';' => in_comment = true,
-                    '"' => in_str = true,
-                    '\'' => quote = true,
-                    '(' | '[' | '{' => depth += 1,
-                    ')' | ']' | '}' => depth -= 1,
+                match sc {
+                    b'<' => in_comment = true,
+                    b'"' => in_str = true,
+                    b'\'' => quote = true,
+                    b'(' => depth += 1,
+                    b')' => depth -= 1,
                     _ => quote = false,
                 }
             }

@@ -25,6 +25,7 @@ fn to_num(v: &Value) -> Option<Num> {
     match v {
         Value::Int(n) => Some(Num::I(*n)),
         Value::Float(f) => Some(Num::F(*f)),
+        Value::Marker(m) => Some(Num::I(m.borrow().position as i128 + 1)),
         _ => None,
     }
 }

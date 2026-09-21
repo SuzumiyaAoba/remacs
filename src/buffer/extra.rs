@@ -1835,13 +1835,12 @@ fn f_subst_char_in_region(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let tc = char::from_u32(to).unwrap_or('\u{FFFD}');
     let b = cur(i);
     let mut bb = b.borrow_mut();
-    let region = bb.text.substring(s, e);
-    let out: String = region
-        .chars()
-        .map(|c| if c == fc { tc } else { c })
-        .collect();
-    bb.delete_region(s, e);
-    bb.insert_at(s, &out);
+    // GNU substitutes in place: point and markers are undisturbed.
+    for p in s..e.min(bb.text.len()) {
+        if bb.text.char_at(p) == fc {
+            bb.text.set_char_at(p, tc);
+        }
+    }
     Ok(Value::Nil)
 }
 

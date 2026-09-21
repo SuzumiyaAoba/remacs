@@ -40,6 +40,7 @@ pub fn special_form(id: SymId) -> Option<SpecialFn> {
         sym::CONDITION_CASE => sf_condition_case,
         sym::INTERACTIVE => |_i, _a| Ok(Value::Nil),
         sym::SAVE_EXCURSION => sf_save_excursion,
+        sym::SAVE_MARK_AND_EXCURSION => sf_save_mark_and_excursion,
         sym::SAVE_CURRENT_BUFFER => sf_save_current_buffer,
         sym::WITH_CURRENT_BUFFER => sf_with_current_buffer,
         sym::SAVE_RESTRICTION => sf_save_restriction,
@@ -477,6 +478,8 @@ fn sf_defconst(i: &mut Interp, args: Value) -> EvalResult {
     };
     i.obarray.symbol_mut(sid).special = true;
     let v = i.eval(&cadr(&args))?;
+    // defconst may (re)define a constant: bypass the constant check.
+    i.obarray.symbol_mut(sid).constant = false;
     i.set_symbol_default(sid, v)?;
     i.obarray.symbol_mut(sid).constant = true;
     Ok(name_v)
@@ -634,7 +637,14 @@ fn sf_condition_case(i: &mut Interp, args: Value) -> EvalResult {
 // ---------- buffer-related special forms ----------
 
 fn sf_save_excursion(i: &mut Interp, args: Value) -> EvalResult {
-    let saved = i.save_excursion_state();
+    let saved = i.save_excursion_state(false);
+    let r = i.eval_progn(&args);
+    i.restore_excursion_state(saved);
+    r
+}
+
+fn sf_save_mark_and_excursion(i: &mut Interp, args: Value) -> EvalResult {
+    let saved = i.save_excursion_state(true);
     let r = i.eval_progn(&args);
     i.restore_excursion_state(saved);
     r

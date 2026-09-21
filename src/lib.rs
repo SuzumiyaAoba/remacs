@@ -76,6 +76,7 @@ mod coverage_tests {
     probe!(u_probe_sort, "probe_sort.el");
     probe!(u_probe_eval14, "probe_eval14.el");
     probe!(u_probe_paragraphs, "probe_paragraphs.el");
+    probe!(u_probe_fillcomment, "probe_fillcomment.el");
 
     /// `command_args` pre-supplies arguments to every prompting
     /// interactive-spec code — the path used when a command is replayed

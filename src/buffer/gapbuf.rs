@@ -98,6 +98,18 @@ impl GapBuffer {
         self.gap_end = (self.gap_end + (end - start)).min(self.buf.len());
     }
 
+    /// Overwrite the char at logical index `i` in place. Unlike
+    /// delete+insert this does not move the gap, so markers and
+    /// point are undisturbed (GNU's `subst-char-in-region` semantics).
+    pub fn set_char_at(&mut self, i: usize, c: char) {
+        debug_assert!(i < self.len());
+        if i < self.gap_start {
+            self.buf[i] = c;
+        } else {
+            self.buf[i + (self.gap_end - self.gap_start)] = c;
+        }
+    }
+
     /// Extract `[start, end)` as a String.
     pub fn substring(&self, start: usize, end: usize) -> String {
         let end = end.min(self.len());

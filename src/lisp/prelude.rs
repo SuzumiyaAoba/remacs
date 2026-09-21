@@ -1563,6 +1563,3019 @@ Leave one space or none, according to the context."
   (cons 'let (cons '((inhibit-quit nil)) body)))
 
 ;; ---------- mode keymaps ----------
+
+
+
+
+;;; -*- Compatibility support for fill.el / newcomment.el ports -*-
+
+(defmacro defcustom (var value &optional doc &rest _keys)
+  (list 'defvar var value doc))
+
+(defmacro defvar-local (var value &optional docstring)
+  (list 'progn
+        (list 'defvar var value docstring)
+        (list 'make-variable-buffer-local (list 'quote var))))
+
+(defmacro defsubst (name arglist &rest body)
+  (cons 'defun (cons name (cons arglist body))))
+
+(defmacro with-buffer-unmodified-if-unchanged (&rest body)
+  (let ((doc (if (stringp (car body)) (pop body))))
+    `(let ((modp (buffer-modified-p))
+           (buffer-undo-list buffer-undo-list))
+       (with-silent-modifications
+         ,doc
+         ,@body
+         (restore-buffer-modified-p modp)))))
+
+;; Character categories are not implemented; an empty table makes
+;; `aref' lookups uniformly nil, matching the no-categories behavior.
+(defvar char-category-set--empty-table (make-char-table nil))
+(defun char-category-set (_char)
+  char-category-set--empty-table)
+
+(defvar text-property-default-nonsticky nil)
+
+;;; ---- newcomment.el cluster ----
+(defun comment-string-strip (str beforep afterp)
+  "Strip STR of any leading (if BEFOREP) and/or trailing (if AFTERP) space."
+  (string-match (concat "\\`" (if beforep "\\s-*")
+			"\\(.*?\\)" (if afterp "\\s-*\n?")
+			"\\'") str)
+  (match-string 1 str))
+
+(defun comment-string-reverse (s)
+  "Return the mirror image of string S, without any trailing space."
+  (comment-string-strip (concat (nreverse (string-to-list s))) nil t))
+
+(defun comment-normalize-vars (&optional noerror)
+  "Check and set up variables needed by other commenting functions.
+All the `comment-*' commands call this function to set up various
+variables, like `comment-start', to ensure that the commenting
+functions work correctly.  Lisp callers of any other `comment-*'
+function should first call this function explicitly."
+  (funcall comment-setup-function)
+  (unless (and (not comment-start) noerror)
+    (unless comment-start
+      (let ((cs (read-string "No comment syntax is defined.  Use: ")))
+	(if (zerop (length cs))
+	    (error "No comment syntax defined")
+          (setq-local comment-start cs)
+          (setq-local comment-start-skip cs))))
+    ;; comment-use-syntax
+    (when (eq comment-use-syntax 'undecided)
+      (setq-local comment-use-syntax
+                  (let ((st (syntax-table))
+                        (cs comment-start)
+                        (ce (if (string= "" comment-end) "\n" comment-end)))
+                    ;; Try to skip over a comment using forward-comment
+                    ;; to see if the syntax tables properly recognize it.
+                    (with-temp-buffer
+                      (set-syntax-table st)
+                      (insert cs " hello " ce)
+                      (goto-char (point-min))
+                      (and (forward-comment 1) (eobp))))))
+    ;; comment-padding
+    (unless comment-padding (setq comment-padding 0))
+    (when (integerp comment-padding)
+      (setq comment-padding (make-string comment-padding ? )))
+    ;; comment markers
+    ;;(setq comment-start (comment-string-strip comment-start t nil))
+    ;;(setq comment-end (comment-string-strip comment-end nil t))
+    ;; comment-continue
+    (unless (or comment-continue (string= comment-end ""))
+      (setq-local comment-continue
+                  (concat (if (string-match "\\S-\\S-" comment-start) " " "|")
+                          (substring comment-start 1)))
+      ;; Hasn't been necessary yet.
+      ;; (unless (string-match comment-start-skip comment-continue)
+      ;;	(kill-local-variable 'comment-continue))
+      )
+    ;; comment-skip regexps
+    (unless (and comment-start-skip
+		 ;; In case comment-start has changed since last time.
+		 (string-match comment-start-skip comment-start))
+      (setq-local comment-start-skip
+                  (concat (unless (eq comment-use-syntax t)
+                            ;; `syntax-ppss' will detect escaping.
+                            "\\(\\(^\\|[^\\\n]\\)\\(\\\\\\\\\\)*\\)")
+                          "\\(?:\\s<+\\|"
+                          (regexp-quote (comment-string-strip comment-start t t))
+                          ;; Let's not allow any \s- but only [ \t] since \n
+                          ;; might be both a comment-end marker and \s-.
+                          "+\\)[ \t]*")))
+    (unless (and comment-end-skip
+		 ;; In case comment-end has changed since last time.
+		 (string-match comment-end-skip
+                               (if (string= "" comment-end) "\n" comment-end)))
+      (let ((ce (if (string= "" comment-end) "\n"
+		  (comment-string-strip comment-end t t))))
+        (setq-local comment-end-skip
+                    ;; We use [ \t] rather than \s- because we don't want to
+                    ;; remove ^L in C mode when uncommenting.
+                    (concat "[ \t]*\\(\\s>" (if comment-quote-nested "" "+")
+                            "\\|" (regexp-quote (substring ce 0 1))
+                            (if (and comment-quote-nested (<= (length ce) 1)) "" "+")
+                            (regexp-quote (substring ce 1))
+                            "\\)"))))))
+
+(defun comment-quote-re (str unp)
+  (concat (regexp-quote (substring str 0 1))
+	  "\\\\" (if unp "+" "*")
+	  (regexp-quote (substring str 1))))
+
+(defvar comment-quote-nested t
+  "Non-nil if nested comments should be quoted.
+This should be locally set by each major mode if needed.")
+
+(defun comment-quote-nested (cs ce unp)
+  "Quote or unquote nested comments.
+If UNP is non-nil, unquote nested comment markers."
+  (setq cs (comment-string-strip cs t t))
+  (setq ce (comment-string-strip ce t t))
+  (when (and comment-quote-nested
+	     (> (length ce) 0))
+    (funcall comment-quote-nested-function cs ce unp)))
+
+(defun comment-quote-nested-default (cs ce unp)
+  "Quote comment delimiters in the buffer.
+It expects to be called with the buffer narrowed to a single comment.
+It is used as a default for `comment-quote-nested-function'.
+
+The arguments CS and CE are strings matching comment starting and
+ending delimiters respectively.
+
+If UNP is non-nil, comments are unquoted instead.
+
+To quote the delimiters, a \\ is inserted after the first
+character of CS or CE.  If CE is a single character it will
+change CE into !CS."
+  (let ((re (concat (comment-quote-re ce unp)
+		    "\\|" (comment-quote-re cs unp))))
+    (goto-char (point-min))
+    (while (re-search-forward re nil t)
+      (goto-char (match-beginning 0))
+      (forward-char 1)
+      (if unp (delete-char 1) (insert "\\"))
+      (when (= (length ce) 1)
+	;; If the comment-end is a single char, adding a \ after that
+	;; "first" char won't deactivate it, so we turn such a CE
+	;; into !CS.  I.e. for pascal, we turn } into !{
+	(if (not unp)
+	    (when (string= (match-string 0) ce)
+	      (replace-match (concat "!" cs) t t))
+	  (when (and (< (point-min) (match-beginning 0))
+		     (string= (buffer-substring (1- (match-beginning 0))
+						(1- (match-end 0)))
+			      (concat "!" cs)))
+	    (backward-char 2)
+	    (delete-char (- (match-end 0) (match-beginning 0)))
+	    (insert ce)))))))
+
+(defun comment-search-forward (limit &optional noerror)
+  "Find a comment start between point and LIMIT.
+Moves point to inside the comment and returns the position of the
+comment-starter.  If no comment is found, moves point to LIMIT
+and raises an error or returns nil if NOERROR is non-nil.
+
+Ensure that `comment-normalize-vars' has been called before you use this."
+  (if (not comment-use-syntax)
+      (if (re-search-forward comment-start-skip limit noerror)
+	  (or (match-end 1) (match-beginning 0))
+	(goto-char limit)
+	(unless noerror (error "No comment")))
+    (let* ((pt (point))
+	   ;; Assume (at first) that pt is outside of any string.
+	   (s (parse-partial-sexp pt (or limit (point-max)) nil nil
+				  (if comment-use-global-state (syntax-ppss pt))
+				  t)))
+      (when (and (nth 8 s) (nth 3 s) (not comment-use-global-state))
+	;; The search ended at eol inside a string.  Try to see if it
+	;; works better when we assume that pt is inside a string.
+	(setq s (parse-partial-sexp
+		 pt (or limit (point-max)) nil nil
+		 (list nil nil nil (nth 3 s) nil nil nil nil)
+		 t)))
+      (if (or (not (and (nth 8 s) (not (nth 3 s))))
+	      ;; Make sure the comment starts after PT.
+	      (< (nth 8 s) pt))
+	  (unless noerror (error "No comment"))
+	;; We found the comment.
+	(let ((pos (point))
+	      (start (nth 8 s))
+	      (bol (line-beginning-position))
+	      (end nil))
+	  (while (and (null end) (>= (point) bol))
+	    (if (looking-at comment-start-skip)
+		(setq end (min (or limit (point-max)) (match-end 0)))
+	      (backward-char)))
+	  (goto-char (or end pos))
+	  start)))))
+
+(defun comment-search-backward (&optional limit noerror)
+  "Find a comment start between LIMIT and point.
+Moves point to inside the comment and returns the position of the
+comment-starter.  If no comment is found, moves point to LIMIT
+and raises an error or returns nil if NOERROR is non-nil.
+
+Ensure that `comment-normalize-vars' has been called before you use this."
+  ;; FIXME: If a comment-start appears inside a comment, we may erroneously
+  ;; stop there.  This can be rather bad in general, but since
+  ;; comment-search-backward is only used to find the comment-column (in
+  ;; comment-set-column) and to find the comment-start string (via
+  ;; comment-beginning) in indent-new-comment-line, it should be harmless.
+  (if (not (re-search-backward comment-start-skip limit 'move))
+      (unless noerror (error "No comment"))
+    (beginning-of-line)
+    (let* ((end (match-end 0))
+	   (cs (comment-search-forward end t))
+	   (pt (point)))
+      (if (not cs)
+	  (progn (beginning-of-line)
+		 (comment-search-backward limit noerror))
+	(while (progn (goto-char cs)
+		      (comment-forward)
+		      (and (< (point) end)
+			   (setq cs (comment-search-forward end t))))
+	  (setq pt (point)))
+	(goto-char pt)
+	cs))))
+
+(defun comment-beginning ()
+  "Find the beginning of the enclosing comment.
+Returns nil if not inside a comment, else moves point and returns
+the same as `comment-search-backward'."
+  (if (and comment-use-syntax comment-use-global-state)
+      (let ((state (syntax-ppss)))
+        (when (nth 4 state)
+          (goto-char (nth 8 state))
+          (prog1 (point)
+            (when (save-restriction
+                    ;; `comment-start-skip' sometimes checks that the
+                    ;; comment char is not escaped.  (Bug#16971)
+                    (narrow-to-region (point) (point-max))
+                    (looking-at comment-start-skip))
+              (goto-char (match-end 0))))))
+    ;; Can't rely on the syntax table, let's guess based on font-lock.
+    (unless (eq (get-text-property (point) 'face) 'font-lock-string-face)
+      (let ((pt (point))
+            (cs (comment-search-backward nil t)))
+        (when cs
+          (if (save-excursion
+                (goto-char cs)
+                (and
+                 ;; For modes where comment-start and comment-end are the same,
+                 ;; the search above may have found a `ce' rather than a `cs'.
+                 (or (if comment-end-skip (not (looking-at comment-end-skip)))
+                     ;; Maybe font-lock knows that it's a `cs'?
+                     (eq (get-text-property (match-end 0) 'face)
+                         'font-lock-comment-face)
+                     (unless (eq (get-text-property (point) 'face)
+                                 'font-lock-comment-face)
+                       ;; Let's assume it's a `cs' if we're on the same line.
+                       (>= (line-end-position) pt)))
+                 ;; Make sure that PT is not past the end of the comment.
+                 (if (comment-forward 1) (> (point) pt) (eobp))))
+              cs
+            (goto-char pt)
+            nil))))))
+
+(defun comment-forward (&optional n)
+  "Skip forward over N comments.
+Just like `forward-comment' but only for positive N
+and can use regexps instead of syntax."
+  (setq n (or n 1))
+  (if (< n 0) (error "No comment-backward")
+    (if comment-use-syntax (forward-comment n)
+      (while (> n 0)
+	(setq n
+	      (if (or (forward-comment 1)
+		      (and (looking-at comment-start-skip)
+			   (goto-char (match-end 0))
+			   (re-search-forward comment-end-skip nil 'move)))
+		  (1- n) -1)))
+      (= n 0))))
+
+(defun comment-enter-backward ()
+  "Move from the end of a comment to the end of its content.
+Point is assumed to be just at the end of a comment."
+  (if (bolp)
+      ;; comment-end = ""
+      (progn (backward-char) (skip-syntax-backward " "))
+    (cond
+     ((save-excursion
+        (save-restriction
+          (narrow-to-region (line-beginning-position) (point))
+          (goto-char (point-min))
+          (re-search-forward (concat comment-end-skip "\\'") nil t)))
+      (goto-char (match-beginning 0)))
+     ;; comment-end-skip not found probably because it was not set
+     ;; right.  Since \\s> should catch the single-char case, let's
+     ;; check that we're looking at a two-char comment ender.
+     ((not (or (<= (- (point-max) (line-beginning-position)) 1)
+               (zerop (logand (car (syntax-after (- (point) 1)))
+                              ;; Here we take advantage of the fact that
+                              ;; the syntax class " " is encoded to 0,
+                              ;; so "  4" gives us just the 4 bit.
+                              (car (string-to-syntax "  4"))))
+               (zerop (logand (car (syntax-after (- (point) 2)))
+                              (car (string-to-syntax "  3"))))))
+      (backward-char 2)
+      (skip-chars-backward (string (char-after)))
+      (skip-syntax-backward " "))
+     ;; No clue what's going on: maybe we're really not right after the
+     ;; end of a comment.  Maybe we're at the "end" because of EOB rather
+     ;; than because of a marker.
+     (t (skip-syntax-backward " ")))))
+
+(defun comment-indent-default ()
+  "Default for `comment-indent-function'."
+  (if (and (looking-at "\\s<\\s<\\(\\s<\\)?")
+	   (or (match-end 1) (/= (current-column) (current-indentation))))
+      0
+    (when (or (/= (current-column) (current-indentation))
+	      (and (> comment-add 0) (looking-at "\\s<\\(\\S<\\|\\'\\)")))
+      comment-column)))
+
+(defun comment-choose-indent (&optional indent)
+  "Choose the indentation to use for a right-hand-side comment.
+The criteria are (in this order):
+- try to keep the comment's text within `comment-fill-column'.
+- try to align with surrounding comments.
+- prefer INDENT (or `comment-column' if nil).
+Point is expected to be at the start of the comment."
+  (unless indent (setq indent comment-column))
+  (let ((other nil)
+        min max)
+    (if (consp indent)
+        (progn (setq min (car indent)) (setq max (cdr indent))
+               (setq indent comment-column))
+      ;; Avoid moving comments past the fill-column.
+      (setq max (+ (current-column)
+                   (- (or comment-fill-column fill-column)
+                      (save-excursion (end-of-line) (current-column)))))
+      (setq min (save-excursion
+                  (skip-chars-backward " \t")
+                  ;; Leave at least `comment-inline-offset' space after
+                  ;; other nonwhite text on the line.
+                  (if (bolp) 0 (+ comment-inline-offset (current-column))))))
+    ;; Fix up the range.
+    (if (< max min) (setq max min))
+    ;; Don't move past the fill column.
+    (if (<= max indent) (setq indent max))
+    ;; We can choose anywhere between min..max.
+    ;; Let's try to align to a comment on the previous line.
+    (save-excursion
+      (when (and (zerop (forward-line -1))
+                 (setq other (comment-search-forward
+                              (line-end-position) t)))
+        (goto-char other) (setq other (current-column))))
+    (if (and other (<= other max) (>= other min))
+        ;; There is a comment and it's in the range: bingo!
+        other
+      ;; Can't align to a previous comment: let's try to align to comments
+      ;; on the following lines, then.  These have not been re-indented yet,
+      ;; so we can't directly align ourselves with them.  All we do is to try
+      ;; and choose an indentation point with which they will be able to
+      ;; align themselves.
+      (save-excursion
+        (while (and (zerop (forward-line 1))
+                    (setq other (comment-search-forward
+                                 (line-end-position) t)))
+          (goto-char other)
+          (let ((omax (+ (current-column)
+                         (- (or comment-fill-column fill-column)
+                            (save-excursion (end-of-line) (current-column)))))
+                (omin (save-excursion (skip-chars-backward " \t")
+                                      (1+ (current-column)))))
+            (if (and (>= omax min) (<= omin max))
+                (progn (setq min (max omin min))
+                       (setq max (min omax max)))
+              ;; Can't align with this anyway, so exit the loop.
+              (goto-char (point-max))))))
+      ;; Return the closest point to indent within min..max.
+      (max min (min max indent)))))
+
+(defun comment-indent (&optional continue)
+  "Indent this line's comment to `comment-column', or insert an empty comment.
+If CONTINUE is non-nil, use the `comment-continue' markers if any."
+  (interactive "*")
+  (comment-normalize-vars)
+  (beginning-of-line)
+  (let ((starter (or (and continue comment-continue)
+                     comment-start
+                     (error "No comment syntax defined")))
+	(ender (or (and continue comment-continue "")
+                   comment-end))
+	(begpos (comment-search-forward (line-end-position) t))
+	cpos indent)
+    (cond
+     ;; If we couldn't find a comment *starting* on this line, see if we
+     ;; are already within a multiline comment at BOL (bug#78003).
+     ((and (not begpos) (not continue)
+           comment-use-syntax comment-use-global-state
+           (save-excursion (nth 4 (syntax-ppss (line-beginning-position)))))
+      ;; We don't know anything about the nature of the multiline
+      ;; construct, so immediately delegate to the mode.
+      (indent-according-to-mode))
+     ((and (not begpos) comment-insert-comment-function)
+      ;; If no comment and c-i-c-f is set, let it do everything.
+      (funcall comment-insert-comment-function))
+     (t
+      ;; An existing comment?
+      (if begpos
+	  (progn
+	    (if (and (not (looking-at "[\t\n ]"))
+		     (looking-at comment-end-skip))
+		;; The comment is empty and we have skipped all its space
+		;; and landed right before the comment-ender:
+		;; Go back to the middle of the space.
+		(forward-char (/ (skip-chars-backward " \t") -2)))
+	    (setq cpos (point-marker)))
+	;; If none, insert one.
+	(save-excursion
+	  ;; Some `comment-indent-function's insist on not moving
+	  ;; comments that are in column 0, so we first go to the
+	  ;; likely target column.
+	  (indent-to comment-column)
+	  ;; Ensure there's a space before the comment for things
+	  ;; like sh where it matters (as well as being neater).
+	  (unless (memq (char-before) '(nil ?\n ?\t ?\s))
+	    (insert ?\s))
+	  (setq begpos (point))
+	  (insert starter)
+	  (setq cpos (point-marker))
+	  (insert ender)))
+      (goto-char begpos)
+      ;; Compute desired indent.
+      (setq indent (save-excursion (funcall comment-indent-function)))
+      ;; If `indent' is nil and there's code before the comment, we can't
+      ;; use `indent-according-to-mode', so we default to comment-column.
+      (unless (or indent (save-excursion (skip-chars-backward " \t") (bolp)))
+	(setq indent comment-column))
+      (if (not indent)
+	  ;; comment-indent-function refuses: delegate to line-indent.
+	  (indent-according-to-mode)
+	;; If the comment is at the right of code, adjust the indentation.
+	(unless (save-excursion (skip-chars-backward " \t") (bolp))
+	  (setq indent (comment-choose-indent indent)))
+	;; If that's different from comment's current position, change it.
+	(unless (= (current-column) indent)
+	  (delete-region (point) (progn (skip-chars-backward " \t") (point)))
+	  (indent-to indent)))
+      (goto-char cpos)
+      (set-marker cpos nil)))))
+
+(defun comment-set-column (arg)
+  "Set the comment column based on point.
+With no ARG, set the comment column to the current column.
+With just minus as arg, kill any comment on this line.
+With any other arg, set comment column to indentation of the previous comment
+ and then align or create a comment on this line at that column."
+  (interactive "P")
+  (cond
+   ((eq arg '-) (comment-kill nil))
+   (arg
+    (comment-normalize-vars)
+    (save-excursion
+      (beginning-of-line)
+      (comment-search-backward)
+      (beginning-of-line)
+      (goto-char (comment-search-forward (line-end-position)))
+      (setq comment-column (current-column))
+      (message "Comment column set to %d" comment-column))
+    (comment-indent))
+   (t (setq comment-column (current-column))
+      (message "Comment column set to %d" comment-column))))
+
+(defun comment-kill (arg)
+  "Kill the first comment on this line, if any.
+With prefix ARG, kill comments on that many lines starting with this one."
+  (interactive "P")
+  (comment-normalize-vars)
+  (dotimes (_i (prefix-numeric-value arg))
+    (save-excursion
+      (beginning-of-line)
+      (let ((cs (comment-search-forward (line-end-position) t)))
+	(when cs
+	  (goto-char cs)
+	  (skip-syntax-backward " ")
+	  (setq cs (point))
+	  (comment-forward)
+	  (kill-region cs (if (bolp) (1- (point)) (point)))
+	  (indent-according-to-mode))))
+    (if arg (forward-line 1))))
+
+(defun comment-padright (str &optional n)
+  "Construct a string composed of STR plus `comment-padding'.
+It also adds N copies of the last non-whitespace chars of STR.
+If STR already contains padding, the corresponding amount is
+ignored from `comment-padding'.
+N defaults to 0.
+If N is `re', a regexp is returned instead, that would match
+the string for any N.
+
+Ensure that `comment-normalize-vars' has been called before you use this."
+  (setq n (or n 0))
+  (when (and (stringp str) (string-match "\\S-" str))
+    ;; Separate the actual string from any leading/trailing padding
+    (string-match "\\`\\s-*\\(.*?\\)\\s-*\\'" str)
+    (let ((s (match-string 1 str))                     ;actual string
+	  (lpad (substring str 0 (match-beginning 1))) ;left padding
+	  (rpad (concat
+                 (substring str (match-end 1)) ;original right padding
+                 (if (numberp comment-padding)
+                     (make-string (min comment-padding
+                                       (- (match-end 0) (match-end 1)))
+                                  ?\s)
+                   (if (not (string-match-p "\\`\\s-" comment-padding))
+                       ;; If the padding isn't spaces, then don't
+                       ;; shorten the padding.
+                       comment-padding
+		     (substring comment-padding ;additional right padding
+			        (min (- (match-end 0) (match-end 1))
+				     (length comment-padding)))))))
+	  ;; We can only duplicate C if the comment-end has multiple chars
+	  ;; or if comments can be nested, else the comment-end `}' would
+	  ;; be turned into `}}}' where only the first ends the comment
+	  ;; and the rest becomes bogus junk.
+	  (multi (not (and comment-quote-nested
+			   ;; comment-end is a single char
+			   (string-match "\\`\\s-*\\S-\\s-*\\'" comment-end)))))
+      (if (not (symbolp n))
+	  (concat lpad s (when multi (make-string n (aref str (1- (match-end 1))))) rpad)
+	;; construct a regexp that would match anything from just S
+	;; to any possible output of this function for any N.
+	(concat (mapconcat (lambda (c) (concat (regexp-quote (string c)) "?"))
+			   lpad "")	;padding is not required
+		(regexp-quote s)
+		(when multi "+") ;the last char of S might be repeated
+		(mapconcat (lambda (c) (concat (regexp-quote (string c)) "?"))
+			   rpad ""))))))
+
+(defun comment-padleft (str &optional n)
+  "Construct a string composed of `comment-padding' plus STR.
+It also adds N copies of the first non-whitespace chars of STR.
+If STR already contains padding, the corresponding amount is
+ignored from `comment-padding'.
+N defaults to 0.
+If N is `re', a regexp is returned instead, that would match the
+string for any N.
+
+Ensure that `comment-normalize-vars' has been called before you use this."
+  (setq n (or n 0))
+  (when (and (stringp str) (not (string= "" str)))
+    ;; Only separate the left pad because we assume there is no right pad.
+    (string-match "\\`\\s-*" str)
+    (let ((s (substring str (match-end 0)))
+	  (pad (concat (if (not (string-match-p "\\`\\s-" comment-padding))
+                           ;; If the padding isn't spaces, then don't
+                           ;; shorten the padding.
+                           comment-padding
+                         (substring comment-padding
+				    (min (- (match-end 0) (match-beginning 0))
+				         (length comment-padding))))
+		       (match-string 0 str)))
+	  (c (aref str (match-end 0)))	;the first non-space char of STR
+	  ;; We can only duplicate C if the comment-end has multiple chars
+	  ;; or if comments can be nested, else the comment-end `}' would
+	  ;; be turned into `}}}' where only the first ends the comment
+	  ;; and the rest becomes bogus junk.
+	  (multi (not (and comment-quote-nested
+			   ;; comment-end is a single char
+			   (string-match "\\`\\s-*\\S-\\s-*\\'" comment-end)))))
+      (if (not (symbolp n))
+	  (concat pad (when multi (make-string n c)) s)
+	;; Construct a regexp that would match anything from just S
+	;; to any possible output of this function for any N.
+	;; We match any number of leading spaces because this regexp will
+	;; be used for uncommenting where we might want to remove
+	;; uncomment markers with arbitrary leading space (because
+	;; they were aligned).
+	(concat "\\s-*"
+		(if multi (concat (regexp-quote (string c)) "*"))
+		(regexp-quote s))))))
+
+(defun uncomment-region (beg end &optional arg)
+  "Uncomment each line in the BEG .. END region.
+The numeric prefix ARG can specify a number of chars to remove from the
+comment delimiters."
+  (interactive "*r\nP")
+  (comment-normalize-vars)
+  (when (> beg end) (setq beg (prog1 end (setq end beg))))
+  ;; Bind `comment-use-global-state' to nil.  While uncommenting a region
+  ;; (which works a line at a time), a comment can appear to be
+  ;; included in a multi-line string, but it is actually not.
+  (let ((comment-use-global-state nil))
+    (save-excursion
+      (funcall uncomment-region-function beg end arg))))
+
+(defun uncomment-region-default-1 (beg end &optional arg)
+  "Uncomment each line in the BEG .. END region.
+The numeric prefix ARG can specify a number of chars to remove from the
+comment delimiters.
+This function is the default value of `uncomment-region-function'."
+  (goto-char beg)
+  (setq end (copy-marker end))
+  (let* ((numarg (prefix-numeric-value arg))
+	 (ccs comment-continue)
+	 (srei (or (comment-padright ccs 're)
+		   (and (stringp comment-continue) comment-continue)))
+	 (csre (comment-padright comment-start 're))
+	 (sre (and srei (concat "^\\s-*?\\(" srei "\\)")))
+	 spt)
+    (while (and (< (point) end)
+		(setq spt (comment-search-forward end t)))
+      (let ((ipt (point))
+	    ;; Find the end of the comment.
+	    (ept (progn
+		   (goto-char spt)
+		   (unless (or (comment-forward)
+			       ;; Allow non-terminated comments.
+			       (eobp))
+		     (error "Can't find the comment end"))
+		   (point)))
+	    (box nil)
+	    (box-equal nil))	   ;Whether we might be using `=' for boxes.
+	(save-restriction
+	  (narrow-to-region spt ept)
+
+	  ;; Remove the comment-start.
+	  (goto-char ipt)
+	  (skip-syntax-backward " ")
+	  ;; A box-comment starts with a looong comment-start marker.
+	  (when (and (or (and (= (- (point) (point-min)) 1)
+			      (setq box-equal t)
+			      (looking-at "=\\{7\\}")
+			      (not (eq (char-before (point-max)) ?\n))
+			      (skip-chars-forward "="))
+			 (> (- (point) (point-min) (length comment-start)) 7))
+		     (> (count-lines (point-min) (point-max)) 2))
+	    (setq box t))
+	  ;; Skip the padding.  Padding can come from comment-padding and/or
+	  ;; from comment-start, so we first check comment-start.
+	  (if (or (save-excursion (goto-char (point-min)) (looking-at csre))
+		  (looking-at (regexp-quote comment-padding)))
+	      (goto-char (match-end 0)))
+	  (when (and sre (looking-at (concat "\\s-*\n\\s-*" srei)))
+	    (goto-char (match-end 0)))
+	  (if (null arg) (delete-region (point-min) (point))
+            (let ((opoint (point-marker)))
+              (skip-syntax-backward " ")
+              (delete-char (- numarg))
+              (unless (and (not (bobp))
+                           (save-excursion (goto-char (point-min))
+                                           (looking-at comment-start-skip)))
+                ;; If there's something left but it doesn't look like
+                ;; a comment-start any more, just remove it.
+                (delete-region (point-min) opoint))))
+
+	  ;; Remove the end-comment (and leading padding and such).
+	  (goto-char (point-max)) (comment-enter-backward)
+	  ;; Check for special `=' used sometimes in comment-box.
+	  (when (and box-equal (not (eq (char-before (point-max)) ?\n)))
+	    (let ((pos (point)))
+	      ;; skip `=' but only if there are at least 7.
+	      (when (> (skip-chars-backward "=") -7) (goto-char pos))))
+	  (unless (looking-at "\\(\n\\|\\s-\\)*\\'")
+	    (when (and (bolp) (not (bobp))) (backward-char))
+	    (if (null arg) (delete-region (point) (point-max))
+	      (skip-syntax-forward " ")
+	      (delete-char numarg)
+	      (unless (or (eobp) (looking-at comment-end-skip))
+		;; If there's something left but it doesn't look like
+		;; a comment-end any more, just remove it.
+		(delete-region (point) (point-max)))))
+
+	  ;; Unquote any nested end-comment.
+	  (comment-quote-nested comment-start comment-end t)
+
+	  ;; Eliminate continuation markers as well.
+	  (when sre
+	    (let* ((cce (comment-string-reverse (or comment-continue
+						    comment-start)))
+		   (erei (and box (comment-padleft cce 're)))
+		   (ere (and erei (concat "\\(" erei "\\)\\s-*$"))))
+	      (goto-char (point-min))
+	      (while (progn
+		       (if (and ere (re-search-forward
+				     ere (line-end-position) t))
+			   (replace-match "" t t nil (if (match-end 2) 2 1))
+			 (setq ere nil))
+		       (forward-line 1)
+		       (re-search-forward sre (line-end-position) t))
+		(replace-match "" t t nil (if (match-end 2) 2 1)))))
+	  ;; Go to the end for the next comment.
+	  (goto-char (point-max)))
+        ;; Remove any obtrusive spaces left preceding a tab at `spt'.
+        (when (and (eq (char-after spt) ?\t) (eq (char-before spt) ? )
+                   (> tab-width 0))
+          (save-excursion
+            (goto-char spt)
+            (let* ((fcol (current-column))
+                   (slim (- (point) (mod fcol tab-width))))
+              (delete-char (- (skip-chars-backward " " slim)))))))))
+  (set-marker end nil))
+
+(defun uncomment-region-default (beg end &optional arg)
+  "Uncomment each line in the BEG .. END region.
+The numeric prefix ARG can specify a number of chars to remove from the
+comment markers."
+  (if comment-combine-change-calls
+      (combine-change-calls beg end (uncomment-region-default-1 beg end arg))
+    (uncomment-region-default-1 beg end arg)))
+
+(defun comment-make-bol-ws (len)
+  "Make a white-space string of width LEN for use at BOL.
+When `indent-tabs-mode' is non-nil, tab characters will be used."
+  (if (and indent-tabs-mode (> tab-width 0))
+      (concat (make-string (/ len tab-width) ?\t)
+	      (make-string (% len tab-width) ? ))
+    (make-string len ? )))
+
+(defun comment-make-extra-lines (cs ce ccs cce min-indent max-indent &optional block)
+  "Make the leading and trailing extra lines.
+This is used for `extra-line' style (or `box' style if BLOCK is specified)."
+  (let ((eindent 0))
+    (if (not block)
+	;; Try to match CS and CE's content so they align aesthetically.
+	(progn
+	  (setq ce (comment-string-strip ce t t))
+	  (when (string-match "\\(.+\\).*\n\\(.*?\\)\\1" (concat ce "\n" cs))
+	    (setq eindent
+		  (max (- (match-end 2) (match-beginning 2) (match-beginning 0))
+		       0))))
+      ;; box comment
+      (let* ((width (- max-indent min-indent))
+	     (s (concat cs "a=m" cce))
+	     (e (concat ccs "a=m" ce))
+	     (c (if (string-match ".*\\S-\\S-" cs)
+		    (aref cs (1- (match-end 0)))
+		  (if (and (equal comment-end "") (string-match ".*\\S-" cs))
+		      (aref cs (1- (match-end 0))) ?=)))
+	     (re "\\s-*a=m\\s-*")
+	     (_ (string-match re s))
+	     (lcs (length cs))
+	     (fill
+	      (make-string (+ width (- (match-end 0)
+				       (match-beginning 0) lcs 3)) c)))
+	(setq cs (replace-match fill t t s))
+	(when (and (not (string-match comment-start-skip cs))
+		   (string-match "a=m" s))
+	  ;; The whitespace around CS cannot be ignored: put it back.
+	  (setq re "a=m")
+	  (setq fill (make-string (- width lcs) c))
+	  (setq cs (replace-match fill t t s)))
+	(string-match re e)
+	(setq ce (replace-match fill t t e))))
+    (cons (concat cs "\n" (comment-make-bol-ws min-indent) ccs)
+	  (concat cce "\n" (comment-make-bol-ws (+ min-indent eindent)) ce))))
+
+(defmacro comment-with-narrowing (beg end &rest body)
+  "Execute BODY with BEG..END narrowing.
+Space is added (and then removed) at the beginning for the text's
+indentation to be kept as it was before narrowing."
+  (declare (debug t) (indent 2))
+  (let ((bindent (make-symbol "bindent")))
+    `(let ((,bindent (save-excursion (goto-char ,beg) (current-column))))
+       (save-restriction
+	 (narrow-to-region ,beg ,end)
+	 (goto-char (point-min))
+	 (insert (make-string ,bindent ? ))
+	 (prog1
+	     (progn ,@body)
+	   ;; remove the bindent
+	   (save-excursion
+	     (goto-char (point-min))
+	     (when (looking-at " *")
+	       (let ((n (min (- (match-end 0) (match-beginning 0)) ,bindent)))
+		 (delete-char n)
+		 (setq ,bindent (- ,bindent n))))
+	     (end-of-line)
+	     (let ((e (point)))
+	       (beginning-of-line)
+	       (while (and (> ,bindent 0) (re-search-forward "   *" e t))
+		 (let ((n (min ,bindent (- (match-end 0) (match-beginning 0) 1))))
+		   (goto-char (match-beginning 0))
+		   (delete-char n)
+		   (setq ,bindent (- ,bindent n)))))))))))
+
+(defvar comment-add 0
+  "How many more comment chars should be inserted by `comment-region'.
+This determines the default value of the numeric argument of `comment-region'.
+The `plain' comment style doubles this value.
+
+This should generally stay 0, except for a few modes like Lisp where
+it is 1 so that regions are commented with two or three semi-colons.")
+
+(defun comment-add (arg)
+  "Compute the number of extra comment starter characters.
+\(Extra semicolons in Lisp mode, extra stars in C mode, etc.)
+If ARG is non-nil, just follow ARG.
+If the comment starter is multi-char, just follow ARG.
+Otherwise obey `comment-add'."
+  (if (and (null arg) (= (string-match "[ \t]*\\'" comment-start) 1))
+      (* comment-add 1)
+    (1- (prefix-numeric-value arg))))
+
+(defun comment-region-internal (beg end cs ce
+                                &optional ccs cce block lines indent)
+  "Comment region BEG .. END.
+CS and CE are the comment start string and comment end string,
+respectively.  CCS and CCE are the comment continuation strings
+for the start and end of lines, respectively (default to CS and CE).
+BLOCK indicates that end of lines should be marked with either CCE,
+CE or CS \(if CE is empty) and that those markers should be aligned.
+LINES indicates that an extra lines will be used at the beginning
+and end of the region for CE and CS.
+INDENT indicates to put CS and CCS at the current indentation of
+the region rather than at left margin."
+  ;;(assert (< beg end))
+  (let ((no-empty (not (or (eq comment-empty-lines t)
+			   (and comment-empty-lines (zerop (length ce))))))
+	ce-sanitized)
+    ;; Sanitize CE and CCE.
+    (if (and (stringp ce) (string= "" ce)) (setq ce nil))
+    (setq ce-sanitized ce)
+    (if (and (stringp cce) (string= "" cce)) (setq cce nil))
+    ;; If CE is empty, multiline cannot be used.
+    (unless ce (setq ccs nil cce nil))
+    ;; Should we mark empty lines as well ?
+    (if (or ccs block lines) (setq no-empty nil))
+    ;; Make sure we have end-markers for BLOCK mode.
+    (when block (unless ce (setq ce (comment-string-reverse cs))))
+    ;; If BLOCK is not requested, we don't need CCE.
+    (unless block (setq cce nil))
+    ;; Continuation defaults to the same as CS and CE.
+    (unless ccs (setq ccs cs cce ce))
+
+    (save-excursion
+      (goto-char end)
+      ;; If the end is not at the end of a line and the comment-end
+      ;; is implicit (i.e. a newline), explicitly insert a newline.
+      (unless (or ce-sanitized (eolp)) (insert "\n") (indent-according-to-mode))
+      (comment-with-narrowing beg end
+	(let ((min-indent (point-max))
+	      (max-indent 0))
+	  (goto-char (point-min))
+	  ;; Quote any nested comment marker
+	  (comment-quote-nested comment-start comment-end nil)
+
+	  ;; Loop over all lines to find the needed indentations.
+	  (goto-char (point-min))
+	  (while
+	      (progn
+		(unless (looking-at "[ \t]*$")
+		  (setq min-indent (min min-indent (current-indentation))))
+		(end-of-line)
+		(setq max-indent (max max-indent (current-column)))
+		(not (or (eobp) (progn (forward-line) nil)))))
+
+	  (setq max-indent
+		(+ max-indent (max (length cs) (length ccs))
+                   ;; Inserting ccs can change max-indent by (1- tab-width)
+                   ;; but only if there are TABs in the boxed text, of course.
+                   (if (save-excursion (goto-char beg)
+                                       (search-forward "\t" end t))
+                       (1- tab-width) 0)))
+	  (unless indent (setq min-indent 0))
+
+	  ;; make the leading and trailing lines if requested
+	  (when lines
+            ;; Trim trailing whitespace from cs if there's some.
+            (setq cs (string-trim-right cs))
+
+	    (let ((csce
+		   (comment-make-extra-lines
+		    cs ce ccs cce min-indent max-indent block)))
+	      (setq cs (car csce))
+	      (setq ce (cdr csce))))
+
+	  (goto-char (point-min))
+	  ;; Loop over all lines from BEG to END.
+	  (while
+	      (progn
+		(unless (and no-empty (looking-at "[ \t]*$"))
+		  (move-to-column min-indent t)
+		  (insert cs) (setq cs ccs) ;switch to CCS after the first line
+		  (end-of-line)
+		  (if (eobp) (setq cce ce))
+		  (when cce
+		    (when block (move-to-column max-indent t))
+		    (insert cce)))
+		(end-of-line)
+		(not (or (eobp) (progn (forward-line) nil))))))))))
+
+(defun comment-region (beg end &optional arg)
+  "Comment or uncomment each line in the region.
+With just \\[universal-argument] prefix arg, uncomment each line in region BEG .. END.
+Numeric prefix ARG means use ARG comment characters.
+If ARG is negative, delete that many comment characters instead.
+
+The strings used as comment starts are built from `comment-start'
+and `comment-padding'; the strings used as comment ends are built
+from `comment-end' and `comment-padding'.
+
+By default, the `comment-start' markers are inserted at the
+current indentation of the region, and comments are terminated on
+each line (even for syntaxes in which newline does not end the
+comment and blank lines do not get comments).  This can be
+changed with `comment-style'."
+  (interactive "*r\nP")
+  (comment-normalize-vars)
+  (if (> beg end) (let (mid) (setq mid beg beg end end mid)))
+  (save-excursion
+    ;; FIXME: maybe we should call uncomment depending on ARG.
+    (funcall comment-region-function beg end arg)))
+
+(defun comment-region-default-1 (beg end &optional arg)
+  (let* ((numarg (prefix-numeric-value arg))
+	 (style (cdr (assoc comment-style comment-styles)))
+	 (lines (nth 2 style))
+	 (block (nth 1 style))
+	 (multi (nth 0 style)))
+
+    ;; We use `chars' instead of `syntax' because `\n' might be
+    ;; of end-comment syntax rather than of whitespace syntax.
+    ;; sanitize BEG and END
+    (goto-char beg) (skip-chars-forward " \t\n\r") (beginning-of-line)
+    (setq beg (max beg (point)))
+    (goto-char end) (skip-chars-backward " \t\n\r") (end-of-line)
+    (setq end (min end (point)))
+    (if (>= beg end) (error "Nothing to comment"))
+
+    ;; sanitize LINES
+    (setq lines
+	  (and
+	   lines ;; multi
+	   (progn (goto-char beg) (beginning-of-line)
+		  (skip-syntax-forward " ")
+		  (>= (point) beg))
+	   (progn (goto-char end) (end-of-line) (skip-syntax-backward " ")
+		  (<= (point) end))
+	   (or block (not (string= "" comment-end)))
+           (or block (progn (goto-char beg) (re-search-forward "$" end t)))))
+
+    ;; don't add end-markers just because the user asked for `block'
+    (unless (or lines (string= "" comment-end)) (setq block nil))
+
+    (cond
+     ((consp arg) (uncomment-region beg end))
+     ((< numarg 0) (uncomment-region beg end (- numarg)))
+     (t
+      (let ((multi-char (/= (string-match "[ \t]*\\'" comment-start) 1))
+	    indent triple)
+	(if (eq (nth 3 style) 'multi-char)
+	    (save-excursion
+	      (goto-char beg)
+	      (setq indent multi-char
+		    ;; Triple if we will put the comment starter at the margin
+		    ;; and the first line of the region isn't indented
+		    ;; at least two spaces.
+		    triple (and (not multi-char) (looking-at "\t\\|  "))))
+	  (setq indent (nth 3 style)))
+
+	;; In Lisp and similar modes with one-character comment starters,
+	;; double it by default if `comment-add' says so.
+	;; If it isn't indented, triple it.
+	(if (and (null arg) (not multi-char))
+	    (setq numarg (* comment-add (if triple 2 1)))
+	  (setq numarg (1- (prefix-numeric-value arg))))
+
+	(comment-region-internal
+	 beg end
+	 (let ((s (comment-padright comment-start numarg)))
+	   (if (string-match comment-start-skip s) s
+	     (comment-padright comment-start)))
+	 (let ((s (comment-padleft comment-end numarg)))
+	   (and s (if (string-match comment-end-skip s) s
+		    (comment-padright comment-end))))
+	 (if multi
+             (or (comment-padright comment-continue numarg)
+                 ;; `comment-padright' returns nil when
+                 ;; `comment-continue' contains only whitespace
+                 (and (stringp comment-continue) comment-continue)))
+	 (if multi
+	     (comment-padleft (comment-string-reverse comment-continue) numarg))
+	 block
+	 lines
+	 indent))))))
+
+(defun comment-region-default (beg end &optional arg)
+  (if comment-combine-change-calls
+      (combine-change-calls beg
+          ;; A new line might get inserted and whitespace deleted
+          ;; after END for line comments.  Ensure the next argument is
+          ;; after any and all changes.
+          (save-excursion
+            (goto-char end)
+            (forward-line)
+            (point))
+        (comment-region-default-1 beg end arg))
+    (comment-region-default-1 beg end arg)))
+
+(defun comment-box (beg end &optional arg)
+  "Comment out the BEG .. END region, putting it inside a box.
+The numeric prefix ARG specifies how many characters to add to begin- and
+end- comment markers additionally to what variable `comment-add' already
+specifies."
+  (interactive "*r\np")
+  (comment-normalize-vars)
+  (let ((comment-style (if (cadr (assoc comment-style comment-styles))
+			   'box-multi 'box)))
+    (comment-region beg end (+ comment-add arg))))
+
+(defun comment-only-p (beg end)
+  "Return non-nil if the text between BEG and END is all comments."
+  (save-excursion
+    (goto-char beg)
+    (comment-forward (point-max))
+    (<= end (point))))
+
+(defun comment-or-uncomment-region (beg end &optional arg)
+  "Call `comment-region', unless the region only consists of comments,
+in which case call `uncomment-region'.  If a prefix arg is given, it
+is passed on to the respective function."
+  (interactive "*r\nP")
+  (comment-normalize-vars)
+  (funcall (if (comment-only-p beg end)
+	       'uncomment-region 'comment-region)
+	   beg end arg))
+
+(defun comment-dwim (arg)
+  "Call the comment command you want (Do What I Mean).
+If the region is active and `transient-mark-mode' is on, call
+`comment-region' (unless it only consists of comments, in which
+case it calls `uncomment-region'); in this case, prefix numeric
+argument ARG specifies how many characters to remove from each
+comment delimiter (so don't specify a prefix argument whose value
+is greater than the total length of the comment delimiters).
+Else, if the current line is empty, call `comment-insert-comment-function'
+if it is defined, otherwise insert a comment and indent it.
+Else, if a prefix ARG is specified, call `comment-kill'; in this
+case, prefix numeric argument ARG specifies on how many lines to kill
+the comments.
+Else, call `comment-indent'.
+You can configure `comment-style' to change the way regions are commented."
+  (interactive "*P")
+  (comment-normalize-vars)
+  (if (use-region-p)
+      (comment-or-uncomment-region (region-beginning) (region-end) arg)
+    (if (save-excursion (beginning-of-line) (not (looking-at "\\s-*$")))
+	;; FIXME: If there's no comment to kill on this line and ARG is
+	;; specified, calling comment-kill is not very clever.
+	(if arg (comment-kill (and (integerp arg) arg)) (comment-indent))
+      ;; Inserting a comment on a blank line. comment-indent calls
+      ;; c-i-c-f if needed in the non-blank case.
+      (if comment-insert-comment-function
+          (funcall comment-insert-comment-function)
+        (let ((add (comment-add arg)))
+          ;; Some modes insist on keeping column 0 comment in column 0
+          ;; so we need to move away from it before inserting the comment.
+          (indent-according-to-mode)
+          (insert (comment-padright comment-start add))
+          (save-excursion
+            (unless (string= "" comment-end)
+              (insert (comment-padleft comment-end add)))
+            (indent-according-to-mode)))))))
+
+(defun comment-valid-prefix-p (prefix compos)
+    "Check that the adaptive fill prefix is consistent with the context.
+PREFIX is the prefix (presumably guessed by `adaptive-fill-mode').
+COMPOS is the position of the beginning of the comment we're in, or nil
+if we're not inside a comment."
+  ;; This consistency checking is mostly needed to workaround the limitation
+  ;; of auto-fill-mode whose paragraph-determination doesn't pay attention
+  ;; to comment boundaries.
+  (if (null compos)
+      ;; We're not inside a comment: the prefix shouldn't match
+      ;; a comment-starter.
+      (not (and comment-start comment-start-skip
+                (string-match comment-start-skip prefix)))
+    (or
+     ;; Accept any prefix if the current comment is not EOL-terminated.
+     (save-excursion (goto-char compos) (comment-forward) (not (bolp)))
+     ;; Accept any prefix that starts with the same comment-start marker
+     ;; as the current one.
+     (when (string-match (concat "\\`[ \t]*\\(?:" comment-start-skip "\\)")
+                         prefix)
+       (let ((prefix-com (comment-string-strip (match-string 0 prefix) nil t)))
+         (string-match "\\`[ \t]*" prefix-com)
+         (let* ((prefix-space (match-string 0 prefix-com))
+                (prefix-indent (string-width prefix-space))
+                (prefix-comstart (substring prefix-com (match-end 0))))
+           (save-excursion
+             (goto-char compos)
+             ;; The comstart marker is the same.
+             (and (looking-at (regexp-quote prefix-comstart))
+                  ;; The indentation as well.
+                  (or (= prefix-indent
+                         (- (current-column) (current-left-margin)))
+                      ;; Check the indentation in two different ways, just
+                      ;; to try and avoid most of the potential funny cases.
+                      (equal prefix-space
+                             (buffer-substring (point)
+                                               (progn (move-to-left-margin)
+                                                      (point)))))))))))))
+
+(defun comment-indent-new-line (&optional soft)
+  "Break line at point and indent, continuing comment if within one.
+This indents the body of the continued comment
+under the previous comment line.
+
+This command is intended for styles where you write a comment per line,
+starting a new comment (and terminating it if necessary) on each line.
+If you want to continue one comment across several lines, use \\[newline-and-indent].
+
+If a fill column is specified, it overrides the use of the comment column
+or comment indentation.
+
+The inserted newline is marked hard if variable `use-hard-newlines' is true,
+unless optional argument SOFT is non-nil."
+  (interactive)
+  (comment-normalize-vars t)
+  (let (compos comin)
+    ;; If we are not inside a comment and we only auto-fill comments,
+    ;; don't do anything (unless no comment syntax is defined).
+    (unless (and comment-start
+		 comment-auto-fill-only-comments
+		 (not (called-interactively-p 'interactive))
+		 (not (save-excursion
+			(prog1 (setq compos (comment-beginning))
+			  (setq comin (point))))))
+
+      ;; Now we know we should auto-fill.
+      ;; Insert the newline before removing empty space so that markers
+      ;; get preserved better.
+      (if soft (insert-and-inherit ?\n) (newline 1))
+      (save-excursion (forward-char -1) (delete-horizontal-space))
+      (delete-horizontal-space)
+
+      (if (and fill-prefix (not adaptive-fill-mode))
+	  ;; Blindly trust a non-adaptive fill-prefix.
+	  (progn
+	    (indent-to-left-margin)
+	    (insert-before-markers-and-inherit fill-prefix))
+
+	;; If necessary check whether we're inside a comment.
+	(unless (or compos (null comment-start))
+	  (save-excursion
+	    (backward-char)
+	    (setq compos (comment-beginning))
+	    (setq comin (point))))
+
+	(cond
+	 ;; If there's an adaptive prefix, use it unless we're inside
+	 ;; a comment and the prefix is not a comment starter.
+	 ((and fill-prefix
+               (comment-valid-prefix-p fill-prefix compos))
+	  (indent-to-left-margin)
+	  (insert-and-inherit fill-prefix))
+	 ;; If we're not inside a comment, just try to indent.
+	 ((not compos) (indent-according-to-mode))
+	 (t
+	  (let* ((comstart (buffer-substring compos comin))
+		 (normalp
+		  (string-match (regexp-quote (comment-string-strip
+					       comment-start t t))
+				comstart))
+		 (comend
+		  (if normalp comment-end
+		    ;; The comment starter is not the normal comment-start
+		    ;; so we can't just use comment-end.
+		    (save-excursion
+		      (goto-char compos)
+		      (if (not (comment-forward)) comment-end
+			(comment-string-strip
+			 (buffer-substring
+			  (save-excursion (comment-enter-backward) (point))
+			  (point))
+			 nil t))))))
+	    (if (and comment-multi-line (> (length comend) 0))
+		(indent-according-to-mode)
+	      (insert-and-inherit ?\n)
+	      (forward-char -1)
+              (let* ((comment-column
+                      ;; The continuation indentation should be somewhere
+                      ;; between the current line's indentation (plus 2 for
+                      ;; good measure) and the current comment's indentation,
+                      ;; with a preference for comment-column.
+                      (save-excursion
+                        ;; FIXME: use prev line's info rather than first
+                        ;; line's.
+                        (goto-char compos)
+                        (min (current-column)
+                             (max comment-column
+                                  (+ 2 (current-indentation))))))
+                     (comment-indent-function
+                      ;; If the previous comment is on its own line, then
+                      ;; reuse its indentation unconditionally.
+                      ;; Important for modes like Python/Haskell where
+                      ;; auto-indentation is unreliable.
+                      (if (save-excursion (goto-char compos)
+                                          (skip-chars-backward " \t")
+                                          (bolp))
+                          (lambda () comment-column) comment-indent-function))
+                     (comment-start comstart)
+                     (comment-end comend)
+                     (continuep (or comment-multi-line
+                                    (cadr (assoc comment-style
+                                                 comment-styles))))
+                     ;; Recreate comment-continue from comment-start.
+                     ;; FIXME: wrong if comment-continue was set explicitly!
+                     ;; FIXME: use prev line's continuation if available.
+                     (comment-continue nil))
+                (comment-indent continuep))
+	      (save-excursion
+		(let ((pt (point)))
+		  (end-of-line)
+		  (let ((comend (buffer-substring pt (point))))
+		    ;; The 1+ is to make sure we delete the \n inserted above.
+		    (delete-region pt (1+ (point)))
+		    (end-of-line 0)
+		    (insert comend))))))))))))
+
+(defun comment-line (n)
+  "Comment or uncomment current line and leave point after it.
+With positive prefix, apply to N lines including current one.
+With negative prefix, apply to -N lines above.  Also, further
+consecutive invocations of this command will inherit the negative
+argument.
+
+If region is active, comment lines in active region instead.
+Unlike `comment-dwim', this always comments whole lines."
+  (interactive "p")
+  (if (use-region-p)
+      (comment-or-uncomment-region
+       (save-excursion
+         (goto-char (region-beginning))
+         (line-beginning-position))
+       (save-excursion
+         (goto-char (region-end))
+         (line-end-position)))
+    (when (and (eq last-command 'comment-line-backward)
+               (natnump n))
+      (setq n (- n)))
+    (let ((range
+           (list (line-beginning-position)
+                 (goto-char (line-end-position n)))))
+      (comment-or-uncomment-region
+       (apply #'min range)
+       (apply #'max range)))
+    (forward-line 1)
+    (back-to-indentation)
+    (unless (natnump n) (setq this-command 'comment-line-backward))))
+
+(defvar comment-use-syntax 'undecided
+  "Non-nil if syntax-tables can be used instead of regexps.
+Can also be `undecided' which means that a somewhat expensive test will
+be used to try to determine whether syntax-tables should be trusted
+to understand comments or not in the given buffer.
+Major modes should set this variable.")
+
+(defvar comment-fill-column nil
+  "Column to use for `comment-indent'.  If nil, use `fill-column' instead."
+  :type '(choice (const nil) integer)
+  :group 'comment)
+
+(defvar comment-end-skip nil
+  "Regexp to match the end of a comment plus everything back to its body.")
+
+(defvar comment-indent-function 'comment-indent-default
+  "Function to compute desired indentation for a comment.
+This function is called with no args with point at the beginning
+of the comment's starting delimiter and should return either the
+desired column indentation, a range of acceptable
+indentation (MIN . MAX), or nil.
+If nil is returned, indentation is delegated to `indent-according-to-mode'.")
+
+(defvar comment-insert-comment-function nil
+  "Function to insert a comment when a line doesn't contain one.
+The function has no args.
+
+Applicable at least in modes for languages like fixed-format Fortran where
+comments always start in column zero.")
+
+(defvar comment-region-function 'comment-region-default
+  "Function to comment a region.
+Its args are the same as those of `comment-region', but BEG and END are
+guaranteed to be correctly ordered.  It is called within `save-excursion'.
+
+Applicable at least in modes for languages like fixed-format Fortran where
+comments always start in column zero.")
+
+(defvar uncomment-region-function 'uncomment-region-default
+  "Function to uncomment a region.
+Its args are the same as those of `uncomment-region', but BEG and END are
+guaranteed to be correctly ordered.  It is called within `save-excursion'.
+
+Applicable at least in modes for languages like fixed-format Fortran where
+comments always start in column zero.")
+
+(defvar comment-quote-nested-function #'comment-quote-nested-default
+  "Function to quote nested comments in a region.
+It takes the same arguments as `comment-quote-nested-default',
+and is called with the buffer narrowed to a single comment.")
+
+(defvar comment-continue nil
+  "Continuation string to insert for multiline comments.
+This string will be added at the beginning of each line except the very
+first one when commenting a region with a commenting style that allows
+comments to span several lines.
+It should generally have the same length as `comment-start' in order to
+preserve indentation.
+If it is nil a value will be automatically derived from `comment-start'
+by replacing its first character with a space.")
+
+(defconst comment-styles
+  '((plain      nil nil nil nil
+                "Start in column 0 (do not indent), as in Emacs-20")
+    (indent-or-triple nil nil nil multi-char
+              "Start in column 0, but only for single-char starters")
+    (indent     nil nil nil t
+                "Full comment per line, ends not aligned")
+    (aligned	nil t   nil t
+                "Full comment per line, ends aligned")
+    (box	nil t   t   t
+                "Full comment per line, ends aligned, + top and bottom")
+    (extra-line	t   nil t   t
+                "One comment for all lines, end on a line by itself")
+    (multi-line	t   nil nil t
+                "One comment for all lines, end on last commented line")
+    (box-multi	t   t   t   t
+                "One comment for all lines, + top and bottom"))
+  "Comment region style definitions.
+Each style is defined with a form (STYLE . (MULTI ALIGN EXTRA INDENT DOC)).
+DOC should succinctly describe the style.
+STYLE should be a mnemonic symbol.
+MULTI specifies that comments are allowed to span multiple lines.
+  e.g. in C it comments regions as
+     /* blabla
+      * bli */
+  rather than
+     /* blabla */
+     /* bli */
+  if `comment-end' is empty, this has no effect.
+
+ALIGN specifies that the `comment-end' markers should be aligned.
+  e.g. in C it comments regions as
+     /* blabla */
+     /* bli    */
+  rather than
+     /* blabla */
+     /* bli */
+  if `comment-end' is empty, this has no effect, unless EXTRA is also set,
+  in which case the comment gets wrapped in a box.
+
+EXTRA specifies that an extra line should be used before and after the
+  region to comment (to put the `comment-end' and `comment-start').
+  e.g. in C it comments regions as
+     /*
+      * blabla
+      * bli
+      */
+  rather than
+     /* blabla
+      * bli */
+  if the comment style is not multi line, this has no effect, unless ALIGN
+  is also set, in which case the comment gets wrapped in a box.
+
+INDENT specifies that the `comment-start' markers should not be put at the
+  left margin but at the current indentation of the region to comment.
+If INDENT is `multi-char', that means indent multi-character
+  comment starters, but not one-character comment starters.")
+
+(defvar comment-style 'indent
+  "Style to be used for `comment-region'.
+See `comment-styles' for a list of available styles."
+  :type (if (boundp 'comment-styles)
+	    `(choice
+              ,@(mapcar (lambda (s)
+                          `(const :tag ,(format "%s: %s" (car s) (nth 5 s))
+                                  ,(car s)))
+                        comment-styles))
+	  'symbol)
+  :version "23.1"
+  :group 'comment)
+
+(defvar comment-padding " "
+  "Padding string that `comment-region' puts between comment chars and text.
+Can also be an integer which will be automatically turned into a string
+of the corresponding number of spaces.
+
+Extra spacing between the comment characters and the comment text
+makes the comment easier to read.  Default is 1.  nil means 0."
+  :type '(choice string integer (const nil))
+  :group 'comment)
+
+(defvar comment-inline-offset 1
+  "Inline comments have to be preceded by at least this many spaces.
+This is useful when style-conventions require a certain minimal offset.
+Python's PEP8 for example recommends two spaces, so you could do:
+
+\(add-hook \\='python-mode-hook
+   (lambda () (setq-local comment-inline-offset 2)))
+
+See `comment-padding' for whole-line comments."
+  :version "24.3"
+  :type 'integer
+  :group 'comment)
+
+(defvar comment-multi-line nil
+  "Non-nil means `comment-indent-new-line' continues comments.
+That is, it inserts no new terminator or starter.
+This affects `auto-fill-mode', which is the main reason to
+customize this variable.
+
+It also affects \\[indent-new-comment-line].  However, if you want this
+behavior for explicit filling, you might as well use \\[newline-and-indent]."
+  :type 'boolean
+  :safe #'booleanp
+  :group 'comment)
+
+(defvar comment-empty-lines nil
+  "If nil, `comment-region' does not comment out empty lines.
+If t, it always comments out empty lines.
+If `eol', it only comments out empty lines if comments are
+terminated by the end of line (i.e., `comment-end' is empty)."
+  :type '(choice (const :tag "Never" nil)
+                 (const :tag "Always" t)
+                 (const :tag "EOL-terminated" eol))
+  :group 'comment)
+
+(defvar comment-setup-function #'ignore
+  "Function to set up variables needed by commenting functions.")
+
+(defvar comment-use-global-state t
+  "Non-nil means that the global syntactic context is used.
+More specifically, it means that `syntax-ppss' is used to find out whether
+point is within a string or not.  Major modes whose syntax is not faithfully
+described by the syntax-tables (or where `font-lock-syntax-table' is radically
+different from the main syntax table) can set this to nil,
+then `syntax-ppss' cache won't be used in comment-related routines.")
+
+(defvar comment-auto-fill-only-comments nil
+  "Non-nil means to only auto-fill inside comments.
+This has no effect in modes that do not define a comment syntax."
+  :type 'boolean
+  :group 'comment)
+
+(defvar comment-combine-change-calls t
+  "If non-nil (the default), use `combine-change-calls' around
+calls of `comment-region-function' and
+`uncomment-region-function'.  This Substitutes a single call to
+each of the hooks `before-change-functions' and
+`after-change-functions' in place of those hooks being called
+for each individual buffer change.")
+
+(defun set-fill-prefix (&optional arg)
+  "Set the fill prefix to the current line up to point.
+Filling expects lines to start with the fill prefix and
+reinserts the fill prefix in each resulting line.
+With a prefix argument, cancel the fill prefix."
+  (interactive "P")
+  (if arg
+      (setq fill-prefix nil)
+    (let ((left-margin-pos (save-excursion (move-to-left-margin) (point))))
+      (if (> (point) left-margin-pos)
+	  (progn
+	    (setq fill-prefix (buffer-substring left-margin-pos (point)))
+	    (when (equal fill-prefix "")
+	      (setq fill-prefix nil)))
+        (setq fill-prefix nil))))
+  (if fill-prefix
+      (message "fill-prefix: \"%s\"" fill-prefix)
+    (message "fill-prefix cancelled")))
+
+(defun current-fill-column ()
+  "Return the fill-column to use for this line.
+The fill-column to use for a buffer is stored in the variable `fill-column',
+but can be locally modified by the `right-margin' text property, which is
+subtracted from `fill-column'.
+
+The fill column to use for a line is the first column at which the column
+number equals or exceeds the local fill-column - right-margin difference."
+  (save-excursion
+    (if fill-column
+	(let* ((here (line-beginning-position))
+	       (here-col 0)
+	       (eol (progn (end-of-line) (point)))
+	       margin fill-col change col)
+	  ;; Look separately at each region of line with a different
+	  ;; right-margin.
+	  (while (and (setq margin (get-text-property here 'right-margin)
+			    fill-col (- fill-column (or margin 0))
+			    change (text-property-not-all
+				    here eol 'right-margin margin))
+		      (progn (goto-char (1- change))
+			     (setq col (current-column))
+			     (< col fill-col)))
+	    (setq here change
+		  here-col col))
+	  (max here-col fill-col))
+      ;; This warning was added in 28.1.  It should be removed later,
+      ;; and this function changed to never return nil.
+      (unless current-fill-column--has-warned
+        (lwarn '(fill-column) :warning
+               "Setting this variable to nil is obsolete; use `(auto-fill-mode -1)' instead")
+        (setq current-fill-column--has-warned t))
+      most-positive-fixnum)))
+
+(defun canonically-space-region (beg end)
+  "Remove extra spaces between words in region.
+Leave one space between words, two at end of sentences or after colons
+\(depending on values of `sentence-end-double-space', `colon-double-space',
+and `sentence-end-without-period').
+Remove indentation from each line."
+  (interactive "*r")
+  ;; Ideally, we'd want to scan the text from the end, so that changes to
+  ;; text don't affect the boundary, but the regexp we match against does
+  ;; not match as eagerly when matching backward, so we instead use
+  ;; a marker.
+  (unless (markerp end) (setq end (copy-marker end t)))
+  (let ((end-spc-re (concat "\\(" (sentence-end) "\\) *\\|  +")))
+    (save-excursion
+      (goto-char beg)
+      ;; Nuke tabs; they get screwed up in a fill.
+      ;; This is quick, but loses when a tab follows the end of a sentence.
+      ;; Actually, it is difficult to tell that from "Mr.\tSmith".
+      ;; Blame the typist.
+      (subst-char-in-region beg end ?\t ?\s)
+      (while (and (< (point) end)
+		  (re-search-forward end-spc-re end t))
+	(delete-region
+	 (cond
+	  ;; `sentence-end' matched and did not match all spaces.
+	  ;; I.e. it only matched the number of spaces it needs: drop the rest.
+	  ((and (match-end 1) (> (match-end 0) (match-end 1)))  (match-end 1))
+	  ;; `sentence-end' matched but with nothing left.  Either that means
+	  ;; nothing should be removed, or it means it's the "old-style"
+	  ;; sentence-end which matches all it can.  Keep only 2 spaces.
+	  ;; We probably don't even need to check `sentence-end-double-space'.
+	  ((match-end 1)
+	   (min (match-end 0)
+		(+ (if sentence-end-double-space 2 1)
+		   (save-excursion (goto-char (match-end 0))
+				   (skip-chars-backward " ")
+				   (point)))))
+	  (t ;; It's not an end of sentence.
+	   (+ (match-beginning 0)
+	      ;; Determine number of spaces to leave:
+	      (save-excursion
+		(skip-chars-backward " ]})\"'")
+		(cond ((and sentence-end-double-space
+			    (or (memq (preceding-char) '(?. ?? ?!))
+				(and sentence-end-without-period
+				     (= (char-syntax (preceding-char)) ?w)))) 2)
+		      ((and colon-double-space
+			    (= (preceding-char) ?:))  2)
+		      ((char-equal (preceding-char) ?\n)  0)
+		      (t 1))))))
+	 (match-end 0))))))
+
+(defun fill-common-string-prefix (s1 s2)
+  "Return the longest common prefix of strings S1 and S2, or nil if none."
+  (let ((cmp (compare-strings s1 nil nil s2 nil nil)))
+    (if (eq cmp t)
+	s1
+      (setq cmp (1- (abs cmp)))
+      (unless (zerop cmp)
+	(substring s1 0 cmp)))))
+
+(defun fill-match-adaptive-prefix ()
+  (let ((str (or
+              (and adaptive-fill-function (funcall adaptive-fill-function))
+              (and adaptive-fill-regexp (looking-at adaptive-fill-regexp)
+                   (match-string 0)))))
+    (if (>= (+ (current-left-margin) (length str)) (current-fill-column))
+        ;; Death to insanely long prefixes.
+        nil
+      str)))
+
+(defun fill-context-prefix (from to &optional first-line-regexp)
+  "Compute a fill prefix from the text between FROM and TO.
+This uses the variables `adaptive-fill-regexp' and `adaptive-fill-function'
+and `adaptive-fill-first-line-regexp'.  `paragraph-start' also plays a role;
+we reject a prefix based on a one-line paragraph if that prefix would
+act as a paragraph-separator."
+  (or first-line-regexp
+      (setq first-line-regexp adaptive-fill-first-line-regexp))
+  (save-excursion
+    (goto-char from)
+    (if (eolp) (forward-line 1))
+    ;; Move to the second line unless there is just one.
+    (move-to-left-margin)
+    (let (first-line-prefix
+	  ;; Non-nil if we are on the second line.
+	  second-line-prefix)
+      (setq first-line-prefix
+	    ;; We don't need to consider `paragraph-start' here since it
+	    ;; will be explicitly checked later on.
+	    ;; Also setting first-line-prefix to nil prevents
+	    ;; second-line-prefix from being used.
+	    ;; ((looking-at paragraph-start) nil)
+	    (fill-match-adaptive-prefix))
+      (forward-line 1)
+      (if (< (point) to)
+          (progn
+            (move-to-left-margin)
+            (setq second-line-prefix
+                  (cond ((looking-at paragraph-start) nil) ;Can it happen? -Stef
+                        (t (fill-match-adaptive-prefix))))
+            ;; If we get a fill prefix from the second line,
+            ;; make sure it or something compatible is on the first line too.
+            (when second-line-prefix
+              (unless first-line-prefix (setq first-line-prefix ""))
+              ;; If the non-whitespace chars match the first line,
+              ;; just use it (this subsumes the 2 checks used previously).
+              ;; Used when first line is `/* ...' and second-line is
+              ;; ` * ...'.
+              (let ((tmp second-line-prefix)
+                    (re "\\`"))
+                (while (string-match "\\`[ \t]*\\([^ \t]+\\)" tmp)
+                  (setq re (concat re ".*" (regexp-quote (match-string 1 tmp))))
+                  (setq tmp (substring tmp (match-end 0))))
+                ;; (assert (string-match "\\`[ \t]*\\'" tmp))
+
+                (if (string-match re first-line-prefix)
+                    second-line-prefix
+
+                  ;; Use the longest common substring of both prefixes,
+                  ;; if there is one.
+                  (fill-common-string-prefix first-line-prefix
+                                             second-line-prefix)))))
+	;; If we get a fill prefix from a one-line paragraph,
+	;; maybe change it to whitespace,
+	;; and check that it isn't a paragraph starter.
+	(if first-line-prefix
+	    (let ((result
+		   ;; If first-line-prefix comes from the first line,
+		   ;; see if it seems reasonable to use for all lines.
+		   ;; If not, replace it with whitespace.
+		   (if (or (and first-line-regexp
+				(string-match first-line-regexp
+					      first-line-prefix))
+			   (and comment-start-skip
+				(string-match comment-start-skip
+					      first-line-prefix)))
+		       first-line-prefix
+		     (make-string (string-width first-line-prefix) ?\s))))
+	      ;; But either way, reject it if it indicates the start
+	      ;; of a paragraph when text follows it.
+	      (if (not (eq 0 (string-match paragraph-start
+					   (concat result "a"))))
+		  result)))))))
+
+(defun fill-single-word-nobreak-p ()
+  "Don't break a line after the first or before the last word of a sentence."
+  ;; Actually, allow breaking before the last word of a sentence, so long as
+  ;; it's not the last word of the paragraph.
+  (or (looking-at (concat "[ \t]*\\sw+" "\\(?:" (sentence-end) "\\)[ \t]*$"))
+      (save-excursion
+	(skip-chars-backward " \t")
+	(and (/= (skip-syntax-backward "w") 0)
+	     (/= (skip-chars-backward " \t") 0)
+	     (/= (skip-chars-backward ".?!:") 0)
+	     (looking-at (sentence-end))))))
+
+(defun fill-french-nobreak-p ()
+  "Return nil if French style allows breaking the line at point.
+This is used in `fill-nobreak-predicate' to prevent breaking lines just
+after an opening paren or just before a closing paren or a punctuation
+mark such as `?' or `:'.  It is common in French writing to put a space
+at such places, which would normally allow breaking the line at those
+places."
+  (or (looking-at "[ \t]*[])}»?!;:-]")
+      (save-excursion
+	(skip-chars-backward " \t")
+	(unless (bolp)
+	  (backward-char 1)
+	  (or (looking-at "[([{«]")
+	      ;; Don't cut right after a single-letter word.
+	      (and (memq (preceding-char) '(?\t ?\s))
+		   (eq (char-syntax (following-char)) ?w)))))))
+
+(defun fill-polish-nobreak-p ()
+  "Return nil if Polish style allows breaking the line at point.
+This function may be used in the `fill-nobreak-predicate' hook.
+It is almost the same as `fill-single-char-nobreak-p', with the
+exception that it does not require the one-letter word to be
+preceded by a space.  This blocks line-breaking in cases like
+\"(a jednak)\"."
+  (save-excursion
+    (skip-chars-backward " \t")
+    (backward-char 2)
+    (looking-at "[^[:alpha:]]\\cl")))
+
+(defun fill-single-char-nobreak-p ()
+  "Return non-nil if a one-letter word is before point.
+This function is suitable for adding to the hook `fill-nobreak-predicate',
+to prevent the breaking of a line just after a one-letter word,
+which is an error according to some typographical conventions."
+  (save-excursion
+    (skip-chars-backward " \t")
+    (backward-char 2)
+    (looking-at "[[:space:]][[:alpha:]]")))
+
+(defun fill-nobreak-p ()
+  "Return nil if breaking the line at point is allowed.
+Can be customized with the variables `fill-nobreak-predicate'
+and `fill-nobreak-invisible'."
+  (or
+   (and fill-nobreak-invisible (invisible-p (point)))
+   (unless (bolp)
+    (or
+     ;; Don't break after a period followed by just one space.
+     ;; Move back to the previous place to break.
+     ;; The reason is that if a period ends up at the end of a
+     ;; line, further fills will assume it ends a sentence.
+     ;; If we now know it does not end a sentence, avoid putting
+     ;; it at the end of the line.
+     (and sentence-end-double-space
+	  (save-excursion
+	    (skip-chars-backward " ")
+	    (and (eq (preceding-char) ?.)
+                 ;; There's something more after the space.
+		 (looking-at " [^ \n]"))))
+     ;; Don't split a line if the rest would look like a new paragraph.
+     (unless use-hard-newlines
+       (save-excursion
+	 (skip-chars-forward " \t")
+	 ;; If this break point is at the end of the line,
+	 ;; which can occur for auto-fill, don't consider the newline
+	 ;; which follows as a reason to return t.
+	 (and (not (eolp))
+	      (looking-at paragraph-start))))
+     (run-hook-with-args-until-success 'fill-nobreak-predicate)))))
+
+(defun fill-find-break-point (limit)
+  "Move point to a proper line breaking position of the current line.
+Don't move back past the buffer position LIMIT.
+
+This function is called when we are going to break the current line
+after or before a non-ASCII character.  If the charset of the
+character has the property `fill-find-break-point-function', this
+function calls the property value as a function with one arg LIMIT.
+If the charset has no such property, do nothing."
+  (let ((func (or
+	       (aref fill-find-break-point-function-table (following-char))
+	       (aref fill-find-break-point-function-table (preceding-char)))))
+    (if (and func (fboundp func))
+	(funcall func limit))))
+
+(defun fill-delete-prefix (from to prefix)
+  "Delete the fill prefix from every line except the first.
+The first line may not even have a fill prefix.
+Point is moved to just past the fill prefix on the first line."
+  (let ((fpre (if (and prefix (not (string-match "\\`[ \t]*\\'" prefix)))
+		  (concat "[ \t]*\\("
+			  (replace-regexp-in-string
+			   "[ \t]+" "[ \t]*"
+			   (regexp-quote prefix))
+			  "\\)?[ \t]*")
+		"[ \t]*")))
+    (goto-char from)
+    ;; Why signal an error here?  The problem needs to be caught elsewhere.
+    ;; (if (>= (+ (current-left-margin) (length prefix))
+    ;;         (current-fill-column))
+    ;;     (error "fill-prefix too long for specified width"))
+    (forward-line 1)
+    (while (< (point) to)
+      (if (looking-at fpre)
+          (delete-region (point) (match-end 0)))
+      (forward-line 1))
+    (goto-char from)
+    (if (looking-at fpre)
+	(goto-char (match-end 0)))
+    (point)))
+
+(defun fill-delete-newlines (from to justify nosqueeze squeeze-after)
+  (goto-char from)
+  ;; Make sure sentences ending at end of line get an extra space.
+  ;; loses on split abbrevs ("Mr.\nSmith")
+  (let ((eol-double-space-re
+	 (cond
+	  ((not colon-double-space) (concat (sentence-end) "$"))
+	  ;; Try to add the : inside the `sentence-end' regexp.
+	  ((string-match "\\[[^][]*\\(\\.\\)[^][]*\\]" (sentence-end))
+	   (concat (replace-match ".:" nil nil (sentence-end) 1) "$"))
+	  ;; Can't find the right spot to insert the colon.
+	  (t "[.?!:][])}\"']*$")))
+	(sentence-end-without-space-list
+	 (string-to-list sentence-end-without-space)))
+    (while (re-search-forward eol-double-space-re to t)
+      (or (>= (point) to) (memq (char-before) '(?\t ?\s))
+	  (memq (char-after (match-beginning 0))
+		sentence-end-without-space-list)
+	  (insert-and-inherit ?\s))))
+
+  (goto-char from)
+  (if enable-multibyte-characters
+      ;; Delete unnecessary newlines surrounded by words.  The
+      ;; character category `|' means that we can break a line at the
+      ;; character.  And, char-table
+      ;; `fill-nospace-between-words-table' tells how to concatenate
+      ;; words.  If a character has non-nil value in the table, never
+      ;; put spaces between words, thus delete a newline between them.
+      ;; Otherwise, delete a newline only when a character preceding a
+      ;; newline has non-nil value in that table.
+      (while (search-forward "\n" to t)
+	(if (get-text-property (match-beginning 0) 'fill-space)
+	    (replace-match (get-text-property (match-beginning 0) 'fill-space))
+	  (let ((prev (char-before (match-beginning 0)))
+		(next (following-char)))
+	    (if (and (if fill-separate-heterogeneous-words-with-space
+			 (and (aref (char-category-set next) ?|)
+			      (aref (char-category-set prev) ?|))
+		       (or (aref (char-category-set next) ?|)
+			   (aref (char-category-set prev) ?|)))
+		     (or (aref fill-nospace-between-words-table next)
+			 (aref fill-nospace-between-words-table prev)))
+		(delete-char -1))))))
+
+  (goto-char from)
+  (skip-chars-forward " \t")
+  ;; Then change all newlines to spaces.
+  (subst-char-in-region from to ?\n ?\s)
+  (if (and nosqueeze (not (eq justify 'full)))
+      nil
+    (canonically-space-region (or squeeze-after (point)) to)
+    ;; Remove trailing whitespace.
+    ;; Maybe canonically-space-region should do that.
+    (goto-char to) (delete-char (- (skip-chars-backward " \t"))))
+  (goto-char from))
+
+(defun fill-move-to-break-point (linebeg)
+  "Move to the position where the line should be broken.
+The break position will be always after LINEBEG and generally before point."
+  ;; If the fill column is before linebeg, move to linebeg.
+  (if (> linebeg (point)) (goto-char linebeg))
+  ;; Move back to the point where we can break the line
+  ;; at.  We break the line between word or after/before
+  ;; the character which has character category `|'.  We
+  ;; search space, \c| followed by a character, or \c|
+  ;; following a character.  If not found, place
+  ;; the point at linebeg.
+  (while
+      (when (re-search-backward "[ \t]\\|\\c|.\\|.\\c|" linebeg 0)
+	;; In case of space, we place the point at next to
+	;; the point where the break occurs actually,
+	;; because we don't want to change the following
+	;; logic of original Emacs.  In case of \c|, the
+	;; point is at the place where the break occurs.
+	(forward-char 1)
+	(when (fill-nobreak-p) (skip-chars-backward " \t" linebeg))))
+
+  ;; Move back over the single space between the words.
+  (skip-chars-backward " \t")
+
+  ;; If the left margin and fill prefix by themselves
+  ;; pass the fill-column. or if they are zero
+  ;; but we have no room for even one word,
+  ;; keep at least one word or a character which has
+  ;; category `|' anyway.
+  (if (>= linebeg (point))
+      ;; Ok, skip at least one word or one \c| character.
+      ;; Meanwhile, don't stop at a period followed by one space.
+      (let ((to (line-end-position))
+	    (first t))
+	(goto-char linebeg)
+	(while (and (< (point) to) (or first (fill-nobreak-p)))
+	  ;; Find a breakable point while ignoring the
+	  ;; following spaces.
+	  (skip-chars-forward " \t")
+	  (if (looking-at "\\c|")
+	      (forward-char 1)
+	    (let ((pos (save-excursion
+			 (skip-chars-forward "^ \n\t")
+			 (point))))
+	      (if (re-search-forward "\\c|" pos t)
+		  (forward-char -1)
+		(goto-char pos))))
+	  (setq first nil)))
+
+    (if enable-multibyte-characters
+	;; If we are going to break the line after or
+	;; before a non-ascii character, we may have to
+	;; run a special function for the charset of the
+	;; character to find the correct break point.
+	(if (not (and (eq (charset-after (1- (point))) 'ascii)
+		      (eq (charset-after (point)) 'ascii)))
+	    ;; Make sure we take SOMETHING after the fill prefix if any.
+	    (fill-find-break-point linebeg)))))
+
+(defun fill-text-properties-at (pos)
+  (let ((l (text-properties-at pos))
+	prop-list)
+    (while l
+      (unless (eq (car l) 'composition)
+	(setq prop-list
+	      (cons (car l) (cons (cadr l) prop-list))))
+      (setq l (cddr l)))
+    prop-list))
+
+(defun fill-newline ()
+  ;; Replace whitespace here with one newline, then
+  ;; indent to left margin.
+  (skip-chars-backward " \t")
+  (insert ?\n)
+  ;; Give newline the properties of the space(s) it replaces
+  (set-text-properties (1- (point)) (point)
+		       (fill-text-properties-at (point)))
+  (and (looking-at "\\( [ \t]*\\)\\(\\c|\\)?")
+       (or (aref (char-category-set (or (char-before (1- (point))) ?\000)) ?|)
+	   (match-end 2))
+       ;; When refilling later on, this newline would normally not be replaced
+       ;; by a space, so we need to mark it specially to re-install the space
+       ;; when we unfill.
+       (put-text-property (1- (point)) (point) 'fill-space (match-string 1)))
+  ;; If we don't want breaks in invisible text, don't insert
+  ;; an invisible newline.
+  (if fill-nobreak-invisible
+      (remove-text-properties (1- (point)) (point)
+			      '(invisible t)))
+  (if (or fill-prefix
+	  (not fill-indent-according-to-mode))
+      (fill-indent-to-left-margin)
+    (indent-according-to-mode))
+  ;; Insert the fill prefix after indentation.
+  (and fill-prefix (not (equal fill-prefix ""))
+       ;; Markers that were after the whitespace are now at point: insert
+       ;; before them so they don't get stuck before the prefix.
+       (insert-before-markers-and-inherit fill-prefix)))
+
+(defun fill-indent-to-left-margin ()
+  "Indent current line to the column given by `current-left-margin'."
+  (let ((beg (point)))
+    (indent-line-to (current-left-margin))
+    (put-text-property beg (point) 'face 'default)))
+
+(defun fill-region-as-paragraph-default (from to &optional justify
+				              nosqueeze squeeze-after)
+  "Fill the region as if it were a single paragraph.
+This command removes any paragraph breaks in the region and
+extra newlines at the end, and indents and fills lines between the
+margins given by the `current-left-margin' and `current-fill-column'
+functions.  (In most cases, the variable `fill-column' controls the
+width.)  It leaves point at the beginning of the line following the
+region.
+
+Note that how paragraph breaks are removed in text that includes
+characters from different scripts is affected by the value
+of `fill-separate-heterogeneous-words-with-space', which see.
+
+Normally, the command performs justification according to
+the `current-justification' function, but with a prefix arg, it
+does full justification instead.
+
+When called from Lisp, optional third arg JUSTIFY can specify any
+type of justification; see `default-justification' for the possible
+values.
+Optional fourth arg NOSQUEEZE non-nil means not to make spaces
+between words canonical before filling.
+Fifth arg SQUEEZE-AFTER, if non-nil, should be a buffer position; it
+means canonicalize spaces only starting from that position.
+See `canonically-space-region' for the meaning of canonicalization
+of spaces.
+
+Return the `fill-prefix' used for filling.
+
+If `sentence-end-double-space' is non-nil, then period followed by one
+space does not end a sentence, so don't break a line there."
+  (interactive (progn
+		 (barf-if-buffer-read-only)
+		 (list (region-beginning) (region-end)
+		       (if current-prefix-arg 'full))))
+  (unless (memq justify '(t nil none full center left right))
+    (setq justify 'full))
+
+  ;; Make sure "to" is the endpoint.
+  (goto-char (min from to))
+  (setq to   (max from to))
+  ;; Ignore blank lines at beginning of region.
+  (skip-chars-forward " \t\n")
+
+  (let ((from-plus-indent (point))
+	(oneleft nil))
+
+    (beginning-of-line)
+    ;; We used to round up to whole line, but that prevents us from
+    ;; correctly handling filling of mixed code-and-comment where we do want
+    ;; to fill the comment but not the code.  So only use (point) if it's
+    ;; further than `from', which means that `from' is followed by some
+    ;; number of empty lines.
+    (setq from (max (point) from))
+
+    ;; Delete all but one soft newline at end of region.
+    ;; And leave TO before that one.
+    (goto-char to)
+    (while (and (> (point) from) (eq ?\n (char-after (1- (point)))))
+      (if (and oneleft
+	       (not (and use-hard-newlines
+			 (get-text-property (1- (point)) 'hard))))
+	  (delete-char -1)
+	(backward-char 1)
+	(setq oneleft t)))
+    (setq to (copy-marker (point) t))
+    ;; ;; If there was no newline, and there is text in the paragraph, then
+    ;; ;; create a newline.
+    ;; (if (and (not oneleft) (> to from-plus-indent))
+    ;; 	(newline))
+    (goto-char from-plus-indent))
+
+  (if (not (> to (point)))
+      ;; There is no paragraph, only whitespace: exit now.
+      (progn
+        (set-marker to nil)
+        nil)
+
+    (or justify (setq justify (current-justification)))
+
+    ;; Don't let Adaptive Fill mode alter the fill prefix permanently.
+    (let ((fill-prefix fill-prefix))
+      ;; Figure out how this paragraph is indented, if desired.
+      (when (and adaptive-fill-mode
+		 (or (null fill-prefix) (string= fill-prefix "")))
+	(setq fill-prefix (fill-context-prefix from to))
+	;; Ignore a white-space only fill-prefix
+	;; if we indent-according-to-mode.
+	(when (and fill-prefix fill-indent-according-to-mode
+		   (string-match "\\`[ \t]*\\'" fill-prefix))
+	  (setq fill-prefix nil)))
+
+      (goto-char from)
+      (beginning-of-line)
+
+      (if (not justify)     ; filling disabled: just check indentation
+	  (progn
+	    (goto-char from)
+	    (while (< (point) to)
+	      (if (and (not (eolp))
+		       (< (current-indentation) (current-left-margin)))
+		  (fill-indent-to-left-margin))
+	      (forward-line 1)))
+
+	(if use-hard-newlines
+	    (remove-list-of-text-properties from to '(hard)))
+	;; Make sure first line is indented (at least) to left margin...
+	(if (or (memq justify '(right center))
+		(< (current-indentation) (current-left-margin)))
+	    (fill-indent-to-left-margin))
+	;; Delete the fill-prefix from every line.
+	(fill-delete-prefix from to fill-prefix)
+	(setq from (point))
+
+	;; FROM, and point, are now before the text to fill,
+	;; but after any fill prefix on the first line.
+
+	(fill-delete-newlines from to justify nosqueeze squeeze-after)
+
+	;; This is the actual filling loop.
+	(goto-char from)
+	(let (linebeg)
+          (while (< (point) to)
+	    (setq linebeg (point))
+	    (move-to-column (current-fill-column))
+	    (if (when (and (< (point) to) (< linebeg to))
+		  ;; Find the position where we'll break the line.
+		  ;; Use an immediately following space, if any.
+		  ;; However, note that `move-to-column' may overshoot
+		  ;; if there are wide characters (Bug#3234).
+		  (unless (> (current-column) (current-fill-column))
+		    (forward-char 1))
+		  (fill-move-to-break-point linebeg)
+		  ;; Check again to see if we got to the end of
+		  ;; the paragraph.
+		  (skip-chars-forward " \t")
+		  (< (point) to))
+		;; Found a place to cut.
+		(progn
+		  (fill-newline)
+		  (when justify
+		    ;; Justify the line just ended, if desired.
+		    (save-excursion
+		      (forward-line -1)
+		      (justify-current-line justify nil t))))
+
+	      (goto-char to)
+	      ;; Justify this last line, if desired.
+	      (if justify (justify-current-line justify t t))))))
+      ;; Leave point after final newline.
+      (goto-char to)
+      (unless (eobp) (forward-char 1))
+      (set-marker to nil)
+      ;; Return the fill-prefix we used
+      fill-prefix)))
+
+(defun fill-region-as-paragraph (from to &optional justify
+				      nosqueeze squeeze-after)
+  "Fill the region as if it were a single paragraph.
+The behavior of this command is controlled by the variable
+`fill-region-as-paragraph-function', with the default implementation
+being `fill-region-as-paragraph-default'.
+
+The arguments FROM and TO define the boundaries of the region.
+
+The optional third argument JUSTIFY, when called interactively with a
+prefix arg, is assigned the value `full'.
+When called from Lisp, JUSTIFY can specify any type of justification;
+see `default-justification' for the possible values.
+Optional fourth arg NOSQUEEZE non-nil means not to make spaces between
+words canonical before filling.
+Fifth arg SQUEEZE-AFTER, if non-nil, should be a buffer position; it
+means canonicalize spaces only starting from that position.
+See `canonically-space-region' for the meaning of canonicalization of
+spaces.
+
+It returns the `fill-prefix' used for filling."
+  (interactive (progn
+		 (barf-if-buffer-read-only)
+		 (list (region-beginning) (region-end)
+		       (if current-prefix-arg 'full))))
+  (funcall fill-region-as-paragraph-function
+           from to justify nosqueeze squeeze-after))
+
+(defun skip-line-prefix (prefix)
+  "If point is inside the string PREFIX at the beginning of line, move past it."
+  (when (and prefix
+	     (< (- (point) (line-beginning-position)) (length prefix))
+	     (save-excursion
+	       (beginning-of-line)
+	       (looking-at (regexp-quote prefix))))
+    (goto-char (match-end 0))))
+
+(defun fill-minibuffer-function (arg)
+  "Fill a paragraph in the minibuffer, ignoring the prompt."
+  (save-restriction
+    (narrow-to-region (minibuffer-prompt-end) (point-max))
+    (fill-paragraph arg)))
+
+(defun fill-forward-paragraph (arg)
+  (funcall fill-forward-paragraph-function arg))
+
+(defun fill-paragraph (&optional justify region)
+  "Fill paragraph at or after point.
+
+If JUSTIFY is non-nil (interactively, with prefix argument), justify as well.
+If `sentence-end-double-space' is non-nil, then period followed by one
+space does not end a sentence, so don't break a line there.
+The variable `fill-column' controls the width for filling.
+
+If `fill-paragraph-function' is non-nil, we call it (passing our
+argument to it), and if it returns non-nil, we simply return its value.
+
+If `fill-paragraph-function' is nil, return the `fill-prefix' used for filling.
+
+The REGION argument is non-nil if called interactively; in that
+case, if Transient Mark mode is enabled and the mark is active,
+call `fill-region' to fill each of the paragraphs in the active
+region, instead of just filling the current paragraph."
+  (interactive (progn
+		 (barf-if-buffer-read-only)
+		 (list (if current-prefix-arg 'full) t)))
+  (with-buffer-unmodified-if-unchanged
+    (or
+     ;; 1. Fill the region if it is active when called interactively.
+     (and region transient-mark-mode mark-active
+          (not (eq (region-beginning) (region-end)))
+          (or (fill-region (region-beginning) (region-end) justify) t))
+     ;; 2. Try fill-paragraph-function.
+     (and (not (eq fill-paragraph-function t))
+          (or fill-paragraph-function
+              (and (minibufferp (current-buffer))
+                   (= 1 (point-min))))
+          (let ((function (or fill-paragraph-function
+                              ;; In the minibuffer, don't count
+                              ;; the width of the prompt.
+                              'fill-minibuffer-function))
+                ;; If fill-paragraph-function is set, it probably
+                ;; takes care of comments and stuff.  If not, it
+                ;; will have to set fill-paragraph-handle-comment
+                ;; back to t explicitly or return nil.
+                (fill-paragraph-handle-comment nil)
+                (fill-paragraph-function t))
+            (funcall function justify)))
+     ;; 3. Try our syntax-aware filling code.
+     (and fill-paragraph-handle-comment
+          ;; Our code only handles \n-terminated comments right now.
+          comment-start (equal comment-end "")
+          (let ((fill-paragraph-handle-comment nil))
+            (fill-comment-paragraph justify)))
+     ;; 4. If it all fails, default to the good ol' text paragraph filling.
+     (let ((before (point))
+           (paragraph-start-orig paragraph-start)
+           (paragraph-start paragraph-start)
+           ;; Fill prefix used for filling the paragraph.
+           fill-pfx)
+       ;; Try to prevent code sections and comment sections from being
+       ;; filled together.
+       (when (and fill-paragraph-handle-comment comment-start-skip)
+         (setq paragraph-start
+               (concat paragraph-start "\\|[ \t]*\\(?:"
+                       comment-start-skip "\\)")))
+       (save-excursion
+         ;; To make sure the return value of forward-paragraph is
+         ;; meaningful, we have to start from the beginning of
+         ;; line, otherwise skipping past the last few chars of a
+         ;; paragraph-separator would count as a paragraph (and
+         ;; not skipping any chars at EOB would not count as a
+         ;; paragraph even if it is).
+         (move-to-left-margin)
+         (if (not (zerop (fill-forward-paragraph 1)))
+             ;; There's no paragraph at or after point: give up.
+             (setq fill-pfx "")
+           (let ((end (point))
+                 (beg (progn (fill-forward-paragraph -1) (point))))
+             ;; If the paragraph starts with a comment line preceding point
+             ;; on a non-comment line, skip such comment lines, so they
+             ;; are not filled together (bug#80449).
+             (when (and fill-paragraph-handle-comment comment-start-skip
+                        (< beg before))
+               (save-excursion
+                 (goto-char beg)
+                 (when (looking-at paragraph-start-orig)
+                   (goto-char (1+ (match-end 0))))
+                 (when (looking-at comment-start-skip)
+                   (forward-line 1)
+                   (setq beg (point)))))
+             (goto-char before)
+             (setq fill-pfx
+                   (if use-hard-newlines
+                       ;; Can't use fill-region-as-paragraph, since this
+                       ;; paragraph may still contain hard newlines.  See
+                       ;; fill-region.
+                       (fill-region beg end justify)
+                     (fill-region-as-paragraph beg end justify))))))
+       fill-pfx))))
+
+(defun unfill-paragraph (arg &optional beg end)
+  "Join lines of this paragraph and fix up whitespace at joins.
+Interactively, if the region is active, join lines of each paragraph in
+the region.  A numeric prefix argument means join the lines of the
+following ARG paragraphs.  In this case an active region is ignored.
+
+With an active region and no prefix argument this is roughly the same as
+`delete-indentation' with that active region, except that this command
+only joins lines within paragraphs, preserving the paragraphs
+themselves.
+
+When called from Lisp, ARG is the number of following paragraphs to join
+lines within, or if ARG is nil, optional arguments BEG and END non-nil
+means to join the lines of each paragraph in the region delimited by BEG
+and END."
+  (interactive "P\nR")
+  (when (or arg (not beg))
+    (let ((arg (prefix-numeric-value arg)))
+      (when (zerop arg)
+        (user-error "Invalid numeric argument to `unfill-paragraph'"))
+      (save-excursion
+        (fill-forward-paragraph 1)
+        (fill-forward-paragraph -1)
+        (setq beg (point))
+        (fill-forward-paragraph arg)
+        (setq end (point)))))
+  ;; FIXME: It would be better to use
+  ;;
+  ;;    (let ((fill-column (* (max 2 tab-width) (point-max))))
+  ;;      (fill-region beg end))
+  ;;
+  ;; multiplying by at least 2 to account for any wide characters in the
+  ;; region to be filled and by at least `tab-width' to account for any
+  ;; tab characters in the region to be filled.  Then we can easily
+  ;; prove that filling the region will actually unfill it.
+  ;; However, `fill-region' fails if `fill-column' is not a fixnum.
+  (let ((fill-column most-positive-fixnum))
+    (fill-region beg end)))
+
+(defun fill-comment-paragraph (&optional justify)
+  "Fill current comment.
+If we're not in a comment, just return nil so that the caller
+can take care of filling.  JUSTIFY is used as in `fill-paragraph'."
+  (comment-normalize-vars)
+  (let (has-code-and-comment ; Non-nil if it contains code and a comment.
+	comin comstart)
+    ;; Figure out what kind of comment we are looking at.
+    (save-excursion
+      (beginning-of-line)
+      (when (setq comstart (comment-search-forward (line-end-position) t))
+	(setq comin (point))
+	(goto-char comstart) (skip-chars-backward " \t")
+	(setq has-code-and-comment (not (bolp)))))
+
+    (if (not (and comstart
+                  ;; Make sure the comment-start mark we found is accepted by
+                  ;; comment-start-skip.  If not, all bets are off, and
+                  ;; we'd better not mess with it.
+                  (string-match comment-start-skip
+                                (buffer-substring comstart comin))))
+
+	;; Return nil, so the normal filling will take place.
+	nil
+
+      ;; Narrow to include only the comment, and then fill the region.
+      (let* ((fill-prefix fill-prefix)
+	     (commark
+	      (comment-string-strip (buffer-substring comstart comin) nil t))
+	     (comment-re
+              ;; A regexp more specialized than comment-start-skip, that only
+              ;; matches the current commark rather than any valid commark.
+              ;;
+              ;; The specialized regexp only works for "normal" comment
+              ;; syntax, not for Texinfo's "@c" (which can't be immediately
+              ;; followed by word-chars) or Fortran's "C" (which needs to be
+              ;; at bol), so check that comment-start-skip indeed allows the
+              ;; commark to appear in the middle of the line and followed by
+              ;; word chars.  The choice of "\0" and "a" is mostly arbitrary.
+              (if (string-match comment-start-skip (concat "\0" commark "a"))
+                  (concat "[ \t]*" (regexp-quote commark)
+                          ;; Make sure we only match comments that
+                          ;; use the exact same comment marker.
+                          "[^" (substring commark -1) "]")
+                (concat "[ \t]*\\(?:" comment-start-skip "\\)")))
+             (comment-fill-prefix	; Compute a fill prefix.
+	      (save-excursion
+		(goto-char comstart)
+		(if has-code-and-comment
+		    (concat
+		     (if (not indent-tabs-mode)
+			 (make-string (current-column) ?\s)
+		       (concat
+			(make-string (/ (current-column) tab-width) ?\t)
+			(make-string (% (current-column) tab-width) ?\s)))
+		     (buffer-substring (point) comin))
+		  (buffer-substring (line-beginning-position) comin))))
+	     beg end)
+	(save-excursion
+	  (save-restriction
+	    (beginning-of-line)
+	    (narrow-to-region
+	     ;; Find the first line we should include in the region to fill.
+	     (if has-code-and-comment
+		 (line-beginning-position)
+	       (save-excursion
+		 (while (and (zerop (forward-line -1))
+			     (looking-at comment-re)))
+		 ;; We may have gone too far.  Go forward again.
+		 (line-beginning-position
+		  (if (progn
+			(goto-char
+			 (or (comment-search-forward (line-end-position) t)
+			     (point)))
+			(looking-at comment-re))
+		      (progn (setq comstart (point)) 1)
+		    (progn (setq comstart (point)) 2)))))
+	     ;; Find the beginning of the first line past the region to fill.
+	     (save-excursion
+	       (while (progn (forward-line 1)
+			     (looking-at comment-re)))
+	       (point)))
+	    ;; Obey paragraph starters and boundaries within comments.
+	    (let* ((paragraph-separate
+		    ;; Use the default values since they correspond to
+		    ;; the values to use for plain text.
+		    (concat paragraph-separate "\\|[ \t]*\\(?:"
+			    comment-start-skip "\\)\\(?:"
+			    (default-value 'paragraph-separate) "\\)"))
+		   (paragraph-start
+		    (concat paragraph-start "\\|[ \t]*\\(?:"
+			    comment-start-skip "\\)\\(?:"
+			    (default-value 'paragraph-start) "\\)"))
+		   ;; We used to rely on fill-prefix to break paragraph at
+		   ;; comment-starter changes, but it did not work for the
+		   ;; first line (mixed comment&code).
+		   ;; We now use comment-re instead to "manually" make sure
+		   ;; we treat comment-marker changes as paragraph boundaries.
+		   ;; (paragraph-ignore-fill-prefix nil)
+		   ;; (fill-prefix comment-fill-prefix)
+		   (after-line (if has-code-and-comment
+				   (line-beginning-position 2))))
+	      (setq end (progn (forward-paragraph) (point)))
+	      ;; If this comment starts on a line with code,
+	      ;; include that line in the filling.
+	      (setq beg (progn (backward-paragraph)
+			       (if (eq (point) after-line)
+				   (forward-line -1))
+			       (point)))))
+
+	  ;; Find the fill-prefix to use.
+	  (cond
+	   (fill-prefix)	  ; Use the user-provided fill prefix.
+	   ((and adaptive-fill-mode	; Try adaptive fill mode.
+		 (setq fill-prefix (fill-context-prefix beg end))
+		 (string-match comment-start-skip fill-prefix)))
+	   (t
+	    (setq fill-prefix comment-fill-prefix)))
+
+	  ;; Don't fill with narrowing.
+	  (or
+	   (fill-region-as-paragraph
+	    (max comstart beg) end justify nil
+	    ;; Don't canonicalize spaces within the code just before
+	    ;; the comment.
+	    (save-excursion
+	      (goto-char beg)
+	      (if (looking-at fill-prefix)
+		  nil
+		(re-search-forward comment-start-skip))))
+	   ;; Make sure we don't return nil.
+	   t))))))
+
+(defun fill-region (from to &optional justify nosqueeze to-eop)
+  "Fill each of the paragraphs in the region.
+A prefix arg means justify as well.
+The `fill-column' variable controls the width.
+
+Noninteractively, the third argument JUSTIFY specifies which
+kind of justification to do: `full', `left', `right', `center',
+or `none' (equivalent to nil).  A value of t means handle each
+paragraph as specified by its text properties.
+
+The fourth arg NOSQUEEZE non-nil means to leave whitespace other
+than line breaks untouched, and fifth arg TO-EOP non-nil means
+to keep filling to the end of the paragraph (or next hard newline,
+if variable `use-hard-newlines' is on).
+
+Return the `fill-prefix' used for filling the last paragraph.
+
+If `sentence-end-double-space' is non-nil, then period followed by one
+space does not end a sentence, so don't break a line there.
+
+The variable `fill-region-as-paragraph-function' can be used to override
+how paragraphs are filled."
+  (interactive (progn
+		 (barf-if-buffer-read-only)
+		 (list (region-beginning) (region-end)
+		       (if current-prefix-arg 'full))))
+  (unless (memq justify '(t nil none full center left right))
+    (setq justify 'full))
+  (let ((start-point (point-marker))
+	max beg fill-pfx)
+    (goto-char (max from to))
+    (when to-eop
+      (skip-chars-backward "\n")
+      (fill-forward-paragraph 1))
+    (setq max (copy-marker (point) t))
+    (goto-char (setq beg (min from to)))
+    (beginning-of-line)
+    (while (< (point) max)
+      (let ((initial (point))
+	    end)
+	;; If using hard newlines, break at every one for filling
+	;; purposes rather than using paragraph breaks.
+	(if use-hard-newlines
+	    (progn
+	      (while (and (setq end (text-property-any (point) max
+						       'hard t))
+			  (not (= ?\n (char-after end)))
+			  (not (>= end max)))
+		(goto-char (1+ end)))
+	      (setq end (if end (min max (1+ end)) max))
+	      (goto-char initial))
+	  (fill-forward-paragraph 1)
+	  (setq end (min max (point)))
+	  (fill-forward-paragraph -1))
+	(if (< (point) beg)
+	    (goto-char beg))
+	(if (and (>= (point) initial) (< (point) end))
+	    (setq fill-pfx
+		  (fill-region-as-paragraph (point) end justify nosqueeze))
+	  (goto-char end))))
+    (goto-char start-point)
+    (set-marker start-point nil)
+    fill-pfx))
+
+(defun current-justification ()
+  "How should we justify this line?
+This returns the value of the text-property `justification',
+or the variable `default-justification' if there is no text-property.
+However, it returns nil rather than `none' to mean \"don't justify\"."
+  (let ((j (or (get-text-property
+		;; Make sure we're looking at paragraph body.
+		(save-excursion (skip-chars-forward " \t")
+				(if (and (eobp) (not (bobp)))
+				    (1- (point)) (point)))
+		'justification)
+	       default-justification)))
+    (if (eq 'none j)
+	nil
+      j)))
+
+(defun set-justification (begin end style &optional whole-par)
+  "Set the region's justification style to STYLE.
+This commands prompts for the kind of justification to use.
+See `default-justification' for the possible values and their meaning.
+If the mark is not active, this command operates on the current paragraph.
+If the mark is active, it operates on the region.  However, if the
+beginning and end of the region are not at paragraph breaks, they are
+moved to the beginning and end \(respectively) of the paragraphs they
+are in.
+
+If variable `use-hard-newlines' is true, all hard newlines are
+taken to be paragraph breaks.
+
+When calling from a program, operates just on region between BEGIN and END,
+unless optional fourth arg WHOLE-PAR is non-nil.  In that case bounds are
+extended to include entire paragraphs as in the interactive command."
+  (interactive (list (if mark-active (region-beginning) (point))
+		     (if mark-active (region-end) (point))
+		     (let ((s (completing-read
+			       "Set justification to: "
+			       '(("left") ("right") ("full")
+				 ("center") ("none"))
+			       nil t)))
+		       (if (equal s "") (error ""))
+		       (intern s))
+		     t))
+  (save-excursion
+    (save-restriction
+      (if whole-par
+	  (let ((paragraph-start (if use-hard-newlines "." paragraph-start))
+		(paragraph-ignore-fill-prefix (if use-hard-newlines t
+						paragraph-ignore-fill-prefix)))
+	    (goto-char begin)
+	    (while (and (bolp) (not (eobp))) (forward-char 1))
+	    (backward-paragraph)
+	    (setq begin (point))
+	    (goto-char end)
+	    (skip-chars-backward " \t\n" begin)
+	    (forward-paragraph)
+	    (setq end (point))))
+
+      (narrow-to-region (point-min) end)
+      (unjustify-region begin (point-max))
+      (put-text-property begin (point-max) 'justification style)
+      (fill-region begin (point-max) nil t))))
+
+(defun set-justification-none (b e)
+  "Disable automatic filling for paragraphs in the region.
+If the mark is not active, this applies to the current paragraph."
+  (interactive (list (if mark-active (region-beginning) (point))
+		     (if mark-active (region-end) (point))))
+  (set-justification b e 'none t))
+
+(defun set-justification-left (b e)
+  "Make paragraphs in the region left-justified.
+This means lines are flush (lined up) at the left margin and ragged
+on the right.
+This is usually the default, but see the variable `default-justification'.
+If the mark is not active, this applies to the current paragraph."
+  (interactive (list (if mark-active (region-beginning) (point))
+		     (if mark-active (region-end) (point))))
+  (set-justification b e 'left t))
+
+(defun set-justification-right (b e)
+  "Make paragraphs in the region right-justified.
+This means lines are flush (lined up) at the right margin and ragged
+on the left.
+If the mark is not active, this applies to the current paragraph."
+  (interactive (list (if mark-active (region-beginning) (point))
+		     (if mark-active (region-end) (point))))
+  (set-justification b e 'right t))
+
+(defun set-justification-full (b e)
+  "Make paragraphs in the region fully justified.
+This makes lines be lined up on both margins by inserting spaces between words.
+If the mark is not active, this applies to the current paragraph."
+  (interactive (list (if mark-active (region-beginning) (point))
+		     (if mark-active (region-end) (point))))
+  (set-justification b e 'full t))
+
+(defun set-justification-center (b e)
+  "Make paragraphs in the region centered.
+If the mark is not active, this applies to the current paragraph."
+  (interactive (list (if mark-active (region-beginning) (point))
+		     (if mark-active (region-end) (point))))
+  (set-justification b e 'center t))
+
+(defun justify-current-line (&optional how eop nosqueeze)
+  "Do some kind of justification on this line.
+Normally does full justification: adds spaces to the line to make it end at
+the column given by `current-fill-column'.
+Optional first argument HOW specifies alternate type of justification:
+it can be `left', `right', `full', `center', or `none'; for their
+meaning, see `default-justification'.
+If HOW is t, will justify however the `current-justification' function says to.
+If HOW is nil or missing, full justification is done by default.
+Second arg EOP non-nil means that this is the last line of the paragraph, so
+it will not be stretched by full justification.
+Third arg NOSQUEEZE non-nil means to leave interior whitespace unchanged,
+otherwise it is made canonical."
+  (interactive "*")
+  (if (eq t how) (setq how (or (current-justification) 'none))
+    (if (null how) (setq how 'full)
+      (or (memq how '(none left right center))
+	  (setq how 'full))))
+  (or (memq how '(none left))  ; No action required for these.
+      (let ((fc (current-fill-column))
+	    (pos (point-marker))
+	    fp-end			; point at end of fill prefix
+	    beg				; point at beginning of line's text
+	    end				; point at end of line's text
+	    indent			; column of `beg'
+	    endcol			; column of `end'
+	    ncols			; new indent point or offset
+	    (nspaces 0)			; number of spaces between words
+					; in line (not space characters)
+	    (curr-fracspace 0)		; current fractional space amount
+	    count)
+	(end-of-line)
+	;; Check if this is the last line of the paragraph.
+	(if (and use-hard-newlines (null eop)
+		 (get-text-property (point) 'hard))
+	    (setq eop t))
+	(skip-chars-backward " \t")
+	;; Quick exit if it appears to be properly justified already
+	;; or there is no text.
+	(if (or (bolp)
+		(and (memq how '(full right))
+		     (= (current-column) fc)))
+	    nil
+	  (setq end (point))
+	  (beginning-of-line)
+	  (skip-chars-forward " \t")
+	  ;; Skip over fill-prefix.
+	  (if (and fill-prefix
+		   (not (string-equal fill-prefix ""))
+		   (equal fill-prefix
+			  (buffer-substring
+			   (point) (min (point-max) (+ (length fill-prefix)
+						       (point))))))
+	      (forward-char (length fill-prefix))
+	    (if (and adaptive-fill-mode
+		     (looking-at adaptive-fill-regexp))
+		(goto-char (match-end 0))))
+	  (setq fp-end (point))
+	  (skip-chars-forward " \t")
+	  ;; This is beginning of the line's text.
+	  (setq indent (current-column))
+	  (setq beg (point))
+	  (goto-char end)
+	  (setq endcol (current-column))
+
+	  ;; HOW can't be null or left--we would have exited already
+	  (cond ((eq 'right how)
+		 (setq ncols (- fc endcol))
+		 (if (< ncols 0)
+		     ;; Need to remove some indentation
+		     (delete-region
+		      (progn (goto-char fp-end)
+			     (if (< (current-column) (+ indent ncols))
+				 (move-to-column (+ indent ncols) t))
+			     (point))
+		      (progn (move-to-column indent) (point)))
+		   ;; Need to add some
+		   (goto-char beg)
+		   (indent-to (+ indent ncols))
+		   ;; If point was at beginning of text, keep it there.
+		   (if (= beg pos)
+		       (move-marker pos (point)))))
+
+		((eq 'center how)
+		 ;; Figure out how much indentation is needed
+		 (setq ncols (+ (current-left-margin)
+				(/ (- fc (current-left-margin) ;avail. space
+				      (- endcol indent)) ;text width
+				   2)))
+		 (if (< ncols indent)
+		     ;; Have too much indentation - remove some
+		     (delete-region
+		      (progn (goto-char fp-end)
+			     (if (< (current-column) ncols)
+				 (move-to-column ncols t))
+			     (point))
+		      (progn (move-to-column indent) (point)))
+		   ;; Have too little - add some
+		   (goto-char beg)
+		   (indent-to ncols)
+		   ;; If point was at beginning of text, keep it there.
+		   (if (= beg pos)
+		       (move-marker pos (point)))))
+
+		((eq 'full how)
+		 ;; Insert extra spaces between words to justify line
+		 (save-restriction
+		   (narrow-to-region beg end)
+		   (or nosqueeze
+		       (canonically-space-region beg end))
+		   (goto-char (point-max))
+		   ;; count word spaces in line
+		   (while (search-backward " " nil t)
+		     (setq nspaces (1+ nspaces))
+		     (skip-chars-backward " "))
+		   (setq ncols (- fc endcol))
+		   ;; Ncols is number of additional space chars needed
+		   (when (and (> ncols 0) (> nspaces 0) (not eop))
+                     (setq curr-fracspace (+ ncols (/ nspaces 2))
+                           count nspaces)
+                     (while (> count 0)
+                       (skip-chars-forward " ")
+                       (insert-char ?\s (/ curr-fracspace nspaces) t)
+                       (search-forward " " nil t)
+                       (setq count (1- count)
+                             curr-fracspace
+                             (+ (% curr-fracspace nspaces) ncols))))))
+		(t (error "Unknown justification value"))))
+	(goto-char pos)
+	(move-marker pos nil)))
+  nil)
+
+(defun unjustify-current-line ()
+  "Remove justification whitespace from current line.
+If the line is centered or right-justified, this function removes any
+indentation past the left margin.  If the line is full-justified, it removes
+extra spaces between words.  It does nothing in other justification modes."
+  (let ((justify (current-justification)))
+    (cond ((eq 'left justify) nil)
+	  ((eq  nil  justify) nil)
+	  ((eq 'full justify)		; full justify: remove extra spaces
+	   (beginning-of-line-text)
+	   (canonically-space-region (point) (line-end-position)))
+	  ((memq justify '(center right))
+	   (save-excursion
+	     (move-to-left-margin nil t)
+	     ;; Position ourselves after any fill-prefix.
+	     (if (and fill-prefix
+		      (not (string-equal fill-prefix ""))
+		      (equal fill-prefix
+			     (buffer-substring
+			      (point) (min (point-max) (+ (length fill-prefix)
+							  (point))))))
+		 (forward-char (length fill-prefix)))
+	     (delete-region (point) (progn (skip-chars-forward " \t")
+					   (point))))))))
+
+(defun unjustify-region (&optional begin end)
+  "Remove justification whitespace from region.
+For centered or right-justified regions, this function removes any indentation
+past the left margin from each line.  For full-justified lines, it removes
+extra spaces between words.  It does nothing in other justification modes.
+Arguments BEGIN and END are optional; default is the whole buffer."
+  (save-excursion
+    (save-restriction
+      (if end (narrow-to-region (point-min) end))
+      (goto-char (or begin (point-min)))
+      (while (not (eobp))
+	(unjustify-current-line)
+	(forward-line 1)))))
+
+(defun fill-nonuniform-paragraphs (min max &optional justifyp citation-regexp)
+  "Fill paragraphs within the region, allowing varying indentation within each.
+This command divides the region into \"paragraphs\",
+only at paragraph-separator lines, then fills each paragraph
+using as the fill prefix the smallest indentation of any line
+in the paragraph.
+
+When calling from a program, pass range to fill as first two arguments.
+
+Optional third and fourth arguments JUSTIFYP and CITATION-REGEXP:
+JUSTIFYP to justify paragraphs (prefix arg).
+When filling a mail message, pass a regexp for CITATION-REGEXP
+which will match the prefix of a line which is a citation marker
+plus whitespace, but no other kind of prefix.
+Also, if CITATION-REGEXP is non-nil, don't fill header lines."
+  (interactive (progn
+		 (barf-if-buffer-read-only)
+		 (list (region-beginning) (region-end)
+		       (if current-prefix-arg 'full))))
+  (let ((fill-individual-varying-indent t))
+    (fill-individual-paragraphs min max justifyp citation-regexp)))
+
+(defun fill-individual-paragraphs (min max &optional justify citation-regexp)
+  "Fill paragraphs of uniform indentation within the region.
+This command divides the region into \"paragraphs\",
+treating every change in indentation level or prefix as a paragraph boundary,
+then fills each paragraph using its indentation level as the fill prefix.
+
+There is one special case where a change in indentation does not start
+a new paragraph.  This is for text of this form:
+
+   foo>    This line with extra indentation starts
+   foo> a paragraph that continues on more lines.
+
+These lines are filled together.
+
+When calling from a program, pass the range to fill
+as the first two arguments.
+
+Optional third and fourth arguments JUSTIFY and CITATION-REGEXP:
+JUSTIFY to justify paragraphs (prefix arg).
+When filling a mail message, pass a regexp for CITATION-REGEXP
+which will match the prefix of a line which is a citation marker
+plus whitespace, but no other kind of prefix.
+Also, if CITATION-REGEXP is non-nil, don't fill header lines."
+  (interactive (progn
+		 (barf-if-buffer-read-only)
+		 (list (region-beginning) (region-end)
+		       (if current-prefix-arg 'full))))
+  (save-restriction
+    (save-excursion
+      (goto-char min)
+      (beginning-of-line)
+      (narrow-to-region (point) max)
+      (if citation-regexp
+	  (while (and (not (eobp))
+		      (or (looking-at "[ \t]*[^ \t\n]+:")
+			  (looking-at "[ \t]*$")))
+	    (if (looking-at "[ \t]*[^ \t\n]+:")
+		(search-forward "\n\n" nil 'move)
+	      (forward-line 1))))
+      (narrow-to-region (point) max)
+      ;; Loop over paragraphs.
+      (while (progn
+	       ;; Skip over all paragraph-separating lines
+	       ;; so as to not include them in any paragraph.
+               (while (and (not (eobp))
+			   (progn (move-to-left-margin)
+				  (and (not (eobp))
+				       (looking-at paragraph-separate))))
+                 (forward-line 1))
+               (skip-chars-forward " \t\n") (not (eobp)))
+	(move-to-left-margin)
+	(let ((start (point))
+	      fill-prefix fill-prefix-regexp)
+	  ;; Find end of paragraph, and compute the smallest fill-prefix
+	  ;; that fits all the lines in this paragraph.
+	  (while (progn
+		   ;; Update the fill-prefix on the first line
+		   ;; and whenever the prefix good so far is too long.
+		   (if (not (and fill-prefix
+				 (looking-at fill-prefix-regexp)))
+		       (setq fill-prefix
+			     (fill-individual-paragraphs-prefix
+			      citation-regexp)
+			     fill-prefix-regexp (regexp-quote fill-prefix)))
+		   (forward-line 1)
+		   (if (bolp)
+		       ;; If forward-line went past a newline,
+		       ;; move further to the left margin.
+		       (move-to-left-margin))
+		   ;; Now stop the loop if end of paragraph.
+		   (and (not (eobp))
+			(if fill-individual-varying-indent
+			    ;; If this line is a separator line, with or
+			    ;; without prefix, end the paragraph.
+			    (and
+			     (not (looking-at paragraph-separate))
+			     (save-excursion
+			       (not (and (looking-at fill-prefix-regexp)
+					 (progn (forward-char
+						 (length fill-prefix))
+						(looking-at
+						 paragraph-separate))))))
+			  ;; If this line has more or less indent
+			  ;; than the fill prefix wants, end the paragraph.
+			  (and (looking-at fill-prefix-regexp)
+			       ;; If fill prefix is shorter than a new
+			       ;; fill prefix computed here, end paragraph.
+ 			       (let ((this-line-fill-prefix
+				      (fill-individual-paragraphs-prefix
+				       citation-regexp)))
+ 				 (>= (length fill-prefix)
+ 				     (length this-line-fill-prefix)))
+			       (save-excursion
+				 (not (progn (forward-char
+					      (length fill-prefix))
+					     (or (looking-at "[ \t]")
+						 (looking-at paragraph-separate)
+						 (looking-at paragraph-start)))))
+			       (not (and (equal fill-prefix "")
+					 citation-regexp
+					 (looking-at citation-regexp))))))))
+	  ;; Fill this paragraph, but don't add a newline at the end.
+	  (let ((had-newline (bolp)))
+	    (fill-region-as-paragraph start (point) justify)
+	    (if (and (bolp) (not had-newline))
+		(delete-char -1))))))))
+
+(defun fill-individual-paragraphs-prefix (citation-regexp)
+  (let* ((adaptive-fill-first-line-regexp ".*")
+	 (just-one-line-prefix
+	  ;; Accept any prefix rather than just the ones matched by
+	  ;; adaptive-fill-first-line-regexp.
+	  (fill-context-prefix (point) (line-beginning-position 2)))
+	 (two-lines-prefix
+	  (fill-context-prefix (point) (line-beginning-position 3))))
+    (if (not just-one-line-prefix)
+	(buffer-substring
+	 (point) (save-excursion (skip-chars-forward " \t") (point)))
+	;; See if the citation part of JUST-ONE-LINE-PREFIX
+	;; is the same as that of TWO-LINES-PREFIX,
+	;; except perhaps with longer whitespace.
+      (if (and just-one-line-prefix two-lines-prefix
+	       (let* ((one-line-citation-part
+		       (fill-individual-paragraphs-citation
+			just-one-line-prefix citation-regexp))
+		      (two-lines-citation-part
+		       (fill-individual-paragraphs-citation
+			two-lines-prefix citation-regexp))
+		      (adjusted-two-lines-citation-part
+		       (substring two-lines-citation-part 0
+				  (string-match "[ \t]*\\'"
+						two-lines-citation-part))))
+		 (and
+		 (string-match (concat "\\`"
+				       (regexp-quote
+					adjusted-two-lines-citation-part)
+				       "[ \t]*\\'")
+			       one-line-citation-part)
+		 (>= (string-width one-line-citation-part)
+		      (string-width two-lines-citation-part)))))
+	    two-lines-prefix
+	just-one-line-prefix))))
+
+(defun fill-individual-paragraphs-citation (string citation-regexp)
+  (if citation-regexp
+      (if (string-match citation-regexp string)
+	  (match-string 0 string)
+	"")
+    string))
+
+(defun fill-region-as-paragraph-semlf (from to &optional justify
+                                            nosqueeze squeeze-after)
+  "Fill the region using semantic linefeeds as if it were a single paragraph.
+This command removes any paragraph breaks in the region and extra
+newlines at the end, and fills lines within the region.  Text is
+refilled putting a newline character after each sentence, calling
+`forward-sentence' to find the ends of sentences.  If
+`sentence-end-double-space' is non-nil, period followed by one space is
+not the end of a sentence.
+
+If JUSTIFY is non-nil (interactively, with prefix argument), justify as
+well.  If NOSQUEEZE is non-nil, do not to make spaces between words
+canonical before filling.  SQUEEZE-AFTER, if non-nil, should be a buffer
+position; it means canonicalize spaces only starting from that position.
+See `canonically-space-region' for the meaning of canonicalization of
+spaces.  The variable `fill-column' controls the width for filling.
+
+Return the `fill-prefix' used for filling.
+
+This function can be assigned to `fill-region-as-paragraph-function' to
+override how functions like `fill-paragraph' and `fill-region' fill
+text.
+
+For more details about semantic linefeeds, see URL `https://sembr.org/'
+and URL `https://rhodesmill.org/brandon/2012/one-sentence-per-line/'."
+  (interactive (progn
+		 (barf-if-buffer-read-only)
+		 (list (region-beginning)
+                       (region-end)
+		       (if current-prefix-arg 'full))))
+
+  (let ((from (min from to))
+        (to (copy-marker (max from to) t))
+        pfx)
+    (goto-char from)
+    (let ((fill-column most-positive-fixnum))
+      (setq pfx (or (save-excursion
+                      (fill-region-as-paragraph-default (point)
+                                                        to
+                                                        nil
+                                                        nosqueeze
+                                                        squeeze-after))
+                    "")))
+    (while (< (point) to)
+      (let ((fill-to (copy-marker
+                      (min to
+                           (save-excursion
+                             (forward-sentence)
+                             (point)))
+                      t))
+            (fill-prefix pfx))
+	(fill-region-as-paragraph-default (point)
+				          fill-to
+				          justify
+                                          t)
+        (goto-char fill-to))
+      (when (and (> (point) (line-beginning-position))
+		 (< (point) (line-end-position))
+                 (< (point) to))
+	(delete-horizontal-space)
+	(insert "\n")
+	(insert pfx)))
+    pfx))
+
+(defvar comment-start-skip nil
+  "Regexp to match the start of a comment plus everything up to its body.")
+
+(defvar mail-citation-prefix nil)
+
+(defvar fill-individual-varying-indent nil)
+(defvar colon-double-space nil)
+(defvar fill-separate-heterogeneous-words-with-space nil)
+(defvar fill-paragraph-function nil)
+(defvar fill-paragraph-handle-comment t)
+(defvar enable-kinsoku t)
+(defvar fill-indent-according-to-mode nil)
+(defvar current-fill-column--has-warned nil)
+(defvar fill-nobreak-predicate nil)
+(defvar fill-nobreak-invisible nil)
+(defvar fill-find-break-point-function-table (make-char-table nil))
+(defvar fill-nospace-between-words-table (make-char-table nil))
+(defvar fill-region-as-paragraph-function #'fill-region-as-paragraph-default)
+(defvar fill-forward-paragraph-function 'forward-paragraph)
+
+
 (defvar lisp-interaction-mode-map
   (let ((m (make-sparse-keymap))
         (menu (make-sparse-keymap)))

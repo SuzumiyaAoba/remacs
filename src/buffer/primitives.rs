@@ -988,7 +988,13 @@ pub(crate) static SUBRS: &[Subr] = &[
         f_string_match,
         "Match REGEXP in STRING."
     ),
-    S!("string-match-p", 2, 4, f_string_match, "Predicate version."),
+    S!(
+        "string-match-p",
+        2,
+        4,
+        f_string_match_p,
+        "Predicate version."
+    ),
     S!(
         "re-search-forward",
         1,
@@ -2052,13 +2058,21 @@ fn f_pos_eol(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 }
 
 fn f_line_beginning_position(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    f_beginning_of_line(i, vec![a.get(0).cloned().unwrap_or(Value::Int(1))])?;
-    f_point(i, vec![])
+    let saved = cur(i).borrow().point();
+    let r = f_beginning_of_line(i, vec![a.get(0).cloned().unwrap_or(Value::Int(1))]);
+    let p = cur(i).borrow().point();
+    cur(i).borrow_mut().set_point(saved);
+    r?;
+    Ok(Value::Int(p as i128 + 1))
 }
 
 fn f_line_end_position(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    f_end_of_line(i, vec![a.get(0).cloned().unwrap_or(Value::Int(1))])?;
-    f_point(i, vec![])
+    let saved = cur(i).borrow().point();
+    let r = f_end_of_line(i, vec![a.get(0).cloned().unwrap_or(Value::Int(1))]);
+    let p = cur(i).borrow().point();
+    cur(i).borrow_mut().set_point(saved);
+    r?;
+    Ok(Value::Int(p as i128 + 1))
 }
 
 fn f_line_number_at_pos(i: &mut Interp, a: Vec<Value>) -> EvalResult {
@@ -2173,14 +2187,21 @@ fn f_forward_comment(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let len = bb.text_len();
     let mut p = bb.point();
     let mut comments = 0i128;
+    // GNU drives this off the syntax table: `<` starts a comment, `>` ends
+    // it.  The standard syntax table has no comment characters at all, so
+    // `forward-comment' returns nil in fundamental-mode buffers — callers
+    // (e.g. `comment-forward') then fall back to regexps.
     if count >= 0 {
         loop {
-            while p < len && bb.text.char_at(p).is_whitespace() {
+            while p < len && crate::lisp::regexp::syntax_code(bb.text.char_at(p)) == b' ' {
                 p += 1;
             }
-            // A `;' comment runs to end of line.
-            if p < len && bb.text.char_at(p) == ';' {
-                while p < len && bb.text.char_at(p) != '\n' {
+            if p < len && crate::lisp::regexp::syntax_code(bb.text.char_at(p)) == b'<' {
+                p += 1;
+                while p < len && crate::lisp::regexp::syntax_code(bb.text.char_at(p)) != b'>' {
+                    p += 1;
+                }
+                if p < len {
                     p += 1;
                 }
                 comments += 1;
@@ -2190,28 +2211,19 @@ fn f_forward_comment(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         }
     } else {
         loop {
-            while p > bb.begv && bb.text.char_at(p - 1).is_whitespace() {
+            while p > bb.begv && crate::lisp::regexp::syntax_code(bb.text.char_at(p - 1)) == b' ' {
                 p -= 1;
             }
-            // If the preceding text on this line is a `;' comment
-            // reaching p, jump back over it.
-            let mut ls = p;
-            while ls > bb.begv && bb.text.char_at(ls - 1) != '\n' {
-                ls -= 1;
-            }
-            let mut semi = None;
-            for k in ls..p {
-                if bb.text.char_at(k) == ';' {
-                    semi = Some(k);
-                    break;
+            if p > bb.begv && crate::lisp::regexp::syntax_code(bb.text.char_at(p - 1)) == b'>' {
+                p -= 1;
+                while p > bb.begv
+                    && crate::lisp::regexp::syntax_code(bb.text.char_at(p - 1)) != b'<'
+                {
+                    p -= 1;
                 }
-            }
-            match semi {
-                Some(k) => {
-                    p = k;
-                    comments += 1;
-                }
-                None => break,
+                comments += 1;
+            } else {
+                break;
             }
         }
     }
@@ -2861,33 +2873,33 @@ pub(crate) fn f_syntax_after(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     }
     let c = bb.text.char_at(idx);
     // GNU syntax classes: 0 ws, 1 punct, 2 word, 3 symbol, 4 open,
-    // 5 close, 6 expr-prefix, 7 string-quote, 8 paired-delim,
-    // 9 escape, 10 charquote, 11 comment-start, 12 comment-end.
-    let (cls, matching): (i128, Option<char>) = match c {
-        ' ' | '\t' | '\n' | '\x0b' | '\x0c' | '\r' => (0, None),
-        'a'..='z' | 'A'..='Z' | '0'..='9' => (2, None),
-        '(' | '[' | '{' => (
-            4,
-            Some(match c {
-                '(' => ')',
-                '[' => ']',
-                _ => '}',
-            }),
-        ),
-        ')' | ']' | '}' => (
-            5,
-            Some(match c {
-                ')' => '(',
-                ']' => '[',
-                _ => '{',
-            }),
-        ),
-        '"' | '|' => (7, None),
-        '\\' => (9, None),
-        ';' => (11, None),
-        '\'' | '`' | ',' | '#' => (6, None),
-        '_' | '$' | '%' | '&' | '*' | '+' | '-' | '/' | '<' | '=' | '>' => (3, None),
-        _ => (1, None),
+    // 5 close, 6 expr-prefix, 7 string-quote, 8 math, 9 escape,
+    // 10 charquote, 11 comment-start, 12 comment-end, 14/15 fences.
+    let cls: i128 = match crate::lisp::regexp::syntax_code(c) {
+        b' ' => 0,
+        b'w' => 2,
+        b'_' => 3,
+        b'(' => 4,
+        b')' => 5,
+        b'\'' => 6,
+        b'"' => 7,
+        b'\\' => 9,
+        b'<' => 11,
+        b'>' => 12,
+        _ => 1,
+    };
+    let matching: Option<char> = match cls {
+        4 => Some(match c {
+            '(' => ')',
+            '[' => ']',
+            _ => '}',
+        }),
+        5 => Some(match c {
+            ')' => '(',
+            ']' => '[',
+            _ => '{',
+        }),
+        _ => None,
     };
     // GNU returns a dotted pair (CLASS . MATCHING-CHAR) for
     // open/close classes, a singleton list otherwise.
@@ -3793,7 +3805,12 @@ fn rect_tab_width(i: &Interp) -> i128 {
 }
 
 /// Column of char index P on the line starting at LS.
-fn rect_col_at(text: &crate::buffer::gapbuf::GapBuffer, ls: usize, p: usize, tab: i128) -> i128 {
+pub(crate) fn rect_col_at(
+    text: &crate::buffer::gapbuf::GapBuffer,
+    ls: usize,
+    p: usize,
+    tab: i128,
+) -> i128 {
     let mut col = 0i128;
     let mut k = ls;
     while k < p {
@@ -4845,6 +4862,14 @@ fn f_string_match(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         }
         None => Ok(Value::Nil),
     }
+}
+
+/// GNU's `string-match-p` does not change the match data.
+fn f_string_match_p(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let saved = i.match_data.clone();
+    let r = f_string_match(i, a);
+    i.match_data = saved;
+    r
 }
 
 pub(crate) fn search_common(

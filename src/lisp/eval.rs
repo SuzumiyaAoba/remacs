@@ -14,7 +14,7 @@ use super::error::{EvalResult, Flow};
 use super::obarray::Obarray;
 use super::obarray::sym;
 use super::reader::Reader;
-use super::value::{Arity, Lambda, SymId, Value};
+use super::value::{Arity, Lambda, Marker, SymId, Value};
 
 /// A saved dynamic binding (specbind entry).
 struct SpecBind {
@@ -2089,7 +2089,7 @@ impl Interp {
             ("blink-matching-delay", Value::Int(1)),
             ("coding-system-for-read", Value::Nil),
             ("coding-system-for-write", Value::Nil),
-            ("comment-column", Value::Int(40)),
+            ("comment-column", Value::Int(32)),
             ("comment-end", Value::string("")),
             ("completion-auto-help", Value::Sym(sym::T)),
             ("completions-detailed", Value::Nil),
@@ -2231,12 +2231,15 @@ impl Interp {
             ("comment-multi-line", Value::Nil),
             ("comment-empty-lines", Value::Sym(sym::T)),
             ("comment-fill-column", Value::Nil),
-            ("comment-use-syntax", Value::Nil),
+            ("comment-use-syntax", Value::Sym(self.intern("undecided"))),
             ("fill-nospace-between-words", Value::Sym(sym::T)),
             ("auto-fill-function", Value::Nil),
             ("normal-auto-fill-function", Value::Nil),
             ("adaptive-fill-mode", Value::Sym(sym::T)),
-            ("adaptive-fill-regexp", Value::Nil),
+            (
+                "adaptive-fill-regexp",
+                Value::string("[-–!|#%;>*·•‣⁃◦ \t]*"),
+            ),
             ("adaptive-fill-function", Value::Nil),
             (
                 "adaptive-fill-first-line-regexp",
@@ -2660,20 +2663,34 @@ impl Interp {
 
     // ---------- excursions ----------
 
-    /// Snapshot for `save-excursion`: buffer + point (+mark).
-    pub fn save_excursion_state(&self) -> ExcursionState {
-        let b = self.current_buffer_ref();
-        let (point, mark, mark_active) = b
-            .as_ref()
+    /// Snapshot for `save-excursion`: buffer + point saved as a *marker*
+    /// (like GNU), so edits before point move the restored position.
+    /// `save_mark` additionally records the mark (`save-mark-and-excursion`).
+    pub fn save_excursion_state(&mut self, save_mark: bool) -> ExcursionState {
+        let buf = self.current_buffer;
+        let (point, mark, mark_active) = self
+            .buffers
+            .get(buf)
             .map(|r| {
                 let bb = r.borrow();
                 (bb.point, bb.mark, bb.mark_active)
             })
             .unwrap_or((0, None, false));
+        let mut mk = |pos| {
+            let m = Rc::new(RefCell::new(Marker {
+                buffer: Some(buf),
+                position: pos,
+                insertion_type: false,
+            }));
+            if let Some(b) = self.buffers.get(buf) {
+                b.borrow_mut().register_marker(&m);
+            }
+            m
+        };
         ExcursionState {
-            buffer: self.current_buffer,
-            point,
-            mark,
+            buffer: buf,
+            point: mk(point),
+            mark: if save_mark { mark.map(&mut mk) } else { None },
             mark_active,
         }
     }
@@ -2682,36 +2699,54 @@ impl Interp {
         if let Some(b) = self.buffers.get(s.buffer) {
             {
                 let mut bb = b.borrow_mut();
-                bb.set_point(s.point);
-                bb.mark = s.mark;
-                bb.mark_active = s.mark_active;
+                bb.set_point(s.point.borrow().position);
+                if let Some(m) = &s.mark {
+                    let p = m.borrow().position;
+                    bb.mark = Some(p.min(bb.text.len()));
+                    bb.mark_active = s.mark_active;
+                }
             }
             self.set_current_buffer(s.buffer);
         }
     }
 
-    /// Snapshot for `save-restriction` (narrowing bounds).
-    pub fn save_restriction_state(&self) -> RestrictionState {
-        let b = self.current_buffer_ref();
-        let (begv, zv) = b
-            .as_ref()
+    /// Snapshot for `save-restriction` (narrowing bounds). GNU records the
+    /// bounds as markers so edits inside the restriction move them.
+    pub fn save_restriction_state(&mut self) -> RestrictionState {
+        let buf = self.current_buffer;
+        let (begv, zv) = self
+            .buffers
+            .get(buf)
             .map(|r| {
                 let bb = r.borrow();
                 (bb.begv, bb.zv)
             })
             .unwrap_or((0, 0));
+        let mk = |pos, itype| {
+            let m = Rc::new(RefCell::new(Marker {
+                buffer: Some(buf),
+                position: pos,
+                insertion_type: itype,
+            }));
+            if let Some(b) = self.buffers.get(buf) {
+                b.borrow_mut().register_marker(&m);
+            }
+            m
+        };
+        // GNU records ZV with insertion_type = t: text inserted exactly at
+        // the end of the restriction stays inside it.
         RestrictionState {
-            buffer: self.current_buffer,
-            begv,
-            zv,
+            buffer: buf,
+            begv: mk(begv, false),
+            zv: mk(zv, true),
         }
     }
 
     pub fn restore_restriction_state(&mut self, s: RestrictionState) {
         if let Some(b) = self.buffers.get(s.buffer) {
             let mut bb = b.borrow_mut();
-            bb.begv = s.begv.min(bb.text.len());
-            bb.zv = s.zv.max(bb.begv).min(bb.text.len());
+            bb.begv = s.begv.borrow().position.min(bb.text.len());
+            bb.zv = s.zv.borrow().position.max(bb.begv).min(bb.text.len());
         }
     }
 
@@ -3170,19 +3205,20 @@ fn skip_prompt(chars: &[char], pos: &mut usize) {
     let _ = take_prompt(chars, pos);
 }
 
-/// Saved point/buffer for `save-excursion`.
+/// Saved point/buffer for `save-excursion` (marker-based, like GNU).
 pub struct ExcursionState {
     pub buffer: usize,
-    pub point: usize,
-    pub mark: Option<usize>,
+    pub point: Rc<RefCell<Marker>>,
+    /// Only `Some` for `save-mark-and-excursion`.
+    pub mark: Option<Rc<RefCell<Marker>>>,
     pub mark_active: bool,
 }
 
-/// Saved narrowing bounds for `save-restriction`.
+/// Saved narrowing bounds for `save-restriction` (markers like GNU).
 pub struct RestrictionState {
     pub buffer: usize,
-    pub begv: usize,
-    pub zv: usize,
+    pub begv: Rc<RefCell<Marker>>,
+    pub zv: Rc<RefCell<Marker>>,
 }
 
 /// `match-data` contents after a successful search.

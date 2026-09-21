@@ -273,7 +273,6 @@ fn install_aliases(interp: &mut Interp) {
         ("string-equal", "string="),
         ("string-lessp", "string<"),
         ("same-names-p", "string="),
-        ("string-match-p", "string-match"),
         ("buffer-name-as-string", "buffer-name"),
     ];
     for (alias, target) in aliases {
@@ -301,7 +300,8 @@ pub(crate) fn want_num(i: &mut Interp, v: &Value) -> Result<f64, Flow> {
     match v {
         Value::Int(n) => Ok(*n as f64),
         Value::Float(f) => Ok(*f),
-        _ => Err(i.wrong_type_mut("numberp", v)),
+        Value::Marker(m) => Ok(m.borrow().position as f64 + 1.0),
+        _ => Err(i.wrong_type_mut("number-or-marker-p", v)),
     }
 }
 
