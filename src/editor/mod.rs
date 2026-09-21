@@ -4820,7 +4820,8 @@ fn temp_name_seed() -> String {
 }
 
 fn f_make_temp_name(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let prefix = want_filename(i, &a[0])?;
+    // GNU's make-temp-name does not expand the prefix.
+    let prefix = want_str(i, &a[0])?;
     for _ in 0..64 {
         let name = format!("{}{}", prefix, temp_name_seed());
         if !std::path::Path::new(&name).exists() {
@@ -4831,7 +4832,14 @@ fn f_make_temp_name(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 }
 
 fn f_make_temp_file(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let prefix = want_filename(i, &a[0])?;
+    // GNU expands relative prefixes under `temporary-file-directory`,
+    // not the buffer's `default-directory`.
+    let raw = want_str(i, &a[0])?;
+    let prefix = if raw.starts_with('/') || raw.starts_with('~') {
+        expand_file_name_str(i, &raw)
+    } else {
+        std::env::temp_dir().join(&raw).to_string_lossy().into_owned()
+    };
     let dir_flag = a.get(1).map(|v| v.truthy()).unwrap_or(false);
     for _ in 0..64 {
         let name = format!("{}{}", prefix, temp_name_seed());
