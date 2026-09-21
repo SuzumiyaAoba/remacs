@@ -1796,6 +1796,8 @@ places where expressions are evaluated and inserted or spliced in."
 ;; library from lisp/ (see load-path handling in load.rs).
 (autoload 'define-minor-mode "easy-mmode"
   "Define a new minor mode MODE." nil t)
+;; loaddefs.el registers this obsolete alias eagerly.
+(defalias 'easy-mmode-define-minor-mode 'define-minor-mode)
 (autoload 'kbd-macro-query "macros"
   "Query user during kbd macro execution." t)
 (autoload 'insert-kbd-macro "macros"
@@ -1813,6 +1815,65 @@ places where expressions are evaluated and inserted or spliced in."
 ;; GNU aliases (resolve immediately, before the library loads).
 (defalias 'kmacro-exec-ring-item 'funcall)
 (defalias 'name-last-kbd-macro 'kmacro-name-last-macro)
+
+;; ---------- nadvice place forms ----------
+
+;; `add-function'/`remove-function' are GNU macros over generalized
+;; places; PLACE is normalized to code evaluating to (KIND . ARGS)
+;; and `cl--add-function'/`cl--remove-function' do the wrap/dispatch.
+(defun cl--advice-place-code (place)
+  (cond
+   ((symbolp place) (list 'list ''var (list 'quote place)))
+   ((eq (car-safe place) 'local) (list 'list ''var (nth 1 place)))
+   ((eq (car-safe place) 'var) (list 'list ''var (nth 1 place)))
+   ((eq (car-safe place) 'function) (list 'list ''function (nth 1 place)))
+   ((eq (car-safe place) 'symbol-function)
+    (list 'list ''function (nth 1 place)))
+   ((eq (car-safe place) 'default-value)
+    (list 'list ''var (nth 1 place)))
+   ((eq (car-safe place) 'get)
+    (list 'list ''get (nth 1 place) (nth 2 place)))
+   ;; GNU: a quoted place reaches a `(setf quote)' setter and fails.
+   ((eq (car-safe place) 'quote) '(quote (setf-quote)))
+   (t (list 'list ''bad (list 'quote place)))))
+
+(defmacro add-function (how place function &optional props)
+  "Add FUNCTION to the function stored in the generalized PLACE.
+HOW is one of the `advice-add' locations; PROPS is an alist that may
+contain `name' and `depth'."
+  (list 'cl--add-function how (cl--advice-place-code place)
+        function props))
+
+(defmacro remove-function (place function)
+  "Remove FUNCTION (or the named advice) from the function in PLACE."
+  (list 'cl--remove-function (cl--advice-place-code place) function))
+
+(defmacro define-advice (symbol args &rest body)
+  "Define an advice and add it to the function named SYMBOL."
+  (or (listp args) (signal 'wrong-type-argument (list 'listp args)))
+  (or (<= 2 (length args) 4)
+      (signal 'wrong-number-of-arguments (list 2 4 (length args))))
+  (let* ((how (nth 0 args))
+         (lambda-list (nth 1 args))
+         (name (nth 2 args))
+         (depth (nth 3 args))
+         (props (append (and depth (list (cons 'depth depth)))
+                        (and name (list (cons 'name name)))))
+         (advice (cond ((null name) (cons 'lambda (cons lambda-list body)))
+                       ((or (stringp name) (symbolp name))
+                        (intern (format "%s@%s" symbol name)))
+                       (t (error "Unrecognized name spec `%S'" name)))))
+    (append '(prog1)
+            (and (symbolp advice)
+                 (list (cons 'defun (cons advice (cons lambda-list body)))))
+            (list (list 'advice-add (list 'quote symbol) how
+                        (list 'function advice)
+                        (and props (list 'quote props)))))))
+
+(defun advice-mapc (fun symbol)
+  "Apply FUN to each advice added to SYMBOL.
+FUN is called with the advice function and its property alist."
+  (advice-function-mapc fun symbol))
 
 ;; ---------- mode keymaps ----------
 

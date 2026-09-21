@@ -3,6 +3,7 @@
 
 use super::{S, arg, want_list, want_sym};
 use crate::lisp::Interp;
+use crate::lisp::SymId;
 use crate::lisp::error::{EvalResult, Flow};
 use crate::lisp::obarray::sym;
 use crate::lisp::value::{Marker, Subr, Value};
@@ -213,6 +214,20 @@ pub(crate) static SUBRS: &[Subr] = &[
         many 1,
         f_advice_apply_link,
         "Internal trampoline applying one advice wrapper."
+    ),
+    S!(
+        "cl--add-function",
+        3,
+        4,
+        f_add_function,
+        "Internal: add FUNCTION at HOW to normalized PLACE."
+    ),
+    S!(
+        "cl--remove-function",
+        2,
+        2,
+        f_remove_function,
+        "Internal: remove FUNCTION from normalized PLACE."
     ),
     S!(
         "handler-bind-1",
@@ -1680,8 +1695,8 @@ fn advice_name(i: &mut Interp, props: &Value) -> Value {
 
 /// Match an advice entry against `advice-remove'/`advice-member-p''s
 /// FUNCTION argument: the function value itself or a non-nil :name.
-fn advice_entry_matches(fun: &Value, name: &Value, sel: &Value) -> bool {
-    super::eq_values(fun, sel) || (!name.is_nil() && super::eq_values(name, sel))
+fn advice_entry_matches(i: &Interp, fun: &Value, name: &Value, sel: &Value) -> bool {
+    super::equal_values(i, fun, sel) || (!name.is_nil() && super::equal_values(i, name, sel))
 }
 
 fn f_advice_add(i: &mut Interp, a: Vec<Value>) -> EvalResult {
@@ -1700,27 +1715,171 @@ fn f_advice_add(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         ));
     }
     let name = advice_name(i, &arg(&a, 3));
-    let entry = (w, a[2].clone(), name.clone());
-    let pos = i.advices.iter().position(|(s, _)| *s == sym);
-    let list = match pos {
-        Some(p) => &mut i.advices[p].1,
+    advice_push(i, sym, w, a[2].clone(), name);
+    Ok(Value::Nil)
+}
+
+fn advice_retain(i: &mut Interp, key: SymId, sel: &Value) {
+    if let Some(pos) = i.advices.iter().position(|(s, _)| *s == key) {
+        let mut list = std::mem::take(&mut i.advices[pos].1);
+        list.retain(|(_, f, n)| !advice_entry_matches(i, f, n, sel));
+        i.advices[pos].1 = list;
+    }
+}
+
+fn advice_push(i: &mut Interp, key: SymId, w: SymId, fun: Value, name: Value) {
+    let entry = (w, fun.clone(), name.clone());
+    let pos = match i.advices.iter().position(|(s, _)| *s == key) {
+        Some(p) => p,
         None => {
-            i.advices.push((sym, Vec::new()));
-            &mut i.advices.last_mut().unwrap().1
+            i.advices.push((key, Vec::new()));
+            i.advices.len() - 1
         }
     };
+    let mut list = std::mem::take(&mut i.advices[pos].1);
     if !name.is_nil() {
-        list.retain(|(_, _, n)| !super::eq_values(n, &name));
+        list.retain(|(_, _, n)| !super::equal_values(i, n, &name));
     }
-    list.retain(|(_, f, _)| !super::eq_values(f, &a[2]));
+    list.retain(|(_, f, _)| !super::equal_values(i, f, &fun));
     list.push(entry);
-    Ok(Value::Nil)
+    i.advices[pos].1 = list;
+}
+
+/// The property under which an advice-wrapper gensym records the
+/// original place value it replaced.
+fn advice_wrap(i: &mut Interp, cur: &Value) -> SymId {
+    let orig_key = i.intern("cl--advice--orig");
+    if let Value::Sym(k) = cur {
+        if matches!(i.get_prop(*k, orig_key), Value::Cons(_)) {
+            return *k;
+        }
+    }
+    let k = i.obarray.gensym("cl--advice--");
+    i.fset(k, cur.clone());
+    i.put_prop(k, orig_key, Value::cons(cur.clone(), Value::Nil));
+    k
+}
+
+/// If V is an advice-wrapper gensym, return (wrapper-key, orig-value).
+fn advice_unwrap(i: &mut Interp, v: &Value) -> Option<(SymId, Value)> {
+    if let Value::Sym(k) = v {
+        let orig_key = i.intern("cl--advice--orig");
+        if let Value::Cons(c) = i.get_prop(*k, orig_key) {
+            return Some((*k, c.borrow().car.clone()));
+        }
+    }
+    None
 }
 
 fn f_advice_remove(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let sym = want_sym(i, &a[0])?;
-    if let Some((_, list)) = i.advices.iter_mut().find(|(s, _)| *s == sym) {
-        list.retain(|(_, f, n)| !advice_entry_matches(f, n, &a[1]));
+    advice_retain(i, sym, &a[1]);
+    Ok(Value::Nil)
+}
+
+/// `cl--add-function` — (HOW PLACE FUNCTION PROPS) where PLACE is a
+/// normalized `(KIND . ARGS)' list produced by the `add-function'
+/// macro: (function SYM), (var SYM), or (get SYM PROP).
+fn f_add_function(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let w = want_sym(i, &a[0])?;
+    if !ADVICE_WHERES
+        .iter()
+        .any(|n| i.symbol_name(w).as_str() == *n)
+    {
+        return Err(i.signal_data(
+            sym::ERROR,
+            vec![Value::string(format!(
+                "Unknown add-function location ‘{}’",
+                i.symbol_name(w)
+            ))],
+        ));
+    }
+    let p = a[1]
+        .list_to_vec()
+        .map_err(|_| i.wrong_type_mut("listp", &a[1]))?;
+    let kind = p
+        .first()
+        .and_then(|h| i.sym_id(h))
+        .map(|s| i.symbol_name(s));
+    let key = match kind.as_deref() {
+        Some("function") | Some("symbol-function") => want_sym(i, &p[1])?,
+        Some("var") | Some("default-value") | Some("local") => {
+            let sym = want_sym(i, &p[1])?;
+            let cur = i.symbol_value(sym);
+            let k = advice_wrap(i, &cur);
+            i.set_symbol(sym, Value::Sym(k))?;
+            k
+        }
+        Some("get") => {
+            let sym = want_sym(i, &p[1])?;
+            let prop = want_sym(i, &p[2])?;
+            let cur = i.get_prop(sym, prop);
+            let k = advice_wrap(i, &cur);
+            i.put_prop(sym, prop, Value::Sym(k));
+            k
+        }
+        // GNU's gv setter for a quoted place is the nonexistent
+        // function `(setf quote)' — signal the same void-function.
+        Some("setf-quote") => {
+            let sf = i.intern("(setf quote)");
+            return Err(i.signal_data(sym::VOID_FUNCTION, vec![Value::Sym(sf)]));
+        }
+        _ => {
+            return Err(i.signal_data(
+                sym::ERROR,
+                vec![Value::string(format!(
+                    "Unknown add-function place ‘{}’",
+                    i.print_to_string(&a[1])
+                ))],
+            ))
+        }
+    };
+    let name = advice_name(i, &arg(&a, 3));
+    advice_push(i, key, w, a[2].clone(), name);
+    Ok(Value::Nil)
+}
+
+/// `cl--remove-function` — (PLACE FUNCTION); mirror of the above.
+fn f_remove_function(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let p = a[0]
+        .list_to_vec()
+        .map_err(|_| i.wrong_type_mut("listp", &a[0]))?;
+    let kind = p
+        .first()
+        .and_then(|h| i.sym_id(h))
+        .map(|s| i.symbol_name(s));
+    let (holder, key) = match kind.as_deref() {
+        Some("function") | Some("symbol-function") => (None, want_sym(i, &p[1])?),
+        Some("var") | Some("default-value") | Some("local") => {
+            let sym = want_sym(i, &p[1])?;
+            let cur = i.symbol_value(sym);
+            match advice_unwrap(i, &cur) {
+                Some((k, orig)) => (Some(("var".to_string(), sym, orig, sym)), k),
+                None => return Ok(Value::Nil),
+            }
+        }
+        Some("get") => {
+            let sym = want_sym(i, &p[1])?;
+            let prop = want_sym(i, &p[2])?;
+            match advice_unwrap(i, &i.get_prop(sym, prop)) {
+                Some((k, orig)) => (Some(("get".to_string(), sym, orig, prop)), k),
+                None => return Ok(Value::Nil),
+            }
+        }
+        Some("setf-quote") => {
+            let sf = i.intern("(setf quote)");
+            return Err(i.signal_data(sym::VOID_FUNCTION, vec![Value::Sym(sf)]));
+        }
+        _ => return Ok(Value::Nil),
+    };
+    advice_retain(i, key, &a[1]);
+    if i.advice_list(key).is_empty() {
+        if let Some((kind, sym, orig, prop)) = holder {
+            match kind.as_str() {
+                "var" => i.set_symbol(sym, orig)?,
+                _ => i.put_prop(sym, prop, orig),
+            }
+        }
     }
     Ok(Value::Nil)
 }
@@ -1730,11 +1889,15 @@ fn f_advice_member_p(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         Value::Sym(s) => *s,
         _ => return Ok(Value::Nil),
     };
+    // GNU returns the found advice object (or nil), not just t.
     let hit = i
         .advice_list(sym)
-        .iter()
-        .any(|(_, f, n)| advice_entry_matches(f, n, &a[0]));
-    Ok(Value::from_bool(hit))
+        .into_iter()
+        .find(|(_, f, n)| advice_entry_matches(i, f, n, &a[0]));
+    Ok(match hit {
+        Some((_, f, _)) => f,
+        None => Value::Nil,
+    })
 }
 
 fn f_advice_function_mapc(i: &mut Interp, a: Vec<Value>) -> EvalResult {

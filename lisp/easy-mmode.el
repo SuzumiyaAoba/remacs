@@ -52,4 +52,7 @@ forced on/off with positive/nonpositive numeric arguments, and
                  (cons (list ',variable ,lighter-val) minor-mode-alist))))
        ',mode)))
 
+;; GNU: `easy-mmode-define-minor-mode' is the pre-30.1 name.
+(defalias 'easy-mmode-define-minor-mode #'define-minor-mode)
+
 (provide 'easy-mmode)

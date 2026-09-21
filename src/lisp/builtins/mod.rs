@@ -434,6 +434,28 @@ pub fn equal_values(interp: &Interp, a: &Value, b: &Value) -> bool {
                 .zip(yv.iter())
                 .all(|(a, b)| equal_values(interp, a, b))
         }
+        (Value::Lambda(x), Value::Lambda(y)) => {
+            // GNU compares interpreted lambdas as list structure.
+            x.is_macro == y.is_macro
+                && x.required == y.required
+                && x.rest == y.rest
+                && x.optional.len() == y.optional.len()
+                && x.optional.iter().zip(y.optional.iter()).all(|(a, b)| {
+                    a.sym == b.sym
+                        && a.supplied == b.supplied
+                        && match (&a.default, &b.default) {
+                            (Some(d), Some(e)) => equal_values(interp, d, e),
+                            (None, None) => true,
+                            _ => false,
+                        }
+                })
+                && x.body.len() == y.body.len()
+                && x.body
+                    .iter()
+                    .zip(y.body.iter())
+                    .all(|(a, b)| equal_values(interp, a, b))
+                && x.env.is_none() == y.env.is_none()
+        }
         _ => eql_values(a, b),
     }
 }

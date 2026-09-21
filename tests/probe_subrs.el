@@ -675,4 +675,54 @@
                (macroexp-quote 'a) (macroexp-quote 5)
                (macroexp-quote :k) (macroexp-quote '(x))))
   (terpri)
+
+;; nadvice place forms: add-function / remove-function.
+(defun probe-af-base (x) (list 'base x))
+(defvar probe-af-var nil)
+(setq probe-af-var (lambda (x) (* x 10)))
+(princ
+ (list (progn
+         (add-function :before (symbol-function 'probe-af-base)
+                       (lambda (x) (princ (list 'before x))))
+         (prog1 (probe-af-base 1)
+           (remove-function (symbol-function 'probe-af-base)
+                            (lambda (x) (princ (list 'before x))))))
+       (probe-af-base 2)
+       (progn (add-function :around probe-af-var
+                            (lambda (orig &rest r)
+                              (list 'around (apply orig r))))
+              (funcall probe-af-var 3))
+       (progn (add-function :filter-return probe-af-var
+                            (lambda (v) (list 'fr v)))
+              (funcall probe-af-var 4))
+       (progn (remove-function probe-af-var
+                               (lambda (v) (list 'fr v)))
+              (funcall probe-af-var 4))
+       (progn (put 'probe-holder 'fn 'probe-af-base)
+              (add-function :before-until (get 'probe-holder 'fn)
+                            (lambda (x) (and (> x 5) (list 'big x))))
+              (list (funcall (get 'probe-holder 'fn) 3)
+                    (funcall (get 'probe-holder 'fn) 7)))
+       (progn (add-function :after probe-af-var
+                            (lambda (x) (princ 'named!)) '((name . probe-name)))
+              (add-function :after probe-af-var
+                            (lambda (x) (princ 'dup!)) '((name . probe-name)))
+              (funcall probe-af-var 1)
+              (remove-function probe-af-var 'probe-name)
+              (funcall probe-af-var 1))
+       (condition-case e
+           (add-function :bogus probe-af-var #'ignore)
+         (error (list (car e) (cadr e))))
+       (macrop 'add-function) (macrop 'remove-function)
+       (fboundp 'easy-mmode-define-minor-mode)))
+(terpri)
+(define-advice probe-af-base (:around (orig &rest r) probe-adv)
+  (list 'adv (apply orig r)))
+(princ (list (probe-af-base 9)
+             (and (advice-member-p 'probe-adv 'probe-af-base) t)
+             (boundp 'standard-output)))
+(terpri)
+(advice-mapc (lambda (f p) (princ (list 'mapc (cdr (assq 'name p)))))
+             'probe-af-base)
+(terpri)
 nil)
