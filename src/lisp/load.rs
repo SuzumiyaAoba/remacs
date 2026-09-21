@@ -66,6 +66,29 @@ pub(crate) fn locate(i: &mut Interp, name: &str) -> Option<String> {
     None
 }
 
+/// Built-in Lisp libraries embedded in the binary (the repo's lisp/ dir),
+/// so `load`/autoload works regardless of the process cwd.
+static EMBEDDED_LISP: &[(&str, &str)] = &[
+    ("easy-mmode", include_str!("../../lisp/easy-mmode.el")),
+    ("eieio", include_str!("../../lisp/eieio.el")),
+    ("gv", include_str!("../../lisp/gv.el")),
+    ("kmacro", include_str!("../../lisp/kmacro.el")),
+    ("macros", include_str!("../../lisp/macros.el")),
+    ("pp", include_str!("../../lisp/pp.el")),
+];
+
+/// Embedded source for library NAME (with or without .el/.elc suffix).
+fn embedded(name: &str) -> Option<&'static str> {
+    let stem = name
+        .strip_suffix(".el")
+        .or_else(|| name.strip_suffix(".elc"))
+        .unwrap_or(name);
+    EMBEDDED_LISP
+        .iter()
+        .find(|(n, _)| *n == stem)
+        .map(|(_, src)| *src)
+}
+
 /// Read the file at PATH and evaluate all forms in it.
 /// Binds `load-file-name` and `load-in-progress` like Emacs `load`.
 pub fn eval_file(i: &mut Interp, path: &str) -> EvalResult {
@@ -94,11 +117,17 @@ pub fn eval_file(i: &mut Interp, path: &str) -> EvalResult {
     let canon = std::fs::canonicalize(path)
         .map(|p| p.to_string_lossy().into_owned())
         .unwrap_or_else(|_| path.to_string());
+    eval_src(i, &canon, &src)
+}
+
+/// Evaluate SRC as if loaded from file FILE (binds load-file-name,
+/// load-in-progress, lexical-binding cookie; runs after-load hooks).
+fn eval_src(i: &mut Interp, file: &str, src: &str) -> EvalResult {
     let lfn = i.intern("load-file-name");
     let lip = i.intern("load-in-progress");
     let cll = i.intern("current-load-list");
     let mark = i.specbind_depth();
-    i.specbind(lfn, Value::string(canon.clone()))?;
+    i.specbind(lfn, Value::string(file))?;
     i.specbind(lip, Value::t())?;
     // Emacs: `load' honors a `lexical-binding' file cookie on the first
     // line (or the second, after a `#!' line); absent → dynamic eval.
@@ -110,7 +139,7 @@ pub fn eval_file(i: &mut Interp, path: &str) -> EvalResult {
         // Push the file onto current-load-list's default? Emacs pushes
         // each loaded file; we keep it simple.
         let _ = cll;
-        run_after_load(i, &canon);
+        run_after_load(i, file);
     }
     i.unbind_to(mark)?;
     r
@@ -257,6 +286,15 @@ pub(crate) fn load_library(i: &mut Interp, name: &str) -> Result<bool, crate::li
             eval_file(i, &path)?;
             Ok(true)
         }
-        None => Ok(false),
+        // Fall back to the embedded copy of a built-in library, so that
+        // autoloads work even when the lisp/ dir isn't reachable by path.
+        None => match embedded(name) {
+            Some(src) => {
+                let virtual_path = format!("builtin:{}", name);
+                eval_src(i, &virtual_path, src)?;
+                Ok(true)
+            }
+            None => Ok(false),
+        },
     }
 }

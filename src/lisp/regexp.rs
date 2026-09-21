@@ -483,24 +483,11 @@ impl Parser {
         Ok(Ast::Class(set))
     }
 
-    /// One char inside a class (handles \-escapes for control chars).
+    /// One char inside a class.  GNU: `\' is an ordinary character
+    /// inside [...] (only `[:posix:]' and `\s'/`\S' are special, and
+    /// those are handled by the caller before this).
     fn class_char(&mut self) -> Result<char, RegexError> {
-        match self.next() {
-            None => Err(RegexError("unterminated class".into())),
-            Some('\\') => match self.next() {
-                Some('n') => Ok('\n'),
-                Some('t') => Ok('\t'),
-                Some('r') => Ok('\r'),
-                Some('f') => Ok('\x0c'),
-                Some('v') => Ok('\x0b'),
-                Some('a') => Ok('\x07'),
-                Some('e') => Ok('\x1b'),
-                Some('d') => Ok('\x7f'),
-                Some(c) => Ok(c),
-                None => Err(RegexError("trailing \\".into())),
-            },
-            Some(c) => Ok(c),
-        }
+        self.next().ok_or(RegexError("unterminated class".into()))
     }
 }
 

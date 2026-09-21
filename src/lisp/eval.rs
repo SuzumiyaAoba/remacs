@@ -2332,9 +2332,8 @@ impl Interp {
             ("minibuffer-local-map", Value::Nil),
             ("lexical-binding", Value::Sym(sym::T)),
             ("overriding-local-map", Value::Nil),
-            ("auto-mode-alist", Value::Nil),
-            ("interpreter-mode-alist", Value::Nil),
-            ("magic-mode-alist", Value::Nil),
+            // auto-mode-alist / interpreter-mode-alist / magic-mode-alist
+            // get their real GNU defaults from prelude defvars.
             // GNU: exec-path = $PATH dirs + exec-directory.
             (
                 "exec-path",

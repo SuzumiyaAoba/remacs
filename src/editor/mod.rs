@@ -1857,19 +1857,10 @@ pub(crate) static SUBRS: &[Subr] = &[
         f_fundamental_mode,
         "The default major mode."
     ),
-    S!("normal-mode", 0, 1, f_normal_mode, "Pick major mode."),
     S!("major-mode-suspend", 0, 0, f_nil, ""),
-    S!(
-        "delay-mode-hooks",
-        raw,
-        f_progn_raw,
-        "Eval BODY delaying mode hooks."
-    ),
-    S!("run-mode-hooks", many 0, f_run_mode_hooks, "Run mode hooks."),
-    S!("set-auto-mode", 0, 1, f_nil, ""),
-    S!("set-auto-mode-0", 0, 0, f_nil, ""),
-    S!("set-buffer-major-mode", 1, 1, f_nil, ""),
-    S!("hack-local-variables", 0, 1, f_nil, ""),
+    // delay-mode-hooks / run-mode-hooks /
+    // normal-mode / set-auto-mode{,-0} / set-buffer-major-mode /
+    // hack-local-variables are Lisp (prelude files.el port), like GNU.
     S!("hack-dir-local-variables", 0, 0, f_nil, ""),
     S!("dir-locals-set-class-variables", 1, 1, f_nil, ""),
     // timers
@@ -2116,10 +2107,6 @@ fn f_identity(_i: &mut Interp, a: Vec<Value>) -> EvalResult {
 fn f_second(_i: &mut Interp, a: Vec<Value>) -> EvalResult {
     Ok(a.into_iter().nth(1).unwrap_or(Value::Nil))
 }
-fn f_progn_raw(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    i.eval_progn(&a.into_iter().next().unwrap_or(Value::Nil))
-}
-
 fn arg(a: &[Value], i: usize) -> Value {
     a.get(i).cloned().unwrap_or(Value::Nil)
 }
@@ -5252,6 +5239,14 @@ fn f_find_file_noselect(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         let b = i.buffers.get(bid).unwrap();
         let mut bb = b.borrow_mut();
         bb.file_name = Some(path.clone());
+        // GNU exposes the visited file name as the buffer-local variable
+        // `buffer-file-name' (a C field); mirror it into locals so Lisp
+        // reads work.  permanent-local marks keep it through
+        // kill-all-local-variables.
+        let bfn = i.intern_soft("buffer-file-name").unwrap_or(u32::MAX);
+        let bft = i.intern_soft("buffer-file-truename").unwrap_or(u32::MAX);
+        bb.locals.insert(bfn, Value::string(path.clone()));
+        bb.locals.insert(bft, Value::string(path.clone()));
         if let Some(dir_end) = path.rfind('/') {
             let dd = i.intern_soft("default-directory").unwrap_or(u32::MAX);
             bb.locals
@@ -5263,6 +5258,22 @@ fn f_find_file_noselect(i: &mut Interp, a: Vec<Value>) -> EvalResult {
             bb.modified = false;
         }
     }
+    // GNU find-file-noselect -> after-find-file: pick the major mode and
+    // process file-local variables, then run find-file-hook.
+    let prev_buf = i.current_buffer;
+    i.set_current_buffer(bid);
+    let nm = i.intern("normal-mode");
+    let rh = i.intern("run-hooks");
+    let q = i.intern("quote");
+    let ffh = i.intern("find-file-hook");
+    let r1 = i.apply(&Value::Sym(nm), vec![Value::t()]);
+    let r2 = r1.and_then(|_| {
+        i.apply(&Value::Sym(rh), vec![
+            Value::list(vec![Value::Sym(q), Value::Sym(ffh)]),
+        ])
+    });
+    i.set_current_buffer(prev_buf);
+    r2?;
     Ok(i.buffer_value(bid).unwrap_or(Value::Nil))
 }
 
@@ -7382,32 +7393,10 @@ fn f_fundamental_mode(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
         bb.locals.insert(mm, Value::Sym(fmid));
         bb.locals.insert(mn, Value::string("Fundamental"));
     }
+    let rmh = i.intern("run-mode-hooks");
     let hook = i.intern("fundamental-mode-hook");
-    f_run_mode_hooks(i, vec![Value::Sym(hook)])?;
+    i.apply(&Value::Sym(rmh), vec![Value::Sym(hook)])?;
     Ok(Value::Sym(fmid))
-}
-
-fn f_normal_mode(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
-    f_fundamental_mode(i, vec![])
-}
-
-fn f_run_mode_hooks(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    for hook in a {
-        let id = match i.sym_id(&hook) {
-            Some(s) => s,
-            None => continue,
-        };
-        let v = i.symbol_value(id);
-        let fns = match &v {
-            Value::Cons(_) => v.list_to_vec().unwrap_or_default(),
-            Value::Nil => Vec::new(),
-            other => vec![other.clone()],
-        };
-        for f in fns {
-            i.apply(&f, vec![])?;
-        }
-    }
-    Ok(Value::Nil)
 }
 
 fn f_with_timeout_raw(i: &mut Interp, a: Vec<Value>) -> EvalResult {

@@ -2,7 +2,7 @@
 //! These are real Lisp macros/functions (as in Emacs), not Rust code.
 
 /// Source evaluated once per `Interp::new`.
-pub const PRELUDE: &str = r#"
+pub const PRELUDE: &str = r##"
 ;; -*- lexical-binding: nil -*-
 
 ;; ---------- control-flow macros ----------
@@ -8618,8 +8618,1838 @@ On error, location of point is unspecified."
               (signal (car err) (cdr err)))))))
       (setq arg (- arg inc)))))
 
+;; ---------- files.el: auto-mode & local variables (GNU port) ----------
+;; GNU marks these buffer-locals permanent (buffer.c); preserved by
+;; kill-all-local-variables.
+(put 'buffer-file-name 'permanent-local t)
+(put 'buffer-file-truename 'permanent-local t)
+(put 'default-directory 'permanent-local t)
+(put 'buffer-auto-save-file-name 'permanent-local t)
+(put 'buffer-saved-size 'permanent-local t)
+(put 'buffer-backed-up 'permanent-local t)
+
+;; minor convenience feature for handling of an obsolete Rmail file format.
+(defun define-obsolete-function-alias (obsolete-name current-name
+                                                     &optional when docstring)
+  "Make OBSOLETE-NAME a (function) alias for CURRENT-NAME."
+  (defalias obsolete-name current-name docstring)
+  (put obsolete-name 'byte-obsolete-function t)
+  obsolete-name)
+
+(defun provided-mode-derived-p (mode &rest modes)
+  "Non-nil if MODE is a major mode derived from one of MODES."
+  (let ((m mode)
+        (found nil))
+    (while (and m (not found))
+      (if (memq m modes)
+          (setq found t)
+        (setq m (get m 'derived-mode-parent))))
+    found))
+
+(defvar file-name-version-regexp
+  "\\(?:~\\|\\.~[-[:alnum:]:#@^._]+\\(?:~[[:digit:]]+\\)?~\\)"
+  ;; The last ~[[:digit:]]+ matches relative versions in git,
+  ;; e.g. `foo.js.~HEAD~1~'.
+  "Regular expression matching the backup/version part of a file name.
+Used by `file-name-sans-versions'.")
+
+(defun file-name-sans-versions (name &optional keep-backup-version)
+  "Return file NAME sans backup versions or strings.
+This is a separate procedure so your site-init or startup file can
+redefine it.
+If the optional argument KEEP-BACKUP-VERSION is non-nil,
+we do not remove backup version numbers, only true file version numbers.
+See `file-name-version-regexp' for what constitutes backup versions
+and version strings."
+  (let ((handler (find-file-name-handler name 'file-name-sans-versions)))
+    (if handler
+	(funcall handler 'file-name-sans-versions name keep-backup-version)
+      (substring name 0
+		 (unless keep-backup-version
+                   (string-match (concat file-name-version-regexp "\\'")
+                                 name))))))
+
+;; GNU C var (indent.c); consulted by hack-local-variables--find-variables.
+(defvar selective-display nil)
+
+;; subr.el: mode-hook machinery (verbatim GNU).
+(defvar-local delay-mode-hooks nil
+  "If non-nil, `run-mode-hooks' should delay running the hooks.")
+(defvar-local delayed-mode-hooks nil
+  "List of delayed mode hooks waiting to be run.")
+(defvar-local delayed-after-hook-functions nil
+  "List of functions to run at the end of `run-mode-hooks'.")
+
+(defun run-mode-hooks (&rest hooks)
+  "Run mode hooks `delayed-mode-hooks' and HOOKS, or delay HOOKS.
+Call `hack-local-variables' to set up file local and directory local
+variables.
+
+If the variable `delay-mode-hooks' is non-nil, does not do anything,
+just adds the HOOKS to the list `delayed-mode-hooks'.
+Otherwise, runs hooks in the sequence: `change-major-mode-after-body-hook',
+`delayed-mode-hooks' (in reverse order), HOOKS, then runs
+`hack-local-variables' (if the buffer is visiting a file),
+runs the hook `after-change-major-mode-hook', and finally
+evaluates the functions in `delayed-after-hook-functions' (see
+`define-derived-mode').
+
+Major mode functions should use this instead of `run-hooks' when
+running their FOO-mode-hook."
+  (if delay-mode-hooks
+      ;; Delaying case.
+      (dolist (hook hooks)
+	(push hook delayed-mode-hooks))
+    ;; Normal case, just run the hook as before plus any delayed hooks.
+    (setq hooks (nconc (nreverse delayed-mode-hooks) hooks))
+    (and (bound-and-true-p syntax-propertize-function)
+         (not (local-variable-p 'parse-sexp-lookup-properties))
+         ;; `syntax-propertize' sets `parse-sexp-lookup-properties' for us, but
+         ;; in order for the sexp primitives to automatically call
+         ;; `syntax-propertize' we need `parse-sexp-lookup-properties' to be
+         ;; set first.
+         (setq-local parse-sexp-lookup-properties t))
+    (setq delayed-mode-hooks nil)
+    (apply #'run-hooks (cons 'change-major-mode-after-body-hook hooks))
+    (if (buffer-file-name)
+        (with-demoted-errors "File local-variables error: %s"
+          (hack-local-variables 'no-mode)))
+    (run-hooks 'after-change-major-mode-hook)
+    (dolist (fun (prog1 (nreverse delayed-after-hook-functions)
+                    (setq delayed-after-hook-functions nil)))
+      (funcall fun))))
+
+(defmacro delay-mode-hooks (&rest body)
+  "Execute BODY, but delay any `run-mode-hooks'.
+These hooks will be executed by the first following call to
+`run-mode-hooks' that occurs outside any `delay-mode-hooks' form.
+Affects only hooks run in the current buffer."
+  (declare (debug t) (indent 0))
+  `(progn
+     (make-local-variable 'delay-mode-hooks)
+     (let ((delay-mode-hooks t))
+       ,@body)))
+
+(defvar local-enable-local-variables t
+  "Like `enable-local-variables', except for major mode in a -*- line.
+The meaningful values are nil and non-nil.  The default is non-nil.
+It should be set in a buffer-local fashion.
+
+Setting this to nil has the same effect as setting `enable-local-variables'
+to nil, except that it does not ignore any mode: setting in a -*- line.
+Unless this difference matters to you, you should set `enable-local-variables'
+instead of this variable.")
+
+(defcustom enable-local-eval 'maybe
+  "Control processing of the \"variable\" `eval' in a file's local variables.
+The value can be t, nil or something else.
+A value of t means obey `eval' variables.
+A value of nil means ignore them; anything else means query."
+  :risky t
+  :type '(choice (const :tag "Obey" t)
+		 (const :tag "Ignore" nil)
+		 (other :tag "Query" other))
+  :group 'find-file)
+
+(defun normal-mode (&optional find-file)
+  "Choose the major mode for this buffer automatically.
+Also sets up any specified local variables of the file or its directory.
+Uses the visited file name, the -*- line, and the local variables spec.
+
+This function is called automatically from `find-file'.  In that case,
+we may set up the file-specified mode and local variables,
+depending on the value of `enable-local-variables'.
+In addition, if `local-enable-local-variables' is nil, we do
+not set local variables (though we do notice a mode specified with -*-.)
+
+`enable-local-variables' is ignored if you run `normal-mode' interactively,
+or from Lisp without specifying the optional argument FIND-FILE;
+in that case, this function acts as if `enable-local-variables' were t.
+
+If invoked in a buffer that doesn't visit a file, this function
+processes only the major mode specification in the -*- line and
+the local variables spec."
+  (interactive)
+  (kill-all-local-variables)
+  (unless delay-mode-hooks
+    (run-hooks 'change-major-mode-after-body-hook
+               'after-change-major-mode-hook))
+  (let ((enable-local-variables (or (not find-file) enable-local-variables)))
+    ;; FIXME this is less efficient than it could be, since both
+    ;; s-a-m and h-l-v may parse the same regions, looking for "mode:".
+    (with-demoted-errors "File mode specification error: %S"
+      (set-auto-mode))
+    ;; `delay-mode-hooks' being non-nil will have prevented the major
+    ;; mode's call to `run-mode-hooks' from calling
+    ;; `hack-local-variables'.  In that case, call it now.
+    (when delay-mode-hooks
+      (with-demoted-errors "File local-variables error: %S"
+        (hack-local-variables 'no-mode))))
+  ;; Turn font lock off and on, to make sure it takes account of
+  ;; whatever file local variables are relevant to it.
+  (when (and font-lock-mode
+             ;; Font-lock-mode (now in font-core.el) can be ON when
+             ;; font-lock.el still hasn't been loaded.
+             (boundp 'font-lock-keywords)
+             (eq (car font-lock-keywords) t))
+    (setq font-lock-keywords (cadr font-lock-keywords))
+    (font-lock-mode 1)))
+
+(defcustom auto-mode-case-fold t
+  "Non-nil means to try second pass through `auto-mode-alist'.
+This means that if the first case-sensitive search through the alist fails
+to find a matching major mode, a second case-insensitive search is made.
+On systems with case-insensitive file names, this variable is ignored,
+since only a single case-insensitive search through the alist is made."
+  :group 'files
+  :version "22.1"
+  :type 'boolean)
+
+(defvar auto-mode-alist
+  '(("\\.elc\\'" . elisp-byte-code-mode) ("\\.gpg\\(~\\|\\.~[0-9]+~\\)?\\'" nil epa-file) ("\\.zst\\'" nil jka-compr) ("\\.dz\\'" nil jka-compr) ("\\.xz\\'" nil jka-compr) ("\\.lzma\\'" nil jka-compr) ("\\.lz\\'" nil jka-compr) ("\\.g?z\\'" nil jka-compr) ("\\.bz2\\'" nil jka-compr) ("\\.Z\\'" nil jka-compr) ("\\.ya?ml\\'" . yaml-ts-mode-maybe) ("\\.vr[hi]?\\'" . vera-mode) ("\\.tsx\\'" . tsx-ts-mode-maybe) ("\\.ts\\'" . typescript-ts-mode-maybe) ("\\.rs\\'" . rust-ts-mode-maybe) ("\\(?:\\.\\(?:rbw?\\|ru\\|rake\\|thor\\|axlsx\\|jbuilder\\|rabl\\|gemspec\\|podspec\\)\\|/\\(?:Gem\\|Rake\\|Cap\\|Thor\\|Puppet\\|Berks\\|Brew\\|Fast\\|Vagrant\\|Guard\\|Pod\\)file\\)\\'" . ruby-mode) ("\\.re?st\\'" . rst-mode) ("/\\(?:Pipfile\\|\\.?flake8\\)\\'" . conf-mode) ("\\(?:\\.\\(?:p\\(?:th\\|y[iw]?\\)\\)\\|/\\(?:SCons\\(?:\\(?:crip\\|truc\\)t\\)\\)\\)\\'" . python-mode) ("/\\.php_cs\\(?:\\.dist\\)?\\'" . php-ts-mode-maybe) ("\\.\\(?:php\\|inc\\|stub\\)\\'" . php-ts-mode-maybe) ("\\.\\(?:php[s345]?\\|phtml\\)\\'" . php-ts-mode-maybe) ("\\.m\\'" . octave-maybe-mode) ("\\.lua\\'" . lua-mode) ("\\.less\\'" . less-css-mode) ("\\.[hl]?eex\\'" . heex-ts-mode-maybe) ("/go\\.work\\'" . go-work-ts-mode-maybe) ("/go\\.mod\\'" . go-mod-ts-mode-maybe) ("\\.go\\'" . go-ts-mode-maybe) ("mix\\.lock" . elixir-ts-mode-maybe) ("\\.exs\\'" . elixir-ts-mode-maybe) ("\\.ex\\'" . elixir-ts-mode-maybe) ("\\.elixir\\'" . elixir-ts-mode-maybe) ("\\.editorconfig\\'" . editorconfig-conf-mode) ("\\(?:\\(?:\\(?:Contain\\|Dock\\)erfile\\)\\(?:\\..*\\)?\\|\\.[Dd]ockerfile\\)\\'" . dockerfile-ts-mode-maybe) ("\\.scss\\'" . scss-mode) ("\\.cs\\'" . csharp-mode) ("\\(?:CMakeLists\\.txt\\|\\.cmake\\)\\'" . cmake-ts-mode-maybe) ("\\.awk\\'" . awk-mode) ("\\.\\(u?lpc\\|pike\\|pmod\\(\\.in\\)?\\)\\'" . pike-mode) ("\\.idl\\'" . idl-mode) ("\\.java\\'" . java-mode) ("\\.m\\'" . objc-mode) ("\\.ii\\'" . c++-mode) ("\\.i\\'" . c-mode) ("\\.lex\\'" . c-mode) ("\\.y\\(acc\\)?\\'" . c-mode) ("\\.h\\'" . c-or-c++-mode) ("\\.c\\'" . c-mode) ("\\.\\(CC?\\|HH?\\)\\'" . c++-mode) ("\\.[ch]\\(pp\\|xx\\|\\+\\+\\)\\'" . c++-mode) ("\\.\\(cc\\|hh\\)\\'" . c++-mode) ("\\.\\(bat\\|cmd\\)\\'" . bat-mode) ("\\.[sx]?html?\\(\\.[a-zA-Z_]+\\)?\\'" . mhtml-mode) ("\\.svgz?\\'" . image-mode) ("\\.svgz?\\'" . xml-mode) ("\\.x[bp]m\\'" . image-mode) ("\\.x[bp]m\\'" . c-mode) ("\\.p[bpgn]m\\'" . image-mode) ("\\.tiff?\\'" . image-mode) ("\\.gif\\'" . image-mode) ("\\.png\\'" . image-mode) ("\\.jpe?g\\'" . image-mode) ("\\.webp\\'" . image-mode) ("\\.te?xt\\'" . text-mode) ("\\.[tT]e[xX]\\'" . tex-mode) ("\\.ins\\'" . tex-mode) ("\\.ltx\\'" . latex-mode) ("\\.dtx\\'" . doctex-mode) ("\\.org\\'" . org-mode) ("\\.dir-locals\\(?:-2\\)?\\.el\\'" . lisp-data-mode) ("\\.eld\\'" . lisp-data-mode) ("eww-bookmarks\\'" . lisp-data-mode) ("tramp\\'" . lisp-data-mode) ("/archive-contents\\'" . lisp-data-mode) ("places\\'" . lisp-data-mode) ("\\.emacs-places\\'" . lisp-data-mode) ("\\.el\\'" . emacs-lisp-mode) ("Project\\.ede\\'" . emacs-lisp-mode) ("\\(?:\\.\\(?:scm\\|sls\\|sld\\|stk\\|ss\\|sch\\)\\|/\\.guile\\)\\'" . scheme-mode) ("\\.l\\'" . lisp-mode) ("\\.li?sp\\'" . lisp-mode) ("\\.[fF]\\'" . fortran-mode) ("\\.for\\'" . fortran-mode) ("\\.p\\'" . pascal-mode) ("\\.pas\\'" . pascal-mode) ("\\.\\(dpr\\|DPR\\)\\'" . opascal-mode) ("\\.\\([pP]\\([Llm]\\|erl\\|od\\)\\|al\\)\\'" . perl-mode) ("Imakefile\\'" . makefile-imake-mode) ("Makeppfile\\(?:\\.mk\\)?\\'" . makefile-makepp-mode) ("\\.makepp\\'" . makefile-makepp-mode) ("\\.mk\\'" . makefile-bsdmake-mode) ("\\.make\\'" . makefile-bsdmake-mode) ("GNUmakefile\\'" . makefile-gmake-mode) ("[Mm]akefile\\'" . makefile-bsdmake-mode) ("\\.am\\'" . makefile-automake-mode) ("\\.texinfo\\'" . texinfo-mode) ("\\.te?xi\\'" . texinfo-mode) ("\\.[sS]\\'" . asm-mode) ("\\.asm\\'" . asm-mode) ("\\.css\\'" . css-mode) ("\\.mixal\\'" . mixal-mode) ("\\.gcov\\'" . compilation-mode) ("/[._]?[A-Za-z0-9-]*\\(?:gdbinit\\(?:\\.\\(?:ini?\\|loader\\)\\)?\\|gdb\\.ini\\)\\'" . gdb-script-mode) ("-gdb\\.gdb" . gdb-script-mode) ("[cC]hange\\.?[lL]og?\\'" . change-log-mode) ("[cC]hange[lL]og[-.][0-9]+\\'" . change-log-mode) ("\\$CHANGE_LOG\\$\\.TXT" . change-log-mode) ("\\.scm\\.[0-9]*\\'" . scheme-mode) ("\\.[ckz]?sh\\'\\|\\.shar\\'\\|/\\.z?profile\\'" . sh-mode) ("\\.bash\\'" . sh-mode) ("/bash-fc\\.[0-9A-Za-z]\\{6\\}\\'" . sh-mode) ("\\`/etc/profile\\'" . sh-mode) ("/PKGBUILD\\'" . sh-mode) ("\\(/\\|\\`\\)\\.\\(bash_\\(profile\\|history\\|log\\(in\\|out\\)\\)\\|z?log\\(in\\|out\\)\\)\\'" . sh-mode) ("\\(/\\|\\`\\)\\.\\(shrc\\|zshrc\\|m?kshrc\\|bashrc\\|t?cshrc\\|esrc\\)\\'" . sh-mode) ("\\(/\\|\\`\\)\\.\\([kz]shenv\\|xinitrc\\|startxrc\\|xsession\\)\\'" . sh-mode) ("\\.m?spec\\'" . sh-mode) ("\\.m[mes]\\'" . nroff-mode) ("\\.man\\'" . nroff-mode) ("\\.sty\\'" . latex-mode) ("\\.cl[so]\\'" . latex-mode) ("\\.bbl\\'" . latex-mode) ("\\.bib\\'" . bibtex-mode) ("\\.bst\\'" . bibtex-style-mode) ("\\.sql\\'" . sql-mode) ("\\(acinclude\\|aclocal\\|acsite\\)\\.m4\\'" . autoconf-mode) ("\\.m[4c]\\'" . m4-mode) ("\\.mf\\'" . metafont-mode) ("\\.mp\\'" . metapost-mode) ("\\.vhdl?\\'" . vhdl-mode) ("\\.article\\'" . text-mode) ("\\.letter\\'" . text-mode) ("\\.i?tcl\\'" . tcl-mode) ("\\.exp\\'" . tcl-mode) ("\\.itk\\'" . tcl-mode) ("\\.icn\\'" . icon-mode) ("\\.sim\\'" . simula-mode) ("\\.mss\\'" . scribe-mode) ("\\.f9[05]\\'" . f90-mode) ("\\.f0[38]\\'" . f90-mode) ("\\.srt\\'" . srecode-template-mode) ("\\.prolog\\'" . prolog-mode) ("\\.tar\\'" . tar-mode) ("\\.\\(arc\\|zip\\|lzh\\|lha\\|zoo\\|[jew]ar\\|xpi\\|rar\\|cbr\\|7z\\|squashfs\\|ARC\\|ZIP\\|LZH\\|LHA\\|ZOO\\|[JEW]AR\\|XPI\\|RAR\\|CBR\\|7Z\\|SQUASHFS\\)\\'" . archive-mode) ("\\.oxt\\'" . archive-mode) ("\\.\\(deb\\|[oi]pk\\)\\'" . archive-mode) ("\\`/tmp/Re" . text-mode) ("/Message[0-9]*\\'" . text-mode) ("\\`/tmp/fol/" . text-mode) ("\\.oak\\'" . scheme-mode) ("\\.sgml?\\'" . sgml-mode) ("\\.x[ms]l\\'" . xml-mode) ("\\.slnx\\'" . xml-mode) ("\\.dbk\\'" . xml-mode) ("\\.dtd\\'" . sgml-mode) ("\\.ds\\(ss\\)?l\\'" . dsssl-mode) ("\\.js[mx]?\\'" . javascript-mode) ("\\.har\\'" . javascript-mode) ("\\.json\\'" . js-json-mode) ("\\.[ds]?va?h?\\'" . verilog-mode) ("\\.by\\'" . bovine-grammar-mode) ("\\.wy\\'" . wisent-grammar-mode) ("\\.erts\\'" . erts-mode) ("[:/\\]\\..*\\(emacs\\|gnus\\|viper\\)\\'" . emacs-lisp-mode) ("\\`\\..*emacs\\'" . emacs-lisp-mode) ("[:/]_emacs\\'" . emacs-lisp-mode) ("/crontab\\.X*[0-9]+\\'" . shell-script-mode) ("\\.ml\\'" . lisp-mode) ("\\.ld[si]?\\'" . ld-script-mode) ("ld\\.?script\\'" . ld-script-mode) ("\\.xs\\'" . c-mode) ("\\.x[abdsru]?[cnw]?\\'" . ld-script-mode) ("\\.zone\\'" . dns-mode) ("\\.soa\\'" . dns-mode) ("\\.asd\\'" . lisp-mode) ("\\.\\(asn\\|mib\\|smi\\)\\'" . snmp-mode) ("\\.\\(as\\|mi\\|sm\\)2\\'" . snmpv2-mode) ("\\.\\(diffs?\\|patch\\|rej\\)\\'" . diff-mode) ("\\.\\(dif\\|pat\\)\\'" . diff-mode) ("\\.[eE]?[pP][sS]\\'" . ps-mode) ("\\.\\(?:PDF\\|EPUB\\|CBZ\\|FB2\\|O?XPS\\|DVI\\|OD[FGPST]\\|DOCX\\|XLSX?\\|PPTX?\\|pdf\\|epub\\|cbz\\|fb2\\|o?xps\\|djvu\\|dvi\\|od[fgpst]\\|docx\\|xlsx?\\|pptx?\\)\\'" . doc-view-mode-maybe) ("configure\\.\\(ac\\|in\\)\\'" . autoconf-mode) ("\\.s\\(v\\|iv\\|ieve\\)\\'" . sieve-mode) ("BROWSE\\'" . ebrowse-tree-mode) ("\\.ebrowse\\'" . ebrowse-tree-mode) ("#\\*mail\\*" . mail-mode) ("\\.g\\'" . antlr-mode) ("\\.g4\\'" . antlr-v4-mode) ("\\.mod\\'" . m2-mode) ("\\.ses\\'" . ses-mode) ("\\.docbook\\'" . sgml-mode) ("\\.com\\'" . dcl-mode) ("/config\\.\\(?:bat\\|log\\)\\'" . fundamental-mode) ("/\\.?\\(authinfo\\|netrc\\)\\'" . authinfo-mode) ("\\.\\(?:[iI][nN][iI]\\|[lL][sS][tT]\\|[rR][eE][gG]\\|[sS][yY][sS]\\)\\'" . conf-mode) ("\\.la\\'" . conf-unix-mode) ("\\.ppd\\'" . conf-ppd-mode) ("java.+\\.conf\\'" . conf-javaprop-mode) ("\\.properties\\(?:\\.[a-zA-Z0-9._-]+\\)?\\'" . conf-javaprop-mode) ("\\.toml\\'" . conf-toml-mode) ("\\.desktop\\'" . conf-desktop-mode) ("npmrc\\'" . conf-npmrc-mode) ("/\\.redshift\\.conf\\'" . conf-windows-mode) ("\\`/etc/\\(?:DIR_COLORS\\|ethers\\|.?fstab\\|.*hosts\\|lesskey\\|login\\.?de\\(?:fs\\|vperm\\)\\|magic\\|mtab\\|pam\\.d/.*\\|permissions\\(?:\\.d/.+\\)?\\|protocols\\|rpc\\|services\\)\\'" . conf-space-mode) ("\\`/etc/\\(?:acpid?/.+\\|aliases\\(?:\\.d/.+\\)?\\|default/.+\\|group-?\\|hosts\\..+\\|inittab\\|ksysguarddrc\\|opera6rc\\|passwd-?\\|shadow-?\\|sysconfig/.+\\)\\'" . conf-mode) ("[cC]hange[lL]og[-.][-0-9a-z]+\\'" . change-log-mode) ("/\\.?\\(?:gitconfig\\|gnokiirc\\|hgrc\\|kde.*rc\\|mime\\.types\\|wgetrc\\)\\'" . conf-mode) ("/\\.mailmap\\'" . conf-unix-mode) ("/\\.\\(?:asound\\|enigma\\|fetchmail\\|gltron\\|gtk\\|hxplayer\\|mairix\\|mbsync\\|msmtp\\|net\\|neverball\\|nvidia-settings-\\|offlineimap\\|qt/.+\\|realplayer\\|reportbug\\|rtorrent\\.\\|screen\\|scummvm\\|sversion\\|sylpheed/.+\\|xmp\\)rc\\'" . conf-mode) ("/\\.\\(?:gdbtkinit\\|grip\\|mpdconf\\|notmuch-config\\|orbital/.+txt\\|rhosts\\|tuxracer/options\\)\\'" . conf-mode) ("/\\.?X\\(?:default\\|resource\\|re\\)s\\>" . conf-xdefaults-mode) ("/X11.+app-defaults/\\|\\.ad\\'" . conf-xdefaults-mode) ("/X11.+locale/.+/Compose\\'" . conf-colon-mode) ("/X11.+locale/compose\\.dir\\'" . conf-javaprop-mode) ("\\.~?[0-9]+\\.[0-9][-.0-9]*~?\\'" nil t) ("\\.\\(?:orig\\|in\\|[bB][aA][kK]\\)\\'" nil t) ("[/.]c\\(?:on\\)?f\\(?:i?g\\)?\\(?:\\.[a-zA-Z0-9._-]+\\)?\\'" . conf-mode-maybe) ("\\.[1-9]\\'" . nroff-mode) ("\\.avif\\'" . image-mode) ("\\.art\\'" . image-mode) ("\\.avs\\'" . image-mode) ("\\.bmp\\'" . image-mode) ("\\.cmyk\\'" . image-mode) ("\\.cmyka\\'" . image-mode) ("\\.crw\\'" . image-mode) ("\\.dcm\\'" . image-mode) ("\\.dcr\\'" . image-mode) ("\\.dcx\\'" . image-mode) ("\\.dng\\'" . image-mode) ("\\.dpx\\'" . image-mode) ("\\.fax\\'" . image-mode) ("\\.heic\\'" . image-mode) ("\\.hrz\\'" . image-mode) ("\\.icb\\'" . image-mode) ("\\.icc\\'" . image-mode) ("\\.icm\\'" . image-mode) ("\\.ico\\'" . image-mode) ("\\.icon\\'" . image-mode) ("\\.jbg\\'" . image-mode) ("\\.jbig\\'" . image-mode) ("\\.jng\\'" . image-mode) ("\\.jnx\\'" . image-mode) ("\\.miff\\'" . image-mode) ("\\.mng\\'" . image-mode) ("\\.mvg\\'" . image-mode) ("\\.otb\\'" . image-mode) ("\\.p7\\'" . image-mode) ("\\.pcx\\'" . image-mode) ("\\.pdb\\'" . image-mode) ("\\.pfa\\'" . image-mode) ("\\.pfb\\'" . image-mode) ("\\.picon\\'" . image-mode) ("\\.pict\\'" . image-mode) ("\\.rgb\\'" . image-mode) ("\\.rgba\\'" . image-mode) ("\\.six\\'" . image-mode) ("\\.tga\\'" . image-mode) ("\\.wbmp\\'" . image-mode) ("\\.wmf\\'" . image-mode) ("\\.wpg\\'" . image-mode) ("\\.xcf\\'" . image-mode) ("\\.xmp\\'" . image-mode) ("\\.xwd\\'" . image-mode) ("\\.yuv\\'" . image-mode) ("\\.tgz\\'" . tar-mode) ("\\.tbz2?\\'" . tar-mode) ("\\.txz\\'" . tar-mode) ("\\.tzst\\'" . tar-mode))
+  "Alist of filename patterns vs corresponding major mode functions.
+GNU Emacs runtime default, including entries injected by autoloads
+(cc-mode, python, jka-compr, epa-file, and friends).")
+
+(put 'auto-mode-alist 'risky-local-variable t)
+
+(defun conf-mode-maybe ()
+  "Select Conf mode or XML mode according to start of file."
+  (if (save-excursion
+	(save-restriction
+	  (widen)
+	  (goto-char (point-min))
+	  (looking-at "<\\?xml \\|<!-- \\|<!DOCTYPE ")))
+      (xml-mode)
+    (conf-mode)))
+
+(defvar interpreter-mode-alist
+  '(("j?ruby\\(?:[0-9.]+\\)" . ruby-mode) ("jruby" . ruby-mode) ("rbx" . ruby-mode) ("ruby" . ruby-mode) ("python[0-9.]*" . python-mode) ("php\\(?:-?[34578]\\(?:\\.[0-9]+\\)*\\)?" . php-ts-mode-maybe) ("lua" . lua-mode) ("rhino" . js-mode) ("gjs" . js-mode) ("nodejs" . js-mode) ("node" . js-mode) ("gawk" . awk-mode) ("nawk" . awk-mode) ("mawk" . awk-mode) ("awk" . awk-mode) ("pike" . pike-mode) ("\\(mini\\)?perl5?" . perl-mode) ("wishx?" . tcl-mode) ("tcl\\(sh\\)?" . tcl-mode) ("expect" . tcl-mode) ("octave" . octave-mode) ("scm" . scheme-mode) ("[acjkwz]sh" . sh-mode) ("r?bash2?" . sh-mode) ("dash" . sh-mode) ("mksh" . sh-mode) ("\\(dt\\|pd\\|w\\)ksh" . sh-mode) ("es" . sh-mode) ("i?tcsh" . sh-mode) ("oash" . sh-mode) ("rc" . sh-mode) ("rpm" . sh-mode) ("sh5?" . sh-mode) ("tail" . text-mode) ("more" . text-mode) ("less" . text-mode) ("pg" . text-mode) ("make" . makefile-gmake-mode) ("guile" . scheme-mode) ("clisp" . lisp-mode) ("emacs" . emacs-lisp-mode))
+  "Alist of interpreters vs corresponding major modes.
+GNU Emacs runtime default.")
+
+(defvar inhibit-local-variables-regexps
+  '("\\.tar\\'" "\\.t[bg]z\\'"
+    "\\.arc\\'" "\\.zip\\'" "\\.lzh\\'" "\\.lha\\'"
+    "\\.zoo\\'" "\\.[jew]ar\\'" "\\.xpi\\'" "\\.rar\\'"
+    "\\.7z\\'"
+    "\\.sx[dmicw]\\'" "\\.odt\\'"
+    "\\.diff\\'" "\\.patch\\'"
+    "\\.tiff?\\'" "\\.gif\\'" "\\.png\\'" "\\.jpe?g\\'")
+  "List of regexps matching file names in which to ignore local variables.
+This includes `-*-' lines as well as trailing \"Local Variables\" sections.
+Files matching this list are typically binary file formats.
+They may happen to contain sequences that look like local variable
+specifications, but are not really, or they may be containers for
+member files with their own local variable sections, which are
+not appropriate for the containing file.
+The function `inhibit-local-variables-p' uses this.")
+
+(defvar inhibit-local-variables-suffixes nil
+  "List of regexps matching suffixes to remove from file names.
+The function `inhibit-local-variables-p' uses this: when checking
+a file name, it first discards from the end of the name anything that
+matches one of these regexps.")
+
+;; Can't think of any situation in which you'd want this to be nil...
+(defvar inhibit-local-variables-ignore-case t
+  "Non-nil means `inhibit-local-variables-p' ignores case.")
+
+(defun inhibit-local-variables-p ()
+  "Return non-nil if file local variables should be ignored.
+This checks the file (or buffer) name against `inhibit-local-variables-regexps'
+and `inhibit-local-variables-suffixes'.  If
+`inhibit-local-variables-ignore-case' is non-nil, this ignores case."
+  (let ((temp inhibit-local-variables-regexps)
+	(name (if buffer-file-name
+		  (file-name-sans-versions buffer-file-name)
+		(buffer-name)))
+	(case-fold-search inhibit-local-variables-ignore-case))
+    (while (let ((sufs inhibit-local-variables-suffixes))
+	     (while (and sufs (not (string-match (car sufs) name)))
+	       (setq sufs (cdr sufs)))
+	     sufs)
+      (setq name (substring name 0 (match-beginning 0))))
+    (while (and temp
+		(not (string-match (car temp) name)))
+      (setq temp (cdr temp)))
+    temp))
+
+(defvar auto-mode-interpreter-regexp
+  (concat
+   "#![ \t]*"
+   ;; Optional group 1: env(1) invocation.
+   "\\("
+   "[^ \t\n]*/bin/env[ \t]*"
+   ;; Within group 1: possible -S/--split-string and environment
+   ;; adjustments.
+   "\\(?:"
+   ;; -S/--split-string
+   "\\(?:-[0a-z]*S[ \t]*\\|--split-string=\\)"
+   ;; More env arguments.
+   "\\(?:-[^ \t\n]+[ \t]+\\)*"
+   ;; Interpreter environment modifications.
+   "\\(?:[^ \t\n]+=[^ \t\n]*[ \t]+\\)*"
+   "\\)?"
+   "\\)?"
+   ;; Group 2: interpreter.
+   "\\([^ \t\n]+\\)")
+  "Regexp matching interpreters, for file mode determination.
+This regular expression is matched against the first line of a file
+to determine the file's mode in `set-auto-mode'.  If it matches, the file
+is assumed to be interpreted by the interpreter matched by the second group
+of the regular expression.  The mode is then determined as the mode
+associated with that interpreter in `interpreter-mode-alist'.")
+
+(defvar magic-mode-alist nil
+  "Alist of buffer beginnings vs. corresponding major mode functions.
+Each element looks like (REGEXP . FUNCTION) or (MATCH-FUNCTION . FUNCTION).
+After visiting a file, if REGEXP matches the text at the beginning of the
+buffer (case-sensitively), or calling MATCH-FUNCTION returns non-nil,
+`normal-mode' will call FUNCTION rather than allowing `auto-mode-alist' to
+decide the buffer's major mode.
+
+If FUNCTION is nil, then it is not called.  (That is a way of saying
+\"allow `auto-mode-alist' to decide for these files.\")")
+(put 'magic-mode-alist 'risky-local-variable t)
+
+(defvar magic-fallback-mode-alist
+  `((image-type-auto-detected-p . image-mode)
+    ("\\(PK00\\)?[P]K\003\004" . archive-mode) ; zip
+    ;; The < comes before the groups (but the first) to reduce backtracking.
+    ;; TODO: UTF-16 <?xml may be preceded by a BOM 0xff 0xfe or 0xfe 0xff.
+    ;; We use [ \t\r\n] instead of `\\s ' to make regex overflow less likely.
+    (,(let* ((incomment-re "\\(?:[^-]\\|-[^-]\\)")
+	     (comment-re (concat "\\(?:!--" incomment-re "*-->[ \t\r\n]*<\\)")))
+	(concat "\\(?:<\\?xml[ \t\r\n]+[^>]*>\\)?[ \t\r\n]*<"
+		comment-re "*"
+		"\\(?:!DOCTYPE[ \t\r\n]+[^>]*>[ \t\r\n]*<[ \t\r\n]*" comment-re "*\\)?"
+		"[Hh][Tt][Mm][Ll]"))
+     . mhtml-mode)
+    ("<![Dd][Oo][Cc][Tt][Yy][Pp][Ee][ \t\r\n]+[Hh][Tt][Mm][Ll]" . mhtml-mode)
+    ;; These two must come after html, because they are more general:
+    ("<\\?xml " . xml-mode)
+    (,(let* ((incomment-re "\\(?:[^-]\\|-[^-]\\)")
+	     (comment-re (concat "\\(?:!--" incomment-re "*-->[ \t\r\n]*<\\)")))
+	(concat "[ \t\r\n]*<" comment-re "*!DOCTYPE "))
+     . sgml-mode)
+    ("\320\317\021\340\241\261\032\341" . doc-view-mode-maybe) ; Word documents 1997-2004
+    ("%!PS" . ps-mode)
+    ("# xmcd " . conf-unix-mode))
+  "Like `magic-mode-alist' but has lower priority than `auto-mode-alist'.
+Each element looks like (REGEXP . FUNCTION) or (MATCH-FUNCTION . FUNCTION).
+After visiting a file, if REGEXP matches the text at the beginning of the
+buffer (case-sensitively), or calling MATCH-FUNCTION returns non-nil,
+`normal-mode' will call FUNCTION, provided that `magic-mode-alist' and
+`auto-mode-alist' have not specified a mode for this file.
+
+If FUNCTION is nil, then it is not called.")
+(put 'magic-fallback-mode-alist 'risky-local-variable t)
+
+(defvar magic-mode-regexp-match-limit 4000
+  "Upper limit on `magic-mode-alist' regexp matches.
+Also applies to `magic-fallback-mode-alist'.")
+
+(defun set-auto-mode--find-matching-alist-entry (alist name case-insensitive)
+  "Find first matching entry in ALIST for file NAME.
+
+If CASE-INSENSITIVE, the file system of file NAME is case-insensitive."
+  (let (mode)
+    (while name
+      (let ((newmode
+             (if case-insensitive
+                 ;; Filesystem is case-insensitive.
+                 (let ((case-fold-search t))
+                   (assoc-default name alist 'string-match))
+               ;; Filesystem is case-sensitive.
+               (or
+                ;; First match case-sensitively.
+                (let ((case-fold-search nil))
+                  (assoc-default name alist 'string-match))
+                ;; Fallback to case-insensitive match.
+                (and auto-mode-case-fold
+                     (let ((case-fold-search t))
+                       (assoc-default name alist 'string-match)))))))
+        (when newmode
+          (when mode
+            ;; We had already found a mode but in a (REGEXP MODE t)
+            ;; entry, so we still have to run MODE.  Let's do it now.
+            ;; FIXME: It's kind of ugly to run the function here.
+            ;; An alternative could be to return a list of functions and
+            ;; callers.
+            (set-auto-mode-0 mode t))
+          (setq mode newmode))
+        (if (and newmode
+                 (not (functionp newmode))
+                 (consp newmode)
+                 (cadr newmode))
+            ;; It's a (REGEXP MODE t): Keep looking but remember the MODE.
+            (setq mode (car newmode)
+                  name (substring name 0 (match-beginning 0)))
+          (setq name nil))))
+    mode))
+
+(defun set-auto-mode--apply-alist (alist keep-mode-if-same dir-local)
+  "Helper function for `set-auto-mode'.
+This function takes an alist of the same form as
+`auto-mode-alist'.  It then tries to find the appropriate match
+in the alist for the current buffer; setting the mode if
+possible.
+Return non-nil if the mode was set, nil otherwise.
+DIR-LOCAL non-nil means this call is via directory-locals, and
+extra checks should be done."
+  (if buffer-file-name
+      (let (mode
+            (name buffer-file-name)
+            (remote-id (file-remote-p buffer-file-name))
+            (case-insensitive-p (file-name-case-insensitive-p
+                                 buffer-file-name)))
+        ;; Remove backup-suffixes from file name.
+        (setq name (file-name-sans-versions name))
+        ;; Remove remote file name identification.
+        (when (and (stringp remote-id)
+                   (string-match (regexp-quote remote-id) name))
+          (setq name (substring name (match-end 0))))
+        (setq mode (set-auto-mode--find-matching-alist-entry
+                    alist name case-insensitive-p))
+        (when (and dir-local mode
+                   (not (set-auto-mode--dir-local-valid-p mode)))
+          (message "Ignoring invalid mode `%S'" mode)
+          (setq mode nil))
+        (when mode
+          (set-auto-mode-0 mode keep-mode-if-same)
+          t))))
+
+(defun set-auto-mode--dir-local-valid-p (mode)
+  "Say whether MODE can be used in a .dir-local.el `auto-mode-alist'."
+  (and (symbolp mode)
+       (string-suffix-p "-mode" (symbol-name mode))
+       (commandp mode)
+       (not (provided-mode-derived-p mode 'special-mode))))
+
+(defun set-auto-mode (&optional keep-mode-if-same)
+  "Select major mode appropriate for current buffer.
+
+To find the right major mode, this function checks for a -*- mode tag
+checks for a `mode:' entry in the Local Variables section of the file,
+checks if there an `auto-mode-alist' entry in `.dir-locals.el',
+checks if it uses an interpreter listed in `interpreter-mode-alist',
+matches the buffer beginning against `magic-mode-alist',
+compares the file name against the entries in `auto-mode-alist',
+then matches the buffer beginning against `magic-fallback-mode-alist'.
+It also obeys `major-mode-remap-alist' and `major-mode-remap-defaults'.
+
+If `enable-local-variables' is nil, or if the file name matches
+`inhibit-local-variables-regexps', this function does not check
+for any mode: tag anywhere in the file.  If `local-enable-local-variables'
+is nil, then the only mode: tag that can be relevant is a -*- one.
+
+If the optional argument KEEP-MODE-IF-SAME is non-nil, then we
+set the major mode only if that would change it.  In other words
+we don't actually set it to the same mode the buffer already has."
+  ;; Look for -*-MODENAME-*- or -*- ... mode: MODENAME; ... -*-
+  (let ((try-locals (not (inhibit-local-variables-p)))
+	end modes)
+    ;; Once we drop the deprecated feature where mode: is also allowed to
+    ;; specify minor-modes (ie, there can be more than one "mode:"), we can
+    ;; remove this section and just let (hack-local-variables t) handle it.
+    ;; Find a -*- mode tag.
+    (save-excursion
+      (goto-char (point-min))
+      (skip-chars-forward " \t\n")
+      ;; Note by design local-enable-local-variables does not matter here.
+      (and enable-local-variables
+	   try-locals
+	   (setq end (set-auto-mode-1))
+	   (if (save-excursion (search-forward ":" end t))
+	       ;; Find all specifications for the `mode:' variable
+	       ;; and execute them left to right.
+	       (while (let ((case-fold-search t))
+			(or (and (looking-at "mode:")
+				 (goto-char (match-end 0)))
+			    (re-search-forward "[ \t;]mode:" end t)))
+		 (skip-chars-forward " \t")
+		 (let ((beg (point)))
+		   (if (search-forward ";" end t)
+		       (forward-char -1)
+		     (goto-char end))
+		   (skip-chars-backward " \t")
+		   (push (intern (concat (downcase (buffer-substring beg (point))) "-mode"))
+			 modes)))
+	     ;; Simple -*-MODE-*- case.
+	     (push (intern (concat (downcase (buffer-substring (point) end))
+				   "-mode"))
+		   modes))))
+    (or
+     ;; If we found modes to use, invoke them now, outside the save-excursion.
+     ;; Presume `modes' holds a major mode followed by minor modes.
+     (let ((done ()))
+       (dolist (mode (nreverse modes))
+	 (if (eq done :keep)
+	     ;; `keep-mode-if-same' is set and the (major) mode
+	     ;; was already set.  Refrain from calling the following
+	     ;; minor modes since they have already been set.
+	     ;; It was especially important in the past when calling
+	     ;; minor modes without an arg would toggle them, but it's
+             ;; still preferable to avoid re-enabling them,
+	     nil
+	   (let ((res (set-auto-mode-0 mode keep-mode-if-same)))
+	     (setq done (or res done)))))
+       done)
+     ;; Check for auto-mode-alist entry in dir-locals.
+     (with-demoted-errors "Directory-local variables error: %s"
+       ;; Note this is a no-op if enable-local-variables is nil.
+       ;; We don't use `hack-dir-local-get-variables-functions' here, because
+       ;; modes are specific to Emacs.
+       (let* ((mode-alist (cdr (hack-dir-local--get-variables
+                                (lambda (key) (eq key 'auto-mode-alist))))))
+         (set-auto-mode--apply-alist mode-alist keep-mode-if-same t)))
+     (let ((mode (hack-local-variables t (not try-locals))))
+       (unless (memq mode modes)	; already tried and failed
+         (set-auto-mode-0 mode keep-mode-if-same)))
+     ;; If we didn't, look for an interpreter specified in the first line.
+     ;; As a special case, allow for things like "#!/bin/env perl", which
+     ;; finds the interpreter anywhere in $PATH.
+     (when-let*
+	 ((interp (save-excursion
+		    (goto-char (point-min))
+		    (if (looking-at auto-mode-interpreter-regexp)
+			(match-string 2))))
+	  ;; Map interpreter name to a mode, signaling we're done at the
+	  ;; same time.
+	  (mode (assoc-default
+		 (file-name-nondirectory interp)
+		 (mapcar (lambda (e)
+                           (cons
+                            (format "\\`%s\\'" (car e))
+                            (cdr e)))
+			 interpreter-mode-alist)
+		 #'string-match-p)))
+       ;; If we found an interpreter mode to use, invoke it now.
+       (set-auto-mode-0 mode keep-mode-if-same))
+     ;; Next try matching the buffer beginning against magic-mode-alist.
+     (let ((mode (save-excursion
+		   (goto-char (point-min))
+		   (save-restriction
+		     (narrow-to-region (point-min)
+				       (min (point-max)
+					    (+ (point-min) magic-mode-regexp-match-limit)))
+                     (assoc-default
+                      nil magic-mode-alist
+                      (lambda (re _dummy)
+                        (cond
+                         ((functionp re)
+                          (funcall re))
+                         ((stringp re)
+                          (let ((case-fold-search nil))
+                            (looking-at re)))
+                         (t
+                          (error
+                           "Problem in magic-mode-alist with element %s"
+                           re)))))))))
+       (set-auto-mode-0 mode keep-mode-if-same))
+     ;; Next compare the filename against the entries in auto-mode-alist.
+     (set-auto-mode--apply-alist auto-mode-alist
+                                 keep-mode-if-same nil)
+     ;; Next try matching the buffer beginning against magic-fallback-mode-alist.
+     (let ((mode (save-excursion
+		   (goto-char (point-min))
+		   (save-restriction
+		     (narrow-to-region (point-min)
+				       (min (point-max)
+					    (+ (point-min) magic-mode-regexp-match-limit)))
+		     (assoc-default nil magic-fallback-mode-alist
+                                    (lambda (re _dummy)
+                                      (cond
+                                       ((functionp re)
+                                        (funcall re))
+                                       ((stringp re)
+                                        (let ((case-fold-search nil))
+                                          (looking-at re)))
+                                       (t
+                                        (error
+                                         "Problem with magic-fallback-mode-alist element: %s"
+                                         re)))))))))
+       (set-auto-mode-0 mode keep-mode-if-same))
+     (set-buffer-major-mode (current-buffer)))))
+
+(defvar-local set-auto-mode--last nil
+  "Remember the mode we have set via `set-auto-mode-0'.")
+
+(defcustom major-mode-remap-alist nil
+  "Alist mapping file-specified modes to alternative modes.
+Each entry is of the form (MODE . FUNCTION) which means that in place
+of activating the major mode MODE (specified via something like
+`auto-mode-alist', file-local variables, ...) we actually call FUNCTION
+instead.
+FUNCTION is typically a major mode which \"does the same thing\" as
+MODE, but can also be nil to hide other entries (either in this var or
+in `major-mode-remap-defaults') and means that we should call MODE."
+  :type '(alist
+          :tag "Remappings"
+          :key-type (symbol :tag "From major mode")
+          :value-type (function :tag "To mode (or function)")))
+
+(defvar major-mode-remap-defaults nil
+  "Alist mapping file-specified modes to alternative modes.
+This works like `major-mode-remap-alist' except it has lower priority
+and it is meant to be modified by packages rather than users.")
+
+(defun major-mode-remap (mode)
+  "Return the function to use to enable MODE."
+  (or (cdr (or (assq mode major-mode-remap-alist)
+               (assq mode major-mode-remap-defaults)))
+      mode))
+
+;; When `keep-mode-if-same' is set, we are working on behalf of
+;; set-visited-file-name.  In that case, if the major mode specified is the
+;; same one we already have, don't actually reset it.  We don't want to lose
+;; minor modes such as Font Lock.
+(defun set-auto-mode-0 (mode &optional keep-mode-if-same)
+  "Apply MODE and return it.
+If optional arg KEEP-MODE-IF-SAME is non-nil, MODE is chased of
+any aliases and compared to current major mode.  If they are the
+same, do nothing and return `:keep'.
+Return nil if MODE could not be applied."
+  (when mode
+    (if (and keep-mode-if-same
+	     (or (eq (indirect-function mode)
+		     (indirect-function major-mode))
+		 (and set-auto-mode--last
+		      (eq mode (car set-auto-mode--last))
+		      (eq major-mode (cdr set-auto-mode--last)))))
+	:keep
+      (let ((modefun (major-mode-remap mode)))
+        (if (not (functionp modefun))
+            (progn
+              (message "Ignoring unknown mode `%s'%s" mode
+                       (if (eq mode modefun) ""
+                         (format " (remapped to `%S')" modefun)))
+              nil)
+          (funcall modefun)
+          (unless (or (eq mode major-mode) ;`set-auto-mode--last' is overkill.
+                      ;; `modefun' is something like a minor mode.
+                      (local-variable-p 'set-auto-mode--last))
+            (setq set-auto-mode--last (cons mode major-mode)))
+          mode)))))
+
+(defvar file-auto-mode-skip "^\\(#!\\|'\\\\\"\\)"
+  "Regexp of lines to skip when looking for file-local settings.
+If the first line matches this regular expression, then the -*-...-*- file-
+local settings will be consulted on the second line instead of the first.")
+
+(defun set-auto-mode-1 ()
+  "Find the -*- spec in the buffer.
+Call with point at the place to start searching from.
+If one is found, set point to the beginning and return the position
+of the end.  Otherwise, return nil; may change point.
+The variable `inhibit-local-variables-regexps' can cause a -*- spec to
+be ignored; but `enable-local-variables' and `local-enable-local-variables'
+have no effect."
+  (let (beg end)
+    (and
+     ;; Don't look for -*- if this file name matches any
+     ;; of the regexps in inhibit-local-variables-regexps.
+     (not (inhibit-local-variables-p))
+     (search-forward "-*-" (line-end-position
+                            ;; If the file begins with "#!"  (exec
+                            ;; interpreter magic), look for mode frobs
+                            ;; in the first two lines.  You cannot
+                            ;; necessarily put them in the first line
+                            ;; of such a file without screwing up the
+                            ;; interpreter invocation.  The same holds
+                            ;; for '\" in man pages (preprocessor
+                            ;; magic for the `man' program).
+                            (and (looking-at file-auto-mode-skip) 2))
+                     t)
+     (progn
+       (skip-chars-forward " \t")
+       (setq beg (point))
+       (search-forward "-*-" (line-end-position) t))
+     (progn
+       (forward-char -3)
+       (skip-chars-backward " \t")
+       (setq end (point))
+       (goto-char beg)
+       end))))
+
+;;; Handling file local variables
+
+(defvar ignored-local-variables
+  '(ignored-local-variables safe-local-variable-values
+    file-local-variables-alist dir-local-variables-alist)
+  "Variables to be ignored in a file's local variable spec.")
+(put 'ignored-local-variables 'risky-local-variable t)
+
+(defvar hack-local-variables-hook nil
+  "Normal hook run after processing a file's local variables specs.
+Major modes can use this to examine user-specified local variables
+in order to initialize other data structure based on them.")
+
+(defcustom safe-local-variable-values nil
+  "List of variable-value pairs that are considered safe.
+Each element is a cons cell (VAR . VAL), where VAR is a variable
+symbol and VAL is a value that is considered safe.
+
+Also see `ignored-local-variable-values'."
+  :risky t
+  :group 'find-file
+  :type 'alist)
+
+(defcustom ignored-local-variable-values nil
+  "List of variable-value pairs that should always be ignored.
+Each element is a cons cell (VAR . VAL), where VAR is a variable
+symbol and VAL is its value; if VAR is set to VAL by a file-local
+variables section, that setting should be ignored.
+
+Also see `safe-local-variable-values'."
+  :risky t
+  :group 'find-file
+  :type 'alist
+  :version "28.1")
+
+(defcustom safe-local-eval-forms
+  ;; This should be here at least as long as Emacs supports write-file-hooks.
+  '((add-hook 'write-file-hooks 'time-stamp)
+    (add-hook 'write-file-functions 'time-stamp)
+    (add-hook 'before-save-hook 'time-stamp nil t)
+    (add-hook 'before-save-hook 'delete-trailing-whitespace nil t))
+  "Expressions that are considered safe in an `eval:' local variable.
+Add expressions to this list if you want Emacs to evaluate them, when
+they appear in an `eval' local variable specification, without first
+asking you for confirmation."
+  :risky t
+  :group 'find-file
+  :version "24.1"			; added write-file-hooks
+  :type '(repeat sexp))
+
+;; Risky local variables:
+(mapc (lambda (var) (put var 'risky-local-variable t))
+      '(after-load-alist
+	buffer-auto-save-file-name
+	buffer-file-name
+	buffer-file-truename
+	buffer-undo-list
+	debugger
+	default-text-properties
+	eval
+	exec-directory
+	exec-path
+	file-name-handler-alist
+	frame-title-format
+	global-mode-string
+	header-line-format
+	icon-title-format
+	inhibit-quit
+	load-path
+	max-lisp-eval-depth
+	minor-mode-map-alist
+	minor-mode-overriding-map-alist
+	mode-line-format
+	mode-name
+	overriding-local-map
+	overriding-terminal-local-map
+	process-environment
+	standard-input
+	standard-output
+	unread-command-events))
+
+;; Safe local variables:
+;;
+;; For variables defined by major modes, the safety declarations can go into
+;; the major mode's file, since that will be loaded before file variables are
+;; processed.
+;;
+;; For variables defined by minor modes, put the safety declarations in the
+;; file defining the minor mode after the defcustom/defvar using an autoload
+;; cookie, e.g.:
+;;
+;;   ;;;###autoload(put 'variable 'safe-local-variable 'stringp)
+;;
+;; Otherwise, when Emacs visits a file specifying that local variable, the
+;; minor mode file may not be loaded yet.
+;;
+;; For variables defined in the C source code the declaration should go here:
+
+(dolist (pair
+	 '((buffer-read-only        . booleanp)	;; C source code
+	   (default-directory       . stringp)	;; C source code
+	   (fill-column             . integerp)	;; C source code
+	   (indent-tabs-mode        . booleanp)	;; C source code
+	   (left-margin             . integerp)	;; C source code
+	   (inhibit-compacting-font-caches . booleanp) ;; C source code
+	   (no-update-autoloads     . booleanp)
+	   (lexical-binding	 . booleanp)	  ;; C source code
+	   (tab-width               . integerp)	  ;; C source code
+	   (truncate-lines          . booleanp)	  ;; C source code
+	   (word-wrap               . booleanp)	  ;; C source code
+	   (bidi-display-reordering . booleanp))) ;; C source code
+  (put (car pair) 'safe-local-variable (cdr pair)))
+
+(put 'bidi-paragraph-direction 'safe-local-variable
+     (lambda (v) (memq v '(nil right-to-left left-to-right))))
+
+(put 'c-set-style 'safe-local-eval-function t)
+
+(defvar-local file-local-variables-alist nil
+  "Alist of file-local variable settings in the current buffer.
+Each element in this list has the form (VAR . VALUE), where VAR
+is a file-local variable (a symbol) and VALUE is the value
+specified.  The actual value in the buffer may differ from VALUE,
+if it is changed by the major or minor modes, or by the user.")
+(put 'file-local-variables-alist 'permanent-local t)
+
+(defvar-local dir-local-variables-alist nil
+  "Alist of directory-local variable settings in the current buffer.
+Each element in this list has the form (VAR . VALUE), where VAR
+is a directory-local variable (a symbol) and VALUE is the value
+specified in .dir-locals.el.  The actual value in the buffer
+may differ from VALUE, if it is changed by the major or minor modes,
+or by the user.")
+
+(defvar before-hack-local-variables-hook nil
+  "Normal hook run before setting file-local variables.
+It is called after checking for unsafe/risky variables and
+setting `file-local-variables-alist', and before applying the
+variables stored in `file-local-variables-alist'.  A hook
+function is allowed to change the contents of this alist.
+
+This hook is called only if there is at least one file-local
+variable to set.")
+
+(defvar permanently-enabled-local-variables
+  '(lexical-binding read-symbol-shorthands)
+  "A list of file-local variables that are always enabled.
+This overrides any `enable-local-variables' setting.")
+
+(defcustom safe-local-variable-directories '()
+  "A list of directories where local variables are always enabled.
+Directory-local variables loaded from these directories, such as the
+variables in .dir-locals.el, will be enabled even if they are risky.
+The names of the directories in the list must be absolute, and must
+end in a slash.  Remote directories can be included if the
+variable `enable-remote-dir-locals' is non-nil."
+  :version "30.1"
+  :type '(repeat string)
+  :risky t
+  :group 'find-file)
+
+(defun hack-local-variables-confirm (all-vars unsafe-vars risky-vars dir-name)
+  "Get confirmation before setting up local variable values.
+ALL-VARS is the list of all variables to be set up.
+UNSAFE-VARS is the list of those that aren't marked as safe or risky.
+RISKY-VARS is the list of those that are marked as risky.
+If these settings come from directory-local variables, then
+DIR-NAME is the name of the associated directory.  Otherwise it is nil."
+  (unless noninteractive
+    (let ((name (cond (dir-name)
+		      (buffer-file-name
+		       (file-name-nondirectory buffer-file-name))
+		      ((concat "buffer " (buffer-name)))))
+	  (offer-save (and (eq enable-local-variables t)
+			   unsafe-vars))
+	  (buf (get-buffer-create "*Local Variables*")))
+      ;; Set up the contents of the *Local Variables* buffer.
+      (with-current-buffer buf
+	(erase-buffer)
+	(cond
+	 (unsafe-vars
+	  (insert "The local variables list in " name
+		  "\nor .dir-locals.el contains values that may not be safe (*)"
+		  (if risky-vars
+		      ", and variables that are risky (**)."
+		    ".")))
+	 (risky-vars
+	  (insert "The local variables list in " name
+		  "\ncontains variables that are risky (**)."))
+	 (t
+	  (insert "A local variables list is specified in " name ".")))
+	(insert "\n\nDo you want to apply it?  You can type
+y  -- to apply the local variables list.
+n  -- to ignore the local variables list.")
+	(if offer-save
+	    (insert "
+!  -- to apply the local variables list, and permanently mark these
+      values (*) as safe (in the future, they will be set automatically.)
+i  -- to ignore the local variables list, and permanently mark these
+      values (*) as ignored"
+                    (if dir-name "
++  -- to apply the local variables list, and trust all directory-local
+      variables in this directory\n\n"
+                      "\n\n"))
+	  (insert "\n\n"))
+	(dolist (elt all-vars)
+	  (cond ((member elt unsafe-vars)
+		 (insert "  * "))
+		((member elt risky-vars)
+		 (insert " ** "))
+		(t
+		 (insert "    ")))
+	  (princ (car elt) buf)
+	  (insert " : ")
+	  ;; Make strings with embedded whitespace easier to read.
+	  (let ((print-escape-newlines t))
+	    (prin1 (cdr elt) buf))
+	  (insert "\n"))
+        (setq-local cursor-type nil)
+	(set-buffer-modified-p nil)
+	(goto-char (point-min)))
+
+      ;; Display the buffer and read a choice.
+      (save-window-excursion
+	(pop-to-buffer buf '(display-buffer--maybe-at-bottom))
+	(let* ((exit-chars '(?y ?n ?\s))
+	       (prompt (format "Please type %s%s: "
+			       (if offer-save
+                                   (if dir-name
+                                       "y, n, !, i, +"
+                                     "y, n, !, i")
+                                 "y or n")
+			       (if (< (line-number-at-pos (point-max))
+				      (window-body-height))
+				   ""
+				 ", or C-v/M-v to scroll")))
+	       char)
+	  (when offer-save
+            (push ?i exit-chars)
+            (push ?! exit-chars)
+            (when dir-name
+              (push ?+ exit-chars)))
+	  (setq char (read-char-choice prompt exit-chars))
+          (when (and offer-save dir-name (= char ?+))
+            (customize-push-and-save 'safe-local-variable-directories
+                                     (list dir-name)))
+	  (when (and offer-save
+                     (or (= char ?!) (= char ?i))
+                     unsafe-vars)
+	    (customize-push-and-save
+             (if (= char ?!)
+                 'safe-local-variable-values
+               'ignored-local-variable-values)
+             unsafe-vars))
+	  (prog1 (memq char '(?! ?\s ?y ?+))
+	    (quit-window t)))))))
+
+(defconst hack-local-variable-regexp
+  "[ \t]*\\([^][;\"'?()\\ \t\n]+\\)[ \t]*:[ \t]*")
+
+(defun hack-local-variables-prop-line (&optional handle-mode)
+  "Return local variables specified in the -*- line.
+Usually returns an alist of elements (VAR . VAL), where VAR is a
+variable and VAL is the specified value.  Ignores any
+specification for `coding:', and sometimes for `mode' (which
+should have already been handled by `set-auto-coding' and
+`set-auto-mode', respectively).  Return nil if the -*- line is
+malformed.
+
+If HANDLE-MODE is nil, we return the alist of all the local
+variables in the line except `coding' as described above.  If it
+is neither nil nor t, we do the same, except that any settings of
+`mode' and `coding' are ignored.  If HANDLE-MODE is t, we ignore
+all settings in the line except for `mode', which \(if present) we
+return as the symbol specifying the mode."
+  (catch 'malformed-line
+    (save-excursion
+      (goto-char (point-min))
+      (let ((end (set-auto-mode-1))
+	    result)
+	(cond ((not end)
+	       nil)
+	      ((looking-at "[ \t]*\\([^ \t\n\r:;]+\\)\\([ \t]*-\\*-\\)")
+	       ;; Simple form: "-*- MODENAME -*-".
+	       (if (eq handle-mode t)
+		   (intern (concat (match-string 1) "-mode"))))
+	      (t
+	       ;; Hairy form: '-*-' [ <variable> ':' <value> ';' ]* '-*-'
+	       ;; (last ";" is optional).
+	       ;; If HANDLE-MODE is t, just check for `mode'.
+	       ;; Otherwise, parse the -*- line into the RESULT alist.
+	       (while (not (or (and (eq handle-mode t) result)
+                               (>= (point) end)))
+		 (unless (looking-at hack-local-variable-regexp)
+		   (message "Malformed mode-line: %S in buffer %S"
+                            (buffer-substring-no-properties (point) end) (buffer-name))
+		   (throw 'malformed-line nil))
+		 (goto-char (match-end 0))
+		 ;; There used to be a downcase here,
+		 ;; but the manual didn't say so,
+		 ;; and people want to set var names that aren't all lc.
+		 (let* ((key (intern (match-string 1)))
+			(val (save-restriction
+			       (narrow-to-region (point) end)
+                               ;; As a defensive measure, we do not allow
+                               ;; circular data in the file-local data.
+			       (let ((read-circle nil))
+				 (read (current-buffer)))))
+			;; It is traditional to ignore
+			;; case when checking for `mode' in set-auto-mode,
+			;; so we must do that here as well.
+			;; That is inconsistent, but we're stuck with it.
+			;; The same can be said for `coding' in set-auto-coding.
+			(keyname (downcase (symbol-name key))))
+                   (cond
+                    ((eq handle-mode t)
+                     (and (equal keyname "mode")
+                          (setq result
+                                (intern (concat (downcase (symbol-name val))
+                                                "-mode")))))
+                    ((equal keyname "coding"))
+                    (t
+                     (when (or (not handle-mode)
+                               (not (equal keyname "mode")))
+                       (condition-case nil
+                           (push (cons (cond ((eq key 'eval) 'eval)
+                                             ;; Downcase "Mode:".
+                                             ((equal keyname "mode") 'mode)
+                                             (t (indirect-variable key)))
+                                       val)
+                                 result)
+                         (error nil)))))
+		   (skip-chars-forward " \t;")))
+	       result))))))
+
+(defun hack-local-variables-filter (variables dir-name)
+  "Filter local variable settings, querying the user if necessary.
+VARIABLES is the alist of variable-value settings.  This alist is
+ filtered based on the values of `ignored-local-variables',
+ `enable-local-eval', `enable-local-variables', and (if necessary)
+ user interaction.  The results are added to
+ `file-local-variables-alist', without applying them.
+If these settings come from directory-local variables, then
+DIR-NAME is the name of the associated directory.  Otherwise it is nil."
+  ;; Find those variables that we may want to save to
+  ;; `safe-local-variable-values'.
+  (let (all-vars risky-vars unsafe-vars)
+    (dolist (elt variables)
+      (let ((var (car elt))
+	    (val (cdr elt)))
+	(cond ((memq var ignored-local-variables)
+	       ;; Ignore any variable in `ignored-local-variables'.
+	       nil)
+              ;; Ignore variables with the specified values.
+              ((member elt ignored-local-variable-values)
+               nil)
+	      ;; Obey `enable-local-eval'.
+	      ((eq var 'eval)
+	       (when enable-local-eval
+		 (let ((safe (or (hack-one-local-variable-eval-safep val)
+				 ;; In case previously marked safe (bug#5636).
+				 (safe-local-variable-p var val))))
+		   ;; If not safe and e-l-v = :safe, ignore totally.
+		   (when (or safe (not (eq enable-local-variables :safe)))
+		     (push elt all-vars)
+		     (or (eq enable-local-eval t)
+			 safe
+			 (push elt unsafe-vars))))))
+	      ;; Ignore duplicates (except `mode') in the present list.
+	      ((and (assq var all-vars) (not (eq var 'mode))) nil)
+	      ;; Accept known-safe variables.
+	      ((or (memq var '(mode unibyte coding))
+		   (safe-local-variable-p var val))
+	       (push elt all-vars))
+	      ;; The variable is either risky or unsafe:
+	      ((not (eq enable-local-variables :safe))
+	       (push elt all-vars)
+	       (if (risky-local-variable-p var val)
+		   (push elt risky-vars)
+		 (push elt unsafe-vars))))))
+    (and all-vars
+	 ;; Query, unless all vars are safe or user wants no querying.
+	 (or (and (eq enable-local-variables t)
+		  (null unsafe-vars)
+		  (null risky-vars))
+	     (memq enable-local-variables '(:all :safe))
+             (delq nil (mapcar (lambda (dir)
+                                 (and dir-name dir
+                                      (file-equal-p dir dir-name)))
+                               safe-local-variable-directories))
+	     (hack-local-variables-confirm all-vars unsafe-vars
+					   risky-vars dir-name))
+	 (dolist (elt all-vars)
+	   (unless (memq (car elt) '(eval mode))
+	     (unless dir-name
+	       (setq dir-local-variables-alist
+		     (assq-delete-all (car elt) dir-local-variables-alist)))
+	     (setq file-local-variables-alist
+		   (assq-delete-all (car elt) file-local-variables-alist)))
+	   (push elt file-local-variables-alist)))))
+
+;; TODO?  Warn once per file rather than once per session?
+(defvar hack-local-variables--warned-lexical nil)
+
+(defun hack-local-variables (&optional handle-mode inhibit-locals)
+  "Parse and put into effect this buffer's local variables spec.
+Also puts into effect directory-local variables.
+For buffers not visiting files, apply the directory-local variables that
+would be applicable to files in `default-directory'.
+
+Uses `hack-local-variables-apply' and `hack-dir-local-variables'
+to apply the variables.
+
+If `enable-local-variables' or `local-enable-local-variables' is
+nil, or INHIBIT-LOCALS is non-nil, this function disregards all
+normal local variables.  If `inhibit-local-variables-regexps'
+applies to the file in question, the file is not scanned for
+local variables, but directory-local variables may still be
+applied.
+
+Variables present in `permanently-enabled-local-variables' will
+still be evaluated, even if local variables are otherwise
+inhibited.
+
+If HANDLE-MODE is t, the function only checks whether a \"mode:\"
+is specified, and returns the corresponding mode symbol, or nil.
+In this case, try to ignore minor-modes, and return only a major-mode.
+If HANDLE-MODE is nil, the function gathers all the specified local
+variables.  If HANDLE-MODE is neither nil nor t, the function gathers
+all the specified local variables, but ignores any settings of \"mode:\"."
+  ;; We don't let inhibit-local-variables-p influence the value of
+  ;; enable-local-variables, because then it would affect dir-local
+  ;; variables.  We don't want to search eg tar files for file local
+  ;; variable sections, but there is no reason dir-locals cannot apply
+  ;; to them.  The real meaning of inhibit-local-variables-p is "do
+  ;; not scan this file for local variables".
+  (let ((enable-local-variables
+	 (and (not inhibit-locals)
+              local-enable-local-variables enable-local-variables)))
+    (if (eq handle-mode t)
+        ;; We're looking just for the major mode setting.
+        (and enable-local-variables
+             (not (inhibit-local-variables-p))
+	     ;; If HANDLE-MODE is t, and the prop line specifies a
+	     ;; mode, then we're done, and have no need to scan further.
+             (or (hack-local-variables-prop-line t)
+                 ;; Look for the mode elsewhere in the buffer.
+                 (hack-local-variables--find-variables t)))
+      ;; Normal handling of local variables.
+      (setq file-local-variables-alist nil)
+      (when (and (file-remote-p default-directory)
+                 (fboundp 'hack-connection-local-variables)
+                 (fboundp 'connection-local-criteria-for-default-directory))
+        (with-demoted-errors "Connection-local variables error: %s"
+	  ;; Note this is a no-op if enable-local-variables is nil.
+	  (hack-connection-local-variables
+           (connection-local-criteria-for-default-directory))))
+      (with-demoted-errors "Directory-local variables error: %s"
+	;; Note this is a no-op if enable-local-variables is nil.
+	(hack-dir-local-variables))
+      (let ((result (append (hack-local-variables--find-variables handle-mode)
+                            (hack-local-variables-prop-line handle-mode))))
+        (if (and enable-local-variables
+                 (not (inhibit-local-variables-p)))
+            (progn
+	      ;; Set the variables.
+	      (hack-local-variables-filter result nil)
+	      (hack-local-variables-apply))
+          ;; Handle `lexical-binding' and other special local
+          ;; variables.
+          (dolist (variable permanently-enabled-local-variables)
+            (when-let* ((elem (assq variable result)))
+              (push elem file-local-variables-alist)))
+          (hack-local-variables-apply))))))
+
+(defun internal--get-default-lexical-binding (from)
+  (let ((mib (lambda (node) (buttonize node (lambda (_) (info node))
+                                  nil "mouse-2: Jump to Info node"))))
+    (or (and (bufferp from) (zerop (buffer-size from)))
+        (and (stringp from)
+             (eql 0 (file-attribute-size (file-attributes from))))
+        (let ((source
+               (if (not (and (bufferp from)
+                             (string-match-p "\\` \\*load\\*\\(-[0-9]+\\)?\\'"
+                                             (buffer-name from))
+                             load-file-name))
+                   from
+                 (abbreviate-file-name load-file-name))))
+          (condition-case nil
+              (display-warning
+               `(files missing-lexbind-cookie
+                       ,(if (bufferp source) 'eval-buffer source))
+               (format-message "Missing `lexical-binding' cookie in %S.
+You can add one with `M-x %s RET'.
+See `%s' and `%s'
+for more information."
+                               source
+                               (buttonize "elisp-enable-lexical-binding"
+                                          (lambda (_)
+                                            (pop-to-buffer
+                                             (if (bufferp source) source
+                                               (find-file-noselect source)))
+                                            (call-interactively
+                                             #'elisp-enable-lexical-binding))
+                                          nil "mouse-2: Add cookie")
+                               (funcall mib "(elisp)Selecting Lisp Dialect")
+                               (funcall mib "(elisp)Converting to Lexical Binding"))
+               :warning)
+            ;; In various corner-case situations, `display-warning' may
+            ;; fail (e.g. not yet defined, or can't be (auto)loaded),
+            ;; so use a simple fallback that won't get in the way.
+            (error
+             ;; But not if this particular warning is disabled.
+             (unless (equal warning-inhibit-types
+                            '((files missing-lexbind-cookie)))
+               (message "Missing `lexical-binding' cookie in %S" source))))))
+    (default-toplevel-value 'lexical-binding)))
+
+(setq internal--get-default-lexical-binding-function
+      #'internal--get-default-lexical-binding)
+
+(defun hack-local-variables--find-variables (&optional handle-mode)
+  "Return all local variables in the current buffer.
+If HANDLE-MODE is nil, we gather all the specified local
+variables.  If HANDLE-MODE is neither nil nor t, we do the same,
+except that any settings of `mode' are ignored.
+
+If HANDLE-MODE is t, all we do is check whether a \"mode:\"
+is specified, and return the corresponding mode symbol, or nil.
+In this case, we try to ignore minor-modes, and return only a
+major-mode."
+  (let ((result nil))
+    ;; Look for "Local variables:" line in last page.
+    (save-excursion
+      (goto-char (point-max))
+      (search-backward "\n\^L" (max (- (point-max) 3000) (point-min))
+		       'move)
+      (when (let ((case-fold-search t))
+	      (search-forward "Local Variables:" nil t))
+        (skip-chars-forward " \t")
+        ;; suffix is what comes after "local variables:" in its line.
+        ;; prefix is what comes before "local variables:" in its line.
+        (let ((suffix
+	       (concat
+	        (regexp-quote (buffer-substring (point)
+					        (line-end-position)))
+	        "$"))
+	      (prefix
+	       (concat "^" (regexp-quote
+			    (buffer-substring (line-beginning-position)
+					      (match-beginning 0))))))
+
+	  (forward-line 1)
+	  (let ((startpos (point))
+	        endpos
+                (selective-p (eq selective-display t))
+	        (thisbuf (current-buffer)))
+	    (save-excursion
+	      (unless (let ((case-fold-search t))
+		        (re-search-forward
+		         (concat prefix "[ \t]*End:[ \t]*" suffix)
+		         nil t))
+	        ;; This used to be an error, but really all it means is
+	        ;; that this may simply not be a local-variables section,
+	        ;; so just ignore it.
+	        (message "Local variables list is not properly terminated"))
+	      (beginning-of-line)
+	      (setq endpos (point)))
+
+	    (with-temp-buffer
+	      (insert-buffer-substring thisbuf startpos endpos)
+	      (goto-char (point-min))
+              (if selective-p
+	          (subst-char-in-region (point) (point-max) ?\r ?\n))
+	      (while (not (eobp))
+	        ;; Discard the prefix.
+	        (if (looking-at prefix)
+		    (delete-region (point) (match-end 0))
+		  (user-error "Local variables entry is missing the prefix"))
+	        (end-of-line)
+	        ;; Discard the suffix.
+	        (if (looking-back suffix (line-beginning-position))
+		    (delete-region (match-beginning 0) (point))
+		  (user-error "Local variables entry is missing the suffix"))
+	        (forward-line 1))
+	      (goto-char (point-min))
+
+	      (while (not (eobp))
+	        ;; Find the variable name;
+	        (unless (looking-at hack-local-variable-regexp)
+                  (user-error "Malformed local variable line: %S"
+                              (buffer-substring-no-properties
+                               (point) (line-end-position))))
+                (goto-char (match-end 1))
+	        (let* ((str (match-string 1))
+		       (var (intern str))
+		       val val2)
+		  (and (equal (downcase (symbol-name var)) "mode")
+		       (setq var 'mode))
+		  ;; Read the variable value.
+		  (skip-chars-forward "^:")
+		  (forward-char 1)
+                  ;; As a defensive measure, we do not allow
+                  ;; circular data in the file-local data.
+		  (let ((read-circle nil))
+		    (setq val (read (current-buffer))))
+		  (if (eq handle-mode t)
+		      (and (eq var 'mode)
+			   ;; Specifying minor-modes via mode: is
+			   ;; deprecated, but try to reject them anyway.
+			   (not (string-match
+			         "-minor\\'"
+			         (setq val2 (downcase (symbol-name val)))))
+			   (let ((mode (intern (concat val2 "-mode"))))
+                             (when (fboundp (major-mode-remap mode))
+                               (setq result mode))))
+		    (cond ((eq var 'coding))
+			  ((eq var 'lexical-binding)
+			   (unless hack-local-variables--warned-lexical
+			     (setq hack-local-variables--warned-lexical t)
+			     (display-warning
+                              'files
+                              (format-message
+                               "%s: `lexical-binding' at end of file unreliable"
+                               (file-name-nondirectory
+                                ;; We are called from
+                                ;; 'with-temp-buffer', so we need
+                                ;; to use 'thisbuf's name in the
+                                ;; warning message.
+                                (or (buffer-file-name thisbuf) ""))))))
+                          ((eq var 'read-symbol-shorthands)
+                           ;; Sort automatically by shorthand length
+                           ;; in descending order.
+                           (setq val (sort val
+                                           (lambda (sh1 sh2) (> (length (car sh1))
+                                                                (length (car sh2))))))
+                           (push (cons 'read-symbol-shorthands val) result))
+                          ((and (eq var 'mode) handle-mode))
+			  (t
+			   (ignore-errors
+			     (push (cons (if (eq var 'eval)
+					     'eval
+					   (indirect-variable var))
+				         val)
+                                   result))))))
+	        (forward-line 1)))))))
+    result))
+
+(defun hack-local-variables-apply ()
+  "Apply the elements of `file-local-variables-alist'.
+If there are any elements, runs `before-hack-local-variables-hook',
+then calls `hack-one-local-variable' to apply the alist elements one by one.
+Finishes by running `hack-local-variables-hook', regardless of whether
+the alist is empty or not.
+
+Note that this function ignores a `mode' entry if it specifies the same
+major mode as the buffer already has."
+  (when file-local-variables-alist
+    ;; Any 'evals must run in the Right sequence.
+    (setq file-local-variables-alist
+	  (nreverse file-local-variables-alist))
+    (run-hooks 'before-hack-local-variables-hook)
+    (dolist (elt file-local-variables-alist)
+      (hack-one-local-variable (car elt) (cdr elt))))
+  (run-hooks 'hack-local-variables-hook))
+
+(defun safe-local-variable-p (sym val)
+  "Non-nil if SYM is safe as a file-local variable with value VAL.
+It is safe if any of these conditions are met:
+
+ * There is a matching entry (SYM . VAL) in the
+   `safe-local-variable-values' user option.
+
+ * The `safe-local-variable' property of SYM is a function that
+   evaluates to a non-nil value with VAL as an argument."
+  (or (member (cons sym val) safe-local-variable-values)
+      (let ((safep (get sym 'safe-local-variable)))
+        (and (functionp safep)
+             ;; If the function signals an error, that means it
+             ;; can't assure us that the value is safe.
+             (with-demoted-errors "Local variable error: %S"
+               (funcall safep val))))))
+
+(defun risky-local-variable-p (sym &optional _ignored)
+  "Non-nil if SYM could be dangerous as a file-local variable.
+It is dangerous if either of these conditions are met:
+
+ * Its `risky-local-variable' property is non-nil.
+
+ * Its name ends with \"hook(s)\", \"function(s)\", \"form(s)\", \"map\",
+   \"program\", \"command(s)\", \"predicate(s)\", \"frame-alist\",
+   \"mode-alist\", \"font-lock-(syntactic-)keyword*\",
+   \"map-alist\", or \"bindat-spec\"."
+  ;; If this is an alias, check the base name.
+  (condition-case nil
+      (setq sym (indirect-variable sym))
+    (error nil))
+  (or (get sym 'risky-local-variable)
+      (string-match "-hooks?$\\|-functions?$\\|-forms?$\\|-program$\\|\
+-commands?$\\|-predicates?$\\|font-lock-keywords$\\|font-lock-keywords\
+-[0-9]+$\\|font-lock-syntactic-keywords$\\|-frame-alist$\\|-mode-alist$\\|\
+-map$\\|-map-alist$\\|-bindat-spec$" (symbol-name sym))))
+
+(defun hack-one-local-variable-quotep (exp)
+  (and (consp exp) (eq (car exp) 'quote) (consp (cdr exp))))
+
+(define-obsolete-function-alias 'hack-one-local-variable-constantp
+  #'macroexp-const-p "29.1")
+
+(defun hack-one-local-variable-eval-safep (exp)
+  "Return non-nil if it is safe to eval EXP when it is found in a file."
+  (or (not (consp exp))
+      ;; Detect certain `put' expressions.
+      (and (eq (car exp) 'put)
+	   (hack-one-local-variable-quotep (nth 1 exp))
+	   (hack-one-local-variable-quotep (nth 2 exp))
+	   (let ((prop (nth 1 (nth 2 exp)))
+		 (val (nth 3 exp)))
+	     (cond ((memq prop '(lisp-indent-hook
+				 lisp-indent-function
+				 scheme-indent-function))
+		    ;; Allow only safe values (not functions).
+		    (or (numberp val)
+			(and (hack-one-local-variable-quotep val)
+			     (eq (nth 1 val) 'defun))))
+		   ((eq prop 'edebug-form-spec)
+		    ;; Allow only indirect form specs.
+		    ;; During bootstrapping, edebug-basic-spec might not be
+		    ;; defined yet.
+                    (and (fboundp 'edebug-basic-spec)
+			 (hack-one-local-variable-quotep val)
+                         (edebug-basic-spec (nth 1 val)))))))
+      ;; Allow expressions that the user requested.
+      (member exp safe-local-eval-forms)
+      ;; Certain functions can be allowed with safe arguments
+      ;; or can specify verification functions to try.
+      (and (symbolp (car exp))
+	   ;; Allow (minor)-modes calls with no arguments.
+	   ;; This obsoletes the use of "mode:" for such things.  (Bug#8613)
+	   (or (and (member (cdr exp) '(nil (1) (0) (-1)))
+		    (string-match "-mode\\'" (symbol-name (car exp))))
+	       (let ((prop (get (car exp) 'safe-local-eval-function)))
+		 (cond ((eq prop t)
+			(let ((ok t))
+			  (dolist (arg (cdr exp))
+			    (unless (macroexp-const-p arg)
+			      (setq ok nil)))
+			  ok))
+		       ((functionp prop)
+			(funcall prop exp))
+		       ((listp prop)
+			(let ((ok nil))
+			  (dolist (function prop)
+			    (if (funcall function exp)
+				(setq ok t)))
+			  ok))))))))
+
+(defun hack-one-local-variable--obsolete (var)
+  (let ((o (get var 'byte-obsolete-variable)))
+    (when o
+      (let ((instead (nth 0 o))
+            (since (nth 2 o)))
+        (message "%s is obsolete%s; %s"
+                 var (if since (format " (since %s)" since))
+                 (if (stringp instead)
+                     (substitute-command-keys instead)
+                   (format-message "use `%s' instead" instead)))))))
+
+(defvar hack-local-variables--inhibit-eval nil
+  "List of `eval' forms to ignore in file/dir local variables.")
+(defun hack-one-local-variable (var val)
+  "Set local variable VAR with value VAL.
+If VAR is `mode', call `VAL-mode' as a function unless it's
+already the major mode."
+  (cond
+   ((and (eq var 'eval) (member val hack-local-variables--inhibit-eval)) nil)
+   ((eq var 'mode)
+    (let ((mode (intern (concat (downcase (symbol-name val))
+                                "-mode"))))
+      (set-auto-mode-0 mode t)))
+   ((eq var 'eval)
+    (when (and (consp val) (eq (car val) 'add-hook)
+               (consp (cdr val))
+               (hack-one-local-variable-quotep (cadr val)))
+      (hack-one-local-variable--obsolete (nth 1 (cadr val))))
+    (let ((hack-local-variables--inhibit-eval ;; FIXME: Should be buffer-local!
+           (cons val hack-local-variables--inhibit-eval)))
+      (save-excursion (eval val t))))
+   (t
+    (hack-one-local-variable--obsolete var)
+    ;; Make sure the string has no text properties.
+    ;; Some text properties can get evaluated in various ways,
+    ;; so it is risky to put them on with a local variable list.
+    (if (stringp val)
+        (set-text-properties 0 (length val) nil val))
+    (set (make-local-variable var) val))))
+
+(defun macroexp-const-p (exp)
+  "Return non-nil if EXP will always evaluate to the same value."
+  (cond ((consp exp) (memq (car exp) '(quote function)))
+        ((symbolp exp) (or (keywordp exp) (memq exp '(nil t))))
+        (t t)))
+
+(defun set-buffer-major-mode (buffer)
+  "Set an appropriate major mode for BUFFER.
+For the *scratch* buffer, use `initial-major-mode', otherwise
+choose the mode specified by the default value of `major-mode'."
+  (with-current-buffer buffer
+    (funcall (or (default-value 'major-mode) 'fundamental-mode))))
+
+;; Directory-local variables are not implemented yet; provide the
+;; entry points used by `set-auto-mode'/`hack-local-variables'.
+(defun hack-dir-local--get-variables (&optional _predicate)
+  "Stub: return nil (no .dir-locals.el support yet)."
+  nil)
+
+(defun image-type-auto-detected-p ()
+  "Stub: no image support; always nil."
+  nil)
+
+(defvar enable-dir-local-variables t
+  "Non-nil means read .dir-locals.el files.  Currently a no-op stub.")
+(defvar enable-remote-dir-locals nil)
+(defvar dir-locals-class-alist '())
+(defvar dir-locals-directory-cache '())
+
+;; Mode stubs: correct mode symbol/name for `set-auto-mode' selection;
+;; bodies are prog/text/special-derived approximations.
+(define-derived-mode c-mode prog-mode "C")
+(define-derived-mode c++-mode prog-mode "C++")
+(define-derived-mode objc-mode prog-mode "ObjC")
+(define-derived-mode java-mode prog-mode "Java")
+(define-derived-mode javascript-mode prog-mode "Javascript")
+(define-derived-mode js-json-mode prog-mode "JSON")
+(define-derived-mode css-mode prog-mode "CSS")
+(define-derived-mode mhtml-mode prog-mode "MHTML")
+(define-derived-mode sgml-mode text-mode "SGML")
+(define-derived-mode xml-mode prog-mode "XML")
+(define-derived-mode conf-mode prog-mode "Conf")
+(define-derived-mode conf-unix-mode prog-mode "Conf[Unix]")
+(define-derived-mode conf-windows-mode prog-mode "Conf[Win]")
+(define-derived-mode conf-space-mode prog-mode "Conf[Space]")
+(define-derived-mode conf-colon-mode prog-mode "Conf[Colon]")
+(define-derived-mode conf-desktop-mode prog-mode "Conf[Desktop]")
+(define-derived-mode conf-javaprop-mode prog-mode "Conf[JavaProp]")
+(define-derived-mode conf-ppd-mode prog-mode "Conf[PPD]")
+(define-derived-mode conf-xdefaults-mode prog-mode "Conf[Xdefaults]")
+(define-derived-mode conf-toml-mode prog-mode "Conf[TOML]")
+(define-derived-mode conf-npmrc-mode prog-mode "Conf[NPMRC]")
+(define-derived-mode makefile-mode prog-mode "Makefile")
+(define-derived-mode makefile-gmake-mode prog-mode "GNUmakefile")
+(define-derived-mode makefile-bsdmake-mode prog-mode "Makefile[BSD]")
+(define-derived-mode makefile-imake-mode prog-mode "Makefile[imake]")
+(define-derived-mode makefile-makepp-mode prog-mode "Makefile[makepp]")
+(define-derived-mode makefile-automake-mode prog-mode "Makefile[automake]")
+(define-derived-mode sh-mode prog-mode "Shell-script")
+(defalias 'shell-script-mode 'sh-mode)
+(define-derived-mode perl-mode prog-mode "Perl")
+(define-derived-mode prolog-mode prog-mode "Prolog")
+(define-derived-mode scheme-mode prog-mode "Scheme")
+(define-derived-mode dsssl-mode prog-mode "DSSSL")
+(define-derived-mode tcl-mode prog-mode "Tcl")
+(define-derived-mode verilog-mode prog-mode "Verilog")
+(define-derived-mode vhdl-mode prog-mode "VHDL")
+(define-derived-mode m4-mode prog-mode "M4")
+(define-derived-mode metafont-mode prog-mode "Metafont")
+(define-derived-mode metapost-mode prog-mode "MetaPost")
+(define-derived-mode simula-mode prog-mode "Simula")
+(define-derived-mode opascal-mode prog-mode "OPascal")
+(define-derived-mode m2-mode prog-mode "Modula-2")
+(define-derived-mode icon-mode prog-mode "Icon")
+(define-derived-mode dcl-mode prog-mode "DCL")
+(define-derived-mode fortran-mode prog-mode "Fortran")
+(define-derived-mode f90-mode prog-mode "F90")
+(define-derived-mode asm-mode prog-mode "Assembler")
+(define-derived-mode antlr-mode prog-mode "Antlr")
+(define-derived-mode antlr-v4-mode prog-mode "Antlr-v4")
+(define-derived-mode python-mode prog-mode "Python")
+(define-derived-mode ruby-mode prog-mode "Ruby")
+(define-derived-mode diff-mode prog-mode "Diff")
+(define-derived-mode dns-mode prog-mode "DNS")
+(define-derived-mode sql-mode prog-mode "SQL")
+(define-derived-mode tex-mode text-mode "TeX")
+(define-derived-mode latex-mode tex-mode "LaTeX")
+(define-derived-mode doctex-mode tex-mode "DocTeX")
+(define-derived-mode plain-tex-mode tex-mode "TeX")
+(define-derived-mode slitex-mode tex-mode "SliTeX")
+(define-derived-mode texinfo-mode text-mode "Texinfo")
+(define-derived-mode nroff-mode text-mode "Nroff")
+(define-derived-mode scribe-mode text-mode "Scribe")
+(define-derived-mode mail-mode text-mode "Mail")
+(define-derived-mode bibtex-mode text-mode "BibTeX")
+(define-derived-mode bibtex-style-mode text-mode "BibTeX-Style")
+(define-derived-mode change-log-mode text-mode "ChangeLog")
+(define-derived-mode org-mode prog-mode "Org")
+(define-derived-mode ps-mode prog-mode "PostScript")
+(define-derived-mode mixal-mode prog-mode "MIXAL")
+(define-derived-mode ses-mode prog-mode "SES")
+(define-derived-mode sieve-mode prog-mode "Sieve")
+(define-derived-mode lisp-data-mode prog-mode "Lisp-Data")
+(define-derived-mode autoconf-mode prog-mode "Autoconf")
+(define-derived-mode compilation-mode prog-mode "Compilation")
+(define-derived-mode ebrowse-tree-mode prog-mode "Ebrowse-Tree")
+(define-derived-mode erts-mode prog-mode "Erts")
+(define-derived-mode gdb-script-mode prog-mode "GDB-Script")
+(define-derived-mode ld-script-mode prog-mode "LD-Script")
+(define-derived-mode bovine-grammar-mode prog-mode "Bovine-Grammar")
+(define-derived-mode wisent-grammar-mode prog-mode "Wisent-Grammar")
+(define-derived-mode srecode-template-mode prog-mode "SRecode")
+(define-derived-mode snmp-mode prog-mode "SNMP")
+(define-derived-mode snmpv2-mode prog-mode "SNMPv2")
+(define-derived-mode authinfo-mode prog-mode "Authinfo")
+(define-derived-mode archive-mode special-mode "Archive")
+(define-derived-mode tar-mode special-mode "Tar")
+(define-derived-mode image-mode special-mode "Image")
+(define-derived-mode doc-view-mode special-mode "DocView")
+(defun doc-view-mode-maybe ()
+  "Stub: `doc-view-mode' approximation."
+  (doc-view-mode))
+(put 'doc-view-mode-maybe 'safe-local-eval-function nil)
+
+;; remaining auto-mode symbols (fboundp-guarded stubs)
+(unless (fboundp 'antlr-mode)
+  (define-derived-mode antlr-mode prog-mode "Antlr"))
+(unless (fboundp 'antlr-v4-mode)
+  (define-derived-mode antlr-v4-mode prog-mode "Antlr-V4"))
+(unless (fboundp 'archive-mode)
+  (define-derived-mode archive-mode special-mode "Archive"))
+(unless (fboundp 'asm-mode)
+  (define-derived-mode asm-mode prog-mode "Asm"))
+(unless (fboundp 'authinfo-mode)
+  (define-derived-mode authinfo-mode prog-mode "Authinfo"))
+(unless (fboundp 'autoconf-mode)
+  (define-derived-mode autoconf-mode prog-mode "Autoconf"))
+(unless (fboundp 'awk-mode)
+  (define-derived-mode awk-mode prog-mode "AWK"))
+(unless (fboundp 'bat-mode)
+  (define-derived-mode bat-mode prog-mode "Bat"))
+(unless (fboundp 'bibtex-mode)
+  (define-derived-mode bibtex-mode text-mode "Bibtex"))
+(unless (fboundp 'bibtex-style-mode)
+  (define-derived-mode bibtex-style-mode text-mode "Bibtex-Style"))
+(unless (fboundp 'bovine-grammar-mode)
+  (define-derived-mode bovine-grammar-mode prog-mode "Bovine-Grammar"))
+(unless (fboundp 'c++-mode)
+  (define-derived-mode c++-mode prog-mode "C++"))
+(unless (fboundp 'c-mode)
+  (define-derived-mode c-mode prog-mode "C"))
+(unless (fboundp 'c-or-c++-mode) (defun c-or-c++-mode () "Stub: pick c-mode." (c-mode)))
+(unless (fboundp 'change-log-mode)
+  (define-derived-mode change-log-mode text-mode "Change-Log"))
+(unless (fboundp 'cmake-ts-mode-maybe)
+  (defun cmake-ts-mode-maybe () "Stub for `cmake-ts-mode-maybe'."
+    (if (fboundp 'cmake-mode) (funcall 'cmake-mode) (prog-mode))))
+(unless (fboundp 'compilation-mode)
+  (define-derived-mode compilation-mode prog-mode "Compilation"))
+(unless (fboundp 'conf-colon-mode)
+  (define-derived-mode conf-colon-mode prog-mode "Conf-Colon"))
+(unless (fboundp 'conf-desktop-mode)
+  (define-derived-mode conf-desktop-mode prog-mode "Conf-Desktop"))
+(unless (fboundp 'conf-javaprop-mode)
+  (define-derived-mode conf-javaprop-mode prog-mode "Conf-Javaprop"))
+(unless (fboundp 'conf-mode)
+  (define-derived-mode conf-mode prog-mode "Conf"))
+(unless (fboundp 'conf-mode-maybe)
+  (defun conf-mode-maybe () "Stub for `conf-mode-maybe'."
+    (if (fboundp 'conf-mode) (funcall 'conf-mode) (prog-mode))))
+(unless (fboundp 'conf-npmrc-mode)
+  (define-derived-mode conf-npmrc-mode prog-mode "Conf-Npmrc"))
+(unless (fboundp 'conf-ppd-mode)
+  (define-derived-mode conf-ppd-mode prog-mode "Conf-Ppd"))
+(unless (fboundp 'conf-space-mode)
+  (define-derived-mode conf-space-mode prog-mode "Conf-Space"))
+(unless (fboundp 'conf-toml-mode)
+  (define-derived-mode conf-toml-mode prog-mode "Conf-Toml"))
+(unless (fboundp 'conf-unix-mode)
+  (define-derived-mode conf-unix-mode prog-mode "Conf-Unix"))
+(unless (fboundp 'conf-windows-mode)
+  (define-derived-mode conf-windows-mode prog-mode "Conf-Windows"))
+(unless (fboundp 'conf-xdefaults-mode)
+  (define-derived-mode conf-xdefaults-mode prog-mode "Conf-Xdefaults"))
+(unless (fboundp 'csharp-mode)
+  (define-derived-mode csharp-mode prog-mode "C#"))
+(unless (fboundp 'css-mode)
+  (define-derived-mode css-mode prog-mode "Css"))
+(unless (fboundp 'dcl-mode)
+  (define-derived-mode dcl-mode prog-mode "Dcl"))
+(unless (fboundp 'diff-mode)
+  (define-derived-mode diff-mode prog-mode "Diff"))
+(unless (fboundp 'dns-mode)
+  (define-derived-mode dns-mode prog-mode "Dns"))
+(unless (fboundp 'doc-view-mode-maybe)
+  (defun doc-view-mode-maybe () "Stub for `doc-view-mode-maybe'."
+    (if (fboundp 'doc-view-mode) (funcall 'doc-view-mode) (prog-mode))))
+(unless (fboundp 'dockerfile-ts-mode-maybe)
+  (defun dockerfile-ts-mode-maybe () "Stub for `dockerfile-ts-mode-maybe'."
+    (if (fboundp 'dockerfile-mode) (funcall 'dockerfile-mode) (prog-mode))))
+(unless (fboundp 'doctex-mode)
+  (define-derived-mode doctex-mode text-mode "Doctex"))
+(unless (fboundp 'dsssl-mode)
+  (define-derived-mode dsssl-mode prog-mode "Dsssl"))
+(unless (fboundp 'ebrowse-tree-mode)
+  (define-derived-mode ebrowse-tree-mode prog-mode "Ebrowse-Tree"))
+(unless (fboundp 'editorconfig-conf-mode)
+  (define-derived-mode editorconfig-conf-mode prog-mode "EditorConfig"))
+(unless (fboundp 'elisp-byte-code-mode)
+  (define-derived-mode elisp-byte-code-mode special-mode "Elisp-Byte-Code"))
+(unless (fboundp 'elixir-ts-mode-maybe)
+  (defun elixir-ts-mode-maybe () "Stub for `elixir-ts-mode-maybe'."
+    (if (fboundp 'elixir-mode) (funcall 'elixir-mode) (prog-mode))))
+(unless (fboundp 'emacs-lisp-mode)
+  (define-derived-mode emacs-lisp-mode prog-mode "Emacs-Lisp"))
+(unless (fboundp 'epa-file) (defun epa-file () "Stub: `epa-file'." nil))
+(unless (fboundp 'erts-mode)
+  (define-derived-mode erts-mode prog-mode "Erts"))
+(unless (fboundp 'f90-mode)
+  (define-derived-mode f90-mode prog-mode "F90"))
+(unless (fboundp 'fortran-mode)
+  (define-derived-mode fortran-mode prog-mode "Fortran"))
+(unless (fboundp 'fundamental-mode)
+  (define-derived-mode fundamental-mode prog-mode "Fundamental"))
+(unless (fboundp 'gdb-script-mode)
+  (define-derived-mode gdb-script-mode prog-mode "Gdb-Script"))
+(unless (fboundp 'go-mod-ts-mode-maybe)
+  (defun go-mod-ts-mode-maybe () "Stub for `go-mod-ts-mode-maybe'."
+    (if (fboundp 'go-mod-mode) (funcall 'go-mod-mode) (prog-mode))))
+(unless (fboundp 'go-ts-mode-maybe)
+  (defun go-ts-mode-maybe () "Stub for `go-ts-mode-maybe'."
+    (if (fboundp 'go-mode) (funcall 'go-mode) (prog-mode))))
+(unless (fboundp 'go-work-ts-mode-maybe)
+  (defun go-work-ts-mode-maybe () "Stub for `go-work-ts-mode-maybe'."
+    (if (fboundp 'go-work-mode) (funcall 'go-work-mode) (prog-mode))))
+(unless (fboundp 'heex-ts-mode-maybe)
+  (defun heex-ts-mode-maybe () "Stub for `heex-ts-mode-maybe'."
+    (if (fboundp 'heex-mode) (funcall 'heex-mode) (prog-mode))))
+(unless (fboundp 'icon-mode)
+  (define-derived-mode icon-mode prog-mode "Icon"))
+(unless (fboundp 'idl-mode)
+  (define-derived-mode idl-mode prog-mode "IDL"))
+(unless (fboundp 'image-mode)
+  (define-derived-mode image-mode special-mode "Image"))
+(unless (fboundp 'java-mode)
+  (define-derived-mode java-mode prog-mode "Java"))
+(unless (fboundp 'javascript-mode)
+  (define-derived-mode javascript-mode prog-mode "Javascript"))
+(unless (fboundp 'jka-compr) (defun jka-compr () "Stub: `jka-compr'." nil))
+(unless (fboundp 'js-json-mode)
+  (define-derived-mode js-json-mode prog-mode "Js-Json"))
+(unless (fboundp 'js-mode)
+  (define-derived-mode js-mode prog-mode "JavaScript"))
+(unless (fboundp 'latex-mode)
+  (define-derived-mode latex-mode text-mode "Latex"))
+(unless (fboundp 'ld-script-mode)
+  (define-derived-mode ld-script-mode prog-mode "Ld-Script"))
+(unless (fboundp 'less-css-mode)
+  (define-derived-mode less-css-mode prog-mode "LESS"))
+(unless (fboundp 'lisp-data-mode)
+  (define-derived-mode lisp-data-mode prog-mode "Lisp-Data"))
+(unless (fboundp 'lisp-mode)
+  (define-derived-mode lisp-mode prog-mode "Lisp"))
+(unless (fboundp 'lua-mode)
+  (define-derived-mode lua-mode prog-mode "Lua"))
+(unless (fboundp 'm2-mode)
+  (define-derived-mode m2-mode prog-mode "M2"))
+(unless (fboundp 'm4-mode)
+  (define-derived-mode m4-mode prog-mode "M4"))
+(unless (fboundp 'mail-mode)
+  (define-derived-mode mail-mode text-mode "Mail"))
+(unless (fboundp 'makefile-automake-mode)
+  (define-derived-mode makefile-automake-mode prog-mode "Makefile-Automake"))
+(unless (fboundp 'makefile-bsdmake-mode)
+  (define-derived-mode makefile-bsdmake-mode prog-mode "Makefile-Bsdmake"))
+(unless (fboundp 'makefile-gmake-mode)
+  (define-derived-mode makefile-gmake-mode prog-mode "Makefile-Gmake"))
+(unless (fboundp 'makefile-imake-mode)
+  (define-derived-mode makefile-imake-mode prog-mode "Makefile-Imake"))
+(unless (fboundp 'makefile-makepp-mode)
+  (define-derived-mode makefile-makepp-mode prog-mode "Makefile-Makepp"))
+(unless (fboundp 'metafont-mode)
+  (define-derived-mode metafont-mode prog-mode "Metafont"))
+(unless (fboundp 'metapost-mode)
+  (define-derived-mode metapost-mode prog-mode "Metapost"))
+(unless (fboundp 'mhtml-mode)
+  (define-derived-mode mhtml-mode text-mode "Mhtml"))
+(unless (fboundp 'mixal-mode)
+  (define-derived-mode mixal-mode prog-mode "Mixal"))
+(unless (fboundp 'nroff-mode)
+  (define-derived-mode nroff-mode text-mode "Nroff"))
+(unless (fboundp 'objc-mode)
+  (define-derived-mode objc-mode prog-mode "Objc"))
+(unless (fboundp 'octave-maybe-mode)
+  (defun octave-maybe-mode () "Stub for `octave-maybe-mode'."
+    (if (fboundp 'octave-mode) (funcall 'octave-mode) (prog-mode))))
+(unless (fboundp 'octave-mode)
+  (define-derived-mode octave-mode prog-mode "Octave"))
+(unless (fboundp 'opascal-mode)
+  (define-derived-mode opascal-mode prog-mode "Opascal"))
+(unless (fboundp 'org-mode)
+  (define-derived-mode org-mode prog-mode "Org"))
+(unless (fboundp 'pascal-mode)
+  (define-derived-mode pascal-mode prog-mode "Pascal"))
+(unless (fboundp 'perl-mode)
+  (define-derived-mode perl-mode prog-mode "Perl"))
+(unless (fboundp 'php-ts-mode-maybe)
+  (defun php-ts-mode-maybe () "Stub for `php-ts-mode-maybe'."
+    (if (fboundp 'php-mode) (funcall 'php-mode) (prog-mode))))
+(unless (fboundp 'pike-mode)
+  (define-derived-mode pike-mode prog-mode "Pike"))
+(unless (fboundp 'prolog-mode)
+  (define-derived-mode prolog-mode prog-mode "Prolog"))
+(unless (fboundp 'ps-mode)
+  (define-derived-mode ps-mode prog-mode "Ps"))
+(unless (fboundp 'python-mode)
+  (define-derived-mode python-mode prog-mode "Python"))
+(unless (fboundp 'rst-mode)
+  (define-derived-mode rst-mode text-mode "reST"))
+(unless (fboundp 'ruby-mode)
+  (define-derived-mode ruby-mode prog-mode "Ruby"))
+(unless (fboundp 'rust-ts-mode-maybe)
+  (defun rust-ts-mode-maybe () "Stub for `rust-ts-mode-maybe'."
+    (if (fboundp 'rust-mode) (funcall 'rust-mode) (prog-mode))))
+(unless (fboundp 'scheme-mode)
+  (define-derived-mode scheme-mode prog-mode "Scheme"))
+(unless (fboundp 'scribe-mode)
+  (define-derived-mode scribe-mode text-mode "Scribe"))
+(unless (fboundp 'scss-mode)
+  (define-derived-mode scss-mode prog-mode "SCSS"))
+(unless (fboundp 'ses-mode)
+  (define-derived-mode ses-mode prog-mode "Ses"))
+(unless (fboundp 'sgml-mode)
+  (define-derived-mode sgml-mode text-mode "Sgml"))
+(unless (fboundp 'sh-mode)
+  (define-derived-mode sh-mode prog-mode "Sh"))
+(unless (fboundp 'sieve-mode)
+  (define-derived-mode sieve-mode prog-mode "Sieve"))
+(unless (fboundp 'simula-mode)
+  (define-derived-mode simula-mode prog-mode "Simula"))
+(unless (fboundp 'snmp-mode)
+  (define-derived-mode snmp-mode prog-mode "Snmp"))
+(unless (fboundp 'snmpv2-mode)
+  (define-derived-mode snmpv2-mode prog-mode "Snmpv2"))
+(unless (fboundp 'sql-mode)
+  (define-derived-mode sql-mode prog-mode "Sql"))
+(unless (fboundp 'srecode-template-mode)
+  (define-derived-mode srecode-template-mode prog-mode "Srecode-Template"))
+(unless (fboundp 'tar-mode)
+  (define-derived-mode tar-mode special-mode "Tar"))
+(unless (fboundp 'tcl-mode)
+  (define-derived-mode tcl-mode prog-mode "Tcl"))
+(unless (fboundp 'tex-mode)
+  (define-derived-mode tex-mode text-mode "Tex"))
+(unless (fboundp 'texinfo-mode)
+  (define-derived-mode texinfo-mode text-mode "Texinfo"))
+(unless (fboundp 'text-mode)
+  (define-derived-mode text-mode prog-mode "Text"))
+(unless (fboundp 'tsx-ts-mode-maybe)
+  (defun tsx-ts-mode-maybe () "Stub for `tsx-ts-mode-maybe'."
+    (if (fboundp 'tsx-mode) (funcall 'tsx-mode) (prog-mode))))
+(unless (fboundp 'typescript-ts-mode-maybe)
+  (defun typescript-ts-mode-maybe () "Stub for `typescript-ts-mode-maybe'."
+    (if (fboundp 'typescript-mode) (funcall 'typescript-mode) (prog-mode))))
+(unless (fboundp 'vera-mode)
+  (define-derived-mode vera-mode prog-mode "Vera"))
+(unless (fboundp 'verilog-mode)
+  (define-derived-mode verilog-mode prog-mode "Verilog"))
+(unless (fboundp 'vhdl-mode)
+  (define-derived-mode vhdl-mode prog-mode "Vhdl"))
+(unless (fboundp 'wisent-grammar-mode)
+  (define-derived-mode wisent-grammar-mode prog-mode "Wisent-Grammar"))
+(unless (fboundp 'xml-mode)
+  (define-derived-mode xml-mode prog-mode "Xml"))
+(unless (fboundp 'yaml-ts-mode-maybe)
+  (defun yaml-ts-mode-maybe () "Stub for `yaml-ts-mode-maybe'."
+    (if (fboundp 'yaml-mode) (funcall 'yaml-mode) (prog-mode))))
+
 ;; *scratch* starts in lisp-interaction-mode (GNU batch behavior too).
 (when (get-buffer "*scratch*")
   (with-current-buffer "*scratch*"
     (lisp-interaction-mode)))
-"#;
+"##;
