@@ -133,6 +133,8 @@ pub struct Interp {
     pub charsets: Vec<(String, Value)>,
     /// Charset alias → canonical name (`define-charset-alias`).
     pub charset_aliases: Vec<(String, String)>,
+    /// Coding systems defined via `define-coding-system-internal`.
+    pub extra_coding_systems: Vec<String>,
     /// char-code property name → per-char entries (`put-char-code-property`).
     pub char_code_props: Vec<(String, Vec<(i64, Value)>)>,
     /// char-code property name → char-table backing store.
@@ -221,6 +223,7 @@ impl Interp {
             processes: Vec::new(),
             charsets: Vec::new(),
             charset_aliases: Vec::new(),
+            extra_coding_systems: Vec::new(),
             char_code_props: Vec::new(),
             char_code_prop_tables: Vec::new(),
             mtwlb_phase: 0,

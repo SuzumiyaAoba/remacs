@@ -41,6 +41,16 @@ const BUILTIN_CHARSETS: &[&str] = &[
     "mule-unicode-0100-24ff",
     "mule-unicode-2500-33ff",
     "mule-unicode-e000-ffff",
+    "big5",
+    "cp932",
+    "cp932-2-byte",
+    "chinese-big5-1",
+    "chinese-big5-2",
+    "japanese-jisx0208",
+    "jisx0201",
+    "latin-jisx0201",
+    "katakana-jisx0201",
+    "katakana-sjis",
 ];
 
 fn charset_entry<'a>(i: &'a Interp, name: &str) -> Option<&'a (String, Value)> {
@@ -52,7 +62,7 @@ fn charset_defined(i: &Interp, name: &str) -> bool {
     BUILTIN_CHARSETS.contains(&name.as_str()) || charset_entry(i, &name).is_some()
 }
 
-fn want_charset(i: &mut Interp, v: &Value) -> Result<String, Flow> {
+pub(crate) fn want_charset(i: &mut Interp, v: &Value) -> Result<String, Flow> {
     let name = match v {
         Value::Sym(s) => i.symbol_name(*s),
         _ => return Err(i.wrong_type_mut("charsetp", v)),
@@ -1144,4 +1154,232 @@ pub(crate) static SUBRS: &[Subr] = &[
         f_put_unicode_property_internal,
         "Set PROP-TABLE value at CHAR."
     ),
+    S!(
+        "decode-big5-char",
+        1,
+        1,
+        f_decode_big5_char,
+        "Decode Big5 CODE to a character."
+    ),
+    S!(
+        "encode-big5-char",
+        1,
+        1,
+        f_encode_big5_char,
+        "Encode CH to a Big5 code."
+    ),
+    S!(
+        "decode-sjis-char",
+        1,
+        1,
+        f_decode_sjis_char,
+        "Decode Shift-JIS CODE to a character."
+    ),
+    S!(
+        "encode-sjis-char",
+        1,
+        1,
+        f_encode_sjis_char,
+        "Encode CH to a Shift-JIS code."
+    ),
+    S!(
+        "define-charset-internal",
+        many 17,
+        f_define_charset_internal,
+        "Internal: define charset from attributes."
+    ),
+    S!(
+        "define-coding-system-internal",
+        many 13,
+        f_define_coding_system_internal,
+        "Internal: define coding system from attributes."
+    ),
 ];
+
+// ---------- CJK coders ----------
+
+fn tbl_decode(t: &[(u32, u32)], code: u32) -> Option<i64> {
+    t.binary_search_by_key(&code, |p| p.0)
+        .ok()
+        .map(|ix| t[ix].1 as i64)
+}
+
+fn tbl_encode(t: &[(u32, u32)], ucs: u32) -> Option<i64> {
+    t.binary_search_by_key(&ucs, |p| p.0)
+        .ok()
+        .map(|ix| t[ix].1 as i64)
+}
+
+/// `decode-char CHARSET CODE` semantics: nil when CODE is outside the
+/// charset's space or unmapped. Used by `f_decode_char` in strfn.rs.
+pub(crate) fn decode_charset_code(name: &str, code: i64) -> Option<i64> {
+    use crate::lisp::cjk_tables as cjk;
+    if code < 0 {
+        return None;
+    }
+    let u = code as u32;
+    match name {
+        "ascii" => (code < 0x80).then_some(code),
+        "eight-bit" => (0x80..=0xff).contains(&code).then(|| 0x3fff00 + code),
+        "iso-8859-1" | "latin-iso8859-1" | "eight-bit-graphic" | "eight-bit-control" => {
+            (code < 0x100).then_some(code)
+        }
+        "unicode" | "ucs" => (code < 0x110000).then_some(code),
+        "emacs" => (code < 0x400000).then_some(code),
+        "big5" => Some(if code < 0x80 {
+            code
+        } else {
+            return tbl_decode(cjk::BIG5_DECODE, u);
+        }),
+        "cp932" | "cp932-2-byte" => Some(if code < 0x80 {
+            code
+        } else if (0xa1..=0xdf).contains(&code) {
+            code + 0xfec0
+        } else {
+            return tbl_decode(cjk::SJIS_DECODE, u);
+        }),
+        "katakana-sjis" => (0xa1..=0xdf).contains(&code).then(|| code + 0xfec0),
+        "japanese-jisx0208" => tbl_decode(cjk::JISX0208_DECODE, u),
+        "jisx0201" | "katakana-jisx0201" | "latin-jisx0201" => {
+            tbl_decode(cjk::JISX0201_DECODE, u)
+        }
+        "chinese-big5-1" => tbl_decode(cjk::BIG5_1_DECODE, u),
+        "chinese-big5-2" => tbl_decode(cjk::BIG5_2_DECODE, u),
+        // Defined charsets we don't model: pass the code through (ASCII-safe).
+        _ => Some(code),
+    }
+}
+
+/// `encode-char CH CHARSET` semantics: nil when CH has no code in CHARSET.
+pub(crate) fn encode_charset_code(name: &str, ch: i64) -> Option<i64> {
+    use crate::lisp::cjk_tables as cjk;
+    if !(0..0x400000).contains(&ch) {
+        return None;
+    }
+    let u = ch as u32;
+    match name {
+        "ascii" => (ch < 0x80).then_some(ch),
+        "eight-bit" => (0x3fff80..=0x3fffff).contains(&ch).then(|| ch - 0x3fff00),
+        "iso-8859-1" | "latin-iso8859-1" | "eight-bit-graphic" | "eight-bit-control" => {
+            (ch < 0x100).then_some(ch)
+        }
+        "unicode" | "ucs" | "emacs" => Some(ch),
+        "big5" => Some(if ch < 0x80 {
+            ch
+        } else {
+            return tbl_encode(cjk::BIG5_ENCODE, u);
+        }),
+        "cp932" | "cp932-2-byte" => Some(if ch < 0x80 {
+            ch
+        } else if (0xff61..=0xff9f).contains(&ch) {
+            ch - 0xfec0
+        } else {
+            return tbl_encode(cjk::SJIS_ENCODE, u);
+        }),
+        "katakana-sjis" => (0xff61..=0xff9f).contains(&ch).then(|| ch - 0xfec0),
+        "japanese-jisx0208" => tbl_encode(cjk::JISX0208_ENCODE, u),
+        "jisx0201" | "katakana-jisx0201" | "latin-jisx0201" => {
+            tbl_encode(cjk::JISX0201_ENCODE, u)
+        }
+        "chinese-big5-1" => tbl_encode(cjk::BIG5_1_ENCODE, u),
+        "chinese-big5-2" => tbl_encode(cjk::BIG5_2_ENCODE, u),
+        _ => Some(ch),
+    }
+}
+
+fn want_wholenum_c(i: &mut Interp, v: &Value) -> Result<i64, Flow> {
+    match v {
+        Value::Int(n) if *n >= 0 => Ok(*n as i64),
+        _ => Err(i.wrong_type_mut("wholenump", v)),
+    }
+}
+
+fn want_char_c(i: &mut Interp, v: &Value) -> Result<i64, Flow> {
+    match v {
+        Value::Int(n) if (0..0x400000).contains(n) => Ok(*n as i64),
+        _ => Err(i.wrong_type_mut("characterp", v)),
+    }
+}
+
+fn invalid_code(i: &mut Interp, code: i64) -> Flow {
+    i.error(format!("Invalid code: {code}"))
+}
+
+fn f_decode_big5_char(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    use crate::lisp::cjk_tables as cjk;
+    let code = want_wholenum_c(i, &a[0])?;
+    if code < 0x80 {
+        return Ok(Value::Int(code.into()));
+    }
+    match tbl_decode(cjk::BIG5_DECODE, code as u32) {
+        Some(u) => Ok(Value::Int(u.into())),
+        None => Err(invalid_code(i, code)),
+    }
+}
+
+fn f_encode_big5_char(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    use crate::lisp::cjk_tables as cjk;
+    let ch = want_char_c(i, &a[0])?;
+    if ch < 0x80 {
+        return Ok(Value::Int(ch.into()));
+    }
+    match tbl_encode(cjk::BIG5_ENCODE, ch as u32) {
+        Some(c) => Ok(Value::Int(c.into())),
+        None => Err(i.error(format!("Cannot encode character: {ch}"))),
+    }
+}
+
+fn f_decode_sjis_char(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    use crate::lisp::cjk_tables as cjk;
+    let code = want_wholenum_c(i, &a[0])?;
+    if code < 0x80 {
+        return Ok(Value::Int(code.into()));
+    }
+    if (0xa1..=0xdf).contains(&code) {
+        return Ok(Value::Int((code + 0xfec0).into()));
+    }
+    match tbl_decode(cjk::SJIS_DECODE, code as u32) {
+        Some(u) => Ok(Value::Int(u.into())),
+        None => Err(invalid_code(i, code)),
+    }
+}
+
+fn f_encode_sjis_char(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    use crate::lisp::cjk_tables as cjk;
+    let ch = want_char_c(i, &a[0])?;
+    if ch < 0x80 {
+        return Ok(Value::Int(ch.into()));
+    }
+    // GNU's `sjis` charset encodes halfwidth kana at 0x709F+offset.
+    if (0xff61..=0xff9f).contains(&ch) {
+        return Ok(Value::Int((ch - 0xff61 + 0x709f).into()));
+    }
+    match tbl_encode(cjk::SJIS_ENCODE, ch as u32) {
+        Some(c) => Ok(Value::Int(c.into())),
+        None => Err(i.error(format!("Cannot encode character: {ch}"))),
+    }
+}
+
+fn f_define_charset_internal(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    // (define-charset-internal NAME DIMENSION CODE-SPACE MIN-CHAR MAX-CHAR
+    //  ISO-FINAL-CHAR ISO-GRAPHIC-PLANE ASCII-COMPATIBLE-P SUPPLEMENT-P
+    //  INVALID-CODE CODE-OFFSET MAP SUBSET-PARENTS SUPPLEMENT-CHARSET
+    //  UNIFY-MAP UNICODES &rest)
+    let sid = want_sym(i, &a[0])?;
+    let name = i.symbol_name(sid);
+    if charset_entry(i, &name).is_none() {
+        i.charsets.push((name, Value::Nil));
+    }
+    Ok(Value::Nil)
+}
+
+fn f_define_coding_system_internal(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    // (define-coding-system-internal NAME MNEMONIC CODING-TYPE CHARSET-LIST
+    //  ...13+ attrs) — register the name so `coding-system-p` sees it.
+    let sid = want_sym(i, &a[0])?;
+    let name = i.symbol_name(sid);
+    if !i.extra_coding_systems.iter().any(|n| *n == name) {
+        i.extra_coding_systems.push(name);
+    }
+    Ok(Value::Nil)
+}

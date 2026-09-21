@@ -1667,27 +1667,25 @@ fn f_split_char(i: &mut Interp, args: Vec<Value>) -> EvalResult {
 }
 
 fn f_encode_char(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    // (encode-char CH CODING-SYSTEM) — utf-8 identity.
-    want_int(i, &args[0])?;
-    Ok(args[0].clone())
+    // (encode-char CH CHARSET)
+    let ch = match &args[0] {
+        Value::Int(n) if (0..0x400000).contains(n) => *n as i64,
+        _ => return Err(i.wrong_type_mut("characterp", &args[0])),
+    };
+    let name = super::charset::want_charset(i, &args[1])?;
+    match super::charset::encode_charset_code(&name, ch) {
+        Some(c) => Ok(Value::Int(c.into())),
+        None => Ok(Value::Nil),
+    }
 }
 
 fn f_decode_char(i: &mut Interp, args: Vec<Value>) -> EvalResult {
+    // (decode-char CHARSET CODE) — nil when CODE is outside CHARSET's space.
+    let name = super::charset::want_charset(i, &args[0])?;
     let code = want_int(i, &args[1])?;
-    // GNU returns nil when CODE exceeds the charset's code space.
-    let cs_name = match &args[0] {
-        Value::Sym(s) => i.symbol_name(*s),
-        _ => String::new(),
-    };
-    let max: i128 = match cs_name.as_str() {
-        "ascii" => 127,
-        "iso-8859-1" | "latin-iso8859-1" | "eight-bit-graphic" | "eight-bit-control" => 255,
-        _ => i128::MAX,
-    };
-    if code >= 0 && code <= max {
-        Ok(args[1].clone())
-    } else {
-        Ok(Value::Nil)
+    match super::charset::decode_charset_code(&name, code as i64) {
+        Some(c) => Ok(Value::Int(c.into())),
+        None => Ok(Value::Nil),
     }
 }
 

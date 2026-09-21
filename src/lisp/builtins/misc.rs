@@ -4625,7 +4625,10 @@ pub(crate) fn coding_known(i: &Interp, v: &Value) -> Option<String> {
         .or_else(|| name.strip_suffix("-dos"))
         .or_else(|| name.strip_suffix("-mac"))
         .unwrap_or(&name);
-    if CODING_SYSTEMS.contains(&name.as_str()) || CODING_SYSTEMS.contains(&base) {
+    if CODING_SYSTEMS.contains(&name.as_str())
+        || CODING_SYSTEMS.contains(&base)
+        || i.extra_coding_systems.iter().any(|n| *n == name)
+    {
         Some(name)
     } else {
         None

@@ -2,6 +2,7 @@
 //! evaluator, special forms, builtins, regexp engine, loader.
 
 pub mod builtins;
+pub(crate) mod cjk_tables;
 pub mod error;
 pub mod eval;
 pub mod load;
