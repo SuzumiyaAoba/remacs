@@ -174,19 +174,66 @@ fn eval_str_for_load(i: &mut Interp, src: &str) -> EvalResult {
         match next {
             Some((form, end)) => {
                 pos = end;
-                let expanded = crate::lisp::builtins::evalfn::macroexpand_all(i, &form)?;
-                match i.eval(&expanded) {
-                    Ok(v) => last = v,
-                    Err(crate::lisp::Flow::Throw(tag, val)) => {
-                        let nc = i.intern("no-catch");
-                        return Err(i.signal_data(nc, vec![tag, val]));
-                    }
-                    Err(f) => return Err(f),
-                }
+                last = eval_for_load(i, form)?;
             }
             None => return Ok(last),
         }
     }
+}
+
+/// Expand + eval one top-level form the way GNU's
+/// `internal-macroexpand-for-load' does during `load': the form is
+/// expanded; a top-level `progn' is spliced so each child is expanded
+/// and evaluated in turn (an autoloaded macro in a later child is not
+/// resolved until that child's expansion runs, matching GNU's
+/// observable autoload timing).
+fn eval_for_load(i: &mut Interp, form: Value) -> EvalResult {
+    // Splice a `progn' BEFORE expanding: GNU expands each spliced child
+    // at its own turn, so later autoloaded macros stay unresolved while
+    // earlier children evaluate.
+    if let Some(children) = progn_children(i, &form) {
+        let mut last = Value::Nil;
+        for child in children {
+            last = eval_for_load(i, child)?;
+        }
+        return Ok(last);
+    }
+    let expanded = match crate::lisp::builtins::evalfn::macroexpand_all(i, &form)
+    {
+        Ok(f) => f,
+        // GNU tolerates expansion failure here and evaluates the
+        // original form instead.
+        Err(_) => form.clone(),
+    };
+    // A macro may have expanded into a top-level `progn' — splice it too.
+    if let Some(children) = progn_children(i, &expanded) {
+        let mut last = Value::Nil;
+        for child in children {
+            last = eval_for_load(i, child)?;
+        }
+        return Ok(last);
+    }
+    match i.eval(&expanded) {
+        Ok(v) => Ok(v),
+        Err(crate::lisp::Flow::Throw(tag, val)) => {
+            let nc = i.intern("no-catch");
+            Err(i.signal_data(nc, vec![tag, val]))
+        }
+        Err(f) => Err(f),
+    }
+}
+
+/// If FORM is `(progn CHILDREN...)', return the children.
+fn progn_children(i: &mut Interp, form: &Value) -> Option<Vec<Value>> {
+    if let Value::Cons(c) = form {
+        let cb = c.borrow();
+        if let Value::Sym(s) = &cb.car {
+            if *s == i.intern("progn") {
+                return cb.cdr.list_to_vec().ok();
+            }
+        }
+    }
+    None
 }
 
 /// True when the file declares `-*- lexical-binding: t -*-' (or the

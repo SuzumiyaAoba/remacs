@@ -1821,6 +1821,10 @@ places where expressions are evaluated and inserted or spliced in."
   "Define a setter method for generalized variable NAME." nil t)
 (autoload 'gv-define-simple-setter "gv"
   "Define a simple setter method for generalized variable NAME." nil t)
+(autoload 'defclass "eieio"
+  "Define NAME as a class." nil t)
+(autoload 'make-instance "eieio"
+  "Create an instance of CLASS." nil nil)
 (autoload 'gv-ref "gv"
   "Return a reference to PLACE." nil t)
 
@@ -2160,6 +2164,14 @@ trying SUFFIXES; PREDICATE (default `file-exists-p') must pass."
    ((consp place)
     (let ((op (car place)))
       (cond
+       ;; Expand macro-headed places (GNU gv does this) so e.g.
+       ;; `(oref o s)' exposes its `(setf eieio-oref)'-able form.
+       ((and (symbolp op)
+             (not (memq op '(car cdr caar cadr cddr nth elt nthcdr aref
+                             get gethash symbol-value symbol-function
+                             symbol-plist plist-get alist-get gv-deref)))
+             (macrop (symbol-function op)))
+        (cl--setf-pair (macroexpand-1 place) val))
        ((eq op 'car) `(setcar ,(cadr place) ,val))
        ((eq op 'cdr) `(setcdr ,(cadr place) ,val))
        ((eq op 'caar) `(setcar (car ,(cadr place)) ,val))
@@ -2192,6 +2204,11 @@ trying SUFFIXES; PREDICATE (default `file-exists-p') must pass."
 (defmacro setf (&rest args)
   "Set each generalized PLACE to VALUE.  Supports symbol, car, cdr,
 nth, elt, aref, get, gethash, plist-get, symbol-* places."
+  ;; GNU autoloads `setf' itself from gv.el, so expanding a `setf' form
+  ;; loads that file and defines gv-ref/gv-letplace/gv-get.  Mirror the
+  ;; observable autoload timing.
+  (when (autoloadp (symbol-function 'gv-get))
+    (load "gv"))
   (cons 'progn
         (let ((out nil) (rest args))
           (while rest
@@ -2201,6 +2218,9 @@ nth, elt, aref, get, gethash, plist-get, symbol-* places."
 
 (defmacro psetf (&rest args)
   "Like `setf' but evaluate all values before assigning."
+  ;; GNU autoloads `psetf' from gv.el — expanding it loads gv.
+  (when (autoloadp (symbol-function 'gv-get))
+    (load "gv"))
   (let ((temps nil) (sets nil) (rest args))
     (while rest
       (let ((tmp (gensym)))
@@ -2310,6 +2330,14 @@ with no ARG (or 'toggle), toggle."
        (let ((inhibit-read-only t)) (erase-buffer))
        (run-hooks 'temp-buffer-setup-hook))
      (prog1 (progn ,@body)
+       (with-current-buffer standard-output
+         ;; GNU's temp-buffer display (help-mode setup) ensures the
+         ;; contents end with a newline and makes the buffer read-only.
+         (let ((inhibit-read-only t))
+           (goto-char (point-max))
+           (unless (or (bobp) (eq (char-before) ?\n))
+             (insert "\n")))
+         (setq buffer-read-only t))
        (ignore-errors (display-buffer standard-output)))))
 
 ;; ---------- cl-generic subset ----------
@@ -2365,6 +2393,11 @@ with no ARG (or 'toggle), toggle."
    ((symbolp spec)
     (or (and (fboundp (intern (format "%sp" spec)))
              (funcall (intern (format "%sp" spec)) arg))
+        ;; An EIEIO class name specializes on instances of it.
+        (and (fboundp 'eieio--class-p)
+             (funcall 'eieio--class-p spec)
+             (fboundp 'object-of-class-p)
+             (funcall 'object-of-class-p arg spec))
         (eq spec 't)))
    (t nil)))
 
@@ -2376,7 +2409,12 @@ with no ARG (or 'toggle), toggle."
    ((consp b) nil)
    ((eq b t) (not (eq a t)))
    ((eq a t) nil)
-   (t (memq b (cl--type-parents a)))))
+   (t (or (memq b (cl--type-parents a))
+          ;; EIEIO subclass specializers are more specific than parents.
+          (and (fboundp 'eieio--class-p)
+               (funcall 'eieio--class-p a)
+               (fboundp 'child-of-class-p)
+               (funcall 'child-of-class-p a b))))))
 
 (defun cl--method-more-specific-p (a b)
   "Compare method specs lexicographically."
@@ -3346,16 +3384,35 @@ Accumulation refers to the `cl--loop-list-acc' and
                (t nil)))))))
 
 (defun cl--sm-subst (form bindings)
-  "Substitute symbol-macrolet BINDINGS ((SYM FORM)...) in FORM tree."
+  "Substitute symbol-macrolet BINDINGS ((SYM FORM)...) in FORM tree.
+`setq' on a bound symbol becomes `setf' on its expansion, like GNU's
+`cl--sm-macroexpand'."
   (cond
    ((symbolp form)
     (let ((b (assq form bindings)))
       (if b (cadr b) form)))
    ((consp form)
-    (if (memq (car form) '(quote function))
-        form
+    (cond
+     ((memq (car form) '(quote function))
+      form)
+     ((memq (car form) '(setq setq-default))
+      ;; (setq SYM VAL ...) → (setf EXPANSION VAL ...) for bound syms.
+      (let ((args (cdr form)) (out nil))
+        (while args
+          (let* ((s (car args)) (v (cadr args))
+                 (b (assq s bindings)))
+            (if b
+                (push (list 'setf (cl--sm-subst (cadr b) bindings)
+                            (cl--sm-subst v bindings))
+                      out)
+              (push (list (car form) s
+                          (cl--sm-subst v bindings))
+                    out)))
+          (setq args (cddr args)))
+        (if (cdr out) (cons 'progn (nreverse out)) (car out))))
+     (t
       (cons (cl--sm-subst (car form) bindings)
-            (cl--sm-subst (cdr form) bindings))))
+            (cl--sm-subst (cdr form) bindings)))))
    (t form)))
 
 (defmacro cl-symbol-macrolet (bindings &rest body)

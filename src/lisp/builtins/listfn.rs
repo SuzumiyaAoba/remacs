@@ -371,6 +371,8 @@ fn f_length(i: &mut Interp, args: Vec<Value>) -> EvalResult {
             }
             Ok(Value::Int(0))
         }
+        // Records (incl. EIEIO instances) report their slot count.
+        Value::Record(r) => Ok(Value::Int(r.borrow().len() as i128)),
         other => Err(i.wrong_type_mut("sequencep", other)),
     }
 }
