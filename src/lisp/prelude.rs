@@ -8687,6 +8687,10 @@ and version strings."
 ;; GNU C var (indent.c); consulted by hack-local-variables--find-variables.
 (defvar selective-display nil)
 
+;; filelock.c.
+(defvar create-lockfiles t
+  "Non-nil means use lockfiles to avoid editing clashes.")
+
 ;; subr.el: mode-hook machinery (verbatim GNU).
 (defvar-local delay-mode-hooks nil
   "If non-nil, `run-mode-hooks' should delay running the hooks.")

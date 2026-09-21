@@ -5150,7 +5150,7 @@ fn f_insert_file_contents(i: &mut Interp, a: Vec<Value>) -> EvalResult {
             bb.set_point(start);
             if visit {
                 bb.file_name = Some(path.clone());
-                bb.modified = false;
+                bb.note_modified(false);
                 // set default-directory to file's dir
                 if let Some(dir_end) = path.rfind('/') {
                     let dd = i.intern_soft("default-directory").unwrap_or(u32::MAX);
@@ -5238,6 +5238,9 @@ fn write_file_string(i: &mut Interp, path: &str, text: &str, a: &[Value]) -> Eva
             if visit && !i.noninteractive {
                 i.message(&format!("Wrote {}", path));
             }
+            // GNU: writing the visited file refreshes the recorded
+            // modtime (write-region / basic-save-buffer path).
+            update_visited_file_modtime(&mut cur(i).borrow_mut(), path);
             Ok(Value::Nil)
         }
         Err(e) => Err(i.signal_data(
@@ -5258,7 +5261,7 @@ fn f_set_visited_file_name(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         Value::Str(s) => bb.file_name = Some(s.borrow().clone()),
         other => return Err(i.wrong_type_mut("stringp", other)),
     }
-    bb.modified = false;
+    bb.note_modified(false);
     Ok(Value::Nil)
 }
 
@@ -5289,15 +5292,37 @@ fn f_find_file_noselect(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         let bft = i.intern_soft("buffer-file-truename").unwrap_or(u32::MAX);
         bb.locals.insert(bfn, Value::string(path.clone()));
         bb.locals.insert(bft, Value::string(path.clone()));
+        // Snapshot `create-lockfiles' for Buffer's C-level auto-lock
+        // (which cannot see Lisp state during modification).
+        if let Some(cl) = i.intern_soft("create-lockfiles") {
+            bb.create_lockfiles = i.symbol_value(cl).truthy();
+        }
         if let Some(dir_end) = path.rfind('/') {
             let dd = i.intern_soft("default-directory").unwrap_or(u32::MAX);
             bb.locals
                 .insert(dd, Value::string(path[..=dir_end].to_string()));
         }
-        if let Ok(contents) = std::fs::read_to_string(&path) {
-            bb.text.set_text(&contents);
-            bb.zv = bb.text.len();
-            bb.modified = false;
+        match std::fs::read_to_string(&path) {
+            Ok(contents) => {
+                bb.text.set_text(&contents);
+                bb.zv = bb.text.len();
+                bb.note_modified(false);
+                // GNU records the visited file's modtime+size so
+                // `verify-visited-file-modtime' can detect changes.
+                if let Ok(m) = std::fs::metadata(&path) {
+                    bb.file_modtime_ns = m
+                        .modified()
+                        .ok()
+                        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                        .map(|d| d.as_secs() as i128 * 1_000_000_000 + d.subsec_nanos() as i128)
+                        .unwrap_or(-2);
+                    bb.file_modtime_size = m.len() as i128;
+                }
+            }
+            Err(_) => {
+                // Visited file does not exist (GNU: modtime flag -1).
+                bb.file_modtime_ns = -1;
+            }
         }
     }
     // GNU find-file-noselect -> after-find-file: pick the major mode and
@@ -5331,6 +5356,26 @@ fn f_find_file(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     Ok(buf)
 }
 
+/// Refresh a buffer's recorded visited-file modtime+size after writing
+/// PATH (only when PATH is the file the buffer visits).
+fn update_visited_file_modtime(
+    bb: &mut crate::buffer::Buffer,
+    path: &str,
+) {
+    if bb.file_name.as_deref() != Some(path) {
+        return;
+    }
+    if let Ok(m) = std::fs::metadata(path) {
+        bb.file_modtime_ns = m
+            .modified()
+            .ok()
+            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+            .map(|d| d.as_secs() as i128 * 1_000_000_000 + d.subsec_nanos() as i128)
+            .unwrap_or(-2);
+        bb.file_modtime_size = m.len() as i128;
+    }
+}
+
 fn f_save_buffer(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
     let b = cur(i);
     let (path, text) = {
@@ -5342,7 +5387,11 @@ fn f_save_buffer(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
     };
     match std::fs::write(&path, &text) {
         Ok(()) => {
-            b.borrow_mut().modified = false;
+            {
+                let mut bb = b.borrow_mut();
+                bb.note_modified(false);
+                update_visited_file_modtime(&mut bb, &path);
+            }
             i.message(&format!("Wrote {}", path));
             Ok(Value::t())
         }

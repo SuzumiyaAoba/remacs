@@ -1685,6 +1685,18 @@ impl Interp {
             "permission-denied",
             &["permission-denied", "file-error", "error"],
         );
+        // filelock.c
+        put(
+            self,
+            "file-locked",
+            &["file-locked", "file-error", "error"],
+        );
+        // cl-macs.el `cl-assert'
+        put(
+            self,
+            "cl-assertion-failed",
+            &["cl-assertion-failed", "error"],
+        );
         put(
             self,
             "coding-system-error",
@@ -1752,6 +1764,8 @@ impl Interp {
             ("file-already-exists", "File already exists"),
             ("file-supersession", "File is already being edited"),
             ("permission-denied", "Permission denied"),
+            ("file-locked", "File is locked"),
+            ("cl-assertion-failed", "Assertion failed"),
             (
                 "recursion-error",
                 "Variable binding depth exceeds max-specpdl-size",
@@ -2190,7 +2204,6 @@ impl Interp {
             "lexical-binding",
             "eval-expression-print-level",
             "eval-expression-print-length",
-            "create-lockfiles",
             "backup-enable-predicate",
             "buffer-offer-save",
             "find-file-literally",

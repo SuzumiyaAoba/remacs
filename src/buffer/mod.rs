@@ -72,6 +72,113 @@ pub struct Buffer {
     /// `internal--labeled-narrow-to-region' so `internal--labeled-widen'
     /// can restore the bounds it replaced.
     pub narrow_labels: Vec<(usize, usize, crate::lisp::value::Value)>,
+    /// Recorded visited-file modtime, in nanoseconds since the epoch.
+    /// GNU encodes flags in the timespec's tv_nsec: -2 means "modtime
+    /// unknown" (`visited-file-modtime' returns 0) and -1 means "the
+    /// visited file did not exist" (returns -1).
+    pub file_modtime_ns: i128,
+    /// Recorded visited-file size, or -1 when unknown (GNU
+    /// modtime_size); verified by `verify-visited-file-modtime'.
+    pub file_modtime_size: i128,
+    /// Name of the lock file (`.#FILE') created by `lock-buffer'.
+    pub file_lock_name: Option<String>,
+    /// Cached snapshot of the `create-lockfiles' Lisp variable, taken
+    /// when the file is visited (Buffer methods cannot see Lisp state).
+    pub create_lockfiles: bool,
+}
+
+/// Resolve symlinks like GNU's `file-truename'.  When FILE doesn't
+/// exist, canonicalize resolves nothing — resolve the parent
+/// directory and reattach the basename instead.
+pub(crate) fn file_truename(path: &str) -> String {
+    match std::fs::canonicalize(path) {
+        Ok(real) => real.to_string_lossy().into_owned(),
+        Err(_) => match path.rfind('/') {
+            Some(pos) => match std::fs::canonicalize(&path[..pos.max(1)]) {
+                Ok(dir) => format!("{}/{}", dir.to_string_lossy(), &path[pos + 1..]),
+                Err(_) => path.to_string(),
+            },
+            None => path.to_string(),
+        },
+    }
+}
+
+/// GNU file-lock path: `.#NAME' in FILE's directory.
+pub(crate) fn lock_file_name(file: &str) -> String {
+    match file.rfind('/') {
+        Some(pos) => format!("{}/.#{}", &file[..pos], &file[pos + 1..]),
+        None => format!(".#{}", file),
+    }
+}
+
+/// Our hostname as GNU records it in lock files (`system-name').
+pub(crate) fn our_host_name() -> String {
+    let mut host = std::env::var("HOSTNAME").unwrap_or_default();
+    if host.is_empty() {
+        #[cfg(unix)]
+        unsafe {
+            let mut buf = [0i8; 256];
+            if libc::gethostname(buf.as_mut_ptr(), buf.len()) == 0 {
+                host = std::ffi::CStr::from_ptr(buf.as_ptr())
+                    .to_string_lossy()
+                    .into_owned();
+            }
+        }
+    }
+    if host.is_empty() {
+        host = "localhost".into();
+    }
+    host
+}
+
+/// Seconds since the epoch of the last system boot, or 0 when it
+/// cannot be determined (GNU filelock.c `get_boot_time').
+fn boot_time() -> i64 {
+    #[cfg(target_os = "macos")]
+    unsafe {
+        let name = std::ffi::CString::new("kern.boottime").unwrap();
+        let mut tv: libc::timeval = std::mem::zeroed();
+        let mut len = std::mem::size_of::<libc::timeval>();
+        if libc::sysctlbyname(
+            name.as_ptr(),
+            &mut tv as *mut _ as *mut _,
+            &mut len,
+            std::ptr::null_mut(),
+            0,
+        ) == 0
+        {
+            return tv.tv_sec as i64;
+        }
+        0
+    }
+    #[cfg(target_os = "linux")]
+    {
+        if let Ok(stat) = std::fs::read_to_string("/proc/stat") {
+            for line in stat.lines() {
+                if let Some(n) = line.strip_prefix("btime ") {
+                    return n.trim().parse().unwrap_or(0);
+                }
+            }
+        }
+        0
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+    {
+        0
+    }
+}
+
+/// GNU lock contents: `USER@HOST.PID:BOOT' (the `:BOOT' suffix is
+/// appended when the boot time is known, e.g. on macOS).
+pub(crate) fn lock_owner_string() -> String {
+    let user = std::env::var("USER")
+        .or_else(|_| std::env::var("LOGNAME"))
+        .unwrap_or_else(|_| "unknown".into());
+    let base = format!("{}@{}.{}", user, our_host_name(), std::process::id());
+    match boot_time() {
+        0 => base,
+        bt => format!("{}:{}", base, bt),
+    }
 }
 
 /// One text-property interval.
@@ -135,6 +242,54 @@ impl Buffer {
             case_table: None,
             category_table: None,
             narrow_labels: Vec::new(),
+            file_modtime_ns: -2,
+            file_modtime_size: -1,
+            file_lock_name: None,
+            create_lockfiles: true,
+        }
+    }
+
+    /// Set the modified flag, running the GNU lock/unlock side
+    /// effects: becoming modified locks the visited file
+    /// (filelock.c `lock_file' via `prepare_to_modify_buffer'), and
+    /// becoming unmodified releases our lock (`unlock_file').
+    pub fn note_modified(&mut self, flag: bool) {
+        if flag == self.modified {
+            return;
+        }
+        self.modified = flag;
+        if flag {
+            self.maybe_lock_file();
+        } else {
+            self.release_lock_file();
+        }
+    }
+
+    /// Create `.#FILE' for the visited file unless already locked by us.
+    /// A lock owned by another process is left in place;
+    /// `file-locked-p' still reports its owner.
+    fn maybe_lock_file(&mut self) {
+        if !self.create_lockfiles || self.file_lock_name.is_some() {
+            return;
+        }
+        let file = match &self.file_name {
+            Some(f) => f.clone(),
+            None => return,
+        };
+        #[cfg(unix)]
+        {
+            // GNU locks the visited file's truename.
+            let lname = lock_file_name(&file_truename(&file));
+            if std::os::unix::fs::symlink(&lock_owner_string(), &lname).is_ok() {
+                self.file_lock_name = Some(lname);
+            }
+        }
+    }
+
+    /// Remove the lock file this buffer created, if any.
+    pub fn release_lock_file(&mut self) {
+        if let Some(lname) = self.file_lock_name.take() {
+            let _ = std::fs::remove_file(&lname);
         }
     }
 
@@ -173,7 +328,7 @@ impl Buffer {
         }
         self.text.insert(pos, s);
         self.adjust_insert(pos, n, before_markers_flag(pos, self.point));
-        self.modified = true;
+        self.note_modified(true);
         self.mod_tick += 1;
     }
 
@@ -192,7 +347,7 @@ impl Buffer {
         self.text.insert(p, s);
         self.point = p + n;
         self.adjust_markers_insert(p, n, false);
-        self.modified = true;
+        self.note_modified(true);
         self.mod_tick += 1;
     }
 
@@ -209,7 +364,7 @@ impl Buffer {
         self.text.insert(p, s);
         self.point = p + n;
         self.adjust_markers_insert(p, n, true);
-        self.modified = true;
+        self.note_modified(true);
         self.mod_tick += 1;
     }
 
@@ -300,7 +455,7 @@ impl Buffer {
         } else if self.begv > start {
             self.begv = start;
         }
-        self.modified = true;
+        self.note_modified(true);
         self.mod_tick += 1;
         removed
     }

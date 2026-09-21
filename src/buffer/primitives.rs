@@ -5,10 +5,11 @@
 //! Position convention: Emacs positions are 1-based; internally the
 //! `Buffer` uses 0-based char indices. `pt` = `bb.point + 1`.
 
-use crate::buffer::{Buffer, TextProp};
+use crate::buffer::{file_truename, lock_file_name, lock_owner_string, Buffer, TextProp};
 use crate::lisp::Interp;
 use crate::lisp::error::{EvalResult, Flow};
 use crate::lisp::eval::MatchData;
+use crate::lisp::builtins::want_string;
 use crate::lisp::obarray::sym;
 use crate::lisp::value::{Marker, Subr, Value};
 use std::cell::RefCell;
@@ -1291,14 +1292,62 @@ pub(crate) static SUBRS: &[Subr] = &[
         f_barf_if_buffer_read_only,
         "Signal if read-only."
     ),
-    S!("verify-visited-file-modtime", 0, 1, f_t, ""),
-    S!("clear-visited-file-modtime", 0, 0, f_nil, ""),
-    S!("visited-file-modtime", 0, 0, f_zero, ""),
-    S!("set-visited-file-modtime", 0, 1, f_nil, ""),
-    S!("lock-buffer", 0, 1, f_nil, ""),
-    S!("unlock-buffer", 0, 0, f_nil, ""),
-    S!("file-locked-p", 1, 1, f_nil, ""),
-    S!("ask-user-about-lock", many 0, f_nil, ""),
+    S!(
+        "verify-visited-file-modtime",
+        1,
+        1,
+        f_verify_visited_file_modtime,
+        "t if last mod time of BUF's visited file matches what BUF records."
+    ),
+    S!(
+        "clear-visited-file-modtime",
+        0,
+        0,
+        f_clear_visited_file_modtime,
+        "Clear out records of last mod time of visited file."
+    ),
+    S!(
+        "visited-file-modtime",
+        0,
+        0,
+        f_visited_file_modtime,
+        "Current buffer's recorded visited file modification time."
+    ),
+    S!(
+        "set-visited-file-modtime",
+        0,
+        1,
+        f_set_visited_file_modtime,
+        "Update buffer's recorded mod time from visited file's time."
+    ),
+    S!(
+        "lock-buffer",
+        0,
+        1,
+        f_lock_buffer,
+        "Lock FILE, if current buffer is modified."
+    ),
+    S!(
+        "unlock-buffer",
+        0,
+        0,
+        f_unlock_buffer,
+        "Unlock the file visited in the current buffer."
+    ),
+    S!(
+        "file-locked-p",
+        1,
+        1,
+        f_file_locked_p,
+        "Return lock status of FILE."
+    ),
+    S!(
+        "ask-user-about-lock",
+        2,
+        3,
+        f_ask_user_about_lock,
+        "Ask user what to do when one wants to edit a file that is locked."
+    ),
     S!("internal-set-alist", 0, 0, f_nil, ""),
     S!(
         "compare-buffer-substrings",
@@ -1311,6 +1360,340 @@ pub(crate) static SUBRS: &[Subr] = &[
 
 fn f_nil(_i: &mut Interp, _a: Vec<Value>) -> EvalResult {
     Ok(Value::Nil)
+}
+
+/// Stat mtime of PATH as nanoseconds since the epoch.
+fn file_mtime_ns(path: &str) -> Option<(i128, i128)> {
+    let m = std::fs::metadata(path).ok()?;
+    let t = m.modified().ok()?;
+    let d = t.duration_since(std::time::UNIX_EPOCH).ok()?;
+    Some((
+        d.as_secs() as i128 * 1_000_000_000 + d.subsec_nanos() as i128,
+        m.len() as i128,
+    ))
+}
+
+fn f_verify_visited_file_modtime(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let b = match a.first() {
+        None => cur(i),
+        Some(v) => buf_of(i, v)?,
+    };
+    let bb = b.borrow();
+    // GNU: no visited file or never recorded (-2) → t.
+    let path = match &bb.file_name {
+        None => return Ok(Value::t()),
+        Some(p) => p.clone(),
+    };
+    let rec = bb.file_modtime_ns;
+    if rec == -2 {
+        return Ok(Value::t());
+    }
+    match file_mtime_ns(&path) {
+        // File missing: verified iff the recorded flag said missing (-1).
+        None => Ok(Value::from_bool(rec < 0)),
+        Some((ns, size)) => {
+            if rec < 0 {
+                return Ok(Value::Nil);
+            }
+            Ok(Value::from_bool(
+                ns == rec && (bb.file_modtime_size < 0 || size == bb.file_modtime_size),
+            ))
+        }
+    }
+}
+
+fn f_clear_visited_file_modtime(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
+    let b = cur(i);
+    let mut bb = b.borrow_mut();
+    bb.file_modtime_ns = -2;
+    bb.file_modtime_size = -1;
+    Ok(Value::Nil)
+}
+
+fn f_visited_file_modtime(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
+    let b = cur(i);
+    let bb = b.borrow();
+    // GNU: negative ns is a flag — visited-file-modtime returns
+    // UNKNOWN_MODTIME_NSECS - ns (0 when unknown, -1 when file missing).
+    if bb.file_modtime_ns < 0 {
+        return Ok(Value::Int(-2 - bb.file_modtime_ns));
+    }
+    Ok(crate::lisp::builtins::misc::ns_to_lisp_time(bb.file_modtime_ns))
+}
+
+fn f_set_visited_file_modtime(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    match a.first() {
+        Some(Value::Nil) | None => {
+            // Stat the visited file and record its modtime+size.
+            let b = cur(i);
+            let path = {
+                let bb = b.borrow();
+                if bb.base_buffer.is_some() {
+                    return Err(i.error("An indirect buffer does not have a visited file"));
+                }
+                match &bb.file_name {
+                    Some(p) => p.clone(),
+                    // GNU stats the nil filename → wrong-type-argument.
+                    None => return Err(i.wrong_type_mut("stringp", &Value::Nil)),
+                }
+            };
+            let mut bb = b.borrow_mut();
+            match file_mtime_ns(&path) {
+                Some((ns, size)) => {
+                    bb.file_modtime_ns = ns;
+                    bb.file_modtime_size = size;
+                }
+                // GNU: a file name that doesn't stat records the
+                // "file nonexistent" flag rather than signaling.
+                None => {
+                    bb.file_modtime_ns = -1;
+                    bb.file_modtime_size = -1;
+                }
+            }
+            Ok(Value::Nil)
+        }
+        Some(v) => {
+            // Explicit value: fixnum flag (-1/0) or a Lisp timestamp.
+            let ns = match v {
+                Value::Int(n) => {
+                    if *n != -1 && *n != 0 {
+                        return Err(i.signal_data(
+                            sym::ARGS_OUT_OF_RANGE,
+                            vec![v.clone(), Value::Int(-1), Value::Int(0)],
+                        ));
+                    }
+                    -2 - *n
+                }
+                _ => {
+                    let us = crate::lisp::builtins::misc::lisp_time_to_us(i, v)?;
+                    us * 1000
+                }
+            };
+            let b = cur(i);
+            let mut bb = b.borrow_mut();
+            bb.file_modtime_ns = ns;
+            bb.file_modtime_size = -1;
+            Ok(Value::Nil)
+        }
+    }
+}
+
+/// Parse a lock-file target `USER@HOST.PID' or `USER@HOST.PID:BOOT'
+/// into (user, host, pid); None if malformed.
+fn parse_lock_target(target: &str) -> Option<(String, String, u32)> {
+    let (user, rest) = target.split_once('@')?;
+    let (host, pid) = rest.rsplit_once('.')?;
+    let pid = pid.split(':').next()?.parse().ok()?;
+    Some((user.to_string(), host.to_string(), pid))
+}
+
+/// GNU `current_lock_owner' result.
+enum LockOwner {
+    /// The lock belongs to this Emacs process.
+    Ours,
+    /// Another live process holds it: `user' is the plain name
+    /// (file-locked-p returns it) and `info' is GNU's
+    /// `USER@HOST (pid N)' description used in `file-locked' errors.
+    Foreign { user: String, info: String },
+}
+
+/// Parse the lock target and classify ownership.  Err = not locked or
+/// stale (dead pid on this host, or unparseable target).
+fn lock_owner(target: &str) -> Result<LockOwner, ()> {
+    let (user, host, pid) = parse_lock_target(target).ok_or(())?;
+    let same_host = host == crate::buffer::our_host_name();
+    if same_host && pid == std::process::id() {
+        return Ok(LockOwner::Ours);
+    }
+    if same_host {
+        // Same host: check whether the process is still alive.
+        #[cfg(unix)]
+        unsafe {
+            if libc::kill(pid as i32, 0) != 0 && *libc::__error() == libc::ESRCH {
+                return Err(()); // stale lock
+            }
+        }
+    }
+    Ok(LockOwner::Foreign {
+        info: format!("{}@{} (pid {})", user, host, pid),
+        user,
+    })
+}
+
+/// Signal GNU's `file-locked' error, as `ask-user-about-lock' does in
+/// batch mode: (FILE OWNER-INFO "Cannot resolve lock conflict in
+/// batch mode").
+fn signal_file_locked(i: &mut Interp, file: Value, owner_info: Value) -> Flow {
+    let fl = i.intern("file-locked");
+    i.signal_data(
+        fl,
+        vec![
+            file,
+            owner_info,
+            Value::string("Cannot resolve lock conflict in batch mode"),
+        ],
+    )
+}
+
+/// GNU `prepare_to_modify_buffer' runs `lock_file' before the first
+/// modification of a file-visiting buffer; a foreign lock makes the
+/// modification itself signal `file-locked'.
+pub(crate) fn barf_if_file_locked(i: &mut Interp) -> EvalResult {
+    let b = cur(i);
+    // Refresh the create-lockfiles snapshot so dynamic `let' bindings
+    // established after visiting still take effect.
+    if let Some(cl) = i.intern_soft("create-lockfiles") {
+        let v = i.symbol_value(cl).truthy();
+        b.borrow_mut().create_lockfiles = v;
+    }
+    let (modified, file) = {
+        let bb = b.borrow();
+        (bb.modified, bb.file_name.clone())
+    };
+    if modified {
+        return Ok(Value::Nil);
+    }
+    let f = match file {
+        Some(f) => f,
+        None => return Ok(Value::Nil),
+    };
+    let f = file_truename(&f);
+    if let Ok(target) = std::fs::read_link(&lock_file_name(&f)) {
+        if let Ok(LockOwner::Foreign { info, .. }) = lock_owner(&target.to_string_lossy()) {
+            return Err(signal_file_locked(i, Value::string(f), Value::string(info)));
+        }
+    }
+    Ok(Value::Nil)
+}
+
+fn f_lock_buffer(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    // GNU lock-buffer: "Lock FILE, if current buffer is modified."
+    // The modified check precedes the FILE argument handling.
+    {
+        let b = cur(i);
+        let bb = b.borrow();
+        if !bb.modified {
+            return Ok(Value::Nil);
+        }
+    }
+    let file = match a.first() {
+        Some(Value::Nil) | None => {
+            let b = cur(i);
+            match b.borrow().file_name.clone() {
+                Some(f) => f,
+                None => return Ok(Value::Nil),
+            }
+        }
+        Some(v) => want_string(i, v)?,
+    };
+    let cl = i.intern_soft("create-lockfiles");
+    if let Some(id) = cl {
+        if !i.symbol_value(id).truthy() {
+            return Ok(Value::Nil);
+        }
+    }
+    // GNU locks the truename of the visited file.
+    let file = file_truename(&file);
+    let lname = lock_file_name(&file);
+    let owner = lock_owner_string();
+    #[cfg(unix)]
+    match std::os::unix::fs::symlink(&owner, &lname) {
+        Ok(()) => {
+            cur(i).borrow_mut().file_lock_name = Some(lname);
+            Ok(Value::Nil)
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+            // Lock exists: a lock we own is a no-op; a foreign lock
+            // goes through ask-user-about-lock, which signals
+            // `file-locked' in batch.
+            match std::fs::read_link(&lname) {
+                Ok(target) => match lock_owner(&target.to_string_lossy()) {
+                    Ok(LockOwner::Ours) => {
+                        cur(i).borrow_mut().file_lock_name = Some(lname);
+                        Ok(Value::Nil)
+                    }
+                    Ok(LockOwner::Foreign { info, .. }) => Err(signal_file_locked(
+                        i,
+                        Value::string(file),
+                        Value::string(info),
+                    )),
+                    // Stale/unparseable: GNU breaks the lock.
+                    Err(()) => {
+                        let _ = std::fs::remove_file(&lname);
+                        match std::os::unix::fs::symlink(&owner, &lname) {
+                            Ok(()) => {
+                                cur(i).borrow_mut().file_lock_name = Some(lname);
+                                Ok(Value::Nil)
+                            }
+                            Err(e) => Err(i.signal_data(
+                                sym::FILE_ERROR,
+                                vec![
+                                    Value::string(format!("Locking file: {}", e)),
+                                    Value::string(file),
+                                ],
+                            )),
+                        }
+                    }
+                },
+                Err(_) => Err(i.signal_data(
+                    sym::FILE_ERROR,
+                    vec![Value::string("Locking file"), Value::string(file)],
+                )),
+            }
+        }
+        Err(e) => Err(i.signal_data(
+            sym::FILE_ERROR,
+            vec![
+                Value::string(format!("Locking file: {}", e)),
+                Value::string(file),
+            ],
+        )),
+    }
+    #[cfg(not(unix))]
+    Ok(Value::Nil)
+}
+
+fn f_unlock_buffer(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
+    let b = cur(i);
+    let recorded = b.borrow_mut().file_lock_name.take();
+    if let Some(l) = recorded {
+        let _ = std::fs::remove_file(&l);
+        return Ok(Value::Nil);
+    }
+    // No lock recorded: GNU removes `.#FILE' only if we own it.
+    let file = b.borrow().file_name.clone();
+    if let Some(f) = file {
+        let l = lock_file_name(&file_truename(&f));
+        if let Ok(target) = std::fs::read_link(&l) {
+            if matches!(lock_owner(&target.to_string_lossy()), Ok(LockOwner::Ours)) {
+                let _ = std::fs::remove_file(&l);
+            }
+        }
+    }
+    Ok(Value::Nil)
+}
+
+fn f_file_locked_p(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let file = want_string(i, &a[0])?;
+    let lname = lock_file_name(&file_truename(&file));
+    match std::fs::read_link(&lname) {
+        Err(_) => Ok(Value::Nil),
+        Ok(target) => match lock_owner(&target.to_string_lossy()) {
+            // GNU returns t for our own lock, else the owner's
+            // user name.
+            Ok(LockOwner::Ours) => Ok(Value::t()),
+            Ok(LockOwner::Foreign { user, .. }) => Ok(Value::string(user)),
+            Err(()) => Ok(Value::Nil),
+        },
+    }
+}
+
+fn f_ask_user_about_lock(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    // GNU prompts interactively; in batch or when the file isn't
+    // locked by another Emacs, this signals `file-locked'.
+    let file = a[0].clone();
+    let other = a.get(1).cloned().unwrap_or(Value::Nil);
+    Err(signal_file_locked(i, file, other))
 }
 
 /// GNU: 0 when equal, else +/-(1 + number of matching leading chars).
@@ -1376,12 +1759,6 @@ fn cmp_common_prefix(a: &str, b: &str, fold: bool) -> usize {
         n += 1;
     }
     n
-}
-fn f_t(_i: &mut Interp, _a: Vec<Value>) -> EvalResult {
-    Ok(Value::t())
-}
-fn f_zero(_i: &mut Interp, _a: Vec<Value>) -> EvalResult {
-    Ok(Value::Int(0))
 }
 fn f_identity(_i: &mut Interp, a: Vec<Value>) -> EvalResult {
     Ok(a.into_iter().next().unwrap_or(Value::Nil))
@@ -1557,6 +1934,10 @@ fn f_buffer_live_p(_i: &mut Interp, a: Vec<Value>) -> EvalResult {
 /// Kill `id` and repair `current_buffer`: GNU always has a live
 /// buffer, so killing the last one yields a fresh *scratch*.
 pub(crate) fn kill_buffer_keep_current(i: &mut Interp, id: usize) -> bool {
+    // GNU kill-buffer unlocks the killed buffer's file lock.
+    if let Some(b) = i.buffers.get(id) {
+        b.borrow_mut().release_lock_file();
+    }
     if !i.buffers.kill(id) {
         return false;
     }
@@ -1678,13 +2059,19 @@ fn f_buffer_modified_p(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 
 pub(crate) fn f_set_buffer_modified_p(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let flag = a[0].truthy();
-    cur(i).borrow_mut().modified = flag;
+    if flag {
+        barf_if_file_locked(i)?;
+    }
+    cur(i).borrow_mut().note_modified(flag);
     Ok(a[0].clone())
 }
 
 fn f_not_modified(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let flag = arg(&a, 0).truthy();
-    cur(i).borrow_mut().modified = flag;
+    if flag {
+        barf_if_file_locked(i)?;
+    }
+    cur(i).borrow_mut().note_modified(flag);
     Ok(Value::Nil)
 }
 
@@ -4118,6 +4505,7 @@ fn f_last_buffer(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
 
 fn insert_str_at_point(i: &mut Interp, s: &str, before_markers: bool) -> Result<(), Flow> {
     check_writable(i)?;
+    barf_if_file_locked(i)?;
     let b = cur(i);
     let mut bb = b.borrow_mut();
     if before_markers {
@@ -4314,6 +4702,7 @@ fn f_forward_visible_line(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 
 fn f_delete_and_extract_region(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     check_writable(i)?;
+    barf_if_file_locked(i)?;
     let b = cur(i);
     let mut bb = b.borrow_mut();
     let len = bb.text.len();
@@ -4329,6 +4718,7 @@ fn f_delete_region(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 
 fn f_erase_buffer(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
     check_writable(i)?;
+    barf_if_file_locked(i)?;
     let b = cur(i);
     let mut bb = b.borrow_mut();
     let tlen = bb.text.len();

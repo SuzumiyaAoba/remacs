@@ -1471,7 +1471,7 @@ fn f_emacs_pid(_i: &mut Interp, _args: Vec<Value>) -> EvalResult {
     Ok(Value::Int(std::process::id() as i128))
 }
 fn f_system_name(_i: &mut Interp, _args: Vec<Value>) -> EvalResult {
-    Ok(Value::string("localhost"))
+    Ok(Value::string(crate::buffer::our_host_name()))
 }
 fn f_emacs_version(_i: &mut Interp, _args: Vec<Value>) -> EvalResult {
     Ok(Value::string(format!(
