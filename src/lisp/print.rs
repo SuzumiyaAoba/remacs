@@ -254,6 +254,25 @@ impl Interp {
             Value::Thread(t) => {
                 let _ = write!(out, "#<thread 0x{:x}>", Rc::as_ptr(t) as usize);
             }
+            Value::Mutex(m) => {
+                let mm = m.borrow();
+                match &mm.name {
+                    Some(n) => {
+                        let _ = write!(out, "#<mutex {n}>");
+                    }
+                    None => out.push_str("#<mutex>"),
+                }
+            }
+            Value::CondVar(c) => {
+                let cc = c.borrow();
+                match &cc.name {
+                    Some(n) => {
+                        let _ = write!(out, "#<condvar {n}>");
+                    }
+                    None => out.push_str("#<condvar>"),
+                }
+            }
+            Value::Finalizer(_) => out.push_str("#<finalizer>"),
         }
     }
 

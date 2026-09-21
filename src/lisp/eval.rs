@@ -157,6 +157,8 @@ pub struct Interp {
     /// `thread-last-error' state: the (sym . data) condition of the
     /// most recent thread function failure.
     pub thread_last_error: Value,
+    /// The standard case table (`standard-case-table'), built lazily.
+    pub standard_case_table: Option<Value>,
 }
 
 /// Result of a minibuffer read from the front-end.
@@ -227,6 +229,7 @@ impl Interp {
             ))],
             current_thread: 0,
             thread_last_error: Value::Nil,
+            standard_case_table: None,
         };
         crate::lisp::builtins::install(&mut interp);
         crate::buffer::install_primitives(&mut interp);
@@ -508,6 +511,55 @@ impl Interp {
         self.specbind.len()
     }
 
+    /// `default-toplevel-value': the global binding ignoring `let' frames.
+    /// The outermost specbind frame for the symbol saved the toplevel value.
+    /// Returns None when the symbol's default is void.
+    pub fn default_toplevel_value(&self, id: SymId) -> Option<Value> {
+        for sb in &self.specbind {
+            if sb.sym == id && sb.buf.is_none() {
+                return sb.old.clone();
+            }
+        }
+        match &self.obarray.symbol(id).value {
+            Value::Sym(s) if *s == sym::UNBOUND => None,
+            v => Some(v.clone()),
+        }
+    }
+
+    /// `buffer-local-toplevel-value': the toplevel buffer-local binding in
+    /// `buf`, ignoring `let' frames. None when no toplevel local exists.
+    pub fn buffer_local_toplevel_value(&self, id: SymId, buf: usize) -> Option<Value> {
+        for sb in &self.specbind {
+            if sb.sym == id && sb.buf == Some(buf) {
+                return sb.old.clone().filter(|v| {
+                    !matches!(v, Value::Sym(s) if *s == sym::UNBOUND)
+                });
+            }
+        }
+        let v = self
+            .buffers
+            .get(buf)
+            .and_then(|b| b.try_borrow().ok().map(|bb| bb.locals.get(&id).cloned()))
+            .flatten();
+        v.filter(|v| !matches!(v, Value::Sym(s) if *s == sym::UNBOUND))
+    }
+
+    /// `set-buffer-local-toplevel-value': set the toplevel buffer-local
+    /// binding in `buf` without disturbing in-flight `let' bindings.
+    pub fn set_buffer_local_toplevel_value(&mut self, id: SymId, buf: usize, val: Value) {
+        for sb in &mut self.specbind {
+            if sb.sym == id && sb.buf == Some(buf) {
+                sb.old = Some(val);
+                return;
+            }
+        }
+        if let Some(b) = self.buffers.get(buf) {
+            if let Ok(mut bb) = b.try_borrow_mut() {
+                bb.locals.insert(id, val);
+            }
+        }
+    }
+
     // ---------- errors ----------
 
     /// `(signal sym (data...))` where data is already a list.
@@ -759,7 +811,10 @@ impl Interp {
             | Value::Window(_)
             | Value::Frame(_)
             | Value::Process(_)
-            | Value::Thread(_) => Ok(form.clone()),
+            | Value::Thread(_)
+            | Value::Mutex(_)
+            | Value::CondVar(_)
+            | Value::Finalizer(_) => Ok(form.clone()),
             Value::Sym(id) => self.eval_symbol(*id),
             Value::Cons(_) => self.eval_form(form),
         }
@@ -2098,7 +2153,7 @@ impl Interp {
             ),
             ("buffer-undo-list", Value::Nil),
             ("mark-ring", Value::Nil),
-            ("text-quoting-style", Value::Sym(self.intern("grave"))),
+            ("text-quoting-style", Value::Sym(self.intern("curve"))),
             ("transient-mark-mode", Value::Nil),
             ("mark-even-if-inactive", Value::t()),
             ("shift-select-mode", Value::t()),
@@ -2136,8 +2191,29 @@ impl Interp {
             ("auto-mode-alist", Value::Nil),
             ("interpreter-mode-alist", Value::Nil),
             ("magic-mode-alist", Value::Nil),
-            ("exec-path", Value::Nil),
-            ("process-environment", Value::Nil),
+            // GNU: exec-path = $PATH dirs + exec-directory.
+            (
+                "exec-path",
+                Value::list(
+                    std::env::var("PATH")
+                        .unwrap_or_default()
+                        .split(':')
+                        .filter(|s| !s.is_empty())
+                        .map(|d| Value::string(d.to_string()))
+                        .chain(std::iter::once(Value::string(
+                            "/usr/local/bin/".to_string(),
+                        )))
+                        .collect(),
+                ),
+            ),
+            (
+                "process-environment",
+                Value::list(
+                    std::env::vars()
+                        .map(|(k, v)| Value::string(format!("{k}={v}")))
+                        .collect(),
+                ),
+            ),
             // Command-loop state variables (set per command interactively).
             ("last-command", Value::Nil),
             ("this-command", Value::Nil),
@@ -2793,6 +2869,29 @@ impl Interp {
     /// With `set-buffer` semantics — no error for dead/missing.
     pub fn current_buffer_is_live(&self) -> bool {
         self.buffers.get(self.current_buffer).is_some()
+    }
+
+    /// `standard-case-table': the shared case-table char-table.
+    pub fn standard_case_table(&mut self) -> Value {
+        if let Some(v) = &self.standard_case_table {
+            return v.clone();
+        }
+        let slots = std::rc::Rc::new(std::cell::RefCell::new(vec![Value::Nil; 256]));
+        let t = Value::Record(std::rc::Rc::new(std::cell::RefCell::new(vec![
+            Value::Sym(self.intern("char-table")),
+            Value::Sym(self.intern("case-table")),
+            Value::Vec(slots),
+        ])));
+        self.standard_case_table = Some(t.clone());
+        t
+    }
+
+    /// GNU `BUFFER_LIVE_P` on a buffer id.
+    pub fn buffer_live(&self, id: usize) -> bool {
+        self.buffers
+            .get(id)
+            .map(|b| b.borrow().live)
+            .unwrap_or(false)
     }
 
     // ---------- excursions ----------

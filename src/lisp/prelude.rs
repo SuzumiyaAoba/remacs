@@ -74,14 +74,8 @@ inclusive, to COUNT, exclusive."
                             (list 'buffer-name temp-buffer)
                             (list 'kill-buffer temp-buffer)))))))
 
-(defmacro save-current-buffer (&rest body)
-  "Save the current buffer; execute BODY; restore the current buffer."
-  (let ((old-buf (make-symbol "old-buffer")))
-    (list 'let (list (list old-buf '(current-buffer)))
-          (list 'unwind-protect
-                (cons 'progn body)
-                (list 'if (list 'buffer-live-p old-buf)
-                      (list 'set-buffer old-buf))))))
+;; `save-current-buffer' is a primitive special form (as in GNU), not a
+;; macro — see special.rs.
 
 (defmacro push (newelt place)
   "Add NEWELT to the list stored in symbol PLACE."

@@ -27,6 +27,9 @@ pub type WindowRef = Rc<RefCell<Window>>;
 pub type FrameRef = Rc<RefCell<Frame>>;
 pub type ProcessRef = Rc<RefCell<crate::lisp::process::Proc>>;
 pub type ThreadRef = Rc<RefCell<Thread>>;
+pub type MutexRef = Rc<RefCell<Mutex>>;
+pub type CondVarRef = Rc<RefCell<CondVar>>;
+pub type FinalizerRef = Rc<RefCell<Value>>;
 
 /// A Lisp thread object. Threads run synchronously at `make-thread'
 /// time (cooperative model: no preemption), so a created thread is
@@ -43,6 +46,22 @@ pub struct Thread {
     pub last_error: Option<Value>,
     /// True once the function has run to completion.
     pub finished: bool,
+}
+
+/// A mutex object (`make-mutex'). With the cooperative thread model a
+/// mutex can only ever be held by the running thread.
+#[derive(Debug)]
+pub struct Mutex {
+    pub name: Option<String>,
+    /// `Some(thread)` while locked; cooperative model keeps this simple.
+    pub owner: Option<Value>,
+}
+
+/// A condition variable (`make-condition-variable').
+#[derive(Debug)]
+pub struct CondVar {
+    pub name: Option<String>,
+    pub mutex: Value,
 }
 
 /// Emacs fixnum range on 64-bit builds: 62 bits (2 tag bits in C).
@@ -71,6 +90,10 @@ pub enum Value {
     Frame(FrameRef),
     Process(ProcessRef),
     Thread(ThreadRef),
+    Mutex(MutexRef),
+    CondVar(CondVarRef),
+    /// `make-finalizer' object; holds the finalizer function.
+    Finalizer(FinalizerRef),
 }
 
 /// A cons cell. `cdr` may be any value (dotted pair).
@@ -339,6 +362,9 @@ impl fmt::Debug for Value {
             Value::Frame(_) => write!(f, "Frame(..)"),
             Value::Process(_) => write!(f, "Process(..)"),
             Value::Thread(_) => write!(f, "Thread(..)"),
+            Value::Mutex(_) => write!(f, "Mutex(..)"),
+            Value::CondVar(_) => write!(f, "CondVar(..)"),
+            Value::Finalizer(_) => write!(f, "Finalizer(..)"),
         }
     }
 }

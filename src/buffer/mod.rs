@@ -57,6 +57,9 @@ pub struct Buffer {
     /// shared. (Text itself is currently copied at creation rather than
     /// aliased — edit propagation is not yet modeled.)
     pub base_buffer: Option<usize>,
+    /// Buffer-local case table (`current-case-table'), or None for the
+    /// standard table.
+    pub case_table: Option<crate::lisp::value::Value>,
 }
 
 /// One text-property interval.
@@ -116,6 +119,7 @@ impl Buffer {
             overlays: Vec::new(),
             live: true,
             base_buffer: None,
+            case_table: None,
         }
     }
 

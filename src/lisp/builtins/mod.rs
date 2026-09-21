@@ -360,6 +360,10 @@ pub fn eq_values(a: &Value, b: &Value) -> bool {
         (Value::Window(x), Value::Window(y)) => std::rc::Rc::ptr_eq(x, y),
         (Value::Frame(x), Value::Frame(y)) => std::rc::Rc::ptr_eq(x, y),
         (Value::Process(x), Value::Process(y)) => std::rc::Rc::ptr_eq(x, y),
+        (Value::Thread(x), Value::Thread(y)) => std::rc::Rc::ptr_eq(x, y),
+        (Value::Mutex(x), Value::Mutex(y)) => std::rc::Rc::ptr_eq(x, y),
+        (Value::CondVar(x), Value::CondVar(y)) => std::rc::Rc::ptr_eq(x, y),
+        (Value::Finalizer(x), Value::Finalizer(y)) => std::rc::Rc::ptr_eq(x, y),
         _ => false,
     }
 }

@@ -693,7 +693,10 @@ fn sf_save_mark_and_excursion(i: &mut Interp, args: Value) -> EvalResult {
 fn sf_save_current_buffer(i: &mut Interp, args: Value) -> EvalResult {
     let old = i.current_buffer;
     let r = i.eval_progn(&args);
-    i.set_current_buffer(old);
+    // GNU: set_buffer_if_live — restore only if the buffer survives.
+    if i.buffer_live(old) {
+        i.set_current_buffer(old);
+    }
     r
 }
 

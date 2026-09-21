@@ -247,6 +247,41 @@ pub(crate) static SUBRS: &[Subr] = &[
         "Default value of SYMBOL."
     ),
     S!(
+        "current-case-table",
+        0,
+        0,
+        f_current_case_table,
+        "Case table of the current buffer."
+    ),
+    S!(
+        "standard-case-table",
+        0,
+        0,
+        f_standard_case_table,
+        "The standard case table."
+    ),
+    S!(
+        "case-table-p",
+        1,
+        1,
+        f_case_table_p,
+        "t if OBJECT is a case table."
+    ),
+    S!(
+        "set-case-table",
+        1,
+        1,
+        f_set_case_table,
+        "Set the current buffer's case table."
+    ),
+    S!(
+        "set-standard-case-table",
+        1,
+        1,
+        f_set_standard_case_table,
+        "Set the standard case table."
+    ),
+    S!(
         "set-default",
         2,
         2,
@@ -1796,6 +1831,62 @@ fn f_default_boundp(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         i.obarray.symbol(sid).value,
         Value::Sym(s) if s == sym::UNBOUND
     )))
+}
+
+// ---------- case tables ----------
+
+fn is_case_table(i: &Interp, v: &Value) -> bool {
+    // A case table is a char-table whose subtype is `case-table'.
+    crate::lisp::builtins::misc::is_char_table(i, v)
+        && matches!(
+            v,
+            Value::Record(r)
+                if matches!(r.borrow().get(1), Some(Value::Sym(s)) if i.symbol_name(*s) == "case-table")
+        )
+}
+
+fn want_case_table(i: &mut Interp, v: &Value) -> Result<(), Flow> {
+    if is_case_table(i, v) {
+        Ok(())
+    } else {
+        Err(i.wrong_type_mut("case-table-p", v))
+    }
+}
+
+fn f_current_case_table(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
+    let local = i
+        .buffers
+        .get(i.current_buffer)
+        .and_then(|b| b.try_borrow().ok().map(|bb| bb.case_table.clone()))
+        .flatten();
+    match local {
+        Some(t) => Ok(t),
+        None => Ok(i.standard_case_table()),
+    }
+}
+
+fn f_standard_case_table(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
+    Ok(i.standard_case_table())
+}
+
+fn f_case_table_p(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    Ok(Value::from_bool(is_case_table(i, &a[0])))
+}
+
+fn f_set_case_table(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    want_case_table(i, &a[0])?;
+    if let Some(b) = i.buffers.get(i.current_buffer) {
+        if let Ok(mut bb) = b.try_borrow_mut() {
+            bb.case_table = Some(a[0].clone());
+        }
+    }
+    Ok(a[0].clone())
+}
+
+fn f_set_standard_case_table(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    want_case_table(i, &a[0])?;
+    i.standard_case_table = Some(a[0].clone());
+    Ok(a[0].clone())
 }
 
 fn f_buffer_disable_undo(i: &mut Interp, a: Vec<Value>) -> EvalResult {

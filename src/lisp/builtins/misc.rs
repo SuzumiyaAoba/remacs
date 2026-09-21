@@ -5,7 +5,7 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use super::{S, arg, want_string};
+use super::{S, arg, want_int, want_string};
 use crate::lisp::Interp;
 use crate::lisp::error::{EvalResult, Flow};
 use crate::lisp::obarray::sym;
@@ -455,8 +455,84 @@ pub(crate) static SUBRS: &[Subr] = &[
     ),
     S!("thread--blocker", 1, 1, f_nil, ""),
     S!("thread-signal", 3, 3, f_nil, ""),
-    S!("mutexp", 1, 1, f_false, ""),
-    S!("condition-variable-p", 1, 1, f_false, ""),
+    S!("mutexp", 1, 1, f_mutexp, "t if OBJECT is a mutex."),
+    S!("make-mutex", 0, 1, f_make_mutex, "Create a mutex."),
+    S!("mutex-name", 1, 1, f_mutex_name, "Name of MUTEX."),
+    S!("mutex-lock", 1, 1, f_mutex_lock, "Lock MUTEX."),
+    S!("mutex-unlock", 1, 1, f_mutex_unlock, "Unlock MUTEX."),
+    S!(
+        "condition-variable-p",
+        1,
+        1,
+        f_condition_variable_p,
+        "t if OBJECT is a condition variable."
+    ),
+    S!(
+        "make-condition-variable",
+        1,
+        2,
+        f_make_condition_variable,
+        "Create a condition variable on MUTEX."
+    ),
+    S!(
+        "condition-name",
+        1,
+        1,
+        f_condition_name,
+        "Name of CONDVAR."
+    ),
+    S!(
+        "condition-mutex",
+        1,
+        1,
+        f_condition_mutex,
+        "Mutex associated with CONDVAR."
+    ),
+    S!(
+        "condition-wait",
+        1,
+        1,
+        f_condition_wait,
+        "Wait on CONDVAR (cooperative: returns immediately)."
+    ),
+    S!(
+        "condition-notify",
+        1,
+        2,
+        f_condition_notify,
+        "Notify waiters on CONDVAR."
+    ),
+    S!(
+        "make-finalizer",
+        1,
+        1,
+        f_make_finalizer,
+        "Create a finalizer calling FUNCTION."
+    ),
+    S!("byte-to-string", 1, 1, f_byte_to_string, "Byte to string."),
+    S!(
+        "get-load-suffixes",
+        0,
+        0,
+        f_get_load_suffixes,
+        "Suffixes tried by `load'."
+    ),
+    S!(
+        "num-processors",
+        0,
+        0,
+        f_num_processors,
+        "Number of available processors."
+    ),
+    S!(
+        "daemon-initialized",
+        0,
+        0,
+        f_daemon_initialized,
+        "Error unless running as a daemon."
+    ),
+    S!("signal-names", 0, 0, f_signal_names, "POSIX signal names."),
+    S!("user-ptrp", 1, 1, f_false, "t if OBJECT is a user pointer."),
     S!("cl-type-of", 1, 1, f_cl_type_of, ""),
     S!("bool-vector-p", 1, 1, f_bool_vector_p, ""),
     S!("record", many 0, f_record, "Create a record of TYPE with SLOTS."),
@@ -2233,6 +2309,176 @@ fn f_thread_last_error(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
     Ok(i.thread_last_error.clone())
 }
 
+// ---------- mutexes and condition variables (cooperative model) ----------
+
+fn want_mutex(i: &mut Interp, v: &Value) -> Result<crate::lisp::value::MutexRef, Flow> {
+    match v {
+        Value::Mutex(m) => Ok(m.clone()),
+        other => Err(i.wrong_type_mut("mutexp", other)),
+    }
+}
+
+fn want_condvar(i: &mut Interp, v: &Value) -> Result<crate::lisp::value::CondVarRef, Flow> {
+    match v {
+        Value::CondVar(c) => Ok(c.clone()),
+        other => Err(i.wrong_type_mut("condition-variable-p", other)),
+    }
+}
+
+fn f_mutexp(_i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    Ok(Value::from_bool(matches!(&a[0], Value::Mutex(_))))
+}
+
+fn f_make_mutex(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let name = match a.first() {
+        Some(Value::Str(s)) => Some(s.borrow().clone()),
+        Some(Value::Nil) | None => None,
+        Some(other) => return Err(i.wrong_type_mut("stringp", other)),
+    };
+    Ok(Value::Mutex(std::rc::Rc::new(std::cell::RefCell::new(
+        crate::lisp::value::Mutex {
+            name,
+            owner: None,
+        },
+    ))))
+}
+
+fn f_mutex_name(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let m = want_mutex(i, &a[0])?;
+    Ok(m.borrow()
+        .name
+        .as_ref()
+        .map(|n| Value::string(n.clone()))
+        .unwrap_or(Value::Nil))
+}
+
+fn f_mutex_lock(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let m = want_mutex(i, &a[0])?;
+    m.borrow_mut().owner = Some(Value::Thread(i.threads[i.current_thread].clone()));
+    Ok(Value::Nil)
+}
+
+fn f_mutex_unlock(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let m = want_mutex(i, &a[0])?;
+    if m.borrow().owner.is_none() {
+        return Err(i.error("Cannot unlock mutex owned by another thread"));
+    }
+    m.borrow_mut().owner = None;
+    Ok(Value::Nil)
+}
+
+fn f_condition_variable_p(_i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    Ok(Value::from_bool(matches!(&a[0], Value::CondVar(_))))
+}
+
+fn f_make_condition_variable(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let m = want_mutex(i, &a[0])?;
+    let name = match a.get(1) {
+        Some(Value::Str(s)) => Some(s.borrow().clone()),
+        Some(Value::Nil) | None => None,
+        Some(other) => return Err(i.wrong_type_mut("stringp", other)),
+    };
+    Ok(Value::CondVar(std::rc::Rc::new(std::cell::RefCell::new(
+        crate::lisp::value::CondVar {
+            name,
+            mutex: Value::Mutex(m),
+        },
+    ))))
+}
+
+fn f_condition_name(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let c = want_condvar(i, &a[0])?;
+    Ok(c.borrow()
+        .name
+        .as_ref()
+        .map(|n| Value::string(n.clone()))
+        .unwrap_or(Value::Nil))
+}
+
+fn f_condition_mutex(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let c = want_condvar(i, &a[0])?;
+    Ok(c.borrow().mutex.clone())
+}
+
+fn condition_mutex_held(i: &Interp, c: &crate::lisp::value::CondVarRef) -> bool {
+    let cb = c.borrow();
+    let Value::Mutex(m) = &cb.mutex else { return false };
+    let mb = m.borrow();
+    match &mb.owner {
+        Some(Value::Thread(t)) => std::rc::Rc::ptr_eq(t, &i.threads[i.current_thread]),
+        _ => false,
+    }
+}
+
+fn f_condition_wait(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    // GNU signals when the condvar's mutex isn't held by the current
+    // thread. With the cooperative model a held mutex means "wait"
+    // returns immediately — there is no other thread to wake us.
+    let c = want_condvar(i, &a[0])?;
+    if !condition_mutex_held(i, &c) {
+        return Err(i.error("Condition variable’s mutex is not held by current thread"));
+    }
+    Ok(Value::Nil)
+}
+
+fn f_condition_notify(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let c = want_condvar(i, &a[0])?;
+    if !condition_mutex_held(i, &c) {
+        return Err(i.error("Condition variable’s mutex is not held by current thread"));
+    }
+    Ok(Value::Nil)
+}
+
+fn f_make_finalizer(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    // The function is retained but never invoked (no GC hooks needed
+    // for observable behavior).
+    let _ = i;
+    Ok(Value::Finalizer(std::rc::Rc::new(std::cell::RefCell::new(
+        a[0].clone(),
+    ))))
+}
+
+fn f_byte_to_string(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let n = want_int(i, &a[0])?;
+    match u32::try_from(n).ok().and_then(char::from_u32) {
+        Some(c) => Ok(Value::string(c.to_string())),
+        None => Err(i.signal_data(sym::ARGS_OUT_OF_RANGE, vec![a[0].clone()])),
+    }
+}
+
+fn f_get_load_suffixes(_i: &mut Interp, _a: Vec<Value>) -> EvalResult {
+    // macOS module suffixes first, like GNU.
+    Ok(Value::list(
+        [".so", ".dylib", ".elc", ".elc.gz", ".el", ".el.gz"]
+            .iter()
+            .map(|s| Value::string(*s))
+            .collect(),
+    ))
+}
+
+fn f_num_processors(_i: &mut Interp, _a: Vec<Value>) -> EvalResult {
+    let n = std::thread::available_parallelism()
+        .map(|n| n.get() as i128)
+        .unwrap_or(1);
+    Ok(Value::Int(n))
+}
+
+fn f_daemon_initialized(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
+    Err(i.error("This function can only be called if emacs is run as a daemon"))
+}
+
+fn f_signal_names(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
+    // POSIX names in reverse signal-number order, as GNU's `signal-names'.
+    const NAMES: &[&str] = &[
+        "USR2", "USR1", "INFO", "WINCH", "PROF", "VTALRM", "XFSZ", "XCPU", "IO", "TTOU", "TTIN",
+        "CHLD", "CONT", "TSTP", "STOP", "URG", "TERM", "ALRM", "PIPE", "SYS", "SEGV", "BUS",
+        "KILL", "FPE", "EMT", "ABRT", "TRAP", "ILL", "QUIT", "INT", "HUP", "EXIT",
+    ];
+    Ok(Value::list(
+        NAMES.iter().map(|s| Value::Sym(i.intern(s))).collect(),
+    ))
+}
+
 fn f_cl_type_of(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let name = match &a[0] {
         Value::Int(_) => "fixnum",
@@ -2251,6 +2497,9 @@ fn f_cl_type_of(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         Value::Frame(_) => "frame",
         Value::Process(_) => "process",
         Value::Thread(_) => "thread",
+        Value::Mutex(_) => "mutex",
+        Value::CondVar(_) => "condition-variable",
+        Value::Finalizer(_) => "finalizer",
     };
     Ok(Value::Sym(i.intern(name)))
 }

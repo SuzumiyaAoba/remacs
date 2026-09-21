@@ -1130,6 +1130,27 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!("delete-directory", 1, 3, f_delete_directory, "Delete DIR."),
     S!("delete-file", 1, 2, f_delete_file, "Delete FILENAME."),
     S!(
+        "delete-directory-internal",
+        1,
+        1,
+        f_delete_directory_internal,
+        "Internal: delete DIRECTORY."
+    ),
+    S!(
+        "delete-file-internal",
+        1,
+        1,
+        f_delete_file_internal,
+        "Internal: delete FILE (nil if missing)."
+    ),
+    S!(
+        "locate-file-internal",
+        2,
+        4,
+        f_locate_file_internal,
+        "Search PATH for FILENAME."
+    ),
+    S!(
         "rename-file",
         2,
         3,
@@ -4549,6 +4570,44 @@ fn f_expand_file_name(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     };
     Ok(Value::string(s))
 }
+fn f_locate_file_internal(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    // (locate-file-internal FILENAME PATH &optional SUFFIXES MODE)
+    // Try FILENAME and FILENAME+SUFFIX in each directory of PATH.
+    let name = want_str(i, &a[0])?;
+    let mut suffixes = vec![String::new()];
+    if let Some(sufs) = a.get(2).and_then(|v| v.list_to_vec().ok()) {
+        for s in sufs {
+            if let Ok(s) = want_str(i, &s) {
+                suffixes.push(s);
+            }
+        }
+    }
+    if name.starts_with('/') {
+        // Absolute: only suffix variants apply.
+        for suf in &suffixes {
+            let cand = format!("{name}{suf}");
+            if std::path::Path::new(&cand).exists() {
+                return Ok(Value::string(cand));
+            }
+        }
+        return Ok(Value::Nil);
+    }
+    let paths = a
+        .get(1)
+        .and_then(|v| v.list_to_vec().ok())
+        .unwrap_or_default();
+    for dir_v in &paths {
+        let Ok(dir) = want_str(i, dir_v) else { continue };
+        for suf in &suffixes {
+            let cand = format!("{}/{}{}", dir.trim_end_matches('/'), name, suf);
+            if std::path::Path::new(&cand).exists() {
+                return Ok(Value::string(cand));
+            }
+        }
+    }
+    Ok(Value::Nil)
+}
+
 fn f_file_name_directory(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let s = want_str(i, &a[0])?;
     match s.rfind('/') {
@@ -4954,6 +5013,42 @@ fn f_delete_file(i: &mut Interp, a: Vec<Value>) -> EvalResult {
                 Value::string(format!("Removing old name: {}", e)),
                 a[0].clone(),
             ],
+        )),
+    }
+}
+
+// GNU internals: `delete-file-internal' quietly returns nil when the file
+// is missing; `delete-directory-internal' signals file-missing.
+fn f_delete_file_internal(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let p = want_filename(i, &a[0])?;
+    match std::fs::remove_file(&p) {
+        Ok(()) => Ok(Value::Nil),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Value::Nil),
+        Err(e) => Err(i.signal_data(
+            sym::FILE_ERROR,
+            vec![
+                Value::string(format!("Removing old name: {}", e)),
+                a[0].clone(),
+            ],
+        )),
+    }
+}
+
+fn f_delete_directory_internal(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let dir = want_filename(i, &a[0])?;
+    match std::fs::remove_dir(&dir) {
+        Ok(()) => Ok(Value::Nil),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Err(i.signal_data(
+            sym::FILE_MISSING,
+            vec![
+                Value::string("Deleting directory".to_string()),
+                Value::string("no such file or directory".to_string()),
+                a[0].clone(),
+            ],
+        )),
+        Err(e) => Err(i.signal_data(
+            sym::FILE_ERROR,
+            vec![Value::string(format!("Removing directory: {}", e))],
         )),
     }
 }

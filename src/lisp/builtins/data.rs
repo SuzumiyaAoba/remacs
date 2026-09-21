@@ -180,6 +180,50 @@ pub(crate) static SUBRS: &[Subr] = &[
         "Make SYMBOL's value void."
     ),
     S!(
+        "default-toplevel-value",
+        1,
+        1,
+        f_default_toplevel_value,
+        "Toplevel default value of SYMBOL."
+    ),
+    S!(
+        "buffer-local-toplevel-value",
+        1,
+        1,
+        f_buffer_local_toplevel_value,
+        "Toplevel buffer-local value of SYMBOL."
+    ),
+    S!(
+        "set-buffer-local-toplevel-value",
+        2,
+        2,
+        f_set_buffer_local_toplevel_value,
+        "Set SYMBOL's toplevel buffer-local value."
+    ),
+    S!(
+        "internal-subr-documentation",
+        1,
+        1,
+        f_internal_subr_documentation,
+        "Docstring of a primitive subr."
+    ),
+    S!("defvar-1", 1, 3, f_defvar_1, "Internal defvar helper."),
+    S!("defconst-1", 2, 3, f_defconst_1, "Internal defconst helper."),
+    S!(
+        "make-record",
+        3,
+        3,
+        f_make_record,
+        "Create a record of TYPE with LENGTH slots."
+    ),
+    S!(
+        "text-quoting-style",
+        0,
+        0,
+        f_text_quoting_style,
+        "Current quoting style."
+    ),
+    S!(
         "fmakunbound",
         1,
         1,
@@ -493,6 +537,9 @@ fn f_type_of(i: &mut Interp, args: Vec<Value>) -> EvalResult {
         Value::Marker(_) => "marker",
         Value::Process(_) => "process",
         Value::Thread(_) => "thread",
+        Value::Mutex(_) => "mutex",
+        Value::CondVar(_) => "condition-variable",
+        Value::Finalizer(_) => "finalizer",
     };
     Ok(Value::Sym(i.intern(name)))
 }
@@ -608,6 +655,87 @@ fn f_makunbound(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     i.obarray.symbol_mut(id).value = Value::Sym(sym::UNBOUND);
     i.fire_var_watchers(id, &Value::Nil, "makunbound", None)?;
     Ok(args[0].clone())
+}
+
+fn f_default_toplevel_value(i: &mut Interp, args: Vec<Value>) -> EvalResult {
+    let id = want_sym(i, &args[0])?;
+    match i.default_toplevel_value(id) {
+        Some(v) => Ok(v),
+        None => Err(i.signal_data(sym::VOID_VARIABLE, vec![args[0].clone()])),
+    }
+}
+
+fn f_buffer_local_toplevel_value(i: &mut Interp, args: Vec<Value>) -> EvalResult {
+    let id = want_sym(i, &args[0])?;
+    match i.buffer_local_toplevel_value(id, i.current_buffer) {
+        Some(v) => Ok(v),
+        None => Err(i.signal_data(sym::VOID_VARIABLE, vec![args[0].clone()])),
+    }
+}
+
+fn f_set_buffer_local_toplevel_value(i: &mut Interp, args: Vec<Value>) -> EvalResult {
+    let id = want_sym(i, &args[0])?;
+    i.set_buffer_local_toplevel_value(id, i.current_buffer, args[1].clone());
+    Ok(Value::Nil)
+}
+
+fn f_internal_subr_documentation(_i: &mut Interp, _args: Vec<Value>) -> EvalResult {
+    // GNU returns t for primitive subrs (docstrings live in etc/DOC).
+    Ok(Value::t())
+}
+
+fn f_defvar_1(i: &mut Interp, args: Vec<Value>) -> EvalResult {
+    // (defvar-1 SYM INITVALUE &optional DOCSTRING): defvar with
+    // evaluated arguments.
+    let id = want_sym(i, &args[0])?;
+    i.obarray.symbol_mut(id).special = true;
+    // Like `defvar': set the default only when the variable is void.
+    if let Some(v) = args.get(1) {
+        if !i.bound_p(id) {
+            i.set_symbol_default(id, v.clone())?;
+        }
+    }
+    if let Some(Value::Str(s)) = args.get(2) {
+        let doc = s.borrow().clone();
+        i.obarray.symbol_mut(id).variable_documentation = Some(doc);
+    }
+    Ok(args[0].clone())
+}
+
+fn f_defconst_1(i: &mut Interp, args: Vec<Value>) -> EvalResult {
+    // (defconst-1 SYM INITVALUE &optional DOCSTRING): defconst with
+    // evaluated arguments — always sets the default.
+    let id = want_sym(i, &args[0])?;
+    i.obarray.symbol_mut(id).special = true;
+    i.set_symbol_default(id, args[1].clone())?;
+    if let Some(Value::Str(s)) = args.get(2) {
+        let doc = s.borrow().clone();
+        i.obarray.symbol_mut(id).variable_documentation = Some(doc);
+    }
+    Ok(args[0].clone())
+}
+
+fn f_make_record(i: &mut Interp, args: Vec<Value>) -> EvalResult {
+    // (make-record TYPE LENGTH INITVAL)
+    let n = match &args[1] {
+        Value::Int(n) if *n >= 0 => *n as usize,
+        _ => {
+            let natnump = Value::Sym(i.intern("natnump"));
+            return Err(i.signal_data(
+                sym::WRONG_TYPE_ARGUMENT,
+                vec![natnump, args[1].clone()],
+            ));
+        }
+    };
+    let mut v = Vec::with_capacity(n + 1);
+    v.push(args[0].clone());
+    v.extend(std::iter::repeat_n(args[2].clone(), n));
+    Ok(Value::Record(std::rc::Rc::new(std::cell::RefCell::new(v))))
+}
+
+fn f_text_quoting_style(i: &mut Interp, _args: Vec<Value>) -> EvalResult {
+    let id = i.intern("text-quoting-style");
+    Ok(i.symbol_value(id))
 }
 fn f_fmakunbound(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     let id = want_sym(i, &args[0])?;

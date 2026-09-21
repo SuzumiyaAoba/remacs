@@ -107,6 +107,9 @@ fn eq_key(v: &Value) -> HashKey {
         Value::Frame(s) => HashKey::Ptr(Rc::as_ptr(s) as usize),
         Value::Process(s) => HashKey::Ptr(Rc::as_ptr(s) as usize),
         Value::Thread(s) => HashKey::Ptr(Rc::as_ptr(s) as usize),
+        Value::Mutex(s) => HashKey::Ptr(Rc::as_ptr(s) as usize),
+        Value::CondVar(s) => HashKey::Ptr(Rc::as_ptr(s) as usize),
+        Value::Finalizer(s) => HashKey::Ptr(Rc::as_ptr(s) as usize),
     }
 }
 
