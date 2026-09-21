@@ -693,42 +693,42 @@ fn sort_engine_inner(
     let mut recs: Vec<SortRec> = Vec::new();
     let mut build = |i: &mut Interp| -> Result<(), Flow> {
         loop {
-        let (p, zv) = (pt(i), zv(i));
-        if p >= zv {
-            break;
-        }
-        let start_rec = p;
-        let mut done = false;
-        // GNU wraps the whole key computation in (catch 'key ...).
-        let key = match sort_key(i, startkey, endkey, endrec, &mut done) {
-            Err(Flow::Throw(tag, v)) if is_key_tag(i, &tag) => v,
-            r => r?,
-        };
-        // GNU: (cond ((prog1 done (setq done nil))) (endrecfun ...)
-        //      (nextrecfun ... done t))
-        if done {
-            done = false;
-        } else if let Some(f) = endrec.as_deref_mut() {
-            f(i)?;
-        } else if let Some(f) = nextrec.as_deref_mut() {
-            f(i)?;
-            done = true;
-        }
-        if key.truthy() {
-            recs.push(SortRec {
-                key,
-                start: start_rec,
-                end: pt(i),
-            });
-        }
-        if !done {
-            if let Some(f) = nextrec.as_deref_mut() {
-                f(i)?;
+            let (p, zv) = (pt(i), zv(i));
+            if p >= zv {
+                break;
             }
-        }
-        if pt(i) <= start_rec {
-            break; // malformed movement fns would loop forever (as in GNU)
-        }
+            let start_rec = p;
+            let mut done = false;
+            // GNU wraps the whole key computation in (catch 'key ...).
+            let key = match sort_key(i, startkey, endkey, endrec, &mut done) {
+                Err(Flow::Throw(tag, v)) if is_key_tag(i, &tag) => v,
+                r => r?,
+            };
+            // GNU: (cond ((prog1 done (setq done nil))) (endrecfun ...)
+            //      (nextrecfun ... done t))
+            if done {
+                done = false;
+            } else if let Some(f) = endrec.as_deref_mut() {
+                f(i)?;
+            } else if let Some(f) = nextrec.as_deref_mut() {
+                f(i)?;
+                done = true;
+            }
+            if key.truthy() {
+                recs.push(SortRec {
+                    key,
+                    start: start_rec,
+                    end: pt(i),
+                });
+            }
+            if !done {
+                if let Some(f) = nextrec.as_deref_mut() {
+                    f(i)?;
+                }
+            }
+            if pt(i) <= start_rec {
+                break; // malformed movement fns would loop forever (as in GNU)
+            }
         }
         Ok(())
     };
@@ -2095,9 +2095,14 @@ fn f_delete_field(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 
 fn f_constrain_to_field(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     // (constrain-to-field NEW-POS OLD-POS ...) → clamp NEW-POS into the
-    // field containing OLD-POS.
+    // field containing OLD-POS.  GNU: when NEW-POS is nil, use the
+    // current point and also move point to the constrained position.
     let len = cur(i).borrow().text_len();
-    let new_pos = pos_idx(len, a[0].int().unwrap_or(1));
+    let (new_pos, move_pt) = match a[0].int().or_else(|| marker_pos(&a[0])) {
+        Some(n) => (pos_idx(len, n), false),
+        None if a[0].is_nil() => (cur(i).borrow().point(), true),
+        None => return Err(i.wrong_type_mut("integer-or-marker-p", &a[0])),
+    };
     let fid = i.intern("field");
     let (field_at_new, bounds) = {
         let b = cur(i);
@@ -2105,17 +2110,24 @@ fn f_constrain_to_field(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         (prop_at_pos(&bb, new_pos, fid), (bb.begv, bb.text_len()))
     };
     if field_at_new.is_nil() {
+        if move_pt {
+            cur(i).borrow_mut().set_point(new_pos);
+        }
         return Ok(Value::Int(new_pos as i128 + 1));
     }
     let _ = bounds;
     let old_field = prop_at_pos(&cur(i).borrow(), pos_idx(len, a[1].int().unwrap_or(1)), fid);
-    if crate::lisp::builtins::eq_values(&field_at_new, &old_field) {
-        return Ok(Value::Int(new_pos as i128 + 1));
+    let clamped = if crate::lisp::builtins::eq_values(&field_at_new, &old_field) {
+        new_pos
+    } else {
+        // Move to nearest boundary of the old field.
+        let s = field_bounds(i, &a[1..], true)?;
+        let e = field_bounds(i, &a[1..], false)?;
+        new_pos.clamp(s, e)
+    };
+    if move_pt {
+        cur(i).borrow_mut().set_point(clamped);
     }
-    // Move to nearest boundary of the old field.
-    let s = field_bounds(i, &a[1..], true)?;
-    let e = field_bounds(i, &a[1..], false)?;
-    let clamped = new_pos.clamp(s, e);
     Ok(Value::Int(clamped as i128 + 1))
 }
 

@@ -608,7 +608,11 @@ fn interactive_spec_command_args() {
     let (mut i, _) = interp();
     i.command_args = vec![Value::Int(42)];
     // 'n' with a numeric prefix arg consults prefix_numeric first.
-    set(&mut i, "current-prefix-arg", Value::list(vec![Value::Int(4)]));
+    set(
+        &mut i,
+        "current-prefix-arg",
+        Value::list(vec![Value::Int(4)]),
+    );
     let v = ev_in(
         &mut i,
         "(defun f (n) (interactive \"nN: \") n) (call-interactively 'f)",

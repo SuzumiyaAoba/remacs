@@ -664,23 +664,28 @@ mod tests {
         let meta = CHAR_META;
         let keys: Vec<i128> = vec![
             'h' as i128,
-            'i' as i128,                    // self-insert "hi"
-            21,                             // C-u
-            '3' as i128, 'z' as i128,       // C-u 3 z
-            19,                             // C-s → isearch
-            'i' as i128,                    // search "i"
-            127,                            // DEL pops the search char
-            6,                              // C-f inside isearch
-            13,                             // RET exits isearch
-            'x' as i128 | meta,             // M-x → minibuffer
-            'd' as i128, 'e' as i128, 's' as i128, 'c' as i128,
-            9,                              // TAB completes
-            13,                             // RET runs it
-            7,                              // C-g safety
-            11,                             // C-k
-            25,                             // C-y
-            31,                             // C-_ undo
-            24, 3,                          // C-x C-c
+            'i' as i128, // self-insert "hi"
+            21,          // C-u
+            '3' as i128,
+            'z' as i128,        // C-u 3 z
+            19,                 // C-s → isearch
+            'i' as i128,        // search "i"
+            127,                // DEL pops the search char
+            6,                  // C-f inside isearch
+            13,                 // RET exits isearch
+            'x' as i128 | meta, // M-x → minibuffer
+            'd' as i128,
+            'e' as i128,
+            's' as i128,
+            'c' as i128,
+            9,  // TAB completes
+            13, // RET runs it
+            7,  // C-g safety
+            11, // C-k
+            25, // C-y
+            31, // C-_ undo
+            24,
+            3, // C-x C-c
         ];
         for k in keys {
             if tx.send(GuiEvent::Key(k)).is_err() {

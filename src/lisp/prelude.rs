@@ -397,10 +397,33 @@ returning that buffer's contents as a string."
   (interactive "P")
   (read-only-mode arg))
 
-(defun kill-sexp (&optional arg)
-  "Kill the sexp after point."
-  (interactive "p")
-  (kill-region (point) (save-excursion (forward-sexp arg) (point))))
+(defun kill-sexp (&optional arg interactive)
+  "Kill the sexp (balanced expression) following point.
+With ARG, kill that many sexps after point.
+Negative arg -N means kill N sexps before point.
+This command assumes point is not in a string or comment.
+If INTERACTIVE is non-nil, as it is interactively,
+report errors as appropriate for this kind of usage."
+  (interactive "p\nd")
+  (if interactive
+      (condition-case _
+          (kill-sexp arg nil)
+        (scan-error (user-error (if (> arg 0)
+                                    "No next sexp"
+                                  "No previous sexp"))))
+    (let ((opoint (point)))
+      (forward-sexp (or arg 1))
+      (kill-region opoint (point)))))
+
+(defun backward-kill-sexp (&optional arg interactive)
+  "Kill the sexp (balanced expression) preceding point.
+With ARG, kill that many sexps before point.
+Negative arg -N means kill N sexps after point.
+This command assumes point is not in a string or comment.
+If INTERACTIVE is non-nil, as it is interactively,
+report errors as appropriate for this kind of usage."
+  (interactive "p\nd")
+  (kill-sexp (- (or arg 1)) interactive))
 
 (defun kill-sentence (&optional arg)
   "Kill from point to end of sentence."
@@ -412,55 +435,334 @@ returning that buffer's contents as a string."
   (interactive "p")
   (kill-region (point) (save-excursion (backward-sentence arg) (point))))
 
+(defun kill-paragraph (arg)
+  "Kill forward to end of paragraph.
+With ARG N, kill forward to Nth end of paragraph;
+negative ARG -N means kill backward to Nth start of paragraph."
+  (interactive "p")
+  (kill-region (point) (progn (forward-paragraph arg) (point))))
+
+(defun backward-kill-paragraph (arg)
+  "Kill back to start of paragraph.
+With ARG N, kill back to Nth start of paragraph;
+negative ARG -N means kill forward to Nth end of paragraph."
+  (interactive "p")
+  (kill-region (point) (progn (backward-paragraph arg) (point))))
+
+(defun transpose-paragraphs (arg)
+  "Interchange the current paragraph with the next one.
+With prefix argument ARG a non-zero integer, moves the current
+paragraph past ARG paragraphs, leaving point after the current paragraph.
+If ARG is positive, moves the current paragraph forwards, if
+ARG is negative moves it backwards.  If ARG is zero, exchanges
+the current paragraph with the one containing the mark."
+  (interactive "*p")
+  (transpose-subr 'forward-paragraph arg))
+
+(defun transpose-sentences (arg)
+  "Interchange the current sentence with the next one.
+With prefix argument ARG a non-zero integer, moves the current
+sentence past ARG sentences, leaving point after the current sentence.
+If ARG is positive, moves the current sentence forwards, if
+ARG is negative moves it backwards.  If ARG is zero, exchanges
+the current sentence with the one containing the mark."
+  (interactive "*p")
+  (transpose-subr 'forward-sentence arg))
+
+(defun start-of-paragraph-text ()
+  "Move to the start of the current paragraph."
+  (let ((opoint (point)) npoint)
+    (forward-paragraph -1)
+    (setq npoint (point))
+    (skip-chars-forward " \t\n")
+    ;; If the range of blank lines found spans the original start point,
+    ;; try again from the beginning of it.
+    ;; Must be careful to avoid infinite loop
+    ;; when following a single return at start of buffer.
+    (if (and (>= (point) opoint) (< npoint opoint))
+	(progn
+	  (goto-char npoint)
+	  (if (> npoint (point-min))
+	      (start-of-paragraph-text))))))
+
+(defun end-of-paragraph-text ()
+  "Move to the end of the current paragraph."
+  (let ((opoint (point)))
+    (forward-paragraph 1)
+    (if (eq (preceding-char) ?\n) (forward-char -1))
+    (if (<= (point) opoint)
+	(progn
+	  (forward-char 1)
+	  (if (< (point) (point-max))
+	      (end-of-paragraph-text))))))
+
+(defun mark-end-of-sentence (arg)
+  "Put mark at end of sentence.
+ARG works as in `forward-sentence'.  If this command is repeated,
+it marks the next ARG sentences after the ones already marked."
+  (interactive "p")
+  (push-mark
+   (save-excursion
+     (if (and (eq last-command this-command) (mark t))
+	 (goto-char (mark)))
+     (forward-sentence arg)
+     (point))
+   nil t))
+
 (defun forward-paragraph (&optional arg)
-  "Move forward to end of paragraph."
+  "Move forward to end of paragraph.
+With argument ARG, do it ARG times;
+a negative argument ARG = -N means move backward N paragraphs.
+
+A line which `paragraph-start' matches either separates paragraphs
+\(if `paragraph-separate' matches it also) or is the first line of a paragraph.
+A paragraph end is the beginning of a line which is not part of the paragraph
+to which the end of the previous line belongs, or the end of the buffer.
+Returns the count of paragraphs left to move."
   (interactive "^p")
-  (let ((n (or arg 1)))
-    (while (> n 0)
-      ;; Skip separator lines (test at BOL without moving point back).
-      (while (and (< (point) (point-max))
-                  (save-excursion
-                    (beginning-of-line)
-                    (looking-at paragraph-separate)))
-        (forward-line 1))
-      ;; Scan to the start of the next separator line (or eob).
-      (while (and (< (point) (point-max))
-                  (save-excursion
-                    (beginning-of-line)
-                    (not (looking-at paragraph-separate))))
-        (forward-line 1))
-      (setq n (1- n)))
-    (while (< n 0)
-      (forward-line -1)
-      (setq n (1+ n)))))
+  (or arg (setq arg 1))
+  (let* ((opoint (point))
+	 (fill-prefix-regexp
+	  (and (boundp 'fill-prefix)
+	       fill-prefix (not (equal fill-prefix ""))
+	       (not paragraph-ignore-fill-prefix)
+	       (regexp-quote fill-prefix)))
+	 ;; Remove ^ from paragraph-start and paragraph-sep if they are there.
+	 ;; These regexps shouldn't be anchored, because we look for them
+	 ;; starting at the left-margin.  This allows paragraph commands to
+	 ;; work normally with indented text.
+	 (parstart (if (and (not (equal "" paragraph-start))
+			    (equal ?^ (aref paragraph-start 0)))
+		       (substring paragraph-start 1)
+		     paragraph-start))
+	 (parsep (if (and (not (equal "" paragraph-separate))
+			  (equal ?^ (aref paragraph-separate 0)))
+		     (substring paragraph-separate 1)
+		   paragraph-separate))
+	 (parsep
+	  (if fill-prefix-regexp
+	      (concat parsep "\\|"
+		      fill-prefix-regexp "[ \t]*$")
+	    parsep))
+	 ;; This is used for searching.
+	 (sp-parstart (concat "^[ \t]*\\(?:" parstart "\\|" parsep "\\)"))
+	 start found-start)
+    (while (and (< arg 0) (not (bobp)))
+      (if (and (not (looking-at parsep))
+	       (re-search-backward "^\n" (max (1- (point)) (point-min)) t)
+	       (looking-at parsep))
+	  (setq arg (1+ arg))
+	(setq start (point))
+	;; Move back over paragraph-separating lines.
+	(forward-char -1) (beginning-of-line)
+	(while (and (not (bobp))
+		    (progn (move-to-left-margin)
+			   (looking-at parsep)))
+	  (forward-line -1))
+	(if (bobp)
+	    nil
+	  (setq arg (1+ arg))
+	  ;; Go to end of the previous (non-separating) line.
+	  (end-of-line)
+	  ;; Search back for line that starts or separates paragraphs.
+	  (if (if fill-prefix-regexp
+		  ;; There is a fill prefix; it overrides parstart.
+		  (progn
+		    (while (and (progn (beginning-of-line) (not (bobp)))
+				(progn (move-to-left-margin)
+				       (not (looking-at parsep)))
+				(looking-at fill-prefix-regexp))
+		      (forward-line -1))
+		    (move-to-left-margin)
+		    (not (bobp)))
+		(while (and (re-search-backward sp-parstart nil 1)
+			    (setq found-start t)
+			    ;; Found a candidate, but need to check if it is a
+			    ;; REAL parstart.
+			    (progn (setq start (point))
+				   (move-to-left-margin)
+				   (not (looking-at parsep)))
+			    (not (and (looking-at parstart)
+				      (or (not use-hard-newlines)
+					  (bobp)
+					  (get-text-property
+					   (1- start) 'hard)))))
+		  (setq found-start nil)
+		  (goto-char start))
+		found-start)
+	      ;; Found one.
+	      (progn
+		;; Move forward over paragraph separators.
+		;; We know this cannot reach the place we started
+		;; because we know we moved back over a non-separator.
+		(while (and (not (eobp))
+			    (progn (move-to-left-margin)
+				   (looking-at parsep)))
+		  (forward-line 1))
+		;; If line before paragraph is just margin, back up to there.
+		(end-of-line 0)
+		(if (> (current-column) (current-left-margin))
+		    (forward-char 1)
+		  (skip-chars-backward " \t")
+		  (if (not (bolp))
+		      (forward-line 1))))
+	    ;; No starter or separator line => use buffer beg.
+	    (goto-char (point-min))))))
+
+    (while (and (> arg 0) (not (eobp)))
+      ;; Move forward over separator lines...
+      (while (and (not (eobp))
+		  (progn (move-to-left-margin) (not (eobp)))
+		  (looking-at parsep))
+	(forward-line 1))
+      (unless (eobp) (setq arg (1- arg)))
+      ;; ... and one more line.
+      (forward-line 1)
+      (if fill-prefix-regexp
+	  ;; There is a fill prefix; it overrides parstart.
+	  (while (and (not (eobp))
+		      (progn (move-to-left-margin) (not (eobp)))
+		      (not (looking-at parsep))
+		      (looking-at fill-prefix-regexp))
+	    (forward-line 1))
+	(while (and (re-search-forward sp-parstart nil 1)
+		    (progn (setq start (match-beginning 0))
+			   (goto-char start)
+			   (not (eobp)))
+		    (progn (move-to-left-margin)
+			   (not (looking-at parsep)))
+		    (or (not (looking-at parstart))
+			(and use-hard-newlines
+			     (not (get-text-property (1- start) 'hard)))))
+	  (forward-char 1))
+	(if (< (point) (point-max))
+	    (goto-char start))))
+    (constrain-to-field nil opoint t)
+    ;; Return the number of steps that could not be done.
+    arg))
 
 (defun backward-paragraph (&optional arg)
-  "Move backward to start of paragraph."
+  "Move backward to start of paragraph.
+With argument ARG, do it ARG times;
+a negative argument ARG = -N means move forward N paragraphs.
+
+A paragraph start is the beginning of a line which is a
+`paragraph-start' or which is ordinary text and follows a
+`paragraph-separate'ing line; except: if the first real line of a
+paragraph is preceded by a blank line, the paragraph starts at that
+blank line.
+
+See `forward-paragraph' for more information."
   (interactive "^p")
-  (forward-paragraph (- (or arg 1))))
+  (or arg (setq arg 1))
+  (forward-paragraph (- arg)))
+
+(defvar sentence-end-double-space t
+  "Non-nil means a single space does not end a sentence.")
+
+(defvar sentence-end-without-period nil
+  "Non-nil means a sentence will end without a period.")
+
+(defvar sentence-end-without-space "。．？！"
+  "String of characters that end sentence without following spaces.")
+
+(defvar sentence-end-base "[.?!…‽][]\"'”’)}»›]*"
+  "Regexp matching the basic end of a sentence, not including following space.")
+
+(defun sentence-end ()
+  "Return the regexp describing the end of a sentence.
+
+This function returns either the value of the variable `sentence-end'
+if it is non-nil, or the default value constructed from the
+variables `sentence-end-base', `sentence-end-double-space',
+`sentence-end-without-period' and `sentence-end-without-space'."
+  (or sentence-end
+      ;; We accept non-break space along with space.
+      (concat (if sentence-end-without-period "\\w[ \u00a0][ \u00a0]\\|")
+	      "\\("
+	      sentence-end-base
+              (if sentence-end-double-space
+                  "\\($\\|[ \u00a0]$\\|\t\\|[ \u00a0][ \u00a0]\\)" "\\($\\|[\t \u00a0]\\)")
+              "\\|[" sentence-end-without-space "]+"
+	      "\\)"
+              "[ \u00a0\t\n]*")))
+
+(defun forward-sentence-default-function (&optional arg)
+  "Move forward to next end of sentence.  With argument, repeat.
+When ARG is negative, move backward repeatedly to start of sentence.
+
+The variable `sentence-end' is a regular expression that matches ends of
+sentences.  Also, every paragraph boundary terminates sentences as well."
+  (or arg (setq arg 1))
+  (let ((opoint (point))
+        (sentence-end (sentence-end)))
+    (while (< arg 0)
+      (let ((pos (point))
+	    par-beg par-text-beg)
+	(save-excursion
+	  (start-of-paragraph-text)
+	  ;; Start of real text in the paragraph.
+	  ;; We move back to here if we don't see a sentence-end.
+	  (setq par-text-beg (point))
+	  ;; Start of the first line of the paragraph.
+	  ;; We use this as the search limit
+	  ;; to allow sentence-end to match if it is anchored at
+	  ;; BOL and the paragraph starts indented.
+	  (beginning-of-line)
+	  (setq par-beg (point)))
+	(if (and (re-search-backward sentence-end par-beg t)
+		 (or (< (match-end 0) pos)
+		     (re-search-backward sentence-end par-beg t)))
+	    (goto-char (match-end 0))
+	  (goto-char par-text-beg)))
+      (setq arg (1+ arg)))
+    (while (> arg 0)
+      (let ((par-end (save-excursion (end-of-paragraph-text) (point))))
+	(if (re-search-forward sentence-end par-end t)
+	    (skip-chars-backward " \t\n")
+	  (goto-char par-end)))
+      (setq arg (1- arg)))
+    (constrain-to-field nil opoint t)))
+
+(defvar forward-sentence-function #'forward-sentence-default-function
+  "Function to be used to calculate sentence movements.
+See `forward-sentence' for a description of its behavior.")
 
 (defun forward-sentence (&optional arg)
-  "Move forward to next end of sentence."
+  "Move forward to next end of sentence.  With argument ARG, repeat.
+If ARG is negative, move backward repeatedly to start of
+sentence.  Delegates its work to `forward-sentence-function'."
   (interactive "^p")
-  (let ((n (or arg 1)))
-    (while (> n 0)
-      (if (re-search-forward "[.!?][])}\"']*[ \t\n]+" nil t)
-          (setq n (1- n))
-        (goto-char (point-max))
-        (setq n 0))))
-  (skip-chars-forward " \t\n"))
+  (or arg (setq arg 1))
+  (funcall forward-sentence-function arg))
 
 (defun backward-sentence (&optional arg)
-  "Move backward to start of sentence."
+  "Move backward to start of sentence.  With argument, repeat.
+With negative argument, move forward repeatedly to end of sentence.
+See `forward-sentence' for more information."
   (interactive "^p")
-  (let ((n (or arg 1)))
-    (while (> n 0)
-      (if (re-search-backward "[.!?][])}\"']*[ \t\n]+" nil t)
-          (progn
-            (goto-char (match-end 0))
-            (setq n (1- n)))
+  (or arg (setq arg 1))
+  (forward-sentence (- arg)))
+
+(defun count-sentences (start end)
+  "Count sentences in current buffer from START to END."
+  (let ((sentences 0)
+        (inhibit-field-text-motion t))
+    (save-excursion
+      (save-restriction
+        (narrow-to-region start end)
         (goto-char (point-min))
-        (setq n 0)))))
+        (let* ((prev (point))
+               (next (forward-sentence)))
+          (while (and (not (null next))
+                      (not (= prev next)))
+            (setq prev next
+                  next (ignore-errors (forward-sentence))
+                  sentences (1+ sentences))))
+        ;; Remove last possibly empty sentence
+        (when (/= (skip-chars-backward " \t\n") 0)
+          (setq sentences (1- sentences)))
+	sentences))))
 
 (defun forward-page (&optional count)
   "Move forward to page boundary."
@@ -700,7 +1002,18 @@ returning that buffer's contents as a string."
 (defvar buffer-file-name nil
   "Name of file visited in the current buffer.")
 (defvar left-margin 0
-  "Column for the default `indent-line-function' to indent to.")
+  "Column for the default `indent-line-function' to indent to.
+Linefeed-indented lines are indented to this column.")
+
+(defvar fill-prefix nil
+  "Text for `fill-region' to put at the beginning of each line, or nil.")
+
+(defvar use-hard-newlines nil
+  "Non-nil means to distinguish between soft and hard newlines.")
+
+(defvar paragraph-ignore-fill-prefix nil
+  "Non-nil means the paragraph commands are not affected by `fill-prefix'.")
+
 (defvar comment-column 32
   "Column to indent right-margin comments to.")
 (defvar comment-start nil
@@ -792,11 +1105,48 @@ returning that buffer's contents as a string."
   (let ((e (or endpos (save-excursion (forward-sexp 1) (point)))))
     (indent-region (point) e)))
 
+(defun current-left-margin ()
+  "Return the left margin to use for this line.
+This is the value of the buffer-local variable `left-margin' plus the value
+of the `left-margin' text-property at the start of the line."
+  (save-excursion
+    (back-to-indentation)
+    (max 0
+	 (+ left-margin (or (get-text-property
+			     (if (and (eobp) (not (bobp)))
+				 (1- (point)) (point))
+			     'left-margin) 0)))))
+
 (defun move-to-left-margin (&optional n force)
-  "Move to column LEFT-MARGIN of current line."
-  (interactive "p\nP")
+  "Move to the left margin of the current line.
+With optional argument, move forward N-1 lines first.
+The column moved to is the one given by the `current-left-margin' function.
+If the line's indentation appears to be wrong, and this command is called
+interactively or with optional argument FORCE, it will be fixed."
+  (interactive (list (prefix-numeric-value current-prefix-arg) t))
   (beginning-of-line n)
-  (move-to-column left-margin force))
+  (skip-chars-forward " \t")
+  (if (minibufferp (current-buffer))
+      (if (save-excursion (beginning-of-line) (bobp))
+	  (goto-char (minibuffer-prompt-end))
+	(beginning-of-line))
+    (let ((lm (current-left-margin))
+	  (cc (current-column)))
+      (cond ((> cc lm)
+	     (if (> (move-to-column lm force) lm)
+		 ;; If lm is in a tab and we are not forcing, move before tab
+		 (backward-char 1)))
+	    ((and force (< cc lm))
+	     (indent-to-left-margin))))))
+
+(defun indent-to-left-margin ()
+  "Indent current line to the column given by `current-left-margin'."
+  (save-excursion (indent-line-to (current-left-margin)))
+  ;; If we are within the indentation, move past it.
+  (when (save-excursion
+	  (skip-chars-backward " \t")
+	  (bolp))
+    (skip-chars-forward " \t")))
 
 (defun delete-to-left-margin (&optional from to)
   "Delete left margin indentation of each line between FROM and TO."

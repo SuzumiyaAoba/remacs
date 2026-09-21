@@ -75,6 +75,7 @@ mod coverage_tests {
     probe!(u_probe_rect, "probe_rect.el");
     probe!(u_probe_sort, "probe_sort.el");
     probe!(u_probe_eval14, "probe_eval14.el");
+    probe!(u_probe_paragraphs, "probe_paragraphs.el");
 
     /// `command_args` pre-supplies arguments to every prompting
     /// interactive-spec code — the path used when a command is replayed
@@ -107,18 +108,21 @@ mod coverage_tests {
         use std::rc::Rc;
         let mut i = Interp::new();
         let answers = RefCell::new(VecDeque::from([
-            MinibufInput::Text("5".into()),      // n
-            MinibufInput::Text("str".into()),    // s
-            MinibufInput::Text("".into()),       // b → current buffer
-            MinibufInput::Text("mksym".into()),  // a → symbol
-            MinibufInput::Text("seq".into()),    // k
-            MinibufInput::Text("(+ 1 2)".into()),// x → evals
-            MinibufInput::Text("(+ 1 2)".into()),// X → evals+prints
-            MinibufInput::Key(65),               // c → char code
-            MinibufInput::Text("txt".into()),    // c → Text arm
+            MinibufInput::Text("5".into()),       // n
+            MinibufInput::Text("str".into()),     // s
+            MinibufInput::Text("".into()),        // b → current buffer
+            MinibufInput::Text("mksym".into()),   // a → symbol
+            MinibufInput::Text("seq".into()),     // k
+            MinibufInput::Text("(+ 1 2)".into()), // x → evals
+            MinibufInput::Text("(+ 1 2)".into()), // X → evals+prints
+            MinibufInput::Key(65),                // c → char code
+            MinibufInput::Text("txt".into()),     // c → Text arm
         ]));
         i.minibuf_reader = Some(Rc::new(move |_, _, _| {
-            answers.borrow_mut().pop_front().ok_or(crate::lisp::Flow::Quit)
+            answers
+                .borrow_mut()
+                .pop_front()
+                .ok_or(crate::lisp::Flow::Quit)
         }));
         for code in ["n", "s", "b", "a", "k", "x", "X", "c", "c"] {
             i.eval_str(&format!(
@@ -129,7 +133,6 @@ mod coverage_tests {
             .unwrap();
         }
     }
-
 
     #[test]
     fn u_output_sinks() {

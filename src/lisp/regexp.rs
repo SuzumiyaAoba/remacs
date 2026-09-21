@@ -888,8 +888,8 @@ pub fn search_full(re: &Regex, text: &[char], pos: usize) -> Option<Regs> {
     None
 }
 
-/// Backward search returning full regs: the latest match with
-/// start <= pos (preferring matches that don't extend beyond pos).
+/// Backward search returning full regs: the match with the greatest
+/// start whose end is at or before `pos` (GNU semantics).
 pub fn search_backward_full(re: &Regex, text: &[char], pos: usize) -> Option<Regs> {
     let mut best: Option<Regs> = None;
     let mut p = 0;
@@ -897,7 +897,7 @@ pub fn search_backward_full(re: &Regex, text: &[char], pos: usize) -> Option<Reg
         if let Some(regs) = match_at(re, text, p) {
             let s = regs[0].unwrap_or(p);
             let e = regs[1].unwrap_or(p);
-            if s <= pos && (e <= pos || s == pos) {
+            if s <= pos && e <= pos {
                 best = Some(regs);
             }
         }

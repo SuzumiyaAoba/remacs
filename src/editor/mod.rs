@@ -4838,7 +4838,10 @@ fn f_make_temp_file(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let prefix = if raw.starts_with('/') || raw.starts_with('~') {
         expand_file_name_str(i, &raw)
     } else {
-        std::env::temp_dir().join(&raw).to_string_lossy().into_owned()
+        std::env::temp_dir()
+            .join(&raw)
+            .to_string_lossy()
+            .into_owned()
     };
     let dir_flag = a.get(1).map(|v| v.truthy()).unwrap_or(false);
     for _ in 0..64 {

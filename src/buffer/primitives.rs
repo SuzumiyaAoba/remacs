@@ -1833,36 +1833,83 @@ fn f_forward_line(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let n = a.get(0).and_then(|v| v.int()).unwrap_or(1);
     let b = cur(i);
     let mut bb = b.borrow_mut();
-    let cur_line = bb.text.line_of_pos(bb.point());
-    let target = (cur_line as i128 + n).max(0) as usize;
-    let p = bb.text.line_start(target);
-    bb.set_point(p);
-    Ok(Value::Nil)
+    let len = bb.zv.max(bb.begv).min(bb.text_len());
+    let mut pt = bb.point();
+    let result: i128;
+    if n == 0 {
+        // GNU quirk: forward-line 0 moves to BOL of the current line.
+        let line = bb.text.line_of_pos(pt);
+        pt = bb.text.line_start(line);
+        result = 0;
+    } else if n > 0 {
+        let mut remaining = n;
+        while remaining > 0 && pt < len {
+            let mut p = pt;
+            let nl = loop {
+                if p >= len {
+                    break None;
+                }
+                if bb.text.char_at(p) == '\n' {
+                    break Some(p);
+                }
+                p += 1;
+            };
+            match nl {
+                Some(nl) => {
+                    pt = nl + 1;
+                    remaining -= 1;
+                }
+                // Reaching eob not preceded by a newline counts as a move.
+                None => {
+                    pt = len;
+                    remaining -= 1;
+                }
+            }
+        }
+        result = remaining;
+    } else {
+        let cur_line = bb.text.line_of_pos(pt);
+        let moved = cur_line.min((-n) as usize);
+        pt = bb.text.line_start(cur_line - moved);
+        result = n + moved as i128;
+    }
+    let begv = bb.begv;
+    bb.set_point(pt.max(begv).min(len));
+    Ok(Value::Int(result))
 }
 
 fn f_beginning_of_line(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     // Emacs: (beginning-of-line N) = forward-line(N-1) then BOL.
-    let n = a.get(0).and_then(|v| v.int()).unwrap_or(1).max(1);
+    // N <= 0 moves to the BOL of an earlier line (N=0 → previous line).
+    let n = a.get(0).and_then(|v| v.int()).unwrap_or(1);
     let b = cur(i);
     let mut bb = b.borrow_mut();
     let cur_line = bb.text.line_of_pos(bb.point());
-    let target = cur_line + (n - 1) as usize;
+    let target = (cur_line as i128 + n - 1).max(0) as usize;
     let p = bb.text.line_start(target).max(bb.begv);
     bb.set_point(p);
     Ok(Value::Nil)
 }
 
 fn f_end_of_line(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let n = a.get(0).and_then(|v| v.int()).unwrap_or(1).max(1);
+    // GNU: end-of-line N = forward-line(N-1) then end of line; for
+    // N <= 0, if the backward move cannot complete, point stays at the
+    // first line's BOL (no end-of-line).
+    let n = a.get(0).and_then(|v| v.int()).unwrap_or(1);
     let b = cur(i);
     let mut bb = b.borrow_mut();
+    let len = bb.zv.max(bb.begv).min(bb.text_len());
     let cur_line = bb.text.line_of_pos(bb.point());
-    let target = cur_line + (n - 1) as usize;
-    let p = bb
-        .text
-        .line_end(bb.text.line_start(target))
-        .min(bb.text_len());
-    bb.set_point(p);
+    let target = cur_line as i128 + n - 1;
+    let p = if target < 0 {
+        bb.text.line_start(0).max(bb.begv)
+    } else {
+        bb.text
+            .line_end(bb.text.line_start(target as usize))
+            .min(len)
+    };
+    let begv = bb.begv;
+    bb.set_point(p.max(begv).min(len));
     Ok(Value::Nil)
 }
 
@@ -3331,24 +3378,15 @@ fn f_thing_at_point(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 
 // ---------- mark & region ----------
 
-fn f_mark(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let force = a.get(0).map(|v| v.truthy()).unwrap_or(false);
+fn f_mark(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
     let b = cur(i);
     let bb = b.borrow();
+    // GNU: the mark marker always exists once the buffer is live, so an
+    // unset mark yields nil, not an error.  (The "mark is not set"
+    // error comes from region-beginning/region-end, not `mark`.)
     match bb.mark {
         Some(m) => Ok(Value::Int(m as i128 + 1)),
-        None => {
-            if force {
-                Ok(Value::Nil)
-            } else {
-                Err(i.signal_data(
-                    sym::ERROR,
-                    vec![Value::string(
-                        "The mark is not set now, so there is no region",
-                    )],
-                ))
-            }
-        }
+        None => Ok(Value::Nil),
     }
 }
 
@@ -4889,11 +4927,18 @@ pub(crate) fn search_common(
         }
         None => {
             if noerror {
-                if let Some(b) = bound {
-                    let idx = b.max(1) as usize - 1;
+                // GNU: noerror neither nil nor t moves point to the
+                // search limit (BOUND, else eob/bob in search dir).
+                let noerror_t = matches!(&a[2], Value::Sym(s) if i.sym_is(&Value::Sym(*s), sym::T));
+                if !noerror_t {
+                    let limit = match bound {
+                        Some(b) => b.max(1) as usize - 1,
+                        None if backward => 0,
+                        None => text.len(),
+                    };
                     let buf = cur(i);
-                    let len = buf.borrow().text_len();
-                    buf.borrow_mut().set_point(idx.min(len));
+                    let blen = buf.borrow().text_len();
+                    buf.borrow_mut().set_point(limit.min(blen));
                 }
                 Ok(Value::Nil)
             } else {
@@ -4915,9 +4960,13 @@ pub(crate) fn literal_search(
         return Some(vec![Some(from.min(text.len())), Some(from.min(text.len()))]);
     }
     if backward {
-        let mut p = from.min(text.len());
+        // GNU: the match must end at or before `from`.
+        let mut p = match from.min(text.len()).checked_sub(n.len()) {
+            Some(p) => p,
+            None => return None,
+        };
         loop {
-            if p + n.len() <= text.len() && text[p..p + n.len()] == n[..] {
+            if text[p..p + n.len()] == n[..] {
                 return Some(vec![Some(p), Some(p + n.len())]);
             }
             if p == 0 {
