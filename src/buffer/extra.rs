@@ -610,7 +610,8 @@ fn sort_key(
         *done = true;
     } else {
         // GNU: (funcall nil) -> void-function nil.
-        i.apply(&Value::Nil, Vec::new())?;
+        let sym = i.intern("void-function");
+        return Err(i.signal_data(sym, vec![Value::Nil]));
     }
     let kend = pt(i);
     Ok(Value::cons(
@@ -685,8 +686,13 @@ fn sort_engine_inner(
     predicate: Option<&Value>,
 ) -> EvalResult {
     // ---- sort-build-lists (records collected in buffer order) ----
+    // GNU wraps key computation in (catch 'key ...); pushing the tag lets
+    // Lisp-level `throw' reach us instead of signaling `no-catch'.
+    let ksym = i.intern("key");
+    i.catch_tags.push(Value::Sym(ksym));
     let mut recs: Vec<SortRec> = Vec::new();
-    loop {
+    let mut build = |i: &mut Interp| -> Result<(), Flow> {
+        loop {
         let (p, zv) = (pt(i), zv(i));
         if p >= zv {
             break;
@@ -723,7 +729,12 @@ fn sort_engine_inner(
         if pt(i) <= start_rec {
             break; // malformed movement fns would loop forever (as in GNU)
         }
-    }
+        }
+        Ok(())
+    };
+    let build_r = build(i);
+    i.catch_tags.pop();
+    build_r?;
     if recs.is_empty() {
         return Ok(Value::Nil);
     }
@@ -984,7 +995,10 @@ fn sort_skip_fields(i: &mut Interp, n: i128) -> EvalResult {
 }
 
 fn sort_fields_1(i: &mut Interp, field: i128, s: usize, e: usize, numeric: bool) -> EvalResult {
-    let field = if field == 0 { 1 } else { field };
+    // GNU normalizes its own `field' parameter to 1, but the startkeyfun
+    // lambda is dynamically bound to the caller's FIELD -- so a 0 arg ends
+    // up running sort-skip-fields(0), which lands at the last field.
+    // Passing the raw value reproduces that.
     let base_default = i
         .symbol_value(i.intern_soft("sort-numeric-base").unwrap_or(0))
         .int()
@@ -1219,7 +1233,8 @@ fn f_sort_regexp_fields(i: &mut Interp, a: Vec<Value>) -> EvalResult {
                 KeySpec::Re(s)
             }
         }
-        Value::Int(n) => KeySpec::Group((*n).max(0) as usize),
+        // GNU: (numberp key-regexp) only after string normalization; a
+        // non-string argument errors wrong-type-argument stringp.
         other => return Err(i.wrong_type_mut("stringp", other)),
     };
     let (s, e) = beg_end(i, &a, 3, 4)?;
@@ -1243,15 +1258,12 @@ fn f_sort_regexp_fields(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     with_narrow(i, s, e, |i| {
         let nbeg = cur(i).borrow().begv;
         goto(i, nbeg);
-        // GNU's initial (re-search-forward re nil t) + goto match-beginning.
-        if !re_search_fwd(i, &record_re0, None, false)?.truthy() {
-            // (goto-char (match-beginning 0)) on no match.
-            return Err(i.wrong_type_mut("integer-or-marker-p", &Value::Nil));
-        }
-        let rec_end = std::rc::Rc::new(std::cell::Cell::new(
-            match_pos(i, 0, true).unwrap_or_else(|| pt(i)),
-        ));
-        goto(i, match_pos(i, 0, false).unwrap_or_else(|| pt(i)));
+        // GNU: (re-search-forward re nil t) -- no move on failure; then
+        // record-end = (point), and (goto-char (match-beginning 0)).
+        // In a fresh buffer match data reads as 0 -> goto clamps to begv.
+        re_search_fwd(i, &record_re0, None, false)?;
+        let rec_end = std::rc::Rc::new(std::cell::Cell::new(pt(i)));
+        goto(i, match_pos(i, 0, false).unwrap_or(0));
         let rec_end2 = rec_end.clone();
         let mut nr = move |i: &mut Interp| {
             let oldpos = pt(i);

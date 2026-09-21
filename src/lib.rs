@@ -74,6 +74,62 @@ mod coverage_tests {
     probe!(u_probe_registers, "probe_registers.el");
     probe!(u_probe_rect, "probe_rect.el");
     probe!(u_probe_sort, "probe_sort.el");
+    probe!(u_probe_eval14, "probe_eval14.el");
+
+    /// `command_args` pre-supplies arguments to every prompting
+    /// interactive-spec code — the path used when a command is replayed
+    /// with known args.
+    #[test]
+    fn u_interactive_spec_command_args() {
+        let mut i = Interp::new();
+        i.command_args = vec![crate::lisp::Value::Int(42)];
+        for code in [
+            "s", "B", "b", "F", "f", "D", "z", "Z", "a", "C", "S", "v", "k", "K", "c", "e", "x",
+            "X", "n", "N",
+        ] {
+            i.eval_str(&format!(
+                "(progn (defun g (x) (interactive \"{}In: \") x)
+                        (call-interactively 'g) (fmakunbound 'g))",
+                code
+            ))
+            .unwrap();
+        }
+    }
+
+    /// With a minibuffer reader installed, the prompting spec codes read
+    /// their answers through it — mirrors the canned-reader coverage in
+    /// tests/interactive.rs but lands inside the instrumented libtest.
+    #[test]
+    fn u_interactive_spec_reader() {
+        use crate::lisp::MinibufInput;
+        use std::cell::RefCell;
+        use std::collections::VecDeque;
+        use std::rc::Rc;
+        let mut i = Interp::new();
+        let answers = RefCell::new(VecDeque::from([
+            MinibufInput::Text("5".into()),      // n
+            MinibufInput::Text("str".into()),    // s
+            MinibufInput::Text("".into()),       // b → current buffer
+            MinibufInput::Text("mksym".into()),  // a → symbol
+            MinibufInput::Text("seq".into()),    // k
+            MinibufInput::Text("(+ 1 2)".into()),// x → evals
+            MinibufInput::Text("(+ 1 2)".into()),// X → evals+prints
+            MinibufInput::Key(65),               // c → char code
+            MinibufInput::Text("txt".into()),    // c → Text arm
+        ]));
+        i.minibuf_reader = Some(Rc::new(move |_, _, _| {
+            answers.borrow_mut().pop_front().ok_or(crate::lisp::Flow::Quit)
+        }));
+        for code in ["n", "s", "b", "a", "k", "x", "X", "c", "c"] {
+            i.eval_str(&format!(
+                "(progn (defun g (x) (interactive \"{}In: \") x)
+                        (call-interactively 'g) (fmakunbound 'g))",
+                code
+            ))
+            .unwrap();
+        }
+    }
+
 
     #[test]
     fn u_output_sinks() {

@@ -7416,7 +7416,7 @@ fn f_quit_window(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let kill = arg(&a, 0).truthy();
     if kill {
         let bid = w.borrow().buffer;
-        i.buffers.kill(bid);
+        crate::buffer::primitives::kill_buffer_keep_current(i, bid);
     }
     let f = sel_frame(i).ok_or_else(|| i.error("No frame"))?;
     let live = f
@@ -7459,15 +7459,14 @@ fn f_kill_buffer_and_window(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
         return Err(i.error("Attempt to delete the only window"));
     }
     let bid = i.current_buffer;
-    i.buffers.kill(bid);
+    crate::buffer::primitives::kill_buffer_keep_current(i, bid);
     f_delete_window(i, vec![Value::Nil])?;
-    if let Some(next) = i
+    let next = i
         .buffers
         .other(bid)
         .or_else(|| i.buffers.list().first().copied())
-    {
-        i.set_current_buffer(next);
-    }
+        .unwrap_or_else(|| i.buffers.create("*scratch*"));
+    i.set_current_buffer(next);
     Ok(Value::Nil)
 }
 

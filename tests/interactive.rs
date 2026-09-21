@@ -600,6 +600,74 @@ fn interactive_spec_codes_batch() {
     let _ = v;
 }
 
+/// `command_args` pre-supplies arguments to every prompting code —
+/// the noninteractive path used when a command is replayed with
+/// known args (e.g. by the front-end loop or `execute-extended-command`).
+#[test]
+fn interactive_spec_command_args() {
+    let (mut i, _) = interp();
+    i.command_args = vec![Value::Int(42)];
+    // 'n' with a numeric prefix arg consults prefix_numeric first.
+    set(&mut i, "current-prefix-arg", Value::list(vec![Value::Int(4)]));
+    let v = ev_in(
+        &mut i,
+        "(defun f (n) (interactive \"nN: \") n) (call-interactively 'f)",
+    );
+    assert_eq!(i.prin1_to_string(&v), "4");
+    // Without a prefix, command_args supplies the value.
+    set(&mut i, "current-prefix-arg", Value::Nil);
+    let v = ev_in(&mut i, "(call-interactively 'f)");
+    assert_eq!(i.prin1_to_string(&v), "42");
+    // 's'/'B'/'b'/'F'/'f'/'D'/'z'/'Z' all take command_args first.
+    for code in ["s", "B", "b", "F", "f", "D", "z", "Z"] {
+        let v = ev_in(
+            &mut i,
+            &format!(
+                "(defun g (x) (interactive \"{}In: \") x) (call-interactively 'g)",
+                code
+            ),
+        );
+        assert_eq!(i.prin1_to_string(&v), "42", "code {}", code);
+        ev_in(&mut i, "(fmakunbound 'g)");
+    }
+    // Symbol-valued codes 'a' 'C' 'S' 'v' take command_args verbatim.
+    for code in ["a", "C", "S", "v"] {
+        let v = ev_in(
+            &mut i,
+            &format!(
+                "(defun g (x) (interactive \"{}In: \") x) (call-interactively 'g)",
+                code
+            ),
+        );
+        assert_eq!(i.prin1_to_string(&v), "42", "code {}", code);
+        ev_in(&mut i, "(fmakunbound 'g)");
+    }
+    // 'k'/'K' key sequences, 'c'/'e' chars, 'x'/'X' evals.
+    for code in ["k", "K", "c", "e", "x", "X"] {
+        let v = ev_in(
+            &mut i,
+            &format!(
+                "(defun g (x) (interactive \"{}In: \") x) (call-interactively 'g)",
+                code
+            ),
+        );
+        assert_eq!(i.prin1_to_string(&v), "42", "code {}", code);
+        ev_in(&mut i, "(fmakunbound 'g)");
+    }
+    // 'p' with command_args and no prefix uses the first arg.
+    let v = ev_in(
+        &mut i,
+        "(defun g (n) (interactive \"p\") n) (call-interactively 'g)",
+    );
+    assert_eq!(i.prin1_to_string(&v), "42");
+    // 'P' raw prefix: nil prefix falls back to command_args.
+    let v = ev_in(
+        &mut i,
+        "(defun g (n) (interactive \"P\") n) (call-interactively 'g)",
+    );
+    assert_eq!(i.prin1_to_string(&v), "42");
+}
+
 // ---------- lambda arg binding paths ----------
 
 #[test]

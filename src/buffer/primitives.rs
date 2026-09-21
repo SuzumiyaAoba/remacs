@@ -1470,6 +1470,23 @@ fn f_buffer_live_p(_i: &mut Interp, a: Vec<Value>) -> EvalResult {
     Ok(Value::from_bool(matches!(&a[0], Value::Buffer(_))))
 }
 
+/// Kill `id` and repair `current_buffer`: GNU always has a live
+/// buffer, so killing the last one yields a fresh *scratch*.
+pub(crate) fn kill_buffer_keep_current(i: &mut Interp, id: usize) -> bool {
+    if !i.buffers.kill(id) {
+        return false;
+    }
+    if i.current_buffer == id {
+        let next = i
+            .buffers
+            .other(id)
+            .or_else(|| i.buffers.list().first().copied())
+            .unwrap_or_else(|| i.buffers.create("*scratch*"));
+        i.current_buffer = next;
+    }
+    true
+}
+
 fn f_kill_buffer(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let id = match a.get(0) {
         None => i.current_buffer,
@@ -1477,19 +1494,7 @@ fn f_kill_buffer(i: &mut Interp, a: Vec<Value>) -> EvalResult {
             .buffer_id_of(v)
             .ok_or_else(|| i.error(format!("No buffer named {}", i.princ_to_string(&v))))?,
     };
-    if !i.buffers.kill(id) {
-        return Ok(Value::Nil);
-    }
-    if i.current_buffer == id {
-        if let Some(next) = i
-            .buffers
-            .other(id)
-            .or_else(|| i.buffers.list().first().copied())
-        {
-            i.current_buffer = next;
-        }
-    }
-    Ok(Value::t())
+    Ok(Value::from_bool(kill_buffer_keep_current(i, id)))
 }
 
 fn f_buffer_list(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
@@ -4886,9 +4891,9 @@ pub(crate) fn search_common(
             if noerror {
                 if let Some(b) = bound {
                     let idx = b.max(1) as usize - 1;
-                    cur(i)
-                        .borrow_mut()
-                        .set_point(idx.min(cur(i).borrow().text_len()));
+                    let buf = cur(i);
+                    let len = buf.borrow().text_len();
+                    buf.borrow_mut().set_point(idx.min(len));
                 }
                 Ok(Value::Nil)
             } else {

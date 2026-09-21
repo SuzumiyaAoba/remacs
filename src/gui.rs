@@ -654,6 +654,47 @@ mod tests {
         panic!("logic thread did not exit after C-x C-c");
     }
 
+    /// A scripted editing session over `ChanIo` — same key codes as the
+    /// terminal pty test, covering `dispatch_key`, `isearch_loop` and
+    /// `minibuf_loop` for the channel IO flavor.
+    #[test]
+    fn logic_thread_drives_editing_session() {
+        let (tx, rx) = start_logic(Vec::new()).unwrap();
+        rx.recv_blocking().unwrap(); // initial frame
+        let meta = CHAR_META;
+        let keys: Vec<i128> = vec![
+            'h' as i128,
+            'i' as i128,                    // self-insert "hi"
+            21,                             // C-u
+            '3' as i128, 'z' as i128,       // C-u 3 z
+            19,                             // C-s → isearch
+            'i' as i128,                    // search "i"
+            127,                            // DEL pops the search char
+            6,                              // C-f inside isearch
+            13,                             // RET exits isearch
+            'x' as i128 | meta,             // M-x → minibuffer
+            'd' as i128, 'e' as i128, 's' as i128, 'c' as i128,
+            9,                              // TAB completes
+            13,                             // RET runs it
+            7,                              // C-g safety
+            11,                             // C-k
+            25,                             // C-y
+            31,                             // C-_ undo
+            24, 3,                          // C-x C-c
+        ];
+        for k in keys {
+            if tx.send(GuiEvent::Key(k)).is_err() {
+                break;
+            }
+        }
+        for _ in 0..400 {
+            if rx.recv_blocking().is_err() {
+                return;
+            }
+        }
+        panic!("logic thread did not exit after scripted session");
+    }
+
     #[test]
     fn headless_view_renders_and_reports_size() {
         let mut app_cx = gpui::TestAppContext::single();

@@ -177,3 +177,78 @@
                                  (sort-fields 1 (point-min) (point-max)))))
   (princ (format "ddl=%S\n" (progn (erase-buffer) (insert "x\n")
                                    (delete-duplicate-lines (point-min) (point-max))))))
+(princ "==extra==\n")
+;; Lisp-level startkeyfun that throws 'key -> all records skipped
+(with-temp-buffer
+  (insert "b\na\n")
+  (goto-char (point-min))
+  (sort-subr nil 'forward-line 'end-of-line (lambda () (throw 'key nil)))
+  (princ (buffer-string)) (princ "|\n"))
+;; nil endrecfun with endkeyfun: nextrecfun is the record end
+(with-temp-buffer
+  (insert "b1\na2\n")
+  (goto-char (point-min))
+  (sort-subr nil 'forward-line nil nil (lambda () (end-of-line)))
+  (princ (buffer-string)) (princ "|\n"))
+;; nil endrecfun and nil endkeyfun -> GNU funcalls nil (void-function)
+(with-temp-buffer
+  (insert "b1\na2\n")
+  (goto-char (point-min))
+  (condition-case e (sort-subr nil 'forward-line nil)
+    (error (princ (format "ERR %s %s\n" (car e) (car (cdr e)))))))
+;; negative field beyond range
+(with-temp-buffer
+  (insert "aa bb\ncc dd\n")
+  (condition-case e (sort-fields -5 (point-min) (point-max))
+    (error (princ (format "ERR %S\n" e)))))
+;; field zero -> treated as 1
+(with-temp-buffer
+  (insert "b 1\na 2\n")
+  (sort-fields 0 (point-min) (point-max))
+  (princ (buffer-string)))
+;; delete-duplicate-lines interactive message
+(with-temp-buffer
+  (insert "x\nx\n")
+  (delete-duplicate-lines (point-min) (point-max) nil nil nil t)
+  (princ (buffer-string)) (princ "|\n"))
+;; reverse delete-duplicate-lines hitting first line
+(with-temp-buffer
+  (insert "a\nb\na\n")
+  (princ (format "n=%d " (delete-duplicate-lines (point-min) (point-max) t)))
+  (princ (buffer-string)) (princ "|\n"))
+;; sort on read-only buffer
+(with-temp-buffer
+  (insert "b\na\n")
+  (setq buffer-read-only t)
+  (condition-case e (sort-lines nil (point-min) (point-max))
+    (error (princ (format "ERR %s\n" (car e))))))
+;; sort-regexp-fields with numeric key arg -> GNU wants a string
+(with-temp-buffer
+  (insert "k3v\nk1v\nk2v\n")
+  (condition-case e (sort-regexp-fields nil "k\\([0-9]\\)v" 1 (point-min) (point-max))
+    (error (princ (format "ERR %s %s\n" (car e) (car (cdr e)))))))
+;; sort-regexp-fields no record match at all
+(with-temp-buffer
+  (insert "abc\n")
+  (condition-case e (sort-regexp-fields nil "^z.*$" "\\&" (point-min) (point-max))
+    (error (princ (format "ERR %s\n" (car e))))))
+;; sort-columns reverse
+(with-temp-buffer
+  (insert "za1\nyb2\nxc3\n")
+  (goto-char (point-min)) (forward-char 1)
+  (let ((p (point)))
+    (goto-char (point-max)) (backward-char 1)
+    (sort-columns t p (point)))
+  (princ (buffer-string)))
+;; string keys via startkeyfun returning a value
+(with-temp-buffer
+  (insert "zz\naa\nmm\n")
+  (goto-char (point-min))
+  (sort-subr nil 'forward-line 'end-of-line
+             (lambda () (buffer-substring (point) (point))))
+  (princ (buffer-string)) (princ "|\n"))
+;; sort-paragraphs reverse
+(with-temp-buffer
+  (insert "pa1\n\npb2\n")
+  (sort-paragraphs t (point-min) (point-max))
+  (princ (buffer-string)) (princ "|\n"))

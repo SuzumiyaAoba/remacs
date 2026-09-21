@@ -54,3 +54,4 @@ probe!(probe_process_cov12, "probe_eval12.el");
 probe!(probe_eval13_misc, "probe_eval13.el");
 probe!(probe_registers, "probe_registers.el");
 probe!(probe_sort, "probe_sort.el");
+probe!(probe_eval14_cov, "probe_eval14.el");

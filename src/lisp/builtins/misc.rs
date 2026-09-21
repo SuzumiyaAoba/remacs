@@ -876,7 +876,7 @@ fn f_func_arity(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     // A `(lambda ARGLIST ...)' or `(closure ENV ARGLIST ...)' list.
     let mut list_arity = |v: &Value| -> Option<Arity> {
         let cells = v.list_to_vec().ok()?;
-        let head = i.sym_id(&cells[0])?;
+        let head = i.sym_id(cells.first()?)?;
         let name = i.symbol_name(head);
         if name != "lambda" && name != "closure" {
             return None;
