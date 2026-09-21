@@ -768,7 +768,7 @@ fn standard_output_dests() {
         "(let ((m (set-marker (make-marker) 1 \"so-buf\")))
            (let ((standard-output m)) (princ \"MM\")))",
     );
-    // Function destination.
+    // Function destination: GNU calls the stream once per character.
     ev_in(
         &mut i,
         "(setq out-acc nil)
@@ -776,7 +776,7 @@ fn standard_output_dests() {
            (princ \"F1\") (princ \"F2\"))",
     );
     let v = ev_in(&mut i, "(length out-acc)");
-    assert_eq!(i.prin1_to_string(&v), "2");
+    assert_eq!(i.prin1_to_string(&v), "4");
     // Symbol naming a function.
     ev_in(
         &mut i,
@@ -785,7 +785,7 @@ fn standard_output_dests() {
          (let ((standard-output 'my-sink)) (princ \"Q\"))",
     );
     let v = ev_in(&mut i, "out-acc2");
-    assert_eq!(i.prin1_to_string(&v), "(\"Q\")");
+    assert_eq!(i.prin1_to_string(&v), "(81)");
     // kill the helper buffer.
     ev_in(&mut i, "(kill-buffer \"so-buf\")");
 }

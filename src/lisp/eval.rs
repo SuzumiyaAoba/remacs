@@ -110,6 +110,9 @@ pub struct Interp {
     /// GNU's `noninteractive_need_newline`: set when batch stdout was
     /// written, so the next stderr message is preceded by a newline.
     pub stderr_need_newline: bool,
+    /// Last character written to the real output sink; used by
+    /// `(terpri nil t)'-style BOL checks (GNU's print_position).
+    pub out_last_char: Option<char>,
     /// All frames (the first is the initial tty frame).
     pub frames: Vec<crate::editor::FrameRef>,
     /// The selected frame.
@@ -231,6 +234,7 @@ impl Interp {
             match_data: None,
             noninteractive: false,
             stderr_need_newline: false,
+            out_last_char: None,
             frames: Vec::new(),
             selected_frame: None,
             quit_editor: false,
@@ -3171,17 +3175,67 @@ impl Interp {
     /// Send printed output to the current destination
     /// (`standard-output`, capture buffer, or the editor's sink).
     pub fn write_output(&mut self, s: &str) {
+        self.write_output_to(s, &Value::Nil)
+    }
+
+    /// Is the print destination STREAM currently at the beginning of a
+    /// line?  Buffers/markers peek at the preceding character; the real
+    /// output sink uses `out_last_char` (GNU's print_position).
+    pub fn output_at_bol(&mut self, stream: &Value) -> bool {
+        if self.capture_output {
+            return self.output_buffer.ends_with('\n');
+        }
+        let dest = match stream {
+            Value::Nil => self.symbol_value(self.standard_output_sym),
+            v => v.clone(),
+        };
+        match dest {
+            Value::Buffer(b) => {
+                let bb = b.borrow();
+                let p = bb.point();
+                p <= bb.begv || bb.text.char_at(p - 1) == '\n'
+            }
+            Value::Marker(m) => {
+                let mm = m.borrow();
+                match mm.buffer.and_then(|id| self.buffers.get(id)) {
+                    Some(b) => {
+                        let bb = b.borrow();
+                        mm.position <= bb.begv
+                            || bb.text.char_at(mm.position - 1) == '\n'
+                    }
+                    None => false,
+                }
+            }
+            // Function streams carry no position state — GNU treats
+            // them as never at BOL.
+            Value::Lambda(_) | Value::Subr(_) => false,
+            Value::Sym(sid) if sid != sym::T => false,
+            _ => self.out_last_char == Some('\n'),
+        }
+    }
+
+    /// Send printed output to STREAM (nil → `standard-output', t → the
+    /// real output sink, buffer/marker → insert, function → call).
+    pub fn write_output_to(&mut self, s: &str, stream: &Value) {
+        if let Some(c) = s.chars().last() {
+            self.out_last_char = Some(c);
+        }
         if self.capture_output {
             self.output_buffer.push_str(s);
             return;
         }
         // `standard-output` may name a buffer, a marker, a function, or t.
-        let dest = self.symbol_value(self.standard_output_sym);
+        let dest = match stream {
+            Value::Nil => self.symbol_value(self.standard_output_sym),
+            v => v.clone(),
+        };
         match dest {
             Value::Buffer(b) => {
                 b.borrow_mut().insert(s);
             }
             Value::Marker(m) => {
+                // GNU inserts before the marker, then advances it past
+                // the inserted text.
                 let mm = m.borrow();
                 if let Some(buf_id) = mm.buffer {
                     let pos = mm.position;
@@ -3189,16 +3243,25 @@ impl Interp {
                     if let Some(b) = self.buffers.get(buf_id) {
                         b.borrow_mut().insert_at(pos, s);
                     }
+                    let newpos = pos + s.chars().count();
+                    m.borrow_mut().position = newpos;
                 }
             }
-            Value::Lambda(_) | Value::Subr(_) => {
-                let arg = Value::string(s);
-                let _ = self.apply(&dest, vec![arg]);
+            // GNU calls a function print stream once per character.
+            Value::Lambda(_) => {
+                for ch in s.chars() {
+                    let _ = self.apply(&dest, vec![Value::Int(ch as i128)]);
+                }
             }
             Value::Sym(sid) if sid != sym::T => {
-                // A symbol naming a print function.
-                let arg = Value::string(s);
-                let _ = self.apply(&dest, vec![arg]);
+                for ch in s.chars() {
+                    let _ = self.apply(&dest, vec![Value::Int(ch as i128)]);
+                }
+            }
+            Value::Subr(_) => {
+                for ch in s.chars() {
+                    let _ = self.apply(&dest, vec![Value::Int(ch as i128)]);
+                }
             }
             _ => {
                 // nil or t: the real print destination — echo area

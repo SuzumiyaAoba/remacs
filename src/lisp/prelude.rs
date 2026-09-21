@@ -1811,6 +1811,18 @@ places where expressions are evaluated and inserted or spliced in."
 (autoload 'kmacro-end-or-call-macro-repeat "kmacro" nil t)
 (autoload 'kmacro-name-last-macro "kmacro"
   "Assign a name to the last keyboard macro defined." t)
+(autoload 'gv-get "gv"
+  "Build the code that applies DO to PLACE." nil t)
+(autoload 'gv-letplace "gv"
+  "Build the code manipulating the generalized variable PLACE." nil t)
+(autoload 'gv-define-expander "gv"
+  "Attach HANDLER as the gv-expander of NAME." nil t)
+(autoload 'gv-define-setter "gv"
+  "Define a setter method for generalized variable NAME." nil t)
+(autoload 'gv-define-simple-setter "gv"
+  "Define a simple setter method for generalized variable NAME." nil t)
+(autoload 'gv-ref "gv"
+  "Return a reference to PLACE." nil t)
 
 ;; GNU aliases (resolve immediately, before the library loads).
 (defalias 'kmacro-exec-ring-item 'funcall)
@@ -2169,6 +2181,11 @@ trying SUFFIXES; PREDICATE (default `file-exists-p') must pass."
                 ,(caddr place)))
        ((eq op 'alist-get)
         `(setf (cdr (assoc ,(caddr place) ,(cadr place))) ,val))
+       ((eq op 'gv-deref) `(funcall (cdr ,(cadr place)) ,val))
+       ;; Fallback like GNU's gv-setter: call the `(setf OP)' function.
+       ((symbolp op)
+        `(funcall ',(intern (format "(setf %s)" op)) ,val
+                  ,@(cdr place)))
        (t (error "setf: unsupported place %s" place)))))
    (t (error "setf: unsupported place %s" place))))
 
@@ -2241,6 +2258,223 @@ nth, elt, aref, get, gethash, plist-get, symbol-* places."
       (push (cl--setf-pair (nth i args) (nth (1+ i) tmps)) sets)
       (setq i (1+ i)))
     `(let ,(cl--zip tmps args) ,@(nreverse sets) ,(car tmps))))
+
+;; ---------- simple.el / timer.el / subr.el additions ----------
+
+(defun transient-mark-mode (&optional arg)
+  "Toggle Transient Mark mode.
+With positive numeric ARG, enable; with non-positive, disable;
+with no ARG (or 'toggle), toggle."
+  (interactive (list (or current-prefix-arg 'toggle)))
+  (setq transient-mark-mode
+        (cond ((eq arg 'toggle) (not transient-mark-mode))
+              ((null arg) t)
+              (t (> (prefix-numeric-value arg) 0))))
+  nil)
+
+(defun read-minibuffer (prompt &optional initial-contents)
+  "Return a Lisp object read using the minibuffer, unevaluated."
+  (read-from-minibuffer prompt initial-contents minibuffer-local-map
+                        t 'minibuffer-history))
+
+(defun eval-minibuffer (prompt &optional initial-contents)
+  "Return value of Lisp expression read using the minibuffer."
+  (eval (read-minibuffer prompt initial-contents) t))
+
+;; GNU: obsolete alias of `run-with-timer' since 26.1.
+(defalias 'add-timeout 'run-with-timer)
+
+(defun values--store-value (value)
+  "Store VALUE in the list `values'."
+  (push value values))
+
+(autoload 'pp "pp" "Output pretty-printed representation of OBJECT." t)
+(autoload 'pp-to-string "pp"
+  "Return a string containing the pretty-printed representation of OBJECT.")
+(autoload 'pp-buffer "pp" "Prettify the current buffer." t)
+(autoload 'pp-eval-expression "pp"
+  "Evaluate EXPRESSION and pretty-print its value." t)
+(autoload 'pp-eval-last-sexp "pp"
+  "Run `pp-eval-expression' on sexp before point." t)
+(autoload 'pp-macroexpand-expression "pp"
+  "Macroexpand EXPRESSION and pretty-print its value." t)
+(autoload 'pp-macroexpand-last-sexp "pp"
+  "Run `pp-macroexpand-expression' on sexp before point." t)
+(autoload 'pp-display-expression "pp"
+  "Prettify and display EXPRESSION in an appropriate way.")
+
+(defmacro with-output-to-temp-buffer (bufname &rest body)
+  "Bind `standard-output' to buffer BUFNAME, then run BODY."
+  `(let ((standard-output (get-buffer-create ,bufname)))
+     (with-current-buffer standard-output
+       (let ((inhibit-read-only t)) (erase-buffer))
+       (run-hooks 'temp-buffer-setup-hook))
+     (prog1 (progn ,@body)
+       (ignore-errors (display-buffer standard-output)))))
+
+;; ---------- cl-generic subset ----------
+
+(define-error 'cl-no-applicable-method "No applicable method" 'error)
+(define-error 'cl-no-next-method "No next method" 'error)
+
+;; A generic function's methods live on its `cl--methods' plist entry:
+;; a list of (SPECIALIZERS QUALIFIER . FUNCTION), where SPECIALIZERS is
+;; a list of `t', a type symbol, or (eql FORM).
+
+(defvar cl--cnm nil
+  "Dynamically bound chain of remaining applicable methods.")
+(defvar cl--cnm-args nil)
+
+(defvar cl--cnm-name nil
+  "Dynamically bound name of the generic function being dispatched.")
+
+(defun cl-call-next-method (&rest args)
+  "Call the next most specific applicable method."
+  (unless cl--cnm-ok
+    (error "cl-call-next-method only allowed inside primary and around methods"))
+  (unless (consp cl--cnm)
+    (signal 'cl-no-next-method (cons cl--cnm-name (or args cl--cnm-args))))
+  (let ((m (car cl--cnm)))
+    (setq cl--cnm (cdr cl--cnm))
+    (apply (cl--method-fn m) (or args cl--cnm-args))))
+
+(defvar cl--cnm-ok nil
+  "Dynamically bound non-nil while executing a method body.")
+
+(defun cl-next-method-p ()
+  "Return non-nil if a next method is available."
+  (unless cl--cnm-ok
+    (error "cl-next-method-p only allowed inside primary and around methods"))
+  (consp cl--cnm))
+
+(defun cl--type-parents (type)
+  "Ancestors of TYPE for method specificity ordering."
+  (cdr (assq type '((integer number) (fixnum integer) (bignum integer)
+                    (number t) (string t) (cons list) (list t)
+                    (symbol t) (keyword symbol) (float number)
+                    (vector sequence) (list sequence)
+                    (sequence t) (function t) (buffer t)
+                    (marker t) (window t) (frame t) (process t)
+                    (hash-table t) (atom t) (null symbol)
+                    (boolean symbol) (plist list)))))
+
+(defun cl--spec-applicable-p (spec arg)
+  (cond
+   ((eq spec t) t)
+   ((and (consp spec) (eq (car spec) 'eql)) (eql arg (cadr spec)))
+   ((symbolp spec)
+    (or (and (fboundp (intern (format "%sp" spec)))
+             (funcall (intern (format "%sp" spec)) arg))
+        (eq spec 't)))
+   (t nil)))
+
+(defun cl--spec-more-specific-p (a b)
+  "Non-nil if specializer A is more specific than B."
+  (cond
+   ((equal a b) nil)
+   ((and (consp a) (eq (car a) 'eql)) t)
+   ((consp b) nil)
+   ((eq b t) (not (eq a t)))
+   ((eq a t) nil)
+   (t (memq b (cl--type-parents a)))))
+
+(defun cl--method-more-specific-p (a b)
+  "Compare method specs lexicographically."
+  (let ((sa (car a)) (sb (car b)) (more nil))
+    (while (and sa sb (not more) (equal (car sa) (car sb)))
+      (setq sa (cdr sa) sb (cdr sb)))
+    (when (and sa sb)
+      (setq more (cl--spec-more-specific-p (car sa) (car sb))))
+    more))
+
+(defun cl--method-fn (m) (nth 2 m))
+
+(defmacro cl-defgeneric (name args &rest body)
+  "Define a generic function NAME with arglist ARGS.
+BODY may contain a docstring, declarations, and options (subset)."
+  (let ((doc (and (stringp (car body)) (car body))))
+    `(progn
+       (put ',name 'cl--methods nil)
+       (defun ,name (&rest cl--args)
+         ,@(and doc (list doc))
+         (cl--generic-dispatch ',name cl--args))
+       ',name)))
+
+(defun cl--generic-dispatch (name args)
+  (let* ((methods (get name 'cl--methods))
+         (applicable
+          (let (out)
+            (dolist (m methods)
+              (let ((specs (car m)) (ok t) (as args))
+                (while (and specs as ok)
+                  (unless (cl--spec-applicable-p (car specs) (car as))
+                    (setq ok nil))
+                  (setq specs (cdr specs) as (cdr as)))
+                (when ok (push m out))))
+            ;; Stable sort: most specific first.
+            (sort (nreverse out)
+                  (lambda (a b) (cl--method-more-specific-p a b)))))
+         (around (cl--methods-with-qual applicable :around))
+         (before (cl--methods-with-qual applicable :before))
+         (primary (cl--methods-with-qual applicable nil))
+         (after (nreverse (cl--methods-with-qual applicable :after))))
+    (unless (or around primary)
+      (signal 'cl-no-applicable-method (cons name args)))
+    (let ((cl--cnm-ok t) (cl--cnm-name name))
+      (dolist (m before) (apply (cl--method-fn m) args))
+      (let* ((cl--cnm-args args)
+             (cl--cnm (append (cdr around) primary))
+             (fn (cl--method-fn (car (or around primary))))
+             (result (apply fn args)))
+        (dolist (m after) (apply (cl--method-fn m) args))
+        result))))
+
+(defun cl--methods-with-qual (methods qual)
+  (let (out)
+    (dolist (m methods)
+      (when (eq (cadr m) qual) (push m out)))
+    (nreverse out)))
+
+(defmacro cl-defmethod (name &rest args)
+  "Define a method for generic function NAME.
+ARGS is [QUALIFIER] ARGLIST BODY where ARGLIST elements may be
+VAR, (VAR TYPE), or (VAR (eql FORM))."
+  (let ((qual nil))
+    (when (and (car args) (not (listp (car args))))
+      (setq qual (car args) args (cdr args)))
+    (let* ((arglist (car args))
+           (mbody (cdr args))
+           (doc (and (stringp (car mbody)) (pop mbody)))
+           (params nil) (specs nil))
+      (dolist (a arglist)
+        (cond
+         ((symbolp a) (push a params) (push t specs))
+         ((and (consp a) (eq (car a) '&rest)) (push a params)
+          (push t specs))
+         ((memq (car-safe a) '(&optional &aux &key))
+          (push a params) (push t specs))
+         ((consp a)
+          (push (car a) params)
+          (push (if (and (consp (cadr a)) (eq (caadr a) 'eql))
+                    (list 'eql (eval (cadr (cadr a))))
+                  (cadr a))
+                specs))
+         (t (push a params) (push t specs))))
+      (let ((specs (nreverse specs))
+            (params (nreverse params)))
+        `(progn
+           (put ',name 'cl--methods
+                (cons (list ',specs ',qual
+                            (lambda ,params
+                              ,@(and doc (list doc)) ,@mbody))
+                      (let ((old (get ',name 'cl--methods)) (out nil))
+                        ;; Replace a method with same specs+qualifier.
+                        (dolist (m old)
+                          (unless (and (equal (car m) ',specs)
+                                       (eq (cadr m) ',qual))
+                            (push m out)))
+                        (nreverse out))))
+           ',name)))))
 
 ;; ---------- cl-lib / cl-seq subset ----------
 
@@ -2843,11 +3077,6 @@ records whose first element is NAME."
 (defmacro with-suppressed-warnings (_warnings &rest body)
   "Eval BODY with byte-compile WARNINGS suppressed."
   `(progn ,@body))
-
-(defmacro gv-ref (place)
-  "Return a cons of a getter and a setter closure for PLACE."
-  `(cons (lambda () ,place)
-         (lambda (gv--newval) (setf ,place gv--newval))))
 
 (defun exec-path ()
   "Return `exec-path'."

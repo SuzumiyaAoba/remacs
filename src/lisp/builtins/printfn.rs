@@ -3,6 +3,7 @@
 use super::{S, arg};
 use crate::lisp::Interp;
 use crate::lisp::error::EvalResult;
+use crate::lisp::obarray::sym;
 use crate::lisp::value::{Subr, Value};
 
 pub(crate) static SUBRS: &[Subr] = &[
@@ -27,7 +28,7 @@ pub(crate) static SUBRS: &[Subr] = &[
         f_print,
         "Print OBJECT readably, preceded by newline and space."
     ),
-    S!("terpri", 0, 1, f_terpri, "Output a newline."),
+    S!("terpri", 0, 2, f_terpri, "Output a newline."),
     S!("write-char", 1, 2, f_write_char, "Output CHARACTER."),
     S!(
         "prin1-to-string",
@@ -60,7 +61,7 @@ fn f_noop(_i: &mut Interp, _args: Vec<Value>) -> EvalResult {
 
 fn f_prin1(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     let s = i.print_to_string(&args[0]);
-    i.write_output(&s);
+    i.write_output_to(&s, &arg(&args, 1));
     Ok(args[0].clone())
 }
 
@@ -70,33 +71,51 @@ fn f_princ_to_string(i: &mut Interp, args: Vec<Value>) -> EvalResult {
 
 fn f_princ(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     let s = i.princ_to_string(&args[0]);
-    i.write_output(&s);
+    i.write_output_to(&s, &arg(&args, 1));
     Ok(args[0].clone())
 }
 
 fn f_print(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     let s = i.print_to_string(&args[0]);
     // GNU's print emits a newline before and after the object.
-    i.write_output(&format!("\n{}\n", s));
+    i.write_output_to(&format!("\n{}\n", s), &arg(&args, 1));
     Ok(args[0].clone())
 }
 
 fn f_terpri(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    let n = match args.get(0) {
-        Some(Value::Int(n)) => (*n).max(1),
-        _ => 1,
+    // GNU: (terpri &optional PRINTCHARFUN ENSURE) — PRINTCHARFUN is the
+    // print stream; with ENSURE, output only if not already at BOL.
+    let stream = arg(&args, 0);
+    // GNU's terpri accepts only t/nil/marker/buffer streams; function
+    // streams signal `error' ("Unsupported function argument" FN).
+    let dest = match &stream {
+        Value::Nil => i.symbol_value(i.standard_output_sym),
+        v => v.clone(),
     };
-    for _ in 0..n {
-        i.write_output("\n");
+    match &dest {
+        Value::Nil => {}
+        Value::Sym(sid) if *sid == sym::T => {}
+        Value::Marker(_) | Value::Buffer(_) => {}
+        _ => {
+            return Err(i.signal_data(
+                sym::ERROR,
+                vec![Value::string("Unsupported function argument"), dest],
+            ));
+        }
     }
-    Ok(Value::Nil)
+    let ensure = arg(&args, 1).truthy();
+    if ensure && i.output_at_bol(&stream) {
+        return Ok(Value::Nil);
+    }
+    i.write_output_to("\n", &stream);
+    Ok(Value::Sym(sym::T))
 }
 
 fn f_write_char(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     if let Value::Int(n) = &args[0] {
         if let Some(c) = char::from_u32(*n as u32) {
             let mut s = [0u8; 4];
-            i.write_output(c.encode_utf8(&mut s));
+            i.write_output_to(c.encode_utf8(&mut s), &arg(&args, 1));
         }
     }
     Ok(args[0].clone())

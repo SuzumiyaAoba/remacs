@@ -5841,18 +5841,33 @@ fn f_capitalize_word(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 
 fn f_indent_line_to(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let col = want_int(i, &a[0])?.max(0) as usize;
+    let tab = i
+        .symbol_value(i.intern_soft("tab-width").unwrap_or(0))
+        .int()
+        .unwrap_or(8)
+        .max(1) as usize;
+    let tabs_on = i
+        .symbol_value(i.intern_soft("indent-tabs-mode").unwrap_or(0))
+        .truthy();
     let b = cur(i);
     let mut bb = b.borrow_mut();
     let line = bb.text.line_of_pos(bb.point());
     let ls = bb.text.line_start(line);
-    // Delete existing leading whitespace, insert `col` spaces.
+    // Delete existing leading whitespace, insert `col` columns of
+    // whitespace (tabs when `indent-tabs-mode' is on, like GNU).
     let mut e = ls;
     while e < bb.text.len() && matches!(bb.text.char_at(e), ' ' | '\t') {
         e += 1;
     }
     bb.delete_region(ls, e);
-    bb.insert_at(ls, &" ".repeat(col));
-    bb.set_point(ls + col);
+    let ws = if tabs_on {
+        format!("{}{}", "\t".repeat(col / tab), " ".repeat(col % tab))
+    } else {
+        " ".repeat(col)
+    };
+    let wlen = ws.chars().count();
+    bb.insert_at(ls, &ws);
+    bb.set_point(ls + wlen);
     Ok(Value::Nil)
 }
 

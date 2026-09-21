@@ -318,8 +318,8 @@ impl Parser {
             Some('^') => Ok(Ast::Anchor('^')),
             Some('$') => Ok(Ast::Anchor('$')),
             Some('[') => self.parse_class(),
-            Some('(') => Err(RegexError("unescaped ( — use \\( for groups".into())),
-            Some(')') => Err(RegexError("unescaped )".into())),
+            // Emacs syntax: bare parens are literal; groups use \( \).
+            Some('(') | Some(')') => Ok(Ast::Char(self.chars[self.pos - 1])),
             Some('\\') => self.parse_escape(),
             Some(c) => Ok(Ast::Char(c)),
         }
