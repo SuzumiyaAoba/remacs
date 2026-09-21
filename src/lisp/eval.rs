@@ -159,6 +159,10 @@ pub struct Interp {
     pub thread_last_error: Value,
     /// The standard case table (`standard-case-table'), built lazily.
     pub standard_case_table: Option<Value>,
+    /// `register-ccl-program' registration counter.
+    pub ccl_program_count: usize,
+    /// `register-code-conversion-map' registration counter.
+    pub code_conv_map_count: usize,
 }
 
 /// Result of a minibuffer read from the front-end.
@@ -230,6 +234,8 @@ impl Interp {
             current_thread: 0,
             thread_last_error: Value::Nil,
             standard_case_table: None,
+            ccl_program_count: 0,
+            code_conv_map_count: 0,
         };
         crate::lisp::builtins::install(&mut interp);
         crate::buffer::install_primitives(&mut interp);

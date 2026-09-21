@@ -5,7 +5,7 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use super::{S, arg, want_int, want_string};
+use super::{S, arg, want_int, want_string, want_sym};
 use crate::lisp::Interp;
 use crate::lisp::error::{EvalResult, Flow};
 use crate::lisp::obarray::sym;
@@ -533,6 +533,92 @@ pub(crate) static SUBRS: &[Subr] = &[
     ),
     S!("signal-names", 0, 0, f_signal_names, "POSIX signal names."),
     S!("user-ptrp", 1, 1, f_false, "t if OBJECT is a user pointer."),
+    S!("group-name", 1, 1, f_group_name, "Group name for GID."),
+    S!(
+        "waiting-for-user-input-p",
+        0,
+        0,
+        f_nil,
+        "t while waiting for user input."
+    ),
+    S!("bitmap-spec-p", 1, 1, f_false, "t if OBJECT is a bitmap spec."),
+    S!(
+        "get-truename-buffer",
+        1,
+        1,
+        f_get_truename_buffer,
+        "Return the buffer visiting the truename of FILENAME."
+    ),
+    S!(
+        "unencodable-char-position",
+        3,
+        5,
+        f_unencodable_char_position,
+        "Position of first unencodable char in a region."
+    ),
+    S!(
+        "compose-region-internal",
+        2,
+        4,
+        f_compose_region_internal,
+        "Internal function for `compose-region'."
+    ),
+    S!(
+        "compose-string-internal",
+        3,
+        5,
+        f_compose_string_internal,
+        "Internal function for `compose-string'."
+    ),
+    S!(
+        "set-buffer-redisplay",
+        4,
+        4,
+        f_set_buffer_redisplay,
+        "Set redisplay flags for BUFFER's region."
+    ),
+    S!(
+        "delete-other-windows-internal",
+        0,
+        2,
+        f_nil,
+        "Delete all windows except WINDOW in ROOT."
+    ),
+    S!(
+        "register-ccl-program",
+        2,
+        2,
+        f_register_ccl_program,
+        "Register CCL program CCL-PROG as NAME."
+    ),
+    S!(
+        "ccl-program-p",
+        1,
+        1,
+        f_ccl_program_p,
+        "t if NAME is a registered CCL program."
+    ),
+    S!(
+        "ccl-execute",
+        2,
+        2,
+        f_ccl_execute,
+        "Execute registered CCL-PROG with registers STATUS."
+    ),
+    S!(
+        "ccl-execute-on-string",
+        3,
+        4,
+        f_ccl_execute_on_string,
+        "Execute CCL-PROG on STRING with registers STATUS."
+    ),
+    S!(
+        "register-code-conversion-map",
+        2,
+        2,
+        f_register_code_conversion_map,
+        "Register MAP as code conversion map NAME."
+    ),
     S!("cl-type-of", 1, 1, f_cl_type_of, ""),
     S!("bool-vector-p", 1, 1, f_bool_vector_p, ""),
     S!("record", many 0, f_record, "Create a record of TYPE with SLOTS."),
@@ -2092,6 +2178,132 @@ fn f_system_groups(_i: &mut Interp, _a: Vec<Value>) -> EvalResult {
         )),
         _ => Ok(Value::Nil),
     }
+}
+
+fn f_group_name(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let gid = want_int(i, &a[0])?;
+    #[cfg(unix)]
+    unsafe {
+        let grp = libc::getgrgid(gid as libc::gid_t);
+        if !grp.is_null() {
+            let name = std::ffi::CStr::from_ptr((*grp).gr_name).to_string_lossy();
+            return Ok(Value::string(name.into_owned()));
+        }
+    }
+    Ok(Value::Nil)
+}
+
+fn f_get_truename_buffer(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    want_string(i, &a[0])?;
+    Ok(Value::Nil)
+}
+
+fn f_unencodable_char_position(_i: &mut Interp, _a: Vec<Value>) -> EvalResult {
+    Ok(Value::Nil)
+}
+
+fn f_compose_region_internal(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let (start, end) = (want_int(i, &a[0])?, want_int(i, &a[1])?);
+    let (begv, zv) = i
+        .current_buffer_ref()
+        .map(|b| {
+            let b = b.borrow();
+            (b.begv as i128 + 1, b.zv as i128 + 1)
+        })
+        .unwrap_or((1, 1));
+    if start < begv || end > zv || start > end {
+        return Err(i.signal_data(
+            sym::ARGS_OUT_OF_RANGE,
+            vec![a[0].clone(), a[1].clone()],
+        ));
+    }
+    Ok(Value::Nil)
+}
+
+fn f_compose_string_internal(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let s = want_string(i, &a[0])?;
+    let (start, end) = (want_int(i, &a[1])?, want_int(i, &a[2])?);
+    if start < 0 || end > s.chars().count() as i128 || start > end {
+        return Err(i.signal_data(
+            sym::ARGS_OUT_OF_RANGE,
+            vec![a[0].clone(), a[1].clone(), a[2].clone()],
+        ));
+    }
+    Ok(Value::string(s))
+}
+
+fn f_set_buffer_redisplay(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    if !matches!(a[0], Value::Buffer(_)) && !a[0].is_nil() {
+        return Err(i.wrong_type_mut("bufferp", &a[0]));
+    }
+    want_int(i, &a[1])?;
+    want_int(i, &a[2])?;
+    Ok(Value::Nil)
+}
+
+fn f_register_ccl_program(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let name = want_sym(i, &a[0])?;
+    let elems = match &a[1] {
+        Value::Vec(v) => v.borrow().clone(),
+        other => return Err(i.wrong_type_mut("vectorp", other)),
+    };
+    if elems.len() < 3 || !elems.iter().all(|e| matches!(e, Value::Int(_))) {
+        return Err(i.signal_data(
+            sym::ERROR,
+            vec![Value::string("Invalid CCL program")],
+        ));
+    }
+    let prop = i.intern("ccl-program");
+    if let Value::Int(idx) = i.get_prop(name, prop) {
+        return Ok(Value::Int(idx));
+    }
+    let idx = i.ccl_program_count;
+    i.ccl_program_count += 1;
+    i.put_prop(name, prop, Value::Int(idx as i128));
+    Ok(Value::Int(idx as i128))
+}
+
+fn f_ccl_program_p(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let name = want_sym(i, &a[0])?;
+    let prop = i.intern("ccl-program");
+    Ok(if i.get_prop(name, prop).is_nil() {
+        Value::Nil
+    } else {
+        Value::t()
+    })
+}
+
+fn f_ccl_execute(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let name = want_sym(i, &a[0])?;
+    let prop = i.intern("ccl-program");
+    if i.get_prop(name, prop).is_nil() {
+        return Err(i.signal_data(
+            sym::ERROR,
+            vec![Value::string("CCL program is not registered")],
+        ));
+    }
+    Ok(Value::Nil)
+}
+
+fn f_ccl_execute_on_string(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let s = want_string(i, &a[1])?;
+    f_ccl_execute(i, vec![a[0].clone(), a[2].clone()])?;
+    Ok(Value::string(s))
+}
+
+fn f_register_code_conversion_map(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let name = want_sym(i, &a[0])?;
+    if !matches!(a[1], Value::Vec(_)) {
+        return Err(i.wrong_type_mut("vectorp", &a[1]));
+    }
+    let prop = i.intern("code-conversion-map");
+    if let Value::Int(idx) = i.get_prop(name, prop) {
+        return Ok(Value::Int(idx));
+    }
+    let idx = i.code_conv_map_count;
+    i.code_conv_map_count += 1;
+    i.put_prop(name, prop, Value::Int(idx as i128));
+    Ok(Value::Int(idx as i128))
 }
 
 fn f_invocation_name(_i: &mut Interp, _a: Vec<Value>) -> EvalResult {
