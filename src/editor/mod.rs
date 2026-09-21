@@ -1158,7 +1158,7 @@ pub(crate) static SUBRS: &[Subr] = &[
         "Rename FILE to NEWNAME."
     ),
     S!("copy-file", 2, 4, f_copy_file, "Copy FILE to NEWNAME."),
-    S!("copy-directory", 2, 4, f_nil, ""),
+
     S!(
         "add-name-to-file",
         2,
@@ -1239,18 +1239,18 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!("insert-directory-literally", many 0, f_nil, ""),
     S!("insert-directory", many 0, f_nil, ""),
     S!("unhandled-file-name-directory", 1, 1, f_nil, ""),
-    S!("file-remote-p", 1, 3, f_nil, ""),
+    S!("file-remote-p", 1, 3, f_file_remote_p, ""),
     S!("file-local-name", 1, 1, f_identity, ""),
     S!("file-name-quote", 1, 1, f_identity, ""),
     S!("file-name-unquote", 1, 1, f_identity, ""),
     S!("file-accessible-directory-p", 1, 1, f_file_directory_p, ""),
     S!("verify-visited-file-modtime-princ", 0, 0, f_nil, ""),
-    S!("set-default-file-modes", 1, 1, f_nil, ""),
-    S!("default-file-modes", 0, 0, f_file_modes_default, ""),
+    S!("default-file-modes", 0, 0, f_default_file_modes, ""),
+    S!("set-default-file-modes", 1, 1, f_set_default_file_modes, ""),
     S!("file-modes-symbolic-to-number", 1, 3, f_zero, ""),
     S!("unix-sync", 0, 0, f_nil, ""),
-    S!("file-system-info", 1, 1, f_nil, ""),
-    S!("file-equal-p", 2, 2, f_nil, ""),
+    S!("file-system-info", 1, 1, f_file_system_info, ""),
+    S!("file-equal-p", 2, 2, f_file_equal_p, ""),
     // processes
     S!(
         "call-process",
@@ -4522,7 +4522,8 @@ fn f_file_newer_than_file_p(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 }
 fn f_file_attributes(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let p = want_filename(i, &a[0])?;
-    match std::fs::metadata(&p) {
+    // GNU lstats: a symlink's attributes are its own, and car = link target.
+    match std::fs::symlink_metadata(&p) {
         Ok(m) => {
             // GNU order: type nlinks uid gid atime mtime ctime size
             // modes gidchg inode device.
@@ -4569,8 +4570,19 @@ fn f_file_attributes(i: &mut Interp, a: Vec<Value>) -> EvalResult {
                     (1, 0, 0, 0, 0, "----------".to_string(), Value::Nil)
                 }
             };
+            let car = if m.is_dir() {
+                Value::t()
+            } else if m.file_type().is_symlink() {
+                Value::string(
+                    std::fs::read_link(&p)
+                        .map(|t| t.to_string_lossy().into_owned())
+                        .unwrap_or_default(),
+                )
+            } else {
+                Value::Nil
+            };
             Ok(Value::list(vec![
-                if m.is_dir() { Value::t() } else { Value::Nil },
+                car,
                 Value::Int(nlinks),
                 Value::Int(uid),
                 Value::Int(gid),
@@ -4592,7 +4604,8 @@ fn f_file_modes(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        if let Ok(m) = std::fs::metadata(&p) {
+        // GNU file-modes goes through file_attributes → lstat.
+        if let Ok(m) = std::fs::symlink_metadata(&p) {
             return Ok(Value::Int((m.permissions().mode() & 0o7777) as i128));
         }
     }
@@ -4601,10 +4614,32 @@ fn f_file_modes(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 fn f_set_file_modes(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let p = want_filename(i, &a[0])?;
     let mode = want_int(i, &a[1])? as u32;
+    let nofollow = match a.get(2) {
+        Some(Value::Sym(s)) => i.symbol_name(*s) == "nofollow",
+        Some(v) => v.truthy(),
+        None => false,
+    };
     #[cfg(unix)]
     {
-        use std::os::unix::fs::PermissionsExt;
-        let _ = std::fs::set_permissions(&p, std::fs::Permissions::from_mode(mode));
+        if nofollow {
+            // chmod on a symlink itself: fchmodat with AT_SYMLINK_NOFOLLOW.
+            // On Linux this is a no-op (returns EINVAL); macOS supports it.
+            let c = std::ffi::CString::new(p.clone()).map_err(|_| {
+                i.signal_data(sym::FILE_ERROR, vec![Value::string("bad filename")])
+            })?;
+            unsafe {
+                libc::fchmodat(
+                    libc::AT_FDCWD,
+                    c.as_ptr(),
+                    mode as libc::mode_t,
+                    libc::AT_SYMLINK_NOFOLLOW,
+                )
+            };
+        } else {
+            use std::os::unix::fs::PermissionsExt;
+            let _ =
+                std::fs::set_permissions(&p, std::fs::Permissions::from_mode(mode));
+        }
     }
     Ok(Value::Nil)
 }
@@ -4808,17 +4843,36 @@ fn f_directory_files(i: &mut Interp, a: Vec<Value>) -> EvalResult {
             });
         }
     }
-    if let Ok(rd) = std::fs::read_dir(&dir) {
-        for ent in rd.flatten() {
-            let name = ent.file_name().to_string_lossy().into_owned();
-            if !matches(&name) {
-                continue;
+    match std::fs::read_dir(&dir) {
+        Ok(rd) => {
+            for ent in rd.flatten() {
+                let name = ent.file_name().to_string_lossy().into_owned();
+                if !matches(&name) {
+                    continue;
+                }
+                names.push(if full {
+                    format!("{}{}", base, name)
+                } else {
+                    name
+                });
             }
-            names.push(if full {
-                format!("{}{}", base, name)
+        }
+        Err(e) => {
+            // GNU signals file-missing (ENOENT) or file-error otherwise,
+            // data = ("Opening directory" strerror DIR).
+            let s = if e.kind() == std::io::ErrorKind::NotFound {
+                sym::FILE_MISSING
             } else {
-                name
-            });
+                sym::FILE_ERROR
+            };
+            return Err(i.signal_data(
+                s,
+                vec![
+                    Value::string("Opening directory"),
+                    Value::string(e.to_string()),
+                    Value::string(dir.clone()),
+                ],
+            ));
         }
     }
     if !nosort {
@@ -4915,6 +4969,29 @@ fn f_file_name_all_completions(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     ))
 }
 
+/// Signal the GNU-matching error for a failed mkdir: EEXIST maps to
+/// `file-already-exists`, everything else to `file-error`.
+fn signal_mkdir_error(i: &mut Interp, dir: &str, e: std::io::Error) -> Flow {
+    if e.kind() == std::io::ErrorKind::AlreadyExists {
+        let sym = i.intern("file-already-exists");
+        i.signal_data(
+            sym,
+            vec![
+                Value::string("File already exists"),
+                Value::string(dir.to_string()),
+            ],
+        )
+    } else {
+        i.signal_data(
+            sym::FILE_ERROR,
+            vec![
+                Value::string(format!("Creating directory: {}", e)),
+                Value::string(dir.to_string()),
+            ],
+        )
+    }
+}
+
 fn f_make_directory(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let dir = want_filename(i, &a[0])?;
     let parents = a.get(1).map(|v| v.truthy()).unwrap_or(false);
@@ -4925,20 +5002,14 @@ fn f_make_directory(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     };
     match r {
         Ok(()) => Ok(Value::Nil),
-        Err(e) => Err(i.signal_data(
-            sym::FILE_ERROR,
-            vec![Value::string(format!("Creating directory: {}", e))],
-        )),
+        Err(e) => Err(signal_mkdir_error(i, &dir, e)),
     }
 }
 fn f_make_directory_internal(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let dir = want_filename(i, &a[0])?;
     match std::fs::create_dir(&dir) {
         Ok(()) => Ok(Value::Nil),
-        Err(e) => Err(i.signal_data(
-            sym::FILE_ERROR,
-            vec![Value::string(format!("Creating directory: {}", e))],
-        )),
+        Err(e) => Err(signal_mkdir_error(i, &dir, e)),
     }
 }
 
@@ -5440,8 +5511,153 @@ fn f_file_truename(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         Err(_) => Ok(Value::string(p)),
     }
 }
-fn f_file_modes_default(_i: &mut Interp, _a: Vec<Value>) -> EvalResult {
-    Ok(Value::Int(0o666))
+/// GNU `file-remote-p' remote-name syntax: `/METHOD:USER@HOST:LOCAL'
+/// where the method begins a run containing no `/' or `|'.  Returns
+/// (prefix, method, user, host, localname); `user' may be absent.
+fn remote_name_parts(file: &str) -> Option<(String, String, Option<String>, String, String)> {
+    if !file.starts_with('/') {
+        return None;
+    }
+    let rest = &file[1..];
+    // First char of the run must not be '/', '|', or ':'.
+    let first = rest.chars().next()?;
+    if first == '/' || first == '|' || first == ':' {
+        return None;
+    }
+    // The run ends at the first '/' or '|' after the first char.
+    let run_end = rest[1..]
+        .find(|c| c == '/' || c == '|')
+        .map(|p| p + 1)
+        .unwrap_or(rest.len());
+    let run = &rest[..run_end];
+    // The prefix ends at the LAST ':' inside the run.
+    let colon = run.rfind(':')?;
+    let prefix_len = 1 + colon + 1;
+    let prefix = file[..prefix_len].to_string();
+    let localname = file[prefix_len..].to_string();
+    let spec = &run[..colon];
+    // METHOD:USER@HOST — method is up to the first ':'.
+    let (method, uh) = match spec.split_once(':') {
+        Some((m, uh)) => (m, uh),
+        None => return None,
+    };
+    // USER@HOST splits at the last '@' (user may contain '@').
+    let (user, host) = match uh.rsplit_once('@') {
+        Some((u, h)) => (Some(u.to_string()), h.to_string()),
+        None => (None, uh.to_string()),
+    };
+    Some((prefix, method.to_string(), user, host, localname))
+}
+
+fn f_file_remote_p(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let file = want_str(i, &a[0])?;
+    let Some((prefix, method, user, host, localname)) = remote_name_parts(&file) else {
+        return Ok(Value::Nil);
+    };
+    // IDENTIFICATION selects a component (GNU files.el).
+    let id = a.get(1).cloned().unwrap_or(Value::Nil);
+    let id_name = match &id {
+        Value::Nil => return Ok(Value::string(prefix)),
+        Value::Sym(s) => i.obarray.name(*s).to_string(),
+        other => return Err(i.wrong_type_mut("symbolp", other)),
+    };
+    let v = match id_name.as_str() {
+        "method" => Value::string(method),
+        "user" => match user {
+            Some(u) => Value::string(u),
+            None => Value::Nil,
+        },
+        "host" => Value::string(host),
+        "localname" => Value::string(localname),
+        _ => {
+            return Err(i.error(&format!("Wrong identification '{}'", id_name)));
+        }
+    };
+    Ok(v)
+}
+
+fn f_file_equal_p(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let f1 = want_filename(i, &a[0])?;
+    let f2 = want_filename(i, &a[1])?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        match (std::fs::metadata(&f1), std::fs::metadata(&f2)) {
+            (Ok(m1), Ok(m2)) => Ok(Value::from_bool(m1.dev() == m2.dev() && m1.ino() == m2.ino())),
+            _ => Ok(Value::Nil),
+        }
+    }
+    #[cfg(not(unix))]
+    Ok(Value::from_bool(
+        crate::buffer::file_truename(&f1) == crate::buffer::file_truename(&f2),
+    ))
+}
+
+fn f_file_system_info(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let path = want_filename(i, &a[0])?;
+    #[cfg(unix)]
+    {
+        let c = match std::ffi::CString::new(path) {
+            Ok(c) => c,
+            Err(_) => return Ok(Value::Nil),
+        };
+        let mut st: libc::statvfs = unsafe { std::mem::zeroed() };
+        if unsafe { libc::statvfs(c.as_ptr(), &mut st) } != 0 {
+            return Ok(Value::Nil);
+        }
+        // GNU returns (TOTAL FREE AVAIL) in bytes.
+        let bsize = st.f_frsize.max(1) as i128;
+        Ok(Value::list(vec![
+            Value::Int(st.f_blocks as i128 * bsize),
+            Value::Int(st.f_bfree as i128 * bsize),
+            Value::Int(st.f_bavail as i128 * bsize),
+        ]))
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = path;
+        Ok(Value::Nil)
+    }
+}
+
+/// Process-global default file protection, like GNU's C static
+/// `default_file_modes'.  Seeded from the real umask on first use.
+static DEFAULT_FILE_MODES: std::sync::atomic::AtomicI64 =
+    std::sync::atomic::AtomicI64::new(-1);
+
+fn default_file_modes() -> i64 {
+    use std::sync::atomic::Ordering;
+    let v = DEFAULT_FILE_MODES.load(Ordering::Relaxed);
+    if v >= 0 {
+        return v;
+    }
+    #[cfg(unix)]
+    unsafe {
+        let m = libc::umask(0);
+        libc::umask(m);
+        let modes = (!m as i64) & 0o777;
+        DEFAULT_FILE_MODES.store(modes, Ordering::Relaxed);
+        return modes;
+    }
+    #[allow(unreachable_code)]
+    0o666
+}
+
+fn f_default_file_modes(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let _ = (i, a);
+    Ok(Value::Int(default_file_modes() as i128))
+}
+
+fn f_set_default_file_modes(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let mode = want_int(i, &a[0])?;
+    // GNU sets the process umask to ~MODE & 0777 and records MODE in
+    // the `default-file-modes' static (fileio.c).
+    #[cfg(unix)]
+    unsafe {
+        libc::umask((!mode & 0o777) as libc::mode_t);
+    }
+    DEFAULT_FILE_MODES.store(mode as i64, std::sync::atomic::Ordering::Relaxed);
+    Ok(Value::Nil)
 }
 fn f_car_less_than_car(_i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let x = match &a[0] {

@@ -2147,6 +2147,59 @@ pub(crate) fn lisp_time_to_us(i: &mut Interp, v: &Value) -> Result<i128, Flow> {
     }
 }
 
+/// Like `lisp_time_to_us`, but nanosecond precision (ps field / 1000).
+pub(crate) fn lisp_time_to_ns(i: &mut Interp, v: &Value) -> Result<i128, Flow> {
+    match v {
+        Value::Cons(_) => {
+            // (hi lo us ps) or (TICKS . HZ) — reuse the µs walk for the
+            // (TICKS . HZ) case; for the 4-list take ps into account.
+            let mut elems: Vec<i128> = Vec::new();
+            let mut tail = v.clone();
+            let mut dotted_hz = false;
+            loop {
+                let step = match &tail {
+                    Value::Cons(c) => {
+                        let (car, cdr) = {
+                            let b = c.borrow();
+                            (b.car.clone(), b.cdr.clone())
+                        };
+                        if let Value::Int(n) = car {
+                            elems.push(n as i128);
+                        }
+                        Some(cdr)
+                    }
+                    Value::Int(n) => {
+                        elems.push(*n as i128);
+                        dotted_hz = true;
+                        None
+                    }
+                    _ => None,
+                };
+                match step {
+                    Some(cdr) => tail = cdr,
+                    None => break,
+                }
+                if elems.len() > 4 {
+                    break;
+                }
+            }
+            if dotted_hz && elems.len() == 2 {
+                let ticks = elems[0];
+                let hz = elems[1];
+                return Ok(ticks * 1_000_000_000 / hz.max(1));
+            }
+            let n = |k: usize| elems.get(k).copied().unwrap_or(0);
+            let ticks = match elems.len() {
+                0 => 0,
+                1 => n(0),
+                _ => n(0) * 65536 + n(1),
+            };
+            Ok(ticks * 1_000_000_000 + n(2) * 1000 + n(3) / 1000)
+        }
+        _ => Ok(lisp_time_to_us(i, v)? * 1000),
+    }
+}
+
 pub(crate) fn us_to_lisp_time(us: i128) -> Value {
     let secs = us.div_euclid(1_000_000);
     let micro = us.rem_euclid(1_000_000);
@@ -2544,8 +2597,23 @@ fn random_suffix() -> String {
 fn f_make_symbolic_link(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     let target = want_string(i, &args[0])?;
     let name = want_string(i, &args[1])?;
+    let ok_if_exists = args.get(2).cloned().unwrap_or(Value::Nil);
+    if ok_if_exists.truthy() && !matches!(ok_if_exists, Value::Int(_)) {
+        // Non-nil non-integer means overwrite silently (GNU fileio.c).
+        let _ = std::fs::remove_file(&name);
+    }
     match std::os::unix::fs::symlink(&target, &name) {
         Ok(()) => Ok(Value::Nil),
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+            let s = i.intern("file-already-exists");
+            Err(i.signal_data(
+                s,
+                vec![
+                    Value::string("File already exists"),
+                    Value::string(name),
+                ],
+            ))
+        }
         Err(e) => Err(i.signal_data(
             sym::FILE_ERROR,
             vec![
@@ -2602,14 +2670,44 @@ fn f_file_attributes_lessp(_i: &mut Interp, args: Vec<Value>) -> EvalResult {
 
 fn f_set_file_times(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     let name = want_string(i, &args[0])?;
-    if !std::path::Path::new(&name).exists() {
-        return Err(i.signal_data(
-            sym::FILE_MISSING,
-            vec![Value::string(format!(
-                "Setting file times: no such file {}",
-                name
-            ))],
-        ));
+    let time = args.get(1).cloned().unwrap_or(Value::Nil);
+    let nofollow = match args.get(2) {
+        Some(Value::Sym(s)) => i.symbol_name(*s) == "nofollow",
+        Some(v) => v.truthy(),
+        None => false,
+    };
+    let ns = lisp_time_to_ns(i, &time)?;
+    let secs = ns.div_euclid(1_000_000_000) as i64;
+    let nsec = ns.rem_euclid(1_000_000_000) as i64;
+    #[cfg(unix)]
+    {
+        let c = std::ffi::CString::new(name.clone()).map_err(|_| {
+            i.signal_data(sym::FILE_ERROR, vec![Value::string("bad filename")])
+        })?;
+        let ts = libc::timespec {
+            tv_sec: secs as libc::time_t,
+            tv_nsec: nsec as _,
+        };
+        let times = [ts, ts];
+        let flag = if nofollow { libc::AT_SYMLINK_NOFOLLOW } else { 0 };
+        let r = unsafe {
+            libc::utimensat(libc::AT_FDCWD, c.as_ptr(), times.as_ptr(), flag)
+        };
+        if r != 0 {
+            let e = std::io::Error::last_os_error();
+            let (s, msg) = if e.kind() == std::io::ErrorKind::NotFound {
+                (sym::FILE_MISSING, "Setting file times: no such file")
+            } else {
+                (sym::FILE_ERROR, "Setting file times")
+            };
+            return Err(i.signal_data(
+                s,
+                vec![
+                    Value::string(format!("{}: {}", msg, e)),
+                    Value::string(name),
+                ],
+            ));
+        }
     }
     Ok(Value::t())
 }

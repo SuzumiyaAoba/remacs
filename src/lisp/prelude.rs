@@ -8691,6 +8691,119 @@ and version strings."
 (defvar create-lockfiles t
   "Non-nil means use lockfiles to avoid editing clashes.")
 
+;; files.el: directory copying (verbatim GNU).
+(defcustom copy-directory-create-symlink nil
+  "Whether copying a directory creates a symbolic link when the source
+directory is a symlink."
+  :type 'boolean)
+
+(defconst directory-files-no-dot-files-regexp
+  "[^.]\\|\\.\\.\\."
+  "Regexp matching any file name except \".\" and \"..\".
+More precisely, it matches parts of any nonempty string except those two.
+It is useful as the regexp argument to `directory-files' and
+`directory-files-and-attributes'.")
+
+(defun copy-directory (directory newname &optional keep-time parents
+                                 copy-contents)
+  "Copy DIRECTORY to NEWNAME.  Both args must be strings.
+This function always sets the file modes of the output files to match
+the corresponding input file.
+
+The third arg KEEP-TIME non-nil means give the output files the same
+last-modified time as the old ones.  (This works on only some systems.)
+
+A prefix arg makes KEEP-TIME non-nil.
+
+Noninteractively, the PARENTS argument says whether to create
+parent directories if they don't exist.  Interactively, this
+happens by default.
+
+If DIRECTORY is a symlink and `copy-directory-create-symlink' is
+non-nil, create a symlink with the same target as DIRECTORY.
+
+If NEWNAME is a directory name, copy DIRECTORY as a subdirectory
+there.  However, if called from Lisp with a non-nil optional
+argument COPY-CONTENTS, copy the contents of DIRECTORY directly
+into NEWNAME instead."
+  (interactive
+   (let ((dir (read-directory-name
+	       "Copy directory: " default-directory default-directory t nil)))
+     (list dir
+	   (read-directory-name
+	    (format "Copy directory %s to: " dir)
+	    default-directory default-directory nil nil)
+	   current-prefix-arg t nil)))
+  (when (file-in-directory-p newname directory)
+    (error "Cannot copy `%s' into its subdirectory `%s'"
+           directory newname))
+  ;; If default-directory is a remote directory, make sure we find its
+  ;; copy-directory handler.
+  (let ((handler (or (find-file-name-handler directory 'copy-directory)
+		     (find-file-name-handler newname 'copy-directory)))
+	follow)
+    (if handler
+	(funcall handler 'copy-directory directory
+                 newname keep-time parents copy-contents)
+
+      ;; Compute target name.
+      (setq directory (directory-file-name (expand-file-name directory))
+	    newname (expand-file-name newname))
+
+      ;; If DIRECTORY is a symlink, create a symlink with the same target.
+      (if (and (file-symlink-p directory)
+               copy-directory-create-symlink)
+          (let ((target (car (file-attributes directory))))
+	    (if (directory-name-p newname)
+		(make-symbolic-link target
+				    (concat newname
+					    (file-name-nondirectory directory))
+				    t)
+	      (make-symbolic-link target newname t)))
+        ;; Else proceed to copy as a regular directory
+	;; first by creating the destination directory if needed,
+	;; preparing to follow any symlink to a directory we did not create.
+	(setq follow
+	    (if (not (directory-name-p newname))
+	       ;; If NEWNAME is not a directory name, create it;
+	       ;; that is where we will copy the files of DIRECTORY.
+	       (make-directory newname parents)
+	      ;; NEWNAME is a directory name.  If COPY-CONTENTS is non-nil,
+	      ;; create NEWNAME if it is not already a directory;
+	      ;; otherwise, create NEWNAME/[DIRECTORY-BASENAME].
+	      (unless copy-contents
+	         (setq newname (concat newname
+				       (file-name-nondirectory directory))))
+	      (condition-case err
+		  (make-directory (directory-file-name newname) parents)
+		(error
+		 (or (file-directory-p newname)
+		     (signal (car err) (cdr err)))))))
+
+        ;; Copy recursively.
+        (dolist (file
+	         ;; We do not want to copy "." and "..".
+	         (directory-files directory 'full
+				  directory-files-no-dot-files-regexp))
+	  (let ((target (concat (file-name-as-directory newname)
+			        (file-name-nondirectory file)))
+	        (filetype (car (file-attributes file))))
+	    (cond
+	     ((eq filetype t)           ; Directory but not a symlink.
+	      (copy-directory file target keep-time parents t))
+	     ((stringp filetype)        ; Symbolic link
+	      (make-symbolic-link filetype target t))
+	     ((copy-file file target t keep-time)))))
+
+        ;; Set directory attributes.
+        (let ((modes (file-modes directory))
+	      (times (and keep-time (file-attribute-modification-time
+				     (file-attributes directory))))
+	      (follow-flag (unless follow 'nofollow)))
+	  (if modes (set-file-modes newname modes follow-flag))
+	  (when times
+            (set-file-times newname times follow-flag)))))))
+
 ;; subr.el: mode-hook machinery (verbatim GNU).
 (defvar-local delay-mode-hooks nil
   "If non-nil, `run-mode-hooks' should delay running the hooks.")

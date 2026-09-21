@@ -2235,7 +2235,6 @@ impl Interp {
             ("emacs-minor-version", Value::Int(1)),
             ("emacs-version", Value::string("31.1.0 (remacs)")),
             ("system-type", Value::Sym(self.intern("darwin"))),
-            ("system-name", Value::string("localhost")),
             (
                 "system-configuration",
                 Value::string("aarch64-apple-darwin"),
