@@ -8092,17 +8092,276 @@ Called with two arguments (START END) covering the text to propertize.")
 (defvar indent-region-function nil
   "Function to indent a region, or nil to indent each line.")
 
+;; ---------- defun navigation (GNU lisp.el) ----------
+
+(defvar beginning-of-defun-function nil
+  "If non-nil, function for `beginning-of-defun-raw' to call.")
+
+(defun beginning-of-defun (&optional arg)
+  "Move backward to the beginning of a defun.
+With ARG, do it that many times.  Negative ARG means move forward
+to the ARGth following beginning of defun."
+  (interactive "^p")
+  (or (not (eq this-command 'beginning-of-defun))
+      (eq last-command 'beginning-of-defun)
+      (and transient-mark-mode mark-active)
+      (push-mark))
+  (and (beginning-of-defun-raw arg)
+       (progn (beginning-of-line) t)))
+
+(defun syntax-ppss-toplevel-pos (ppss)
+  "Outermost position found by the scan that produced PPSS."
+  (or (car (nth 9 ppss))
+      (nth 8 ppss)))
+
 (defun beginning-of-defun-raw (&optional arg)
-  "Move point to the start of the current defun (paren-based subset)."
-  (interactive "p")
-  (let ((arg (or arg 1)))
-    (if (>= arg 0)
-        (dotimes (_ arg)
-          (when (re-search-backward "^\\s(" nil t)
-            (beginning-of-line)))
-      (dotimes (_ (- arg))
-        (when (re-search-forward "^\\s(" nil t)
-          (beginning-of-line))))))
+  "Move point to the character that starts a defun."
+  (interactive "^p")
+  (unless arg (setq arg 1))
+  (cond
+   (beginning-of-defun-function
+    (condition-case nil
+        (funcall beginning-of-defun-function arg)
+      (wrong-number-of-arguments
+       (if (> arg 0)
+           (dotimes (_ arg)
+             (funcall beginning-of-defun-function))
+         (dotimes (_ (- arg))
+           (funcall end-of-defun-function))))))
+
+   ((or defun-prompt-regexp open-paren-in-column-0-is-defun-start)
+    (and (< arg 0) (not (eobp)) (forward-char 1))
+    (and (let (found)
+           (while
+               (and (setq found
+                          (re-search-backward
+                           (if defun-prompt-regexp
+                               (concat (if open-paren-in-column-0-is-defun-start
+                                           "^\\s(\\|" "")
+                                       "\\(?:" defun-prompt-regexp "\\)\\s(")
+                             "^\\s(")
+                           nil 'move arg))
+                    (save-match-data
+                      (nth 8 (syntax-ppss)))))
+           found)
+         (progn (goto-char (1- (match-end 0)))
+                t)))
+
+   ((eq arg 0))
+   (t
+    (let ((floor (point-min))
+          (ceiling (point-max))
+          (arg-+ve (> arg 0)))
+      (save-restriction
+        (widen)
+        (let ((ppss (syntax-ppss))
+              encl-pos)
+          (when (nth 8 ppss)
+            (goto-char (nth 8 ppss))
+            (setq ppss (syntax-ppss)))
+          (setq encl-pos (syntax-ppss-toplevel-pos ppss))
+          (if encl-pos (goto-char encl-pos))
+          (and encl-pos arg-+ve (setq arg (1- arg)))
+          (and (not encl-pos) (not arg-+ve) (not (looking-at "\\s("))
+               (setq arg (1+ arg)))
+          (condition-case nil
+              (progn
+                (goto-char (scan-lists (point) (- arg) 0))
+                (if arg-+ve
+                    (if (>= (point) floor)
+                        t
+                      (goto-char floor)
+                      nil)
+                  (goto-char (1- (scan-lists (point) 1 -1)))
+                  (if (<= (point) ceiling)
+                      t
+                    (goto-char ceiling)
+                    nil)))
+            (error
+             (goto-char (if arg-+ve floor ceiling))
+             nil))))))))
+
+(defun beginning-of-defun--in-emptyish-line-p ()
+  "Whether point is in a line of only comments and/or whitespace."
+  (save-excursion
+    (forward-line 0)
+    (let ((ppss (syntax-ppss)))
+      (and (null (nth 3 ppss))
+           (< (line-end-position)
+              (progn (when (nth 4 ppss)
+                       (goto-char (nth 8 ppss)))
+                     (forward-comment (point-max))
+                     (point)))))))
+
+(defun beginning-of-defun-comments (&optional arg)
+  "Move to the beginning of ARGth defun, including comments."
+  (interactive "^p")
+  (unless arg (setq arg 1))
+  (beginning-of-defun arg)
+  (let (first-line-p)
+    (while (let ((ppss (progn (setq first-line-p (= (forward-line -1) -1))
+                              (syntax-ppss (line-end-position)))))
+             (while (and (nth 4 ppss)
+                         (< (nth 8 ppss) (line-beginning-position)))
+               (goto-char (nth 8 ppss))
+               (setq ppss (syntax-ppss (line-end-position))))
+             (and (not first-line-p)
+                  (progn (skip-syntax-backward
+                          "-" (line-beginning-position))
+                         (not (bolp)))
+                  (beginning-of-defun--in-emptyish-line-p))))
+    (forward-line (if first-line-p 0 1))))
+
+(defvar end-of-defun-function
+  (lambda () (forward-sexp 1))
+  "Function for `end-of-defun' to call.")
+(defvar end-of-defun-moves-to-eol t
+  "Whether `end-of-defun' moves to eol before doing anything else.")
+
+(defun end-of-defun (&optional arg interactive)
+  "Move forward to next end of defun."
+  (interactive "^p\nd")
+  (if interactive
+      (condition-case e
+          (end-of-defun arg nil)
+        (scan-error (user-error (cadr e))))
+    (or (not (eq this-command 'end-of-defun))
+        (eq last-command 'end-of-defun)
+        (and transient-mark-mode mark-active)
+        (push-mark))
+    (if (or (null arg) (= arg 0)) (setq arg 1))
+    (let ((pos (point))
+          (success nil)
+          (beg (progn (when end-of-defun-moves-to-eol
+                        (end-of-line 1))
+                      (beginning-of-defun-raw 1) (point)))
+          (skip (lambda ()
+                  (unless (bolp)
+                    (skip-chars-forward " \t")
+                    (if (looking-at "\\s<\\|\n")
+                        (forward-line 1))))))
+      (funcall end-of-defun-function)
+      (when (<= arg 1)
+        (funcall skip))
+      (cond
+       ((> arg 0)
+        (if (> (point) pos)
+            (setq arg (1- arg))
+          (goto-char pos))
+        (unless (zerop arg)
+          (when (setq success (beginning-of-defun-raw (- arg)))
+            (funcall end-of-defun-function))))
+       ((< arg 0)
+        (if (< (point) pos)
+            (setq arg (1+ arg))
+          (goto-char beg))
+        (unless (zerop arg)
+          (when (setq success (beginning-of-defun-raw (- arg)))
+            (setq beg (point))
+            (funcall end-of-defun-function)))))
+      (funcall skip)
+      (while (and (< arg 0) (>= (point) pos) success)
+        (goto-char beg)
+        (setq success (beginning-of-defun-raw (- arg)))
+        (if (or (>= (point) beg) (not success))
+            (setq arg 0)
+          (setq beg (point))
+          (funcall end-of-defun-function)
+          (funcall skip))))))
+
+(defun mark-defun (&optional arg interactive)
+  "Put mark at end of this defun, point at beginning."
+  (interactive "p\nd")
+  (if interactive
+      (condition-case e
+          (mark-defun arg nil)
+        (scan-error (user-error (cadr e))))
+    (setq arg (or arg 1))
+    (when (eq last-command 'mark-defun-back)
+      (setq arg (- arg)))
+    (when (< arg 0)
+      (setq this-command 'mark-defun-back))
+    (cond ((use-region-p)
+           (if (>= arg 0)
+               (set-mark
+                (save-excursion
+                  (goto-char (mark))
+                  (dotimes (_ignore arg)
+                    (end-of-defun))
+                  (point)))
+             (beginning-of-defun-comments (- arg))))
+          (t
+           (let ((opoint (point))
+                 beg end)
+             (push-mark opoint)
+             (beginning-of-defun-comments)
+             (setq beg (point))
+             (end-of-defun)
+             (setq end (point))
+             (when (or (and (<= (point) opoint)
+                            (> arg 0))
+                       (= beg (point-min)))
+               (goto-char opoint)
+               (end-of-defun)
+               (setq end (point))
+               (beginning-of-defun-comments)
+               (setq beg (point)))
+             (goto-char beg)
+             (cond ((> arg 0)
+                    (dotimes (_ignore arg)
+                      (end-of-defun))
+                    (setq end (point))
+                    (push-mark end nil t)
+                    (goto-char beg))
+                   (t
+                    (goto-char beg)
+                    (unless (= arg -1)
+                      (beginning-of-defun (1- (- arg))))
+                    (push-mark end nil t))))))
+    (skip-chars-backward "[:space:]\n")
+    (unless (bobp)
+      (forward-line 1))))
+
+(defvar narrow-to-defun-include-comments nil
+  "If non-nil, `narrow-to-defun' shows comments preceding the defun.")
+
+(defun narrow-to-defun (&optional include-comments)
+  "Make text outside current defun invisible."
+  (interactive (list narrow-to-defun-include-comments))
+  (save-excursion
+    (widen)
+    (let ((opoint (point))
+          beg end)
+      (let ((here (point)))
+        (unless (eolp)
+          (forward-char))
+        (beginning-of-defun)
+        (when (< (point) here)
+          (goto-char here)
+          (beginning-of-defun)))
+      (setq beg (point))
+      (end-of-defun)
+      (setq end (point))
+      (while (looking-at "^\n")
+        (forward-line 1))
+      (unless (> (point) opoint)
+        (goto-char opoint)
+        (end-of-defun)
+        (setq end (point))
+        (beginning-of-defun)
+        (setq beg (point)))
+      (when include-comments
+        (goto-char beg)
+        (when (forward-comment -1)
+          (while (forward-comment -1))
+          (when (and page-delimiter (not (string= page-delimiter "")))
+            (while (re-search-forward page-delimiter beg t)))
+          (skip-chars-forward "[:space:]\n")
+          (beginning-of-line)
+          (setq beg (point))))
+      (goto-char end)
+      (re-search-backward "^\n" (- (point) 1) t)
+      (narrow-to-region beg end))))
 
 (defun split-line (&optional arg)
   "Split current line at point into two lines, first indenting the

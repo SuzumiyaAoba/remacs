@@ -1780,22 +1780,8 @@ pub(crate) static SUBRS: &[Subr] = &[
         "Set prefix arg from typed digits."
     ),
     S!("negative-argument", 1, 1, f_negative_argument, "M--."),
-    S!(
-        "beginning-of-defun",
-        0,
-        1,
-        f_beginning_of_defun,
-        "Move to defun start."
-    ),
-    S!("end-of-defun", 0, 1, f_end_of_defun, "Move past defun end."),
-    S!("mark-defun", 0, 0, f_mark_defun, "Mark the defun."),
-    S!(
-        "narrow-to-defun",
-        0,
-        1,
-        f_narrow_to_defun,
-        "Narrow to defun."
-    ),
+    // `beginning-of-defun', `end-of-defun', `mark-defun' and
+    // `narrow-to-defun' are defined in Lisp (as in GNU's lisp.el).
     S!("narrow-to-page", 0, 1, f_nil, ""),
     S!("count-words", 2, 2, f_count_words, "Words in region."),
     S!("count-words-region", 2, 2, f_count_words, ""),
@@ -6693,78 +6679,8 @@ fn f_negative_argument(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
     Ok(Value::Nil)
 }
 
-fn f_beginning_of_defun(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let n = arg(&a, 0).int().unwrap_or(1);
-    let b = cur(i);
-    let mut bb = b.borrow_mut();
-    for _ in 0..n.max(0) {
-        // Find previous '(' at column 0.
-        let mut p = bb.point();
-        let mut found = None;
-        while p > 0 {
-            p -= 1;
-            if bb.text.char_at(p) == '(' && (p == 0 || bb.text.char_at(p - 1) == '\n') {
-                found = Some(p);
-                break;
-            }
-        }
-        match found {
-            Some(x) => bb.set_point(x),
-            None => {
-                let bv = bb.begv;
-                bb.set_point(bv);
-                break;
-            }
-        }
-    }
-    Ok(Value::Nil)
-}
-
-fn f_end_of_defun(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let n = arg(&a, 0).int().unwrap_or(1);
-    let b = cur(i);
-    let mut bb = b.borrow_mut();
-    for _ in 0..n.max(0) {
-        // scan forward past balanced '(...)'
-        let mut p = bb.point();
-        let len = bb.text_len();
-        // move to next '(' at col 0 then scan to its close
-        while p < len && !(bb.text.char_at(p) == '(' && (p == 0 || bb.text.char_at(p - 1) == '\n'))
-        {
-            p += 1;
-        }
-        if p >= len {
-            bb.set_point(len);
-            break;
-        }
-        let mut depth = 0i128;
-        let mut k = p;
-        while k < len {
-            match bb.text.char_at(k) {
-                '(' => depth += 1,
-                ')' => {
-                    depth -= 1;
-                    if depth == 0 {
-                        break;
-                    }
-                }
-                _ => {}
-            }
-            k += 1;
-        }
-        bb.set_point((k + 1).min(len));
-    }
-    Ok(Value::Nil)
-}
-
-fn f_mark_defun(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
-    let _ = i;
-    Ok(Value::Nil)
-}
-fn f_narrow_to_defun(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
-    let _ = i;
-    Ok(Value::Nil)
-}
+// `beginning-of-defun', `end-of-defun', `mark-defun', `narrow-to-defun'
+// are Lisp functions in GNU (lisp.el) — see the prelude.
 
 fn f_count_words(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let len = cur(i).borrow().text.len();
@@ -7419,22 +7335,19 @@ fn f_parse_partial_sexp(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 }
 
 fn f_syntax_ppss(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    // GNU's syntax-ppss is parse-partial-sexp from point-min, without
-    // moving point.
-    let (beg, pos, save) = {
+    // GNU's syntax-ppss is parse-partial-sexp from point-min; when POS
+    // is given point ends up there (the parse leaves point at POS).
+    let (beg, pos) = {
         let b = cur(i);
         let bb = b.borrow();
-        let save = bb.point();
         let beg = Value::Int(bb.begv as i128 + 1);
         let pos = match a.get(0) {
             Some(v) if v.truthy() => v.clone(),
             _ => Value::Int(bb.point() as i128 + 1),
         };
-        (beg, pos, save)
+        (beg, pos)
     };
-    let state = f_parse_partial_sexp(i, vec![beg, pos])?;
-    cur(i).borrow_mut().set_point(save);
-    Ok(state)
+    f_parse_partial_sexp(i, vec![beg, pos])
 }
 
 // ---------- modes ----------

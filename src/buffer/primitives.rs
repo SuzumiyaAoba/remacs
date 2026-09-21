@@ -6036,6 +6036,9 @@ pub(crate) fn search_common(
     let bound = a.get(1).and_then(|v| v.int());
     let noerror = a.get(2).map(|v| v.truthy()).unwrap_or(false);
     let count = a.get(3).and_then(|v| v.int()).unwrap_or(1);
+    // GNU: a negative COUNT reverses the search direction (and BOUND
+    // then limits the flipped direction).
+    let backward = backward != (count < 0);
     let (text, pos, begv) = {
         let b = cur(i);
         let bb = b.borrow();
