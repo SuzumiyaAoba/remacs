@@ -433,12 +433,7 @@ impl Interp {
                 if is_auto_local || bb.locals.contains_key(&id) {
                     bb.locals.insert(id, val.clone());
                     drop(bb);
-                    return self.fire_var_watchers(
-                        id,
-                        &val,
-                        "set",
-                        Some(self.current_buffer),
-                    );
+                    return self.fire_var_watchers(id, &val, "set", Some(self.current_buffer));
                 }
             }
         }
@@ -575,9 +570,10 @@ impl Interp {
     pub fn buffer_local_toplevel_value(&self, id: SymId, buf: usize) -> Option<Value> {
         for sb in &self.specbind {
             if sb.sym == id && sb.buf == Some(buf) {
-                return sb.old.clone().filter(|v| {
-                    !matches!(v, Value::Sym(s) if *s == sym::UNBOUND)
-                });
+                return sb
+                    .old
+                    .clone()
+                    .filter(|v| !matches!(v, Value::Sym(s) if *s == sym::UNBOUND));
             }
         }
         let v = self
@@ -809,9 +805,7 @@ impl Interp {
         op: &str,
         buf: Option<usize>,
     ) -> Result<(), Flow> {
-        if self.var_watchers.is_empty()
-            || !self.var_watchers.iter().any(|(s, _)| *s == id)
-        {
+        if self.var_watchers.is_empty() || !self.var_watchers.iter().any(|(s, _)| *s == id) {
             return Ok(());
         }
         if let Some(inh) = self.intern_soft("inhibit-variable-watchers") {
@@ -825,9 +819,7 @@ impl Interp {
             .filter(|(s, _)| *s == id)
             .map(|(_, f)| f.clone())
             .collect();
-        let where_ = buf
-            .and_then(|b| self.buffer_value(b))
-            .unwrap_or(Value::Nil);
+        let where_ = buf.and_then(|b| self.buffer_value(b)).unwrap_or(Value::Nil);
         let op_id = self.intern(op);
         let op_sym = self.sym(op_id);
         for f in watchers {
@@ -912,11 +904,7 @@ impl Interp {
                         return Err(self.signal_data(sym::VOID_FUNCTION, vec![Value::Sym(id)]));
                     }
                 }
-                if self
-                    .advices
-                    .iter()
-                    .any(|(s, a)| *s == id && !a.is_empty())
-                {
+                if self.advices.iter().any(|(s, a)| *s == id && !a.is_empty()) {
                     let argv = self.eval_args(&args)?;
                     return self.apply_adviced(id, &fun, argv);
                 }
@@ -986,10 +974,7 @@ impl Interp {
                         return Err(self.error("Function alias loop"));
                     }
                     if advised.is_none()
-                        && self
-                            .advices
-                            .iter()
-                            .any(|(s, a)| *s == cur && !a.is_empty())
+                        && self.advices.iter().any(|(s, a)| *s == cur && !a.is_empty())
                     {
                         advised = Some(cur);
                     }
@@ -1056,11 +1041,8 @@ impl Interp {
                 if self.sym_is(&car, auto_id) {
                     // (autoload FILE ...) — load, then re-dispatch on
                     // the real definition (macro autoloads expand).
-                    let newdef = crate::lisp::builtins::evalfn::autoload_do_load(
-                        self,
-                        fun.clone(),
-                        false,
-                    )?;
+                    let newdef =
+                        crate::lisp::builtins::evalfn::autoload_do_load(self, fun.clone(), false)?;
                     return self.call_function(&newdef, args, sym_name);
                 }
                 Err(self.signal_data(sym::INVALID_FUNCTION, vec![fun.clone()]))
@@ -1108,10 +1090,7 @@ impl Interp {
                         return Err(self.error("Function alias loop"));
                     }
                     if advised.is_none()
-                        && self
-                            .advices
-                            .iter()
-                            .any(|(s, a)| *s == cur && !a.is_empty())
+                        && self.advices.iter().any(|(s, a)| *s == cur && !a.is_empty())
                     {
                         advised = Some(cur);
                     }
@@ -1158,11 +1137,8 @@ impl Interp {
                 }
                 let auto_id = self.intern("autoload");
                 if self.sym_is(&car, auto_id) {
-                    let newdef = crate::lisp::builtins::evalfn::autoload_do_load(
-                        self,
-                        fun.clone(),
-                        false,
-                    )?;
+                    let newdef =
+                        crate::lisp::builtins::evalfn::autoload_do_load(self, fun.clone(), false)?;
                     return self.apply(&newdef, argv);
                 }
                 Err(self.signal_data(sym::INVALID_FUNCTION, vec![fun.clone()]))
@@ -1202,8 +1178,7 @@ impl Interp {
         let mut next = base.clone();
         for (w, f, _) in &advs {
             let idx = self.advice_links.len();
-            self.advice_links
-                .push((Value::Sym(*w), f.clone(), next));
+            self.advice_links.push((Value::Sym(*w), f.clone(), next));
             next = self.advice_trampoline(idx)?;
         }
         self.apply(&next, argv)
@@ -1434,21 +1409,13 @@ impl Interp {
                             // (TYPE non-nil); others stop expansion.
                             let auto_id = self.intern("autoload");
                             let is_auto = match &f {
-                                Value::Cons(cc) => {
-                                    self.sym_is(&cc.borrow().car, auto_id)
-                                }
+                                Value::Cons(cc) => self.sym_is(&cc.borrow().car, auto_id),
                                 _ => false,
                             };
                             if is_auto {
-                                f = crate::lisp::builtins::evalfn::autoload_do_load(
-                                    self,
-                                    f,
-                                    true,
-                                )?;
+                                f = crate::lisp::builtins::evalfn::autoload_do_load(self, f, true)?;
                                 let still_auto = match &f {
-                                    Value::Cons(cc) => {
-                                        self.sym_is(&cc.borrow().car, auto_id)
-                                    }
+                                    Value::Cons(cc) => self.sym_is(&cc.borrow().car, auto_id),
                                     _ => false,
                                 };
                                 if still_auto {
@@ -1738,7 +1705,12 @@ impl Interp {
         put(
             self,
             "json-end-of-file",
-            &["json-end-of-file", "json-parse-error", "json-error", "error"],
+            &[
+                "json-end-of-file",
+                "json-parse-error",
+                "json-error",
+                "error",
+            ],
         );
         put(self, "mark-set", &["mark-set"]);
         put(self, "mark-active", &["mark-active"]);
@@ -2372,12 +2344,14 @@ impl Interp {
                         .split(':')
                         .filter(|s| !s.is_empty())
                         .map(|d| {
-                            Value::string(d.trim_end_matches('/').to_string()
-                                + if d.trim_end_matches('/').is_empty() {
-                                    "/"
-                                } else {
-                                    ""
-                                })
+                            Value::string(
+                                d.trim_end_matches('/').to_string()
+                                    + if d.trim_end_matches('/').is_empty() {
+                                        "/"
+                                    } else {
+                                        ""
+                                    },
+                            )
                         })
                         .collect(),
                 ),
@@ -2520,7 +2494,7 @@ impl Interp {
             ("paragraph-separate", Value::string("[ \t\x0c]*$")),
             ("paragraph-start", Value::string("\x0c\\|[ \t]*$")),
             ("page-delimiter", Value::string("^\x0c")),
-            ("parse-sexp-ignore-comments", Value::Sym(sym::T)),
+            ("parse-sexp-ignore-comments", Value::Nil),
             ("require-final-newline", Value::Sym(sym::T)),
             ("sort-numeric-base", Value::Int(10)),
             ("sort-fold-case", Value::Nil),
@@ -3200,8 +3174,7 @@ impl Interp {
                 match mm.buffer.and_then(|id| self.buffers.get(id)) {
                     Some(b) => {
                         let bb = b.borrow();
-                        mm.position <= bb.begv
-                            || bb.text.char_at(mm.position - 1) == '\n'
+                        mm.position <= bb.begv || bb.text.char_at(mm.position - 1) == '\n'
                     }
                     None => false,
                 }

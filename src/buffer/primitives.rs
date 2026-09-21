@@ -478,20 +478,10 @@ pub(crate) static SUBRS: &[Subr] = &[
         f_skip_syntax_backward,
         "Backward syntax skip."
     ),
-    S!(
-        "forward-sexp",
-        0,
-        1,
-        f_forward_sexp,
-        "Move across a balanced expression."
-    ),
-    S!(
-        "backward-sexp",
-        0,
-        1,
-        f_backward_sexp,
-        "Move back across a balanced expression."
-    ),
+    // `forward-sexp', `backward-sexp', `forward-list', `backward-list',
+    // `down-list', `up-list' and `backward-up-list' are Lisp-level
+    // functions in GNU (lisp.el); our prelude defines them on top of
+    // the `scan-lists'/`scan-sexps' subrs below.
     S!("scan-lists", 3, 3, f_scan_lists, "Scan lists."),
     S!(
         "scan-sexps",
@@ -499,23 +489,6 @@ pub(crate) static SUBRS: &[Subr] = &[
         2,
         f_scan_sexps,
         "Scan COUNT sexps from FROM."
-    ),
-    S!("down-list", 0, 1, f_down_list, "Move down into a list."),
-    S!("up-list", 0, 1, f_up_list, "Move out of a list."),
-    S!("forward-list", 0, 1, f_forward_list, "Move across a list."),
-    S!(
-        "backward-list",
-        0,
-        1,
-        f_backward_list,
-        "Move back across a list."
-    ),
-    S!(
-        "backward-up-list",
-        0,
-        1,
-        f_backward_up_list,
-        "Move up out of a list."
     ),
     S!(
         "looking-back",
@@ -1002,7 +975,13 @@ pub(crate) static SUBRS: &[Subr] = &[
         f_set_buffer_modified_tick,
         "Internal: set buffer tick."
     ),
-    S!("recent-auto-save-p", 0, 0, f_nil, "t if recently auto-saved."),
+    S!(
+        "recent-auto-save-p",
+        0,
+        0,
+        f_nil,
+        "t if recently auto-saved."
+    ),
     S!(
         "set-buffer-auto-saved",
         0,
@@ -2393,59 +2372,695 @@ fn f_move_to_column(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     }
 }
 
-fn f_forward_comment(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let count = a.get(0).and_then(|v| v.int()).unwrap_or(1);
-    let b = cur(i);
-    let mut bb = b.borrow_mut();
-    let len = bb.text_len();
-    let mut p = bb.point();
-    let mut comments = 0i128;
-    // GNU drives this off the syntax table: `<` starts a comment, `>` ends
-    // it.  The standard syntax table has no comment characters at all, so
-    // `forward-comment' returns nil in fundamental-mode buffers — callers
-    // (e.g. `comment-forward') then fall back to regexps.
-    if count >= 0 {
-        loop {
-            while p < len && crate::editor::syntax_code_buf(i, bb.text.char_at(p)) == b' ' {
-                p += 1;
+// ---------- GNU scan engine (port of syntax.c) ----------
+
+/// GNU `enum syntaxcode' class numbers.
+mod sclass {
+    pub const WHITESPACE: i128 = 0;
+    pub const PUNCT: i128 = 1;
+    pub const WORD: i128 = 2;
+    pub const SYMBOL: i128 = 3;
+    pub const OPEN: i128 = 4;
+    pub const CLOSE: i128 = 5;
+    pub const QUOTE: i128 = 6;
+    pub const STRING: i128 = 7;
+    pub const MATH: i128 = 8;
+    pub const ESCAPE: i128 = 9;
+    pub const CHARQUOTE: i128 = 10;
+    pub const COMMENT: i128 = 11;
+    pub const ENDCOMMENT: i128 = 12;
+    pub const COMMENT_FENCE: i128 = 14;
+    pub const STRING_FENCE: i128 = 15;
+    /// GNU `Smax' — sentinel "no syntax" value (one past the last real
+    /// class): all flag bits clear, class matches nothing.
+    pub const SMAX: i128 = 16;
+    /// Pseudo comment styles for fence-delimited constructs.
+    pub const ST_COMMENT: i128 = 256 + 1;
+    pub const ST_STRING: i128 = 256 + 2;
+}
+use sclass::*;
+
+/// `SYNTAX_WITH_FLAGS' of TEXT[IDX].
+#[inline]
+fn wf(syn: &crate::editor::Syn, text: &[char], idx: usize) -> i128 {
+    syn.with_flags_at(idx, text[idx])
+}
+#[inline]
+fn fl_comstart_first(s: i128) -> bool {
+    (s >> 16) & 1 == 1
+}
+#[inline]
+fn fl_comstart_second(s: i128) -> bool {
+    (s >> 17) & 1 == 1
+}
+#[inline]
+fn fl_comend_first(s: i128) -> bool {
+    (s >> 18) & 1 == 1
+}
+#[inline]
+fn fl_comend_second(s: i128) -> bool {
+    (s >> 19) & 1 == 1
+}
+#[inline]
+fn fl_prefix(s: i128) -> bool {
+    (s >> 20) & 1 == 1
+}
+#[inline]
+fn fl_nested(s: i128) -> bool {
+    (s >> 22) & 1 == 1
+}
+#[inline]
+fn fl_style(syntax: i128, other: i128) -> i128 {
+    crate::editor::Syn::comment_style(syntax, other)
+}
+
+/// GNU `char_quoted': is the char at index POS escaped by an odd run
+/// of `\\' or `/'-class characters ending just before it?
+fn char_quoted(syn: &crate::editor::Syn, text: &[char], pos: usize, beg: usize) -> bool {
+    let mut q = pos;
+    let mut quoted = false;
+    while q > beg {
+        let code = wf(syn, text, q - 1) & 0xff;
+        if code == CHARQUOTE || code == ESCAPE {
+            quoted = !quoted;
+            q -= 1;
+        } else {
+            break;
+        }
+    }
+    quoted
+}
+
+/// Port of GNU `forw_comment': scan forward over a comment whose body
+/// starts at FROM (just past the starter).  STYLE is the comment style
+/// (`fl_style' of the starter flags, or `ST_COMMENT' for a fence);
+/// NESTING is the initial nesting level (>0 for nested comments, else
+/// <=0).  Returns (index of the comment's last ender char, found,
+/// last_syntax, residual_nesting): when FOUND is false the comment ran
+/// to STOP and LAST_SYNTAX carries the syntax of the last char scanned
+/// when it could begin a two-character construct (GNU `last_syntax_ptr').
+#[allow(unused_assignments)]
+fn forw_comment(
+    syn: &crate::editor::Syn,
+    text: &[char],
+    mut from: usize,
+    stop: usize,
+    nesting: i64,
+    style: i128,
+    mut prev_syntax: i128,
+) -> (usize, bool, i128, i64) {
+    let end_escaped = syn.end_escaped;
+    let mut nesting = if nesting <= 0 { -1 } else { nesting };
+    let mut syntax = prev_syntax;
+    let mut code = syntax & 0xff;
+    // GNU enters mid-iteration to catch a two-char ender spanning the
+    // start (PREV_SYNTAX holds the preceding char's syntax).
+    let mut mid = syntax != 0;
+    loop {
+        if !mid {
+            if from == stop {
+                let last = if code == ESCAPE
+                    || code == CHARQUOTE
+                    || fl_comend_first(syntax)
+                    || (nesting > 0 && fl_comstart_first(syntax))
+                {
+                    syntax
+                } else {
+                    SMAX
+                };
+                return (from, false, last, nesting);
             }
-            if p < len && crate::editor::syntax_code_buf(i, bb.text.char_at(p)) == b'<' {
-                p += 1;
-                while p < len && crate::editor::syntax_code_buf(i, bb.text.char_at(p)) != b'>' {
-                    p += 1;
-                }
-                if p < len {
-                    p += 1;
-                }
-                comments += 1;
-            } else {
+            prev_syntax = syntax;
+            syntax = wf(syn, text, from);
+            code = syntax & 0xff;
+            if code == ENDCOMMENT
+                && fl_style(syntax, 0) == style
+                && (if fl_nested(syntax) {
+                    nesting > 0 && {
+                        nesting -= 1;
+                        nesting == 0
+                    }
+                } else {
+                    nesting < 0
+                })
+                && !(end_escaped
+                    && (prev_syntax & 0xff == ESCAPE || prev_syntax & 0xff == CHARQUOTE))
+            {
                 break;
+            }
+            if code == COMMENT_FENCE && style == ST_COMMENT {
+                break;
+            }
+            if nesting > 0 && code == COMMENT && fl_nested(syntax) && fl_style(syntax, 0) == style {
+                nesting += 1;
+            }
+            if end_escaped && (code == ESCAPE || code == CHARQUOTE) {
+                from += 1;
+                if from == stop {
+                    continue;
+                }
+                prev_syntax = syntax;
+                syntax = SMAX;
+                code = SMAX;
+            }
+            from += 1;
+        }
+        mid = false;
+        // GNU's forw_incomment tail: detect two-char enders and nested
+        // two-char starters.
+        if from < stop && fl_comend_first(syntax) {
+            let other = wf(syn, text, from);
+            if fl_comend_second(other)
+                && fl_style(syntax, other) == style
+                && (if fl_nested(syntax) || fl_nested(other) {
+                    nesting > 0
+                } else {
+                    nesting < 0
+                })
+            {
+                syntax = SMAX;
+                nesting -= 1;
+                if nesting <= 0 {
+                    break;
+                }
+                from += 1;
             }
         }
-    } else {
-        loop {
-            while p > bb.begv && crate::editor::syntax_code_buf(i, bb.text.char_at(p - 1)) == b' ' {
-                p -= 1;
-            }
-            if p > bb.begv && crate::editor::syntax_code_buf(i, bb.text.char_at(p - 1)) == b'>' {
-                p -= 1;
-                while p > bb.begv
-                    && crate::editor::syntax_code_buf(i, bb.text.char_at(p - 1)) != b'<'
-                {
-                    p -= 1;
-                }
-                comments += 1;
-            } else {
-                break;
+        if nesting > 0 && from < stop && fl_comstart_first(syntax) {
+            let other = wf(syn, text, from);
+            if fl_style(other, syntax) == style
+                && fl_comstart_second(other)
+                && (fl_nested(syntax) || fl_nested(other))
+            {
+                syntax = SMAX;
+                from += 1;
+                nesting += 1;
             }
         }
     }
-    bb.set_point(p);
-    Ok(if comments >= count.abs() && comments > 0 {
-        Value::Sym(sym::T)
-    } else {
-        Value::Nil
-    })
+    (from, true, SMAX, 0)
+}
+
+/// Port of GNU `back_comment': FROM is the index of the last char of a
+/// comment ender (or first char of a two-char ender).  Scans back for
+/// the matching starter, tracking string-quote parity.  Returns the
+/// index of the comment's first starter char on success.
+fn back_comment(
+    syn: &crate::editor::Syn,
+    text: &[char],
+    mut from: usize,
+    stop: usize,
+    comnested: bool,
+    comstyle: i128,
+) -> (usize, bool) {
+    let end_escaped = syn.end_escaped;
+    let mut string_style: i128 = -1;
+    let mut string_lossage = false;
+    let mut comment_lossage = false;
+    let comment_end = from;
+    let mut comstart_pos: Option<usize> = None;
+    let mut nesting: i64 = 1;
+    let mut syntax: i128 = 0;
+    while from != stop {
+        from -= 1;
+        let prev_syntax = syntax;
+        let c = text[from];
+        syntax = wf(syn, text, from);
+        let mut code = syntax & 0xff;
+        let com2start = fl_comstart_first(syntax)
+            && fl_comstart_second(prev_syntax)
+            && comstyle == fl_style(prev_syntax, syntax)
+            && (fl_nested(prev_syntax) || fl_nested(syntax)) == comnested;
+        let mut com2end = fl_comend_first(syntax) && fl_comend_second(prev_syntax);
+        let comstart = com2start || code == COMMENT;
+        // Overlapping two-char comment markers: GNU re-scans forward
+        // from a safe position; approximate by preferring the last
+        // recorded comment starter.
+        if from > stop && (com2end || comstart) {
+            let next_syntax = wf(syn, text, from - 1);
+            if ((comstart || comnested) && fl_comend_second(syntax) && fl_comend_first(next_syntax))
+                || ((com2end || comnested)
+                    && fl_comstart_second(syntax)
+                    && comstyle == fl_style(syntax, prev_syntax)
+                    && fl_comstart_first(next_syntax))
+            {
+                return match comstart_pos {
+                    Some(p) => (p, true),
+                    None => (comment_end, false),
+                };
+            }
+        }
+        if com2start && comstart_pos.is_none() {
+            com2end = false;
+        }
+        if com2end {
+            code = ENDCOMMENT;
+        } else if com2start {
+            code = COMMENT;
+        } else if code == COMMENT
+            && (comstyle != fl_style(syntax, 0) || fl_nested(syntax) != comnested)
+        {
+            continue;
+        }
+        // Quoted chars are skipped, but comment enders cannot be
+        // quoted unless `comment-end-can-be-escaped'.
+        if (end_escaped || code != ENDCOMMENT) && char_quoted(syn, text, from, stop) {
+            continue;
+        }
+        match code {
+            STRING_FENCE | COMMENT_FENCE => {
+                let cc = if code == STRING_FENCE {
+                    ST_STRING
+                } else {
+                    ST_COMMENT
+                };
+                if string_style == -1 {
+                    string_style = cc;
+                } else if string_style == cc {
+                    string_style = -1;
+                } else {
+                    string_lossage = true;
+                }
+            }
+            STRING => {
+                if string_style == -1 {
+                    string_style = c as i128;
+                } else if string_style == c as i128 {
+                    string_style = -1;
+                } else {
+                    string_lossage = true;
+                }
+            }
+            COMMENT => {
+                if string_style != -1 || comment_lossage || string_lossage {
+                    return match comstart_pos {
+                        Some(p) => (p, true),
+                        None => (comment_end, false),
+                    };
+                }
+                if !comnested {
+                    comstart_pos = Some(from);
+                } else {
+                    nesting -= 1;
+                    if nesting <= 0 {
+                        return (from, true);
+                    }
+                }
+            }
+            ENDCOMMENT => {
+                if fl_style(syntax, 0) == comstyle
+                    && (if com2end {
+                        fl_nested(prev_syntax)
+                    } else {
+                        fl_nested(syntax)
+                    }) == comnested
+                {
+                    if comnested {
+                        nesting += 1;
+                    } else {
+                        // A same-style ender: anything earlier would
+                        // match it rather than ours — stop looking.
+                        break;
+                    }
+                } else if comstart_pos.is_some() || c != '\n' {
+                    comment_lossage = true;
+                }
+            }
+            OPEN => {
+                // An open paren in column 0 is a defun start — a safe
+                // place outside strings and comments (GNU's
+                // defun_start heuristic; the loop simply stops).
+                if from == stop || text[from - 1] == '\n' {
+                    break;
+                }
+            }
+            _ => {}
+        }
+    }
+    match comstart_pos {
+        Some(p) => (p, true),
+        None => (comment_end, false),
+    }
+}
+
+/// What a failed `scan_lists' reports.
+enum ScanErr {
+    /// "Unbalanced parentheses" — ran out of text mid-object.
+    Unbalanced(usize, usize),
+    /// "Containing expression ends prematurely" — hit a mismatched
+    /// delimiter before reaching the target level.
+    Premature(usize, usize),
+}
+
+/// Port of GNU `scan_lists' over TEXT ([BEG,STOP) = narrowed bounds,
+/// 0-based indices).  When SEXPFLAG, atoms and strings count as sexps
+/// at level 0 (`scan-sexps'); otherwise only parens matter
+/// (`scan-lists').  Returns Ok(Some(landing)) or Ok(None) when the
+/// boundary is reached between objects (COUNT not used up).
+fn scan_lists_gnu(
+    syn: &crate::editor::Syn,
+    text: &[char],
+    beg: usize,
+    stop: usize,
+    from0: usize,
+    count: i128,
+    depth: i64,
+    sexpflag: bool,
+) -> Result<Option<usize>, ScanErr> {
+    let comments = syn.comments_enabled();
+    let min_depth = if depth > 0 { 0 } else { depth };
+    let mut depth = depth;
+    let mut last_good = from0;
+    let mut from = from0.clamp(beg, stop);
+    let mut count1 = count;
+    let mut mathexit = false;
+    while count1 > 0 {
+        // `completed' marks GNU's `done' path: one object crossed.
+        let mut completed = false;
+        while from < stop {
+            let syntax = wf(syn, text, from);
+            let mut code = syntax & 0xff;
+            let comstart_first = fl_comstart_first(syntax);
+            let mut comnested = fl_nested(syntax);
+            let mut comstyle = fl_style(syntax, 0);
+            let prefix = fl_prefix(syntax);
+            if depth == min_depth {
+                last_good = from;
+            }
+            from += 1;
+            if from < stop && comstart_first && comments {
+                let other = wf(syn, text, from);
+                if fl_comstart_second(other) {
+                    code = COMMENT;
+                    comstyle = fl_style(other, syntax);
+                    comnested |= fl_nested(other);
+                    from += 1;
+                }
+            }
+            if prefix {
+                continue;
+            }
+            match code {
+                ESCAPE | CHARQUOTE | WORD | SYMBOL => {
+                    if code == ESCAPE || code == CHARQUOTE {
+                        if from == stop {
+                            return Err(ScanErr::Unbalanced(last_good, from));
+                        }
+                        // The escaped char counts as a word constituent.
+                        from += 1;
+                    }
+                    if depth != 0 || !sexpflag {
+                        continue;
+                    }
+                    // This word counts as a sexp; finish the atom.
+                    while from < stop {
+                        let cd = wf(syn, text, from) & 0xff;
+                        if cd == CHARQUOTE || cd == ESCAPE {
+                            from += 1;
+                            if from == stop {
+                                return Err(ScanErr::Unbalanced(last_good, from));
+                            }
+                        } else if cd == WORD || cd == SYMBOL || cd == QUOTE {
+                        } else {
+                            break;
+                        }
+                        from += 1;
+                    }
+                    completed = true;
+                    break;
+                }
+                COMMENT_FENCE | COMMENT => {
+                    if code == COMMENT_FENCE {
+                        comstyle = ST_COMMENT;
+                    }
+                    if !comments {
+                        continue;
+                    }
+                    let (out, found, ..) = forw_comment(
+                        syn,
+                        text,
+                        from,
+                        stop,
+                        if comnested { 1 } else { -1 },
+                        comstyle,
+                        0,
+                    );
+                    from = out;
+                    if !found {
+                        if depth == 0 {
+                            completed = true;
+                            break;
+                        }
+                        return Err(ScanErr::Unbalanced(last_good, from));
+                    }
+                    from += 1;
+                }
+                MATH => {
+                    if !sexpflag {
+                        continue;
+                    }
+                    if from != stop && text[from - 1] == text[from] {
+                        from += 1;
+                    }
+                    if mathexit {
+                        mathexit = false;
+                        depth -= 1;
+                        if depth == 0 {
+                            completed = true;
+                            break;
+                        }
+                        if depth < min_depth {
+                            return Err(ScanErr::Premature(last_good, from));
+                        }
+                    } else {
+                        mathexit = true;
+                        depth += 1;
+                        if depth == 0 {
+                            completed = true;
+                            break;
+                        }
+                    }
+                }
+                OPEN => {
+                    depth += 1;
+                    if depth == 0 {
+                        completed = true;
+                        break;
+                    }
+                }
+                CLOSE => {
+                    depth -= 1;
+                    if depth == 0 {
+                        completed = true;
+                        break;
+                    }
+                    if depth < min_depth {
+                        return Err(ScanErr::Premature(last_good, from));
+                    }
+                }
+                STRING | STRING_FENCE => {
+                    let stringterm = text[from - 1];
+                    loop {
+                        if from >= stop {
+                            return Err(ScanErr::Unbalanced(last_good, from));
+                        }
+                        let cd = wf(syn, text, from) & 0xff;
+                        let hit = if code == STRING {
+                            text[from] == stringterm && cd == STRING
+                        } else {
+                            cd == STRING_FENCE
+                        };
+                        if hit {
+                            break;
+                        }
+                        if cd == CHARQUOTE || cd == ESCAPE {
+                            from += 1;
+                        }
+                        from += 1;
+                    }
+                    from += 1;
+                    if depth == 0 && sexpflag {
+                        completed = true;
+                        break;
+                    }
+                }
+                // Whitespace, punctuation, quote, comment-end: trivia.
+                WHITESPACE | PUNCT | QUOTE | ENDCOMMENT => {}
+                _ => {}
+            }
+        }
+        // Reached the boundary mid-scan: error inside an object, nil
+        // between objects.
+        if !completed {
+            if depth != 0 {
+                return Err(ScanErr::Unbalanced(last_good, from));
+            }
+            return Ok(None);
+        }
+        count1 -= 1;
+    }
+    while count1 < 0 {
+        let mut completed = false;
+        while from > beg {
+            from -= 1;
+            let c = text[from];
+            let mut syntax = wf(syn, text, from);
+            let mut code = syntax & 0xff;
+            if depth == min_depth {
+                last_good = from;
+            }
+            let mut comstyle = 0;
+            let mut comnested = fl_nested(syntax);
+            if code == ENDCOMMENT {
+                comstyle = fl_style(syntax, 0);
+            }
+            // Two-character comment ender: current char is the second,
+            // preceded by a COMEND_FIRST char.
+            if from > beg
+                && fl_comend_second(syntax)
+                && syn.comend_first(text[from - 1])
+                && comments
+            {
+                from -= 1;
+                code = ENDCOMMENT;
+                let other = wf(syn, text, from);
+                comstyle = fl_style(other, syntax);
+                comnested |= fl_nested(other);
+                syntax = other;
+            }
+            // Quoting turns anything except a comment-ender into a
+            // word character.
+            if code != ENDCOMMENT && char_quoted(syn, text, from, beg) {
+                from -= 1;
+                code = WORD;
+            } else if fl_prefix(syntax) {
+                continue;
+            }
+            match code {
+                WORD | SYMBOL | ESCAPE | CHARQUOTE => {
+                    if depth != 0 || !sexpflag {
+                        continue;
+                    }
+                    // Backward over a word/atom: continue while the
+                    // previous char is word/symbol/quote or quoted.
+                    while from > beg {
+                        if wf(syn, text, from - 1) & 0xff == ENDCOMMENT {
+                            break;
+                        }
+                        if char_quoted(syn, text, from - 1, beg) {
+                            // Quoted pair: consume both chars.
+                            from -= 2;
+                            continue;
+                        }
+                        let cd = wf(syn, text, from - 1) & 0xff;
+                        if cd == WORD || cd == SYMBOL || cd == QUOTE {
+                            from -= 1;
+                        } else {
+                            break;
+                        }
+                    }
+                    completed = true;
+                    break;
+                }
+                MATH => {
+                    if !sexpflag {
+                        continue;
+                    }
+                    if from > beg && c == text[from - 1] {
+                        from -= 1;
+                    }
+                    if mathexit {
+                        mathexit = false;
+                        depth -= 1;
+                        if depth == 0 {
+                            completed = true;
+                            break;
+                        }
+                        if depth < min_depth {
+                            return Err(ScanErr::Premature(last_good, from));
+                        }
+                    } else {
+                        mathexit = true;
+                        depth += 1;
+                        if depth == 0 {
+                            completed = true;
+                            break;
+                        }
+                    }
+                }
+                CLOSE => {
+                    depth += 1;
+                    if depth == 0 {
+                        completed = true;
+                        break;
+                    }
+                }
+                OPEN => {
+                    depth -= 1;
+                    if depth == 0 {
+                        completed = true;
+                        break;
+                    }
+                    if depth < min_depth {
+                        return Err(ScanErr::Premature(last_good, from));
+                    }
+                }
+                ENDCOMMENT => {
+                    if !comments {
+                        continue;
+                    }
+                    let (out, found) = back_comment(syn, text, from, beg, comnested, comstyle);
+                    if found {
+                        from = out;
+                    }
+                }
+                COMMENT_FENCE | STRING_FENCE => {
+                    loop {
+                        if from == beg {
+                            return Err(ScanErr::Unbalanced(last_good, from));
+                        }
+                        from -= 1;
+                        if !char_quoted(syn, text, from, beg) && wf(syn, text, from) & 0xff == code
+                        {
+                            break;
+                        }
+                    }
+                    if code == STRING_FENCE && depth == 0 && sexpflag {
+                        completed = true;
+                        break;
+                    }
+                }
+                STRING => {
+                    let stringterm = c;
+                    loop {
+                        if from == beg {
+                            return Err(ScanErr::Unbalanced(last_good, from));
+                        }
+                        from -= 1;
+                        if !char_quoted(syn, text, from, beg)
+                            && text[from] == stringterm
+                            && wf(syn, text, from) & 0xff == STRING
+                        {
+                            break;
+                        }
+                    }
+                    if depth == 0 && sexpflag {
+                        completed = true;
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+        if !completed {
+            if depth != 0 {
+                return Err(ScanErr::Unbalanced(last_good, from));
+            }
+            return Ok(None);
+        }
+        count1 += 1;
+    }
+    Ok(Some(from))
 }
 
 /// Parse a skip-chars spec like " \t\n" or "^a-z" into a predicate set.
@@ -2475,6 +3090,549 @@ fn char_set_pred(spec: &str) -> (Vec<(char, char)>, Vec<char>, bool) {
 fn char_set_contains(ranges: &[(char, char)], singles: &[char], neg: bool, c: char) -> bool {
     let in_ = singles.contains(&c) || ranges.iter().any(|(lo, hi)| c >= *lo && c <= *hi);
     in_ != neg
+}
+
+// ---------- parse-partial-sexp state machine (GNU scan_sexps_forward) ----------
+
+/// Mirror of GNU's `lisp_parse_state'.  Positions are 0-based indices
+/// internally; externalization adds 1.  `-1' marks "none" positions.
+#[derive(Clone)]
+pub(crate) struct ParseState {
+    pub depth: i128,
+    /// -1 outside strings; else the terminator char, or ST_STRING.
+    pub instring: i128,
+    /// 0 outside comments; -1 inside a non-nestable comment; else the
+    /// nesting depth.
+    pub incomment: i64,
+    /// Comment style bits (0 = style a; ST_COMMENT for fence comments).
+    pub comstyle: i128,
+    pub quoted: bool,
+    pub mindepth: i128,
+    /// Start of the last complete sexp at the current level (-1 none).
+    pub thislevelstart: i64,
+    /// Start of the innermost containing list (-1 none).
+    pub prevlevelstart: i64,
+    /// Start of the innermost comment/string (-1 none).
+    pub comstr_start: i64,
+    /// Open-paren positions of enclosing lists, outermost first.
+    pub levelstarts: Vec<i64>,
+    /// Syntax-with-flags of the last scanned char that could begin a
+    /// two-character construct; SMAX when it cannot.
+    pub prev_syntax: i128,
+    /// Where scanning stopped.
+    pub location: usize,
+}
+
+impl ParseState {
+    pub fn fresh() -> Self {
+        ParseState {
+            depth: 0,
+            instring: -1,
+            incomment: 0,
+            comstyle: 0,
+            quoted: false,
+            mindepth: 0,
+            thislevelstart: -1,
+            prevlevelstart: -1,
+            comstr_start: -1,
+            levelstarts: Vec::new(),
+            prev_syntax: SMAX,
+            location: 0,
+        }
+    }
+
+    /// GNU `internalize_parse_state': rebuild from the external list
+    /// form (elements are 1-based charpos).
+    pub fn internalize(old: &[Value]) -> Self {
+        let mut st = ParseState::fresh();
+        let get = |n: usize| old.get(n);
+        st.depth = get(0).and_then(|v| v.int()).unwrap_or(0);
+        st.instring = match get(3) {
+            Some(Value::Int(n)) => *n,
+            Some(v) if v.truthy() => ST_STRING,
+            _ => -1,
+        };
+        st.incomment = match get(4) {
+            Some(Value::Int(n)) => *n as i64,
+            Some(v) if v.truthy() => -1,
+            _ => 0,
+        };
+        st.quoted = get(5).is_some_and(|v| v.truthy());
+        st.comstyle = match get(7) {
+            Some(Value::Int(n)) if *n >= 0 && *n <= ST_COMMENT => *n,
+            Some(v) if v.truthy() => ST_COMMENT,
+            _ => 0,
+        };
+        st.comstr_start = get(8)
+            .and_then(|v| v.int())
+            .map(|n| n as i64 - 1)
+            .unwrap_or(-1);
+        if let Some(Value::Int(_)) | Some(_) = get(9) {
+            if let Some(list) = get(9).and_then(|v| v.list_to_vec().ok()) {
+                st.levelstarts = list
+                    .iter()
+                    .filter_map(|v| v.int())
+                    .map(|n| n as i64 - 1)
+                    .collect();
+            }
+        }
+        st.prev_syntax = get(10).and_then(|v| v.int()).unwrap_or(SMAX);
+        st
+    }
+
+    /// GNU's return list for `parse-partial-sexp' (1-based positions).
+    pub fn externalize(&self, i: &mut Interp) -> Value {
+        let pos = |p: i64| -> Value {
+            if p < 0 {
+                Value::Nil
+            } else {
+                Value::Int(p as i128 + 1)
+            }
+        };
+        Value::list(vec![
+            Value::Int(self.depth),
+            pos(self.prevlevelstart),
+            pos(self.thislevelstart),
+            if self.instring >= 0 {
+                if self.instring == ST_STRING {
+                    Value::Sym(sym::T)
+                } else {
+                    Value::Int(self.instring)
+                }
+            } else {
+                Value::Nil
+            },
+            if self.incomment < 0 {
+                Value::Sym(sym::T)
+            } else if self.incomment == 0 {
+                Value::Nil
+            } else {
+                Value::Int(self.incomment as i128)
+            },
+            Value::from_bool(self.quoted),
+            Value::Int(self.mindepth),
+            if self.comstyle == 0 {
+                Value::Nil
+            } else if self.comstyle == ST_COMMENT {
+                Value::Sym(i.intern("syntax-table"))
+            } else {
+                Value::Int(self.comstyle)
+            },
+            if self.incomment != 0 || self.instring >= 0 {
+                pos(self.comstr_start)
+            } else {
+                Value::Nil
+            },
+            Value::list(self.levelstarts.iter().map(|p| pos(*p)).collect()),
+            if self.prev_syntax == SMAX {
+                Value::Nil
+            } else {
+                Value::Int(self.prev_syntax)
+            },
+        ])
+    }
+}
+
+/// Whether the char at FROM-1 (syntax PREV_FROM_SYNTAX) plus the char
+/// at FROM start a two-character comment; on match, fills STATE's
+/// comment fields like GNU's `in_2char_comment_start'.
+fn in_2char_comment_start(
+    syn: &crate::editor::Syn,
+    text: &[char],
+    st: &mut ParseState,
+    prev_from_syntax: i128,
+    prev_from: usize,
+    from: usize,
+) -> bool {
+    if fl_comstart_first(prev_from_syntax) {
+        let syntax = wf(syn, text, from);
+        if fl_comstart_second(syntax) {
+            st.comstyle = fl_style(syntax, prev_from_syntax);
+            st.incomment = if fl_nested(prev_from_syntax) || fl_nested(syntax) {
+                1
+            } else {
+                -1
+            };
+            st.comstr_start = prev_from as i64;
+            return true;
+        }
+    }
+    false
+}
+
+/// Port of GNU `scan_sexps_forward': advance the parse state ST from
+/// position FROM to END (0-based exclusive), under BEGV=BEG.
+/// TARGETDEPTH stops early when DEPTH reaches it; STOPBEFORE stops at
+/// the start of the next sexp; COMMENTSTOP is 0 (never), 1 (stop at
+/// comment start), or -1 (also stop at comment/string boundaries).
+#[allow(unused_assignments)]
+pub(crate) fn scan_sexps_fwd(
+    syn: &crate::editor::Syn,
+    text: &[char],
+    beg: usize,
+    from0: usize,
+    end: usize,
+    st: &mut ParseState,
+    targetdepth: i128,
+    stopbefore: bool,
+    commentstop: i32,
+) {
+    // GNU's fixed 100-deep `levelstart' stack.  GNU stores the open
+    // paren of enclosing list K (outermost first) in level[K].last and
+    // points curlevel at level[K+1] while inside it.
+    const LEVELS: usize = 100;
+    struct Level {
+        last: i64,
+        prev: i64,
+    }
+    let nlev = st.levelstarts.len().min(LEVELS - 1);
+    let mut levels: Vec<Level> = Vec::with_capacity(nlev + 2);
+    for p in st.levelstarts.iter().take(nlev) {
+        levels.push(Level { last: *p, prev: -1 });
+    }
+    levels.push(Level { last: -1, prev: -1 });
+    let mut cur: usize = nlev;
+
+    let boundary_stop = commentstop == -1;
+    let mut depth = st.depth;
+    let mut mindepth = depth;
+    let start_quoted = st.quoted;
+    st.quoted = false;
+
+    let mut from = from0;
+    let mut prev_from = from;
+    if from != beg {
+        prev_from = from - 1;
+    }
+    let mut prev_from_syntax = st.prev_syntax;
+    let mut prev_prev_from_syntax = SMAX;
+
+    // INC_FROM: prev_from tracks the char just stepped over and
+    // prev_from_syntax its flags.
+    macro_rules! inc_from {
+        () => {{
+            prev_from = from;
+            prev_prev_from_syntax = prev_from_syntax;
+            prev_from_syntax = if prev_from < text.len() {
+                wf(syn, text, prev_from)
+            } else {
+                SMAX
+            };
+            from += 1;
+        }};
+    }
+
+    macro_rules! done {
+        () => {{
+            st.depth = depth;
+            st.mindepth = mindepth;
+            st.thislevelstart = levels[cur].prev;
+            st.prevlevelstart = if cur == 0 { -1 } else { levels[cur - 1].last };
+            st.location = from;
+            st.levelstarts = levels[..cur].iter().map(|l| l.last).collect();
+            st.prev_syntax = if (prev_from_syntax & 0x50000) != 0 || st.quoted {
+                prev_from_syntax
+            } else {
+                SMAX
+            };
+            return;
+        }};
+    }
+
+    macro_rules! endquoted {
+        () => {{
+            st.quoted = true;
+            done!();
+        }};
+    }
+
+    // GNU's `atcomment' label: ST holds the new comment's fields.
+    macro_rules! atcomment {
+        () => {{
+            if commentstop != 0 || boundary_stop {
+                done!();
+            }
+            let (out, found, last_syn, rem) = forw_comment(
+                syn,
+                text,
+                from,
+                end,
+                st.incomment,
+                st.comstyle,
+                if from == beg { 0 } else { prev_from_syntax },
+            );
+            from = out;
+            st.incomment = rem;
+            prev_from_syntax = last_syn;
+            if !found {
+                if last_syn & 0xff == ESCAPE || last_syn & 0xff == CHARQUOTE {
+                    endquoted!();
+                }
+                done!();
+            }
+            inc_from!();
+            st.incomment = 0;
+            st.comstyle = 0;
+            prev_from_syntax = SMAX;
+            if boundary_stop {
+                done!();
+            }
+        }};
+    }
+
+    // GNU's `symstarted' inner loop: continue an atom after an escape
+    // or word/symbol char; a 2-char comment start interrupts it and
+    // skips `symdone'.
+    macro_rules! symstarted {
+        () => {{
+            let mut interrupted = false;
+            while from < end {
+                if in_2char_comment_start(syn, text, st, prev_from_syntax, prev_from, from) {
+                    inc_from!();
+                    prev_from_syntax = SMAX;
+                    atcomment!();
+                    interrupted = true;
+                    break;
+                }
+                match wf(syn, text, from) & 0xff {
+                    CHARQUOTE | ESCAPE => {
+                        inc_from!();
+                        if from == end {
+                            endquoted!();
+                        }
+                    }
+                    WORD | SYMBOL | QUOTE => {}
+                    _ => break,
+                }
+                inc_from!();
+            }
+            if !interrupted {
+                levels[cur].prev = levels[cur].last;
+            }
+        }};
+    }
+
+    // Enter mid-construct per the resumed state.
+    if st.incomment != 0 {
+        // startincomment
+        if from >= end {
+            done!();
+        }
+        let (out, found, last_syn, rem) = forw_comment(
+            syn,
+            text,
+            from,
+            end,
+            st.incomment,
+            st.comstyle,
+            if from == beg { 0 } else { prev_from_syntax },
+        );
+        from = out;
+        st.incomment = rem;
+        prev_from_syntax = last_syn;
+        if !found {
+            if last_syn & 0xff == ESCAPE || last_syn & 0xff == CHARQUOTE {
+                endquoted!();
+            }
+            done!();
+        }
+        inc_from!();
+        st.incomment = 0;
+        st.comstyle = 0;
+        prev_from_syntax = SMAX;
+        if boundary_stop {
+            done!();
+        }
+    } else if st.instring >= 0 {
+        // startinstring (possibly resuming after a quote char).
+        let nofence = st.instring != ST_STRING;
+        if start_quoted {
+            // startquotedinstring: `from' sits on the escaped char.
+            if from >= end {
+                endquoted!();
+            }
+            inc_from!();
+        }
+        'instring: loop {
+            if from >= end {
+                done!();
+            }
+            let c = text[from];
+            let c_code = wf(syn, text, from) & 0xff;
+            if nofence && c as i128 == st.instring && c_code == STRING {
+                break;
+            }
+            match c_code {
+                STRING_FENCE => {
+                    if !nofence {
+                        break 'instring;
+                    }
+                }
+                CHARQUOTE | ESCAPE => {
+                    inc_from!();
+                    // startquotedinstring
+                    if from >= end {
+                        endquoted!();
+                    }
+                }
+                _ => {}
+            }
+            inc_from!();
+        }
+        // string_end
+        st.instring = -1;
+        levels[cur].prev = levels[cur].last;
+        inc_from!();
+        if boundary_stop {
+            done!();
+        }
+    } else if start_quoted {
+        // startquoted
+        if from == end {
+            endquoted!();
+        }
+        inc_from!();
+        symstarted!();
+    } else if from < end && in_2char_comment_start(syn, text, st, prev_from_syntax, prev_from, from)
+    {
+        inc_from!();
+        prev_from_syntax = SMAX;
+        atcomment!();
+    }
+
+    while from < end {
+        inc_from!();
+
+        if from < end && in_2char_comment_start(syn, text, st, prev_from_syntax, prev_from, from) {
+            inc_from!();
+            prev_from_syntax = SMAX;
+            atcomment!();
+            continue;
+        }
+        if fl_prefix(prev_from_syntax) {
+            continue;
+        }
+        match prev_from_syntax & 0xff {
+            ESCAPE | CHARQUOTE => {
+                if stopbefore {
+                    from = prev_from;
+                    prev_from_syntax = prev_prev_from_syntax;
+                    done!();
+                }
+                levels[cur].last = prev_from as i64;
+                // startquoted
+                if from == end {
+                    endquoted!();
+                }
+                inc_from!();
+                symstarted!();
+            }
+            WORD | SYMBOL => {
+                if stopbefore {
+                    from = prev_from;
+                    prev_from_syntax = prev_prev_from_syntax;
+                    done!();
+                }
+                levels[cur].last = prev_from as i64;
+                symstarted!();
+            }
+            COMMENT_FENCE | COMMENT => {
+                if prev_from_syntax & 0xff == COMMENT_FENCE {
+                    st.comstyle = ST_COMMENT;
+                    st.incomment = -1;
+                } else {
+                    st.comstyle = fl_style(prev_from_syntax, 0);
+                    st.incomment = if fl_nested(prev_from_syntax) { 1 } else { -1 };
+                }
+                st.comstr_start = prev_from as i64;
+                atcomment!();
+            }
+            OPEN => {
+                if stopbefore {
+                    from = prev_from;
+                    prev_from_syntax = prev_prev_from_syntax;
+                    done!();
+                }
+                depth += 1;
+                levels[cur].last = prev_from as i64;
+                if cur + 1 < LEVELS {
+                    cur += 1;
+                    levels.push(Level { last: -1, prev: -1 });
+                }
+                // GNU clamps curlevel at endlevel without clearing.
+                if targetdepth == depth {
+                    done!();
+                }
+            }
+            CLOSE => {
+                depth -= 1;
+                if depth < mindepth {
+                    mindepth = depth;
+                }
+                if cur != 0 {
+                    cur -= 1;
+                }
+                levels[cur].prev = levels[cur].last;
+                if targetdepth == depth {
+                    done!();
+                }
+            }
+            STRING | STRING_FENCE => {
+                st.comstr_start = (from - 1) as i64;
+                if stopbefore {
+                    from = prev_from;
+                    prev_from_syntax = prev_prev_from_syntax;
+                    done!();
+                }
+                levels[cur].last = prev_from as i64;
+                st.instring = if prev_from_syntax & 0xff == STRING {
+                    text[prev_from] as i128
+                } else {
+                    ST_STRING
+                };
+                if boundary_stop {
+                    done!();
+                }
+                // startinstring
+                let nofence = st.instring != ST_STRING;
+                'instr: loop {
+                    if from >= end {
+                        done!();
+                    }
+                    let c = text[from];
+                    let c_code = wf(syn, text, from) & 0xff;
+                    if nofence && c as i128 == st.instring && c_code == STRING {
+                        break;
+                    }
+                    match c_code {
+                        STRING_FENCE => {
+                            if !nofence {
+                                break 'instr;
+                            }
+                        }
+                        CHARQUOTE | ESCAPE => {
+                            inc_from!();
+                            if from >= end {
+                                endquoted!();
+                            }
+                        }
+                        _ => {}
+                    }
+                    inc_from!();
+                }
+                // string_end
+                st.instring = -1;
+                levels[cur].prev = levels[cur].last;
+                inc_from!();
+                if boundary_stop {
+                    done!();
+                }
+            }
+            // Smath, whitespace, punctuation, quote, endcomment: skip.
+            _ => {}
+        }
+    }
+    done!();
 }
 
 fn f_skip_chars_forward(i: &mut Interp, a: Vec<Value>) -> EvalResult {
@@ -2521,15 +3679,12 @@ fn f_skip_chars_backward(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     Ok(Value::Int(moved))
 }
 
-fn syntax_char_of(c: char) -> u8 {
-    crate::lisp::regexp::syntax_code(c)
-}
-
 fn f_skip_syntax_forward(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let spec = match &a[0] {
         Value::Str(s) => s.borrow().clone(),
         other => return Err(i.wrong_type_mut("stringp", other)),
     };
+    let syn = crate::editor::Syn::current(i);
     let b = cur(i);
     let mut bb = b.borrow_mut();
     let lim = match a.get(1) {
@@ -2545,7 +3700,7 @@ fn f_skip_syntax_forward(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         .collect();
     let mut p = bb.point();
     while p < lim.min(bb.text.len()) {
-        let hit = codes.contains(&syntax_char_of(bb.text.char_at(p)));
+        let hit = codes.contains(&syn.code_at(p, bb.text.char_at(p)));
         if hit == neg {
             break;
         }
@@ -2561,6 +3716,7 @@ fn f_skip_syntax_backward(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         Value::Str(s) => s.borrow().clone(),
         other => return Err(i.wrong_type_mut("stringp", other)),
     };
+    let syn = crate::editor::Syn::current(i);
     let b = cur(i);
     let mut bb = b.borrow_mut();
     let lim = match a.get(1) {
@@ -2575,7 +3731,7 @@ fn f_skip_syntax_backward(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         .collect();
     let mut p = bb.point();
     while p > lim {
-        let hit = codes.contains(&syntax_char_of(bb.text.char_at(p - 1)));
+        let hit = codes.contains(&syn.code_at(p - 1, bb.text.char_at(p - 1)));
         if hit == neg {
             break;
         }
@@ -2586,498 +3742,238 @@ fn f_skip_syntax_backward(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     Ok(Value::Int(moved))
 }
 
-/// Move point forward over one sexp.  Like GNU: at EOB outside any
-/// sexp, stop silently instead of signaling.
-fn forward_sexp_once(i: &mut Interp, bb: &mut Buffer) -> Result<(), Flow> {
-    let mut p = bb.point();
-    let len = bb.text_len();
-    // skip whitespace
-    while p < len && bb.text.char_at(p).is_whitespace() {
-        p += 1;
-    }
-    if p >= len {
-        bb.set_point(len);
-        return Ok(());
-    }
-    let c = bb.text.char_at(p);
-    if c == '(' || c == '[' || c == '{' {
-        // scan balanced
-        let mut depth = 0i128;
-        let mut in_str = false;
-        let mut esc = false;
-        let mut k = p;
-        while k < len {
-            let ch = bb.text.char_at(k);
-            if in_str {
-                if esc {
-                    esc = false;
-                } else if ch == '\\' {
-                    esc = true;
-                } else if ch == '"' {
-                    in_str = false;
-                }
-            } else {
-                match ch {
-                    '"' => in_str = true,
-                    '(' | '[' | '{' => depth += 1,
-                    ')' | ']' | '}' => {
-                        depth -= 1;
-                        if depth == 0 {
-                            break;
-                        }
-                    }
-                    _ => {}
-                }
-            }
-            k += 1;
-        }
-        if depth != 0 {
-            return Err(err_sym(
-                i,
-                "scan-error",
-                vec![Value::string("Unbalanced parentheses")],
-            ));
-        }
-        bb.set_point(k + 1);
-    } else if c == ')' || c == ']' || c == '}' {
-        return Err(err_sym(
-            i,
-            "scan-error",
-            vec![Value::string("Unbalanced parentheses")],
-        ));
-    } else if c == '"' {
-        let mut k = p + 1;
-        let mut esc = false;
-        let mut closed = false;
-        while k < len {
-            let ch = bb.text.char_at(k);
-            if esc {
-                esc = false;
-            } else if ch == '\\' {
-                esc = true;
-            } else if ch == '"' {
-                closed = true;
-                break;
-            }
-            k += 1;
-        }
-        if !closed {
-            return Err(err_sym(
-                i,
-                "scan-error",
-                vec![Value::string("Unbalanced parentheses")],
-            ));
-        }
-        bb.set_point(k + 1);
-    } else {
-        // atom: symbol chars
-        while p < len {
-            let ch = bb.text.char_at(p);
-            if ch.is_whitespace() || "()[]{}\"'`,;".contains(ch) {
-                break;
-            }
-            p += 1;
-        }
-        bb.set_point(p);
-    }
-    Ok(())
+/// Build the `scan-error' flow for a failed `scan_lists'.
+/// GNU signals (scan-error MESSAGE LAST_GOOD FROM) with 1-based
+/// character positions.
+fn scan_err_flow(i: &mut Interp, e: ScanErr) -> Flow {
+    let (msg, a, b) = match e {
+        ScanErr::Unbalanced(l, f) => ("Unbalanced parentheses", l, f),
+        ScanErr::Premature(l, f) => ("Containing expression ends prematurely", l, f),
+    };
+    let sym = i.intern("scan-error");
+    i.signal_data(
+        sym,
+        vec![
+            Value::string(msg),
+            Value::Int(a as i128 + 1),
+            Value::Int(b as i128 + 1),
+        ],
+    )
 }
 
-/// Move point backward over one sexp.  At BOB, stop silently (GNU).
-fn backward_sexp_once(i: &mut Interp, bb: &mut Buffer) -> Result<(), Flow> {
-    let mut p = bb.point();
-    while p > bb.begv && bb.text.char_at(p - 1).is_whitespace() {
-        p -= 1;
-    }
-    if p <= bb.begv {
-        bb.set_point(bb.begv);
-        return Ok(());
-    }
-    let c = bb.text.char_at(p - 1);
-    if matches!(c, ')' | ']' | '}') {
-        let mut depth = 0i128;
-        let mut k = p;
-        while k > bb.begv {
-            let ch = bb.text.char_at(k - 1);
-            match ch {
-                ')' | ']' | '}' => depth += 1,
-                '(' | '[' | '{' => {
-                    depth -= 1;
-                    if depth == 0 {
-                        break;
-                    }
-                }
-                _ => {}
-            }
-            k -= 1;
-        }
-        if depth != 0 {
-            return Err(err_sym(
-                i,
-                "scan-error",
-                vec![Value::string("Unbalanced parentheses")],
-            ));
-        }
-        bb.set_point(k - 1);
-    } else {
-        while p > bb.begv {
-            let ch = bb.text.char_at(p - 1);
-            if ch.is_whitespace() || "()[]{}\"'`,;".contains(ch) {
-                break;
-            }
-            p -= 1;
-        }
-        bb.set_point(p);
-    }
-    Ok(())
-}
-
-fn f_forward_sexp(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let n = a.get(0).and_then(|v| v.int()).unwrap_or(1);
-    let b = cur(i);
-    let mut bb = b.borrow_mut();
-    for _ in 0..n.abs() {
-        if n < 0 {
-            backward_sexp_once(i, &mut *bb)?;
-        } else {
-            forward_sexp_once(i, &mut *bb)?;
-        }
-    }
-    Ok(Value::Nil)
-}
-
-fn f_backward_sexp(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let n = a.get(0).and_then(|v| v.int()).unwrap_or(1);
-    let b = cur(i);
-    let mut bb = b.borrow_mut();
-    for _ in 0..n.abs() {
-        if n < 0 {
-            forward_sexp_once(i, &mut *bb)?;
-        } else {
-            backward_sexp_once(i, &mut *bb)?;
-        }
-    }
-    Ok(Value::Nil)
-}
-
-fn sexp_is_open(c: char) -> bool {
-    matches!(c, '(' | '[' | '{')
-}
-fn sexp_is_close(c: char) -> bool {
-    matches!(c, ')' | ']' | '}')
-}
-
-/// Index of the close matching the open at `open` (0-based).
-fn sexp_match_close(text: &[char], open: usize) -> Option<usize> {
-    let mut d = 0i32;
-    for (j, c) in text.iter().enumerate().skip(open) {
-        if sexp_is_open(*c) {
-            d += 1;
-        } else if sexp_is_close(*c) {
-            d -= 1;
-            if d == 0 {
-                return Some(j);
-            }
-        }
-    }
-    None
-}
-
-/// (complete pairs, unmatched opens) for the text before `pos`.
-fn sexp_pairs_before(text: &[char], pos: usize) -> (Vec<(usize, usize)>, Vec<usize>) {
-    let mut stack = Vec::new();
-    let mut pairs = Vec::new();
-    for (j, c) in text.iter().enumerate().take(pos.min(text.len())) {
-        if sexp_is_open(*c) {
-            stack.push(j);
-        } else if sexp_is_close(*c) {
-            if let Some(o) = stack.pop() {
-                pairs.push((o, j));
-            }
-        }
-    }
-    (pairs, stack)
-}
-
-/// Index of the open matching the close at `close` (0-based).
-fn sexp_match_open(text: &[char], close: usize) -> Option<usize> {
-    let mut d = 0i32;
-    for j in (0..=close.min(text.len().saturating_sub(1))).rev() {
-        let c = text[j];
-        if sexp_is_close(c) {
-            d += 1;
-        } else if sexp_is_open(c) {
-            d -= 1;
-            if d == 0 {
-                return Some(j);
-            }
-        }
-    }
-    None
-}
-
-/// Core of `scan-lists`: returns the 0-based landing position, None
-/// for "stays put", Err for scan-error.
-///
-/// GNU semantics: DEPTH is the assumed paren-level at FROM.  Each step
-/// scans forward (COUNT>0) or backward (COUNT<0) for the paren that
-/// brings the level back to 0, landing just outside it (after `)' /
-/// before `(').  At level 0 a step skips a whole balanced pair; a
-/// mismatched paren (close going forward, open going backward) or an
-/// unbalanced group signals scan-error; running out of text at level 0
-/// returns nil.
-fn scan_lists_impl(
+/// Port of GNU `Fforward_comment': move across COUNT comments, stopping
+/// at the first non-comment non-whitespace char.  Returns
+/// (new point, t-when-all-count-crossed).  Comment delimiters apply
+/// unconditionally (unlike `scan_lists', which gates on
+/// `parse-sexp-ignore-comments').
+fn forward_comment_scan(
+    syn: &crate::editor::Syn,
     text: &[char],
-    pos: usize,
+    beg: usize,
+    stop: usize,
+    mut from: usize,
     count: i128,
-    depth: i128,
-) -> Result<Option<usize>, ()> {
-    let len = text.len();
-    let mut level = depth;
-    let mut p = pos;
-    let mut remaining = count.unsigned_abs();
-    if count > 0 {
-        while remaining > 0 {
-            let mut i = p;
-            let mut landed = None;
-            while i < len {
-                let c = text[i];
-                if sexp_is_open(c) {
-                    if level == 0 {
-                        match sexp_match_close(text, i) {
-                            Some(cl) => {
-                                landed = Some(cl + 1);
-                                break;
-                            }
-                            None => return Err(()),
-                        }
-                    }
-                    level += 1;
-                } else if sexp_is_close(c) {
-                    if level == 0 {
-                        return Err(());
-                    }
-                    level -= 1;
-                    if level == 0 {
-                        landed = Some(i + 1);
-                        break;
-                    }
+) -> (usize, bool) {
+    let mut count1 = count;
+    while count1 > 0 {
+        // Skip whitespace (and newline comment-enders) to a starter.
+        let mut code;
+        let mut comnested;
+        let mut comstyle;
+        loop {
+            if from == stop {
+                return (from, false);
+            }
+            let c = text[from];
+            let syntax = wf(syn, text, from);
+            code = syntax & 0xff;
+            let comstart_first = fl_comstart_first(syntax);
+            comnested = fl_nested(syntax);
+            comstyle = fl_style(syntax, 0);
+            from += 1;
+            if from < stop && comstart_first {
+                let other = wf(syn, text, from);
+                if fl_comstart_second(other) {
+                    code = COMMENT;
+                    comstyle = fl_style(other, syntax);
+                    comnested |= fl_nested(other);
+                    from += 1;
                 }
-                i += 1;
             }
-            match landed {
-                Some(np) => p = np,
-                // Ran out of text: nil at level 0, error if still inside.
-                None => return if level == 0 { Ok(None) } else { Err(()) },
+            if !(code == WHITESPACE || (code == ENDCOMMENT && c == '\n')) {
+                break;
             }
-            remaining -= 1;
         }
-        Ok(Some(p))
-    } else if count < 0 {
-        while remaining > 0 {
-            let mut i = p as i64 - 1;
-            let mut landed = None;
-            while i >= 0 {
-                let c = text[i as usize];
-                if sexp_is_close(c) {
-                    if level == 0 {
-                        match sexp_match_open(text, i as usize) {
-                            Some(o) => {
-                                landed = Some(o);
-                                break;
-                            }
-                            None => return Err(()),
-                        }
-                    }
-                    level += 1;
-                } else if sexp_is_open(c) {
-                    if level == 0 {
-                        return Err(());
-                    }
-                    level -= 1;
-                    if level == 0 {
-                        landed = Some(i as usize);
-                        break;
-                    }
-                }
-                i -= 1;
-            }
-            match landed {
-                Some(np) => p = np,
-                // Ran out of text: nil at level 0, error if still inside.
-                None => return if level == 0 { Ok(None) } else { Err(()) },
-            }
-            remaining -= 1;
+        if code == COMMENT_FENCE {
+            comstyle = ST_COMMENT;
+        } else if code != COMMENT {
+            from -= 1;
+            return (from, false);
         }
-        Ok(Some(p))
-    } else {
-        Ok(Some(pos))
+        let (out, found, ..) = forw_comment(
+            syn,
+            text,
+            from,
+            stop,
+            if comnested { 1 } else { -1 },
+            comstyle,
+            0,
+        );
+        from = out;
+        if !found {
+            return (from, false);
+        }
+        from += 1;
+        count1 -= 1;
     }
+    while count1 < 0 {
+        loop {
+            if from <= beg {
+                return (beg, false);
+            }
+            from -= 1;
+            let quoted = char_quoted(syn, text, from, beg);
+            let c = text[from];
+            let mut syntax = wf(syn, text, from);
+            let mut code = syntax & 0xff;
+            let mut comstyle = 0;
+            let mut comnested = fl_nested(syntax);
+            if code == ENDCOMMENT {
+                comstyle = fl_style(syntax, 0);
+            }
+            let mut two_char = false;
+            if from > beg
+                && fl_comend_second(syntax)
+                && syn.comend_first(text[from - 1])
+                && !char_quoted(syn, text, from - 1, beg)
+            {
+                from -= 1;
+                two_char = true;
+                code = ENDCOMMENT;
+                let other = wf(syn, text, from);
+                comstyle = fl_style(other, syntax);
+                comnested |= fl_nested(other);
+                syntax = other;
+            }
+            if code == COMMENT_FENCE {
+                // Skip back to the first preceding unquoted fence.
+                let ini = from;
+                let mut found = false;
+                while from > beg {
+                    from -= 1;
+                    if wf(syn, text, from) & 0xff == COMMENT_FENCE
+                        && !char_quoted(syn, text, from, beg)
+                    {
+                        found = true;
+                        break;
+                    }
+                }
+                if !found {
+                    return (ini + 1, false);
+                }
+                break;
+            } else if code == ENDCOMMENT {
+                let (out, found) = if !quoted || !syn.end_escaped {
+                    back_comment(syn, text, from, beg, comnested, comstyle)
+                } else {
+                    (from, false)
+                };
+                if !found {
+                    if c == '\n' {
+                        // An end-of-line that isn't an end-of-comment
+                        // is treated like whitespace.
+                        continue;
+                    }
+                    if two_char {
+                        from += 1;
+                    }
+                    return (from + 1, false);
+                }
+                from = out;
+                break;
+            } else if code != WHITESPACE || quoted {
+                return (from + 1, false);
+            }
+        }
+        count1 += 1;
+    }
+    (from, true)
 }
 
+/// GNU `Fbackward_prefix_chars': skip back over unquoted chars whose
+/// syntax is expression-prefix (`'') or carries the `p' flag.
+pub(crate) fn backward_prefix_chars(
+    syn: &crate::editor::Syn,
+    text: &[char],
+    beg: usize,
+    mut pos: usize,
+) -> usize {
+    while pos > beg
+        && !char_quoted(syn, text, pos - 1, beg)
+        && (wf(syn, text, pos - 1) & 0xff == QUOTE || syn.is_prefix_flag(text[pos - 1]))
+    {
+        pos -= 1;
+    }
+    pos
+}
+
+fn f_forward_comment(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let count = a.get(0).and_then(|v| v.int()).unwrap_or(1);
+    // Resolve the syntax table before the buffer borrow (the borrow
+    // would make the lookup silently fall back to the standard table).
+    let syn = crate::editor::Syn::current(i);
+    let b = cur(i);
+    let mut bb = b.borrow_mut();
+    let text: Vec<char> = bb.text.text().chars().collect();
+    let beg = bb.begv;
+    let stop = bb.zv.min(bb.text_len());
+    let (np, ok) = forward_comment_scan(&syn, &text, beg, stop, bb.point(), count);
+    bb.set_point(np);
+    Ok(if ok { Value::Sym(sym::T) } else { Value::Nil })
+}
+
+/// Text of the current buffer plus point, as a char vec; also the
+/// narrowed [BEGV,ZV) bounds (0-based).
+fn nav_text(i: &Interp) -> (Vec<char>, usize, usize, usize) {
+    let b = i.buffers.get(i.current_buffer).unwrap();
+    let bb = b.borrow();
+    let text: Vec<char> = bb.text.text().chars().collect();
+    (text, bb.point(), bb.begv, bb.zv.min(bb.text_len()))
+}
+
+/// GNU `scan-lists': scan COUNT lists from FROM starting at DEPTH.
+/// Returns the landing charpos, nil at the boundary between objects.
 fn f_scan_lists(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let from = want_int(i, &a[0])?;
     let count = want_int(i, &a[1])?;
     let depth = want_int(i, &a[2])?;
-    let text: Vec<char> = {
-        let b = cur(i);
-        let bb = b.borrow();
-        bb.text.text().chars().collect()
-    };
-    let pos = pos_idx(text.len(), from);
-    match scan_lists_impl(&text, pos, count, depth) {
+    let syn = crate::editor::Syn::current(i);
+    let (text, _, beg, stop) = nav_text(i);
+    let pos = pos_idx(stop, from).max(beg);
+    match scan_lists_gnu(&syn, &text, beg, stop, pos, count, depth as i64, false) {
         Ok(Some(p)) => Ok(Value::Int(p as i128 + 1)),
         Ok(None) => Ok(Value::Nil),
-        Err(()) => Err(scan_error(i)),
+        Err(e) => Err(scan_err_flow(i, e)),
     }
 }
 
 fn f_scan_sexps(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let from = want_int(i, &a[0])?;
     let count = want_int(i, &a[1])?;
-    let b = cur(i);
-    let mut bb = b.borrow_mut();
-    let saved = bb.point();
-    let pos = pos_idx(bb.text_len(), from);
-    bb.set_point(pos);
-    let mut result = pos;
-    let mut steps = 0i128;
-    let mut failed = false;
-    let mut flow = None;
-    while steps < count.abs() {
-        let before = bb.point();
-        let r = if count < 0 {
-            backward_sexp_once(i, &mut bb)
-        } else {
-            forward_sexp_once(i, &mut bb)
-        };
-        match r {
-            Ok(()) => {
-                let after = bb.point();
-                if after == before {
-                    failed = true;
-                    break;
-                }
-                result = after;
-                steps += 1;
-            }
-            Err(e) => {
-                flow = Some(e);
-                break;
-            }
-        }
-    }
-    bb.set_point(saved);
-    drop(bb);
-    if let Some(e) = flow {
-        return Err(e);
-    }
-    if failed || steps < count.abs() {
-        return Ok(Value::Nil);
-    }
-    Ok(Value::Int(result as i128 + 1))
-}
-
-fn scan_error(i: &mut Interp) -> Flow {
-    let sym = i.intern("scan-error");
-    i.signal_data(sym, Vec::new())
-}
-
-/// Emacs's `(scan-error "Unbalanced parentheses" BEG END)' — 1-based.
-fn scan_error_at(i: &mut Interp, beg0: usize, end0: usize) -> Flow {
-    let sym = i.intern("scan-error");
-    i.signal_data(
-        sym,
-        vec![
-            Value::string("Unbalanced parentheses"),
-            Value::Int(beg0 as i128 + 1),
-            Value::Int(end0 as i128 + 1),
-        ],
-    )
-}
-
-fn nav_text(i: &Interp) -> (Vec<char>, usize) {
-    let b = i.buffers.get(i.current_buffer).unwrap();
-    let bb = b.borrow();
-    (bb.text.text().chars().collect(), bb.point())
-}
-
-fn f_down_list(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let n = a.get(0).and_then(|v| v.int()).unwrap_or(1).max(1);
-    let (text, mut p) = nav_text(i);
-    for _ in 0..n {
-        let mut j = p;
-        while j < text.len() && !sexp_is_open(text[j]) {
-            j += 1;
-        }
-        if j >= text.len() {
-            return Err(scan_error_at(i, p, text.len()));
-        }
-        p = j + 1;
-    }
-    cur(i).borrow_mut().set_point(p);
-    Ok(Value::Nil)
-}
-
-fn f_up_list(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let n = a.get(0).and_then(|v| v.int()).unwrap_or(1).max(1);
-    let (text, mut p) = nav_text(i);
-    for _ in 0..n {
-        let (_, stack) = sexp_pairs_before(&text, p);
-        match stack.last() {
-            Some(&o) => match sexp_match_close(&text, o) {
-                Some(c) => p = c + 1,
-                None => return Err(scan_error_at(i, o, text.len())),
-            },
-            None => return Err(scan_error_at(i, p, text.len())),
-        }
-    }
-    cur(i).borrow_mut().set_point(p);
-    Ok(Value::Nil)
-}
-
-fn f_forward_list(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let n = a.get(0).and_then(|v| v.int()).unwrap_or(1).max(1);
-    let (text, p) = nav_text(i);
-    match scan_lists_impl(&text, p, n, 0) {
-        Ok(Some(np)) => {
-            cur(i).borrow_mut().set_point(np);
-            Ok(Value::Nil)
-        }
+    let syn = crate::editor::Syn::current(i);
+    let (text, _, beg, stop) = nav_text(i);
+    let pos = pos_idx(stop, from).max(beg);
+    match scan_lists_gnu(&syn, &text, beg, stop, pos, count, 0, true) {
+        Ok(Some(p)) => Ok(Value::Int(p as i128 + 1)),
         Ok(None) => Ok(Value::Nil),
-        Err(()) => Err(scan_error_at(i, p, text.len())),
+        Err(e) => Err(scan_err_flow(i, e)),
     }
 }
 
-fn f_backward_list(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let n = a.get(0).and_then(|v| v.int()).unwrap_or(1).max(1);
-    let (text, p) = nav_text(i);
-    match scan_lists_impl(&text, p, -n, 0) {
-        Ok(Some(np)) => {
-            cur(i).borrow_mut().set_point(np);
-            Ok(Value::Nil)
-        }
-        Ok(None) => Ok(Value::Nil),
-        Err(()) => Err(scan_error_at(i, p, 0)),
-    }
-}
-
-fn f_backward_up_list(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let n = a.get(0).and_then(|v| v.int()).unwrap_or(1).max(1);
-    let (text, mut p) = nav_text(i);
-    for _ in 0..n {
-        let (_, stack) = sexp_pairs_before(&text, p);
-        match stack.last() {
-            Some(&o) => p = o,
-            None => return Err(scan_error_at(i, p, 0)),
-        }
-    }
-    cur(i).borrow_mut().set_point(p);
-    Ok(Value::Nil)
-}
-
+/// GNU `syntax-after': (CLASS . MATCHING-CHAR) for the char at POS.
 pub(crate) fn f_syntax_after(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let pos = want_int(i, &a[0])?;
+    let syn = crate::editor::Syn::current(i);
     let b = cur(i);
     let bb = b.borrow();
     let idx = pos_idx(bb.text_len(), pos);
@@ -3085,41 +3981,14 @@ pub(crate) fn f_syntax_after(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         return Ok(Value::Nil);
     }
     let c = bb.text.char_at(idx);
-    // GNU syntax classes: 0 ws, 1 punct, 2 word, 3 symbol, 4 open,
-    // 5 close, 6 expr-prefix, 7 string-quote, 8 math, 9 escape,
-    // 10 charquote, 11 comment-start, 12 comment-end, 14/15 fences.
-    let cls: i128 = match crate::lisp::regexp::syntax_code(c) {
-        b' ' => 0,
-        b'w' => 2,
-        b'_' => 3,
-        b'(' => 4,
-        b')' => 5,
-        b'\'' => 6,
-        b'"' => 7,
-        b'\\' => 9,
-        b'<' => 11,
-        b'>' => 12,
-        _ => 1,
-    };
-    let matching: Option<char> = match cls {
-        4 => Some(match c {
-            '(' => ')',
-            '[' => ']',
-            _ => '}',
-        }),
-        5 => Some(match c {
-            ')' => '(',
-            ']' => '[',
-            _ => '{',
-        }),
-        _ => None,
-    };
-    // GNU returns a dotted pair (CLASS . MATCHING-CHAR) for
-    // open/close classes, a singleton list otherwise.
-    Ok(match matching {
-        Some(m) => Value::cons(Value::Int(cls), Value::Int(m as i128)),
-        None => Value::list(vec![Value::Int(cls)]),
-    })
+    let cls = syn.class_at(idx, c);
+    let matching = syn.matching_at(idx, c);
+    // GNU returns (CLASS . MATCHING-CHAR); a nil cdr prints as a
+    // one-element list.
+    Ok(Value::cons(
+        Value::Int(cls),
+        matching.map(Value::Int).unwrap_or(Value::Nil),
+    ))
 }
 
 fn f_looking_back(i: &mut Interp, a: Vec<Value>) -> EvalResult {
@@ -4850,9 +5719,19 @@ fn f_narrow_to_region(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let b = cur(i);
     let mut bb = b.borrow_mut();
     let len = bb.text.len();
-    let s = pos_idx(len, want_int(i, &a[0])?);
-    let e = pos_idx(len, want_int(i, &a[1])?);
-    let (s, e) = (s.min(e), s.max(e));
+    let sl = want_int(i, &a[0])?;
+    let el = want_int(i, &a[1])?;
+    // GNU validates against the unrestricted bounds and signals
+    // args-out-of-range with the original arguments.
+    let (sl, el) = (sl.min(el), sl.max(el));
+    if !(1 <= sl && sl <= el && el <= len as i128 + 1) {
+        return Err(err_sym(
+            i,
+            "args-out-of-range",
+            vec![a[0].clone(), a[1].clone()],
+        ));
+    }
+    let (s, e) = ((sl - 1) as usize, (el - 1) as usize);
     bb.begv = s;
     bb.zv = e;
     if bb.point < s || bb.point > e {
@@ -4875,9 +5754,17 @@ fn f_labeled_narrow_to_region(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let b = cur(i);
     let mut bb = b.borrow_mut();
     let len = bb.text.len();
-    let s = pos_idx(len, want_int(i, &a[0])?);
-    let e = pos_idx(len, want_int(i, &a[1])?);
-    let (s, e) = (s.min(e), s.max(e));
+    let sl = want_int(i, &a[0])?;
+    let el = want_int(i, &a[1])?;
+    let (sl, el) = (sl.min(el), sl.max(el));
+    if !(1 <= sl && sl <= el && el <= len as i128 + 1) {
+        return Err(err_sym(
+            i,
+            "args-out-of-range",
+            vec![a[0].clone(), a[1].clone()],
+        ));
+    }
+    let (s, e) = ((sl - 1) as usize, (el - 1) as usize);
     let (pb, pz) = (bb.begv, bb.zv);
     bb.begv = s;
     bb.zv = e;
@@ -5964,8 +6851,7 @@ fn single_prop_change(i: &mut Interp, a: &[Value], forward: bool) -> EvalResult 
             return Value::Nil;
         }
         for tp in bb.text_props.iter().rev() {
-            if tp.prop == prop && (p as usize - 1) >= tp.start && (p as usize - 1) < tp.end
-            {
+            if tp.prop == prop && (p as usize - 1) >= tp.start && (p as usize - 1) < tp.end {
                 return tp.value.clone();
             }
         }

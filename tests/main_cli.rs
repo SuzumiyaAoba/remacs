@@ -167,6 +167,37 @@ fn pty_editor_smoke() {
         .stderr(Stdio::null());
     let mut child = cmd.spawn().expect("spawn script");
     let mut stdin = child.stdin.take().unwrap();
+    // Collect rendered output in the background so we can wait for the
+    // first frame before typing — otherwise input sent during startup
+    // is merely echoed and the editor may see C-x C-c before ever
+    // drawing, making the test racy under load.
+    let stdout = child.stdout.take().unwrap();
+    let buf = std::sync::Arc::new(std::sync::Mutex::new(Vec::<u8>::new()));
+    let buf_reader = buf.clone();
+    let reader = std::thread::spawn(move || {
+        use std::io::Read;
+        let mut so = stdout;
+        let mut tmp = [0u8; 8192];
+        loop {
+            match so.read(&mut tmp) {
+                Ok(0) | Err(_) => break,
+                Ok(n) => buf_reader.lock().unwrap().extend_from_slice(&tmp[..n]),
+            }
+        }
+        buf_reader
+    });
+    // Wait for the initial frame (the *scratch* mode line).
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+    loop {
+        if String::from_utf8_lossy(&buf.lock().unwrap()).contains("scratch") {
+            break;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "timed out waiting for the first rendered frame"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
     let keys: Vec<&[u8]> = vec![
         b"hello",
         b"\x15\x35z",                // C-u 5 z (universal/digit-argument path)
@@ -200,12 +231,13 @@ fn pty_editor_smoke() {
         std::thread::sleep(std::time::Duration::from_millis(150));
     }
     drop(stdin);
-    let out = child.wait_with_output().unwrap();
-    let text = String::from_utf8_lossy(&out.stdout);
+    let status = child.wait().unwrap();
+    let out = reader.join().unwrap();
+    let text = String::from_utf8_lossy(&out.lock().unwrap()).into_owned();
     assert!(
         text.contains("scratch"),
         "expected a rendered frame, got: {}",
         &text[..text.len().min(400)]
     );
-    assert!(out.status.success());
+    assert!(status.success());
 }

@@ -471,7 +471,11 @@ fn f_get_byte(i: &mut Interp, a: Vec<Value>) -> EvalResult {
             let b = cur(i);
             let bb = b.borrow();
             let pos = a.get(0).and_then(|v| v.int()).unwrap_or(bb.point() as i128);
-            let p = if pos < 1 { usize::MAX } else { (pos - 1) as usize };
+            let p = if pos < 1 {
+                usize::MAX
+            } else {
+                (pos - 1) as usize
+            };
             if p >= bb.text.len() {
                 return Err(i.signal_data(
                     crate::lisp::sym::ARGS_OUT_OF_RANGE,
@@ -518,9 +522,7 @@ fn f_find_file_name_handler(i: &mut Interp, a: Vec<Value>) -> EvalResult {
                         let chars: Vec<char> = file.chars().collect();
                         let matched = crate::lisp::regexp::compile_case(&pat, false)
                             .ok()
-                            .and_then(|re| {
-                                crate::lisp::regexp::search_full(&re, &chars, 0)
-                            })
+                            .and_then(|re| crate::lisp::regexp::search_full(&re, &chars, 0))
                             .is_some();
                         if matched {
                             return Ok(handler);
@@ -2603,16 +2605,12 @@ fn f_win_line_height(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
 }
 
 fn f_backward_prefix_chars(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
-    // Skip back over chars with expression-prefix syntax (' ` , #).
+    // GNU: skip back over unquoted `''-class chars and `p'-flagged chars.
+    let syn = crate::editor::Syn::current(i);
     let b = cur(i);
     let mut bb = b.borrow_mut();
-    let mut p = bb.point();
-    while p > 0 {
-        match bb.text.char_at(p - 1) {
-            '\'' | '`' | ',' | '#' => p -= 1,
-            _ => break,
-        }
-    }
+    let text: Vec<char> = bb.text.text().chars().collect();
+    let p = crate::buffer::primitives::backward_prefix_chars(&syn, &text, bb.begv, bb.point());
     bb.set_point(p);
     Ok(Value::Nil)
 }

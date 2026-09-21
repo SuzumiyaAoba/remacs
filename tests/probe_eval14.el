@@ -1208,6 +1208,78 @@
   (ci (backward-sexp 2))
   (ci (forward-sexp 99)))
 
+;; ---------- GNU-style syntax scanner paths ----------
+;; Two-char comments, nesting, fences, prefix flags, math, escapes.
+(let ((ct (make-syntax-table)))
+  (modify-syntax-entry ?/ ". 124b" ct)
+  (modify-syntax-entry ?* ". 23n" ct)
+  (modify-syntax-entry ?\n "> b" ct)
+  (with-temp-buffer
+    (set-syntax-table ct)
+    (setq-local parse-sexp-ignore-comments t)
+    (insert "a /* c /* d */ e */ b (x y) \"s\" \\'q #f")
+    (goto-char 1)
+    (dotimes (_ 8) (ci (forward-sexp 1)))
+    (dotimes (_ 6) (ci (backward-sexp 1)))
+    (ci (scan-lists 1 2 0))
+    (ci (scan-sexps 1 -2))
+    (goto-char 1) (ci (forward-comment 1))
+    (goto-char (point-max)) (ci (forward-comment -1))
+    (ci (down-list 1)) (ci (up-list -1))))
+;; Fence comments/strings, math, escapes at boundary, scan errors.
+(let ((ct (make-syntax-table)))
+  (modify-syntax-entry ?| "|" ct)
+  (modify-syntax-entry ?! "!" ct)
+  (modify-syntax-entry ?$ "$" ct)
+  (modify-syntax-entry ?\n ">" ct)
+  (with-temp-buffer
+    (set-syntax-table ct)
+    (setq-local parse-sexp-ignore-comments t)
+    (insert "a |s| !c! $m$ (x \"y\") \\'z")
+    (goto-char 1)
+    (dotimes (_ 8) (ci (forward-sexp 1)))
+    (dotimes (_ 6) (ci (backward-sexp 1)))
+    (ci (up-list 1)) (ci (down-list -1)) (ci (backward-up-list 1))))
+;; scan-error data + premature close + boundary nils.
+(with-temp-buffer
+  (insert "(a b")
+  (ci (scan-lists 1 1 0))
+  (ci (scan-sexps 1 2))
+  (insert ")") (goto-char (point-max))
+  (ci (scan-lists (point) 1 0))
+  (ci (scan-sexps (point) -2))
+  (goto-char 2) (ci (backward-sexp 1))
+  (goto-char 3) (ci (up-list 1)) (ci (up-list -1)))
+;; forward-sexp-function dispatch + zero count.
+(with-temp-buffer
+  (insert "a b")
+  (let ((forward-sexp-function (lambda (n) (goto-char (point-max)))))
+    (ci (forward-sexp 1)))
+  (goto-char 1) (ci (forward-sexp 0)) (ci (backward-sexp 0)))
+;; prefix-flag + quoting in backward-prefix-chars.
+(let ((ct (make-syntax-table)))
+  (modify-syntax-entry ?' "' p" ct)
+  (modify-syntax-entry ?# ". p" ct)
+  (modify-syntax-entry ?\\ "\\" ct)
+  (with-temp-buffer
+    (set-syntax-table ct)
+    (insert "a #'b \\'c")
+    (goto-char (point-max))
+    (ci (backward-prefix-chars)) (ci (backward-sexp 1))
+    (goto-char 1) (ci (forward-comment 1))))
+;; comment-end-can-be-escaped path.
+(let ((ct (make-syntax-table)))
+  (modify-syntax-entry ?\; "<" ct)
+  (modify-syntax-entry ?\n ">" ct)
+  (modify-syntax-entry ?\\ "\\" ct)
+  (with-temp-buffer
+    (set-syntax-table ct)
+    (setq-local parse-sexp-ignore-comments t)
+    (setq-local comment-end-can-be-escaped t)
+    (insert "; c \\\n still comment\nz")
+    (goto-char 1) (ci (forward-comment 1)) (ci (forward-sexp 1))
+    (goto-char (point-max)) (ci (forward-comment -1))))
+
 ;; ---------- digit-argument remaining arms ----------
 (ci (let ((prefix-arg '(16)) (last-command-event (+ ?- (ash 1 27))))
       (digit-argument)))
@@ -6137,4 +6209,56 @@
 (ci (translate-region 1 nil (make-hash-table)))
 (ci (translate-region nil nil (make-hash-table)))
 (ci (translate-region 1 2 (make-hash-table)))
+;; ---------- syntax-propertize / parse-sexp-lookup-properties ----------
+;; NB: earlier coverage forms set (default-value 'buffer-read-only) to
+;; t, so new buffers are read-only here; clear it locally per buffer.
+(with-temp-buffer
+  (emacs-lisp-mode)
+  (setq buffer-read-only nil)
+  (insert "(defun foo (x ,@y) ; doc\n  `(a ,@b ?\\N{OK} ## #s(r) #&2\"z\"))\n")
+  (ci (syntax-propertize (point-max)))
+  (ci (internal--syntax-propertize (point-max)))
+  ;; scan the buffer incrementally through propertized text
+  (let ((st nil) (p 1))
+    (while (< (+ p 5) (point-max))
+      (setq st (parse-partial-sexp p (+ p 5) nil nil st)
+            p (point))))
+  (ci (syntax-ppss 50))
+  (ci (get-text-property 13 'syntax-table))
+  (ci (goto-char 12) (forward-sexp 1) (backward-sexp 1))
+  (ci (goto-char 12) (forward-sexp 2) (up-list -1))
+  (ci (elisp-mode-syntax-propertize 1 (point-max))))
+;; propertize with nil function (no-op path)
+(with-temp-buffer
+  (setq buffer-read-only nil)
+  (insert "x ,@y ## z\n")
+  (setq-local syntax-propertize-function nil)
+  (ci (syntax-propertize 5))
+  (ci (syntax-propertize 1)))
+;; propertize inside a narrowed buffer
+(with-temp-buffer
+  (emacs-lisp-mode)
+  (setq buffer-read-only nil)
+  (insert "aa ,@bb cc\n")
+  (narrow-to-region 4 9)
+  (ci (syntax-propertize 9))
+  (ci (syntax-ppss 8))
+  (widen))
+;; syntax-propertize-chunks / --done bookkeeping
+(ci (let ((syntax-propertize-chunks 3))
+      (with-temp-buffer
+        (emacs-lisp-mode)
+        (setq buffer-read-only nil)
+        (insert ",@x ,@y ,@z ,@w ,@v")
+        (syntax-propertize 4)
+        (list syntax-propertize--done
+              (get-text-property 2 'syntax-table)))))
+;; scan-lists/scan-sexps through propertized ,@
+(with-temp-buffer
+  (emacs-lisp-mode)
+  (setq buffer-read-only nil)
+  (insert "(a ,@b (c ,@d) e)\n")
+  (ci (goto-char 3) (forward-sexp 1))
+  (ci (goto-char 1) (forward-list 1) (backward-list 1))
+  (ci (down-list 1) (backward-up-list 1)))
 (princ "cov14 done\n")

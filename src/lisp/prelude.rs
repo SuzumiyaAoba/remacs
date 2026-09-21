@@ -190,7 +190,12 @@ Symbols are also allowed; their print names are used instead."
 
 (defmacro with-silent-modifications (&rest body)
   "Execute BODY, suppressing modification hooks (simplified)."
-  (cons 'progn body))
+  (list 'let '((inhibit-modification-hooks t)
+              (inhibit-read-only t)
+              deactivate-mark
+              buffer-file-format
+              buffer-file-coding-system)
+        (cons 'progn body)))
 
 (defun member-ignore-case (elt list)
   "Like `member', but ignore string case differences."
@@ -7911,9 +7916,91 @@ Port of GNU's lisp-mode.el indentation dispatch."
 
 ;; ---------- major modes ----------
 
+(defvar parse-sexp-ignore-comments nil
+  "Non-nil means `forward-sexp', etc., should treat comments as whitespace.")
+
 (define-derived-mode prog-mode nil "ProgMode"
   "Major mode for editing programming languages.
-Typically the base mode for language-specific modes.")
+Typically the base mode for language-specific modes."
+  (setq-local parse-sexp-ignore-comments t))
+
+;; ---------- syntax-propertize (GNU syntax.el) ----------
+
+(defvar syntax-propertize-function nil
+  "Mode-specific function to apply `syntax-table' text properties.
+Called with two arguments (START END) covering the text to propertize.")
+(defvar parse-sexp-lookup-properties nil
+  "Non-nil means `forward-sexp', etc., obey `syntax-table' property.")
+(defvar syntax-propertize--done -1
+  "Position up to which syntax-table properties have been set.")
+(make-variable-buffer-local 'syntax-propertize--done)
+(defvar syntax-propertize-chunks 2000
+  "Minimal size of a syntax-propertize chunk.")
+(defvar syntax-ppss-table nil
+  "Syntax table used by `syntax-ppss' and `syntax-propertize'.")
+
+(defun syntax-propertize (pos)
+  "Ensure that syntax-table properties are set until POS (a buffer point)."
+  (when (< syntax-propertize--done pos)
+    (if (memq syntax-propertize-function '(nil ignore))
+        (setq syntax-propertize--done (max (point-max) pos))
+      (setq-local parse-sexp-lookup-properties t)
+      (when (< syntax-propertize--done (point-min))
+        (setq syntax-propertize--done (point-min)))
+      (with-silent-modifications
+        (let* ((start (max (min syntax-propertize--done (point-max))
+                           (point-min)))
+               (end (max pos
+                         (min (point-max)
+                              (+ start syntax-propertize-chunks)))))
+          (remove-text-properties
+           start end '(syntax-table nil syntax-multiline nil))
+          ;; Move the limit before calling the function, so it's done
+          ;; in case of errors (as in GNU).
+          (setq syntax-propertize--done end)
+          ;; Bind `syntax-propertize--done' to avoid recursion.
+          (let ((syntax-propertize--done most-positive-fixnum))
+            (funcall syntax-propertize-function start end)))))))
+
+(defun internal--syntax-propertize (charpos)
+  "Propertize text through at least CHARPOS (called from the scanner)."
+  (save-match-data
+    (syntax-propertize
+     (min (+ syntax-propertize-chunks charpos) (point-max)))))
+
+(defun elisp-mode-syntax-propertize (start end)
+  ;; Port of GNU `elisp-mode-syntax-propertize' (elisp-mode.el): the
+  ;; same four rules as its `syntax-propertize-rules' expansion.
+  (save-excursion
+    (goto-char start)
+    (let ((case-fold-search nil))
+      (while (< (point) end)
+        (cond
+       ;; Empty symbol.
+       ((looking-at (string ?# ?#))
+        (unless (nth 8 (syntax-ppss))
+          (put-text-property (point) (match-end 0)
+                             'syntax-table (string-to-syntax "_")))
+        (goto-char (match-end 0)))
+       ;; Prevent the @ from becoming part of a following symbol.
+       ((looking-at ",@")
+        (unless (nth 8 (syntax-ppss))
+          (put-text-property (point) (match-end 0)
+                             'syntax-table (string-to-syntax "'")))
+        (goto-char (match-end 0)))
+       ;; Unicode character names.
+       ((looking-at "\\?\\\\N{[-A-Za-z0-9 ]\\{,100\\}}")
+        (unless (nth 8 (syntax-ppss))
+          (put-text-property (point) (match-end 0)
+                             'syntax-table (string-to-syntax "_")))
+        (goto-char (match-end 0)))
+       ;; Bool-vectors, records, char-tables.
+       ((looking-at (concat (string ?#) "\\(&[0-9]+\\|s\\|\\^+\\)\\(\"\\|(\\|\\[\\)"))
+        (unless (save-excursion (nth 8 (syntax-ppss (match-beginning 0))))
+          (put-text-property (match-beginning 1) (match-end 1)
+                             'syntax-table (string-to-syntax "'")))
+        (goto-char (match-end 1)))
+       (t (forward-char 1)))))))
 
 (define-derived-mode special-mode nil "Special"
   "Major mode for buffers containing read-only text.")
@@ -7983,7 +8070,12 @@ Typically the base mode for language-specific modes.")
   (set-syntax-table emacs-lisp-mode-syntax-table)
   (setq-local indent-line-function #'lisp-indent-line)
   (setq-local comment-start ";")
-  (setq-local comment-start-skip ";+ *"))
+  (setq-local comment-start-skip ";+ *")
+  (setq-local syntax-propertize-function #'elisp-mode-syntax-propertize)
+  ;; GNU ends up with this enabled in elisp buffers (set lazily by
+  ;; `syntax-propertize'); setting it eagerly matches the observable
+  ;; state.
+  (setq-local parse-sexp-lookup-properties t))
 
 (define-derived-mode lisp-interaction-mode emacs-lisp-mode
   "Lisp Interaction"
@@ -8057,6 +8149,213 @@ second so it aligns with the text that follows point."
   (interactive "*P")
   (let ((end (save-excursion (forward-sexp (or arg 1)) (point))))
     (when end (indent-region (point) end))))
+
+;; ---------- balanced-expression navigation (GNU lisp.el) ----------
+
+(defun buffer-end (arg)
+  "Return `point-max' if ARG is positive, `point-min' otherwise."
+  (if (> arg 0) (point-max) (point-min)))
+
+(defsubst ppss-comment-or-string-start (state)
+  "Return the start position of the innermost string/comment in STATE."
+  (nth 8 state))
+
+(defun forward-sexp-default-function (&optional arg)
+  "Default function for `forward-sexp-function'."
+  (goto-char (or (scan-sexps (point) arg) (buffer-end arg)))
+  (if (< arg 0) (backward-prefix-chars)))
+
+(defvar forward-sexp-function nil
+  "If non-nil, `forward-sexp' delegates to this function.
+Should take the same arguments and behave similarly to `forward-sexp'.")
+
+(defun forward-sexp (&optional arg interactive)
+  "Move forward across one balanced expression (sexp).
+With ARG, do it that many times.  Negative arg -N means move
+backward across N balanced expressions.  This command assumes
+point is not in a string or comment.  Calls
+`forward-sexp-function' to do the work, if that is non-nil.
+If unable to move over a sexp, signal `scan-error' with three
+arguments: a message, the start of the obstacle (usually a
+parenthesis or list marker of some kind), and end of the
+obstacle.  If INTERACTIVE is non-nil, as it is interactively,
+report errors as appropriate for this kind of usage."
+  (interactive "^p\nd")
+  (if interactive
+      (condition-case nil
+          (forward-sexp arg nil)
+        (scan-error (user-error (if (> arg 0)
+                                    "No next sexp"
+                                  "No previous sexp"))))
+    (or arg (setq arg 1))
+    (if forward-sexp-function
+        (funcall forward-sexp-function arg)
+      (forward-sexp-default-function arg))))
+
+(defun backward-sexp (&optional arg interactive)
+  "Move backward across one balanced expression (sexp).
+With ARG, do it that many times.  Negative arg -N means
+move forward across N balanced expressions.
+This command assumes point is not in a string or comment.
+Uses `forward-sexp' to do the work.
+If INTERACTIVE is non-nil, as it is interactively,
+report errors as appropriate for this kind of usage."
+  (interactive "^p\nd")
+  (or arg (setq arg 1))
+  (forward-sexp (- arg) interactive))
+
+(defun forward-list (&optional arg interactive)
+  "Move forward across one balanced group of parentheses.
+This command will also work on other parentheses-like expressions
+defined by the current language mode.
+With ARG, do it that many times.
+Negative arg -N means move backward across N groups of parentheses.
+This command assumes point is not in a string or comment.
+If INTERACTIVE is non-nil, as it is interactively,
+report errors as appropriate for this kind of usage."
+  (interactive "^p\nd")
+  (if interactive
+      (condition-case nil
+          (forward-list arg nil)
+        (scan-error (user-error (if (> arg 0)
+                                    "No next group"
+                                  "No previous group"))))
+    (or arg (setq arg 1))
+    (goto-char (or (scan-lists (point) arg 0) (buffer-end arg)))))
+
+(defun backward-list (&optional arg interactive)
+  "Move backward across one balanced group of parentheses.
+This command will also work on other parentheses-like expressions
+defined by the current language mode.
+With ARG, do it that many times.
+Negative arg -N means move forward across N groups of parentheses.
+This command assumes point is not in a string or comment.
+If INTERACTIVE is non-nil, as it is interactively,
+report errors as appropriate for this kind of usage."
+  (interactive "^p\nd")
+  (or arg (setq arg 1))
+  (forward-list (- arg) interactive))
+
+(defun down-list (&optional arg interactive)
+  "Move forward down one level of parentheses.
+This command will also work on other parentheses-like expressions
+defined by the current language mode.
+With ARG, do this that many times.
+A negative argument means move backward but still go down a level.
+This command assumes point is not in a string or comment.
+If INTERACTIVE is non-nil, as it is interactively,
+report errors as appropriate for this kind of usage."
+  (interactive "^p\nd")
+  (when (ppss-comment-or-string-start (syntax-ppss))
+    (user-error "This command doesn't work in strings or comments"))
+  (if interactive
+      (condition-case nil
+          (down-list arg nil)
+        (scan-error (user-error "At bottom level")))
+    (or arg (setq arg 1))
+    (let ((inc (if (> arg 0) 1 -1)))
+      (while (/= arg 0)
+        (goto-char (or (scan-lists (point) inc -1) (buffer-end arg)))
+        (setq arg (- arg inc))))))
+
+(defun backward-up-list (&optional arg escape-strings no-syntax-crossing)
+  "Move backward out of one level of parentheses.
+This command will also work on other parentheses-like expressions
+defined by the current language mode.  With ARG, do this that
+many times.  A negative argument means move forward but still to
+a less deep spot.
+
+If ESCAPE-STRINGS is non-nil (as it is interactively), move out
+of enclosing strings as well.
+
+If NO-SYNTAX-CROSSING is non-nil (as it is interactively), prefer
+to break out of any enclosing string instead of moving to the
+start of a list broken across multiple strings.
+
+On error, location of point is unspecified."
+  (interactive "^p\nd\nd")
+  (up-list (- (or arg 1)) escape-strings no-syntax-crossing))
+
+(defun up-list (&optional arg escape-strings no-syntax-crossing)
+  "Move forward out of one level of parentheses.
+This command will also work on other parentheses-like expressions
+defined by the current language mode.  With ARG, do this that
+many times.  A negative argument means move backward but still to
+a less deep spot.
+
+If ESCAPE-STRINGS is non-nil (as it is interactively), move out
+of enclosing strings as well.
+
+If NO-SYNTAX-CROSSING is non-nil (as it is interactively), prefer
+to break out of any enclosing string instead of moving to the
+end of a list broken across multiple strings.
+
+On error, location of point is unspecified."
+  (interactive "^p\nd\nd")
+  (or arg (setq arg 1))
+  (let ((inc (if (> arg 0) 1 -1))
+        (pos nil))
+    (while (/= arg 0)
+      (condition-case err
+          (save-restriction
+            ;; If we've been asked not to cross string boundaries
+            ;; and we're inside a string, narrow to that string so
+            ;; that scan-lists doesn't find a match in a different
+            ;; string.
+            (when no-syntax-crossing
+              (let* ((syntax (syntax-ppss))
+                     (string-comment-start (nth 8 syntax)))
+                (when string-comment-start
+                  (save-excursion
+                    (goto-char string-comment-start)
+                    (narrow-to-region
+                     (point)
+                     (if (nth 3 syntax) ; in string
+                         (condition-case nil
+                             (progn (forward-sexp) (point))
+                           (scan-error (point-max)))
+                       (forward-comment 1)
+                       (point)))))))
+            (if (null forward-sexp-function)
+                (goto-char (or (scan-lists (point) inc 1)
+                               (buffer-end arg)))
+              (condition-case err
+                  (while (progn (setq pos (point))
+                                (forward-sexp inc)
+                                (/= (point) pos)))
+                (scan-error (goto-char (nth (if (> arg 0) 3 2) err))))
+              (if (= (point) pos)
+                  (signal 'scan-error
+                          (list "Unbalanced parentheses" (point) (point))))))
+        (scan-error
+         (let ((syntax nil))
+           (or
+            ;; If we bumped up against the end of a list, see whether
+            ;; we're inside a string: if so, just go to the beginning
+            ;; or end of that string.
+            (and escape-strings
+                 (or syntax (setq syntax (syntax-ppss)))
+                 (nth 3 syntax)
+                 (goto-char (nth 8 syntax))
+                 (progn (when (> inc 0)
+                          (forward-sexp))
+                        t))
+            ;; If we narrowed to a comment above and failed to escape
+            ;; it, the error might be our fault, not an indication
+            ;; that we're out of syntax.  Try again from beginning or
+            ;; end of the comment.
+            (and no-syntax-crossing
+                 (or syntax (setq syntax (syntax-ppss)))
+                 (nth 4 syntax)
+                 (goto-char (nth 8 syntax))
+                 (or (< inc 0)
+                     (forward-comment 1))
+                 (setq arg (+ arg inc)))
+            (if no-syntax-crossing
+                ;; Assume called interactively; don't signal an error.
+                (user-error "At top level")
+              (signal (car err) (cdr err)))))))
+      (setq arg (- arg inc)))))
 
 ;; *scratch* starts in lisp-interaction-mode (GNU batch behavior too).
 (when (get-buffer "*scratch*")

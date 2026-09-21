@@ -57,6 +57,11 @@ pub struct Buffer {
     /// shared. (Text itself is currently copied at creation rather than
     /// aliased — edit propagation is not yet modeled.)
     pub base_buffer: Option<usize>,
+    /// Buffer-local syntax table, installed by `set-syntax-table'
+    /// (GNU: a C-level buffer field, NOT a Lisp variable — plain
+    /// `setq' on `syntax-table' does not affect the scanner).
+    /// None means the standard syntax table.
+    pub syntax_table: Option<crate::lisp::value::Value>,
     /// Buffer-local case table (`current-case-table'), or None for the
     /// standard table.
     pub case_table: Option<crate::lisp::value::Value>,
@@ -126,6 +131,7 @@ impl Buffer {
             overlays: Vec::new(),
             live: true,
             base_buffer: None,
+            syntax_table: None,
             case_table: None,
             category_table: None,
             narrow_labels: Vec::new(),
