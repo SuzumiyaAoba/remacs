@@ -1235,13 +1235,10 @@ pub(crate) static SUBRS: &[Subr] = &[
         f_file_truename,
         "Canonical name of FILENAME."
     ),
-    S!("file-name-history", 0, 0, f_nil, ""),
-    S!("insert-directory-literally", many 0, f_nil, ""),
-    S!("insert-directory", many 0, f_nil, ""),
     S!("unhandled-file-name-directory", 1, 1, f_nil, ""),
     S!("file-remote-p", 1, 3, f_file_remote_p, ""),
     S!("file-local-name", 1, 1, f_identity, ""),
-    S!("file-name-quote", 1, 1, f_identity, ""),
+    S!("file-name-quote", 1, 2, f_identity, ""),
     S!("file-name-unquote", 1, 1, f_identity, ""),
     S!("file-accessible-directory-p", 1, 1, f_file_directory_p, ""),
     S!("verify-visited-file-modtime-princ", 0, 0, f_nil, ""),
@@ -4665,8 +4662,52 @@ fn f_expand_file_name(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 }
 fn f_locate_file_internal(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     // (locate-file-internal FILENAME PATH &optional SUFFIXES MODE)
-    // Try FILENAME and FILENAME+SUFFIX in each directory of PATH.
+    // MODE: nil = file-readable-p semantics (dirs skipped), an integer
+    // = access(2) mask, otherwise a predicate funcalled per candidate;
+    // a directory is accepted only when the predicate returns `dir-ok'.
     let name = want_str(i, &a[0])?;
+    let pred = a.get(3).cloned().unwrap_or(Value::Nil);
+    let dir_ok = i.intern("dir-ok");
+    let accept = |i: &mut Interp, cand: &str| -> Result<bool, Flow> {
+        let md = std::fs::metadata(cand);
+        match &pred {
+            Value::Int(mask) => {
+                if md.is_err() {
+                    return Ok(false);
+                }
+                #[cfg(unix)]
+                unsafe {
+                    let c = std::ffi::CString::new(cand).unwrap_or_default();
+                    return Ok(libc::access(c.as_ptr(), *mask as i32) == 0);
+                }
+                #[allow(unreachable_code)]
+                Ok(true)
+            }
+            Value::Nil => {
+                // file-readable-p semantics: R_OK via access(2), and
+                // directories are skipped (no dir-ok without a predicate).
+                #[cfg(unix)]
+                unsafe {
+                    let c = std::ffi::CString::new(cand).unwrap_or_default();
+                    return Ok(
+                        libc::access(c.as_ptr(), libc::R_OK) == 0
+                            && !md.map(|m| m.is_dir()).unwrap_or(false),
+                    );
+                }
+                #[allow(unreachable_code)]
+                Ok(md.map(|m| !m.is_dir()).unwrap_or(false))
+            }
+            p => {
+                let args = Value::list(vec![Value::string(cand.to_string())]);
+                let r = i.call_function(&p.clone(), &args, None)?;
+                Ok(match &md {
+                    Ok(m) if m.is_dir() => matches!(&r, Value::Sym(s) if *s == dir_ok),
+                    Ok(_) => r.truthy(),
+                    Err(_) => false,
+                })
+            }
+        }
+    };
     let mut suffixes = vec![String::new()];
     if let Some(sufs) = a.get(2).and_then(|v| v.list_to_vec().ok()) {
         for s in sufs {
@@ -4679,7 +4720,7 @@ fn f_locate_file_internal(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         // Absolute: only suffix variants apply.
         for suf in &suffixes {
             let cand = format!("{name}{suf}");
-            if std::path::Path::new(&cand).exists() {
+            if accept(i, &cand)? {
                 return Ok(Value::string(cand));
             }
         }
@@ -4695,7 +4736,7 @@ fn f_locate_file_internal(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         };
         for suf in &suffixes {
             let cand = format!("{}/{}{}", dir.trim_end_matches('/'), name, suf);
-            if std::path::Path::new(&cand).exists() {
+            if accept(i, &cand)? {
                 return Ok(Value::string(cand));
             }
         }

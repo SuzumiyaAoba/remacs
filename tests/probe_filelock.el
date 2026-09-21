@@ -203,4 +203,42 @@
                                               (expand-file-name "d2" base))
                             (error e)))))
     (delete-directory base t)))
+
+;; lock-file/unlock-file subrs (filelock.c) and insert-directory.
+(let* ((dir (make-temp-file "remacs-lk" t))
+       (f (expand-file-name "x.txt" dir)))
+  (unwind-protect
+      (progn
+        (with-temp-file f (insert "z"))
+        ;; lock-file creates .#FILE regardless of buffer state.
+        (cl-assert (null (lock-file f)))
+        (cl-assert (eq (file-locked-p f) t))
+        ;; unlock-file removes our lock.
+        (cl-assert (null (unlock-file f)))
+        (cl-assert (null (file-locked-p f)))
+        ;; Both are nil/best-effort on missing paths.
+        (cl-assert (null (unlock-file "/no/such/remacs-xyz")))
+        ;; file-acl: nil for ordinary files.
+        (cl-assert (null (file-acl f)))
+        ;; insert-directory: ls -d output lands in the buffer.
+        (with-temp-buffer
+          (insert-directory f "-l")
+          (cl-assert (string-match "x\\.txt" (buffer-string))))
+        ;; missing file: reference build returns nil, inserts nothing.
+        (with-temp-buffer
+          (insert-directory "/no/such/remacs-xyz" "-l")
+          (cl-assert (= (buffer-size) 0)))
+        ;; executable-find / locate-file with integer predicate.
+        (cl-assert (equal (file-name-nondirectory (executable-find "ls")) "ls"))
+        (cl-assert (null (executable-find "remacs-no-such-cmd")))
+        (cl-assert (locate-file "ls" exec-path '("") 1))
+        ;; Symbol predicate -> access mask; unknown symbol => F_OK (exists).
+        (cl-assert (locate-file "ls" exec-path '("") 'remacs-bogus))
+        (cl-assert (null (locate-file "remacs-no-such" exec-path '("") 1)))
+        ;; Symbol predicate `executable' -> X_OK mask.
+        (cl-assert (locate-file "ls" exec-path '("") 'executable))
+        ;; file-name-history is a variable, not a function.
+        (cl-assert (boundp 'file-name-history))
+        (cl-assert (listp file-name-history)))
+    (delete-directory dir t)))
 (princ "filelock-ok")

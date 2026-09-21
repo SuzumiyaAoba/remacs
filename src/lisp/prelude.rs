@@ -2085,22 +2085,34 @@ any path, with optional .so/.dylib/.elc/.el/.gz extension."
    ((memq thing '(char)) (forward-char n))
    (t (error "Unknown thing: %s" thing))))
 
+;; files.el (verbatim GNU).
 (defun locate-file (filename path &optional suffixes predicate)
-  "Search PATH (a directory or list of directories) for FILENAME,
-trying SUFFIXES; PREDICATE (default `file-exists-p') must pass."
-  (let ((dirs (if (listp path) path (list path)))
-        (sufs (or suffixes '("")))
-        (pred (or predicate #'file-exists-p))
-        (found nil))
-    (while (and dirs (not found))
-      (let ((ss sufs))
-        (while ss
-          (let ((f (expand-file-name (concat filename (car ss)) (car dirs))))
-            (when (funcall pred f)
-              (setq found f ss nil)))
-          (setq ss (cdr ss))))
-      (setq dirs (cdr dirs)))
-    found))
+  "Search for FILENAME through PATH.
+If found, return the absolute file name of FILENAME; otherwise
+return nil.
+PATH should be a list of directories to look in, like the lists in
+`exec-path' or `load-path'.
+If SUFFIXES is non-nil, it should be a list of suffixes to append to
+file name when searching.  If SUFFIXES is nil, it is equivalent to (\"\").
+Use (\"/\") to disable PATH search, but still try the suffixes in SUFFIXES.
+If non-nil, PREDICATE is used instead of `file-readable-p'.
+
+This function will normally skip directories, so if you want it to find
+directories, make sure the PREDICATE function returns `dir-ok' for them.
+
+PREDICATE can also be an integer to pass to the `access' system call,
+in which case file name handlers are ignored.  This usage is deprecated.
+For compatibility, PREDICATE can also be one of the symbols
+`executable', `writable', `readable', or `exists', or a list of
+one or more of those symbols."
+  (if (and predicate (symbolp predicate) (not (functionp predicate)))
+      (setq predicate (list predicate)))
+  (when (and (consp predicate) (not (functionp predicate)))
+    (setq predicate
+	  (logior (if (memq 'executable predicate) 1 0)
+		  (if (memq 'writable predicate) 2 0)
+		  (if (memq 'readable predicate) 4 0))))
+  (locate-file-internal filename path suffixes predicate))
 
 (defun file-name-parent-directory (file)
   "Return the parent directory of directory FILE, or nil."
@@ -8691,6 +8703,10 @@ and version strings."
 (defvar create-lockfiles t
   "Non-nil means use lockfiles to avoid editing clashes.")
 
+;; minibuf.c DEFVAR_LISP.
+(defvar file-name-history nil
+  "History list of file names read in minibuffer.")
+
 ;; files.el: directory copying (verbatim GNU).
 (defcustom copy-directory-create-symlink nil
   "Whether copying a directory creates a symbolic link when the source
@@ -8803,6 +8819,522 @@ into NEWNAME instead."
 	  (if modes (set-file-modes newname modes follow-flag))
 	  (when times
             (set-file-times newname times follow-flag)))))))
+
+;; coding.c: return a coding system like CS with the given eol type.
+;; Our coding systems are BASE-EOL symbols (utf-8-unix), as in GNU names.
+(defun coding-system-change-eol-conversion (coding-system eol-type)
+  "Return a coding system like CODING-SYSTEM but with EOL-TYPE.
+EOL-TYPE is `unix', `dos', `mac', or 0, 1, 2 respectively."
+  (let ((eol (cond ((memq eol-type '(unix 0)) "unix")
+                   ((memq eol-type '(dos 1)) "dos")
+                   ((memq eol-type '(mac 2)) "mac")
+                   (t "unix")))
+        (base (coding-system-base coding-system)))
+    (intern (concat (symbol-name base) "-" eol))))
+
+;; files.el: insert-directory cluster (verbatim GNU).
+;; files.el 1287.
+(defun executable-find (command &optional remote)
+  "Search for COMMAND in `exec-path' and return the absolute file name.
+Return nil if COMMAND is not found anywhere in `exec-path'.
+If REMOTE is non-nil, search on a remote host if `default-directory' is
+remote, otherwise search locally."
+  (if (and remote (file-remote-p default-directory))
+      (let ((res (locate-file
+	          command
+	          (mapcar
+	           (lambda (x) (concat (file-remote-p default-directory) x))
+	           (exec-path))
+	          exec-suffixes 'file-executable-p)))
+        (when (stringp res) (file-local-name res)))
+    ;; Use 1 rather than file-executable-p to better match the
+    ;; behavior of call-process.
+    (let ((default-directory (file-name-quote default-directory 'top)))
+      (locate-file command exec-path exec-suffixes 1))))
+
+
+(defun shell-quote-wildcard-pattern (pattern)
+  "Quote characters special to the shell in PATTERN, leave wildcards alone.
+
+PATTERN is assumed to represent a file-name wildcard suitable for the
+underlying filesystem.  For Unix and GNU/Linux, each character from the
+set [ \\t\\n;<>&|()\\=`\\='\"#$] is quoted with a backslash; for DOS/Windows, all
+the parts of the pattern that don't include wildcard characters are
+quoted with double quotes.
+
+This function leaves alone existing quote characters (\\ on Unix and \"
+on Windows), so PATTERN can use them to quote wildcard characters that
+need to be passed verbatim to shell commands."
+  (save-match-data
+    (cond
+     ((memq system-type '(ms-dos windows-nt cygwin))
+      ;; DOS/Windows don't allow `"' in file names.  So if the
+      ;; argument has quotes, we can safely assume it is already
+      ;; quoted by the caller.
+      (if (or (string-search "\"" pattern)
+	      ;; We quote [&()#$`'] in case their shell is a port of a
+	      ;; Unixy shell.  We quote [,=+] because stock DOS and
+	      ;; Windows shells require that in some cases, such as
+	      ;; passing arguments to batch files that use positional
+	      ;; arguments like %1.
+	      (not (string-match "[ \t;&()#$`',=+]" pattern)))
+	  pattern
+	(let ((result "\"")
+	      (beg 0)
+	      end)
+	  (while (string-match "[*?]+" pattern beg)
+	    (setq end (match-beginning 0)
+		  result (concat result (substring pattern beg end)
+				 "\""
+				 (substring pattern end (match-end 0))
+				 "\"")
+		  beg (match-end 0)))
+	  (concat result (substring pattern beg) "\""))))
+     (t
+      (let ((beg 0))
+	(while (string-match "[ \t\n;<>&|()`'\"#$]" pattern beg)
+	  (setq pattern
+		(concat (substring pattern 0 (match-beginning 0))
+			"\\"
+			(substring pattern (match-beginning 0)))
+		beg (1+ (match-end 0)))))
+      pattern))))
+
+
+(defcustom insert-directory-program
+  (if (and (memq system-type '(berkeley-unix darwin))
+           (executable-find "gls"))
+      (purecopy "gls")
+    (purecopy "ls"))
+  "Absolute or relative name of the `ls'-like program.
+This is used by `insert-directory' and `dired-insert-directory'
+\(thus, also by `dired').  For Dired, this should ideally point to
+GNU ls, or another version of ls that supports the \"--dired\"
+flag.  See `dired-use-ls-dired'.
+
+On GNU/Linux and other capable systems, the default is \"ls\".
+
+On *BSD and macOS systems, the default \"ls\" does not support
+the \"--dired\" flag.  Therefore, the default is to use the
+\"gls\" executable on such machines, if it exists.  This means
+that there should normally be no need to customize this when
+installing GNU coreutils using something like ports or Homebrew."
+  :group 'dired
+  :type 'string
+  :initialize #'custom-initialize-delay
+  :version "30.1")
+
+(defun files--use-insert-directory-program-p ()
+  "Return non-nil if we should use `insert-directory-program'.
+Return nil if we should prefer `ls-lisp' instead."
+  ;; FIXME: Should we also check `file-accessible-directory-p' so we
+  ;; automatically redirect to ls-lisp when operating on magic file names?
+  (and (if (boundp 'ls-lisp-use-insert-directory-program)
+           ls-lisp-use-insert-directory-program
+         t)
+       insert-directory-program))
+
+
+(defun get-free-disk-space (dir)
+  "String describing the amount of free space on DIR's file system.
+If DIR's free space cannot be obtained, this function returns nil."
+  (save-match-data
+    (let ((avail (nth 2 (file-system-info dir))))
+      (if avail
+          (funcall byte-count-to-string-function avail)))))
+
+(defvar directory-listing-before-filename-regexp
+  (let* ((l "\\([A-Za-z]\\|[^\0-\177]\\)")
+	 (l-or-quote "\\([A-Za-z']\\|[^\0-\177]\\)")
+	 ;; In some locales, month abbreviations are as short as 2 letters,
+	 ;; and they can be followed by ".".
+	 ;; In Breton, a month name  can include a quote character.
+	 (month (concat l-or-quote l-or-quote "+\\.?"))
+	 (s " ")
+	 (yyyy "[0-9][0-9][0-9][0-9]")
+	 (dd "[ 0-3][0-9]")
+	 (HH:MM "[ 0-2][0-9][:.][0-5][0-9]")
+	 (seconds "[0-6][0-9]\\([.,][0-9]+\\)?")
+	 (zone "[-+][0-2][0-9][0-5][0-9]")
+	 (iso-mm-dd "[01][0-9]-[0-3][0-9]")
+	 (iso-time (concat HH:MM "\\(:" seconds "\\( ?" zone "\\)?\\)?"))
+	 (iso (concat "\\(\\(" yyyy "-\\)?" iso-mm-dd "[ T]" iso-time
+		      "\\|" yyyy "-" iso-mm-dd "\\)"))
+	 (western (concat "\\(" month s "+" dd "\\|" dd "\\.?" s month "\\)"
+			  s "+"
+			  "\\(" HH:MM "\\|" yyyy "\\)"))
+	 (western-comma (concat month s "+" dd "," s "+" yyyy))
+         ;; This represents the date in strftime(3) format "%e-%b-%Y"
+         ;; (aka "%v"), as it is the default for many ls incarnations.
+         (DD-MMM-YYYY (concat dd "-" month "-" yyyy s HH:MM))
+	 ;; Japanese MS-Windows ls-lisp has one-digit months, and
+	 ;; omits the Kanji characters after month and day-of-month.
+	 ;; On Mac OS X 10.3, the date format in East Asian locales is
+	 ;; day-of-month digits followed by month digits.
+	 (mm "[ 0-1]?[0-9]")
+	 (east-asian
+	  (concat "\\(" mm l "?" s dd l "?" s "+"
+		  "\\|" dd s mm s "+" "\\)"
+		  "\\(" HH:MM "\\|" yyyy l "?" "\\)")))
+	 ;; The "[0-9]" below requires the previous column to end in a digit.
+	 ;; This avoids recognizing `1 may 1997' as a date in the line:
+	 ;; -r--r--r--   1 may      1997        1168 Oct 19 16:49 README
+
+	 ;; The "[BkKMGTPEZYRQ]?" below supports "ls -alh" output.
+
+	 ;; For non-iso date formats, we add the ".*" in order to find
+	 ;; the last possible match.  This avoids recognizing
+	 ;; `jservice 10 1024' as a date in the line:
+	 ;; drwxr-xr-x  3 jservice  10  1024 Jul  2  1997 esg-host
+
+         ;; vc dired listings provide the state or blanks between file
+         ;; permissions and date.  The state is always surrounded by
+         ;; parentheses:
+         ;; -rw-r--r-- (modified) 2005-10-22 21:25 files.el
+         ;; This is not supported yet.
+    (purecopy (concat "\\([0-9][BkKMGTPEZYRQ]? " iso
+		      "\\|.*[0-9][BkKMGTPEZYRQ]? "
+	              "\\(" western "\\|" western-comma
+                      "\\|" DD-MMM-YYYY "\\|" east-asian "\\)"
+		      "\\) +")))
+  "Regular expression to match up to the file name in a directory listing.
+The default value is designed to recognize dates and times
+regardless of the language.")
+
+(defvar insert-directory-ls-version 'unknown)
+
+(defun insert-directory-wildcard-in-dir-p (dir)
+  "Return non-nil if DIR contains shell wildcards in its parent directory part.
+The return value is a cons (DIRECTORY . WILDCARD), where DIRECTORY is the
+part of DIR up to and excluding the first component that includes
+wildcard characters, and WILDCARD is the rest of DIR's components.  The
+DIRECTORY part of the value includes the trailing slash, to indicate that
+it is a directory.
+
+Valid wildcards are `*', `?', `[abc]' and `[a-z]'."
+  (let ((wildcards "[?*"))
+    (when (and (or (not (featurep 'ls-lisp))
+                   ls-lisp-support-shell-wildcards)
+               (string-match (concat "[" wildcards "]") (file-name-directory dir))
+               (not (file-exists-p dir))) ; Prefer an existing file to wildcards.
+      (let ((regexp (format "\\`\\([^%s]*/\\)\\([^%s]*[%s].*\\)"
+                            wildcards wildcards wildcards)))
+        (string-match regexp dir)
+        (cons (match-string 1 dir) (match-string 2 dir))))))
+
+(defun insert-directory-clean (beg switches)
+  (when (if (stringp switches)
+	    (string-match "--dired\\>" switches)
+	  (member "--dired" switches))
+    ;; The following overshoots by one line for an empty
+    ;; directory listed with "--dired", but without "-a"
+    ;; switch, where the ls output contains a
+    ;; "//DIRED-OPTIONS//" line, but no "//DIRED//" line.
+    ;; We take care of that case later.
+    (forward-line -2)
+    ;; We reset case-fold-search here and elsewhere, because
+    ;; case-insensitive search for strings with uppercase 'I' will fail
+    ;; in language environments (such as Turkish) where 'I' downcases to
+    ;; 'ı', not to 'i'.
+    (when (let ((case-fold-search nil)) (looking-at "//SUBDIRED//"))
+      (delete-region (point) (progn (forward-line 1) (point)))
+      (forward-line -1))
+    (if (let ((case-fold-search nil)) (looking-at "//DIRED//"))
+	(let ((end (line-end-position))
+	      (linebeg (point))
+	      error-lines)
+	  ;; Find all the lines that are error messages,
+	  ;; and record the bounds of each one.
+	  (goto-char beg)
+	  (while (< (point) linebeg)
+	    (or (eql (following-char) ?\s)
+		(push (list (point) (line-end-position)) error-lines))
+	    (forward-line 1))
+	  (setq error-lines (nreverse error-lines))
+	  ;; Now read the numeric positions of file names.
+	  (goto-char linebeg)
+	  (forward-word-strictly 1)
+	  (forward-char 3)
+	  (while (< (point) end)
+	    (let ((start (insert-directory-adj-pos
+			  (+ beg (read (current-buffer)))
+			  error-lines))
+		  (end (insert-directory-adj-pos
+			(+ beg (read (current-buffer)))
+			error-lines)))
+	      (if (memq (char-after end) '(?\n ?\s ?/ ?* ?@ ?% ?= ?|))
+		  ;; End is followed by \n or by output of -F.
+		  (put-text-property start end 'dired-filename t)
+		;; It seems that we can't trust ls's output as to
+		;; byte positions of filenames.
+		(put-text-property beg (point) 'dired-filename nil)
+		(end-of-line))))
+	  (goto-char end)
+	  (beginning-of-line)
+	  (delete-region (point) (progn (forward-line 1) (point))))
+      ;; Take care of the case where the ls output contains a
+      ;; "//DIRED-OPTIONS//"-line, but no "//DIRED//"-line
+      ;; and we went one line too far back (see above).
+      (forward-line 1))
+    (if (let ((case-fold-search nil)) (looking-at "//DIRED-OPTIONS//"))
+	(delete-region (point) (progn (forward-line 1) (point))))))
+
+;; insert-directory
+;; - must insert _exactly_one_line_ describing FILE if WILDCARD and
+;;   FULL-DIRECTORY-P is nil.
+;;   The single line of output must display FILE's name as it was
+;;   given, namely, an absolute path name.
+;; - must insert exactly one line for each file if WILDCARD or
+;;   FULL-DIRECTORY-P is t, plus one optional "total" line
+;;   before the file lines, plus optional text after the file lines.
+;;   Lines are delimited by "\n", so filenames containing "\n" are not
+;;   allowed.
+;;   File lines should display the basename.
+;; - must be consistent with
+;;   - functions dired-move-to-filename, (these two define what a file line is)
+;;   		 dired-move-to-end-of-filename,
+;;		 dired-between-files, (shortcut for (not (dired-move-to-filename)))
+;;   		 dired-insert-headerline
+;;   		 dired-after-subdir-garbage (defines what a "total" line is)
+;;   - variable dired-subdir-regexp
+;; - may be passed "--dired" as the first argument in SWITCHES.
+;;   File name handlers might have to remove this switch if their
+;;   "ls" command does not support it.
+(defun insert-directory (file switches &optional wildcard full-directory-p)
+  "Insert directory listing for FILE, formatted according to SWITCHES.
+Leaves point after the inserted text.
+SWITCHES may be a string of options, or a list of strings
+representing individual options.
+Optional third arg WILDCARD means treat FILE as shell wildcard.
+Optional fourth arg FULL-DIRECTORY-P means file is a directory and
+switches do not contain `d', so that a full listing is expected.
+
+Depending on the value of `ls-lisp-use-insert-directory-program'
+this works either using a Lisp emulation of the \"ls\" program
+or by running a directory listing program
+whose name is in the variable `insert-directory-program'
+\(and if WILDCARD, it also runs the shell specified by `shell-file-name').
+
+When SWITCHES contains the long `--dired' option, this function
+treats it specially, for the sake of dired.  However, the
+normally equivalent short `-D' option is just passed on to
+`insert-directory-program', as any other option."
+  ;; We need the directory in order to find the right handler.
+  (let ((handler (find-file-name-handler (expand-file-name file)
+					 'insert-directory)))
+    (cond
+     (handler
+      (funcall handler 'insert-directory file switches
+	       wildcard full-directory-p))
+     ((not (files--use-insert-directory-program-p))
+      (require 'ls-lisp)
+      (declare-function ls-lisp--insert-directory "ls-lisp")
+      (ls-lisp--insert-directory file switches wildcard full-directory-p))
+     (t
+      (let (result (beg (point)))
+
+	;; Read the actual directory using `insert-directory-program'.
+	;; RESULT gets the status code.
+	(let* (;; We at first read by no-conversion, then after
+	       ;; putting text property `dired-filename, decode one
+	       ;; bunch by one to preserve that property.
+	       (coding-system-for-read 'no-conversion)
+	       ;; This is to control encoding the arguments in call-process.
+	       (coding-system-for-write
+		(and enable-multibyte-characters
+		     (or file-name-coding-system
+			 default-file-name-coding-system))))
+	  (setq result
+		(if wildcard
+		    ;; If the wildcard is just in the file part, then run ls in
+                    ;; the directory part of the file pattern using the last
+                    ;; component as argument.  Otherwise, run ls in the longest
+                    ;; subdirectory of the directory part free of wildcards; use
+                    ;; the remaining of the file pattern as argument.
+		    (let* ((dir-wildcard (insert-directory-wildcard-in-dir-p file))
+                           (default-directory
+                            (cond (dir-wildcard (car dir-wildcard))
+                                  (t
+			           (if (file-name-absolute-p file)
+				       (file-name-directory file)
+				     (file-name-directory (expand-file-name file))))))
+			   (pattern (if dir-wildcard (cdr dir-wildcard) (file-name-nondirectory file))))
+		      ;; NB since switches is passed to the shell, be
+		      ;; careful of malicious values, eg "-l;reboot".
+		      ;; See eg dired-safe-switches-p.
+		      (call-process
+		       shell-file-name nil t nil
+		       shell-command-switch
+		       (concat (if (memq system-type '(ms-dos windows-nt))
+				   ""
+				 "\\") ; Disregard Unix shell aliases!
+			       insert-directory-program
+			       " -d "
+			       ;; Quote switches that require quoting
+			       ;; such as "--block-size='1".  But don't
+			       ;; quote switches that use patterns
+			       ;; such as "--ignore=PATTERN" (bug#71935).
+			       (mapconcat #'shell-quote-wildcard-pattern
+					  (if (stringp switches)
+					      (split-string-and-unquote switches)
+					    switches)
+					  " ")
+			       " -- "
+			       ;; Quote some characters that have
+			       ;; special meanings in shells; but
+			       ;; don't quote the wildcards--we want
+			       ;; them to be special.  We also
+			       ;; currently don't quote the quoting
+			       ;; characters in case people want to
+			       ;; use them explicitly to quote
+			       ;; wildcard characters.
+			       (shell-quote-wildcard-pattern pattern))))
+		  ;; SunOS 4.1.3, SVr4 and others need the "." to list the
+		  ;; directory if FILE is a symbolic link.
+		  (unless full-directory-p
+		    (setq switches
+			  (cond
+                           ((stringp switches) (concat switches " -d"))
+                           ((member "-d" switches) switches)
+                           (t (append switches '("-d"))))))
+		  (if (string-match "\\`~" file)
+		      (setq file (expand-file-name file)))
+		  (apply #'call-process
+			 insert-directory-program nil t nil
+			 (append
+			  (if (listp switches) switches
+			    (unless (equal switches "")
+			      ;; Split the switches at any spaces so we can
+			      ;; pass separate options as separate args.
+			      (split-string-and-unquote switches)))
+			  ;; Avoid lossage if FILE starts with `-'.
+			  '("--")
+			  (list file))))))
+
+	;; If we got "//DIRED//" in the output, it means we got a real
+	;; directory listing, even if `ls' returned nonzero.
+	;; So ignore any errors.
+	(when (if (stringp switches)
+		  (string-match "--dired\\>" switches)
+		(member "--dired" switches))
+	  (save-excursion
+            (let ((case-fold-search nil))
+	      (forward-line -2)
+	      (when (looking-at "//SUBDIRED//")
+	        (forward-line -1))
+	      (if (looking-at "//DIRED//")
+		  (setq result 0)))))
+
+	(when (and (not (eq 0 result))
+		   (eq insert-directory-ls-version 'unknown))
+	  ;; The first time ls returns an error,
+	  ;; find the version numbers of ls,
+	  ;; and set insert-directory-ls-version
+	  ;; to > if it is more than 5.2.1, < if it is less, nil if it
+	  ;; is equal or if the info cannot be obtained.
+	  ;; (That can mean it isn't GNU ls.)
+	  (let ((version-out
+		 (with-temp-buffer
+		   (call-process "ls" nil t nil "--version")
+		   (buffer-string))))
+	    (setq insert-directory-ls-version
+		  (if (string-match "ls (.*utils) \\([0-9.]*\\)$" version-out)
+		      (let* ((version (match-string 1 version-out))
+		             (split (split-string version "[.]"))
+		             (numbers (mapcar #'string-to-number split))
+		             (min '(5 2 1))
+		             comparison)
+		        (while (and (not comparison) (or numbers min))
+			  (cond ((null min)
+			         (setq comparison #'>))
+			        ((null numbers)
+			         (setq comparison #'<))
+			        ((> (car numbers) (car min))
+			         (setq comparison #'>))
+			        ((< (car numbers) (car min))
+			         (setq comparison #'<))
+			        (t
+				 (setq numbers (cdr numbers)
+				       min (cdr min)))))
+			(or comparison #'=))
+		    nil))))
+
+	;; For GNU ls versions 5.2.2 and up, ignore minor errors.
+	(when (and (eq 1 result) (eq insert-directory-ls-version #'>))
+	  (setq result 0))
+
+	;; If `insert-directory-program' failed, delete the error output and
+	;; return nil — matching the reference build's C-level
+	;; `insert-directory', which does not signal on ls failure.
+	(unless (eq 0 result)
+	  (delete-region beg (point)))
+        (insert-directory-clean beg switches)
+	;; Now decode what read if necessary.
+	(let ((coding (or coding-system-for-read
+			  file-name-coding-system
+			  default-file-name-coding-system
+			  'undecided))
+	      coding-no-eol
+	      val pos)
+	  (when (and enable-multibyte-characters
+		     (not (memq (coding-system-base coding)
+				'(raw-text no-conversion))))
+	    ;; If no coding system is specified or detection is
+	    ;; requested, detect the coding.
+	    (if (eq (coding-system-base coding) 'undecided)
+		(setq coding (detect-coding-region beg (point) t)))
+	    (if (not (eq (coding-system-base coding) 'undecided))
+		(save-restriction
+		  (setq coding-no-eol
+			(coding-system-change-eol-conversion coding 'unix))
+		  (narrow-to-region beg (point))
+		  (goto-char (point-min))
+		  (while (not (eobp))
+		    (setq pos (point)
+			  val (get-text-property (point) 'dired-filename))
+		    (goto-char (next-single-property-change
+				(point) 'dired-filename nil (point-max)))
+		    ;; Force no eol conversion on a file name, so
+		    ;; that CR is preserved.
+		    (decode-coding-region pos (point)
+					  (if val coding-no-eol coding))
+		    (if val
+			(put-text-property pos (point)
+					   'dired-filename t))))))))))))
+
+(defun insert-directory-adj-pos (pos error-lines)
+  "Convert `ls --dired' file name position value POS to a buffer position.
+File name position values returned in ls --dired output
+count only stdout; they don't count the error messages sent to stderr.
+So this function converts to them to real buffer positions.
+ERROR-LINES is a list of buffer positions of error message lines,
+of the form (START END)."
+  (while (and error-lines (< (caar error-lines) pos))
+    (setq pos (+ pos (- (nth 1 (car error-lines)) (nth 0 (car error-lines)))))
+    (pop error-lines))
+  pos)
+
+(defun insert-directory-safely (file switches
+				     &optional wildcard full-directory-p)
+  "Insert directory listing for FILE, formatted according to SWITCHES.
+
+Like `insert-directory', but if FILE does not exist, it inserts a
+message to that effect instead of signaling an error."
+  (if (file-exists-p file)
+      (insert-directory file switches wildcard full-directory-p)
+    ;; Simulate the message printed by `ls'.
+    (insert (format "%s: No such file or directory\n" file))))
+
+(defcustom byte-count-to-string-function #'file-size-human-readable-iec
+  "Function that turns a number of bytes into a human-readable string.
+It is for use when displaying file sizes and disk space where other
+constraints do not force a specific format."
+  :type '(radio
+          (function-item file-size-human-readable-iec)
+          (function-item file-size-human-readable)
+          (function :tag "Custom function" :value number-to-string))
+  :group 'files
+  :version "27.1")
 
 ;; subr.el: mode-hook machinery (verbatim GNU).
 (defvar-local delay-mode-hooks nil

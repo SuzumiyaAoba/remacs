@@ -1342,6 +1342,21 @@ pub(crate) static SUBRS: &[Subr] = &[
         "Return lock status of FILE."
     ),
     S!(
+        "lock-file",
+        1,
+        1,
+        f_lock_file,
+        "Lock FILE, if current buffer is modified."
+    ),
+    S!(
+        "unlock-file",
+        1,
+        1,
+        f_unlock_file,
+        "Unlock FILE."
+    ),
+    S!("file-acl", 1, 1, f_file_acl, "Return ACL entries of FILE."),
+    S!(
         "ask-user-about-lock",
         2,
         3,
@@ -1686,6 +1701,73 @@ fn f_file_locked_p(i: &mut Interp, a: Vec<Value>) -> EvalResult {
             Err(()) => Ok(Value::Nil),
         },
     }
+}
+
+/// GNU `lock-file': create FILE's `.#FILE' lock, best effort.
+/// A foreign live lock goes through ask-user-about-lock (signals
+/// `file-locked' in batch); ours or stale is replaced quietly.
+fn f_lock_file(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let file = want_string(i, &a[0])?;
+    if let Some(id) = i.intern_soft("create-lockfiles") {
+        if !i.symbol_value(id).truthy() {
+            return Ok(Value::Nil);
+        }
+    }
+    let file = file_truename(&file);
+    let lname = lock_file_name(&file);
+    let owner = lock_owner_string();
+    #[cfg(unix)]
+    match std::os::unix::fs::symlink(&owner, &lname) {
+        Ok(()) => {}
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+            match std::fs::read_link(&lname) {
+                Ok(target) => match lock_owner(&target.to_string_lossy()) {
+                    Ok(LockOwner::Ours) => {}
+                    Ok(LockOwner::Foreign { info, .. }) => {
+                        return Err(signal_file_locked(
+                            i,
+                            Value::string(file),
+                            Value::string(info),
+                        ));
+                    }
+                    Err(()) => {
+                        let _ = std::fs::remove_file(&lname);
+                        let _ = std::os::unix::fs::symlink(&owner, &lname);
+                    }
+                },
+                Err(_) => {}
+            }
+        }
+        Err(_) => {}
+    }
+    Ok(Value::Nil)
+}
+
+/// GNU `unlock-file': remove FILE's lock if it is ours or stale.
+fn f_unlock_file(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let file = want_string(i, &a[0])?;
+    let lname = lock_file_name(&file_truename(&file));
+    if let Ok(target) = std::fs::read_link(&lname) {
+        match lock_owner(&target.to_string_lossy()) {
+            Ok(LockOwner::Ours) | Err(()) => {
+                let _ = std::fs::remove_file(&lname);
+            }
+            Ok(LockOwner::Foreign { info, .. }) => {
+                return Err(signal_file_locked(
+                    i,
+                    Value::string(file),
+                    Value::string(info),
+                ));
+            }
+        }
+    }
+    Ok(Value::Nil)
+}
+
+/// GNU `file-acl': returns the ACL text, or nil when none / unsupported.
+fn f_file_acl(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let _file = want_string(i, &a[0])?;
+    Ok(Value::Nil)
 }
 
 fn f_ask_user_about_lock(i: &mut Interp, a: Vec<Value>) -> EvalResult {
