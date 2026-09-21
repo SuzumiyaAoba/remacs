@@ -2202,7 +2202,16 @@ trying SUFFIXES; PREDICATE (default `file-exists-p') must pass."
                       (plist-put ,(cadr place) ,(caddr place) ,val))
                 ,(caddr place)))
        ((eq op 'alist-get)
-        `(setf (cdr (assoc ,(caddr place) ,(cadr place))) ,val))
+        ;; GNU gv-define-setter for alist-get: setcdr an existing
+        ;; slot, else push (cons key val) onto the alist place.
+        (let ((k (make-symbol "k")) (v (make-symbol "v"))
+              (a (make-symbol "a")) (slot (make-symbol "slot")))
+          `(let* ((,k ,(cadr place)) (,a ,(caddr place)) (,v ,val)
+                  (,slot (assoc ,k ,a)))
+             (if ,slot
+                 (progn (setcdr ,slot ,v) ,v)
+               (setf ,(caddr place) (cons (cons ,k ,v) ,a))
+               ,v))))
        ((eq op 'gv-deref) `(funcall (cdr ,(cadr place)) ,val))
        ;; Fallback like GNU's gv-setter: call the `(setf OP)' function.
        ((symbolp op)
@@ -2780,15 +2789,21 @@ LIMIT is the maximum number of links to chase (default: unlimited)."
     name))
 
 (defun locate-dominating-file (file name)
-  "Look up the directory hierarchy from FILE for a directory
-containing NAME.  Return the absolute directory name, or nil."
+  "Look up the directory hierarchy from FILE for a directory containing NAME.
+FILE can be a file or directory name; if it is a directory name, the
+search starts in that directory, otherwise in its parent directory.
+NAME can be a file name, or a predicate function called with one
+argument (the directory name); the predicate should return non-nil
+for a match.  Return the absolute directory name, or nil."
   (let ((dir (if (file-directory-p file)
                  (file-name-as-directory file)
                (or (file-name-directory file)
                    (file-name-as-directory file))))
         (found nil) (prev nil))
     (while (and dir (not found) (not (equal dir prev)))
-      (if (file-exists-p (concat dir name))
+      (if (if (functionp name)
+              (funcall name dir)
+            (file-exists-p (concat dir name)))
           (setq found dir)
         (setq prev dir
               dir (let ((parent (file-name-directory
@@ -9389,7 +9404,191 @@ asking you for confirmation."
 (put 'bidi-paragraph-direction 'safe-local-variable
      (lambda (v) (memq v '(nil right-to-left left-to-right))))
 
+;; Predicate functions referenced by the safe-local-variable puts below.
+(defun list-of-strings-p (object)
+  "Return t if OBJECT is nil or a list of strings."
+  (while (and (consp object) (stringp (car object)))
+    (setq object (cdr object)))
+  (null object))
+(defun c-string-list-p (val)
+  "Return non-nil if VAL is a list of strings."
+  (and (listp val)
+       (catch 'string
+	 (dolist (elt val)
+	   (if (not (stringp elt))
+	       (throw 'string nil)))
+	 t)))
+(defun version-control-safe-local-p (x)
+  "Return whether X is safe as local value for `version-control'."
+  (or (booleanp x) (equal x 'never)))
+(defun time-stamp-zone-type-p (zone)
+  "Return non-nil if ZONE looks like a valid timezone rule."
+  (or (memq zone '(nil t wall))
+      (stringp zone)
+      (and (consp zone)
+           (integerp (car zone)))))
+(defun vc--safe-branch-regexps-p (val)
+  "Return non-nil if VAL is a safe local value for `vc-*-branch-regexps'."
+  (or (eq val t)
+      (and (listp val)
+           (seq-every-p (lambda (elt)
+                          (or (symbolp elt) (stringp elt)))
+                        val))))
+
+;; GNU's runtime safe-local-variable symbol properties (from autoload
+;; cookies, :safe defcustom keywords, and files.el/cus-start.el puts).
+(put 'Info-documentlanguage 'safe-local-variable 'symbolp)
+(put 'abbrev-mode 'safe-local-variable 'booleanp)
+(put 'allout-distinctive-bullets-string 'safe-local-variable 'stringp)
+(put 'allout-file-xref-bullet 'safe-local-variable 'string-or-null-p)
+(put 'allout-header-prefix 'safe-local-variable 'stringp)
+(put 'allout-numbered-bullet 'safe-local-variable 'string-or-null-p)
+(put 'allout-old-style-prefixes 'safe-local-variable 'booleanp)
+(put 'allout-plain-bullets-string 'safe-local-variable 'stringp)
+(put 'allout-presentation-padding 'safe-local-variable 'integerp)
+(put 'allout-primary-bullet 'safe-local-variable 'stringp)
+(put 'allout-show-bodies 'safe-local-variable 'booleanp)
+(put 'allout-stylish-prefixes 'safe-local-variable 'booleanp)
+(put 'allout-use-hanging-indents 'safe-local-variable 'booleanp)
+(put 'allout-widgets-mode-inhibit 'safe-local-variable 'booleanp)
+(put 'auto-fill-function 'safe-local-variable 'null)
+(put 'auto-insert 'safe-local-variable 'null)
+(put 'autoload-compute-prefixes 'safe-local-variable 'booleanp)
+(put 'bidi-display-reordering 'safe-local-variable 'booleanp)
+(put 'buffer-read-only 'safe-local-variable 'booleanp)
+(put 'bug-reference-bug-regexp 'safe-local-variable 'stringp)
+(put 'byte-compile-dynamic 'safe-local-variable 'booleanp)
+(put 'byte-compile-dynamic-docstrings 'safe-local-variable 'booleanp)
+(put 'byte-compile-error-on-warn 'safe-local-variable 'booleanp)
+(put 'c++-font-lock-extra-types 'safe-local-variable 'c-string-list-p)
+(put 'c-backslash-column 'safe-local-variable 'integerp)
+(put 'c-basic-offset 'safe-local-variable 'integerp)
+(put 'c-file-style 'safe-local-variable 'string-or-null-p)
+(put 'c-font-lock-extra-types 'safe-local-variable 'c-string-list-p)
+(put 'change-log-default-name 'safe-local-variable 'string-or-null-p)
+(put 'checkdoc-allow-quoting-nil-and-t 'safe-local-variable 'booleanp)
+(put 'checkdoc-arguments-in-order-flag 'safe-local-variable 'booleanp)
+(put 'checkdoc-arguments-missing-flag 'safe-local-variable 'booleanp)
+(put 'checkdoc-common-verbs-regexp 'safe-local-variable 'stringp)
+(put 'checkdoc-force-docstrings-flag 'safe-local-variable 'booleanp)
+(put 'checkdoc-force-history-flag 'safe-local-variable 'booleanp)
+(put 'checkdoc-ispell-list-words 'safe-local-variable 'list-of-strings-p)
+(put 'checkdoc-package-keywords-flag 'safe-local-variable 'booleanp)
+(put 'checkdoc-permit-comma-termination-flag 'safe-local-variable 'booleanp)
+(put 'checkdoc-proper-noun-regexp 'safe-local-variable 'stringp)
+(put 'checkdoc-spellcheck-documentation-flag 'safe-local-variable 'booleanp)
+(put 'checkdoc-symbol-words 'safe-local-variable 'list-of-strings-p)
+(put 'checkdoc-verb-check-experimental-flag 'safe-local-variable 'booleanp)
+(put 'colon-double-space 'safe-local-variable 'booleanp)
+(put 'comment-column 'safe-local-variable 'integerp)
+(put 'comment-end 'safe-local-variable 'stringp)
+(put 'comment-end-skip 'safe-local-variable 'stringp)
+(put 'comment-multi-line 'safe-local-variable 'booleanp)
+(put 'comment-start 'safe-local-variable 'string-or-null-p)
+(put 'comment-start-skip 'safe-local-variable 'stringp)
+(put 'compilation-directory 'safe-local-variable 'stringp)
+(put 'copyright-at-end-flag 'safe-local-variable 'booleanp)
+(put 'copyright-names-regexp 'safe-local-variable 'stringp)
+(put 'copyright-year-ranges 'safe-local-variable 'booleanp)
+(put 'cperl-brace-offset 'safe-local-variable 'integerp)
+(put 'cperl-continued-brace-offset 'safe-local-variable 'integerp)
+(put 'cperl-continued-statement-offset 'safe-local-variable 'integerp)
+(put 'cperl-extra-newline-before-brace 'safe-local-variable 'booleanp)
+(put 'cperl-file-style 'safe-local-variable 'stringp)
+(put 'cperl-indent-level 'safe-local-variable 'integerp)
+(put 'cperl-label-offset 'safe-local-variable 'integerp)
+(put 'cperl-merge-trailing-else 'safe-local-variable 'booleanp)
+(put 'create-lockfiles 'safe-local-variable 'booleanp)
+(put 'default-directory 'safe-local-variable 'stringp)
+(put 'default-justification 'safe-local-variable 'symbolp)
+(put 'diff-add-log-use-relative-names 'safe-local-variable 'booleanp)
+(put 'display-fill-column-indicator 'safe-local-variable 'booleanp)
+(put 'electric-quote-comment 'safe-local-variable 'booleanp)
+(put 'electric-quote-context-sensitive 'safe-local-variable 'booleanp)
+(put 'electric-quote-paragraph 'safe-local-variable 'booleanp)
+(put 'electric-quote-replace-consecutive 'safe-local-variable 'booleanp)
+(put 'electric-quote-replace-double 'safe-local-variable 'booleanp)
+(put 'electric-quote-string 'safe-local-variable 'booleanp)
+(put 'enable-character-translation 'safe-local-variable 'booleanp)
+(put 'fill-column 'safe-local-variable 'integerp)
+(put 'fill-prefix 'safe-local-variable 'string-or-null-p)
+(put 'generated-autoload-file 'safe-local-variable 'stringp)
+(put 'generated-autoload-load-name 'safe-local-variable 'stringp)
+(put 'goto-line-history-local 'safe-local-variable 'booleanp)
+(put 'idl-font-lock-extra-types 'safe-local-variable 'c-string-list-p)
+(put 'indent-tabs-mode 'safe-local-variable 'booleanp)
+(put 'inhibit-compacting-font-caches 'safe-local-variable 'booleanp)
+(put 'ispell-local-dictionary 'safe-local-variable 'string-or-null-p)
+(put 'ispell-local-pdict 'safe-local-variable 'stringp)
+(put 'java-font-lock-extra-types 'safe-local-variable 'c-string-list-p)
+(put 'kept-new-versions 'safe-local-variable 'natnump)
+(put 'kept-old-versions 'safe-local-variable 'natnump)
+(put 'left-margin 'safe-local-variable 'integerp)
+(put 'less-css-compile-at-save 'safe-local-variable 'booleanp)
+(put 'less-css-input-file-name 'safe-local-variable 'stringp)
+(put 'less-css-lessc-options 'safe-local-variable 't)
+(put 'less-css-output-directory 'safe-local-variable 'stringp)
+(put 'lexical-binding 'safe-local-variable 'booleanp)
+(put 'lisp-body-indent 'safe-local-variable 'integerp)
+(put 'next-error-verbose 'safe-local-variable 'booleanp)
+(put 'no-byte-compile 'safe-local-variable 'booleanp)
+(put 'no-native-compile 'safe-local-variable 'booleanp)
+(put 'no-update-autoloads 'safe-local-variable 'booleanp)
+(put 'objc-font-lock-extra-types 'safe-local-variable 'c-string-list-p)
+(put 'outline-heading-end-regexp 'safe-local-variable 'stringp)
+(put 'outline-regexp 'safe-local-variable 'stringp)
+(put 'page-delimiter 'safe-local-variable 'stringp)
+(put 'paragraph-ignore-fill-prefix 'safe-local-variable 'booleanp)
+(put 'paragraph-separate 'safe-local-variable 'stringp)
+(put 'paragraph-start 'safe-local-variable 'stringp)
+(put 'perl-brace-imaginary-offset 'safe-local-variable 'integerp)
+(put 'perl-brace-offset 'safe-local-variable 'integerp)
+(put 'perl-continued-brace-offset 'safe-local-variable 'integerp)
+(put 'perl-continued-statement-offset 'safe-local-variable 'integerp)
+(put 'perl-indent-level 'safe-local-variable 'integerp)
+(put 'perl-label-offset 'safe-local-variable 'integerp)
+(put 'pike-font-lock-extra-types 'safe-local-variable 'c-string-list-p)
+(put 'project-kill-buffers-display-buffer-list 'safe-local-variable 'booleanp)
+(put 'project-vc-include-untracked 'safe-local-variable 'booleanp)
+(put 'project-vc-merge-submodules 'safe-local-variable 'booleanp)
+(put 'project-vc-name 'safe-local-variable 'stringp)
+(put 'read-symbol-shorthands 'safe-local-variable 'consp)
+(put 'reftex-guess-label-type 'safe-local-variable 'booleanp)
+(put 'reftex-level-indent 'safe-local-variable 'integerp)
+(put 'require-final-newline 'safe-local-variable 'symbolp)
+(put 'sentence-end 'safe-local-variable 'string-or-null-p)
+(put 'sentence-end-base 'safe-local-variable 'stringp)
+(put 'sentence-end-double-space 'safe-local-variable 'booleanp)
+(put 'sentence-end-without-period 'safe-local-variable 'booleanp)
+(put 'sentence-end-without-space 'safe-local-variable 'stringp)
+(put 'sh-shell 'safe-local-variable 'symbolp)
+(put 'show-paren-predicate 'safe-local-variable 'booleanp)
+(put 'show-trailing-whitespace 'safe-local-variable 'booleanp)
+(put 'sort-fold-case 'safe-local-variable 'booleanp)
+(put 'sort-numeric-base 'safe-local-variable 'integerp)
+(put 'tab-stop-list 'safe-local-variable 'listp)
+(put 'tab-width 'safe-local-variable 'integerp)
+(put 'tags-case-fold-search 'safe-local-variable 'symbolp)
+(put 'tags-file-name 'safe-local-variable 'stringp)
+(put 'time-stamp-end 'safe-local-variable 'stringp)
+(put 'time-stamp-format 'safe-local-variable 'stringp)
+(put 'time-stamp-inserts-lines 'safe-local-variable 'booleanp)
+(put 'time-stamp-line-limit 'safe-local-variable 'integerp)
+(put 'time-stamp-pattern 'safe-local-variable 'stringp)
+(put 'time-stamp-start 'safe-local-variable 'stringp)
+(put 'time-stamp-time-zone 'safe-local-variable 'time-stamp-zone-type-p)
+(put 'truncate-lines 'safe-local-variable 'booleanp)
+(put 'vc-default-patch-addressee 'safe-local-variable 'stringp)
+(put 'vc-follow-symlinks 'safe-local-variable 'null)
+(put 'vc-prepare-patches-separately 'safe-local-variable 'booleanp)
+(put 'vc-topic-branch-regexps 'safe-local-variable 'vc--safe-branch-regexps-p)
+(put 'vc-trunk-branch-regexps 'safe-local-variable 'vc--safe-branch-regexps-p)
+(put 'version-control 'safe-local-variable 'version-control-safe-local-p)
+(put 'word-wrap 'safe-local-variable 'booleanp)
+;; GNU's safe-local-eval-function properties.
 (put 'c-set-style 'safe-local-eval-function t)
+(put 'goto-address 'safe-local-eval-function t)
+
 
 (defvar-local file-local-variables-alist nil
   "Alist of file-local variable settings in the current buffer.
@@ -10083,21 +10282,507 @@ choose the mode specified by the default value of `major-mode'."
   (with-current-buffer buffer
     (funcall (or (default-value 'major-mode) 'fundamental-mode))))
 
-;; Directory-local variables are not implemented yet; provide the
-;; entry points used by `set-auto-mode'/`hack-local-variables'.
-(defun hack-dir-local--get-variables (&optional _predicate)
-  "Stub: return nil (no .dir-locals.el support yet)."
-  nil)
+;; files.el: directory-local variables (.dir-locals.el), verbatim GNU
+;; except `dir-locals--load-mode-if-needed' (pcase-dolist → dolist) and
+;; `dir-locals-read-from-dir' (map-merge-with → remacs--dir-locals-merge).
+
+(defvar dir-locals-class-alist '()
+  "Alist mapping directory-local variable classes (symbols) to variable lists.")
+
+(defvar dir-locals-directory-cache '()
+  "List of cached directory roots for directory-local variable classes.
+Each element in this list has the form (DIR CLASS MTIME).
+DIR is the name of the directory.
+CLASS is the name of a variable class (a symbol).
+MTIME is the recorded modification time of the directory-local
+variables file associated with this entry.  This time is a Lisp
+timestamp (the same format as `current-time'), and is
+used to test whether the cache entry is still valid.
+Alternatively, MTIME can be nil, which means the entry is always
+considered valid.")
+
+(defsubst dir-locals-get-class-variables (class)
+  "Return the variable list for CLASS."
+  (cdr (assq class dir-locals-class-alist)))
+
+(defun dir-locals-collect-mode-variables (mode-variables variables)
+  "Collect directory-local variables from MODE-VARIABLES.
+VARIABLES is the initial list of variables.
+Returns the new list."
+  (dolist (pair mode-variables variables)
+    (let* ((variable (car pair))
+	   (value (cdr pair))
+	   (slot (assq variable variables)))
+      ;; If variables are specified more than once, use only the last.  (Why?)
+      ;; The pseudo-variables mode and eval are different (bug#3430).
+      (if (and slot (not (memq variable '(mode eval))))
+	  (setcdr slot value)
+	;; Need a new cons in case we setcdr later.
+	(push (cons variable value) variables)))))
+
+(defun dir-locals--load-mode-if-needed (key alist)
+  ;; If KEY is an extra parent it may remain not loaded
+  ;; (hence with some of its mode-specific vars missing their
+  ;; `safe-local-variable' property), leading to spurious
+  ;; prompts about unsafe vars (bug#68246).
+  (when (and (symbolp key) (autoloadp (indirect-function key)))
+    (let ((unsafe nil))
+      (dolist (pair alist)
+        (let ((var (car pair)))
+          (unless (or (memq var '(mode eval))
+                      (get var 'safe-local-variable))
+            (setq unsafe t))))
+      (when unsafe
+        (ignore-errors
+          (autoload-do-load (indirect-function key)))))))
+
+(defun dir-locals-collect-variables (class-variables root variables
+                                                     &optional predicate)
+  "Collect entries from CLASS-VARIABLES into VARIABLES.
+ROOT is the root directory of the project.
+Return the new variables list.
+If PREDICATE is given, it is used to test a symbol key in the alist
+to see whether it should be considered."
+  (let* ((file-name (or (buffer-file-name)
+			;; Handle non-file buffers, too.
+			(expand-file-name default-directory)))
+	 (sub-file-name (if (and file-name
+                                 (file-name-absolute-p file-name))
+                            ;; FIXME: Why not use file-relative-name?
+			    (substring file-name (length root)))))
+    (condition-case err
+        (dolist (entry class-variables variables)
+          (let ((key (car entry)))
+            (cond
+             ((stringp key)
+              ;; Don't include this in the previous condition, because we
+              ;; want to filter all strings before the next condition.
+              (when (and sub-file-name
+                         (>= (length sub-file-name) (length key))
+                         (string-prefix-p key sub-file-name))
+                (setq variables (dir-locals-collect-variables
+                                 (cdr entry) root variables predicate))))
+             ((if predicate
+                  (funcall predicate key)
+                (or (not key)
+                    (derived-mode-p key)))
+              (let* ((alist (cdr entry))
+                     (subdirs (assq 'subdirs alist)))
+                (when (or (not subdirs)
+                        (progn
+                          (setq alist (remq subdirs alist))
+                          (cdr-safe subdirs))
+                        ;; TODO someone might want to extend this to allow
+                        ;; integer values for subdir, where N means
+                        ;; variables apply to this directory and N levels
+                        ;; below it (0 == nil).
+                        (equal root (expand-file-name default-directory)))
+                  (dir-locals--load-mode-if-needed key alist)
+                    (setq variables (dir-locals-collect-mode-variables
+                                     alist variables))))))))
+      (error
+       ;; The file's content might be invalid (e.g. have a merge conflict), but
+       ;; that shouldn't prevent the user from opening the file.
+       (message "%s error: %s" dir-locals-file (error-message-string err))
+       nil))))
+
+(defun dir-locals-set-directory-class (directory class &optional mtime)
+  "Declare that the DIRECTORY root is an instance of CLASS.
+DIRECTORY is the name of a directory, a string.
+CLASS is the name of a project class, a symbol.
+MTIME is either the modification time of the directory-local
+variables file that defined this class, or nil.
+
+When a file beneath DIRECTORY is visited, the mode-specific
+variables from CLASS are applied to the buffer.  The variables
+for a class are defined using `dir-locals-set-class-variables'."
+  (setq directory (file-name-as-directory (expand-file-name directory)))
+  (unless (assq class dir-locals-class-alist)
+    (error "No such class `%s'" (symbol-name class)))
+  (push (list directory class mtime) dir-locals-directory-cache))
+
+(defun dir-locals-set-class-variables (class variables)
+  "Map the type CLASS to a list of variable settings.
+CLASS is the project class, a symbol.  VARIABLES is a list
+that declares directory-local variables for the class.
+An element in VARIABLES is either of the form:
+    (MAJOR-MODE . ALIST)
+or
+    (DIRECTORY . LIST)
+
+In the first form, MAJOR-MODE is a symbol, and ALIST is an alist
+whose elements are of the form (VARIABLE . VALUE).
+
+In the second form, DIRECTORY is a directory name (a string), and
+LIST is a list of the form accepted by the function.
+
+When a file is visited, the file's class is found.  A directory
+may be assigned a class using `dir-locals-set-directory-class'.
+Then variables are set in the file's buffer according to the
+VARIABLES list of the class.  The list is processed in order.
+
+* If the element is of the form (MAJOR-MODE . ALIST), and the
+  buffer's major mode is derived from MAJOR-MODE (as determined
+  by `derived-mode-p'), then all the variables in ALIST are
+  applied.  A MAJOR-MODE of nil may be used to match any buffer.
+  `make-local-variable' is called for each variable before it is
+  set.
+
+* If the element is of the form (DIRECTORY . LIST), and DIRECTORY
+  is an initial substring of the file's directory, then LIST is
+  applied by recursively following these rules."
+  (setf (alist-get class dir-locals-class-alist) variables))
+
+(defconst dir-locals-file ".dir-locals.el"
+  "File that contains directory-local variables.
+It has to be constant to enforce uniform values across different
+environments and users.
+
+A second dir-locals file can be used by a user to specify their
+personal dir-local variables even if the current directory
+already has a `dir-locals-file' that is shared with other
+users (such as in a git repository).  The name of this second
+file is derived by appending \"-2\" to the base name of
+`dir-locals-file'.  With the default value of `dir-locals-file',
+a \".dir-locals-2.el\" file in the same directory will override
+the \".dir-locals.el\".
+
+See Info node `(elisp)Directory Local Variables' for details.")
+
+(defun dir-locals--all-files (directory &optional base-el-only)
+  "Return a list of all readable dir-locals files in DIRECTORY.
+The returned list is sorted by increasing priority.  That is,
+values specified in the last file should take precedence over
+those in the first."
+  (when (file-readable-p directory)
+    (let* ((file-1 (expand-file-name dir-locals-file directory))
+           (file-2 (when (string-match "\\.el\\'" file-1)
+                     (replace-match "-2.el" t nil file-1)))
+           out)
+      (dolist (f (or (and base-el-only (list file-1))
+                     ;; The order here is important.
+                     (list file-2 file-1)))
+        (when (and f
+                   (file-readable-p f)
+                   (file-regular-p f))
+          (push f out)))
+      out)))
+
+(defun dir-locals--base-file (directory)
+  "Return readable `dir-locals-file' in DIRECTORY, or nil."
+  (dir-locals--all-files directory 'base-el-only))
+
+(defun dir-locals-find-file (file)
+  "Find the directory-local variables for FILE.
+This searches upward in the directory tree from FILE.
+It stops at the first directory that has been registered in
+`dir-locals-directory-cache' or contains a `dir-locals-file'.
+If it finds an entry in the cache, it checks that it is valid.
+A cache entry with no modification time element (normally, one that
+has been assigned directly using `dir-locals-set-directory-class', not
+set from a file) is always valid.
+A cache entry based on a `dir-locals-file' is valid if the modification
+time stored in the cache matches the current file modification time.
+If not, the cache entry is cleared so that the file will be re-read.
+
+This function returns either:
+  - nil (no directory local variables found),
+  - the matching entry from `dir-locals-directory-cache' (a list),
+  - or the full path to the directory (a string) containing at
+    least one `dir-locals-file' in the case of no valid cache
+    entry."
+  (setq file (expand-file-name file))
+  (let* ((locals-dir (locate-dominating-file (file-name-directory file)
+                                             #'dir-locals--base-file))
+         dir-elt)
+    ;; `locate-dominating-file' may have abbreviated the name.
+    (when locals-dir
+      (setq locals-dir (expand-file-name locals-dir)))
+    ;; Find the best cached value in `dir-locals-directory-cache'.
+    (dolist (elt dir-locals-directory-cache)
+      (when (and (string-prefix-p (car elt) file)
+                 (> (length (car elt)) (length (car dir-elt))))
+        (setq dir-elt elt)))
+    (if (and dir-elt
+             (or (null locals-dir)
+                 (<= (length locals-dir)
+                     (length (car dir-elt)))))
+        ;; Found a potential cache entry.  Check validity.
+        ;; A cache entry with no MTIME is assumed to always be valid
+        ;; (ie, set directly, not from a dir-locals file).
+        ;; Note, we don't bother to check that there is a matching class
+        ;; element in dir-locals-class-alist, since that's done by
+        ;; dir-locals-set-directory-class.
+        (if (or (null (nth 2 dir-elt))
+                (let ((cached-files (dir-locals--all-files (car dir-elt))))
+                  ;; The entry MTIME should match the most recent
+                  ;; MTIME among matching files.
+                  (and cached-files
+		       (time-equal-p
+			      (nth 2 dir-elt)
+			      (let ((latest 0))
+				(dolist (f cached-files latest)
+				  (let ((f-time
+					 (file-attribute-modification-time
+					  (file-attributes f))))
+				    (if (time-less-p latest f-time)
+					(setq latest f-time)))))))))
+            ;; This cache entry is OK.
+            dir-elt
+          ;; This cache entry is invalid; clear it.
+          (setq dir-locals-directory-cache
+                (delq dir-elt dir-locals-directory-cache))
+          ;; Return the first existing dir-locals file.  Might be the same
+          ;; as dir-elt's, might not (eg latter might have been deleted).
+          locals-dir)
+      ;; No cache entry.
+      locals-dir)))
+
+(defun dir-locals--get-sort-score (node)
+  "Return a number used for sorting the definitions of dir locals.
+NODE is assumed to be a cons cell where the car is either a
+string or a symbol representing a mode name.
+
+If it is a mode then the depth of the mode (ie, how many parents
+that mode has) will be returned.
+
+If it is a string then the length of the string plus 1000 will be
+returned.
+
+Otherwise it returns -1.
+
+That way the value can be used to sort the list such that deeper
+modes will be after the other modes.  This will be followed by
+directory entries in order of length.  If the entries are all
+applied in order then that means the more specific modes will
+  override the values specified by the earlier modes and directory
+variables will override modes."
+  (let ((key (car node)))
+    (cond ((null key) -1)
+          ((symbolp key) (length (derived-mode-all-parents key)))
+          ((stringp key)
+           (+ 1000 (length key)))
+          (t -2))))
+
+(defun dir-locals--sort-variables (variables)
+  "Sort VARIABLES so that applying them in order has the right effect.
+The variables are compared by `dir-locals--get-sort-score'.
+Directory entries are then recursively sorted using the same
+criteria."
+  (setq variables (sort variables
+                        (lambda (a b)
+                          (< (dir-locals--get-sort-score a)
+                             (dir-locals--get-sort-score b)))))
+  (dolist (n variables)
+    (when (stringp (car n))
+      (setcdr n (dir-locals--sort-variables (cdr n)))))
+
+  variables)
+
+;; Merge helpers replacing map-merge-with/map-merge/seq-group-by for
+;; the list-of-alists merge in `dir-locals-read-from-dir'.
+(defun remacs--dir-locals-merge-vars (a b)
+  "Merge variable alists A and B: non-eval pairs of B shadow A's;
+eval pairs from both are kept, A's first."
+  (let ((aeval (seq-filter (lambda (e) (eq (car e) 'eval)) a))
+        (beval (seq-filter (lambda (e) (eq (car e) 'eval)) b))
+        (out (seq-filter (lambda (e) (not (eq (car e) 'eval))) a)))
+    (dolist (e b)
+      (unless (eq (car e) 'eval)
+        (let ((slot (assoc (car e) out)))
+          (if slot
+              (setcdr slot (cdr e))
+            (setq out (append out (list e)))))))
+    (append out aeval beval)))
+
+(defun remacs--dir-locals-merge (a b)
+  "Merge two dir-locals top-level alists; B wins on equal keys."
+  (let ((out (copy-sequence a)))
+    (dolist (e b out)
+      (let ((slot (assoc (car e) out)))
+        (if slot
+            (setcdr slot (remacs--dir-locals-merge-vars (cdr slot) (cdr e)))
+          (setq out (append out (list e))))))))
+
+(defun dir-locals-read-from-dir (dir)
+  "Load all variables files in DIR and register a new class and instance.
+DIR is the absolute name of a directory, which must contain at
+least one dir-local file (which is a file holding variables to
+apply).
+Return the new class name, which is a symbol named DIR."
+  (let* ((class-name (intern dir))
+         (files (dir-locals--all-files dir))
+	 ;; If there was a problem, use the values we could get but
+	 ;; don't let the cache prevent future reads.
+	 (latest 0) (success 0)
+         (variables))
+    (with-demoted-errors "Error reading dir-locals: %S"
+      (dolist (file files)
+	(let ((file-time (file-attribute-modification-time
+			  (file-attributes (file-chase-links file)))))
+	  (if (time-less-p latest file-time)
+	    (setq latest file-time)))
+        (with-temp-buffer
+          (insert-file-contents file)
+          (let ((newvars
+                 (condition-case-unless-debug nil
+                     ;; As a defensive measure, we do not allow
+                     ;; circular data in the file/dir-local data.
+                     (let ((read-circle nil))
+                       (read (current-buffer)))
+                   (end-of-file nil))))
+            (unless (listp newvars)
+              (message "Invalid data in %s: %s" file newvars)
+              (setq newvars nil))
+            (setq variables
+                  ;; We want to make the variable setting from
+                  ;; newvars (the second .dir-locals file) take
+                  ;; precedence over the old variables, but we also
+                  ;; want to preserve all `eval' elements as is from
+                  ;; both lists.
+                  (if (not (and newvars variables))
+                      (or newvars variables)
+                    (remacs--dir-locals-merge variables newvars))))))
+      (setq success latest))
+    (setq variables (dir-locals--sort-variables variables))
+    (dir-locals-set-class-variables class-name variables)
+    (dir-locals-set-directory-class dir class-name success)
+    class-name))
+
+(define-obsolete-function-alias 'dir-locals-read-from-file
+  'dir-locals-read-from-dir "25.1")
+
+(defcustom enable-remote-dir-locals nil
+  "Non-nil means dir-local variables will be applied to remote files."
+  :version "24.3"
+  :type 'boolean
+  :group 'find-file)
+
+(defvar hack-dir-local-variables--warned-coding nil)
+
+(defun hack-dir-local--get-variables (&optional predicate)
+  "Read per-directory local variables for the current buffer.
+Return a cons of the form (DIR . ALIST), where DIR is the
+directory name (maybe nil) and ALIST is an alist of all variables
+that might apply.  These will be filtered according to the
+buffer's directory, but not according to its mode.
+PREDICATE is passed to `dir-locals-collect-variables'."
+  (when (and enable-local-variables
+	     enable-dir-local-variables
+	     (or enable-remote-dir-locals
+		 (not (file-remote-p (or (buffer-file-name)
+					 default-directory)))))
+    ;; Find the variables file.
+    (let ((dir-or-cache (dir-locals-find-file
+                         (or (buffer-file-name) default-directory)))
+	  (class nil)
+	  (dir-name nil))
+      (cond
+       ((stringp dir-or-cache)
+	(setq dir-name dir-or-cache
+	      class (dir-locals-read-from-dir dir-or-cache)))
+       ((consp dir-or-cache)
+	(setq dir-name (nth 0 dir-or-cache))
+	(setq class (nth 1 dir-or-cache))))
+      (when class
+        (cons dir-name
+              (dir-locals-collect-variables
+               (dir-locals-get-class-variables class)
+               dir-name nil predicate))))))
+
+(defvar hack-dir-local-get-variables-functions
+  (list #'hack-dir-local--get-variables)
+  "Special hook to compute the set of dir-local variables.
+Every function is called without arguments and should return either
+a cons of the form (DIR . ALIST) or a (possibly empty) list of such conses,
+where ALIST is an alist of (VAR . VAL) settings.
+DIR should be a string (a directory name) and is used to obey
+`safe-local-variable-directories'.
+This hook is run after the major mode has been setup.")
+
+(defun hack-dir-local-variables ()
+  "Read per-directory local variables for the current buffer.
+Store the directory-local variables in `dir-local-variables-alist'
+and `file-local-variables-alist', without applying them.
+
+This does nothing if either `enable-local-variables' or
+`enable-dir-local-variables' are nil."
+  (let (items)
+    (when (and enable-local-variables
+	       enable-dir-local-variables
+	       (or enable-remote-dir-locals
+		   (not (file-remote-p (or (buffer-file-name)
+					   default-directory)))))
+      (run-hook-wrapped 'hack-dir-local-get-variables-functions
+                        (lambda (fun)
+                          (let ((res (funcall fun)))
+                            (cond
+                             ((null res))
+                             ((consp (car-safe res))
+                              (setq items (append res items)))
+                             (t (push res items))))
+			  nil)))
+    ;; Sort the entries from nearest dir to furthest dir.
+    (setq items (sort (nreverse items)
+                      :key (lambda (x) (length (car-safe x))) :reverse t))
+    ;; Filter out duplicates, preferring the settings from the nearest dir
+    ;; and from the first hook function.
+    (let ((seen nil))
+      (dolist (item items)
+        (when seen ;; Special case seen=nil since it's the most common case.
+          (setcdr item (seq-filter (lambda (vv) (not (memq (car-safe vv) seen)))
+                                   (cdr item))))
+        (setq seen (nconc (seq-difference (mapcar #'car (cdr item))
+                                          '(eval mode))
+                          seen))))
+    ;; Rather than a loop, maybe we should handle all the dirs
+    ;; "together", e.g.  prompting the user only once.  But if so, we'd
+    ;; probably want to also merge the prompt for file-local vars,
+    ;; which comes from the call to `hack-local-variables-filter' in
+    ;; `hack-local-variables'.
+    (dolist (item items)
+      (let ((dir-name (car item))
+            (variables (cdr item)))
+        (when variables
+          (dolist (elt variables)
+            (if (eq (car elt) 'coding)
+                (unless hack-dir-local-variables--warned-coding
+                  (setq hack-dir-local-variables--warned-coding t)
+                  (display-warning 'files
+                                   "Coding cannot be specified by dir-locals"))
+              (unless (memq (car elt) '(eval mode))
+                (setq dir-local-variables-alist
+                      (assq-delete-all (car elt) dir-local-variables-alist)))
+              (push elt dir-local-variables-alist)))
+          (hack-local-variables-filter variables dir-name))))))
+
+(defun hack-dir-local-variables-non-file-buffer ()
+  "Apply directory-local variables to a non-file buffer.
+For non-file buffers, such as Dired buffers, directory-local
+variables are looked for in `default-directory' and its parent
+directories."
+  (hack-dir-local-variables)
+  (hack-local-variables-apply))
+
+(defsubst file-attribute-modification-time (attributes)
+  "Return modification time of file ATTRIBUTES describes.
+The file attribute list ATTRIBUTES must be a list returned by
+`file-attributes'."
+  (nth 5 attributes))
+
+(defun seq-difference (sequence sequence2 &optional testfn)
+  "Return a list of the elements of SEQUENCE that do not appear in SEQUENCE2.
+SEQUENCE2 may be a list, vector, or string."
+  (seq-filter (lambda (e)
+                (not (seq-contains-p sequence2 e (or testfn #'equal))))
+              sequence))
 
 (defun image-type-auto-detected-p ()
   "Stub: no image support; always nil."
   nil)
 
 (defvar enable-dir-local-variables t
-  "Non-nil means read .dir-locals.el files.  Currently a no-op stub.")
-(defvar enable-remote-dir-locals nil)
-(defvar dir-locals-class-alist '())
-(defvar dir-locals-directory-cache '())
+  "Non-nil means read .dir-locals.el files.")
 
 ;; Mode stubs: correct mode symbol/name for `set-auto-mode' selection;
 ;; bodies are prog/text/special-derived approximations.

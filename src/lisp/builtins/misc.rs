@@ -2160,6 +2160,20 @@ pub(crate) fn us_to_lisp_time(us: i128) -> Value {
     ])
 }
 
+/// GNU (hi lo us ps) timestamp from nanoseconds since the epoch.
+pub(crate) fn ns_to_lisp_time(ns: i128) -> Value {
+    let secs = ns.div_euclid(1_000_000_000);
+    let nano = ns.rem_euclid(1_000_000_000);
+    let hi = secs.div_euclid(65536);
+    let lo = secs.rem_euclid(65536);
+    Value::list(vec![
+        Value::Int(hi as i128),
+        Value::Int(lo as i128),
+        Value::Int(nano / 1000),
+        Value::Int((nano % 1000) * 1000),
+    ])
+}
+
 /// Minimal POSIX tm for `localtime_r` (macOS/Linux layout).
 #[repr(C)]
 pub(crate) struct Tm {

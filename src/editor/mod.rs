@@ -1860,9 +1860,9 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!("major-mode-suspend", 0, 0, f_nil, ""),
     // delay-mode-hooks / run-mode-hooks /
     // normal-mode / set-auto-mode{,-0} / set-buffer-major-mode /
-    // hack-local-variables are Lisp (prelude files.el port), like GNU.
-    S!("hack-dir-local-variables", 0, 0, f_nil, ""),
-    S!("dir-locals-set-class-variables", 1, 1, f_nil, ""),
+    // hack-local-variables / hack-dir-local-variables /
+    // dir-locals-set-class-variables are Lisp (prelude files.el port),
+    // like GNU.
     // timers
     S!("run-at-time", 2, 7, f_nil, ""),
     S!("run-with-timer", 2, 5, f_nil, ""),
@@ -4524,25 +4524,64 @@ fn f_file_attributes(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let p = want_filename(i, &a[0])?;
     match std::fs::metadata(&p) {
         Ok(m) => {
-            let isdir = m.is_dir();
-            let nlinks = 1;
-            let uid = 0;
-            let gid = 0;
-            let size = m.len() as i128;
-            let modes = 0;
+            // GNU order: type nlinks uid gid atime mtime ctime size
+            // modes gidchg inode device.
+            let to_lisp_time = |r: std::io::Result<std::time::SystemTime>| match r {
+                Ok(t) => match t.duration_since(std::time::UNIX_EPOCH) {
+                    Ok(d) => crate::lisp::builtins::misc::ns_to_lisp_time(
+                        (d.as_secs() as i128) * 1_000_000_000 + d.subsec_nanos() as i128,
+                    ),
+                    Err(_) => Value::Nil,
+                },
+                Err(_) => Value::Nil,
+            };
+            let (nlinks, uid, gid, inode, dev, modes, ctime) = {
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::MetadataExt;
+                    let mode = m.mode();
+                    let mut s = String::with_capacity(10);
+                    s.push(if m.is_dir() {
+                        'd'
+                    } else if m.file_type().is_symlink() {
+                        'l'
+                    } else {
+                        '-'
+                    });
+                    const RWX: &str = "rwxrwxrwx";
+                    for (i, c) in RWX.chars().enumerate() {
+                        s.push(if mode & (0o400 >> i) != 0 { c } else { '-' });
+                    }
+                    (
+                        m.nlink() as i128,
+                        m.uid() as i128,
+                        m.gid() as i128,
+                        m.ino() as i128,
+                        m.dev() as i128,
+                        s,
+                        crate::lisp::builtins::misc::ns_to_lisp_time(
+                            m.ctime() as i128 * 1_000_000_000 + m.ctime_nsec() as i128,
+                        ),
+                    )
+                }
+                #[cfg(not(unix))]
+                {
+                    (1, 0, 0, 0, 0, "----------".to_string(), Value::Nil)
+                }
+            };
             Ok(Value::list(vec![
-                if isdir { Value::t() } else { Value::Nil },
+                if m.is_dir() { Value::t() } else { Value::Nil },
                 Value::Int(nlinks),
                 Value::Int(uid),
                 Value::Int(gid),
+                to_lisp_time(m.accessed()),
+                to_lisp_time(m.modified()),
+                ctime,
+                Value::Int(m.len() as i128),
+                Value::string(modes),
                 Value::Nil,
-                Value::Nil,
-                Value::Nil,
-                Value::Int(modes),
-                Value::Nil,
-                Value::Int(size),
-                Value::Nil,
-                Value::Int(0),
+                Value::Int(inode),
+                Value::Int(dev),
             ]))
         }
         Err(_) => Ok(Value::Nil),
@@ -5104,8 +5143,11 @@ fn f_insert_file_contents(i: &mut Interp, a: Vec<Value>) -> EvalResult {
             let n = contents.chars().count();
             let b = cur(i);
             let mut bb = b.borrow_mut();
-            let _start = bb.point();
+            let start = bb.point();
             bb.insert(&contents);
+            // GNU Finsert_file_contents leaves point BEFORE the
+            // inserted text (like `insert-before-markers').
+            bb.set_point(start);
             if visit {
                 bb.file_name = Some(path.clone());
                 bb.modified = false;

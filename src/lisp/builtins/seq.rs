@@ -1,5 +1,8 @@
 //! Sequence subrs: elt, aref, aset, copy-sequence, mapcar, sort, etc.
 
+use std::cell::RefCell;
+use std::rc::Rc;
+
 use super::listfn::{err_circular, nthcdr_of};
 use super::{S, arg, eq_values, equal_values, want_int, want_list, want_string};
 use crate::lisp::Interp;
@@ -42,7 +45,7 @@ pub(crate) static SUBRS: &[Subr] = &[
         f_maphash,
         "Map FUNCTION over hash table entries."
     ),
-    S!("sort", 2, 2, f_sort, "Sort SEQ destructively by PREDICATE."),
+    S!("sort", many 1, f_sort, "Sort SEQ stably by PREDICATE."),
     S!(
         "string-to-sequence",
         1,
@@ -551,39 +554,128 @@ fn f_maphash(i: &mut Interp, args: Vec<Value>) -> EvalResult {
 }
 
 fn f_sort(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    let pred = args[1].clone();
+    // GNU sort.el: (sort SEQ [PRED] &key KEY LESSP REVERSE IN-PLACE).
+    // Old-style call has PRED as arg 2; keyword call starts with a
+    // keyword symbol.  The two forms cannot be mixed.
+    let rest = &args[1..];
+    let kw_style =
+        matches!(rest.first(), Some(Value::Sym(s)) if i.obarray.name(*s).starts_with(':'));
+    let (keyf, lessp, reverse, in_place) = if kw_style {
+        let mut keyf = Value::Nil;
+        let mut lessp = Value::Nil;
+        let mut reverse = false;
+        let mut in_place = false;
+        let mut it = rest.iter();
+        while let Some(k) = it.next() {
+            let kn = match k {
+                Value::Sym(s) => i.obarray.name(*s).to_string(),
+                _ => return Err(i.error("Invalid argument list")),
+            };
+            let v = it
+                .next()
+                .cloned()
+                .ok_or_else(|| i.error("Invalid argument list"))?;
+            match kn.as_str() {
+                ":key" => keyf = v,
+                ":lessp" => lessp = v,
+                ":reverse" => reverse = v.truthy(),
+                ":in-place" => in_place = v.truthy(),
+                _ => return Err(i.error("Invalid argument list")),
+            }
+        }
+        (keyf, lessp, reverse, in_place)
+    } else {
+        if rest.len() > 1 {
+            return Err(i.error("Invalid argument list"));
+        }
+        // Old-style call: vectors sort in place (historic behavior);
+        // keyword calls default :in-place to nil (sorted copy).
+        (
+            Value::Nil,
+            rest.first().cloned().unwrap_or(Value::Nil),
+            false,
+            true,
+        )
+    };
+    // Default comparator is `<'.
+    let lessp = match lessp {
+        Value::Nil => Value::Sym(i.intern("<")),
+        f => f,
+    };
+    let spec = SortSpec {
+        keyf,
+        lessp,
+        reverse,
+    };
     match &args[0] {
         Value::Cons(_) => {
             let mut items = want_list(i, &args[0])?;
-            merge_sort(i, &mut items, &pred)?;
+            merge_sort(i, &mut items, &spec)?;
             Ok(Value::list(items))
         }
         Value::Vec(v) => {
             let mut items = v.borrow().clone();
-            merge_sort(i, &mut items, &pred)?;
-            *v.borrow_mut() = items;
-            Ok(args[0].clone())
+            merge_sort(i, &mut items, &spec)?;
+            if in_place {
+                *v.borrow_mut() = items;
+                Ok(args[0].clone())
+            } else {
+                Ok(Value::Vec(Rc::new(RefCell::new(items))))
+            }
         }
         Value::Nil => Ok(Value::Nil),
         other => Err(i.wrong_type_mut("listp", other)),
     }
 }
 
+struct SortSpec {
+    keyf: Value,
+    lessp: Value,
+    reverse: bool,
+}
+
+impl SortSpec {
+    /// Emacs `sort` uses (pred a b) = "a < b"; :key applies to each
+    /// element, :reverse flips the comparison (keeping stability).
+    fn less(&self, i: &mut Interp, a: &Value, b: &Value) -> Result<bool, super::Flow> {
+        let ka = if self.keyf.truthy() {
+            i.apply(&self.keyf, vec![a.clone()])?
+        } else {
+            a.clone()
+        };
+        let kb = if self.keyf.truthy() {
+            i.apply(&self.keyf, vec![b.clone()])?
+        } else {
+            b.clone()
+        };
+        let r = if self.reverse {
+            i.apply(&self.lessp, vec![kb, ka])?
+        } else {
+            i.apply(&self.lessp, vec![ka, kb])?
+        };
+        Ok(r.truthy())
+    }
+}
+
 /// Stable merge sort (same order guarantees as Emacs `sort`).
-fn merge_sort(i: &mut Interp, items: &mut Vec<Value>, pred: &Value) -> Result<(), super::Flow> {
+fn merge_sort(
+    i: &mut Interp,
+    items: &mut Vec<Value>,
+    spec: &SortSpec,
+) -> Result<(), super::Flow> {
     if items.len() < 2 {
         return Ok(());
     }
     let mid = items.len() / 2;
     let mut left = items[..mid].to_vec();
     let mut right = items[mid..].to_vec();
-    merge_sort(i, &mut left, pred)?;
-    merge_sort(i, &mut right, pred)?;
+    merge_sort(i, &mut left, spec)?;
+    merge_sort(i, &mut right, spec)?;
     let (mut a, mut b, mut k) = (0usize, 0usize, 0usize);
     while a < left.len() && b < right.len() {
         // pred(right[b], left[a])? Emacs `sort` uses (pred a b) = "a < b"
-        let r = i.apply(pred, vec![right[b].clone(), left[a].clone()])?;
-        if r.truthy() {
+        let r = spec.less(i, &right[b], &left[a])?;
+        if r {
             items[k] = right[b].clone();
             b += 1;
         } else {
