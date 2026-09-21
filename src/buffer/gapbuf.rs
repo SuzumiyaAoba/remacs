@@ -2,6 +2,7 @@
 //! movable gap so insert/delete near point is O(gap move + insert size).
 
 /// A buffer of `char`s with a gap at the editing position.
+#[derive(Clone)]
 pub struct GapBuffer {
     buf: Vec<char>,
     gap_start: usize,

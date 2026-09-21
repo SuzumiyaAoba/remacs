@@ -41,7 +41,7 @@ fn ev_in(i: &mut Interp, src: &str) -> Value {
 fn ev_err_in(i: &mut Interp, src: &str) -> String {
     match i.eval_str(src) {
         Ok(v) => panic!("expected error, got {}", i.prin1_to_string(&v)),
-        Err(Flow::Signal(sym, _)) => match &sym {
+        Err(Flow::Signal(sym, _, _)) => match &sym {
             Value::Sym(id) => i.symbol_name(*id),
             _ => "?".into(),
         },
@@ -361,9 +361,10 @@ fn load_path_search() {
 #[test]
 fn load_missing_signals() {
     let (mut i, _) = interp();
+    // GNU signals `file-missing' (a `file-error' subtype) for ENOENT.
     assert_eq!(
         ev_err_in(&mut i, "(load \"/nonexistent-dir-xyz/nofile\")"),
-        "file-error"
+        "file-missing"
     );
 }
 

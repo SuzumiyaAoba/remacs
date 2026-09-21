@@ -130,7 +130,7 @@ fn load_file(i: &mut Interp, path: &str) -> bool {
 
 fn report_flow(i: &mut Interp, flow: Flow) {
     match flow {
-        Flow::Signal(sym, data) => {
+        Flow::Signal(sym, data, _) => {
             let err_obj = Value::cons(sym.clone(), data.clone());
             let msg = remacs::lisp::builtins::error_message(i, &err_obj);
             let name = match &sym {

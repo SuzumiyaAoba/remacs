@@ -1562,6 +1562,34 @@ Leave one space or none, according to the context."
   "Execute BODY with quits allowed."
   (cons 'let (cons '((inhibit-quit nil)) body)))
 
+(defvar signal-hook-function nil
+  "If non-nil, `signal' calls this function (with the same arguments)
+before doing anything else.")
+
+(defvar inhibit-variable-watchers nil
+  "If non-nil, variable watchers are not called.")
+
+(defmacro handler-bind (handlers &rest body)
+  "Execute BODY with condition handlers bound.
+Each element of HANDLERS is (CONDITIONS HANDLER) where CONDITIONS is a
+condition name or list of names; HANDLER is called with the condition
+object (CONDITION-NAME . DATA) when a matching signal is raised
+uncaught (at debugger-entry time, in the raising dynamic context)."
+  (cons 'handler-bind-1
+        (cons (cons 'lambda (cons nil body))
+              (apply #'append
+                     (mapcar (lambda (b)
+                               (list (list 'quote
+                                           (let ((c (car b)))
+                                             (if (consp c) c (list c))))
+                                     (car (cdr b))))
+                             handlers)))))
+
+(defmacro condition-case-unless-debug (var bodyform &rest handlers)
+  "Like `condition-case' (we have no debugger, so equivalent here)."
+  (cons 'condition-case
+        (cons var (cons bodyform handlers))))
+
 ;; ---------- mode keymaps ----------
 
 

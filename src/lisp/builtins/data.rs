@@ -51,6 +51,14 @@ pub(crate) static SUBRS: &[Subr] = &[
         f_subrp,
         "t if OBJECT is a built-in function."
     ),
+    S!(
+        "subr-primitive-p",
+        1,
+        1,
+        f_subr_primitive_p,
+        "t if OBJECT is a primitive built-in function."
+    ),
+    S!("subr-type", 1, 1, f_subr_type, "Type of a subr object."),
     S!("macrop", 1, 1, f_macrop, "t if OBJECT is a macro."),
     S!("keywordp", 1, 1, f_keywordp, "t if OBJECT is a keyword."),
     S!("sequencep", 1, 1, f_sequencep, "t if OBJECT is a sequence."),
@@ -129,6 +137,27 @@ pub(crate) static SUBRS: &[Subr] = &[
         "t if SYMBOL's function definition is not void."
     ),
     S!("set", 2, 2, f_set, "Set SYMBOL's value to NEWVAL."),
+    S!(
+        "add-variable-watcher",
+        2,
+        2,
+        f_add_variable_watcher,
+        "Register WATCHER called on changes to SYMBOL."
+    ),
+    S!(
+        "get-variable-watchers",
+        1,
+        1,
+        f_get_variable_watchers,
+        "List of watcher functions on SYMBOL."
+    ),
+    S!(
+        "remove-variable-watcher",
+        2,
+        2,
+        f_remove_variable_watcher,
+        "Remove WATCHER from SYMBOL."
+    ),
     S!(
         "fset",
         2,
@@ -353,6 +382,19 @@ fn f_subrp(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     let _ = i;
     Ok(Value::from_bool(matches!(&args[0], Value::Subr(_))))
 }
+fn f_subr_primitive_p(i: &mut Interp, args: Vec<Value>) -> EvalResult {
+    // No byte-compiled/native-compiled subrs exist: primitive = subr.
+    let _ = i;
+    Ok(Value::from_bool(matches!(&args[0], Value::Subr(_))))
+}
+fn f_subr_type(i: &mut Interp, args: Vec<Value>) -> EvalResult {
+    // Emacs 31: returns nil for primitives, `built-in'/`special' only
+    // for native-compiled subrs — we have none, so always nil.
+    match &args[0] {
+        Value::Subr(_) => Ok(Value::Nil),
+        other => Err(i.wrong_type_mut("subrp", other)),
+    }
+}
 fn f_macrop(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     let r = match &args[0] {
         Value::Sym(id) => match i.symbol_function(*id) {
@@ -493,6 +535,45 @@ fn f_set(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     i.set_symbol(id, args[1].clone())?;
     Ok(args[1].clone())
 }
+fn f_add_variable_watcher(i: &mut Interp, args: Vec<Value>) -> EvalResult {
+    // (add-variable-watcher SYM WATCH-FN) — watcher is called as
+    // (SYM NEWVAL OP WHERE) after each change.
+    let id = want_sym(i, &args[0])?;
+    let watcher = args[1].clone();
+    // Refuse non-function watchers like Emacs does.
+    let ok = match &watcher {
+        Value::Sym(s) => i.fbound_p(*s),
+        Value::Subr(_) | Value::Lambda(_) => true,
+        Value::Cons(_) => true,
+        _ => false,
+    };
+    if !ok {
+        return Err(i.wrong_type_mut("functionp", &watcher));
+    }
+    i.var_watchers.push((id, watcher));
+    Ok(Value::Nil)
+}
+fn f_get_variable_watchers(i: &mut Interp, args: Vec<Value>) -> EvalResult {
+    let id = want_sym(i, &args[0])?;
+    let list: Vec<Value> = i
+        .var_watchers
+        .iter()
+        .filter(|(s, _)| *s == id)
+        .map(|(_, f)| f.clone())
+        .collect();
+    Ok(Value::list(list))
+}
+fn f_remove_variable_watcher(i: &mut Interp, args: Vec<Value>) -> EvalResult {
+    let id = want_sym(i, &args[0])?;
+    if let Some(pos) = i
+        .var_watchers
+        .iter()
+        .position(|(s, f)| *s == id && crate::lisp::builtins::eq_values(f, &args[1]))
+    {
+        i.var_watchers.remove(pos);
+    }
+    Ok(Value::Nil)
+}
 fn f_fset(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     let id = want_sym(i, &args[0])?;
     let def = normalize_fn_def(i, args[1].clone());
@@ -524,6 +605,7 @@ fn f_makunbound(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     let id = want_sym(i, &args[0])?;
     let id = i.var_alias_target(id);
     i.obarray.symbol_mut(id).value = Value::Sym(sym::UNBOUND);
+    i.fire_var_watchers(id, &Value::Nil, "makunbound", None)?;
     Ok(args[0].clone())
 }
 fn f_fmakunbound(i: &mut Interp, args: Vec<Value>) -> EvalResult {

@@ -9,8 +9,10 @@ use super::value::Value;
 /// How evaluation unwound.
 #[derive(Debug)]
 pub enum Flow {
-    /// `(signal SYM DATA)` — a Lisp error.
-    Signal(Value, Value),
+    /// `(signal SYM DATA)` — a Lisp error. The third element records
+    /// whether `handler-bind' handlers/`signal-hook-function' have
+    /// already been offered this signal (they run once, at raise time).
+    Signal(Value, Value, bool),
     /// `(throw TAG VALUE)` — caught by a matching `catch`.
     Throw(Value, Value),
     /// C-g quit. Like a signal but `condition-case` can't catch it

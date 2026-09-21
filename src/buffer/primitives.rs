@@ -121,6 +121,13 @@ pub(crate) static SUBRS: &[Subr] = &[
         "Move BUFFER to the end of the list."
     ),
     S!(
+        "bury-buffer-internal",
+        1,
+        1,
+        f_bury_buffer_internal,
+        "Move BUFFER-OR-NAME to the end of the buffer list."
+    ),
+    S!(
         "unbury-buffer",
         0,
         1,
@@ -168,6 +175,13 @@ pub(crate) static SUBRS: &[Subr] = &[
         1,
         f_buffer_base_buffer,
         "Base buffer (nil)."
+    ),
+    S!(
+        "make-indirect-buffer",
+        2,
+        4,
+        f_make_indirect_buffer,
+        "Create an indirect buffer sharing BASE-BUFFER's text."
     ),
     S!(
         "buffer-local-variables",
@@ -1154,9 +1168,23 @@ pub(crate) static SUBRS: &[Subr] = &[
         f_next_single_property_change,
         "Next pos where PROP changes."
     ),
+    S!(
+        "next-single-char-property-change",
+        2,
+        4,
+        f_next_single_property_change,
+        "Next pos where PROP changes (incl. overlays)."
+    ),
     S!("previous-property-change", 1, 3, f_prev_property_change, ""),
     S!(
         "previous-single-property-change",
+        2,
+        4,
+        f_prev_single_property_change,
+        ""
+    ),
+    S!(
+        "previous-single-char-property-change",
         2,
         4,
         f_prev_single_property_change,
@@ -1568,6 +1596,14 @@ fn f_bury_buffer(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     Ok(Value::Nil)
 }
 
+fn f_bury_buffer_internal(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let id = i
+        .buffer_id_of(&a[0])
+        .ok_or_else(|| i.error(format!("No buffer named {}", i.princ_to_string(&a[0]))))?;
+    i.buffers.bury(id);
+    Ok(Value::Nil)
+}
+
 fn f_unbury_buffer(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
     let ids = i.buffers.list();
     match ids.last() {
@@ -1610,8 +1646,56 @@ fn f_buffer_file_name(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     }
 }
 
-fn f_buffer_base_buffer(_i: &mut Interp, _a: Vec<Value>) -> EvalResult {
-    Ok(Value::Nil)
+fn f_buffer_base_buffer(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let b = buf_of(i, &arg(&a, 0))?;
+    let base = b.borrow().base_buffer;
+    Ok(base.and_then(|id| i.buffer_value(id)).unwrap_or(Value::Nil))
+}
+
+/// (make-indirect-buffer BASE-BUFFER NAME &optional CLONE
+/// INHIBIT-BUFFER-HOOKS) — create a buffer sharing BASE-BUFFER's text.
+/// The name must not already be in use; CLONE copies point, mark,
+/// narrowing, and locals from the base.
+fn f_make_indirect_buffer(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let base_id = match &a[0] {
+        Value::Buffer(b) => b.borrow().id,
+        other => return Err(i.wrong_type_mut("bufferp", other)),
+    };
+    if !i
+        .buffers
+        .get(base_id)
+        .map(|b| b.borrow().live)
+        .unwrap_or(false)
+    {
+        return Err(i.error("Selecting deleted buffer"));
+    }
+    let name = match &a[1] {
+        Value::Str(s) => s.borrow().clone(),
+        other => return Err(i.wrong_type_mut("stringp", other)),
+    };
+    if i.buffers.by_name(&name).is_some() {
+        return Err(i.error("Buffer name is already in use"));
+    }
+    let clone = a.get(2).map(|v| v.truthy()).unwrap_or(false);
+    let id = i.buffers.create_exact(&name);
+    {
+        let base = i.buffers.get(base_id).unwrap();
+        let bb = base.borrow();
+        let nb = i.buffers.get(id).unwrap();
+        let mut n = nb.borrow_mut();
+        n.text = bb.text.clone();
+        n.base_buffer = Some(base_id);
+        if clone {
+            n.point = bb.point;
+            n.mark = bb.mark;
+            n.mark_active = bb.mark_active;
+            n.begv = bb.begv;
+            n.zv = bb.zv;
+            n.locals = bb.locals.clone();
+            n.file_name = bb.file_name.clone();
+        }
+    }
+    Ok(i.buffer_value(id).unwrap_or(Value::Nil))
 }
 
 fn f_buffer_local_variables(i: &mut Interp, a: Vec<Value>) -> EvalResult {
@@ -5663,8 +5747,77 @@ pub(crate) fn f_next_property_change(i: &mut Interp, a: Vec<Value>) -> EvalResul
     }
 }
 
+/// Shared engine for `next/previous-single(-char)-property-change':
+/// (POS PROP &optional OBJECT LIMIT). Buffer positions are 1-based,
+/// string positions 0-based; a "change" at P means PROP's value at P
+/// differs from its value at P-1. No change → LIMIT (defaults:
+/// point-max / point-min for buffers, len / 0 for strings).
+fn single_prop_change(i: &mut Interp, a: &[Value], forward: bool) -> EvalResult {
+    let pos_v = a[0].int().unwrap_or(0);
+    let prop = want_sym(i, &a[1])?;
+    let object = a.get(2);
+    let limit = a.get(3);
+
+    // String object: our strings carry no properties, so the value at
+    // every position is nil — nothing ever changes; return LIMIT.
+    if let Some(Value::Str(s)) = object {
+        let len = s.borrow().chars().count() as i128;
+        let default = if forward { len } else { 0 };
+        return Ok(match limit {
+            Some(v) if v.truthy() => v.clone(),
+            _ => Value::Int(default),
+        });
+    }
+    let b = match object {
+        Some(v) if v.truthy() => buf_of(i, v)?,
+        _ => cur(i),
+    };
+    let bb = b.borrow();
+    let len = bb.text.len() as i128;
+    // pos is a 1-based Lisp position; char index = pos-1.
+    let pos = pos_v.clamp(1, len + 1);
+    let at = |p: i128| -> Value {
+        if p < 1 || p > len {
+            return Value::Nil;
+        }
+        for tp in bb.text_props.iter().rev() {
+            if tp.prop == prop && (p as usize - 1) >= tp.start && (p as usize - 1) < tp.end
+            {
+                return tp.value.clone();
+            }
+        }
+        Value::Nil
+    };
+    let default_limit = if forward { len + 1 } else { 1 };
+    let lim = match limit {
+        Some(v) if v.truthy() => v.int().unwrap_or(default_limit),
+        _ => default_limit,
+    };
+    if forward {
+        let mut p = pos + 1;
+        while p <= lim {
+            if !crate::lisp::builtins::eq_values(&at(p), &at(p - 1)) {
+                return Ok(Value::Int(p));
+            }
+            p += 1;
+        }
+        Ok(Value::Int(lim))
+    } else {
+        // Last change strictly before POS: a boundary at P counts when
+        // at(P) != at(P-1); GNU never returns POS itself.
+        let mut p = pos - 1;
+        while p > lim && p >= 2 {
+            if !crate::lisp::builtins::eq_values(&at(p), &at(p - 1)) {
+                return Ok(Value::Int(p));
+            }
+            p -= 1;
+        }
+        Ok(Value::Int(lim))
+    }
+}
+
 fn f_next_single_property_change(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    f_next_property_change(i, a)
+    single_prop_change(i, &a, true)
 }
 
 fn f_prev_property_change(i: &mut Interp, a: Vec<Value>) -> EvalResult {
@@ -5690,7 +5843,7 @@ fn f_prev_property_change(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 }
 
 fn f_prev_single_property_change(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    f_prev_property_change(i, a)
+    single_prop_change(i, &a, false)
 }
 
 fn f_propertize(i: &mut Interp, a: Vec<Value>) -> EvalResult {

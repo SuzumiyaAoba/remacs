@@ -9,6 +9,13 @@ use crate::lisp::value::{Subr, Value};
 pub(crate) static SUBRS: &[Subr] = &[
     S!("string", many 0, f_string, "Concatenate characters into a string."),
     S!("concat", many 0, f_concat, "Concatenate sequences into a string."),
+    S!(
+        "ngettext",
+        3,
+        3,
+        f_ngettext,
+        "Plural-aware MSGID/MSGID-PLURAL selector for N."
+    ),
     S!("vconcat", many 0, f_vconcat, "Concatenate sequences into a vector."),
     S!(
         "substring",
@@ -484,6 +491,14 @@ fn f_concat(i: &mut Interp, args: Vec<Value>) -> EvalResult {
         concat_seq(i, a, &mut out)?;
     }
     Ok(Value::string(out))
+}
+
+fn f_ngettext(i: &mut Interp, args: Vec<Value>) -> EvalResult {
+    // (ngettext MSGID MSGID-PLURAL N) — English rule: N != 1 → plural.
+    let sing = want_string(i, &args[0])?;
+    let plural = want_string(i, &args[1])?;
+    let n = want_int(i, &args[2])?;
+    Ok(Value::string(if n == 1 { sing } else { plural }))
 }
 
 fn f_vconcat(i: &mut Interp, args: Vec<Value>) -> EvalResult {

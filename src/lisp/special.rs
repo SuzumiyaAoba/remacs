@@ -109,11 +109,17 @@ impl Interp {
     /// `let`/`let*`/`condition-case` variable binding honoring scoping:
     /// binds lexically when lexical-binding is active and the var isn't
     /// special, else specbinds dynamically.
-    pub fn bind_var(&mut self, lex_vars: Option<&Rc<LexFrame>>, sym: SymId, val: Value) {
+    pub fn bind_var(
+        &mut self,
+        lex_vars: Option<&Rc<LexFrame>>,
+        sym: SymId,
+        val: Value,
+    ) -> Result<(), Flow> {
         let is_special = self.obarray.symbol(sym).special;
         match (lex_vars, is_special) {
             (Some(frame), false) => {
                 frame.vars.borrow_mut().insert(sym, val);
+                Ok(())
             }
             _ => self.specbind(sym, val),
         }
@@ -303,13 +309,19 @@ fn sf_let(i: &mut Interp, args: Value) -> EvalResult {
             parent: i.lexenv.clone(),
         });
         let mark = i.specbind_depth();
+        let mut r = Ok(Value::Nil);
         for (s, v) in evaluated {
-            i.bind_var(Some(&frame), s, v);
+            r = i.bind_var(Some(&frame), s, v).map(|_| Value::Nil);
+            if r.is_err() {
+                break;
+            }
         }
         let saved = std::mem::replace(&mut i.lexenv, Some(frame));
-        let r = i.eval_progn(&body);
+        if r.is_ok() {
+            r = i.eval_progn(&body);
+        }
         i.lexenv = saved;
-        i.unbind_to(mark);
+        i.unbind_to(mark)?;
         r
     } else {
         let mark = i.specbind_depth();
@@ -329,10 +341,10 @@ fn sf_let(i: &mut Interp, args: Value) -> EvalResult {
             return Err(e);
         }
         for (s, v) in evaluated {
-            i.specbind(s, v);
+            i.specbind(s, v)?;
         }
         let r = i.eval_progn(&body);
-        i.unbind_to(mark);
+        i.unbind_to(mark)?;
         r
     }
 }
@@ -350,7 +362,12 @@ fn sf_let_star(i: &mut Interp, args: Value) -> EvalResult {
         let mut r = Ok(Value::Nil);
         for (s, init) in &specs {
             match i.eval(init) {
-                Ok(v) => i.bind_var(Some(&frame), *s, v),
+                Ok(v) => {
+                    if let Err(e) = i.bind_var(Some(&frame), *s, v) {
+                        r = Err(e);
+                        break;
+                    }
+                }
                 Err(e) => {
                     r = Err(e);
                     break;
@@ -361,14 +378,19 @@ fn sf_let_star(i: &mut Interp, args: Value) -> EvalResult {
             r = i.eval_progn(&body);
         }
         i.lexenv = saved;
-        i.unbind_to(mark);
+        i.unbind_to(mark)?;
         r
     } else {
         let mark = i.specbind_depth();
         let mut r = Ok(Value::Nil);
         for (s, init) in &specs {
             match i.eval(init) {
-                Ok(v) => i.specbind(*s, v),
+                Ok(v) => {
+                    if let Err(e) = i.specbind(*s, v) {
+                        r = Err(e);
+                        break;
+                    }
+                }
                 Err(e) => {
                     r = Err(e);
                     break;
@@ -378,7 +400,7 @@ fn sf_let_star(i: &mut Interp, args: Value) -> EvalResult {
         if r.is_ok() {
             r = i.eval_progn(&body);
         }
-        i.unbind_to(mark);
+        i.unbind_to(mark)?;
         r
     }
 }
@@ -519,11 +541,13 @@ fn sf_defmacro(i: &mut Interp, args: Value) -> EvalResult {
 }
 
 fn sf_lambda(i: &mut Interp, args: Value) -> EvalResult {
-    // `(lambda ...)' self-evaluates to a function object.
+    // `(lambda ...)' self-evaluates to a function object; under
+    // lexical-binding it closes over the current lexical env.
     let params = car(&args);
     let body_v = cdr(&args);
     let body = body_v.list_to_vec().unwrap_or_default();
-    let lambda = i.parse_lambda(&params, &body, None)?;
+    let mut lambda = i.parse_lambda(&params, &body, None)?;
+    lambda.env = i.lexenv.clone();
     Ok(Value::Lambda(Rc::new(lambda)))
 }
 
@@ -583,15 +607,23 @@ fn sf_condition_case(i: &mut Interp, args: Value) -> EvalResult {
     let var_v = car(&args);
     let bodyform = cadr(&args);
     let handlers = cdr(&cdr(&args));
-    match i.eval(&bodyform) {
+    // Register our condition names so a signal raised in BODY knows it
+    // will be caught — `handler-bind' handlers only fire for signals
+    // no enclosing `condition-case' claims (Emacs debugger semantics).
+    let mut cond_names = Vec::new();
+    handlers.each_car(|h| cond_names.push(car(h)));
+    i.case_handlers.push(Value::list(cond_names));
+    let body_result = i.eval(&bodyform);
+    i.case_handlers.pop();
+    match body_result {
         Ok(v) => Ok(v),
-        Err(Flow::Signal(sig, data)) => {
+        Err(Flow::Signal(sig, data, offered)) => {
             // Build the condition object: (sig . data)
             let err_val = Value::cons(sig.clone(), data.clone());
             let mut cur = handlers;
             loop {
                 match cur {
-                    Value::Nil => return Err(Flow::Signal(sig, data)),
+                    Value::Nil => return Err(Flow::Signal(sig, data, offered)),
                     Value::Cons(c) => {
                         let (handler, next) = {
                             let b = c.borrow();
@@ -615,18 +647,26 @@ fn sf_condition_case(i: &mut Interp, args: Value) -> EvalResult {
                                 None => None,
                             };
                             if let Some(vid) = i.sym_id(&var_v) {
-                                i.bind_var(lex_frame.as_ref(), vid, err_val);
+                                if let Err(e) =
+                                    i.bind_var(lex_frame.as_ref(), vid, err_val)
+                                {
+                                    if lex_frame.is_some() {
+                                        i.lexenv = saved_lex;
+                                    }
+                                    let _ = i.unbind_to(mark);
+                                    return Err(e);
+                                }
                             }
                             let r = i.eval_progn(&hbody);
                             if lex_frame.is_some() {
                                 i.lexenv = saved_lex;
                             }
-                            i.unbind_to(mark);
+                            i.unbind_to(mark)?;
                             return r;
                         }
                         cur = next;
                     }
-                    _ => return Err(Flow::Signal(sig, data)),
+                    _ => return Err(Flow::Signal(sig, data, offered)),
                 }
             }
         }

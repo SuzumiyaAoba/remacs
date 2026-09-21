@@ -1,7 +1,7 @@
 //! Extra buffer subrs: region commands, text-property scans, fields,
 //! indentation helpers, and encoding on regions.
 
-use crate::buffer::primitives::{check_writable, cur, err_sym, pos_idx};
+use crate::buffer::primitives::{buf_of, check_writable, cur, err_sym, pos_idx};
 use crate::lisp::Interp;
 use crate::lisp::builtins::{S, arg, want_int, want_string};
 use crate::lisp::error::{EvalResult, Flow};
@@ -375,7 +375,183 @@ pub(crate) static SUBRS: &[Subr] = &[
         f_undo_boundary,
         "Push undo boundary."
     ),
+    S!(
+        "base64url-encode-string",
+        1,
+        2,
+        f_b64url_encode_string,
+        "URL-safe base64 of STRING; NO-PADDING strips `='."
+    ),
+    S!(
+        "get-byte",
+        0,
+        2,
+        f_get_byte,
+        "Byte value of char at POSITION in STRING."
+    ),
+    S!(
+        "find-file-name-handler",
+        2,
+        2,
+        f_find_file_name_handler,
+        "Handler for FILE per `file-name-handler-alist', or nil."
+    ),
+    S!(
+        "replace-region-contents",
+        3,
+        6,
+        f_replace_region_contents,
+        "Replace region with SOURCE (a buffer, string, or fn)."
+    ),
+    S!(
+        "combine-after-change-execute",
+        0,
+        0,
+        f_combine_after_change_execute,
+        "Run deferred after-change functions (no-op: ours are eager)."
+    ),
 ];
+
+fn f_b64url_encode_string(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    use base64::Engine;
+    let s = want_string(i, &a[0])?;
+    let no_pad = a.get(1).map(|v| v.truthy()).unwrap_or(false);
+    let eng = if no_pad {
+        base64::engine::general_purpose::URL_SAFE_NO_PAD
+    } else {
+        base64::engine::general_purpose::URL_SAFE
+    };
+    Ok(Value::string(eng.encode(s.as_bytes())))
+}
+
+fn f_get_byte(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    // (get-byte &optional POSITION STRING) — byte units; multibyte
+    // chars that aren't ASCII/8-bit signal an error like Emacs.
+    match a.get(1) {
+        Some(Value::Str(s)) => {
+            let s = s.borrow().clone();
+            let chars: Vec<char> = s.chars().collect();
+            let pos = a.get(0).and_then(|v| v.int()).unwrap_or(0);
+            if pos < 0 || pos as usize >= chars.len() {
+                return Err(i.signal_data(
+                    crate::lisp::sym::ARGS_OUT_OF_RANGE,
+                    vec![a[1].clone(), a[0].clone()],
+                ));
+            }
+            let c = chars[pos as usize] as u32;
+            if c < 128 {
+                Ok(Value::Int(c as i128))
+            } else {
+                Err(i.signal_data(
+                    crate::lisp::sym::ERROR,
+                    vec![Value::string(format!(
+                        "Not an ASCII nor an 8-bit character: {}",
+                        c
+                    ))],
+                ))
+            }
+        }
+        Some(other) if !other.is_nil() => Err(i.wrong_type_mut("stringp", other)),
+        _ => {
+            // Buffer text at POSITION (1-based); ASCII-only like strings.
+            let b = cur(i);
+            let bb = b.borrow();
+            let pos = a.get(0).and_then(|v| v.int()).unwrap_or(bb.point() as i128);
+            let p = if pos < 1 { usize::MAX } else { (pos - 1) as usize };
+            if p >= bb.text.len() {
+                return Err(i.signal_data(
+                    crate::lisp::sym::ARGS_OUT_OF_RANGE,
+                    vec![a.get(0).cloned().unwrap_or(Value::Nil)],
+                ));
+            }
+            let c = bb.text.char_at(p) as u32;
+            if c < 128 {
+                Ok(Value::Int(c as i128))
+            } else {
+                Err(i.signal_data(
+                    crate::lisp::sym::ERROR,
+                    vec![Value::string(format!(
+                        "Not an ASCII nor an 8-bit character: {}",
+                        c
+                    ))],
+                ))
+            }
+        }
+    }
+}
+
+fn f_find_file_name_handler(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    // (find-file-name-handler FILE OPERATION) — scan
+    // `file-name-handler-alist' (REGEXP . HANDLER) pairs.
+    let file = want_string(i, &a[0])?;
+    let fid = i.intern("file-name-handler-alist");
+    let alist = i.symbol_value(fid);
+    let mut cur = alist;
+    loop {
+        match cur {
+            Value::Cons(c) => {
+                let (cell, next) = {
+                    let b = c.borrow();
+                    (b.car.clone(), b.cdr.clone())
+                };
+                if let Value::Cons(pair) = &cell {
+                    let (re, handler) = {
+                        let b = pair.borrow();
+                        (b.car.clone(), b.cdr.clone())
+                    };
+                    if let Value::Str(pat) = &re {
+                        let pat = pat.borrow().clone();
+                        let chars: Vec<char> = file.chars().collect();
+                        let matched = crate::lisp::regexp::compile_case(&pat, false)
+                            .ok()
+                            .and_then(|re| {
+                                crate::lisp::regexp::search_full(&re, &chars, 0)
+                            })
+                            .is_some();
+                        if matched {
+                            return Ok(handler);
+                        }
+                    }
+                }
+                cur = next;
+            }
+            _ => return Ok(Value::Nil),
+        }
+    }
+}
+
+fn f_replace_region_contents(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    // (replace-region-contents BEG END SOURCE &rest) — SOURCE is a
+    // buffer, a string, or a 0-arg function returning one.
+    let (s, e, _) = region_text(i, &a)?;
+    let src = a[2].clone();
+    let text = match &src {
+        Value::Str(st) => st.borrow().clone(),
+        Value::Buffer(_) => {
+            let b = buf_of(i, &src)?;
+            b.borrow().text.text()
+        }
+        Value::Sym(_) | Value::Lambda(_) | Value::Subr(_) | Value::Cons(_) => {
+            let r = i.apply(&src, vec![])?;
+            match &r {
+                Value::Str(st) => st.borrow().clone(),
+                Value::Buffer(_) => buf_of(i, &r)?.borrow().text.text(),
+                other => return Err(i.wrong_type_mut("stringp", other)),
+            }
+        }
+        other => return Err(i.wrong_type_mut("stringp", other)),
+    };
+    check_writable(i)?;
+    let b = cur(i);
+    let mut bb = b.borrow_mut();
+    bb.delete_region(s, e);
+    bb.insert_at(s, &text);
+    Ok(Value::t())
+}
+
+fn f_combine_after_change_execute(_i: &mut Interp, _a: Vec<Value>) -> EvalResult {
+    Ok(Value::Nil)
+}
 
 fn f_nil2(_i: &mut Interp, _a: Vec<Value>) -> EvalResult {
     Ok(Value::Nil)

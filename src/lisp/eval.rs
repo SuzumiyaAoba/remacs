@@ -141,6 +141,14 @@ pub struct Interp {
     pub mtwlb_phase: u8,
     /// Path of the dribble file opened by `open-dribble-file'.
     pub dribble_file: Option<String>,
+    /// `handler-bind' dynamic chain: (CONDITIONS . HANDLER) pairs,
+    /// innermost last. Consulted when a signal is raised uncaught.
+    pub handler_bindings: Vec<(Value, Value)>,
+    /// Condition lists of `condition-case' forms currently evaluating
+    /// their bodies — a signal matching any of them is "caught".
+    pub case_handlers: Vec<Value>,
+    /// `add-variable-watcher' registry: (SYM . FUNCTION) pairs.
+    pub var_watchers: Vec<(SymId, Value)>,
 }
 
 /// Result of a minibuffer read from the front-end.
@@ -197,6 +205,9 @@ impl Interp {
             char_code_prop_tables: Vec::new(),
             mtwlb_phase: 0,
             dribble_file: None,
+            handler_bindings: Vec::new(),
+            case_handlers: Vec::new(),
+            var_watchers: Vec::new(),
         };
         crate::lisp::builtins::install(&mut interp);
         crate::buffer::install_primitives(&mut interp);
@@ -354,13 +365,19 @@ impl Interp {
         if let Some(b) = self.buffers.get(self.current_buffer) {
             if let Ok(mut bb) = b.try_borrow_mut() {
                 if is_auto_local || bb.locals.contains_key(&id) {
-                    bb.locals.insert(id, val);
-                    return Ok(());
+                    bb.locals.insert(id, val.clone());
+                    drop(bb);
+                    return self.fire_var_watchers(
+                        id,
+                        &val,
+                        "set",
+                        Some(self.current_buffer),
+                    );
                 }
             }
         }
-        self.obarray.symbol_mut(id).value = val;
-        Ok(())
+        self.obarray.symbol_mut(id).value = val.clone();
+        self.fire_var_watchers(id, &val, "set", None)
     }
 
     /// Set the global (default) value regardless of buffer-local bindings.
@@ -368,8 +385,8 @@ impl Interp {
         if self.obarray.symbol(id).constant {
             return Err(self.signal_data(sym::SETTING_CONSTANT, vec![self.sym(id)]));
         }
-        self.obarray.symbol_mut(id).value = val;
-        Ok(())
+        self.obarray.symbol_mut(id).value = val.clone();
+        self.fire_var_watchers(id, &val, "set", None)
     }
 
     pub fn symbol_function(&self, id: SymId) -> Value {
@@ -407,52 +424,65 @@ impl Interp {
     // ---------- specbind (dynamic let) ----------
 
     /// Push a dynamic binding for `sym` to `val`.
-    pub fn specbind(&mut self, id: SymId, val: Value) {
+    pub fn specbind(&mut self, id: SymId, val: Value) -> Result<(), Flow> {
         let is_auto_local = self.obarray.symbol(id).make_local_if_set;
+        let mut bound_buf = None;
         if let Some(b) = self.buffers.get(self.current_buffer) {
             let mut bb = b.borrow_mut();
             if is_auto_local || bb.locals.contains_key(&id) {
-                let old = bb.locals.insert(id, val);
+                let old = bb.locals.insert(id, val.clone());
+                drop(bb);
                 self.specbind.push(SpecBind {
                     sym: id,
                     buf: Some(self.current_buffer),
                     old,
                 });
-                return;
+                bound_buf = Some(self.current_buffer);
             }
         }
-        let old = self.obarray.symbol(id).value.clone();
-        self.obarray.symbol_mut(id).value = val;
-        self.specbind.push(SpecBind {
-            sym: id,
-            buf: None,
-            old: Some(old),
-        });
+        if bound_buf.is_none() {
+            let old = self.obarray.symbol(id).value.clone();
+            self.obarray.symbol_mut(id).value = val.clone();
+            self.specbind.push(SpecBind {
+                sym: id,
+                buf: None,
+                old: Some(old),
+            });
+        }
+        self.fire_var_watchers(id, &val, "let", bound_buf)
     }
 
     /// Pop `n` specbind entries, restoring values.
-    pub fn unbind(&mut self, n: usize) {
+    pub fn unbind(&mut self, n: usize) -> Result<(), Flow> {
         for _ in 0..n {
             let Some(sb) = self.specbind.pop() else {
-                return;
+                return Ok(());
             };
+            let mut restored = Value::Nil;
             match sb.buf {
                 Some(buf_id) => {
                     if let Some(b) = self.buffers.get(buf_id) {
                         let mut bb = b.borrow_mut();
                         match sb.old {
-                            Some(v) => bb.locals.insert(sb.sym, v),
+                            Some(v) => {
+                                restored = v.clone();
+                                bb.locals.insert(sb.sym, v)
+                            }
                             None => bb.locals.remove(&sb.sym),
                         };
                     }
                 }
                 None => {
                     if let Some(v) = sb.old {
+                        restored = v.clone();
                         self.obarray.symbol_mut(sb.sym).value = v;
                     }
                 }
             }
+            // GNU fires 'unlet watchers with the restored value.
+            self.fire_var_watchers(sb.sym, &restored, "unlet", sb.buf)?;
         }
+        Ok(())
     }
 
     pub fn specbind_depth(&self) -> usize {
@@ -463,12 +493,12 @@ impl Interp {
 
     /// `(signal sym (data...))` where data is already a list.
     pub fn signal(&self, sym_id: SymId, data: Value) -> Flow {
-        Flow::Signal(Value::Sym(sym_id), data)
+        Flow::Signal(Value::Sym(sym_id), data, false)
     }
 
     /// `(signal sym data-list-from-vec)`.
     pub fn signal_data(&self, sym_id: SymId, data: Vec<Value>) -> Flow {
-        Flow::Signal(Value::Sym(sym_id), Value::list(data))
+        Flow::Signal(Value::Sym(sym_id), Value::list(data), false)
     }
 
     /// `(error "fmt" args...)` — signals `error` with a formatted message.
@@ -607,7 +637,91 @@ impl Interp {
         }
         let result = self.eval_inner(form);
         self.eval_depth -= 1;
-        result
+        match result {
+            Err(Flow::Signal(sig, data, false)) => match self.offer_signal(&sig, &data) {
+                Ok(()) => Err(Flow::Signal(sig, data, true)),
+                Err(f) => Err(f),
+            },
+            other => other,
+        }
+    }
+
+    /// Offer a freshly-raised signal to `signal-hook-function' and to
+    /// `handler-bind' handlers. Emacs runs these at raise time, in the
+    /// signaling dynamic context, once per signal — the `offered' flag
+    /// in `Flow::Signal' marks it after the innermost eval frame sees it.
+    /// Handler nonlocal exits supersede the original signal.
+    fn offer_signal(&mut self, sig: &Value, data: &Value) -> Result<(), Flow> {
+        if let Some(id) = self.intern_soft("signal-hook-function") {
+            if self.bound_p(id) {
+                let hook = self.symbol_value(id);
+                if hook.truthy() {
+                    self.apply(&hook, vec![sig.clone(), data.clone()])?;
+                }
+            }
+        }
+        if self.handler_bindings.is_empty() {
+            return Ok(());
+        }
+        // Emacs runs handler-bind handlers only for signals no
+        // condition-case will claim (the debugger-entry point).
+        for conds in self.case_handlers.iter().rev() {
+            if self.signal_matches(sig, conds) {
+                return Ok(());
+            }
+        }
+        let cond = Value::cons(sig.clone(), data.clone());
+        for idx in (0..self.handler_bindings.len()).rev() {
+            let (conds, handler) = self.handler_bindings[idx].clone();
+            if self.signal_matches(sig, &conds) {
+                // While a handler runs only strictly-outer bindings are
+                // visible — a handler's own signal can't re-enter it.
+                let tail = self.handler_bindings.split_off(idx);
+                let r = self.apply(&handler, vec![cond.clone()]);
+                self.handler_bindings.extend(tail);
+                r?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Run `add-variable-watcher' functions for `id' after a change.
+    /// GNU calls each watcher as (SYM NEWVAL OPERATION WHERE).
+    pub(crate) fn fire_var_watchers(
+        &mut self,
+        id: SymId,
+        newval: &Value,
+        op: &str,
+        buf: Option<usize>,
+    ) -> Result<(), Flow> {
+        if self.var_watchers.is_empty()
+            || !self.var_watchers.iter().any(|(s, _)| *s == id)
+        {
+            return Ok(());
+        }
+        if let Some(inh) = self.intern_soft("inhibit-variable-watchers") {
+            if self.bound_p(inh) && self.symbol_value(inh).truthy() {
+                return Ok(());
+            }
+        }
+        let watchers: Vec<Value> = self
+            .var_watchers
+            .iter()
+            .filter(|(s, _)| *s == id)
+            .map(|(_, f)| f.clone())
+            .collect();
+        let where_ = buf
+            .and_then(|b| self.buffer_value(b))
+            .unwrap_or(Value::Nil);
+        let op_id = self.intern(op);
+        let op_sym = self.sym(op_id);
+        for f in watchers {
+            self.apply(
+                &f,
+                vec![self.sym(id), newval.clone(), op_sym.clone(), where_.clone()],
+            )?;
+        }
+        Ok(())
     }
 
     fn eval_inner(&mut self, form: &Value) -> EvalResult {
@@ -920,7 +1034,7 @@ impl Interp {
                 Err(e) => Err(e),
             };
             self.lexenv = saved;
-            self.unbind_to(mark);
+            self.unbind_to(mark)?;
             result
         } else {
             // Dynamic: specbind each parameter, and make sure no lexical
@@ -933,7 +1047,7 @@ impl Interp {
                 Err(e) => Err(e),
             };
             self.lexenv = saved_lex;
-            self.unbind_to(mark);
+            self.unbind_to(mark)?;
             result
         }
     }
@@ -996,7 +1110,7 @@ impl Interp {
     fn bind_lambda_args_result(&mut self, l: &Rc<Lambda>, argv: &[Value]) -> Result<(), Flow> {
         let mut i = 0;
         for s in &l.required {
-            self.specbind(*s, argv[i].clone());
+            self.specbind(*s, argv[i].clone())?;
             i += 1;
         }
         for opt in &l.optional {
@@ -1009,9 +1123,9 @@ impl Interp {
                     None => Value::Nil,
                 }
             };
-            self.specbind(opt.sym, v);
+            self.specbind(opt.sym, v)?;
             if let Some(sp) = opt.supplied {
-                self.specbind(sp, Value::from_bool(given));
+                self.specbind(sp, Value::from_bool(given))?;
             }
             i += 1;
         }
@@ -1021,14 +1135,14 @@ impl Interp {
             } else {
                 Value::Nil
             };
-            self.specbind(rest, tail);
+            self.specbind(rest, tail)?;
         }
         Ok(())
     }
 
-    pub fn unbind_to(&mut self, mark: usize) {
+    pub fn unbind_to(&mut self, mark: usize) -> Result<(), Flow> {
         let n = self.specbind.len() - mark;
-        self.unbind(n);
+        self.unbind(n)
     }
 
     /// Evaluate a body (progn), returning the last value.

@@ -40,14 +40,14 @@ pub struct Reader<'a> {
 
 fn read_err(interp: &mut Interp, msg: &str) -> Flow {
     let sym_id = interp.intern("invalid-read-syntax");
-    Flow::Signal(Value::Sym(sym_id), Value::list(vec![Value::string(msg)]))
+    Flow::Signal(Value::Sym(sym_id), Value::list(vec![Value::string(msg)]), false)
 }
 
 /// `invalid-read-syntax' with a symbol argument, like Emacs's `#|', `#z'.
 fn read_err_sym(interp: &mut Interp, name: &str) -> Flow {
     let sym_id = interp.intern("invalid-read-syntax");
     let data = Value::list(vec![Value::Sym(interp.intern(name))]);
-    Flow::Signal(Value::Sym(sym_id), data)
+    Flow::Signal(Value::Sym(sym_id), data, false)
 }
 
 /// `invalid-read-syntax' for radix integers: `(integer, radix N)'.
@@ -58,12 +58,12 @@ fn read_err_radix(interp: &mut Interp, radix: u32) -> Flow {
         Value::Sym(interp.intern("radix")),
         Value::Int(radix as i128),
     ]);
-    Flow::Signal(Value::Sym(sym_id), data)
+    Flow::Signal(Value::Sym(sym_id), data, false)
 }
 
 fn eof_err(interp: &mut Interp) -> Flow {
     let sym_id = interp.intern("end-of-file");
-    Flow::Signal(Value::Sym(sym_id), Value::Nil)
+    Flow::Signal(Value::Sym(sym_id), Value::Nil, false)
 }
 
 impl<'a> Reader<'a> {
@@ -263,7 +263,7 @@ impl<'a> Reader<'a> {
                         Value::Sym(self.interp.intern("expected")),
                         Value::Sym(self.interp.intern(")")),
                     ]);
-                    return Err(Flow::Signal(Value::Sym(sym_id), data));
+                    return Err(Flow::Signal(Value::Sym(sym_id), data, false));
                 }
                 // A `. nil' tail is just a proper list end.
                 let tail = if tail.is_nil() { Value::Nil } else { tail };

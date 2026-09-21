@@ -1762,6 +1762,20 @@ pub(crate) static SUBRS: &[Subr] = &[
         ""
     ),
     S!("syntax-class", 1, 1, f_zero, ""),
+    S!(
+        "syntax-class-to-char",
+        1,
+        1,
+        f_syntax_class_to_char,
+        "Character designating syntax class CLASS."
+    ),
+    S!(
+        "matching-paren",
+        1,
+        1,
+        f_matching_paren,
+        "Matching parenthesis of CHAR, or nil."
+    ),
     S!("standard-syntax-table", 0, 0, f_standard_syntax_table, ""),
     S!("string-to-syntax", 1, 1, f_string_to_syntax, ""),
     S!("syntax-propertize", 1, 1, f_nil, ""),
@@ -1828,6 +1842,13 @@ pub(crate) static SUBRS: &[Subr] = &[
         "Create overlay BEG..END."
     ),
     S!("delete-overlay", 1, 1, f_delete_overlay, "Delete OVERLAY."),
+    S!(
+        "delete-all-overlays",
+        0,
+        1,
+        f_delete_all_overlays,
+        "Delete all overlays of BUFFER."
+    ),
     S!(
         "move-overlay",
         3,
@@ -4295,7 +4316,7 @@ fn want_filename(i: &mut Interp, v: &Value) -> Result<String, Flow> {
 }
 
 /// Expand ~, env vars, and make absolute via `default-directory`.
-fn expand_file_name_str(i: &mut Interp, name: &str) -> String {
+pub(crate) fn expand_file_name_str(i: &mut Interp, name: &str) -> String {
     let mut s = name.to_string();
     // ~ expansion
     if s.starts_with('~') {
@@ -6468,6 +6489,42 @@ fn f_string_to_syntax(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     Ok(Value::cons(Value::Int(code | flags), matching))
 }
 
+/// GNU's syntax-class letters, indexed by class number.
+const SYNTAX_CLASS_CHARS: [char; 16] = [
+    ' ', '.', 'w', '_', '(', ')', '\'', '"', '$', '\\', '/', '<', '>', '@', '!', '|',
+];
+
+fn f_syntax_class_to_char(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let class = match &a[0] {
+        Value::Int(n) => *n,
+        other => return Err(i.wrong_type_mut("fixnump", other)),
+    };
+    match SYNTAX_CLASS_CHARS.get(class as usize) {
+        Some(c) if class >= 0 => Ok(Value::Int(*c as i128)),
+        _ => Err(i.signal_data(
+            sym::ARGS_OUT_OF_RANGE,
+            vec![a[0].clone(), Value::Int(0), Value::Int(15)],
+        )),
+    }
+}
+
+fn f_matching_paren(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let c = match &a[0] {
+        Value::Int(n) => *n,
+        other => return Err(i.wrong_type_mut("fixnump", other)),
+    };
+    let m = match char::from_u32(c as u32) {
+        Some('(') => ')',
+        Some(')') => '(',
+        Some('[') => ']',
+        Some(']') => '[',
+        Some('{') => '}',
+        Some('}') => '{',
+        _ => return Ok(Value::Nil),
+    };
+    Ok(Value::Int(m as i128))
+}
+
 fn f_standard_syntax_table(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
     let sid = i.intern("remacs--standard-syntax-table");
     let cur = i.symbol_value(sid);
@@ -6699,6 +6756,12 @@ fn f_delete_overlay(i: &mut Interp, a: Vec<Value>) -> EvalResult {
             bb.overlays[idx].start = bb.overlays[idx].end;
         }
     }
+    Ok(Value::Nil)
+}
+
+fn f_delete_all_overlays(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let b = crate::buffer::primitives::buf_of(i, &arg(&a, 0))?;
+    b.borrow_mut().overlays.clear();
     Ok(Value::Nil)
 }
 

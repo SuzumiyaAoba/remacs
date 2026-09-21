@@ -53,6 +53,10 @@ pub struct Buffer {
     /// False once the buffer has been killed (the object may still be
     /// referenced by variables, markers, or window configurations).
     pub live: bool,
+    /// For indirect buffers, the id of the base buffer whose text is
+    /// shared. (Text itself is currently copied at creation rather than
+    /// aliased — edit propagation is not yet modeled.)
+    pub base_buffer: Option<usize>,
 }
 
 /// One text-property interval.
@@ -111,6 +115,7 @@ impl Buffer {
             text_props: Vec::new(),
             overlays: Vec::new(),
             live: true,
+            base_buffer: None,
         }
     }
 

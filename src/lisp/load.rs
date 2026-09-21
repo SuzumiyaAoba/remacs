@@ -72,10 +72,18 @@ pub fn eval_file(i: &mut Interp, path: &str) -> EvalResult {
     let src = match std::fs::read_to_string(path) {
         Ok(s) => s,
         Err(e) => {
+            // GNU signals `file-missing' for ENOENT, `file-error' for
+            // other failures, with data (FORMAT REASON PATH).
+            let sym = if e.kind() == std::io::ErrorKind::NotFound {
+                i.intern("file-missing")
+            } else {
+                crate::lisp::sym::FILE_ERROR
+            };
             return Err(i.signal_data(
-                crate::lisp::sym::FILE_ERROR,
+                sym,
                 vec![
-                    Value::string(format!("Opening input file: {}", e)),
+                    Value::string("Opening input file"),
+                    Value::string(e.to_string()),
                     Value::string(path),
                 ],
             ));
@@ -90,16 +98,35 @@ pub fn eval_file(i: &mut Interp, path: &str) -> EvalResult {
     let lip = i.intern("load-in-progress");
     let cll = i.intern("current-load-list");
     let mark = i.specbind_depth();
-    i.specbind(lfn, Value::string(canon));
-    i.specbind(lip, Value::t());
+    i.specbind(lfn, Value::string(canon))?;
+    i.specbind(lip, Value::t())?;
+    // Emacs: `load' honors a `lexical-binding' file cookie on the first
+    // line (or the second, after a `#!' line); absent → dynamic eval.
+    let lex_id = i.intern("lexical-binding");
+    let lex_on = file_lexical_binding(&src);
+    i.specbind(lex_id, if lex_on { Value::t() } else { Value::Nil })?;
     let r = i.eval_str(&src);
     if r.is_ok() {
         // Push the file onto current-load-list's default? Emacs pushes
         // each loaded file; we keep it simple.
         let _ = cll;
     }
-    i.unbind_to(mark);
+    i.unbind_to(mark)?;
     r
+}
+
+/// True when the file declares `-*- lexical-binding: t -*-' (or the
+/// `lexical-binding: t' local-variable form) on its first line — or on
+/// the second line when the first is a `#!' line, like Emacs.
+fn file_lexical_binding(src: &str) -> bool {
+    let mut lines = src.lines();
+    let first = lines.next().unwrap_or("");
+    let probe = if first.starts_with("#!") {
+        lines.next().unwrap_or("")
+    } else {
+        first
+    };
+    probe.contains("lexical-binding: t") || probe.contains("lexical-binding:t")
 }
 
 /// Load library NAME; returns true if a file was found and loaded.

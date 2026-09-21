@@ -468,7 +468,7 @@ fn dispatch_key<T: KeyIo>(
                     Err(crate::lisp::error::Flow::Quit) => {
                         i.message("Quit");
                     }
-                    Err(crate::lisp::error::Flow::Signal(sym, data)) => {
+                    Err(crate::lisp::error::Flow::Signal(sym, data, _)) => {
                         let name = match &sym {
                             Value::Sym(id) => i.symbol_name(*id),
                             _ => "error".into(),

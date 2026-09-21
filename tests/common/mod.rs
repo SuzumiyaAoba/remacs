@@ -38,7 +38,7 @@ pub fn ev_err(src: &str) -> String {
     let (mut i, _) = interp();
     match i.eval_str(src) {
         Ok(v) => panic!("expected error, got {} for {}", i.prin1_to_string(&v), src),
-        Err(Flow::Signal(sym, _)) => match &sym {
+        Err(Flow::Signal(sym, _, _)) => match &sym {
             Value::Sym(id) => i.symbol_name(*id),
             _ => "non-symbol-signal".into(),
         },
@@ -52,7 +52,7 @@ pub fn ev_result(src: &str) -> Result<String, String> {
     let (mut i, _) = interp();
     match i.eval_str(src) {
         Ok(v) => Ok(i.prin1_to_string(&v)),
-        Err(Flow::Signal(sym, _)) => Err(match &sym {
+        Err(Flow::Signal(sym, _, _)) => Err(match &sym {
             Value::Sym(id) => i.symbol_name(*id),
             _ => "non-symbol-signal".into(),
         }),
@@ -62,7 +62,7 @@ pub fn ev_result(src: &str) -> Result<String, String> {
 
 fn flow_str(i: &mut Interp, f: &Flow) -> String {
     match f {
-        Flow::Signal(sym, data) => {
+        Flow::Signal(sym, data, _) => {
             let name = match sym {
                 Value::Sym(id) => i.symbol_name(*id),
                 _ => "?".into(),

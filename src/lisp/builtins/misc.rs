@@ -1674,7 +1674,7 @@ fn hash_hex(algo: &str, bytes: &[u8]) -> Result<String, Flow> {
         "sha256" => sha2::Sha256::digest(bytes).to_vec(),
         "sha384" => sha2::Sha384::digest(bytes).to_vec(),
         "sha512" => sha2::Sha512::digest(bytes).to_vec(),
-        _ => return Err(Flow::Signal(Value::Nil, Value::Nil)),
+        _ => return Err(Flow::Signal(Value::Nil, Value::Nil, false)),
     };
     Ok(out.iter().map(|b| format!("{:02x}", b)).collect())
 }

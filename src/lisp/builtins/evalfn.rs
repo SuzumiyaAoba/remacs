@@ -144,6 +144,33 @@ pub(crate) static SUBRS: &[Subr] = &[
         "t if OBJECT is an autoload object."
     ),
     S!(
+        "autoload-do-load",
+        1,
+        3,
+        f_autoload_do_load,
+        "Load FUNDEF's autoload file, return the new definition."
+    ),
+    S!(
+        "handler-bind-1",
+        many 1,
+        f_handler_bind_1,
+        "Run BODY with condition handlers bound (see `handler-bind')."
+    ),
+    S!(
+        "access-file",
+        1,
+        2,
+        f_access_file,
+        "Access FILENAME for reading; signal `file-missing' on failure."
+    ),
+    S!(
+        "current-message",
+        0,
+        0,
+        f_current_message,
+        "String currently shown in the echo area, or nil."
+    ),
+    S!(
         "eval-buffer",
         0,
         5,
@@ -388,9 +415,9 @@ fn f_eval(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     i.explicit_eval_depth += 1;
     let r = if lex {
         let id = i.intern("lexical-binding");
-        i.specbind(id, Value::t());
+        i.specbind(id, Value::t())?;
         let r = i.eval(&args[0]);
-        i.unbind(1);
+        i.unbind(1)?;
         r
     } else {
         i.eval(&args[0])
@@ -511,10 +538,11 @@ fn f_signal(i: &mut Interp, args: Vec<Value>) -> EvalResult {
             return Err(Flow::Signal(
                 Value::Sym(sym::ERROR),
                 Value::list(vec![Value::string("Invalid error symbol"), args[0].clone()]),
+                false,
             ));
         }
     }
-    Err(Flow::Signal(args[0].clone(), args[1].clone()))
+    Err(Flow::Signal(args[0].clone(), args[1].clone(), false))
 }
 
 fn f_error(i: &mut Interp, args: Vec<Value>) -> EvalResult {
@@ -526,6 +554,7 @@ fn f_error(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     Err(Flow::Signal(
         Value::Sym(sym::ERROR),
         Value::list(vec![Value::string(msg)]),
+        false,
     ))
 }
 
@@ -538,6 +567,7 @@ fn f_user_error(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     Err(Flow::Signal(
         Value::Sym(sym::USER_ERROR),
         Value::list(vec![Value::string(msg)]),
+        false,
     ))
 }
 
@@ -631,9 +661,16 @@ fn f_condition_case_raw(i: &mut Interp, _args: Vec<Value>) -> EvalResult {
 /// `(ignore-errors BODY...)` and `(with-demoted-errors BODY...)`.
 fn f_ignore_error_raw(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     let body = args.into_iter().next().unwrap_or(Value::Nil);
-    match i.eval_progn(&body) {
+    // Register `error' as claimed so handler-bind handlers don't run
+    // for signals this form will swallow (GNU suppresses them via the
+    // no-debugger-entry rule).
+    let err_id = i.intern("error");
+    i.case_handlers.push(Value::list(vec![Value::Sym(err_id)]));
+    let r = i.eval_progn(&body);
+    i.case_handlers.pop();
+    match r {
         Ok(v) => Ok(v),
-        Err(Flow::Signal(_, _)) => Ok(Value::Nil),
+        Err(Flow::Signal(_, _, _)) => Ok(Value::Nil),
         Err(e) => Err(e),
     }
 }
@@ -863,9 +900,15 @@ fn f_load(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     if ok {
         Ok(Value::t())
     } else {
+        // GNU: file-missing ("Cannot open load file" REASON NAME).
+        let fm = i.intern("file-missing");
         Err(i.signal_data(
-            sym::FILE_ERROR,
-            vec![Value::string("Cannot open load file"), args[0].clone()],
+            fm,
+            vec![
+                Value::string("Cannot open load file"),
+                Value::string("No such file or directory"),
+                args[0].clone(),
+            ],
         ))
     }
 }
@@ -908,6 +951,115 @@ fn f_autoloadp(i: &mut Interp, args: Vec<Value>) -> EvalResult {
             Ok(Value::from_bool(i.sym_is(&b.car, auto_id)))
         }
         _ => Ok(Value::Nil),
+    }
+}
+
+fn f_autoload_do_load(i: &mut Interp, args: Vec<Value>) -> EvalResult {
+    // (autoload-do-load FUNDEF &optional MACRO-ONLY) — load the file for
+    // an autoload cell and return the resulting function definition.
+    let fundef = args[0].clone();
+    let auto_id = i.intern("autoload");
+    let is_auto = match &fundef {
+        Value::Cons(c) => i.sym_is(&c.borrow().car, auto_id),
+        _ => false,
+    };
+    if !is_auto {
+        return Ok(fundef);
+    }
+    let cell = fundef.list_to_vec().unwrap_or_default();
+    let file = cell.get(1).cloned().unwrap_or(Value::Nil);
+    // (autoload FILE DOC INTERACTIVE TYPE) — TYPE non-nil = macro.
+    let is_macro_autoload = cell.get(4).map(|v| v.truthy()).unwrap_or(false);
+    let macro_only = args.get(1).map(|v| v.truthy()).unwrap_or(false);
+    if macro_only && !is_macro_autoload {
+        return Ok(fundef);
+    }
+    let name = match &file {
+        Value::Str(s) => s.borrow().clone(),
+        _ => return Err(i.wrong_type_mut("stringp", &file)),
+    };
+    // Find the symbol whose function cell is this autoload object.
+    let owner = i
+        .obarray
+        .all_ids()
+        .into_iter()
+        .find(|id| super::eq_values(&i.symbol_function(*id), &fundef));
+    let _ = crate::lisp::load::load_library(i, &name)?;
+    match owner {
+        Some(id) => {
+            let newdef = i.symbol_function(id);
+            // Emacs signals error if loading didn't redefine the autoload.
+            let still_auto = match &newdef {
+                Value::Cons(c) => i.sym_is(&c.borrow().car, auto_id),
+                _ => false,
+            };
+            if still_auto {
+                return Err(i.error(format!(
+                    "Autoloading file {} failed to define function {}",
+                    name,
+                    i.symbol_name(id)
+                )));
+            }
+            Ok(newdef)
+        }
+        None => Ok(Value::Nil),
+    }
+}
+
+fn f_handler_bind_1(i: &mut Interp, args: Vec<Value>) -> EvalResult {
+    // (handler-bind-1 BODY-FN CONDS HANDLER CONDS HANDLER ...) — bind
+    // dynamic signal handlers while running the 0-argument BODY-FN.
+    let body = args[0].clone();
+    let base = i.handler_bindings.len();
+    // Pairs are consulted innermost-first (reverse stack order), so
+    // push them in reverse to consult them in argument order, with all
+    // of this call's bindings inner to any outer `handler-bind-1'.
+    let mut k = if args.len() % 2 == 1 {
+        args.len() - 1
+    } else {
+        args.len() - 2
+    };
+    while k >= 2 {
+        i.handler_bindings
+            .push((args[k - 1].clone(), args[k].clone()));
+        k -= 2;
+    }
+    let r = i.apply(&body, vec![]);
+    i.handler_bindings.truncate(base);
+    r
+}
+
+fn f_access_file(i: &mut Interp, args: Vec<Value>) -> EvalResult {
+    // (access-file FILENAME ERROR-FORMAT) — signal `file-missing' with
+    // (ERROR-FORMAT ERRNO-STRING FILENAME) when FILENAME can't be read.
+    let name = match &args[0] {
+        Value::Str(s) => s.borrow().clone(),
+        other => return Err(i.wrong_type_mut("stringp", other)),
+    };
+    let expanded = crate::editor::expand_file_name_str(i, &name);
+    match std::fs::File::open(&expanded) {
+        Ok(_) => Ok(Value::Nil),
+        Err(e) => {
+            let estr = e.to_string();
+            let estr = estr
+                .split(" (os error")
+                .next()
+                .unwrap_or(&estr)
+                .to_string();
+            let fmt = args.get(1).cloned().unwrap_or(Value::Nil);
+            Err(i.signal_data(
+                sym::FILE_MISSING,
+                vec![fmt, Value::string(estr), args[0].clone()],
+            ))
+        }
+    }
+}
+
+fn f_current_message(i: &mut Interp, _args: Vec<Value>) -> EvalResult {
+    if i.echo_message.is_empty() {
+        Ok(Value::Nil)
+    } else {
+        Ok(Value::string(i.echo_message.clone()))
     }
 }
 fn f_eval_buffer(i: &mut Interp, args: Vec<Value>) -> EvalResult {
@@ -1351,8 +1503,12 @@ fn f_byte_code(_i: &mut Interp, args: Vec<Value>) -> EvalResult {
 fn f_make_byte_code(_i: &mut Interp, _args: Vec<Value>) -> EvalResult {
     Ok(Value::Nil)
 }
-fn f_subr_native_lambda_list(_i: &mut Interp, _args: Vec<Value>) -> EvalResult {
-    Ok(Value::Nil)
+fn f_subr_native_lambda_list(i: &mut Interp, args: Vec<Value>) -> EvalResult {
+    // Emacs 31: t for primitives, wrong-type-argument otherwise.
+    match &args[0] {
+        Value::Subr(_) => Ok(Value::t()),
+        other => Err(i.wrong_type_mut("subrp", other)),
+    }
 }
 fn f_declare_functionp(_i: &mut Interp, _args: Vec<Value>) -> EvalResult {
     Ok(Value::Nil)
