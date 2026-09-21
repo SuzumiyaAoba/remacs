@@ -5073,8 +5073,13 @@ fn write_file_string(i: &mut Interp, path: &str, text: &str, a: &[Value]) -> Eva
     };
     match r {
         Ok(()) => {
-            // Message: Wrote /path
-            i.message(&format!("Wrote {}", path));
+            // GNU shows "Wrote ..." only interactively with a non-nil
+            // VISIT arg; batch write-region (e.g. with-temp-file) is
+            // silent.
+            let visit = a.get(4).map(|v| v.truthy()).unwrap_or(false);
+            if visit && !i.noninteractive {
+                i.message(&format!("Wrote {}", path));
+            }
             Ok(Value::Nil)
         }
         Err(e) => Err(i.signal_data(

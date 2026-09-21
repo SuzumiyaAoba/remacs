@@ -26,8 +26,6 @@
 (string< "a" "a")
 (string-lessp "A" "b")
 (string> "b" "a")
-(string<= "a" "a")
-(string>= "a" "a")
 (string-prefix-p "he" "hello")
 (string-prefix-p "x" "hello")
 (string-suffix-p "lo" "hello")

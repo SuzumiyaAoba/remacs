@@ -31,52 +31,22 @@ pub(crate) static SUBRS: &[Subr] = &[
         f_substring,
         "Substring without text props."
     ),
+    // GNU: string-equal/string-lessp are primitives accepting strings or
+    // symbols; string=, string<, string>, string-greaterp are Lisp-level
+    // definitions and string<=/string>= do not exist.
     S!(
-        "string=",
+        "string-equal",
         2,
         2,
-        f_string_eq,
-        "t if two strings have identical contents."
+        f_string_equal,
+        "t if two strings or symbols have identical contents."
     ),
     S!(
-        "string<",
+        "string-lessp",
         2,
         2,
-        f_string_lt,
+        f_string_lessp,
         "t if S1 is less than S2 lexicographically."
-    ),
-    S!("string>", 2, 2, f_string_gt, "t if S1 is greater than S2."),
-    S!("string<=", 2, 2, f_string_le, "t if S1 <= S2."),
-    S!("string>=", 2, 2, f_string_ge, "t if S1 >= S2."),
-    S!("string-lessp", 2, 2, f_string_lt, "Alias for string<."),
-    S!("string-greaterp", 2, 2, f_string_gt, "t if S1 > S2."),
-    S!(
-        "string-empty-p",
-        1,
-        1,
-        f_string_empty_p,
-        "t if STRING has zero length."
-    ),
-    S!(
-        "string-blank-p",
-        1,
-        1,
-        f_string_blank_p,
-        "t if STRING is all whitespace."
-    ),
-    S!(
-        "string-prefix-p",
-        2,
-        3,
-        f_string_prefix_p,
-        "t if S1 is a prefix of S2."
-    ),
-    S!(
-        "string-suffix-p",
-        2,
-        3,
-        f_string_suffix_p,
-        "t if S1 is a suffix of S2."
     ),
     S!(
         "string-compare",
@@ -257,14 +227,14 @@ pub(crate) static SUBRS: &[Subr] = &[
         "string-collate-equalp",
         2,
         3,
-        f_string_eq,
+        f_string_collate_equalp,
         "Collation equality (simple)."
     ),
     S!(
         "string-collate-lessp",
         2,
         3,
-        f_string_lt,
+        f_string_collate_lessp,
         "Collation lessp (simple)."
     ),
     S!(
@@ -565,68 +535,36 @@ fn f_substring(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     }
 }
 
-fn f_string_eq(i: &mut Interp, args: Vec<Value>) -> EvalResult {
+// GNU string-equal/string-lessp accept strings or symbols (symbols compare
+// by name); other types signal wrong-type-argument stringp.
+fn str_or_sym_arg(i: &mut Interp, v: &Value) -> Result<String, Flow> {
+    match v {
+        Value::Str(s) => Ok(s.borrow().clone()),
+        // nil is the symbol nil in GNU; symbols compare by name.
+        Value::Nil => Ok("nil".to_string()),
+        Value::Sym(id) => Ok(i.symbol_name(*id)),
+        other => Err(i.wrong_type_mut("stringp", other)),
+    }
+}
+fn f_string_equal(i: &mut Interp, args: Vec<Value>) -> EvalResult {
+    let a = str_or_sym_arg(i, &args[0])?;
+    let b = str_or_sym_arg(i, &args[1])?;
+    Ok(Value::from_bool(a == b))
+}
+fn f_string_lessp(i: &mut Interp, args: Vec<Value>) -> EvalResult {
+    let a = str_or_sym_arg(i, &args[0])?;
+    let b = str_or_sym_arg(i, &args[1])?;
+    Ok(Value::from_bool(a < b))
+}
+fn f_string_collate_equalp(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     let a = want_string(i, &args[0])?;
     let b = want_string(i, &args[1])?;
     Ok(Value::from_bool(a == b))
 }
-fn f_string_lt(i: &mut Interp, args: Vec<Value>) -> EvalResult {
+fn f_string_collate_lessp(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     let a = want_string(i, &args[0])?;
     let b = want_string(i, &args[1])?;
     Ok(Value::from_bool(a < b))
-}
-fn f_string_gt(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    let a = want_string(i, &args[0])?;
-    let b = want_string(i, &args[1])?;
-    Ok(Value::from_bool(a > b))
-}
-fn f_string_le(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    let a = want_string(i, &args[0])?;
-    let b = want_string(i, &args[1])?;
-    Ok(Value::from_bool(a <= b))
-}
-fn f_string_ge(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    let a = want_string(i, &args[0])?;
-    let b = want_string(i, &args[1])?;
-    Ok(Value::from_bool(a >= b))
-}
-fn f_string_empty_p(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    match &args[0] {
-        Value::Nil => Ok(Value::t()),
-        Value::Str(s) => Ok(Value::from_bool(s.borrow().is_empty())),
-        other => Err(i.wrong_type_mut("stringp", other)),
-    }
-}
-fn f_string_blank_p(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    // Emacs (subr-x): returns the match position 0 or nil.
-    match &args[0] {
-        Value::Str(s) => Ok(if s.borrow().chars().all(|c| c.is_whitespace()) {
-            Value::Int(0)
-        } else {
-            Value::Nil
-        }),
-        other => Err(i.wrong_type_mut("stringp", other)),
-    }
-}
-fn f_string_prefix_p(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    let a = want_string(i, &args[0])?;
-    let b = want_string(i, &args[1])?;
-    let ic = args.get(2).map(|v| v.truthy()).unwrap_or(false);
-    Ok(Value::from_bool(if ic {
-        b.to_lowercase().starts_with(&a.to_lowercase())
-    } else {
-        b.starts_with(&a)
-    }))
-}
-fn f_string_suffix_p(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    let a = want_string(i, &args[0])?;
-    let b = want_string(i, &args[1])?;
-    let ic = args.get(2).map(|v| v.truthy()).unwrap_or(false);
-    Ok(Value::from_bool(if ic {
-        b.to_lowercase().ends_with(&a.to_lowercase())
-    } else {
-        b.ends_with(&a)
-    }))
 }
 fn f_string_compare(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     let a = want_string(i, &args[0])?;

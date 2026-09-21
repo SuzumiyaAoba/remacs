@@ -414,7 +414,47 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!("string-or-null-p", 1, 1, f_string_or_null_p, ""),
     S!("vector-or-char-table-p", 1, 1, f_vector_or_char_table_p, ""),
     S!("subr-native-elisp-p", 1, 1, f_false, ""),
-    S!("threadp", 1, 1, f_false, ""),
+    S!("threadp", 1, 1, f_threadp, "t if OBJECT is a thread."),
+    S!("all-threads", 0, 0, f_all_threads, "List of all threads."),
+    S!(
+        "current-thread",
+        0,
+        0,
+        f_current_thread,
+        "The currently running thread."
+    ),
+    S!("thread-name", 1, 1, f_thread_name, "Name of THREAD."),
+    S!(
+        "thread-live-p",
+        1,
+        1,
+        f_thread_live_p,
+        "t if THREAD is alive (not yet joined)."
+    ),
+    S!(
+        "make-thread",
+        1,
+        2,
+        f_make_thread,
+        "Run FUNCTION in a new thread named NAME."
+    ),
+    S!(
+        "thread-join",
+        1,
+        1,
+        f_thread_join,
+        "Wait for THREAD and return its result."
+    ),
+    S!("thread-yield", 0, 0, f_nil, "Yield to other threads."),
+    S!(
+        "thread-last-error",
+        0,
+        0,
+        f_thread_last_error,
+        "Last error form recorded by a thread."
+    ),
+    S!("thread--blocker", 1, 1, f_nil, ""),
+    S!("thread-signal", 3, 3, f_nil, ""),
     S!("mutexp", 1, 1, f_false, ""),
     S!("condition-variable-p", 1, 1, f_false, ""),
     S!("cl-type-of", 1, 1, f_cl_type_of, ""),
@@ -2096,6 +2136,103 @@ fn f_vector_or_char_table_p(_i: &mut Interp, a: Vec<Value>) -> EvalResult {
     Ok(Value::from_bool(matches!(&a[0], Value::Vec(_))))
 }
 
+// ---------- threads ----------
+
+fn want_thread(i: &mut Interp, v: &Value) -> Result<crate::lisp::value::ThreadRef, Flow> {
+    match v {
+        Value::Thread(t) => Ok(t.clone()),
+        other => Err(i.wrong_type_mut("threadp", other)),
+    }
+}
+
+fn f_threadp(_i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    Ok(Value::from_bool(matches!(&a[0], Value::Thread(_))))
+}
+
+fn f_all_threads(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
+    // GNU lists only threads that haven't finished (a finished thread
+    // drops out even before `thread-join' reaps it).
+    let ts: Vec<Value> = i
+        .threads
+        .iter()
+        .filter(|t| !t.borrow().finished)
+        .map(|t| Value::Thread(t.clone()))
+        .collect();
+    Ok(Value::list(ts))
+}
+
+fn f_current_thread(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
+    Ok(Value::Thread(i.threads[i.current_thread].clone()))
+}
+
+fn f_thread_name(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let t = want_thread(i, &a[0])?;
+    Ok(t.borrow()
+        .name
+        .as_ref()
+        .map(|n| Value::string(n.clone()))
+        .unwrap_or(Value::Nil))
+}
+
+fn f_thread_live_p(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let t = want_thread(i, &a[0])?;
+    Ok(Value::from_bool(t.borrow().alive))
+}
+
+fn f_make_thread(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    // (make-thread FUNCTION &optional NAME) — cooperative model: run
+    // the function now; the thread stays a zombie (live) until joined.
+    let fun = a[0].clone();
+    let name = match a.get(1) {
+        Some(Value::Str(s)) => Some(s.borrow().clone()),
+        Some(Value::Nil) | None => None,
+        Some(other) => return Err(i.wrong_type_mut("stringp", other)),
+    };
+    let t = std::rc::Rc::new(std::cell::RefCell::new(crate::lisp::value::Thread {
+        name,
+        alive: true,
+        result: None,
+        last_error: None,
+        finished: false,
+    }));
+    i.threads.push(t.clone());
+    let idx = i.threads.len() - 1;
+    let saved = i.current_thread;
+    i.current_thread = idx;
+    let r = i.apply(&fun, vec![]);
+    i.current_thread = saved;
+    {
+        let mut tb = t.borrow_mut();
+        tb.finished = true;
+        match r {
+            Ok(v) => tb.result = Some(v),
+            Err(Flow::Signal(s, d, _)) => {
+                let cond = Value::cons(s.clone(), d.clone());
+                tb.last_error = Some(cond.clone());
+                i.thread_last_error = cond;
+            }
+            Err(e) => {
+                tb.last_error = Some(Value::Nil);
+                return Err(e);
+            }
+        }
+    }
+    Ok(Value::Thread(t))
+}
+
+fn f_thread_join(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    // GNU: reaps the thread; returns the function result, or nil when
+    // it died with an error.
+    let t = want_thread(i, &a[0])?;
+    let mut tb = t.borrow_mut();
+    tb.alive = false;
+    Ok(tb.result.clone().unwrap_or(Value::Nil))
+}
+
+fn f_thread_last_error(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
+    Ok(i.thread_last_error.clone())
+}
+
 fn f_cl_type_of(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let name = match &a[0] {
         Value::Int(_) => "fixnum",
@@ -2113,6 +2250,7 @@ fn f_cl_type_of(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         Value::Window(_) => "window",
         Value::Frame(_) => "frame",
         Value::Process(_) => "process",
+        Value::Thread(_) => "thread",
     };
     Ok(Value::Sym(i.intern(name)))
 }

@@ -250,6 +250,10 @@ impl Interp {
             Value::Process(p) => {
                 let _ = write!(out, "#<process {}>", p.borrow().name);
             }
+            // GNU prints the machine address; any unique pointer works.
+            Value::Thread(t) => {
+                let _ = write!(out, "#<thread 0x{:x}>", Rc::as_ptr(t) as usize);
+            }
         }
     }
 

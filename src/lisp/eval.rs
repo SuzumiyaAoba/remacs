@@ -149,6 +149,14 @@ pub struct Interp {
     pub case_handlers: Vec<Value>,
     /// `add-variable-watcher' registry: (SYM . FUNCTION) pairs.
     pub var_watchers: Vec<(SymId, Value)>,
+    /// All thread objects ever created (`all-threads'); element 0 is
+    /// the main thread.
+    pub threads: Vec<crate::lisp::value::ThreadRef>,
+    /// Index into `threads` of the currently running thread.
+    pub current_thread: usize,
+    /// `thread-last-error' state: the (sym . data) condition of the
+    /// most recent thread function failure.
+    pub thread_last_error: Value,
 }
 
 /// Result of a minibuffer read from the front-end.
@@ -208,6 +216,17 @@ impl Interp {
             handler_bindings: Vec::new(),
             case_handlers: Vec::new(),
             var_watchers: Vec::new(),
+            threads: vec![std::rc::Rc::new(std::cell::RefCell::new(
+                crate::lisp::value::Thread {
+                    name: None,
+                    alive: true,
+                    result: None,
+                    last_error: None,
+                    finished: false,
+                },
+            ))],
+            current_thread: 0,
+            thread_last_error: Value::Nil,
         };
         crate::lisp::builtins::install(&mut interp);
         crate::buffer::install_primitives(&mut interp);
@@ -739,7 +758,8 @@ impl Interp {
             | Value::Marker(_)
             | Value::Window(_)
             | Value::Frame(_)
-            | Value::Process(_) => Ok(form.clone()),
+            | Value::Process(_)
+            | Value::Thread(_) => Ok(form.clone()),
             Value::Sym(id) => self.eval_symbol(*id),
             Value::Cons(_) => self.eval_form(form),
         }

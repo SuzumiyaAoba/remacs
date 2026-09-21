@@ -492,6 +492,7 @@ fn f_type_of(i: &mut Interp, args: Vec<Value>) -> EvalResult {
         Value::Buffer(_) => "buffer",
         Value::Marker(_) => "marker",
         Value::Process(_) => "process",
+        Value::Thread(_) => "thread",
     };
     Ok(Value::Sym(i.intern(name)))
 }

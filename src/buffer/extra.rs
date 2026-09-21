@@ -410,6 +410,20 @@ pub(crate) static SUBRS: &[Subr] = &[
         f_combine_after_change_execute,
         "Run deferred after-change functions (no-op: ours are eager)."
     ),
+    S!(
+        "translate-region-internal",
+        3,
+        3,
+        f_translate_region_internal,
+        "Translate chars in START..END through TABLE (a string)."
+    ),
+    S!(
+        "buffer-line-statistics",
+        0,
+        0,
+        f_buffer_line_statistics,
+        "Return (LINES LONGEST-LINE MEAN-LINE-LENGTH) for the buffer."
+    ),
 ];
 
 fn f_b64url_encode_string(i: &mut Interp, a: Vec<Value>) -> EvalResult {
@@ -551,6 +565,68 @@ fn f_replace_region_contents(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 
 fn f_combine_after_change_execute(_i: &mut Interp, _a: Vec<Value>) -> EvalResult {
     Ok(Value::Nil)
+}
+
+/// (translate-region-internal START END TABLE) — map each character in
+/// the region through TABLE (a string): char c becomes table[c] when
+/// c < len(TABLE), else stays. GNU also accepts char-tables.
+fn f_translate_region_internal(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let (s, e, _) = region_text(i, &a)?;
+    let table: Vec<char> = match &a[2] {
+        Value::Str(st) => st.borrow().chars().collect(),
+        // GNU signals a generic `error' for a non-string/non-chartable
+        // TABLE.
+        _ => return Err(i.error("Bad translation table")),
+    };
+    check_writable(i)?;
+    let b = cur(i);
+    let mut bb = b.borrow_mut();
+    for pos in s..e {
+        let c = bb.text.char_at(pos);
+        let ci = c as usize;
+        if ci < table.len() {
+            bb.text.set_char_at(pos, table[ci]);
+        }
+    }
+    Ok(Value::Nil)
+}
+
+/// (buffer-line-statistics) → (LINES LONGEST MEAN) over the accessible
+/// portion: a line ends at each newline, plus a trailing partial line
+/// when text follows the last newline.
+fn f_buffer_line_statistics(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
+    let b = cur(i);
+    let bb = b.borrow();
+    let (lo, hi) = (bb.begv, bb.zv.min(bb.text.len()));
+    let mut lines = 0usize;
+    let mut longest = 0usize;
+    let mut total = 0usize;
+    let mut cur_len = 0usize;
+    for pos in lo..hi {
+        if bb.text.char_at(pos) == '\n' {
+            lines += 1;
+            total += cur_len;
+            longest = longest.max(cur_len);
+            cur_len = 0;
+        } else {
+            cur_len += 1;
+        }
+    }
+    if cur_len > 0 {
+        lines += 1;
+        total += cur_len;
+        longest = longest.max(cur_len);
+    }
+    let mean = if lines > 0 {
+        total as f64 / lines as f64
+    } else {
+        0.0
+    };
+    Ok(Value::list(vec![
+        Value::Int(lines as i128),
+        Value::Int(longest as i128),
+        Value::Float(mean),
+    ]))
 }
 
 fn f_nil2(_i: &mut Interp, _a: Vec<Value>) -> EvalResult {

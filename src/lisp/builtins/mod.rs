@@ -270,8 +270,8 @@ static SPECIAL_FORM_SUBRS: &[Subr] = &[
 /// `defalias`-style alternate names.
 fn install_aliases(interp: &mut Interp) {
     let aliases: &[(&str, &str)] = &[
-        ("string-equal", "string="),
-        ("string-lessp", "string<"),
+        // GNU direction: the verbose name is the primitive; the short name
+        // is a Lisp alias (installed by the prelude).
         ("same-names-p", "string="),
         ("buffer-name-as-string", "buffer-name"),
     ];

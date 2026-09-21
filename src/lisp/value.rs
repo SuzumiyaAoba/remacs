@@ -26,6 +26,24 @@ pub type MarkerRef = Rc<RefCell<Marker>>;
 pub type WindowRef = Rc<RefCell<Window>>;
 pub type FrameRef = Rc<RefCell<Frame>>;
 pub type ProcessRef = Rc<RefCell<crate::lisp::process::Proc>>;
+pub type ThreadRef = Rc<RefCell<Thread>>;
+
+/// A Lisp thread object. Threads run synchronously at `make-thread'
+/// time (cooperative model: no preemption), so a created thread is
+/// dead but joinable by the time `make-thread' returns.
+#[derive(Debug)]
+pub struct Thread {
+    pub name: Option<String>,
+    /// GNU semantics: a finished thread stays "live" until reaped by
+    /// `thread-join' (it is a zombie holding its result).
+    pub alive: bool,
+    /// Result of the thread's function, once finished.
+    pub result: Option<Value>,
+    /// Error the thread function died with, if any.
+    pub last_error: Option<Value>,
+    /// True once the function has run to completion.
+    pub finished: bool,
+}
 
 /// Emacs fixnum range on 64-bit builds: 62 bits (2 tag bits in C).
 /// Integers outside this range are bignums — we represent all integers
@@ -52,6 +70,7 @@ pub enum Value {
     Window(WindowRef),
     Frame(FrameRef),
     Process(ProcessRef),
+    Thread(ThreadRef),
 }
 
 /// A cons cell. `cdr` may be any value (dotted pair).
@@ -319,6 +338,7 @@ impl fmt::Debug for Value {
             Value::Window(_) => write!(f, "Window(..)"),
             Value::Frame(_) => write!(f, "Frame(..)"),
             Value::Process(_) => write!(f, "Process(..)"),
+            Value::Thread(_) => write!(f, "Thread(..)"),
         }
     }
 }

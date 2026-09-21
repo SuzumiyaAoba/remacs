@@ -132,6 +132,42 @@ returning that buffer's contents as a string."
                       (list 'buffer-name buf)
                       (list 'kill-buffer buf))))))
 
+;; ---------- string predicates ----------
+;; GNU: string-equal/string-lessp/string-greaterp are primitives that accept
+;; strings or symbols; the =/</> spellings are Lisp-level aliases.
+;; string-empty-p et al. are Lisp defuns in subr.el.
+
+(defalias 'string= 'string-equal)
+(defalias 'string< 'string-lessp)
+(defalias 'string> 'string-greaterp)
+
+(defun string-greaterp (string1 string2)
+  "Return non-nil if STRING1 is greater than STRING2 in lexicographic order.
+Symbols are also allowed; their print names are used instead."
+  (string-lessp string2 string1))
+
+(defun string-empty-p (string)
+  "Check whether STRING is empty."
+  (string= string ""))
+
+(defun string-blank-p (string)
+  "Check whether STRING is either empty or only whitespace."
+  (string-match-p "\\`[ \11\n\15]*\\'" string))
+
+(defun string-prefix-p (prefix string &optional ignore-case)
+  "Return non-nil if STRING begins with PREFIX."
+  (let ((prefix-length (length prefix)))
+    (if (> prefix-length (length string)) nil
+      (eq t (compare-strings prefix 0 prefix-length string
+                             0 prefix-length ignore-case)))))
+
+(defun string-suffix-p (suffix string &optional ignore-case)
+  "Return non-nil if STRING ends with SUFFIX."
+  (let ((start-pos (- (length string) (length suffix))))
+    (and (>= start-pos 0)
+         (eq t (compare-strings suffix nil nil
+                                string start-pos nil ignore-case)))))
+
 ;; ---------- cl-lib list accessors ----------
 ;; These are plain Lisp defaliases in cl-lib.el / cl-macs.el.
 
