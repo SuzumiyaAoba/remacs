@@ -619,6 +619,73 @@ pub(crate) static SUBRS: &[Subr] = &[
         f_register_code_conversion_map,
         "Register MAP as code conversion map NAME."
     ),
+    S!("zlib-available-p", 0, 0, f_zlib_available_p, "t if zlib decompression is available."),
+    S!(
+        "zlib-decompress-region",
+        2,
+        3,
+        f_zlib_decompress_region,
+        "Decompress the region as gzip or zlib data."
+    ),
+    S!(
+        "find-buffer",
+        2,
+        2,
+        f_find_buffer,
+        "Return the buffer with buffer-local VARIABLE `equal' to VALUE."
+    ),
+    S!("insert-byte", 2, 3, f_insert_byte, "Insert COUNT copies of BYTE."),
+    S!("set-quit-char", 1, 1, f_nil, "Set terminal quit char."),
+    S!(
+        "set-binary-mode",
+        2,
+        2,
+        f_set_binary_mode,
+        "Switch STREAM into binary or text MODE."
+    ),
+    S!(
+        "set-output-flow-control",
+        1,
+        2,
+        f_set_output_flow_control,
+        "Enable flow control on TERMINAL."
+    ),
+    S!(
+        "newline-cache-check",
+        0,
+        1,
+        f_nil,
+        "Check the newline cache for sanity."
+    ),
+    S!("tab-bar-height", 0, 2, f_tab_bar_height, "Height of the tab bar."),
+    S!(
+        "insert-special-event",
+        1,
+        1,
+        f_insert_special_event,
+        "Insert EVENT into the input queue."
+    ),
+    S!(
+        "buffer-text-pixel-size",
+        0,
+        4,
+        f_buffer_text_pixel_size,
+        "Size of the buffer text in pixels."
+    ),
+    S!(
+        "format-mode-line",
+        1,
+        4,
+        f_format_mode_line,
+        "Format a string using the mode line format."
+    ),
+    S!(
+        "debugger-trap",
+        0,
+        0,
+        f_nil,
+        "Trap into the debugger."
+    ),
     S!("cl-type-of", 1, 1, f_cl_type_of, ""),
     S!("bool-vector-p", 1, 1, f_bool_vector_p, ""),
     S!("record", many 0, f_record, "Create a record of TYPE with SLOTS."),
@@ -2304,6 +2371,198 @@ fn f_register_code_conversion_map(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     i.code_conv_map_count += 1;
     i.put_prop(name, prop, Value::Int(idx as i128));
     Ok(Value::Int(idx as i128))
+}
+
+fn f_zlib_available_p(_i: &mut Interp, _a: Vec<Value>) -> EvalResult {
+    Ok(Value::t())
+}
+
+fn f_zlib_decompress_region(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    use std::io::Read;
+    let (start, end) = (want_int(i, &a[0])?, want_int(i, &a[1])?);
+    let buf = match i.current_buffer_ref() {
+        Some(b) => b,
+        None => return Err(i.signal_data(sym::ERROR, vec![Value::string("No buffer")])),
+    };
+    let bytes = {
+        let bb = buf.borrow();
+        let (begv, zv) = (bb.begv as i128 + 1, bb.zv as i128 + 1);
+        if start < begv || end > zv || start > end {
+            return Err(i.signal_data(
+                sym::ARGS_OUT_OF_RANGE,
+                vec![a[0].clone(), a[1].clone()],
+            ));
+        }
+        let t = bb.text.text();
+        let chars: Vec<char> = t.chars().collect();
+        let lo = (start - 1).max(0) as usize;
+        let hi = (end - 1).min(chars.len() as i128) as usize;
+        // Approximate unibyte storage: Latin-1 chars encode as their
+        // single byte; anything else uses UTF-8.
+        let mut bytes = Vec::new();
+        let mut tmp = [0u8; 4];
+        for &c in &chars[lo..hi] {
+            if (c as u32) < 256 {
+                bytes.push(c as u8);
+            } else {
+                bytes.extend_from_slice(c.encode_utf8(&mut tmp).as_bytes());
+            }
+        }
+        bytes
+    };
+    // Try gzip first, then raw zlib.
+    let mut decoded: Option<Vec<u8>> = None;
+    {
+        let mut d = flate2::read::GzDecoder::new(&bytes[..]);
+        let mut out = Vec::new();
+        if d.read_to_end(&mut out).is_ok() {
+            decoded = Some(out);
+        }
+    }
+    if decoded.is_none() {
+        let mut d = flate2::read::ZlibDecoder::new(&bytes[..]);
+        let mut out = Vec::new();
+        if d.read_to_end(&mut out).is_ok() {
+            decoded = Some(out);
+        }
+    }
+    match decoded {
+        Some(out) => {
+            let text = String::from_utf8_lossy(&out).into_owned();
+            let mut bb = buf.borrow_mut();
+            let lo = (start - 1).max(0) as usize;
+            let hi = (end - 1).max(lo as i128) as usize;
+            bb.delete_region(lo, hi);
+            bb.insert_at(lo, &text);
+            Ok(Value::t())
+        }
+        None => Err(i.signal_data(
+            sym::ERROR,
+            vec![Value::string("Malformed or misplaced compressed data")],
+        )),
+    }
+}
+
+fn f_find_buffer(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let sid = want_sym(i, &a[0])?;
+    for id in i.buffers.list() {
+        let v = match i.buffers.get(id) {
+            Some(b) => match b.borrow().locals.get(&sid) {
+                Some(v) => v.clone(),
+                None => i.obarray.symbol(sid).value.clone(),
+            },
+            None => continue,
+        };
+        if matches!(v, Value::Sym(s) if s == sym::UNBOUND) {
+            return Err(i.signal_data(sym::VOID_VARIABLE, vec![a[0].clone()]));
+        }
+        if super::equal_values(i, &v, &a[1]) {
+            if let Some(b) = i.buffers.get(id) {
+                return Ok(Value::Buffer(b));
+            }
+        }
+    }
+    Ok(Value::Nil)
+}
+
+fn f_insert_byte(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let byte = want_int(i, &a[0])?;
+    let count = want_int(i, &a[1])?;
+    if !(0..=255).contains(&byte) {
+        return Err(i.signal_data(sym::ARGS_OUT_OF_RANGE, vec![a[0].clone()]));
+    }
+    let ch = char::from_u32(byte as u32).unwrap_or('\u{fffd}');
+    let s: String = std::iter::repeat_n(ch, count.max(0) as usize).collect();
+    if let Some(b) = i.current_buffer_ref() {
+        b.borrow_mut().insert(&s);
+    }
+    Ok(Value::Nil)
+}
+
+fn f_set_binary_mode(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let sid = want_sym(i, &a[0])?;
+    let name = i.symbol_name(sid);
+    if !matches!(name.as_str(), "stdin" | "stdout" | "stderr") {
+        return Err(i.signal_data(
+            sym::ERROR,
+            vec![Value::string(format!("Bad stream {}", name))],
+        ));
+    }
+    // POSIX: always binary; value is the previous mode (non-nil).
+    Ok(Value::t())
+}
+
+fn f_set_output_flow_control(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    // (FLOW &optional TERMINAL). No terminal objects in this port;
+    // GNU signals terminal-live-p when TERMINAL is given and not a
+    // live terminal.
+    if let Some(term) = a.get(1) {
+        let pred = i.intern("terminal-live-p");
+        return Err(i.signal_data(
+            sym::WRONG_TYPE_ARGUMENT,
+            vec![Value::Sym(pred), term.clone()],
+        ));
+    }
+    Ok(Value::Nil)
+}
+
+fn f_tab_bar_height(_i: &mut Interp, _a: Vec<Value>) -> EvalResult {
+    Ok(Value::Int(0))
+}
+
+fn f_insert_special_event(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    if !matches!(a[0], Value::Cons(_)) {
+        return Err(i.wrong_type_mut("consp", &a[0]));
+    }
+    Ok(Value::Nil)
+}
+
+fn f_buffer_text_pixel_size(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let buf = match a.first() {
+        None | Some(Value::Nil) => i.current_buffer_ref(),
+        Some(Value::Buffer(b)) => Some(b.clone()),
+        Some(other) => return Err(i.wrong_type_mut("window-live-p", other)),
+    };
+    let (width, height) = match buf {
+        Some(b) => {
+            let bb = b.borrow();
+            let text = bb.text.text();
+            let chars: Vec<char> = text.chars().collect();
+            let (mut from, mut to) = (1i128, chars.len() as i128 + 1);
+            if let Some(v) = a.get(1) {
+                if !v.is_nil() {
+                    from = want_int(i, v)?;
+                }
+            }
+            if let Some(v) = a.get(2) {
+                if !v.is_nil() {
+                    to = want_int(i, v)?;
+                }
+            }
+            let lo = (from - 1).clamp(0, chars.len() as i128) as usize;
+            let hi = (to - 1).clamp(lo as i128, chars.len() as i128) as usize;
+            let region: String = chars[lo..hi].iter().collect();
+            let mut w = 0usize;
+            let mut h = region.matches('\n').count();
+            for line in region.split('\n') {
+                w = w.max(line.chars().count());
+            }
+            if !region.ends_with('\n') && !region.is_empty() {
+                h += 1;
+            }
+            (w, h)
+        }
+        None => (0, 0),
+    };
+    Ok(Value::cons(
+        Value::Int(width as i128),
+        Value::Int(height as i128),
+    ))
+}
+
+fn f_format_mode_line(_i: &mut Interp, _a: Vec<Value>) -> EvalResult {
+    // No mode-line machinery; batch GNU likewise yields "".
+    Ok(Value::string(""))
 }
 
 fn f_invocation_name(_i: &mut Interp, _a: Vec<Value>) -> EvalResult {

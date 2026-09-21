@@ -6,6 +6,7 @@ edition = "2024"
 [dependencies]
 base64 = "0.22.1"
 crossterm = "0.29.0"
+flate2 = "1.1.5"
 gpui = { version = "0.2.2", features = ["runtime_shaders"] }
 libc = "0.2.189"
 md-5 = "0.10.6"
