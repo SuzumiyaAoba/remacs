@@ -1814,7 +1814,7 @@ fn f_kill_local_variable(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     Ok(a[0].clone())
 }
 
-fn f_kill_all_local_variables(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
+pub(crate) fn f_kill_all_local_variables(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
     let keep: Vec<u32> = {
         let b = cur(i);
         let bb = b.borrow();
@@ -2406,12 +2406,12 @@ fn f_forward_comment(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     // (e.g. `comment-forward') then fall back to regexps.
     if count >= 0 {
         loop {
-            while p < len && crate::lisp::regexp::syntax_code(bb.text.char_at(p)) == b' ' {
+            while p < len && crate::editor::syntax_code_buf(i, bb.text.char_at(p)) == b' ' {
                 p += 1;
             }
-            if p < len && crate::lisp::regexp::syntax_code(bb.text.char_at(p)) == b'<' {
+            if p < len && crate::editor::syntax_code_buf(i, bb.text.char_at(p)) == b'<' {
                 p += 1;
-                while p < len && crate::lisp::regexp::syntax_code(bb.text.char_at(p)) != b'>' {
+                while p < len && crate::editor::syntax_code_buf(i, bb.text.char_at(p)) != b'>' {
                     p += 1;
                 }
                 if p < len {
@@ -2424,13 +2424,13 @@ fn f_forward_comment(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         }
     } else {
         loop {
-            while p > bb.begv && crate::lisp::regexp::syntax_code(bb.text.char_at(p - 1)) == b' ' {
+            while p > bb.begv && crate::editor::syntax_code_buf(i, bb.text.char_at(p - 1)) == b' ' {
                 p -= 1;
             }
-            if p > bb.begv && crate::lisp::regexp::syntax_code(bb.text.char_at(p - 1)) == b'>' {
+            if p > bb.begv && crate::editor::syntax_code_buf(i, bb.text.char_at(p - 1)) == b'>' {
                 p -= 1;
                 while p > bb.begv
-                    && crate::lisp::regexp::syntax_code(bb.text.char_at(p - 1)) != b'<'
+                    && crate::editor::syntax_code_buf(i, bb.text.char_at(p - 1)) != b'<'
                 {
                     p -= 1;
                 }

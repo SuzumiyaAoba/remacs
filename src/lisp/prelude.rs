@@ -1044,8 +1044,10 @@ Linefeed-indented lines are indented to this column.")
   "Column to indent right-margin comments to.")
 (defvar comment-start nil
   "String to insert to start a new comment, or nil if none.")
-(defvar tab-stop-list '(8 16 24 32 40 48 56 64 72 80 88 96 104 112 120)
-  "List of tab stop positions used by `tab-to-tab-stop'.")
+(defvar tab-stop-list nil
+  "List of tab stop positions used by `tab-to-tab-stop'.
+Elements should be integers or markers.  A nil value means tab stops are
+spaced `tab-width' columns apart.")
 (defvar indent-line-function 'indent-relative-first-indent-point
   "Function to be used to indent the current line.")
 
@@ -1796,8 +1798,11 @@ places where expressions are evaluated and inserted or spliced in."
 ;; library from lisp/ (see load-path handling in load.rs).
 (autoload 'define-minor-mode "easy-mmode"
   "Define a new minor mode MODE." nil t)
+(autoload 'define-globalized-minor-mode "easy-mmode"
+  "Define a global minor mode." nil t)
 ;; loaddefs.el registers this obsolete alias eagerly.
 (defalias 'easy-mmode-define-minor-mode 'define-minor-mode)
+(defalias 'define-global-minor-mode 'define-globalized-minor-mode)
 (autoload 'kbd-macro-query "macros"
   "Query user during kbd macro execution." t)
 (autoload 'insert-kbd-macro "macros"
@@ -2339,6 +2344,553 @@ with no ARG (or 'toggle), toggle."
              (insert "\n")))
          (setq buffer-read-only t))
        (ignore-errors (display-buffer standard-output)))))
+
+;; ---------- minibuffer / completion / misc common fns ----------
+
+;; GNU's expansion defers the body behind a `throw-on-input' catch so a
+;; pending event aborts it and returns t.  `input-pending-p' is a
+;; sufficient approximation for the non-async case.
+(defmacro while-no-input (&rest body)
+  "Execute BODY only if there is no pending input.
+If input arrives while BODY runs, stop and return t; otherwise return
+the value of the last form."
+  `(condition-case nil
+       (let ((inhibit-quit nil))
+         (catch 'input
+           (let ((throw-on-input 'input) val)
+             (setq val (or (input-pending-p) (progn ,@body)))
+             (cond ((eq quit-flag throw-on-input)
+                    (setq quit-flag nil)
+                    t)
+                   (quit-flag nil)
+                   (t val)))))
+     (quit (setq quit-flag t)
+           (eval '(ignore nil) t))))
+
+;; `unsafep' reasons about whether evaluating FORM could have side
+;; effects.  Returns nil when safe, else `(function SYM)' for an unsafe
+;; call head like GNU.
+(defvar unsafep--safe-functions
+  '(quote function let let* if when unless progn prog1 prog2 progv
+    setq setq-local setq-default and or cond case cl-case while until
+    catch throw unwind-protect condition-case dolist dotimes
+    save-excursion save-current-buffer save-restriction
+    with-current-buffer with-temp-buffer with-temp-file
+    car cdr caar cadr cdar cddr caaar caadr cadar caddr cdaar cdadr
+    cddar cddddr nth nthcdr last cons list append reverse nreverse
+    length copy-sequence elt aref assq assoc rassoc member memq memql
+    delq delete remove cl-remove equal eq eql null not atom consp listp
+    nlistp symbolp numberp stringp vectorp integerp fixnump wholenump
+    natnump zerop plusp minusp booleanp keywordp sequencep arrayp
+    hash-table-p recordp functionp commandp subrp boundp fboundp
+    bound-and-true-p featurep < > = <= >= /= + - * / % mod min max abs
+    1+ 1- float truncate round floor ceiling expt sqrt
+    format format-message concat substring string make-string
+    string= string-equal string< string-lessp string-prefix-p
+    string-suffix-p string-match string-match-p match-string
+    match-beginning match-end string-to-number number-to-string
+    string-to-list upcase downcase capitalize intern intern-soft
+    symbol-name symbol-value symbol-function symbol-plist
+    makunbound fmakunbound get put plist-get plist-put plist-member
+    lax-plist-get defvar defconst defvar-local defcustom
+    apply funcall funcall-interactively mapcar mapc mapcan mapconcat
+    mapply seq-doseq gensym eval macroexpand macroexpand-1
+    macroexpand-all prin1 princ prin1-to-string print terpri
+    read-from-string read minibufferp bufferp windowp framep
+    processp markerp overlayp keymapp char-table-p bool-vector-p
+    ignore cl-block cl-return cl-return-from eieio-object-p))
+
+(defun unsafep (form &optional unsafep-vars)
+  "Return nil if evaluating FORM could not possibly do any harm.
+Otherwise return a value describing why it might be unsafe — GNU
+returns (function SYM) for an unsafe call head."
+  (catch 'unsafe
+    (unsafep--check form unsafep-vars)
+    nil))
+
+(defun unsafep--check (form unsafep-vars)
+  (cond
+   ((symbolp form)
+    (and (memq form unsafep-vars)
+         (throw 'unsafe (list 'function form))))
+   ((consp form)
+    (let ((head (car form)))
+      (cond
+       ((eq head 'quote) nil)
+       ((eq head 'function) nil)
+       ((and (consp head) (eq (car head) 'lambda))
+        (dolist (f (cddr head)) (unsafep--check f unsafep-vars)))
+       ((or (and (symbolp head)
+                 (memq head unsafep--safe-functions))
+            (get head 'safe-function))
+        (dolist (f (cdr form)) (unsafep--check f unsafep-vars)))
+       (t (throw 'unsafe (list 'function head))))))))
+
+(defun readablep (object)
+  "Return OBJECT if it has a readable printed representation, else nil."
+  (cond
+   ((or (null object) (numberp object) (stringp object)
+        (symbolp object) (keywordp object))
+    object)
+   ((consp object)
+    (let ((ok t) (rest object))
+      (while (consp rest)
+        (unless (readablep (car rest)) (setq ok nil rest nil))
+        (setq rest (cdr rest)))
+      (and ok (or (null rest) (readablep rest)) object)))
+   ((or (vectorp object) (recordp object))
+    (let ((ok t) (idx 0) (n (length object)))
+      (while (< idx n)
+        (unless (readablep (aref object idx)) (setq ok nil idx n))
+        (setq idx (1+ idx)))
+      (and ok object)))
+   ((hash-table-p object)
+    (let ((ok t))
+      (maphash (lambda (k v)
+                 (unless (and (readablep k) (readablep v))
+                   (setq ok nil)))
+               object)
+      (and ok object)))
+   (t nil)))
+
+(defun undefined ()
+  "Beep to tell the user this binding is undefined."
+  (interactive)
+  (ding))
+
+(defvar small-temporary-file-directory nil
+  "The directory for writing small temporary files.
+If nil, use `temporary-file-directory'.")
+
+(defvar temporary-file-directory
+  (file-name-as-directory (or (getenv "TMPDIR") "/tmp"))
+  "The directory for writing temporary files.")
+
+(defun temporary-file-directory ()
+  "The directory for writing temporary files."
+  temporary-file-directory)
+
+(defvar minibuffer-completion-table nil
+  "Completion table used for completion in the minibuffer.")
+(defvar minibuffer-completion-predicate nil
+  "Completion predicate used for completion in the minibuffer.")
+(defvar minibuffer-completion-confirm nil
+  "Non-nil if completion must be confirmed in the minibuffer.")
+
+;; Completion styles (minibuffer.el subset).  Each alist entry is
+;; (NAME TRY-FN ALL-FN DOCSTRING).
+(defvar completion-styles-alist
+  '((emacs21 completion-emacs21-try-completion
+     completion-emacs21-all-completions
+     "Simple prefix-based completion.")
+    (emacs22 completion-emacs22-try-completion
+     completion-emacs22-all-completions
+     "Prefix completion with hyphen separator.")
+    (basic completion-basic-try-completion
+     completion-basic-all-completions
+     "Completion of the string before point.")
+    (partial-completion completion-pcm-try-completion
+     completion-pcm-all-completions
+     "Completion of multiple words, each hyphen-separated.")
+    (substring completion-substring-try-completion
+     completion-substring-all-completions
+     "Completion where the pattern is a substring of candidates.")
+    (flex completion-flex-try-completion
+     completion-flex-all-completions
+     "Completion where pattern characters appear in order.")
+    (initials completion-initials-try-completion
+     completion-initials-all-completions
+     "Completion of acronyms and initialisms.")
+    (shorthand completion-shorthand-try-completion
+     completion-shorthand-all-completions
+     "Shorthand completion."))
+  "List of available completion styles.")
+
+(defvar completion-category-defaults
+  '((buffer (styles basic substring))
+    (unicode-name (styles basic substring))
+    (project-file (styles substring))
+    (xref-location (styles substring))
+    (info-menu (styles basic substring))
+    (symbol-help (styles basic shorthand substring)))
+  "Alist of completion category defaults.")
+
+(defun cl--shared-prefix (strings)
+  "Longest common prefix of STRINGS (list of strings)."
+  (if (null strings) ""
+    (let ((prefix (car strings)))
+      (dolist (s (cdr strings))
+        (let ((i 0) (n (min (length prefix) (length s))))
+          (while (and (< i n)
+                      (eq (aref prefix i) (aref s i)))
+            (setq i (1+ i)))
+          (setq prefix (substring prefix 0 i))))
+      prefix)))
+
+(defun completion-basic-try-completion (string table pred point)
+  "Try to complete STRING using TABLE and PRED (basic style)."
+  (let ((comps (all-completions string table pred)))
+    (and comps
+         (let ((prefix (cl--shared-prefix comps)))
+           (cons prefix (min point (length prefix)))))))
+
+(defun completion-basic-all-completions (string table pred _point)
+  "Complete STRING using TABLE and PRED (basic style)."
+  (let ((comps (all-completions string table pred)))
+    (and comps (nconc comps 0))))
+
+(defun completion-substring-try-completion (string table pred point)
+  "Try to complete STRING as a substring of candidates."
+  (let ((comps nil))
+    (dolist (c (all-completions "" table pred))
+      (when (string-match-p (regexp-quote string) c)
+        (push c comps)))
+    (setq comps (nreverse comps))
+    (cond
+     ((null comps) nil)
+     ((null (cdr comps)) (cons (car comps) (length (car comps))))
+     (t (let ((prefix (cl--shared-prefix comps)))
+          (cons (concat prefix string)
+                (min (+ (length prefix) point)
+                     (+ (length prefix) (length string)))))))))
+
+(defun completion-substring-all-completions (string table pred _point)
+  "Complete STRING matching it as a substring of candidates."
+  (let ((comps nil))
+    (dolist (c (all-completions "" table pred))
+      (when (string-match-p (regexp-quote string) c)
+        (push c comps)))
+    (and comps (nconc (nreverse comps) 0))))
+
+(defun cl--flex-match-p (pattern candidate)
+  "Non-nil if PATTERN's chars appear in CANDIDATE in order."
+  (let ((i 0) (j 0) (pn (length pattern)) (cn (length candidate)))
+    (while (and (< i pn) (< j cn))
+      (if (eq (aref pattern i) (aref candidate j))
+          (setq i (1+ i)))
+      (setq j (1+ j)))
+    (>= i pn)))
+
+(defun completion-flex-try-completion (string table pred point)
+  "Try to complete STRING as a flex pattern of candidates."
+  (let ((comps nil))
+    (dolist (c (all-completions "" table pred))
+      (when (cl--flex-match-p string c)
+        (push c comps)))
+    (and comps (cons string point))))
+
+(defun completion-flex-all-completions (string table pred _point)
+  "Complete STRING as a flex pattern of candidates."
+  (let ((comps nil))
+    (dolist (c (all-completions "" table pred))
+      (when (cl--flex-match-p string c)
+        (push c comps)))
+    (and comps (nconc (nreverse comps) 0))))
+
+(defalias 'completion-emacs21-try-completion
+  'completion-basic-try-completion)
+(defalias 'completion-emacs21-all-completions
+  'completion-basic-all-completions)
+(defalias 'completion-emacs22-try-completion
+  'completion-basic-try-completion)
+(defalias 'completion-emacs22-all-completions
+  'completion-basic-all-completions)
+(defalias 'completion-pcm-try-completion
+  'completion-substring-try-completion)
+(defalias 'completion-pcm-all-completions
+  'completion-substring-all-completions)
+(defalias 'completion-initials-try-completion
+  'completion-flex-try-completion)
+(defalias 'completion-initials-all-completions
+  'completion-flex-all-completions)
+
+(defun completion-shorthand-try-completion (string table pred _point)
+  "Try to complete STRING using shorthand rules (subset)."
+  (let ((comps (all-completions "" table pred)))
+    (and comps (cons string (length string)))))
+
+(defun completion-shorthand-all-completions (_string table pred _point)
+  "Return all candidates under shorthand rules (subset)."
+  (let ((comps (all-completions "" table pred)))
+    (and comps (nconc comps 0))))
+
+(defun completion--insert-strings (strings &optional group-fun)
+  "Insert a list of STRINGS into the current buffer, column-wise."
+  (let ((count 0))
+    (dolist (str strings)
+      (setq count (1+ count))
+      (let ((s (copy-sequence (format "%s" str))))
+        (insert s)
+        (insert "  ")))
+    (terpri)))
+
+(defun read-answer (question answers)
+  "Read an answer to QUESTION among ANSWERS.
+ANSWERS is a list of (LONG-ANSWER SHORT-ANSWER HELP-MESSAGE); the
+short answer is a single character.  Returns the long-answer string."
+  (let ((match nil) (seen nil))
+    (while (not match)
+      (let ((c (read-char
+                (concat question " "
+                        (mapconcat (lambda (a) (format "[%s]" (car a)))
+                                   answers " ")
+                        ": "))))
+        (dolist (a answers)
+          (when (eq c (nth 1 a)) (setq match (car a))))
+        (unless match
+          (when (memq c seen)
+            ;; avoid an infinite loop on EOF/unchanged input
+            (error "read-answer: invalid answer"))
+          (push c seen))))
+    match))
+
+(defun command-history (&optional limit &rest args)
+  "Examine commands from `command-history'.
+Signals an error if the command history is empty.  With `list' in
+ARGS, list the commands in the *Command History* buffer."
+  (unless command-history (error "No command history"))
+  (let ((history (if (integerp limit)
+                     (let ((res nil) (rest command-history) (n limit))
+                       (while (and rest (> n 0))
+                         (push (car rest) res)
+                         (setq rest (cdr rest) n (1- n)))
+                       (nreverse res))
+                   command-history)))
+    (if (memq 'list args)
+        (with-output-to-temp-buffer "*Command History*"
+          (dolist (entry history)
+            (princ entry)
+            (terpri)))
+      history)))
+
+(defun list-command-history (&optional limit)
+  "List history of commands executed with \\[execute-extended-command]."
+  (interactive "P")
+  (command-history limit 'list)
+  nil)
+
+;; ---------- file-name / backup helpers (files.el subset) ----------
+
+(defvar backup-by-copying nil
+  "Non-nil means always use copying to create backup files.")
+(defvar make-backup-files t
+  "Non-nil means make a backup of a file the first time it is saved.")
+(defvar version-control nil
+  "Control use of version numbers for backup files.")
+(defvar kept-new-versions 2
+  "Number of newest versions to keep when a new numbered backup is made.")
+(defvar kept-old-versions 2
+  "Number of oldest versions to keep when a new numbered backup is made.")
+(defvar delete-old-versions nil
+  "Non-nil means delete excess backup versions silently.")
+(defvar backup-directory-alist nil
+  "Alist of filename patterns and backup directory names.")
+(defvar backup-enable-predicate #'file-writable-p
+  "Predicate that looks at a file name to decide backup worthiness.")
+
+(defun backup-file-name-p (file)
+  "Return non-nil if FILE is a backup file name (numeric or not).
+This is a predicate for a file name ending in `~'.  It does not check
+whether the file exists.  The return value, when non-nil, is the
+position of the last `~' in FILE."
+  (string-match "~$" file))
+
+(defvar make-backup-file-name-function 'make-backup-file-name--default-function
+  "Function called to get a backup file name for FILE.")
+
+(defun make-backup-file-name--default-function (file)
+  "Return the default backup file name for FILE (FILE~)."
+  (concat file "~"))
+
+(defun make-backup-file-name (file)
+  "Create the non-numeric backup file name for FILE.
+This calls the function that `make-backup-file-name-function' specifies."
+  (funcall make-backup-file-name-function file))
+
+(defalias 'make-backup-file-name-1 'make-backup-file-name)
+
+(defun find-backup-file-name (filename)
+  "Return a list of potential backup file names for FILENAME.
+The list is ordered most recent first; the first name is the one that
+would be used for a new backup."
+  (if (or (eq version-control t) (eq version-control 'always))
+      (let* ((dir (file-name-directory filename))
+             (base (file-name-nondirectory filename))
+             (existing (and dir (directory-files
+                                 dir nil
+                                 (concat "^" (regexp-quote base)
+                                         "\\.~[0-9]+~$"))))
+             (hi 0))
+        (dolist (f existing)
+          (when (string-match "\\.~\\([0-9]+\\)~$" f)
+            (setq hi (max hi (string-to-number (match-string 1 f))))))
+        (list (concat filename ".~" (number-to-string (1+ hi)) "~")))
+    (list (make-backup-file-name filename))))
+
+(defun file-backup-file-names (filename)
+  "Return a list of backup files for FILENAME, newest first.
+Only existing files are included."
+  (let* ((dir (or (file-name-directory filename) default-directory))
+         (base (file-name-nondirectory filename))
+         (cands (and dir
+                     (directory-files
+                      dir nil
+                      (concat "^" (regexp-quote base)
+                              "\\(\\.~[0-9]+~\\|~\\)$"))))
+         (files (mapcar (lambda (f) (expand-file-name f dir)) cands)))
+    ;; Numeric backups sort newest first by version; plain "~" last.
+    (setq files
+          (sort files
+                (lambda (a b)
+                  (let ((na (and (string-match "\\.~\\([0-9]+\\)~$" a)
+                                 (string-to-number (match-string 1 a))))
+                        (nb (and (string-match "\\.~\\([0-9]+\\)~$" b)
+                                 (string-to-number (match-string 1 b)))))
+                    (cond ((and na nb) (> na nb))
+                          (na t)
+                          (nb nil)
+                          (t nil))))))
+    files))
+
+(defun file-newest-backup (filename)
+  "Return the most recently created backup of FILENAME, or nil."
+  (car (file-backup-file-names filename)))
+
+(defun diff-latest-backup-file (fn)
+  "Return the latest existing backup of file FN, or nil."
+  (car (file-backup-file-names fn)))
+
+(defun file-chase-links (filename &optional limit)
+  "Resolve FILENAME to a non-link name by following symbolic links.
+LIMIT is the maximum number of links to chase (default: unlimited)."
+  (let ((count 0) (name filename) (target t))
+    (while (and target (or (null limit) (< count limit)))
+      (setq target (file-symlink-p name))
+      (when target
+        (setq name (if (file-name-absolute-p target)
+                       target
+                     (expand-file-name
+                      target (file-name-directory name)))
+              count (1+ count))))
+    name))
+
+(defun locate-dominating-file (file name)
+  "Look up the directory hierarchy from FILE for a directory
+containing NAME.  Return the absolute directory name, or nil."
+  (let ((dir (if (file-directory-p file)
+                 (file-name-as-directory file)
+               (or (file-name-directory file)
+                   (file-name-as-directory file))))
+        (found nil) (prev nil))
+    (while (and dir (not found) (not (equal dir prev)))
+      (if (file-exists-p (concat dir name))
+          (setq found dir)
+        (setq prev dir
+              dir (let ((parent (file-name-directory
+                                 (directory-file-name dir))))
+                    (and parent (file-name-as-directory parent))))))
+    found))
+
+;; ---------- minor-mode commands ----------
+
+;; These are defined (not autoloaded) at GNU startup, so plain
+;; `define-minor-mode' forms give the same observable state.
+(define-minor-mode scroll-bar-mode "Toggle scroll bars."
+  :global t :init-value 'right)
+(define-minor-mode horizontal-scroll-bar-mode
+  "Toggle horizontal scroll bars." :global t)
+(define-minor-mode display-time-mode "Toggle display of time."
+  :global t)
+(define-minor-mode size-indication-mode
+  "Toggle buffer size display in the mode line." :global t)
+(define-minor-mode line-number-mode "Toggle line number display."
+  :global t :init-value t)
+(define-minor-mode column-number-mode "Toggle column number display."
+  :global t)
+(define-minor-mode display-battery-mode "Toggle battery display."
+  :global t)
+(define-minor-mode delete-selection-mode
+  "Delete the selection when typing." :global t)
+(define-minor-mode auto-compression-mode
+  "Transparently handle compressed files." :global t :init-value t)
+(define-minor-mode auto-encryption-mode
+  "Transparently handle encrypted files." :global t :init-value t)
+(define-minor-mode auto-composition-mode
+  "Toggle automatic character composition." :global t :init-value t)
+(define-minor-mode mouse-wheel-mode "Toggle mouse wheel support."
+  :global t :init-value t)
+(define-minor-mode show-paren-mode
+  "Highlight matching parens." :global t :init-value t)
+(define-minor-mode electric-indent-mode
+  "Toggle electric indentation." :global t :init-value t)
+(define-minor-mode electric-pair-mode
+  "Toggle automatic pairing of brackets." :global t)
+(define-minor-mode blink-cursor-mode "Toggle cursor blinking."
+  :global t)
+(define-minor-mode menu-bar-mode "Toggle the menu bar." :global t)
+(define-minor-mode tool-bar-mode "Toggle the tool bar." :global t)
+(define-minor-mode eldoc-mode "Toggle echo-area documentation."
+  :init-value t)
+(define-minor-mode visual-line-mode "Toggle visual word wrapping."
+  :lighter " Wrap")
+;; GNU lacks `diff-auto-refine-mode' as a defined symbol.
+;; `binary-overwrite-mode' is a plain obsolete command, not a mode var.
+(defun binary-overwrite-mode (&optional arg)
+  "Toggle Binary Overwrite mode (obsolete).
+When enabled, actual binary text editing is done via `overwrite-mode'."
+  (interactive (list (or current-prefix-arg 'toggle)))
+  (overwrite-mode arg)
+  (setq overwrite-mode 'overwrite-mode-binary)
+  overwrite-mode)
+
+;; GNU keeps these as autoloads into their libraries; the real
+;; definitions live in the corresponding files under lisp/.
+(autoload 'subword-mode "subword" "Toggle subword movement." t)
+(autoload 'superword-mode "subword" "Toggle superword movement." t)
+(autoload 'outline-minor-mode "outline" "Toggle outline minor mode." t)
+(autoload 'outline-mode "outline" "Outline major mode." t)
+(autoload 'hs-minor-mode "hideshow" "Toggle hideshow minor mode." t)
+(autoload 'reveal-mode "reveal" "Toggle reveal minor mode." t)
+(autoload 'auto-revert-mode "autorevert"
+  "Toggle reverting buffer when file changes." t)
+(autoload 'auto-revert-tail-mode "autorevert"
+  "Toggle reverting tail of file." t)
+(autoload 'global-auto-revert-mode "autorevert"
+  "Toggle auto-revert-mode in all buffers." t)
+(autoload 'compilation-minor-mode "compile"
+  "Toggle compilation minor mode." t)
+(autoload 'compilation-shell-minor-mode "compile"
+  "Toggle compilation shell minor mode." t)
+(autoload 'diff-minor-mode "diff-mode" "Toggle diff minor mode." t)
+(autoload 'word-wrap-whitespace-mode "word-wrap-mode"
+  "Toggle word-wrap whitespace mode." t)
+(autoload 'display-time "time" "Display time." t)
+(autoload 'mouse-avoidance-mode "avoid" "Toggle mouse avoidance." t)
+(autoload 'flyspell-mode "flyspell" "Toggle flyspell mode." t)
+(autoload 'flyspell-prog-mode "flyspell" "Flyspell for comments." t)
+(defvar flyspell-mode nil)
+(autoload 'global-eldoc-mode "eldoc" "Global eldoc." t)
+(define-globalized-minor-mode global-visual-line-mode visual-line-mode
+  (lambda () (visual-line-mode 1)))
+(define-globalized-minor-mode global-auto-revert-mode auto-revert-mode
+  (lambda () (auto-revert-mode 1)))
+
+;; Plain commands that GNU defines at startup.
+(defun toggle-frame-maximized (&optional frame)
+  "Toggle maximization of FRAME (subset: no frame state yet)."
+  (interactive)
+  frame)
+(defun toggle-frame-fullscreen (&optional frame)
+  "Toggle fullscreen of FRAME (subset: no frame state yet)."
+  (interactive)
+  frame)
+(defun fringe-mode (&optional mode)
+  "Set the default fringe appearance (subset: returns MODE)."
+  (interactive)
+  mode)
+(defun vc-mode-line (file &optional backend)
+  "Return the mode-line version-control string for FILE (subset)."
+  (concat " " (or (and backend (symbol-name backend)) "")))
 
 ;; ---------- cl-generic subset ----------
 
@@ -3903,9 +4455,12 @@ See `event-start' for a description of the value returned."
        (defun ,variant ()
          ,@(when docstring (list docstring))
          (interactive)
-         ,@(when parent `((when (fboundp ',parent) (,parent))))
-         (kill-all-local-variables)
-         (setq major-mode ',variant
+         ;; GNU runs the parent first; the kill-all-local-variables at
+         ;; the chain's root (fundamental-mode) resets locals.
+         ,@(if parent
+               `((when (fboundp ',parent) (,parent)))
+               '((kill-all-local-variables)))
+        (setq major-mode ',variant
                mode-name ,name)
          (use-local-map ,map-sym)
          ,@body
@@ -7076,8 +7631,435 @@ and URL `https://rhodesmill.org/brandon/2012/one-sentence-per-line/'."
     m)
   "Keymap for Emacs Lisp mode.")
 
-;; *scratch* starts in lisp-interaction-mode.
+(define-derived-mode minibuffer-inactive-mode fundamental-mode
+  "InactiveMinibuffer"
+  "Major mode for the minibuffer when it is inactive.
+This is only used when the minibuffer area has no active minibuffer.")
+
+;; ---------- Lisp indentation (lisp-mode.el subset) ----------
+
+(defvar lisp-indent-offset nil
+  "If non-nil, indent Lisp code by this many columns.")
+(defvar lisp-body-indent 2
+  "Number of columns to indent the second line of a `(def...)' form.")
+(defvar-local lisp-indent-local-overrides nil
+  "Alist of per-buffer indent overrides.")
+;; `lisp-indent-function' (the variable) already defaults to the
+;; function of the same name; declared by the C side.
+(defvar-local lisp-indent-function 'lisp-indent-function)
+(defvar calculate-lisp-indent-last-sexp nil
+  "Dynamically bound during `calculate-lisp-indent'.")
+
+(defun lisp-ppss (&optional pos)
+  "Return the parse-partial-sexp state at POS (or point)."
+  (syntax-ppss pos))
+
+(defun calculate-lisp-indent (&optional parse-start)
+  "Return appropriate indentation for current line as Lisp code.
+Faithful port of GNU's algorithm in lisp-mode.el."
+  (save-excursion
+    (beginning-of-line)
+    (let ((indent-point (point))
+          state
+          (desired-indent nil)
+          (retry t)
+          whitespace-after-open-paren
+          calculate-lisp-indent-last-sexp containing-sexp)
+      (cond ((or (markerp parse-start) (integerp parse-start))
+             (goto-char parse-start))
+            ((null parse-start) (beginning-of-defun))
+            (t (setq state parse-start)))
+      (unless state
+        ;; Find outermost containing sexp.
+        (while (< (point) indent-point)
+          (setq state (parse-partial-sexp (point) indent-point 0))))
+      ;; Find innermost containing sexp.
+      (while (and retry
+                  state
+                  (> (elt state 0) 0))
+        (setq retry nil)
+        (setq calculate-lisp-indent-last-sexp (elt state 2))
+        (setq containing-sexp (elt state 1))
+        ;; Position following last unclosed open.
+        (goto-char (1+ containing-sexp))
+        ;; Is there a complete sexp since then?
+        (if (and calculate-lisp-indent-last-sexp
+                 (> calculate-lisp-indent-last-sexp (point)))
+            ;; Yes, but is there a containing sexp after that?
+            (let ((peek (parse-partial-sexp calculate-lisp-indent-last-sexp
+                                            indent-point 0)))
+              (if (setq retry (car (cdr peek))) (setq state peek)))))
+      (if retry
+          nil
+        ;; Innermost containing sexp found.
+        (goto-char (1+ containing-sexp))
+        (setq whitespace-after-open-paren (looking-at "\\s-"))
+        (if (not calculate-lisp-indent-last-sexp)
+            ;; indent-point immediately follows open paren.
+            (setq desired-indent (current-column))
+          ;; Find the start of first element of containing sexp.
+          (parse-partial-sexp (point) calculate-lisp-indent-last-sexp 0 t)
+          (cond ((looking-at "\\s(")
+                 ;; First element is itself a list — indent under it.
+                 nil)
+                ((> (save-excursion (forward-line 1) (point))
+                    calculate-lisp-indent-last-sexp)
+                 ;; First line to start within the containing sexp.
+                 (if (or (= (point) calculate-lisp-indent-last-sexp)
+                         whitespace-after-open-paren)
+                     nil
+                   ;; Skip first element; indent under second.
+                   (forward-sexp 1)
+                   (parse-partial-sexp (point)
+                                       calculate-lisp-indent-last-sexp
+                                       0 t))
+                 (backward-prefix-chars))
+                (t
+                 ;; Indent beneath first sexp on the same line as
+                 ;; calculate-lisp-indent-last-sexp.
+                 (goto-char calculate-lisp-indent-last-sexp)
+                 (beginning-of-line)
+                 (parse-partial-sexp (point)
+                                     calculate-lisp-indent-last-sexp 0 t)
+                 (backward-prefix-chars)))))
+      (let ((normal-indent (current-column)))
+        (cond ((elt state 3)
+               ;; Inside a string: don't change indentation.
+               nil)
+              ((and (integerp lisp-indent-offset) containing-sexp)
+               (goto-char containing-sexp)
+               (+ (current-column) lisp-indent-offset))
+              (calculate-lisp-indent-last-sexp
+               (or (and lisp-indent-function
+                        (not retry)
+                        (funcall lisp-indent-function indent-point state))
+                   ;; Align a keyword arg under a preceding keyword.
+                   (and (save-excursion
+                          (goto-char indent-point)
+                          (skip-chars-forward " \t")
+                          (looking-at ":"))
+                        (save-excursion
+                          (goto-char calculate-lisp-indent-last-sexp)
+                          (backward-prefix-chars)
+                          (while (not (save-excursion
+                                        (skip-chars-backward " \t")
+                                        (or (= (point)
+                                               (line-beginning-position))
+                                            (and containing-sexp
+                                                 (= (point)
+                                                    (1+ containing-sexp))))))
+                            (forward-sexp -1)
+                            (backward-prefix-chars))
+                          (setq calculate-lisp-indent-last-sexp (point)))
+                        (> calculate-lisp-indent-last-sexp
+                           (save-excursion
+                             (goto-char (1+ containing-sexp))
+                             (parse-partial-sexp
+                              (point) calculate-lisp-indent-last-sexp 0 t)
+                             (point)))
+                        (let ((parse-sexp-ignore-comments t)
+                              indent)
+                          (goto-char calculate-lisp-indent-last-sexp)
+                          (or (and (looking-at ":")
+                                   (setq indent (current-column)))
+                              (and (< (line-beginning-position)
+                                      (prog2 (backward-sexp) (point)))
+                                   (looking-at ":")
+                                   (setq indent (current-column))))
+                          indent))
+                   normal-indent))
+              (desired-indent)
+              (t normal-indent))))))
+
+(defun lisp--local-defform-body-p (state)
+  "Non-nil when at a local definition body per STATE (subset)."
+  (condition-case nil
+      (let ((start (nth 1 state)))
+        (when start
+          (let* ((parents (nth 9 state))
+                 (first-cons-after (cdr parents))
+                 (second-cons-after (cdr first-cons-after))
+                 first-order-parent second-order-parent)
+            (while second-cons-after
+              (when (= start (car second-cons-after))
+                (setq second-order-parent (pop parents)
+                      first-order-parent (pop parents)
+                      second-cons-after nil))
+              (pop second-cons-after)
+              (pop parents))
+            (when second-order-parent
+              (let (local-definitions-starting-point)
+                (and (save-excursion
+                       (goto-char (1+ second-order-parent))
+                       (let ((head (ignore-errors (read (current-buffer)))))
+                         (when (memq head '(cl-flet cl-labels cl-macrolet
+                                            cl-flet* cl-symbol-macrolet))
+                           (setq local-definitions-starting-point
+                                 (progn
+                                   (parse-partial-sexp
+                                    (point) first-order-parent nil t)
+                                   (point)))
+                           local-definitions-starting-point)))
+                     (save-excursion
+                       (when (ignore-errors (backward-up-list 2) t)
+                         (= local-definitions-starting-point
+                            (point))))))))))
+    (error nil)))
+
+(defun lisp-indent-function (indent-point state)
+  "This function is the normal value of `lisp-indent-function'.
+Port of GNU's lisp-mode.el indentation dispatch."
+  (let ((normal-indent (current-column)))
+    (goto-char (1+ (elt state 1)))
+    (parse-partial-sexp (point) calculate-lisp-indent-last-sexp 0 t)
+    (if (and (elt state 2)
+             (not (looking-at "\\sw\\|\\s_")))
+        ;; Car of form doesn't seem to be a symbol.
+        (if (lisp--local-defform-body-p state)
+            (lisp-indent-defform state indent-point)
+          (if (not (> (save-excursion (forward-line 1) (point))
+                      calculate-lisp-indent-last-sexp))
+              (progn (goto-char calculate-lisp-indent-last-sexp)
+                     (beginning-of-line)
+                     (parse-partial-sexp (point)
+                                         calculate-lisp-indent-last-sexp
+                                         0 t)))
+          ;; Indent under the list or under the first sexp on the same
+          ;; line as calculate-lisp-indent-last-sexp.
+          (backward-prefix-chars)
+          (current-column))
+      (let* ((function (intern-soft
+                        (buffer-substring (point)
+                                          (progn (forward-sexp 1)
+                                                 (point)))))
+             (local (assq function lisp-indent-local-overrides))
+             (method (if local
+                         (cdr local)
+                       (or (function-get function 'lisp-indent-function
+                                         'macro)
+                           (get function 'lisp-indent-hook)))))
+        (cond ((or (eq method 'defun)
+                   (lisp--local-defform-body-p state))
+               (lisp-indent-defform state indent-point))
+              ((integerp method)
+               (lisp-indent-specform method state
+                                     indent-point normal-indent))
+              (method
+               (funcall method indent-point state)))))))
+
+(defun lisp-indent-specform (count state indent-point normal-indent)
+  "Indent a specform with COUNT distinguished arguments."
+  (let ((containing-form-start (elt state 1))
+        (i count)
+        body-indent containing-form-column)
+    (goto-char containing-form-start)
+    (setq containing-form-column (current-column))
+    (setq body-indent (+ lisp-body-indent containing-form-column))
+    (forward-char 1)
+    (forward-sexp 1)
+    ;; Find the start of the last form.
+    (parse-partial-sexp (point) indent-point 1 t)
+    (while (and (< (point) indent-point)
+                (condition-case ()
+                    (progn
+                      (setq count (1- count))
+                      (forward-sexp 1)
+                      (parse-partial-sexp (point) indent-point 1 t))
+                  (error nil))))
+    ;; Point is on first character of last (or count) sexp.
+    (if (> count 0)
+        ;; A distinguished form.
+        (if (<= (- i count) 1)
+            (list (+ containing-form-column (* 2 lisp-body-indent))
+                  containing-form-start)
+          (list normal-indent containing-form-start))
+      ;; A non-distinguished form.
+      (if (or (and (= i 0) (= count 0))
+              (and (= count 0) (<= body-indent normal-indent)))
+          body-indent
+        normal-indent))))
+
+(defun lisp-indent-defform (state _indent-point)
+  "Indent a `defun'-style form."
+  (goto-char (car (cdr state)))
+  (forward-line 1)
+  (if (> (point) (car (cdr (cdr state))))
+      (progn
+        (goto-char (car (cdr state)))
+        (+ lisp-body-indent (current-column)))))
+
+(defun lisp-indent-line (&optional indent)
+  "Indent current line as Lisp code."
+  (interactive)
+  (let ((pos (- (point-max) (point)))
+        (indent (progn (beginning-of-line)
+                       (or indent (calculate-lisp-indent (lisp-ppss))))))
+    (skip-chars-forward " \t")
+    (if (or (null indent) (looking-at "\\s<\\s<\\s<"))
+        ;; Don't alter indentation of a ;;; comment line or a line
+        ;; that starts in a string.
+        (goto-char (- (point-max) pos))
+      (if (and (looking-at "\\s<") (not (looking-at "\\s<\\s<")))
+          ;; Single-semicolon comment lines indent as comments.
+          (progn (indent-for-comment) (forward-char -1))
+        (if (listp indent) (setq indent (car indent)))
+        (indent-line-to indent))
+      ;; If initial point was within line's indentation, position
+      ;; after the indentation.  Else stay at same point in text.
+      (if (> (- (point-max) pos) (point))
+          (goto-char (- (point-max) pos))))))
+
+;; ---------- major modes ----------
+
+(define-derived-mode prog-mode nil "ProgMode"
+  "Major mode for editing programming languages.
+Typically the base mode for language-specific modes.")
+
+(define-derived-mode special-mode nil "Special"
+  "Major mode for buffers containing read-only text.")
+
+(define-derived-mode text-mode nil "Text"
+  "Major mode for editing text intended for humans to read.")
+
+(defvar lisp-mode-map
+  (let ((m (make-sparse-keymap))) m)
+  "Keymap for Lisp mode.")
+
+(defvar emacs-lisp-mode-syntax-table
+  (let ((st (make-syntax-table)))
+    ;; Replicates GNU's emacs-lisp-mode-syntax-table (lisp-mode.el):
+    ;; all ASCII non-word chars are symbol constituents, then the
+    ;; exceptions below.
+    (dotimes (c 128) (modify-syntax-entry c "_" st))
+    (modify-syntax-entry ?\t " " st)
+    (modify-syntax-entry ?\n ">" st)
+    (modify-syntax-entry ?\f " " st)
+    (modify-syntax-entry ?\s " " st)
+    (modify-syntax-entry ?\" "\"" st)
+    (modify-syntax-entry ?# "'" st)
+    (modify-syntax-entry ?' "'" st)
+    (modify-syntax-entry ?\( "()" st)
+    (modify-syntax-entry ?\) ")(" st)
+    (modify-syntax-entry ?, "'" st)
+    (modify-syntax-entry ?\; "<" st)
+    (modify-syntax-entry ?\[ "(]" st)
+    (modify-syntax-entry ?\] ")[" st)
+    (modify-syntax-entry ?\\ "\\" st)
+    (modify-syntax-entry ?\` "'" st)
+    (dotimes (i 10) (modify-syntax-entry (+ ?0 i) "w" st))
+    (dotimes (i 26)
+      (modify-syntax-entry (+ ?A i) "w" st)
+      (modify-syntax-entry (+ ?a i) "w" st))
+    st)
+  "Syntax table for Emacs Lisp mode.")
+
+;; `lisp-indent-function' properties, matching GNU (set via `declare'
+;; and lisp-mode.el dolists upstream).
+(dolist (x '((defun . 2) (defmacro . 2) (defsubst . 2)
+             (defvar . defun) (defconst . defun) (defcustom . defun)
+             (defalias . defun) (lambda . defun)
+             (let . 1) (let* . 1) (if . 2) (when . 1) (unless . 1)
+             (while . 1) (dolist . 1) (dotimes . 1) (condition-case . 2)
+             (prog1 . 1) (prog2 . 2) (progn . 0)
+             (save-excursion . 0) (save-restriction . 0)
+             (save-current-buffer . 0) (save-match-data . 0)
+             (with-current-buffer . 1) (with-temp-buffer . 0)
+             (with-temp-file . 1) (unwind-protect . 1) (catch . 1)
+             (track-mouse . 0) (with-silent-modifications . 0)
+             (ignore-errors . 0) (eval-after-load . 1)
+             (with-output-to-temp-buffer . 1) (with-syntax-table . 1)
+             (combine-after-change-calls . 0)))
+  (put (car x) 'lisp-indent-function (cdr x)))
+
+(define-derived-mode lisp-mode prog-mode "Lisp"
+  "Major mode for editing Lisp code."
+  (set-syntax-table emacs-lisp-mode-syntax-table)
+  (setq-local indent-line-function #'lisp-indent-line)
+  (setq-local comment-start ";")
+  (setq-local comment-start-skip ";+ *"))
+
+(define-derived-mode emacs-lisp-mode prog-mode "Emacs-Lisp"
+  "Major mode for editing Emacs Lisp code."
+  (set-syntax-table emacs-lisp-mode-syntax-table)
+  (setq-local indent-line-function #'lisp-indent-line)
+  (setq-local comment-start ";")
+  (setq-local comment-start-skip ";+ *"))
+
+(define-derived-mode lisp-interaction-mode emacs-lisp-mode
+  "Lisp Interaction"
+  "Major mode for typing and evaluating Emacs Lisp code.")
+
+;; ---------- remaining navigation/indentation commands ----------
+
+(defvar widen-automatically t
+  "Non-nil means widen automatically for various commands.")
+(defvar defun-prompt-regexp nil
+  "Non-nil means a regexp to skip before a defun's opening paren.")
+(defvar open-paren-in-column-0-is-defun-start t
+  "Non-nil means an open paren in column 0 starts a defun.")
+(defvar indent-region-function nil
+  "Function to indent a region, or nil to indent each line.")
+
+(defun beginning-of-defun-raw (&optional arg)
+  "Move point to the start of the current defun (paren-based subset)."
+  (interactive "p")
+  (let ((arg (or arg 1)))
+    (if (>= arg 0)
+        (dotimes (_ arg)
+          (when (re-search-backward "^\\s(" nil t)
+            (beginning-of-line)))
+      (dotimes (_ (- arg))
+        (when (re-search-forward "^\\s(" nil t)
+          (beginning-of-line))))))
+
+(defun split-line (&optional arg)
+  "Split current line at point into two lines, first indenting the
+second so it aligns with the text that follows point."
+  (interactive "*P")
+  (let ((col (current-column))
+        (pos (point)))
+    (newline (prefix-numeric-value arg))
+    (goto-char pos)
+    (indent-to col)
+    (goto-char (1+ pos))))
+
+(defun move-to-tab-stop ()
+  "Move point to the next tab stop."
+  (interactive "*")
+  (let ((col (current-column)) (next nil))
+    (dolist (ts (or tab-stop-list
+                    (let ((n 0) (out nil))
+                      (while (< (setq n (1+ n)) 20)
+                        (push (* n tab-width) out))
+                      (nreverse out))))
+      (when (and (not next) (> ts col))
+        (setq next ts)))
+    (indent-to (or next (+ col tab-width)))))
+
+(defun count-screen-lines (&optional beg end)
+  "Count screen lines between BEG and END (batch: count-lines)."
+  (count-lines (or beg (point-min)) (or end (point-max))))
+
+(defun reindent-then-newline-and-indent ()
+  "Reindent current line, insert newline, then indent that line."
+  (interactive "*")
+  (indent-according-to-mode)
+  (newline)
+  (indent-according-to-mode))
+
+(defun indent-new-comment-line (&optional soft)
+  "Break line at point and indent, continuing a comment if any."
+  (interactive "*")
+  (newline-and-indent))
+
+(defun indent-pp-sexp (&optional arg)
+  "Indent each line of the list starting just after point."
+  (interactive "*P")
+  (let ((end (save-excursion (forward-sexp (or arg 1)) (point))))
+    (when end (indent-region (point) end))))
+
+;; *scratch* starts in lisp-interaction-mode (GNU batch behavior too).
 (when (get-buffer "*scratch*")
   (with-current-buffer "*scratch*"
-    (use-local-map lisp-interaction-mode-map)))
+    (lisp-interaction-mode)))
 "#;

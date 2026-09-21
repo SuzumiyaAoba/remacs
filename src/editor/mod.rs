@@ -1809,7 +1809,7 @@ pub(crate) static SUBRS: &[Subr] = &[
     ),
     S!("what-line", 0, 0, f_what_line, "Show line number."),
     S!("char-syntax", 1, 1, f_char_syntax, "Syntax code of CHAR."),
-    S!("modify-syntax-entry", 2, 3, f_nil, ""),
+    S!("modify-syntax-entry", 2, 3, f_modify_syntax_entry, ""),
     S!("syntax-table", 0, 0, f_syntax_table, ""),
     S!("set-syntax-table", 1, 1, f_set_syntax_table, ""),
     S!("syntax-table-p", 1, 1, f_syntax_table_p, ""),
@@ -6812,17 +6812,110 @@ fn f_what_line(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
     Ok(Value::Nil)
 }
 
+/// Syntax code for C under the current buffer's `syntax-table',
+/// falling back to the hardcoded standard table when the table has no
+/// entry for C.
+pub(crate) fn syntax_code_buf(i: &Interp, c: char) -> u8 {
+    let local = i
+        .intern_soft("syntax-table")
+        .and_then(|sid| {
+            i.buffers
+                .get(i.current_buffer)
+                .and_then(|b| {
+                    b.try_borrow()
+                        .ok()
+                        .map(|bb| bb.locals.get(&sid).cloned())
+                })
+                .flatten()
+        })
+        .filter(|v| is_syntax_table(i, v));
+    let table = match local {
+        Some(t) => Some(t),
+        None => i
+            .intern_soft("remacs--standard-syntax-table")
+            .map(|ssid| i.symbol_value(ssid))
+            .filter(|t| is_syntax_table(i, t)),
+    };
+    let table = match table {
+        Some(t) => t,
+        None => return crate::lisp::regexp::syntax_code(c),
+    };
+    if let Value::Record(r) = &table {
+        let rr = r.borrow();
+        if let Some(Value::Vec(v)) = rr.get(2) {
+            let vv = v.borrow();
+            if let Some(entry) = vv.get(c as usize) {
+                // Entry shape: (CLASS|FLAGS . MATCHING-CHAR) where CLASS
+                // is the numeric syntax class (0..15) — map back to the
+                // class letter used by `syntax_code'.
+                if let Value::Cons(cn) = entry {
+                    let cb = cn.borrow();
+                    if let Value::Int(n) = &cb.car {
+                        if let Some(letter) =
+                            SYNTAX_CLASS_CHARS.get(*n as usize & 0xf)
+                        {
+                            return *letter as u8;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    crate::lisp::regexp::syntax_code(c)
+}
+
 fn f_char_syntax(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let c = want_int(i, &a[0])? as u32;
     match char::from_u32(c) {
-        Some(ch) => Ok(Value::Int(crate::lisp::regexp::syntax_code(ch) as i128)),
+        Some(ch) => Ok(Value::Int(syntax_code_buf(i, ch) as i128)),
         None => Ok(Value::Nil),
     }
 }
 
 /// A syntax table is a char-table (#s(char-table syntax-table VEC)).
+/// The raw syntax-table entry for ASCII char C in GNU's
+/// `standard-syntax-table': a (CLASS|FLAGS . MATCHING-CHAR) cons.
+fn std_syntax_entry(c: u32) -> Value {
+    let class: i128 = match c {
+        // tab, LF, FF, CR, and SPC are whitespace.
+        9 | 10 | 12 | 13 | 32 => 0,
+        34 => 7,                             // " is the string quote.
+        36 | 37 => 2,                        // $ % are word chars.
+        // & * + - / < = > _ | are symbol constituents.
+        38 | 42 | 43 | 45 | 47 | 60 | 61 | 62 | 95 | 124 => 3,
+        40 | 91 | 123 => 4,                  // ( [ {
+        41 | 93 | 125 => 5,                  // ) ] }
+        92 => 9,                             // \ is escape.
+        48..=57 | 65..=90 | 97..=122 => 2,   // alnum is word.
+        _ => 1,                              // everything else: punctuation.
+    };
+    let matching = match c {
+        40 => 41,
+        41 => 40,
+        91 => 93,
+        93 => 91,
+        123 => 125,
+        125 => 123,
+        _ => 0,
+    };
+    Value::cons(
+        Value::Int(class),
+        if matching == 0 {
+            Value::Nil
+        } else {
+            Value::Int(matching as i128)
+        },
+    )
+}
+
 fn new_syntax_table(i: &mut Interp) -> Value {
-    let vec = Value::Vec(Rc::new(RefCell::new(vec![Value::Nil; 256])));
+    // A fresh table exposes the standard entries, like GNU's
+    // `make-syntax-table' (which parents to standard-syntax-table).
+    let vec = Value::Vec(Rc::new(RefCell::new(
+        (0..256)
+            .map(|c| if c < 128 { std_syntax_entry(c) } else { Value::Nil })
+            .collect(),
+    )));
     Value::Record(Rc::new(RefCell::new(vec![
         Value::Sym(i.intern("char-table")),
         Value::Sym(i.intern("syntax-table")),
@@ -6849,16 +6942,12 @@ fn f_syntax_table_p(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     Ok(Value::from_bool(is_syntax_table(i, &a[0])))
 }
 
-/// `string-to-syntax`: parse a syntax descriptor string like "w", "()",
-/// or "  4" into (CODE|FLAGS . MATCHING-CHAR), matching GNU.
-fn f_string_to_syntax(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let s = match &a[0] {
-        Value::Str(s) => s.borrow().clone(),
-        other => return Err(i.wrong_type_mut("stringp", other)),
-    };
+/// Parse a syntax descriptor string like "w", "()" or "  4" into
+/// (CLASS|FLAGS . MATCHING-CHAR); nil return means the generic "@".
+fn parse_syntax_desc(i: &mut Interp, s: &str) -> Result<Option<Value>, Flow> {
     let chars: Vec<char> = s.chars().collect();
     if chars.is_empty() {
-        return Err(i.signal_data(sym::ARGS_OUT_OF_RANGE, vec![a[0].clone(), Value::Int(0)]));
+        return Err(i.error("Empty syntax descriptor"));
     }
     let code: i128 = match chars[0] {
         ' ' => 0,
@@ -6874,7 +6963,7 @@ fn f_string_to_syntax(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         '/' => 10,
         '<' => 11,
         '>' => 12,
-        '@' => return Ok(Value::Nil),
+        '@' => return Ok(None),
         '!' => 14,
         '|' => 15,
         other => {
@@ -6895,7 +6984,20 @@ fn f_string_to_syntax(i: &mut Interp, a: Vec<Value>) -> EvalResult {
             flags |= 1i128 << (15 + f as i128 - '0' as i128);
         }
     }
-    Ok(Value::cons(Value::Int(code | flags), matching))
+    Ok(Some(Value::cons(Value::Int(code | flags), matching)))
+}
+
+/// `string-to-syntax`: parse a syntax descriptor string like "w", "()",
+/// or "  4" into (CODE|FLAGS . MATCHING-CHAR), matching GNU.
+fn f_string_to_syntax(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let s = match &a[0] {
+        Value::Str(s) => s.borrow().clone(),
+        other => return Err(i.wrong_type_mut("stringp", other)),
+    };
+    if s.is_empty() {
+        return Err(i.signal_data(sym::ARGS_OUT_OF_RANGE, vec![a[0].clone(), Value::Int(0)]));
+    }
+    Ok(parse_syntax_desc(i, &s)?.unwrap_or(Value::Nil))
 }
 
 /// GNU's syntax-class letters, indexed by class number.
@@ -6991,72 +7093,311 @@ fn f_copy_syntax_table(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     Ok(src_t)
 }
 
-fn f_parse_partial_sexp(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
-    // Return a plausible parse state: (depth in-parens in-string ...)
-    let (depth, in_str, in_comment, quote) = {
-        let b = cur(i);
-        let bb = b.borrow();
-        let mut depth = 0i128;
-        let mut in_str = false;
-        let mut in_comment = false;
-        let mut quote = false;
-        let end = bb.point();
-        let mut k = 0;
-        let mut esc = false;
-        while k < end.min(bb.text.len()) {
-            let c = bb.text.char_at(k);
-            let sc = crate::lisp::regexp::syntax_code(c);
-            if esc {
-                esc = false;
-            } else if in_comment {
-                if sc == b'>' {
-                    in_comment = false;
-                }
-            } else if in_str {
-                if sc == b'\\' {
-                    esc = true;
-                } else if sc == b'"' {
-                    in_str = false;
-                }
-            } else {
-                match sc {
-                    b'<' => in_comment = true,
-                    b'"' => in_str = true,
-                    b'\'' => quote = true,
-                    b'(' => depth += 1,
-                    b')' => depth -= 1,
-                    _ => quote = false,
-                }
-            }
-            k += 1;
-        }
-        (depth, in_str, in_comment, quote)
+fn f_modify_syntax_entry(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    // (modify-syntax-entry CHAR NEWENTRY &optional SYNTAX-TABLE)
+    let c = want_int(i, &a[0])? as u32;
+    let ch = match char::from_u32(c) {
+        Some(ch) => ch,
+        None => return Err(i.wrong_type_mut("characterp", &a[0])),
     };
-    Ok(Value::list(vec![
-        Value::Int(depth),
-        Value::Nil,
-        Value::Nil,
-        Value::from_bool(in_str),
-        Value::from_bool(in_comment),
-        Value::from_bool(quote),
-        Value::Nil,
-        Value::Nil,
-        Value::Nil,
-        Value::Nil,
-        Value::Nil,
-    ]))
+    let desc = match &a[1] {
+        Value::Str(s) => s.borrow().clone(),
+        other => return Err(i.wrong_type_mut("stringp", other)),
+    };
+    let entry = match parse_syntax_desc(i, &desc)? {
+        Some(e) => e,
+        None => return Ok(Value::Nil),
+    };
+    let table = match a.get(2) {
+        Some(v) if !v.is_nil() => {
+            if !is_syntax_table(i, v) {
+                return Err(i.wrong_type_mut("syntax-table-p", v));
+            }
+            v.clone()
+        }
+        _ => f_syntax_table(i, vec![])?,
+    };
+    if let Value::Record(r) = &table {
+        let rr = r.borrow();
+        if let Some(Value::Vec(v)) = rr.get(2) {
+            let mut vv = v.borrow_mut();
+            let idx = ch as usize;
+            if idx >= vv.len() {
+                vv.resize(idx + 1, Value::Nil);
+            }
+            vv[idx] = entry;
+        }
+    }
+    Ok(Value::Nil)
 }
 
-fn f_syntax_ppss(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
-    f_parse_partial_sexp(i, vec![])
+/// `(parse-partial-sexp FROM TO &optional TARGETDEPTH STOPBEFORE
+/// OLDSTATE COMMENTSTOP)` — a real sexp scanner honoring the current
+/// buffer's syntax table, GNU's 11-element state, and the stop flags.
+fn f_parse_partial_sexp(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let b = cur(i);
+    let (stop_pos, state) = {
+        let bb = b.borrow();
+        let len = bb.text_len();
+        let to_lisp = |v: &Value| -> Option<usize> {
+            v.int().map(|n| (n - 1).clamp(0, len as i128) as usize)
+        };
+        let from = a.get(0).and_then(to_lisp).unwrap_or(0);
+        let to = a
+            .get(1)
+            .and_then(to_lisp)
+            .unwrap_or(len)
+            .clamp(0, len);
+        let target_depth = a.get(2).and_then(|v| v.int());
+        let stop_before = a.get(3).is_some_and(|v| v.truthy());
+        let comment_stop = a.get(5).is_some_and(|v| v.truthy());
+        let stop_cs_end = a.get(5).is_some_and(|v| {
+            matches!(v, Value::Sym(s) if i.symbol_name(*s) == "syntax-table")
+        });
+
+        // State, possibly resumed from OLDSTATE.
+        let mut depth: i128 = 0;
+        let mut opens: Vec<usize> = Vec::new();
+        let mut open_starts: Vec<usize> = Vec::new();
+        let mut last_complete: Option<usize> = None;
+        let mut in_string: Option<i128> = None;
+        let mut in_comment = false;
+        let mut cs_start: Option<usize> = None;
+        let mut min_depth: i128 = 0;
+        let mut after_quote = false;
+        if let Some(old) = a.get(4).and_then(|v| v.list_to_vec().ok()) {
+            depth = old.get(0).and_then(|v| v.int()).unwrap_or(0);
+            min_depth = depth;
+            in_string = old.get(3).and_then(|v| match v {
+                Value::Int(n) => Some(*n),
+                Value::Sym(s) if i.symbol_name(*s) == "t" => Some('"' as i128),
+                _ => None,
+            });
+            in_comment = old.get(4).is_some_and(|v| v.truthy());
+            after_quote = old.get(5).is_some_and(|v| v.truthy());
+            cs_start = old
+                .get(8)
+                .and_then(|v| v.int())
+                .map(|n| (n - 1).max(0) as usize);
+            if let Some(list) = old.get(9).and_then(|v| v.list_to_vec().ok()) {
+                for p in list {
+                    if let Value::Int(n) = p {
+                        let pos = (n - 1).max(0) as usize;
+                        opens.push(pos);
+                        open_starts.push(pos);
+                    }
+                }
+            }
+        }
+
+        let mut k = from;
+        let mut atom_start: Option<usize> = None;
+        let mut pending_prefix: Option<usize> = None;
+        macro_rules! finish_atom {
+            () => {
+                if let Some(s) = atom_start.take() {
+                    last_complete = Some(s);
+                }
+            };
+        }
+        while k < to {
+            let c = bb.text.char_at(k);
+            let sc = syntax_code_buf(i, c);
+            if let Some(term) = in_string {
+                if c as i128 == term {
+                    in_string = None;
+                    // A completed string counts as a sexp whose start is
+                    // the quote (or a pending expression prefix).
+                    last_complete = cs_start.take();
+                } else if sc == b'\\' {
+                    k += 1; // skip escaped char
+                }
+                k += 1;
+                continue;
+            }
+            if in_comment {
+                if sc == b'>' {
+                    in_comment = false;
+                    cs_start = None;
+                    if stop_cs_end {
+                        k += 1;
+                        break;
+                    }
+                }
+                k += 1;
+                continue;
+            }
+            match sc {
+                b'\\' => {
+                    finish_atom!();
+                    k += 1; // the escape, next char is quoted
+                    k += 1;
+                }
+                b'<' => {
+                    finish_atom!();
+                    in_comment = true;
+                    cs_start = Some(k);
+                    k += 1;
+                    if comment_stop {
+                        break;
+                    }
+                }
+                b'"' => {
+                    finish_atom!();
+                    if stop_before {
+                        break;
+                    }
+                    in_string = Some('"' as i128);
+                    cs_start = Some(pending_prefix.take().unwrap_or(k));
+                    k += 1;
+                    if stop_cs_end {
+                        break;
+                    }
+                }
+                b'(' => {
+                    finish_atom!();
+                    if stop_before {
+                        break;
+                    }
+                    opens.push(k);
+                    open_starts.push(pending_prefix.take().unwrap_or(k));
+                    depth += 1;
+                    // Entering a new list: no complete sexp inside it yet.
+                    last_complete = None;
+                    k += 1;
+                    if target_depth.is_some_and(|td| depth == td) {
+                        break;
+                    }
+                }
+                b')' => {
+                    finish_atom!();
+                    if stop_before {
+                        break;
+                    }
+                    if let Some(start) = open_starts.pop() {
+                        last_complete = Some(start);
+                    }
+                    opens.pop();
+                    depth -= 1;
+                    min_depth = min_depth.min(depth);
+                    k += 1;
+                    if target_depth.is_some_and(|td| depth == td) {
+                        break;
+                    }
+                }
+                b' ' | b'>' => {
+                    finish_atom!();
+                    k += 1;
+                }
+                b'\'' => {
+                    // Expression prefix: begins a new sexp.
+                    finish_atom!();
+                    if stop_before {
+                        break;
+                    }
+                    pending_prefix.get_or_insert(k);
+                    k += 1;
+                }
+                b'w' | b'_' => {
+                    if atom_start.is_none() {
+                        if stop_before {
+                            break;
+                        }
+                        atom_start =
+                            Some(pending_prefix.take().unwrap_or(k));
+                    }
+                    k += 1;
+                }
+                _ => {
+                    // Punctuation and other non-sexp classes: skipped.
+                    finish_atom!();
+                    pending_prefix = None;
+                    k += 1;
+                }
+            }
+            after_quote = matches!(sc, b'\'');
+            if k >= to {
+                break;
+            }
+        }
+        let opens_lisp: Vec<Value> = opens
+            .iter()
+            .map(|p| Value::Int(*p as i128 + 1))
+            .collect();
+        (
+            k,
+            vec![
+                Value::Int(depth),
+                opens
+                    .last()
+                    .map(|p| Value::Int(*p as i128 + 1))
+                    .unwrap_or(Value::Nil),
+                last_complete
+                    .map(|p| Value::Int(p as i128 + 1))
+                    .unwrap_or(Value::Nil),
+                in_string
+                    .map(Value::Int)
+                    .unwrap_or(Value::Nil),
+                if in_comment {
+                    Value::Sym(sym::T)
+                } else {
+                    Value::Nil
+                },
+                Value::from_bool(after_quote),
+                Value::Int(min_depth),
+                if in_comment {
+                    Value::Int(1)
+                } else {
+                    Value::Nil
+                },
+                cs_start
+                    .map(|p| Value::Int(p as i128 + 1))
+                    .unwrap_or(Value::Nil),
+                Value::list(opens_lisp),
+                Value::Nil,
+            ],
+        )
+    };
+    cur(i).borrow_mut().set_point(stop_pos);
+    Ok(Value::list(state))
+}
+
+fn f_syntax_ppss(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    // GNU's syntax-ppss is parse-partial-sexp from point-min, without
+    // moving point.
+    let (beg, pos, save) = {
+        let b = cur(i);
+        let bb = b.borrow();
+        let save = bb.point();
+        let beg = Value::Int(bb.begv as i128 + 1);
+        let pos = match a.get(0) {
+            Some(v) if v.truthy() => v.clone(),
+            _ => Value::Int(bb.point() as i128 + 1),
+        };
+        (beg, pos, save)
+    };
+    let state = f_parse_partial_sexp(i, vec![beg, pos])?;
+    cur(i).borrow_mut().set_point(save);
+    Ok(state)
 }
 
 // ---------- modes ----------
 
 fn f_fundamental_mode(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
+    // GNU: (kill-all-local-variables) then set major-mode/mode-name and
+    // run the hook.  Derived modes rely on the root doing the killing.
+    crate::buffer::primitives::f_kill_all_local_variables(i, vec![])?;
     let mm = i.intern("major-mode");
     let fmid = i.intern("fundamental-mode");
-    cur(i).borrow_mut().locals.insert(mm, Value::Sym(fmid));
+    let mn = i.intern("mode-name");
+    {
+        let b = cur(i);
+        let mut bb = b.borrow_mut();
+        bb.locals.insert(mm, Value::Sym(fmid));
+        bb.locals.insert(mn, Value::string("Fundamental"));
+    }
+    let hook = i.intern("fundamental-mode-hook");
+    f_run_mode_hooks(i, vec![Value::Sym(hook)])?;
     Ok(Value::Sym(fmid))
 }
 
