@@ -662,7 +662,7 @@ pub(crate) static SUBRS: &[Subr] = &[
         f_nil,
         "Window system type (nil on tty)."
     ),
-    S!("frame-terminal", 0, 1, f_selected_frame, ""),
+    S!("frame-terminal", 0, 1, f_frame_terminal, ""),
     S!("select-frame", 1, 2, f_select_frame, "Select FRAME."),
     S!("handle-switch-frame", 1, 1, f_handle_switch_frame, ""),
     S!("frame-focus-state", 0, 1, f_frame_focus_state, ""),
@@ -712,7 +712,7 @@ pub(crate) static SUBRS: &[Subr] = &[
         f_global_key_binding,
         "Global binding of KEY."
     ),
-    S!("minor-mode-key-binding", 1, 1, f_nil, ""),
+    S!("minor-mode-key-binding", 1, 2, f_nil, ""),
     S!(
         "current-local-map",
         0,
@@ -1428,7 +1428,8 @@ pub(crate) static SUBRS: &[Subr] = &[
         "Command: EOL."
     ),
     S!("forward-line-command", 0, 1, f_forward_line_cmd, ""),
-    S!("beginning-of-buffer-other-window", 0, 0, f_nil, ""),
+    // `beginning-of-buffer-other-window'/`end-of-buffer-other-window'
+    // are Lisp (prelude window.el port).
     // minibuffer/echo
     S!(
         "minibufferp",
@@ -1480,7 +1481,7 @@ pub(crate) static SUBRS: &[Subr] = &[
         f_active_minibuffer_window,
         ""
     ),
-    S!("set-minibuffer-window", 1, 1, f_nil, ""),
+    S!("set-minibuffer-window", 1, 1, f_set_minibuffer_window, ""),
     S!("minibuffer-message", many 1, f_minibuffer_message, "Message in minibuffer."),
     S!(
         "read-from-minibuffer",
@@ -1999,11 +2000,11 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!("tty-color-values", 1, 1, f_nil, ""),
     S!("x-list-fonts", many 0, f_nil, ""),
     S!("internal-char-font", 1, 2, f_nil, ""),
-    S!("fontp", 1, 2, f_nil, ""),
-    S!("find-font", 1, 1, f_nil, ""),
+    S!("fontp", 1, 2, f_fontp, ""),
+    S!("find-font", 1, 2, f_find_font, ""),
     S!("font-xlfd-name", 1, 1, f_nil, ""),
     S!("clear-font-cache", 0, 0, f_nil, ""),
-    S!("list-fonts", 3, 3, f_nil, ""),
+    S!("list-fonts", 1, 4, f_list_fonts, ""),
     // cursor/display misc
     // `cursor-type` is a variable in Emacs, not a function —
     // calling it signals void-function like GNU.
@@ -2016,8 +2017,8 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!("make-display-table", 0, 0, f_nil, ""),
     S!("describe-display-table", 1, 1, f_nil, ""),
     // `standard-display-table' is a variable in GNU (nil in batch).
-    S!("open-font", 1, 3, f_nil, ""),
-    S!("query-font", 1, 1, f_nil, ""),
+    S!("open-font", 1, 3, f_open_font, ""),
+    S!("query-font", 1, 1, f_query_font, ""),
     S!("font-get", 2, 2, f_nil, ""),
     S!("font-put", 3, 3, f_nil, ""),
     S!("set-fontset-font", many 0, f_nil, ""),
@@ -2324,6 +2325,84 @@ fn f_active_minibuffer_window(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         return Ok(Value::Nil);
     }
     f_minibuffer_window(i, a)
+}
+
+/// The sole terminal object: a `tty' symbol stands in for GNU's
+/// `#<terminal 0 on initial_terminal>'.
+pub(crate) fn terminal_token(i: &mut Interp) -> Value {
+    Value::Sym(i.intern("tty"))
+}
+
+fn f_frame_terminal(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    // Validate optional FRAME like GNU, then return its terminal.
+    if let Some(v) = a.first() {
+        let _ = frame_of(i, v)?;
+    }
+    Ok(terminal_token(i))
+}
+
+/// The tag name when V is one of our font objects: a record tagged
+/// `font-spec', `font-entity', or `font-object'.
+fn font_kind(i: &Interp, v: &Value) -> Option<String> {
+    if let Value::Record(r) = v {
+        if let Some(Value::Sym(tag)) = r.borrow().first() {
+            let name = i.symbol_name(*tag);
+            if matches!(name.as_str(), "font-spec" | "font-entity" | "font-object") {
+                return Some(name);
+            }
+        }
+    }
+    None
+}
+
+fn f_fontp(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let kind = font_kind(i, &a[0]);
+    let ok = match a.get(1) {
+        None | Some(Value::Nil) => kind.is_some(),
+        Some(Value::Sym(s)) => kind.as_deref() == Some(i.symbol_name(*s).as_str()),
+        Some(_) => false,
+    };
+    Ok(Value::from_bool(ok))
+}
+
+fn f_find_font(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    // GNU checks FONT-SPEC; batch finds no matching font → nil.
+    if font_kind(i, &a[0]).as_deref() != Some("font-spec") {
+        return Err(i.wrong_type_mut("font-spec", &a[0]));
+    }
+    if let Some(v) = a.get(1) {
+        let _ = frame_of(i, v)?;
+    }
+    Ok(Value::Nil)
+}
+
+fn f_list_fonts(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    if font_kind(i, &a[0]).as_deref() != Some("font-spec") {
+        return Err(i.wrong_type_mut("font-spec", &a[0]));
+    }
+    Ok(Value::Nil)
+}
+
+fn f_open_font(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    if font_kind(i, &a[0]).as_deref() != Some("font-entity") {
+        return Err(i.wrong_type_mut("font-entity", &a[0]));
+    }
+    Ok(Value::Nil)
+}
+
+fn f_query_font(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    if font_kind(i, &a[0]).as_deref() != Some("font-object") {
+        return Err(i.wrong_type_mut("font-object", &a[0]));
+    }
+    Ok(Value::Nil)
+}
+
+fn f_set_minibuffer_window(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    // GNU: WINDOW must be a window; ours is fixed.
+    match &a[0] {
+        Value::Window(_) => Ok(Value::Nil),
+        other => Err(i.wrong_type_mut("windowp", other)),
+    }
 }
 
 fn f_minibuffer_window_active_p(i: &mut Interp, a: Vec<Value>) -> EvalResult {
@@ -7919,7 +7998,7 @@ fn f_fundamental_mode(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
 
 // ---------- overlays ----------
 
-fn f_make_overlay(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+pub(crate) fn f_make_overlay(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let bid = match a.get(2) {
         Some(v) if v.truthy() => i
             .buffer_id_of(v)

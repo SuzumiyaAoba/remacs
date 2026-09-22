@@ -534,5 +534,7 @@ process-environment
 ;; `suspend-tty' signals in batch (GNU: "Attempt to suspend a non-text
 ;; terminal device"); exercise it under condition-case.
 (condition-case e (suspend-tty) (error e))
-(resume-tty)
+;; `resume-tty' likewise signals in batch ("Attempt to resume a
+;; non-text terminal device").
+(condition-case e (resume-tty) (error e))
 (internal-timer-start-idle)

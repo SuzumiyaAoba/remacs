@@ -9690,6 +9690,42 @@ Use \\[edit-tab-stops] to edit them interactively."
   "Count screen lines between BEG and END (batch: count-lines)."
   (count-lines (or beg (point-min)) (or end (point-max))))
 
+;; window.el cluster (verbatim GNU where possible).
+
+(defmacro with-selected-window (window &rest body)
+  "Execute BODY within WINDOW, then restore the previously selected window."
+  (declare (indent 1) (debug t))
+  `(let ((with-selected-window--old (selected-window))
+         (with-selected-window--win ,window))
+     (unwind-protect
+         (progn
+           (select-window with-selected-window--win)
+           ,@body)
+       (select-window with-selected-window--old))))
+
+(defun beginning-of-buffer-other-window (arg)
+  "Move point to the beginning of the buffer in the other window.
+Leave mark at previous position.
+With arg N, put point N/10 of the way from the true beginning."
+  (interactive "P")
+  (with-selected-window (other-window-for-scrolling)
+    ;; Set point and mark in that window's buffer.
+    (with-no-warnings
+      (beginning-of-buffer arg))
+    ;; Set point accordingly.
+    (recenter '(t))))
+
+(defun end-of-buffer-other-window (arg)
+  "Move point to the end of the buffer in the other window.
+Leave mark at previous position.
+With arg N, put point N/10 of the way from the true end."
+  (interactive "P")
+  ;; See beginning-of-buffer-other-window for comments.
+  (with-selected-window (other-window-for-scrolling)
+    (with-no-warnings
+      (end-of-buffer arg))
+    (recenter '(t))))
+
 (defun reindent-then-newline-and-indent ()
   "Reindent current line, insert newline, then indent that line."
   (interactive "*")

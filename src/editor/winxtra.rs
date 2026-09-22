@@ -154,8 +154,8 @@ pub(crate) static SUBRS: &[Subr] = &[
         f_delete_window_internal,
         "Remove WINDOW."
     ),
-    S!("uncombine-window", 1, 2, f_false, ""),
-    S!("combine-windows", 1, 3, f_false, ""),
+    S!("uncombine-window", 1, 1, f_uncombine_window, ""),
+    S!("combine-windows", 2, 2, f_combine_windows, ""),
     S!(
         "get-lru-window",
         0,
@@ -168,7 +168,7 @@ pub(crate) static SUBRS: &[Subr] = &[
         "other-window-for-scrolling",
         0,
         0,
-        f_other_window,
+        f_other_window_for_scrolling,
         "Window to scroll."
     ),
     S!("coordinates-in-window-p", 2, 2, f_coordinates_in_window_p, ""),
@@ -413,7 +413,7 @@ pub(crate) static SUBRS: &[Subr] = &[
     // `terminal-id' does not exist in GNU.
     S!("delete-terminal", 0, 2, f_delete_terminal, ""),
     S!("suspend-tty", 0, 1, f_suspend_tty, ""),
-    S!("resume-tty", 0, 1, f_nil, ""),
+    S!("resume-tty", 0, 1, f_resume_tty, ""),
     S!("tty--output-buffer-size", 0, 1, f_zero, ""),
     S!("tty--set-output-buffer-size", 1, 1, f_nil, ""),
     S!("tty-find-type", 3, 3, f_nil, ""),
@@ -437,9 +437,33 @@ fn f_nil(_i: &mut Interp, _a: Vec<Value>) -> EvalResult {
     Ok(Value::Nil)
 }
 
+fn f_other_window_for_scrolling(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
+    // GNU: with a single window, other-window scrolling errors.
+    let f = i
+        .selected_frame
+        .clone()
+        .ok_or_else(|| i.error("No frame"))?;
+    let fb = f.borrow();
+    if fb.windows.len() <= 1 {
+        return Err(i.error("There is no other window"));
+    }
+    // Return the first non-selected window.
+    let sel = fb.selected.clone();
+    for w in &fb.windows {
+        if w.borrow().id != sel.borrow().id {
+            return Ok(Value::Window(w.clone()));
+        }
+    }
+    Err(i.error("There is no other window"))
+}
+
 fn f_suspend_tty(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
     // GNU batch: the initial terminal is not suspendable.
     Err(i.error("Attempt to suspend a non-text terminal device"))
+}
+
+fn f_resume_tty(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
+    Err(i.error("Attempt to resume a non-text terminal device"))
 }
 
 fn f_delete_terminal(i: &mut Interp, a: Vec<Value>) -> EvalResult {
@@ -714,25 +738,6 @@ fn f_get_lru_window(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
     f_sel_window(i, vec![])
 }
 
-fn f_other_window(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
-    // Next window after selected, or selected itself.
-    match sel_frame(i) {
-        Some(f) => {
-            let fb = f.borrow();
-            let sel_id = fb.selected.borrow().id;
-            let n = fb.windows.len();
-            for (k, w) in fb.windows.iter().enumerate() {
-                if w.borrow().id == sel_id {
-                    let target = &fb.windows[(k + 1) % n.max(1)];
-                    return Ok(Value::Window(target.clone()));
-                }
-            }
-            Ok(Value::Window(fb.selected.clone()))
-        }
-        None => Ok(Value::Nil),
-    }
-}
-
 fn f_posn_at_point(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let pos = a.get(0).and_then(|v| v.int()).unwrap_or_else(|| {
         i.current_buffer_ref()
@@ -940,11 +945,28 @@ fn f_tty_type(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
     Ok(Value::Sym(i.intern("remacs-tty")))
 }
 
-fn f_terminal_live_p(_i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    Ok(Value::from_bool(matches!(
-        &a[0],
-        Value::Sym(_) | Value::Nil
-    )))
+fn f_terminal_live_p(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    // Our only terminal is the `tty' token (nil = the same default).
+    let tty = i.intern("tty");
+    Ok(Value::from_bool(match &a[0] {
+        Value::Nil => true,
+        v => i.sym_is(v, tty),
+    }))
+}
+
+fn f_uncombine_window(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    // nil = selected window; nothing to uncombine in batch → nil.
+    match &a[0] {
+        Value::Nil | Value::Window(_) => Ok(Value::Nil),
+        other => Err(i.wrong_type_mut("window-valid-p", other)),
+    }
+}
+
+fn f_combine_windows(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    match &a[0] {
+        Value::Window(_) => Ok(Value::Nil),
+        other => Err(i.wrong_type_mut("window-valid-p", other)),
+    }
 }
 
 fn f_terminal_list(i: &mut Interp, _a: Vec<Value>) -> EvalResult {

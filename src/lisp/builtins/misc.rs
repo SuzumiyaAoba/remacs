@@ -453,7 +453,7 @@ pub(crate) static SUBRS: &[Subr] = &[
         f_thread_last_error,
         "Last error form recorded by a thread."
     ),
-    S!("thread--blocker", 1, 1, f_nil, ""),
+    S!("thread--blocker", 1, 1, f_thread_blocker, ""),
     S!("thread-signal", 3, 3, f_nil, ""),
     S!("mutexp", 1, 1, f_mutexp, "t if OBJECT is a mutex."),
     S!("make-mutex", 0, 1, f_make_mutex, "Create a mutex."),
@@ -963,7 +963,7 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!("suppress-keymap", 1, 2, f_suppress_keymap, ""),
     S!("make-composed-keymap", 1, 2, f_make_composed_keymap, ""),
     S!("current-active-maps", 0, 2, f_current_active_maps, ""),
-    S!("keymap-canonicalize", 1, 1, f_identity, ""),
+    S!("keymap-canonicalize", 1, 1, f_keymap_canonicalize, ""),
     S!("set-transient-map", 1, 3, f_set_transient_map, ""),
     // `text-mode-map' is a variable (keymap) in GNU, not a subr.
     // ---------- tables ----------
@@ -987,7 +987,7 @@ pub(crate) static SUBRS: &[Subr] = &[
         ""
     ),
     S!("map-char-table", 2, 2, f_map_char_table, ""),
-    S!("optimize-char-table", 1, 2, f_nil, ""),
+    S!("optimize-char-table", 1, 2, f_optimize_char_table, ""),
     S!("char-table-subtype", 1, 1, f_char_table_subtype, ""),
     S!("char-table-p", 1, 1, f_char_table_p, ""),
     // ---------- GNU subrs present on a terminal build ----------
@@ -1129,7 +1129,7 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!("describe-vector", 1, 2, f_describe_vector, ""),
     S!("locale-info", 1, 1, f_locale_info, "Locale data for ITEM."),
     S!("locale-translate", 1, 1, f_nil, ""),
-    S!("mapbacktrace", 1, 2, f_nil, ""),
+    S!("mapbacktrace", 1, 2, f_mapbacktrace, ""),
     // `internal-timer-start-idle' is Lisp (prelude timer.el port).
     S!("internal-describe-syntax-value", 1, 1, f_identity, ""),
     S!("internal-copy-lisp-face", 4, 4, f_nil, ""),
@@ -1166,15 +1166,15 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!("frame-inner-height", 0, 1, f_frame_height_val, ""),
     S!("frame-outer-width", 0, 1, f_frame_width_val, ""),
     S!("frame-outer-height", 0, 1, f_frame_height_val, ""),
-    S!("glyph-char", 0, 1, f_nil, ""),
-    S!("glyph-face", 0, 1, f_nil, ""),
+    S!("glyph-char", 1, 1, f_glyph_char, ""),
+    S!("glyph-face", 1, 1, f_glyph_face, ""),
     S!("font-at", 1, 3, f_nil, ""),
     S!("font-get-glyphs", 3, 4, f_nil, ""),
     S!("font-info", 1, 2, f_nil, ""),
     S!("font-match-p", 2, 2, f_nil, ""),
     S!("font-family-list", 0, 1, f_nil, ""),
     S!("font-face-attributes", 1, 2, f_nil, ""),
-    S!("font-spec", many 0, f_nil, ""),
+    S!("font-spec", many 0, f_font_spec, ""),
     S!("face-font", 1, 2, f_face_font, ""),
     S!("face-documentation", 1, 1, f_nil, ""),
     S!("face-attributes-as-vector", 1, 1, f_nil, ""),
@@ -1186,8 +1186,8 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!("image-type", 0, 1, f_nil, ""),
     S!("image-type-available-p", 1, 1, f_nil, ""),
     S!("init-image-library", 1, 1, f_nil, ""),
-    S!("put-image", 2, 3, f_nil, ""),
-    S!("remove-images", 0, 3, f_nil, ""),
+    S!("put-image", 2, 4, f_put_image, ""),
+    S!("remove-images", 2, 3, f_nil, ""),
     S!("display-popup-menus-p", 0, 1, f_nil, ""),
     S!("display-screens", 0, 1, f_display_screens, ""),
     S!("display-selections-p", 0, 1, f_nil, ""),
@@ -1283,7 +1283,7 @@ pub(crate) static SUBRS: &[Subr] = &[
         ""
     ),
     S!("internal-stack-stats", 0, 0, f_nil, ""),
-    S!("pdumper-stats", 0, 0, f_nil, ""),
+    S!("pdumper-stats", 0, 0, f_pdumper_stats, ""),
     S!("profiler-cpu-running-p", 0, 0, f_nil, ""),
     S!(
         "move-to-window-line",
@@ -1320,7 +1320,7 @@ pub(crate) static SUBRS: &[Subr] = &[
         f_nil,
         "Set SELinux context of FILE."
     ),
-    S!("set-file-acl", 2, 2, f_nil, "Set ACL of FILE."),
+    S!("set-file-acl", 2, 2, f_set_file_acl, "Set ACL of FILE."),
     S!(
         "garbage-collect-heapsize",
         0,
@@ -1540,7 +1540,13 @@ pub(crate) static SUBRS: &[Subr] = &[
         f_internal_default_signal_process,
         ""
     ),
-    S!("internal-default-interrupt-process", 0, 2, f_nil, ""),
+    S!(
+        "internal-default-interrupt-process",
+        0,
+        2,
+        f_internal_default_interrupt,
+        ""
+    ),
     S!("set-network-process-option", 3, 4, f_process_arg_err, ""),
     S!("set-process-thread", 2, 2, f_process_arg_err, ""),
     S!("process-thread", 1, 1, f_process_arg_err, ""),
@@ -1794,6 +1800,14 @@ fn f_command_modes(_i: &mut Interp, args: Vec<Value>) -> EvalResult {
 
 fn f_abort_minibuffers(_i: &mut Interp, _a: Vec<Value>) -> EvalResult {
     Ok(Value::Nil)
+}
+
+fn f_keymap_canonicalize(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    // GNU: a keymap returns itself; anything else becomes a fresh `(keymap)`.
+    match keymap_of(i, &a[0])? {
+        Some(_) => Ok(a[0].clone()),
+        None => Ok(Value::list(vec![Value::Sym(i.intern("keymap"))])),
+    }
 }
 
 fn keymap_of(i: &mut Interp, v: &Value) -> Result<Option<Vec<Value>>, Flow> {
@@ -5011,7 +5025,8 @@ fn f_coding_system_put(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 }
 
 fn f_terminal_coding_system(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
-    Ok(Value::Sym(i.intern("utf-8")))
+    // GNU tty default: utf-8 with unix EOL.
+    Ok(Value::Sym(i.intern("utf-8-unix")))
 }
 
 fn f_detect_coding_string(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
@@ -6111,6 +6126,109 @@ fn f_internal_default_signal_process(i: &mut Interp, a: Vec<Value>) -> EvalResul
     // Accepts a pid (int); nothing to signal here → -1 like GNU.
     let _ = want_int(i, &a[0])?;
     Ok(Value::Int(-1))
+}
+
+/// `thread--blocker` — GNU checks THREADP; nil (no blocker tracked).
+fn f_thread_blocker(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let _ = want_thread(i, &a[0])?;
+    Ok(Value::Nil)
+}
+
+/// `optimize-char-table` — GNU char-table-p-checks TABLE; ours are
+/// already flat, so nil.
+fn f_optimize_char_table(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    if !is_char_table(i, &a[0]) {
+        return Err(i.wrong_type_mut("char-table-p", &a[0]));
+    }
+    Ok(Value::Nil)
+}
+
+/// `glyph-char`/`glyph-face` — GNU Lisp accessors over glyph codes:
+/// a plain char maps to itself / no face.
+fn f_glyph_char(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    match &a[0] {
+        v @ Value::Int(_) => Ok(v.clone()),
+        Value::Cons(c) => Ok(c.borrow().car.clone()),
+        other => Err(i.wrong_type_mut("numberp", other)),
+    }
+}
+
+fn f_glyph_face(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    match &a[0] {
+        Value::Int(_) => Ok(Value::Nil),
+        Value::Cons(c) => Ok(c.borrow().cdr.clone()),
+        other => Err(i.wrong_type_mut("numberp", other)),
+    }
+}
+
+/// `font-spec` — build a font-spec record `#s(font-spec PROPS)'.
+fn f_font_spec(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    Ok(Value::Record(Rc::new(RefCell::new(vec![
+        Value::Sym(i.intern("font-spec")),
+        Value::list(a),
+    ]))))
+}
+
+/// `put-image` — GNU requires an image spec (list headed `image') and
+/// returns a fresh overlay at POS.
+fn f_put_image(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let image_sym = i.intern("image");
+    let ok = match &a[0] {
+        Value::Cons(c) => i.sym_is(&c.borrow().car, image_sym),
+        _ => false,
+    };
+    if !ok {
+        let shown = i.prin1_to_string(&a[0]);
+        return Err(i.error(format!("Not an image: {shown}")));
+    }
+    let pos = a[1].clone();
+    crate::editor::f_make_overlay(i, vec![pos.clone(), pos, Value::Nil])
+}
+
+/// `pdumper-stats` — GNU returns an alist; we were never dumped.
+fn f_pdumper_stats(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
+    Ok(Value::list(vec![
+        Value::cons(
+            Value::Sym(i.intern("dumped-with-pdumper")),
+            Value::Nil,
+        ),
+        Value::cons(Value::Sym(i.intern("load-time")), Value::Float(0.0)),
+        Value::cons(Value::Sym(i.intern("dump-file-name")), Value::Nil),
+    ]))
+}
+
+/// `set-file-acl` — best-effort like GNU: validate strings, no ACL
+/// support → nil.
+fn f_set_file_acl(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let _ = want_string(i, &a[0])?;
+    let _ = want_string(i, &a[1])?;
+    Ok(Value::Nil)
+}
+
+/// `mapbacktrace` — GNU calls FUNCTION with (EVALD FUNC ARGS FLAGS)
+/// for each live frame, innermost first, then returns nil.
+fn f_mapbacktrace(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let fun = a[0].clone();
+    let t = Value::Sym(sym::T);
+    let frames: Vec<(Value, Vec<Value>)> = i.lisp_stack.iter().rev().cloned().collect();
+    for (fval, args) in frames {
+        i.apply(&fun, vec![t.clone(), fval, Value::list(args), Value::Nil])?;
+    }
+    Ok(Value::Nil)
+}
+
+fn f_internal_default_interrupt(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    // GNU: nil arg means "the process of the current buffer".
+    match a.first() {
+        Some(Value::Process(_)) => Ok(Value::Nil),
+        _ => {
+            let name = i
+                .current_buffer_ref()
+                .map(|b| b.borrow().name.clone())
+                .unwrap_or_else(|| "*scratch*".into());
+            Err(i.error(format!("Buffer {name} has no process")))
+        }
+    }
 }
 
 fn f_process_arg_err(i: &mut Interp, a: Vec<Value>) -> EvalResult {

@@ -1243,7 +1243,7 @@ pub(crate) static SUBRS: &[Subr] = &[
     ),
     S!("propertize", many 1, f_propertize, "Return STRING (props ignored)."),
     // `text-props-copy' does not exist in GNU.
-    S!("object-intervals", 0, 0, f_nil, ""),
+    S!("object-intervals", 1, 1, f_object_intervals, ""),
     // --- undo ---
     S!("undo", 0, 1, f_undo, "Undo some changes."),
     S!(
@@ -1841,6 +1841,14 @@ fn cmp_common_prefix(a: &str, b: &str, fold: bool) -> usize {
     }
     n
 }
+fn f_object_intervals(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    // GNU: list of property-change intervals; we don't track them → nil.
+    match &a[0] {
+        Value::Str(_) | Value::Buffer(_) => Ok(Value::Nil),
+        other => Err(i.wrong_type_mut("buffer-or-string-p", other)),
+    }
+}
+
 fn f_accept_change_group(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     // GNU validates the handle is a change-group cons; accept = drop it.
     if !matches!(a[0], Value::Cons(_)) && !matches!(a[0], Value::Nil) {

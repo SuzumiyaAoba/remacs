@@ -197,6 +197,10 @@ pub struct Interp {
     pub char_table_parents: Vec<(usize, Value)>,
     /// Fingerprint seen by the last `frame-or-buffer-changed-p' call.
     pub frame_state_seen: Option<u64>,
+    /// Live Lisp call frames `(FUNCTION . ARGS)', outermost first.
+    /// Pushed by `apply' so `mapbacktrace'/backtrace internals can
+    /// walk the stack like GNU's specpdl entries do.
+    pub lisp_stack: Vec<(Value, Vec<Value>)>,
 }
 
 /// Result of a minibuffer read from the front-end.
@@ -282,6 +286,7 @@ impl Interp {
             advice_links: Vec::new(),
             char_table_parents: Vec::new(),
             frame_state_seen: None,
+            lisp_stack: Vec::new(),
         };
         crate::lisp::builtins::install(&mut interp);
         crate::buffer::install_primitives(&mut interp);
@@ -1114,11 +1119,23 @@ impl Interp {
                         }
                         other => match advised {
                             Some(s) => return self.apply_adviced(s, &other, argv),
-                            None => return self.apply(&other, argv),
+                            None => {
+                                return self.apply_resolved(&other, argv, Value::Sym(*id))
+                            }
                         },
                     }
                 }
             }
+            _ => self.apply_resolved(fun, argv, fun.clone()),
+        }
+    }
+
+    /// Dispatch a resolved (non-symbol) function, recording the call on
+    /// `lisp_stack' so `mapbacktrace' can walk live frames.  `shown' is
+    /// what backtraces display as the callee — the symbol when the call
+    /// came through a symbol's function cell, else the function itself.
+    fn apply_resolved(&mut self, fun: &Value, argv: Vec<Value>, shown: Value) -> EvalResult {
+        match fun {
             Value::Subr(s) => match s.arity {
                 Arity::Unevalled => {
                     // GNU: special forms cannot be funcalled/applied.
@@ -1126,10 +1143,18 @@ impl Interp {
                 }
                 _ => {
                     self.check_arity_subr(s, &argv, None)?;
-                    (s.func)(self, argv)
+                    self.lisp_stack.push((shown, argv.clone()));
+                    let r = (s.func)(self, argv);
+                    self.lisp_stack.pop();
+                    r
                 }
             },
-            Value::Lambda(l) => self.call_lambda(l, argv),
+            Value::Lambda(l) => {
+                self.lisp_stack.push((shown, argv.clone()));
+                let r = self.call_lambda(l, argv);
+                self.lisp_stack.pop();
+                r
+            }
             Value::Cons(_) => {
                 let (car, _) = {
                     let c = match fun {
@@ -1141,7 +1166,10 @@ impl Interp {
                 };
                 if self.sym_is(&car, sym::LAMBDA) {
                     let lambda = self.lambda_from_form(fun, None)?;
-                    return self.call_lambda(&Rc::new(lambda), argv);
+                    self.lisp_stack.push((shown, argv.clone()));
+                    let r = self.call_lambda(&Rc::new(lambda), argv);
+                    self.lisp_stack.pop();
+                    return r;
                 }
                 let auto_id = self.intern("autoload");
                 if self.sym_is(&car, auto_id) {
