@@ -896,8 +896,8 @@ pub(crate) static SUBRS: &[Subr] = &[
     ),
     S!("mouse-position", 0, 0, f_mouse_position, ""),
     S!("mouse-pixel-position", 0, 0, f_mouse_position, ""),
-    S!("set-mouse-position", 3, 3, f_nil, ""),
-    S!("set-mouse-pixel-position", 3, 3, f_nil, ""),
+    S!("set-mouse-position", 3, 3, f_frame_live_nil, ""),
+    S!("set-mouse-pixel-position", 3, 3, f_frame_live_nil, ""),
     S!("display-images-p", 0, 1, f_false, ""),
     S!("display-pixel-width", 0, 1, f_display_pixel_width, ""),
     S!("display-pixel-height", 0, 1, f_display_pixel_height, ""),
@@ -1148,7 +1148,7 @@ pub(crate) static SUBRS: &[Subr] = &[
     ),
     S!("scroll-bar-scale", 2, 2, f_scroll_bar_scale, ""),
     S!("popup-menu", 1, 2, f_popup_menu, ""),
-    S!("set-frame-font", 1, 3, f_nil, ""),
+    S!("set-frame-font", 1, 3, f_set_frame_font, ""),
     S!("set-keyboard-coding-system", 1, 2, f_set_keyboard_coding_system, ""),
     S!("set-terminal-coding-system", 1, 2, f_set_terminal_coding_system, ""),
     S!("set-mouse-absolute-pixel-position", 2, 2, f_nil, ""),
@@ -1593,8 +1593,8 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!("font-variation-glyphs", 2, 2, f_font_object_stub, ""),
     S!("query-fontset", 1, 2, f_query_fontset, ""),
     S!("define-fringe-bitmap", 2, 5, f_define_fringe_bitmap, ""),
-    S!("destroy-fringe-bitmap", 1, 1, f_nil, ""),
-    S!("set-fringe-bitmap-face", 1, 2, f_nil, ""),
+    S!("destroy-fringe-bitmap", 1, 1, f_destroy_fringe_bitmap, ""),
+    S!("set-fringe-bitmap-face", 1, 2, f_set_fringe_bitmap_face, ""),
 ];
 
 // ---------- symbols / functions ----------
@@ -5656,6 +5656,40 @@ fn f_x_get_resource(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
 /// `x-begin-drag' — GNU fails on the missing drag-selection atom.
 fn f_x_begin_drag(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
     Err(i.error("No local value for XdndSelection"))
+}
+
+/// `set-mouse-position' / `set-mouse-pixel-position' — frame-live-p
+/// check on FRAME; nil on a tty.
+fn f_frame_live_nil(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    match arg(&a, 0) {
+        Value::Nil | Value::Frame(_) => Ok(Value::Nil),
+        other => Err(i.wrong_type_mut("frame-live-p", &other)),
+    }
+}
+
+/// `set-frame-font' — GNU's third argument (FRAMES) is a list.
+fn f_set_frame_font(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    match arg(&a, 2) {
+        Value::Nil | Value::Cons(_) => Ok(Value::Nil),
+        other => Err(i.wrong_type_mut("listp", &other)),
+    }
+}
+
+/// `destroy-fringe-bitmap' — the name must be a symbol.
+fn f_destroy_fringe_bitmap(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    match &a[0] {
+        Value::Sym(_) => Ok(Value::Nil),
+        other => Err(i.wrong_type_mut("symbolp", other)),
+    }
+}
+
+/// `set-fringe-bitmap-face' — symbolp name, then GNU fails because
+/// no fringe bitmaps are defined.
+fn f_set_fringe_bitmap_face(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    match &a[0] {
+        Value::Sym(_) => Err(i.error("Undefined fringe bitmap")),
+        other => Err(i.wrong_type_mut("symbolp", other)),
+    }
 }
 
 /// `internal-set-alternative-font-family-alist' — each element's car

@@ -362,10 +362,10 @@ pub(crate) static SUBRS: &[Subr] = &[
         "Set FRAME width."
     ),
     S!("set-frame-size", 3, 4, f_set_frame_size, "Set FRAME size."),
-    S!("set-frame-position", 3, 3, f_nil, ""),
-    S!("set-frame-size-and-position-pixelwise", 5, 6, f_nil, ""),
-    S!("set-frame-window-state-change", 0, 2, f_nil, ""),
-    S!("frame-window-state-change", 0, 1, f_nil, ""),
+    S!("set-frame-position", 3, 3, f_set_frame_position, ""),
+    S!("set-frame-size-and-position-pixelwise", 5, 6, f_frame_live_arg_nil, ""),
+    S!("set-frame-window-state-change", 0, 2, f_frame_live_arg_nil, ""),
+    S!("frame-window-state-change", 0, 1, f_frame_live_arg_nil, ""),
     S!("frame-after-make-frame", 2, 2, f_frame_after_make_frame, ""),
     S!("frame--set-was-invisible", 2, 2, f_frame_set_was_invisible, ""),
     S!("frame--z-order-lessp", 2, 3, f_true2, ""),
@@ -1005,6 +1005,25 @@ fn f_window_sizable_p(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     match arg(&a, 0) {
         Value::Nil | Value::Window(_) => Ok(Value::t()),
         other => Err(err_not_valid_window(i, &other)),
+    }
+}
+
+/// `set-frame-position' — frame-live-p check, then t (GNU reports
+/// success even though a tty has no real positioning).
+fn f_set_frame_position(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    match arg(&a, 0) {
+        Value::Nil | Value::Frame(_) => Ok(Value::t()),
+        other => Err(i.wrong_type_mut("frame-live-p", &other)),
+    }
+}
+
+/// `set-frame-size-and-position-pixelwise' /
+/// `set-frame-window-state-change' / `frame-window-state-change' —
+/// frame-live-p on the first/optional FRAME argument, then nil.
+fn f_frame_live_arg_nil(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    match arg(&a, 0) {
+        Value::Nil | Value::Frame(_) => Ok(Value::Nil),
+        other => Err(i.wrong_type_mut("frame-live-p", &other)),
     }
 }
 

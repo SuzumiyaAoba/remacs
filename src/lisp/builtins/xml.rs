@@ -112,6 +112,7 @@ fn parse_xml(i: &mut Interp, text: &str) -> Value {
 fn html_node(
     i: &mut Interp,
     h: &markup5ever_rcdom::Handle,
+    src_has_tbody: bool,
     out: &mut Vec<Value>,
 ) {
     use markup5ever_rcdom::NodeData;
@@ -119,10 +120,16 @@ fn html_node(
         NodeData::Element { name, attrs, .. } => {
             let mut kids = Vec::new();
             for c in h.children.borrow().iter() {
-                html_node(i, c, &mut kids);
+                html_node(i, c, src_has_tbody, &mut kids);
             }
             // libxml2 doesn't materialize an empty <head>; drop it.
             if &*name.local == "head" && kids.is_empty() {
+                return;
+            }
+            // html5ever implies <tbody> like HTML5; libxml2 doesn't.
+            // When the source has no tbody tag, unwrap it into the parent.
+            if &*name.local == "tbody" && !src_has_tbody {
+                out.extend(kids);
                 return;
             }
             let attr_list: Vec<Value> = attrs
@@ -158,9 +165,11 @@ fn parse_html(i: &mut Interp, text: &str) -> Value {
         Default::default(),
     )
     .one(text.to_string());
+    let lower = text.to_lowercase();
+    let src_has_tbody = lower.contains("<tbody");
     let mut out = Vec::new();
     for c in dom.document.children.borrow().iter() {
-        html_node(i, c, &mut out);
+        html_node(i, c, src_has_tbody, &mut out);
     }
     match out.as_slice() {
         [single] => single.clone(),

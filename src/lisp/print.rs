@@ -276,7 +276,7 @@ impl Interp {
                 );
             }
             Value::Frame(f) => {
-                let _ = write!(out, "#<frame {}>", f.borrow().name);
+                let _ = write!(out, "#<frame {} {:#x}>", f.borrow().name, Rc::as_ptr(f) as usize);
             }
             Value::Process(p) => {
                 let _ = write!(out, "#<process {}>", p.borrow().name);

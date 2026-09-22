@@ -22,6 +22,10 @@ struct Set {
     cols: Vec<String>,
     rows: Vec<Vec<SVal>>,
     pos: usize,
+    /// GNU's `sqlite-more-p' is lazy: it stays t until a `sqlite-next'
+    /// call steps past the last row, so even an empty set reports t
+    /// before the first `sqlite-next'.
+    more: bool,
     /// Becomes false on `sqlite-finalize'; further set ops then fail.
     live: bool,
 }
@@ -316,7 +320,7 @@ fn f_sqlite_select(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         SETS.with(|s| {
             s.borrow_mut().insert(
                 sid,
-                Set { cols, rows, pos: 0, live: true },
+                Set { cols, rows, pos: 0, more: true, live: true },
             )
         });
         return Ok(make_set_record(i, sid));
@@ -365,13 +369,14 @@ fn f_sqlite_next(i: &mut Interp, a: Vec<Value>) -> EvalResult {
             s.pos += 1;
             Ok(Value::list(row.iter().map(sval_to_value).collect()))
         } else {
+            s.more = false;
             Ok(Value::Nil)
         }
     })
 }
 
 fn f_sqlite_more_p(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    with_set(i, &a[0], |s| Ok(Value::from_bool(s.pos < s.rows.len())))
+    with_set(i, &a[0], |s| Ok(Value::from_bool(s.more)))
 }
 
 fn f_sqlite_columns(i: &mut Interp, a: Vec<Value>) -> EvalResult {
