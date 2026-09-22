@@ -137,7 +137,7 @@ pub(crate) static SUBRS: &[Subr] = &[
         "Windows in cyclic order."
     ),
     S!("window-bump-use-time", 0, 1, f_window_live_nil, ""),
-    S!("window-discard-buffer-from-window", 2, 2, f_nil, ""),
+    S!("window-discard-buffer-from-window", 2, 3, f_nil, ""),
     S!(
         "split-window-internal",
         4,
@@ -407,7 +407,7 @@ pub(crate) static SUBRS: &[Subr] = &[
         f_arg0,
         ""
     ),
-    S!("controlling-tty-p", 0, 1, f_nil, ""),
+    S!("controlling-tty-p", 0, 1, f_controlling_tty_p, ""),
     S!("terminal-live-p", 1, 1, f_terminal_live_p, ""),
     S!("terminal-list", 0, 0, f_terminal_list, ""),
     S!("terminal-name", 0, 1, f_terminal_name, ""),
@@ -1294,6 +1294,16 @@ fn f_frame_face_hash_table(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     use crate::lisp::value::{HashTest, LispHash};
     let h = Value::Hash(Rc::new(RefCell::new(LispHash::new(HashTest::Eq))));
     Ok(h)
+}
+
+/// `controlling-tty-p' — GNU validates the optional TERMINAL with
+/// terminal-live-p; in batch we are never the controlling tty → nil.
+fn f_controlling_tty_p(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    match arg(&a, 0) {
+        Value::Nil => Ok(Value::Nil),
+        v if is_terminal(i, &v) => Ok(Value::Nil),
+        other => Err(i.wrong_type_mut("terminal-live-p", &other)),
+    }
 }
 
 fn f_terminal_live_p(i: &mut Interp, a: Vec<Value>) -> EvalResult {

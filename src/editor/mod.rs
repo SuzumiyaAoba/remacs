@@ -2045,7 +2045,7 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!("x-popup-menu", 2, 2, f_x_popup_menu, ""),
     S!("x-popup-dialog", 2, 3, f_x_popup_dialog, ""),
     S!("menu-or-popup-active-p", 0, 0, f_nil, ""),
-    S!("menu-bar-menu-at-x-y", 2, 2, f_nil, ""),
+    S!("menu-bar-menu-at-x-y", 2, 3, f_nil, ""),
     // echo/help
     S!(
         "documentation-property",

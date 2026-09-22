@@ -940,7 +940,7 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!("window-min-width", 0, 0, f_window_min_width, ""),
     S!("window-sizable", 1, 3, f_window_sizable, ""),
     S!("window-fixed-size-p", 0, 2, f_windowp_nil, ""),
-    S!("fit-window-to-buffer", 0, 4, f_nil, ""),
+    S!("fit-window-to-buffer", 0, 6, f_nil, ""),
     S!("shrink-window-if-larger-than-buffer", 0, 1, f_nil, ""),
     S!("window-safely-shrinkable-p", 0, 1, f_safely_shrinkable, ""),
     S!("window--display-buffer", 3, 4, f_window_display_buffer, ""),
@@ -1197,7 +1197,7 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!("display-screens", 0, 1, f_display_screens, ""),
     S!("display-selections-p", 0, 1, f_nil, ""),
     // ---------- X stubs (no X) ----------
-    S!("gui-get-selection", 0, 3, f_nil, ""),
+    S!("gui-get-selection", 0, 2, f_nil, ""),
     S!("gui-set-selection", 2, 2, f_arg1, ""),
     S!("x-begin-drag", 1, 4, f_x_begin_drag, ""),
     S!("x-display-backing-store", 0, 1, f_ns_display, ""),
@@ -1213,7 +1213,7 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!("x-display-visual-class", 0, 1, f_ns_display, ""),
     S!("x-get-clipboard", 0, 0, f_nil, ""),
     S!("x-get-resource", 2, 4, f_x_get_resource, ""),
-    S!("x-get-selection", 0, 4, f_nil, ""),
+    S!("x-get-selection", 0, 2, f_nil, ""),
     S!("x-hide-tip", 0, 0, f_nil, ""),
     S!(
         "x-parse-geometry",
@@ -1562,7 +1562,7 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!("set-process-thread", 2, 2, f_process_arg_err, ""),
     S!("process-thread", 1, 1, f_process_arg_err, ""),
     // ---------- reader/printer/composition internals ----------
-    S!("lread--substitute-object-in-subtree", 2, 2, f_nil, ""),
+    S!("lread--substitute-object-in-subtree", 3, 3, f_nil, ""),
     S!("print--preprocess", 1, 1, f_arg0, ""),
     S!("clear-composition-cache", 0, 0, f_nil, ""),
     S!("help--describe-vector", 7, 7, f_help_describe_vector, ""),
