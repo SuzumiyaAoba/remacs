@@ -117,7 +117,7 @@ pub(crate) static SUBRS: &[Subr] = &[
     ),
     S!("window-max-delta", 0, 5, f_zero, ""),
     S!("window-min-delta", 0, 5, f_zero, ""),
-    S!("window-sizable-p", 1, 4, f_t, ""),
+    S!("window-sizable-p", 1, 4, f_window_sizable_p, ""),
     S!("window-size-fixed-p", 0, 2, f_window_size_fixed_p, ""),
     S!(
         "window-resize",
@@ -366,8 +366,8 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!("set-frame-size-and-position-pixelwise", 5, 6, f_nil, ""),
     S!("set-frame-window-state-change", 0, 2, f_nil, ""),
     S!("frame-window-state-change", 0, 1, f_nil, ""),
-    S!("frame-after-make-frame", 2, 2, f_nil, ""),
-    S!("frame--set-was-invisible", 1, 1, f_nil, ""),
+    S!("frame-after-make-frame", 2, 2, f_frame_after_make_frame, ""),
+    S!("frame--set-was-invisible", 2, 2, f_frame_set_was_invisible, ""),
     S!("frame--z-order-lessp", 2, 3, f_true2, ""),
     S!("frame--face-hash-table", 0, 1, f_frame_face_hash_table, ""),
     S!("frame-font-cache", 0, 1, f_nil, ""),
@@ -375,19 +375,19 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!("previous-frame", 0, 2, f_frame_self, ""),
     S!("old-selected-frame", 0, 0, f_frame_self, ""),
     S!("old-selected-window", 0, 0, f_sel_window, ""),
-    S!("raise-frame", 0, 1, f_nil, ""),
-    S!("lower-frame", 0, 1, f_nil, ""),
+    S!("raise-frame", 0, 1, f_frame_live_nil, ""),
+    S!("lower-frame", 0, 1, f_frame_live_nil, ""),
     S!("make-frame-visible", 0, 1, f_make_frame_visible, ""),
     S!("make-frame-invisible", 0, 2, f_make_frame_invisible, ""),
-    S!("iconify-frame", 0, 1, f_nil, ""),
+    S!("iconify-frame", 0, 1, f_frame_live_nil, ""),
     S!("x-focus-frame", 1, 2, f_x_focus_frame, ""),
-    S!("redirect-frame-focus", 1, 2, f_nil, ""),
+    S!("redirect-frame-focus", 1, 2, f_redirect_frame_focus, ""),
     S!("reconsider-frame-fonts", 1, 1, f_reconsider_frame_fonts, ""),
     S!("frame--list-z-order", 0, 1, f_frame_list, ""),
     S!("tty-frame-list-z-order", 0, 1, f_frame_list, ""),
     S!("tty-frame-restack", 3, 3, f_nil, ""),
     S!("tty-frame-at", 2, 2, f_frame_self, ""),
-    S!("tty-display-color-p", 0, 3, f_t, ""),
+    S!("tty-display-color-p", 0, 3, f_nil, ""),
     S!(
         "tty-display-color-cells",
         0,
@@ -420,7 +420,7 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!("resume-tty", 0, 1, f_resume_tty, ""),
     S!("tty--output-buffer-size", 0, 1, f_not_tty, ""),
     S!("tty--set-output-buffer-size", 1, 2, f_not_tty, ""),
-    S!("tty-find-type", 2, 2, f_nil, ""),
+    S!("tty-find-type", 2, 2, f_tty_find_type, ""),
     S!("handle-select-window", 1, 1, f_t, ""),
     S!("innermost-minibuffer-p", 0, 1, f_false, ""),
     S!("minibuffer-innermost-command-loop-p", 0, 1, f_false, ""),
@@ -999,6 +999,15 @@ fn err_not_live_window(i: &mut Interp, v: &Value) -> Flow {
     i.error(format!("{shown} is not a live window"))
 }
 
+/// `window-sizable-p' — valid-window check, then t (any window can
+/// be resized in our model).
+fn f_window_sizable_p(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    match arg(&a, 0) {
+        Value::Nil | Value::Window(_) => Ok(Value::t()),
+        other => Err(err_not_valid_window(i, &other)),
+    }
+}
+
 /// `window-size-fixed-p' — nil on our model (nothing is size-fixed).
 fn f_window_size_fixed_p(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     match arg(&a, 0) {
@@ -1106,6 +1115,60 @@ fn f_set_window_scroll_bars(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         Value::Nil | Value::Window(_) => Ok(Value::Nil),
         other => Err(i.wrong_type_mut("window-live-p", other)),
     }
+}
+
+/// `raise-frame'/`lower-frame'/`iconify-frame' — frame-live-p check,
+/// then nil (no window manager to talk to).
+fn f_frame_live_nil(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    match arg(&a, 0) {
+        Value::Nil | Value::Frame(_) => Ok(Value::Nil),
+        other => Err(i.wrong_type_mut("frame-live-p", &other)),
+    }
+}
+
+/// `frame-after-make-frame' — GNU checks FRAME with frame-live-p
+/// and returns the VALUE flag.
+fn f_frame_after_make_frame(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    match &a[0] {
+        Value::Frame(_) => Ok(arg(&a, 1)),
+        other => Err(i.wrong_type_mut("frame-live-p", other)),
+    }
+}
+
+/// `frame--set-was-invisible' — frame-live-p check on FRAME; GNU
+/// returns WAS-INVISIBLE.
+fn f_frame_set_was_invisible(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    match &a[0] {
+        Value::Frame(_) => Ok(arg(&a, 1)),
+        other => Err(i.wrong_type_mut("frame-live-p", other)),
+    }
+}
+
+/// `redirect-frame-focus' — GNU checks both args with framep; the
+/// redirect itself is a display detail we don't model.
+fn f_redirect_frame_focus(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    for v in &a[..2] {
+        match v {
+            Value::Nil | Value::Frame(_) => {}
+            other => return Err(i.wrong_type_mut("framep", other)),
+        }
+    }
+    Ok(Value::Nil)
+}
+
+/// `tty-find-type' — GNU funcalls the first argument; a non-callable
+/// one raises `invalid-function'.
+fn f_tty_find_type(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let callable = match &a[0] {
+        Value::Sym(s) => i.fbound_p(*s),
+        Value::Lambda(_) | Value::Subr(_) => true,
+        _ => false,
+    };
+    if !callable {
+        let s = i.intern("invalid-function");
+        return Err(i.signal_data(s, vec![a[0].clone()]));
+    }
+    i.apply(&a[0], vec![a[1].clone()])
 }
 
 /// The terminal parameter alist: GNU's tty defaults, seeded lazily so

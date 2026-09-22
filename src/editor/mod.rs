@@ -681,7 +681,7 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!("select-frame", 1, 2, f_select_frame, "Select FRAME."),
     S!("handle-switch-frame", 1, 1, f_handle_switch_frame, ""),
     S!("frame-focus-state", 0, 1, f_frame_focus_state, ""),
-    S!("redraw-frame", 0, 1, f_nil, ""),
+    S!("redraw-frame", 0, 1, f_redraw_frame, ""),
     S!("redraw-display", 0, 0, f_nil, ""),
     S!("frame-visible-p", 1, 1, f_frame_visible_p, ""),
     // keymaps
@@ -2011,14 +2011,14 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!("color-defined-p", 1, 1, f_color_defined_p, ""),
     S!("defined-colors", 0, 1, f_defined_colors, ""),
     S!("color-values", 1, 2, f_color_values, ""),
-    S!("x-color-values", 1, 1, f_nil, ""),
-    S!("xw-color-values", 1, 1, f_nil, ""),
-    S!("tty-color-values", 1, 1, f_nil, ""),
+    S!("x-color-values", 1, 1, f_x_color_values, ""),
+    S!("xw-color-values", 1, 2, f_xw_color_values, ""),
+    S!("tty-color-values", 1, 1, f_tty_color_values, ""),
     S!("x-list-fonts", 1, 5, f_nil, ""),
     S!("internal-char-font", 1, 2, f_nil, ""),
     S!("fontp", 1, 2, f_fontp, ""),
     S!("find-font", 1, 2, f_find_font, ""),
-    S!("font-xlfd-name", 1, 1, f_nil, ""),
+    S!("font-xlfd-name", 1, 1, f_font_xlfd_name, ""),
     S!("clear-font-cache", 0, 0, f_nil, ""),
     S!("list-fonts", 1, 4, f_list_fonts, ""),
     // cursor/display misc
@@ -2034,16 +2034,16 @@ pub(crate) static SUBRS: &[Subr] = &[
     // `standard-display-table' is a variable in GNU (nil in batch).
     S!("open-font", 1, 3, f_open_font, ""),
     S!("query-font", 1, 1, f_query_font, ""),
-    S!("font-get", 2, 2, f_nil, ""),
-    S!("font-put", 3, 3, f_nil, ""),
+    S!("font-get", 2, 2, f_font_get, ""),
+    S!("font-put", 3, 3, f_font_put, ""),
     S!("set-fontset-font", 3, 5, f_nil, ""),
     S!("new-fontset", 2, 2, f_nil, ""),
     S!("fontset-info", 1, 1, f_nil, ""),
     S!("fontset-font", 2, 3, f_nil, ""),
     S!("fontset-list", 0, 0, f_fontset_list, ""),
     // menus/popups
-    S!("x-popup-menu", 2, 2, f_nil, ""),
-    S!("x-popup-dialog", 2, 3, f_nil, ""),
+    S!("x-popup-menu", 2, 2, f_x_popup_menu, ""),
+    S!("x-popup-dialog", 2, 3, f_x_popup_dialog, ""),
     S!("menu-or-popup-active-p", 0, 0, f_nil, ""),
     S!("menu-bar-menu-at-x-y", 2, 2, f_nil, ""),
     // echo/help
@@ -3262,6 +3262,255 @@ fn f_color_values(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     }
     // No display colors in batch.
     Ok(Value::Nil)
+}
+
+/// `(r g b)' list for a parsed color, else nil.
+fn color_rgb_list(v: &Value) -> Value {
+    match crate::lisp::builtins::misc::parse_color_16(v) {
+        Some((r, g, b)) => Value::list(vec![
+            Value::Int(r as i128),
+            Value::Int(g as i128),
+            Value::Int(b as i128),
+        ]),
+        None => Value::Nil,
+    }
+}
+
+/// `tty-color-values' — the tty color database knows the standard
+/// color names and #rgb specs; anything else yields nil.
+fn f_tty_color_values(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    // Consulting the tty color database initializes the color
+    // machinery; afterwards `x-color-values' stops erroring.
+    i.color_db_init = true;
+    Ok(color_rgb_list(&a[0]))
+}
+
+/// `x-color-values' — GNU errors "Window system is not in use or not
+/// initialized" until either an X connection attempt or a tty color
+/// database lookup initialized the color machinery.
+fn f_x_color_values(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    if !i.x_display_attempted && !i.color_db_init {
+        return Err(i.error("Window system is not in use or not initialized"));
+    }
+    Ok(color_rgb_list(&a[0]))
+}
+
+/// `xw-color-values' — unlike `x-color-values' this needs a real X
+/// connection attempt; a tty color lookup is not enough.  GNU's xw
+/// palette (rgb.txt on X, the NS palette on macOS) differs slightly
+/// from the tty table for the standard names.
+fn f_xw_color_values(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    if !i.x_display_attempted {
+        return Err(i.error("Window system is not in use or not initialized"));
+    }
+    const XW: &[(&str, i128, i128, i128)] = &[
+        ("red", 65535, 9773, 0),
+        ("green", 0, 64015, 0),
+        ("blue", 1101, 12999, 65535),
+        ("cyan", 0, 64974, 65535),
+        ("magenta", 65535, 16567, 65535),
+        ("yellow", 65497, 64588, 0),
+    ];
+    if let Value::Str(s) = &a[0] {
+        let n = s.borrow();
+        for (name, r, g, b) in XW {
+            if n.eq_ignore_ascii_case(name) {
+                return Ok(Value::list(vec![
+                    Value::Int(*r),
+                    Value::Int(*g),
+                    Value::Int(*b),
+                ]));
+            }
+        }
+    }
+    Ok(color_rgb_list(&a[0]))
+}
+
+/// `redraw-frame' — frame-live-p check, then nil (no display).
+fn f_redraw_frame(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    match arg(&a, 0) {
+        Value::Nil | Value::Frame(_) => Ok(Value::Nil),
+        other => Err(i.wrong_type_mut("frame-live-p", &other)),
+    }
+}
+
+/// Extract PROP's value from a font-spec record's plist.
+fn font_spec_prop(i: &Interp, spec: &Value, prop: &str) -> Option<Value> {
+    if let Value::Record(r) = spec {
+        let fields = r.borrow();
+        if let Some(Value::Cons(_)) = fields.get(1) {
+            let mut cur = fields[1].clone();
+            while let Value::Cons(c) = cur {
+                let (car, cdr) = (c.borrow().car.clone(), c.borrow().cdr.clone());
+                if let Value::Cons(c2) = cdr {
+                    if let Value::Sym(id) = &car {
+                        if i.symbol_name(*id) == prop {
+                            return Some(c2.borrow().car.clone());
+                        }
+                    }
+                    cur = c2.borrow().cdr.clone();
+                } else {
+                    break;
+                }
+            }
+        }
+    }
+    None
+}
+
+/// GNU parses the spec's `:name' as XLFD; a plain name fills the
+/// family field, an XLFD name's second field is the family.
+fn font_spec_family(i: &Interp, spec: &Value) -> Option<String> {
+    if let Some(Value::Str(s)) = font_spec_prop(i, spec, ":family") {
+        return Some(s.borrow().clone());
+    }
+    if let Some(Value::Str(s)) = font_spec_prop(i, spec, ":name") {
+        let name = s.borrow().clone();
+        if name.starts_with('-') {
+            return name.split('-').nth(2).map(|f| f.to_string());
+        }
+        return Some(name);
+    }
+    None
+}
+
+/// `font-xlfd-name' — GNU requires a font object (typed `font'
+/// check) and renders the spec as an XLFD wildcard string.
+fn f_font_xlfd_name(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    if font_kind(i, &a[0]).is_none() {
+        return Err(i.wrong_type_mut("font", &a[0]));
+    }
+    let sym_name = |i: &Interp, v: Option<Value>| -> Option<String> {
+        match v {
+            Some(Value::Sym(id)) => Some(i.symbol_name(id).to_string()),
+            _ => None,
+        }
+    };
+    let family = font_spec_family(i, &a[0]).unwrap_or_else(|| "*".to_string());
+    let weight = sym_name(i, font_spec_prop(i, &a[0], ":weight")).unwrap_or_else(|| "*".to_string());
+    let slant = sym_name(i, font_spec_prop(i, &a[0], ":slant")).unwrap_or_else(|| "*".to_string());
+    let width = sym_name(i, font_spec_prop(i, &a[0], ":width")).unwrap_or_else(|| "*".to_string());
+    let size = match font_spec_prop(i, &a[0], ":size") {
+        Some(Value::Int(n)) => format!("{}", n * 10),
+        Some(Value::Float(f)) => format!("{}", (f * 10.0) as i64),
+        _ => "*".to_string(),
+    };
+    Ok(Value::string(format!(
+        "-*-{family}-{weight}-{slant}-{width}-*-*-*-{size}-*-*-*-*-*"
+    )))
+}
+
+/// `font-get' — a font-spec stores its properties as a plist; GNU
+/// returns the property value or nil.  `:family' falls back to the
+/// spec's `:name' (GNU parses it as XLFD).
+fn f_font_get(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    if font_kind(i, &a[0]).is_none() {
+        return Err(i.wrong_type_mut("font", &a[0]));
+    }
+    if let Value::Sym(id) = &a[1] {
+        if i.symbol_name(*id) == ":family" {
+            // GNU stores the spec's family as a symbol.
+            if let Some(f) = font_spec_family(i, &a[0]) {
+                let sym = i.intern(&f);
+                return Ok(Value::Sym(sym));
+            }
+            return Ok(Value::Nil);
+        }
+    }
+    if let Some(v) = font_spec_prop_by_key(i, &a[0], &a[1]) {
+        return Ok(v);
+    }
+    Ok(Value::Nil)
+}
+
+fn font_spec_prop_by_key(i: &Interp, spec: &Value, key: &Value) -> Option<Value> {
+    if let Value::Record(r) = spec {
+        let fields = r.borrow();
+        if let Some(Value::Cons(_)) = fields.get(1) {
+            let mut cur = fields[1].clone();
+            while let Value::Cons(c) = cur {
+                let (car, cdr) = (c.borrow().car.clone(), c.borrow().cdr.clone());
+                if let Value::Cons(c2) = cdr {
+                    let _ = i;
+                    if eq_values(&car, key) {
+                        return Some(c2.borrow().car.clone());
+                    }
+                    cur = c2.borrow().cdr.clone();
+                } else {
+                    break;
+                }
+            }
+        }
+    }
+    None
+}
+
+/// `font-put' — GNU checks FONT with `font-spec' and returns VALUE.
+fn f_font_put(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let spec = i.intern("font-spec");
+    let is_spec = match &a[0] {
+        Value::Record(r) => i.sym_is(&r.borrow()[0], spec),
+        _ => false,
+    };
+    if !is_spec {
+        return Err(i.wrong_type_mut("font-spec", &a[0]));
+    }
+    Ok(a[2].clone())
+}
+
+/// `x-popup-menu' — POSITION must be a list (or t/nil); the menu is
+/// (TITLE PANE...), each pane (TITLE ITEM...).  GNU checks TITLE is
+/// a string, each pane is a list, and a pane's tail is a list of
+/// items (its cdr may not be a bare atom).  Returns nil on a tty.
+fn f_x_popup_menu(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    if !matches!(a[0], Value::Cons(_) | Value::Nil | Value::Sym(_) | Value::Marker(_)) {
+        return Err(i.wrong_type_mut("listp", &a[0]));
+    }
+    check_popup_menu(i, &a[1], true)?;
+    Ok(Value::Nil)
+}
+
+/// `x-popup-dialog' — only the dialog title is validated; the pane
+/// structure is not walked like `x-popup-menu' does.  Returns nil.
+fn f_x_popup_dialog(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    if !matches!(a[0], Value::Cons(_) | Value::Nil | Value::Sym(_) | Value::Marker(_)) {
+        return Err(i.wrong_type_mut("listp", &a[0]));
+    }
+    check_popup_menu(i, &a[1], false)?;
+    Ok(Value::Nil)
+}
+
+fn check_popup_menu(i: &mut Interp, menu: &Value, deep: bool) -> Result<(), Flow> {
+    let items = match menu {
+        Value::Cons(_) => menu.list_to_vec().ok(),
+        _ => None,
+    };
+    let items = match items {
+        Some(it) if !it.is_empty() => it,
+        _ => return Err(i.wrong_type_mut("stringp", menu)),
+    };
+    if !matches!(items[0], Value::Str(_)) {
+        return Err(i.wrong_type_mut("stringp", &items[0]));
+    }
+    if !deep {
+        return Ok(());
+    }
+    for pane in &items[1..] {
+        let c = match pane {
+            Value::Cons(c) => c,
+            other => return Err(i.wrong_type_mut("listp", other)),
+        };
+        let (head, tail) = (c.borrow().car.clone(), c.borrow().cdr.clone());
+        if !matches!(head, Value::Str(_)) {
+            return Err(i.wrong_type_mut("stringp", &head));
+        }
+        // A pane's tail is the item list — a bare atom (or nil, i.e.
+        // no items) fails GNU's consp check on that tail.
+        if !matches!(tail, Value::Cons(_)) {
+            return Err(i.wrong_type_mut("consp", &tail));
+        }
+    }
+    Ok(())
 }
 
 // ---------- keymaps ----------
@@ -8886,7 +9135,7 @@ fn f_facep(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         Err(_) => return Ok(Value::Nil),
     };
     let mut v = Vec::with_capacity(20);
-    v.push(a[0].clone());
+    v.push(Value::Sym(i.intern("face")));
     let un = Value::Sym(i.intern("unspecified"));
     v.resize(20, un);
     let _ = name;

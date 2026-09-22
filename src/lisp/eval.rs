@@ -209,6 +209,13 @@ pub struct Interp {
     /// `terminal-parameter'/`set-terminal-parameter' alist, seeded
     /// with GNU's tty defaults.
     pub terminal_params: Vec<(Value, Value)>,
+    /// Set once `x-open-connection'/`x-close-connection' ran; GNU's
+    /// `xw-*'/`x-color-values' then work even though no real X
+    /// display exists.
+    pub x_display_attempted: bool,
+    /// `tty-color-values' was called — GNU's tty color database also
+    /// initializes `x-color-values' (but not the `xw-*' functions).
+    pub color_db_init: bool,
 }
 
 /// Result of a minibuffer read from the front-end.
@@ -298,6 +305,8 @@ impl Interp {
             cpu_profiler: false,
             terminal: None,
             terminal_params: Vec::new(),
+            x_display_attempted: false,
+            color_db_init: false,
         };
         crate::lisp::builtins::install(&mut interp);
         crate::buffer::install_primitives(&mut interp);

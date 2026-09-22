@@ -925,11 +925,11 @@ pub(crate) static SUBRS: &[Subr] = &[
         ""
     ),
     // `display-mm-dimensions-alist' is a variable in GNU (nil in batch).
-    S!("x-open-connection", 1, 2, f_nil, ""),
-    S!("x-close-connection", 1, 1, f_nil, ""),
+    S!("x-open-connection", 1, 3, f_x_open_connection, ""),
+    S!("x-close-connection", 1, 1, f_x_close_connection, ""),
     S!("x-display-list", 0, 0, f_nil, ""),
     S!("xw-display-color-p", 0, 1, f_ns_display, ""),
-    S!("xw-color-defined-p", 1, 2, f_false, ""),
+    S!("xw-color-defined-p", 1, 2, f_xw_color_defined_p, ""),
     S!("color-gray-p", 1, 2, f_color_gray_p, ""),
     S!("color-supported-p", 1, 2, f_color_defined_p, ""),
     S!("invert-face", 1, 2, f_invert_face, ""),
@@ -943,7 +943,7 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!("fit-window-to-buffer", 0, 4, f_nil, ""),
     S!("shrink-window-if-larger-than-buffer", 0, 1, f_nil, ""),
     S!("window-safely-shrinkable-p", 0, 1, f_safely_shrinkable, ""),
-    S!("window--display-buffer", 3, 4, f_nil, ""),
+    S!("window--display-buffer", 3, 4, f_window_display_buffer, ""),
     S!("window-max-chars-per-line", 0, 2, f_window_max_chars, ""),
     S!("window-preserve-size", 0, 3, f_window_preserve_size, ""),
     S!("window-left-column", 0, 1, f_zero, ""),
@@ -1137,8 +1137,8 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!("mapbacktrace", 1, 2, f_mapbacktrace, ""),
     // `internal-timer-start-idle' is Lisp (prelude timer.el port).
     S!("internal-describe-syntax-value", 1, 1, f_identity, ""),
-    S!("internal-copy-lisp-face", 4, 4, f_nil, ""),
-    S!("internal-make-lisp-face", 1, 2, f_nil, ""),
+    S!("internal-copy-lisp-face", 4, 4, f_internal_copy_lisp_face, ""),
+    S!("internal-make-lisp-face", 1, 2, f_internal_make_lisp_face, ""),
     S!(
         "frame-or-buffer-changed-p",
         0,
@@ -1173,20 +1173,20 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!("frame-outer-height", 0, 1, f_frame_height_val, ""),
     S!("glyph-char", 1, 1, f_glyph_char, ""),
     S!("glyph-face", 1, 1, f_glyph_face, ""),
-    S!("font-at", 1, 3, f_nil, ""),
+    S!("font-at", 1, 3, f_font_at, ""),
     S!("font-get-glyphs", 3, 4, f_nil, ""),
-    S!("font-info", 1, 2, f_nil, ""),
-    S!("font-match-p", 2, 2, f_nil, ""),
+    S!("font-info", 1, 2, f_font_info, ""),
+    S!("font-match-p", 2, 2, f_font_match_p, ""),
     S!("font-family-list", 0, 1, f_nil, ""),
-    S!("font-face-attributes", 1, 2, f_nil, ""),
+    S!("font-face-attributes", 1, 2, f_font_face_attributes, ""),
     S!("font-spec", many 0, f_font_spec, ""),
     S!("face-font", 1, 2, f_face_font, ""),
     S!("face-documentation", 1, 1, f_face_documentation, ""),
     S!("face-attributes-as-vector", 1, 1, f_face_attributes_as_vector, ""),
     S!("image-flush", 1, 2, f_nil, ""),
-    S!("image-mask-p", 1, 2, f_nil, ""),
+    S!("image-mask-p", 1, 2, f_image_spec_check, ""),
     S!("image-metadata", 1, 2, f_nil, ""),
-    S!("image-size", 1, 3, f_nil, ""),
+    S!("image-size", 1, 3, f_image_spec_check, ""),
     S!("image-transforms-p", 0, 1, f_image_transforms_p, ""),
     S!("image-type", 1, 3, f_image_type, ""),
     S!("image-type-available-p", 1, 2, f_image_type_available_p, ""),
@@ -1213,7 +1213,7 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!("x-display-visual-class", 0, 1, f_ns_display, ""),
     S!("x-get-clipboard", 0, 0, f_nil, ""),
     S!("x-get-resource", 2, 4, f_nil, ""),
-    S!("x-get-selection", 0, 2, f_nil, ""),
+    S!("x-get-selection", 0, 4, f_nil, ""),
     S!("x-hide-tip", 0, 0, f_nil, ""),
     S!(
         "x-parse-geometry",
@@ -1226,7 +1226,7 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!("x-server-vendor", 0, 1, f_ns_display, ""),
     S!("x-server-version", 0, 1, f_ns_display, ""),
     S!("x-set-selection", 2, 2, f_arg1, ""),
-    S!("x-show-tip", 1, 6, f_nil, ""),
+    S!("x-show-tip", 1, 6, f_x_show_tip, ""),
     // ---------- optional-library availability ----------
     S!("gnutls-available-p", 0, 0, f_nil, ""),
     S!("sqlite-available-p", 0, 0, f_nil, ""),
@@ -1588,7 +1588,7 @@ pub(crate) static SUBRS: &[Subr] = &[
     ),
     S!("internal-set-lisp-face-attribute-from-resource", 3, 4, f_nil, ""),
     S!("close-font", 1, 2, f_close_font, ""),
-    S!("font-has-char-p", 2, 3, f_nil, ""),
+    S!("font-has-char-p", 2, 3, f_font_has_char_p, ""),
     S!("font-shape-gstring", 2, 2, f_nil, ""),
     S!("font-variation-glyphs", 2, 2, f_nil, ""),
     S!("query-fontset", 1, 2, f_query_fontset, ""),
@@ -5218,6 +5218,170 @@ fn f_face_documentation(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     Ok(i.get_prop(id, prop))
 }
 
+/// `x-open-connection' — never connects on a tty batch (nil), but
+/// GNU still marks the X machinery initialized: afterwards the
+/// `xw-*' color functions consult the color database instead of
+/// erroring.
+fn f_x_open_connection(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
+    i.x_display_attempted = true;
+    Ok(Value::Nil)
+}
+
+fn f_x_close_connection(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    f_x_open_connection(i, a)
+}
+
+/// `xw-color-defined-p' — errors until an X connection was tried,
+/// then answers from the standard color table.
+fn f_xw_color_defined_p(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    if !i.x_display_attempted {
+        return Err(i.error("Window system is not in use or not initialized"));
+    }
+    match &a[0] {
+        Value::Str(_) => Ok(Value::from_bool(parse_color_16(&a[0]).is_some())),
+        _ => Ok(Value::Nil),
+    }
+}
+
+/// `window--display-buffer' — GNU returns the window when BUFFER and
+/// WINDOW are usable, nil otherwise (no hard type checks).
+fn f_window_display_buffer(_i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let buf_ok = matches!(a[0], Value::Buffer(_));
+    match &a[1] {
+        Value::Window(w) if buf_ok => Ok(Value::Window(w.clone())),
+        _ => Ok(Value::Nil),
+    }
+}
+
+/// `internal-make-lisp-face' — creates the face (GNU registers it in
+/// the face table) and returns the fresh face vector
+/// `[face unspecified ...]' with 19 attribute slots.
+fn f_internal_make_lisp_face(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let id = want_sym(i, &a[0])?;
+    let name = i.symbol_name(id).to_string();
+    if !i.face_table.iter().any(|(n, _)| *n == name) {
+        i.face_table.push((name, Value::Nil));
+    }
+    let mut v = vec![Value::Sym(i.intern("face"))];
+    let unspec = Value::Sym(i.intern("unspecified"));
+    for _ in 0..19 {
+        v.push(unspec.clone());
+    }
+    Ok(Value::Vec(Rc::new(RefCell::new(v))))
+}
+
+/// `internal-copy-lisp-face' — GNU checks FRAME (arg3, required and
+/// non-nil) with frame-live-p first, then FROM must be a known face
+/// (plain "Invalid face" error); registers TO and returns it.
+fn f_internal_copy_lisp_face(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    match arg(&a, 2) {
+        Value::Frame(_) => {}
+        other => return Err(i.wrong_type_mut("frame-live-p", &other)),
+    }
+    let from = want_sym(i, &a[0])?;
+    let from_name = i.symbol_name(from).to_string();
+    if !crate::editor::face_known(i, &from_name) {
+        return Err(i.error(format!("Invalid face {from_name}")));
+    }
+    let to = want_sym(i, &a[1])?;
+    let to_name = i.symbol_name(to).to_string();
+    if !i.face_table.iter().any(|(n, _)| *n == to_name) {
+        i.face_table.push((to_name, Value::Nil));
+    }
+    Ok(a[1].clone())
+}
+
+/// `font-at' — GNU checks that WINDOW (default selected) displays
+/// the current buffer, then bounds-checks POSITION against the
+/// buffer (1-based) or STRING (0-based).  tty text has no font.
+fn f_font_at(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let pos = want_int(i, &a[0])?;
+    let aoor = |i: &mut Interp, v: Vec<Value>| {
+        let s = i.intern("args-out-of-range");
+        i.signal_data(s, v)
+    };
+    if let Value::Str(s) = arg(&a, 2) {
+        let len = s.borrow().chars().count() as i128;
+        if pos < 0 || pos >= len.max(1) {
+            return Err(aoor(i, vec![Value::Int(pos), Value::Int(0), Value::Int(len)]));
+        }
+        return Ok(Value::Nil);
+    }
+    let w = crate::editor::win_of(i, &arg(&a, 1))?;
+    let wid = w.borrow().buffer;
+    let cur = i.buffers.get(i.current_buffer);
+    if cur.as_ref().map(|b| b.borrow().id) != Some(wid) {
+        return Err(i.error("Specified window is not displaying the current buffer"));
+    }
+    let (begv, zv) = match &cur {
+        Some(b) => {
+            let bb = b.borrow();
+            (bb.begv as i128 + 1, bb.text_len() as i128 + 1)
+        }
+        None => (1, 1),
+    };
+    if pos < begv || pos >= zv {
+        return Err(aoor(i, vec![Value::Int(pos), Value::Int(begv), Value::Int(zv)]));
+    }
+    Ok(Value::Nil)
+}
+
+/// `font-info' — needs a window-system frame; GNU always errors on
+/// a tty.
+fn f_font_info(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
+    Err(i.error("Window system frame should be used"))
+}
+
+/// `font-match-p' — both args are font-specs in GNU (typed check);
+/// matching two arbitrary specs is trivially true for us.
+fn f_font_match_p(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    for v in &a[..2] {
+        if !matches!(v, Value::Record(_)) {
+            return Err(i.wrong_type_mut("font-spec", v));
+        }
+    }
+    Ok(Value::t())
+}
+
+/// `font-face-attributes' — GNU errors "Invalid font object" for a
+/// non-font argument.
+fn f_font_face_attributes(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    if matches!(a[0], Value::Record(_)) {
+        return Ok(Value::Nil);
+    }
+    let shown = i.princ_to_string(&a[0]);
+    Err(i.error(format!("Invalid font object {shown}")))
+}
+
+/// `font-has-char-p' — typed `font' check, then nil (no fonts on a
+/// tty).
+fn f_font_has_char_p(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    if !matches!(a[0], Value::Record(_)) {
+        return Err(i.wrong_type_mut("font", &a[0]));
+    }
+    Ok(Value::Nil)
+}
+
+/// `x-show-tip' — always the window-system error on a tty.
+fn f_x_show_tip(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
+    Err(i.error("Window system frame should be used"))
+}
+
+/// `image-size' / `image-mask-p' — GNU validates the spec first and
+/// signals "Invalid image specification" for anything else.
+fn f_image_spec_check(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let image_sym = i.intern("image");
+    let ok = match &a[0] {
+        Value::Cons(c) => i.sym_is(&c.borrow().car, image_sym),
+        _ => false,
+    };
+    if ok {
+        Ok(Value::Nil)
+    } else {
+        Err(i.error("Invalid image specification"))
+    }
+}
+
 fn f_detect_coding_string(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
     Ok(Value::list(vec![Value::Sym(i.intern("undecided"))]))
 }
@@ -6179,7 +6343,7 @@ fn f_one(_i: &mut Interp, _a: Vec<Value>) -> EvalResult {
 
 /// Parse a color to 16-bit (0-65535) RGB like GNU: "#rgb"/"#rrggbb"
 /// strings, the 8 standard color names, or a (R G B) list.
-fn parse_color_16(v: &Value) -> Option<(i64, i64, i64)> {
+pub(crate) fn parse_color_16(v: &Value) -> Option<(i64, i64, i64)> {
     if let Value::Str(s) = v {
         let t = s.borrow().clone();
         let h = t.trim_start_matches('#');
@@ -6574,7 +6738,48 @@ fn f_glyph_face(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 }
 
 /// `font-spec` — build a font-spec record `#s(font-spec PROPS)'.
+/// GNU validates the restricted properties: :weight/:slant/:width
+/// must name a member of their enum, :size/:dpi a number.
 fn f_font_spec(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    const WEIGHTS: &[&str] = &[
+        "thin", "ultra-light", "extra-light", "light", "semi-light", "book", "normal",
+        "medium", "semi-bold", "demi-bold", "bold", "extra-bold", "ultra-bold",
+    ];
+    const SLANTS: &[&str] = &[
+        "normal", "roman", "italic", "oblique", "reverse-italic", "reverse-oblique",
+    ];
+    const WIDTHS: &[&str] = &[
+        "ultra-condensed", "extra-condensed", "condensed", "semi-condensed", "narrow",
+        "normal", "regular", "medium", "semi-expanded", "expanded", "extra-expanded",
+        "ultra-expanded",
+    ];
+    let bad = |i: &mut Interp, p: &Value, v: &Value| -> Flow {
+        let err = i.intern("error");
+        let msg = Value::string("invalid font property");
+        let datum = Value::cons(p.clone(), v.clone());
+        i.signal_data(err, vec![msg, datum])
+    };
+    let mut idx = 0;
+    while idx + 1 < a.len() {
+        let prop = &a[idx];
+        let val = &a[idx + 1];
+        if let Value::Sym(id) = prop {
+            let name = i.symbol_name(*id).to_string();
+            let invalid = match name.as_str() {
+                ":weight" => !matches!(val, Value::Sym(s) if WEIGHTS.contains(&i.symbol_name(*s).as_str()))
+                    && !matches!(val, Value::Int(_)),
+                ":slant" => !matches!(val, Value::Sym(s) if SLANTS.contains(&i.symbol_name(*s).as_str())),
+                ":width" => !matches!(val, Value::Sym(s) if WIDTHS.contains(&i.symbol_name(*s).as_str()))
+                    && !matches!(val, Value::Int(_)),
+                ":size" | ":dpi" => !matches!(val, Value::Int(_) | Value::Float(_)),
+                _ => false,
+            };
+            if invalid {
+                return Err(bad(i, prop, val));
+            }
+        }
+        idx += 2;
+    }
     Ok(Value::Record(Rc::new(RefCell::new(vec![
         Value::Sym(i.intern("font-spec")),
         Value::list(a),
