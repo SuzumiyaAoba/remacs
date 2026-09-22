@@ -1363,7 +1363,6 @@ pub(crate) static SUBRS: &[Subr] = &[
         f_ask_user_about_lock,
         "Ask user what to do when one wants to edit a file that is locked."
     ),
-    S!("internal-set-alist", 0, 0, f_nil, ""),
     S!(
         "compare-buffer-substrings",
         6,

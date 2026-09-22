@@ -184,7 +184,8 @@ process-environment
   (map-char-table (lambda (k v) (list k v)) ct)
   (condition-case e (optimize-char-table ct) (error e)))
 (let ((d (make-display-table)))
-  (display-table-p d)
+  ;; `display-table-p' is not a GNU function; exercise the void path.
+  (condition-case e (display-table-p d) (error e))
   (standard-display-table)
   (condition-case e (display-table-slot d 0) (error e))
   (condition-case e (set-display-table-slot d 0 ?x) (error e))
@@ -529,6 +530,8 @@ process-environment
 (listify-key-sequence "ab")
 (listify-key-sequence (kbd "C-f M-x"))
 (not-modified)
-(suspend-tty)
+;; `suspend-tty' signals in batch (GNU: "Attempt to suspend a non-text
+;; terminal device"); exercise it under condition-case.
+(condition-case e (suspend-tty) (error e))
 (resume-tty)
 (internal-timer-start-idle)

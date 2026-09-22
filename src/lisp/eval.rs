@@ -2828,7 +2828,7 @@ impl Interp {
             ("ask-about-buffer-names", Value::Nil),
             ("large-file-warning-threshold", Value::Int(10000000)),
             ("write-region-inhibit-fsync", Value::Sym(sym::T)),
-            ("write-region-annotation-functions", Value::Nil),
+            ("write-region-annotate-functions", Value::Nil),
             ("write-region-post-annotation-function", Value::Nil),
             ("write-region-annotations-so-far", Value::Nil),
             ("after-insert-file-set-coding-functions", Value::Nil),

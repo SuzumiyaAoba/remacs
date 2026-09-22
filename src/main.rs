@@ -37,6 +37,9 @@ fn main() {
                     if !run_batch(&mut i, &args[idx]) {
                         exit = 1;
                     }
+                    if i.quit_editor {
+                        std::process::exit(exit);
+                    }
                 }
             }
             "--load" | "-l" => {
@@ -45,6 +48,9 @@ fn main() {
                     batch = true;
                     if !load_file(&mut i, &args[idx]) {
                         exit = 1;
+                    }
+                    if i.quit_editor {
+                        std::process::exit(exit);
                     }
                 }
             }
@@ -104,6 +110,7 @@ fn run_batch(i: &mut Interp, src: &str) -> bool {
     let _ = i.set_symbol_default(nid, Value::t());
     match i.eval_str(src) {
         Ok(_) => true,
+        Err(Flow::Exit(code)) => std::process::exit(code as i32),
         Err(flow) => {
             report_flow(i, flow);
             false
@@ -120,6 +127,7 @@ fn load_file(i: &mut Interp, path: &str) -> bool {
     let _ = i.set_symbol_default(nid, Value::t());
     match remacs::lisp::load::eval_file(i, path) {
         Ok(_) => true,
+        Err(Flow::Exit(code)) => std::process::exit(code as i32),
         Err(flow) => {
             // Reuse run_batch's error formatting on the stored flow.
             report_flow(i, flow);
@@ -155,6 +163,9 @@ fn report_flow(i: &mut Interp, flow: Flow) {
         }
         Flow::Quit => {
             eprintln!("Quit");
+        }
+        Flow::Exit(code) => {
+            std::process::exit(code as i32);
         }
     }
 }

@@ -44,6 +44,7 @@ pub fn ev_err(src: &str) -> String {
         },
         Err(Flow::Throw(_, _)) => "uncaught-throw".into(),
         Err(Flow::Quit) => "quit".into(),
+        Err(Flow::Exit(c)) => format!("exit-{c}"),
     }
 }
 
@@ -71,5 +72,6 @@ fn flow_str(i: &mut Interp, f: &Flow) -> String {
         }
         Flow::Throw(t, v) => format!("throw {} {}", i.prin1_to_string(t), i.prin1_to_string(v)),
         Flow::Quit => "quit".into(),
+        Flow::Exit(c) => format!("exit {c}"),
     }
 }

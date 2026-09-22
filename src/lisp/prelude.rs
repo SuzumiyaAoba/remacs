@@ -9625,18 +9625,66 @@ second so it aligns with the text that follows point."
     (indent-to col)
     (goto-char (1+ pos))))
 
+(defun indent-next-tab-stop (column &optional prev)
+  "Return the next tab stop after COLUMN.
+If PREV is non-nil, return the previous one instead."
+  (let ((tabs tab-stop-list))
+    (while (and tabs (>= column (car tabs)))
+      (setq tabs (cdr tabs)))
+    (if tabs
+        (if (not prev)
+            (car tabs)
+          (let ((prevtabs (cdr (memq (car tabs) (reverse tab-stop-list)))))
+            (if (null prevtabs) 0
+              (if (= column (car prevtabs))
+                  (or (nth 1 prevtabs) 0)
+                (car prevtabs)))))
+      ;; We passed the end of tab-stop-list: guess a continuation.
+      (let* ((last2 (last tab-stop-list 2))
+             (step (if (cdr last2) (- (cadr last2) (car last2)) tab-width))
+             (last (or (cadr last2) (car last2) 0)))
+        ;; Repeat the last tab's length.
+        (+ last (* step (if prev
+                            (if (<= column last) -1 (/ (- column last 1) step))
+                          (1+ (/ (- column last) step)))))))))
+
+;; FIXME: full abbrev expansion is not implemented yet; GNU calls this
+;; from `tab-to-tab-stop' when `abbrev-mode' is on.
+(defun expand-abbrev ()
+  "No-op stub: expand the abbrev before point, if any."
+  nil)
+
+(defun tab-to-tab-stop ()
+  "Insert spaces or tabs to next defined tab-stop column.
+The variable `tab-stop-list' is a list of columns at which there are tab stops.
+Use \\[edit-tab-stops] to edit them interactively.
+Whether this inserts tabs or spaces depends on `indent-tabs-mode'."
+  (interactive)
+  (and abbrev-mode (= (char-syntax (preceding-char)) ?w)
+       (expand-abbrev))
+  (let ((nexttab (indent-next-tab-stop (current-column))))
+    (delete-horizontal-space t)
+    (indent-to nexttab)))
+
 (defun move-to-tab-stop ()
-  "Move point to the next tab stop."
-  (interactive "*")
-  (let ((col (current-column)) (next nil))
-    (dolist (ts (or tab-stop-list
-                    (let ((n 0) (out nil))
-                      (while (< (setq n (1+ n)) 20)
-                        (push (* n tab-width) out))
-                      (nreverse out))))
-      (when (and (not next) (> ts col))
-        (setq next ts)))
-    (indent-to (or next (+ col tab-width)))))
+  "Move point to next defined tab-stop column.
+The variable `tab-stop-list' is a list of columns at which there are tab stops.
+Use \\[edit-tab-stops] to edit them interactively."
+  (interactive)
+  (let ((nexttab (indent-next-tab-stop (current-column))))
+    (let ((before (point)))
+      (move-to-column nexttab t)
+      (save-excursion
+        (goto-char before)
+        ;; If we just added a tab, or moved over one,
+        ;; delete any superfluous spaces before the old point.
+        (if (and (eq (preceding-char) ?\s)
+                 (eq (following-char) ?\t))
+            (let ((tabend (* (/ (current-column) tab-width) tab-width)))
+              (while (and (> (current-column) tabend)
+                          (eq (preceding-char) ?\s))
+                (forward-char -1))
+              (delete-region (point) before)))))))
 
 (defun count-screen-lines (&optional beg end)
   "Count screen lines between BEG and END (batch: count-lines)."

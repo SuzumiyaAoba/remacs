@@ -18,6 +18,10 @@ pub enum Flow {
     /// C-g quit. Like a signal but `condition-case` can't catch it
     /// (Emacs semantics).
     Quit,
+    /// `(kill-emacs N)' / batch `suspend-emacs': the process is exiting.
+    /// Uncatchable from Lisp — unwinds to the batch driver, which exits
+    /// with the given status code.
+    Exit(i128),
 }
 
 /// `eval`/`apply` result.

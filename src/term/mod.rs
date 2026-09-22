@@ -512,6 +512,11 @@ fn dispatch_key<T: KeyIo>(
                         i.message(&format!("No catch for tag: {}", i.princ_to_string(&tag)));
                         let _ = v;
                     }
+                    Err(crate::lisp::error::Flow::Exit(_)) => {
+                        // `kill-emacs' requested termination; the flag is
+                        // already set, so the loop exits at the top.
+                        i.quit_editor = true;
+                    }
                 }
                 // Continue arg entry after C-u / M-digit / M--.
                 if let Value::Sym(id) = &cmd {

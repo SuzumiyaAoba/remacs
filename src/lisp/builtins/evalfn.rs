@@ -1518,8 +1518,23 @@ fn f_garbage_collect(i: &mut Interp, _args: Vec<Value>) -> EvalResult {
 fn f_memory_info(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     f_garbage_collect(i, args)
 }
-fn f_kill_emacs(i: &mut Interp, _args: Vec<Value>) -> EvalResult {
+fn f_kill_emacs(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     i.quit_editor = true;
+    if i.noninteractive {
+        // GNU batch: kill-emacs exits the process immediately; an
+        // integer ARG is the exit status, a string ARG is printed.
+        let code = match args.first() {
+            Some(Value::Int(n)) => *n,
+            Some(Value::Str(s)) => {
+                let msg = s.borrow().clone();
+                let _ = i;
+                eprint!("{msg}");
+                0
+            }
+            _ => 0,
+        };
+        return Err(Flow::Exit(code));
+    }
     Ok(Value::Nil)
 }
 fn f_recursive_edit(i: &mut Interp, _args: Vec<Value>) -> EvalResult {

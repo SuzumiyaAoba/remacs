@@ -920,7 +920,6 @@ pub(crate) static SUBRS: &[Subr] = &[
         ""
     ),
     S!("display-mm-dimensions-alist", 0, 1, f_nil, ""),
-    S!("x-synchronize", 0, 2, f_nil, ""),
     S!("x-open-connection", 1, 2, f_nil, ""),
     S!("x-close-connection", 1, 1, f_nil, ""),
     S!("x-display-list", 0, 0, f_nil, ""),
@@ -959,8 +958,6 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!("window-bottommost-p", 1, 1, f_t, ""),
     S!("window-at-side-p", 1, 2, f_t, ""),
     S!("window-in-direction", 1, 5, f_window_in_direction, ""),
-    S!("window-has-dark-scroll-bar", 0, 0, f_nil, ""),
-    S!("window-group", 0, 1, f_nil, ""),
     S!("window-main-window", 0, 1, f_nil, ""),
     S!("get-mru-window", 0, 2, f_selected_window, ""),
     S!("get-window-with-predicate", 1, 3, f_get_window_pred, ""),
@@ -971,7 +968,7 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!("keymap--mergable", 1, 1, f_t, ""),
     S!("keymap-canonicalize", 1, 1, f_identity, ""),
     S!("set-transient-map", 1, 3, f_set_transient_map, ""),
-    S!("text-mode-map", 0, 0, f_nil, ""),
+    // `text-mode-map' is a variable (keymap) in GNU, not a subr.
     // ---------- tables ----------
     S!("buffer-display-table", 0, 0, f_nil, ""),
     S!("char-table-extra-slot", 2, 2, f_char_table_extra_slot, ""),
@@ -1183,7 +1180,7 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!("put-image", 2, 3, f_nil, ""),
     S!("remove-images", 0, 3, f_nil, ""),
     S!("display-popup-menus-p", 0, 1, f_nil, ""),
-    S!("display-screens", 0, 1, f_nil, ""),
+    S!("display-screens", 0, 1, f_display_screens, ""),
     S!("display-selections-p", 0, 1, f_nil, ""),
     // ---------- X stubs (no X) ----------
     S!("gui-get-selection", 1, 3, f_nil, ""),
@@ -2043,6 +2040,11 @@ fn f_flush_stdout(_i: &mut Interp, _a: Vec<Value>) -> EvalResult {
     use std::io::Write;
     let _ = std::io::stdout().flush();
     Ok(Value::Nil)
+}
+
+fn f_display_screens(_i: &mut Interp, _a: Vec<Value>) -> EvalResult {
+    // GNU batch: one screen (the initial terminal).
+    Ok(Value::Int(1))
 }
 
 fn f_nil(_i: &mut Interp, _a: Vec<Value>) -> EvalResult {

@@ -413,7 +413,7 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!("set-terminal-parameter", 3, 3, f_nil, ""),
     S!("terminal-id", 1, 1, f_terminal_id, ""),
     S!("delete-terminal", 1, 2, f_nil, ""),
-    S!("suspend-tty", 0, 1, f_nil, ""),
+    S!("suspend-tty", 0, 1, f_suspend_tty, ""),
     S!("resume-tty", 0, 1, f_nil, ""),
     S!("tty--output-buffer-size", 0, 1, f_zero, ""),
     S!("tty--set-output-buffer-size", 1, 1, f_nil, ""),
@@ -422,7 +422,6 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!("innermost-minibuffer-p", 0, 0, f_false, ""),
     S!("minibuffer-innermost-command-loop-p", 0, 1, f_false, ""),
     S!("display-supports-face-attributes-p", 1, 2, f_t, ""),
-    S!("compute-motion-hints", 1, 1, f_nil, ""),
     S!("run-window-configuration-change-hook", 0, 1, f_nil, ""),
     S!("run-window-scroll-functions", 0, 1, f_nil, ""),
     S!("set-window-new-total", 2, 3, f_set_window_new_total, ""),
@@ -437,6 +436,11 @@ pub(crate) static SUBRS: &[Subr] = &[
 
 fn f_nil(_i: &mut Interp, _a: Vec<Value>) -> EvalResult {
     Ok(Value::Nil)
+}
+
+fn f_suspend_tty(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
+    // GNU batch: the initial terminal is not suspendable.
+    Err(i.error("Attempt to suspend a non-text terminal device"))
 }
 
 fn f_false(i: &mut Interp, a: Vec<Value>) -> EvalResult {

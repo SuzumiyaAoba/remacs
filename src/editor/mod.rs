@@ -667,7 +667,6 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!("select-frame", 1, 2, f_select_frame, "Select FRAME."),
     S!("handle-switch-frame", 1, 1, f_nil, ""),
     S!("frame-focus-state", 0, 1, f_t, ""),
-    S!("suspend-emacs", 0, 1, f_nil, ""),
     S!("redraw-frame", 0, 1, f_nil, ""),
     S!("redraw-display", 0, 0, f_nil, ""),
     S!("frame-visible-p", 1, 1, f_t, ""),
@@ -1187,9 +1186,9 @@ pub(crate) static SUBRS: &[Subr] = &[
         f_write_region,
         "Write region to FILENAME."
     ),
-    S!("write-region-annotate-functions", 0, 0, f_nil, ""),
-    S!("write-region-post-annotation-function", 0, 0, f_nil, ""),
-    S!("write-region-charset-for-write", 0, 0, f_nil, ""),
+    // `write-region-annotate-functions',
+    // `write-region-post-annotation-function' are plain variables in GNU;
+    // `write-region-charset-for-write' does not exist there.
     S!(
         "car-less-than-car",
         2,
@@ -1241,11 +1240,10 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!("file-name-quote", 1, 2, f_identity, ""),
     S!("file-name-unquote", 1, 1, f_identity, ""),
     S!("file-accessible-directory-p", 1, 1, f_file_directory_p, ""),
-    S!("verify-visited-file-modtime-princ", 0, 0, f_nil, ""),
     S!("default-file-modes", 0, 0, f_default_file_modes, ""),
     S!("set-default-file-modes", 1, 1, f_set_default_file_modes, ""),
     S!("file-modes-symbolic-to-number", 1, 3, f_zero, ""),
-    S!("unix-sync", 0, 0, f_nil, ""),
+    S!("unix-sync", 0, 0, f_unix_sync, ""),
     S!("file-system-info", 1, 1, f_file_system_info, ""),
     S!("file-equal-p", 2, 2, f_file_equal_p, ""),
     // processes
@@ -1389,7 +1387,7 @@ pub(crate) static SUBRS: &[Subr] = &[
         f_indent_rigidly,
         "Indent region rigidly."
     ),
-    S!("tab-to-tab-stop", 0, 0, f_nil, ""),
+    // `tab-to-tab-stop' is defined in Lisp (as in GNU's indent.el).
     S!(
         "delete-trailing-whitespace",
         0,
@@ -1421,7 +1419,6 @@ pub(crate) static SUBRS: &[Subr] = &[
     ),
     S!("forward-line-command", 0, 1, f_forward_line_cmd, ""),
     S!("beginning-of-buffer-other-window", 0, 0, f_nil, ""),
-    S!("exchange-point-and-mark-inactive", 0, 0, f_nil, ""),
     // minibuffer/echo
     S!(
         "minibufferp",
@@ -1843,8 +1840,7 @@ pub(crate) static SUBRS: &[Subr] = &[
         f_syntax_ppss,
         "Sexp parser state at POS."
     ),
-    S!("inside-comment-p", 0, 0, f_nil, ""),
-    S!("comment-beginning", 0, 0, f_nil, ""),
+    // `comment-beginning' is defined in Lisp (as in GNU's newcomment.el).
     // modes
     S!(
         "fundamental-mode",
@@ -1982,7 +1978,6 @@ pub(crate) static SUBRS: &[Subr] = &[
     ),
     S!("internal-lisp-face-attribute-values", 1, 1, f_nil, ""),
     S!("internal-merge-in-global-face", 2, 2, f_nil, ""),
-    S!("face-attrs-more-relative-p", 2, 2, f_nil, ""),
     S!("display-color-p", 0, 1, f_display_color_p, ""),
     S!("display-grayscale-p", 0, 1, f_nil, ""),
     S!("display-mouse-p", 0, 1, f_nil, ""),
@@ -1992,7 +1987,6 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!("x-color-values", 1, 1, f_nil, ""),
     S!("xw-color-values", 1, 1, f_nil, ""),
     S!("tty-color-values", 1, 1, f_nil, ""),
-    S!("tty-defined-colors", 0, 1, f_nil, ""),
     S!("x-list-fonts", many 0, f_nil, ""),
     S!("internal-char-font", 1, 2, f_nil, ""),
     S!("fontp", 1, 2, f_nil, ""),
@@ -2010,10 +2004,8 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!("set-display-table-slot", 3, 3, f_nil, ""),
     S!("display-table-slot", 2, 2, f_nil, ""),
     S!("make-display-table", 0, 0, f_nil, ""),
-    S!("display-table-p", 1, 1, f_nil, ""),
     S!("describe-display-table", 1, 1, f_nil, ""),
     S!("standard-display-table", 0, 0, f_nil, ""),
-    S!("dump-glyph-matrix", 0, 0, f_nil, ""),
     S!("open-font", 1, 3, f_nil, ""),
     S!("query-font", 1, 1, f_nil, ""),
     S!("font-get", 2, 2, f_nil, ""),
@@ -2023,15 +2015,12 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!("fontset-info", 1, 1, f_nil, ""),
     S!("fontset-font", 2, 3, f_nil, ""),
     S!("fontset-list", 0, 0, f_nil, ""),
-    S!("fontset-list-all", 0, 0, f_nil, ""),
     // menus/popups
     S!("x-popup-menu", 2, 2, f_nil, ""),
     S!("x-popup-dialog", 2, 3, f_nil, ""),
     S!("menu-or-popup-active-p", 0, 0, f_nil, ""),
     S!("menu-bar-menu-at-x-y", 2, 2, f_nil, ""),
-    S!("x-menu-bar-open-internal", 0, 1, f_nil, ""),
     // echo/help
-    S!("describe-bindings-internal", 0, 2, f_nil, ""),
     S!(
         "documentation-property",
         2,
@@ -2047,7 +2036,6 @@ pub(crate) static SUBRS: &[Subr] = &[
         f_documentation,
         "Docstring of FUNCTION."
     ),
-    S!("keymap-get-key", 0, 0, f_nil, ""),
     S!(
         "internal-event-symbol-parse-modifiers",
         1,
@@ -5679,6 +5667,15 @@ fn f_default_file_modes(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     Ok(Value::Int(default_file_modes() as i128))
 }
 
+fn f_unix_sync(_i: &mut Interp, _a: Vec<Value>) -> EvalResult {
+    // GNU calls sync(2) and returns nil.
+    #[cfg(unix)]
+    unsafe {
+        libc::sync();
+    }
+    Ok(Value::Nil)
+}
+
 fn f_set_default_file_modes(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let mode = want_int(i, &a[0])?;
     // GNU sets the process umask to ~MODE & 0777 and records MODE in
@@ -9104,9 +9101,12 @@ fn f_open_dribble_file(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 }
 
 fn f_suspend_emacs(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
-    // Batch/nonterminal: nothing to suspend. Interactive use goes through
-    // the editor loop which handles real suspension.
-    let _ = i;
+    // GNU batch semantics: with no controlling tty, suspending terminates
+    // the session like `kill-emacs'.
+    i.quit_editor = true;
+    if i.noninteractive {
+        return Err(Flow::Exit(0));
+    }
     Ok(Value::Nil)
 }
 
