@@ -204,3 +204,100 @@ fn top_level_lambda_captures_when_lexical() {
         "5"
     );
 }
+
+// ------------------------------------------------------- map.el
+
+#[test]
+fn map_generic_lookup() {
+    // alist, plist, hash-table, array lookup all GNU-verified.
+    assert_eq!(
+        ev("(progn (require 'map)
+                  (list (map-elt '((a . 1) (b . 2)) 'b)
+                        (map-elt '(x 1 y 2) 'y)
+                        (map-elt [10 20] 1)))"),
+        "(2 2 20)"
+    );
+    assert_eq!(
+        ev("(progn (require 'map)
+                  (let ((m (make-hash-table)))
+                    (puthash 'k 9 m)
+                    (list (map-elt m 'k) (map-elt m 'z 42))))"),
+        "(9 42)"
+    );
+}
+
+#[test]
+fn map_put_and_delete() {
+    // map-put! on an existing alist key updates in place;
+    // map-delete removes the whole pair (alist-get REMOVE path).
+    assert_eq!(
+        ev("(progn (require 'map)
+                  (let ((m (list '(a . 1) '(b . 2))))
+                    (map-put! m 'a 10)
+                    (map-delete m 'a)))"),
+        "((b . 2))"
+    );
+    assert_eq!(
+        ev("(progn (require 'map)
+                  (let ((m '((a . 1) (b . 2))))
+                    (map-put! m 'b 7)
+                    (map-keys m)))"),
+        "(a b)"
+    );
+}
+
+#[test]
+fn map_let_and_others() {
+    assert_eq!(
+        ev("(progn (require 'map)
+                  (let ((m (make-hash-table :test #'equal)))
+                    (puthash \"x\" 5 m)
+                    (map-let ((\"x\" x)) m (or x 0))))"),
+        "5"
+    );
+    assert_eq!(
+        ev("(progn (require 'map)
+                  (list (map-length '((a . 1) (b . 2)))
+                        (map-contains-key '((a . 1)) 'a)))"),
+        "(2 t)"
+    );
+}
+
+// ------------------------------------------------------- thingatpt.el
+
+#[test]
+fn thingatpt_basics() {
+    // GNU-verified goldens for the ported thingatpt + forward-symbol shim.
+    assert_eq!(
+        ev_out("(progn (require 'thingatpt)
+                      (with-temp-buffer
+                        (insert \"foo_bar baz-qux 42\")
+                        (goto-char 2)
+                        (princ (list (thing-at-point 'symbol)
+                                     (bounds-of-thing-at-point 'symbol))) (terpri)
+                        (goto-char 10)
+                        (princ (thing-at-point 'word)) (terpri)
+                        (goto-char 1)
+                        (princ (list (forward-thing 'word) (point))) (terpri)
+                        (princ (symbol-at-point))))"),
+        "(foo_bar (1 . 8))\nbaz\n(t 4)\nfoo_bar"
+    );
+}
+
+#[test]
+fn thingatpt_uuid() {
+    assert_eq!(
+        ev("(progn (require 'thingatpt)
+                  (with-temp-buffer
+                    (insert \"uuid d3f7b8c2-1234-4abc-9def-0123456789ab x\")
+                    (goto-char 8)
+                    (bounds-of-thing-at-point 'uuid)))"),
+        "(6 . 42)"
+    );
+    // forward-word now returns t on success / nil at the buffer edge (GNU).
+    assert_eq!(
+        ev("(with-temp-buffer (insert \"ab\") (goto-char 1)
+                  (list (forward-word) (forward-word)))"),
+        "(t nil)"
+    );
+}

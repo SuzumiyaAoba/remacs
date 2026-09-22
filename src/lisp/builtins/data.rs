@@ -79,13 +79,8 @@ pub(crate) static SUBRS: &[Subr] = &[
         "t if int or marker."
     ),
     S!("arrayp", 1, 1, f_arrayp, "t if OBJECT is an array."),
-    S!(
-        "user-variable-p",
-        1,
-        1,
-        f_user_variable_p,
-        "t if VARIABLE is a user option."
-    ),
+    // `user-variable-p' was removed in GNU Emacs 31 (obsoleted in 24.4;
+    // `custom-variable-p' is the replacement).
     S!(
         "special-form-p",
         1,
@@ -522,16 +517,6 @@ fn f_arrayp(_i: &mut Interp, args: Vec<Value>) -> EvalResult {
         &args[0],
         Value::Str(_) | Value::Vec(_)
     )))
-}
-fn f_user_variable_p(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    match &args[0] {
-        Value::Sym(id) => {
-            // user-variable: defvar'd or has custom-type prop.
-            let doc = i.obarray.symbol(*id).variable_documentation.is_some();
-            Ok(Value::from_bool(doc))
-        }
-        _ => Ok(Value::Nil),
-    }
 }
 fn f_special_form_p(_i: &mut Interp, args: Vec<Value>) -> EvalResult {
     match &args[0] {

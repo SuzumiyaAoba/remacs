@@ -222,7 +222,7 @@
 (plist-member '(a 1) 'z)
 (lax-plist-get '(a 1 b 2) 'b)
 (lax-plist-put '(a 1) 'b 2)
-(lax-plist-member '(a 1) 'a)
+(ignore-errors (lax-plist-member '(a 1) 'a))
 (flatten-tree '(a (b (c d)) e))
 (flatten-tree nil)
 (flatten-tree '((a . b) c))

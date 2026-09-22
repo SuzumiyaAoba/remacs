@@ -658,28 +658,9 @@ pub(crate) static SUBRS: &[Subr] = &[
     ),
     S!("buffer-word-at-point", 0, 0, f_word_at_point, ""),
     S!("current-word", 0, 3, f_current_word, "Word at point."),
-    S!(
-        "thing-at-point",
-        1,
-        2,
-        f_thing_at_point,
-        "Thing at point (word/symbol/line)."
-    ),
-    S!(
-        "bounds-of-thing-at-point",
-        1,
-        2,
-        f_bounds_of_thing_at_point,
-        "Bounds of thing at point."
-    ),
-    S!("word-at-point", 0, 0, f_word_at_point, "Word at point."),
-    S!(
-        "symbol-at-point",
-        0,
-        0,
-        f_symbol_at_point,
-        "Symbol at point."
-    ),
+    // `thing-at-point', `bounds-of-thing-at-point', `symbol-at-point'
+    // and `word-at-point' live in thingatpt.el (autoloaded in GNU);
+    // registered as autoloads in the prelude.
     // --- mark & region ---
     S!("mark", 0, 1, f_mark, "The mark position (or nil)."),
     S!("set-mark", 1, 1, f_set_mark, "Set the mark to POSITION."),
@@ -2461,6 +2442,8 @@ fn f_forward_word(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let n = a.get(0).and_then(|v| v.int()).unwrap_or(1);
     let b = cur(i);
     let mut bb = b.borrow_mut();
+    // GNU returns t on success, nil when point can't move (buffer edge).
+    let mut ok = true;
     if n >= 0 {
         for _ in 0..n {
             let mut p = bb.point();
@@ -2471,6 +2454,9 @@ fn f_forward_word(i: &mut Interp, a: Vec<Value>) -> EvalResult {
             }
             while p < len && is_word(bb.text.char_at(p)) {
                 p += 1;
+            }
+            if p == bb.point() {
+                ok = false;
             }
             bb.set_point(p);
         }
@@ -2483,10 +2469,13 @@ fn f_forward_word(i: &mut Interp, a: Vec<Value>) -> EvalResult {
             while p > bb.begv && is_word(bb.text.char_at(p - 1)) {
                 p -= 1;
             }
+            if p == bb.point() {
+                ok = false;
+            }
             bb.set_point(p);
         }
     }
-    Ok(Value::Nil)
+    Ok(Value::from_bool(ok))
 }
 
 fn f_backward_word(i: &mut Interp, a: Vec<Value>) -> EvalResult {
@@ -4926,23 +4915,6 @@ fn f_buffer_substring_with_bidi_context(i: &mut Interp, a: Vec<Value>) -> EvalRe
     ))
 }
 
-fn f_bounds_of_thing_at_point(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let sym_id = want_sym(i, &a[0])?;
-    let name = i.symbol_name(sym_id);
-    let pred: fn(char) -> bool = match name.as_str() {
-        "word" | "number" => |c| c.is_alphanumeric() || c == '_',
-        "symbol" => |c| c.is_alphanumeric() || "_-?!*+/<>=:$%&~^.".contains(c),
-        _ => return Ok(Value::Nil),
-    };
-    match thing_bounds(i, pred) {
-        Some((s, e)) => Ok(Value::cons(
-            Value::Int(s as i128 + 1),
-            Value::Int(e as i128 + 1),
-        )),
-        None => Ok(Value::Nil),
-    }
-}
-
 fn thing_bounds(i: &mut Interp, pred: fn(char) -> bool) -> Option<(usize, usize)> {
     let b = i.current_buffer_ref()?;
     let bb = b.borrow();
@@ -4981,49 +4953,6 @@ fn f_current_word(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
 
 fn f_word_at_point(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     f_current_word(i, a)
-}
-
-fn f_symbol_at_point(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
-    match thing_bounds(i, |c| {
-        c.is_alphanumeric() || "_-?!*+/<>=:$%&~^.".contains(c)
-    }) {
-        Some((s, e)) => {
-            let b = cur(i);
-            let name = b.borrow().text.substring(s, e);
-            Ok(Value::Sym(i.intern(&name)))
-        }
-        None => Ok(Value::Nil),
-    }
-}
-
-fn f_thing_at_point(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let sym_id = want_sym(i, &a[0])?;
-    let name = i.symbol_name(sym_id);
-    match name.as_str() {
-        "word" => f_current_word(i, vec![]),
-        "symbol" => {
-            match thing_bounds(i, |c| {
-                c.is_alphanumeric() || "_-?!*+/<>=:$%&~^.".contains(c)
-            }) {
-                Some((s, e)) => {
-                    let b = cur(i);
-                    Ok(Value::string(b.borrow().text.substring(s, e)))
-                }
-                None => Ok(Value::Nil),
-            }
-        }
-        "line" => {
-            let b = cur(i);
-            let bb = b.borrow();
-            let ls = bb.text.line_start(bb.text.line_of_pos(bb.point()));
-            let le = bb.text.line_end(bb.point());
-            Ok(Value::string(bb.text.substring(ls, le)))
-        }
-        "number" => f_current_word(i, vec![]),
-        "filename" | "url" | "email" | "sexp" | "sentence" | "defun" | "list" | "whitespace"
-        | "page" => Ok(Value::Nil),
-        _ => Ok(Value::Nil),
-    }
 }
 
 // ---------- mark & region ----------

@@ -76,10 +76,12 @@ static EMBEDDED_LISP: &[(&str, &str)] = &[
     ("kmacro", include_str!("../../lisp/kmacro.el")),
     ("let-alist", include_str!("../../lisp/let-alist.el")),
     ("macros", include_str!("../../lisp/macros.el")),
+    ("map", include_str!("../../lisp/map.el")),
     ("pcase", include_str!("../../lisp/pcase.el")),
     ("pp", include_str!("../../lisp/pp.el")),
     ("ring", include_str!("../../lisp/ring.el")),
     ("subr-x", include_str!("../../lisp/subr-x.el")),
+    ("thingatpt", include_str!("../../lisp/thingatpt.el")),
     ("thunk", include_str!("../../lisp/thunk.el")),
 ];
 

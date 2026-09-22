@@ -181,7 +181,7 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!("evenp", 1, 1, f_evenp, "t if INTEGER is even."),
     S!("fixnump", 1, 1, f_fixnump, "t if OBJECT is a fixnum."),
     S!("bignump", 1, 1, f_bignump, "t if OBJECT is a bignum."),
-    S!("isqrt", 1, 1, f_isqrt, "Integer square root."),
+    // `isqrt' does not exist in GNU Emacs 31; `cl-isqrt' is in cl-extra.
 ];
 
 fn f_plus(i: &mut Interp, args: Vec<Value>) -> EvalResult {
@@ -857,23 +857,4 @@ fn f_bignump(_i: &mut Interp, args: Vec<Value>) -> EvalResult {
         Value::Int(n) if !(crate::lisp::value::FIXNUM_MIN..=crate::lisp::value::FIXNUM_MAX).contains(n)
     )))
 }
-/// `isqrt` — integer square root (Newton's method on i128).
-fn f_isqrt(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    let n = want_int(i, &args[0])?;
-    if n < 0 {
-        let s = i.intern("arith-error");
-        return Err(i.signal_data(s, vec![args[0].clone()]));
-    }
-    if n < 2 {
-        return Ok(Value::Int(n));
-    }
-    let mut x = 1i128 << ((128 - n.leading_zeros() as i128 + 1) / 2);
-    loop {
-        let y = (x + n / x) / 2;
-        if y >= x {
-            break;
-        }
-        x = y;
-    }
-    Ok(Value::Int(x))
-}
+

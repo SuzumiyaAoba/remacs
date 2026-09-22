@@ -37,13 +37,7 @@ pub(crate) static SUBRS: &[Subr] = &[
         f_prin1_to_string,
         "Return printed representation of OBJECT."
     ),
-    S!(
-        "princ-to-string",
-        1,
-        1,
-        f_princ_to_string,
-        "Return princ representation of OBJECT."
-    ),
+    // `princ-to-string' was removed in GNU Emacs 31 (obsoleted in 29).
     S!(
         "with-output-to-string",
         raw,
@@ -63,10 +57,6 @@ fn f_prin1(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     let s = i.print_to_string(&args[0]);
     i.write_output_to(&s, &arg(&args, 1));
     Ok(args[0].clone())
-}
-
-fn f_princ_to_string(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    Ok(Value::string(i.princ_to_string(&args[0])))
 }
 
 fn f_princ(i: &mut Interp, args: Vec<Value>) -> EvalResult {

@@ -169,12 +169,12 @@ Symbols are also allowed; their print names are used instead."
 (defalias 'cl-second 'cadr)
 (defalias 'cl-third 'caddr)
 (defalias 'cl-fourth 'cadddr)
-(defalias 'cl-fifth 'fifth)
-(defalias 'cl-sixth 'sixth)
-(defalias 'cl-seventh 'seventh)
-(defalias 'cl-eighth 'eighth)
-(defalias 'cl-ninth 'ninth)
-(defalias 'cl-tenth 'tenth)
+(defun cl-fifth (x) (nth 4 x))
+(defun cl-sixth (x) (nth 5 x))
+(defun cl-seventh (x) (nth 6 x))
+(defun cl-eighth (x) (nth 7 x))
+(defun cl-ninth (x) (nth 8 x))
+(defun cl-tenth (x) (nth 9 x))
 (defalias 'cl-rest 'cdr)
 (defalias 'cl-endp 'null)
 
@@ -3314,6 +3314,26 @@ places where expressions are evaluated and inserted or spliced in."
 (autoload 'gv-ref "gv"
   "Return a reference to PLACE." nil t)
 
+;; thingatpt.el autoloads (GNU loaddefs registers exactly these).
+(autoload 'forward-thing "thingatpt"
+  "Move forward to the end of the Nth next THING." t)
+(autoload 'bounds-of-thing-at-point "thingatpt"
+  "Determine the start and end buffer locations for the THING at point.")
+(autoload 'thing-at-point "thingatpt"
+  "Return the THING at point.")
+(autoload 'bounds-of-thing-at-mouse "thingatpt"
+  "Determine start and end locations for THING at mouse click given by EVENT.")
+(autoload 'thing-at-mouse "thingatpt"
+  "Return the THING at mouse click specified by EVENT.")
+(autoload 'sexp-at-point "thingatpt"
+  "Return the sexp at point, or nil if none is found.")
+(autoload 'symbol-at-point "thingatpt"
+  "Return the symbol at point, or nil if none is found.")
+(autoload 'number-at-point "thingatpt"
+  "Return the number at point, or nil if none is found.")
+(autoload 'list-at-point "thingatpt"
+  "Return the Lisp list at point, or nil if none is found.")
+
 ;; GNU aliases (resolve immediately, before the library loads).
 (defalias 'kmacro-exec-ring-item 'funcall)
 (defalias 'name-last-kbd-macro 'kmacro-name-last-macro)
@@ -3690,16 +3710,33 @@ one or more of those symbols."
                       (plist-put ,(cadr place) ,(caddr place) ,val))
                 ,(caddr place)))
        ((eq op 'alist-get)
-        ;; GNU gv-define-setter for alist-get: setcdr an existing
-        ;; slot, else push (cons key val) onto the alist place.
+        ;; GNU gv-define-expander for alist-get: the lookup is testfn
+        ;; aware (nil/'eq => assq, else assoc TESTFN); setting an
+        ;; existing pair does setcdr, else pushes (cons key val); when
+        ;; REMOVE is given, assigning DEFAULT (eql) deletes the pair.
         (let ((k (make-symbol "k")) (v (make-symbol "v"))
-              (a (make-symbol "a")) (slot (make-symbol "slot")))
-          `(let* ((,k ,(cadr place)) (,a ,(caddr place)) (,v ,val)
-                  (,slot (assoc ,k ,a)))
-             (if ,slot
-                 (progn (setcdr ,slot ,v) ,v)
-               (setf ,(caddr place) (cons (cons ,k ,v) ,a))
-               ,v))))
+              (a (make-symbol "a")) (d (make-symbol "d"))
+              (tf (make-symbol "tf")) (p (make-symbol "p")))
+          `(let* ((,k ,(cadr place)) (,a ,(caddr place))
+                  (,d ,(nth 3 place)) (,tf ,(nth 5 place))
+                  (,v ,val)
+                  (,p (if (memq ,tf '(nil eq #'eq))
+                          (assq ,k ,a)
+                        (assoc ,k ,a ,tf))))
+             ,(if (null (nth 4 place))
+                  `(if ,p
+                       (progn (setcdr ,p ,v) ,v)
+                     (setf ,(caddr place) (cons (setq ,p (cons ,k ,v)) ,a))
+                     ,v)
+                `(progn
+                   (cond
+                    ((not (eql ,d ,v))
+                     (if ,p
+                         (setcdr ,p ,v)
+                       (setf ,(caddr place)
+                             (cons (setq ,p (cons ,k ,v)) ,a))))
+                    (,p (setf ,(caddr place) (delq ,p ,a))))
+                   ,v)))))
        ((eq op 'gv-deref) `(funcall (cdr ,(cadr place)) ,val))
        ;; Fallback like GNU's gv-setter: call the `(setf OP)' function.
        ((symbolp op)
@@ -5020,9 +5057,17 @@ When enabled, actual binary text editing is done via `overwrite-mode'."
   (cond
    ((eq spec t) t)
    ((and (consp spec) (eq (car spec) 'eql)) (eql arg (cadr spec)))
+   ;; (head VAL): matches when ARG is a cons whose car is `eql' VAL.
+   ((and (consp spec) (eq (car spec) 'head))
+    (and (consp arg) (eql (car arg) (cadr spec))))
    ((symbolp spec)
-    (or (and (fboundp (intern (format "%sp" spec)))
-             (funcall (intern (format "%sp" spec)) arg))
+    (or (condition-case nil (cl-typep arg spec) (error nil))
+        ;; A type name whose predicate isn't in cl-typep's table can
+        ;; still be tested via `<spec>p' / `<spec>-p' conventions.
+        (let ((p1 (intern (format "%sp" spec)))
+              (p2 (intern (format "%s-p" spec))))
+          (or (and (fboundp p1) (funcall p1 arg))
+              (and (fboundp p2) (funcall p2 arg))))
         ;; An EIEIO class name specializes on instances of it.
         (and (fboundp 'eieio--class-p)
              (funcall 'eieio--class-p spec)
@@ -5059,14 +5104,36 @@ When enabled, actual binary text editing is done via `overwrite-mode'."
 
 (defmacro cl-defgeneric (name args &rest body)
   "Define a generic function NAME with arglist ARGS.
-BODY may contain a docstring, declarations, and options (subset)."
-  (let ((doc (and (stringp (car body)) (car body))))
-    `(progn
-       (put ',name 'cl--methods nil)
-       (defun ,name (&rest cl--args)
-         ,@(and doc (list doc))
-         (cl--generic-dispatch ',name cl--args))
-       ',name)))
+BODY may contain a docstring, declarations, and options (subset).
+Any remaining forms form the default method (specializers all `t')."
+  (let ((doc (and (stringp (car body)) (car body)))
+        (rest (if (stringp (car body)) (cdr body) body)))
+    ;; Skip (declare ...) and (:keyword ...) option forms.
+    (while (and rest
+                (let ((f (car rest)))
+                  (or (eq (car-safe f) 'declare)
+                      (keywordp (car-safe f))
+                      (eq (car-safe f) :method))))
+      (setq rest (cdr rest)))
+    ;; Specializers cover only the args before the first lambda-list
+    ;; keyword.
+    (let ((specs nil) (rest2 args))
+      (while (and rest2
+                  (not (and (symbolp (car rest2))
+                            (eq (aref (symbol-name (car rest2)) 0) ?&))))
+        (push t specs)
+        (setq rest2 (cdr rest2)))
+      (setq specs (nreverse specs))
+      `(progn
+         (put ',name 'cl--methods nil)
+         ,@(and rest
+                `((put ',name 'cl--methods
+                       (list (list ',specs nil
+                                   (lambda ,args ,@rest))))))
+         (defun ,name (&rest cl--args)
+           ,@(and doc (list doc))
+           (cl--generic-dispatch ',name cl--args))
+         ',name))))
 
 (defun cl--generic-dispatch (name args)
   (let* ((methods (get name 'cl--methods))
@@ -5124,7 +5191,15 @@ VAR, (VAR TYPE), or (VAR (eql FORM))."
          ((consp a)
           (push (car a) params)
           (push (if (and (consp (cadr a)) (eq (caadr a) 'eql))
-                    (list 'eql (eval (cadr (cadr a))))
+                    ;; GNU cl-generic: a bare non-constant symbol is
+                    ;; taken literally (Emacs<28 compat); anything else
+                    ;; is evaluated at definition time.
+                    (let ((eqlf (cadr (cadr a))))
+                      (list 'eql (if (and (symbolp eqlf)
+                                          (not (keywordp eqlf))
+                                          (not (memq eqlf '(nil t))))
+                                     eqlf
+                                   (eval eqlf))))
                   (cadr a))
                 specs))
          (t (push a params) (push t specs))))
@@ -5182,11 +5257,16 @@ VAR, (VAR TYPE), or (VAR (eql FORM))."
       (setq l (if (or (zerop l) (zerop x)) 0
                 (/ (* l (abs x)) (cl-gcd l x)))))))
 
-(defun cl-isqrt (n)
-  "Integer square root of N."
-  (if (fboundp 'isqrt)
-      (isqrt n)
-    (floor (sqrt (float n)))))
+(defun cl-isqrt (x)
+  "Return the integer square root of the (integer) argument X."
+  (declare (side-effect-free t))
+  (if (and (integerp x) (> x 0))
+      (let ((g (ash 2 (/ (logb x) 2)))
+	    g2)
+	(while (< (setq g2 (/ (+ g (/ x g)) 2)) g)
+	  (setq g g2))
+	g)
+    (if (eq x 0) 0 (signal 'arith-error nil))))
 
 (defvar cl-most-positive-float 1.7976931348623157e308)
 (defvar cl-most-negative-float -1.7976931348623157e308)
@@ -5428,20 +5508,24 @@ equivalence ignoring int/float distinction."
        ((eq op 'member) (memql val (cdr type)))
        (t (funcall op val)))))
    (t
-    (funcall
-     (or (cdr (assq type '((integer . integerp) (number . numberp)
-                           (float . floatp) (string . stringp)
-                           (symbol . symbolp) (cons . consp)
-                           (list . listp) (vector . vectorp)
-                           (hash-table . hash-table-p) (function . functionp)
-                           (character . characterp) (boolean . booleanp)
-                           (sequence . sequencep) (array . arrayp)
-                           (atom . atom) (keyword . keywordp)
-                           (fixnum . fixnump) (buffer . bufferp)
-                           (window . windowp) (process . processp)
-                           (frame . framep) (marker . markerp))))
-         (error "cl-typep: unknown type %s" type))
-     val))))
+    (cond
+     ((eq type t) t)
+     ((eq type 'null) (null val))
+     (t
+      (funcall
+       (or (cdr (assq type '((integer . integerp) (number . numberp)
+                             (float . floatp) (string . stringp)
+                             (symbol . symbolp) (cons . consp)
+                             (list . listp) (vector . vectorp)
+                             (hash-table . hash-table-p) (function . functionp)
+                             (character . characterp) (boolean . booleanp)
+                             (sequence . sequencep) (array . arrayp)
+                             (atom . atom) (keyword . keywordp)
+                             (fixnum . fixnump) (buffer . bufferp)
+                             (window . windowp) (process . processp)
+                             (frame . framep) (marker . markerp))))
+           (error "cl-typep: unknown type %s" type))
+       val))))))
 
 (defun cl-some (pred seq &rest _keys)
   "First non-nil (PRED X) for X in SEQ."

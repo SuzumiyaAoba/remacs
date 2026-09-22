@@ -190,13 +190,7 @@ pub(crate) static SUBRS: &[Subr] = &[
         f_lax_plist_put,
         "plist-put using equal."
     ),
-    S!(
-        "lax-plist-member",
-        2,
-        2,
-        f_lax_plist_member,
-        "plist-member using equal."
-    ),
+    // `lax-plist-member' was removed in GNU Emacs 31.
     S!(
         "take",
         2,
@@ -289,16 +283,8 @@ pub(crate) static SUBRS: &[Subr] = &[
         f_remq,
         "Copy LIST with ELT `eq' elements removed."
     ),
-    S!("first", 1, 1, f_car, ""),
-    S!("second", 1, 1, f_cadr, ""),
-    S!("third", 1, 1, f_caddr, ""),
-    S!("fourth", 1, 1, f_cadddr, ""),
-    S!("fifth", 1, 1, f_nth4, ""),
-    S!("sixth", 1, 1, f_nth5, ""),
-    S!("seventh", 1, 1, f_nth6, ""),
-    S!("eighth", 1, 1, f_nth7, ""),
-    S!("ninth", 1, 1, f_nth8, ""),
-    S!("tenth", 1, 1, f_nth9, ""),
+    // `first' .. `tenth' were removed in GNU Emacs 31 (subr-x dropped
+    // them); the `cl-*' aliases remain and are defined in the prelude.
     S!("car-or-marker-p", 1, 1, f_car_or_marker_p, ""),
 ];
 
@@ -1026,25 +1012,6 @@ cxr_fn!(f_cddadr, "ddad");
 cxr_fn!(f_cdddar, "ddda");
 cxr_fn!(f_cddddr, "dddd");
 
-fn f_nth4(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    f_nth(i, vec![Value::Int(4), args[0].clone()])
-}
-fn f_nth5(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    f_nth(i, vec![Value::Int(5), args[0].clone()])
-}
-fn f_nth6(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    f_nth(i, vec![Value::Int(6), args[0].clone()])
-}
-fn f_nth7(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    f_nth(i, vec![Value::Int(7), args[0].clone()])
-}
-fn f_nth8(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    f_nth(i, vec![Value::Int(8), args[0].clone()])
-}
-fn f_nth9(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    f_nth(i, vec![Value::Int(9), args[0].clone()])
-}
-
 // ---------- plists ----------
 
 /// `plist-get` core with a caller-supplied predicate.
@@ -1189,10 +1156,6 @@ fn f_plist_member(i: &mut Interp, args: Vec<Value>) -> EvalResult {
             other => return Err(i.wrong_type_mut("listp", &other)),
         }
     }
-}
-
-fn f_lax_plist_member(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    f_plist_member(i, vec![args[0].clone(), args[1].clone(), Value::t()])
 }
 
 fn f_plist_put(i: &mut Interp, args: Vec<Value>) -> EvalResult {

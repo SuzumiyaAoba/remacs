@@ -408,7 +408,7 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!("version-list-<", 2, 2, f_version_list_lt, ""),
     S!("version-list-<=", 2, 2, f_version_list_le, ""),
     S!("version-list-=", 2, 2, f_version_list_eq, ""),
-    S!("version-listp", 1, 1, f_version_listp, ""),
+    // `version-listp' does not exist in GNU Emacs 31.
     // ---------- predicates ----------
     S!("string-or-null-p", 1, 1, f_string_or_null_p, ""),
     S!("vector-or-char-table-p", 1, 1, f_vector_or_char_table_p, ""),
@@ -3986,17 +3986,6 @@ fn f_version_list_le(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 }
 fn f_version_list_eq(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     f_version_eq(i, a)
-}
-fn f_version_listp(_i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let ok = match &a[0] {
-        Value::Nil => true,
-        Value::Cons(_) => a[0]
-            .list_to_vec()
-            .map(|v| v.iter().all(|x| matches!(x, Value::Int(_))))
-            .unwrap_or(false),
-        _ => false,
-    };
-    Ok(Value::from_bool(ok))
 }
 
 // ---------- predicates ----------

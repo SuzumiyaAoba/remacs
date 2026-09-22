@@ -164,6 +164,7 @@
   (line-beginning-position 2)
   (line-end-position 2)
   (count-words-region (point-min) (point-max))
+  (require 'thingatpt)
   (thing-at-point 'word)
   (symbol-at-point)
   (word-at-point)

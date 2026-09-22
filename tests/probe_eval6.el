@@ -52,8 +52,8 @@
   (condition-case e (format "%q") (error (prin1 (car e))))
   (condition-case e (format "%d" "x") (error (prin1 (car e))))
   ;; ---- princ / prin1 to string ------------------------------------------
-  (prin1 (princ-to-string 'a\b))
-  (prin1 (princ-to-string "a\nb"))
+  (prin1 (format "%s" 'a\b))
+  (prin1 (format "%s" "a\nb"))
   (prin1 (prin1-to-string "a\nb"))
   (prin1 (prin1-to-string '(a . b)))
   ;; ---- plist --------------------------------------------------------------

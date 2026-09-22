@@ -243,7 +243,7 @@ fn hash_tables() {
 #[test]
 fn read_print() {
     assert_eq!(ev("(prin1-to-string '(1 \"a\" b))"), "\"(1 \\\"a\\\" b)\"");
-    assert_eq!(ev("(princ-to-string \"a\")"), "\"a\"");
+    assert_eq!(ev("(format "%s" "a")"), "\"a\"");
     assert_eq!(ev("(read-from-string \"(1 2)\")"), "((1 2) . 5)");
     assert_eq!(ev("(car (read-from-string \"42\"))"), "42");
     assert_eq!(ev("(intern \"foo\")"), "foo");
