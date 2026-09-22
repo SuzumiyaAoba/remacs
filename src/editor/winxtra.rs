@@ -287,8 +287,7 @@ pub(crate) static SUBRS: &[Subr] = &[
         f_window_body_edges4,
         ""
     ),
-    S!("window-safe-min-height", 0, 0, f_one, ""),
-    S!("window-safe-min-width", 0, 0, f_two, ""),
+    // `window-safe-min-height'/`window-safe-min-width' are GNU variables.
     // --- frames ---
     S!(
         "frame-root-window",
@@ -411,7 +410,7 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!("terminal-parameter", 2, 2, f_nil, ""),
     S!("terminal-parameters", 0, 1, f_nil, ""),
     S!("set-terminal-parameter", 3, 3, f_nil, ""),
-    S!("terminal-id", 1, 1, f_terminal_id, ""),
+    // `terminal-id' does not exist in GNU.
     S!("delete-terminal", 1, 2, f_nil, ""),
     S!("suspend-tty", 0, 1, f_suspend_tty, ""),
     S!("resume-tty", 0, 1, f_nil, ""),
@@ -461,10 +460,6 @@ fn f_zero(_i: &mut Interp, _a: Vec<Value>) -> EvalResult {
 
 fn f_one(_i: &mut Interp, _a: Vec<Value>) -> EvalResult {
     Ok(Value::Int(1))
-}
-
-fn f_two(_i: &mut Interp, _a: Vec<Value>) -> EvalResult {
-    Ok(Value::Int(2))
 }
 
 fn f_one_f(_i: &mut Interp, _a: Vec<Value>) -> EvalResult {
@@ -918,10 +913,6 @@ fn f_terminal_list(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
 
 fn f_terminal_name(_i: &mut Interp, _a: Vec<Value>) -> EvalResult {
     Ok(Value::string("initial_terminal"))
-}
-
-fn f_terminal_id(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
-    Ok(Value::Sym(i.intern("tty")))
 }
 
 fn f_set_window_new_total(i: &mut Interp, a: Vec<Value>) -> EvalResult {

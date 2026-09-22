@@ -570,7 +570,6 @@ pub(crate) static SUBRS: &[Subr] = &[
     ),
     S!("window-use-time", 0, 1, f_zero, ""),
     S!("window-cursor-type", 0, 1, f_t, ""),
-    S!("window-safe-p", 0, 0, f_t, ""),
     S!("window-configuration-p", 1, 1, f_nil, ""),
     S!("current-window-configuration", 0, 1, f_nil, ""),
     S!("set-window-configuration", 1, 3, f_nil, ""),
@@ -670,7 +669,6 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!("redraw-frame", 0, 1, f_nil, ""),
     S!("redraw-display", 0, 0, f_nil, ""),
     S!("frame-visible-p", 1, 1, f_t, ""),
-    S!("visible-p", 0, 0, f_t, ""),
     // keymaps
     S!("make-keymap", 0, 1, f_make_keymap, "Create a full keymap."),
     S!(
@@ -2005,7 +2003,7 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!("display-table-slot", 2, 2, f_nil, ""),
     S!("make-display-table", 0, 0, f_nil, ""),
     S!("describe-display-table", 1, 1, f_nil, ""),
-    S!("standard-display-table", 0, 0, f_nil, ""),
+    // `standard-display-table' is a variable in GNU (nil in batch).
     S!("open-font", 1, 3, f_nil, ""),
     S!("query-font", 1, 1, f_nil, ""),
     S!("font-get", 2, 2, f_nil, ""),

@@ -186,7 +186,8 @@ process-environment
 (let ((d (make-display-table)))
   ;; `display-table-p' is not a GNU function; exercise the void path.
   (condition-case e (display-table-p d) (error e))
-  (standard-display-table)
+  ;; `standard-display-table' is a variable in GNU, not a function.
+  (condition-case e (standard-display-table) (error e))
   (condition-case e (display-table-slot d 0) (error e))
   (condition-case e (set-display-table-slot d 0 ?x) (error e))
   (condition-case e (describe-display-table d) (error e))

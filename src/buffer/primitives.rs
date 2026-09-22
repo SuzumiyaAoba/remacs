@@ -1242,7 +1242,7 @@ pub(crate) static SUBRS: &[Subr] = &[
         ""
     ),
     S!("propertize", many 1, f_propertize, "Return STRING (props ignored)."),
-    S!("text-props-copy", 1, 1, f_identity, ""),
+    // `text-props-copy' does not exist in GNU.
     S!("object-intervals", 0, 0, f_nil, ""),
     // --- undo ---
     S!("undo", 0, 1, f_undo, "Undo some changes."),

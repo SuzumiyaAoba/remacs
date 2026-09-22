@@ -919,7 +919,7 @@ pub(crate) static SUBRS: &[Subr] = &[
         f_frame_monitor_attributes,
         ""
     ),
-    S!("display-mm-dimensions-alist", 0, 1, f_nil, ""),
+    // `display-mm-dimensions-alist' is a variable in GNU (nil in batch).
     S!("x-open-connection", 1, 2, f_nil, ""),
     S!("x-close-connection", 1, 1, f_nil, ""),
     S!("x-display-list", 0, 0, f_nil, ""),
@@ -952,10 +952,8 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!("window-child", 1, 1, f_nil, ""),
     S!("window-child-count", 1, 1, f_zero, ""),
     S!("window-combined-p", 0, 2, f_nil, ""),
-    S!("window-leftmost-p", 1, 1, f_t, ""),
-    S!("window-rightmost-p", 1, 1, f_t, ""),
-    S!("window-topmost-p", 1, 1, f_t, ""),
-    S!("window-bottommost-p", 1, 1, f_t, ""),
+    // `window-leftmost-p'/`-rightmost-p'/`-topmost-p'/`-bottommost-p'
+    // do not exist in GNU.
     S!("window-at-side-p", 1, 2, f_t, ""),
     S!("window-in-direction", 1, 5, f_window_in_direction, ""),
     S!("window-main-window", 0, 1, f_nil, ""),
@@ -965,12 +963,11 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!("suppress-keymap", 1, 2, f_suppress_keymap, ""),
     S!("make-composed-keymap", 1, 2, f_make_composed_keymap, ""),
     S!("current-active-maps", 0, 2, f_current_active_maps, ""),
-    S!("keymap--mergable", 1, 1, f_t, ""),
     S!("keymap-canonicalize", 1, 1, f_identity, ""),
     S!("set-transient-map", 1, 3, f_set_transient_map, ""),
     // `text-mode-map' is a variable (keymap) in GNU, not a subr.
     // ---------- tables ----------
-    S!("buffer-display-table", 0, 0, f_nil, ""),
+    // `buffer-display-table' is a buffer-local variable in GNU.
     S!("char-table-extra-slot", 2, 2, f_char_table_extra_slot, ""),
     S!(
         "set-char-table-extra-slot",
