@@ -134,10 +134,26 @@ fn eval_src(i: &mut Interp, file: &str, src: &str) -> EvalResult {
     let lex_id = i.intern("lexical-binding");
     let lex_on = file_lexical_binding(&src);
     i.specbind(lex_id, if lex_on { Value::t() } else { Value::Nil })?;
+    // GNU's load machinery autoloads these preloaded libraries on the
+    // first `load' of any file — before the file's own forms run.
+    for feat in ["cl-lib", "cl-loaddefs", "icons", "warnings"] {
+        let id = i.intern(feat);
+        if !i.features.contains(&id) {
+            i.features.insert(0, id);
+        }
+    }
+    // Loading `icons' defines the `icon'/`icon-button' faces (GNU's
+    // icons.el does this via defface).
+    if !i.face_table.iter().any(|(n, _)| n == "icon") {
+        i.face_table.push(("icon".to_string(), Value::Nil));
+        i.face_table.push(("icon-button".to_string(), Value::Nil));
+    }
+    let flist =
+        Value::list(i.features.iter().map(|s| i.sym(*s)).collect::<Vec<_>>());
+    let fid = i.intern("features");
+    i.obarray.symbol_mut(fid).value = flist;
     let r = eval_str_for_load(i, &src);
     if r.is_ok() {
-        // Push the file onto current-load-list's default? Emacs pushes
-        // each loaded file; we keep it simple.
         let _ = cll;
         run_after_load(i, file);
     }

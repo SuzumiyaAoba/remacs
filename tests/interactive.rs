@@ -297,7 +297,7 @@ fn key_binding_and_define_key() {
     assert_eq!(ev("(key-binding \"\\C-f\")"), "forward-char");
     assert_eq!(
         ev("(key-binding \"\\C-x\\C-c\")"),
-        "save-buffers-kill-emacs"
+        "save-buffers-kill-terminal"
     );
     assert_eq!(
         ev("(progn (define-key (current-global-map) [f5] 'ignore) (key-binding [f5]))"),

@@ -799,7 +799,8 @@ fn f_provide(i: &mut Interp, args: Vec<Value>) -> EvalResult {
         }
     }
     if !i.features.contains(&id) {
-        i.features.push(id);
+        // GNU `provide' is `(push feature features)'.
+        i.features.insert(0, id);
     }
     let flist = Value::list(i.features.iter().map(|s| i.sym(*s)).collect::<Vec<_>>());
     let fid = i.intern("features");
@@ -1501,18 +1502,24 @@ fn f_format_time_string(i: &mut Interp, args: Vec<Value>) -> EvalResult {
 }
 
 fn f_garbage_collect(i: &mut Interp, _args: Vec<Value>) -> EvalResult {
+    // GNU shape: (NAME SIZE USED FREE) triples per category, except
+    // string-bytes/buffers which lack the FREE count.
     let n = i.obarray.len() as i128;
+    let item = |i: &mut Interp, name: &str, vals: &[i128]| {
+        let mut v = vec![Value::Sym(i.intern(name))];
+        v.extend(vals.iter().map(|x| Value::Int(*x)));
+        Value::list(v)
+    };
     Ok(Value::list(vec![
-        Value::cons(Value::Sym(i.intern("conses")), Value::Int(n)),
-        Value::cons(Value::Sym(i.intern("symbols")), Value::Int(n)),
-        Value::cons(Value::Sym(i.intern("strings")), Value::Int(0)),
-        Value::cons(Value::Sym(i.intern("miscs")), Value::Int(0)),
-        Value::cons(Value::Sym(i.intern("vector-cells")), Value::Int(0)),
-        Value::cons(Value::Sym(i.intern("floats")), Value::Int(0)),
-        Value::cons(Value::Sym(i.intern("intervals")), Value::Int(0)),
-        Value::cons(Value::Sym(i.intern("buffers")), Value::Int(0)),
-        Value::cons(Value::Sym(i.intern("string-chars")), Value::Int(0)),
-        Value::cons(Value::Sym(i.intern("cons-cells")), Value::Int(n)),
+        item(i, "conses", &[16, n, 0]),
+        item(i, "symbols", &[48, n, 0]),
+        item(i, "strings", &[32, 0, 0]),
+        item(i, "string-bytes", &[1, 0]),
+        item(i, "vectors", &[16, 0]),
+        item(i, "vector-slots", &[8, 0, 0]),
+        item(i, "floats", &[8, 0, 0]),
+        item(i, "intervals", &[56, 0, 0]),
+        item(i, "buffers", &[1064, 0]),
     ]))
 }
 fn f_memory_info(i: &mut Interp, args: Vec<Value>) -> EvalResult {

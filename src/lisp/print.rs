@@ -148,6 +148,24 @@ impl Interp {
                             return;
                         }
                     }
+                    if self.symbol_name(*t) == "window-configuration" {
+                        let _ = write!(out, "#<window-configuration>");
+                        return;
+                    }
+                    // Terminals print `#<terminal N on NAME>'.
+                    if self.symbol_name(*t) == "terminal" {
+                        if let [_, Value::Int(n), Value::Str(name)] =
+                            rr.as_slice()
+                        {
+                            let _ = write!(
+                                out,
+                                "#<terminal {} on {}>",
+                                n,
+                                name.borrow()
+                            );
+                            return;
+                        }
+                    }
                 }
                 // Bool vectors print `#&N"bytes"' with bits packed
                 // LSB-first per byte.

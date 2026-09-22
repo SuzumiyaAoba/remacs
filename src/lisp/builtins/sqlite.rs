@@ -74,15 +74,29 @@ fn sql_err(i: &mut Interp, e: rusqlite::Error) -> Flow {
         ),
         _ => ("SQL logic error".to_string(), Value::Int(1), Value::Int(1)),
     };
-    sqlite_err(
-        i,
-        vec![Value::list(vec![
-            Value::string(name),
-            Value::string(e.to_string()),
-            code,
-            ext,
-        ])],
-    )
+    // GNU signals `sqlite-locked-error' (a subcase of sqlite-error)
+    // when the failure code is SQLITE_LOCKED or SQLITE_BUSY.
+    let locked = matches!(
+        &e,
+        rusqlite::Error::SqliteFailure(c, _)
+            if matches!(
+                c.code,
+                rusqlite::ErrorCode::DatabaseLocked
+                    | rusqlite::ErrorCode::DatabaseBusy
+            )
+    );
+    let data = vec![Value::list(vec![
+        Value::string(name),
+        Value::string(e.to_string()),
+        code,
+        ext,
+    ])];
+    if locked {
+        let le = i.intern("sqlite-locked-error");
+        i.signal_data(le, data)
+    } else {
+        sqlite_err(i, data)
+    }
 }
 
 /// Parse #s(sqlite <kind-sym> <id>); the kind symbol id is compared by name
@@ -274,16 +288,57 @@ fn f_sqlite_execute(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let id = want_db_id(i, &a[0])?;
     let sql = want_string(i, &a[1])?;
     let vals = bind_args(i, &arg(&a, 2))?;
-    with_conn(i, id, |c| {
-        c.execute(sql.as_str(), rusqlite::params_from_iter(vals.iter()))
-    })
-    .map(|n| Value::Int(n as i128))
+    // GNU steps the prepared statement once: SQLITE_ROW means the
+    // statement returns data (e.g. a SELECT or INSERT ... RETURNING),
+    // so all rows are collected eagerly and returned as a list.
+    // Otherwise the affected-row count is returned.
+    let (cols_rows, n) = with_conn(i, id, |c| {
+        let mut stmt = c.prepare(sql.as_str())?;
+        let width = stmt.column_count();
+        if width > 0 {
+            let mut q = stmt.query(rusqlite::params_from_iter(vals.iter()))?;
+            let mut rows = Vec::new();
+            while let Some(row) = q.next()? {
+                let mut r = Vec::with_capacity(width);
+                for k in 0..width {
+                    r.push(row_val(row.get_ref(k)?));
+                }
+                rows.push(r);
+            }
+            Ok((Some(rows), 0))
+        } else {
+            Ok((
+                None,
+                stmt.execute(rusqlite::params_from_iter(vals.iter()))?,
+            ))
+        }
+    })?;
+    match cols_rows {
+        Some(rows) => Ok(Value::list(
+            rows.iter()
+                .map(|r| Value::list(r.iter().map(sval_to_value).collect()))
+                .collect(),
+        )),
+        None => Ok(Value::Int(n as i128)),
+    }
 }
 
 fn f_sqlite_execute_batch(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let id = want_db_id(i, &a[0])?;
     let sql = want_string(i, &a[1])?;
-    with_conn(i, id, |c| c.execute_batch(sql.as_str())).map(|_| Value::Sym(1))
+    // GNU wraps sqlite3_exec: SQL failure returns nil, no signal.
+    exec_quiet(i, id, &sql)
+}
+
+/// sqlite3_exec-style helper: t on success, nil on SQL failure.
+fn exec_quiet(i: &mut Interp, id: u64, sql: &str) -> EvalResult {
+    DBS.with(|d| {
+        let mut m = d.borrow_mut();
+        match m.get_mut(&id).and_then(|e| e.conn.as_mut()) {
+            Some(c) => Ok(Value::from_bool(c.execute_batch(sql).is_ok())),
+            None => Err(sqlite_err(i, vec![Value::string("Database closed")])),
+        }
+    })
 }
 
 fn select_rows(
@@ -341,13 +396,7 @@ fn f_sqlite_select(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 /// reports failure — e.g. commit/rollback with no active transaction.
 fn f_sqlite_execute1(i: &mut Interp, a: Vec<Value>, sql: &str) -> EvalResult {
     let id = want_db_id(i, &a[0])?;
-    DBS.with(|d| {
-        let mut m = d.borrow_mut();
-        match m.get_mut(&id).and_then(|e| e.conn.as_mut()) {
-            Some(c) => Ok(Value::from_bool(c.execute_batch(sql).is_ok())),
-            None => Err(sqlite_err(i, vec![Value::string("Database closed")])),
-        }
-    })
+    exec_quiet(i, id, sql)
 }
 
 fn f_sqlite_transaction(i: &mut Interp, a: Vec<Value>) -> EvalResult {
@@ -398,24 +447,27 @@ fn f_sqlite_finalize(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 fn f_sqlite_pragma(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let id = want_db_id(i, &a[0])?;
     let p = want_string(i, &a[1])?;
-    with_conn(i, id, |c| c.execute_batch(&format!("PRAGMA {p}"))).map(|_| Value::Sym(1))
+    exec_quiet(i, id, &format!("PRAGMA {p}"))
 }
 
 fn f_sqlite_load_extension(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let id = want_db_id(i, &a[0])?;
     let module = want_string(i, &a[1])?;
-    // GNU loads only modules listed in `sqlite-allowed-modules'.
-    let allowed = i
-        .intern_soft("sqlite-allowed-modules")
-        .map(|s| i.symbol_value(s))
-        .map(|v| {
-            v.list_to_vec()
-                .map(|items| {
-                    items.iter().any(|m| matches!(m, Value::Str(s) if *s.borrow() == module))
-                })
-                .unwrap_or(false)
-        })
-        .unwrap_or(false);
+    // GNU's allowlist is hardcoded in sqlite.c: the file's basename
+    // (sans any "libsqlite3_mod_" prefix) must be one of these names
+    // plus a .so/.dylib/.dll extension.
+    const ALLOWLIST: &[&str] = &[
+        "base64", "cksumvfs", "compress", "csv", "csvtable", "fts3", "icu",
+        "pcre", "percentile", "regexp", "rot13", "rtree", "sha1", "uuid",
+        "vec0", "vector0", "vfslog", "vss0", "zipfile",
+    ];
+    let base = module.rsplit('/').next().unwrap_or(&module);
+    let base = base.strip_prefix("libsqlite3_mod_").unwrap_or(base);
+    let allowed = ALLOWLIST.iter().any(|name| {
+        base.strip_prefix(name)
+            .is_some_and(|ext| matches!(ext.to_ascii_lowercase().as_str(),
+                                        ".so" | ".dylib" | ".dll"))
+    });
     if !allowed {
         return Err(sqlite_err(i, vec![Value::string("Module name not on allowlist")]));
     }
@@ -449,6 +501,15 @@ pub(crate) fn install(i: &mut Interp) {
     ]);
     i.put_prop(se, ec, conds);
     i.put_prop(se, em, Value::string("SQLite error"));
+    // `sqlite-locked-error' is a subcase of `sqlite-error' in GNU.
+    let le = i.intern("sqlite-locked-error");
+    let err = i.intern("error");
+    i.put_prop(
+        le,
+        ec,
+        Value::list(vec![Value::Sym(le), Value::Sym(se), Value::Sym(err)]),
+    );
+    i.put_prop(le, em, Value::string("Database locked"));
 }
 
 pub(crate) static SUBRS: &[Subr] = &[

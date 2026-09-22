@@ -226,18 +226,108 @@ pub enum MinibufInput {
     Key(i128),
 }
 
+/// `<share>/emacs/<ver>/etc/` if it contains a DOC file.
+fn doc_dir_under(emacs_share: &std::path::Path) -> Option<String> {
+    let rd = std::fs::read_dir(emacs_share).ok()?;
+    for e in rd.flatten() {
+        let etc = e.path().join("etc");
+        if etc.join("DOC").is_file() {
+            return Some(format!("{}/", etc.display()));
+        }
+    }
+    None
+}
+
+/// Find `<prefix>/share/emacs/<ver>/etc/` (containing DOC) for the
+/// emacs binary at EXE. Wrapper scripts (`exec /real/emacs`, as in
+/// Nixpkgs' emacsWithPackages) are unwrapped up to DEPTH hops.
+fn doc_dir_of_emacs(exe: &std::path::Path, depth: u8) -> Option<String> {
+    let exe = std::fs::canonicalize(exe).ok()?;
+    if let Some(prefix) = exe.parent().and_then(|p| p.parent()) {
+        if let Some(hit) = doc_dir_under(&prefix.join("share/emacs")) {
+            return Some(hit);
+        }
+        // Nixpkgs with-packages wrappers symlink share/* into the real
+        // emacs package — follow any of them to the real prefix.
+        if let Ok(rd) = std::fs::read_dir(prefix.join("share")) {
+            for e in rd.flatten() {
+                if let Ok(real) = std::fs::canonicalize(e.path()) {
+                    if let Some(share) = real.parent() {
+                        if let Some(hit) =
+                            doc_dir_under(&share.join("emacs"))
+                        {
+                            return Some(hit);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    if depth < 5 {
+        if let Ok(src) = std::fs::read_to_string(&exe) {
+            for line in src.lines() {
+                let Some(rest) = line.trim_start().strip_prefix("exec ") else {
+                    continue;
+                };
+                let Some(target) = rest.split_whitespace().next() else {
+                    continue;
+                };
+                let cand = std::path::PathBuf::from(target);
+                if cand.file_name().map(|n| n == "emacs").unwrap_or(false) {
+                    if let Some(hit) = doc_dir_of_emacs(&cand, depth + 1) {
+                        return Some(hit);
+                    }
+                }
+            }
+        }
+    }
+    None
+}
+
 impl Interp {
     pub fn new() -> Interp {
         let mut obarray = Obarray::new();
         let standard_output_sym = obarray.intern("standard-output");
         let emacs_sym = obarray.intern("emacs");
+        // GNU batch's feature list (NS tty build ordering);
+        // `provide' appends to this.
+        let feature_syms: Vec<SymId> = [
+            "japan-util", "rmc", "iso-transl", "tooltip", "cconv", "eldoc",
+            "paren", "electric", "uniquify", "ediff-hook", "vc-hooks",
+            "lisp-float-type", "elisp-mode", "mwheel", "term/ns-win", "ns-win",
+            "ucs-normalize", "mule-util", "term/common-win", "tool-bar", "dnd",
+            "fontset", "image", "regexp-opt", "fringe", "tabulated-list",
+            "replace", "newcomment", "text-mode", "lisp-mode", "prog-mode",
+            "register", "page", "tab-bar", "menu-bar", "rfn-eshadow", "isearch",
+            "easymenu", "timer", "select", "scroll-bar", "mouse", "jit-lock",
+            "font-lock", "syntax", "font-core", "term/tty-colors", "frame",
+            "minibuffer", "nadvice", "seq", "simple", "cl-generic",
+            "indonesian", "philippine", "cham", "georgian", "utf-8-lang",
+            "misc-lang", "vietnamese", "tibetan", "thai", "tai-viet", "lao",
+            "korean", "japanese", "eucjp-ms", "cp51932", "hebrew", "greek",
+            "romanian", "slovak", "czech", "european", "ethiopic", "indian",
+            "cyrillic", "chinese", "composite", "emoji-zwj", "charscript",
+            "charprop", "case-table", "epa-hook", "jka-cmpr-hook", "help",
+            "abbrev", "obarray", "oclosure", "cl-preloaded", "button",
+            "loaddefs", "theme-loaddefs", "faces", "cus-face", "macroexp",
+            "files", "window", "text-properties", "overlay", "sha1", "md5",
+            "base64", "format", "env", "code-pages", "mule", "custom",
+            "widget", "keymap", "hashtable-print-readable", "backquote",
+            "threads", "kqueue", "cocoa", "ns", "multi-tty",
+            "make-network-process", "tty-child-frames", "native-compile",
+        ]
+        .iter()
+        .map(|s| obarray.intern(s))
+        .chain(std::iter::once(emacs_sym))
+        .collect();
+        let dump_features = feature_syms.clone();
         let mut interp = Interp {
             obarray,
             specbind: Vec::new(),
             lexenv: None,
             buffers: crate::buffer::BufferSet::new(),
             current_buffer: 0,
-            features: vec![emacs_sym],
+            features: feature_syms,
             output: None,
             echo_message: String::new(),
             max_lisp_eval_depth: 1600,
@@ -337,6 +427,20 @@ impl Interp {
         // Load the Lisp prelude (subr.el subset). Errors here indicate a
         // broken prelude, but don't abort startup.
         let _ = interp.eval_str(crate::lisp::prelude::PRELUDE);
+        // Boot-time autoloads (easy-mmode & co.) correspond to GNU's
+        // dumped loadup; the user-visible `features' list must match the
+        // post-dump set.
+        interp.features = dump_features;
+        // `icons' faces created by boot-time loads are likewise
+        // hidden until a real `load' triggers them.
+        interp
+            .face_table
+            .retain(|(n, _)| n != "icon" && n != "icon-button");
+        let flist = Value::list(
+            interp.features.iter().map(|s| Value::Sym(*s)).collect(),
+        );
+        let fid = interp.intern("features");
+        interp.obarray.symbol_mut(fid).value = flist;
         interp
     }
 
@@ -2467,7 +2571,13 @@ impl Interp {
             ),
             (
                 "features",
-                Value::list(vec![Value::Sym(self.intern("emacs"))]),
+                // Kept in sync with `self.features' by `provide'.
+                Value::list(
+                    self.features
+                        .iter()
+                        .map(|s| Value::Sym(*s))
+                        .collect(),
+                ),
             ),
             ("current-load-list", Value::Nil),
             ("load-in-progress", Value::Nil),
@@ -3100,7 +3210,30 @@ impl Interp {
                 }),
             ),
             ("exec-directory", Value::string("/usr/local/bin/")),
-            ("doc-directory", Value::string("/usr/share/emacs/")),
+            (
+                "doc-directory",
+                // Locate the host GNU Emacs's etc/ dir (which holds the
+                // DOC file) via the `emacs' on PATH; fall back to the
+                // conventional share path.
+                Value::string(
+                    std::env::var_os("PATH")
+                        .map(|p| std::env::split_paths(&p).collect::<Vec<_>>())
+                        .unwrap_or_default()
+                        .into_iter()
+                        .chain(
+                            [
+                                "/run/current-system/sw/bin",
+                                "/usr/bin",
+                                "/usr/local/bin",
+                                "/opt/homebrew/bin",
+                            ]
+                            .into_iter()
+                            .map(std::path::PathBuf::from),
+                        )
+                        .find_map(|dir| doc_dir_of_emacs(&dir.join("emacs"), 0))
+                        .unwrap_or_else(|| "/usr/share/emacs/".into()),
+                ),
+            ),
             (
                 "initial-major-mode",
                 Value::Sym(self.intern("lisp-interaction-mode")),

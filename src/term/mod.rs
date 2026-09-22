@@ -1411,14 +1411,14 @@ mod tests {
             lookup_command(&mut i, &seq(24)),
             LookupResult::Prefix
         ));
-        // C-x C-c -> save-buffers-kill-emacs
+        // C-x C-c -> save-buffers-kill-terminal (GNU's binding)
         let two = Value::Vec(std::rc::Rc::new(std::cell::RefCell::new(vec![
             Value::Int(24),
             Value::Int(3),
         ])));
         match lookup_command(&mut i, &two) {
             LookupResult::Command(v) => {
-                assert_eq!(i.princ_to_string(&v), "save-buffers-kill-emacs")
+                assert_eq!(i.princ_to_string(&v), "save-buffers-kill-terminal")
             }
             _ => panic!("C-x C-c should resolve"),
         }

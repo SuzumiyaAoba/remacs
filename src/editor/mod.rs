@@ -2488,7 +2488,7 @@ fn f_window_configuration_p(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     }))
 }
 
-fn f_current_window_configuration(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+pub(crate) fn f_current_window_configuration(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     // Optional FRAME: frame-live-p check.
     if let Some(v) = a.first() {
         match v {
@@ -3115,22 +3115,22 @@ fn f_frame_parameter(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         _ => Value::Nil,
     })
 }
-fn f_frame_parameters(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+pub(crate) fn f_frame_parameters(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let f = frame_of(i, &arg(&a, 0))?;
-    let (mut out, name, w, h, mbuf, bufv) = {
+    let (stored, name, w, h, mbuf, bufv) = {
         let ff = f.borrow();
         let items = ff.params.list_to_vec().unwrap_or_default();
-        let mut out = Vec::new();
+        let mut stored = Vec::new();
         let mut k = 0;
         while k + 1 < items.len() {
-            out.push(Value::cons(items[k].clone(), items[k + 1].clone()));
+            stored.push(Value::cons(items[k].clone(), items[k + 1].clone()));
             k += 2;
         }
         let bufv = i
             .buffer_value(ff.windows.first().map(|w| w.borrow().buffer).unwrap_or(0))
             .unwrap_or(Value::Nil);
         (
-            out,
+            stored,
             ff.name.clone(),
             ff.width,
             ff.height,
@@ -3138,39 +3138,60 @@ fn f_frame_parameters(i: &mut Interp, a: Vec<Value>) -> EvalResult {
             bufv,
         )
     };
-    let ids: Vec<SymId> = [
-        "name",
-        "width",
-        "height",
-        "modeline",
-        "minibuffer",
-        "buffer-list",
-    ]
-    .iter()
-    .map(|k| i.intern(k))
-    .collect();
-    let have = |kid: SymId, out: &Vec<Value>| {
-        out.iter().any(
-            |v| matches!(v, Value::Cons(c) if matches!(c.borrow().car, Value::Sym(s) if s == kid)),
-        )
-    };
-    if !have(ids[0], &out) {
-        out.push(Value::cons(Value::Sym(ids[0]), Value::string(name)));
+    // GNU's tty frame parameter list, in order.
+    let dark = i.intern("dark");
+    let mono = i.intern("mono");
+    let defaults: Vec<(&str, Value)> = vec![
+        ("no-accept-focus", Value::Nil),
+        ("visibility", Value::t()),
+        ("tab-bar-lines", Value::Int(0)),
+        ("menu-bar-lines", Value::Int(1)),
+        ("buried-buffer-list", Value::Nil),
+        ("buffer-list", Value::list(vec![bufv])),
+        ("unsplittable", Value::Nil),
+        ("modeline", Value::t()),
+        ("width", Value::Int(w as i128)),
+        ("height", Value::Int(h as i128)),
+        ("name", Value::string(name)),
+        ("font", Value::string("tty")),
+        ("background-color", Value::string("unspecified-bg")),
+        ("foreground-color", Value::string("unspecified-fg")),
+        ("cursor-color", Value::string("white")),
+        ("background-mode", Value::Sym(dark)),
+        ("display-type", Value::Sym(mono)),
+        ("minibuffer", Value::from_bool(mbuf)),
+    ];
+    let mut out = Vec::new();
+    for (k, dv) in defaults {
+        let kid = i.intern(k);
+        let from_store = stored.iter().find_map(|v| match v {
+            Value::Cons(c) if matches!(c.borrow().car, Value::Sym(s) if s == kid) => {
+                Some(c.borrow().cdr.clone())
+            }
+            _ => None,
+        });
+        out.push(Value::cons(
+            Value::Sym(kid),
+            from_store.unwrap_or(dv),
+        ));
     }
-    if !have(ids[1], &out) {
-        out.push(Value::cons(Value::Sym(ids[1]), Value::Int(w as i128)));
-    }
-    if !have(ids[2], &out) {
-        out.push(Value::cons(Value::Sym(ids[2]), Value::Int(h as i128)));
-    }
-    if !have(ids[3], &out) {
-        out.push(Value::cons(Value::Sym(ids[3]), Value::t()));
-    }
-    if !have(ids[4], &out) {
-        out.push(Value::cons(Value::Sym(ids[4]), Value::from_bool(mbuf)));
-    }
-    if !have(ids[5], &out) {
-        out.push(Value::cons(Value::Sym(ids[5]), Value::list(vec![bufv])));
+    // Any stored params not in the default list keep their place.
+    let def_ids: Vec<SymId> = out
+        .iter()
+        .filter_map(|v| match v {
+            Value::Cons(c) => match &c.borrow().car {
+                Value::Sym(s) => Some(*s),
+                _ => None,
+            },
+            _ => None,
+        })
+        .collect();
+    for v in stored {
+        let dup = matches!(&v, Value::Cons(c)
+            if matches!(&c.borrow().car, Value::Sym(s) if def_ids.contains(s)));
+        if !dup {
+            out.push(v);
+        }
     }
     Ok(Value::list(out))
 }
@@ -3634,6 +3655,48 @@ pub(crate) fn is_keymap(i: &Interp, v: &Value) -> bool {
     }
 }
 
+/// Resolve DEF to a keymap when it is a keymap cons or a symbol whose
+/// function cell holds one (prefix commands like `Control-X-prefix',
+/// `ESC-prefix', `mode-specific-command-prefix'). Autoload keymaps
+/// (`(autoload FILE ... keymap)') trigger their file load, as in GNU.
+/// Otherwise returns DEF unchanged.
+pub(crate) fn keymap_def(i: &mut Interp, def: Value) -> EvalResult {
+    if let Value::Sym(s) = &def {
+        if let f @ Value::Cons(_) = i.symbol_function(*s) {
+            if is_keymap(i, &f) {
+                return Ok(f);
+            }
+            // (autoload "file" ... keymap): load, then recheck.
+            if is_autoload_keymap(i, &f) {
+                let newf = crate::lisp::builtins::evalfn::autoload_do_load(
+                    i,
+                    f.clone(),
+                    false,
+                )?;
+                if is_keymap(i, &newf) {
+                    return Ok(newf);
+                }
+            }
+        }
+    }
+    Ok(def)
+}
+
+/// Push MAP onto `keymap--builtin-maps' so the prelude's keymap-order
+/// normalization pass can tell maps built binding-by-binding (whose
+/// alists are reversed by define-key's prepend) from literal
+/// (keymap ...) data, which is already stored in GNU order.
+fn register_builtin_keymap(i: &mut Interp, m: &Value) {
+    let id = i.intern("keymap--builtin-maps");
+    let cur = i.obarray.symbol(id).value.clone();
+    let cur = if matches!(cur, Value::Sym(s) if s == sym::UNBOUND) {
+        Value::Nil
+    } else {
+        cur
+    };
+    i.obarray.symbol_mut(id).value = Value::cons(m.clone(), cur);
+}
+
 fn f_make_keymap(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     // GNU stores the menu prompt as a string element in the keymap's
     // cdr: (keymap "prompt" . bindings).
@@ -3641,16 +3704,66 @@ fn f_make_keymap(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         Value::Str(_) => Value::list(vec![a[0].clone()]),
         _ => Value::Nil,
     };
-    Ok(Value::cons(Value::Sym(i.intern("keymap")), rest))
+    let km = Value::cons(Value::Sym(i.intern("keymap")), rest);
+    register_builtin_keymap(i, &km);
+    Ok(km)
 }
 fn f_make_sparse_keymap(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     f_make_keymap(i, a)
 }
 fn f_keymapp(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    Ok(Value::from_bool(is_keymap(i, &a[0])))
+    // GNU: a cons keymap, or a symbol whose function cell is a keymap
+    // or an (autoload ... keymap) form (checked without loading).
+    let ok = match &a[0] {
+        Value::Sym(s) => match i.symbol_function(*s) {
+            f @ Value::Cons(_) => is_keymap(i, &f) || is_autoload_keymap(i, &f),
+            _ => false,
+        },
+        _ => is_keymap(i, &a[0]),
+    };
+    Ok(Value::from_bool(ok))
 }
+
+/// `(autoload FILE DOC INTERACTIVE keymap)' form check (no load).
+pub(crate) fn is_autoload_keymap(i: &Interp, v: &Value) -> bool {
+    if let Value::Cons(c) = v {
+        if !i.sym_is(&c.borrow().car, i.obarray.intern_soft("autoload").unwrap_or(u32::MAX))
+        {
+            return false;
+        }
+        v.list_to_vec()
+            .ok()
+            .and_then(|l| l.get(4).cloned())
+            .map(|t| i.sym_is(&t, i.obarray.intern_soft("keymap").unwrap_or(u32::MAX)))
+            .unwrap_or(false)
+    } else {
+        false
+    }
+}
+/// Deep-copy a keymap spine cell: cons structure is copied
+/// recursively so nested keymaps and binding cells are fresh.
+/// Non-cons leaves (including a parent-tail keymap's elements —
+/// copied through the same recursion) share nothing with the source.
+fn copy_keymap_elem(v: &Value, depth: usize) -> Value {
+    if depth > 200 {
+        return v.clone();
+    }
+    match v {
+        Value::Cons(c) => {
+            let b = c.borrow();
+            let (car, cdr) = (b.car.clone(), b.cdr.clone());
+            drop(b);
+            Value::cons(
+                copy_keymap_elem(&car, depth + 1),
+                copy_keymap_elem(&cdr, depth + 1),
+            )
+        }
+        _ => v.clone(),
+    }
+}
+
 fn f_copy_keymap(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    // Shallow-copy the bindings alist (bindings themselves shared).
+    // GNU copies the whole cdr spine, including the parent tail.
     if !is_keymap(i, &a[0]) {
         return Err(i.wrong_type_mut("keymapp", &a[0]));
     }
@@ -3658,10 +3771,9 @@ fn f_copy_keymap(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         Value::Cons(c) => c.borrow().cdr.clone(),
         _ => Value::Nil,
     };
-    let items = bindings.list_to_vec().unwrap_or_default();
     Ok(Value::cons(
         Value::Sym(i.intern("keymap")),
-        Value::list(items),
+        copy_keymap_elem(&bindings, 0),
     ))
 }
 
@@ -3672,16 +3784,34 @@ pub(crate) fn keymap_bindings(km: &Value) -> Value {
     }
 }
 
-/// Parent keymaps of KM: elements that are themselves keymaps or a
-/// proper list of keymaps (composed maps from `make-composed-keymap').
+/// Parent keymaps of KM. GNU stores the parent as the improper tail
+/// of the cdr spine — `(keymap E1 ... En . PARENT)'. Scanning the
+/// spine, the first cons cell that is itself a keymap (car `keymap')
+/// is the parent. An element that is a bare keymap (composed maps
+/// from `make-composed-keymap') makes the remaining spine the parent.
 pub(crate) fn keymap_parents(i: &Interp, km: &Value) -> Vec<Value> {
     let mut out = Vec::new();
-    // Improper tail: (keymap P1 . P2) chains in composed maps.
     if let Value::Cons(c) = km {
         let mut cur = c.borrow().cdr.clone();
         loop {
-            match cur {
-                Value::Cons(cc) => cur = cc.borrow().cdr.clone(),
+            match cur.clone() {
+                Value::Cons(cc) => {
+                    if is_keymap(i, &cur) {
+                        out.push(cur.clone());
+                        break;
+                    }
+                    let (car, next) = {
+                        let b = cc.borrow();
+                        (b.car.clone(), b.cdr.clone())
+                    };
+                    if is_keymap(i, &car) {
+                        if is_keymap(i, &next) {
+                            out.push(next);
+                        }
+                        break;
+                    }
+                    cur = next;
+                }
                 tail => {
                     if is_keymap(i, &tail) {
                         out.push(tail);
@@ -3690,18 +3820,51 @@ pub(crate) fn keymap_parents(i: &Interp, km: &Value) -> Vec<Value> {
                 }
             }
         }
+        // Bare keymap elements (composed-map members) are searched
+        // like parents.
+        keymap_bindings(km).each_car(|el| {
+            if is_keymap(i, el) {
+                out.push(el.clone());
+            } else if let Value::Cons(_) = el {
+                let items = el.list_to_vec().unwrap_or_default();
+                if !items.is_empty() && items.iter().all(|v| is_keymap(i, v)) {
+                    out.extend(items);
+                }
+            }
+        });
     }
-    for el in keymap_bindings(km).list_to_vec().unwrap_or_default() {
-        if is_keymap(i, &el) {
-            out.push(el);
-        } else if let Value::Cons(_) = &el {
-            let items = el.list_to_vec().unwrap_or_default();
-            if !items.is_empty() && items.iter().all(|v| is_keymap(i, v)) {
-                out.extend(items);
+    out
+}
+
+/// Split a keymap's cdr into its own elements and the parent tail
+/// (the first spine cons that is itself a keymap, or nil).
+pub(crate) fn keymap_parts(i: &Interp, km: &Value) -> (Vec<Value>, Value) {
+    let mut elems = Vec::new();
+    let mut tail = Value::Nil;
+    if let Value::Cons(c) = km {
+        let mut cur = c.borrow().cdr.clone();
+        loop {
+            match cur.clone() {
+                Value::Cons(cc) => {
+                    if is_keymap(i, &cur) {
+                        tail = cur;
+                        break;
+                    }
+                    let (car, next) = {
+                        let b = cc.borrow();
+                        (b.car.clone(), b.cdr.clone())
+                    };
+                    elems.push(car);
+                    cur = next;
+                }
+                t => {
+                    tail = t;
+                    break;
+                }
             }
         }
     }
-    out
+    (elems, tail)
 }
 
 fn f_keymap_parent(i: &mut Interp, a: Vec<Value>) -> EvalResult {
@@ -3723,30 +3886,15 @@ fn f_set_keymap_parent(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         return Err(i.wrong_type_mut("keymapp", &parent));
     }
     if let Value::Cons(c) = &a[0] {
-        // Rebuild bindings without parent elements; the parent is the
-        // first element of the map (Emacs keeps it in the head slot).
-        let kept: Vec<Value> = keymap_bindings(&a[0])
-            .list_to_vec()
-            .unwrap_or_default()
-            .into_iter()
-            .filter(|el| {
-                if is_keymap(i, el) {
-                    return false;
-                }
-                if let Value::Cons(_) = el {
-                    let items = el.list_to_vec().unwrap_or_default();
-                    if !items.is_empty() && items.iter().all(|v| is_keymap(i, v)) {
-                        return false;
-                    }
-                }
-                true
-            })
-            .collect();
-        c.borrow_mut().cdr = if parent.is_nil() {
-            Value::list(kept)
-        } else {
-            Value::cons(parent.clone(), Value::list(kept))
-        };
+        // GNU stores the parent as the improper tail of the cdr:
+        // (keymap E1 ... En . PARENT). Own elements are preserved
+        // verbatim; only the tail is replaced.
+        let (elems, _old_tail) = keymap_parts(i, &a[0]);
+        let mut tail = parent.clone();
+        for el in elems.iter().rev() {
+            tail = Value::cons(el.clone(), tail);
+        }
+        c.borrow_mut().cdr = tail;
     }
     Ok(a[1].clone())
 }
@@ -3841,63 +3989,167 @@ pub(crate) fn key_name_for(code: i128) -> Option<String> {
         .and_then(|g| g.as_ref().and_then(|m| m.get(&code).cloned()))
 }
 
-pub(crate) fn lookup_in_keymap(i: &Interp, km: &Value, key: i128) -> Value {
-    // Binding cell is (KEY . DEF) or a vector-ish char-table; alist model.
-    // A `t` key is the default binding for otherwise-unbound events.
-    // Order: exact binding > default (t) binding > parent keymaps.
-    let bindings = keymap_bindings(km);
-    let t_code = event_code_for("t");
-    let mut found = Value::Nil;
-    let mut default = Value::Nil;
-    bindings.each_car(|cell| {
-        if let Value::Cons(c) = cell {
+/// Strip menu decorations from a binding's cdr to reach the real
+/// definition: `(KEY "Label" . DEF)' strips the string label, and
+/// `(KEY menu-item "Label" DEF . PROPS)' yields DEF.
+pub(crate) fn menu_label_def(i: &Interp, v: Value) -> Value {
+    if let Value::Cons(c) = &v {
+        let (car, cur) = {
             let b = c.borrow();
-            let k = match &b.car {
-                Value::Int(n) => Some(*n),
-                Value::Sym(s) => Some(event_code_for(&i.symbol_name(*s))),
-                _ => None,
+            (b.car.clone(), b.cdr.clone())
+        };
+        if matches!(car, Value::Str(_)) {
+            return cur;
+        }
+        if matches!(&car, Value::Sym(s) if i.symbol_name(*s) == "menu-item") {
+            // (menu-item LABEL DEF . PROPS): DEF is the caddr.
+            let mut cc = v.clone();
+            for _ in 0..2 {
+                match cc {
+                    Value::Cons(x) => cc = x.borrow().cdr.clone(),
+                    _ => return v.clone(),
+                }
+            }
+            return match cc {
+                Value::Cons(x) => x.borrow().car.clone(),
+                _ => v.clone(),
             };
-            match k {
-                Some(k) if k == key => found = b.cdr.clone(),
-                Some(k) if k == t_code => default = b.cdr.clone(),
-                _ => {}
+        }
+    }
+    v
+}
+
+/// Meta modifier bit in GNU's event encoding (CHAR_META).
+pub(crate) const META_BIT: i128 = 1 << 27;
+
+pub(crate) fn lookup_in_keymap(
+    i: &mut Interp,
+    km: &Value,
+    mut key: i128,
+) -> Result<Value, Flow> {
+    // GNU access_keymap_1: a meta-bit key is looked up through the
+    // map's meta-prefix (27) binding — M-x means ESC x.
+    if key & META_BIT != 0 {
+        let esc_b = lookup_in_keymap(i, km, 27)?;
+        let esc = keymap_def(i, esc_b)?;
+        if is_keymap(i, &esc) {
+            return lookup_in_keymap(i, &esc, key & !META_BIT);
+        }
+        // No meta map: only the default (t) binding can match.
+        key = event_code_for("t");
+    }
+    // GNU access_keymap_1: the cdr spine is one flat alist — the
+    // improper-tail parent's elements merge in order. Bare keymap
+    // elements (composed-map members) are searched inline at their
+    // spine position. `t' keys record a default binding.
+    let t_code = event_code_for("t");
+    let mut default = Value::Nil;
+    let mut cur = keymap_bindings(km);
+    loop {
+        let (elem, next) = match cur {
+            Value::Cons(cc) => {
+                let b = cc.borrow();
+                (b.car.clone(), b.cdr.clone())
+            }
+            _ => break,
+        };
+        if is_keymap(i, &elem) {
+            // Element that is itself a keymap: search it inline.
+            let v = lookup_in_keymap(i, &elem, key)?;
+            if !v.is_nil() {
+                return Ok(v);
+            }
+        } else if let Value::Cons(c) = &elem {
+            let b = c.borrow();
+            // ((LO . HI) . DEF) is a char-table style range binding.
+            if let Value::Cons(r) = &b.car {
+                let rb = r.borrow();
+                if let (Value::Int(lo), Value::Int(hi)) = (&rb.car, &rb.cdr) {
+                    if *lo <= key && key <= *hi {
+                        return Ok(menu_label_def(i, b.cdr.clone()));
+                    }
+                }
+            } else {
+                let k = match &b.car {
+                    Value::Int(n) => Some(*n),
+                    Value::Sym(s) => Some(event_code_for(&i.symbol_name(*s))),
+                    _ => None,
+                };
+                match k {
+                    Some(k) if k == key => return Ok(menu_label_def(i, b.cdr.clone())),
+                    Some(k) if k == t_code => default = menu_label_def(i, b.cdr.clone()),
+                    _ => {}
+                }
             }
         }
-    });
-    if !found.is_nil() {
-        return found;
+        cur = next;
     }
     if !default.is_nil() {
-        return default;
+        return Ok(default);
     }
     for p in keymap_parents(i, km) {
-        let v = lookup_in_keymap(i, &p, key);
+        let v = lookup_in_keymap(i, &p, key)?;
         if !v.is_nil() {
-            return v;
+            return Ok(v);
         }
     }
-    Value::Nil
+    Ok(Value::Nil)
 }
 
 fn f_define_key(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    if !is_keymap(i, &a[0]) {
+    // GNU resolves symbol map args via the function cell.
+    let map = keymap_def(i, a[0].clone())?;
+    if !is_keymap(i, &map) {
         return Err(i.wrong_type_mut("keymapp", &a[0]));
+    }
+    // GNU's char-table keymaps support (LO . HI) range keys; our alist
+    // model stores them as ((LO . HI) . DEF) pairs.
+    if let Value::Vec(v) = &a[1] {
+        let vv = v.borrow();
+        if vv.len() == 1 {
+            if let Value::Cons(r) = &vv[0] {
+                let rb = r.borrow();
+                if let (Value::Int(lo), Value::Int(hi)) =
+                    (&rb.car, &rb.cdr)
+                {
+                    let (lo, hi) = (*lo, *hi);
+                    drop(rb);
+                    drop(vv);
+                    set_range_binding(i, &map, lo, hi, a[2].clone());
+                    return Ok(a[2].clone());
+                }
+            }
+        }
     }
     let keys = key_seq(i, &a[1])?;
     let def = a[2].clone();
     if keys.is_empty() {
         return Ok(def);
     }
-    // Descend for multi-key sequences.
-    let mut km = a[0].clone();
-    for &k in &keys[..keys.len() - 1] {
-        let next = lookup_in_keymap(i, &km, k);
+    // Descend for multi-key sequences, following symbol-backed prefix
+    // maps; GNU errors when an intermediate binding is not a keymap.
+    let mut km = map;
+    for (n, &k) in keys[..keys.len() - 1].iter().enumerate() {
+        let next_raw = lookup_in_keymap(i, &km, k)?;
+        let next = keymap_def(i, next_raw)?;
         if is_keymap(i, &next) {
             km = next;
-        } else {
+        } else if next.is_nil() {
             let sub = Value::cons(Value::Sym(i.intern("keymap")), Value::Nil);
+            register_builtin_keymap(i, &sub);
             set_binding(i, &km, k, sub.clone());
             km = sub;
+        } else {
+            let seq = Value::Vec(std::rc::Rc::new(std::cell::RefCell::new(
+                keys[..n + 2]
+                    .iter()
+                    .map(|&c| Value::Int(c))
+                    .collect(),
+            )));
+            return Err(i.error(&format!(
+                "Key sequence {} uses invalid prefix characters",
+                i.princ_to_string(&seq)
+            )));
         }
     }
     set_binding(i, &km, keys[keys.len() - 1], def.clone());
@@ -3907,12 +4159,17 @@ fn f_define_key(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 /// Set (KEY . DEF) in keymap's alist (prepend or replace).
 pub(crate) fn set_binding(i: &mut Interp, km: &Value, key: i128, def: Value) {
     if let Value::Cons(head) = km {
-        // find existing binding
+        // find existing binding; GNU's store_in_keymap only replaces
+        // own bindings — the walk stops where the parent tail begins
+        // (a spine cons that is itself a keymap).
         let bindings = head.borrow().cdr.clone();
         let mut cur = bindings;
         loop {
-            match cur {
+            match cur.clone() {
                 Value::Cons(cell) => {
+                    if is_keymap(i, &cur) {
+                        break;
+                    }
                     let (car, next) = {
                         let b = cell.borrow();
                         (b.car.clone(), b.cdr.clone())
@@ -3944,31 +4201,82 @@ pub(crate) fn set_binding(i: &mut Interp, km: &Value, key: i128, def: Value) {
     }
 }
 
+/// Bind the character range LO..=HI to DEF (char-table style).
+/// Stored as a ((LO . HI) . DEF) pair in the keymap's alist.
+pub(crate) fn set_range_binding(
+    i: &mut Interp,
+    km: &Value,
+    lo: i128,
+    hi: i128,
+    def: Value,
+) {
+    if let Value::Cons(head) = km {
+        let bindings = head.borrow().cdr.clone();
+        let mut cur = bindings;
+        loop {
+            match cur.clone() {
+                Value::Cons(cell) => {
+                    if is_keymap(i, &cur) {
+                        break;
+                    }
+                    let (car, next) = {
+                        let b = cell.borrow();
+                        (b.car.clone(), b.cdr.clone())
+                    };
+                    if let Value::Cons(pair) = &car {
+                        let is_range = {
+                            let pb = pair.borrow();
+                            matches!(&pb.car, Value::Cons(r) if {
+                                let rb = r.borrow();
+                                matches!((&rb.car, &rb.cdr),
+                                    (Value::Int(l), Value::Int(h))
+                                        if *l == lo && *h == hi)
+                            })
+                        };
+                        if is_range {
+                            pair.borrow_mut().cdr = def;
+                            return;
+                        }
+                    }
+                    cur = next;
+                }
+                _ => break,
+            }
+        }
+        let _ = i;
+        let range = Value::cons(Value::Int(lo), Value::Int(hi));
+        let pair = Value::cons(range, def);
+        let old = head.borrow().cdr.clone();
+        head.borrow_mut().cdr = Value::cons(pair, old);
+    }
+}
+
 fn f_lookup_key(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    if !is_keymap(i, &a[0]) {
+    // GNU resolves symbol args via their function cell (and autoloads).
+    let map = keymap_def(i, a[0].clone())?;
+    if !is_keymap(i, &map) {
         return Err(i.wrong_type_mut("keymapp", &a[0]));
     }
     let keys = key_seq(i, &a[1])?;
-    let mut km = a[0].clone();
-    let mut used = 0usize;
-    for &k in &keys {
-        let def = lookup_in_keymap(i, &km, k);
-        used += 1;
+    let mut km = map;
+    for (n, &k) in keys.iter().enumerate() {
+        let raw = lookup_in_keymap(i, &km, k)?;
+        // Prefix defs may be symbols whose function cell is a keymap
+        // (Control-X-prefix, ESC-prefix, mode-specific-command-prefix).
+        // The raw binding is returned at the last key; GNU returns the
+        // count of examined keys when the sequence runs past a
+        // non-keymap (or missing) binding.
+        let def = keymap_def(i, raw.clone())?;
         if is_keymap(i, &def) {
-            km = def;
-        } else {
-            if used < keys.len() {
-                // Key sequence too long.
-                return Err(i.error(&format!(
-                    "Key sequence {} is too long",
-                    i.princ_to_string(&a[1])
-                )));
+            if n + 1 == keys.len() {
+                return Ok(raw);
             }
-            return Ok(if def.is_nil() { Value::Nil } else { def });
+            km = def;
+        } else if n + 1 == keys.len() {
+            return Ok(raw);
+        } else {
+            return Ok(Value::Int(n as i128 + 1));
         }
-    }
-    if used < keys.len() {
-        return Ok(Value::Int(used as i128)); // prefix: return count
     }
     Ok(km)
 }
@@ -3988,14 +4296,17 @@ fn f_key_binding(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     };
     if is_keymap(i, &local) {
         let mut km = local;
-        for &k in &keys {
-            let def = lookup_in_keymap(i, &km, k);
-            if is_keymap(i, &def) {
+        for (n, &k) in keys.iter().enumerate() {
+            let raw = lookup_in_keymap(i, &km, k)?;
+            let def = keymap_def(i, raw.clone())?;
+            if is_keymap(i, &def) && n + 1 < keys.len() {
                 km = def;
                 continue;
             }
-            if def.truthy() {
-                return Ok(def);
+            // GNU: a non-keymap def before the last key is an overlong
+            // sequence — no binding in this map, try the next map.
+            if n + 1 == keys.len() && raw.truthy() {
+                return Ok(raw);
             }
             break;
         }
@@ -4004,13 +4315,17 @@ fn f_key_binding(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let gmap = i.symbol_value(i.intern_soft("global-map").unwrap_or(0));
     if is_keymap(i, &gmap) {
         let mut km = gmap;
-        for &k in &keys {
-            let def = lookup_in_keymap(i, &km, k);
-            if is_keymap(i, &def) {
+        for (n, &k) in keys.iter().enumerate() {
+            let raw = lookup_in_keymap(i, &km, k)?;
+            let def = keymap_def(i, raw.clone())?;
+            if is_keymap(i, &def) && n + 1 < keys.len() {
                 km = def;
                 continue;
             }
-            return Ok(def);
+            if n + 1 == keys.len() {
+                return Ok(raw);
+            }
+            return Ok(Value::Nil);
         }
     }
     Ok(Value::Nil)
@@ -4028,13 +4343,17 @@ fn f_local_key_binding(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     };
     if is_keymap(i, &local) {
         let mut km = local;
-        for &k in &keys {
-            let def = lookup_in_keymap(i, &km, k);
-            if is_keymap(i, &def) {
+        for (n, &k) in keys.iter().enumerate() {
+            let raw = lookup_in_keymap(i, &km, k)?;
+            let def = keymap_def(i, raw.clone())?;
+            if is_keymap(i, &def) && n + 1 < keys.len() {
                 km = def;
                 continue;
             }
-            return Ok(def);
+            if n + 1 == keys.len() {
+                return Ok(raw);
+            }
+            return Ok(Value::Nil);
         }
     }
     Ok(Value::Nil)
@@ -4045,13 +4364,17 @@ fn f_global_key_binding(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let gmap = i.symbol_value(i.intern_soft("global-map").unwrap_or(0));
     if is_keymap(i, &gmap) {
         let mut km = gmap;
-        for &k in &keys {
-            let def = lookup_in_keymap(i, &km, k);
-            if is_keymap(i, &def) {
+        for (n, &k) in keys.iter().enumerate() {
+            let raw = lookup_in_keymap(i, &km, k)?;
+            let def = keymap_def(i, raw.clone())?;
+            if is_keymap(i, &def) && n + 1 < keys.len() {
                 km = def;
                 continue;
             }
-            return Ok(def);
+            if n + 1 == keys.len() {
+                return Ok(raw);
+            }
+            return Ok(Value::Nil);
         }
     }
     Ok(Value::Nil)
@@ -4163,7 +4486,8 @@ fn f_where_is_internal(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         f_current_global_map(i, vec![]).unwrap_or(Value::Nil),
     ] {
         if is_keymap(i, &km_v) {
-            collect_keys_for(i, &km_v, cmd, &mut Vec::new(), &mut found);
+            let mut prefix: Vec<Value> = Vec::new();
+            collect_keys_for(i, &km_v, cmd, &mut prefix, &mut found);
         }
     }
     // Emacs reports bindings in increasing key order (chars before
@@ -4175,6 +4499,11 @@ fn f_where_is_internal(i: &mut Interp, a: Vec<Value>) -> EvalResult {
                 .first()
                 .map(|e| match e {
                     Value::Int(n) => *n,
+                    // Range keys sort by their low bound.
+                    Value::Cons(r) => match &r.borrow().car {
+                        Value::Int(n) => *n,
+                        _ => i128::MAX,
+                    },
                     _ => i128::MAX,
                 })
                 .unwrap_or(i128::MAX),
@@ -4194,60 +4523,62 @@ fn collect_keys_for(
     i: &mut Interp,
     km: &Value,
     cmd: &Value,
-    prefix: &mut Vec<i128>,
+    prefix: &mut Vec<Value>,
     out: &mut Vec<Value>,
 ) {
-    let bindings = keymap_bindings(km);
-    let cells = bindings.list_to_vec().unwrap_or_default();
+    // GNU's where_is_internal_1 scans the flat cdr spine (parent
+    // elements included); bare keymap elements are searched at the
+    // same prefix level.
+    let mut cells = Vec::new();
+    keymap_bindings(km).each_car(|c| cells.push(c.clone()));
     for cell in cells {
-        if let Value::Cons(c) = &cell {
-            let (k, d) = {
-                let b = c.borrow();
-                (b.car.clone(), b.cdr.clone())
-            };
-            // A keymap element is a parent slot, not a binding.
-            if is_keymap(i, &k) {
-                continue;
-            }
-            let key = match &k {
-                Value::Int(n) => *n,
-                Value::Sym(s) => {
-                    let name = i.symbol_name(*s);
-                    if name == "keymap" {
-                        continue;
-                    }
-                    event_code_for(&name)
-                }
-                _ => continue,
-            };
-            // `t` is the default binding, not a real key. Emacs
-            // reports it as char ranges for self-insert-command.
-            if key == event_code_for("t") {
-                if eq_values(&d, cmd) {
-                    for range in [(32i128, 126i128), (128i128, 4194303i128)] {
-                        let cell = Value::cons(Value::Int(range.0), Value::Int(range.1));
-                        out.push(Value::Vec(Rc::new(RefCell::new(vec![cell]))));
-                    }
-                }
-                continue;
-            }
-            prefix.push(key);
-            if is_keymap(i, &d) {
-                collect_keys_for(i, &d, cmd, prefix, out);
-            } else if eq_values(&d, cmd) {
-                out.push(Value::Vec(Rc::new(RefCell::new(
-                    prefix
-                        .iter()
-                        .map(|k| {
-                            key_name_for(*k)
-                                .map(|n| Value::Sym(i.intern(&n)))
-                                .unwrap_or(Value::Int(*k))
-                        })
-                        .collect(),
-                ))));
-            }
-            prefix.pop();
+        if is_keymap(i, &cell) {
+            collect_keys_for(i, &cell, cmd, prefix, out);
+            continue;
         }
+        let Value::Cons(c) = &cell else {
+            continue;
+        };
+        let (k, d) = {
+            let b = c.borrow();
+            (b.car.clone(), b.cdr.clone())
+        };
+        // Menu-item wrappers: the real def follows the label.
+        let d = menu_label_def(i, d);
+        // Prefix symbols (Control-X-prefix etc.) resolve through
+        // their function cell — autoload keymaps are not loaded here.
+        let dd = match &d {
+            Value::Sym(s) => {
+                let f = i.symbol_function(*s);
+                if is_keymap(i, &f) {
+                    f
+                } else {
+                    d.clone()
+                }
+            }
+            _ => d.clone(),
+        };
+        if is_keymap(i, &dd) {
+            prefix.push(k);
+            collect_keys_for(i, &dd, cmd, prefix, out);
+            prefix.pop();
+            continue;
+        }
+        if !eq_values(&dd, cmd) {
+            continue;
+        }
+        // `t` is the default binding, not a real key. Emacs reports
+        // it as the char ranges it covers.
+        if matches!(&k, Value::Sym(s) if i.symbol_name(*s) == "t") {
+            for (lo, hi) in [(32i128, 126i128), (128i128, 4194303i128)] {
+                let cell = Value::cons(Value::Int(lo), Value::Int(hi));
+                out.push(Value::Vec(Rc::new(RefCell::new(vec![cell]))));
+            }
+            continue;
+        }
+        let mut seq = prefix.clone();
+        seq.push(k);
+        out.push(Value::Vec(Rc::new(RefCell::new(seq))));
     }
 }
 
@@ -4543,24 +4874,27 @@ fn describe_keymap_into(
     prefix: &mut Vec<Value>,
     rows: &mut Vec<(Vec<Value>, String)>,
 ) {
-    let bindings = keymap_bindings(km);
-    let cells = bindings.list_to_vec().unwrap_or_default();
+    let mut cells = Vec::new();
+    keymap_bindings(km).each_car(|c| cells.push(c.clone()));
     for cell in cells {
+        if is_keymap(i, &cell) {
+            // Bare keymap elements list their contents in place.
+            describe_keymap_into(i, &cell, prefix, rows);
+            continue;
+        }
         if let Value::Cons(c) = &cell {
             let (k, d) = {
                 let b = c.borrow();
                 (b.car.clone(), b.cdr.clone())
             };
-            // A keymap element is a parent slot, not a binding.
-            if is_keymap(i, &k) {
-                continue;
-            }
             match &k {
                 Value::Int(_) | Value::Sym(_) => {
                     if matches!(&k, Value::Sym(s) if i.symbol_name(*s) == "keymap") {
                         continue;
                     }
                 }
+                // Range keys ((LO . HI) . DEF) list as-is.
+                Value::Cons(_) => {}
                 _ => continue,
             }
             // `t` is the default binding, not a real key.
@@ -9021,6 +9355,26 @@ fn f_documentation(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         },
         None => match &f {
             Value::Subr(s) => {
+                if let Some(t) =
+                    crate::lisp::builtins::misc::doc_text(i, &format!("F{}", s.name))
+                {
+                    // `documentation' applies substitute-quotes:
+                    // `...' -> ‘...’ unless text-quoting-style is
+                    // 'grave/'straight.
+                    // RAW non-nil returns the docstring verbatim.
+                    if !matches!(arg(&a, 1), Value::Nil) {
+                        return Ok(Value::string(t));
+                    }
+                    let tqs = i.intern("text-quoting-style");
+                    let t = match i.symbol_value(tqs) {
+                        Value::Sym(q) if i.symbol_name(q) == "grave" => t,
+                        Value::Sym(q) if i.symbol_name(q) == "straight" => {
+                            t.replace('`', "'")
+                        }
+                        _ => t.replace('`', "‘").replace('\'', "’"),
+                    };
+                    return Ok(Value::string(t));
+                }
                 if s.doc.is_empty() {
                     Ok(Value::Nil)
                 } else {
@@ -9069,13 +9423,20 @@ pub(crate) fn lookup_command_in_maps(i: &mut Interp, keys: &[Value]) -> Option<V
         let mut last_def = Value::Nil;
         let mut prefix_only = false;
         for &k in &codes {
-            let def = lookup_in_keymap(i, &km, k);
+            let raw = match lookup_in_keymap(i, &km, k) {
+                Ok(v) => v,
+                Err(_) => return None,
+            };
+            let def = match keymap_def(i, raw.clone()) {
+                Ok(v) => v,
+                Err(_) => return None,
+            };
             if is_keymap(i, &def) {
                 km = def;
                 prefix_only = true;
                 last_def = Value::Nil;
             } else {
-                last_def = def;
+                last_def = raw;
                 prefix_only = false;
                 break;
             }
@@ -9103,6 +9464,7 @@ const KNOWN_FACES: &[&str] = &[
     "fixed-pitch",
     "fixed-pitch-serif",
     "variable-pitch",
+    "variable-pitch-text",
     "shadow",
     "link",
     "link-visited",
@@ -9110,6 +9472,11 @@ const KNOWN_FACES: &[&str] = &[
     "region",
     "secondary-selection",
     "trailing-whitespace",
+    "line-number",
+    "line-number-current-line",
+    "line-number-major-tick",
+    "line-number-minor-tick",
+    "fill-column-indicator",
     "escape-glyph",
     "homoglyph",
     "nobreak-space",
@@ -9122,59 +9489,160 @@ const KNOWN_FACES: &[&str] = &[
     "mode-line-buffer-id",
     "header-line",
     "header-line-highlight",
-    "tab-line",
-    "tab-line-tab",
-    "tab-line-tab-current",
-    "tab-line-tab-inactive",
-    "tab-line-highlight",
-    "tool-bar",
-    "fringe",
-    "border",
-    "cursor",
-    "mouse",
-    "scroll-bar",
+    "header-line-active",
+    "header-line-inactive",
     "vertical-border",
     "window-divider",
     "window-divider-first-pixel",
     "window-divider-last-pixel",
+    "internal-border",
+    "child-frame-border",
     "minibuffer-prompt",
-    "completions-annotations",
-    "completions-common-part",
-    "completions-first-difference",
-    "font-lock-builtin-face",
-    "font-lock-comment-face",
-    "font-lock-comment-delimiter-face",
-    "font-lock-constant-face",
-    "font-lock-doc-face",
-    "font-lock-function-name-face",
-    "font-lock-keyword-face",
-    "font-lock-negation-char-face",
-    "font-lock-preprocessor-face",
-    "font-lock-regexp-grouping-backslash",
-    "font-lock-regexp-grouping-construct",
-    "font-lock-string-face",
-    "font-lock-type-face",
-    "font-lock-variable-name-face",
-    "font-lock-warning-face",
-    "isearch",
-    "isearch-fail",
-    "lazy-highlight",
-    "match",
+    "margin",
+    "fringe",
+    "scroll-bar",
+    "border",
+    "cursor",
+    "mouse",
+    "tool-bar",
+    "tab-bar",
+    "tab-line",
+    "tab-line-active",
+    "tab-line-inactive",
+    "menu",
+    "help-argument-name",
+    "help-key-binding",
+    "glyphless-char",
     "error",
     "warning",
     "success",
-    "show-paren-match",
-    "show-paren-mismatch",
-    "show-paren-match-expression",
     "read-multiple-choice-face",
-    "question",
-    "help-key-binding",
-    "help-argument-name",
-    "glyphless-char",
-    "line-number",
-    "line-number-current-line",
-    "line-number-major-tick",
-    "line-number-minor-tick",
+    "tty-menu-enabled-face",
+    "tty-menu-disabled-face",
+    "tty-menu-selected-face",
+    "show-paren-match",
+    "show-paren-match-expression",
+    "show-paren-mismatch",
+    "button",
+    "abbrev-table-name",
+    "help-for-help-header",
+    "confusingly-reordered",
+    "next-error",
+    "next-error-message",
+    "separator-line",
+    "blink-matching-paren-offscreen",
+    "completions-group-title",
+    "completions-group-separator",
+    "completions-annotations",
+    "completions-highlight",
+    "completions-first-difference",
+    "completions-common-part",
+    "minibuffer-nonselected",
+    "font-lock-comment-face",
+    "font-lock-comment-delimiter-face",
+    "font-lock-string-face",
+    "font-lock-doc-face",
+    "font-lock-doc-markup-face",
+    "font-lock-keyword-face",
+    "font-lock-builtin-face",
+    "font-lock-function-name-face",
+    "font-lock-function-call-face",
+    "font-lock-variable-name-face",
+    "font-lock-variable-use-face",
+    "font-lock-type-face",
+    "font-lock-constant-face",
+    "font-lock-warning-face",
+    "font-lock-negation-char-face",
+    "font-lock-preprocessor-face",
+    "font-lock-regexp-face",
+    "font-lock-regexp-grouping-backslash",
+    "font-lock-regexp-grouping-construct",
+    "font-lock-escape-face",
+    "font-lock-number-face",
+    "font-lock-operator-face",
+    "font-lock-property-name-face",
+    "font-lock-property-use-face",
+    "font-lock-punctuation-face",
+    "font-lock-bracket-face",
+    "font-lock-delimiter-face",
+    "font-lock-misc-punctuation-face",
+    "mouse-drag-and-drop-region",
+    "isearch",
+    "isearch-fail",
+    "lazy-highlight",
+    "isearch-group-1",
+    "isearch-group-2",
+    "file-name-shadow",
+    "tab-bar-tab",
+    "tab-bar-tab-inactive",
+    "tab-bar-tab-group-current",
+    "tab-bar-tab-group-inactive",
+    "tab-bar-tab-ungrouped",
+    "tab-bar-tab-highlight",
+    "query-replace",
+    "match",
+    "tabulated-list-fake-header",
+    "buffer-menu-buffer",
+    "ns-working-text-face",
+    "elisp-symbol-at-mouse",
+    "elisp-free-variable",
+    "elisp-special-variable-declaration",
+    "elisp-condition",
+    "elisp-major-mode-name",
+    "elisp-face",
+    "elisp-symbol-role",
+    "elisp-symbol-role-definition",
+    "elisp-function",
+    "elisp-non-local-exit",
+    "elisp-unknown-call",
+    "elisp-macro",
+    "elisp-special-form",
+    "elisp-throw-tag",
+    "elisp-feature",
+    "elisp-rx",
+    "elisp-theme",
+    "elisp-binding-variable",
+    "elisp-bound-variable",
+    "elisp-shadowing-variable",
+    "elisp-shadowed-variable",
+    "elisp-variable-at-point",
+    "elisp-warning-type",
+    "elisp-function-property-declaration",
+    "elisp-thing",
+    "elisp-slot",
+    "elisp-widget-type",
+    "elisp-type",
+    "elisp-group",
+    "elisp-nnoo-backend",
+    "elisp-ampersand",
+    "elisp-constant",
+    "elisp-defun",
+    "elisp-defmacro",
+    "elisp-defvar",
+    "elisp-defface",
+    "elisp-icon",
+    "elisp-deficon",
+    "elisp-oclosure",
+    "elisp-defoclosure",
+    "elisp-coding",
+    "elisp-defcoding",
+    "elisp-charset",
+    "elisp-defcharset",
+    "elisp-completion-category",
+    "elisp-completion-category-definition",
+    "vc-state-base",
+    "vc-up-to-date-state",
+    "vc-needs-update-state",
+    "vc-locked-state",
+    "vc-locally-added-state",
+    "vc-conflict-state",
+    "vc-removed-state",
+    "vc-missing-state",
+    "vc-edited-state",
+    "vc-ignored-state",
+    "elisp-shorthand-font-lock-face",
+    "eldoc-highlight-function-argument",
+    "tooltip",
 ];
 
 pub(crate) fn face_known(i: &Interp, name: &str) -> bool {
@@ -9213,6 +9681,8 @@ fn face_attr(i: &mut Interp, name: &str, attr: &str) -> Value {
         }
         ("default", ":background") => Value::string("unspecified-bg"),
         ("default", ":foreground") => Value::string("unspecified-fg"),
+        ("default", ":family") => Value::string("default"),
+        ("default", ":height") => Value::Int(1),
         (
             "default",
             ":underline" | ":overline" | ":strike-through" | ":box" | ":inverse-video" | ":stipple"
@@ -9248,12 +9718,16 @@ fn f_facep(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 }
 
 fn f_face_list(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
-    let mut names: Vec<String> = KNOWN_FACES.iter().map(|s| s.to_string()).collect();
-    for (n, _) in &i.face_table {
-        if !names.contains(n) {
-            names.push(n.clone());
-        }
-    }
+    // GNU lists faces newest-first: user-created faces (in reverse
+    // creation order), then the built-ins back-to-front.
+    let mut names: Vec<String> = i
+        .face_table
+        .iter()
+        .rev()
+        .map(|(n, _)| n.clone())
+        .filter(|n| !KNOWN_FACES.contains(&n.as_str()))
+        .collect();
+    names.extend(KNOWN_FACES.iter().rev().map(|s| s.to_string()));
     Ok(Value::list(
         names.iter().map(|n| Value::Sym(i.intern(n))).collect(),
     ))
@@ -9264,6 +9738,12 @@ fn f_face_id(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let idx = KNOWN_FACES
         .iter()
         .position(|n| *n == name)
+        .or_else(|| {
+            i.face_table
+                .iter()
+                .position(|(n, _)| *n == name)
+                .map(|p| KNOWN_FACES.len() + p)
+        })
         .unwrap_or(KNOWN_FACES.len());
     Ok(Value::Int(idx as i128))
 }

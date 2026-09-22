@@ -1229,7 +1229,7 @@ pub(crate) fn decode_charset_code(name: &str, code: i64) -> Option<i64> {
         "big5" => Some(if code < 0x80 {
             code
         } else {
-            return tbl_decode(cjk::BIG5_DECODE, u);
+            return big5_decode(u);
         }),
         "cp932" | "cp932-2-byte" => Some(if code < 0x80 {
             code
@@ -1239,7 +1239,7 @@ pub(crate) fn decode_charset_code(name: &str, code: i64) -> Option<i64> {
             return tbl_decode(cjk::SJIS_DECODE, u);
         }),
         "katakana-sjis" => (0xa1..=0xdf).contains(&code).then(|| code + 0xfec0),
-        "japanese-jisx0208" => tbl_decode(cjk::JISX0208_DECODE, u),
+        "japanese-jisx0208" => jisx0208_decode(u),
         "jisx0201" | "katakana-jisx0201" | "latin-jisx0201" => {
             tbl_decode(cjk::JISX0201_DECODE, u)
         }
@@ -1267,7 +1267,7 @@ pub(crate) fn encode_charset_code(name: &str, ch: i64) -> Option<i64> {
         "big5" => Some(if ch < 0x80 {
             ch
         } else {
-            return tbl_encode(cjk::BIG5_ENCODE, u);
+            return big5_encode(u);
         }),
         "cp932" | "cp932-2-byte" => Some(if ch < 0x80 {
             ch
@@ -1277,7 +1277,7 @@ pub(crate) fn encode_charset_code(name: &str, ch: i64) -> Option<i64> {
             return tbl_encode(cjk::SJIS_ENCODE, u);
         }),
         "katakana-sjis" => (0xff61..=0xff9f).contains(&ch).then(|| ch - 0xfec0),
-        "japanese-jisx0208" => tbl_encode(cjk::JISX0208_ENCODE, u),
+        "japanese-jisx0208" => jisx0208_encode(u),
         "jisx0201" | "katakana-jisx0201" | "latin-jisx0201" => {
             tbl_encode(cjk::JISX0201_ENCODE, u)
         }
@@ -1285,6 +1285,133 @@ pub(crate) fn encode_charset_code(name: &str, ch: i64) -> Option<i64> {
         "chinese-big5-2" => tbl_encode(cjk::BIG5_2_ENCODE, u),
         _ => Some(ch),
     }
+}
+
+/// GNU `big5' charset: code-space [64-254][161-254], code-offset
+/// 1245184.  In GNU's packing, dim2 (the 94-slot dimension) is the file
+/// first byte 0xA1-0xFE and dim1 (191 slots) the second byte 0x40-0xFE.
+/// Unmapped in-space codes decode to private chars at code-offset+index.
+const BIG5_PRIV_BASE: i64 = 1245184;
+
+fn big5_decode(code: u32) -> Option<i64> {
+    use crate::lisp::cjk_tables as cjk;
+    let b1 = code >> 8;
+    let b2 = code & 0xff;
+    if !(0xa1..=0xfe).contains(&b1) || !(0x40..=0xfe).contains(&b2) {
+        return None;
+    }
+    if let Some(u) = tbl_decode(cjk::BIG5_DECODE, code) {
+        return Some(u as i64);
+    }
+    Some(BIG5_PRIV_BASE + (b1 as i64 - 0xa1) * 191 + (b2 as i64 - 0x40))
+}
+
+fn big5_encode(ch: u32) -> Option<i64> {
+    use crate::lisp::cjk_tables as cjk;
+    if let Some(c) = tbl_encode(cjk::BIG5_ENCODE, ch) {
+        return Some(c);
+    }
+    let idx = ch as i64 - BIG5_PRIV_BASE;
+    if !(0..94 * 191).contains(&idx) {
+        return None;
+    }
+    Some(((0xa1 + idx / 191) << 8) | (0x40 + idx % 191))
+}
+
+/// GNU `japanese-jisx0208': code-space [33-126][33-126], code-offset
+/// 1310720.  Unmapped in-space codes decode to private chars.
+const JISX0208_PRIV_BASE: i64 = 1310720;
+
+fn jisx0208_decode(code: u32) -> Option<i64> {
+    use crate::lisp::cjk_tables as cjk;
+    let j1 = code >> 8;
+    let j2 = code & 0xff;
+    if !(0x21..=0x7e).contains(&j1) || !(0x21..=0x7e).contains(&j2) {
+        return None;
+    }
+    if let Some(u) = tbl_decode(cjk::JISX0208_DECODE, code) {
+        return Some(u as i64);
+    }
+    Some(JISX0208_PRIV_BASE + (j1 as i64 - 0x21) * 94 + (j2 as i64 - 0x21))
+}
+
+fn jisx0208_encode(ch: u32) -> Option<i64> {
+    use crate::lisp::cjk_tables as cjk;
+    if let Some(c) = tbl_encode(cjk::JISX0208_ENCODE, ch) {
+        return Some(c);
+    }
+    let idx = ch as i64 - JISX0208_PRIV_BASE;
+    if !(0..94 * 94).contains(&idx) {
+        return None;
+    }
+    Some(((0x21 + idx / 94) << 8) | (0x21 + idx % 94))
+}
+
+/// GNU `japanese-jisx0213.2004-1' / `japanese-jisx0213-2': code-space
+/// [33-126][33-126], code-offsets 1359872 / 1376256.  GNU's
+/// decode-sjis-char uses the shift_jis-2004 charset list, so sjis kanji
+/// decodes through JISX0213.2004-1 rather than JISX0208.
+const JISX0213_1_PRIV_BASE: i64 = 1359872;
+const JISX0213_2_PRIV_BASE: i64 = 1376256;
+
+fn jisx0213_decode(code: u32, base: i64, t: &[(u32, u32)]) -> Option<i64> {
+    let j1 = code >> 8;
+    let j2 = code & 0xff;
+    if !(0x21..=0x7e).contains(&j1) || !(0x21..=0x7e).contains(&j2) {
+        return None;
+    }
+    if let Some(u) = tbl_decode(t, code) {
+        return Some(u as i64);
+    }
+    Some(base + (j1 as i64 - 0x21) * 94 + (j2 as i64 - 0x21))
+}
+
+fn jisx0213_encode(ch: u32, base: i64, t: &[(u32, u32)]) -> Option<i64> {
+    if let Some(c) = tbl_encode(t, ch) {
+        return Some(c);
+    }
+    let idx = ch as i64 - base;
+    if !(0..94 * 94).contains(&idx) {
+        return None;
+    }
+    Some(((0x21 + idx / 94) << 8) | (0x21 + idx % 94))
+}
+
+fn jisx0213_1_decode(code: u32) -> Option<i64> {
+    jisx0213_decode(code, JISX0213_1_PRIV_BASE, crate::lisp::cjk_tables::JISX0213_1_DECODE)
+}
+
+fn jisx0213_1_encode(ch: u32) -> Option<i64> {
+    jisx0213_encode(ch, JISX0213_1_PRIV_BASE, crate::lisp::cjk_tables::JISX0213_1_ENCODE)
+}
+
+fn jisx0213_2_encode(ch: u32) -> Option<i64> {
+    jisx0213_encode(ch, JISX0213_2_PRIV_BASE, crate::lisp::cjk_tables::JISX0213_2_ENCODE)
+}
+
+/// coding.h SJIS_TO_JIS: shift_jis pair -> jisx0208 code.
+fn sjis_to_jis(code: i64) -> (i64, i64) {
+    let s1 = code >> 8;
+    let s2 = code & 0xff;
+    if s2 >= 0x9f {
+        (s1 * 2 - if s1 >= 0xe0 { 0x160 } else { 0xe0 }, s2 - 0x7e)
+    } else {
+        (s1 * 2 - if s1 >= 0xe0 { 0x161 } else { 0xe1 },
+         s2 - if s2 >= 0x7f { 0x20 } else { 0x1f })
+    }
+}
+
+/// coding.h JIS_TO_SJIS: jisx0208 code -> shift_jis pair.
+fn jis_to_sjis(code: i64) -> i64 {
+    let j1 = code >> 8;
+    let j2 = code & 0xff;
+    let (s1, s2) = if j1 & 1 != 0 {
+        (j1 / 2 + if j1 < 0x5f { 0x71 } else { 0xb1 },
+         j2 + if j2 >= 0x60 { 0x20 } else { 0x1f })
+    } else {
+        (j1 / 2 + if j1 < 0x5f { 0x70 } else { 0xb0 }, j2 + 0x7e)
+    };
+    (s1 << 8) | s2
 }
 
 fn want_wholenum_c(i: &mut Interp, v: &Value) -> Result<i64, Flow> {
@@ -1306,58 +1433,81 @@ fn invalid_code(i: &mut Interp, code: i64) -> Flow {
 }
 
 fn f_decode_big5_char(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    use crate::lisp::cjk_tables as cjk;
     let code = want_wholenum_c(i, &a[0])?;
     if code < 0x80 {
         return Ok(Value::Int(code.into()));
     }
-    match tbl_decode(cjk::BIG5_DECODE, code as u32) {
-        Some(u) => Ok(Value::Int(u.into())),
+    // GNU checks the low byte masked to 7 bits (coding.c Fdecode_big5_char):
+    // valid iff b1 in [0xA1,0xFE] and (code & 0x7F) in [0x40,0x7E], which
+    // admits full byte2 in [0x40,0x7E] u [0xC0,0xFE].
+    let b1 = code >> 8;
+    let b2m = code & 0x7f;
+    if !(0xa1..=0xfe).contains(&b1) || !(0x40..=0x7e).contains(&b2m) {
+        return Err(invalid_code(i, code));
+    }
+    match big5_decode(code as u32) {
+        Some(c) => Ok(Value::Int(c.into())),
         None => Err(invalid_code(i, code)),
     }
 }
 
 fn f_encode_big5_char(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    use crate::lisp::cjk_tables as cjk;
     let ch = want_char_c(i, &a[0])?;
     if ch < 0x80 {
         return Ok(Value::Int(ch.into()));
     }
-    match tbl_encode(cjk::BIG5_ENCODE, ch as u32) {
+    match big5_encode(ch as u32) {
         Some(c) => Ok(Value::Int(c.into())),
-        None => Err(i.error(format!("Cannot encode character: {ch}"))),
+        None => Err(i.error(format!("Can't encode by Big5 encoding: {ch}"))),
     }
 }
 
 fn f_decode_sjis_char(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    use crate::lisp::cjk_tables as cjk;
     let code = want_wholenum_c(i, &a[0])?;
     if code < 0x80 {
         return Ok(Value::Int(code.into()));
     }
-    // GNU's katakana-jisx0201 map ends at 0xde; 0xdf is an invalid code.
-    if (0xa1..=0xde).contains(&code) {
+    // Halfwidth kana: GNU takes 0xA0..0xDE through charset jisx0201 at
+    // code-0x80; 0xA0 lands outside the charset's space and fails.
+    if (0xa0..0xdf).contains(&code) {
+        if code == 0xa0 {
+            return Err(invalid_code(i, code));
+        }
         return Ok(Value::Int((code + 0xfec0).into()));
     }
-    match tbl_decode(cjk::SJIS_DECODE, code as u32) {
-        Some(u) => Ok(Value::Int(u.into())),
+    let c1 = code >> 8;
+    let c2 = code & 0xff;
+    if (!(0x81..=0x9f).contains(&c1) && !(0xe0..=0xef).contains(&c1))
+        || !(0x40..=0xfc).contains(&c2)
+        || c2 == 0x7f
+    {
+        return Err(invalid_code(i, code));
+    }
+    let (j1, j2) = sjis_to_jis(code);
+    match jisx0213_1_decode(((j1 << 8) | j2) as u32) {
+        Some(c) => Ok(Value::Int(c.into())),
         None => Err(invalid_code(i, code)),
     }
 }
 
 fn f_encode_sjis_char(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    use crate::lisp::cjk_tables as cjk;
     let ch = want_char_c(i, &a[0])?;
     if ch < 0x80 {
         return Ok(Value::Int(ch.into()));
     }
-    // GNU's `sjis` charset encodes halfwidth kana at 0x709F+offset.
+    // GNU runs halfwidth kana through JIS_TO_SJIS on their jisx0201 code,
+    // which produces 0x70NN values that are not real shift_jis.
     if (0xff61..=0xff9f).contains(&ch) {
-        return Ok(Value::Int((ch - 0xff61 + 0x709f).into()));
+        return Ok(Value::Int(jis_to_sjis(ch - 0xff40).into()));
     }
-    match tbl_encode(cjk::SJIS_ENCODE, ch as u32) {
-        Some(c) => Ok(Value::Int(c.into())),
-        None => Err(i.error(format!("Cannot encode character: {ch}"))),
+    // GNU's Vsjis_coding_system ends as shift_jis-2004: charsets
+    // (ascii katakana-jisx0201 jisx0213.2004-1 jisx0213-2).  Plane-2
+    // chars get plain JIS_TO_SJIS, producing nonstandard codes as GNU.
+    let jis = jisx0213_1_encode(ch as u32)
+        .or_else(|| jisx0213_2_encode(ch as u32));
+    match jis {
+        Some(jis) => Ok(Value::Int(jis_to_sjis(jis).into())),
+        None => Err(i.error(format!("Can't encode by shift_jis encoding: {ch}"))),
     }
 }
 

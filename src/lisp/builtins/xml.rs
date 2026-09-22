@@ -132,9 +132,15 @@ fn parse_xml(i: &mut Interp, text: &str, drop_comments: bool) -> Value {
         }
         attrs
     };
+    // libxml2 requires exactly one root element; comments/PIs may
+    // surround it at top level.
+    let mut n_roots = 0u32;
     loop {
         match r.read_event() {
             Ok(Event::Start(e)) => {
+                if stack.len() == 1 {
+                    n_roots += 1;
+                }
                 stack.push(XmlFrame {
                     name: e.name().as_ref().to_vec(),
                     attrs: xml_attrs(i, &e, &r),
@@ -143,6 +149,9 @@ fn parse_xml(i: &mut Interp, text: &str, drop_comments: bool) -> Value {
                 });
             }
             Ok(Event::Empty(e)) => {
+                if stack.len() == 1 {
+                    n_roots += 1;
+                }
                 let node = Value::list(vec![
                     Value::Sym(i.intern(local_name(e.name().as_ref()))),
                     Value::list(xml_attrs(i, &e, &r)),
@@ -202,8 +211,8 @@ fn parse_xml(i: &mut Interp, text: &str, drop_comments: bool) -> Value {
             Err(_) => return Value::Nil,
         }
     }
-    if stack.len() != 1 {
-        return Value::Nil; // unclosed elements
+    if stack.len() != 1 || n_roots != 1 {
+        return Value::Nil; // unclosed elements / wrong number of roots
     }
     let mut out = stack.pop().unwrap().kids;
     // Non-whitespace text outside the root is a parse error for libxml2.
@@ -212,7 +221,6 @@ fn parse_xml(i: &mut Interp, text: &str, drop_comments: bool) -> Value {
         return Value::Nil;
     }
     match out.as_slice() {
-        [] => Value::Nil,
         [single] => single.clone(),
         _ => {
             let mut top = vec![Value::Sym(i.intern("top")), Value::Nil];
