@@ -252,9 +252,21 @@ fn eval_for_load(i: &mut Interp, form: Value) -> EvalResult {
     let expanded = match crate::lisp::builtins::evalfn::macroexpand_all(i, &form)
     {
         Ok(f) => f,
-        // GNU tolerates expansion failure here and evaluates the
-        // original form instead.
-        Err(_) => form.clone(),
+        // GNU's `internal-macroexpand-for-load' wraps expansion
+        // failures: it re-signals (error "Eager macro-expansion
+        // failure: %S" err) where err is the original condition as
+        // (sym . data); `error' formats eagerly, so the data is a
+        // single formatted string.  Non-signal exits propagate.
+        Err(crate::lisp::Flow::Signal(sym, data, _)) => {
+            let err = Value::cons(sym, data);
+            let msg = crate::lisp::builtins::evalfn::apply_format_simple(
+                i,
+                "Eager macro-expansion failure: %S",
+                &[err],
+            );
+            return Err(i.error(msg));
+        }
+        Err(f) => return Err(f),
     };
     // A macro may have expanded into a top-level `progn' — splice it too.
     if let Some(children) = progn_children(i, &expanded) {

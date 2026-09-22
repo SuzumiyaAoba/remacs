@@ -2890,10 +2890,19 @@ fn f_b64_encode_string(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     use base64::Engine;
     let s = want_string(i, &args[0])?;
     let no_break = arg(&args, 1).truthy();
-    let out = if no_break {
-        base64::engine::general_purpose::STANDARD_NO_PAD.encode(s.as_bytes())
+    // GNU pads unconditionally; NO-LINE-BREAK only suppresses the
+    // 76-column line wrapping.
+    let enc = base64::engine::general_purpose::STANDARD.encode(s.as_bytes());
+    let out = if no_break || enc.len() <= 76 {
+        enc
     } else {
-        base64::engine::general_purpose::STANDARD.encode(s.as_bytes())
+        let mut wrapped = String::with_capacity(enc.len() + enc.len() / 76);
+        for chunk in enc.as_bytes().chunks(76) {
+            wrapped.push_str(std::str::from_utf8(chunk).unwrap_or(""));
+            wrapped.push('\n');
+        }
+        wrapped.pop();
+        wrapped
     };
     Ok(Value::string(out))
 }
@@ -6188,13 +6197,15 @@ fn f_detect_coding_region(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 }
 
 fn f_encode_coding_string(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    f_check_coding_system(i, vec![a[0].clone()])?;
-    Ok(a[1].clone())
+    // (encode-coding-string STRING CODING-SYSTEM &optional NOCOPY BUFFER)
+    f_check_coding_system(i, vec![a[1].clone()])?;
+    Ok(a[0].clone())
 }
 
 fn f_decode_coding_string(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let _ = i;
-    Ok(a[1].clone())
+    // (decode-coding-string STRING CODING-SYSTEM &optional NOCOPY BUFFER)
+    f_check_coding_system(i, vec![a[1].clone()])?;
+    Ok(a[0].clone())
 }
 
 fn f_encode_coding_char(_i: &mut Interp, _a: Vec<Value>) -> EvalResult {
@@ -6457,27 +6468,46 @@ fn f_make_composed_keymap(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     Ok(Value::cons(Value::Sym(i.intern("keymap")), tail))
 }
 
-fn f_current_active_maps(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
-    // GNU order: overriding maps, minor-mode maps, local map, global.
+fn f_current_active_maps(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    // GNU Fcurrent_active_maps: (otlp) (keymap-prop) minors local global;
+    // with OLP set and no otlp, overriding-local-map REPLACES all of
+    // the buffer-dependent maps.
+    let olp = a.first().map(|v| v.truthy()).unwrap_or(false);
+    let otlp = i.symbol_value(i.intern_soft("overriding-terminal-local-map").unwrap_or(0));
+    let olmap = i.symbol_value(i.intern_soft("overriding-local-map").unwrap_or(0));
+    let gmap = i.symbol_value(i.intern_soft("global-map").unwrap_or(0));
+
     let mut maps = Vec::new();
-    for name in [
-        "overriding-terminal-local-map",
-        "overriding-local-map",
-        "local-keymap",
-        "global-map",
-    ] {
-        let m = match i.intern_soft(name) {
-            Some(id) if name == "local-keymap" => {
-                let b = crate::editor::cur(i);
-                let lb = b.borrow();
-                lb.locals.get(&id).cloned().unwrap_or(Value::Nil)
-            }
-            Some(id) => i.symbol_value(id),
-            None => Value::Nil,
-        };
-        if is_keymap(i, &m) {
-            maps.push(m);
-        }
+    if is_keymap(i, &gmap) {
+        maps.push(gmap);
+    }
+    if olp && !is_keymap(i, &otlp) && is_keymap(i, &olmap) {
+        maps.insert(0, olmap);
+        return Ok(Value::list(maps));
+    }
+
+    let local = {
+        let b = crate::editor::cur(i);
+        let lb = b.borrow();
+        lb.locals
+            .get(&i.intern_soft("local-keymap").unwrap_or(u32::MAX))
+            .cloned()
+            .unwrap_or(Value::Nil)
+    };
+    if is_keymap(i, &local) {
+        maps.insert(0, local);
+    }
+    // Minor-mode maps precede the local map.
+    let minors = crate::editor::current_minor_maps(i)?
+        .into_iter()
+        .filter(|(_, m)| is_keymap(i, m))
+        .map(|(_, m)| m)
+        .collect::<Vec<_>>();
+    for m in minors.into_iter().rev() {
+        maps.insert(0, m);
+    }
+    if olp && is_keymap(i, &otlp) {
+        maps.insert(0, otlp);
     }
     Ok(Value::list(maps))
 }

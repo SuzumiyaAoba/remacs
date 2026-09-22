@@ -228,28 +228,37 @@ impl Interp {
                 out.push(')');
             }
             Value::Hash(h) => {
-                // GNU: #s(hash-table test equal data (k v ...)).
+                // GNU: #s(hash-table) for defaults; `test' appears only
+                // when non-eql, `data' only when non-empty.
                 let hh = h.borrow();
                 let test = match hh.test {
-                    crate::lisp::value::HashTest::Eq => "eq",
-                    crate::lisp::value::HashTest::Eql => "eql",
-                    crate::lisp::value::HashTest::Equal => "equal",
+                    crate::lisp::value::HashTest::Eq => Some("eq"),
+                    crate::lisp::value::HashTest::Eql => None,
+                    crate::lisp::value::HashTest::Equal => Some("equal"),
                 };
-                let _ = write!(out, "#s(hash-table test {} data (", test);
-                let mut first = true;
-                for (hk, k) in hh.keys.iter() {
-                    let Some(v) = hh.map.get(hk) else {
-                        continue;
-                    };
-                    if !first {
-                        out.push(' ');
-                    }
-                    first = false;
-                    self.prin1_inner(k, out, depth + 1, bq);
-                    out.push(' ');
-                    self.prin1_inner(v, out, depth + 1, bq);
+                let empty = hh.keys.is_empty();
+                out.push_str("#s(hash-table");
+                if let Some(t) = test {
+                    let _ = write!(out, " test {}", t);
                 }
-                out.push_str("))");
+                if !empty {
+                    out.push_str(" data (");
+                    let mut first = true;
+                    for (hk, k) in hh.keys.iter() {
+                        let Some(v) = hh.map.get(hk) else {
+                            continue;
+                        };
+                        if !first {
+                            out.push(' ');
+                        }
+                        first = false;
+                        self.prin1_inner(k, out, depth + 1, bq);
+                        out.push(' ');
+                        self.prin1_inner(v, out, depth + 1, bq);
+                    }
+                    out.push(')');
+                }
+                out.push(')');
             }
             Value::Subr(s) => {
                 let _ = write!(out, "#<subr {}>", s.name);
@@ -269,10 +278,7 @@ impl Interp {
                 self.prin1_inner(&body, out, depth + 1, bq);
                 out.push(' ');
                 match &l.env {
-                    // Plain function objects print `nil'; evaluated
-                    // dynamic closures print `(t)'.
-                    None if l.plain => out.push_str("nil"),
-                    None => out.push_str("(t)"),
+                    None => out.push_str("nil"),
                     Some(frame) => {
                         let env = lex_frame_to_value(self, frame);
                         self.prin1_inner(&env, out, depth + 1, bq);

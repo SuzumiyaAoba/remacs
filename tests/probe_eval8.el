@@ -176,8 +176,8 @@
   (prin1 (key-description "ab"))
   ;; ---- intern-soft nil / unintern --------------------------------------------------------------------
   (prin1 (intern-soft "nosuch-sym-xyz"))
-  (prin1 (unintern "sym-to-unintern"))
-  (prin1 (unintern "nosuch-sym-xyz2"))
+  (prin1 (unintern "sym-to-unintern" nil))
+  (prin1 (unintern "nosuch-sym-xyz2" nil))
   ;; ---- window funcs -------------------------------------------------------------------------------------
   (prin1 (windowp (selected-window)))
   (prin1 (window-live-p (selected-window)))

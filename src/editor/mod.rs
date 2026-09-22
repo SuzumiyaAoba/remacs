@@ -727,7 +727,7 @@ pub(crate) static SUBRS: &[Subr] = &[
         f_global_key_binding,
         "Global binding of KEY."
     ),
-    S!("minor-mode-key-binding", 1, 2, f_nil, ""),
+    S!("minor-mode-key-binding", 1, 2, f_minor_mode_key_binding, ""),
     S!(
         "current-local-map",
         0,
@@ -742,7 +742,7 @@ pub(crate) static SUBRS: &[Subr] = &[
         f_current_global_map,
         "The global map."
     ),
-    S!("current-minor-mode-maps", 0, 0, f_nil, ""),
+    S!("current-minor-mode-maps", 0, 0, f_current_minor_mode_maps, ""),
     S!("use-local-map", 1, 1, f_use_local_map, "Set local map."),
     S!("use-global-map", 1, 1, f_use_global_map, "Set global map."),
     S!(
@@ -4881,22 +4881,131 @@ fn f_lookup_key(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     lookup_seq(i, &map, &elts, t_ok)
 }
 
+/// GNU `current_minor_maps': walk `emulation-mode-map-alists' (each
+/// element itself an alist, resolved through a symbol's value), then
+/// `minor-mode-overriding-map-alist', then `minor-mode-map-alist';
+/// collect (MODE-VAR . MAP) for each entry whose mode variable is
+/// bound and non-nil in the current buffer.  An overriding-alist
+/// entry shadows the same variable's regular-alist entry.
+pub(crate) fn current_minor_maps(
+    i: &mut Interp,
+) -> Result<Vec<(Value, Value)>, Flow> {
+    let emul_id = i.intern("emulation-mode-map-alists");
+    let over_id = i.intern("minor-mode-overriding-map-alist");
+    let reg_id = i.intern("minor-mode-map-alist");
+    let emul = i.symbol_value(emul_id);
+    let overriding = i.symbol_value(over_id);
+    let regular = i.symbol_value(reg_id);
+
+    let mut alists: Vec<(Value, bool)> = Vec::new();
+    emul.each_car(|e| {
+        let alist = match e {
+            Value::Sym(s) => i.symbol_value(*s),
+            v => v.clone(),
+        };
+        alists.push((alist, false));
+    });
+    alists.push((overriding.clone(), false));
+    alists.push((regular, true));
+
+    let mut out: Vec<(Value, Value)> = Vec::new();
+    for (alist, is_regular) in alists {
+        let mut cur = alist;
+        while let Value::Cons(c) = cur.clone() {
+            let (assoc, next) = {
+                let b = c.borrow();
+                (b.car.clone(), b.cdr.clone())
+            };
+            cur = next;
+            let (var, mapdef) = match &assoc {
+                Value::Cons(a) => {
+                    let ab = a.borrow();
+                    (ab.car.clone(), ab.cdr.clone())
+                }
+                _ => continue,
+            };
+            let var_id = match var {
+                Value::Sym(s) => s,
+                _ => continue,
+            };
+            if !i.bound_p(var_id) || !i.symbol_value(var_id).truthy() {
+                continue;
+            }
+            if is_regular {
+                let mut shadowed = false;
+                overriding.each_car(|oa| {
+                    if let Value::Cons(a) = oa {
+                        if matches!(&a.borrow().car, Value::Sym(s) if *s == var_id)
+                        {
+                            shadowed = true;
+                        }
+                    }
+                });
+                if shadowed {
+                    continue;
+                }
+            }
+            // GNU stores Findirect_function(cdr) — nil when unbound.
+            let map = i.indirect_function_value(&mapdef);
+            if !map.is_nil()
+                && !matches!(&map, Value::Sym(s) if *s == sym::UNBOUND)
+            {
+                out.push((Value::Sym(var_id), map));
+            }
+        }
+    }
+    Ok(out)
+}
+
+fn f_current_minor_mode_maps(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
+    let pairs = current_minor_maps(i)?;
+    Ok(Value::list(pairs.into_iter().map(|(_, m)| m).collect()))
+}
+
+fn f_minor_mode_key_binding(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let accept = a.get(1).cloned().unwrap_or(Value::Nil);
+    let mut out: Vec<Value> = Vec::new();
+    for (mode, map) in current_minor_maps(i)? {
+        if map.is_nil() {
+            continue;
+        }
+        let binding =
+            f_lookup_key(i, vec![map, a[0].clone(), accept.clone()])?;
+        if binding.is_nil() || matches!(binding, Value::Int(_)) {
+            continue;
+        }
+        // KEYMAPP check is get_keymap(v, 0, 0): no autoload.
+        let km = keymap_def_noautoload(i, &binding);
+        if is_keymap(i, &km) {
+            out.push(Value::cons(mode, binding));
+        } else if out.is_empty() {
+            // A non-prefix first binding ends the search.
+            return Ok(Value::list(vec![Value::cons(mode, binding)]));
+        }
+        // Non-prefix bindings after prefix maps are omitted.
+    }
+    Ok(Value::list(out))
+}
+
 fn f_key_binding(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     // (key-binding KEY &optional accept-defaults no-remap position)
-    // Search local map, minor-mode maps, global map.
+    // GNU: lookup over the full active-maps list — overriding maps,
+    // local map, minor-mode maps, then global.
     let keys = key_seq(i, &a[0])?;
     let t_ok = a.get(1).map(|v| v.truthy()).unwrap_or(false);
-    // local map first
-    let local = {
-        let b = cur(i);
-        let lb = b.borrow();
-        lb.locals
-            .get(&i.intern_soft("local-keymap").unwrap_or(u32::MAX))
-            .cloned()
-            .unwrap_or(Value::Nil)
-    };
-    if is_keymap(i, &local) {
-        let mut km = local;
+    let am_id = i.intern("current-active-maps");
+    let maps = i.apply(&Value::Sym(am_id), vec![Value::t()])?;
+    let mut list = maps;
+    while let Value::Cons(c) = list.clone() {
+        let (km, next) = {
+            let b = c.borrow();
+            (b.car.clone(), b.cdr.clone())
+        };
+        list = next;
+        if !is_keymap(i, &km) {
+            continue;
+        }
+        let mut km = km;
         for (n, &k) in keys.iter().enumerate() {
             let raw = lookup_in_keymap(i, &km, k, t_ok)?;
             let def = keymap_def(i, raw.clone())?;
@@ -4910,23 +5019,6 @@ fn f_key_binding(i: &mut Interp, a: Vec<Value>) -> EvalResult {
                 return Ok(raw);
             }
             break;
-        }
-    }
-    // global map
-    let gmap = i.symbol_value(i.intern_soft("global-map").unwrap_or(0));
-    if is_keymap(i, &gmap) {
-        let mut km = gmap;
-        for (n, &k) in keys.iter().enumerate() {
-            let raw = lookup_in_keymap(i, &km, k, t_ok)?;
-            let def = keymap_def(i, raw.clone())?;
-            if is_keymap(i, &def) && n + 1 < keys.len() {
-                km = def;
-                continue;
-            }
-            if n + 1 == keys.len() {
-                return Ok(raw);
-            }
-            return Ok(Value::Nil);
         }
     }
     Ok(Value::Nil)
@@ -10405,17 +10497,22 @@ fn f_apropos_internal(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 /// local map, then the global map. Returns the bound value, or None.
 pub(crate) fn lookup_command_in_maps(i: &mut Interp, keys: &[Value]) -> Option<Value> {
     let codes: Vec<i128> = keys.iter().filter_map(|v| v.int()).collect();
-    for km_v in [
-        {
-            let b = i.current_buffer_ref()?;
-            let lb = b.borrow();
-            lb.locals
-                .get(&i.intern_soft("local-keymap").unwrap_or(u32::MAX))
-                .cloned()
-                .unwrap_or(Value::Nil)
-        },
-        i.symbol_value(i.intern_soft("global-map").unwrap_or(0)),
-    ] {
+    let local = {
+        let b = i.current_buffer_ref()?;
+        let lb = b.borrow();
+        lb.locals
+            .get(&i.intern_soft("local-keymap").unwrap_or(u32::MAX))
+            .cloned()
+            .unwrap_or(Value::Nil)
+    };
+    // GNU's active-map order: minor modes, local map, global.
+    let mut map_list = Vec::new();
+    if let Ok(minors) = current_minor_maps(i) {
+        map_list.extend(minors.into_iter().map(|(_, m)| m));
+    }
+    map_list.push(local);
+    map_list.push(i.symbol_value(i.intern_soft("global-map").unwrap_or(0)));
+    for km_v in map_list {
         if !is_keymap(i, &km_v) {
             continue;
         }

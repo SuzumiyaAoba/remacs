@@ -282,7 +282,7 @@ pub(crate) static SUBRS: &[Subr] = &[
     ),
     S!(
         "unintern",
-        1,
+        2,
         2,
         f_unintern,
         "Remove SYMBOL from the obarray."
@@ -826,6 +826,25 @@ fn f_intern(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     match &args[0] {
         Value::Str(s) => {
             let name = s.borrow().clone();
+            // A custom obarray keeps its own symbol vector; symbols in
+            // it are NOT interned in the global obarray (GNU parity:
+            // intern-soft on the default obarray won't find them).
+            if let Some(ob) = args.get(1) {
+                if is_obarray(i, ob) {
+                    if let Some(sym) = obarray_syms(i, ob)
+                        .into_iter()
+                        .find(|v| {
+                            matches!(v, Value::Sym(s) if i.symbol_name(*s) == name)
+                        })
+                    {
+                        return Ok(sym);
+                    }
+                    let id = i.make_symbol(&name);
+                    let sym = i.sym(id);
+                    obarray_push(i, ob, &sym);
+                    return Ok(sym);
+                }
+            }
             let id = i.intern(&name);
             Ok(i.sym(id))
         }
@@ -838,6 +857,14 @@ fn f_intern_soft(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     match &args[0] {
         Value::Str(s) => {
             let name = s.borrow().clone();
+            if let Some(ob) = args.get(1) {
+                if is_obarray(i, ob) {
+                    return Ok(obarray_syms(i, ob)
+                        .into_iter()
+                        .find(|v| matches!(v, Value::Sym(s) if i.symbol_name(*s) == name))
+                        .unwrap_or(Value::Nil));
+                }
+            }
             match i.intern_soft(&name) {
                 Some(id) => Ok(i.sym(id)),
                 None => Ok(Value::Nil),
@@ -849,6 +876,11 @@ fn f_intern_soft(i: &mut Interp, args: Vec<Value>) -> EvalResult {
 }
 fn f_unintern(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     want_obarray(i, args.get(1))?;
+    if let Some(ob) = args.get(1) {
+        if is_obarray(i, ob) {
+            return Ok(Value::from_bool(obarray_remove(i, ob, &args[0])));
+        }
+    }
     match &args[0] {
         Value::Sym(id) => {
             // Our obarray can't physically remove (indices are stable),
@@ -902,6 +934,55 @@ fn is_obarray(i: &Interp, v: &Value) -> bool {
 
 /// Check an optional OBARRAY argument: nil means the default obarray,
 /// a tagged record is an obarray, anything else is a type error.
+/// The symbols interned in a custom (Record-based) obarray.
+fn obarray_syms(i: &Interp, ob: &Value) -> Vec<Value> {
+    let _ = i;
+    if let Value::Record(r) = ob {
+        if let Some(Value::Vec(v)) = r.borrow().get(1) {
+            return v
+                .borrow()
+                .iter()
+                .filter(|x| matches!(x, Value::Sym(_)))
+                .cloned()
+                .collect();
+        }
+    }
+    Vec::new()
+}
+
+fn obarray_push(i: &Interp, ob: &Value, sym: &Value) {
+    if let Value::Record(r) = ob {
+        if let Some(Value::Vec(v)) = r.borrow().get(1) {
+            let mut v = v.borrow_mut();
+            if !v.iter().any(|x| eq_values(x, sym)) {
+                v.push(sym.clone());
+            }
+            return;
+        }
+    }
+    let _ = i;
+}
+
+fn obarray_remove(i: &Interp, ob: &Value, sym: &Value) -> bool {
+    let name = match sym {
+        Value::Sym(s) => i.symbol_name(*s),
+        Value::Str(s) => s.borrow().clone(),
+        _ => return false,
+    };
+    if let Value::Record(r) = ob {
+        if let Some(Value::Vec(v)) = r.borrow().get(1) {
+            let mut v = v.borrow_mut();
+            if let Some(pos) = v.iter().position(|x| {
+                matches!(x, Value::Sym(s) if i.symbol_name(*s) == name)
+            }) {
+                v.remove(pos);
+                return true;
+            }
+        }
+    }
+    false
+}
+
 fn want_obarray(i: &mut Interp, v: Option<&Value>) -> Result<(), Flow> {
     match v {
         None | Some(Value::Nil) => Ok(()),
@@ -913,6 +994,14 @@ fn want_obarray(i: &mut Interp, v: Option<&Value>) -> Result<(), Flow> {
 fn f_mapatoms(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     let fun = args[0].clone();
     want_obarray(i, args.get(1))?;
+    if let Some(ob) = args.get(1) {
+        if is_obarray(i, ob) {
+            for sym in obarray_syms(i, ob) {
+                i.apply(&fun, vec![sym])?;
+            }
+            return Ok(Value::Nil);
+        }
+    }
     let ids = i.obarray.all_ids();
     for id in ids {
         i.apply(&fun, vec![i.sym(id)])?;
