@@ -559,7 +559,7 @@ pub(crate) static SUBRS: &[Subr] = &[
     ),
     S!("window-left-char", 0, 1, f_window_start, ""),
     S!("window-top-line", 0, 1, f_window_start, ""),
-    S!("window-display-table", 0, 1, f_nil, ""),
+    S!("window-display-table", 0, 1, f_window_display_table, ""),
     S!("set-window-display-table", 2, 2, f_second, ""),
     S!(
         "window-margins",
@@ -1965,7 +1965,7 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!("set-face-attribute", many 2, f_set_face_attribute, ""),
     S!("face-attribute", 2, 4, f_face_attribute, ""),
     S!("face-attribute-relative-p", 2, 2, f_nil, ""),
-    S!("merge-face-attribute", 3, 3, f_nil, ""),
+    S!("merge-face-attribute", 3, 3, f_merge_face_attribute, ""),
     S!("face-all-attributes", 1, 2, f_face_all_attributes, ""),
     S!("face-list", 0, 0, f_face_list, ""),
     S!("make-face", 1, 1, f_make_face, ""),
@@ -2012,9 +2012,8 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!("internal-show-cursor", 2, 2, f_nil, ""),
     S!("internal-show-cursor-p", 0, 1, f_show_cursor_p, ""),
     S!("set-window-cursor-type", 2, 2, f_nil, ""),
-    S!("set-display-table-slot", 3, 3, f_nil, ""),
-    S!("display-table-slot", 2, 2, f_nil, ""),
-    S!("make-display-table", 0, 0, f_nil, ""),
+    // `make-display-table', `display-table-slot', `set-display-table-slot'
+    // are Lisp in GNU (disp-table.el) — see prelude.rs.
     S!("describe-display-table", 1, 1, f_nil, ""),
     // `standard-display-table' is a variable in GNU (nil in batch).
     S!("open-font", 1, 3, f_open_font, ""),
@@ -2327,10 +2326,52 @@ fn f_active_minibuffer_window(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     f_minibuffer_window(i, a)
 }
 
-/// The sole terminal object: a `tty' symbol stands in for GNU's
-/// `#<terminal 0 on initial_terminal>'.
+/// The sole terminal object: a lazily-created record standing in for
+/// GNU's `#<terminal 0 on initial_terminal>' (singleton — `eq' holds).
 pub(crate) fn terminal_token(i: &mut Interp) -> Value {
-    Value::Sym(i.intern("tty"))
+    if let Some(t) = &i.terminal {
+        return t.clone();
+    }
+    let t = Value::Record(Rc::new(RefCell::new(vec![
+        Value::Sym(i.intern("terminal")),
+        Value::Int(0),
+        Value::string("initial_terminal"),
+    ])));
+    i.terminal = Some(t.clone());
+    t
+}
+
+/// Whether V is our terminal record (nil counts as the default
+/// terminal for predicates that accept it — callers decide).
+pub(crate) fn is_terminal(i: &Interp, v: &Value) -> bool {
+    if let Value::Record(r) = v {
+        if let Some(Value::Sym(tag)) = r.borrow().first() {
+            return i.symbol_name(*tag) == "terminal";
+        }
+    }
+    false
+}
+
+/// `window-display-table` — window-live-p check; nil (no per-window
+/// display table in our model).
+fn f_window_display_table(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    match a.first() {
+        None | Some(Value::Nil) | Some(Value::Window(_)) => Ok(Value::Nil),
+        Some(other) => Err(i.wrong_type_mut("window-live-p", other)),
+    }
+}
+
+/// `merge-face-attribute` — GNU: VALUE1 wins unless `unspecified' or
+/// `:ignore-defface', in which case VALUE2.  (`:height' merges
+/// relative specs; we take VALUE1.)
+fn f_merge_face_attribute(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    if let Value::Sym(s) = &a[1] {
+        let n = i.symbol_name(*s);
+        if n == "unspecified" || n == ":ignore-defface" {
+            return Ok(a[2].clone());
+        }
+    }
+    Ok(a[1].clone())
 }
 
 fn f_frame_terminal(i: &mut Interp, a: Vec<Value>) -> EvalResult {

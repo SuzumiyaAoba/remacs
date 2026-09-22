@@ -295,7 +295,8 @@ pub(crate) static SUBRS: &[Subr] = &[
         f_set_file_times,
         "Set file times (stub)."
     ),
-    S!("file-acl", 1, 1, f_nil, "ACL list (unsupported)."),
+    // `file-acl', `lock-file', `unlock-file' have real
+    // implementations in buffer/primitives.rs (registered later).
     S!(
         "get-file-buffer",
         1,
@@ -303,8 +304,6 @@ pub(crate) static SUBRS: &[Subr] = &[
         f_get_file_buffer,
         "Buffer visiting FILENAME."
     ),
-    S!("unlock-file", 1, 1, f_nil, "Unlock FILE (no-op)."),
-    S!("lock-file", 1, 1, f_nil, "Lock FILE (no-op)."),
     S!(
         "bare-symbol",
         1,
@@ -878,7 +877,13 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!("encode-coding-char", 1, 2, f_encode_coding_char, ""),
     S!("decode-coding-region", 2, 4, f_decode_coding_region, ""),
     S!("encode-coding-region", 2, 4, f_encode_coding_region, ""),
-    S!("check-coding-systems-region", 3, 3, f_nil, ""),
+    S!(
+        "check-coding-systems-region",
+        3,
+        3,
+        f_check_coding_systems_region,
+        ""
+    ),
     // ---------- multibyte ----------
     // ---------- display/frame ----------
     S!("frame-configuration-p", 1, 1, f_frame_configuration_p, ""),
@@ -934,10 +939,10 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!("window-min-height", 0, 0, f_window_min_height, ""),
     S!("window-min-width", 0, 0, f_window_min_width, ""),
     S!("window-sizable", 1, 3, f_window_sizable, ""),
-    S!("window-fixed-size-p", 1, 2, f_nil, ""),
+    S!("window-fixed-size-p", 0, 2, f_windowp_nil, ""),
     S!("fit-window-to-buffer", 0, 4, f_nil, ""),
     S!("shrink-window-if-larger-than-buffer", 0, 1, f_nil, ""),
-    S!("window-safely-shrinkable-p", 0, 2, f_nil, ""),
+    S!("window-safely-shrinkable-p", 0, 1, f_safely_shrinkable, ""),
     S!("window--display-buffer", 3, 4, f_nil, ""),
     S!("window-max-chars-per-line", 0, 2, f_window_max_chars, ""),
     S!("window-preserve-size", 0, 3, f_nil, ""),
@@ -949,14 +954,14 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!("window-normalize-frame", 0, 1, f_window_norm_frame, ""),
     S!("delete-windows-on", 0, 3, f_nil, ""),
     S!("split-window-sensibly", 0, 1, f_nil, ""),
-    S!("window-child", 1, 1, f_nil, ""),
-    S!("window-child-count", 1, 1, f_zero, ""),
-    S!("window-combined-p", 0, 2, f_nil, ""),
+    S!("window-child", 1, 1, f_window_valid_nil, ""),
+    S!("window-child-count", 1, 1, f_window_valid_zero, ""),
+    S!("window-combined-p", 0, 2, f_window_combined_p, ""),
     // `window-leftmost-p'/`-rightmost-p'/`-topmost-p'/`-bottommost-p'
     // do not exist in GNU.
     S!("window-at-side-p", 1, 2, f_t, ""),
     S!("window-in-direction", 1, 5, f_window_in_direction, ""),
-    S!("window-main-window", 0, 1, f_nil, ""),
+    S!("window-main-window", 0, 1, f_window_main_window, ""),
     S!("get-mru-window", 0, 2, f_selected_window, ""),
     S!("get-window-with-predicate", 1, 3, f_get_window_pred, ""),
     // ---------- keymap ops ----------
@@ -1128,7 +1133,7 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!("read-positioning-symbols", 0, 1, f_nil, ""),
     S!("describe-vector", 1, 2, f_describe_vector, ""),
     S!("locale-info", 1, 1, f_locale_info, "Locale data for ITEM."),
-    S!("locale-translate", 1, 1, f_nil, ""),
+    S!("locale-translate", 1, 1, f_identity, ""),
     S!("mapbacktrace", 1, 2, f_mapbacktrace, ""),
     // `internal-timer-start-idle' is Lisp (prelude timer.el port).
     S!("internal-describe-syntax-value", 1, 1, f_identity, ""),
@@ -1177,7 +1182,7 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!("font-spec", many 0, f_font_spec, ""),
     S!("face-font", 1, 2, f_face_font, ""),
     S!("face-documentation", 1, 1, f_nil, ""),
-    S!("face-attributes-as-vector", 1, 1, f_nil, ""),
+    S!("face-attributes-as-vector", 1, 1, f_face_attributes_as_vector, ""),
     S!("image-flush", 1, 2, f_nil, ""),
     S!("image-mask-p", 1, 2, f_nil, ""),
     S!("image-metadata", 1, 2, f_nil, ""),
@@ -1284,7 +1289,7 @@ pub(crate) static SUBRS: &[Subr] = &[
     ),
     S!("internal-stack-stats", 0, 0, f_nil, ""),
     S!("pdumper-stats", 0, 0, f_pdumper_stats, ""),
-    S!("profiler-cpu-running-p", 0, 0, f_nil, ""),
+    S!("profiler-cpu-running-p", 0, 0, f_profiler_cpu_running_p, ""),
     S!(
         "move-to-window-line",
         1,
@@ -1401,7 +1406,13 @@ pub(crate) static SUBRS: &[Subr] = &[
     ),
     S!("window-cursor-info", 0, 1, f_nil, "Cursor info for WINDOW."),
     S!("profiler-cpu-log", 0, 0, f_nil, "CPU profiler log."),
-    S!("profiler-cpu-stop", 0, 0, f_nil, "Stop CPU profiler."),
+    S!(
+        "profiler-cpu-stop",
+        0,
+        0,
+        f_profiler_cpu_stop,
+        "Stop CPU profiler."
+    ),
     S!(
         "profiler-memory-log",
         0,
@@ -1507,7 +1518,7 @@ pub(crate) static SUBRS: &[Subr] = &[
         f_flex_cost_gotoh,
         "Flex completion cost via Gotoh alignment."
     ),
-    S!("profiler-cpu-start", 1, 1, f_t, ""),
+    S!("profiler-cpu-start", 1, 1, f_profiler_cpu_start, ""),
     S!("redirect-debugging-output", 1, 2, f_nil, ""),
     S!("make-terminal-frame", 1, 1, f_make_terminal_frame, ""),
     S!("tty-frame-edges", 0, 2, f_nil, ""),
@@ -5024,8 +5035,16 @@ fn f_coding_system_put(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     Ok(a[2].clone())
 }
 
-fn f_terminal_coding_system(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
-    // GNU tty default: utf-8 with unix EOL.
+fn f_terminal_coding_system(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    // GNU tty default: utf-8 with unix EOL.  Optional TERMINAL is
+    // terminal-live-p-checked.
+    if let Some(v) = a.first() {
+        match v {
+            Value::Nil => {}
+            w if crate::editor::is_terminal(i, w) => {}
+            other => return Err(i.wrong_type_mut("terminal-live-p", other)),
+        }
+    }
     Ok(Value::Sym(i.intern("utf-8-unix")))
 }
 
@@ -6620,8 +6639,159 @@ fn f_flex_cost_gotoh(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     Ok(Value::list(out))
 }
 
-/// `profiler-memory-start` — GNU returns t and toggles the flag; our
-/// memory profiler is bookkeeping-only.
+/// `profiler-cpu-start` — flag only, no real sampler; GNU returns t.
+fn f_profiler_cpu_start(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
+    i.cpu_profiler = true;
+    Ok(Value::t())
+}
+
+fn f_profiler_cpu_running_p(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
+    Ok(if i.cpu_profiler {
+        Value::t()
+    } else {
+        Value::Nil
+    })
+}
+
+/// `profiler-cpu-stop` — GNU returns whether it was running.
+fn f_profiler_cpu_stop(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
+    let was = i.cpu_profiler;
+    i.cpu_profiler = false;
+    Ok(if was { Value::t() } else { Value::Nil })
+}
+
+/// `check-coding-systems-region` — GNU validates START/END against
+/// the current buffer's accessible range, then reports codings (nil).
+fn f_check_coding_systems_region(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let s = want_int(i, &a[0])?;
+    let e = want_int(i, &a[1])?;
+    // Lisp positions are 1-based over the accessible region.
+    let (lo, hi) = i
+        .current_buffer_ref()
+        .map(|b| {
+            let bb = b.borrow();
+            (bb.begv as i128 + 1, bb.zv as i128 + 1)
+        })
+        .unwrap_or((1, 1));
+    if s < lo || e > hi || s > e {
+        let sym = i.intern("args-out-of-range");
+        return Err(i.signal_data(sym, vec![a[0].clone(), a[1].clone()]));
+    }
+    Ok(Value::Nil)
+}
+
+/// `window-valid-p' check → nil.
+fn f_window_valid_nil(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    match arg(&a, 0) {
+        Value::Nil | Value::Window(_) => Ok(Value::Nil),
+        other => Err(i.wrong_type_mut("window-valid-p", &other)),
+    }
+}
+
+fn f_window_valid_zero(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    match arg(&a, 0) {
+        Value::Nil | Value::Window(_) => Ok(Value::Int(0)),
+        other => Err(i.wrong_type_mut("window-valid-p", &other)),
+    }
+}
+
+/// `window-combined-p` — GNU signals a plain `error' for non-windows.
+fn f_window_combined_p(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    match arg(&a, 0) {
+        Value::Nil | Value::Window(_) => Ok(Value::Nil),
+        other => {
+            let shown = i.princ_to_string(&other);
+            Err(i.error(format!("{shown} is not a valid window")))
+        }
+    }
+}
+
+/// `window-fixed-size-p` — GNU windowp-checks WINDOW; nil (nothing
+/// fixed in our model).
+fn f_windowp_nil(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    match arg(&a, 0) {
+        Value::Nil | Value::Window(_) => Ok(Value::Nil),
+        other => Err(i.wrong_type_mut("windowp", &other)),
+    }
+}
+
+/// `window-safely-shrinkable-p` — batch tty: always safe → t.
+fn f_safely_shrinkable(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    match arg(&a, 0) {
+        Value::Nil | Value::Window(_) => Ok(Value::t()),
+        other => Err(i.wrong_type_mut("window-valid-p", &other)),
+    }
+}
+
+/// `window-main-window` — frame arg check, then the frame's main
+/// (non-minibuffer) window; single-window frames → that window.
+fn f_window_main_window(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let f = match arg(&a, 0) {
+        Value::Nil => sel_frame(i),
+        Value::Frame(fr) => Some(fr),
+        other => {
+            let shown = i.princ_to_string(&other);
+            return Err(i.error(format!("{shown} is not a live frame")));
+        }
+    };
+    let Some(f) = f else {
+        return f_selected_window(i, vec![]);
+    };
+    let fb = f.borrow();
+    let w = fb
+        .windows
+        .iter()
+        .find(|w| !w.borrow().minibuffer)
+        .or_else(|| fb.windows.first())
+        .cloned();
+    drop(fb);
+    Ok(w.map(Value::Window).unwrap_or(Value::Nil))
+}
+
+/// `face-attributes-as-vector` — GNU maps a plist of `:attr value'
+/// onto the 20-slot lface vector; anything else → all unspecified.
+fn f_face_attributes_as_vector(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    const ATTRS: [&str; 20] = [
+        "face", "family", "foundry", "width", "height", "weight", "slant",
+        "underline", "inverse-video", "foreground", "background", "stipple",
+        "overline", "strike-through", "box", "font", "inherit", "fontset",
+        "distant-foreground", "extend",
+    ];
+    let unspec = i.intern("unspecified");
+    let mut slots = vec![Value::Sym(unspec); 20];
+    // Iterate plist pairs: (KEY VAL KEY VAL ...).
+    let mut cur = a[0].clone();
+    while let Value::Cons(c) = cur {
+        let (k, rest) = {
+            let b = c.borrow();
+            (b.car.clone(), b.cdr.clone())
+        };
+        let (v, next) = match rest {
+            Value::Cons(c2) => {
+                let b = c2.borrow();
+                (b.car.clone(), b.cdr.clone())
+            }
+            _ => break,
+        };
+        if let Value::Sym(s) = &k {
+            let name = i.symbol_name(*s);
+            let bare = name.strip_prefix(':').unwrap_or(&name);
+            if let Some(idx) = ATTRS.iter().position(|x| *x == bare) {
+                if idx > 0 {
+                    slots[idx] = if idx == 7 && v.truthy() && !v.is_nil() {
+                        // GNU normalizes :underline to t/nil/plist.
+                        Value::t()
+                    } else {
+                        v
+                    };
+                }
+            }
+        }
+        cur = next;
+    }
+    Ok(Value::Vec(Rc::new(RefCell::new(slots))))
+}
+
 fn f_profiler_memory_start(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
     i.memory_profiler = true;
     Ok(Value::t())

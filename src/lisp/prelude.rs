@@ -9726,6 +9726,55 @@ With arg N, put point N/10 of the way from the true end."
       (end-of-buffer arg))
     (recenter '(t))))
 
+;; disp-table.el cluster (verbatim GNU).
+
+(defun make-display-table ()
+  "Return a new, empty display table."
+  (make-char-table 'display-table nil))
+
+(or standard-display-table
+    (setq standard-display-table (make-display-table)))
+
+;;; Display-table slot names.  The property value says which slot.
+
+(put 'truncation 'display-table-slot 0)
+(put 'wrap 'display-table-slot 1)
+(put 'escape 'display-table-slot 2)
+(put 'control 'display-table-slot 3)
+(put 'selective-display 'display-table-slot 4)
+(put 'vertical-border 'display-table-slot 5)
+
+(put 'box-vertical 'display-table-slot 6)
+(put 'box-horizontal 'display-table-slot 7)
+(put 'box-down-right 'display-table-slot 8)
+(put 'box-down-left 'display-table-slot 9)
+(put 'box-up-right 'display-table-slot 10)
+(put 'box-up-left 'display-table-slot 11)
+
+(put 'box-double-vertical 'display-table-slot 12)
+(put 'box-double-horizontal 'display-table-slot 13)
+(put 'box-double-down-right 'display-table-slot 14)
+(put 'box-double-down-left 'display-table-slot 15)
+(put 'box-double-up-right 'display-table-slot 16)
+(put 'box-double-up-left 'display-table-slot 17)
+
+(defun display-table-slot (display-table slot)
+  "Return the value of the extra slot in DISPLAY-TABLE named SLOT.
+SLOT may be a number from 0 to 17 inclusive, or a slot name (symbol)."
+  (let ((slot-number
+	 (if (numberp slot) slot
+	   (or (get slot 'display-table-slot)
+	       (error "Invalid display-table slot name: %s" slot)))))
+    (char-table-extra-slot display-table slot-number)))
+
+(defun set-display-table-slot (display-table slot value)
+  "Set the value of the extra slot in DISPLAY-TABLE named SLOT to VALUE."
+  (let ((slot-number
+	 (if (numberp slot) slot
+	   (or (get slot 'display-table-slot)
+	       (error "Invalid display-table slot name: %s" slot)))))
+    (set-char-table-extra-slot display-table slot-number value)))
+
 (defun reindent-then-newline-and-indent ()
   "Reindent current line, insert newline, then indent that line."
   (interactive "*")

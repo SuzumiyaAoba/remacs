@@ -2,10 +2,14 @@
 //! Many are stubs returning sensible tty defaults — the window tree
 //! (internal windows, splits) is a later milestone.
 
-use crate::editor::{frame_of, sel_frame, sel_window, win_of};
+use std::cell::RefCell;
+use std::rc::Rc;
+
+use crate::editor::{frame_of, is_terminal, sel_frame, sel_window, terminal_token, win_of};
 use crate::lisp::Interp;
 use crate::lisp::builtins::{S, arg, want_int};
 use crate::lisp::error::EvalResult;
+use crate::lisp::sym;
 use crate::lisp::value::{Subr, Value};
 
 pub(crate) static SUBRS: &[Subr] = &[
@@ -31,7 +35,7 @@ pub(crate) static SUBRS: &[Subr] = &[
         f_nil_win,
         "First child (flat: nil)."
     ),
-    S!("window-left-child", 0, 1, f_nil_win, ""),
+    S!("window-left-child", 0, 1, f_window_valid_nil, ""),
     S!(
         "window-next-sibling",
         0,
@@ -50,10 +54,10 @@ pub(crate) static SUBRS: &[Subr] = &[
         "window-next-buffers",
         0,
         1,
-        f_nil,
+        f_window_live_nil,
         "Recently shown buffers (nil)."
     ),
-    S!("window-prev-buffers", 0, 1, f_nil, ""),
+    S!("window-prev-buffers", 0, 1, f_window_live_nil, ""),
     S!("window-normal-size", 0, 3, f_one_f, "Normal size (1.0)."),
     S!(
         "window-new-total",
@@ -138,7 +142,7 @@ pub(crate) static SUBRS: &[Subr] = &[
         f_window_list1,
         "Windows in cyclic order."
     ),
-    S!("window-bump-use-time", 1, 1, f_nil, ""),
+    S!("window-bump-use-time", 0, 1, f_window_live_nil, ""),
     S!("window-discard-buffer-from-window", 2, 2, f_nil, ""),
     S!(
         "split-window-internal",
@@ -371,7 +375,7 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!("frame-after-make-frame", 2, 2, f_nil, ""),
     S!("frame--set-was-invisible", 1, 1, f_nil, ""),
     S!("frame--z-order-lessp", 2, 3, f_true2, ""),
-    S!("frame--face-hash-table", 0, 1, f_nil, ""),
+    S!("frame--face-hash-table", 0, 1, f_frame_face_hash_table, ""),
     S!("frame-font-cache", 0, 1, f_nil, ""),
     S!("next-frame", 0, 2, f_frame_self, "Next frame (only one)."),
     S!("previous-frame", 0, 2, f_frame_self, ""),
@@ -399,16 +403,22 @@ pub(crate) static SUBRS: &[Subr] = &[
     ),
     S!("tty-display-pixel-width", 0, 1, f_frame_width, ""),
     S!("tty-display-pixel-height", 0, 1, f_frame_height, ""),
-    S!("tty-type", 0, 3, f_tty_type, "Terminal type name."),
+    S!("tty-type", 0, 1, f_tty_type, "Terminal type name."),
     S!("tty-top-frame", 0, 1, f_frame_self, ""),
     S!("tty-no-underline", 0, 1, f_false, ""),
-    S!("tty-suppress-bold-inverse-default-colors", 1, 1, f_nil, ""),
+    S!(
+        "tty-suppress-bold-inverse-default-colors",
+        1,
+        1,
+        f_arg0,
+        ""
+    ),
     S!("controlling-tty-p", 0, 1, f_nil, ""),
     S!("terminal-live-p", 1, 1, f_terminal_live_p, ""),
     S!("terminal-list", 0, 0, f_terminal_list, ""),
     S!("terminal-name", 0, 1, f_terminal_name, ""),
-    S!("terminal-parameter", 2, 2, f_nil, ""),
-    S!("terminal-parameters", 0, 1, f_nil, ""),
+    S!("terminal-parameter", 2, 2, f_terminal_parameter, ""),
+    S!("terminal-parameters", 0, 1, f_terminal_parameters, ""),
     S!("set-terminal-parameter", 3, 3, f_nil, ""),
     // `terminal-id' does not exist in GNU.
     S!("delete-terminal", 0, 2, f_delete_terminal, ""),
@@ -416,7 +426,7 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!("resume-tty", 0, 1, f_resume_tty, ""),
     S!("tty--output-buffer-size", 0, 1, f_zero, ""),
     S!("tty--set-output-buffer-size", 1, 1, f_nil, ""),
-    S!("tty-find-type", 3, 3, f_nil, ""),
+    S!("tty-find-type", 2, 2, f_nil, ""),
     S!("handle-select-window", 1, 1, f_t, ""),
     S!("innermost-minibuffer-p", 0, 1, f_false, ""),
     S!("minibuffer-innermost-command-loop-p", 0, 1, f_false, ""),
@@ -457,20 +467,25 @@ fn f_other_window_for_scrolling(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
     Err(i.error("There is no other window"))
 }
 
-fn f_suspend_tty(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
+fn f_suspend_tty(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     // GNU batch: the initial terminal is not suspendable.
+    let _ = want_terminal_live(i, &arg(&a, 0))?;
     Err(i.error("Attempt to suspend a non-text terminal device"))
 }
 
-fn f_resume_tty(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
+fn f_resume_tty(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let _ = want_terminal_live(i, &arg(&a, 0))?;
     Err(i.error("Attempt to resume a non-text terminal device"))
 }
 
 fn f_delete_terminal(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     // GNU batch: deleting the sole live terminal is an error; a
-    // terminal arg that names nothing is quietly ignored (nil).
+    // non-terminal arg is quietly ignored (nil).
     match a.first() {
         None | Some(Value::Nil) => {
+            Err(i.error("Attempt to delete the sole active display terminal"))
+        }
+        Some(v) if is_terminal(i, v) => {
             Err(i.error("Attempt to delete the sole active display terminal"))
         }
         _ => Ok(Value::Nil),
@@ -940,17 +955,106 @@ fn f_tty_colors(_i: &mut Interp, _a: Vec<Value>) -> EvalResult {
     Ok(Value::Int(256))
 }
 
-fn f_tty_type(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
-    let _ = i;
-    Ok(Value::Sym(i.intern("remacs-tty")))
+fn f_arg0(_i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    Ok(a[0].clone())
+}
+
+fn f_tty_type(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    // GNU: nil on a tty batch terminal; TERMINAL must be terminal-live-p.
+    let _ = want_terminal_live(i, &arg(&a, 0))?;
+    Ok(Value::Nil)
+}
+
+/// nil or the terminal record; anything else is a terminal-live-p error.
+fn want_terminal_live(i: &mut Interp, v: &Value) -> EvalResult {
+    match v {
+        Value::Nil => Ok(Value::Nil),
+        w if is_terminal(i, w) => Ok(Value::Nil),
+        other => Err(i.wrong_type_mut("terminal-live-p", other)),
+    }
+}
+
+/// `window-live-p' check on an optional arg, then nil (all our
+/// windows are live).
+fn f_window_live_nil(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    match arg(&a, 0) {
+        Value::Nil | Value::Window(_) => Ok(Value::Nil),
+        other => Err(i.wrong_type_mut("window-live-p", &other)),
+    }
+}
+
+/// `window-valid-p' check on an optional arg, then nil.
+fn f_window_valid_nil(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    match arg(&a, 0) {
+        Value::Nil | Value::Window(_) => Ok(Value::Nil),
+        other => Err(i.wrong_type_mut("window-valid-p", &other)),
+    }
+}
+
+fn f_terminal_parameters(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let _ = want_terminal_live(i, &arg(&a, 0))?;
+    // GNU's tty default parameters.
+    Ok(Value::list(vec![
+        Value::cons(
+            Value::Sym(i.intern("normal-erase-is-backspace")),
+            Value::Int(0),
+        ),
+        Value::cons(
+            Value::Sym(i.intern("keyboard-coding-saved-meta-mode")),
+            Value::list(vec![Value::Sym(sym::T)]),
+        ),
+    ]))
+}
+
+fn f_terminal_parameter(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let _ = want_terminal_live(i, &a[0])?;
+    let params = f_terminal_parameters(i, vec![])?;
+    // assq over the alist.
+    let mut cur = params;
+    loop {
+        match cur {
+            Value::Cons(c) => {
+                let (entry, next) = {
+                    let b = c.borrow();
+                    (b.car.clone(), b.cdr.clone())
+                };
+                if let Value::Cons(pair) = &entry {
+                    let (pk, pv) = {
+                        let b = pair.borrow();
+                        (b.car.clone(), b.cdr.clone())
+                    };
+                    if let (Value::Sym(s1), Value::Sym(s2)) = (&pk, &a[1]) {
+                        if s1 == s2 {
+                            return Ok(pv);
+                        }
+                    }
+                }
+                cur = next;
+            }
+            _ => return Ok(Value::Nil),
+        }
+    }
+}
+
+fn f_frame_face_hash_table(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    // Validate FRAME like GNU (frame-live-p), then hand back a hash
+    // table of the known faces.
+    if let Some(v) = a.first() {
+        match v {
+            Value::Nil | Value::Frame(_) => {}
+            other => return Err(i.wrong_type_mut("frame-live-p", other)),
+        }
+    }
+    use crate::lisp::value::{HashTest, LispHash};
+    let h = Value::Hash(Rc::new(RefCell::new(LispHash::new(HashTest::Eq))));
+    Ok(h)
 }
 
 fn f_terminal_live_p(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    // Our only terminal is the `tty' token (nil = the same default).
-    let tty = i.intern("tty");
+    // Our only terminal is the singleton record (nil = default terminal).
     Ok(Value::from_bool(match &a[0] {
         Value::Nil => true,
-        v => i.sym_is(v, tty),
+        v => is_terminal(i, v),
     }))
 }
 
@@ -970,11 +1074,11 @@ fn f_combine_windows(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 }
 
 fn f_terminal_list(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
-    let tid = i.intern("tty");
-    Ok(Value::list(vec![Value::Sym(tid)]))
+    Ok(Value::list(vec![terminal_token(i)]))
 }
 
-fn f_terminal_name(_i: &mut Interp, _a: Vec<Value>) -> EvalResult {
+fn f_terminal_name(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let _ = want_terminal_live(i, &arg(&a, 0))?;
     Ok(Value::string("initial_terminal"))
 }
 

@@ -201,6 +201,11 @@ pub struct Interp {
     /// Pushed by `apply' so `mapbacktrace'/backtrace internals can
     /// walk the stack like GNU's specpdl entries do.
     pub lisp_stack: Vec<(Value, Vec<Value>)>,
+    /// `profiler-cpu-running-p' state flag (no real sampler).
+    pub cpu_profiler: bool,
+    /// The sole terminal object (`terminal-list', `frame-terminal'):
+    /// a lazily-created record `#s(terminal 0 "initial_terminal")'.
+    pub terminal: Option<Value>,
 }
 
 /// Result of a minibuffer read from the front-end.
@@ -287,6 +292,8 @@ impl Interp {
             char_table_parents: Vec::new(),
             frame_state_seen: None,
             lisp_stack: Vec::new(),
+            cpu_profiler: false,
+            terminal: None,
         };
         crate::lisp::builtins::install(&mut interp);
         crate::buffer::install_primitives(&mut interp);
