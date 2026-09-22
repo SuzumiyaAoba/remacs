@@ -101,9 +101,35 @@ fn nth_arg(v: &Value, n: usize) -> Value {
 
 impl Interp {
     /// Is `lexical-binding` currently in effect?
+    /// GNU consults `internal-interpreter-environment' for nested evals:
+    /// a non-empty captured lexical env means lexical context even if the
+    /// `lexical-binding' variable is (dynamically) nil, which is what lets
+    /// closures inside lexical functions keep working when the variable's
+    /// global value is nil.
     pub fn lexical_binding_active(&self) -> bool {
+        if self.lexenv.is_some() {
+            return true;
+        }
         let id = self.obarray.intern_soft("lexical-binding").unwrap_or(0);
         self.symbol_value(id).truthy()
+    }
+
+    /// Lexical env captured by a newly created `lambda'/`defun'/`defmacro'.
+    /// When `lexical-binding' is off the function is dynamic (env nil).
+    /// When it is on but no env exists yet — e.g. top level of a file
+    /// loaded with a `lexical-binding: t' cookie — a fresh root frame is
+    /// captured so the function is lexical, like GNU.
+    pub fn lambda_env(&self) -> crate::lisp::eval::LexEnv {
+        if !self.lexical_binding_active() {
+            return None;
+        }
+        match &self.lexenv {
+            Some(_) => self.lexenv.clone(),
+            None => Some(std::rc::Rc::new(crate::lisp::eval::LexFrame {
+                vars: std::cell::RefCell::new(std::collections::HashMap::new()),
+                parent: None,
+            })),
+        }
     }
 
     /// `let`/`let*`/`condition-case` variable binding honoring scoping:
@@ -519,7 +545,7 @@ fn sf_defun(i: &mut Interp, args: Value) -> EvalResult {
     let mut lambda = i.parse_lambda(&params, &body, Some(sid))?;
     // defun never captures a lexical env from the definition site in the
     // dynamic model; under lexical-binding it captures the file env.
-    lambda.env = i.lexenv.clone();
+    lambda.env = i.lambda_env();
     i.fset(sid, Value::Lambda(Rc::new(lambda)));
     Ok(name_v)
 }
@@ -535,7 +561,7 @@ fn sf_defmacro(i: &mut Interp, args: Value) -> EvalResult {
     let body = body_v.list_to_vec().unwrap_or_default();
     let mut lambda = i.parse_lambda(&params, &body, Some(sid))?;
     lambda.is_macro = true;
-    lambda.env = i.lexenv.clone();
+    lambda.env = i.lambda_env();
     i.fset(sid, Value::Lambda(Rc::new(lambda)));
     Ok(name_v)
 }
@@ -547,7 +573,7 @@ fn sf_lambda(i: &mut Interp, args: Value) -> EvalResult {
     let body_v = cdr(&args);
     let body = body_v.list_to_vec().unwrap_or_default();
     let mut lambda = i.parse_lambda(&params, &body, None)?;
-    lambda.env = i.lexenv.clone();
+    lambda.env = i.lambda_env();
     Ok(Value::Lambda(Rc::new(lambda)))
 }
 

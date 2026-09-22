@@ -9,7 +9,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use crate::lisp::Interp;
-use crate::lisp::builtins::eq_values;
+use crate::lisp::builtins::{eq_values, equal_values};
 use crate::lisp::builtins::listfn::nthcdr_of;
 use crate::lisp::error::{EvalResult, Flow};
 use crate::lisp::obarray::sym;
@@ -3682,6 +3682,20 @@ pub(crate) fn keymap_def(i: &mut Interp, def: Value) -> EvalResult {
     Ok(def)
 }
 
+/// GNU `get_keymap (m, 0, 0)' — resolves a symbol's function cell to
+/// its keymap, but never loads an autoload (KEYMAPP's check inside
+/// `access_keymap_1' passes autoload=false).
+pub(crate) fn keymap_def_noautoload(i: &Interp, def: &Value) -> Value {
+    if let Value::Sym(s) = def {
+        if let f @ Value::Cons(_) = i.symbol_function(*s) {
+            if is_keymap(i, &f) {
+                return f;
+            }
+        }
+    }
+    def.clone()
+}
+
 /// Push MAP onto `keymap--builtin-maps' so the prelude's keymap-order
 /// normalization pass can tell maps built binding-by-binding (whose
 /// alists are reversed by define-key's prepend) from literal
@@ -3697,9 +3711,34 @@ fn register_builtin_keymap(i: &mut Interp, m: &Value) {
     i.obarray.symbol_mut(id).value = Value::cons(m.clone(), cur);
 }
 
+/// Fresh purpose-`keymap' char-table — the first cdr element of every
+/// `make-keymap' result, as in GNU.  Our bindings stay in the alist;
+/// the table is for representation parity (it prints `#^[...]').
+pub(crate) fn keymap_char_table(i: &mut Interp) -> Value {
+    Value::Record(std::rc::Rc::new(std::cell::RefCell::new(vec![
+        Value::Sym(i.intern("char-table")),
+        Value::Sym(i.intern("keymap")),
+        Value::Vec(std::rc::Rc::new(std::cell::RefCell::new(vec![
+            Value::Nil;
+            256
+        ]))),
+    ])))
+}
+
 fn f_make_keymap(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    // GNU stores the menu prompt as a string element in the keymap's
-    // cdr: (keymap "prompt" . bindings).
+    // GNU: (keymap CHARTABLE . ALIST) — CHARTABLE holds unmodified
+    // char bindings; the optional STRING arg is the menu prompt.
+    let ct = keymap_char_table(i);
+    let tail = match arg(&a, 0) {
+        Value::Str(_) => Value::cons(ct, Value::list(vec![a[0].clone()])),
+        _ => Value::cons(ct, Value::Nil),
+    };
+    let km = Value::cons(Value::Sym(i.intern("keymap")), tail);
+    register_builtin_keymap(i, &km);
+    Ok(km)
+}
+fn f_make_sparse_keymap(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    // GNU: (keymap . ALIST) — sparse maps have no char-table.
     let rest = match arg(&a, 0) {
         Value::Str(_) => Value::list(vec![a[0].clone()]),
         _ => Value::Nil,
@@ -3707,9 +3746,6 @@ fn f_make_keymap(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let km = Value::cons(Value::Sym(i.intern("keymap")), rest);
     register_builtin_keymap(i, &km);
     Ok(km)
-}
-fn f_make_sparse_keymap(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    f_make_keymap(i, a)
 }
 fn f_keymapp(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     // GNU: a cons keymap, or a symbol whose function cell is a keymap
@@ -3742,9 +3778,9 @@ pub(crate) fn is_autoload_keymap(i: &Interp, v: &Value) -> bool {
 }
 /// Deep-copy a keymap spine cell: cons structure is copied
 /// recursively so nested keymaps and binding cells are fresh.
-/// Non-cons leaves (including a parent-tail keymap's elements —
-/// copied through the same recursion) share nothing with the source.
-fn copy_keymap_elem(v: &Value, depth: usize) -> Value {
+/// Char-table and vector elements are copied too (GNU copies the
+/// char-table's contents); other leaf types share their value.
+fn copy_keymap_elem(i: &Interp, v: &Value, depth: usize) -> Value {
     if depth > 200 {
         return v.clone();
     }
@@ -3754,9 +3790,25 @@ fn copy_keymap_elem(v: &Value, depth: usize) -> Value {
             let (car, cdr) = (b.car.clone(), b.cdr.clone());
             drop(b);
             Value::cons(
-                copy_keymap_elem(&car, depth + 1),
-                copy_keymap_elem(&cdr, depth + 1),
+                copy_keymap_elem(i, &car, depth + 1),
+                copy_keymap_elem(i, &cdr, depth + 1),
             )
+        }
+        Value::Record(r) if crate::lisp::builtins::misc::is_char_table(i, v) => {
+            let items: Vec<Value> = r
+                .borrow()
+                .iter()
+                .map(|e| copy_keymap_elem(i, e, depth + 1))
+                .collect();
+            Value::Record(std::rc::Rc::new(std::cell::RefCell::new(items)))
+        }
+        Value::Vec(vv) => {
+            let items: Vec<Value> = vv
+                .borrow()
+                .iter()
+                .map(|e| copy_keymap_elem(i, e, depth + 1))
+                .collect();
+            Value::Vec(std::rc::Rc::new(std::cell::RefCell::new(items)))
         }
         _ => v.clone(),
     }
@@ -3773,13 +3825,28 @@ fn f_copy_keymap(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     };
     Ok(Value::cons(
         Value::Sym(i.intern("keymap")),
-        copy_keymap_elem(&bindings, 0),
+        copy_keymap_elem(i, &bindings, 0),
     ))
 }
 
-pub(crate) fn keymap_bindings(km: &Value) -> Value {
+/// The binding spine of KM: everything after the `keymap' head when
+/// present, the whole cons otherwise — GNU's
+/// `(CONSP (map) && EQ (Qkeymap, XCAR (map))) ? XCDR (map) : map',
+/// which is also what makes a plain list of keymaps work as a lookup
+/// root (its elements are searched as embedded keymaps).
+pub(crate) fn keymap_bindings(i: &Interp, km: &Value) -> Value {
     match km {
-        Value::Cons(c) => c.borrow().cdr.clone(),
+        Value::Cons(c) => {
+            let b = c.borrow();
+            if i.sym_is(
+                &b.car,
+                i.obarray.intern_soft("keymap").unwrap_or(u32::MAX),
+            ) {
+                b.cdr.clone()
+            } else {
+                km.clone()
+            }
+        }
         _ => Value::Nil,
     }
 }
@@ -3822,7 +3889,7 @@ pub(crate) fn keymap_parents(i: &Interp, km: &Value) -> Vec<Value> {
         }
         // Bare keymap elements (composed-map members) are searched
         // like parents.
-        keymap_bindings(km).each_car(|el| {
+        keymap_bindings(i, km).each_car(|el| {
             if is_keymap(i, el) {
                 out.push(el.clone());
             } else if let Value::Cons(_) = el {
@@ -3833,6 +3900,241 @@ pub(crate) fn keymap_parents(i: &Interp, km: &Value) -> Vec<Value> {
             }
         });
     }
+    out
+}
+
+/// Push the (KEY . DEF) pairs one keymap element yields, in GNU
+/// `map_keymap_internal' order: a char-table element contributes its
+/// non-nil slots as compressed ((LO . HI) . DEF) or (CH . DEF) pairs,
+/// a vector contributes (INDEX . VAL) for every slot, and a cons is
+/// one binding as-is.  Other elements (prompt strings etc.) yield
+/// nothing.
+fn push_elem_bindings(i: &Interp, elem: &Value, out: &mut Vec<(Value, Value)>) {
+    match elem {
+        Value::Cons(c) => {
+            let b = c.borrow();
+            out.push((b.car.clone(), b.cdr.clone()));
+        }
+        _ if crate::lisp::builtins::misc::is_char_table(i, elem) => {
+            if let Some(v) = crate::lisp::builtins::misc::char_table_vec(elem)
+            {
+                let v = v.borrow();
+                let mut k = 0usize;
+                while k < v.len() {
+                    let val = v[k].clone();
+                    if val.is_nil() {
+                        k += 1;
+                        continue;
+                    }
+                    // map_char_table compresses runs of equal values
+                    // into (LO . HI) range keys.
+                    let mut h = k + 1;
+                    while h < v.len()
+                        && crate::lisp::builtins::eq_values(&v[h], &val)
+                    {
+                        h += 1;
+                    }
+                    let key = if h == k + 1 {
+                        Value::Int(k as i128)
+                    } else {
+                        Value::cons(
+                            Value::Int(k as i128),
+                            Value::Int(h as i128 - 1),
+                        )
+                    };
+                    // A `t' slot is GNU's "explicitly unbound" marker;
+                    // map_keymap_item reports it as nil.
+                    let def = if matches!(val, Value::Sym(s) if i.symbol_name(s) == "t")
+                    {
+                        Value::Nil
+                    } else {
+                        val
+                    };
+                    out.push((key, def));
+                    k = h;
+                }
+            }
+        }
+        Value::Vec(vv) => {
+            for (n, v) in vv.borrow().iter().enumerate() {
+                out.push((Value::Int(n as i128), v.clone()));
+            }
+        }
+        _ => {}
+    }
+}
+
+/// The sort key a binding's KEY carries in GNU's char-table
+/// traversal: plain chars and (LO . HI) range keys sort by their low
+/// bound; non-character keys return None.
+fn char_key_lo(k: &Value) -> Option<i128> {
+    match k {
+        Value::Int(n) => Some(*n),
+        Value::Cons(c) => match &c.borrow().car {
+            Value::Int(lo) => Some(*lo),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+/// Merge the deferred high-char alist entries (`chars' collects
+/// (lo, key, def) triples) into `out' at the char-table's emission
+/// position so the whole character section iterates ascending like
+/// GNU's char-table scan.
+fn merge_char_section(
+    out: &mut Vec<(Value, Value)>,
+    chars: &mut Vec<(i128, Value, Value)>,
+    ct_pos: Option<usize>,
+) {
+    if chars.is_empty() {
+        return;
+    }
+    chars.sort_by_key(|(lo, _, _)| *lo);
+    let pos = ct_pos.unwrap_or(out.len());
+    let merged: Vec<(Value, Value)> =
+        chars.drain(..).map(|(_, k, d)| (k, d)).collect();
+    out.splice(pos..pos, merged);
+}
+
+/// Own bindings of KEYMAP in GNU `map_keymap_internal' order: the
+/// walk stops at the improper parent tail and at an embedded keymap
+/// element.  Char-table contents appear at the table's spine
+/// position, then alist conses follow in stored order.  In a dense
+/// map, alist entries whose keys are characters or char ranges
+/// (the >255 overflow our flat table cannot hold) merge into the
+/// character section sorted by key, as GNU's trie iterates them.
+pub(crate) fn keymap_own_bindings(
+    i: &Interp,
+    km: &Value,
+) -> Vec<(Value, Value)> {
+    let mut out = Vec::new();
+    let mut chars: Vec<(i128, Value, Value)> = Vec::new();
+    let mut ct_pos: Option<usize> = None;
+    let mut cur = keymap_bindings(i, km);
+    loop {
+        let cons = match cur.clone() {
+            c @ Value::Cons(_) => c,
+            _ => break,
+        };
+        // A spine cons that is itself a keymap is the parent tail.
+        if is_keymap(i, &cons) {
+            break;
+        }
+        let (elem, next) = {
+            let b = match &cons {
+                Value::Cons(c) => c.borrow(),
+                _ => break,
+            };
+            (b.car.clone(), b.cdr.clone())
+        };
+        if is_keymap(i, &elem) {
+            // GNU stops at an embedded keymap element.
+            break;
+        }
+        if crate::lisp::builtins::misc::is_char_table(i, &elem)
+            || matches!(elem, Value::Vec(_))
+        {
+            if ct_pos.is_none() {
+                ct_pos = Some(out.len());
+            }
+            let mut tmp = Vec::new();
+            push_elem_bindings(i, &elem, &mut tmp);
+            for (k, d) in tmp {
+                match char_key_lo(&k) {
+                    Some(lo) => chars.push((lo, k, d)),
+                    None => out.push((k, d)),
+                }
+            }
+        } else if let Value::Cons(_) = &elem {
+            push_elem_bindings(i, &elem, &mut out);
+            let (k, d) = out.pop().unwrap();
+            // Dense map: alist char keys are char-table overflow.
+            if ct_pos.is_some() {
+                match char_key_lo(&k) {
+                    Some(lo) => chars.push((lo, k, d)),
+                    None => out.push((k, d)),
+                }
+            } else {
+                out.push((k, d));
+            }
+        }
+        cur = next;
+    }
+    merge_char_section(&mut out, &mut chars, ct_pos);
+    out
+}
+
+/// Bindings in the order of GNU's C `map_keymap' (used by
+/// `accessible-keymaps' and `where-is-internal'): like the own
+/// bindings, but embedded keymap elements are expanded in place and
+/// the improper-tail parent's elements follow inline.
+pub(crate) fn keymap_all_bindings(
+    i: &Interp,
+    km: &Value,
+) -> Vec<(Value, Value)> {
+    let mut out = Vec::new();
+    let mut chars: Vec<(i128, Value, Value)> = Vec::new();
+    let mut ct_pos: Option<usize> = None;
+    let mut cur = keymap_bindings(i, km);
+    loop {
+        let cons = match cur.clone() {
+            c @ Value::Cons(_) => c,
+            _ => break,
+        };
+        if is_keymap(i, &cons) {
+            // Parent tail: the deferred char section belongs to the
+            // child; flush it, then the parent's elements follow
+            // inline with a fresh section.
+            merge_char_section(&mut out, &mut chars, ct_pos);
+            ct_pos = None;
+            cur = match &cons {
+                Value::Cons(c) => c.borrow().cdr.clone(),
+                _ => break,
+            };
+            continue;
+        }
+        let (elem, next) = {
+            let b = match &cons {
+                Value::Cons(c) => c.borrow(),
+                _ => break,
+            };
+            (b.car.clone(), b.cdr.clone())
+        };
+        if is_keymap(i, &elem) {
+            // Embedded keymap element: expand its bindings in place.
+            merge_char_section(&mut out, &mut chars, ct_pos);
+            ct_pos = None;
+            out.extend(keymap_all_bindings(i, &elem));
+        } else if crate::lisp::builtins::misc::is_char_table(i, &elem)
+            || matches!(elem, Value::Vec(_))
+        {
+            if ct_pos.is_none() {
+                ct_pos = Some(out.len());
+            }
+            let mut tmp = Vec::new();
+            push_elem_bindings(i, &elem, &mut tmp);
+            for (k, d) in tmp {
+                match char_key_lo(&k) {
+                    Some(lo) => chars.push((lo, k, d)),
+                    None => out.push((k, d)),
+                }
+            }
+        } else if let Value::Cons(_) = &elem {
+            push_elem_bindings(i, &elem, &mut out);
+            let (k, d) = out.pop().unwrap();
+            if ct_pos.is_some() {
+                match char_key_lo(&k) {
+                    Some(lo) => chars.push((lo, k, d)),
+                    None => out.push((k, d)),
+                }
+            } else {
+                out.push((k, d));
+            }
+        }
+        cur = next;
+    }
+    merge_char_section(&mut out, &mut chars, ct_pos);
     out
 }
 
@@ -3989,111 +4291,291 @@ pub(crate) fn key_name_for(code: i128) -> Option<String> {
         .and_then(|g| g.as_ref().and_then(|m| m.get(&code).cloned()))
 }
 
-/// Strip menu decorations from a binding's cdr to reach the real
-/// definition: `(KEY "Label" . DEF)' strips the string label, and
-/// `(KEY menu-item "Label" DEF . PROPS)' yields DEF.
+/// GNU `get_keyelt': unwrap a keymap binding's definition — strip
+/// `(STRING . DEF)' menu labels and `(menu-item LABEL DEF . PROPS)'
+/// wrappers, repeatedly, until the real definition remains.  (GNU also
+/// evaluates a `:filter' property; that needs lisp evaluation which
+/// the lookup paths pass autoload=0 for, so it is left as-is.)
 pub(crate) fn menu_label_def(i: &Interp, v: Value) -> Value {
-    if let Value::Cons(c) = &v {
+    let mut v = v;
+    loop {
+        let Value::Cons(c) = &v else {
+            return v;
+        };
         let (car, cur) = {
             let b = c.borrow();
             (b.car.clone(), b.cdr.clone())
         };
         if matches!(car, Value::Str(_)) {
-            return cur;
+            v = cur;
+            continue;
         }
         if matches!(&car, Value::Sym(s) if i.symbol_name(*s) == "menu-item") {
             // (menu-item LABEL DEF . PROPS): DEF is the caddr.
-            let mut cc = v.clone();
-            for _ in 0..2 {
-                match cc {
-                    Value::Cons(x) => cc = x.borrow().cdr.clone(),
-                    _ => return v.clone(),
-                }
+            let mut cc = cur;
+            match cc {
+                Value::Cons(x) => cc = x.borrow().cdr.clone(),
+                _ => return v,
             }
-            return match cc {
+            v = match cc {
                 Value::Cons(x) => x.borrow().car.clone(),
-                _ => v.clone(),
+                _ => cc,
             };
+            continue;
         }
+        return v;
     }
-    v
 }
 
 /// Meta modifier bit in GNU's event encoding (CHAR_META).
 pub(crate) const META_BIT: i128 = 1 << 27;
 
-pub(crate) fn lookup_in_keymap(
+/// GNU `access_keymap_1' on MAP — a keymap cons or a plain list of
+/// keymaps — for KEY, returning Option: `None' is Qunbound (no entry
+/// found, keep scanning), `Some(nil)' is an explicit nil binding
+/// (suppresses the parent and the default binding, but not a later
+/// sibling map).  T_OK permits `t' default bindings.
+///
+/// The cdr spine is one flat sequence: an improper-tail parent's
+/// elements merge in order, and bare keymap elements (composed-map
+/// members, or the elements of a keymap list) are searched inline.
+/// Multiple keymap results compose into `(keymap M1 M2 ...)'; a
+/// non-nil non-keymap result shadows everything after it.
+fn access_keymap(
     i: &mut Interp,
     km: &Value,
     mut key: i128,
-) -> Result<Value, Flow> {
-    // GNU access_keymap_1: a meta-bit key is looked up through the
-    // map's meta-prefix (27) binding — M-x means ESC x.
+    t_ok: bool,
+) -> Result<Option<Value>, Flow> {
+    // A meta-bit key is looked up through the map's meta-prefix (27)
+    // binding — M-x means ESC x.
     if key & META_BIT != 0 {
-        let esc_b = lookup_in_keymap(i, km, 27)?;
-        let esc = keymap_def(i, esc_b)?;
-        if is_keymap(i, &esc) {
-            return lookup_in_keymap(i, &esc, key & !META_BIT);
-        }
-        // No meta map: only the default (t) binding can match.
-        key = event_code_for("t");
-    }
-    // GNU access_keymap_1: the cdr spine is one flat alist — the
-    // improper-tail parent's elements merge in order. Bare keymap
-    // elements (composed-map members) are searched inline at their
-    // spine position. `t' keys record a default binding.
-    let t_code = event_code_for("t");
-    let mut default = Value::Nil;
-    let mut cur = keymap_bindings(km);
-    loop {
-        let (elem, next) = match cur {
-            Value::Cons(cc) => {
-                let b = cc.borrow();
-                (b.car.clone(), b.cdr.clone())
-            }
-            _ => break,
+        let esc_b = access_keymap(i, km, 27, t_ok)?;
+        let esc = match &esc_b {
+            Some(v) => keymap_def(i, v.clone())?,
+            None => Value::Nil,
         };
-        if is_keymap(i, &elem) {
-            // Element that is itself a keymap: search it inline.
-            let v = lookup_in_keymap(i, &elem, key)?;
-            if !v.is_nil() {
-                return Ok(v);
+        if is_keymap(i, &esc) {
+            return access_keymap(i, &esc, key & !META_BIT, t_ok);
+        }
+        return if t_ok {
+            // No meta map: only the default (t) binding can match.
+            key = event_code_for("t");
+            access_keymap_int(i, km, key, t_ok)
+        } else {
+            // An explicit nil meta binding means nil; anything else
+            // leaves the key unbound here.
+            match esc_b {
+                Some(v) if v.is_nil() => Ok(Some(Value::Nil)),
+                _ => Ok(None),
+            }
+        };
+    }
+    access_keymap_int(i, km, key, t_ok)
+}
+
+/// The element-walk of `access_keymap_1' once meta translation is
+/// done (KEY is a plain code or the `t' default key).
+fn access_keymap_int(
+    i: &mut Interp,
+    km: &Value,
+    key: i128,
+    mut t_ok: bool,
+) -> Result<Option<Value>, Flow> {
+    let t_code = event_code_for("t");
+    let t_sym = i.intern("t");
+    let keymap_sym = i.intern("keymap");
+    let mut t_binding: Option<Value> = None;
+    // RETVAL: None = Qunbound; Some(nil) = explicit nil; otherwise a
+    // binding — a bare keymap, or `(keymap M1 M2 ...)' composing
+    // several keymap hits (RETVAL_TAIL is its last cons cell).
+    let mut retval: Option<Value> = None;
+    let mut retval_tail: Option<Value> = None;
+    let mut cur = keymap_bindings(i, km);
+    loop {
+        // GNU's loop head also resolves a non-cons improper tail
+        // (a symbol whose function cell is a keymap).
+        let cons = match cur.clone() {
+            c @ Value::Cons(_) => c,
+            other => match keymap_def(i, other)? {
+                v @ Value::Cons(_) => v,
+                _ => break,
+            },
+        };
+        let (elem, next) = {
+            let b = match &cons {
+                Value::Cons(c) => c.borrow(),
+                _ => break,
+            };
+            (b.car.clone(), b.cdr.clone())
+        };
+        // An element that IS the `keymap' symbol means the spine has
+        // reached the parent tail (the tail cons is itself a keymap).
+        if matches!(&elem, Value::Sym(s) if *s == keymap_sym) {
+            match &retval {
+                // An explicit nil binding shadows the parent.
+                Some(v) if v.is_nil() => break,
+                // A keymap result absorbs the parent's binding for
+                // KEY when that is also a keymap, then stops.
+                Some(_) => {
+                    let pv = access_keymap_int(i, &cons, key, t_ok)?
+                        .unwrap_or(Value::Nil);
+                    let pv = keymap_def(i, pv)?;
+                    if is_keymap(i, &pv) {
+                        append_keymap_hit(
+                            i, &mut retval, &mut retval_tail, pv,
+                        );
+                    }
+                    break;
+                }
+                // Nothing yet: keep walking the parent's spine.
+                None => {
+                    cur = next;
+                    continue;
+                }
+            }
+        }
+        // The binding this element yields for KEY: None = unbound.
+        let val: Option<Value> = if is_keymap(i, &elem) {
+            // Bare keymap element: searched inline.
+            access_keymap_int(i, &elem, key, t_ok)?
+        } else if matches!(&elem, Value::Sym(_)) {
+            // A bare symbol element whose function cell is a keymap
+            // (composed maps can store raw symbols like `ESC-prefix').
+            match keymap_def(i, elem.clone())? {
+                v if is_keymap(i, &v) => access_keymap_int(i, &v, key, t_ok)?,
+                _ => None,
+            }
+        } else if crate::lisp::builtins::misc::is_char_table(i, &elem) {
+            // Plain character bindings live in the char-table; a nil
+            // slot is unbound (no entry at all).
+            if (0..256).contains(&key) && key & CHAR_MODIFIER_MASK == 0 {
+                crate::lisp::builtins::misc::char_table_vec(&elem)
+                    .map(|v| {
+                        let s = v.borrow()[key as usize].clone();
+                        if s.is_nil() { None } else { Some(s) }
+                    })
+                    .flatten()
+            } else {
+                None
+            }
+        } else if let Value::Vec(vv) = &elem {
+            // Vector keymap element: a nil slot is an explicit nil
+            // binding (it shadows the parent).
+            if key >= 0 && (key as usize) < vv.borrow().len() {
+                Some(vv.borrow()[key as usize].clone())
+            } else {
+                None
             }
         } else if let Value::Cons(c) = &elem {
             let b = c.borrow();
             // ((LO . HI) . DEF) is a char-table style range binding.
             if let Value::Cons(r) = &b.car {
                 let rb = r.borrow();
-                if let (Value::Int(lo), Value::Int(hi)) = (&rb.car, &rb.cdr) {
-                    if *lo <= key && key <= *hi {
-                        return Ok(menu_label_def(i, b.cdr.clone()));
+                match (&rb.car, &rb.cdr) {
+                    (Value::Int(lo), Value::Int(hi))
+                        if *lo <= key && key <= *hi =>
+                    {
+                        Some(b.cdr.clone())
                     }
+                    _ => None,
                 }
             } else {
                 let k = match &b.car {
                     Value::Int(n) => Some(*n),
-                    Value::Sym(s) => Some(event_code_for(&i.symbol_name(*s))),
+                    Value::Sym(s) => {
+                        Some(event_code_for(&i.symbol_name(*s)))
+                    }
                     _ => None,
                 };
                 match k {
-                    Some(k) if k == key => return Ok(menu_label_def(i, b.cdr.clone())),
-                    Some(k) if k == t_code => default = menu_label_def(i, b.cdr.clone()),
-                    _ => {}
+                    Some(k) if k == key => Some(b.cdr.clone()),
+                    Some(k) if k == t_code && t_ok => {
+                        t_binding = Some(b.cdr.clone());
+                        t_ok = false;
+                        None
+                    }
+                    _ => None,
+                }
+            }
+        } else {
+            None
+        };
+        // Fold the element's result into RETVAL, GNU-style.
+        if let Some(v) = val {
+            // `t' in a slot is an explicit nil binding.
+            let v = if matches!(&v, Value::Sym(s) if *s == t_sym) {
+                Value::Nil
+            } else {
+                v
+            };
+            let v = menu_label_def(i, v);
+            // GNU KEYMAPP(val) is get_keymap(val, 0, 0): symbol
+            // function-cells resolve, but autoloads never load — and
+            // RETVAL stores the raw VAL (a `Control-X-prefix' symbol
+            // stays a symbol in the result).
+            let kv = keymap_def_noautoload(i, &v);
+            if is_keymap(i, &kv) {
+                append_keymap_hit(i, &mut retval, &mut retval_tail, v);
+            } else {
+                if retval.is_none()
+                    || matches!(&retval, Some(r) if r.is_nil())
+                {
+                    retval = Some(v.clone());
+                }
+                // A non-nil non-keymap result shadows the rest.
+                if !v.is_nil() {
+                    break;
                 }
             }
         }
         cur = next;
     }
-    if !default.is_nil() {
-        return Ok(default);
-    }
-    for p in keymap_parents(i, km) {
-        let v = lookup_in_keymap(i, &p, key)?;
-        if !v.is_nil() {
-            return Ok(v);
+    Ok(match retval {
+        Some(v) => Some(v),
+        None => t_binding.map(|v| menu_label_def(i, v)),
+    })
+}
+
+/// GNU's retval accumulator: V is a keymap hit — the first stands
+/// alone, later ones compose `(keymap M1 M2 ...)' by appending to
+/// RETVAL_TAIL (the composed list's last cons cell).
+fn append_keymap_hit(
+    i: &mut Interp,
+    retval: &mut Option<Value>,
+    retval_tail: &mut Option<Value>,
+    v: Value,
+) {
+    match retval {
+        None => *retval = Some(v),
+        Some(r) if r.is_nil() => *retval = Some(v),
+        Some(_) => {
+            if let Some(Value::Cons(tc)) = retval_tail {
+                let cell = Value::cons(v, Value::Nil);
+                tc.borrow_mut().cdr = cell.clone();
+                *retval_tail = Some(cell);
+            } else {
+                let t = Value::cons(v, Value::Nil);
+                let old = retval.take().unwrap_or(Value::Nil);
+                *retval = Some(Value::cons(
+                    Value::Sym(i.intern("keymap")),
+                    Value::cons(old, t.clone()),
+                ));
+                *retval_tail = Some(t);
+            }
         }
     }
-    Ok(Value::Nil)
+}
+
+/// `access_keymap' — the public form returning nil for both unbound
+/// and explicit-nil results.  ACCEPT_DEFAULT permits `t' bindings.
+pub(crate) fn lookup_in_keymap(
+    i: &mut Interp,
+    km: &Value,
+    key: i128,
+    accept_default: bool,
+) -> Result<Value, Flow> {
+    Ok(access_keymap(i, km, key, accept_default)?.unwrap_or(Value::Nil))
 }
 
 fn f_define_key(i: &mut Interp, a: Vec<Value>) -> EvalResult {
@@ -4121,16 +4603,30 @@ fn f_define_key(i: &mut Interp, a: Vec<Value>) -> EvalResult {
             }
         }
     }
-    let keys = key_seq(i, &a[1])?;
+    let raw_keys = key_seq(i, &a[1])?;
     let def = a[2].clone();
-    if keys.is_empty() {
-        return Ok(def);
+    if raw_keys.is_empty() {
+        // GNU returns nil for an empty key sequence.
+        return Ok(Value::Nil);
+    }
+    // GNU Fdefine_key metizes: an event carrying the meta bit is
+    // defined through the meta-prefix (27) submap with the bit
+    // stripped — [?\M-x] means [27 ?x].
+    let mut keys = Vec::with_capacity(raw_keys.len());
+    for &k in &raw_keys {
+        if k & CHAR_META != 0 {
+            keys.push(27);
+            keys.push(k & !CHAR_META);
+        } else {
+            keys.push(k);
+        }
     }
     // Descend for multi-key sequences, following symbol-backed prefix
     // maps; GNU errors when an intermediate binding is not a keymap.
     let mut km = map;
     for (n, &k) in keys[..keys.len() - 1].iter().enumerate() {
-        let next_raw = lookup_in_keymap(i, &km, k)?;
+        // GNU descends with access_keymap(c, t_ok=0, noinherit=1).
+        let next_raw = lookup_in_keymap(i, &km, k, false)?;
         let next = keymap_def(i, next_raw)?;
         if is_keymap(i, &next) {
             km = next;
@@ -4156,12 +4652,17 @@ fn f_define_key(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     Ok(def)
 }
 
-/// Set (KEY . DEF) in keymap's alist (prepend or replace).
+/// GNU `store_in_keymap': set KEY's binding to DEF.  Plain character
+/// codes are stored in the keymap's char-table element when one
+/// exists (a nil DEF stores `t', the explicit-unbind marker); other
+/// keys go in the alist at GNU's insertion point — right after the
+/// last char-table/vector/embedded-keymap element — which for a pure
+/// alist map means the front.  The walk stops at the parent tail:
+/// only own bindings are replaced.
 pub(crate) fn set_binding(i: &mut Interp, km: &Value, key: i128, def: Value) {
     if let Value::Cons(head) = km {
-        // find existing binding; GNU's store_in_keymap only replaces
-        // own bindings — the walk stops where the parent tail begins
-        // (a spine cons that is itself a keymap).
+        let t_sym = i.intern("t");
+        let mut ins = km.clone();
         let bindings = head.borrow().cdr.clone();
         let mut cur = bindings;
         loop {
@@ -4174,7 +4675,36 @@ pub(crate) fn set_binding(i: &mut Interp, km: &Value, key: i128, def: Value) {
                         let b = cell.borrow();
                         (b.car.clone(), b.cdr.clone())
                     };
-                    if let Value::Cons(pair) = &car {
+                    if crate::lisp::builtins::misc::is_char_table(i, &car)
+                    {
+                        ins = cur.clone();
+                        // Character codes without modifier bits are
+                        // stored in the char-table (ours covers 0-255).
+                        if (0..256).contains(&key) {
+                            if let Some(v) =
+                                crate::lisp::builtins::misc::char_table_vec(
+                                    &car,
+                                )
+                            {
+                                v.borrow_mut()[key as usize] =
+                                    if def.is_nil() {
+                                        Value::Sym(t_sym)
+                                    } else {
+                                        def
+                                    };
+                                return;
+                            }
+                        }
+                    } else if is_keymap(i, &car) {
+                        ins = cur.clone();
+                    } else if let Value::Vec(vv) = &car {
+                        ins = cur.clone();
+                        // GNU stores keys < ASIZE into vector elements.
+                        if key >= 0 && (key as usize) < vv.borrow().len() {
+                            vv.borrow_mut()[key as usize] = def;
+                            return;
+                        }
+                    } else if let Value::Cons(pair) = &car {
                         let kk = match &pair.borrow().car {
                             Value::Int(n) => Some(*n),
                             Value::Sym(s) => Some(event_code_for(&i.symbol_name(*s))),
@@ -4190,19 +4720,27 @@ pub(crate) fn set_binding(i: &mut Interp, km: &Value, key: i128, def: Value) {
                 _ => break,
             }
         }
-        // Not found: prepend (KEY . DEF). Named events store the
-        // event symbol so printed maps show `down`, `menu-bar`, etc.
+        // Not found: insert (KEY . DEF) at the insertion point.
+        // Named events store the event symbol so printed maps show
+        // `down`, `menu-bar`, etc.
         let kv = key_name_for(key)
             .map(|n| Value::Sym(i.intern(&n)))
             .unwrap_or(Value::Int(key));
         let pair = Value::cons(kv, def);
-        let old = head.borrow().cdr.clone();
-        head.borrow_mut().cdr = Value::cons(pair, old);
+        if let Value::Cons(ic) = &ins {
+            let old = ic.borrow().cdr.clone();
+            ic.borrow_mut().cdr = Value::cons(pair, old);
+        }
     }
 }
 
-/// Bind the character range LO..=HI to DEF (char-table style).
-/// Stored as a ((LO . HI) . DEF) pair in the keymap's alist.
+/// GNU `store_in_keymap' for a (LO . HI) range key: the range is
+/// stored via `set-char-table-range' in the keymap's char-table
+/// element; when the map has none, GNU inserts a fresh char-table at
+/// the insertion point.  Our flat table covers chars 0-255 — a range
+/// that fits goes into the table; a range extending beyond stays
+/// whole as an alist `((LO . HI) . DEF)' pair that
+/// `lookup_in_keymap' reads and the iterators merge into char order.
 pub(crate) fn set_range_binding(
     i: &mut Interp,
     km: &Value,
@@ -4211,8 +4749,16 @@ pub(crate) fn set_range_binding(
     def: Value,
 ) {
     if let Value::Cons(head) = km {
+        let t_sym = i.intern("t");
+        let stored = if def.is_nil() {
+            Value::Sym(t_sym)
+        } else {
+            def
+        };
+        let mut ins = km.clone();
         let bindings = head.borrow().cdr.clone();
         let mut cur = bindings;
+        let mut ct_vec = None;
         loop {
             match cur.clone() {
                 Value::Cons(cell) => {
@@ -4223,68 +4769,123 @@ pub(crate) fn set_range_binding(
                         let b = cell.borrow();
                         (b.car.clone(), b.cdr.clone())
                     };
-                    if let Value::Cons(pair) = &car {
-                        let is_range = {
-                            let pb = pair.borrow();
-                            matches!(&pb.car, Value::Cons(r) if {
-                                let rb = r.borrow();
-                                matches!((&rb.car, &rb.cdr),
-                                    (Value::Int(l), Value::Int(h))
-                                        if *l == lo && *h == hi)
-                            })
-                        };
-                        if is_range {
-                            pair.borrow_mut().cdr = def;
-                            return;
-                        }
+                    if crate::lisp::builtins::misc::is_char_table(i, &car)
+                    {
+                        ins = cur.clone();
+                        ct_vec =
+                            crate::lisp::builtins::misc::char_table_vec(
+                                &car,
+                            );
+                        break;
+                    }
+                    if is_keymap(i, &car) || matches!(car, Value::Vec(_)) {
+                        ins = cur.clone();
                     }
                     cur = next;
                 }
                 _ => break,
             }
         }
-        let _ = i;
+        if hi <= 255 {
+            // Fits the flat table: fill the slots like GNU's
+            // set-char-table-range (creating the table when absent).
+            let v = match ct_vec {
+                Some(v) => v,
+                None => {
+                    // No char-table element: GNU creates one at the
+                    // insertion point and stores the range in it.
+                    let ct = keymap_char_table(i);
+                    if let Value::Cons(ic) = &ins {
+                        let old = ic.borrow().cdr.clone();
+                        ic.borrow_mut().cdr = Value::cons(ct.clone(), old);
+                    }
+                    crate::lisp::builtins::misc::char_table_vec(&ct)
+                        .expect("fresh char-table")
+                }
+            };
+            let len = v.borrow().len();
+            if len > 0 {
+                let clo = lo.max(0) as usize;
+                let chi = (hi.max(0) as usize).min(len - 1);
+                if clo <= chi {
+                    for k in clo..=chi {
+                        v.borrow_mut()[k] = stored.clone();
+                    }
+                }
+            }
+            return;
+        }
+        // Beyond the flat table's reach: keep the whole range as one
+        // alist pair (GNU stores it in the char-table trie, which has
+        // no upper bound).  Replace an identical range in place.
+        let mut cur = head.borrow().cdr.clone();
+        loop {
+            match cur.clone() {
+                Value::Cons(cell) => {
+                    if is_keymap(i, &cur) {
+                        break;
+                    }
+                    let (car, next) = {
+                        let b = cell.borrow();
+                        (b.car.clone(), b.cdr.clone())
+                    };
+                    let replaced = if let Value::Cons(pair) = &car {
+                        let pb = pair.borrow();
+                        if let Value::Cons(r) = &pb.car {
+                            let rb = r.borrow();
+                            matches!((&rb.car, &rb.cdr),
+                                (Value::Int(l), Value::Int(h))
+                                    if *l == lo && *h == hi)
+                        } else {
+                            false
+                        }
+                    } else {
+                        false
+                    };
+                    if replaced {
+                        if let Value::Cons(pair) = &car {
+                            pair.borrow_mut().cdr = stored.clone();
+                        }
+                        return;
+                    }
+                    cur = next;
+                }
+                _ => break,
+            }
+        }
         let range = Value::cons(Value::Int(lo), Value::Int(hi));
-        let pair = Value::cons(range, def);
-        let old = head.borrow().cdr.clone();
-        head.borrow_mut().cdr = Value::cons(pair, old);
+        let pair = Value::cons(range, stored);
+        if let Value::Cons(ic) = &ins {
+            let old = ic.borrow().cdr.clone();
+            ic.borrow_mut().cdr = Value::cons(pair, old);
+        }
     }
 }
 
 fn f_lookup_key(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    // GNU resolves symbol args via their function cell (and autoloads).
-    let map = keymap_def(i, a[0].clone())?;
-    if !is_keymap(i, &map) {
-        return Err(i.wrong_type_mut("keymapp", &a[0]));
-    }
-    let keys = key_seq(i, &a[1])?;
-    let mut km = map;
-    for (n, &k) in keys.iter().enumerate() {
-        let raw = lookup_in_keymap(i, &km, k)?;
-        // Prefix defs may be symbols whose function cell is a keymap
-        // (Control-X-prefix, ESC-prefix, mode-specific-command-prefix).
-        // The raw binding is returned at the last key; GNU returns the
-        // count of examined keys when the sequence runs past a
-        // non-keymap (or missing) binding.
-        let def = keymap_def(i, raw.clone())?;
-        if is_keymap(i, &def) {
-            if n + 1 == keys.len() {
-                return Ok(raw);
+    // GNU lookup_key_1: a cons arg (a keymap, or a list of keymaps)
+    // is used as-is; other non-nil args resolve via their function
+    // cell (and autoload), then must be keymaps.
+    let map = match &a[0] {
+        Value::Cons(_) | Value::Nil => a[0].clone(),
+        _ => {
+            let m = keymap_def(i, a[0].clone())?;
+            if !is_keymap(i, &m) {
+                return Err(i.wrong_type_mut("keymapp", &a[0]));
             }
-            km = def;
-        } else if n + 1 == keys.len() {
-            return Ok(raw);
-        } else {
-            return Ok(Value::Int(n as i128 + 1));
+            m
         }
-    }
-    Ok(km)
+    };
+    let elts = seq_events(&a[1]);
+    let t_ok = a.get(2).map(|v| v.truthy()).unwrap_or(false);
+    lookup_seq(i, &map, &elts, t_ok)
 }
 
 fn f_key_binding(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     // (key-binding KEY &optional accept-defaults no-remap position)
     // Search local map, minor-mode maps, global map.
     let keys = key_seq(i, &a[0])?;
+    let t_ok = a.get(1).map(|v| v.truthy()).unwrap_or(false);
     // local map first
     let local = {
         let b = cur(i);
@@ -4297,7 +4898,7 @@ fn f_key_binding(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     if is_keymap(i, &local) {
         let mut km = local;
         for (n, &k) in keys.iter().enumerate() {
-            let raw = lookup_in_keymap(i, &km, k)?;
+            let raw = lookup_in_keymap(i, &km, k, t_ok)?;
             let def = keymap_def(i, raw.clone())?;
             if is_keymap(i, &def) && n + 1 < keys.len() {
                 km = def;
@@ -4316,7 +4917,7 @@ fn f_key_binding(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     if is_keymap(i, &gmap) {
         let mut km = gmap;
         for (n, &k) in keys.iter().enumerate() {
-            let raw = lookup_in_keymap(i, &km, k)?;
+            let raw = lookup_in_keymap(i, &km, k, t_ok)?;
             let def = keymap_def(i, raw.clone())?;
             if is_keymap(i, &def) && n + 1 < keys.len() {
                 km = def;
@@ -4333,6 +4934,7 @@ fn f_key_binding(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 
 fn f_local_key_binding(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let keys = key_seq(i, &a[0])?;
+    let t_ok = a.get(1).map(|v| v.truthy()).unwrap_or(false);
     let local = {
         let b = cur(i);
         let lb = b.borrow();
@@ -4344,7 +4946,7 @@ fn f_local_key_binding(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     if is_keymap(i, &local) {
         let mut km = local;
         for (n, &k) in keys.iter().enumerate() {
-            let raw = lookup_in_keymap(i, &km, k)?;
+            let raw = lookup_in_keymap(i, &km, k, t_ok)?;
             let def = keymap_def(i, raw.clone())?;
             if is_keymap(i, &def) && n + 1 < keys.len() {
                 km = def;
@@ -4361,11 +4963,12 @@ fn f_local_key_binding(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 
 fn f_global_key_binding(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let keys = key_seq(i, &a[0])?;
+    let t_ok = a.get(1).map(|v| v.truthy()).unwrap_or(false);
     let gmap = i.symbol_value(i.intern_soft("global-map").unwrap_or(0));
     if is_keymap(i, &gmap) {
         let mut km = gmap;
         for (n, &k) in keys.iter().enumerate() {
-            let raw = lookup_in_keymap(i, &km, k)?;
+            let raw = lookup_in_keymap(i, &km, k, t_ok)?;
             let def = keymap_def(i, raw.clone())?;
             if is_keymap(i, &def) && n + 1 < keys.len() {
                 km = def;
@@ -4477,46 +5080,469 @@ fn f_command_remapping(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     Ok(Value::Nil)
 }
 
-fn f_where_is_internal(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    // Search the local+global maps for COMMAND's binding.
-    let cmd = &a[0];
-    let mut found = Vec::new();
-    for km_v in [
-        f_current_local_map(i, vec![]).unwrap_or(Value::Nil),
-        f_current_global_map(i, vec![]).unwrap_or(Value::Nil),
-    ] {
-        if is_keymap(i, &km_v) {
-            let mut prefix: Vec<Value> = Vec::new();
-            collect_keys_for(i, &km_v, cmd, &mut prefix, &mut found);
+/// All modifier bits in GNU's event encoding (CHAR_MODIFIER_MASK).
+pub(crate) const CHAR_MODIFIER_MASK: i128 =
+    CHAR_ALT | CHAR_CTL | CHAR_HYPER | CHAR_META | CHAR_SHIFT | CHAR_SUPER;
+
+/// GNU `parse_solitary_modifier': the modifier bit named by symbol
+/// SYM ("meta", "control", a single letter, ...), or 0 for anything
+/// else — including nil, which makes plain and meta-only sequences
+/// the preferred ones.
+fn solitary_modifier(i: &Interp, v: &Value) -> i128 {
+    let Value::Sym(s) = v else {
+        return 0;
+    };
+    match i.symbol_name(*s).as_str() {
+        "A" | "alt" => CHAR_ALT,
+        "C" | "ctrl" | "control" => CHAR_CTL,
+        "H" | "hyper" => CHAR_HYPER,
+        "M" | "meta" => CHAR_META,
+        "S" | "shift" => CHAR_SHIFT,
+        "s" | "super" => CHAR_SUPER,
+        _ => 0,
+    }
+}
+
+/// GNU `preferred_sequence_p': 0 when SEQ uses non-preferred
+/// modifiers or non-integer events, 2 when it uses the
+/// `where-is-preferred-modifier' modifier, else 1.
+fn preferred_sequence_p(seq: &Value, preferred: i128) -> i32 {
+    let Value::Vec(v) = seq else {
+        return 0;
+    };
+    let elts = v.borrow();
+    let mut result = 1;
+    for elt in elts.iter() {
+        match elt {
+            Value::Int(n) => {
+                let mods = n & (CHAR_MODIFIER_MASK & !META_BIT);
+                if mods == preferred {
+                    result = 2;
+                } else if mods != 0 {
+                    return 0;
+                }
+            }
+            _ => return 0,
         }
     }
-    // Emacs reports bindings in increasing key order (chars before
-    // named events); our alist prepends, so sort for parity.
-    let key_rank = |v: &Value| -> i128 {
-        match v {
-            Value::Vec(rc) => rc
-                .borrow()
-                .first()
-                .map(|e| match e {
-                    Value::Int(n) => *n,
-                    // Range keys sort by their low bound.
-                    Value::Cons(r) => match &r.borrow().car {
-                        Value::Int(n) => *n,
-                        _ => i128::MAX,
-                    },
-                    _ => i128::MAX,
+    result
+}
+
+/// Base event name of a possibly-modified event symbol — the car of
+/// GNU's `parse_modifiers': modifier prefixes (single letters A C H
+/// M S s, and the word modifiers drag- down- double- triple- up-)
+/// stripped from the front.
+fn event_base_name(i: &Interp, s: SymId) -> String {
+    let mut name = i.symbol_name(s).to_string();
+    loop {
+        let mut hit = false;
+        for p in [
+            "A-", "C-", "H-", "M-", "S-", "s-", "drag-", "down-", "double-",
+            "triple-", "up-",
+        ] {
+            if let Some(r) = name.strip_prefix(p) {
+                name = r.to_string();
+                hit = true;
+                break;
+            }
+        }
+        if !hit {
+            return name;
+        }
+    }
+}
+
+/// GNU's `Vmouse_events': pseudo-event base symbols whose key
+/// sequences `where-is-internal' suppresses when menus are not
+/// wanted.
+const MOUSE_EVENT_BASES: &[&str] = &[
+    "menu-bar", "tab-bar", "tool-bar", "tab-line", "header-line",
+    "mode-line", "mouse-1", "mouse-2", "mouse-3", "mouse-4", "mouse-5",
+];
+
+/// Look up one event in MAP, which may be a keymap or a plain list
+/// of keymaps (GNU's access_keymap treats a cons whose car is not
+/// `keymap' as a spine of embedded maps).  Ints are character events
+/// (meta bit included); symbols are named events; a cons's EVENT_HEAD
+/// is its car; strings are menu keys, compared with `eq' — GNU
+/// compares string keys by identity, and the sequences we look up
+/// share the keymap's own string objects.
+fn lookup_event(
+    i: &mut Interp,
+    map: &Value,
+    ev: &Value,
+    t_ok: bool,
+) -> Result<Value, Flow> {
+    match ev {
+        Value::Int(n) => lookup_in_keymap(i, map, *n, t_ok),
+        Value::Sym(s) => {
+            let code = event_code_for(&i.symbol_name(*s));
+            lookup_in_keymap(i, map, code, t_ok)
+        }
+        Value::Cons(c) => {
+            let head = c.borrow().car.clone();
+            lookup_event(i, map, &head, t_ok)
+        }
+        Value::Str(_) => {
+            for (k, d) in keymap_all_bindings(i, map) {
+                if eq_values(&k, ev) {
+                    return Ok(menu_label_def(i, d));
+                }
+            }
+            Ok(Value::Nil)
+        }
+        _ => Ok(Value::Nil),
+    }
+}
+
+/// GNU `lookup_key_1' on a sequence of already-decoded events.
+/// Returns the binding, `Int(n)' when the sequence runs past a
+/// non-prefix binding (GNU's "too long"), or nil.
+fn lookup_seq(
+    i: &mut Interp,
+    map: &Value,
+    elts: &[Value],
+    t_ok: bool,
+) -> Result<Value, Flow> {
+    if elts.is_empty() {
+        return Ok(map.clone());
+    }
+    let mut km = map.clone();
+    for (n, ev) in elts.iter().enumerate() {
+        let raw = lookup_event(i, &km, ev, t_ok)?;
+        if n + 1 == elts.len() {
+            return Ok(raw);
+        }
+        let def = keymap_def(i, raw)?;
+        if !matches!(def, Value::Cons(_)) {
+            return Ok(Value::Int(n as i128 + 1));
+        }
+        km = def;
+    }
+    unreachable!()
+}
+
+/// The event elements of SEQ (vector, string, list, or single
+/// event) — like GNU's Faref iteration in `lookup_key_1'.  Unibyte
+/// string chars with the 8th bit become meta events.
+fn seq_events(v: &Value) -> Vec<Value> {
+    match v {
+        Value::Str(s) => s
+            .borrow()
+            .chars()
+            .map(|c| {
+                let c = c as i128;
+                Value::Int(if (0x80..0x100).contains(&c) {
+                    CHAR_META | (c - 0x80)
+                } else {
+                    c
                 })
-                .unwrap_or(i128::MAX),
-            _ => i128::MAX,
+            })
+            .collect(),
+        Value::Vec(vec) => vec.borrow().clone(),
+        Value::Int(n) => vec![Value::Int(*n)],
+        Value::Cons(_) => v.list_to_vec().unwrap_or_default(),
+        Value::Sym(id) => vec![Value::Sym(*id)],
+        _ => Vec::new(),
+    }
+}
+
+/// GNU `shadow_lookup': `lookup-key' SEQ over the keymap list
+/// KEYMAPS; a "too long" count is nil.  With REMAP, a non-nil symbol
+/// result is passed through `command-remapping'.
+fn shadow_lookup(
+    i: &mut Interp,
+    keymaps: &[Value],
+    seq: &Value,
+    remap: bool,
+) -> Result<Value, Flow> {
+    let kl = Value::list(keymaps.to_vec());
+    let elts = seq_events(seq);
+    // GNU shadow_lookup passes accept_default=nil.
+    let mut v = lookup_seq(i, &kl, &elts, false)?;
+    if matches!(v, Value::Int(_)) {
+        // The sequence is too long — treated as unbound.
+        v = Value::Nil;
+    } else if remap && matches!(v, Value::Sym(_)) {
+        let r = f_command_remapping(i, vec![v.clone(), Value::Nil, kl])?;
+        if r.truthy() {
+            v = r;
+        }
+    }
+    Ok(v)
+}
+
+/// GNU `where_is_internal' (the static collector): for every map
+/// reachable through `accessible-keymaps' from each of KEYMAPS,
+/// every binding whose definition (unwrapped unless NOINDIRECT)
+/// `eq'/`equal'-matches DEFINITION contributes its full key sequence.
+/// NOMENUS drops sequences whose first event is a mouse/menu
+/// pseudo-event.  Returns the sequences in collection order.
+fn where_is_collect(
+    i: &mut Interp,
+    definition: &Value,
+    keymaps: &[Value],
+    noindirect: bool,
+    nomenus: bool,
+) -> Result<Vec<Value>, Flow> {
+    let mut sequences = Vec::new();
+    for km in keymaps {
+        let km = keymap_def(i, km.clone())?;
+        if !is_keymap(i, &km) {
+            continue;
+        }
+        let acc_sym = i.intern("accessible-keymaps");
+        let acc = i.apply(&Value::Sym(acc_sym), vec![km])?;
+        let mut entries = Vec::new();
+        acc.each_car(|e| entries.push(e.clone()));
+        for entry in entries {
+            let (this, map) = match &entry {
+                Value::Cons(c) => {
+                    let b = c.borrow();
+                    (b.car.clone(), b.cdr.clone())
+                }
+                _ => continue,
+            };
+            let elts: Vec<Value> = match &this {
+                Value::Vec(v) => v.borrow().clone(),
+                _ => Vec::new(),
+            };
+            let last = elts.len().wrapping_sub(1);
+            let last_is_meta =
+                matches!(elts.get(last), Some(Value::Int(n)) if *n == 27)
+                    && !elts.is_empty();
+            if nomenus
+                && matches!(elts.first(), Some(Value::Sym(s0)) if {
+                    MOUSE_EVENT_BASES
+                        .contains(&event_base_name(i, *s0).as_str())
+                })
+            {
+                // `menu-bar'/`tool-bar'/mouse prefixes: skipped when
+                // menu bindings are not wanted.
+                continue;
+            }
+            if !matches!(map, Value::Cons(_)) {
+                continue;
+            }
+            for (key, def) in keymap_all_bindings(i, &map) {
+                let binding =
+                    if noindirect { def } else { menu_label_def(i, def) };
+                let matched = eq_values(&binding, definition)
+                    || (matches!(definition, Value::Cons(_))
+                        && equal_values(i, &binding, definition));
+                if !matched {
+                    continue;
+                }
+                // [META-PREFIX CHAR] folds to [M-CHAR].
+                let mut v = elts.clone();
+                if last_is_meta {
+                    if let Value::Int(k) = key {
+                        v[last] = Value::Int(k | META_BIT);
+                    } else {
+                        v.push(key);
+                    }
+                } else {
+                    v.push(key);
+                }
+                sequences.push(Value::Vec(Rc::new(RefCell::new(v))));
+            }
+        }
+    }
+    Ok(sequences)
+}
+
+fn f_where_is_internal(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let mut definition = a[0].clone();
+    let keymap_arg = a.get(1).cloned().unwrap_or(Value::Nil);
+    let firstonly = a.get(2).cloned().unwrap_or(Value::Nil);
+    let noindirect = a.get(3).map(|v| v.truthy()).unwrap_or(false);
+    let no_remap = a.get(4).map(|v| v.truthy()).unwrap_or(false);
+    let non_ascii = i.intern("non-ascii");
+    let first_non_ascii =
+        matches!(&firstonly, Value::Sym(s) if *s == non_ascii);
+    // 1 means ignore all menu bindings entirely.
+    let nomenus = firstonly.truthy() && !first_non_ascii;
+
+    // The C version of `where-is-preferred-modifier'.
+    let preferred = {
+        let s = i.obarray.intern_soft("where-is-preferred-modifier");
+        match s {
+            Some(id) => solitary_modifier(i, &i.symbol_value(id)),
+            None => 0,
         }
     };
-    found.sort_by_key(|v| key_rank(v));
-    if let Some(first) = found.first() {
-        if a.get(3).map(|v| v.truthy()).unwrap_or(false) {
-            return Ok(first.clone());
+
+    // Find the relevant keymaps: a cons whose car is a keymap is a
+    // list of keymaps; a single non-nil map means it plus the global
+    // map; nil means the currently active maps.
+    let mut keymaps: Vec<Value> = Vec::new();
+    match &keymap_arg {
+        Value::Cons(c) if is_keymap(i, &c.borrow().car) => {
+            keymap_arg.each_car(|k| keymaps.push(k.clone()));
+        }
+        Value::Nil => {
+            let cam = i.intern("current-active-maps");
+            let v = i.apply(
+                &Value::Sym(cam),
+                vec![Value::Nil, Value::Nil],
+            )?;
+            v.each_car(|k| keymaps.push(k.clone()));
+        }
+        _ => {
+            keymaps.push(keymap_arg.clone());
+            keymaps.push(f_current_global_map(i, vec![])?);
         }
     }
-    Ok(Value::list(found))
+
+    // Command remapping: a remapped command's bindings are the
+    // remapping target's.
+    if !no_remap {
+        let kl = Value::list(keymaps.clone());
+        let tem =
+            f_command_remapping(i, vec![definition.clone(), Value::Nil, kl])?;
+        if tem.truthy() {
+            definition = tem;
+        }
+    }
+
+    // An `advertised-binding' property overrides the search under
+    // firstonly — each candidate must actually resolve back to the
+    // command (shadow_lookup).
+    if let Value::Sym(ds) = &definition {
+        if firstonly.truthy() {
+            let prop = i.intern("advertised-binding");
+            let adv = i.get_prop(*ds, prop);
+            let mut tem = adv;
+            loop {
+                match tem.clone() {
+                    Value::Cons(c) => {
+                        let (car, cdr) = {
+                            let b = c.borrow();
+                            (b.car.clone(), b.cdr.clone())
+                        };
+                        let v = shadow_lookup(i, &keymaps, &car, false)?;
+                        if eq_values(&v, &definition) {
+                            return Ok(car);
+                        }
+                        tem = cdr;
+                    }
+                    _ => break,
+                }
+            }
+            let v = shadow_lookup(i, &keymaps, &tem, false)?;
+            if eq_values(&v, &definition) {
+                return Ok(tem);
+            }
+        }
+    }
+
+    let sequences = where_is_collect(i, &definition, &keymaps, noindirect, nomenus)?;
+
+    let mut found: Vec<Value> = Vec::new();
+    let mut remapped_sequences: Vec<Value> = Vec::new();
+    let remap_sym = i.intern("remap");
+    let nke_sym = i.intern("non-key-event");
+    let mut queue: std::collections::VecDeque<Value> = sequences.into();
+    let mut remapped = false;
+    loop {
+        let sequence = match queue.pop_front() {
+            Some(s) => s,
+            None => {
+                if remapped {
+                    break;
+                }
+                // Main list exhausted: process the remapped
+                // sequences collected along the way.
+                remapped = true;
+                queue = remapped_sequences.drain(..).collect();
+                match queue.pop_front() {
+                    Some(s) => s,
+                    None => break,
+                }
+            }
+        };
+
+        // Skip sequences shadowed by another binding for the same
+        // key: the effective binding must resolve to DEFINITION.
+        let v = shadow_lookup(i, &keymaps, &sequence, remapped)?;
+        if !equal_values(i, &v, &definition) {
+            continue;
+        }
+
+        // A [remap COMMAND] sequence stands for COMMAND's bindings,
+        // collected into the deferred remapped list.
+        if !no_remap && !remapped {
+            let remap_cmd = match &sequence {
+                Value::Vec(vv) => {
+                    let vb = vv.borrow();
+                    if vb.len() == 2
+                        && matches!(&vb[0], Value::Sym(s) if *s == remap_sym)
+                        && matches!(&vb[1], Value::Sym(_))
+                    {
+                        Some(vb[1].clone())
+                    } else {
+                        None
+                    }
+                }
+                _ => None,
+            };
+            if let Some(cmd) = remap_cmd {
+                let seqs =
+                    where_is_collect(i, &cmd, &keymaps, noindirect, nomenus)?;
+                remapped_sequences.extend(seqs);
+                continue;
+            }
+        }
+
+        // Menu string keys all read as "(any string)".
+        if let Value::Vec(vv) = &sequence {
+            let mut vb = vv.borrow_mut();
+            if let Some(last) = vb.last_mut() {
+                if matches!(last, Value::Str(_)) {
+                    *last = Value::string("(any string)");
+                }
+            }
+        }
+
+        // Record the sequence unless already seen (inherited maps
+        // duplicate bindings) or a non-key event.
+        let non_key = matches!(&sequence, Value::Vec(vv) if {
+            let vb = vv.borrow();
+            vb.len() == 1
+                && matches!(&vb[0], Value::Sym(s) if {
+                    i.get_prop(*s, nke_sym).truthy()
+                })
+        });
+        if !non_key
+            && !found.iter().any(|f| equal_values(i, f, &sequence))
+        {
+            found.push(sequence.clone());
+        }
+
+        if first_non_ascii {
+            return Ok(sequence);
+        }
+        if firstonly.truthy()
+            && preferred_sequence_p(&sequence, preferred) == 2
+        {
+            return Ok(sequence);
+        }
+    }
+
+    if !firstonly.truthy() {
+        return Ok(Value::list(found));
+    }
+    // firstonly wanted a preferred sequence but none scored 2: take
+    // the first acceptable one (or just the first).
+    if preferred == 0 {
+        return Ok(found.first().cloned().unwrap_or(Value::Nil));
+    }
+    for b in &found {
+        if preferred_sequence_p(b, preferred) != 0 {
+            return Ok(b.clone());
+        }
+    }
+    Ok(found.first().cloned().unwrap_or(Value::Nil))
 }
 
 fn collect_keys_for(
@@ -4526,23 +5552,10 @@ fn collect_keys_for(
     prefix: &mut Vec<Value>,
     out: &mut Vec<Value>,
 ) {
-    // GNU's where_is_internal_1 scans the flat cdr spine (parent
-    // elements included); bare keymap elements are searched at the
-    // same prefix level.
-    let mut cells = Vec::new();
-    keymap_bindings(km).each_car(|c| cells.push(c.clone()));
-    for cell in cells {
-        if is_keymap(i, &cell) {
-            collect_keys_for(i, &cell, cmd, prefix, out);
-            continue;
-        }
-        let Value::Cons(c) = &cell else {
-            continue;
-        };
-        let (k, d) = {
-            let b = c.borrow();
-            (b.car.clone(), b.cdr.clone())
-        };
+    // GNU's where_is scans each map via the C `map_keymap': char-table
+    // contents (as compressed range keys), alist pairs, embedded
+    // keymaps in place, and parent elements — all in spine order.
+    for (k, d) in keymap_all_bindings(i, km) {
         // Menu-item wrappers: the real def follows the label.
         let d = menu_label_def(i, d);
         // Prefix symbols (Control-X-prefix etc.) resolve through
@@ -4874,41 +5887,28 @@ fn describe_keymap_into(
     prefix: &mut Vec<Value>,
     rows: &mut Vec<(Vec<Value>, String)>,
 ) {
-    let mut cells = Vec::new();
-    keymap_bindings(km).each_car(|c| cells.push(c.clone()));
-    for cell in cells {
-        if is_keymap(i, &cell) {
-            // Bare keymap elements list their contents in place.
-            describe_keymap_into(i, &cell, prefix, rows);
+    for (k, d) in keymap_all_bindings(i, km) {
+        match &k {
+            Value::Int(_) | Value::Sym(_) => {
+                if matches!(&k, Value::Sym(s) if i.symbol_name(*s) == "keymap") {
+                    continue;
+                }
+            }
+            // Range keys ((LO . HI) . DEF) list as-is.
+            Value::Cons(_) => {}
+            _ => continue,
+        }
+        // `t` is the default binding, not a real key.
+        if matches!(&k, Value::Sym(s) if i.symbol_name(*s) == "t") {
             continue;
         }
-        if let Value::Cons(c) = &cell {
-            let (k, d) = {
-                let b = c.borrow();
-                (b.car.clone(), b.cdr.clone())
-            };
-            match &k {
-                Value::Int(_) | Value::Sym(_) => {
-                    if matches!(&k, Value::Sym(s) if i.symbol_name(*s) == "keymap") {
-                        continue;
-                    }
-                }
-                // Range keys ((LO . HI) . DEF) list as-is.
-                Value::Cons(_) => {}
-                _ => continue,
-            }
-            // `t` is the default binding, not a real key.
-            if matches!(&k, Value::Sym(s) if i.symbol_name(*s) == "t") {
-                continue;
-            }
-            prefix.push(k);
-            if is_keymap(i, &d) {
-                describe_keymap_into(i, &d, prefix, rows);
-            } else {
-                rows.push((prefix.clone(), i.princ_to_string(&d)));
-            }
-            prefix.pop();
+        prefix.push(k);
+        if is_keymap(i, &d) {
+            describe_keymap_into(i, &d, prefix, rows);
+        } else {
+            rows.push((prefix.clone(), i.princ_to_string(&d)));
         }
+        prefix.pop();
     }
 }
 
@@ -9423,7 +10423,7 @@ pub(crate) fn lookup_command_in_maps(i: &mut Interp, keys: &[Value]) -> Option<V
         let mut last_def = Value::Nil;
         let mut prefix_only = false;
         for &k in &codes {
-            let raw = match lookup_in_keymap(i, &km, k) {
+            let raw = match lookup_in_keymap(i, &km, k, true) {
                 Ok(v) => v,
                 Err(_) => return None,
             };
@@ -10660,10 +11660,14 @@ pub fn install_primitives(i: &mut Interp) {
     // Wire the frame's window buffer linkage.
     i.selected_frame = Some(frame.clone());
     i.frames.push(frame);
-    // global-map default (empty sparse keymap).
+    // global-map default: a dense keymap (char-table element), as in
+    // GNU's `current-global-map'.
     let gm = i.intern("global-map");
     if i.symbol_value(gm).is_nil() {
-        let km = Value::cons(Value::Sym(i.intern("keymap")), Value::Nil);
+        let km = Value::cons(
+            Value::Sym(i.intern("keymap")),
+            Value::cons(keymap_char_table(i), Value::Nil),
+        );
         i.obarray.symbol_mut(gm).value = km;
     }
 }

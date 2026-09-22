@@ -349,10 +349,12 @@ pub fn eq_values(a: &Value, b: &Value) -> bool {
         (Value::Nil, Value::Nil) => true,
         (Value::Nil, Value::Sym(0)) | (Value::Sym(0), Value::Nil) => true,
         (Value::Int(x), Value::Int(y)) => x == y,
-        (Value::Float(_), Value::Float(_)) => {
-            // eq on floats is object identity; two distinct Float values are
-            // never the same object (eql compares by value).
-            false
+        (Value::Float(x), Value::Float(y)) => {
+            // Floats are stored by value, so there is no object identity to
+            // compare; two reads of the same variable must be `eq' (GNU t),
+            // while `(eq 3.5 3.5)' on distinct literals is unspecified in GNU.
+            // Comparing bits gives the right answer for the shared-value case.
+            x.to_bits() == y.to_bits()
         }
         (Value::Sym(x), Value::Sym(y)) => x == y,
         (Value::Cons(x), Value::Cons(y)) => std::rc::Rc::ptr_eq(x, y),

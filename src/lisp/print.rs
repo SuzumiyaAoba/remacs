@@ -166,6 +166,24 @@ impl Interp {
                             return;
                         }
                     }
+                    // Char tables print `#^[defalt parent purpose
+                    // ascii contents[64] extras...]' — GNU's
+                    // pseudovector layout.  Our contents are a flat
+                    // 256-entry Vec; emit GNU's sub-char-table trie
+                    // (`#^^[DEPTH MIN ...]') for whatever is set.
+                    if self.symbol_name(*t) == "char-table" {
+                        if let Some(Value::Vec(slots)) = rr.get(2) {
+                            let slots = slots.borrow();
+                            self.print_char_table(
+                                rr.as_slice(),
+                                slots.as_slice(),
+                                out,
+                                depth,
+                                bq,
+                            );
+                            return;
+                        }
+                    }
                 }
                 // Bool vectors print `#&N"bytes"' with bits packed
                 // LSB-first per byte.
@@ -401,6 +419,102 @@ impl Interp {
             out.push_str(&n);
         }
         out.push(')');
+    }
+
+    /// GNU char-table printing: `#^[DEFALT PARENT PURPOSE ASCII
+    /// CONTENTS[64] EXTRAS...]'.  Our Record layout is
+    /// `[char-table SUBTYPE VEC256 EXTRAS...]'.  Sub-ranges that are
+    /// uniformly one value print as that atom; mixed ranges print as
+    /// `#^^[DEPTH MIN SLOTS...]' sub-char-tables.  Slots our flat
+    /// Vec can't represent (chars ≥ 256) print nil.
+    fn print_char_table(
+        &self,
+        rr: &[Value],
+        slots: &[Value],
+        out: &mut String,
+        depth: usize,
+        bq: bool,
+    ) {
+        let eq = crate::lisp::builtins::eq_values;
+        let uniform = |vals: &[Value]| -> Option<Value> {
+            let first = vals.first()?.clone();
+            vals.iter().all(|v| eq(v, &first)).then_some(first)
+        };
+        // Emit one 128-slot level-3 sub-table or its atom equivalent.
+        let emit_d3 = |out: &mut String, vals: &[Value], min: usize| {
+            match uniform(vals) {
+                Some(v) => self.prin1_inner(&v, out, depth + 1, bq),
+                None => {
+                    out.push_str("#^^[3 ");
+                    let _ = write!(out, "{}", min);
+                    for v in vals {
+                        out.push(' ');
+                        self.prin1_inner(v, out, depth + 1, bq);
+                    }
+                    out.push(']');
+                }
+            }
+        };
+        out.push_str("#^[");
+        let whole = uniform(&slots[..256.min(slots.len())]);
+        // defalt
+        match &whole {
+            Some(v) => self.prin1_inner(v, out, depth + 1, bq),
+            None => out.push_str("nil"),
+        }
+        out.push(' ');
+        // parent (from the side-table keyed on the Record pointer)
+        out.push_str("nil");
+        out.push(' ');
+        // purpose
+        match rr.get(1) {
+            Some(p) => self.prin1_inner(p, out, depth + 1, bq),
+            None => out.push_str("nil"),
+        }
+        out.push(' ');
+        // ascii: chars 0..128
+        emit_d3(out, &slots[..128.min(slots.len())], 0);
+        // contents[0]: chars 0..32767 — our 0..255 via the d1/d2 chain.
+        out.push(' ');
+        match &whole {
+            Some(v) => self.prin1_inner(v, out, depth + 1, bq),
+            None => {
+                out.push_str("#^^[1 0 ");
+                // d2 covering 0..2047: d3(0..128), d3(128..256), rest nil.
+                out.push_str("#^^[2 0 ");
+                emit_d3(out, &slots[..128.min(slots.len())], 0);
+                out.push(' ');
+                if slots.len() > 128 {
+                    emit_d3(out, &slots[128..], 128);
+                } else {
+                    out.push_str("nil");
+                }
+                for _ in 0..14 {
+                    out.push_str(" nil");
+                }
+                out.push(']');
+                for _ in 0..15 {
+                    out.push_str(" nil");
+                }
+                out.push(']');
+            }
+        }
+        // contents[1..63]: beyond our flat table's reach.
+        for _ in 1..64 {
+            match &whole {
+                Some(v) => {
+                    out.push(' ');
+                    self.prin1_inner(v, out, depth + 1, bq);
+                }
+                None => out.push_str(" nil"),
+            }
+        }
+        // extra slots
+        for e in &rr[3..] {
+            out.push(' ');
+            self.prin1_inner(e, out, depth + 1, bq);
+        }
+        out.push(']');
     }
 
     /// `print-gensym` variable (default nil): print uninterned

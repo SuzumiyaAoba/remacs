@@ -1774,7 +1774,7 @@ impl Interp {
             optional,
             rest,
             body: body[start..].to_vec(),
-            env: self.lexenv.clone(),
+            env: self.lambda_env(),
             doc,
             interactive,
             name: name.map(|s| self.symbol_name(s)),

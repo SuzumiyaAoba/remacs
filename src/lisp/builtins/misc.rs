@@ -84,7 +84,7 @@ pub(crate) static SUBRS: &[Subr] = &[
         f_map_keymap,
         "Call FUNCTION on each binding in KEYMAP."
     ),
-    S!("map-keymap-internal", 2, 2, f_map_keymap, ""),
+    S!("map-keymap-internal", 2, 2, f_map_keymap_internal, ""),
     S!(
         "keymap--get-keyelt",
         2,
@@ -1821,40 +1821,19 @@ fn f_keymap_canonicalize(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     }
 }
 
-fn keymap_of(i: &mut Interp, v: &Value) -> Result<Option<Vec<Value>>, Flow> {
-    // Our keymaps are lists whose car is the symbol `keymap` and whose
-    // cdr is an alist of (KEY . DEF) or sparse vectors. Return pairs.
-    // GNU also accepts a symbol whose function cell is a keymap.
+fn keymap_of(
+    i: &mut Interp,
+    v: &Value,
+) -> Result<Option<Vec<(Value, Value)>>, Flow> {
+    // GNU's C `map_keymap' traversal order: char-table contents
+    // (compressed ranges) at the table's spine position, then alist
+    // pairs; embedded keymaps expand in place and the parent tail's
+    // elements follow.  Symbols resolve via the function cell.
     let v = crate::editor::keymap_def(i, v.clone())?;
-    match &v {
-        Value::Cons(c) => {
-            let (head, tail) = {
-                let b = c.borrow();
-                (b.car.clone(), b.cdr.clone())
-            };
-            if i.sym_id(&head) != i.intern_soft("keymap") {
-                return Ok(None);
-            }
-            let mut pairs = Vec::new();
-            let mut cur = tail;
-            loop {
-                match cur {
-                    Value::Nil => break,
-                    Value::Cons(cc) => {
-                        let (elem, next) = {
-                            let b = cc.borrow();
-                            (b.car.clone(), b.cdr.clone())
-                        };
-                        pairs.push(elem);
-                        cur = next;
-                    }
-                    _ => break,
-                }
-            }
-            Ok(Some(pairs))
-        }
-        _ => Ok(None),
+    if !crate::editor::is_keymap(i, &v) {
+        return Ok(None);
     }
+    Ok(Some(crate::editor::keymap_all_bindings(i, &v)))
 }
 
 fn f_accessible_keymaps(i: &mut Interp, args: Vec<Value>) -> EvalResult {
@@ -1895,7 +1874,7 @@ fn f_accessible_keymaps(i: &mut Interp, args: Vec<Value>) -> EvalResult {
         let mut km = map0.clone();
         let mut ok = true;
         for &k in &keys {
-            let raw = crate::editor::lookup_in_keymap(i, &km, k)?;
+            let raw = crate::editor::lookup_in_keymap(i, &km, k, false)?;
             let d = crate::editor::keymap_def(i, raw)?;
             if crate::editor::is_keymap(i, &d) {
                 km = d;
@@ -2000,14 +1979,7 @@ fn f_accessible_keymaps(i: &mut Interp, args: Vec<Value>) -> EvalResult {
             continue;
         }
         if let Some(pairs) = keymap_of(i, &thismap)? {
-            for p in pairs {
-                let (k, def) = match &p {
-                    Value::Cons(c) => {
-                        let b = c.borrow();
-                        (b.car.clone(), b.cdr.clone())
-                    }
-                    _ => continue,
-                };
+            for (k, def) in pairs {
                 if let Some(m) = find_keymap(i, def) {
                     if seen_as_prefix(&maps, &m, &thisseq) {
                         continue;
@@ -2051,32 +2023,38 @@ fn f_accessible_keymaps(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     Ok(Value::list(out))
 }
 
-fn f_map_keymap(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    match keymap_of(i, &args[1])? {
-        Some(pairs) => {
-            for p in pairs {
-                // Parent slots (keymap values / keymap lists) aren't
-                // bindings.
-                if is_keymap(i, &p) {
-                    continue;
-                }
-                let (k, def) = match &p {
-                    Value::Cons(c) => {
-                        let b = c.borrow();
-                        (b.car.clone(), b.cdr.clone())
-                    }
-                    _ => continue,
-                };
-                if matches!(&k, Value::Sym(s) if i.symbol_name(*s) == "keymap") {
-                    continue;
-                }
-                let fnv = args[0].clone();
-                i.apply(&fnv, vec![k, def])?;
-            }
-            Ok(Value::Nil)
-        }
-        None => Err(i.wrong_type_mut("keymapp", &args[1])),
+fn map_keymap_impl(
+    i: &mut Interp,
+    args: &[Value],
+    own_only: bool,
+) -> EvalResult {
+    let v = crate::editor::keymap_def(i, args[1].clone())?;
+    if !crate::editor::is_keymap(i, &v) {
+        return Err(i.wrong_type_mut("keymapp", &args[1]));
     }
+    // GNU `map-keymap-internal' stops at the parent tail and at
+    // embedded keymaps; `map-keymap' traverses them.
+    let pairs = if own_only {
+        crate::editor::keymap_own_bindings(i, &v)
+    } else {
+        crate::editor::keymap_all_bindings(i, &v)
+    };
+    for (k, def) in pairs {
+        if matches!(&k, Value::Sym(s) if i.symbol_name(*s) == "keymap") {
+            continue;
+        }
+        let fnv = args[0].clone();
+        i.apply(&fnv, vec![k, def])?;
+    }
+    Ok(Value::Nil)
+}
+
+fn f_map_keymap(i: &mut Interp, args: Vec<Value>) -> EvalResult {
+    map_keymap_impl(i, &args, false)
+}
+
+fn f_map_keymap_internal(i: &mut Interp, args: Vec<Value>) -> EvalResult {
+    map_keymap_impl(i, &args, true)
 }
 
 fn f_keymap_get_keyelt(_i: &mut Interp, args: Vec<Value>) -> EvalResult {
