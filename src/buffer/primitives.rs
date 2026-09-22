@@ -1841,9 +1841,6 @@ fn cmp_common_prefix(a: &str, b: &str, fold: bool) -> usize {
     }
     n
 }
-fn f_identity(_i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    Ok(a.into_iter().next().unwrap_or(Value::Nil))
-}
 fn f_accept_change_group(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     // GNU validates the handle is a change-group cons; accept = drop it.
     if !matches!(a[0], Value::Cons(_)) && !matches!(a[0], Value::Nil) {

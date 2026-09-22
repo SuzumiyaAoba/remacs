@@ -664,11 +664,11 @@ pub(crate) static SUBRS: &[Subr] = &[
     ),
     S!("frame-terminal", 0, 1, f_selected_frame, ""),
     S!("select-frame", 1, 2, f_select_frame, "Select FRAME."),
-    S!("handle-switch-frame", 1, 1, f_nil, ""),
-    S!("frame-focus-state", 0, 1, f_t, ""),
+    S!("handle-switch-frame", 1, 1, f_handle_switch_frame, ""),
+    S!("frame-focus-state", 0, 1, f_frame_focus_state, ""),
     S!("redraw-frame", 0, 1, f_nil, ""),
     S!("redraw-display", 0, 0, f_nil, ""),
-    S!("frame-visible-p", 1, 1, f_t, ""),
+    S!("frame-visible-p", 1, 1, f_frame_visible_p, ""),
     // keymaps
     S!("make-keymap", 0, 1, f_make_keymap, "Create a full keymap."),
     S!(
@@ -1232,15 +1232,27 @@ pub(crate) static SUBRS: &[Subr] = &[
         f_file_truename,
         "Canonical name of FILENAME."
     ),
-    S!("unhandled-file-name-directory", 1, 1, f_nil, ""),
+    S!(
+        "unhandled-file-name-directory",
+        1,
+        1,
+        f_unhandled_dir,
+        ""
+    ),
     S!("file-remote-p", 1, 3, f_file_remote_p, ""),
-    S!("file-local-name", 1, 1, f_identity, ""),
-    S!("file-name-quote", 1, 2, f_identity, ""),
-    S!("file-name-unquote", 1, 1, f_identity, ""),
+    S!("file-local-name", 1, 1, f_file_local_name, ""),
+    S!("file-name-quote", 1, 2, f_file_name_quote, ""),
+    S!("file-name-unquote", 1, 2, f_file_name_unquote, ""),
     S!("file-accessible-directory-p", 1, 1, f_file_directory_p, ""),
     S!("default-file-modes", 0, 0, f_default_file_modes, ""),
     S!("set-default-file-modes", 1, 1, f_set_default_file_modes, ""),
-    S!("file-modes-symbolic-to-number", 1, 3, f_zero, ""),
+    S!(
+        "file-modes-symbolic-to-number",
+        1,
+        2,
+        f_modes_sym2num,
+        ""
+    ),
     S!("unix-sync", 0, 0, f_unix_sync, ""),
     S!("file-system-info", 1, 1, f_file_system_info, ""),
     S!("file-equal-p", 2, 2, f_file_equal_p, ""),
@@ -1981,7 +1993,7 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!("display-mouse-p", 0, 1, f_nil, ""),
     S!("color-defined-p", 1, 1, f_color_defined_p, ""),
     S!("defined-colors", 0, 1, f_defined_colors, ""),
-    S!("color-values", 1, 1, f_nil, ""),
+    S!("color-values", 1, 2, f_color_values, ""),
     S!("x-color-values", 1, 1, f_nil, ""),
     S!("xw-color-values", 1, 1, f_nil, ""),
     S!("tty-color-values", 1, 1, f_nil, ""),
@@ -1997,7 +2009,7 @@ pub(crate) static SUBRS: &[Subr] = &[
     // calling it signals void-function like GNU.
     S!("blink-cursor-mode", 0, 1, f_nil, ""),
     S!("internal-show-cursor", 2, 2, f_nil, ""),
-    S!("internal-show-cursor-p", 0, 1, f_t, ""),
+    S!("internal-show-cursor-p", 0, 1, f_show_cursor_p, ""),
     S!("set-window-cursor-type", 2, 2, f_nil, ""),
     S!("set-display-table-slot", 3, 3, f_nil, ""),
     S!("display-table-slot", 2, 2, f_nil, ""),
@@ -2775,6 +2787,31 @@ fn f_frame_live_p(_i: &mut Interp, a: Vec<Value>) -> EvalResult {
         _ => Ok(Value::Nil),
     }
 }
+
+fn f_frame_visible_p(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    // GNU requires a live frame; our frames are always "visible".
+    match &a[0] {
+        Value::Frame(f) if !f.borrow().dead => Ok(Value::t()),
+        other => Err(i.wrong_type_mut("frame-live-p", other)),
+    }
+}
+
+fn f_show_cursor_p(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    // GNU: optional WINDOW arg (nil = selected); ours always shows.
+    match a.first() {
+        None | Some(Value::Nil) | Some(Value::Window(_)) => Ok(Value::t()),
+        Some(other) => Err(i.wrong_type_mut("windowp", other)),
+    }
+}
+
+fn f_frame_focus_state(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    // GNU: optional FRAME arg must be a live frame; nil (unknown) result.
+    match a.first() {
+        None | Some(Value::Nil) => Ok(Value::Nil),
+        Some(Value::Frame(f)) if !f.borrow().dead => Ok(Value::Nil),
+        Some(other) => Err(i.wrong_type_mut("framep", other)),
+    }
+}
 fn f_frame_list(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
     Ok(Value::list(
         i.frames
@@ -2943,6 +2980,29 @@ fn f_select_frame(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let f = frame_of(i, &arg(&a, 0))?;
     i.selected_frame = Some(f);
     Ok(a[0].clone())
+}
+
+fn f_handle_switch_frame(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    // GNU requires a frame argument.
+    match &a[0] {
+        Value::Frame(_) => Ok(Value::Nil),
+        other => Err(i.wrong_type_mut("framep", other)),
+    }
+}
+
+fn f_color_values(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    // GNU's second arg is a TERMINAL (default: selected). Any non-nil
+    // non-terminal arg errors via get-device-terminal.
+    if let Some(v) = a.get(1) {
+        if !v.is_nil() {
+            return Err(i.error(format!(
+                "Invalid argument {} in ‘get-device-terminal’",
+                i.princ_to_string(v)
+            )));
+        }
+    }
+    // No display colors in batch.
+    Ok(Value::Nil)
 }
 
 // ---------- keymaps ----------
@@ -5674,6 +5734,131 @@ fn f_unix_sync(_i: &mut Interp, _a: Vec<Value>) -> EvalResult {
     Ok(Value::Nil)
 }
 
+fn f_file_name_quote(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let name = want_str(i, &a[0])?;
+    // GNU: prepend the "/:" quotation prefix unless already quoted.
+    if name.starts_with("/:") {
+        Ok(Value::string(name))
+    } else {
+        Ok(Value::string(format!("/:{name}")))
+    }
+}
+
+fn f_file_name_unquote(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let name = want_str(i, &a[0])?;
+    let n = name.strip_prefix("/:").unwrap_or(&name).to_string();
+    Ok(Value::string(n))
+}
+
+fn f_file_local_name(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let file = want_str(i, &a[0])?;
+    // GNU: strip the remote prefix, if any.
+    match remote_name_parts(&file) {
+        Some((_, _, _, _, local)) => Ok(Value::string(local)),
+        None => Ok(Value::string(file)),
+    }
+}
+
+fn f_unhandled_dir(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let file = want_str(i, &a[0])?;
+    // GNU: file-name-as-directory on the (local) name.
+    if file.ends_with('/') {
+        Ok(Value::string(file))
+    } else {
+        Ok(Value::string(format!("{file}/")))
+    }
+}
+
+/// chmod-style symbolic MODE string → numeric mode bits.
+/// Grammar: clauses separated by ',', each `[ugoa]*([=+-][rwxXstugo]*)+'.
+fn f_modes_sym2num(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let modes = want_str(i, &a[0])?;
+    let base: i64 = match a.get(1) {
+        Some(Value::Int(n)) => *n as i64,
+        Some(v) => return Err(i.wrong_type_mut("integerp", v)),
+        None => 0,
+    };
+    // Empty who-set applies to all classes minus umask bits.
+    let umask = !default_file_modes() as i64 & 0o777;
+    let mut value = base;
+    for clause in modes.split(',') {
+        let b = clause.as_bytes();
+        let mut p = 0usize;
+        let mut who: i64 = 0;
+        while p < b.len() {
+            match b[p] {
+                b'u' => who |= 0o700,
+                b'g' => who |= 0o070,
+                b'o' => who |= 0o007,
+                b'a' => who |= 0o777,
+                _ => break,
+            }
+            p += 1;
+        }
+        if who == 0 {
+            who = 0o777 & !umask;
+        }
+        while p < b.len() {
+            let op = b[p];
+            if op != b'=' && op != b'+' && op != b'-' {
+                return Err(i.error("Unknown file mode"));
+            }
+            p += 1;
+            let mut perms: i64 = 0;
+            while p < b.len() {
+                let c = b[p];
+                match c {
+                    b'r' | b'w' | b'x' | b'X' => {
+                        // X: exec only if some exec bit is already set.
+                        if c == b'X' && value & 0o111 == 0 {
+                            p += 1;
+                            continue;
+                        }
+                        let bit = if c == b'r' { 4 } else if c == b'w' { 2 } else { 1 };
+                        for shift in [6i64, 3, 0] {
+                            if who & (0o7 << shift) != 0 {
+                                perms |= bit << shift;
+                            }
+                        }
+                        p += 1;
+                    }
+                    b's' => {
+                        if who & 0o700 != 0 {
+                            perms |= 0o4000;
+                        }
+                        if who & 0o070 != 0 {
+                            perms |= 0o2000;
+                        }
+                        p += 1;
+                    }
+                    b't' => {
+                        perms |= 0o1000;
+                        p += 1;
+                    }
+                    b'u' | b'g' | b'o' => {
+                        // Copy that class's current bits.
+                        let sh = if c == b'u' { 6 } else if c == b'g' { 3 } else { 0 };
+                        let bits = (value >> sh) & 0o7;
+                        for s2 in [6i64, 3, 0] {
+                            if who & (0o7 << s2) != 0 {
+                                perms |= bits << s2;
+                            }
+                        }
+                        p += 1;
+                    }
+                    _ => break,
+                }
+            }
+            value = match op {
+                b'=' => (value & !who) | perms,
+                b'+' => value | perms,
+                _ => value & !perms,
+            };
+        }
+    }
+    Ok(Value::Int(value as i128))
+}
+
 fn f_set_default_file_modes(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let mode = want_int(i, &a[0])?;
     // GNU sets the process umask to ~MODE & 0777 and records MODE in
@@ -8139,7 +8324,7 @@ const KNOWN_FACES: &[&str] = &[
     "line-number-minor-tick",
 ];
 
-fn face_known(i: &Interp, name: &str) -> bool {
+pub(crate) fn face_known(i: &Interp, name: &str) -> bool {
     KNOWN_FACES.contains(&name) || i.face_table.iter().any(|(n, _)| n == name)
 }
 

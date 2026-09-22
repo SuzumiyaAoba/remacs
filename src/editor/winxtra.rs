@@ -171,7 +171,7 @@ pub(crate) static SUBRS: &[Subr] = &[
         f_other_window,
         "Window to scroll."
     ),
-    S!("coordinates-in-window-p", 2, 2, f_false, ""),
+    S!("coordinates-in-window-p", 2, 2, f_coordinates_in_window_p, ""),
     S!(
         "posn-at-point",
         0,
@@ -411,16 +411,16 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!("terminal-parameters", 0, 1, f_nil, ""),
     S!("set-terminal-parameter", 3, 3, f_nil, ""),
     // `terminal-id' does not exist in GNU.
-    S!("delete-terminal", 1, 2, f_nil, ""),
+    S!("delete-terminal", 0, 2, f_delete_terminal, ""),
     S!("suspend-tty", 0, 1, f_suspend_tty, ""),
     S!("resume-tty", 0, 1, f_nil, ""),
     S!("tty--output-buffer-size", 0, 1, f_zero, ""),
     S!("tty--set-output-buffer-size", 1, 1, f_nil, ""),
     S!("tty-find-type", 3, 3, f_nil, ""),
-    S!("handle-select-window", 1, 1, f_nil, ""),
-    S!("innermost-minibuffer-p", 0, 0, f_false, ""),
+    S!("handle-select-window", 1, 1, f_t, ""),
+    S!("innermost-minibuffer-p", 0, 1, f_false, ""),
     S!("minibuffer-innermost-command-loop-p", 0, 1, f_false, ""),
-    S!("display-supports-face-attributes-p", 1, 2, f_t, ""),
+    S!("display-supports-face-attributes-p", 1, 2, f_nil, ""),
     S!("run-window-configuration-change-hook", 0, 1, f_nil, ""),
     S!("run-window-scroll-functions", 0, 1, f_nil, ""),
     S!("set-window-new-total", 2, 3, f_set_window_new_total, ""),
@@ -429,7 +429,7 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!("set-window-combination-limit", 2, 2, f_nil, ""),
     S!("set-window-next-buffers", 2, 2, f_nil, ""),
     S!("set-window-prev-buffers", 2, 2, f_nil, ""),
-    S!("force-window-update", 0, 1, f_nil, ""),
+    S!("force-window-update", 0, 1, f_force_window_update, ""),
     S!("resize-mini-window-internal", 1, 1, f_nil, ""),
 ];
 
@@ -440,6 +440,47 @@ fn f_nil(_i: &mut Interp, _a: Vec<Value>) -> EvalResult {
 fn f_suspend_tty(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
     // GNU batch: the initial terminal is not suspendable.
     Err(i.error("Attempt to suspend a non-text terminal device"))
+}
+
+fn f_delete_terminal(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    // GNU batch: deleting the sole live terminal is an error; a
+    // terminal arg that names nothing is quietly ignored (nil).
+    match a.first() {
+        None | Some(Value::Nil) => {
+            Err(i.error("Attempt to delete the sole active display terminal"))
+        }
+        _ => Ok(Value::Nil),
+    }
+}
+
+fn f_force_window_update(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    // GNU: t when OBJECT designates something updateable — nil (all
+    // windows), a window, a buffer, or a live buffer name.
+    match a.first() {
+        None | Some(Value::Nil) => Ok(Value::t()),
+        Some(Value::Window(_)) | Some(Value::Buffer(_)) => Ok(Value::t()),
+        Some(Value::Str(s)) => {
+            let name = s.borrow().clone();
+            Ok(Value::from_bool(i.buffers.by_name(&name).is_some()))
+        }
+        _ => Ok(Value::Nil),
+    }
+}
+
+fn f_coordinates_in_window_p(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    // GNU: COORDINATES is (X . Y) relative to the frame; returns it when
+    // inside WINDOW's body. Our single batch window spans the frame.
+    let (x, y) = match &a[0] {
+        Value::Cons(c) => {
+            let cc = c.borrow();
+            (cc.car.clone(), cc.cdr.clone())
+        }
+        other => return Err(i.wrong_type_mut("consp", other)),
+    };
+    match (x, y) {
+        (Value::Int(_), Value::Int(_)) => Ok(a[0].clone()),
+        _ => Ok(Value::Nil),
+    }
 }
 
 fn f_false(i: &mut Interp, a: Vec<Value>) -> EvalResult {

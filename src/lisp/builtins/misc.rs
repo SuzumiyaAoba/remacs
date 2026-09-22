@@ -836,7 +836,7 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!("help-function-arglist", 1, 2, f_help_function_arglist, ""),
     S!("function-documentation", 1, 1, f_function_documentation, ""),
     S!("command-error-default-function", 3, 3, f_nil, ""),
-    S!("command-line", 0, 0, f_nil, ""),
+    S!("command-line", 0, 0, f_command_line, ""),
     S!("recursion-depth", 0, 0, f_zero, ""),
     S!("minibuffer-depth", 0, 0, f_zero, ""),
     S!("detect-coding-string", 1, 2, f_detect_coding_string, ""),
@@ -927,7 +927,7 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!("xw-color-defined-p", 1, 2, f_false, ""),
     S!("color-gray-p", 1, 2, f_color_gray_p, ""),
     S!("color-supported-p", 1, 2, f_color_defined_p, ""),
-    S!("invert-face", 1, 2, f_nil, ""),
+    S!("invert-face", 1, 2, f_invert_face, ""),
     S!("clear-face-cache", 0, 1, f_nil, ""),
     // ---------- windows ----------
     S!("minibuffer-selected-window", 0, 0, f_nil, ""),
@@ -978,8 +978,14 @@ pub(crate) static SUBRS: &[Subr] = &[
     ),
     S!("char-table-range", 2, 2, f_char_table_range, ""),
     S!("set-char-table-range", 3, 3, f_set_char_table_range, ""),
-    S!("char-table-parent", 1, 1, f_nil, ""),
-    S!("set-char-table-parent", 2, 2, f_nil, ""),
+    S!("char-table-parent", 1, 1, f_char_table_parent, ""),
+    S!(
+        "set-char-table-parent",
+        2,
+        2,
+        f_set_char_table_parent,
+        ""
+    ),
     S!("map-char-table", 2, 2, f_map_char_table, ""),
     S!("optimize-char-table", 1, 2, f_nil, ""),
     S!("char-table-subtype", 1, 1, f_char_table_subtype, ""),
@@ -1120,15 +1126,21 @@ pub(crate) static SUBRS: &[Subr] = &[
         "Read one form."
     ),
     S!("read-positioning-symbols", 0, 1, f_nil, ""),
-    S!("describe-vector", 1, 2, f_nil, ""),
+    S!("describe-vector", 1, 2, f_describe_vector, ""),
     S!("locale-info", 1, 1, f_locale_info, "Locale data for ITEM."),
     S!("locale-translate", 1, 1, f_nil, ""),
     S!("mapbacktrace", 1, 2, f_nil, ""),
     // `internal-timer-start-idle' is Lisp (prelude timer.el port).
-    S!("internal-describe-syntax-value", 0, 0, f_nil, ""),
+    S!("internal-describe-syntax-value", 1, 1, f_identity, ""),
     S!("internal-copy-lisp-face", 4, 4, f_nil, ""),
     S!("internal-make-lisp-face", 1, 2, f_nil, ""),
-    S!("frame-or-buffer-changed-p", 0, 1, f_nil, ""),
+    S!(
+        "frame-or-buffer-changed-p",
+        0,
+        1,
+        f_frame_or_buffer_changed_p,
+        ""
+    ),
     S!("scroll-bar-scale", 2, 2, f_nil, ""),
     S!("popup-menu", 1, 2, f_nil, ""),
     S!("set-frame-font", 1, 3, f_nil, ""),
@@ -1163,14 +1175,14 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!("font-family-list", 0, 1, f_nil, ""),
     S!("font-face-attributes", 1, 2, f_nil, ""),
     S!("font-spec", many 0, f_nil, ""),
-    S!("face-font", 1, 2, f_nil, ""),
+    S!("face-font", 1, 2, f_face_font, ""),
     S!("face-documentation", 1, 1, f_nil, ""),
     S!("face-attributes-as-vector", 1, 1, f_nil, ""),
     S!("image-flush", 1, 2, f_nil, ""),
     S!("image-mask-p", 1, 2, f_nil, ""),
     S!("image-metadata", 1, 2, f_nil, ""),
     S!("image-size", 1, 3, f_nil, ""),
-    S!("image-transforms-p", 0, 0, f_nil, ""),
+    S!("image-transforms-p", 0, 1, f_image_transforms_p, ""),
     S!("image-type", 0, 1, f_nil, ""),
     S!("image-type-available-p", 1, 1, f_nil, ""),
     S!("init-image-library", 1, 1, f_nil, ""),
@@ -1180,7 +1192,7 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!("display-screens", 0, 1, f_display_screens, ""),
     S!("display-selections-p", 0, 1, f_nil, ""),
     // ---------- X stubs (no X) ----------
-    S!("gui-get-selection", 1, 3, f_nil, ""),
+    S!("gui-get-selection", 0, 3, f_nil, ""),
     S!("gui-set-selection", 2, 3, f_nil, ""),
     S!("x-begin-drag", 1, 4, f_nil, ""),
     S!("x-display-backing-store", 0, 1, f_nil, ""),
@@ -2042,6 +2054,85 @@ fn f_flush_stdout(_i: &mut Interp, _a: Vec<Value>) -> EvalResult {
 fn f_display_screens(_i: &mut Interp, _a: Vec<Value>) -> EvalResult {
     // GNU batch: one screen (the initial terminal).
     Ok(Value::Int(1))
+}
+
+fn f_command_line(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
+    // GNU recurses into the top-level loop; in batch that ends in
+    // excessive-lisp-nesting. Signal a plain error instead.
+    Err(i.error("command-line is for interactive use"))
+}
+
+fn f_describe_vector(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    match &a[0] {
+        Value::Vec(_) => Ok(Value::Nil),
+        v if is_char_table(i, v) => Ok(Value::Nil),
+        other => Err(i.wrong_type_mut("vector-or-char-table-p", other)),
+    }
+}
+
+/// GNU's optional FRAME argument check: nil ok, live frame ok, else
+/// `wrong-type-argument framep'.
+fn want_opt_frame(i: &mut Interp, v: &Value) -> Result<(), Flow> {
+    match v {
+        Value::Nil => Ok(()),
+        Value::Frame(f) if !f.borrow().dead => Ok(()),
+        other => Err(i.wrong_type_mut("framep", other)),
+    }
+}
+
+/// Whether V names a face (symbol or string), like GNU's face lookup.
+fn face_exists(i: &Interp, v: &Value) -> bool {
+    let name = match v {
+        Value::Sym(s) => i.symbol_name(*s),
+        Value::Str(s) => s.borrow().clone(),
+        _ => return false,
+    };
+    crate::editor::face_known(i, &name)
+}
+
+fn f_face_font(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    want_opt_frame(i, a.get(1).unwrap_or(&Value::Nil))?;
+    if !face_exists(i, &a[0]) {
+        return Err(i.error("Invalid face"));
+    }
+    // No fonts in batch.
+    Ok(Value::Nil)
+}
+
+fn f_invert_face(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    want_opt_frame(i, a.get(1).unwrap_or(&Value::Nil))?;
+    if !face_exists(i, &a[0]) {
+        return Err(i.error("Invalid face"));
+    }
+    // GNU returns the face.
+    Ok(a[0].clone())
+}
+
+fn f_frame_or_buffer_changed_p(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    // GNU's STATE arg is a symbol naming a state vector.
+    match a.first() {
+        None | Some(Value::Nil) | Some(Value::Sym(_)) => {}
+        Some(other) => return Err(i.wrong_type_mut("symbolp", other)),
+    }
+    // Stateful like GNU: t when frames/buffers changed since last call.
+    let mut fp = i.frames.len() as u64;
+    for id in i.buffers.list() {
+        if let Some(b) = i.buffers.get(id) {
+            fp = fp.wrapping_mul(31).wrapping_add(b.borrow().mod_tick);
+        }
+    }
+    let changed = i.frame_state_seen != Some(fp);
+    i.frame_state_seen = Some(fp);
+    Ok(Value::from_bool(changed))
+}
+
+fn f_image_transforms_p(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    // Optional FRAME arg must be a live frame; no transforms in batch.
+    match a.first() {
+        None | Some(Value::Nil) => Ok(Value::Nil),
+        Some(Value::Frame(f)) if !f.borrow().dead => Ok(Value::Nil),
+        Some(other) => Err(i.wrong_type_mut("frame-live-p", other)),
+    }
 }
 
 fn f_nil(_i: &mut Interp, _a: Vec<Value>) -> EvalResult {
@@ -5245,17 +5336,72 @@ fn f_char_table_p(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     Ok(Value::from_bool(is_char_table(i, &a[0])))
 }
 
-fn f_char_table_range(_i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    if let Some(v) = char_table_vec(&a[0]) {
-        let idx = match &a[1] {
-            Value::Int(n) if *n >= 0 => *n as usize,
-            Value::Nil => 0,
-            _ => return Ok(v.borrow().first().cloned().unwrap_or(Value::Nil)),
+fn f_char_table_range(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    // GNU: when a slot is nil, the parent chain supplies the value.
+    let mut cur = a[0].clone();
+    let mut guard = 0;
+    loop {
+        if let Some(v) = char_table_vec(&cur) {
+            let idx = match &a[1] {
+                Value::Int(n) if *n >= 0 => *n as usize,
+                Value::Nil => 0,
+                _ => return Ok(v.borrow().first().cloned().unwrap_or(Value::Nil)),
+            };
+            let got = v.borrow().get(idx).cloned().unwrap_or(Value::Nil);
+            if !got.is_nil() {
+                return Ok(got);
+            }
+        } else {
+            return Ok(Value::Nil);
+        }
+        guard += 1;
+        if guard > 32 {
+            return Ok(Value::Nil);
+        }
+        let id = match &cur {
+            Value::Record(r) => Rc::as_ptr(r) as usize,
+            Value::Vec(r) => Rc::as_ptr(r) as usize,
+            _ => return Ok(Value::Nil),
         };
-        Ok(v.borrow().get(idx).cloned().unwrap_or(Value::Nil))
-    } else {
-        Ok(Value::Nil)
+        match i.char_table_parents.iter().find(|(k, _)| *k == id) {
+            Some((_, p)) => cur = p.clone(),
+            None => return Ok(Value::Nil),
+        }
     }
+}
+
+fn f_char_table_parent(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    if !is_char_table(i, &a[0]) {
+        return Err(i.wrong_type_mut("char-table-p", &a[0]));
+    }
+    let id = match &a[0] {
+        Value::Record(r) => Rc::as_ptr(r) as usize,
+        _ => return Ok(Value::Nil),
+    };
+    Ok(i
+        .char_table_parents
+        .iter()
+        .find(|(k, _)| *k == id)
+        .map(|(_, v)| v.clone())
+        .unwrap_or(Value::Nil))
+}
+
+fn f_set_char_table_parent(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    if !is_char_table(i, &a[0]) {
+        return Err(i.wrong_type_mut("char-table-p", &a[0]));
+    }
+    if !a[1].is_nil() && !is_char_table(i, &a[1]) {
+        return Err(i.wrong_type_mut("char-table-p", &a[1]));
+    }
+    let id = match &a[0] {
+        Value::Record(r) => Rc::as_ptr(r) as usize,
+        _ => return Ok(a[1].clone()),
+    };
+    i.char_table_parents.retain(|(k, _)| *k != id);
+    if !a[1].is_nil() {
+        i.char_table_parents.push((id, a[1].clone()));
+    }
+    Ok(a[1].clone())
 }
 
 fn f_set_char_table_range(i: &mut Interp, a: Vec<Value>) -> EvalResult {

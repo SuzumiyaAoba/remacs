@@ -246,7 +246,8 @@ default-directory
 (this-command-keys-vector)
 (this-single-command-keys)
 (this-single-command-raw-keys)
-(command-line)
+;; `command-line' signals in batch (GNU recurses into top-level).
+(condition-case e (command-line) (error e))
 (make-directory "/tmp/remacs-mkd/sub" t)
 (make-directory "/tmp/remacs-mkd/sub2")
 (directory-files "/tmp/remacs-mkd")

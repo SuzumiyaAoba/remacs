@@ -191,6 +191,12 @@ pub struct Interp {
     /// Generated trampolines for advice composition: index →
     /// (WHERE . (ADVICE-FUN . NEXT-CALLABLE)) as a flat triple.
     pub advice_links: Vec<(Value, Value, Value)>,
+    /// `set-char-table-parent' registry: record identity → parent table.
+    /// Char-table parents live outside the record so existing record
+    /// layouts are untouched.
+    pub char_table_parents: Vec<(usize, Value)>,
+    /// Fingerprint seen by the last `frame-or-buffer-changed-p' call.
+    pub frame_state_seen: Option<u64>,
 }
 
 /// Result of a minibuffer read from the front-end.
@@ -274,6 +280,8 @@ impl Interp {
             memory_profiler: false,
             advices: Vec::new(),
             advice_links: Vec::new(),
+            char_table_parents: Vec::new(),
+            frame_state_seen: None,
         };
         crate::lisp::builtins::install(&mut interp);
         crate::buffer::install_primitives(&mut interp);
