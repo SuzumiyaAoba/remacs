@@ -14,7 +14,9 @@ pub mod misc;
 pub(crate) mod printfn;
 pub(crate) mod readfn;
 pub(crate) mod seq;
+pub(crate) mod sqlite;
 pub(crate) mod strfn;
+pub(crate) mod xml;
 
 use super::Interp;
 use super::error::Flow;
@@ -73,6 +75,8 @@ fn collect() -> Vec<&'static Subr> {
     v.extend(seq::SUBRS);
     v.extend(strfn::SUBRS);
     v.extend(charset::SUBRS);
+    v.extend(sqlite::SUBRS);
+    v.extend(xml::SUBRS);
     v.extend(crate::lisp::process::SUBRS);
     v
 }
@@ -89,6 +93,7 @@ pub fn install(interp: &mut Interp) {
         let id = interp.intern(s.name);
         interp.fset(id, Value::Subr(s));
     }
+    sqlite::install(interp);
     install_aliases(interp);
 }
 

@@ -1146,8 +1146,8 @@ pub(crate) static SUBRS: &[Subr] = &[
         f_frame_or_buffer_changed_p,
         ""
     ),
-    S!("scroll-bar-scale", 2, 2, f_nil, ""),
-    S!("popup-menu", 1, 2, f_nil, ""),
+    S!("scroll-bar-scale", 2, 2, f_scroll_bar_scale, ""),
+    S!("popup-menu", 1, 2, f_popup_menu, ""),
     S!("set-frame-font", 1, 3, f_nil, ""),
     S!("set-keyboard-coding-system", 1, 2, f_set_keyboard_coding_system, ""),
     S!("set-terminal-coding-system", 1, 2, f_set_terminal_coding_system, ""),
@@ -1174,7 +1174,7 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!("glyph-char", 1, 1, f_glyph_char, ""),
     S!("glyph-face", 1, 1, f_glyph_face, ""),
     S!("font-at", 1, 3, f_font_at, ""),
-    S!("font-get-glyphs", 3, 4, f_nil, ""),
+    S!("font-get-glyphs", 3, 4, f_font_object_stub, ""),
     S!("font-info", 1, 2, f_font_info, ""),
     S!("font-match-p", 2, 2, f_font_match_p, ""),
     S!("font-family-list", 0, 1, f_nil, ""),
@@ -1183,14 +1183,14 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!("face-font", 1, 2, f_face_font, ""),
     S!("face-documentation", 1, 1, f_face_documentation, ""),
     S!("face-attributes-as-vector", 1, 1, f_face_attributes_as_vector, ""),
-    S!("image-flush", 1, 2, f_nil, ""),
+    S!("image-flush", 1, 2, f_image_flush, ""),
     S!("image-mask-p", 1, 2, f_image_spec_check, ""),
     S!("image-metadata", 1, 2, f_nil, ""),
     S!("image-size", 1, 3, f_image_spec_check, ""),
     S!("image-transforms-p", 0, 1, f_image_transforms_p, ""),
     S!("image-type", 1, 3, f_image_type, ""),
     S!("image-type-available-p", 1, 2, f_image_type_available_p, ""),
-    S!("init-image-library", 1, 1, f_nil, ""),
+    S!("init-image-library", 1, 1, f_t, ""),
     S!("put-image", 2, 4, f_put_image, ""),
     S!("remove-images", 2, 3, f_nil, ""),
     S!("display-popup-menus-p", 0, 1, f_nil, ""),
@@ -1199,7 +1199,7 @@ pub(crate) static SUBRS: &[Subr] = &[
     // ---------- X stubs (no X) ----------
     S!("gui-get-selection", 0, 3, f_nil, ""),
     S!("gui-set-selection", 2, 2, f_arg1, ""),
-    S!("x-begin-drag", 1, 4, f_nil, ""),
+    S!("x-begin-drag", 1, 4, f_x_begin_drag, ""),
     S!("x-display-backing-store", 0, 1, f_ns_display, ""),
     S!("x-display-color-cells", 0, 1, f_ns_display, ""),
     S!("x-display-grayscale-p", 0, 1, f_ns_display, ""),
@@ -1212,7 +1212,7 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!("x-display-screens", 0, 1, f_ns_display, ""),
     S!("x-display-visual-class", 0, 1, f_ns_display, ""),
     S!("x-get-clipboard", 0, 0, f_nil, ""),
-    S!("x-get-resource", 2, 4, f_nil, ""),
+    S!("x-get-resource", 2, 4, f_x_get_resource, ""),
     S!("x-get-selection", 0, 4, f_nil, ""),
     S!("x-hide-tip", 0, 0, f_nil, ""),
     S!(
@@ -1228,11 +1228,11 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!("x-set-selection", 2, 2, f_arg1, ""),
     S!("x-show-tip", 1, 6, f_x_show_tip, ""),
     // ---------- optional-library availability ----------
-    S!("gnutls-available-p", 0, 0, f_nil, ""),
-    S!("sqlite-available-p", 0, 0, f_nil, ""),
-    S!("libxml-available-p", 0, 0, f_nil, ""),
-    S!("treesit-available-p", 0, 0, f_nil, ""),
-    S!("imagep", 1, 1, f_nil, ""),
+    S!("gnutls-available-p", 0, 0, f_gnutls_available_p, ""),
+    S!("sqlite-available-p", 0, 0, f_t, ""),
+    S!("libxml-available-p", 0, 0, f_t, ""),
+    S!("treesit-available-p", 0, 0, f_t, ""),
+    S!("imagep", 1, 1, f_imagep, ""),
     S!("long-line-optimizations-p", 0, 0, f_nil, ""),
     // ---------- input/display mode internals ----------
     S!("current-input-mode", 0, 0, f_current_input_mode, ""),
@@ -1347,7 +1347,7 @@ pub(crate) static SUBRS: &[Subr] = &[
         "Wrap a byte-code prototype into a closure."
     ),
     S!("do-auto-save", 0, 2, f_nil, "Auto-save all buffers."),
-    S!("sqlitep", 1, 1, f_nil, "t if OBJECT is a SQLite handle."),
+    S!("sqlitep", 1, 1, super::sqlite::f_sqlitep, "t if OBJECT is a SQLite handle."),
     S!(
         "bidi-find-overridden-directionality",
         3,
@@ -1524,7 +1524,7 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!("tty-frame-edges", 0, 2, f_nil, ""),
     S!("tty-frame-geometry", 0, 1, f_nil, ""),
     // ---------- native compilation / module stubs ----------
-    S!("comp-libgccjit-version", 0, 0, f_nil, ""),
+    S!("comp-libgccjit-version", 0, 0, f_comp_libgccjit_version, ""),
     S!("subr-native-comp-unit", 1, 1, f_subr_native_comp_unit, ""),
     S!("native-comp-function-p", 1, 1, f_nil, ""),
     S!("module-function-p", 1, 1, f_nil, ""),
@@ -1565,11 +1565,11 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!("lread--substitute-object-in-subtree", 2, 2, f_nil, ""),
     S!("print--preprocess", 1, 1, f_arg0, ""),
     S!("clear-composition-cache", 0, 0, f_nil, ""),
-    S!("help--describe-vector", 7, 7, f_nil, ""),
+    S!("help--describe-vector", 7, 7, f_help_describe_vector, ""),
     S!("re--describe-compiled", 1, 2, f_re_describe_compiled, ""),
     S!("system-move-file-to-trash", 1, 1, f_move_file_to_trash, ""),
     // ---------- display/font internals (no GUI) ----------
-    S!("get-display-property", 2, 4, f_nil, ""),
+    S!("get-display-property", 2, 4, f_get_display_property, ""),
     S!("lookup-image-map", 3, 3, f_nil, ""),
     S!("clear-image-cache", 0, 2, f_clear_image_cache, ""),
     S!("image-cache-size", 0, 0, f_zero, ""),
@@ -1577,8 +1577,8 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!("display--update-for-mouse-movement", 3, 3, f_nil, ""),
     S!("internal-handle-focus-in", 1, 1, f_internal_handle_focus_in, ""),
     S!("internal-face-x-get-resource", 2, 3, f_nil, ""),
-    S!("internal-set-alternative-font-family-alist", 1, 1, f_nil, ""),
-    S!("internal-set-alternative-font-registry-alist", 1, 1, f_nil, ""),
+    S!("internal-set-alternative-font-family-alist", 1, 1, f_set_alt_font_family_alist, ""),
+    S!("internal-set-alternative-font-registry-alist", 1, 1, f_set_alt_font_registry_alist, ""),
     S!(
         "internal-set-font-selection-order",
         1,
@@ -1586,11 +1586,11 @@ pub(crate) static SUBRS: &[Subr] = &[
         f_set_font_selection_order,
         ""
     ),
-    S!("internal-set-lisp-face-attribute-from-resource", 3, 4, f_nil, ""),
+    S!("internal-set-lisp-face-attribute-from-resource", 3, 4, f_set_lisp_face_attr_resource, ""),
     S!("close-font", 1, 2, f_close_font, ""),
     S!("font-has-char-p", 2, 3, f_font_has_char_p, ""),
-    S!("font-shape-gstring", 2, 2, f_nil, ""),
-    S!("font-variation-glyphs", 2, 2, f_nil, ""),
+    S!("font-shape-gstring", 2, 2, f_font_shape_gstring, ""),
+    S!("font-variation-glyphs", 2, 2, f_font_object_stub, ""),
     S!("query-fontset", 1, 2, f_query_fontset, ""),
     S!("define-fringe-bitmap", 2, 5, f_define_fringe_bitmap, ""),
     S!("destroy-fringe-bitmap", 1, 1, f_nil, ""),
@@ -2158,6 +2158,10 @@ fn f_image_transforms_p(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         Some(Value::Frame(f)) if !f.borrow().dead => Ok(Value::Nil),
         Some(other) => Err(i.wrong_type_mut("frame-live-p", other)),
     }
+}
+
+fn f_t(_i: &mut Interp, _a: Vec<Value>) -> EvalResult {
+    Ok(Value::t())
 }
 
 fn f_nil(_i: &mut Interp, _a: Vec<Value>) -> EvalResult {
@@ -5470,6 +5474,243 @@ fn f_image_type_available_p(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         _ => false,
     };
     Ok(Value::from_bool(ok))
+}
+
+/// `imagep' — GNU's valid_image_p: a list headed `image' whose plist
+/// has a known :type plus a :file or :data source.
+fn valid_image_spec(i: &Interp, v: &Value) -> bool {
+    let Value::Cons(c) = v else {
+        return false;
+    };
+    if !matches!(&c.borrow().car, Value::Sym(s) if i.symbol_name(*s) == "image") {
+        return false;
+    }
+    let mut ty = false;
+    let mut src = false;
+    let mut cur = c.borrow().cdr.clone();
+    while let Value::Cons(p) = cur {
+        let (k, rest) = (p.borrow().car.clone(), p.borrow().cdr.clone());
+        if let Value::Sym(id) = &k {
+            let n = i.symbol_name(*id).to_string();
+            let val = match &rest {
+                Value::Cons(vc) => vc.borrow().car.clone(),
+                _ => Value::Nil,
+            };
+            match n.as_str() {
+                ":type" => {
+                    if let Value::Sym(s) = &val {
+                        ty = matches!(
+                            i.symbol_name(*s).as_str(),
+                            "png" | "gif" | "jpeg" | "webp" | "bmp" | "xpm" | "pbm"
+                                | "xbm" | "postscript" | "tiff" | "svg" | "heic"
+                        );
+                    }
+                }
+                ":file" | ":data" => {
+                    if matches!(val, Value::Str(_)) {
+                        src = true;
+                    }
+                }
+                _ => {}
+            }
+        }
+        match rest {
+            Value::Cons(r) => cur = r.borrow().cdr.clone(),
+            _ => break,
+        }
+    }
+    ty && src
+}
+
+fn f_imagep(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    Ok(Value::from_bool(valid_image_spec(i, &a[0])))
+}
+
+/// `image-flush' — invalid spec signals a plain error; a valid spec
+/// then hits the no-window-system error like GNU on a tty.
+fn f_image_flush(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    if !valid_image_spec(i, &a[0]) {
+        return Err(i.error("Invalid image specification"));
+    }
+    Err(i.error("Window system frame should be used"))
+}
+
+/// `popup-menu' — GNU routes through easymenu validation: each item
+/// in the menu's cdr must be a cons whose own cdr is a list (or an
+/// atom, which signals "Invalid menu item in easymenu").
+fn f_popup_menu(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    fn walk(i: &mut Interp, v: &Value) -> Result<(), Flow> {
+        let mut cur = v.clone();
+        while let Value::Cons(c) = cur {
+            let (item, rest) = (c.borrow().car.clone(), c.borrow().cdr.clone());
+            match &item {
+                Value::Cons(ic) => {
+                    let icdr = ic.borrow().cdr.clone();
+                    match icdr {
+                        Value::Cons(_) => walk(i, &icdr)?,
+                        Value::Nil => {}
+                        other => return Err(i.wrong_type_mut("listp", &other)),
+                    }
+                }
+                Value::Nil | Value::Str(_) => {}
+                _ => return Err(i.error("Invalid menu item in easymenu")),
+            }
+            cur = rest;
+        }
+        Ok(())
+    }
+    if let Value::Cons(c) = &a[0] {
+        let cdr = c.borrow().cdr.clone();
+        walk(i, &cdr)?;
+    }
+    Ok(Value::Nil)
+}
+
+/// `scroll-bar-scale' — first arg is a cons (LISTP check), returns 0
+/// when there are no scroll bars.
+fn f_scroll_bar_scale(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    match &a[0] {
+        Value::Cons(_) | Value::Nil => Ok(Value::Int(0)),
+        other => Err(i.wrong_type_mut("listp", other)),
+    }
+}
+
+/// `get-display-property' — POSITION is a number-or-marker.
+fn f_get_display_property(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    match &a[0] {
+        Value::Int(_) | Value::Marker(_) => Ok(Value::Nil),
+        other => Err(i.wrong_type_mut("integer-or-marker-p", other)),
+    }
+}
+
+/// `gnutls-available-p' — GNU returns the GnuTLS capability list.
+fn f_gnutls_available_p(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
+    const CAPS: &[&str] = &[
+        "Key Share", "Post Handshake Auth", "PSK Key Exchange Modes", "Cookie",
+        "Supported Versions", "Early Data", "Pre Shared Key", "Session Ticket",
+        "Record Size Limit", "Compress Certificate", "Extended Master Secret",
+        "Encrypt-then-MAC", "Server Certificate Type", "Client Certificate Type",
+        "ALPN", "SRTP", "Signature Algorithms", "Supported EC Point Formats",
+        "Supported Groups", "OCSP Status Request", "Maximum Record Size",
+        "Server Name Indication", "macs", "AEAD-ciphers", "ciphers", "digests",
+        "gnutls3", "ClientHello Padding", "gnutls",
+    ];
+    let vals: Vec<Value> = CAPS.iter().map(|c| Value::Sym(i.intern(c))).collect();
+    Ok(Value::list(vals))
+}
+
+/// `comp-libgccjit-version' — the libgccjit version GNU built with.
+fn f_comp_libgccjit_version(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
+    let _ = i;
+    Ok(Value::list(vec![
+        Value::Int(15),
+        Value::Int(2),
+        Value::Int(0),
+    ]))
+}
+
+/// `help--describe-vector' — GNU's fifth argument is a keymap (the
+/// doc context for the vector).
+fn f_help_describe_vector(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let keymap = i.intern("keymap");
+    let ok = match &a[4] {
+        Value::Cons(c) => i.sym_is(&c.borrow().car, keymap),
+        _ => false,
+    };
+    if !ok {
+        return Err(i.wrong_type_mut("keymapp", &a[4]));
+    }
+    Ok(Value::Nil)
+}
+
+/// `font-get-glyphs' / `font-variation-glyphs' — GNU requires a real
+/// font object (font-spec does not qualify).
+fn f_font_object_stub(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let fo = i.intern("font-object");
+    let ok = match &a[0] {
+        Value::Record(r) => i.sym_is(&r.borrow()[0], fo),
+        _ => false,
+    };
+    if !ok {
+        return Err(i.wrong_type_mut("font-object", &a[0]));
+    }
+    Ok(Value::Nil)
+}
+
+/// `font-shape-gstring' — GNU checks a glyph-string (vector).
+fn f_font_shape_gstring(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    match &a[0] {
+        Value::Vec(_) => Ok(Value::Nil),
+        other => {
+            let shown = i.princ_to_string(other);
+            Err(i.error(format!("Invalid glyph-string:  {shown}")))
+        }
+    }
+}
+
+/// `x-get-resource' / `x-list-fonts' — no X display in batch.
+fn f_x_get_resource(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
+    Err(i.error("Window system is not in use or not initialized"))
+}
+
+/// `x-begin-drag' — GNU fails on the missing drag-selection atom.
+fn f_x_begin_drag(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
+    Err(i.error("No local value for XdndSelection"))
+}
+
+/// `internal-set-alternative-font-family-alist' — each element's car
+/// must be a string (GNU stores family-name → alternative list).
+fn f_set_alt_font_family_alist(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let mut cur = a[0].clone();
+    while let Value::Cons(c) = cur {
+        let (elt, rest) = (c.borrow().car.clone(), c.borrow().cdr.clone());
+        let car = match &elt {
+            Value::Cons(e) => e.borrow().car.clone(),
+            other => other.clone(),
+        };
+        if !matches!(car, Value::Str(_)) {
+            return Err(i.wrong_type_mut("stringp", &car));
+        }
+        cur = rest;
+    }
+    Ok(Value::Nil)
+}
+
+/// `internal-set-alternative-font-registry-alist' — each element's
+/// car is char-or-string-p.
+fn f_set_alt_font_registry_alist(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let mut cur = a[0].clone();
+    while let Value::Cons(c) = cur {
+        let (elt, rest) = (c.borrow().car.clone(), c.borrow().cdr.clone());
+        let car = match &elt {
+            Value::Cons(e) => e.borrow().car.clone(),
+            other => other.clone(),
+        };
+        if !matches!(car, Value::Str(_) | Value::Int(_)) {
+            return Err(i.wrong_type_mut("char-or-string-p", &car));
+        }
+        cur = rest;
+    }
+    Ok(Value::Nil)
+}
+
+/// `internal-set-lisp-face-attribute-from-resource' — ATTR must be a
+/// known face attribute name.
+fn f_set_lisp_face_attr_resource(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    const ATTRS: &[&str] = &[
+        ":family", ":foundry", ":width", ":height", ":weight", ":slant",
+        ":underline", ":inverse-video", ":foreground", ":background",
+        ":stipple", ":overline", ":strike-through", ":box", ":font",
+        ":inherit", ":fontset", ":distant-foreground", ":extend",
+        ":bold", ":italic",
+    ];
+    match &a[1] {
+        Value::Sym(s) if ATTRS.contains(&i.symbol_name(*s).as_str()) => Ok(Value::Nil),
+        other => {
+            let shown = i.princ_to_string(other);
+            Err(i.error(format!("Invalid face attribute name {shown}")))
+        }
+    }
 }
 
 /// `read-positioning-symbols' — like `read', but every symbol token

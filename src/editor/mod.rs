@@ -1994,7 +1994,7 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!("face-italic-p", 1, 3, f_face_italic_p, ""),
     S!("face-underline-p", 1, 3, f_face_underline_p, ""),
     S!("internal-lisp-face-p", 1, 2, f_facep, ""),
-    S!("internal-lisp-face-empty-p", 1, 2, f_nil, ""),
+    S!("internal-lisp-face-empty-p", 1, 2, f_lisp_face_check_nil, ""),
     S!("internal-lisp-face-equal-p", 2, 3, f_face_equal, ""),
     S!(
         "internal-set-lisp-face-attribute",
@@ -2003,8 +2003,8 @@ pub(crate) static SUBRS: &[Subr] = &[
         f_internal_set_lisp_face_attribute,
         ""
     ),
-    S!("internal-lisp-face-attribute-values", 1, 1, f_nil, ""),
-    S!("internal-merge-in-global-face", 2, 2, f_nil, ""),
+    S!("internal-lisp-face-attribute-values", 1, 1, f_lisp_face_check_nil, ""),
+    S!("internal-merge-in-global-face", 2, 2, f_internal_merge_in_global_face, ""),
     S!("display-color-p", 0, 1, f_display_color_p, ""),
     S!("display-grayscale-p", 0, 1, f_nil, ""),
     S!("display-mouse-p", 0, 1, f_nil, ""),
@@ -2014,8 +2014,8 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!("x-color-values", 1, 1, f_x_color_values, ""),
     S!("xw-color-values", 1, 2, f_xw_color_values, ""),
     S!("tty-color-values", 1, 1, f_tty_color_values, ""),
-    S!("x-list-fonts", 1, 5, f_nil, ""),
-    S!("internal-char-font", 1, 2, f_nil, ""),
+    S!("x-list-fonts", 1, 5, f_x_no_display, ""),
+    S!("internal-char-font", 1, 2, f_internal_char_font, ""),
     S!("fontp", 1, 2, f_fontp, ""),
     S!("find-font", 1, 2, f_find_font, ""),
     S!("font-xlfd-name", 1, 1, f_font_xlfd_name, ""),
@@ -2030,16 +2030,16 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!("set-window-cursor-type", 2, 3, f_set_window_cursor_type, ""),
     // `make-display-table', `display-table-slot', `set-display-table-slot'
     // are Lisp in GNU (disp-table.el) — see prelude.rs.
-    S!("describe-display-table", 1, 1, f_nil, ""),
+    S!("describe-display-table", 1, 1, f_describe_display_table, ""),
     // `standard-display-table' is a variable in GNU (nil in batch).
     S!("open-font", 1, 3, f_open_font, ""),
     S!("query-font", 1, 1, f_query_font, ""),
     S!("font-get", 2, 2, f_font_get, ""),
     S!("font-put", 3, 3, f_font_put, ""),
-    S!("set-fontset-font", 3, 5, f_nil, ""),
-    S!("new-fontset", 2, 2, f_nil, ""),
-    S!("fontset-info", 1, 1, f_nil, ""),
-    S!("fontset-font", 2, 3, f_nil, ""),
+    S!("set-fontset-font", 3, 5, f_fontset_font, ""),
+    S!("new-fontset", 2, 2, f_new_fontset, ""),
+    S!("fontset-info", 1, 1, f_x_no_display, ""),
+    S!("fontset-font", 2, 3, f_fontset_font, ""),
     S!("fontset-list", 0, 0, f_fontset_list, ""),
     // menus/popups
     S!("x-popup-menu", 2, 2, f_x_popup_menu, ""),
@@ -3324,6 +3324,111 @@ fn f_xw_color_values(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         }
     }
     Ok(color_rgb_list(&a[0]))
+}
+
+/// `x-list-fonts' / `fontset-info' — GNU signals "Window system is
+/// not in use or not initialized" for any arg on a tty batch.
+fn f_x_no_display(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
+    Err(i.error("Window system is not in use or not initialized"))
+}
+
+/// `fontset-font' / `set-fontset-font' — NAME must be a string; GNU
+/// then fails because no fontsets exist on a tty.
+fn f_fontset_font(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    match &a[0] {
+        Value::Str(s) => {
+            let name = s.borrow().clone();
+            Err(i.error(format!("Fontset ‘{name}’ does not exist")))
+        }
+        other => Err(i.wrong_type_mut("stringp", other)),
+    }
+}
+
+/// `new-fontset' — GNU requires a string name in XLFD form whose
+/// registry field matches "fontset-*".
+fn f_new_fontset(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let Value::Str(s) = &a[0] else {
+        return Err(i.wrong_type_mut("stringp", &a[0]));
+    };
+    let name = s.borrow().clone();
+    if !name.contains('-') {
+        return Err(i.error("Fontset name must be in XLFD format"));
+    }
+    let registry = name.rsplit('-').next().unwrap_or("");
+    if !registry.starts_with("fontset-") {
+        return Err(i.error("Registry field of fontset name must be \"fontset-*\""));
+    }
+    Ok(a[0].clone())
+}
+
+/// `internal-char-font' — bounds-check POS against the current
+/// buffer; tty text carries no font so the result is nil.
+fn f_internal_char_font(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let pos = match &a[0] {
+        Value::Int(n) => *n,
+        other => return Err(i.wrong_type_mut("integerp", other)),
+    };
+    let len = i
+        .buffers
+        .get(i.current_buffer)
+        .map(|b| b.borrow().text_len() as i128)
+        .unwrap_or(0);
+    if pos < 1 || pos > len {
+        let sym = i.intern("args-out-of-range");
+        return Err(i.signal_data(
+            sym,
+            vec![Value::Int(pos), Value::Int(1), Value::Int(len + 1)],
+        ));
+    }
+    Ok(Value::Nil)
+}
+
+/// `internal-lisp-face-empty-p' / `internal-lisp-face-attribute-
+/// values' — GNU signals a plain "Invalid face" error for unknown
+/// faces; a real face yields nil on a tty.
+fn f_lisp_face_check_nil(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let id = match &a[0] {
+        Value::Sym(s) => *s,
+        other => {
+            let shown = i.princ_to_string(other);
+            return Err(i.error(format!("Invalid face {shown}")));
+        }
+    };
+    let name = i.symbol_name(id).to_string();
+    if !face_known(i, &name) {
+        return Err(i.error(format!("Invalid face {name}")));
+    }
+    Ok(Value::Nil)
+}
+
+/// `internal-merge-in-global-face' — FACE must name a known face and
+/// FRAME must be live; returns nil.
+fn f_internal_merge_in_global_face(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    match &a[0] {
+        Value::Sym(s) => {
+            let name = i.symbol_name(*s).to_string();
+            if !face_known(i, &name) {
+                return Err(i.error(format!("Invalid face {name}")));
+            }
+        }
+        other => {
+            let shown = i.princ_to_string(other);
+            return Err(i.error(format!("Invalid face {shown}")));
+        }
+    }
+    match &a[1] {
+        Value::Frame(_) => Ok(Value::Nil),
+        other => Err(i.wrong_type_mut("frame-live-p", other)),
+    }
+}
+
+/// `describe-display-table' — requires a char-table argument.
+fn f_describe_display_table(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    if crate::lisp::builtins::misc::is_char_table(i, &a[0]) {
+        Ok(Value::Nil)
+    } else {
+        Err(i.wrong_type_mut("char-table-p", &a[0]))
+    }
 }
 
 /// `redraw-frame' — frame-live-p check, then nil (no display).

@@ -309,7 +309,7 @@ pub(crate) static SUBRS: &[Subr] = &[
         f_minibuffer_window,
         "The minibuffer window."
     ),
-    S!("frame-parent", 0, 1, f_nil, ""),
+    S!("frame-parent", 0, 1, f_frame_parent, ""),
     S!("frame-ancestor-p", 2, 2, f_frame_ancestor_p, ""),
     S!("frame-old-selected-window", 0, 1, f_frame_sel_window, ""),
     S!("frame-root-frame", 0, 1, f_frame_self, ""),
@@ -385,7 +385,7 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!("reconsider-frame-fonts", 1, 1, f_reconsider_frame_fonts, ""),
     S!("frame--list-z-order", 0, 1, f_frame_list, ""),
     S!("tty-frame-list-z-order", 0, 1, f_frame_list, ""),
-    S!("tty-frame-restack", 3, 3, f_nil, ""),
+    S!("tty-frame-restack", 2, 2, f_tty_frame_restack, ""),
     S!("tty-frame-at", 2, 2, f_frame_self, ""),
     S!("tty-display-color-p", 0, 3, f_nil, ""),
     S!(
@@ -434,7 +434,7 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!("set-window-next-buffers", 2, 2, f_set_window_next_buffers, ""),
     S!("set-window-prev-buffers", 2, 2, f_set_window_prev_buffers, ""),
     S!("force-window-update", 0, 1, f_force_window_update, ""),
-    S!("resize-mini-window-internal", 1, 1, f_nil, ""),
+    S!("resize-mini-window-internal", 1, 1, f_resize_mini_window_internal, ""),
 ];
 
 fn f_nil(_i: &mut Interp, _a: Vec<Value>) -> EvalResult {
@@ -1005,6 +1005,36 @@ fn f_window_sizable_p(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     match arg(&a, 0) {
         Value::Nil | Value::Window(_) => Ok(Value::t()),
         other => Err(err_not_valid_window(i, &other)),
+    }
+}
+
+/// `tty-frame-restack' — GNU's tty version always signals that the
+/// operation is not implemented.
+fn f_tty_frame_restack(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
+    Err(i.error("tty-frame-restack is not implemented"))
+}
+
+/// `resize-mini-window-internal' — GNU requires a minibuffer window.
+fn f_resize_mini_window_internal(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    match arg(&a, 0) {
+        Value::Window(w) => {
+            let is_mini = w.borrow().minibuffer;
+            if is_mini {
+                Ok(Value::Nil)
+            } else {
+                Err(i.error("Not a valid minibuffer window"))
+            }
+        }
+        other => Err(err_not_valid_window(i, &other)),
+    }
+}
+
+/// `frame-parent' — frame-live-p check on the optional FRAME; tty
+/// frames have no parent so nil.
+fn f_frame_parent(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    match arg(&a, 0) {
+        Value::Nil | Value::Frame(_) => Ok(Value::Nil),
+        other => Err(i.wrong_type_mut("frame-live-p", &other)),
     }
 }
 

@@ -1335,7 +1335,8 @@ fn f_decode_sjis_char(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     if code < 0x80 {
         return Ok(Value::Int(code.into()));
     }
-    if (0xa1..=0xdf).contains(&code) {
+    // GNU's katakana-jisx0201 map ends at 0xde; 0xdf is an invalid code.
+    if (0xa1..=0xde).contains(&code) {
         return Ok(Value::Int((code + 0xfec0).into()));
     }
     match tbl_decode(cjk::SJIS_DECODE, code as u32) {
