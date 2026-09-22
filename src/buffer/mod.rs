@@ -85,6 +85,10 @@ pub struct Buffer {
     /// Cached snapshot of the `create-lockfiles' Lisp variable, taken
     /// when the file is visited (Buffer methods cannot see Lisp state).
     pub create_lockfiles: bool,
+    /// Mode remembered by `major-mode-suspend' (GNU records the local
+    /// `major-mode' so `major-mode-restore' can re-run it after a
+    /// suspend/undump).
+    pub suspended_mode: Option<crate::lisp::value::Value>,
 }
 
 /// Resolve symlinks like GNU's `file-truename'.  When FILE doesn't
@@ -239,6 +243,7 @@ impl Buffer {
             live: true,
             base_buffer: None,
             syntax_table: None,
+            suspended_mode: None,
             case_table: None,
             category_table: None,
             narrow_labels: Vec::new(),

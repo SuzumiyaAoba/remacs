@@ -41,6 +41,8 @@ pub struct Window {
     pub params: Value,
     /// Fringes/margins.
     pub margins: (usize, usize),
+    /// `window-use-time': tick of the last creation/selection.
+    pub use_time: u64,
     pub dead: bool,
 }
 
@@ -68,6 +70,13 @@ fn next_id() -> usize {
     NEXT_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
 }
 
+/// `window-use-time' tick — GNU bumps `window_select_count' at window
+/// creation and each selection, and reports the last tick a window got.
+static USE_TICK: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+pub(crate) fn next_use_time() -> u64 {
+    USE_TICK.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1
+}
+
 impl Window {
     pub fn new(buffer: usize) -> WindowRef {
         Rc::new(RefCell::new(Window {
@@ -84,6 +93,9 @@ impl Window {
             minibuffer: false,
             params: Value::Nil,
             margins: (0, 0),
+            // GNU bumps the use tick on selection, not creation; a
+            // fresh window reports 0 until first selected.
+            use_time: 0,
             dead: false,
         }))
     }
@@ -94,6 +106,9 @@ impl Frame {
         let main = Window::new(buffer);
         let mb = Window::new(minibuf);
         mb.borrow_mut().minibuffer = true;
+        // The frame's main window is the one selected at setup (GNU:
+        // window_select_count bump), so its use-time starts at 1.
+        main.borrow_mut().use_time = next_use_time();
         Rc::new(RefCell::new(Frame {
             id: next_id(),
             name: "F1".into(),
@@ -224,15 +239,15 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!(
         "split-window-below",
         0,
-        1,
-        f_split_window_below,
+        2,
+        f_split_window_vertically,
         "Split below."
     ),
     S!(
         "split-window-right",
         0,
-        1,
-        f_split_window_right,
+        2,
+        f_split_window_horizontally,
         "Split right."
     ),
     S!(
@@ -568,11 +583,11 @@ pub(crate) static SUBRS: &[Subr] = &[
         f_window_margins,
         "Margins of WINDOW."
     ),
-    S!("window-use-time", 0, 1, f_zero, ""),
+    S!("window-use-time", 0, 1, f_window_use_time, ""),
     S!("window-cursor-type", 0, 1, f_t, ""),
-    S!("window-configuration-p", 1, 1, f_nil, ""),
-    S!("current-window-configuration", 0, 1, f_nil, ""),
-    S!("set-window-configuration", 1, 3, f_nil, ""),
+    S!("window-configuration-p", 1, 1, f_window_configuration_p, ""),
+    S!("current-window-configuration", 0, 1, f_current_window_configuration, ""),
+    S!("set-window-configuration", 1, 3, f_set_window_configuration, ""),
     S!("window-state-get", 0, 2, f_nil, ""),
     S!("window-state-put", 1, 3, f_nil, ""),
     // frames
@@ -679,7 +694,7 @@ pub(crate) static SUBRS: &[Subr] = &[
         "Create a sparse keymap."
     ),
     S!("keymapp", 1, 1, f_keymapp, "t if OBJECT is a keymap."),
-    S!("keymap-prompt", 1, 1, f_nil, ""),
+    S!("keymap-prompt", 1, 1, f_keymap_prompt, ""),
     S!("copy-keymap", 1, 1, f_copy_keymap, "Copy KEYMAP."),
     S!("keymap-parent", 1, 1, f_keymap_parent, "Parent of KEYMAP."),
     S!(
@@ -1818,7 +1833,7 @@ pub(crate) static SUBRS: &[Subr] = &[
         crate::buffer::primitives::f_syntax_after,
         ""
     ),
-    S!("syntax-class", 1, 1, f_zero, ""),
+    S!("syntax-class", 1, 1, f_syntax_class, ""),
     S!(
         "syntax-class-to-char",
         1,
@@ -1860,7 +1875,8 @@ pub(crate) static SUBRS: &[Subr] = &[
         f_fundamental_mode,
         "The default major mode."
     ),
-    S!("major-mode-suspend", 0, 0, f_nil, ""),
+    S!("major-mode-suspend", 0, 0, f_major_mode_suspend, ""),
+    S!("major-mode-restore", 0, 0, f_major_mode_restore, ""),
     // delay-mode-hooks / run-mode-hooks /
     // normal-mode / set-auto-mode{,-0} / set-buffer-major-mode /
     // hack-local-variables / hack-dir-local-variables /
@@ -1998,7 +2014,7 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!("x-color-values", 1, 1, f_nil, ""),
     S!("xw-color-values", 1, 1, f_nil, ""),
     S!("tty-color-values", 1, 1, f_nil, ""),
-    S!("x-list-fonts", many 0, f_nil, ""),
+    S!("x-list-fonts", 1, 5, f_nil, ""),
     S!("internal-char-font", 1, 2, f_nil, ""),
     S!("fontp", 1, 2, f_fontp, ""),
     S!("find-font", 1, 2, f_find_font, ""),
@@ -2020,11 +2036,11 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!("query-font", 1, 1, f_query_font, ""),
     S!("font-get", 2, 2, f_nil, ""),
     S!("font-put", 3, 3, f_nil, ""),
-    S!("set-fontset-font", many 0, f_nil, ""),
+    S!("set-fontset-font", 3, 5, f_nil, ""),
     S!("new-fontset", 2, 2, f_nil, ""),
     S!("fontset-info", 1, 1, f_nil, ""),
     S!("fontset-font", 2, 3, f_nil, ""),
-    S!("fontset-list", 0, 0, f_nil, ""),
+    S!("fontset-list", 0, 0, f_fontset_list, ""),
     // menus/popups
     S!("x-popup-menu", 2, 2, f_nil, ""),
     S!("x-popup-dialog", 2, 3, f_nil, ""),
@@ -2079,9 +2095,6 @@ fn f_nil(_i: &mut Interp, _a: Vec<Value>) -> EvalResult {
 }
 fn f_t(_i: &mut Interp, _a: Vec<Value>) -> EvalResult {
     Ok(Value::t())
-}
-fn f_zero(_i: &mut Interp, _a: Vec<Value>) -> EvalResult {
-    Ok(Value::Int(0))
 }
 fn f_one(_i: &mut Interp, _a: Vec<Value>) -> EvalResult {
     Ok(Value::Int(1))
@@ -2374,6 +2387,136 @@ fn f_merge_face_attribute(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     Ok(a[1].clone())
 }
 
+/// `keymap-prompt' — GNU scans KEYMAP's cdr for the first string
+/// element (the menu prompt); non-keymaps return nil, no error.
+fn f_keymap_prompt(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    if !is_keymap(i, &a[0]) {
+        return Ok(Value::Nil);
+    }
+    let mut tail = match &a[0] {
+        Value::Cons(c) => c.borrow().cdr.clone(),
+        _ => Value::Nil,
+    };
+    loop {
+        match tail {
+            Value::Cons(link) => {
+                let (car, next) = {
+                    let b = link.borrow();
+                    (b.car.clone(), b.cdr.clone())
+                };
+                if let Value::Str(_) = car {
+                    return Ok(car);
+                }
+                tail = next;
+            }
+            _ => return Ok(Value::Nil),
+        }
+    }
+}
+
+/// `syntax-class' — a syntax descriptor is a cons (CLASS . MATCHING);
+/// GNU returns CLASS.
+fn f_syntax_class(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    match &a[0] {
+        Value::Nil => Ok(Value::Nil),
+        Value::Cons(c) => {
+            let car = c.borrow().car.clone();
+            match car {
+                Value::Int(_) => Ok(car),
+                _ => Ok(Value::Nil),
+            }
+        }
+        other => Err(i.wrong_type_mut("listp", other)),
+    }
+}
+
+/// `major-mode-suspend' — remember the buffer's local `major-mode'
+/// (nil/`fundamental-mode' isn't recorded), reset it to fundamental,
+/// and return the remembered mode.  Repeated calls return the recorded
+/// value, like GNU's pdump/suspend machinery.
+fn f_major_mode_suspend(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
+    let sid = i.intern("major-mode");
+    let fundamental = i.intern("fundamental-mode");
+    let Some(b) = i.current_buffer_ref() else {
+        return Ok(Value::Nil);
+    };
+    let mut bb = b.borrow_mut();
+    if let Some(m) = &bb.suspended_mode {
+        return Ok(m.clone());
+    }
+    let m = bb.locals.get(&sid).cloned().unwrap_or(Value::Nil);
+    if m.is_nil() || i.sym_is(&m, fundamental) {
+        return Ok(Value::Nil);
+    }
+    bb.suspended_mode = Some(m.clone());
+    bb.locals.insert(sid, Value::Sym(fundamental));
+    Ok(m)
+}
+
+/// `major-mode-restore' — funcall the mode `major-mode-suspend'
+/// recorded; nil when nothing is suspended.
+fn f_major_mode_restore(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
+    let m = i
+        .current_buffer_ref()
+        .and_then(|b| b.borrow_mut().suspended_mode.take())
+        .unwrap_or(Value::Nil);
+    if m.is_nil() {
+        return Ok(Value::Nil);
+    }
+    i.apply(&m, vec![])?;
+    Ok(Value::Nil)
+}
+
+/// `fontset-list' — the default fontset's name, like GNU.
+fn f_fontset_list(_i: &mut Interp, _a: Vec<Value>) -> EvalResult {
+    Ok(Value::list(vec![Value::string(
+        "-*-*-*-*-*-*-*-*-*-*-*-*-fontset-default",
+    )]))
+}
+
+/// Opaque window-configuration token (`#<window-configuration>').
+fn window_configuration(i: &mut Interp) -> Value {
+    Value::Record(Rc::new(RefCell::new(vec![
+        Value::Sym(i.intern("window-configuration")),
+    ])))
+}
+
+fn f_window_configuration_p(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let tag = i.intern("window-configuration");
+    Ok(Value::from_bool(match &a[0] {
+        Value::Record(r) => {
+            matches!(r.borrow().first(), Some(Value::Sym(s)) if *s == tag)
+        }
+        _ => false,
+    }))
+}
+
+fn f_current_window_configuration(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    // Optional FRAME: frame-live-p check.
+    if let Some(v) = a.first() {
+        match v {
+            Value::Nil | Value::Frame(_) => {}
+            other => return Err(i.wrong_type_mut("frame-live-p", other)),
+        }
+    }
+    Ok(window_configuration(i))
+}
+
+fn f_set_window_configuration(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let tag = i.intern("window-configuration");
+    let ok = matches!(&a[0], Value::Record(r) if
+        matches!(r.borrow().first(), Some(Value::Sym(s)) if *s == tag));
+    if !ok {
+        return Err(i.wrong_type_mut("window-configuration-p", &a[0]));
+    }
+    // GNU re-selects the configuration's window, bumping its use-time.
+    if let Some(w) = sel_window(i) {
+        w.borrow_mut().use_time = next_use_time();
+    }
+    // Frame/window args beyond CONFIGURATION are validated loosely.
+    Ok(Value::Sym(sym::T))
+}
+
 fn f_frame_terminal(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     // Validate optional FRAME like GNU, then return its terminal.
     if let Some(v) = a.first() {
@@ -2475,14 +2618,6 @@ fn f_split_window(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     Ok(Value::Window(new))
 }
 
-fn f_split_window_below(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    f_split_window(i, vec![arg(&a, 0), Value::Nil])
-}
-
-fn f_split_window_right(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    f_split_window(i, vec![arg(&a, 0), Value::Nil])
-}
-
 fn f_delete_window(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let w = win_of(i, &arg(&a, 0))?;
     let wid = w.borrow().id;
@@ -2537,6 +2672,7 @@ fn f_other_window(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     // Select it.
     let f = sel_frame(i).unwrap();
     f.borrow_mut().selected = cur.clone();
+    cur.borrow_mut().use_time = next_use_time();
     // Swap buffer point bookkeeping: save old selected point? For a
     // single-buffer-per-window model, point lives in the buffer — on
     // select we copy window point into buffer.
@@ -2552,12 +2688,18 @@ fn f_select_window(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let w = win_of(i, &arg(&a, 0))?;
     let f = sel_frame(i).unwrap();
     f.borrow_mut().selected = w.clone();
+    w.borrow_mut().use_time = next_use_time();
     if let Some(b) = i.buffers.get(w.borrow().buffer) {
         b.borrow_mut().set_point(w.borrow().point);
         i.current_buffer = w.borrow().buffer;
         i.buffers.touch(w.borrow().buffer);
     }
     Ok(a[0].clone())
+}
+
+fn f_window_use_time(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let w = win_of(i, &arg(&a, 0))?;
+    Ok(Value::Int(w.borrow().use_time as i128))
 }
 
 fn f_one_window_p(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
@@ -3142,8 +3284,13 @@ pub(crate) fn is_keymap(i: &Interp, v: &Value) -> bool {
 }
 
 fn f_make_keymap(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let _ = &a;
-    Ok(Value::cons(Value::Sym(i.intern("keymap")), Value::Nil))
+    // GNU stores the menu prompt as a string element in the keymap's
+    // cdr: (keymap "prompt" . bindings).
+    let rest = match arg(&a, 0) {
+        Value::Str(_) => Value::list(vec![a[0].clone()]),
+        _ => Value::Nil,
+    };
+    Ok(Value::cons(Value::Sym(i.intern("keymap")), rest))
 }
 fn f_make_sparse_keymap(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     f_make_keymap(i, a)

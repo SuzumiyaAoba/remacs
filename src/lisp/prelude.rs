@@ -9254,6 +9254,9 @@ Called with two arguments (START END) covering the text to propertize.")
 (define-derived-mode special-mode nil "Special"
   "Major mode for buffers containing read-only text.")
 
+(define-derived-mode messages-buffer-mode special-mode "Messages"
+  "Major mode for the *Messages* buffer.")
+
 (define-derived-mode text-mode nil "Text"
   "Major mode for editing text intended for humans to read.")
 
@@ -9774,6 +9777,81 @@ SLOT may be a number from 0 to 17 inclusive, or a slot name (symbol)."
 	   (or (get slot 'display-table-slot)
 	       (error "Invalid display-table slot name: %s" slot)))))
     (set-char-table-extra-slot display-table slot-number value)))
+
+;; window.el splitting cluster (verbatim GNU, plus a flat
+;; walk-window-tree approximation).
+
+(defun window-splittable-p (window &optional horizontal)
+  "Return non-nil if `split-window-sensibly' may split WINDOW."
+  (when (and (window-live-p window)
+             (not (window-parameter window 'window-side)))
+    (with-current-buffer (window-buffer window)
+      (if horizontal
+	  (and (memq window-size-fixed '(nil height))
+	       (numberp split-width-threshold)
+	       (>= (window-width window)
+		   (max split-width-threshold
+			(* 2 (max window-min-width 2)))))
+	(and (memq window-size-fixed '(nil width))
+	     (numberp split-height-threshold)
+	     (>= (window-height window)
+		 (max split-height-threshold
+		      (* 2 (max window-min-height
+				(if mode-line-format 2 1))))))))))
+
+(defun window--try-vertical-split (window)
+  "Helper function for `split-window-sensibly'."
+  (when (window-splittable-p window)
+    (split-window window nil 'below)))
+
+(defun window--try-horizontal-split (window)
+  "Helper function for `split-window-sensibly'."
+  (when (window-splittable-p window t)
+    (split-window window nil 'right)))
+
+(defun window--frame-landscape-p (&optional frame)
+  "Non-nil if FRAME is wider than it is tall."
+  (if (display-graphic-p frame)
+      (> (frame-pixel-width frame) (frame-pixel-height frame))
+    ;; On a terminal, displayed characters are usually roughly twice as
+    ;; tall as they are wide.
+    (> (frame-width frame) (* 2 (frame-height frame)))))
+
+(defun walk-window-tree (fun &optional frame _any-window nomini _all-frames)
+  "Call FUN on each live window of FRAME (flat model: `window-list')."
+  (dolist (window (window-list frame (if nomini nil t)))
+    (funcall fun window)))
+
+(defun split-window-sensibly (&optional window)
+  "Split WINDOW in a way suitable for `display-buffer'."
+  (let ((window (or window (selected-window))))
+    (or (if (or
+             (eql split-window-preferred-direction 'horizontal)
+             (and (eql split-window-preferred-direction 'longest)
+                  (window--frame-landscape-p (window-frame window))))
+            (or (window--try-horizontal-split window)
+                (window--try-vertical-split window))
+          (or (window--try-vertical-split window)
+              (window--try-horizontal-split window)))
+	(and
+         ;; If WINDOW is the only usable window on its frame (it is
+         ;; the only one or, not being the only one, all the other
+         ;; ones are dedicated) and is not the minibuffer window, try
+         ;; to split it vertically disregarding the value of
+         ;; `split-height-threshold'.
+         (let ((frame (window-frame window)))
+           (or
+            (eq window (frame-root-window frame))
+            (catch 'done
+              (walk-window-tree (lambda (w)
+                                  (unless (or (eq w window)
+                                              (window-dedicated-p w))
+                                    (throw 'done nil)))
+                                frame nil 'nomini)
+              t)))
+	 (not (window-minibuffer-p window))
+         (let ((split-height-threshold 0))
+           (window--try-vertical-split window))))))
 
 (defun reindent-then-newline-and-indent ()
   "Reindent current line, insert newline, then indent that line."

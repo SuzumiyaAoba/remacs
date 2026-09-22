@@ -206,6 +206,9 @@ pub struct Interp {
     /// The sole terminal object (`terminal-list', `frame-terminal'):
     /// a lazily-created record `#s(terminal 0 "initial_terminal")'.
     pub terminal: Option<Value>,
+    /// `terminal-parameter'/`set-terminal-parameter' alist, seeded
+    /// with GNU's tty defaults.
+    pub terminal_params: Vec<(Value, Value)>,
 }
 
 /// Result of a minibuffer read from the front-end.
@@ -294,6 +297,7 @@ impl Interp {
             lisp_stack: Vec::new(),
             cpu_profiler: false,
             terminal: None,
+            terminal_params: Vec::new(),
         };
         crate::lisp::builtins::install(&mut interp);
         crate::buffer::install_primitives(&mut interp);
@@ -304,10 +308,22 @@ impl Interp {
         // Warnings). New buffers append at the end of the order.
         let scratch = interp.buffers.create_exact("*scratch*");
         interp.current_buffer = scratch;
-        interp.buffers.create_exact(" *Minibuf-0*");
-        interp.buffers.create_exact("*Messages*");
+        let minibuf = interp.buffers.create_exact(" *Minibuf-0*");
+        let messages = interp.buffers.create_exact("*Messages*");
         interp.buffers.create_exact(" *load*");
         interp.buffers.create_exact("*Warnings*");
+        // GNU seeds the startup buffers' buffer-local major modes.
+        let mm = interp.intern("major-mode");
+        for (id, mode) in [
+            (minibuf, "minibuffer-inactive-mode"),
+            (messages, "messages-buffer-mode"),
+        ] {
+            if let Some(b) = interp.buffers.get(id) {
+                b.borrow_mut()
+                    .locals
+                    .insert(mm, Value::Sym(interp.intern(mode)));
+            }
+        }
         crate::editor::install_primitives(&mut interp);
         // Load the Lisp prelude (subr.el subset). Errors here indicate a
         // broken prelude, but don't abort startup.
@@ -750,8 +766,21 @@ impl Interp {
 
     /// `read-from-string` core: read one object, return it + end position.
     pub fn read_from_string(&mut self, src: &str, start: usize) -> Result<(Value, usize), Flow> {
+        self.read_from_string_pos(src, start, None)
+    }
+
+    /// `read_from_string' with `read-positioning-symbols' mode: symbol
+    /// tokens become `symbol-with-pos' records carrying `base + token
+    /// char index' as their position.
+    pub fn read_from_string_pos(
+        &mut self,
+        src: &str,
+        start: usize,
+        pos_base: Option<i128>,
+    ) -> Result<(Value, usize), Flow> {
         let mut reader = Reader::new(self, src);
         reader.set_position(start);
+        reader.annotate_pos = pos_base;
         match reader.read()? {
             None => Err(self.signal(sym::END_OF_FILE, Value::Nil)),
             Some(v) => Ok((v, reader.position())),
@@ -1035,7 +1064,8 @@ impl Interp {
                     return self.eval(&expansion);
                 }
                 let argv = self.eval_args(args)?;
-                self.apply(fun, argv)
+                let shown = sym_name.map(Value::Sym).unwrap_or_else(|| fun.clone());
+                self.apply_resolved(fun, argv, shown)
             }
             Value::Cons(_) => {
                 // A cons as function: `(lambda ...)` form or `(macro . f)`.
@@ -1053,9 +1083,12 @@ impl Interp {
                     return self.eval(&expansion);
                 }
                 if self.sym_is(&car, sym::LAMBDA) || self.sym_is(&car, sym::QUOTE_FUNCTION) {
-                    let lambda = self.lambda_from_form(fun, sym_name)?;
+                    let lambda = Rc::new(self.lambda_from_form(fun, sym_name)?);
                     let argv = self.eval_args(args)?;
-                    return self.apply(&Value::Lambda(Rc::new(lambda)), argv);
+                    let shown = sym_name
+                        .map(Value::Sym)
+                        .unwrap_or_else(|| Value::Lambda(lambda.clone()));
+                    return self.apply_resolved(&Value::Lambda(lambda), argv, shown);
                 }
                 let auto_id = self.intern("autoload");
                 if self.sym_is(&car, auto_id) {
@@ -1157,8 +1190,8 @@ impl Interp {
                 }
             },
             Value::Lambda(l) => {
-                self.lisp_stack.push((shown, argv.clone()));
-                let r = self.call_lambda(l, argv);
+                self.lisp_stack.push((shown.clone(), argv.clone()));
+                let r = self.call_lambda(l, argv, &shown);
                 self.lisp_stack.pop();
                 r
             }
@@ -1173,8 +1206,8 @@ impl Interp {
                 };
                 if self.sym_is(&car, sym::LAMBDA) {
                     let lambda = self.lambda_from_form(fun, None)?;
-                    self.lisp_stack.push((shown, argv.clone()));
-                    let r = self.call_lambda(&Rc::new(lambda), argv);
+                    self.lisp_stack.push((shown.clone(), argv.clone()));
+                    let r = self.call_lambda(&Rc::new(lambda), argv, &shown);
                     self.lisp_stack.pop();
                     return r;
                 }
@@ -1227,12 +1260,14 @@ impl Interp {
         self.apply(&next, argv)
     }
 
-    /// Call an interpreted lambda with evaluated args.
-    fn call_lambda(&mut self, l: &Rc<Lambda>, argv: Vec<Value>) -> EvalResult {
+    /// Call an interpreted lambda with evaluated args.  `shown' is what
+    /// `wrong-number-of-arguments' reports as the function — GNU prints
+    /// the called symbol when invoked by name.
+    fn call_lambda(&mut self, l: &Rc<Lambda>, argv: Vec<Value>, shown: &Value) -> EvalResult {
         // Arity.
         let (min, max_ok) = (l.required.len(), l.rest.is_some());
         if argv.len() < min || (!max_ok && argv.len() > min + l.optional.len()) {
-            return Err(self.wrong_number_of_args(&Value::Lambda(l.clone()), argv.len() as i128));
+            return Err(self.wrong_number_of_args(shown, argv.len() as i128));
         }
 
         // Dynamic (non-macro) functions with extended `(var init)'
@@ -1410,8 +1445,8 @@ impl Interp {
         };
         // The macro's function receives raw forms.
         let result = match mac {
-            Value::Lambda(l) if l.is_macro => self.call_lambda(l, argv)?,
-            Value::Lambda(l) => self.call_lambda(l, argv)?,
+            Value::Lambda(l) if l.is_macro => self.call_lambda(l, argv, mac)?,
+            Value::Lambda(l) => self.call_lambda(l, argv, mac)?,
             Value::Cons(_) => {
                 let (car, _) = {
                     let c = match mac {
@@ -1715,6 +1750,11 @@ impl Interp {
         put(self, "recursion-error", &["recursion-error", "error"]);
         put(
             self,
+            "unknown-image-type",
+            &["unknown-image-type", "error"],
+        );
+        put(
+            self,
             "file-already-exists",
             &["file-already-exists", "file-error", "error"],
         );
@@ -1813,6 +1853,7 @@ impl Interp {
                 "recursion-error",
                 "Variable binding depth exceeds max-specpdl-size",
             ),
+            ("unknown-image-type", "Cannot determine image type"),
         ];
         for (name, msg) in msgs {
             let s = self.intern(name);
@@ -1995,6 +2036,9 @@ impl Interp {
             "window-min-width",
             "split-height-threshold",
             "split-width-threshold",
+            "split-window-preferred-direction",
+            "tooltip-mode",
+            "image-type-file-name-regexps",
             "resize-mini-windows",
             "max-mini-window-height",
             "enable-recursive-minibuffers",
@@ -2173,6 +2217,7 @@ impl Interp {
             "fill-nospace-between-words",
             "abbrev-table",
             "local-abbrev-table",
+            "window-size-fixed",
             "abbrev-mode",
             "case-fold-search",
             "overwrite-mode",
@@ -2327,8 +2372,42 @@ impl Interp {
             ("standard-display-table", Value::Nil),
             ("display-mm-dimensions-alist", Value::Nil),
             ("buffer-display-table", Value::Nil),
+            ("window-size-fixed", Value::Nil),
+            ("tooltip-mode", Value::t()),
+            (
+                "split-window-preferred-direction",
+                Value::Sym(self.intern("longest")),
+            ),
             ("split-height-threshold", Value::Int(80)),
             ("split-width-threshold", Value::Int(160)),
+            // GNU image.el: file-name → image-type mapping.
+            (
+                "image-type-file-name-regexps",
+                Value::list(
+                    [
+                        ("\\.png\\'", "png"),
+                        ("\\.gif\\'", "gif"),
+                        ("\\.jpe?g\\'", "jpeg"),
+                        ("\\.webp\\'", "webp"),
+                        ("\\.bmp\\'", "bmp"),
+                        ("\\.xpm\\'", "xpm"),
+                        ("\\.pbm\\'", "pbm"),
+                        ("\\.xbm\\'", "xbm"),
+                        ("\\.ps\\'", "postscript"),
+                        ("\\.tiff?\\'", "tiff"),
+                        ("\\.svgz?\\'", "svg"),
+                        ("\\.hei[cf]s?\\'", "heic"),
+                    ]
+                    .iter()
+                    .map(|(re, ty)| {
+                        Value::cons(
+                            Value::string(*re),
+                            Value::Sym(self.intern(ty)),
+                        )
+                    })
+                    .collect(),
+                ),
+            ),
             ("completion-ignore-case", Value::Nil),
             ("read-buffer-completion-ignore-case", Value::Nil),
             ("read-file-name-completion-ignore-case", Value::Nil),

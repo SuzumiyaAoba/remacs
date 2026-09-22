@@ -9,7 +9,7 @@ use super::{S, arg, want_int, want_list, want_string, want_sym};
 use crate::lisp::Interp;
 use crate::lisp::error::{EvalResult, Flow};
 use crate::lisp::obarray::sym;
-use crate::lisp::value::{Arity, Lambda, Subr, Value};
+use crate::lisp::value::{Arity, Lambda, Subr, SymId, Value};
 
 pub(crate) static SUBRS: &[Subr] = &[
     S!("gensym", 0, 1, f_gensym, "New uninterned symbol gN."),
@@ -336,14 +336,14 @@ pub(crate) static SUBRS: &[Subr] = &[
         "symbol-with-pos-p",
         1,
         1,
-        f_false,
+        f_symbol_with_pos_p,
         "t if OBJECT is a positioned symbol."
     ),
     S!(
         "symbol-with-pos-pos",
         1,
         1,
-        f_nil,
+        f_symbol_with_pos_pos,
         "Position of a positioned symbol."
     ),
     S!(
@@ -453,7 +453,7 @@ pub(crate) static SUBRS: &[Subr] = &[
         "Last error form recorded by a thread."
     ),
     S!("thread--blocker", 1, 1, f_thread_blocker, ""),
-    S!("thread-signal", 3, 3, f_nil, ""),
+    S!("thread-signal", 3, 3, f_thread_signal, ""),
     S!("mutexp", 1, 1, f_mutexp, "t if OBJECT is a mutex."),
     S!("make-mutex", 0, 1, f_make_mutex, "Create a mutex."),
     S!("mutex-name", 1, 1, f_mutex_name, "Name of MUTEX."),
@@ -834,7 +834,7 @@ pub(crate) static SUBRS: &[Subr] = &[
     ),
     S!("help-function-arglist", 1, 2, f_help_function_arglist, ""),
     S!("function-documentation", 1, 1, f_function_documentation, ""),
-    S!("command-error-default-function", 3, 3, f_nil, ""),
+    S!("command-error-default-function", 3, 3, f_command_error_default, ""),
     S!("command-line", 0, 0, f_command_line, ""),
     S!("recursion-depth", 0, 0, f_zero, ""),
     S!("minibuffer-depth", 0, 0, f_zero, ""),
@@ -928,7 +928,7 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!("x-open-connection", 1, 2, f_nil, ""),
     S!("x-close-connection", 1, 1, f_nil, ""),
     S!("x-display-list", 0, 0, f_nil, ""),
-    S!("xw-display-color-p", 0, 1, f_false, ""),
+    S!("xw-display-color-p", 0, 1, f_ns_display, ""),
     S!("xw-color-defined-p", 1, 2, f_false, ""),
     S!("color-gray-p", 1, 2, f_color_gray_p, ""),
     S!("color-supported-p", 1, 2, f_color_defined_p, ""),
@@ -945,7 +945,7 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!("window-safely-shrinkable-p", 0, 1, f_safely_shrinkable, ""),
     S!("window--display-buffer", 3, 4, f_nil, ""),
     S!("window-max-chars-per-line", 0, 2, f_window_max_chars, ""),
-    S!("window-preserve-size", 0, 3, f_nil, ""),
+    S!("window-preserve-size", 0, 3, f_window_preserve_size, ""),
     S!("window-left-column", 0, 1, f_zero, ""),
     S!("pos-visible-in-window-group-p", 0, 3, f_pos_visible, ""),
     S!("window-line", 0, 1, f_window_line, ""),
@@ -953,7 +953,7 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!("window-normalize-buffer", 1, 1, f_window_norm_buffer, ""),
     S!("window-normalize-frame", 0, 1, f_window_norm_frame, ""),
     S!("delete-windows-on", 0, 3, f_nil, ""),
-    S!("split-window-sensibly", 0, 1, f_nil, ""),
+    // `split-window-sensibly' is Lisp (GNU window.el) — see prelude.
     S!("window-child", 1, 1, f_window_valid_nil, ""),
     S!("window-child-count", 1, 1, f_window_valid_zero, ""),
     S!("window-combined-p", 0, 2, f_window_combined_p, ""),
@@ -1130,7 +1130,7 @@ pub(crate) static SUBRS: &[Subr] = &[
         f_read_expression,
         "Read one form."
     ),
-    S!("read-positioning-symbols", 0, 1, f_nil, ""),
+    S!("read-positioning-symbols", 0, 1, f_read_positioning_symbols, ""),
     S!("describe-vector", 1, 2, f_describe_vector, ""),
     S!("locale-info", 1, 1, f_locale_info, "Locale data for ITEM."),
     S!("locale-translate", 1, 1, f_identity, ""),
@@ -1152,7 +1152,7 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!("set-keyboard-coding-system", 1, 2, f_nil, ""),
     S!("set-terminal-coding-system", 1, 2, f_nil, ""),
     S!("set-mouse-absolute-pixel-position", 2, 2, f_nil, ""),
-    S!("tooltip-mode", 0, 1, f_nil, ""),
+    S!("tooltip-mode", 0, 1, f_tooltip_mode, ""),
     S!("keymap-of", 1, 1, f_keymap_of, ""),
     // ---------- display/font/image stubs (no GUI) ----------
     S!("default-font-width", 0, 0, f_one, "Char cell width."),
@@ -1188,8 +1188,8 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!("image-metadata", 1, 2, f_nil, ""),
     S!("image-size", 1, 3, f_nil, ""),
     S!("image-transforms-p", 0, 1, f_image_transforms_p, ""),
-    S!("image-type", 0, 1, f_nil, ""),
-    S!("image-type-available-p", 1, 1, f_nil, ""),
+    S!("image-type", 1, 3, f_image_type, ""),
+    S!("image-type-available-p", 1, 2, f_image_type_available_p, ""),
     S!("init-image-library", 1, 1, f_nil, ""),
     S!("put-image", 2, 4, f_put_image, ""),
     S!("remove-images", 2, 3, f_nil, ""),
@@ -1198,22 +1198,22 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!("display-selections-p", 0, 1, f_nil, ""),
     // ---------- X stubs (no X) ----------
     S!("gui-get-selection", 0, 3, f_nil, ""),
-    S!("gui-set-selection", 2, 3, f_nil, ""),
+    S!("gui-set-selection", 2, 2, f_arg1, ""),
     S!("x-begin-drag", 1, 4, f_nil, ""),
-    S!("x-display-backing-store", 0, 1, f_nil, ""),
-    S!("x-display-color-cells", 0, 1, f_nil, ""),
-    S!("x-display-grayscale-p", 0, 1, f_nil, ""),
-    S!("x-display-mm-height", 0, 1, f_nil, ""),
-    S!("x-display-mm-width", 0, 1, f_nil, ""),
-    S!("x-display-pixel-height", 0, 1, f_nil, ""),
-    S!("x-display-pixel-width", 0, 1, f_nil, ""),
-    S!("x-display-planes", 0, 1, f_nil, ""),
-    S!("x-display-save-under", 0, 1, f_nil, ""),
-    S!("x-display-screens", 0, 1, f_nil, ""),
-    S!("x-display-visual-class", 0, 1, f_nil, ""),
+    S!("x-display-backing-store", 0, 1, f_ns_display, ""),
+    S!("x-display-color-cells", 0, 1, f_ns_display, ""),
+    S!("x-display-grayscale-p", 0, 1, f_ns_display, ""),
+    S!("x-display-mm-height", 0, 1, f_ns_display, ""),
+    S!("x-display-mm-width", 0, 1, f_ns_display, ""),
+    S!("x-display-pixel-height", 0, 1, f_ns_display, ""),
+    S!("x-display-pixel-width", 0, 1, f_ns_display, ""),
+    S!("x-display-planes", 0, 1, f_ns_display, ""),
+    S!("x-display-save-under", 0, 1, f_ns_display, ""),
+    S!("x-display-screens", 0, 1, f_ns_display, ""),
+    S!("x-display-visual-class", 0, 1, f_ns_display, ""),
     S!("x-get-clipboard", 0, 0, f_nil, ""),
     S!("x-get-resource", 2, 4, f_nil, ""),
-    S!("x-get-selection", 2, 4, f_nil, ""),
+    S!("x-get-selection", 0, 2, f_nil, ""),
     S!("x-hide-tip", 0, 0, f_nil, ""),
     S!(
         "x-parse-geometry",
@@ -1222,10 +1222,10 @@ pub(crate) static SUBRS: &[Subr] = &[
         f_x_parse_geometry,
         "Parse GEOMETRY."
     ),
-    S!("x-server-max-request-size", 0, 1, f_nil, ""),
-    S!("x-server-vendor", 0, 1, f_nil, ""),
-    S!("x-server-version", 0, 1, f_nil, ""),
-    S!("x-set-selection", 2, 4, f_nil, ""),
+    S!("x-server-max-request-size", 0, 1, f_ns_display, ""),
+    S!("x-server-vendor", 0, 1, f_ns_display, ""),
+    S!("x-server-version", 0, 1, f_ns_display, ""),
+    S!("x-set-selection", 2, 2, f_arg1, ""),
     S!("x-show-tip", 1, 6, f_nil, ""),
     // ---------- optional-library availability ----------
     S!("gnutls-available-p", 0, 0, f_nil, ""),
@@ -1563,7 +1563,7 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!("process-thread", 1, 1, f_process_arg_err, ""),
     // ---------- reader/printer/composition internals ----------
     S!("lread--substitute-object-in-subtree", 3, 3, f_nil, ""),
-    S!("print--preprocess", 1, 1, f_nil, ""),
+    S!("print--preprocess", 1, 1, f_arg0, ""),
     S!("clear-composition-cache", 0, 0, f_nil, ""),
     S!("help--describe-vector", 7, 7, f_nil, ""),
     S!("re--describe-compiled", 1, 2, f_re_describe_compiled, ""),
@@ -2168,21 +2168,64 @@ fn f_false(_i: &mut Interp, _a: Vec<Value>) -> EvalResult {
     Ok(Value::Nil)
 }
 
+/// `symbol-with-pos' objects print `#<symbol NAME at POS>' in GNU.
+/// Ours are records `#s(symbol-with-pos BARE POS)'; this checks the
+/// tag and returns (symbol, position).
+pub(crate) fn sym_pos_parts(i: &Interp, v: &Value) -> Option<(SymId, i128)> {
+    if let Value::Record(r) = v {
+        let rr = r.borrow();
+        if let [Value::Sym(tag), Value::Sym(s), Value::Int(p)] = rr.as_slice() {
+            if i.symbol_name(*tag) == "symbol-with-pos" {
+                return Some((*s, *p));
+            }
+        }
+    }
+    None
+}
+
+/// Build a `symbol-with-pos' object for SYM at POS.
+pub(crate) fn make_symbol_with_pos(i: &mut Interp, sym: SymId, pos: i128) -> Value {
+    Value::Record(std::rc::Rc::new(std::cell::RefCell::new(vec![
+        Value::Sym(i.intern("symbol-with-pos")),
+        Value::Sym(sym),
+        Value::Int(pos),
+    ])))
+}
+
 fn f_bare_symbol(i: &mut Interp, args: Vec<Value>) -> EvalResult {
+    if let Some((s, _)) = sym_pos_parts(i, &args[0]) {
+        return Ok(Value::Sym(s));
+    }
     match &args[0] {
         Value::Sym(_) => Ok(args[0].clone()),
         other => Err(i.wrong_type_mut("symbolp", other)),
     }
 }
 
-fn f_bare_symbol_p(_i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    Ok(Value::from_bool(matches!(&args[0], Value::Sym(_))))
+fn f_bare_symbol_p(i: &mut Interp, args: Vec<Value>) -> EvalResult {
+    // t only for a plain symbol — a positioned symbol is not bare.
+    Ok(Value::from_bool(
+        matches!(&args[0], Value::Sym(_)) && sym_pos_parts(i, &args[0]).is_none(),
+    ))
 }
 
 fn f_position_symbol(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    match &args[0] {
-        Value::Sym(_) => Ok(args[0].clone()),
-        other => Err(i.wrong_type_mut("symbolp", other)),
+    let s = match &args[0] {
+        Value::Sym(s) => *s,
+        other => return Err(i.wrong_type_mut("symbolp", other)),
+    };
+    let pos = args.get(1).and_then(|v| v.int()).unwrap_or(0);
+    Ok(make_symbol_with_pos(i, s, pos))
+}
+
+fn f_symbol_with_pos_p(i: &mut Interp, args: Vec<Value>) -> EvalResult {
+    Ok(Value::from_bool(sym_pos_parts(i, &args[0]).is_some()))
+}
+
+fn f_symbol_with_pos_pos(i: &mut Interp, args: Vec<Value>) -> EvalResult {
+    match sym_pos_parts(i, &args[0]) {
+        Some((_, p)) => Ok(Value::Int(p)),
+        None => Err(i.wrong_type_mut("symbol-with-pos-p", &args[0])),
     }
 }
 
@@ -5050,6 +5093,231 @@ fn f_terminal_coding_system(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 
 fn f_detect_coding_string(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
     Ok(Value::list(vec![Value::Sym(i.intern("undecided"))]))
+}
+
+fn f_arg0(_i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    Ok(a[0].clone())
+}
+
+fn f_arg1(_i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    Ok(a[1].clone())
+}
+
+/// `x-display-*'/`x-server-*'/`xw-*' on a non-Nextstep display: GNU
+/// checks the arg (frame-live-p), then signals the NS error — with a
+/// terminal object the message names the terminal.
+fn f_ns_display(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    match a.first() {
+        None | Some(Value::Nil) => {
+            Err(i.error("Nextstep windows are not in use or not initialized"))
+        }
+        Some(v) if crate::editor::is_terminal(i, v) => {
+            Err(i.error("Terminal 0 is not a Nextstep display"))
+        }
+        Some(Value::Frame(_)) => {
+            Err(i.error("Terminal 0 is not a Nextstep display"))
+        }
+        Some(other) => Err(i.wrong_type_mut("frame-live-p", other)),
+    }
+}
+
+/// `image-type' — GNU maps a file name's extension via
+/// `image-type-file-name-regexps'; unknown extension signals
+/// `unknown-image-type', a non-string signals a plain error.
+fn f_image_type(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let Value::Str(s) = &a[0] else {
+        let shown = i.princ_to_string(&a[0]);
+        return Err(i.error(format!("Invalid image file name ‘{shown}’")));
+    };
+    let name = s.borrow().clone();
+    let ext = name
+        .rsplit('.')
+        .next()
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    let has_dot = name.contains('.');
+    let ty = if has_dot {
+        match ext.as_str() {
+            "png" => Some("png"),
+            "gif" => Some("gif"),
+            "jpg" | "jpeg" => Some("jpeg"),
+            "webp" => Some("webp"),
+            "bmp" => Some("bmp"),
+            "xpm" => Some("xpm"),
+            "pbm" => Some("pbm"),
+            "xbm" => Some("xbm"),
+            "ps" => Some("postscript"),
+            "tif" | "tiff" => Some("tiff"),
+            "svg" | "svgz" => Some("svg"),
+            "heic" | "heif" | "heics" => Some("heic"),
+            _ => None,
+        }
+    } else {
+        None
+    };
+    match ty {
+        Some(t) => Ok(Value::Sym(i.intern(t))),
+        None => {
+            let unk = i.intern("unknown-image-type");
+            Err(i.signal_data(unk, vec![Value::string("Cannot determine image type")]))
+        }
+    }
+}
+
+/// `image-type-available-p' — the types our (fake) image support
+/// claims: GNU batch reports all built-ins available.
+fn f_image_type_available_p(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let ok = match &a[0] {
+        Value::Sym(s) => {
+            let n = i.symbol_name(*s);
+            matches!(
+                n.as_str(),
+                "png" | "gif" | "jpeg" | "webp" | "bmp" | "xpm" | "pbm" | "xbm"
+                    | "postscript" | "tiff" | "svg" | "heic"
+            )
+        }
+        _ => false,
+    };
+    Ok(Value::from_bool(ok))
+}
+
+/// `read-positioning-symbols' — like `read', but every symbol token
+/// becomes a `symbol-with-pos' object.  GNU reports 1-based absolute
+/// positions for buffers and 0-based read-relative ones for strings
+/// and markers; non-stream args signal `invalid-function'.
+fn f_read_positioning_symbols(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    match arg(&a, 0) {
+        Value::Nil => {
+            let Some(b) = i.current_buffer_ref() else {
+                return Err(i.signal(crate::lisp::sym::END_OF_FILE, Value::Nil));
+            };
+            let (src, pos) = {
+                let bb = b.borrow();
+                (bb.text.text(), bb.point)
+            };
+            let r = i.read_from_string_pos(&src, pos, Some(pos as i128 + 1));
+            match r {
+                Ok((v, end)) => {
+                    b.borrow_mut().set_point(end);
+                    Ok(v)
+                }
+                // GNU's end-of-file signal data is the input stream.
+                Err(e) => Err(eof_with_stream(e, &Value::Buffer(b))),
+            }
+        }
+        Value::Buffer(b) => {
+            let (src, pos) = {
+                let bb = b.borrow();
+                (bb.text.text(), bb.point)
+            };
+            let r = i.read_from_string_pos(&src, pos, Some(pos as i128 + 1));
+            match r {
+                Ok((v, end)) => {
+                    b.borrow_mut().set_point(end);
+                    Ok(v)
+                }
+                Err(e) => Err(eof_with_stream(e, &Value::Buffer(b))),
+            }
+        }
+        Value::Str(s) => {
+            let src = s.borrow().clone();
+            let r = i.read_from_string_pos(&src, 0, Some(0));
+            match r {
+                Ok((v, _)) => Ok(v),
+                Err(e) => Err(eof_with_stream(e, &Value::Str(s))),
+            }
+        }
+        Value::Marker(m) => {
+            let (buf, pos) = {
+                let mm = m.borrow();
+                (mm.buffer, mm.position)
+            };
+            match buf.and_then(|id| i.buffers.get(id)) {
+                Some(b) => {
+                    let src = b.borrow().text.text();
+                    // GNU reports marker-read positions relative to the
+                    // marker, zero-based.
+                    let r = i.read_from_string_pos(&src, pos, Some(-(pos as i128)));
+                    match r {
+                        Ok((v, end)) => {
+                            m.borrow_mut().position = end;
+                            Ok(v)
+                        }
+                        Err(e) => Err(eof_with_stream(e, &Value::Marker(m))),
+                    }
+                }
+                None => Err(i.signal_data(crate::lisp::sym::END_OF_FILE, vec![])),
+            }
+        }
+        other => Err(i.signal_data(crate::lisp::sym::INVALID_FUNCTION, vec![other])),
+    }
+}
+
+/// GNU's `end-of-file' signal carries the input stream as its datum.
+fn eof_with_stream(e: Flow, stream: &Value) -> Flow {
+    match e {
+        Flow::Signal(Value::Sym(s), _, seen) if s == crate::lisp::sym::END_OF_FILE => {
+            Flow::Signal(Value::Sym(s), Value::list(vec![stream.clone()]), seen)
+        }
+        other => other,
+    }
+}
+
+/// `tooltip-mode' — minor-mode semantics: no arg reports, 'toggle
+/// flips, numeric <= 0 disables, else enables.  State lives in the
+/// `tooltip-mode' variable (seeded t like GNU).
+fn f_tooltip_mode(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let sid = i.intern("tooltip-mode");
+    let cur = i.symbol_value(sid).truthy();
+    let on = match arg(&a, 0) {
+        Value::Nil => cur,
+        Value::Sym(s) if i.symbol_name(s) == "toggle" => !cur,
+        Value::Int(n) => n > 0,
+        _ => true,
+    };
+    let v = Value::from_bool(on);
+    let _ = i.set_symbol(sid, v.clone());
+    Ok(v)
+}
+
+/// `command-error-default-function' — print "CONTEXT<msg>" for the
+/// error data, like GNU's batch error report.  In a noninteractive
+/// session this is the toplevel death path: GNU kills the batch job
+/// (exit status 255, i.e. kill-emacs -1).
+fn f_command_error_default(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let msg = error_message(i, &a[0]);
+    let context = match &a[1] {
+        Value::Str(s) => s.borrow().clone(),
+        _ => String::new(),
+    };
+    eprintln!("{context}{msg}");
+    if i.noninteractive {
+        return Err(crate::lisp::error::Flow::Exit(-1));
+    }
+    Ok(Value::Nil)
+}
+
+/// `window-preserve-size' — returns (BUFFER HSIZE WSIZE).
+fn f_window_preserve_size(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let w = match arg(&a, 0) {
+        Value::Nil => crate::editor::sel_window(i),
+        Value::Window(w) => Some(w),
+        other => return Err(i.wrong_type_mut("window-live-p", &other)),
+    };
+    let buf = match w {
+        Some(w) => i
+            .buffer_value(w.borrow().buffer)
+            .unwrap_or(Value::Nil),
+        None => Value::Nil,
+    };
+    Ok(Value::list(vec![buf, Value::Nil, Value::Nil]))
+}
+
+/// `thread-signal' — threadp-check THREAD; nothing to deliver in our
+/// single-threaded evaluator.
+fn f_thread_signal(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let _ = want_thread(i, &a[0])?;
+    Ok(Value::Nil)
 }
 
 fn f_detect_coding_region(i: &mut Interp, a: Vec<Value>) -> EvalResult {

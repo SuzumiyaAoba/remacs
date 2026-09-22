@@ -139,6 +139,16 @@ impl Interp {
             }
             Value::Record(items) => {
                 let rr = items.borrow();
+                // Positioned symbols print `#<symbol NAME at POS>'.
+                if let Some(Value::Sym(t)) = rr.first() {
+                    if self.symbol_name(*t) == "symbol-with-pos" {
+                        if let [_, Value::Sym(s), Value::Int(p)] = rr.as_slice() {
+                            let name = self.symbol_name(*s);
+                            let _ = write!(out, "#<symbol {} at {}>", name, p);
+                            return;
+                        }
+                    }
+                }
                 // Bool vectors print `#&N"bytes"' with bits packed
                 // LSB-first per byte.
                 let is_bv = matches!(rr.first(), Some(Value::Sym(t))
@@ -313,8 +323,16 @@ impl Interp {
             Value::Str(s) => out.push_str(&s.borrow()),
             // princ prints symbol names raw — no backslash escapes.
             Value::Sym(id) => out.push_str(&self.symbol_name(*id)),
-            // princ prints buffers and processes as their bare names.
-            Value::Buffer(b) => out.push_str(&b.borrow().name),
+            // princ prints live buffers as bare names; a killed buffer
+            // prints `#<killed buffer>' like the escaped form.
+            Value::Buffer(b) => {
+                let bb = b.borrow();
+                if bb.live {
+                    out.push_str(&bb.name);
+                } else {
+                    out.push_str("#<killed buffer>");
+                }
+            }
             Value::Process(p) => out.push_str(&p.borrow().name),
             Value::Cons(_) => self.print_list_princ(v, out, depth, bq),
             Value::Vec(items) => {

@@ -118,8 +118,9 @@
 (display-pixel-width)
 (frame-visible-p (selected-frame))
 (make-frame-visible (selected-frame))
-(iconify-frame (selected-frame))
-(make-frame-invisible (selected-frame) t)
+(ignore-errors (iconify-frame (selected-frame)))
+;; GNU errors on iconifying/invisibling the sole visible frame.
+(ignore-errors (make-frame-invisible (selected-frame) t))
 (make-frame-visible (selected-frame))
 (lower-frame)
 (raise-frame)

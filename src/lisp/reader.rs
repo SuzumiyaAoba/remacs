@@ -36,6 +36,10 @@ pub struct Reader<'a> {
     /// Placeholder symbols for pending forward references; replaced
     /// by the real object once its `#N=` finishes reading.
     label_markers: HashMap<u32, SymId>,
+    /// `read-positioning-symbols' mode: when `Some(base)', every symbol
+    /// token reads as a `symbol-with-pos' record carrying position
+    /// `base + token_start' (`read' keeps it off).
+    pub annotate_pos: Option<i128>,
 }
 
 fn read_err(interp: &mut Interp, msg: &str) -> Flow {
@@ -75,6 +79,7 @@ impl<'a> Reader<'a> {
             labels: HashMap::new(),
             pending_labels: Vec::new(),
             label_markers: HashMap::new(),
+            annotate_pos: None,
         }
     }
 
@@ -759,6 +764,7 @@ impl<'a> Reader<'a> {
 
     /// Read a token and classify: number, symbol, or error.
     fn read_atom(&mut self) -> Result<Value, Flow> {
+        let start = self.pos;
         let tok = self.read_symbol_token();
         if tok.is_empty() {
             return Err(read_err(self.interp, "empty token"));
@@ -774,7 +780,15 @@ impl<'a> Reader<'a> {
             "." => return Err(read_err(self.interp, ".")),
             _ => {}
         }
-        Ok(Value::Sym(self.interp.intern(&tok)))
+        let sym = self.interp.intern(&tok);
+        if let Some(base) = self.annotate_pos {
+            return Ok(crate::lisp::builtins::misc::make_symbol_with_pos(
+                self.interp,
+                sym,
+                base + start as i128,
+            ));
+        }
+        Ok(Value::Sym(sym))
     }
 }
 

@@ -107,13 +107,7 @@ pub(crate) static SUBRS: &[Subr] = &[
         f_window_live_t,
         "t if WINDOW can be deleted."
     ),
-    S!(
-        "window-splittable-p",
-        0,
-        2,
-        f_t,
-        "t if WINDOW is splittable."
-    ),
+    // `window-splittable-p' is Lisp (GNU window.el) — see prelude.
     S!(
         "window-min-size",
         0,
@@ -231,8 +225,8 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!("window-bottom-divider-width", 0, 1, f_zero, ""),
     S!("window-right-divider-width", 0, 1, f_zero, ""),
     S!("window-divider-width-valid-p", 1, 1, f_false, ""),
-    S!("window-lines-pixel-dimensions", 0, 7, f_zero, ""),
-    S!("window-text-pixel-size", 0, 8, f_zero, ""),
+    S!("window-lines-pixel-dimensions", 0, 6, f_window_live_nil, ""),
+    S!("window-text-pixel-size", 0, 7, f_window_text_pixel_size, ""),
     S!("window-absolute-pixel-position", 2, 2, f_posn_pair, ""),
     S!(
         "window-screen-lines",
@@ -369,7 +363,7 @@ pub(crate) static SUBRS: &[Subr] = &[
     ),
     S!("set-frame-size", 3, 4, f_set_frame_size, "Set FRAME size."),
     S!("set-frame-position", 3, 3, f_nil, ""),
-    S!("set-frame-size-and-position-pixelwise", 0, 2, f_nil, ""),
+    S!("set-frame-size-and-position-pixelwise", 5, 6, f_nil, ""),
     S!("set-frame-window-state-change", 0, 2, f_nil, ""),
     S!("frame-window-state-change", 0, 1, f_nil, ""),
     S!("frame-after-make-frame", 2, 2, f_nil, ""),
@@ -384,11 +378,11 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!("raise-frame", 0, 1, f_nil, ""),
     S!("lower-frame", 0, 1, f_nil, ""),
     S!("make-frame-visible", 0, 1, f_make_frame_visible, ""),
-    S!("make-frame-invisible", 0, 2, f_nil, ""),
+    S!("make-frame-invisible", 0, 2, f_make_frame_invisible, ""),
     S!("iconify-frame", 0, 1, f_nil, ""),
     S!("x-focus-frame", 1, 2, f_x_focus_frame, ""),
     S!("redirect-frame-focus", 1, 2, f_nil, ""),
-    S!("reconsider-frame-fonts", 0, 1, f_nil, ""),
+    S!("reconsider-frame-fonts", 1, 1, f_reconsider_frame_fonts, ""),
     S!("frame--list-z-order", 0, 1, f_frame_list, ""),
     S!("tty-frame-list-z-order", 0, 1, f_frame_list, ""),
     S!("tty-frame-restack", 3, 3, f_nil, ""),
@@ -419,13 +413,13 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!("terminal-name", 0, 1, f_terminal_name, ""),
     S!("terminal-parameter", 2, 2, f_terminal_parameter, ""),
     S!("terminal-parameters", 0, 1, f_terminal_parameters, ""),
-    S!("set-terminal-parameter", 3, 3, f_nil, ""),
+    S!("set-terminal-parameter", 3, 3, f_set_terminal_parameter, ""),
     // `terminal-id' does not exist in GNU.
     S!("delete-terminal", 0, 2, f_delete_terminal, ""),
     S!("suspend-tty", 0, 1, f_suspend_tty, ""),
     S!("resume-tty", 0, 1, f_resume_tty, ""),
-    S!("tty--output-buffer-size", 0, 1, f_zero, ""),
-    S!("tty--set-output-buffer-size", 1, 1, f_nil, ""),
+    S!("tty--output-buffer-size", 0, 1, f_not_tty, ""),
+    S!("tty--set-output-buffer-size", 1, 2, f_not_tty, ""),
     S!("tty-find-type", 2, 2, f_nil, ""),
     S!("handle-select-window", 1, 1, f_t, ""),
     S!("innermost-minibuffer-p", 0, 1, f_false, ""),
@@ -712,6 +706,7 @@ fn f_split_window_internal(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         minibuffer: false,
         params: Value::Nil,
         margins: (0, 0),
+        use_time: 0,
         dead: false,
     };
     if horizontal {
@@ -991,49 +986,66 @@ fn f_window_valid_nil(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     }
 }
 
+/// The terminal parameter alist: GNU's tty defaults, seeded lazily so
+/// `set-terminal-parameter' can overwrite them.
+fn terminal_params(i: &mut Interp) -> &Vec<(Value, Value)> {
+    if i.terminal_params.is_empty() {
+        i.terminal_params = vec![
+            (
+                Value::Sym(i.intern("normal-erase-is-backspace")),
+                Value::Int(0),
+            ),
+            (
+                Value::Sym(i.intern("keyboard-coding-saved-meta-mode")),
+                Value::list(vec![Value::Sym(sym::T)]),
+            ),
+        ];
+    }
+    &i.terminal_params
+}
+
+fn param_eq(a: &Value, b: &Value) -> bool {
+    match (a, b) {
+        (Value::Sym(x), Value::Sym(y)) => x == y,
+        (Value::Int(x), Value::Int(y)) => x == y,
+        (Value::Str(x), Value::Str(y)) => x == y,
+        _ => false,
+    }
+}
+
 fn f_terminal_parameters(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let _ = want_terminal_live(i, &arg(&a, 0))?;
-    // GNU's tty default parameters.
-    Ok(Value::list(vec![
-        Value::cons(
-            Value::Sym(i.intern("normal-erase-is-backspace")),
-            Value::Int(0),
-        ),
-        Value::cons(
-            Value::Sym(i.intern("keyboard-coding-saved-meta-mode")),
-            Value::list(vec![Value::Sym(sym::T)]),
-        ),
-    ]))
+    let entries = terminal_params(i)
+        .iter()
+        .map(|(k, v)| Value::cons(k.clone(), v.clone()))
+        .collect();
+    Ok(Value::list(entries))
 }
 
 fn f_terminal_parameter(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let _ = want_terminal_live(i, &a[0])?;
-    let params = f_terminal_parameters(i, vec![])?;
     // assq over the alist.
-    let mut cur = params;
-    loop {
-        match cur {
-            Value::Cons(c) => {
-                let (entry, next) = {
-                    let b = c.borrow();
-                    (b.car.clone(), b.cdr.clone())
-                };
-                if let Value::Cons(pair) = &entry {
-                    let (pk, pv) = {
-                        let b = pair.borrow();
-                        (b.car.clone(), b.cdr.clone())
-                    };
-                    if let (Value::Sym(s1), Value::Sym(s2)) = (&pk, &a[1]) {
-                        if s1 == s2 {
-                            return Ok(pv);
-                        }
-                    }
-                }
-                cur = next;
-            }
-            _ => return Ok(Value::Nil),
+    for (k, v) in terminal_params(i) {
+        if param_eq(k, &a[1]) {
+            return Ok(v.clone());
         }
     }
+    Ok(Value::Nil)
+}
+
+/// `set-terminal-parameter` — set/overwrite a parameter on the
+/// terminal's alist.
+fn f_set_terminal_parameter(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let _ = want_terminal_live(i, &a[0])?;
+    let _ = terminal_params(i);
+    for entry in i.terminal_params.iter_mut() {
+        if param_eq(&entry.0, &a[1]) {
+            entry.1 = a[2].clone();
+            return Ok(Value::Nil);
+        }
+    }
+    i.terminal_params.push((a[1].clone(), a[2].clone()));
+    Ok(Value::Nil)
 }
 
 fn f_frame_face_hash_table(i: &mut Interp, a: Vec<Value>) -> EvalResult {
@@ -1075,6 +1087,45 @@ fn f_combine_windows(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 
 fn f_terminal_list(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
     Ok(Value::list(vec![terminal_token(i)]))
+}
+
+/// `window-text-pixel-size' — fixed-pitch model: (WIDTH . HEIGHT)
+/// in pixels; MODE-AND-HEADER-LINE arg adds the header rows (1).
+fn f_window_text_pixel_size(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    if let Some(v) = a.first() {
+        match v {
+            Value::Nil | Value::Window(_) => {}
+            other => return Err(i.wrong_type_mut("window-live-p", other)),
+        }
+    }
+    let h = if arg(&a, 5).truthy() { 1 } else { 0 };
+    Ok(Value::cons(Value::Int(0), Value::Int(h)))
+}
+
+/// tty output-buffer helpers on a non-tty terminal → GNU error.
+fn f_not_tty(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
+    Err(i.error("Not a tty terminal"))
+}
+
+/// `make-frame-invisible' — our batch frame is always the sole
+/// visible frame → GNU's error.
+fn f_make_frame_invisible(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    if let Some(v) = a.first() {
+        match v {
+            Value::Nil | Value::Frame(_) => {}
+            other => return Err(i.wrong_type_mut("frame-live-p", other)),
+        }
+    }
+    Err(i.error("Attempt to make invisible the sole visible or iconified frame"))
+}
+
+/// `reconsider-frame-fonts' — frame check, then GNU's non-wsi error.
+fn f_reconsider_frame_fonts(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    match &a[0] {
+        Value::Nil | Value::Frame(_) => {}
+        other => return Err(i.wrong_type_mut("frame-live-p", other)),
+    }
+    Err(i.error("Window system frame should be used"))
 }
 
 fn f_terminal_name(i: &mut Interp, a: Vec<Value>) -> EvalResult {
