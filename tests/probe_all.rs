@@ -70,3 +70,4 @@ probe!(probe_eval14_cov, "probe_eval14.el");
 probe!(probe_paragraphs, "probe_paragraphs.el");
 probe!(probe_fillcomment, "probe_fillcomment.el");
 probe!(probe_subrs, "probe_subrs.el");
+probe!(probe_page, "probe_page.el");

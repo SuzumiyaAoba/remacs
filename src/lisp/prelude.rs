@@ -217,15 +217,536 @@ Symbols are also allowed; their print names are used instead."
 
 ;; ---------- simple.el-style interactive commands ----------
 
+;; ---------- vertical motion (simple.el) ----------
+
+(defvar hard-newline (propertize "\n" 'hard t 'rear-nonsticky '(hard))
+  "Propertized newline representing a \"hard\" newline.")
+
+(defvar next-line-add-newlines nil
+  "Non-nil means `next-line' inserts newlines when called at the end of a buffer."
+  :type 'boolean
+  :group 'editing-basics)
+
+(defvar track-eol nil
+  "Non-nil means vertical motion starting at end of line keeps to ends of lines.
+This means moving to the end of each line moved onto.
+The beginning of a blank line does not count as the end of a line.
+This has no effect when the variable `line-move-visual' is non-nil."
+  :type 'boolean
+  :group 'editing-basics)
+
+(defvar goal-column nil
+  "Semipermanent goal column for vertical motion, as set by \\[set-goal-column], or nil.
+A non-nil setting overrides the variable `line-move-visual', which see."
+  :type '(choice integer
+		 (const :tag "None" nil))
+  :local t
+  :group 'editing-basics)
+
+(defvar temporary-goal-column 0
+  "Current goal column for vertical motion.
+It is the column where point was at the start of the current run
+of vertical motion commands.
+
+When moving by visual lines via the function `line-move-visual', it is a cons
+cell (COL . HSCROLL), where COL is the x-position, in pixels,
+divided by the default column width, and HSCROLL is the number of
+columns by which window is scrolled from left margin.
+
+When the `track-eol' feature is doing its job, the value is
+`most-positive-fixnum'.")
+
+(defvar line-move-ignore-invisible t
+  "Non-nil means commands that move by lines ignore invisible newlines.
+When this option is non-nil, \\[next-line], \\[previous-line], \\[move-end-of-line], and \\[move-beginning-of-line] behave
+as if newlines that are invisible didn't exist, and count
+only visible newlines.  Thus, moving across 2 newlines
+of which one is invisible will move point to the second visible newline.
+\(This is the default, because it is behavior users expect.)
+Note that this option does not affect motion commands that are invoked
+via `line-move', like \\[move-end-of-line] and \\[move-beginning-of-line]."
+  :type 'boolean
+  :group 'editing-basics)
+
+(defvar line-move-visual t
+  "When non-nil, `line-move' moves point by visual lines.
+This movement is based on where the cursor is displayed on the
+screen, instead of relying on buffer contents alone.  It takes
+into account variable-width characters and line continuation.
+If nil, `line-move' moves point by logical lines.
+A non-nil setting of `goal-column' overrides the value of this variable
+and forces movement by logical lines.
+A window that is horizontally scrolled also forces movement by logical
+lines."
+  :type 'boolean
+  :group 'editing-basics)
+
+(defvar auto-window-vscroll t
+  "Non-nil means to automatically adjust `window-vscroll' to view tall lines."
+  :type 'boolean
+  :group 'windows)
+
+(defvar overflow-newline-into-fringe nil
+  "Non-nil means to display the newline on right fringe in a truncated line.")
+
+(defun line-move-to-column (col)
+  "Try to find column COL, considering invisibility.
+This function works only in certain cases,
+because what we really need is for `move-to-column'
+and `current-column' to be able to ignore invisible text."
+  (if (zerop col)
+      (beginning-of-line)
+    (move-to-column col))
+
+  (when (and line-move-ignore-invisible
+	     (not (bolp)) (invisible-p (1- (point))))
+    (let ((normal-location (point))
+	  (normal-column (current-column)))
+      ;; If the following character is currently invisible,
+      ;; skip all characters with that same `invisible' property value.
+      (while (and (not (eobp))
+		  (invisible-p (point)))
+	(goto-char (next-char-property-change (point))))
+      ;; Have we advanced to a larger column position?
+      (if (> (current-column) normal-column)
+	  ;; We have made some progress towards the desired column.
+	  ;; See if we can make any further progress.
+	  (line-move-to-column (+ (current-column) (- col normal-column)))
+	;; Otherwise, go to the place we originally found
+	;; and move back over invisible text.
+	;; that will get us to the same place on the screen
+	;; but with a more reasonable buffer position.
+	(goto-char normal-location)
+	(let ((line-beg
+               ;; We want the real line beginning, so it's consistent
+               ;; with bolp below, otherwise we might infloop.
+               (let ((inhibit-field-text-motion t))
+                 (line-beginning-position))))
+	  (while (and (not (bolp)) (invisible-p (1- (point))))
+	    (goto-char (previous-char-property-change (point) line-beg))))))))
+
+(defun line-move-finish (column opoint forward &optional not-ipmh)
+  (let ((repeat t))
+    (while repeat
+      ;; Set REPEAT to t to repeat the whole thing.
+      (setq repeat nil)
+
+      (let (new
+	    (old (point))
+	    (line-beg (line-beginning-position))
+	    (line-end
+	     ;; Compute the end of the line
+	     ;; ignoring effectively invisible newlines.
+	     (save-excursion
+	       ;; Like end-of-line but ignores fields.
+	       (skip-chars-forward "^\n")
+	       (while (and (not (eobp)) (invisible-p (point)))
+		 (goto-char (next-char-property-change (point)))
+		 (skip-chars-forward "^\n"))
+	       (point))))
+
+	;; Move to the desired column.  GNU takes a pixel-accurate
+	;; `vertical-motion' path under `line-move-visual'; on our
+	;; fixed-pitch display both paths reduce to `move-to-column'.
+        (line-move-to-column (truncate column))
+
+	;; Corner case: suppose we start out in a field boundary in
+	;; the middle of a continued line.  When we get to
+	;; line-move-finish, point is at the start of a new *screen*
+	;; line but the same text line; then line-move-to-column would
+	;; move us backwards.  Test using C-n with point on the "x" in
+	;;   (insert "a" (propertize "x" 'field t) (make-string 89 ?y))
+	(and forward
+	     (< (point) old)
+	     (goto-char old))
+
+	(setq new (point))
+
+	;; Process intangibility within a line.
+	;; With inhibit-point-motion-hooks bound to nil, a call to
+	;; goto-char moves point past intangible text.
+
+	;; However, inhibit-point-motion-hooks controls both the
+	;; intangibility and the point-entered/point-left hooks.  The
+	;; following hack avoids calling the point-* hooks
+	;; unnecessarily.  Note that we move *forward* past intangible
+	;; text when the initial and final points are the same.
+	(goto-char new)
+	(with-suppressed-warnings ((obsolete inhibit-point-motion-hooks))
+	  (let ((inhibit-point-motion-hooks (not not-ipmh)))
+	    (goto-char new)
+
+	    ;; If intangibility moves us to a different (later) place
+	    ;; in the same line, use that as the destination.
+	    (if (<= (point) line-end)
+	        (setq new (point))
+	      ;; If that position is "too late",
+	      ;; try the previous allowable position.
+	      ;; See if it is ok.
+	      (backward-char)
+	      (if (if forward
+		      ;; If going forward, don't accept the previous
+		      ;; allowable position if it is before the target line.
+		      (< line-beg (point))
+		    ;; If going backward, don't accept the previous
+		    ;; allowable position if it is still after the target line.
+		    (<= (point) line-end))
+		  (setq new (point))
+		;; As a last resort, use the end of the line.
+		(setq new line-end)))))
+
+	;; Now move to the updated destination, processing fields
+	;; as well as intangibility.
+	(goto-char opoint)
+	(with-suppressed-warnings ((obsolete inhibit-point-motion-hooks))
+	  (let ((inhibit-point-motion-hooks (not not-ipmh)))
+	    (goto-char
+	     ;; Ignore field boundaries if the initial and final
+	     ;; positions have the same `field' property, even if the
+	     ;; fields are non-contiguous.  This seems to be "nicer"
+	     ;; behavior in many situations.
+	     (if (eq (get-char-property new 'field)
+		     (get-char-property opoint 'field))
+		 new
+	       (constrain-to-field new opoint t t
+				   'inhibit-line-move-field-capture)))))
+
+	;; If all this moved us to a different line,
+	;; retry everything within that new line.
+	(when (or (< (point) line-beg) (> (point) line-end))
+	  ;; Repeat the intangibility and field processing.
+	  (setq repeat t))))))
+
+;; This is the guts of next-line and previous-line.
+;; Arg says how many lines to move.
+;; The value is t if we can move the specified number of lines.
+(defun line-move-1 (arg &optional noerror _to-end)
+  ;; Don't run any point-motion hooks, and disregard intangibility,
+  ;; for intermediate positions.
+  (with-suppressed-warnings ((obsolete inhibit-point-motion-hooks))
+  (let ((outer-ipmh inhibit-point-motion-hooks)
+	(inhibit-point-motion-hooks t)
+	(opoint (point))
+	(orig-arg arg))
+    (if (consp temporary-goal-column)
+	(setq temporary-goal-column (+ (car temporary-goal-column)
+				       (cdr temporary-goal-column))))
+    (unwind-protect
+	(progn
+	  (if (not (memq last-command '(next-line previous-line)))
+	      (setq temporary-goal-column
+		    (if (and track-eol (eolp)
+			     ;; Don't count beg of empty line as end of line
+			     ;; unless we just did explicit end-of-line.
+			     (or (not (bolp)) (eq last-command 'move-end-of-line)))
+			most-positive-fixnum
+		      (current-column))))
+
+	  (if (not (or (integerp selective-display)
+                       line-move-ignore-invisible))
+	      ;; Use just newline characters.
+	      ;; Set ARG to 0 if we move as many lines as requested.
+	      (or (if (> arg 0)
+		      (progn (if (> arg 1) (forward-line (1- arg)))
+			     ;; This way of moving forward ARG lines
+			     ;; verifies that we have a newline after the last one.
+			     ;; It doesn't get confused by intangible text.
+			     (end-of-line)
+			     (if (zerop (forward-line 1))
+				 (setq arg 0)))
+		    (and (zerop (forward-line arg))
+			 (bolp)
+			 (setq arg 0)))
+		  (unless noerror
+		    (signal (if (< arg 0)
+				'beginning-of-buffer
+			      'end-of-buffer)
+			    nil)))
+	    ;; Move by arg lines, but ignore invisible ones.
+	    (let (done)
+	      (while (and (> arg 0) (not done))
+		;; If the following character is currently invisible,
+		;; skip all characters with that same `invisible' property value.
+		(while (and (not (eobp)) (invisible-p (point)))
+		  (goto-char (next-char-property-change (point))))
+		;; Move a line.
+		;; We don't use `end-of-line', since we want to escape
+		;; from field boundaries occurring exactly at point.
+		(goto-char (constrain-to-field
+			    (let ((inhibit-field-text-motion t))
+			      (line-end-position))
+			    (point) t t
+			    'inhibit-line-move-field-capture))
+		;; If there's no invisibility here, move over the newline.
+		(cond
+		 ((eobp)
+		  (if (not noerror)
+		      (signal 'end-of-buffer nil)
+		    (setq done t)))
+		 ((and (> arg 1)  ;; Use vertical-motion for last move
+		       (not (integerp selective-display))
+		       (not (invisible-p (point))))
+		  ;; We avoid vertical-motion when possible
+		  ;; because that has to fontify.
+		  (forward-line 1))
+		 ;; Otherwise move a more sophisticated way.
+		 ((zerop (vertical-motion 1))
+		  (if (not noerror)
+		      (signal 'end-of-buffer nil)
+		    (setq done t))))
+		(unless done
+		  (setq arg (1- arg))))
+	      ;; The logic of this is the same as the loop above,
+	      ;; it just goes in the other direction.
+	      (while (and (< arg 0) (not done))
+		;; For completely consistency with the forward-motion
+		;; case, we should call beginning-of-line here.
+		;; However, if point is inside a field and on a
+		;; continued line, the call to (vertical-motion -1)
+		;; below won't move us back far enough; then we return
+		;; to the same column in line-move-finish, and point
+		;; gets stuck -- cyd
+		(forward-line 0)
+		(cond
+		 ((bobp)
+		  (if (not noerror)
+		      (signal 'beginning-of-buffer nil)
+		    (setq done t)))
+		 ((and (< arg -1) ;; Use vertical-motion for last move
+		       (not (integerp selective-display))
+		       (not (invisible-p (1- (point)))))
+		  (forward-line -1))
+		 ((zerop (vertical-motion -1))
+		  (if (not noerror)
+		      (signal 'beginning-of-buffer nil)
+		    (setq done t))))
+		(unless done
+		  (setq arg (1+ arg))
+		  (while (and ;; Don't move over previous invis lines
+			  ;; if our target is the middle of this line.
+			  (or (zerop (or goal-column temporary-goal-column))
+			      (< arg 0))
+			  (not (bobp)) (invisible-p (1- (point))))
+		    (goto-char (previous-char-property-change (point))))))))
+	  ;; This is the value the function returns.
+	  (= arg 0))
+
+      (cond ((> arg 0)
+	     ;; If we did not move down as far as desired, at least go
+	     ;; to end of line.  Be sure to call point-entered and
+	     ;; point-left-hooks.
+	     (let* ((npoint (prog1 (line-end-position)
+			      (goto-char opoint)))
+		    (inhibit-point-motion-hooks outer-ipmh))
+	       (goto-char npoint)))
+	    ((< arg 0)
+	     ;; If we did not move up as far as desired,
+	     ;; at least go to beginning of line.
+	     (let* ((npoint (prog1 (line-beginning-position)
+			      (goto-char opoint)))
+		    (inhibit-point-motion-hooks outer-ipmh))
+	       (goto-char npoint)))
+	    (t
+	     (line-move-finish (or goal-column temporary-goal-column)
+			       opoint (> orig-arg 0) (not outer-ipmh))))))))
+
+;; Display-based alternative to line-move-1.
+;; Arg says how many lines to move.  The value is t if we can move the
+;; specified number of lines.
+;; FIXME: our display is fixed-pitch and does not wrap lines, so visual
+;; and buffer-line motion coincide; delegate to the buffer-line engine.
+(defun line-move-visual (arg &optional noerror)
+  "Move ARG lines forward.
+If NOERROR, don't signal an error if we can't move that many lines."
+  (line-move-1 arg noerror))
+
+(defun line-move-partial (arg noerror &optional _to-end)
+  "Fallback for GNU's pixel-scrolling partial line move."
+  (line-move-1 arg noerror))
+
+(defun line-move (arg &optional noerror _to-end try-vscroll)
+  "Move forward ARG lines.
+If NOERROR, don't signal an error if we can't move ARG lines.
+TO-END is unused.
+TRY-VSCROLL controls whether to vscroll tall lines: if either
+`auto-window-vscroll' or TRY-VSCROLL is nil, this function will
+not vscroll."
+  (if noninteractive
+      (line-move-1 arg noerror)
+    (unless (and auto-window-vscroll try-vscroll
+		 ;; Only vscroll for single line moves
+		 (= (abs arg) 1)
+		 ;; Under scroll-conservatively, the display engine
+		 ;; does this better.
+		 (zerop scroll-conservatively)
+		 ;; But don't vscroll in a keyboard macro.
+		 (not defining-kbd-macro)
+		 (not executing-kbd-macro)
+                 ;; Lines are not truncated...
+                 (not
+                  (and
+                   (or truncate-lines (truncated-partial-width-window-p))
+                   ;; ...or if lines are truncated, this buffer
+                   ;; doesn't have very long lines.
+                   (long-line-optimizations-p)))
+		 (line-move-partial arg noerror))
+      (set-window-vscroll nil 0 t)
+      (if (and line-move-visual
+	       ;; Display-based column are incompatible with goal-column.
+	       (not goal-column)
+               ;; Lines aren't truncated.
+               (not
+                (and
+                 (or truncate-lines (truncated-partial-width-window-p))
+                 (long-line-optimizations-p)))
+	       ;; When the text in the window is scrolled to the left,
+	       ;; display-based motion doesn't make sense (because each
+	       ;; logical line occupies exactly one screen line).
+	       (not (> (window-hscroll) 0))
+	       ;; Likewise when the text _was_ scrolled to the left
+	       ;; when the current run of vertical motion commands
+	       ;; started.
+	       (not (and (memq last-command
+			       `(next-line previous-line ,this-command))
+			 auto-hscroll-mode
+			 (numberp temporary-goal-column)
+			 (>= temporary-goal-column
+			    (- (window-width) hscroll-margin)))))
+	  (prog1 (line-move-visual arg noerror)
+	    ;; If we moved into a tall line, set vscroll to make
+	    ;; scrolling through tall images more smooth.
+	    (let ((lh (line-pixel-height))
+		  (edges (window-inside-pixel-edges))
+		  (dlh (line-pixel-height))
+		  winh)
+	      (setq winh (- (nth 3 edges) (nth 1 edges) 1))
+	      (if (and (< arg 0)
+		       (< (point) (window-start))
+		       (> lh winh))
+		  (set-window-vscroll
+		   nil
+		   (- lh dlh) t))))
+	(line-move-1 arg noerror)))))
+
 (defun next-line (&optional arg try-vscroll)
-  "Move cursor vertically down ARG lines."
-  (interactive "^p\nP")
-  (forward-line (or arg 1)))
+  "Move cursor vertically down ARG lines.
+Interactively, vscroll tall lines if `auto-window-vscroll' is enabled.
+Non-interactively, use TRY-VSCROLL to control whether to vscroll tall
+lines: if either `auto-window-vscroll' or TRY-VSCROLL is nil, this
+function will not vscroll.
+
+ARG defaults to 1.
+
+If there is no character in the target line exactly under the current column,
+the cursor is positioned after the character in that line that spans this
+column, or at the end of the line if it is not long enough.
+If there is no line in the buffer after this one, behavior depends on the
+value of `next-line-add-newlines'.  If non-nil, it inserts a newline character
+to create a line, and moves the cursor to that line.  Otherwise it moves the
+cursor to the end of the buffer.
+
+If the variable `line-move-visual' is non-nil, this command moves
+by display lines.  Otherwise, it moves by buffer lines, without
+taking variable-width characters or continued lines into account.
+See \\[next-logical-line] for a command that always moves by buffer lines.
+
+The command \\[set-goal-column] can be used to create
+a semipermanent goal column for this command.
+Then instead of trying to move exactly vertically (or as close as possible),
+this command moves to the specified goal column (or as close as possible).
+The goal column is stored in the variable `goal-column', which is nil
+when there is no goal column.  Note that setting `goal-column'
+overrides `line-move-visual' and causes this command to move by buffer
+lines rather than by display lines."
+  (declare (interactive-only forward-line))
+  (interactive "^p\np")
+  (or arg (setq arg 1))
+  (if (and next-line-add-newlines (= arg 1)
+	   (save-excursion (end-of-line) (eobp)))
+      ;; When adding a newline, don't expand an abbrev.
+      (let ((abbrev-mode nil))
+	(end-of-line)
+	(insert (if use-hard-newlines hard-newline "\n")))
+    (line-move arg nil nil try-vscroll))
+  nil)
 
 (defun previous-line (&optional arg try-vscroll)
-  "Move cursor vertically up ARG lines."
-  (interactive "^p\nP")
-  (forward-line (- (or arg 1))))
+  "Move cursor vertically up ARG lines.
+Interactively, vscroll tall lines if `auto-window-vscroll' is enabled.
+Non-interactively, use TRY-VSCROLL to control whether to vscroll tall
+lines: if either `auto-window-vscroll' or TRY-VSCROLL is nil, this
+function will not vscroll.
+
+ARG defaults to 1.
+
+If there is no character in the target line exactly over the current column,
+the cursor is positioned after the character in that line that spans this
+column, or at the end of the line if it is not long enough.
+
+If the variable `line-move-visual' is non-nil, this command moves
+by display lines.  Otherwise, it moves by buffer lines, without
+taking variable-width characters or continued lines into account.
+See \\[previous-logical-line] for a command that always moves by buffer lines.
+
+The command \\[set-goal-column] can be used to create
+a semipermanent goal column for this command.
+Then instead of trying to move exactly vertically (or as close as possible),
+this command moves to the specified goal column (or as close as possible).
+The goal column is stored in the variable `goal-column', which is nil
+when there is no goal column.  Note that setting `goal-column'
+overrides `line-move-visual' and causes this command to move by buffer
+lines rather than by display lines."
+  (declare (interactive-only
+            "use `forward-line' with negative argument instead."))
+  (interactive "^p\np")
+  (or arg (setq arg 1))
+  (line-move (- arg) nil nil try-vscroll)
+  nil)
+
+(defun next-logical-line (&optional arg try-vscroll)
+  "Move cursor vertically down ARG lines.
+This is identical to `next-line', except that it always moves
+by logical lines instead of visual lines, ignoring the value of
+the variable `line-move-visual'."
+  (interactive "^p\np")
+  (let ((line-move-visual nil))
+    (with-no-warnings
+      (next-line arg try-vscroll))))
+
+(defun previous-logical-line (&optional arg try-vscroll)
+  "Move cursor vertically up ARG lines.
+This is identical to `previous-line', except that it always moves
+by logical lines instead of visual lines, ignoring the value of
+the variable `line-move-visual'."
+  (interactive "^p\np")
+  (let ((line-move-visual nil))
+    (with-no-warnings
+      (previous-line arg try-vscroll))))
+
+(defun set-goal-column (arg)
+  "Set the current horizontal position as a goal column.
+This goal column will affect the \\[next-line] and \\[previous-line] commands,
+as well as the \\[scroll-up-command] and \\[scroll-down-command] commands.
+
+Those commands will move to this position in the line moved to
+rather than trying to keep the same horizontal position.
+
+With a non-nil argument ARG, clears out the goal column so that
+these commands resume normal motion.
+
+The goal column is stored in the variable `goal-column'.  This is
+a buffer-local setting."
+  (interactive "P")
+  (if arg
+      (progn
+        (setq goal-column nil)
+        (message "No goal column"))
+    (setq goal-column (current-column))
+    (message "Goal column %d %s"
+             goal-column
+	     (substitute-command-keys
+	      "(use \\[set-goal-column] with an arg to unset it)")))
+  nil)
 
 (defun beginning-of-buffer (&optional arg)
   "Move point to the beginning of the buffer."
@@ -799,27 +1320,158 @@ See `forward-sentence' for more information."
           (setq sentences (1- sentences)))
 	sentences))))
 
+;; ---------- page motion (textmodes/page.el) ----------
+
 (defun forward-page (&optional count)
-  "Move forward to page boundary."
-  (interactive "^p")
-  (skip-chars-forward "\n")
-  (if (re-search-forward page-delimiter nil t (or count 1))
-      (goto-char (match-end 0))
-    (goto-char (point-max))))
+  "Move forward to page boundary.  With arg, repeat, or go back if negative.
+A page boundary is any line whose beginning matches the regexp
+`page-delimiter'."
+  (interactive "p")
+  (or count (setq count 1))
+  (while (and (> count 0) (not (eobp)))
+    (if (and (looking-at page-delimiter)
+             (> (match-end 0) (point)))
+        ;; If we're standing at the page delimiter, then just skip to
+        ;; the end of it.  (But only if it's not a zero-length
+        ;; delimiter, because then we wouldn't have forward progress.)
+        (goto-char (match-end 0))
+      ;; In case the page-delimiter matches the null string,
+      ;; don't find a match without moving.
+      (when (bolp)
+        (forward-char 1))
+      (unless (re-search-forward page-delimiter nil t)
+        (goto-char (point-max))))
+    (setq count (1- count)))
+  (while (and (< count 0) (not (bobp)))
+    ;; In case the page-delimiter matches the null string,
+    ;; don't find a match without moving.
+    (and (save-excursion (re-search-backward page-delimiter nil t))
+	 (= (match-end 0) (point))
+	 (goto-char (match-beginning 0)))
+    (unless (bobp)
+      (forward-char -1)
+      (if (re-search-backward page-delimiter nil t)
+	  ;; We found one--move to the end of it.
+	  (goto-char (match-end 0))
+	;; We found nothing--go to beg of buffer.
+	(goto-char (point-min))))
+    (setq count (1+ count))))
 
 (defun backward-page (&optional count)
-  "Move backward to page boundary."
-  (interactive "^p")
-  (if (re-search-backward "\f" nil t (or count 1))
-      (goto-char (match-end 0))
-    (goto-char (point-min))))
-
-(defun mark-page (&optional page)
-  "Put mark at end of page, point at beginning."
+  "Move backward to page boundary.  With arg, repeat, or go fwd if negative.
+A page boundary is any line whose beginning matches the regexp
+`page-delimiter'."
   (interactive "p")
-  (forward-page page)
+  (or count (setq count 1))
+  (forward-page (- count)))
+
+(defun mark-page (&optional arg)
+  "Put mark at end of page, point at beginning.
+A numeric arg specifies to move forward or backward by that many pages,
+thus marking a page other than the one point was originally in."
+  (interactive "P")
+  (setq arg (if arg (prefix-numeric-value arg) 0))
+  (if (> arg 0)
+      (forward-page arg)
+    (if (< arg 0)
+        (forward-page (1- arg))))
+  (forward-page)
   (push-mark nil t t)
-  (backward-page))
+  (forward-page -1))
+
+(defun narrow-to-page (&optional arg)
+  "Make text outside current page invisible.
+A numeric arg specifies to move forward or backward by that many pages,
+thus showing a page other than the one point was originally in."
+  (interactive "P")
+  (setq arg (if arg (prefix-numeric-value arg) 0))
+  (save-excursion
+    (widen)
+    (if (> arg 0)
+	(forward-page arg)
+      (if (< arg 0)
+	  (let ((adjust 0)
+		(opoint (point)))
+	    ;; If we are not now at the beginning of a page,
+	    ;; move back one extra time, to get to the start of this page.
+	    (save-excursion
+	      (beginning-of-line)
+	      (or (and (looking-at page-delimiter)
+		       (eq (match-end 0) opoint))
+		  (setq adjust 1)))
+	    (forward-page (- arg adjust)))))
+    ;; Find the end of the page.
+    (set-match-data nil)
+    (forward-page)
+    ;; If we stopped due to end of buffer, stay there.
+    ;; If we stopped after a page delimiter, put end of restriction
+    ;; at the beginning of that line.
+    ;; Before checking the match that was found,
+    ;; verify that forward-page actually set the match data.
+    (if (and (match-beginning 0)
+	     (save-excursion
+	       (goto-char (match-beginning 0)) ; was (beginning-of-line)
+	       (looking-at page-delimiter)))
+	(goto-char (match-beginning 0))) ; was (beginning-of-line)
+    (narrow-to-region (point)
+		      (progn
+			;; Find the top of the page.
+			(forward-page -1)
+			;; If we found beginning of buffer, stay there.
+			;; If extra text follows page delimiter on same line,
+			;; include it.
+			;; Otherwise, show text starting with following line.
+			(if (and (eolp) (not (bobp)))
+			    (forward-line 1))
+			(point)))))
+(put 'narrow-to-page 'disabled t)
+
+(defun page--count-lines-page ()
+  "Return a list of line counts on the current page.
+The list is on the form (TOTAL BEFORE AFTER), where TOTAL is the
+total number of lines on the current page, while BEFORE and AFTER
+are the number of lines on the current page before and after
+point, respectively."
+  (save-excursion
+    (let ((opoint (point)))
+      (forward-page)
+      (beginning-of-line)
+      (unless (looking-at page-delimiter)
+        (end-of-line))
+      (let ((end (point)))
+        (backward-page)
+        (list (count-lines (point) end)
+              (count-lines (point) opoint)
+              (count-lines opoint end))))))
+
+(defun count-lines-page ()
+  "Report number of lines on current page, and how many are before or after point."
+  (interactive)
+  (let ((counts (page--count-lines-page)))
+    (message (ngettext "Page has %d line (%d + %d)"
+                      "Page has %d lines (%d + %d)" (car counts))
+             (car counts) (nth 1 counts) (nth 2 counts))))
+
+(defun page--what-page ()
+  "Return a list of the page and line number of point.
+The line number is relative to the start of the page."
+  (save-restriction
+    (widen)
+    (save-excursion
+      (let ((count 1)
+            (adjust (if (or (bolp) (looking-back page-delimiter nil)) 1 0))
+            (opoint (point)))
+        (goto-char (point-min))
+        (while (re-search-forward page-delimiter opoint t)
+          (when (= (match-beginning 0) (match-end 0))
+            (forward-char))
+          (setq count (1+ count)))
+        (list count (+ adjust (count-lines (point) opoint)))))))
+
+(defun what-page ()
+  "Display the page number, and the line number within that page."
+  (interactive)
+  (apply #'message (cons "Page %d, line %d" (page--what-page))))
 
 (defun center-line (&optional nlines)
   "Center the line point is on (approximate: no-op when unsupported)."

@@ -1421,7 +1421,6 @@ pub(crate) static SUBRS: &[Subr] = &[
     ),
     S!("forward-line-command", 0, 1, f_forward_line_cmd, ""),
     S!("beginning-of-buffer-other-window", 0, 0, f_nil, ""),
-    S!("set-goal-column", 1, 1, f_nil, ""),
     S!("exchange-point-and-mark-inactive", 0, 0, f_nil, ""),
     // minibuffer/echo
     S!(
@@ -1779,10 +1778,10 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!("negative-argument", 1, 1, f_negative_argument, "M--."),
     // `beginning-of-defun', `end-of-defun', `mark-defun' and
     // `narrow-to-defun' are defined in Lisp (as in GNU's lisp.el).
-    S!("narrow-to-page", 0, 1, f_nil, ""),
+    // `narrow-to-page', `count-lines-page', `what-page' and
+    // `set-goal-column' are defined in Lisp (as in GNU's page.el/simple.el).
     S!("count-words", 2, 2, f_count_words, "Words in region."),
     S!("count-words-region", 2, 2, f_count_words, ""),
-    S!("count-lines-page", 0, 0, f_nil, ""),
     S!(
         "what-cursor-position",
         0,

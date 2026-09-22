@@ -2545,18 +2545,23 @@ fn f_compute_motion(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 }
 
 fn f_vertical_motion(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    // (vertical-motion LINES &optional WINDOW CUR-COL) — move down LINES,
-    // try to keep column. Returns lines moved.
-    let lines = a[0].int().unwrap_or(0);
+    // (vertical-motion LINES &optional WINDOW CUR-COL).  LINES may be a
+    // cons (COLS . LINES); without a real display matrix (batch) GNU
+    // moves LINES lines and lands at the beginning of the line, and the
+    // return value is the signed number of lines actually moved.
+    let lines = match &a[0] {
+        Value::Cons(c) => c.borrow().cdr.int().unwrap_or(0),
+        v => v.int().unwrap_or(0),
+    };
     let b = cur(i);
     let mut bb = b.borrow_mut();
     let len = bb.text_len();
     let mut p = bb.point();
-    // Current column.
-    let ls = line_start(&bb.text, p);
-    let goal_col = p - ls;
     let mut moved = 0i128;
-    if lines >= 0 {
+    if lines == 0 {
+        // Zero lines: GNU still lands on the beginning of the line.
+        p = line_start(&bb.text, p);
+    } else if lines > 0 {
         for _ in 0..lines {
             let eol = line_end(&bb.text, p);
             if eol >= len {
@@ -2568,18 +2573,17 @@ fn f_vertical_motion(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         }
     } else {
         for _ in 0..(-lines) {
-            if p == 0 {
+            // Each step lands on the beginning of the previous line.
+            let bol = line_start(&bb.text, p);
+            if bol == 0 {
+                p = 0;
                 break;
             }
-            let ls2 = line_start(&bb.text, p.saturating_sub(1));
-            p = ls2;
-            moved += 1;
+            p = line_start(&bb.text, bol - 1);
+            moved -= 1;
         }
     }
-    // Move to goal column on the landed line.
-    let ls = line_start(&bb.text, p);
-    let le = line_end(&bb.text, p);
-    bb.set_point((ls + goal_col).min(le));
+    bb.set_point(p);
     Ok(Value::Int(moved))
 }
 

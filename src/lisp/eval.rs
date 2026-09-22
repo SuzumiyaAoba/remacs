@@ -2519,6 +2519,13 @@ impl Interp {
             ("shell-command-switch", Value::string("-c")),
             ("tab-always-indent", Value::Sym(sym::T)),
             ("track-eol", Value::Nil),
+            ("goal-column", Value::Nil),
+            ("temporary-goal-column", Value::Int(0)),
+            ("next-line-add-newlines", Value::Nil),
+            ("auto-window-vscroll", Value::Sym(sym::T)),
+            ("line-move-visual", Value::Sym(sym::T)),
+            ("line-move-ignore-invisible", Value::Sym(sym::T)),
+            ("overflow-newline-into-fringe", Value::Nil),
             (
                 "uniquify-buffer-name-style",
                 Value::Sym(self.intern("post-forward-angle-brackets")),

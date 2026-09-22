@@ -2768,6 +2768,11 @@ fn f_count_lines(i: &mut Interp, a: Vec<Value>) -> EvalResult {
             n += 1;
         }
     }
+    // GNU: if the greater position is not at the start of a line,
+    // the partial line counts too.
+    if e > s && bb.text.char_at(e - 1) != '\n' {
+        n += 1;
+    }
     Ok(Value::Int(n))
 }
 
