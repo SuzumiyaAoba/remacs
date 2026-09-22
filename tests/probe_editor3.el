@@ -215,8 +215,6 @@
 (where-is-internal 'self-insert-command)
 (this-command-keys)
 (this-command-keys-vector)
-(read-key-sequence-vector "")
-(read-key-sequence "")
 (commandp 'next-line)
 (commandp 'car)
 (command-remapping 'self-insert-command)

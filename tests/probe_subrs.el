@@ -542,6 +542,9 @@
                (progn (probe-mm -1) probe-mm)
                (assq 'probe-mm minor-mode-alist)))
   (terpri)
+    ;; GNU keeps the cl-* generalized-variable macros in cl-macs.el,
+    ;; which is not loaded at startup — require it like GNU callers do.
+    (require 'cl-macs)
     (princ (list 'lisplib
                (cl-case 'b (a 1) ((b c) 2) (t 9))
                (condition-case e (cl-ecase 'z (a 1)) (error (cadr e)))

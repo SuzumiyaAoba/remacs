@@ -69,6 +69,8 @@ pub(crate) fn locate(i: &mut Interp, name: &str) -> Option<String> {
 /// Built-in Lisp libraries embedded in the binary (the repo's lisp/ dir),
 /// so `load`/autoload works regardless of the process cwd.
 static EMBEDDED_LISP: &[(&str, &str)] = &[
+    ("avl-tree", include_str!("../../lisp/avl-tree.el")),
+    ("cl-macs", include_str!("../../lisp/cl-macs.el")),
     ("dom", include_str!("../../lisp/dom.el")),
     ("easy-mmode", include_str!("../../lisp/easy-mmode.el")),
     ("eieio", include_str!("../../lisp/eieio.el")),
@@ -83,6 +85,7 @@ static EMBEDDED_LISP: &[(&str, &str)] = &[
     ("subr-x", include_str!("../../lisp/subr-x.el")),
     ("thingatpt", include_str!("../../lisp/thingatpt.el")),
     ("thunk", include_str!("../../lisp/thunk.el")),
+    ("time-date", include_str!("../../lisp/time-date.el")),
 ];
 
 /// Embedded source for library NAME (with or without .el/.elc suffix).

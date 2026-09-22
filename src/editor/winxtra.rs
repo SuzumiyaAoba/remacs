@@ -115,6 +115,14 @@ pub(crate) static SUBRS: &[Subr] = &[
         f_win_min_size,
         "Minimum window size."
     ),
+    S!("window-size", 0, 4, f_window_size, "Size of WINDOW."),
+    S!(
+        "window-safe-min-size",
+        0,
+        3,
+        f_window_safe_min_size,
+        "Absolute minimum window size."
+    ),
     S!("window-max-delta", 0, 5, f_zero, ""),
     S!("window-min-delta", 0, 5, f_zero, ""),
     S!("window-sizable-p", 1, 4, f_window_sizable_p, ""),
@@ -630,9 +638,51 @@ fn f_window_has_params(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     Ok(Value::from_bool(!p.is_nil()))
 }
 
+/// `window-min-size' — GNU's decode_any_window convention: nil →
+/// selected, non-window → plain "N is not a valid window" error.
+/// Safe minimum plus decorations, clamped to `window-min-height'/
+/// `window-min-width' unless IGNORE suppresses them.
 fn f_win_min_size(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let _ = win_of(i, &arg(&a, 0))?;
-    let horiz = arg(&a, 2).truthy();
+    let wv = match &arg(&a, 0) {
+        Value::Nil => sel_window(i).map(Value::Window).unwrap_or(Value::Nil),
+        v @ Value::Window(_) => v.clone(),
+        other => {
+            let shown = i.princ_to_string(other);
+            return Err(i.error(format!("{shown} is not a valid window")));
+        }
+    };
+    let horiz = arg(&a, 1).truthy();
+    let ignore = arg(&a, 2);
+    Ok(Value::Int(crate::lisp::builtins::misc::win_min_size(
+        i, &wv, horiz, &ignore,
+    )))
+}
+
+/// `window-size' — GNU's subr uses CHECK_VALID_WINDOW (typed
+/// `window-valid-p' error) and returns the total size.
+fn f_window_size(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let w = match arg(&a, 0) {
+        Value::Nil => sel_window(i),
+        Value::Window(w) => Some(w),
+        other => return Err(i.wrong_type_mut("window-valid-p", &other)),
+    };
+    let horiz = arg(&a, 1).truthy();
+    let (wd, ht) = w
+        .map(|w| {
+            let w = w.borrow();
+            (w.width, w.height)
+        })
+        .unwrap_or((80, 24));
+    Ok(Value::Int(if horiz { wd } else { ht } as i128))
+}
+
+/// `window-safe-min-size' — `window-safe-min-height'/`-width' (1/2).
+fn f_window_safe_min_size(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    match arg(&a, 0) {
+        Value::Nil | Value::Window(_) => {}
+        other => return Err(i.wrong_type_mut("window-valid-p", &other)),
+    }
+    let horiz = arg(&a, 1).truthy();
     Ok(Value::Int(if horiz { 2 } else { 1 }))
 }
 
@@ -999,13 +1049,57 @@ fn err_not_live_window(i: &mut Interp, v: &Value) -> Flow {
     i.error(format!("{shown} is not a live window"))
 }
 
-/// `window-sizable-p' — valid-window check, then t (any window can
-/// be resized in our model).
+/// `window-sizable-p' — GNU: normalize WINDOW, then compare
+/// `window-sizable' against DELTA.
 fn f_window_sizable_p(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     match arg(&a, 0) {
-        Value::Nil | Value::Window(_) => Ok(Value::t()),
-        other => Err(err_not_valid_window(i, &other)),
+        Value::Nil | Value::Window(_) => {}
+        ref other => {
+            let shown = i.princ_to_string(other);
+            return Err(i.error(format!("{shown} is not a valid window")));
+        }
     }
+    let delta = match &arg(&a, 1) {
+        Value::Int(n) => *n,
+        other => return Err(i.wrong_type_mut("number-or-marker-p", other)),
+    };
+    let wv = arg(&a, 0);
+    let horiz = arg(&a, 2).truthy();
+    let ignore = arg(&a, 3);
+    let actual = if delta < 0 {
+        let min = crate::lisp::builtins::misc::win_min_size(i, &wv, horiz, &ignore);
+        let size = match &wv {
+            Value::Window(w) => {
+                let w = w.borrow();
+                if horiz {
+                    w.width
+                } else {
+                    w.height
+                }
+            }
+            _ => {
+                if horiz {
+                    80
+                } else {
+                    24
+                }
+            }
+        } as i128;
+        if size <= min {
+            0
+        } else {
+            (min - size).max(delta)
+        }
+    } else if delta > 0 {
+        delta
+    } else {
+        0
+    };
+    Ok(Value::from_bool(if delta > 0 {
+        actual >= delta
+    } else {
+        actual <= delta
+    }))
 }
 
 /// `set-frame-position' — frame-live-p check, then t (GNU reports

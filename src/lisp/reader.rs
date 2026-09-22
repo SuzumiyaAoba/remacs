@@ -319,17 +319,39 @@ impl<'a> Reader<'a> {
 
     fn read_string(&mut self) -> Result<Value, Flow> {
         let mut out = String::new();
+        let mut multibyte = false;
         loop {
             match self.next() {
                 None => return Err(eof_err(self.interp)),
-                Some('"') => return Ok(Value::string(out)),
+                Some('"') => {
+                    let v = Value::string(out);
+                    // GNU: a literal is unibyte unless it contains a
+                    // decoded source char ≥0x80 or an escape producing
+                    // a char >0xFF; \NNN escapes ≤0xFF stay bytes.
+                    if multibyte {
+                        if let Value::Str(r) = &v {
+                            self.interp.mark_multibyte(r);
+                        }
+                    } else if let Value::Str(r) = &v {
+                        self.interp.mark_unibyte(r);
+                    }
+                    return Ok(v);
+                }
                 Some('\\') => {
                     let c = self.read_string_escape()?;
                     if let Some(c) = c {
+                        if (c as u32) > 0xFF {
+                            multibyte = true;
+                        }
                         out.push(c);
                     }
                 }
-                Some(c) => out.push(c),
+                Some(c) => {
+                    if (c as u32) >= 0x80 {
+                        multibyte = true;
+                    }
+                    out.push(c);
+                }
             }
         }
     }

@@ -301,3 +301,133 @@ fn thingatpt_uuid() {
         "(t nil)"
     );
 }
+
+// ------------------------------------------------------- avl-tree.el
+
+#[test]
+fn avl_tree_insert_order_delete() {
+    // GNU-verified: in-order traversal yields sorted order, both
+    // directions; delete keeps the tree balanced and correct.
+    assert_eq!(
+        ev("(progn (require 'avl-tree)
+                  (let ((t1 (avl-tree-create #'<)))
+                    (dolist (x '(5 3 8 1 4 7 9)) (avl-tree-enter t1 x))
+                    (list (avl-tree-flatten t1)
+                          (avl-tree-member t1 4)
+                          (avl-tree-size t1)
+                          (avl-tree-mapcar #'1+ t1))))"),
+        "((1 3 4 5 7 8 9) 4 7 (2 4 5 6 8 9 10))"
+    );
+    assert_eq!(
+        ev("(progn (require 'avl-tree)
+                  (let ((t1 (avl-tree-create #'<)))
+                    (dolist (x '(5 3 8 1 4 7 9)) (avl-tree-enter t1 x))
+                    (avl-tree-delete t1 5)
+                    (avl-tree-flatten t1)))"),
+        "(1 3 4 7 8 9)"
+    );
+}
+
+#[test]
+fn avl_tree_iter_and_stack() {
+    assert_eq!(
+        ev_out("(progn (require 'avl-tree)
+                      (let ((t1 (avl-tree-create #'<)))
+                        (avl-tree-enter t1 1) (avl-tree-enter t1 3)
+                        (let ((it (avl-tree-iter t1)))
+                          (princ (list (iter-next it) (iter-next it))) (terpri)
+                          (princ (condition-case _e
+                                     (progn (iter-next it) 'more)
+                                   (iter-end-of-sequence 'done))) (terpri))
+                        (let ((s (avl-tree-stack t1)))
+                          (princ (list (avl-tree-stack-pop s)
+                                       (avl-tree-stack-empty-p s))))))"),
+        "(1 3)\ndone\n(1 nil)"
+    );
+}
+
+// ------------------------------------------------------- time-date.el
+
+#[test]
+fn time_date_decoded_add() {
+    // GNU-verified: month overflow clamps day, year leap handling,
+    // negative day delta, second carry.
+    assert_eq!(
+        ev("(progn (require 'time-date)
+                  (list (decoded-time-add (list 30 30 12 31 1 2019 nil -1 nil)
+                                          (make-decoded-time :month 1))
+                        (decoded-time-add (list 0 0 0 29 2 2020 nil -1 nil)
+                                          (make-decoded-time :year 1))
+                        (decoded-time-add (list 0 0 0 1 1 2024 nil -1 nil)
+                                          (make-decoded-time :day -1))))"),
+        "((30 30 12 28 2 2019 nil -1 nil) (0 0 0 28 2 2021 nil -1 nil) (0 0 0 31 12 2023 nil -1 nil))"
+    );
+}
+
+#[test]
+fn time_date_helpers() {
+    assert_eq!(
+        ev("(progn (require 'time-date)
+                  (list (date-days-in-month 2024 2)
+                        (date-days-in-month 2023 2)
+                        (decoded-time-period (make-decoded-time :hour 1 :minute 1 :second 1))
+                        (decoded-time-set-defaults (list nil nil nil 15 nil nil nil nil nil))))"),
+        "(29 28 3661 (0 0 0 15 1 1970 nil nil nil))"
+    );
+    // safe-date-to-time catches the \"Invalid date\" error.
+    assert_eq!(
+        ev("(progn (require 'time-date)
+                  (list (safe-date-to-time \"not a date\")
+                        (format-seconds \"%y %d %h %m %s\" 10000000)
+                        (format-seconds \"%.3Y\" 10000000)))"),
+        "(0 \"0 115 17 46 40\" \"000 years\")"
+    );
+}
+
+#[test]
+fn time_arith_forms() {
+    // GNU timefns.c forms: (TICKS . HZ) preserved through convert;
+    // hz==1 renders as integer; eq subtract yields the list zero.
+    assert_eq!(
+        ev("(list (time-convert 30 t) (time-convert 30 'integer)
+                 (time-convert '(0 30 0 0) t) (time-convert '(1 2) t)
+                 (time-add 30 0) (time-subtract '(30 . 1) '(0 . 1))
+                 (time-subtract 30 30))"),
+        "((30 . 1) 30 (30000000000000 . 1000000000000) (65538 . 1) 30 30 (0 0 0 0))"
+    );
+}
+
+// ------------------------------------------------------- seq extras
+
+#[test]
+fn seq_indexed_and_positions() {
+    assert_eq!(
+        ev("(list (seq-map-indexed (lambda (e i) (list e i)) '(a b c))
+                 (seq-positions '(a b a c a) 'a)
+                 (seq-positions [1 2 3 2] 2 #'=))"),
+        "(((a 0) (b 1) (c 2)) (0 2 4) (1 3))"
+    );
+    assert_eq!(
+        ev_out("(let ((acc nil))
+                 (seq-do-indexed (lambda (e i) (push (list i e) acc)) '(x y))
+                 (princ acc))"),
+        "((1 y) (0 x))"
+    );
+}
+
+#[test]
+fn seq_set_ops_and_split() {
+    assert_eq!(
+        ev("(list (seq-union '(1 2 3) '(2 3 4))
+                 (seq-intersection '(1 2 3 4) '(2 4 6))
+                 (seq-keep (lambda (x) (and (numberp x) (* x 10))) '(1 a 2 b 3))
+                 (seq-split '(1 2 3 4 5 6 7) 3)
+                 (seq-mapcat 'list '(1 2) 'vector))"),
+        "((1 2 3 4) (2 4) (10 20 30) ((1 2 3) (4 5 6) (7)) [1 2])"
+    );
+    assert_eq!(
+        ev("(list (seq-sort-by 'car '< '((3 . a) (1 . b) (2 . c)))
+                 (condition-case e (seq-random-elt '()) (error (car e))))"),
+        "(((1 . b) (2 . c) (3 . a)) error)"
+    );
+}

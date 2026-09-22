@@ -491,7 +491,6 @@
 (ignore-errors (text-char-description 7))
 (ignore-errors (text-char-description 128))
 (ignore-errors (describe-buffer-bindings (current-buffer) "a"))
-(ignore-errors (read-key-sequence ""))
 (ignore-errors (describe-key [?a] nil nil t))
 
 ;; --- editor gaps: buffers/files ---

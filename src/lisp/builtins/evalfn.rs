@@ -425,22 +425,6 @@ pub(crate) static SUBRS: &[Subr] = &[
         "Parse body into (declares . forms)."
     ),
     S!(
-        "macroexp-progn",
-        1,
-        1,
-        f_macroexp_progn,
-        "Wrap EXPS in progn if needed."
-    ),
-    S!("macroexp-let2", 4, 4, f_macroexp_let2, "Build a let form."),
-    S!(
-        "macroexp-let*",
-        2,
-        2,
-        f_macroexp_let_star,
-        "Build a let* form."
-    ),
-    S!("macroexp-if", 3, 3, f_macroexp_if, "Build an if form."),
-    S!(
         "byte-code-function-p",
         1,
         1,
@@ -654,8 +638,24 @@ fn f_user_error(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     ))
 }
 
+/// GNU's `format-message' quote convention: every `` `' `` and `'` in
+/// the FORMAT STRING becomes U+2018/U+2019 (curve quoting).  Only the
+/// format string is translated, never the substituted arguments.
+pub(crate) fn translate_message_quotes(fmt: &str) -> String {
+    let mut out = String::with_capacity(fmt.len());
+    for c in fmt.chars() {
+        match c {
+            '`' => out.push('\u{2018}'),
+            '\'' => out.push('\u{2019}'),
+            _ => out.push(c),
+        }
+    }
+    out
+}
+
 /// Simple format for error strings: %s → princ, %S → prin1, %% → %.
 pub(crate) fn apply_format_simple(i: &Interp, fmt: &str, args: &[Value]) -> String {
+    let fmt = translate_message_quotes(fmt);
     let mut out = String::new();
     let mut ai = 0;
     let mut chars = fmt.chars().peekable();
@@ -827,10 +827,17 @@ fn f_require(i: &mut Interp, args: Vec<Value>) -> EvalResult {
             Ok(args[0].clone())
         }
         Ok(false) | Err(_) if noerror => Ok(Value::Nil),
-        Ok(false) => Err(i.signal_data(
-            sym::FILE_ERROR,
-            vec![Value::string("Cannot open load file"), Value::string(name)],
-        )),
+        Ok(false) => {
+            let fm = i.intern("file-missing");
+            Err(i.signal_data(
+                fm,
+                vec![
+                    Value::string("Cannot open load file"),
+                    Value::string("No such file or directory"),
+                    Value::string(name),
+                ],
+            ))
+        }
         Err(e) => Err(e),
     }
 }
@@ -850,8 +857,16 @@ fn hook_fns(i: &Interp, hook: &Value) -> Vec<Value> {
     }
 }
 
+fn want_hook_sym(i: &mut Interp, hook: &Value) -> Result<(), super::Flow> {
+    match hook {
+        Value::Sym(_) | Value::Nil => Ok(()),
+        other => Err(i.wrong_type_mut("symbolp", other)),
+    }
+}
+
 fn f_run_hooks(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     for hook in &args {
+        want_hook_sym(i, hook)?;
         let fns = hook_fns(i, hook);
         for f in fns {
             i.apply(&f, vec![])?;
@@ -862,6 +877,7 @@ fn f_run_hooks(i: &mut Interp, args: Vec<Value>) -> EvalResult {
 
 fn f_run_hook_with_args(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     let hook = args[0].clone();
+    want_hook_sym(i, &hook)?;
     let fns = hook_fns(i, &hook);
     for f in fns {
         i.apply(&f, args[1..].to_vec())?;
@@ -871,6 +887,7 @@ fn f_run_hook_with_args(i: &mut Interp, args: Vec<Value>) -> EvalResult {
 
 fn f_run_hook_until_fail(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     let hook = args[0].clone();
+    want_hook_sym(i, &hook)?;
     let fns = hook_fns(i, &hook);
     for f in fns {
         if i.apply(&f, args[1..].to_vec())?.is_nil() {
@@ -882,6 +899,7 @@ fn f_run_hook_until_fail(i: &mut Interp, args: Vec<Value>) -> EvalResult {
 
 fn f_run_hook_until_success(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     let hook = args[0].clone();
+    want_hook_sym(i, &hook)?;
     let fns = hook_fns(i, &hook);
     for f in fns {
         let r = i.apply(&f, args[1..].to_vec())?;
@@ -1171,13 +1189,21 @@ fn f_eval_region(i: &mut Interp, args: Vec<Value>) -> EvalResult {
         (Some(Value::Int(a)), Some(Value::Int(b))) => (*a, *b),
         _ => return Err(i.wrong_type_mut("integerp", &args[0])),
     };
+    let len = i
+        .buffers
+        .get(i.current_buffer)
+        .map(|b| b.borrow().text.len() as i128 + 1)
+        .unwrap_or(1);
+    if s < 1 || e < 1 || s > len || e > len {
+        let sym = i.intern("args-out-of-range");
+        return Err(i.signal_data(sym, vec![Value::Int(s), Value::Int(e)]));
+    }
     let text = i
         .buffers
         .get(i.current_buffer)
         .map(|b| {
             let bb = b.borrow();
-            bb.text
-                .substring((s - 1).max(0) as usize, (e - 1).max(0) as usize)
+            bb.text.substring((s - 1) as usize, (e - 1) as usize)
         })
         .unwrap_or_default();
     i.eval_str(&text)
@@ -1211,14 +1237,22 @@ fn f_with_no_warnings(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     i.eval_progn(&body)
 }
 fn f_display_warning(i: &mut Interp, args: Vec<Value>) -> EvalResult {
+    let ty = i.princ_to_string(&args[0]);
     let msg = i.princ_to_string(&args[1]);
-    i.message(&format!("Warning: {}", msg));
-    Ok(Value::Nil)
+    let text = format!("Warning ({}): {}", ty, msg);
+    i.message(&text);
+    Ok(Value::string(text))
 }
 fn f_lwarn(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    let msg = i.princ_to_string(&args[3]);
-    i.message(&format!("Warning: {}", msg));
-    Ok(Value::Nil)
+    let ty = i.princ_to_string(&args[0]);
+    let fmt = match &args[2] {
+        Value::Str(s) => s.borrow().clone(),
+        other => i.princ_to_string(other),
+    };
+    let msg = apply_format_simple(i, &fmt, &args[3..]);
+    let text = format!("Warning ({}): {}", ty, msg);
+    i.message(&text);
+    Ok(Value::string(text))
 }
 fn f_warn(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     let fmt = match &args[0] {
@@ -1226,8 +1260,9 @@ fn f_warn(i: &mut Interp, args: Vec<Value>) -> EvalResult {
         _ => "%s".into(),
     };
     let msg = apply_format_simple(i, &fmt, &args[1..]);
-    i.message(&format!("Warning: {}", msg));
-    Ok(Value::Nil)
+    let text = format!("Warning (emacs): {}", msg);
+    i.message(&text);
+    Ok(Value::string(text))
 }
 pub(crate) fn f_message(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     let fmt = match &args[0] {
@@ -1397,104 +1432,72 @@ fn f_float_time(i: &mut Interp, args: Vec<Value>) -> EvalResult {
 fn f_format_time_string(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     let fmt = match &args[0] {
         Value::Str(s) => s.borrow().clone(),
-        _ => String::new(),
+        other => return Err(i.wrong_type_mut("stringp", other)),
     };
     let t = match args.get(1) {
         Some(v) => super::misc::lisp_time_to_us(i, v)?,
         None => super::misc::lisp_time_to_us(i, &Value::Nil)?,
     };
-    // %z needs the local offset — format in local time.
-    let secs = (t / 1_000_000) as i64;
-    let tm = super::misc::local_tm(secs);
-    let (y, mo, d) = (
-        tm.tm_year as i128 + 1900,
-        (tm.tm_mon + 1) as u64,
-        tm.tm_mday as u64,
-    );
-    let (h, mi, s) = (tm.tm_hour as u64, tm.tm_min as u64, tm.tm_sec as u64);
-    let mut out = String::new();
-    let mut ch = fmt.chars().peekable();
-    while let Some(c) = ch.next() {
-        if c == '%' {
-            match ch.next() {
-                Some('Y') => out.push_str(&format!("{}", y)),
-                Some('m') => out.push_str(&format!("{:02}", mo)),
-                Some('d') => out.push_str(&format!("{:02}", d)),
-                Some('e') => out.push_str(&format!("{}", d)),
-                Some('H') => out.push_str(&format!("{:02}", h)),
-                Some('M') => out.push_str(&format!("{:02}", mi)),
-                Some('S') => out.push_str(&format!("{:02}", s)),
-                Some('s') => out.push_str(&format!("{}", secs)),
-                Some('F') => out.push_str(&format!("{}-{:02}-{:02}", y, mo, d)),
-                Some('T') => out.push_str(&format!("{:02}:{:02}:{:02}", h, mi, s)),
-                Some('a') => out.push_str(
-                    ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
-                        [tm.tm_wday.clamp(0, 6) as usize],
-                ),
-                Some('A') => out.push_str(
-                    [
-                        "Sunday",
-                        "Monday",
-                        "Tuesday",
-                        "Wednesday",
-                        "Thursday",
-                        "Friday",
-                        "Saturday",
-                    ][tm.tm_wday.clamp(0, 6) as usize],
-                ),
-                Some('b') | Some('h') => out.push_str(
-                    [
-                        "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct",
-                        "Nov", "Dec",
-                    ][tm.tm_mon.clamp(0, 11) as usize],
-                ),
-                Some('B') => out.push_str(
-                    [
-                        "January",
-                        "February",
-                        "March",
-                        "April",
-                        "May",
-                        "June",
-                        "July",
-                        "August",
-                        "September",
-                        "October",
-                        "November",
-                        "December",
-                    ][tm.tm_mon.clamp(0, 11) as usize],
-                ),
-                Some('j') => out.push_str(&format!("{:03}", tm.tm_yday + 1)),
-                Some('w') => out.push_str(&format!("{}", tm.tm_wday)),
-                Some('u') => {
-                    out.push_str(&format!("{}", if tm.tm_wday == 0 { 7 } else { tm.tm_wday }))
-                }
-                Some('y') => out.push_str(&format!("{:02}", (tm.tm_year + 1900) % 100)),
-                Some('Z') => {
-                    let z = if tm.tm_zone.is_null() {
-                        String::new()
-                    } else {
-                        unsafe { std::ffi::CStr::from_ptr(tm.tm_zone as *const i8) }
-                            .to_string_lossy()
-                            .into_owned()
-                    };
-                    out.push_str(&z);
-                }
-                Some('z') => {
-                    let off = tm.tm_gmtoff;
-                    let sign = if off < 0 { '-' } else { '+' };
-                    let a = off.abs();
-                    out.push_str(&format!("{}{:02}{:02}", sign, a / 3600, (a % 3600) / 60));
-                }
-                Some('%') => out.push('%'),
-                Some(o) => {
-                    out.push('%');
-                    out.push(o);
-                }
-                None => out.push('%'),
+    let secs = t.div_euclid(1_000_000) as i64;
+    let nsecs = t.rem_euclid(1_000_000) * 1000;
+    // GNU (format-time-string FORMAT TIME ZONE): nil/`wall' = local,
+    // integer = fixed offset, string = TZ spec, `t' is treated as UTC.
+    let t_sym = i.intern("t");
+    let wall_sym = i.intern("wall");
+    let tm = match args.get(2) {
+        Some(Value::Int(off)) => {
+            let mut tm = super::misc::gmt_tm(secs + *off as i64);
+            tm.tm_gmtoff = *off as i64;
+            tm
+        }
+        Some(Value::Sym(s)) if *s == wall_sym => super::misc::local_tm(secs),
+        Some(Value::Sym(s)) if *s == t_sym => super::misc::gmt_tm(secs),
+        Some(Value::Str(z)) => {
+            let z = z.borrow().clone();
+            if z == "UTC" || z == "t" {
+                super::misc::gmt_tm(secs)
+            } else {
+                super::misc::tz_local_tm(secs, &z)
             }
-        } else {
+        }
+        Some(v) if v.truthy() => super::misc::gmt_tm(secs),
+        _ => super::misc::local_tm(secs),
+    };
+    let mut out = String::new();
+    let chars: Vec<char> = fmt.chars().collect();
+    let mut k = 0;
+    while k < chars.len() {
+        let c = chars[k];
+        if c != '%' {
             out.push(c);
+            k += 1;
+            continue;
+        }
+        // GNU passes flags/width (e.g. %-d, %_3a, %05Y, %::z) through to
+        // the underlying strftime.
+        let mut j = k + 1;
+        while j < chars.len() && matches!(chars[j], '-' | '_' | '0' | '^' | '#') {
+            j += 1;
+        }
+        while j < chars.len() && (chars[j].is_ascii_digit() || matches!(chars[j], '.' | ',' | ':')) {
+            j += 1;
+        }
+        let spec = chars.get(j).copied();
+        let spec_text: String = chars[k..=j.min(chars.len() - 1)].iter().collect();
+        k = j + 1;
+        match spec {
+            Some('N') => out.push_str(&format!("{:09}", nsecs)),
+            Some('s') => out.push_str(&format!("{}", secs)),
+            // macOS strftime derives %z from the process TZ, not the
+            // broken-down time — compute it from tm_gmtoff instead.
+            Some('z') => {
+                let off = tm.tm_gmtoff;
+                let sign = if off < 0 { '-' } else { '+' };
+                let a = off.abs();
+                out.push_str(&format!("{}{:02}{:02}", sign, a / 3600, (a % 3600) / 60));
+            }
+            Some(_) => out.push_str(&super::misc::strftime_spec(&spec_text, &tm)),
+            None => out.push('%'),
         }
     }
     let _ = i;
@@ -1522,8 +1525,10 @@ fn f_garbage_collect(i: &mut Interp, _args: Vec<Value>) -> EvalResult {
         item(i, "buffers", &[1064, 0]),
     ]))
 }
-fn f_memory_info(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    f_garbage_collect(i, args)
+fn f_memory_info(_i: &mut Interp, _args: Vec<Value>) -> EvalResult {
+    // GNU returns nil where the kernel gives no memory-info query
+    // interface (macOS, and thus our batch probes).
+    Ok(Value::Nil)
 }
 fn f_kill_emacs(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     i.quit_editor = true;
@@ -1631,45 +1636,7 @@ fn f_macroexp_parse_body(i: &mut Interp, args: Vec<Value>) -> EvalResult {
         Value::list(items[rest_start..].to_vec()),
     ))
 }
-fn f_macroexp_progn(_i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    match &args[0] {
-        Value::Cons(c) => {
-            let b = c.borrow();
-            if b.cdr.is_nil() {
-                return Ok(b.car.clone());
-            }
-        }
-        Value::Nil => return Ok(Value::Nil),
-        _ => {}
-    }
-    Ok(Value::cons(
-        Value::Sym(crate::lisp::sym::PROGN),
-        args[0].clone(),
-    ))
-}
-fn f_macroexp_let2(_i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    // (macroexp-let2 VAR SYM VALUE EXP) → (let ((SYM VALUE)) EXP)
-    let binding = Value::list(vec![args[1].clone(), args[2].clone()]);
-    Ok(Value::list(vec![
-        Value::Sym(sym::LET),
-        Value::list(vec![binding]),
-        args[3].clone(),
-    ]))
-}
-fn f_macroexp_let_star(_i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    Ok(Value::cons(
-        Value::Sym(sym::LET_STAR),
-        Value::cons(args[0].clone(), args[1].clone()),
-    ))
-}
-fn f_macroexp_if(_i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    Ok(Value::list(vec![
-        Value::Sym(sym::IF),
-        args[0].clone(),
-        args[1].clone(),
-        args[2].clone(),
-    ]))
-}
+
 fn f_byte_code_function_p(_i: &mut Interp, _args: Vec<Value>) -> EvalResult {
     Ok(Value::Nil)
 }

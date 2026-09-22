@@ -1025,13 +1025,7 @@ pub(crate) static SUBRS: &[Subr] = &[
         f_file_name_sans_extension,
         ""
     ),
-    S!(
-        "file-name-sans-directory",
-        1,
-        1,
-        f_file_name_nondirectory,
-        ""
-    ),
+
     S!(
         "file-name-base",
         1,
@@ -6445,39 +6439,7 @@ pub(crate) fn expand_file_name_str(i: &mut Interp, name: &str) -> String {
     }
     // $VAR expansion
     if s.contains('$') {
-        let mut out = String::new();
-        let mut cs = s.chars().peekable();
-        while let Some(c) = cs.next() {
-            if c == '$' {
-                let mut var = String::new();
-                if cs.peek() == Some(&'{') {
-                    cs.next();
-                    while let Some(&c2) = cs.peek() {
-                        if c2 == '}' {
-                            cs.next();
-                            break;
-                        }
-                        var.push(c2);
-                        cs.next();
-                    }
-                } else {
-                    while let Some(&c2) = cs.peek() {
-                        if c2.is_alphanumeric() || c2 == '_' {
-                            var.push(c2);
-                            cs.next();
-                        } else {
-                            break;
-                        }
-                    }
-                }
-                if let Ok(v) = std::env::var(&var) {
-                    out.push_str(&v);
-                }
-            } else {
-                out.push(c);
-            }
-        }
-        s = out;
+        s = substitute_env_vars(&s);
     }
     // absolute?
     if !s.starts_with('/') {
@@ -6833,17 +6795,19 @@ fn f_file_name_directory(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 }
 fn f_file_name_nondirectory(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let s = want_str(i, &a[0])?;
-    let trimmed = s.trim_end_matches('/');
-    match trimmed.rfind('/') {
-        Some(idx) => Ok(Value::string(&trimmed[idx + 1..])),
-        None => Ok(Value::string(trimmed)),
+    match s.rfind('/') {
+        Some(idx) => Ok(Value::string(&s[idx + 1..])),
+        None => Ok(Value::string(s)),
     }
 }
 fn f_file_name_extension(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let s = want_str(i, &a[0])?;
     let base = s.rsplit('/').next().unwrap_or(&s);
     match base.rfind('.') {
-        Some(idx) if idx > 0 => Ok(Value::string(&base[idx..])),
+        Some(idx) if idx > 0 => {
+            let keep_dot = a.get(1).map(|v| v.truthy()).unwrap_or(false);
+            Ok(Value::string(&base[idx + usize::from(!keep_dot)..]))
+        }
         _ => Ok(Value::Nil),
     }
 }
@@ -6896,20 +6860,26 @@ fn f_file_name_concat(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 fn f_file_relative_name(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let name_in = want_str(i, &a[0])?;
     let name = expand_file_name_str(i, &name_in);
-    let dir = match a.get(1) {
-        Some(Value::Str(d)) => d.borrow().clone(),
+    let dir_in = match a.get(1) {
+        Some(v) if v.truthy() => want_str(i, v)?,
         _ => default_directory(i),
     };
-    let dir = if dir.ends_with('/') {
-        dir
-    } else {
-        format!("{}/", dir)
-    };
-    if let Some(rel) = name.strip_prefix(&dir) {
-        Ok(Value::string(rel))
-    } else {
-        Ok(Value::string(name))
+    let dir = expand_file_name_str(i, &dir_in);
+    let dparts: Vec<&str> = dir.split('/').filter(|c| !c.is_empty()).collect();
+    let nparts: Vec<&str> = name.split('/').filter(|c| !c.is_empty()).collect();
+    let mut k = 0;
+    while k < dparts.len() && k < nparts.len() && dparts[k] == nparts[k] {
+        k += 1;
     }
+    let mut out = String::new();
+    for _ in k..dparts.len() {
+        out.push_str("../");
+    }
+    out.push_str(&nparts[k..].join("/"));
+    if out.is_empty() {
+        out.push('.');
+    }
+    Ok(Value::string(out))
 }
 fn f_abbreviate_file_name(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let name = want_str(i, &a[0])?;
@@ -6920,9 +6890,82 @@ fn f_abbreviate_file_name(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         Ok(Value::string(name))
     }
 }
+/// GNU env-var substitution in filenames: `$VAR' and `${VAR}' expand to the
+/// variable's value, `$$' becomes `$', and unset variables stay literal.
+fn substitute_env_vars(s: &str) -> String {
+    let mut out = String::new();
+    let mut cs = s.chars().peekable();
+    while let Some(c) = cs.next() {
+        if c != '$' {
+            out.push(c);
+            continue;
+        }
+        match cs.peek().copied() {
+            Some('$') => {
+                cs.next();
+                out.push('$');
+            }
+            Some('{') => {
+                cs.next();
+                let mut var = String::new();
+                let mut closed = false;
+                while let Some(&c2) = cs.peek() {
+                    cs.next();
+                    if c2 == '}' {
+                        closed = true;
+                        break;
+                    }
+                    var.push(c2);
+                }
+                if closed {
+                    match std::env::var(&var) {
+                        Ok(v) => out.push_str(&v),
+                        Err(_) => {
+                            out.push_str("${");
+                            out.push_str(&var);
+                            out.push('}');
+                        }
+                    }
+                } else {
+                    out.push_str("${");
+                    out.push_str(&var);
+                }
+            }
+            _ => {
+                let mut var = String::new();
+                while let Some(&c2) = cs.peek() {
+                    if c2.is_alphanumeric() || c2 == '_' {
+                        var.push(c2);
+                        cs.next();
+                    } else {
+                        break;
+                    }
+                }
+                if var.is_empty() {
+                    out.push('$');
+                } else {
+                    match std::env::var(&var) {
+                        Ok(v) => out.push_str(&v),
+                        Err(_) => {
+                            out.push('$');
+                            out.push_str(&var);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    out
+}
+
 fn f_substitute_in_file_name(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let s = want_str(i, &a[0])?;
-    Ok(Value::string(expand_file_name_str(i, &s)))
+    let out = substitute_env_vars(&s);
+    // A `//' after position 0 discards the text before it.
+    if let Some(idx) = out.match_indices("//").find(|(i, _)| *i > 0).map(|(i, _)| i) {
+        return Ok(Value::string(out[idx + 1..].to_string()));
+    }
+    Ok(Value::string(out))
 }
 
 fn f_directory_files(i: &mut Interp, a: Vec<Value>) -> EvalResult {
@@ -7523,13 +7566,10 @@ fn f_find_file_noselect(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     i.set_current_buffer(bid);
     let nm = i.intern("normal-mode");
     let rh = i.intern("run-hooks");
-    let q = i.intern("quote");
     let ffh = i.intern("find-file-hook");
     let r1 = i.apply(&Value::Sym(nm), vec![Value::t()]);
     let r2 = r1.and_then(|_| {
-        i.apply(&Value::Sym(rh), vec![
-            Value::list(vec![Value::Sym(q), Value::Sym(ffh)]),
-        ])
+        i.apply(&Value::Sym(rh), vec![Value::Sym(ffh)])
     });
     i.set_current_buffer(prev_buf);
     r2?;

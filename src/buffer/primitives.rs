@@ -2652,7 +2652,7 @@ fn f_char_after(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     if p < bb.begv || p >= bb.text_len() || p >= bb.text.len() {
         return Ok(Value::Nil);
     }
-    Ok(Value::Int(bb.text.char_at(p) as i128))
+    Ok(Value::Int(crate::lisp::value::lisp_char_code(bb.text.char_at(p))))
 }
 
 fn f_char_before(i: &mut Interp, a: Vec<Value>) -> EvalResult {
@@ -2666,7 +2666,7 @@ fn f_char_before(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     if p <= bb.begv || p > bb.text_len() || p > bb.text.len() {
         return Ok(Value::Nil);
     }
-    Ok(Value::Int(bb.text.char_at(p - 1) as i128))
+    Ok(Value::Int(crate::lisp::value::lisp_char_code(bb.text.char_at(p - 1))))
 }
 
 fn f_following_char(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
@@ -2677,7 +2677,7 @@ fn f_following_char(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
     if p >= bb.text_len() {
         return Ok(Value::Int(0));
     }
-    Ok(Value::Int(bb.text.char_at(p) as i128))
+    Ok(Value::Int(crate::lisp::value::lisp_char_code(bb.text.char_at(p))))
 }
 
 fn f_preceding_char(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
@@ -2687,7 +2687,7 @@ fn f_preceding_char(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
     if p <= bb.begv {
         return Ok(Value::Int(0));
     }
-    Ok(Value::Int(bb.text.char_at(p - 1) as i128))
+    Ok(Value::Int(crate::lisp::value::lisp_char_code(bb.text.char_at(p - 1))))
 }
 
 fn f_pos_bol(i: &mut Interp, a: Vec<Value>) -> EvalResult {

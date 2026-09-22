@@ -231,6 +231,38 @@ pub struct Marker {
     pub insertion_type: bool,
 }
 
+/// GNU's eight-bit chars (0x3FFF80..=0x3FFFFF) exceed Rust's char
+/// range, so inside strings they are proxied into plane-15 PUA:
+/// byte b (0x80..=0xFF) maps to U+F0000+b.  As `Value::Int` they keep
+/// their real GNU codes.
+pub const EIGHT_BIT_BASE: u32 = 0xF_0000;
+
+/// Map a GNU char code to a storable Rust char; eight-bit codes
+/// become PUA proxies.
+pub fn lisp_char(code: u32) -> Option<char> {
+    match code {
+        0x3FFF80..=0x3FFFFF => char::from_u32(EIGHT_BIT_BASE + (code & 0xFF)),
+        _ => char::from_u32(code),
+    }
+}
+
+/// If `c` is an eight-bit proxy char, return its byte value.
+pub fn eight_bit_byte(c: char) -> Option<u8> {
+    let u = c as u32;
+    (0xF0080..=0xF00FF)
+        .contains(&u)
+        .then(|| (u - EIGHT_BIT_BASE) as u8)
+}
+
+/// The GNU char code a string char stands for (proxies return their
+/// 0x3FFFxx code).
+pub fn lisp_char_code(c: char) -> i128 {
+    match eight_bit_byte(c) {
+        Some(b) => 0x3FFF00 + b as i128,
+        None => c as i128,
+    }
+}
+
 impl Value {
     pub fn is_nil(&self) -> bool {
         matches!(self, Value::Nil)

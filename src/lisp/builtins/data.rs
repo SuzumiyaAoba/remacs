@@ -1,6 +1,6 @@
 //! Type predicates and symbol-manipulation subrs.
 
-use super::{S, eq_values, equal_values, want_int, want_sym};
+use super::{S, eq_values, equal_values, want_sym};
 use crate::lisp::Interp;
 use crate::lisp::error::{EvalResult, Flow};
 use crate::lisp::obarray::sym;
@@ -1055,11 +1055,10 @@ fn f_function_put(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     i.put_prop(id, prop, args[2].clone());
     Ok(args[2].clone())
 }
-fn f_obarray_make(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    let n = match args.first() {
-        Some(v) => want_int(i, v)?.max(0) as usize,
-        None => 0,
-    };
+fn f_obarray_make(i: &mut Interp, _args: Vec<Value>) -> EvalResult {
+    // GNU's growable obarrays always start at size 4 regardless of the
+    // SIZE argument.
+    let n = 4usize;
     Ok(Value::Record(std::rc::Rc::new(std::cell::RefCell::new(
         vec![
             obarray_tag(i),

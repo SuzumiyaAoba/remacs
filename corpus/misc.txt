@@ -415,7 +415,6 @@
 (prin1-to-string [?\M-x])
 (prin1-to-string [tab])
 (keymap--get-keyelt [?\C-n] t)
-(command-error-default-function 'a 'b 'c)
 (detect-coding-string "abc")
 (detect-coding-region 1 2)
 (coding-system-list)
@@ -512,3 +511,4 @@
 (fit-window-to-buffer)
 (shrink-window-if-larger-than-buffer)
 (window-fixed-size-p (selected-window) 'width)
+(command-error-default-function 'a 'b 'c)

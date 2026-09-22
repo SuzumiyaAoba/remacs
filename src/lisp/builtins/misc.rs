@@ -857,24 +857,12 @@ pub(crate) static SUBRS: &[Subr] = &[
         ""
     ),
     S!("terminal-coding-system", 0, 1, f_terminal_coding_system, ""),
-    S!("keyboard-coding-system", 0, 1, f_terminal_coding_system, ""),
-    S!(
-        "file-name-coding-system",
-        0,
-        0,
-        f_terminal_coding_system,
-        ""
-    ),
-    S!(
-        "default-terminal-coding-system",
-        0,
-        0,
-        f_terminal_coding_system,
-        ""
-    ),
+    S!("keyboard-coding-system", 0, 1, f_keyboard_coding_system, ""),
+    // GNU 31: `file-name-coding-system' and `default-terminal-coding-system'
+    // exist only as variables, not functions.
     S!("encode-coding-string", 2, 4, f_encode_coding_string, ""),
     S!("decode-coding-string", 2, 4, f_decode_coding_string, ""),
-    S!("encode-coding-char", 1, 2, f_encode_coding_char, ""),
+    S!("encode-coding-char", 1, 3, f_encode_coding_char, ""),
     S!("decode-coding-region", 2, 4, f_decode_coding_region, ""),
     S!("encode-coding-region", 2, 4, f_encode_coding_region, ""),
     S!(
@@ -936,9 +924,9 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!("clear-face-cache", 0, 1, f_nil, ""),
     // ---------- windows ----------
     S!("minibuffer-selected-window", 0, 0, f_nil, ""),
-    S!("window-min-height", 0, 0, f_window_min_height, ""),
-    S!("window-min-width", 0, 0, f_window_min_width, ""),
-    S!("window-sizable", 1, 3, f_window_sizable, ""),
+    // GNU 31: `window-min-height'/`window-min-width' are Lisp functions in
+    // window.el (not loaded at -Q); the variables exist.
+    S!("window-sizable", 2, 5, f_window_sizable, ""),
     S!("window-fixed-size-p", 0, 2, f_windowp_nil, ""),
     S!("fit-window-to-buffer", 0, 6, f_nil, ""),
     S!("shrink-window-if-larger-than-buffer", 0, 1, f_nil, ""),
@@ -1122,7 +1110,7 @@ pub(crate) static SUBRS: &[Subr] = &[
         "List of hash algorithm names."
     ),
     S!("primitive-function-p", 1, 1, f_primitive_function_p, ""),
-    S!("setenv-internal", 2, 3, f_setenv, ""),
+    S!("setenv-internal", 4, 4, f_setenv_internal, ""),
     S!(
         "read--expression",
         0,
@@ -1153,7 +1141,7 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!("set-terminal-coding-system", 1, 2, f_set_terminal_coding_system, ""),
     S!("set-mouse-absolute-pixel-position", 2, 2, f_nil, ""),
     S!("tooltip-mode", 0, 1, f_tooltip_mode, ""),
-    S!("keymap-of", 1, 1, f_keymap_of, ""),
+    // `keymap-of' does not exist in GNU Emacs 31.
     // ---------- display/font/image stubs (no GUI) ----------
     S!("default-font-width", 0, 0, f_one, "Char cell width."),
     S!("default-font-height", 0, 0, f_one, "Char cell height."),
@@ -1197,7 +1185,7 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!("display-screens", 0, 1, f_display_screens, ""),
     S!("display-selections-p", 0, 1, f_nil, ""),
     // ---------- X stubs (no X) ----------
-    S!("gui-get-selection", 0, 2, f_nil, ""),
+    S!("gui-get-selection", 0, 2, f_gui_get_selection, ""),
     S!("gui-set-selection", 2, 2, f_arg1, ""),
     S!("x-begin-drag", 1, 4, f_x_begin_drag, ""),
     S!("x-display-backing-store", 0, 1, f_ns_display, ""),
@@ -1656,7 +1644,9 @@ fn f_func_arity(i: &mut Interp, args: Vec<Value>) -> EvalResult {
         Value::Lambda(l) => l.arity(),
         v => match list_arity(v) {
             Some(a) => a,
-            None => return Err(i.signal_data(sym::VOID_FUNCTION, vec![args[0].clone()])),
+            None => {
+                return Err(i.signal_data(sym::INVALID_FUNCTION, vec![args[0].clone()]));
+            }
         },
     };
     let (min, max) = match arity {
@@ -2597,20 +2587,6 @@ pub(crate) fn lisp_time_to_ps(i: &mut Interp, v: &Value) -> Result<i128, Flow> {
     }
 }
 
-/// GNU (hi lo us ps) timestamp from picoseconds since the epoch.
-pub(crate) fn ps_to_lisp_time(ps: i128) -> Value {
-    let secs = ps.div_euclid(1_000_000_000_000);
-    let rem = ps.rem_euclid(1_000_000_000_000);
-    let hi = secs.div_euclid(65536);
-    let lo = secs.rem_euclid(65536);
-    Value::list(vec![
-        Value::Int(hi as i128),
-        Value::Int(lo as i128),
-        Value::Int(rem / 1_000_000),
-        Value::Int(rem % 1_000_000),
-    ])
-}
-
 /// Minimal POSIX tm for `localtime_r` (macOS/Linux layout).
 #[repr(C)]
 pub(crate) struct Tm {
@@ -2629,12 +2605,64 @@ pub(crate) struct Tm {
 
 unsafe extern "C" {
     pub(crate) fn localtime_r(timep: *const i64, result: *mut Tm) -> *mut Tm;
+    pub(crate) fn gmtime_r(timep: *const i64, result: *mut Tm) -> *mut Tm;
+    fn tzset();
 }
 
 /// Local-time breakdown for a unix-second timestamp.
 pub(crate) fn local_tm(secs: i64) -> Tm {
     let mut tm = unsafe { std::mem::zeroed::<Tm>() };
     unsafe { localtime_r(&secs, &mut tm) };
+    tm
+}
+
+/// UTC breakdown for a unix-second timestamp.
+pub(crate) fn gmt_tm(secs: i64) -> Tm {
+    let mut tm = unsafe { std::mem::zeroed::<Tm>() };
+    unsafe { gmtime_r(&secs, &mut tm) };
+    tm
+}
+
+/// Run one `strftime` conversion against a broken-down time.  Returns the
+/// locale-formatted text (e.g. `%a` -> weekday abbrev, `%p` -> AM/PM).
+/// The C library's locale is initialized once from the environment, like
+/// GNU does at startup.
+pub(crate) fn strftime_spec(fmt: &str, tm: &Tm) -> String {
+    static INIT: std::sync::Once = std::sync::Once::new();
+    INIT.call_once(|| unsafe {
+        libc::setlocale(libc::LC_TIME, c"".as_ptr());
+    });
+    let mut cfmt = fmt.as_bytes().to_vec();
+    cfmt.push(0);
+    let mut buf = vec![0u8; 512];
+    // Our `Tm' mirrors the POSIX `struct tm' layout used by strftime.
+    let n = unsafe {
+        libc::strftime(
+            buf.as_mut_ptr() as *mut i8,
+            buf.len(),
+            cfmt.as_ptr() as *const i8,
+            tm as *const Tm as *const libc::tm,
+        )
+    };
+    String::from_utf8_lossy(&buf[..n]).into_owned()
+}
+
+/// Local-time breakdown under an explicit TZ spec (e.g. "Europe/Paris",
+/// "UTC"), restoring the process TZ afterwards.
+pub(crate) fn tz_local_tm(secs: i64, zone: &str) -> Tm {
+    let saved = std::env::var_os("TZ");
+    unsafe {
+        std::env::set_var("TZ", zone);
+        tzset();
+    }
+    let tm = local_tm(secs);
+    unsafe {
+        match saved {
+            Some(v) => std::env::set_var("TZ", v),
+            None => std::env::remove_var("TZ"),
+        }
+        tzset();
+    }
     tm
 }
 
@@ -2686,7 +2714,24 @@ fn f_decode_time(i: &mut Interp, args: Vec<Value>) -> EvalResult {
         None => lisp_time_to_us(i, &Value::Nil)?,
     };
     let secs = (t / 1_000_000) as i64;
-    let tm = local_tm(secs);
+    // GNU (decode-time TIME ZONE): nil/`wall' = local wall clock, t = UTC,
+    // integer = fixed seconds-east-of-UTC offset.
+    let t_sym = i.intern("t");
+    let (tm, zone) = match args.get(1) {
+        Some(Value::Int(off)) => (gmt_tm(secs + *off as i64), *off),
+        Some(Value::Sym(s)) if *s == t_sym => (gmt_tm(secs), 0),
+        Some(v) if v.truthy() && matches!(v, Value::Sym(_)) => {
+            let t = local_tm(secs);
+            let off = t.tm_gmtoff as i128;
+            (t, off)
+        }
+        Some(v) if v.truthy() => (gmt_tm(secs), 0),
+        _ => {
+            let t = local_tm(secs);
+            let off = t.tm_gmtoff as i128;
+            (t, off)
+        }
+    };
     Ok(Value::list(vec![
         Value::Int(tm.tm_sec as i128),
         Value::Int(tm.tm_min as i128),
@@ -2695,23 +2740,154 @@ fn f_decode_time(i: &mut Interp, args: Vec<Value>) -> EvalResult {
         Value::Int(tm.tm_mon as i128 + 1),
         Value::Int(tm.tm_year as i128 + 1900),
         Value::Int(tm.tm_wday as i128),
-        if tm.tm_isdst > 0 {
-            Value::t()
-        } else {
-            Value::Nil
-        },
-        Value::Int(tm.tm_gmtoff as i128),
+        Value::from_bool(tm.tm_isdst > 0),
+        Value::Int(zone),
     ]))
 }
 
-/// `time-add`/`time-subtract`: integer args give an integer result.
-fn time_arith(i: &mut Interp, a: &[Value], sub: bool) -> EvalResult {
-    if let (Value::Int(x), Value::Int(y)) = (&a[0], &a[1]) {
-        return Ok(Value::Int(if sub { x - y } else { x + y }));
+/// `current-time-list': GNU defaults it to t; when the variable is
+/// unbound (or bound non-nil) timestamps render in (HI LO US PS)
+/// list form rather than (TICKS . HZ).
+fn current_time_list(i: &mut Interp) -> bool {
+    let id = i.intern("current-time-list");
+    !i.bound_p(id) || i.symbol_value(id).truthy()
+}
+
+/// Decode a Lisp time value to GNU's (TICKS . HZ) pair, per
+/// decode_lisp_time in timefns.c (CFORM_TICKS_HZ):
+///   int N      -> (N . 1)
+///   float F    -> (F * 1e12 . 1e12)
+///   (T . HZ)   -> (T . HZ), HZ > 0 required
+///   (HI LO)    -> (HI*65536 + LO . 1)
+///   (HI LO US) / (HI LO . US)  -> (*1e6 . 1e6)
+///   (HI LO US PS ...)          -> (*1e12 . 1e12)
+fn decode_ticks_hz(i: &mut Interp, v: &Value) -> Result<(i128, i128), Flow> {
+    match v {
+        Value::Nil => {
+            let ps = lisp_time_to_ps(i, &Value::Nil)?;
+            Ok((ps, 1_000_000_000_000))
+        }
+        Value::Int(n) => Ok((*n, 1)),
+        Value::Float(f) => Ok(((*f * 1e12) as i128, 1_000_000_000_000)),
+        Value::Cons(_) => {
+            let mut elems: Vec<i128> = Vec::new();
+            let mut tail = v.clone();
+            let mut dotted: Option<i128> = None;
+            loop {
+                match &tail {
+                    Value::Cons(c) => {
+                        let (car, cdr) = {
+                            let b = c.borrow();
+                            (b.car.clone(), b.cdr.clone())
+                        };
+                        if let Value::Int(n) = car {
+                            elems.push(n);
+                        }
+                        tail = cdr;
+                    }
+                    Value::Int(n) => {
+                        dotted = Some(*n);
+                        break;
+                    }
+                    _ => break,
+                }
+                if elems.len() > 4 {
+                    break;
+                }
+            }
+            match (elems.as_slice(), dotted) {
+                // (TICKS . HZ)
+                ([t], Some(hz)) if hz > 0 => Ok((*t, hz)),
+                // (HI LO . US): dotted tail becomes the usec count.
+                ([a, b], Some(us)) => Ok(((*a * 65536 + *b) * 1_000_000 + us, 1_000_000)),
+                ([a, b], None) => Ok((*a * 65536 + *b, 1)),
+                ([a, b, c], _) => Ok(((*a * 65536 + *b) * 1_000_000 + *c, 1_000_000)),
+                ([a, b, c, d], _) => Ok((
+                    (*a * 65536 + *b) * 1_000_000_000_000 + *c * 1_000_000 + *d,
+                    1_000_000_000_000,
+                )),
+                _ => Err(i.error("Invalid time specification")),
+            }
+        }
+        _ => Err(i.error("Invalid time specification")),
     }
-    let x = lisp_time_to_ps(i, &a[0])?;
-    let y = lisp_time_to_ps(i, &a[1])?;
-    Ok(ps_to_lisp_time(if sub { x - y } else { x + y }))
+}
+
+fn gcd128(a: i128, b: i128) -> i128 {
+    let (mut a, mut b) = (a.abs(), b.abs());
+    while b != 0 {
+        let t = b;
+        b = a % b;
+        a = t;
+    }
+    a
+}
+
+/// GNU `ticks_hz_list4`: (HI LO US PS) from TICKS/HZ, dropping excess
+/// precision (floor arithmetic).
+fn ticks_hz_list4(ticks: i128, hz: i128) -> Value {
+    let ps = (ticks * 1_000_000_000_000).div_euclid(hz);
+    let secs = ps.div_euclid(1_000_000_000_000);
+    let rem = ps.rem_euclid(1_000_000_000_000);
+    Value::list(vec![
+        Value::Int(secs.div_euclid(65536)),
+        Value::Int(secs.rem_euclid(65536)),
+        Value::Int(rem / 1_000_000),
+        Value::Int(rem % 1_000_000),
+    ])
+}
+
+/// True for a (TICKS . HZ) cons — a cons whose cdr is not a cons.
+fn is_ticks_hz_form(v: &Value) -> bool {
+    match v {
+        Value::Cons(c) => !matches!(c.borrow().cdr, Value::Cons(_)),
+        _ => false,
+    }
+}
+
+/// GNU timefns.c `time_arith': decode both args to (TICKS . HZ), add or
+/// subtract ticks (normalizing via lcm when the frequencies differ, and
+/// never returning a resolution coarser than either input), then render:
+/// hz == 1 yields an integer; a (TICKS . HZ) input, `current-time-list'
+/// nil, or an hz that does not divide 1e12 yields (TICKS . HZ);
+/// otherwise the (HI LO US PS) list form.
+fn time_arith(i: &mut Interp, a: &[Value], sub: bool) -> EvalResult {
+    let (ta, ha) = decode_ticks_hz(i, &a[0])?;
+    let (tb, hb) = decode_ticks_hz(i, &a[1])?;
+    let (ticks, hz) = if ha == hb {
+        (if sub { ta - tb } else { ta + tb }, ha)
+    } else {
+        let g = gcd128(ha, hb);
+        let fa = ha / g;
+        let fb = hb / g;
+        let mut iticks = if sub { fb * ta - fa * tb } else { fb * ta + fa * tb };
+        let mut ihz = fa * hb;
+        let ig = gcd128(iticks, ihz);
+        if ig > 1 {
+            iticks /= ig;
+            ihz /= ig;
+            let hzmin = ha.min(hb);
+            if ihz < hzmin {
+                let rescale = hzmin.div_euclid(ihz) + i128::from(hzmin % ihz != 0);
+                iticks *= rescale;
+                ihz *= rescale;
+            }
+        }
+        (iticks, ihz)
+    };
+    if hz == 1 {
+        return Ok(Value::Int(ticks));
+    }
+    Ok(if !current_time_list(i)
+        || is_ticks_hz_form(&a[0])
+        || is_ticks_hz_form(&a[1])
+        || hz <= 0
+        || 1_000_000_000_000i128 % hz != 0
+    {
+        Value::cons(Value::Int(ticks), Value::Int(hz))
+    } else {
+        ticks_hz_list4(ticks, hz)
+    })
 }
 
 fn f_time_add(i: &mut Interp, args: Vec<Value>) -> EvalResult {
@@ -2719,6 +2895,20 @@ fn f_time_add(i: &mut Interp, args: Vec<Value>) -> EvalResult {
 }
 
 fn f_time_subtract(i: &mut Interp, args: Vec<Value>) -> EvalResult {
+    // GNU: (time-subtract X X) takes the BASE_EQ shortcut and returns
+    // zero in make_lisp_time form — (0 0 0 0) under current-time-list.
+    if super::eq_values(&args[0], &args[1]) {
+        return Ok(if current_time_list(i) {
+            Value::list(vec![
+                Value::Int(0),
+                Value::Int(0),
+                Value::Int(0),
+                Value::Int(0),
+            ])
+        } else {
+            Value::cons(Value::Int(0), Value::Int(1_000_000_000))
+        });
+    }
     time_arith(i, &args, true)
 }
 
@@ -2735,27 +2925,35 @@ fn f_time_equal_p(i: &mut Interp, args: Vec<Value>) -> EvalResult {
 }
 
 fn f_time_convert(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    // GNU timefns.c: internal representation is (TICKS . HZ); `t'
-    // yields ps ticks (hz = 10^12), an integer FORM yields
-    // (TICKS . FORM), `integer' truncates to whole seconds, `list'
-    // (the default) yields (HI LO US PS).
-    let ps = lisp_time_to_ps(i, &args[0])?;
+    // GNU timefns.c Ftime_convert: decode to (TICKS . HZ); FORM nil
+    // defers to `current-time-list' (t => `list'), `list' yields
+    // (HI LO US PS), `integer' yields whole seconds (floor), `t'
+    // yields (TICKS . HZ) preserving the input's own HZ, and a
+    // positive integer FORM yields (floor(TICKS*FORM/HZ) . FORM).
+    let (ticks, hz) = decode_ticks_hz(i, &args[0])?;
     match args.get(1) {
-        Some(Value::Int(hz)) if *hz > 0 => Ok(Value::cons(
-            Value::Int(ps * *hz / 1_000_000_000_000),
-            Value::Int(*hz),
+        None | Some(Value::Nil) => Ok(if current_time_list(i) {
+            ticks_hz_list4(ticks, hz)
+        } else {
+            Value::cons(Value::Int(ticks), Value::Int(hz))
+        }),
+        Some(Value::Int(form)) if *form > 0 => Ok(Value::cons(
+            Value::Int((ticks * *form).div_euclid(hz)),
+            Value::Int(*form),
         )),
         Some(Value::Sym(_)) => {
             let name = i.symbol_name(i.sym_id(&args[1]).unwrap_or(0));
             if name == "integer" {
-                Ok(Value::Int(ps / 1_000_000_000_000))
+                Ok(Value::Int(ticks.div_euclid(hz)))
             } else if name == "t" {
-                Ok(Value::cons(Value::Int(ps), Value::Int(1_000_000_000_000)))
+                Ok(Value::cons(Value::Int(ticks), Value::Int(hz)))
+            } else if name == "list" {
+                Ok(ticks_hz_list4(ticks, hz))
             } else {
-                Ok(ps_to_lisp_time(ps))
+                Err(i.wrong_type_mut("integerp", &args[1]))
             }
         }
-        _ => Ok(ps_to_lisp_time(ps)),
+        _ => Err(i.wrong_type_mut("integerp", &args[1])),
     }
 }
 
@@ -2767,7 +2965,7 @@ fn f_load_average(_i: &mut Interp, _a: Vec<Value>) -> EvalResult {
     let mut v = [0.0f64; 3];
     let n = unsafe { getloadavg(v.as_mut_ptr(), 3) };
     let items: Vec<Value> = (0..n.max(0) as usize)
-        .map(|k| Value::Float((v[k] * 100.0) as i64 as f64))
+        .map(|k| Value::Int((v[k] * 100.0) as i128))
         .collect();
     Ok(Value::list(items))
 }
@@ -2785,9 +2983,14 @@ fn f_invocation_dir(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
     Ok(Value::string(dir))
 }
 
-fn f_build_binding(_i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    // (VAR VALUE &optional BUFFER) — lexical binding object.
-    Ok(Value::cons(a[0].clone(), a[1].clone()))
+fn f_build_binding(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    // (VAR VALUE &optional BUFFER) — GNU's printed binding shape is
+    // (VAR (and VALUE VAR)).
+    let and = Value::Sym(i.intern("and"));
+    Ok(Value::list(vec![
+        a[0].clone(),
+        Value::list(vec![and, a[1].clone(), a[0].clone()]),
+    ]))
 }
 
 fn f_emacs_uptime(i: &mut Interp, a: Vec<Value>) -> EvalResult {
@@ -2795,13 +2998,21 @@ fn f_emacs_uptime(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let secs = start.elapsed().as_secs() as i128;
     if let Some(fmt) = a.get(0) {
         if fmt.truthy() {
-            // (emacs-uptime FORMAT) formats via format-time-string.
-            let fts = i.intern("format-time-string");
-            if i.fbound_p(fts) {
-                let t = us_to_lisp_time(start.elapsed().as_micros() as i128);
+            // GNU applies `format-seconds' to the uptime in seconds
+            // (autoloaded from time-date).
+            let fs = i.intern("format-seconds");
+            if !i.fbound_p(fs) {
+                let q = |v: Value| Value::list(vec![Value::Sym(sym::QUOTE), v]);
+                let req = Value::list(vec![
+                    Value::Sym(i.intern("require")),
+                    q(Value::Sym(i.intern("time-date"))),
+                ]);
+                let _ = i.eval(&req);
+            }
+            if i.fbound_p(fs) {
                 let q = |v: &Value| Value::list(vec![Value::Sym(sym::QUOTE), v.clone()]);
-                let args = Value::list(vec![q(fmt), q(&t)]);
-                return i.call_function(&Value::Sym(fts), &args, None);
+                let args = Value::list(vec![q(fmt), q(&Value::Int(secs))]);
+                return i.call_function(&Value::Sym(fs), &args, None);
             }
         }
     }
@@ -2848,6 +3059,10 @@ fn hash_hex(algo: &str, bytes: &[u8]) -> Result<String, Flow> {
         "sha256" => sha2::Sha256::digest(bytes).to_vec(),
         "sha384" => sha2::Sha384::digest(bytes).to_vec(),
         "sha512" => sha2::Sha512::digest(bytes).to_vec(),
+        "sha3-224" => sha3::Sha3_224::digest(bytes).to_vec(),
+        "sha3-256" => sha3::Sha3_256::digest(bytes).to_vec(),
+        "sha3-384" => sha3::Sha3_384::digest(bytes).to_vec(),
+        "sha3-512" => sha3::Sha3_512::digest(bytes).to_vec(),
         _ => return Err(Flow::Signal(Value::Nil, Value::Nil, false)),
     };
     Ok(out.iter().map(|b| format!("{:02x}", b)).collect())
@@ -2857,21 +3072,53 @@ fn secure_hash_str(i: &mut Interp, args: &[Value]) -> Result<String, Flow> {
     let algo_sym = i.sym_id(&args[0]).unwrap_or(u32::MAX);
     let algo = i.symbol_name(algo_sym);
     let obj = &args[1];
-    let bytes: Vec<u8> = match obj {
+    let mut bytes: Vec<u8> = match obj {
         Value::Str(s) => s.borrow().as_bytes().to_vec(),
-        _ => {
-            // Buffer text (current buffer or 4th arg).
+        Value::Buffer(b) => b.borrow().text.text().into_bytes(),
+        Value::Nil => {
             let b = i
                 .current_buffer_ref()
                 .ok_or_else(|| i.error("No current buffer"))?;
             let bb = b.borrow();
             bb.text.text().into_bytes()
         }
+        _ => {
+            return Err(i.signal_data(
+                sym::ERROR,
+                vec![
+                    Value::string("Invalid object argument"),
+                    obj.clone(),
+                ],
+            ));
+        }
     };
+    // GNU: (secure-hash ALGORITHM OBJECT &optional START END BINARY) —
+    // hash only OBJECT[START..END] (byte offsets); nil means default.
+    if let Some(st) = args.get(2) {
+        let start = match st {
+            Value::Nil => 0usize,
+            other => want_int(i, other)?.max(0) as usize,
+        };
+        let end = match args.get(3) {
+            Some(Value::Nil) | None => bytes.len(),
+            Some(v) => (want_int(i, v)?).max(0) as usize,
+        };
+        if start > bytes.len() || end > bytes.len() || start > end {
+            return Err(i.signal_data(
+                sym::ARGS_OUT_OF_RANGE,
+                vec![
+                    obj.clone(),
+                    Value::Int(start as i128),
+                    Value::Int(end as i128),
+                ],
+            ));
+        }
+        bytes = bytes[start..end].to_vec();
+    }
     hash_hex(&algo, &bytes).map_err(|_| {
         i.signal_data(
             sym::ERROR,
-            vec![Value::string(format!("Unknown hash algorithm {}", algo))],
+            vec![Value::string(format!("Invalid algorithm arg: {}", algo))],
         )
     })
 }
@@ -2886,13 +3133,40 @@ fn f_md5(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     f_secure_hash(i, a)
 }
 
+/// The byte sequence a Lisp string stands for: unibyte strings use
+/// their chars' values directly; multibyte strings encode each char
+/// as UTF-8 (eight-bit chars emit their raw byte).
+pub(crate) fn lisp_string_bytes(i: &Interp, v: &Value) -> Vec<u8> {
+    let unibyte = match v {
+        Value::Str(r) => i.is_unibyte_str(r),
+        _ => false,
+    };
+    let s = match v {
+        Value::Str(r) => r.borrow().clone(),
+        _ => String::new(),
+    };
+    if unibyte {
+        return s.chars().map(|c| c as u8).collect();
+    }
+    let mut out = Vec::new();
+    for c in s.chars() {
+        if let Some(b) = crate::lisp::value::eight_bit_byte(c) {
+            out.push(b);
+        } else {
+            let mut buf = [0u8; 4];
+            out.extend_from_slice(c.encode_utf8(&mut buf).as_bytes());
+        }
+    }
+    out
+}
+
 fn f_b64_encode_string(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     use base64::Engine;
-    let s = want_string(i, &args[0])?;
+    let _s = want_string(i, &args[0])?;
     let no_break = arg(&args, 1).truthy();
     // GNU pads unconditionally; NO-LINE-BREAK only suppresses the
     // 76-column line wrapping.
-    let enc = base64::engine::general_purpose::STANDARD.encode(s.as_bytes());
+    let enc = base64::engine::general_purpose::STANDARD.encode(lisp_string_bytes(i, &args[0]));
     let out = if no_break || enc.len() <= 76 {
         enc
     } else {
@@ -2912,14 +3186,19 @@ fn f_b64_decode_string(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     let s = want_string(i, &args[0])?;
     let cleaned: String = s.chars().filter(|c| !c.is_whitespace()).collect();
     match base64::engine::general_purpose::STANDARD.decode(cleaned.as_bytes()) {
-        Ok(bytes) => Ok(Value::string(String::from_utf8_lossy(&bytes).to_string())),
+        Ok(bytes) => {
+            let v = Value::string(bytes.iter().map(|&b| b as char).collect::<String>());
+            if let Value::Str(r) = &v {
+                i.mark_unibyte(r);
+            }
+            Ok(v)
+        }
         Err(_) => Err(i.signal_data(sym::ERROR, vec![Value::string("Invalid base64 data")])),
     }
 }
 
 fn f_buffer_hash(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    use std::collections::hash_map::DefaultHasher;
-    use std::hash::{Hash, Hasher};
+    // GNU: (buffer-hash BUFFER) = sha1 hex of the buffer's text.
     let b = match args.get(0) {
         Some(Value::Buffer(b)) => b.clone(),
         _ => i
@@ -2927,9 +3206,10 @@ fn f_buffer_hash(i: &mut Interp, args: Vec<Value>) -> EvalResult {
             .ok_or_else(|| i.error("No current buffer"))?,
     };
     let text = b.borrow().text.text();
-    let mut h = DefaultHasher::new();
-    text.hash(&mut h);
-    Ok(Value::Int(h.finish() as i128))
+    match hash_hex("sha1", text.as_bytes()) {
+        Ok(h) => Ok(Value::string(h)),
+        Err(_) => unreachable!(),
+    }
 }
 
 // ---------- files ----------
@@ -3162,6 +3442,34 @@ fn f_setenv(i: &mut Interp, args: Vec<Value>) -> EvalResult {
         Some(v) => Value::string(v),
         None => Value::Nil,
     })
+}
+
+/// GNU `setenv-internal': (ENV VARIABLE VALUE KEEP-EMPTY) — set
+/// VARIABLE to VALUE in the list ENV by side effect; the matching
+/// element ("VAR=..." or a bare "VAR") is replaced in place, else
+/// "VAR=VALUE" is prepended.  Returns the new list head.
+fn f_setenv_internal(i: &mut Interp, args: Vec<Value>) -> EvalResult {
+    let env = arg(&args, 0);
+    let var = want_string(i, &args[1])?;
+    let val = want_string(i, &args[2])?;
+    let new_entry = format!("{}={}", var, val);
+    let mut cur = env.clone();
+    while let Value::Cons(c) = &cur {
+        let cc = c.clone();
+        let hit = match &cc.borrow().car {
+            Value::Str(s) => {
+                let s = s.borrow();
+                *s == var || s.starts_with(&format!("{}=", var))
+            }
+            _ => false,
+        };
+        if hit {
+            cc.borrow_mut().car = Value::string(new_entry);
+            return Ok(env);
+        }
+        cur = cc.borrow().cdr.clone();
+    }
+    Ok(Value::cons(Value::string(new_entry), env))
 }
 
 fn f_user_login_name(_i: &mut Interp, _a: Vec<Value>) -> EvalResult {
@@ -4445,14 +4753,19 @@ fn f_bool_vector_count(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 }
 
 fn f_bool_vector_consec(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    // GNU: (bool-vector-count-consecutive A B I) — length of the run of
+    // B-valued elements starting at index I.
     let x = bool_vec_of(i, &a[0])?;
-    let Value::Int(at) = a[1] else {
-        return Err(i.wrong_type_mut("integerp", &a[1]));
+    let b = !a[1].is_nil();
+    let Value::Int(at) = a[2] else {
+        return Err(i.wrong_type_mut("wholenump", &a[2]));
     };
-    let b = !a[2].is_nil();
+    if at < 0 {
+        return Err(i.wrong_type_mut("wholenump", &a[2]));
+    }
     Ok(Value::Int(
         x.iter()
-            .skip(at.max(0) as usize)
+            .skip(at as usize)
             .take_while(|v| **v == b)
             .count() as i128,
     ))
@@ -4472,6 +4785,109 @@ fn f_eventp(_i: &mut Interp, a: Vec<Value>) -> EvalResult {
         _ => false,
     };
     Ok(Value::from_bool(ok))
+}
+
+/// GNU's canonical order for `event-modifiers' output:
+/// (meta control shift hyper super alt triple double down drag click).
+fn mod_list_rank(m: &str) -> usize {
+    [
+        "meta", "control", "shift", "hyper", "super", "alt", "triple", "double", "down", "drag",
+        "click",
+    ]
+    .iter()
+    .position(|x| *x == m)
+    .unwrap_or(usize::MAX)
+}
+
+/// Parse an event symbol NAME into (char-mods, click-mods, base-name):
+/// prefixes `A- C- H- M- S- s-' then `down- drag- double- triple-'.
+/// (`click-' is not a name prefix in GNU.)
+fn parse_event_symbol(name: &str) -> (Vec<String>, Vec<String>, String) {
+    let mut cmods = Vec::new();
+    let mut kmods = Vec::new();
+    let mut name = name.to_string();
+    loop {
+        let mut hit = false;
+        for (p, m) in [
+            ("A-", "alt"),
+            ("C-", "control"),
+            ("H-", "hyper"),
+            ("M-", "meta"),
+            ("S-", "shift"),
+            ("s-", "super"),
+        ] {
+            if let Some(r) = name.strip_prefix(p) {
+                cmods.push(m.to_string());
+                name = r.to_string();
+                hit = true;
+                break;
+            }
+        }
+        if !hit {
+            break;
+        }
+    }
+    loop {
+        let mut hit = false;
+        for p in ["down-", "drag-", "double-", "triple-"] {
+            if let Some(r) = name.strip_prefix(p) {
+                kmods.push(p.trim_end_matches('-').to_string());
+                name = r.to_string();
+                hit = true;
+                break;
+            }
+        }
+        if !hit {
+            break;
+        }
+    }
+    (cmods, kmods, name)
+}
+
+/// (base-name, modifier-symbols) for an event symbol name: the same
+/// data GNU caches as `event-symbol-elements'.  Modifiers come back
+/// in GNU's canonical list order.
+fn event_sym_elements(name: &str) -> (String, Vec<String>) {
+    let (cmods, kmods, base) = parse_event_symbol(name);
+    let mut mods = cmods;
+    mods.extend(kmods);
+    if base.starts_with("mouse-") && !mods.iter().any(|m| {
+        matches!(m.as_str(), "down" | "drag" | "double" | "triple" | "click")
+    }) {
+        mods.push("click".to_string());
+    }
+    mods.sort_by_key(|m| mod_list_rank(m));
+    mods.dedup();
+    (base, mods)
+}
+
+/// Is the parsed event (char mods, click mods, base) one of the
+/// standard events GNU predefines in `event-symbol-elements'?
+fn event_predefined(cmods: &[String], kmods: &[String], base: &str) -> bool {
+    let has = |m: &str, v: &[String]| v.iter().any(|x| x == m);
+    let only = |allowed: &[&str], v: &[String]| v.iter().all(|x| allowed.contains(&x.as_str()));
+    if let Some(n) = base.strip_prefix("mouse-").and_then(|d| d.parse::<u32>().ok()) {
+        if !(1..=7).contains(&n) {
+            return false;
+        }
+        if kmods.is_empty() {
+            // Bare click events allow meta (M-mouse-3), nothing else.
+            return only(&["meta"], cmods);
+        }
+        if only(&["down", "drag"], kmods) {
+            // down-/drag- allow control only.
+            return only(&["control"], cmods);
+        }
+        // double-click is standard only on button 1.
+        return n == 1 && cmods.is_empty() && only(&["double", "down"], kmods) && has("double", kmods);
+    }
+    if kmods.is_empty() && eventish(base) {
+        // Named keys: at most two of control/meta/shift in standard
+        // combos (C-M-left, S-left); hyper/super/alt are nonstandard.
+        return cmods.iter().all(|m| matches!(m.as_str(), "control" | "meta" | "shift"))
+            && !(has("shift", cmods) && cmods.len() > 1);
+    }
+    false
 }
 
 /// Modifier symbols of an event: (click mouse-1), (control ?a), or
@@ -4510,55 +4926,28 @@ fn event_mod_list(i: &Interp, ev: &Value) -> Vec<String> {
             }
         }
         Value::Sym(s) => {
-            let mut name = i.symbol_name(*s).to_string();
-            loop {
-                let mut hit = false;
-                for (p, m) in [
-                    ("A-", "alt"),
-                    ("C-", "control"),
-                    ("H-", "hyper"),
-                    ("M-", "meta"),
-                    ("S-", "shift"),
-                    ("s-", "super"),
-                ] {
-                    if let Some(r) = name.strip_prefix(p) {
-                        mods.push(m.to_string());
-                        name = r.to_string();
-                        hit = true;
-                        break;
-                    }
-                }
-                if !hit {
-                    break;
-                }
-            }
-            // Click-kind prefixes and bare mouse-N contribute kinds.
-            let pre_len = mods.len();
-            loop {
-                let mut hit = false;
-                for p in ["down-", "drag-", "double-", "triple-", "click-"] {
-                    if let Some(r) = name.strip_prefix(p) {
-                        mods.push(p.trim_end_matches('-').to_string());
-                        name = r.to_string();
-                        hit = true;
-                        break;
-                    }
-                }
-                if !hit {
-                    break;
-                }
-            }
-            if name.starts_with("mouse-") && mods.len() == pre_len {
-                mods.push("click".to_string());
-            }
+            mods.extend(event_sym_elements(&i.symbol_name(*s)).1);
         }
         _ => {}
     }
+    mods.sort_by_key(|m| mod_list_rank(m));
+    mods.dedup();
     mods
 }
 
 fn f_event_modifiers(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let mods = event_mod_list(i, &a[0]);
+    // GNU's parse caches `event-symbol-elements' on the symbol, which
+    // `event-basic-type' then reads back.
+    if let Value::Sym(s) = &a[0] {
+        let (base, ms) = event_sym_elements(&i.symbol_name(*s));
+        let el = Value::cons(
+            Value::Sym(i.intern(&base)),
+            Value::list(ms.iter().map(|m| Value::Sym(i.intern(m))).collect()),
+        );
+        let prop = i.intern("event-symbol-elements");
+        i.put_prop(*s, prop, el);
+    }
     Ok(Value::list(
         mods.iter().map(|m| Value::Sym(i.intern(m))).collect(),
     ))
@@ -4586,25 +4975,15 @@ fn event_basic(i: &mut Interp, ev: &Value) -> Value {
             })
         }
         Value::Sym(s) => {
-            let mut name = i.symbol_name(*s).to_string();
-            loop {
-                let mut hit = false;
-                for p in [
-                    "A-", "C-", "H-", "M-", "S-", "s-", "down-", "drag-", "double-", "triple-",
-                    "click-",
-                ] {
-                    if let Some(r) = name.strip_prefix(p) {
-                        name = r.to_string();
-                        hit = true;
-                        break;
-                    }
-                }
-                if !hit {
-                    break;
-                }
+            // GNU: `event-basic-type' is the car of the symbol's cached
+            // `event-symbol-elements' (set by `event-modifiers' et al.);
+            // only standard events are predefined.
+            let ese = i.intern("event-symbol-elements");
+            if let Value::Cons(c) = i.get_prop(*s, ese) {
+                return c.borrow().car.clone();
             }
-            let stripped = name != i.symbol_name(*s);
-            if stripped || eventish(&name) {
+            let (cmods, kmods, name) = parse_event_symbol(&i.symbol_name(*s));
+            if event_predefined(&cmods, &kmods, &name) {
                 Value::Sym(i.intern(&name))
             } else {
                 Value::Nil
@@ -4676,22 +5055,41 @@ fn f_event_convert_list(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     }
     let basic = event_basic(i, items.last().unwrap());
     let mut mods = 0i128;
+    let mut kmasks = 0i128;
     for m in &items[..items.len() - 1] {
-        if let Value::Sym(s) = m {
+        // Anything that isn't a modifier name is a second base.
+        let bit = if let Value::Sym(s) = m {
             match i.symbol_name(*s).as_str() {
-                "control" => mods |= CHAR_CTL,
-                "meta" => mods |= CHAR_META,
-                "shift" => mods |= CHAR_SHIFT,
-                "hyper" => mods |= CHAR_HYPER,
-                "super" => mods |= CHAR_SUPER,
-                "alt" => mods |= CHAR_ALT,
-                _ => {}
+                "control" => CHAR_CTL,
+                "meta" => CHAR_META,
+                "shift" => CHAR_SHIFT,
+                "hyper" => CHAR_HYPER,
+                "super" => CHAR_SUPER,
+                "alt" => CHAR_ALT,
+                // GNU's low mouse-event bits folded into char codes.
+                "down" => -2,
+                "drag" => -4,
+                "click" => -8,
+                "double" => -16,
+                "triple" => -32,
+                _ => 0,
             }
+        } else {
+            0
+        };
+        if bit == 0 {
+            return Err(i.error("Two bases given in one event"));
+        }
+        if bit < 0 {
+            kmasks |= -bit;
+        } else {
+            mods |= bit;
         }
     }
     Ok(match basic {
-        Value::Int(c) => Value::Int(apply_mods(c, mods)),
+        Value::Int(c) => Value::Int(apply_mods(c, mods) | kmasks & !0x20),
         Value::Sym(s) => {
+            // GNU name order: A- C- H- M- S- s- double- triple- down- drag- click-.
             let mut prefix = String::new();
             for (bit, name) in [
                 (CHAR_ALT, "A-"),
@@ -4702,6 +5100,17 @@ fn f_event_convert_list(i: &mut Interp, a: Vec<Value>) -> EvalResult {
                 (CHAR_SUPER, "s-"),
             ] {
                 if mods & bit != 0 {
+                    prefix.push_str(name);
+                }
+            }
+            for (bit, name) in [
+                (16, "double-"),
+                (32, "triple-"),
+                (2, "down-"),
+                (4, "drag-"),
+                (8, "click-"),
+            ] {
+                if kmasks & bit != 0 {
                     prefix.push_str(name);
                 }
             }
@@ -4814,13 +5223,129 @@ fn f_days_between(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     }
 }
 
+fn month_from_name(tok: &str) -> Option<i64> {
+    const MONTHS: [&str; 12] = [
+        "jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec",
+    ];
+    let mut t = tok.to_ascii_lowercase();
+    t.truncate(3);
+    MONTHS.iter().position(|m| t == *m).map(|p| p as i64 + 1)
+}
+
+/// Parse a numeric zone token like `+0900`, `-05:30` into offset seconds.
+fn parse_zone_offset(tok: &str) -> Option<i64> {
+    let (sign, rest) = match tok.as_bytes().first()? {
+        b'+' => (1i64, &tok[1..]),
+        b'-' => (-1i64, &tok[1..]),
+        _ => return None,
+    };
+    let digits: String = rest.chars().filter(|c| c.is_ascii_digit()).collect();
+    let n: i64 = digits.parse().ok()?;
+    if rest.contains(':') || digits.len() <= 2 {
+        Some(sign * (n * 3600 + 0))
+    } else {
+        Some(sign * ((n / 100) * 3600 + (n % 100) * 60))
+    }
+}
+
+/// Parse the date+time forms GNU `parse-time-string' accepts in practice:
+/// ISO `YYYY-MM-DD[T]HH:MM[:SS][Z|±ZZZZ]`, ctime `[Www] Mmm DD HH:MM:SS
+/// YYYY`, RFC-822 `DD Mmm YYYY HH:MM:SS ZZZZ`.  Returns the broken-down
+/// fields and an explicit zone offset in seconds when the string carried
+/// one.
+fn parse_date_hms(s: &str) -> Option<(i64, i64, i64, i64, i64, i64, Option<i64>)> {
+    let mut year = None;
+    let mut month = None;
+    let mut day = None;
+    let (mut hh, mut mm, mut ss) = (0i64, 0i64, 0i64);
+    let mut zone = None;
+    for raw in s.split(|c: char| c.is_whitespace() || c == ',') {
+        let mut tok = raw;
+        if tok.is_empty() {
+            continue;
+        }
+        // ISO date `YYYY-MM-DD' or `YYYY/MM/DD', possibly glued to the
+        // time via `T'.
+        if tok.len() >= 8
+            && tok[..4].chars().all(|c| c.is_ascii_digit())
+            && matches!(tok.as_bytes()[4], b'-' | b'/')
+        {
+            let (dtok, rest) = match tok.find('T') {
+                Some(p) => (&tok[..p], &tok[p + 1..]),
+                None => (tok, ""),
+            };
+            let dpart: Vec<&str> = dtok.split(['-', '/']).collect();
+            if dpart.len() >= 3 {
+                year = dpart[0].parse().ok();
+                month = dpart[1].parse().ok();
+                day = dpart[2].parse().ok();
+            }
+            if rest.is_empty() {
+                continue;
+            }
+            tok = rest;
+        }
+        // HH:MM[:SS][.frac][Z|±ZZZZ]
+        if tok.contains(':') && tok.as_bytes()[0].is_ascii_digit() {
+            let (hmain, zpart) = match tok.find(|c| c == '+' || c == 'Z' || c == 'z') {
+                Some(p) => (&tok[..p], Some(&tok[p..])),
+                None => (tok, None),
+            };
+            let p: Vec<&str> = hmain.split(':').collect();
+            if p.len() >= 2 && p[0].chars().all(|c| c.is_ascii_digit()) {
+                hh = p[0].parse().ok()?;
+                mm = p[1].parse().ok()?;
+                if p.len() >= 3 {
+                    ss = p[2]
+                        .split('.')
+                        .next()
+                        .unwrap_or("0")
+                        .parse()
+                        .unwrap_or(0);
+                }
+            }
+            if let Some(z) = zpart {
+                zone = Some(if z.eq_ignore_ascii_case("z") {
+                    0
+                } else {
+                    parse_zone_offset(z).unwrap_or(0)
+                });
+            }
+            continue;
+        }
+        if let Some(z) = parse_zone_offset(tok) {
+            zone = Some(z);
+            continue;
+        }
+        if matches!(tok, "Z" | "z" | "UT" | "UTC" | "GMT" | "ut" | "utc" | "gmt") {
+            zone = Some(0);
+            continue;
+        }
+        if let Some(m) = month_from_name(tok) {
+            month = Some(m);
+            continue;
+        }
+        if tok.chars().all(|c| c.is_ascii_digit()) {
+            match tok.len() {
+                4 => year = year.or(tok.parse().ok()),
+                1 | 2 => day = day.or(tok.parse().ok()),
+                _ => {}
+            }
+        }
+    }
+    Some((year?, month?, day?, hh, mm, ss, zone))
+}
+
 fn f_date_to_time(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let s = want_string(i, &a[0])?;
-    // Parse ISO date; RFC822 forms get a day-level approximation.
-    if let Some((y, m, d)) = parse_date_ymd(&s) {
-        let mut secs = days_from_civil(y as i128, m as i128, d as i128) * 86400;
-        // Local midnight, like encode-time.
-        secs -= local_tm(secs as i64).tm_gmtoff as i128;
+    if let Some((y, m, d, hh, mm, ss, zone)) = parse_date_hms(&s) {
+        let mut secs =
+            days_from_civil(y as i128, m as i128, d as i128) * 86400 + hh as i128 * 3600 + mm as i128 * 60 + ss as i128;
+        // Broken-down fields are local wall time unless a zone was given.
+        secs -= match zone {
+            Some(z) => z as i128,
+            None => local_tm(secs as i64).tm_gmtoff as i128,
+        };
         let hi = secs.div_euclid(65536);
         let lo = secs.rem_euclid(65536);
         return Ok(Value::list(vec![
@@ -4828,7 +5353,9 @@ fn f_date_to_time(i: &mut Interp, a: Vec<Value>) -> EvalResult {
             Value::Int(lo as i128),
         ]));
     }
-    Ok(Value::Nil)
+    // GNU signals (error "Invalid date: DATE") on unparseable input;
+    // `safe-date-to-time' relies on catching it.
+    Err(i.error(format!("Invalid date: {}", s)))
 }
 
 fn f_memory_limit(_i: &mut Interp, _a: Vec<Value>) -> EvalResult {
@@ -4984,277 +5511,551 @@ fn f_function_documentation(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 
 /// Coding systems defined by GNU Emacs batch startup.
 pub(crate) const CODING_SYSTEMS: &[&str] = &[
-    "adobe-standard-encoding",
-    "alternativnyj",
-    "ascii",
-    "big5",
-    "big5-hkscs",
     "binary",
-    "chinese-big5",
-    "chinese-big5-hkscs",
-    "chinese-gb18030",
-    "chinese-gbk",
-    "chinese-hz",
-    "chinese-iso-7bit",
-    "chinese-iso-8bit",
-    "cn-big5",
-    "cn-big5-hkscs",
-    "cn-gb",
-    "cn-gb-2312",
-    "compound-text",
-    "compound-text-with-extensions",
-    "cp038",
-    "cp1047",
-    "cp1125",
-    "cp1250",
-    "cp1251",
-    "cp1252",
-    "cp1253",
-    "cp1254",
-    "cp1255",
-    "cp1256",
-    "cp1257",
-    "cp1258",
-    "cp256",
-    "cp273",
-    "cp274",
-    "cp275",
-    "cp277",
-    "cp278",
-    "cp280",
-    "cp281",
-    "cp284",
-    "cp285",
-    "cp290",
-    "cp297",
-    "cp437",
-    "cp65001",
-    "cp737",
-    "cp775",
-    "cp850",
-    "cp851",
-    "cp852",
-    "cp855",
-    "cp857",
-    "cp858",
-    "cp860",
-    "cp861",
-    "cp862",
-    "cp863",
-    "cp865",
-    "cp866",
-    "cp866u",
-    "cp869",
-    "cp874",
-    "cp878",
-    "cp932",
-    "cp936",
-    "cp949",
-    "cp950",
-    "ctext",
-    "ctext-no-compositions",
-    "ctext-with-extensions",
-    "cyrillic-alternativnyj",
-    "cyrillic-iso-8bit",
-    "cyrillic-koi8",
-    "devanagari",
-    "ebcdic-be",
-    "ebcdic-br",
-    "ebcdic-cp-dk",
-    "ebcdic-cp-es",
-    "ebcdic-cp-fi",
-    "ebcdic-cp-fr",
-    "ebcdic-cp-gb",
-    "ebcdic-cp-it",
-    "ebcdic-cp-no",
-    "ebcdic-cp-se",
-    "ebcdic-int",
-    "ebcdic-int1",
-    "ebcdic-jp-e",
-    "ebcdic-jp-kana",
-    "ebcdic-uk",
-    "ebcdic-us",
-    "emacs-mule",
-    "euc-china",
-    "euc-cn",
-    "euc-japan",
-    "euc-japan-1990",
-    "euc-jis-2004",
-    "euc-jisx0213",
-    "euc-jp",
-    "euc-korea",
-    "euc-kr",
-    "euc-taiwan",
-    "euc-tw",
-    "eucjp-ms",
-    "gb18030",
-    "gb2312",
-    "gbk",
-    "georgian-academy",
-    "georgian-ps",
-    "greek-iso-8bit",
-    "hebrew-iso-8bit",
-    "hp-roman8",
-    "hz",
-    "hz-gb-2312",
-    "ibm038",
-    "ibm1047",
-    "ibm256",
-    "ibm273",
-    "ibm274",
-    "ibm275",
-    "ibm277",
-    "ibm278",
-    "ibm280",
-    "ibm281",
-    "ibm284",
-    "ibm285",
-    "ibm290",
-    "ibm297",
-    "ibm437",
-    "ibm775",
-    "ibm850",
-    "ibm851",
-    "ibm852",
-    "ibm855",
-    "ibm857",
-    "ibm860",
-    "ibm861",
-    "ibm862",
-    "ibm863",
-    "ibm865",
-    "ibm869",
-    "ibm874",
-    "in-is13194-devanagari",
-    "iso-2022-7bit",
-    "iso-2022-7bit-lock",
-    "iso-2022-7bit-lock-ss2",
-    "iso-2022-7bit-ss2",
-    "iso-2022-8bit-ss2",
-    "iso-2022-cjk",
-    "iso-2022-cn",
-    "iso-2022-cn-ext",
-    "iso-2022-int-1",
-    "iso-2022-jp",
-    "iso-2022-jp-1978-irv",
-    "iso-2022-jp-2",
-    "iso-2022-jp-2004",
-    "iso-2022-jp-3",
-    "iso-2022-kr",
-    "iso-8859-1",
-    "iso-8859-10",
-    "iso-8859-11",
-    "iso-8859-13",
-    "iso-8859-14",
-    "iso-8859-15",
-    "iso-8859-16",
-    "iso-8859-2",
-    "iso-8859-3",
-    "iso-8859-4",
-    "iso-8859-5",
-    "iso-8859-6",
-    "iso-8859-7",
-    "iso-8859-8",
-    "iso-8859-8-e",
-    "iso-8859-8-i",
-    "iso-8859-9",
-    "iso-latin-1",
-    "iso-latin-10",
-    "iso-latin-2",
-    "iso-latin-3",
-    "iso-latin-4",
-    "iso-latin-5",
-    "iso-latin-6",
-    "iso-latin-7",
-    "iso-latin-8",
-    "iso-latin-9",
-    "iso-safe",
-    "japanese-cp932",
-    "japanese-iso-7bit-1978-irv",
-    "japanese-iso-8bit",
-    "japanese-shift-jis",
-    "japanese-shift-jis-2004",
-    "junet",
-    "koi8",
-    "koi8-r",
-    "koi8-t",
-    "koi8-u",
-    "korean-cp949",
-    "korean-iso-7bit-lock",
-    "korean-iso-8bit",
-    "ks_c_5601-1987",
-    "lao",
-    "latin-0",
-    "latin-1",
-    "latin-10",
-    "latin-2",
-    "latin-3",
-    "latin-4",
-    "latin-5",
-    "latin-6",
-    "latin-7",
-    "latin-8",
-    "latin-9",
-    "mac-roman",
-    "macintosh",
-    "mik",
-    "mule-utf-8",
-    "next",
     "no-conversion",
-    "no-conversion-multibyte",
-    "old-jis",
-    "prefer-utf-8",
-    "pt154",
-    "raw-text",
-    "roman8",
-    "ruscii",
-    "shift_jis",
-    "shift_jis-2004",
-    "sjis",
-    "tcvn",
-    "tcvn-5712",
-    "th-tis620",
-    "thai-tis620",
-    "tibetan",
-    "tibetan-iso-8bit",
-    "tis-620",
-    "tis620",
     "undecided",
-    "us-ascii",
-    "utf-16",
-    "utf-16-be",
-    "utf-16-le",
-    "utf-16be",
-    "utf-16be-with-signature",
-    "utf-16le",
-    "utf-16le-with-signature",
-    "utf-7",
-    "utf-7-imap",
+    "prefer-utf-8",
+    "raw-text",
+    "no-conversion-multibyte",
+    "latin-1",
+    "iso-8859-1",
+    "iso-latin-1",
+    "emacs-mule",
+    "cp65001",
+    "mule-utf-8",
     "utf-8",
+    "utf-8-with-signature",
     "utf-8-auto",
     "utf-8-emacs",
-    "utf-8-hfs",
-    "utf-8-nfd",
-    "utf-8-with-signature",
-    "vietnamese-tcvn",
-    "vietnamese-viqr",
+    "utf-16le",
+    "utf-16be",
+    "utf-16-le",
+    "utf-16le-with-signature",
+    "utf-16-be",
+    "utf-16be-with-signature",
+    "utf-16",
+    "iso-2022-7bit",
+    "iso-2022-7bit-ss2",
+    "iso-2022-int-1",
+    "iso-2022-7bit-lock",
+    "iso-2022-cjk",
+    "iso-2022-7bit-lock-ss2",
+    "iso-2022-8bit-ss2",
+    "ctext",
+    "x-ctext",
+    "compound-text",
+    "ctext-no-compositions",
+    "ctext-with-extensions",
+    "x-ctext-with-extensions",
+    "compound-text-with-extensions",
+    "ascii",
+    "iso-safe",
+    "us-ascii",
+    "utf-7",
+    "utf-7-imap",
+    "chinese-iso-7bit",
+    "iso-2022-cn",
+    "iso-2022-cn-ext",
+    "gb2312",
+    "cn-gb",
+    "euc-cn",
+    "euc-china",
+    "cn-gb-2312",
+    "chinese-iso-8bit",
+    "hz",
+    "hz-gb-2312",
+    "chinese-hz",
+    "cp950",
+    "cn-big5",
+    "big5",
+    "chinese-big5",
+    "cn-big5-hkscs",
+    "big5-hkscs",
+    "chinese-big5-hkscs",
+    "euc-taiwan",
+    "euc-tw",
+    "windows-936",
+    "cp936",
+    "gbk",
+    "chinese-gbk",
+    "gb18030",
+    "chinese-gb18030",
+    "iso-8859-5",
+    "cyrillic-iso-8bit",
+    "cp878",
+    "koi8",
+    "koi8-r",
+    "cyrillic-koi8",
+    "koi8-u",
+    "alternativnyj",
+    "cyrillic-alternativnyj",
+    "cp866",
+    "koi8-t",
+    "cp1251",
+    "windows-1251",
+    "cp866u",
+    "ruscii",
+    "cp1125",
+    "ibm855",
+    "cp855",
+    "mik",
+    "pt154",
+    "devanagari",
+    "in-is13194-devanagari",
+    "ebcdic-us",
+    "ebcdic-uk",
+    "cp1047",
+    "ibm1047",
+    "cp038",
+    "ebcdic-int",
+    "ibm038",
+    "latin-2",
+    "iso-8859-2",
+    "iso-latin-2",
+    "latin-3",
+    "iso-8859-3",
+    "iso-latin-3",
+    "latin-4",
+    "iso-8859-4",
+    "iso-latin-4",
+    "latin-5",
+    "iso-8859-9",
+    "iso-latin-5",
+    "latin-6",
+    "iso-8859-10",
+    "iso-latin-6",
+    "latin-7",
+    "iso-8859-13",
+    "iso-latin-7",
+    "latin-8",
+    "iso-8859-14",
+    "iso-latin-8",
+    "latin-0",
+    "latin-9",
+    "iso-8859-15",
+    "iso-latin-9",
+    "cp1250",
+    "windows-1250",
+    "cp1252",
+    "windows-1252",
+    "cp1254",
+    "windows-1254",
+    "cp1257",
+    "windows-1257",
+    "cp256",
+    "ebcdic-int1",
+    "ibm256",
+    "cp273",
+    "ibm273",
+    "cp274",
+    "ebcdic-be",
+    "ibm274",
+    "cp275",
+    "ebcdic-br",
+    "ibm275",
+    "cp277",
+    "ebcdic-cp-no",
+    "ebcdic-cp-dk",
+    "ibm277",
+    "cp278",
+    "ebcdic-cp-se",
+    "ebcdic-cp-fi",
+    "ibm278",
+    "cp280",
+    "ebcdic-cp-it",
+    "ibm280",
+    "cp284",
+    "ebcdic-cp-es",
+    "ibm284",
+    "cp285",
+    "ebcdic-cp-gb",
+    "ibm285",
+    "cp297",
+    "ebcdic-cp-fr",
+    "ibm297",
+    "ibm775",
+    "cp775",
+    "ibm850",
+    "cp850",
+    "ibm852",
+    "cp852",
+    "ibm857",
+    "cp857",
+    "cp858",
+    "ibm860",
+    "cp860",
+    "ibm861",
+    "cp861",
+    "ibm863",
+    "cp863",
+    "ibm865",
+    "cp865",
+    "ibm437",
+    "cp437",
+    "macintosh",
+    "mac-roman",
+    "next",
+    "roman8",
+    "hp-roman8",
+    "adobe-standard-encoding",
+    "latin-10",
+    "iso-8859-16",
+    "iso-latin-10",
+    "iso-8859-7",
+    "greek-iso-8bit",
+    "cp1253",
+    "windows-1253",
+    "cp737",
+    "ibm851",
+    "cp851",
+    "ibm869",
+    "cp869",
+    "iso-8859-8-i",
+    "iso-8859-8-e",
+    "iso-8859-8",
+    "hebrew-iso-8bit",
+    "cp1255",
+    "windows-1255",
+    "ibm862",
+    "cp862",
+    "junet",
+    "iso-2022-jp",
+    "iso-2022-jp-2",
+    "sjis",
+    "shift_jis",
+    "japanese-shift-jis",
+    "cp932",
+    "japanese-cp932",
+    "old-jis",
+    "iso-2022-jp-1978-irv",
+    "japanese-iso-7bit-1978-irv",
+    "euc-jp",
+    "euc-japan",
+    "euc-japan-1990",
+    "japanese-iso-8bit",
+    "eucjp-ms",
+    "iso-2022-jp-3",
+    "iso-2022-jp-2004",
+    "euc-jisx0213",
+    "euc-jis-2004",
+    "shift_jis-2004",
+    "japanese-shift-jis-2004",
+    "cp281",
+    "ebcdic-jp-e",
+    "ibm281",
+    "cp290",
+    "ebcdic-jp-kana",
+    "ibm290",
+    "ks_c_5601-1987",
+    "euc-korea",
+    "euc-kr",
+    "korean-iso-8bit",
+    "korean-iso-7bit-lock",
+    "iso-2022-kr",
+    "cp949",
+    "korean-cp949",
+    "lao",
+    "tis-620",
+    "tis620",
+    "th-tis620",
+    "thai-tis620",
+    "ibm874",
+    "cp874",
+    "iso-8859-11",
+    "tibetan",
+    "tibetan-iso-8bit",
+    "viscii",
     "vietnamese-viscii",
+    "tcvn-5712",
+    "tcvn",
+    "vietnamese-tcvn",
+    "vscii",
     "vietnamese-vscii",
     "viqr",
-    "viscii",
-    "vscii",
-    "windows-1250",
-    "windows-1251",
-    "windows-1252",
-    "windows-1253",
-    "windows-1254",
-    "windows-1255",
-    "windows-1256",
-    "windows-1257",
+    "vietnamese-viqr",
+    "cp1258",
     "windows-1258",
-    "windows-936",
-    "x-ctext",
-    "x-ctext-with-extensions",
+    "iso-8859-6",
+    "cp1256",
+    "windows-1256",
+    "georgian-ps",
+    "georgian-academy",
+    "utf-8-nfd",
+    "utf-8-hfs",
+];
+
+pub(crate) const CODING_ALIASES: &[(&str, &[&str])] = &[
+    ("binary", &["no-conversion", "binary"]),
+    ("no-conversion", &["no-conversion", "binary"]),
+    ("undecided", &["undecided"]),
+    ("prefer-utf-8", &["prefer-utf-8"]),
+    ("raw-text", &["raw-text"]),
+    ("no-conversion-multibyte", &["no-conversion-multibyte"]),
+    ("latin-1", &["iso-latin-1", "iso-8859-1", "latin-1"]),
+    ("iso-8859-1", &["iso-latin-1", "iso-8859-1", "latin-1"]),
+    ("iso-latin-1", &["iso-latin-1", "iso-8859-1", "latin-1"]),
+    ("emacs-mule", &["emacs-mule"]),
+    ("cp65001", &["utf-8", "mule-utf-8", "cp65001"]),
+    ("mule-utf-8", &["utf-8", "mule-utf-8", "cp65001"]),
+    ("utf-8", &["utf-8", "mule-utf-8", "cp65001"]),
+    ("utf-8-with-signature", &["utf-8-with-signature"]),
+    ("utf-8-auto", &["utf-8-auto"]),
+    ("utf-8-emacs", &["utf-8-emacs"]),
+    ("utf-16le", &["utf-16le"]),
+    ("utf-16be", &["utf-16be"]),
+    ("utf-16-le", &["utf-16le-with-signature", "utf-16-le"]),
+    ("utf-16le-with-signature", &["utf-16le-with-signature", "utf-16-le"]),
+    ("utf-16-be", &["utf-16be-with-signature", "utf-16-be"]),
+    ("utf-16be-with-signature", &["utf-16be-with-signature", "utf-16-be"]),
+    ("utf-16", &["utf-16"]),
+    ("iso-2022-7bit", &["iso-2022-7bit"]),
+    ("iso-2022-7bit-ss2", &["iso-2022-7bit-ss2"]),
+    ("iso-2022-int-1", &["iso-2022-7bit-lock", "iso-2022-int-1"]),
+    ("iso-2022-7bit-lock", &["iso-2022-7bit-lock", "iso-2022-int-1"]),
+    ("iso-2022-cjk", &["iso-2022-7bit-lock-ss2", "iso-2022-cjk"]),
+    ("iso-2022-7bit-lock-ss2", &["iso-2022-7bit-lock-ss2", "iso-2022-cjk"]),
+    ("iso-2022-8bit-ss2", &["iso-2022-8bit-ss2"]),
+    ("ctext", &["compound-text", "x-ctext", "ctext"]),
+    ("x-ctext", &["compound-text", "x-ctext", "ctext"]),
+    ("compound-text", &["compound-text", "x-ctext", "ctext"]),
+    ("ctext-no-compositions", &["ctext-no-compositions"]),
+    ("ctext-with-extensions", &["compound-text-with-extensions", "x-ctext-with-extensions", "ctext-with-extensions"]),
+    ("x-ctext-with-extensions", &["compound-text-with-extensions", "x-ctext-with-extensions", "ctext-with-extensions"]),
+    ("compound-text-with-extensions", &["compound-text-with-extensions", "x-ctext-with-extensions", "ctext-with-extensions"]),
+    ("ascii", &["us-ascii", "iso-safe", "ascii"]),
+    ("iso-safe", &["us-ascii", "iso-safe", "ascii"]),
+    ("us-ascii", &["us-ascii", "iso-safe", "ascii"]),
+    ("utf-7", &["utf-7"]),
+    ("utf-7-imap", &["utf-7-imap"]),
+    ("chinese-iso-7bit", &["iso-2022-cn", "chinese-iso-7bit"]),
+    ("iso-2022-cn", &["iso-2022-cn", "chinese-iso-7bit"]),
+    ("iso-2022-cn-ext", &["iso-2022-cn-ext"]),
+    ("gb2312", &["chinese-iso-8bit", "cn-gb-2312", "euc-china", "euc-cn", "cn-gb", "gb2312"]),
+    ("cn-gb", &["chinese-iso-8bit", "cn-gb-2312", "euc-china", "euc-cn", "cn-gb", "gb2312"]),
+    ("euc-cn", &["chinese-iso-8bit", "cn-gb-2312", "euc-china", "euc-cn", "cn-gb", "gb2312"]),
+    ("euc-china", &["chinese-iso-8bit", "cn-gb-2312", "euc-china", "euc-cn", "cn-gb", "gb2312"]),
+    ("cn-gb-2312", &["chinese-iso-8bit", "cn-gb-2312", "euc-china", "euc-cn", "cn-gb", "gb2312"]),
+    ("chinese-iso-8bit", &["chinese-iso-8bit", "cn-gb-2312", "euc-china", "euc-cn", "cn-gb", "gb2312"]),
+    ("hz", &["chinese-hz", "hz-gb-2312", "hz"]),
+    ("hz-gb-2312", &["chinese-hz", "hz-gb-2312", "hz"]),
+    ("chinese-hz", &["chinese-hz", "hz-gb-2312", "hz"]),
+    ("cp950", &["chinese-big5", "big5", "cn-big5", "cp950"]),
+    ("cn-big5", &["chinese-big5", "big5", "cn-big5", "cp950"]),
+    ("big5", &["chinese-big5", "big5", "cn-big5", "cp950"]),
+    ("chinese-big5", &["chinese-big5", "big5", "cn-big5", "cp950"]),
+    ("cn-big5-hkscs", &["chinese-big5-hkscs", "big5-hkscs", "cn-big5-hkscs"]),
+    ("big5-hkscs", &["chinese-big5-hkscs", "big5-hkscs", "cn-big5-hkscs"]),
+    ("chinese-big5-hkscs", &["chinese-big5-hkscs", "big5-hkscs", "cn-big5-hkscs"]),
+    ("euc-taiwan", &["euc-tw", "euc-taiwan"]),
+    ("euc-tw", &["euc-tw", "euc-taiwan"]),
+    ("windows-936", &["chinese-gbk", "gbk", "cp936", "windows-936"]),
+    ("cp936", &["chinese-gbk", "gbk", "cp936", "windows-936"]),
+    ("gbk", &["chinese-gbk", "gbk", "cp936", "windows-936"]),
+    ("chinese-gbk", &["chinese-gbk", "gbk", "cp936", "windows-936"]),
+    ("gb18030", &["chinese-gb18030", "gb18030"]),
+    ("chinese-gb18030", &["chinese-gb18030", "gb18030"]),
+    ("iso-8859-5", &["cyrillic-iso-8bit", "iso-8859-5"]),
+    ("cyrillic-iso-8bit", &["cyrillic-iso-8bit", "iso-8859-5"]),
+    ("cp878", &["cyrillic-koi8", "koi8-r", "koi8", "cp878"]),
+    ("koi8", &["cyrillic-koi8", "koi8-r", "koi8", "cp878"]),
+    ("koi8-r", &["cyrillic-koi8", "koi8-r", "koi8", "cp878"]),
+    ("cyrillic-koi8", &["cyrillic-koi8", "koi8-r", "koi8", "cp878"]),
+    ("koi8-u", &["koi8-u"]),
+    ("alternativnyj", &["cyrillic-alternativnyj", "alternativnyj"]),
+    ("cyrillic-alternativnyj", &["cyrillic-alternativnyj", "alternativnyj"]),
+    ("cp866", &["cp866"]),
+    ("koi8-t", &["koi8-t"]),
+    ("cp1251", &["windows-1251", "cp1251"]),
+    ("windows-1251", &["windows-1251", "cp1251"]),
+    ("cp866u", &["cp1125", "ruscii", "cp866u"]),
+    ("ruscii", &["cp1125", "ruscii", "cp866u"]),
+    ("cp1125", &["cp1125", "ruscii", "cp866u"]),
+    ("ibm855", &["cp855", "ibm855"]),
+    ("cp855", &["cp855", "ibm855"]),
+    ("mik", &["mik"]),
+    ("pt154", &["pt154"]),
+    ("devanagari", &["in-is13194-devanagari", "devanagari"]),
+    ("in-is13194-devanagari", &["in-is13194-devanagari", "devanagari"]),
+    ("ebcdic-us", &["ebcdic-us"]),
+    ("ebcdic-uk", &["ebcdic-uk"]),
+    ("cp1047", &["ibm1047", "cp1047"]),
+    ("ibm1047", &["ibm1047", "cp1047"]),
+    ("cp038", &["ibm038", "ebcdic-int", "cp038"]),
+    ("ebcdic-int", &["ibm038", "ebcdic-int", "cp038"]),
+    ("ibm038", &["ibm038", "ebcdic-int", "cp038"]),
+    ("latin-2", &["iso-latin-2", "iso-8859-2", "latin-2"]),
+    ("iso-8859-2", &["iso-latin-2", "iso-8859-2", "latin-2"]),
+    ("iso-latin-2", &["iso-latin-2", "iso-8859-2", "latin-2"]),
+    ("latin-3", &["iso-latin-3", "iso-8859-3", "latin-3"]),
+    ("iso-8859-3", &["iso-latin-3", "iso-8859-3", "latin-3"]),
+    ("iso-latin-3", &["iso-latin-3", "iso-8859-3", "latin-3"]),
+    ("latin-4", &["iso-latin-4", "iso-8859-4", "latin-4"]),
+    ("iso-8859-4", &["iso-latin-4", "iso-8859-4", "latin-4"]),
+    ("iso-latin-4", &["iso-latin-4", "iso-8859-4", "latin-4"]),
+    ("latin-5", &["iso-latin-5", "iso-8859-9", "latin-5"]),
+    ("iso-8859-9", &["iso-latin-5", "iso-8859-9", "latin-5"]),
+    ("iso-latin-5", &["iso-latin-5", "iso-8859-9", "latin-5"]),
+    ("latin-6", &["iso-latin-6", "iso-8859-10", "latin-6"]),
+    ("iso-8859-10", &["iso-latin-6", "iso-8859-10", "latin-6"]),
+    ("iso-latin-6", &["iso-latin-6", "iso-8859-10", "latin-6"]),
+    ("latin-7", &["iso-latin-7", "iso-8859-13", "latin-7"]),
+    ("iso-8859-13", &["iso-latin-7", "iso-8859-13", "latin-7"]),
+    ("iso-latin-7", &["iso-latin-7", "iso-8859-13", "latin-7"]),
+    ("latin-8", &["iso-latin-8", "iso-8859-14", "latin-8"]),
+    ("iso-8859-14", &["iso-latin-8", "iso-8859-14", "latin-8"]),
+    ("iso-latin-8", &["iso-latin-8", "iso-8859-14", "latin-8"]),
+    ("latin-0", &["iso-latin-9", "iso-8859-15", "latin-9", "latin-0"]),
+    ("latin-9", &["iso-latin-9", "iso-8859-15", "latin-9", "latin-0"]),
+    ("iso-8859-15", &["iso-latin-9", "iso-8859-15", "latin-9", "latin-0"]),
+    ("iso-latin-9", &["iso-latin-9", "iso-8859-15", "latin-9", "latin-0"]),
+    ("cp1250", &["windows-1250", "cp1250"]),
+    ("windows-1250", &["windows-1250", "cp1250"]),
+    ("cp1252", &["windows-1252", "cp1252"]),
+    ("windows-1252", &["windows-1252", "cp1252"]),
+    ("cp1254", &["windows-1254", "cp1254"]),
+    ("windows-1254", &["windows-1254", "cp1254"]),
+    ("cp1257", &["windows-1257", "cp1257"]),
+    ("windows-1257", &["windows-1257", "cp1257"]),
+    ("cp256", &["ibm256", "ebcdic-int1", "cp256"]),
+    ("ebcdic-int1", &["ibm256", "ebcdic-int1", "cp256"]),
+    ("ibm256", &["ibm256", "ebcdic-int1", "cp256"]),
+    ("cp273", &["ibm273", "cp273"]),
+    ("ibm273", &["ibm273", "cp273"]),
+    ("cp274", &["ibm274", "ebcdic-be", "cp274"]),
+    ("ebcdic-be", &["ibm274", "ebcdic-be", "cp274"]),
+    ("ibm274", &["ibm274", "ebcdic-be", "cp274"]),
+    ("cp275", &["ibm275", "ebcdic-br", "cp275"]),
+    ("ebcdic-br", &["ibm275", "ebcdic-br", "cp275"]),
+    ("ibm275", &["ibm275", "ebcdic-br", "cp275"]),
+    ("cp277", &["ibm277", "ebcdic-cp-dk", "ebcdic-cp-no", "cp277"]),
+    ("ebcdic-cp-no", &["ibm277", "ebcdic-cp-dk", "ebcdic-cp-no", "cp277"]),
+    ("ebcdic-cp-dk", &["ibm277", "ebcdic-cp-dk", "ebcdic-cp-no", "cp277"]),
+    ("ibm277", &["ibm277", "ebcdic-cp-dk", "ebcdic-cp-no", "cp277"]),
+    ("cp278", &["ibm278", "ebcdic-cp-fi", "ebcdic-cp-se", "cp278"]),
+    ("ebcdic-cp-se", &["ibm278", "ebcdic-cp-fi", "ebcdic-cp-se", "cp278"]),
+    ("ebcdic-cp-fi", &["ibm278", "ebcdic-cp-fi", "ebcdic-cp-se", "cp278"]),
+    ("ibm278", &["ibm278", "ebcdic-cp-fi", "ebcdic-cp-se", "cp278"]),
+    ("cp280", &["ibm280", "ebcdic-cp-it", "cp280"]),
+    ("ebcdic-cp-it", &["ibm280", "ebcdic-cp-it", "cp280"]),
+    ("ibm280", &["ibm280", "ebcdic-cp-it", "cp280"]),
+    ("cp284", &["ibm284", "ebcdic-cp-es", "cp284"]),
+    ("ebcdic-cp-es", &["ibm284", "ebcdic-cp-es", "cp284"]),
+    ("ibm284", &["ibm284", "ebcdic-cp-es", "cp284"]),
+    ("cp285", &["ibm285", "ebcdic-cp-gb", "cp285"]),
+    ("ebcdic-cp-gb", &["ibm285", "ebcdic-cp-gb", "cp285"]),
+    ("ibm285", &["ibm285", "ebcdic-cp-gb", "cp285"]),
+    ("cp297", &["ibm297", "ebcdic-cp-fr", "cp297"]),
+    ("ebcdic-cp-fr", &["ibm297", "ebcdic-cp-fr", "cp297"]),
+    ("ibm297", &["ibm297", "ebcdic-cp-fr", "cp297"]),
+    ("ibm775", &["cp775", "ibm775"]),
+    ("cp775", &["cp775", "ibm775"]),
+    ("ibm850", &["cp850", "ibm850"]),
+    ("cp850", &["cp850", "ibm850"]),
+    ("ibm852", &["cp852", "ibm852"]),
+    ("cp852", &["cp852", "ibm852"]),
+    ("ibm857", &["cp857", "ibm857"]),
+    ("cp857", &["cp857", "ibm857"]),
+    ("cp858", &["cp858"]),
+    ("ibm860", &["cp860", "ibm860"]),
+    ("cp860", &["cp860", "ibm860"]),
+    ("ibm861", &["cp861", "ibm861"]),
+    ("cp861", &["cp861", "ibm861"]),
+    ("ibm863", &["cp863", "ibm863"]),
+    ("cp863", &["cp863", "ibm863"]),
+    ("ibm865", &["cp865", "ibm865"]),
+    ("cp865", &["cp865", "ibm865"]),
+    ("ibm437", &["cp437", "ibm437"]),
+    ("cp437", &["cp437", "ibm437"]),
+    ("macintosh", &["mac-roman", "macintosh"]),
+    ("mac-roman", &["mac-roman", "macintosh"]),
+    ("next", &["next"]),
+    ("roman8", &["hp-roman8", "roman8"]),
+    ("hp-roman8", &["hp-roman8", "roman8"]),
+    ("adobe-standard-encoding", &["adobe-standard-encoding"]),
+    ("latin-10", &["iso-latin-10", "iso-8859-16", "latin-10"]),
+    ("iso-8859-16", &["iso-latin-10", "iso-8859-16", "latin-10"]),
+    ("iso-latin-10", &["iso-latin-10", "iso-8859-16", "latin-10"]),
+    ("iso-8859-7", &["greek-iso-8bit", "iso-8859-7"]),
+    ("greek-iso-8bit", &["greek-iso-8bit", "iso-8859-7"]),
+    ("cp1253", &["windows-1253", "cp1253"]),
+    ("windows-1253", &["windows-1253", "cp1253"]),
+    ("cp737", &["cp737"]),
+    ("ibm851", &["cp851", "ibm851"]),
+    ("cp851", &["cp851", "ibm851"]),
+    ("ibm869", &["cp869", "ibm869"]),
+    ("cp869", &["cp869", "ibm869"]),
+    ("iso-8859-8-i", &["hebrew-iso-8bit", "iso-8859-8", "iso-8859-8-e", "iso-8859-8-i"]),
+    ("iso-8859-8-e", &["hebrew-iso-8bit", "iso-8859-8", "iso-8859-8-e", "iso-8859-8-i"]),
+    ("iso-8859-8", &["hebrew-iso-8bit", "iso-8859-8", "iso-8859-8-e", "iso-8859-8-i"]),
+    ("hebrew-iso-8bit", &["hebrew-iso-8bit", "iso-8859-8", "iso-8859-8-e", "iso-8859-8-i"]),
+    ("cp1255", &["windows-1255", "cp1255"]),
+    ("windows-1255", &["windows-1255", "cp1255"]),
+    ("ibm862", &["cp862", "ibm862"]),
+    ("cp862", &["cp862", "ibm862"]),
+    ("junet", &["iso-2022-jp", "junet"]),
+    ("iso-2022-jp", &["iso-2022-jp", "junet"]),
+    ("iso-2022-jp-2", &["iso-2022-jp-2"]),
+    ("sjis", &["japanese-shift-jis", "shift_jis", "sjis"]),
+    ("shift_jis", &["japanese-shift-jis", "shift_jis", "sjis"]),
+    ("japanese-shift-jis", &["japanese-shift-jis", "shift_jis", "sjis"]),
+    ("cp932", &["japanese-cp932", "cp932"]),
+    ("japanese-cp932", &["japanese-cp932", "cp932"]),
+    ("old-jis", &["japanese-iso-7bit-1978-irv", "iso-2022-jp-1978-irv", "old-jis"]),
+    ("iso-2022-jp-1978-irv", &["japanese-iso-7bit-1978-irv", "iso-2022-jp-1978-irv", "old-jis"]),
+    ("japanese-iso-7bit-1978-irv", &["japanese-iso-7bit-1978-irv", "iso-2022-jp-1978-irv", "old-jis"]),
+    ("euc-jp", &["japanese-iso-8bit", "euc-japan-1990", "euc-japan", "euc-jp"]),
+    ("euc-japan", &["japanese-iso-8bit", "euc-japan-1990", "euc-japan", "euc-jp"]),
+    ("euc-japan-1990", &["japanese-iso-8bit", "euc-japan-1990", "euc-japan", "euc-jp"]),
+    ("japanese-iso-8bit", &["japanese-iso-8bit", "euc-japan-1990", "euc-japan", "euc-jp"]),
+    ("eucjp-ms", &["eucjp-ms"]),
+    ("iso-2022-jp-3", &["iso-2022-jp-2004", "iso-2022-jp-3"]),
+    ("iso-2022-jp-2004", &["iso-2022-jp-2004", "iso-2022-jp-3"]),
+    ("euc-jisx0213", &["euc-jis-2004", "euc-jisx0213"]),
+    ("euc-jis-2004", &["euc-jis-2004", "euc-jisx0213"]),
+    ("shift_jis-2004", &["japanese-shift-jis-2004", "shift_jis-2004"]),
+    ("japanese-shift-jis-2004", &["japanese-shift-jis-2004", "shift_jis-2004"]),
+    ("cp281", &["ibm281", "ebcdic-jp-e", "cp281"]),
+    ("ebcdic-jp-e", &["ibm281", "ebcdic-jp-e", "cp281"]),
+    ("ibm281", &["ibm281", "ebcdic-jp-e", "cp281"]),
+    ("cp290", &["ibm290", "ebcdic-jp-kana", "cp290"]),
+    ("ebcdic-jp-kana", &["ibm290", "ebcdic-jp-kana", "cp290"]),
+    ("ibm290", &["ibm290", "ebcdic-jp-kana", "cp290"]),
+    ("ks_c_5601-1987", &["korean-iso-8bit", "euc-kr", "euc-korea", "ks_c_5601-1987"]),
+    ("euc-korea", &["korean-iso-8bit", "euc-kr", "euc-korea", "ks_c_5601-1987"]),
+    ("euc-kr", &["korean-iso-8bit", "euc-kr", "euc-korea", "ks_c_5601-1987"]),
+    ("korean-iso-8bit", &["korean-iso-8bit", "euc-kr", "euc-korea", "ks_c_5601-1987"]),
+    ("korean-iso-7bit-lock", &["iso-2022-kr", "korean-iso-7bit-lock"]),
+    ("iso-2022-kr", &["iso-2022-kr", "korean-iso-7bit-lock"]),
+    ("cp949", &["korean-cp949", "cp949"]),
+    ("korean-cp949", &["korean-cp949", "cp949"]),
+    ("lao", &["lao"]),
+    ("tis-620", &["thai-tis620", "th-tis620", "tis620", "tis-620"]),
+    ("tis620", &["thai-tis620", "th-tis620", "tis620", "tis-620"]),
+    ("th-tis620", &["thai-tis620", "th-tis620", "tis620", "tis-620"]),
+    ("thai-tis620", &["thai-tis620", "th-tis620", "tis620", "tis-620"]),
+    ("ibm874", &["cp874", "ibm874"]),
+    ("cp874", &["cp874", "ibm874"]),
+    ("iso-8859-11", &["iso-8859-11"]),
+    ("tibetan", &["tibetan-iso-8bit", "tibetan"]),
+    ("tibetan-iso-8bit", &["tibetan-iso-8bit", "tibetan"]),
+    ("viscii", &["vietnamese-viscii", "viscii"]),
+    ("vietnamese-viscii", &["vietnamese-viscii", "viscii"]),
+    ("tcvn-5712", &["vietnamese-vscii", "vscii", "vietnamese-tcvn", "tcvn", "tcvn-5712"]),
+    ("tcvn", &["vietnamese-vscii", "vscii", "vietnamese-tcvn", "tcvn", "tcvn-5712"]),
+    ("vietnamese-tcvn", &["vietnamese-vscii", "vscii", "vietnamese-tcvn", "tcvn", "tcvn-5712"]),
+    ("vscii", &["vietnamese-vscii", "vscii", "vietnamese-tcvn", "tcvn", "tcvn-5712"]),
+    ("vietnamese-vscii", &["vietnamese-vscii", "vscii", "vietnamese-tcvn", "tcvn", "tcvn-5712"]),
+    ("viqr", &["vietnamese-viqr", "viqr"]),
+    ("vietnamese-viqr", &["vietnamese-viqr", "viqr"]),
+    ("cp1258", &["windows-1258", "cp1258"]),
+    ("windows-1258", &["windows-1258", "cp1258"]),
+    ("iso-8859-6", &["iso-8859-6"]),
+    ("cp1256", &["windows-1256", "cp1256"]),
+    ("windows-1256", &["windows-1256", "cp1256"]),
+    ("georgian-ps", &["georgian-ps"]),
+    ("georgian-academy", &["georgian-academy"]),
+    ("utf-8-nfd", &["utf-8-hfs", "utf-8-nfd"]),
+    ("utf-8-hfs", &["utf-8-hfs", "utf-8-nfd"]),
 ];
 
 pub(crate) fn coding_known(i: &Interp, v: &Value) -> Option<String> {
@@ -5300,23 +6101,67 @@ fn f_check_coding_system(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     }
 }
 
-fn f_coding_system_eol_type(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let n = match &a[0] {
+/// Strip a `-unix'/`-dos'/`-mac' EOL suffix, returning the base name
+/// and variant index (0/1/2); None when there's no suffix.
+fn eol_split(name: &str) -> (&str, Option<usize>) {
+    for (suf, idx) in [("-unix", 0usize), ("-dos", 1), ("-mac", 2)] {
+        if let Some(b) = name.strip_suffix(suf) {
+            return (b, Some(idx));
+        }
+    }
+    (name, None)
+}
+
+/// The alias group (canonical name first) for a known coding-system
+/// name, resolving EOL variants to their base first.
+fn coding_alias_group<'a>(i: &'a Interp, v: &Value) -> Option<&'static [&'static str]> {
+    let name = match v {
         Value::Sym(s) => i.symbol_name(*s).to_string(),
-        _ => return Ok(Value::Int(0)),
+        _ => return None,
     };
-    Ok(Value::Int(if n.ends_with("-dos") {
-        1
-    } else if n.ends_with("-mac") {
-        2
+    let (base, _) = eol_split(&name);
+    if let Some(&(_, group)) = CODING_ALIASES
+        .iter()
+        .find(|&&(n, _)| n == name || n == base)
+    {
+        return Some(group);
+    }
+    // Custom-defined systems alias to themselves.
+    if i.extra_coding_systems.iter().any(|n| *n == name) {
+        Some(&[])
     } else {
-        0
-    }))
+        None
+    }
+}
+
+fn f_coding_system_eol_type(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let name = match &a[0] {
+        Value::Sym(s) => i.symbol_name(*s).to_string(),
+        // GNU: non-symbol → `wrong-type-argument coding-system-p'.
+        other => return Err(i.wrong_type_mut("coding-system-p", other)),
+    };
+    if coding_known(i, &a[0]).is_none() {
+        let s = i.intern("coding-system-error");
+        return Err(i.signal_data(s, vec![a[0].clone()]));
+    }
+    let (base, idx) = eol_split(&name);
+    if let Some(idx) = idx {
+        return Ok(Value::Int(idx as i128));
+    }
+    // Base system: vector of the three EOL variants.
+    Ok(Value::Vec(Rc::new(RefCell::new(
+        ["unix", "dos", "mac"]
+            .iter()
+            .map(|s| Value::Sym(i.intern(&format!("{base}-{s}"))))
+            .collect(),
+    ))))
 }
 
 fn f_coding_system_aliases(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    match coding_known(i, &a[0]) {
-        Some(n) => Ok(Value::list(vec![Value::Sym(i.intern(&n))])),
+    match coding_alias_group(i, &a[0]) {
+        Some(group) => Ok(Value::list(
+            group.iter().map(|n| Value::Sym(i.intern(n))).collect(),
+        )),
         None => Ok(Value::Nil),
     }
 }
@@ -5336,22 +6181,46 @@ fn f_coding_system_base(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 }
 
 fn f_coding_system_plist(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    match coding_known(i, &a[0]) {
-        Some(n) => Ok(Value::list(vec![
-            Value::Sym(i.intern(":name")),
-            Value::Sym(i.intern(&n)),
-            Value::Sym(i.intern(":coding-type")),
-            Value::Sym(i.intern(if n.starts_with("utf-8") {
-                "utf-8"
-            } else {
-                "charset"
-            })),
-        ])),
-        None => {
-            let s = i.intern("coding-system-error");
-            Err(i.signal_data(s, vec![a[0].clone()]))
+    // GNU stores per-coding-system metadata on the coding-system
+    // symbol's plist; we mirror it via the generated
+    // `remacs-coding-system-plists' alist keyed by the queried name.
+    let Some(_) = coding_known(i, &a[0]) else {
+        let s = i.intern("coding-system-error");
+        return Err(i.signal_data(s, vec![a[0].clone()]));
+    };
+    let table_id = i.intern("remacs-coding-system-plists");
+    if let Value::Cons(_) = i.symbol_value(table_id) {
+        if let Some(entry) = assq(&i.symbol_value(table_id), &a[0]) {
+            if let Value::Cons(c) = entry {
+                return Ok(c.borrow().cdr.clone());
+            }
         }
     }
+    Ok(Value::Nil)
+}
+
+/// `(assq KEY ALIST)' on raw Values.
+fn assq(alist: &Value, key: &Value) -> Option<Value> {
+    let mut cur = alist.clone();
+    while let Value::Cons(c) = cur {
+        let (car, cdr) = {
+            let b = c.borrow();
+            (b.car.clone(), b.cdr.clone())
+        };
+        if let Value::Cons(pair) = &car {
+            let (k, _) = {
+                let b = pair.borrow();
+                (b.car.clone(), b.cdr.clone())
+            };
+            if let (Value::Sym(a), Value::Sym(b)) = (&k, key) {
+                if a == b {
+                    return Some(car.clone());
+                }
+            }
+        }
+        cur = cdr;
+    }
+    None
 }
 
 fn f_coding_system_get(i: &mut Interp, a: Vec<Value>) -> EvalResult {
@@ -5377,8 +6246,7 @@ fn f_coding_system_put(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 }
 
 fn f_terminal_coding_system(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    // GNU tty default: utf-8 with unix EOL.  Optional TERMINAL is
-    // terminal-live-p-checked.
+    // Optional TERMINAL is terminal-live-p-checked.
     if let Some(v) = a.first() {
         match v {
             Value::Nil => {}
@@ -5386,7 +6254,18 @@ fn f_terminal_coding_system(i: &mut Interp, a: Vec<Value>) -> EvalResult {
             other => return Err(i.wrong_type_mut("terminal-live-p", other)),
         }
     }
-    Ok(Value::Sym(i.intern("utf-8-unix")))
+    Ok(i.terminal_coding.clone())
+}
+
+fn f_keyboard_coding_system(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    if let Some(v) = a.first() {
+        match v {
+            Value::Nil => {}
+            w if crate::editor::is_terminal(i, w) => {}
+            other => return Err(i.wrong_type_mut("terminal-live-p", other)),
+        }
+    }
+    Ok(i.keyboard_coding.clone())
 }
 
 /// `window-at-side-p' — valid-window check (GNU's plain "N is not a
@@ -5451,32 +6330,63 @@ fn f_set_input_meta_mode(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 /// coding-system-name check (coding-system-error), then the optional
 /// TERMINAL (terminal-live-p).
 fn set_coding_system(i: &mut Interp, a: Vec<Value>, ret_name: bool) -> EvalResult {
-    let name = match &a[0] {
-        Value::Sym(_) => match coding_known(i, &a[0]) {
-            Some(n) => n,
-            None => {
+    match &a[0] {
+        // GNU: nil resets — terminal to nil, keyboard to no-conversion;
+        // both return nil.
+        Value::Nil => {
+            if ret_name {
+                i.keyboard_coding = Value::Sym(i.intern("no-conversion"));
+            } else {
+                i.terminal_coding = Value::Nil;
+            }
+            return Ok(Value::Nil);
+        }
+        Value::Sym(_) => {
+            if coding_known(i, &a[0]).is_none() {
                 let s = i.intern("coding-system-error");
                 return Err(i.signal_data(s, vec![a[0].clone()]));
             }
-        },
+        }
         other => return Err(i.wrong_type_mut("symbolp", other)),
-    };
+    }
     match arg(&a, 1) {
         Value::Nil => {}
         w if crate::editor::is_terminal(i, &w) => {}
         other => return Err(i.wrong_type_mut("terminal-live-p", &other)),
     }
     if !ret_name {
+        // `set-terminal-coding-system' stores the given name and
+        // returns nil.
+        i.terminal_coding = a[0].clone();
         return Ok(Value::Nil);
     }
-    // GNU's keyboard coding gains the platform EOL suffix.
-    let bare = name
+    // GNU's keyboard coding canonicalizes aliases and gains the
+    // platform EOL suffix.
+    let name = match &a[0] {
+        Value::Sym(s) => i.symbol_name(*s).to_string(),
+        _ => unreachable!(),
+    };
+    let canon = coding_alias_group(i, &a[0])
+        .and_then(|g| g.first())
+        .map(|s| s.to_string())
+        .unwrap_or(name);
+    let bare = canon
         .strip_suffix("-unix")
-        .or_else(|| name.strip_suffix("-dos"))
-        .or_else(|| name.strip_suffix("-mac"))
+        .or_else(|| canon.strip_suffix("-dos"))
+        .or_else(|| canon.strip_suffix("-mac"))
         .is_some();
-    let out = if bare { name } else { format!("{name}-unix") };
-    Ok(Value::Sym(i.intern(&out)))
+    let out = if bare { canon } else { format!("{canon}-unix") };
+    let sym = Value::Sym(i.intern(&out));
+    i.keyboard_coding = sym.clone();
+    Ok(sym)
+}
+
+/// `gui-get-selection' — GNU's Lisp definition calls
+/// `gui-selection-exists-p', which is void in batch; the
+/// void-function error propagates.
+fn f_gui_get_selection(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
+    let f = Value::Sym(i.intern("gui-selection-exists-p"));
+    i.call_function(&f, &Value::Nil, None)
 }
 
 fn f_set_terminal_coding_system(i: &mut Interp, a: Vec<Value>) -> EvalResult {
@@ -6181,31 +7091,274 @@ fn f_thread_signal(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     Ok(Value::Nil)
 }
 
+/// GNU `Fcheck_region'-style validation: START and END must be
+/// integers (or markers) inside the accessible portion —
+/// 1-based positions in BEGV+1 ..= TEXT_LEN+1 with START <= END.
+/// Returns `args-out-of-range (START END)' otherwise.
+pub(crate) fn check_region_positions(i: &mut Interp, a: &[Value]) -> Result<(), Flow> {
+    let (lo, hi) = i
+        .buffers
+        .get(i.current_buffer)
+        .map(|b| {
+            let bb = b.borrow();
+            (bb.begv, bb.text_len())
+        })
+        .unwrap_or((0, 0));
+    let (start, end) = match (&a[0], &a[1]) {
+        (Value::Int(s), Value::Int(e)) => (*s, *e),
+        (s, e) => {
+            let bad = if !matches!(s, Value::Int(_)) { s } else { e };
+            return Err(i.wrong_type_mut("integer-or-marker-p", bad));
+        }
+    };
+    if start < lo as i128 + 1 || end > hi as i128 + 1 || start > end {
+        let s = i.intern("args-out-of-range");
+        return Err(i.signal_data(s, vec![a[0].clone(), a[1].clone()]));
+    }
+    Ok(())
+}
+
 fn f_detect_coding_region(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    check_region_positions(i, &a)?;
     f_detect_coding_string(i, a)
+}
+
+/// Canonical coding-system name for the arg (alias-group head, EOL
+/// suffix stripped).
+fn coding_canonical(i: &Interp, v: &Value) -> String {
+    let name = coding_known(i, v).unwrap_or_default();
+    let (base, _) = eol_split(&name);
+    coding_alias_group(i, v)
+        .and_then(|g| g.first().copied())
+        .unwrap_or(base)
+        .to_string()
 }
 
 fn f_encode_coding_string(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     // (encode-coding-string STRING CODING-SYSTEM &optional NOCOPY BUFFER)
+    let s = want_string(i, &a[0])?;
     f_check_coding_system(i, vec![a[1].clone()])?;
-    Ok(a[0].clone())
+    let canonical = coding_canonical(i, &a[1]);
+    let unibyte_in = matches!(&a[0], Value::Str(r) if i.is_unibyte_str(r));
+    let mut out = String::new();
+    for c in s.chars() {
+        let u = c as u32;
+        if unibyte_in && (0x80..=0xFF).contains(&u) {
+            // A unibyte string's high chars are already bytes; GNU
+            // emits them raw (eight-bit passthrough).
+            out.push(c);
+            continue;
+        }
+        if let Some(b) = crate::lisp::value::eight_bit_byte(c) {
+            // Eight-bit chars emit their raw byte in any system.
+            out.push(b as char);
+            continue;
+        }
+        match encode_one_char(&canonical, u) {
+            Some(bs) => out.extend(bs.iter().map(|&b| b as char)),
+            // GNU substitutes the coding system's default-char (SPC).
+            None => out.push(' '),
+        }
+    }
+    let sv = Value::string(out);
+    if let Value::Str(r) = &sv {
+        i.mark_unibyte(r);
+    }
+    Ok(sv)
+}
+
+/// Decode bytes to chars for CANONICAL coding names — the inverse of
+/// `encode_one_char' using the same generated tables.
+fn decode_bytes(canonical: &str, bytes: &[u8]) -> String {
+    use super::enc_tables::*;
+    let utf8ish = matches!(
+        canonical,
+        "utf-8" | "mule-utf-8" | "cp65001" | "utf-8-auto" | "utf-8-emacs"
+            | "utf-8-hfs" | "utf-8-nfd" | "utf-8-with-signature" | "prefer-utf-8"
+            | "no-conversion" | "raw-text" | "binary" | "no-conversion-multibyte"
+            | "undecided"
+    );
+    if utf8ish {
+        return String::from_utf8_lossy(bytes).into_owned();
+    }
+    if matches!(canonical, "iso-latin-1") {
+        // Latin-1 is the identity byte→char map.
+        return bytes.iter().map(|&b| b as char).collect();
+    }
+    let single: Option<&[(u32, u64)]> = match canonical {
+        "iso-latin-2" | "iso-latin-3" | "iso-latin-4" | "iso-latin-5"
+        | "iso-latin-9" | "iso-latin-10" | "us-ascii" => Some(&[]),
+        "cyrillic-koi8" => Some(ENC_KOI8_R),
+        "windows-1251" => Some(ENC_WINDOWS_1251),
+        "mac-roman" => Some(ENC_MAC_ROMAN),
+        _ => None,
+    };
+    if let Some(t) = single {
+        return bytes
+            .iter()
+            .map(|&b| {
+                if b < 0x80 {
+                    b as char
+                } else {
+                    t.iter()
+                        .find(|(_, p)| {
+                            (p >> 56) == 1 && ((p >> 48) & 0xFF) == b as u64
+                        })
+                        .and_then(|(u, _)| char::from_u32(*u))
+                        .unwrap_or('?')
+                }
+            })
+            .collect();
+    }
+    let multi: Option<&[(u32, u64)]> = match canonical {
+        "japanese-shift-jis" | "japanese-cp932" => Some(ENC_SHIFT_JIS),
+        "japanese-iso-8bit" => Some(ENC_EUC_JP),
+        "chinese-big5" => Some(ENC_BIG5),
+        "chinese-iso-8bit" | "chinese-gbk" => Some(ENC_GB2312),
+        _ => None,
+    };
+    if let Some(t) = multi {
+        let mut out = String::new();
+        let mut ix = 0;
+        while ix < bytes.len() {
+            let b = bytes[ix];
+            if b < 0x80 {
+                out.push(b as char);
+                ix += 1;
+                continue;
+            }
+            // Try the longest sequence first (up to 4 bytes).
+            let mut matched = false;
+            for len in (2..=4usize).rev() {
+                if ix + len > bytes.len() {
+                    continue;
+                }
+                let seq = &bytes[ix..ix + len];
+                if let Some((u, _)) = t.iter().find(|(_, p)| {
+                    let n = (p >> 56) as usize;
+                    n == len
+                        && seq
+                            .iter()
+                            .enumerate()
+                            .all(|(k, &bb)| ((p >> (48 - 8 * k)) & 0xFF) == bb as u64)
+                }) {
+                    if let Some(c) = char::from_u32(*u) {
+                        out.push(c);
+                        matched = true;
+                    }
+                    ix += len;
+                    break;
+                }
+            }
+            if !matched {
+                out.push('?');
+                ix += 1;
+            }
+        }
+        return out;
+    }
+    String::from_utf8_lossy(bytes).into_owned()
 }
 
 fn f_decode_coding_string(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     // (decode-coding-string STRING CODING-SYSTEM &optional NOCOPY BUFFER)
+    let s = want_string(i, &a[0])?;
     f_check_coding_system(i, vec![a[1].clone()])?;
-    Ok(a[0].clone())
+    let canonical = coding_canonical(i, &a[1]);
+    let _ = s;
+    let bytes = lisp_string_bytes(i, &a[0]);
+    let sv = Value::string(decode_bytes(&canonical, &bytes));
+    if let Value::Str(r) = &sv {
+        i.mark_multibyte(r);
+    }
+    Ok(sv)
 }
 
-fn f_encode_coding_char(_i: &mut Interp, _a: Vec<Value>) -> EvalResult {
+/// Encode one Unicode scalar to bytes for CANONICAL (alias-group
+/// head) coding-system names, mirroring GNU's `encode-coding-char'.
+/// Returns None when the char is not encodable.
+fn encode_one_char(canonical: &str, c: u32) -> Option<Vec<u8>> {
+    use super::enc_tables::*;
+    if c < 0x80 {
+        return Some(vec![c as u8]);
+    }
+    let table: Option<&[(u32, u64)]> = match canonical {
+        "japanese-shift-jis" | "japanese-cp932" => Some(ENC_SHIFT_JIS),
+        "japanese-iso-8bit" => Some(ENC_EUC_JP),
+        "cyrillic-koi8" => Some(ENC_KOI8_R),
+        "windows-1251" => Some(ENC_WINDOWS_1251),
+        "mac-roman" => Some(ENC_MAC_ROMAN),
+        "chinese-big5" => Some(ENC_BIG5),
+        "chinese-iso-8bit" | "chinese-gbk" => Some(ENC_GB2312),
+        _ => None,
+    };
+    if let Some(t) = table {
+        return t.binary_search_by_key(&c, |&(u, _)| u).ok().map(|ix| {
+            let p = t[ix].1;
+            let n = (p >> 56) as usize;
+            p.to_be_bytes()[1..1 + n].to_vec()
+        });
+    }
+    match canonical {
+        "utf-8" | "mule-utf-8" | "cp65001" | "utf-8-auto" | "utf-8-emacs"
+        | "utf-8-hfs" | "utf-8-nfd" | "utf-8-with-signature" | "prefer-utf-8"
+        | "no-conversion" | "raw-text" | "binary" | "no-conversion-multibyte" => {
+            char::from_u32(c).map(|ch| ch.to_string().into_bytes())
+        }
+        "iso-latin-1" | "iso-latin-2" | "iso-latin-3" | "iso-latin-4"
+        | "iso-latin-5" | "iso-latin-9" | "iso-latin-10" => {
+            if c <= 0xFF {
+                Some(vec![c as u8])
+            } else {
+                None
+            }
+        }
+        "utf-16" | "utf-16be" | "utf-16be-with-signature" => {
+            Some(vec![(c >> 8) as u8, (c & 0xFF) as u8])
+        }
+        "utf-16le" | "utf-16le-with-signature" => {
+            Some(vec![(c & 0xFF) as u8, (c >> 8) as u8])
+        }
+        _ => None,
+    }
+}
+
+fn f_encode_coding_char(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    // (encode-coding-char CHAR CODING-SYSTEM &optional CHARSET) —
+    // GNU returns a unibyte string of the encoded bytes.
+    let c = match &a[0] {
+        Value::Int(n) if *n >= 0 && *n <= 0x3FFFFF => *n as u32,
+        other => return Err(i.wrong_type_mut("characterp", other)),
+    };
+    let _ = f_check_coding_system(i, vec![a[1].clone()])?;
+    let canonical = coding_canonical(i, &a[1]);
+    Ok(match encode_one_char(&canonical, c) {
+        Some(bs) => {
+            let sv =
+                Value::string(bs.iter().map(|&b| b as char).collect::<String>());
+            if let Value::Str(r) = &sv {
+                i.mark_unibyte(r);
+            }
+            sv
+        }
+        None => Value::Nil,
+    })
+}
+
+fn f_decode_coding_region(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    // (decode-coding-region START END CODING-SYSTEM &optional BUFFER)
+    check_region_positions(i, &a)?;
+    if let Some(cs) = a.get(2) {
+        let _ = f_check_coding_system(i, vec![cs.clone()])?;
+    }
     Ok(Value::Nil)
 }
 
-fn f_decode_coding_region(_i: &mut Interp, _a: Vec<Value>) -> EvalResult {
-    Ok(Value::Nil)
-}
-
-fn f_encode_coding_region(_i: &mut Interp, _a: Vec<Value>) -> EvalResult {
+fn f_encode_coding_region(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    check_region_positions(i, &a)?;
+    if let Some(cs) = a.get(2) {
+        let _ = f_check_coding_system(i, vec![cs.clone()])?;
+    }
     Ok(Value::Nil)
 }
 
@@ -6303,6 +7456,10 @@ fn f_color_gray_p(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 
 // ---------- windows ----------
 
+/// Window dims helper: nil/omitted → selected window; a non-window
+/// value is a `wrong-type-argument' under GNU's CHECK_WINDOW
+/// convention — callers needing GNU's "not a valid window" plain
+/// error use `win_any' instead.
 fn win_dims(i: &Interp, v: &Value) -> (usize, usize) {
     let w = match v {
         Value::Window(w) => Some(w.clone()),
@@ -6315,23 +7472,63 @@ fn win_dims(i: &Interp, v: &Value) -> (usize, usize) {
     .unwrap_or((80, 24))
 }
 
-fn f_window_min_height(_i: &mut Interp, _a: Vec<Value>) -> EvalResult {
-    Ok(Value::Int(4))
-}
-fn f_window_min_width(_i: &mut Interp, _a: Vec<Value>) -> EvalResult {
-    Ok(Value::Int(10))
+/// `window-min-size' for a leaf window at -Q: safe-minimum plus
+/// window decorations (mode-line counts vertically), clamped to the
+/// user minimum unless IGNORE suppresses it.
+pub(crate) fn win_min_size(i: &mut Interp, wv: &Value, horiz: bool, ignore: &Value) -> i128 {
+    if i.sym_id(ignore).map(|id| i.symbol_name(id) == "safe") == Some(true) {
+        return if horiz { 2 } else { 1 };
+    }
+    // safe-min + decorations: vertical adds the mode-line (1),
+    // horizontal adds margins/fringes/scroll-bars (0 on a tty frame).
+    let base: i128 = if horiz { 2 } else { 2 };
+    let ignore_p = match ignore {
+        Value::Window(iw) => match wv {
+            Value::Window(w) => !Rc::ptr_eq(w, iw),
+            _ => true,
+        },
+        Value::Nil => false,
+        Value::Sym(s) => i.symbol_name(*s) != "preserved",
+        _ => true,
+    };
+    let minvar: i128 = if horiz { 10 } else { 4 };
+    base.max(if ignore_p { 0 } else { minvar })
 }
 
+/// `window-sizable' — GNU: normalize WINDOW (plain "N is not a valid
+/// window" error), DELTA must satisfy number-or-marker-p.  Negative
+/// DELTA clamps at the window's minimum size; positive DELTA returns
+/// DELTA unless the window is size-fixed.
 fn f_window_sizable(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let delta = match arg(&a, 1) {
-        Value::Int(n) => n,
-        _ => return Ok(Value::Nil),
+    let wv = match &a[0] {
+        Value::Window(_) => a[0].clone(),
+        Value::Nil => f_selected_window(i, vec![])?,
+        other => {
+            let shown = i.princ_to_string(other);
+            return Err(i.error(format!("{shown} is not a valid window")));
+        }
+    };
+    let delta = match &a[1] {
+        Value::Int(n) => *n,
+        other => return Err(i.wrong_type_mut("number-or-marker-p", other)),
     };
     let horiz = !arg(&a, 2).is_nil();
-    let (w, h) = win_dims(i, &a[0]);
-    let lim = if horiz { 10 } else { 4 };
-    let dim = if horiz { w } else { h };
-    Ok(Value::from_bool((dim as i128 + delta) >= lim as i128))
+    let ignore = arg(&a, 3);
+    if delta < 0 {
+        let min = win_min_size(i, &wv, horiz, &ignore);
+        let (w, h) = win_dims(i, &a[0]);
+        let size = if horiz { w } else { h } as i128;
+        if size <= min {
+            Ok(Value::Int(0))
+        } else {
+            Ok(Value::Int((min - size).max(delta)))
+        }
+    } else if delta > 0 {
+        // `window-size-fixed-p' is nil on our model.
+        Ok(Value::Int(delta))
+    } else {
+        Ok(Value::Int(0))
+    }
 }
 
 fn f_window_max_chars(i: &mut Interp, a: Vec<Value>) -> EvalResult {
@@ -6378,7 +7575,10 @@ fn f_window_normalize(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     match &a[0] {
         Value::Window(_) => Ok(a[0].clone()),
         Value::Nil => f_selected_window(i, vec![]),
-        _ => Err(i.wrong_type_mut("window-live-p", &a[0])),
+        other => {
+            let shown = i.princ_to_string(other);
+            Err(i.error(format!("{shown} is not a valid window")))
+        }
     }
 }
 
@@ -6669,7 +7869,11 @@ fn f_char_table_extra_slot(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         Value::Int(n) if *n >= 0 => *n as usize,
         other => return Err(i.wrong_type_mut("wholenump", other)),
     };
-    Ok(r.borrow().get(3 + n).cloned().unwrap_or(Value::Nil))
+    if 3 + n >= r.borrow().len() {
+        let s = i.intern("args-out-of-range");
+        return Err(i.signal_data(s, vec![a[0].clone(), a[1].clone()]));
+    }
+    Ok(r.borrow()[3 + n].clone())
 }
 
 fn f_set_char_table_extra_slot(i: &mut Interp, a: Vec<Value>) -> EvalResult {
@@ -6681,8 +7885,9 @@ fn f_set_char_table_extra_slot(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         other => return Err(i.wrong_type_mut("wholenump", other)),
     };
     let mut rr = r.borrow_mut();
-    while rr.len() <= 3 + n {
-        rr.push(Value::Nil);
+    if 3 + n >= rr.len() {
+        let s = i.intern("args-out-of-range");
+        return Err(i.signal_data(s, vec![a[0].clone(), a[1].clone()]));
     }
     rr[3 + n] = a[2].clone();
     Ok(a[2].clone())
@@ -6911,15 +8116,18 @@ fn f_message_box(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 }
 
 fn f_secure_hash_algorithms(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
-    let names = ["md5", "sha1", "sha224", "sha256", "sha384", "sha512"];
+    let names = [
+        "md5", "sha1", "sha224", "sha256", "sha384", "sha512", "sha3-224", "sha3-256", "sha3-384",
+        "sha3-512",
+    ];
     Ok(Value::list(
         names.iter().map(|n| Value::Sym(i.intern(n))).collect(),
     ))
 }
 
 fn f_primitive_function_p(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let f = i.indirect_function_value(&a[0]);
-    Ok(Value::from_bool(matches!(f, Value::Subr(_))))
+    let _ = i;
+    Ok(Value::from_bool(matches!(a[0], Value::Subr(_))))
 }
 
 fn f_read_expression(i: &mut Interp, a: Vec<Value>) -> EvalResult {
@@ -6932,13 +8140,10 @@ fn f_read_expression(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let input = if i.minibuf_reader.is_some() {
         i.minibuf_line(&prompt)?
     } else {
-        match a.get(1) {
-            Some(Value::Str(s)) => s.borrow().clone(),
-            _ => {
-                let eof = i.intern("end-of-file");
-                return Err(i.signal_data(eof, vec![Value::string("End of file during parsing")]));
-            }
-        }
+        // GNU reads an answer from the minibuffer; in batch that is
+        // stdin and signals end-of-file with this message.
+        let eof = i.intern("end-of-file");
+        return Err(i.signal_data(eof, vec![Value::string("Error reading from stdin")]));
     };
     let mut r = crate::lisp::reader::Reader::new(i, &input);
     match r.read() {
@@ -6951,13 +8156,7 @@ fn f_read_expression(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     }
 }
 
-fn f_keymap_of(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    if is_keymap(i, &a[0]) {
-        Ok(a[0].clone())
-    } else {
-        Ok(Value::Nil)
-    }
-}
+
 
 fn f_one(_i: &mut Interp, _a: Vec<Value>) -> EvalResult {
     Ok(Value::Int(1))

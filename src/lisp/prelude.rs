@@ -47,6 +47,528 @@ inclusive, to COUNT, exclusive."
   "Execute BODY; if an error occurs, return nil."
   (list 'condition-case nil (cons 'progn body) '(error nil)))
 
+;; ---------- macroexp.el helpers (GNU: dumped, always loaded) ----------
+;; Ported from GNU lisp/emacs-lisp/macroexp.el; the parts that were once
+;; internal subrs here had incompatible signatures and were replaced by
+;; these Lisp definitions.
+
+(defvar macro-declarations-alist nil
+  "Alist of (MACRO . DECLARATIONS-ALIST) for macro expanders.")
+(defvar defun-declarations-alist nil
+  "Alist of (PROP . FN) handlers for `declare' specs in `defun'.")
+
+(defun macroexp-progn (exps)
+  "Return EXPS (a list of expressions) with `progn' prepended.
+If EXPS is a list with a single expression, `progn' is not
+prepended, but that expression is returned instead."
+  (if (cdr exps) `(progn ,@exps) (car exps)))
+
+(defun macroexp-unprogn (exp)
+  "Turn EXP into a list of expressions to execute in sequence.
+Never returns an empty list."
+  (if (eq (car-safe exp) 'progn) (or (cdr exp) '(nil)) (list exp)))
+
+(defun macroexp-let* (bindings exp)
+  "Return an expression equivalent to \\=`(let* ,BINDINGS ,EXP)."
+  (cond
+   ((null bindings) exp)
+   ((eq 'let* (car-safe exp)) `(let* (,@bindings ,@(cadr exp)) ,@(cddr exp)))
+   (t `(let* ,bindings ,exp))))
+
+(defun macroexp-if (test then else)
+  "Return an expression equivalent to \\=`(if ,TEST ,THEN ,ELSE)."
+  (cond
+   ((eq (car-safe else) 'if)
+    (cond
+     ((equal then (nth 2 else))
+      `(if (or ,test ,(nth 1 else)) ,then ,@(nthcdr 3 else)))
+     ((equal (macroexp-unprogn then) (nthcdr 3 else))
+      `(if (or ,test (not ,(nth 1 else)))
+           ,then ,@(macroexp-unprogn (nth 2 else))))
+     (t
+      `(cond (,test ,@(macroexp-unprogn then))
+             (,(nth 1 else) ,@(macroexp-unprogn (nth 2 else)))
+             ,@(let ((def (nthcdr 3 else))) (if def `((t ,@def))))))))
+   ((eq (car-safe else) 'cond)
+    `(cond (,test ,@(macroexp-unprogn then)) ,@(cdr else)))
+   ;; Invert the test if that lets us reduce the depth of the tree.
+   ((memq (car-safe then) '(if cond)) (macroexp-if `(not ,test) else then))
+   (t `(if ,test ,then ,@(if else (macroexp-unprogn else))))))
+
+(defmacro macroexp-let2 (test sym exp &rest body)
+  "Evaluate BODY with SYM bound to an expression for EXP's value.
+The intended usage is that BODY generates an expression that
+will refer to EXP's value multiple times, but will evaluate
+EXP only once.  As BODY generates that expression, it should
+use SYM to stand for the value of EXP.
+
+If EXP is a simple, safe expression, then SYM's value is EXP itself.
+Otherwise, SYM's value is a symbol which holds the value produced by
+evaluating EXP.  The return value incorporates the value of BODY, plus
+additional code to evaluate EXP once and save the result so SYM can
+refer to it.
+
+If BODY consists of multiple forms, they are all evaluated
+but only the last one's value matters.
+
+TEST is a predicate to determine whether EXP qualifies as simple and
+safe; if TEST is nil, only constant expressions qualify."
+  (declare (indent 3))
+  (let ((bodysym (make-symbol "body"))
+        (expsym (make-symbol "exp")))
+    `(let* ((,expsym ,exp)
+            (,sym (if (funcall #',(or test #'macroexp-const-p) ,expsym)
+                      ,expsym (make-symbol ,(symbol-name sym))))
+            (,bodysym ,(macroexp-progn body)))
+       (if (eq ,sym ,expsym) ,bodysym
+         (macroexp-let* (list (list ,sym ,expsym))
+                        ,bodysym)))))
+
+(defmacro macroexp-let2* (test bindings &rest body)
+  "Multiple binding version of `macroexp-let2'.
+
+BINDINGS is a list of elements of the form (SYM EXP) or just SYM,
+which then stands for (SYM SYM).
+Each EXP can refer to symbols specified earlier in the binding list.
+
+TEST has to be a symbol, and if it is nil it can be omitted."
+  (declare (indent 2))
+  (when (consp test) ;; `test' was omitted.
+    (push bindings body)
+    (setq bindings test)
+    (setq test nil))
+  (if (null bindings)
+      (macroexp-progn body)
+    (let* ((hd (car bindings))
+           (var (if (consp hd) (car hd) hd))
+           (exp (if (consp hd) (cadr hd) var)))
+      `(macroexp-let2 ,test ,var ,exp
+         (macroexp-let2* ,test ,(cdr bindings) ,@body)))))
+
+(defun macroexp--maxsize (exp size)
+  (cond ((< size 0) size)
+        ((symbolp exp) (1- size))
+        ((stringp exp) (- size (/ (length exp) 16)))
+        ((vectorp exp)
+         (dotimes (i (length exp))
+           (setq size (macroexp--maxsize (aref exp i) size)))
+         (1- size))
+        ((consp exp)
+         (dolist (e exp)
+           (setq size (macroexp--maxsize e size)))
+         (1- size))
+        (t -1)))
+
+(defun macroexp-small-p (exp)
+  "Return non-nil if EXP can be considered small."
+  (> (macroexp--maxsize exp 10) 0))
+
+(defun macroexp--const-symbol-p (symbol &optional any-value)
+  "Non-nil if SYMBOL is constant.
+If ANY-VALUE is nil, only return non-nil if the value of the symbol is the
+symbol itself."
+  (or (memq symbol '(nil t))
+      (keywordp symbol)
+      (and any-value (boundp symbol))))
+
+(defun macroexp-const-p (exp)
+  "Return non-nil if EXP will always evaluate to the same value."
+  (cond ((consp exp) (or (eq (car exp) 'quote)
+                         (and (eq (car exp) 'function)
+                              (symbolp (cadr exp)))))
+        ;; It would sometimes make sense to pass `any-value', but it's not
+        ;; always safe since a "constant" variable may not actually always have
+        ;; the same value.
+        ((symbolp exp) (macroexp--const-symbol-p exp))
+        (t t)))
+
+(defun macroexp-copyable-p (exp)
+  "Return non-nil if EXP can be copied without extra cost."
+  (or (symbolp exp) (macroexp-const-p exp)))
+
+(defun macroexp-quote (v)
+  "Return an expression E such that `(eval E)' is V.
+
+E is either V or (quote V) depending on whether V evaluates to
+itself or not."
+  (if (and (not (consp v))
+	   (or (keywordp v)
+	       (not (symbolp v))
+	       (memq v '(nil t))))
+      v
+    (list 'quote v)))
+
+(defun macroexp-warn-and-return (msg form &optional _category compile-only _arg)
+  "Return code equivalent to FORM labeled with warning MSG."
+  (unless compile-only (message "%s" msg))
+  form)
+
+;; Bytecomp internals that gv.el may consult when a generalized variable
+;; is marked obsolete; the byte-compiler itself is not present.
+(defun byte-compile-warn-obsolete (&rest _)
+  "Warn that an obsolete construct was used (stub: bytecomp absent)."
+  nil)
+
+;; GNU defines `function-get' in subr.el as a Lisp function that follows
+;; autoloads and symbol-function indirections; port that exact behavior.
+(defun function-get (f prop &optional autoload)
+  "Return the value of property PROP of function F.
+If AUTOLOAD is non-nil and F is autoloaded, try to load it
+in the hope that it will set PROP.  If AUTOLOAD is `macro', do it only
+if it's an autoloaded macro."
+  (let ((val nil))
+    (while (and (symbolp f)
+                (null (setq val (get f prop)))
+                (fboundp f))
+      (let ((fundef (symbol-function f)))
+        (if (and autoload (autoloadp fundef)
+                 (not (equal fundef
+                             (autoload-do-load fundef f
+                                               (if (eq autoload 'macro)
+                                                   'macro)))))
+            nil                         ;Re-try `get' on the same `f'.
+          (setq f fundef))))
+    val))
+
+;; GNU dumps macroexp.el, so `(featurep 'macroexp)' is t and
+;; `(require 'macroexp)' in `push'/gv.el is a no-op.  Mirror that.
+(provide 'macroexp)
+
+(defvar remacs-coding-system-plists
+  '(
+    (adobe-standard-encoding . (:ascii-compatible-p nil :category coding-category-charset :name adobe-standard-encoding :docstring "Adobe `standard' encoding for PostScript" :coding-type charset :mnemonic 42 :charset-list (adobe-standard-encoding) :mime-charset adobe-standard-encoding))
+    (alternativnyj . (:ascii-compatible-p t :category coding-category-charset :name cyrillic-alternativnyj :docstring "ALTERNATIVNYJ 8-bit encoding for Cyrillic." :coding-type charset :mnemonic 65 :charset-list (alternativnyj)))
+    (ascii . (:ascii-compatible-p t :category coding-category-charset :name us-ascii :docstring "Encode ASCII as-is and encode non-ASCII characters to `?'." :coding-type charset :mnemonic 45 :charset-list (ascii) :default-char 63 :mime-charset us-ascii))
+    (big5 . (:ascii-compatible-p t :category coding-category-big5 :name chinese-big5 :docstring "BIG5 8-bit encoding for Chinese (MIME:Big5)" :coding-type big5 :mnemonic 66 :charset-list (ascii big5) :mime-charset big5))
+    (big5-hkscs . (:ascii-compatible-p t :category coding-category-charset :name chinese-big5-hkscs :docstring "BIG5-HKSCS 8-bit encoding for Chinese, Hong Kong supplement (MIME:Big5-HKSCS)" :coding-type charset :mnemonic 66 :charset-list (ascii big5-hkscs) :mime-charset big5-hkscs))
+    (binary . (:ascii-compatible-p t :category coding-category-raw-text :name no-conversion :mnemonic 61 :coding-type raw-text :ascii-compatible-p t :default-char 0 :for-unibyte t :docstring "Do no conversion.
+    
+    When you visit a file with this coding, the file is read into a
+    unibyte buffer as is, thus each byte of a file is treated as a
+    character." :eol-type unix))
+    (chinese-big5 . (:ascii-compatible-p t :category coding-category-big5 :name chinese-big5 :docstring "BIG5 8-bit encoding for Chinese (MIME:Big5)" :coding-type big5 :mnemonic 66 :charset-list (ascii big5) :mime-charset big5))
+    (chinese-big5-hkscs . (:ascii-compatible-p t :category coding-category-charset :name chinese-big5-hkscs :docstring "BIG5-HKSCS 8-bit encoding for Chinese, Hong Kong supplement (MIME:Big5-HKSCS)" :coding-type charset :mnemonic 66 :charset-list (ascii big5-hkscs) :mime-charset big5-hkscs))
+    (chinese-gb18030 . (:ascii-compatible-p t :category coding-category-charset :name chinese-gb18030 :docstring "GB18030 encoding for Chinese (MIME:GB18030)." :coding-type charset :mnemonic 99 :charset-list (ascii gb18030-2-byte gb18030-4-byte-bmp gb18030-4-byte-smp gb18030-4-byte-ext-1 gb18030-4-byte-ext-2) :mime-charset gb18030))
+    (chinese-gbk . (:ascii-compatible-p t :category coding-category-charset :name chinese-gbk :docstring "GBK encoding for Chinese (MIME:GBK)." :coding-type charset :mnemonic 99 :charset-list (ascii chinese-gbk) :mime-charset gbk))
+    (chinese-hz . (:ascii-compatible-p nil :category coding-category-utf-8 :name chinese-hz :docstring "Hz/ZW 7-bit encoding for Chinese GB2312 (MIME:HZ-GB-2312)." :coding-type utf-8 :mnemonic 122 :charset-list (ascii chinese-gb2312) :mime-charset hz-gb-2312 :post-read-conversion post-read-decode-hz :pre-write-conversion pre-write-encode-hz))
+    (chinese-iso-7bit . (:ascii-compatible-p nil :category coding-category-iso-7-else :name iso-2022-cn :docstring "ISO 2022 based 7bit encoding for Chinese GB and CNS (MIME:ISO-2022-CN)." :coding-type iso-2022 :mnemonic 67 :charset-list (ascii chinese-gb2312 chinese-cns11643-1 chinese-cns11643-2) :designation [ascii (nil chinese-gb2312 chinese-cns11643-1) (nil chinese-cns11643-2) nil] :flags (ascii-at-eol ascii-at-cntl 7-bit designation locking-shift single-shift init-at-bol) :mime-charset iso-2022-cn :suitable-for-keyboard t))
+    (chinese-iso-8bit . (:ascii-compatible-p t :category coding-category-iso-8-2 :name chinese-iso-8bit :docstring "ISO 2022 based EUC encoding for Chinese GB2312 (MIME:GB2312)." :coding-type iso-2022 :mnemonic 99 :charset-list (ascii chinese-gb2312) :designation [ascii chinese-gb2312 nil nil] :mime-charset gb2312))
+    (cn-big5 . (:ascii-compatible-p t :category coding-category-big5 :name chinese-big5 :docstring "BIG5 8-bit encoding for Chinese (MIME:Big5)" :coding-type big5 :mnemonic 66 :charset-list (ascii big5) :mime-charset big5))
+    (cn-big5-hkscs . (:ascii-compatible-p t :category coding-category-charset :name chinese-big5-hkscs :docstring "BIG5-HKSCS 8-bit encoding for Chinese, Hong Kong supplement (MIME:Big5-HKSCS)" :coding-type charset :mnemonic 66 :charset-list (ascii big5-hkscs) :mime-charset big5-hkscs))
+    (cn-gb . (:ascii-compatible-p t :category coding-category-iso-8-2 :name chinese-iso-8bit :docstring "ISO 2022 based EUC encoding for Chinese GB2312 (MIME:GB2312)." :coding-type iso-2022 :mnemonic 99 :charset-list (ascii chinese-gb2312) :designation [ascii chinese-gb2312 nil nil] :mime-charset gb2312))
+    (cn-gb-2312 . (:ascii-compatible-p t :category coding-category-iso-8-2 :name chinese-iso-8bit :docstring "ISO 2022 based EUC encoding for Chinese GB2312 (MIME:GB2312)." :coding-type iso-2022 :mnemonic 99 :charset-list (ascii chinese-gb2312) :designation [ascii chinese-gb2312 nil nil] :mime-charset gb2312))
+    (compound-text . (:ascii-compatible-p nil :category coding-category-iso-8-else :name compound-text :docstring "Compound text based generic encoding.
+    This coding system is an extension of X's \"Compound Text Encoding\".
+    It encodes many characters using the normal ISO-2022 designation sequences,
+    but it doesn't support extended segments of CTEXT." :coding-type iso-2022 :mnemonic 120 :charset-list iso-2022 :designation [(ascii 94) (latin-iso8859-1 katakana-jisx0201 96) nil nil] :flags (ascii-at-eol ascii-at-cntl long-form designation locking-shift single-shift composition) :mime-charset x-ctext))
+    (compound-text-with-extensions . (:ascii-compatible-p nil :category coding-category-iso-8-else :name compound-text-with-extensions :docstring "Compound text encoding with ICCCM Extended Segment extensions.
+    
+    See the variables `ctext-standard-encodings' and
+    `ctext-non-standard-encodings-alist' for the detail about how
+    extended segments are handled.
+    
+    This coding system should be used only for X selections.  It is inappropriate
+    for decoding and encoding files, process I/O, etc." :coding-type iso-2022 :mnemonic 120 :charset-list iso-2022 :designation [(ascii 94) (latin-iso8859-1 katakana-jisx0201 96) nil nil] :flags (ascii-at-eol ascii-at-cntl long-form designation locking-shift single-shift) :post-read-conversion ctext-post-read-conversion :pre-write-conversion ctext-pre-write-conversion :mime-charset x-ctext))
+    (cp038 . (:ascii-compatible-p nil :category coding-category-charset :name ibm038 :docstring "International version of EBCDIC" :coding-type charset :charset-list (ibm038) :mnemonic 42))
+    (cp1047 . (:ascii-compatible-p nil :category coding-category-charset :name ibm1047 :docstring "A version of EBCDIC used in OS/390 Unix" :coding-type charset :charset-list (ibm1047) :mnemonic 42))
+    (cp1125 . (:ascii-compatible-p t :category coding-category-charset :name cp1125 :docstring "cp1125 8-bit encoding for Cyrillic" :coding-type charset :mnemonic 42 :charset-list (cp1125)))
+    (cp1250 . (:ascii-compatible-p t :category coding-category-charset :name windows-1250 :docstring "windows-1250 (Central European) encoding (MIME: WINDOWS-1250)" :coding-type charset :mnemonic 42 :charset-list (windows-1250) :mime-charset windows-1250))
+    (cp1251 . (:ascii-compatible-p t :category coding-category-charset :name windows-1251 :docstring "windows-1251 8-bit encoding for Cyrillic (MIME: WINDOWS-1251)" :coding-type charset :mnemonic 98 :charset-list (windows-1251) :mime-charset windows-1251))
+    (cp1252 . (:ascii-compatible-p t :category coding-category-charset :name windows-1252 :docstring "windows-1252 (Western European) encoding (MIME: WINDOWS-1252)" :coding-type charset :mnemonic 42 :charset-list (windows-1252) :mime-charset windows-1252))
+    (cp1253 . (:ascii-compatible-p t :category coding-category-charset :name windows-1253 :docstring "windows-1253 encoding for Greek" :coding-type charset :mnemonic 103 :charset-list (windows-1253) :mime-charset windows-1253))
+    (cp1254 . (:ascii-compatible-p t :category coding-category-charset :name windows-1254 :docstring "windows-1254 (Turkish) encoding (MIME: WINDOWS-1254)" :coding-type charset :mnemonic 42 :charset-list (windows-1254) :mime-charset windows-1254))
+    (cp1255 . (:ascii-compatible-p t :category coding-category-charset :name windows-1255 :docstring "windows-1255 (Hebrew) encoding (MIME: WINDOWS-1255)" :coding-type charset :mnemonic 104 :charset-list (windows-1255) :mime-charset windows-1255))
+    (cp1256 . (:ascii-compatible-p t :category coding-category-charset :name windows-1256 :docstring "windows-1256 (Arabic) encoding (MIME: WINDOWS-1256)" :coding-type charset :mnemonic 65 :charset-list (windows-1256) :mime-charset windows-1256))
+    (cp1257 . (:ascii-compatible-p t :category coding-category-charset :name windows-1257 :docstring "windows-1257 (Baltic) encoding (MIME: WINDOWS-1257)" :coding-type charset :mnemonic 42 :charset-list (windows-1257) :mime-charset windows-1257))
+    (cp1258 . (:ascii-compatible-p t :category coding-category-charset :name windows-1258 :docstring "windows-1258 encoding for Vietnamese (MIME: WINDOWS-1258)" :coding-type charset :mnemonic 42 :charset-list (windows-1258) :mime-charset windows-1258))
+    (cp256 . (:ascii-compatible-p nil :category coding-category-charset :name ibm256 :docstring "Netherlands version of EBCDIC" :coding-type charset :charset-list (ibm256) :mnemonic 42))
+    (cp273 . (:ascii-compatible-p nil :category coding-category-charset :name ibm273 :docstring "Austrian / German version of EBCDIC" :coding-type charset :charset-list (ibm273) :mnemonic 42))
+    (cp274 . (:ascii-compatible-p nil :category coding-category-charset :name ibm274 :docstring "Belgian version of EBCDIC" :coding-type charset :charset-list (ibm274) :mnemonic 42))
+    (cp275 . (:ascii-compatible-p nil :category coding-category-charset :name ibm275 :docstring "Brazilian version of EBCDIC" :coding-type charset :charset-list (ibm275) :mnemonic 42))
+    (cp277 . (:ascii-compatible-p nil :category coding-category-charset :name ibm277 :docstring "Danish / Norwegian version of EBCDIC" :coding-type charset :charset-list (ibm277) :mnemonic 42))
+    (cp278 . (:ascii-compatible-p nil :category coding-category-charset :name ibm278 :docstring "Finnish / Swedish version of EBCDIC" :coding-type charset :charset-list (ibm278) :mnemonic 42))
+    (cp280 . (:ascii-compatible-p nil :category coding-category-charset :name ibm280 :docstring "Italian version of EBCDIC" :coding-type charset :charset-list (ibm280) :mnemonic 42))
+    (cp281 . (:ascii-compatible-p nil :category coding-category-charset :name ibm281 :docstring "Japanese-E version of EBCDIC" :coding-type charset :charset-list (ibm281) :mnemonic 42))
+    (cp284 . (:ascii-compatible-p nil :category coding-category-charset :name ibm284 :docstring "Spanish version of EBCDIC" :coding-type charset :charset-list (ibm284) :mnemonic 42))
+    (cp285 . (:ascii-compatible-p nil :category coding-category-charset :name ibm285 :docstring "UK English version of EBCDIC" :coding-type charset :charset-list (ibm285) :mnemonic 42))
+    (cp290 . (:ascii-compatible-p nil :category coding-category-charset :name ibm290 :docstring "Japanese katakana version of EBCDIC" :coding-type charset :charset-list (ibm290) :mnemonic 42))
+    (cp297 . (:ascii-compatible-p nil :category coding-category-charset :name ibm297 :docstring "French version of EBCDIC" :coding-type charset :charset-list (ibm297) :mnemonic 42))
+    (cp437 . (:ascii-compatible-p t :category coding-category-charset :name cp437 :docstring "DOS codepage 437" :coding-type charset :mnemonic 68 :charset-list (cp437) :mime-charset cp437))
+    (cp65001 . (:ascii-compatible-p t :category coding-category-utf-8 :name utf-8 :docstring "UTF-8 (no signature (BOM))" :coding-type utf-8 :mnemonic 85 :charset-list (unicode) :mime-charset utf-8))
+    (cp737 . (:ascii-compatible-p t :category coding-category-charset :name cp737 :docstring "Codepage 737 (PC Greek)" :coding-type charset :mnemonic 68 :charset-list (cp737) :mime-charset cp737))
+    (cp775 . (:ascii-compatible-p t :category coding-category-charset :name cp775 :docstring "DOS codepage 775 (PC Baltic, MS-DOS Baltic Rim)" :coding-type charset :mnemonic 68 :charset-list (cp775) :mime-charset cp775))
+    (cp850 . (:ascii-compatible-p t :category coding-category-charset :name cp850 :docstring "DOS codepage 850 (Western European)" :coding-type charset :mnemonic 68 :charset-list (cp850) :mime-charset cp850))
+    (cp851 . (:ascii-compatible-p t :category coding-category-charset :name cp851 :docstring "DOS codepage 851 (Greek)" :coding-type charset :mnemonic 68 :charset-list (cp851) :mime-charset cp851))
+    (cp852 . (:ascii-compatible-p t :category coding-category-charset :name cp852 :docstring "DOS codepage 852 (Slavic)" :coding-type charset :mnemonic 68 :charset-list (cp852) :mime-charset cp852))
+    (cp855 . (:ascii-compatible-p t :category coding-category-charset :name cp855 :docstring "DOS codepage 855 (Russian)" :coding-type charset :mnemonic 68 :charset-list (cp855) :mime-charset cp855))
+    (cp857 . (:ascii-compatible-p t :category coding-category-charset :name cp857 :docstring "DOS codepage 857 (Turkish)" :coding-type charset :mnemonic 68 :charset-list (cp857) :mime-charset cp857))
+    (cp858 . (:ascii-compatible-p t :category coding-category-charset :name cp858 :docstring "Codepage 858 (Multilingual Latin I + Euro)" :coding-type charset :mnemonic 68 :charset-list (cp858) :mime-charset cp858))
+    (cp860 . (:ascii-compatible-p t :category coding-category-charset :name cp860 :docstring "DOS codepage 860 (Portuguese)" :coding-type charset :mnemonic 68 :charset-list (cp860) :mime-charset cp860))
+    (cp861 . (:ascii-compatible-p t :category coding-category-charset :name cp861 :docstring "DOS codepage 861 (Icelandic)" :coding-type charset :mnemonic 68 :charset-list (cp861) :mime-charset cp861))
+    (cp862 . (:ascii-compatible-p t :category coding-category-charset :name cp862 :docstring "DOS codepage 862 (Hebrew)" :coding-type charset :mnemonic 68 :charset-list (cp862) :mime-charset cp862))
+    (cp863 . (:ascii-compatible-p t :category coding-category-charset :name cp863 :docstring "DOS codepage 863 (French Canadian)" :coding-type charset :mnemonic 68 :charset-list (cp863) :mime-charset cp863))
+    (cp865 . (:ascii-compatible-p t :category coding-category-charset :name cp865 :docstring "DOS codepage 865 (Norwegian/Danish)" :coding-type charset :mnemonic 68 :charset-list (cp865) :mime-charset cp865))
+    (cp866 . (:ascii-compatible-p t :category coding-category-charset :name cp866 :docstring "CP866 encoding for Cyrillic." :coding-type charset :mnemonic 42 :charset-list (ibm866) :mime-charset cp866))
+    (cp866u . (:ascii-compatible-p t :category coding-category-charset :name cp1125 :docstring "cp1125 8-bit encoding for Cyrillic" :coding-type charset :mnemonic 42 :charset-list (cp1125)))
+    (cp869 . (:ascii-compatible-p t :category coding-category-charset :name cp869 :docstring "DOS codepage 869 (Greek)" :coding-type charset :mnemonic 68 :charset-list (cp869) :mime-charset cp869))
+    (cp874 . (:ascii-compatible-p t :category coding-category-charset :name cp874 :docstring "DOS codepage 874 (Thai)" :coding-type charset :mnemonic 68 :charset-list (cp874) :mime-charset cp874))
+    (cp878 . (:ascii-compatible-p t :category coding-category-charset :name cyrillic-koi8 :docstring "KOI8 8-bit encoding for Cyrillic (MIME: KOI8-R)." :coding-type charset :mnemonic 82 :charset-list (koi8) :mime-charset koi8-r))
+    (cp932 . (:ascii-compatible-p t :category coding-category-charset :name japanese-cp932 :docstring "CP932 (Microsoft shift-jis)" :coding-type charset :mnemonic 83 :charset-list (ascii katakana-sjis cp932-2-byte)))
+    (cp936 . (:ascii-compatible-p t :category coding-category-charset :name chinese-gbk :docstring "GBK encoding for Chinese (MIME:GBK)." :coding-type charset :mnemonic 99 :charset-list (ascii chinese-gbk) :mime-charset gbk))
+    (cp949 . (:ascii-compatible-p t :category coding-category-charset :name korean-cp949 :docstring "CP949 (Microsoft Unified Hangul Code)" :coding-type charset :mnemonic 75 :charset-list (ascii cp949)))
+    (cp950 . (:ascii-compatible-p t :category coding-category-big5 :name chinese-big5 :docstring "BIG5 8-bit encoding for Chinese (MIME:Big5)" :coding-type big5 :mnemonic 66 :charset-list (ascii big5) :mime-charset big5))
+    (ctext . (:ascii-compatible-p nil :category coding-category-iso-8-else :name compound-text :docstring "Compound text based generic encoding.
+    This coding system is an extension of X's \"Compound Text Encoding\".
+    It encodes many characters using the normal ISO-2022 designation sequences,
+    but it doesn't support extended segments of CTEXT." :coding-type iso-2022 :mnemonic 120 :charset-list iso-2022 :designation [(ascii 94) (latin-iso8859-1 katakana-jisx0201 96) nil nil] :flags (ascii-at-eol ascii-at-cntl long-form designation locking-shift single-shift composition) :mime-charset x-ctext))
+    (ctext-no-compositions . (:ascii-compatible-p nil :category coding-category-iso-8-else :name ctext-no-compositions :docstring "Compound text based generic encoding.
+    
+    Like `compound-text', but does not produce escape sequences for compositions." :coding-type iso-2022 :mnemonic 120 :charset-list iso-2022 :designation [(ascii 94) (latin-iso8859-1 katakana-jisx0201 96) nil nil] :flags (ascii-at-eol ascii-at-cntl designation locking-shift single-shift)))
+    (ctext-with-extensions . (:ascii-compatible-p nil :category coding-category-iso-8-else :name compound-text-with-extensions :docstring "Compound text encoding with ICCCM Extended Segment extensions.
+    
+    See the variables `ctext-standard-encodings' and
+    `ctext-non-standard-encodings-alist' for the detail about how
+    extended segments are handled.
+    
+    This coding system should be used only for X selections.  It is inappropriate
+    for decoding and encoding files, process I/O, etc." :coding-type iso-2022 :mnemonic 120 :charset-list iso-2022 :designation [(ascii 94) (latin-iso8859-1 katakana-jisx0201 96) nil nil] :flags (ascii-at-eol ascii-at-cntl long-form designation locking-shift single-shift) :post-read-conversion ctext-post-read-conversion :pre-write-conversion ctext-pre-write-conversion :mime-charset x-ctext))
+    (cyrillic-alternativnyj . (:ascii-compatible-p t :category coding-category-charset :name cyrillic-alternativnyj :docstring "ALTERNATIVNYJ 8-bit encoding for Cyrillic." :coding-type charset :mnemonic 65 :charset-list (alternativnyj)))
+    (cyrillic-iso-8bit . (:ascii-compatible-p t :category coding-category-charset :name cyrillic-iso-8bit :docstring "ISO 2022 based 8-bit encoding for Cyrillic script (MIME:ISO-8859-5)." :coding-type charset :mnemonic 53 :charset-list (iso-8859-5) :mime-charset iso-8859-5))
+    (cyrillic-koi8 . (:ascii-compatible-p t :category coding-category-charset :name cyrillic-koi8 :docstring "KOI8 8-bit encoding for Cyrillic (MIME: KOI8-R)." :coding-type charset :mnemonic 82 :charset-list (koi8) :mime-charset koi8-r))
+    (devanagari . (:ascii-compatible-p t :category coding-category-iso-8-1 :name in-is13194-devanagari :docstring "8-bit encoding for ASCII (MSB=0) and IS13194-Devanagari (MSB=1)." :coding-type iso-2022 :mnemonic 68 :designation [ascii indian-is13194 nil nil] :charset-list (ascii indian-is13194) :post-read-conversion in-is13194-post-read-conversion :pre-write-conversion in-is13194-pre-write-conversion))
+    (ebcdic-be . (:ascii-compatible-p nil :category coding-category-charset :name ibm274 :docstring "Belgian version of EBCDIC" :coding-type charset :charset-list (ibm274) :mnemonic 42))
+    (ebcdic-br . (:ascii-compatible-p nil :category coding-category-charset :name ibm275 :docstring "Brazilian version of EBCDIC" :coding-type charset :charset-list (ibm275) :mnemonic 42))
+    (ebcdic-cp-dk . (:ascii-compatible-p nil :category coding-category-charset :name ibm277 :docstring "Danish / Norwegian version of EBCDIC" :coding-type charset :charset-list (ibm277) :mnemonic 42))
+    (ebcdic-cp-es . (:ascii-compatible-p nil :category coding-category-charset :name ibm284 :docstring "Spanish version of EBCDIC" :coding-type charset :charset-list (ibm284) :mnemonic 42))
+    (ebcdic-cp-fi . (:ascii-compatible-p nil :category coding-category-charset :name ibm278 :docstring "Finnish / Swedish version of EBCDIC" :coding-type charset :charset-list (ibm278) :mnemonic 42))
+    (ebcdic-cp-fr . (:ascii-compatible-p nil :category coding-category-charset :name ibm297 :docstring "French version of EBCDIC" :coding-type charset :charset-list (ibm297) :mnemonic 42))
+    (ebcdic-cp-gb . (:ascii-compatible-p nil :category coding-category-charset :name ibm285 :docstring "UK English version of EBCDIC" :coding-type charset :charset-list (ibm285) :mnemonic 42))
+    (ebcdic-cp-it . (:ascii-compatible-p nil :category coding-category-charset :name ibm280 :docstring "Italian version of EBCDIC" :coding-type charset :charset-list (ibm280) :mnemonic 42))
+    (ebcdic-cp-no . (:ascii-compatible-p nil :category coding-category-charset :name ibm277 :docstring "Danish / Norwegian version of EBCDIC" :coding-type charset :charset-list (ibm277) :mnemonic 42))
+    (ebcdic-cp-se . (:ascii-compatible-p nil :category coding-category-charset :name ibm278 :docstring "Finnish / Swedish version of EBCDIC" :coding-type charset :charset-list (ibm278) :mnemonic 42))
+    (ebcdic-int . (:ascii-compatible-p nil :category coding-category-charset :name ibm038 :docstring "International version of EBCDIC" :coding-type charset :charset-list (ibm038) :mnemonic 42))
+    (ebcdic-int1 . (:ascii-compatible-p nil :category coding-category-charset :name ibm256 :docstring "Netherlands version of EBCDIC" :coding-type charset :charset-list (ibm256) :mnemonic 42))
+    (ebcdic-jp-e . (:ascii-compatible-p nil :category coding-category-charset :name ibm281 :docstring "Japanese-E version of EBCDIC" :coding-type charset :charset-list (ibm281) :mnemonic 42))
+    (ebcdic-jp-kana . (:ascii-compatible-p nil :category coding-category-charset :name ibm290 :docstring "Japanese katakana version of EBCDIC" :coding-type charset :charset-list (ibm290) :mnemonic 42))
+    (ebcdic-uk . (:ascii-compatible-p nil :category coding-category-charset :name ebcdic-uk :docstring "UK version of EBCDIC" :coding-type charset :charset-list (ebcdic-uk) :mnemonic 42))
+    (ebcdic-us . (:ascii-compatible-p nil :category coding-category-charset :name ebcdic-us :docstring "US version of EBCDIC" :coding-type charset :charset-list (ebcdic-us) :mnemonic 42))
+    (emacs-mule . (:ascii-compatible-p t :category coding-category-emacs-mule :name emacs-mule :docstring "Emacs 21 internal format used in buffer and string." :coding-type emacs-mule :charset-list emacs-mule :mnemonic 77))
+    (euc-china . (:ascii-compatible-p t :category coding-category-iso-8-2 :name chinese-iso-8bit :docstring "ISO 2022 based EUC encoding for Chinese GB2312 (MIME:GB2312)." :coding-type iso-2022 :mnemonic 99 :charset-list (ascii chinese-gb2312) :designation [ascii chinese-gb2312 nil nil] :mime-charset gb2312))
+    (euc-cn . (:ascii-compatible-p t :category coding-category-iso-8-2 :name chinese-iso-8bit :docstring "ISO 2022 based EUC encoding for Chinese GB2312 (MIME:GB2312)." :coding-type iso-2022 :mnemonic 99 :charset-list (ascii chinese-gb2312) :designation [ascii chinese-gb2312 nil nil] :mime-charset gb2312))
+    (euc-japan . (:ascii-compatible-p t :category coding-category-iso-8-2 :name japanese-iso-8bit :docstring "ISO 2022 based EUC encoding for Japanese (MIME:EUC-JP)." :coding-type iso-2022 :mnemonic 69 :designation [ascii japanese-jisx0208 katakana-jisx0201 japanese-jisx0212] :flags (short ascii-at-eol ascii-at-cntl single-shift) :charset-list (ascii latin-jisx0201 japanese-jisx0208 katakana-jisx0201 japanese-jisx0212 japanese-jisx0208-1978) :mime-charset euc-jp))
+    (euc-japan-1990 . (:ascii-compatible-p t :category coding-category-iso-8-2 :name japanese-iso-8bit :docstring "ISO 2022 based EUC encoding for Japanese (MIME:EUC-JP)." :coding-type iso-2022 :mnemonic 69 :designation [ascii japanese-jisx0208 katakana-jisx0201 japanese-jisx0212] :flags (short ascii-at-eol ascii-at-cntl single-shift) :charset-list (ascii latin-jisx0201 japanese-jisx0208 katakana-jisx0201 japanese-jisx0212 japanese-jisx0208-1978) :mime-charset euc-jp))
+    (euc-jis-2004 . (:ascii-compatible-p t :category coding-category-iso-8-2 :name euc-jis-2004 :docstring "ISO 2022 based EUC encoding for JIS X 0213 (MIME:EUC-JIS-2004)." :coding-type iso-2022 :mnemonic 69 :designation [ascii japanese-jisx0213.2004-1 katakana-jisx0201 japanese-jisx0213-2] :flags (short ascii-at-eol ascii-at-cntl single-shift) :charset-list (ascii latin-jisx0201 japanese-jisx0213.2004-1 japanese-jisx0213-1 katakana-jisx0201 japanese-jisx0213-2) :mime-charset euc-jis-2004))
+    (euc-jisx0213 . (:ascii-compatible-p t :category coding-category-iso-8-2 :name euc-jis-2004 :docstring "ISO 2022 based EUC encoding for JIS X 0213 (MIME:EUC-JIS-2004)." :coding-type iso-2022 :mnemonic 69 :designation [ascii japanese-jisx0213.2004-1 katakana-jisx0201 japanese-jisx0213-2] :flags (short ascii-at-eol ascii-at-cntl single-shift) :charset-list (ascii latin-jisx0201 japanese-jisx0213.2004-1 japanese-jisx0213-1 katakana-jisx0201 japanese-jisx0213-2) :mime-charset euc-jis-2004))
+    (euc-jp . (:ascii-compatible-p t :category coding-category-iso-8-2 :name japanese-iso-8bit :docstring "ISO 2022 based EUC encoding for Japanese (MIME:EUC-JP)." :coding-type iso-2022 :mnemonic 69 :designation [ascii japanese-jisx0208 katakana-jisx0201 japanese-jisx0212] :flags (short ascii-at-eol ascii-at-cntl single-shift) :charset-list (ascii latin-jisx0201 japanese-jisx0208 katakana-jisx0201 japanese-jisx0212 japanese-jisx0208-1978) :mime-charset euc-jp))
+    (euc-korea . (:ascii-compatible-p t :category coding-category-iso-8-2 :name korean-iso-8bit :docstring "ISO 2022 based EUC encoding for Korean KSC5601 (MIME:EUC-KR)." :coding-type iso-2022 :mnemonic 75 :designation [ascii korean-ksc5601 nil nil] :charset-list (ascii korean-ksc5601) :mime-charset euc-kr))
+    (euc-kr . (:ascii-compatible-p t :category coding-category-iso-8-2 :name korean-iso-8bit :docstring "ISO 2022 based EUC encoding for Korean KSC5601 (MIME:EUC-KR)." :coding-type iso-2022 :mnemonic 75 :designation [ascii korean-ksc5601 nil nil] :charset-list (ascii korean-ksc5601) :mime-charset euc-kr))
+    (euc-taiwan . (:ascii-compatible-p t :category coding-category-iso-8-2 :name euc-tw :docstring "ISO 2022 based EUC encoding for Chinese CNS11643." :coding-type iso-2022 :mnemonic 90 :charset-list (ascii chinese-cns11643-1 chinese-cns11643-2 chinese-cns11643-3 chinese-cns11643-4 chinese-cns11643-5 chinese-cns11643-6 chinese-cns11643-7) :designation [ascii chinese-cns11643-1 (chinese-cns11643-1 chinese-cns11643-2 chinese-cns11643-3 chinese-cns11643-4 chinese-cns11643-5 chinese-cns11643-6 chinese-cns11643-7) nil] :mime-charset euc-tw))
+    (euc-tw . (:ascii-compatible-p t :category coding-category-iso-8-2 :name euc-tw :docstring "ISO 2022 based EUC encoding for Chinese CNS11643." :coding-type iso-2022 :mnemonic 90 :charset-list (ascii chinese-cns11643-1 chinese-cns11643-2 chinese-cns11643-3 chinese-cns11643-4 chinese-cns11643-5 chinese-cns11643-6 chinese-cns11643-7) :designation [ascii chinese-cns11643-1 (chinese-cns11643-1 chinese-cns11643-2 chinese-cns11643-3 chinese-cns11643-4 chinese-cns11643-5 chinese-cns11643-6 chinese-cns11643-7) nil] :mime-charset euc-tw))
+    (eucjp-ms . (:ascii-compatible-p t :category coding-category-iso-8-2 :name eucjp-ms :docstring "eucJP-ms (like EUC-JP but with CP932 extension).
+    eucJP-ms is defined in <http://www.opengroup.or.jp/jvc/cde/appendix.html>." :coding-type iso-2022 :mnemonic 69 :designation [ascii japanese-jisx0208 katakana-jisx0201 japanese-jisx0212] :flags (short ascii-at-eol ascii-at-cntl single-shift) :charset-list (ascii latin-jisx0201 japanese-jisx0208 katakana-jisx0201 japanese-jisx0212) :decode-translation-table eucjp-ms-decode :encode-translation-table eucjp-ms-encode))
+    (gb18030 . (:ascii-compatible-p t :category coding-category-charset :name chinese-gb18030 :docstring "GB18030 encoding for Chinese (MIME:GB18030)." :coding-type charset :mnemonic 99 :charset-list (ascii gb18030-2-byte gb18030-4-byte-bmp gb18030-4-byte-smp gb18030-4-byte-ext-1 gb18030-4-byte-ext-2) :mime-charset gb18030))
+    (gb2312 . (:ascii-compatible-p t :category coding-category-iso-8-2 :name chinese-iso-8bit :docstring "ISO 2022 based EUC encoding for Chinese GB2312 (MIME:GB2312)." :coding-type iso-2022 :mnemonic 99 :charset-list (ascii chinese-gb2312) :designation [ascii chinese-gb2312 nil nil] :mime-charset gb2312))
+    (gbk . (:ascii-compatible-p t :category coding-category-charset :name chinese-gbk :docstring "GBK encoding for Chinese (MIME:GBK)." :coding-type charset :mnemonic 99 :charset-list (ascii chinese-gbk) :mime-charset gbk))
+    (georgian-academy . (:ascii-compatible-p t :category coding-category-charset :name georgian-academy :docstring "Georgian Academy encoding" :coding-type charset :mnemonic 71 :charset-list (georgian-academy)))
+    (georgian-ps . (:ascii-compatible-p t :category coding-category-charset :name georgian-ps :docstring "Georgian PS encoding" :coding-type charset :mnemonic 71 :charset-list (georgian-ps)))
+    (greek-iso-8bit . (:ascii-compatible-p t :category coding-category-charset :name greek-iso-8bit :docstring "ISO 2022 based 8-bit encoding for Greek (MIME:ISO-8859-7)." :coding-type charset :mnemonic 55 :charset-list (iso-8859-7) :mime-charset iso-8859-7))
+    (hebrew-iso-8bit . (:ascii-compatible-p t :category coding-category-charset :name hebrew-iso-8bit :docstring "ISO 2022 based 8-bit encoding for Hebrew (MIME:ISO-8859-8)." :coding-type charset :mnemonic 56 :charset-list (iso-8859-8) :mime-charset iso-8859-8))
+    (hp-roman8 . (:ascii-compatible-p t :category coding-category-charset :name hp-roman8 :docstring "Hewlet-Packard roman-8 encoding (MIME:ROMAN-8)" :coding-type charset :mnemonic 42 :charset-list (hp-roman8) :mime-charset hp-roman8))
+    (hz . (:ascii-compatible-p nil :category coding-category-utf-8 :name chinese-hz :docstring "Hz/ZW 7-bit encoding for Chinese GB2312 (MIME:HZ-GB-2312)." :coding-type utf-8 :mnemonic 122 :charset-list (ascii chinese-gb2312) :mime-charset hz-gb-2312 :post-read-conversion post-read-decode-hz :pre-write-conversion pre-write-encode-hz))
+    (hz-gb-2312 . (:ascii-compatible-p nil :category coding-category-utf-8 :name chinese-hz :docstring "Hz/ZW 7-bit encoding for Chinese GB2312 (MIME:HZ-GB-2312)." :coding-type utf-8 :mnemonic 122 :charset-list (ascii chinese-gb2312) :mime-charset hz-gb-2312 :post-read-conversion post-read-decode-hz :pre-write-conversion pre-write-encode-hz))
+    (ibm038 . (:ascii-compatible-p nil :category coding-category-charset :name ibm038 :docstring "International version of EBCDIC" :coding-type charset :charset-list (ibm038) :mnemonic 42))
+    (ibm1047 . (:ascii-compatible-p nil :category coding-category-charset :name ibm1047 :docstring "A version of EBCDIC used in OS/390 Unix" :coding-type charset :charset-list (ibm1047) :mnemonic 42))
+    (ibm256 . (:ascii-compatible-p nil :category coding-category-charset :name ibm256 :docstring "Netherlands version of EBCDIC" :coding-type charset :charset-list (ibm256) :mnemonic 42))
+    (ibm273 . (:ascii-compatible-p nil :category coding-category-charset :name ibm273 :docstring "Austrian / German version of EBCDIC" :coding-type charset :charset-list (ibm273) :mnemonic 42))
+    (ibm274 . (:ascii-compatible-p nil :category coding-category-charset :name ibm274 :docstring "Belgian version of EBCDIC" :coding-type charset :charset-list (ibm274) :mnemonic 42))
+    (ibm275 . (:ascii-compatible-p nil :category coding-category-charset :name ibm275 :docstring "Brazilian version of EBCDIC" :coding-type charset :charset-list (ibm275) :mnemonic 42))
+    (ibm277 . (:ascii-compatible-p nil :category coding-category-charset :name ibm277 :docstring "Danish / Norwegian version of EBCDIC" :coding-type charset :charset-list (ibm277) :mnemonic 42))
+    (ibm278 . (:ascii-compatible-p nil :category coding-category-charset :name ibm278 :docstring "Finnish / Swedish version of EBCDIC" :coding-type charset :charset-list (ibm278) :mnemonic 42))
+    (ibm280 . (:ascii-compatible-p nil :category coding-category-charset :name ibm280 :docstring "Italian version of EBCDIC" :coding-type charset :charset-list (ibm280) :mnemonic 42))
+    (ibm281 . (:ascii-compatible-p nil :category coding-category-charset :name ibm281 :docstring "Japanese-E version of EBCDIC" :coding-type charset :charset-list (ibm281) :mnemonic 42))
+    (ibm284 . (:ascii-compatible-p nil :category coding-category-charset :name ibm284 :docstring "Spanish version of EBCDIC" :coding-type charset :charset-list (ibm284) :mnemonic 42))
+    (ibm285 . (:ascii-compatible-p nil :category coding-category-charset :name ibm285 :docstring "UK English version of EBCDIC" :coding-type charset :charset-list (ibm285) :mnemonic 42))
+    (ibm290 . (:ascii-compatible-p nil :category coding-category-charset :name ibm290 :docstring "Japanese katakana version of EBCDIC" :coding-type charset :charset-list (ibm290) :mnemonic 42))
+    (ibm297 . (:ascii-compatible-p nil :category coding-category-charset :name ibm297 :docstring "French version of EBCDIC" :coding-type charset :charset-list (ibm297) :mnemonic 42))
+    (ibm437 . (:ascii-compatible-p t :category coding-category-charset :name cp437 :docstring "DOS codepage 437" :coding-type charset :mnemonic 68 :charset-list (cp437) :mime-charset cp437))
+    (ibm775 . (:ascii-compatible-p t :category coding-category-charset :name cp775 :docstring "DOS codepage 775 (PC Baltic, MS-DOS Baltic Rim)" :coding-type charset :mnemonic 68 :charset-list (cp775) :mime-charset cp775))
+    (ibm850 . (:ascii-compatible-p t :category coding-category-charset :name cp850 :docstring "DOS codepage 850 (Western European)" :coding-type charset :mnemonic 68 :charset-list (cp850) :mime-charset cp850))
+    (ibm851 . (:ascii-compatible-p t :category coding-category-charset :name cp851 :docstring "DOS codepage 851 (Greek)" :coding-type charset :mnemonic 68 :charset-list (cp851) :mime-charset cp851))
+    (ibm852 . (:ascii-compatible-p t :category coding-category-charset :name cp852 :docstring "DOS codepage 852 (Slavic)" :coding-type charset :mnemonic 68 :charset-list (cp852) :mime-charset cp852))
+    (ibm855 . (:ascii-compatible-p t :category coding-category-charset :name cp855 :docstring "DOS codepage 855 (Russian)" :coding-type charset :mnemonic 68 :charset-list (cp855) :mime-charset cp855))
+    (ibm857 . (:ascii-compatible-p t :category coding-category-charset :name cp857 :docstring "DOS codepage 857 (Turkish)" :coding-type charset :mnemonic 68 :charset-list (cp857) :mime-charset cp857))
+    (ibm860 . (:ascii-compatible-p t :category coding-category-charset :name cp860 :docstring "DOS codepage 860 (Portuguese)" :coding-type charset :mnemonic 68 :charset-list (cp860) :mime-charset cp860))
+    (ibm861 . (:ascii-compatible-p t :category coding-category-charset :name cp861 :docstring "DOS codepage 861 (Icelandic)" :coding-type charset :mnemonic 68 :charset-list (cp861) :mime-charset cp861))
+    (ibm862 . (:ascii-compatible-p t :category coding-category-charset :name cp862 :docstring "DOS codepage 862 (Hebrew)" :coding-type charset :mnemonic 68 :charset-list (cp862) :mime-charset cp862))
+    (ibm863 . (:ascii-compatible-p t :category coding-category-charset :name cp863 :docstring "DOS codepage 863 (French Canadian)" :coding-type charset :mnemonic 68 :charset-list (cp863) :mime-charset cp863))
+    (ibm865 . (:ascii-compatible-p t :category coding-category-charset :name cp865 :docstring "DOS codepage 865 (Norwegian/Danish)" :coding-type charset :mnemonic 68 :charset-list (cp865) :mime-charset cp865))
+    (ibm869 . (:ascii-compatible-p t :category coding-category-charset :name cp869 :docstring "DOS codepage 869 (Greek)" :coding-type charset :mnemonic 68 :charset-list (cp869) :mime-charset cp869))
+    (ibm874 . (:ascii-compatible-p t :category coding-category-charset :name cp874 :docstring "DOS codepage 874 (Thai)" :coding-type charset :mnemonic 68 :charset-list (cp874) :mime-charset cp874))
+    (in-is13194-devanagari . (:ascii-compatible-p t :category coding-category-iso-8-1 :name in-is13194-devanagari :docstring "8-bit encoding for ASCII (MSB=0) and IS13194-Devanagari (MSB=1)." :coding-type iso-2022 :mnemonic 68 :designation [ascii indian-is13194 nil nil] :charset-list (ascii indian-is13194) :post-read-conversion in-is13194-post-read-conversion :pre-write-conversion in-is13194-pre-write-conversion))
+    (iso-2022-7bit . (:ascii-compatible-p nil :category coding-category-iso-7 :name iso-2022-7bit :docstring "ISO 2022 based 7-bit encoding using only G0." :coding-type iso-2022 :mnemonic 74 :charset-list iso-2022 :designation [(ascii t) nil nil nil] :flags (short ascii-at-eol ascii-at-cntl 7-bit designation composition)))
+    (iso-2022-7bit-lock . (:ascii-compatible-p nil :category coding-category-iso-7-else :name iso-2022-7bit-lock :docstring "ISO-2022 coding system using Locking-Shift for 96-charset." :coding-type iso-2022 :mnemonic 38 :charset-list iso-2022 :designation [(ascii 94) (nil 96) nil nil] :flags (ascii-at-eol ascii-at-cntl 7-bit designation locking-shift composition)))
+    (iso-2022-7bit-lock-ss2 . (:ascii-compatible-p nil :category coding-category-iso-7-else :name iso-2022-7bit-lock-ss2 :docstring "Mixture of ISO-2022-JP, ISO-2022-KR, and ISO-2022-CN." :coding-type iso-2022 :mnemonic 105 :charset-list (ascii japanese-jisx0208 japanese-jisx0208-1978 latin-jisx0201 korean-ksc5601 chinese-gb2312 chinese-cns11643-1 chinese-cns11643-2 chinese-cns11643-3 chinese-cns11643-4 chinese-cns11643-5 chinese-cns11643-6 chinese-cns11643-7) :designation [(ascii 94) (nil korean-ksc5601 chinese-gb2312 chinese-cns11643-1 96) (nil chinese-cns11643-2) (nil chinese-cns11643-3 chinese-cns11643-4 chinese-cns11643-5 chinese-cns11643-6 chinese-cns11643-7)] :flags (short ascii-at-eol ascii-at-cntl 7-bit locking-shift single-shift init-bol)))
+    (iso-2022-7bit-ss2 . (:ascii-compatible-p nil :category coding-category-iso-7-else :name iso-2022-7bit-ss2 :docstring "ISO 2022 based 7-bit encoding using SS2 for 96-charset." :coding-type iso-2022 :mnemonic 36 :charset-list iso-2022 :designation [(ascii 94) nil (nil 96) nil] :flags (short ascii-at-eol ascii-at-cntl 7-bit designation single-shift composition)))
+    (iso-2022-8bit-ss2 . (:ascii-compatible-p nil :category coding-category-iso-8-else :name iso-2022-8bit-ss2 :docstring "ISO 2022 based 8-bit encoding using SS2 for 96-charset." :coding-type iso-2022 :mnemonic 64 :charset-list iso-2022 :designation [(ascii 94) nil (nil 96) nil] :flags (ascii-at-eol ascii-at-cntl designation single-shift composition)))
+    (iso-2022-cjk . (:ascii-compatible-p nil :category coding-category-iso-7-else :name iso-2022-7bit-lock-ss2 :docstring "Mixture of ISO-2022-JP, ISO-2022-KR, and ISO-2022-CN." :coding-type iso-2022 :mnemonic 105 :charset-list (ascii japanese-jisx0208 japanese-jisx0208-1978 latin-jisx0201 korean-ksc5601 chinese-gb2312 chinese-cns11643-1 chinese-cns11643-2 chinese-cns11643-3 chinese-cns11643-4 chinese-cns11643-5 chinese-cns11643-6 chinese-cns11643-7) :designation [(ascii 94) (nil korean-ksc5601 chinese-gb2312 chinese-cns11643-1 96) (nil chinese-cns11643-2) (nil chinese-cns11643-3 chinese-cns11643-4 chinese-cns11643-5 chinese-cns11643-6 chinese-cns11643-7)] :flags (short ascii-at-eol ascii-at-cntl 7-bit locking-shift single-shift init-bol)))
+    (iso-2022-cn . (:ascii-compatible-p nil :category coding-category-iso-7-else :name iso-2022-cn :docstring "ISO 2022 based 7bit encoding for Chinese GB and CNS (MIME:ISO-2022-CN)." :coding-type iso-2022 :mnemonic 67 :charset-list (ascii chinese-gb2312 chinese-cns11643-1 chinese-cns11643-2) :designation [ascii (nil chinese-gb2312 chinese-cns11643-1) (nil chinese-cns11643-2) nil] :flags (ascii-at-eol ascii-at-cntl 7-bit designation locking-shift single-shift init-at-bol) :mime-charset iso-2022-cn :suitable-for-keyboard t))
+    (iso-2022-cn-ext . (:ascii-compatible-p nil :category coding-category-iso-7-else :name iso-2022-cn-ext :docstring "ISO 2022 based 7bit encoding for Chinese GB and CNS (MIME:ISO-2022-CN-EXT)." :coding-type iso-2022 :mnemonic 67 :charset-list (ascii chinese-gb2312 chinese-cns11643-1 chinese-cns11643-2 chinese-cns11643-3 chinese-cns11643-4 chinese-cns11643-5 chinese-cns11643-6 chinese-cns11643-7) :designation [ascii (nil chinese-gb2312 chinese-cns11643-1) (nil chinese-cns11643-2) (nil chinese-cns11643-3 chinese-cns11643-4 chinese-cns11643-5 chinese-cns11643-6 chinese-cns11643-7)] :flags (ascii-at-eol ascii-at-cntl 7-bit designation locking-shift single-shift init-at-bol) :mime-charset iso-2022-cn-ext :suitable-for-keyboard t))
+    (iso-2022-int-1 . (:ascii-compatible-p nil :category coding-category-iso-7-else :name iso-2022-7bit-lock :docstring "ISO-2022 coding system using Locking-Shift for 96-charset." :coding-type iso-2022 :mnemonic 38 :charset-list iso-2022 :designation [(ascii 94) (nil 96) nil nil] :flags (ascii-at-eol ascii-at-cntl 7-bit designation locking-shift composition)))
+    (iso-2022-jp . (:ascii-compatible-p nil :category coding-category-iso-7-tight :name iso-2022-jp :docstring "ISO 2022 based 7bit encoding for Japanese (MIME:ISO-2022-JP)." :coding-type iso-2022 :mnemonic 74 :designation [(ascii japanese-jisx0208-1978 japanese-jisx0208 latin-jisx0201) nil nil nil] :flags (short ascii-at-eol ascii-at-cntl 7-bit designation) :charset-list (ascii japanese-jisx0208 japanese-jisx0208-1978 latin-jisx0201) :mime-charset iso-2022-jp :suitable-for-keyboard t))
+    (iso-2022-jp-1978-irv . (:ascii-compatible-p nil :category coding-category-iso-7-tight :name japanese-iso-7bit-1978-irv :docstring "ISO 2022 based 7-bit encoding for Japanese JISX0208-1978 and JISX0201-Roman." :coding-type iso-2022 :mnemonic 106 :designation [(latin-jisx0201 japanese-jisx0208-1978 japanese-jisx0208 japanese-jisx0212 katakana-jisx0201) nil nil nil] :flags (short ascii-at-eol ascii-at-cntl 7-bit designation use-roman use-oldjis) :charset-list (ascii latin-jisx0201 japanese-jisx0208-1978 japanese-jisx0208 japanese-jisx0212)))
+    (iso-2022-jp-2 . (:ascii-compatible-p nil :category coding-category-iso-7-else :name iso-2022-jp-2 :docstring "ISO 2022 based 7bit encoding for CJK, Latin-1, Greek (MIME:ISO-2022-JP-2)." :coding-type iso-2022 :mnemonic 74 :designation [(ascii japanese-jisx0208-1978 japanese-jisx0208 latin-jisx0201 japanese-jisx0212 chinese-gb2312 korean-ksc5601) nil (nil latin-iso8859-1 greek-iso8859-7) nil] :flags (short ascii-at-eol ascii-at-cntl 7-bit designation single-shift init-at-bol) :charset-list (ascii japanese-jisx0208 japanese-jisx0212 latin-jisx0201 japanese-jisx0208-1978 chinese-gb2312 korean-ksc5601 latin-iso8859-1 greek-iso8859-7) :mime-charset iso-2022-jp-2 :suitable-for-keyboard t))
+    (iso-2022-jp-2004 . (:ascii-compatible-p nil :category coding-category-iso-7-tight :name iso-2022-jp-2004 :docstring "ISO 2022 based 7bit encoding for JIS X 0213:2004 (MIME:ISO-2022-JP-2004)." :coding-type iso-2022 :mnemonic 74 :designation [(ascii japanese-jisx0208 japanese-jisx0213.2004-1 japanese-jisx0213-1 japanese-jisx0213-2) nil nil nil] :flags (short ascii-at-eol ascii-at-cntl 7-bit designation) :charset-list (ascii japanese-jisx0208 japanese-jisx0213.2004-1 japanese-jisx0213-1 japanese-jisx0213-2) :mime-charset iso-2022-jp-2004 :suitable-for-keyboard t))
+    (iso-2022-jp-3 . (:ascii-compatible-p nil :category coding-category-iso-7-tight :name iso-2022-jp-2004 :docstring "ISO 2022 based 7bit encoding for JIS X 0213:2004 (MIME:ISO-2022-JP-2004)." :coding-type iso-2022 :mnemonic 74 :designation [(ascii japanese-jisx0208 japanese-jisx0213.2004-1 japanese-jisx0213-1 japanese-jisx0213-2) nil nil nil] :flags (short ascii-at-eol ascii-at-cntl 7-bit designation) :charset-list (ascii japanese-jisx0208 japanese-jisx0213.2004-1 japanese-jisx0213-1 japanese-jisx0213-2) :mime-charset iso-2022-jp-2004 :suitable-for-keyboard t))
+    (iso-2022-kr . (:ascii-compatible-p nil :category coding-category-iso-7-else :name iso-2022-kr :docstring "ISO 2022 based 7-bit encoding for Korean KSC5601 (MIME:ISO-2022-KR)." :coding-type iso-2022 :mnemonic 107 :designation [ascii (nil korean-ksc5601) nil nil] :flags (ascii-at-eol ascii-at-cntl 7-bit designation locking-shift designation-bol) :charset-list (ascii korean-ksc5601) :mime-charset iso-2022-kr :suitable-for-keyboard t))
+    (iso-8859-1 . (:ascii-compatible-p t :category coding-category-charset :name iso-latin-1 :docstring "ISO 2022 based 8-bit encoding for Latin-1 (MIME:ISO-8859-1)." :coding-type charset :mnemonic 49 :charset-list (iso-8859-1) :mime-charset iso-8859-1))
+    (iso-8859-10 . (:ascii-compatible-p t :category coding-category-charset :name iso-latin-6 :docstring "ISO 2022 based 8-bit encoding for Latin-6 (MIME:ISO-8859-10)." :coding-type charset :mnemonic 57 :charset-list (iso-8859-10) :mime-charset iso-8859-10))
+    (iso-8859-11 . (:ascii-compatible-p t :category coding-category-charset :name iso-8859-11 :docstring "ISO/IEC 8859/11 (Latin/Thai)
+    This is the same as `thai-tis620' with the addition of no-break-space." :coding-type charset :mnemonic 42 :mime-charset iso-8859-11 :charset-list (iso-8859-11)))
+    (iso-8859-13 . (:ascii-compatible-p t :category coding-category-charset :name iso-latin-7 :docstring "ISO 2022 based 8-bit encoding for Latin-7 (MIME:ISO-8859-13)." :coding-type charset :mnemonic 57 :charset-list (iso-8859-13) :mime-charset iso-8859-13))
+    (iso-8859-14 . (:ascii-compatible-p t :category coding-category-charset :name iso-latin-8 :docstring "ISO 2022 based 8-bit encoding for Latin-8 (MIME:ISO-8859-14)." :coding-type charset :mnemonic 87 :charset-list (iso-8859-14) :mime-charset iso-8859-14))
+    (iso-8859-15 . (:ascii-compatible-p t :category coding-category-charset :name iso-latin-9 :docstring "ISO 2022 based 8-bit encoding for Latin-9 (MIME:ISO-8859-15)." :coding-type charset :mnemonic 48 :charset-list (iso-8859-15) :mime-charset iso-8859-15))
+    (iso-8859-16 . (:ascii-compatible-p t :category coding-category-charset :name iso-latin-10 :docstring "ISO 2022 based 8-bit encoding for Latin-10." :coding-type charset :mnemonic 42 :charset-list (iso-8859-16) :mime-charset iso-8859-16))
+    (iso-8859-2 . (:ascii-compatible-p t :category coding-category-charset :name iso-latin-2 :docstring "ISO 2022 based 8-bit encoding for Latin-2 (MIME:ISO-8859-2)." :coding-type charset :mnemonic 50 :charset-list (iso-8859-2) :mime-charset iso-8859-2))
+    (iso-8859-3 . (:ascii-compatible-p t :category coding-category-charset :name iso-latin-3 :docstring "ISO 2022 based 8-bit encoding for Latin-3 (MIME:ISO-8859-3)." :coding-type charset :mnemonic 51 :charset-list (iso-8859-3) :mime-charset iso-8859-3))
+    (iso-8859-4 . (:ascii-compatible-p t :category coding-category-charset :name iso-latin-4 :docstring "ISO 2022 based 8-bit encoding for Latin-4 (MIME:ISO-8859-4)." :coding-type charset :mnemonic 52 :charset-list (iso-8859-4) :mime-charset iso-8859-4))
+    (iso-8859-5 . (:ascii-compatible-p t :category coding-category-charset :name cyrillic-iso-8bit :docstring "ISO 2022 based 8-bit encoding for Cyrillic script (MIME:ISO-8859-5)." :coding-type charset :mnemonic 53 :charset-list (iso-8859-5) :mime-charset iso-8859-5))
+    (iso-8859-6 . (:ascii-compatible-p t :category coding-category-charset :name iso-8859-6 :docstring "ISO-8859-6 based encoding (MIME:ISO-8859-6)." :coding-type charset :mnemonic 54 :charset-list (iso-8859-6) :mime-charset iso-8859-6))
+    (iso-8859-7 . (:ascii-compatible-p t :category coding-category-charset :name greek-iso-8bit :docstring "ISO 2022 based 8-bit encoding for Greek (MIME:ISO-8859-7)." :coding-type charset :mnemonic 55 :charset-list (iso-8859-7) :mime-charset iso-8859-7))
+    (iso-8859-8 . (:ascii-compatible-p t :category coding-category-charset :name hebrew-iso-8bit :docstring "ISO 2022 based 8-bit encoding for Hebrew (MIME:ISO-8859-8)." :coding-type charset :mnemonic 56 :charset-list (iso-8859-8) :mime-charset iso-8859-8))
+    (iso-8859-8-e . (:ascii-compatible-p t :category coding-category-charset :name hebrew-iso-8bit :docstring "ISO 2022 based 8-bit encoding for Hebrew (MIME:ISO-8859-8)." :coding-type charset :mnemonic 56 :charset-list (iso-8859-8) :mime-charset iso-8859-8))
+    (iso-8859-8-i . (:ascii-compatible-p t :category coding-category-charset :name hebrew-iso-8bit :docstring "ISO 2022 based 8-bit encoding for Hebrew (MIME:ISO-8859-8)." :coding-type charset :mnemonic 56 :charset-list (iso-8859-8) :mime-charset iso-8859-8))
+    (iso-8859-9 . (:ascii-compatible-p t :category coding-category-charset :name iso-latin-5 :docstring "ISO 2022 based 8-bit encoding for Latin-5 (MIME:ISO-8859-9)." :coding-type charset :mnemonic 57 :charset-list (iso-8859-9) :mime-charset iso-8859-9))
+    (iso-latin-1 . (:ascii-compatible-p t :category coding-category-charset :name iso-latin-1 :docstring "ISO 2022 based 8-bit encoding for Latin-1 (MIME:ISO-8859-1)." :coding-type charset :mnemonic 49 :charset-list (iso-8859-1) :mime-charset iso-8859-1))
+    (iso-latin-10 . (:ascii-compatible-p t :category coding-category-charset :name iso-latin-10 :docstring "ISO 2022 based 8-bit encoding for Latin-10." :coding-type charset :mnemonic 42 :charset-list (iso-8859-16) :mime-charset iso-8859-16))
+    (iso-latin-2 . (:ascii-compatible-p t :category coding-category-charset :name iso-latin-2 :docstring "ISO 2022 based 8-bit encoding for Latin-2 (MIME:ISO-8859-2)." :coding-type charset :mnemonic 50 :charset-list (iso-8859-2) :mime-charset iso-8859-2))
+    (iso-latin-3 . (:ascii-compatible-p t :category coding-category-charset :name iso-latin-3 :docstring "ISO 2022 based 8-bit encoding for Latin-3 (MIME:ISO-8859-3)." :coding-type charset :mnemonic 51 :charset-list (iso-8859-3) :mime-charset iso-8859-3))
+    (iso-latin-4 . (:ascii-compatible-p t :category coding-category-charset :name iso-latin-4 :docstring "ISO 2022 based 8-bit encoding for Latin-4 (MIME:ISO-8859-4)." :coding-type charset :mnemonic 52 :charset-list (iso-8859-4) :mime-charset iso-8859-4))
+    (iso-latin-5 . (:ascii-compatible-p t :category coding-category-charset :name iso-latin-5 :docstring "ISO 2022 based 8-bit encoding for Latin-5 (MIME:ISO-8859-9)." :coding-type charset :mnemonic 57 :charset-list (iso-8859-9) :mime-charset iso-8859-9))
+    (iso-latin-6 . (:ascii-compatible-p t :category coding-category-charset :name iso-latin-6 :docstring "ISO 2022 based 8-bit encoding for Latin-6 (MIME:ISO-8859-10)." :coding-type charset :mnemonic 57 :charset-list (iso-8859-10) :mime-charset iso-8859-10))
+    (iso-latin-7 . (:ascii-compatible-p t :category coding-category-charset :name iso-latin-7 :docstring "ISO 2022 based 8-bit encoding for Latin-7 (MIME:ISO-8859-13)." :coding-type charset :mnemonic 57 :charset-list (iso-8859-13) :mime-charset iso-8859-13))
+    (iso-latin-8 . (:ascii-compatible-p t :category coding-category-charset :name iso-latin-8 :docstring "ISO 2022 based 8-bit encoding for Latin-8 (MIME:ISO-8859-14)." :coding-type charset :mnemonic 87 :charset-list (iso-8859-14) :mime-charset iso-8859-14))
+    (iso-latin-9 . (:ascii-compatible-p t :category coding-category-charset :name iso-latin-9 :docstring "ISO 2022 based 8-bit encoding for Latin-9 (MIME:ISO-8859-15)." :coding-type charset :mnemonic 48 :charset-list (iso-8859-15) :mime-charset iso-8859-15))
+    (iso-safe . (:ascii-compatible-p t :category coding-category-charset :name us-ascii :docstring "Encode ASCII as-is and encode non-ASCII characters to `?'." :coding-type charset :mnemonic 45 :charset-list (ascii) :default-char 63 :mime-charset us-ascii))
+    (japanese-cp932 . (:ascii-compatible-p t :category coding-category-charset :name japanese-cp932 :docstring "CP932 (Microsoft shift-jis)" :coding-type charset :mnemonic 83 :charset-list (ascii katakana-sjis cp932-2-byte)))
+    (japanese-iso-7bit-1978-irv . (:ascii-compatible-p nil :category coding-category-iso-7-tight :name japanese-iso-7bit-1978-irv :docstring "ISO 2022 based 7-bit encoding for Japanese JISX0208-1978 and JISX0201-Roman." :coding-type iso-2022 :mnemonic 106 :designation [(latin-jisx0201 japanese-jisx0208-1978 japanese-jisx0208 japanese-jisx0212 katakana-jisx0201) nil nil nil] :flags (short ascii-at-eol ascii-at-cntl 7-bit designation use-roman use-oldjis) :charset-list (ascii latin-jisx0201 japanese-jisx0208-1978 japanese-jisx0208 japanese-jisx0212)))
+    (japanese-iso-8bit . (:ascii-compatible-p t :category coding-category-iso-8-2 :name japanese-iso-8bit :docstring "ISO 2022 based EUC encoding for Japanese (MIME:EUC-JP)." :coding-type iso-2022 :mnemonic 69 :designation [ascii japanese-jisx0208 katakana-jisx0201 japanese-jisx0212] :flags (short ascii-at-eol ascii-at-cntl single-shift) :charset-list (ascii latin-jisx0201 japanese-jisx0208 katakana-jisx0201 japanese-jisx0212 japanese-jisx0208-1978) :mime-charset euc-jp))
+    (japanese-shift-jis . (:ascii-compatible-p t :category coding-category-sjis :name japanese-shift-jis :docstring "Shift-JIS 8-bit encoding for Japanese (MIME:SHIFT_JIS)" :coding-type shift-jis :mnemonic 83 :charset-list (ascii katakana-jisx0201 japanese-jisx0208) :mime-charset shift_jis))
+    (japanese-shift-jis-2004 . (:ascii-compatible-p t :category coding-category-sjis :name japanese-shift-jis-2004 :docstring "Shift_JIS 8-bit encoding for Japanese (MIME:SHIFT_JIS-2004)" :coding-type shift-jis :mnemonic 83 :charset-list (ascii katakana-jisx0201 japanese-jisx0213.2004-1 japanese-jisx0213-2)))
+    (junet . (:ascii-compatible-p nil :category coding-category-iso-7-tight :name iso-2022-jp :docstring "ISO 2022 based 7bit encoding for Japanese (MIME:ISO-2022-JP)." :coding-type iso-2022 :mnemonic 74 :designation [(ascii japanese-jisx0208-1978 japanese-jisx0208 latin-jisx0201) nil nil nil] :flags (short ascii-at-eol ascii-at-cntl 7-bit designation) :charset-list (ascii japanese-jisx0208 japanese-jisx0208-1978 latin-jisx0201) :mime-charset iso-2022-jp :suitable-for-keyboard t))
+    (koi8 . (:ascii-compatible-p t :category coding-category-charset :name cyrillic-koi8 :docstring "KOI8 8-bit encoding for Cyrillic (MIME: KOI8-R)." :coding-type charset :mnemonic 82 :charset-list (koi8) :mime-charset koi8-r))
+    (koi8-r . (:ascii-compatible-p t :category coding-category-charset :name cyrillic-koi8 :docstring "KOI8 8-bit encoding for Cyrillic (MIME: KOI8-R)." :coding-type charset :mnemonic 82 :charset-list (koi8) :mime-charset koi8-r))
+    (koi8-t . (:ascii-compatible-p t :category coding-category-charset :name koi8-t :docstring "KOI8-T 8-bit encoding for Cyrillic" :coding-type charset :mnemonic 42 :charset-list (koi8-t) :mime-charset koi8-t))
+    (koi8-u . (:ascii-compatible-p t :category coding-category-charset :name koi8-u :docstring "KOI8-U 8-bit encoding for Cyrillic (MIME: KOI8-U)" :coding-type charset :mnemonic 1059 :charset-list (koi8-u) :mime-charset koi8-u))
+    (korean-cp949 . (:ascii-compatible-p t :category coding-category-charset :name korean-cp949 :docstring "CP949 (Microsoft Unified Hangul Code)" :coding-type charset :mnemonic 75 :charset-list (ascii cp949)))
+    (korean-iso-7bit-lock . (:ascii-compatible-p nil :category coding-category-iso-7-else :name iso-2022-kr :docstring "ISO 2022 based 7-bit encoding for Korean KSC5601 (MIME:ISO-2022-KR)." :coding-type iso-2022 :mnemonic 107 :designation [ascii (nil korean-ksc5601) nil nil] :flags (ascii-at-eol ascii-at-cntl 7-bit designation locking-shift designation-bol) :charset-list (ascii korean-ksc5601) :mime-charset iso-2022-kr :suitable-for-keyboard t))
+    (korean-iso-8bit . (:ascii-compatible-p t :category coding-category-iso-8-2 :name korean-iso-8bit :docstring "ISO 2022 based EUC encoding for Korean KSC5601 (MIME:EUC-KR)." :coding-type iso-2022 :mnemonic 75 :designation [ascii korean-ksc5601 nil nil] :charset-list (ascii korean-ksc5601) :mime-charset euc-kr))
+    (ks_c_5601-1987 . (:ascii-compatible-p t :category coding-category-iso-8-2 :name korean-iso-8bit :docstring "ISO 2022 based EUC encoding for Korean KSC5601 (MIME:EUC-KR)." :coding-type iso-2022 :mnemonic 75 :designation [ascii korean-ksc5601 nil nil] :charset-list (ascii korean-ksc5601) :mime-charset euc-kr))
+    (lao . (:ascii-compatible-p nil :category coding-category-charset :name lao :docstring "8-bit encoding for ASCII (MSB=0) and LAO (MSB=1)." :coding-type charset :mnemonic 76 :charset-list (lao)))
+    (latin-0 . (:ascii-compatible-p t :category coding-category-charset :name iso-latin-9 :docstring "ISO 2022 based 8-bit encoding for Latin-9 (MIME:ISO-8859-15)." :coding-type charset :mnemonic 48 :charset-list (iso-8859-15) :mime-charset iso-8859-15))
+    (latin-1 . (:ascii-compatible-p t :category coding-category-charset :name iso-latin-1 :docstring "ISO 2022 based 8-bit encoding for Latin-1 (MIME:ISO-8859-1)." :coding-type charset :mnemonic 49 :charset-list (iso-8859-1) :mime-charset iso-8859-1))
+    (latin-10 . (:ascii-compatible-p t :category coding-category-charset :name iso-latin-10 :docstring "ISO 2022 based 8-bit encoding for Latin-10." :coding-type charset :mnemonic 42 :charset-list (iso-8859-16) :mime-charset iso-8859-16))
+    (latin-2 . (:ascii-compatible-p t :category coding-category-charset :name iso-latin-2 :docstring "ISO 2022 based 8-bit encoding for Latin-2 (MIME:ISO-8859-2)." :coding-type charset :mnemonic 50 :charset-list (iso-8859-2) :mime-charset iso-8859-2))
+    (latin-3 . (:ascii-compatible-p t :category coding-category-charset :name iso-latin-3 :docstring "ISO 2022 based 8-bit encoding for Latin-3 (MIME:ISO-8859-3)." :coding-type charset :mnemonic 51 :charset-list (iso-8859-3) :mime-charset iso-8859-3))
+    (latin-4 . (:ascii-compatible-p t :category coding-category-charset :name iso-latin-4 :docstring "ISO 2022 based 8-bit encoding for Latin-4 (MIME:ISO-8859-4)." :coding-type charset :mnemonic 52 :charset-list (iso-8859-4) :mime-charset iso-8859-4))
+    (latin-5 . (:ascii-compatible-p t :category coding-category-charset :name iso-latin-5 :docstring "ISO 2022 based 8-bit encoding for Latin-5 (MIME:ISO-8859-9)." :coding-type charset :mnemonic 57 :charset-list (iso-8859-9) :mime-charset iso-8859-9))
+    (latin-6 . (:ascii-compatible-p t :category coding-category-charset :name iso-latin-6 :docstring "ISO 2022 based 8-bit encoding for Latin-6 (MIME:ISO-8859-10)." :coding-type charset :mnemonic 57 :charset-list (iso-8859-10) :mime-charset iso-8859-10))
+    (latin-7 . (:ascii-compatible-p t :category coding-category-charset :name iso-latin-7 :docstring "ISO 2022 based 8-bit encoding for Latin-7 (MIME:ISO-8859-13)." :coding-type charset :mnemonic 57 :charset-list (iso-8859-13) :mime-charset iso-8859-13))
+    (latin-8 . (:ascii-compatible-p t :category coding-category-charset :name iso-latin-8 :docstring "ISO 2022 based 8-bit encoding for Latin-8 (MIME:ISO-8859-14)." :coding-type charset :mnemonic 87 :charset-list (iso-8859-14) :mime-charset iso-8859-14))
+    (latin-9 . (:ascii-compatible-p t :category coding-category-charset :name iso-latin-9 :docstring "ISO 2022 based 8-bit encoding for Latin-9 (MIME:ISO-8859-15)." :coding-type charset :mnemonic 48 :charset-list (iso-8859-15) :mime-charset iso-8859-15))
+    (mac-roman . (:ascii-compatible-p t :category coding-category-charset :name mac-roman :docstring "Mac Roman Encoding (MIME:MACINTOSH)." :coding-type charset :mnemonic 77 :charset-list (mac-roman) :mime-charset macintosh))
+    (macintosh . (:ascii-compatible-p t :category coding-category-charset :name mac-roman :docstring "Mac Roman Encoding (MIME:MACINTOSH)." :coding-type charset :mnemonic 77 :charset-list (mac-roman) :mime-charset macintosh))
+    (mik . (:ascii-compatible-p t :category coding-category-charset :name mik :docstring "Bulgarian DOS codepage" :coding-type charset :mnemonic 68 :charset-list (mik)))
+    (mule-utf-8 . (:ascii-compatible-p t :category coding-category-utf-8 :name utf-8 :docstring "UTF-8 (no signature (BOM))" :coding-type utf-8 :mnemonic 85 :charset-list (unicode) :mime-charset utf-8))
+    (next . (:ascii-compatible-p t :category coding-category-charset :name next :docstring "NeXTstep encoding" :coding-type charset :mnemonic 42 :charset-list (next) :mime-charset next))
+    (no-conversion . (:ascii-compatible-p t :category coding-category-raw-text :name no-conversion :mnemonic 61 :coding-type raw-text :ascii-compatible-p t :default-char 0 :for-unibyte t :docstring "Do no conversion.
+    
+    When you visit a file with this coding, the file is read into a
+    unibyte buffer as is, thus each byte of a file is treated as a
+    character." :eol-type unix))
+    (no-conversion-multibyte . (:ascii-compatible-p t :category coding-category-raw-text :name no-conversion-multibyte :docstring "Like `no-conversion' but don't read a file into a unibyte buffer." :coding-type raw-text :eol-type unix :mnemonic 61))
+    (old-jis . (:ascii-compatible-p nil :category coding-category-iso-7-tight :name japanese-iso-7bit-1978-irv :docstring "ISO 2022 based 7-bit encoding for Japanese JISX0208-1978 and JISX0201-Roman." :coding-type iso-2022 :mnemonic 106 :designation [(latin-jisx0201 japanese-jisx0208-1978 japanese-jisx0208 japanese-jisx0212 katakana-jisx0201) nil nil nil] :flags (short ascii-at-eol ascii-at-cntl 7-bit designation use-roman use-oldjis) :charset-list (ascii latin-jisx0201 japanese-jisx0208-1978 japanese-jisx0208 japanese-jisx0212)))
+    (prefer-utf-8 . (:ascii-compatible-p nil :category coding-category-undecided :name prefer-utf-8 :docstring "Like `undecided' but prefer UTF-8 when appropriate.
+    On decoding, if the source contains 8-bit codes and they all
+    are valid UTF-8 sequences, detect the source as UTF-8 encoding
+    regardless of the coding priority.
+    On encoding, if the source contains non-ASCII characters, encode them
+    by UTF-8." :coding-type undecided :mnemonic 45 :charset-list (emacs) :prefer-utf-8 t :inhibit-null-byte-detection 0 :inhibit-iso-escape-detection 0))
+    (pt154 . (:ascii-compatible-p t :category coding-category-charset :name pt154 :docstring "ParaType Asian Cyrillic codepage" :coding-type charset :mnemonic 68 :charset-list (pt154)))
+    (raw-text . (:ascii-compatible-p t :category coding-category-raw-text :name raw-text :docstring "Raw text, which means text contains random 8-bit codes.
+    Encoding text with this coding system produces the actual byte
+    sequence of the text in buffers and strings.  An exception is made for
+    characters from the `eight-bit' character set.  Each of them is encoded
+    into a single byte.
+    
+    When you visit a file with this coding, the file is read into a
+    unibyte buffer as is (except for EOL format), thus each byte of a file
+    is treated as a character." :coding-type raw-text :for-unibyte t :mnemonic 116))
+    (roman8 . (:ascii-compatible-p t :category coding-category-charset :name hp-roman8 :docstring "Hewlet-Packard roman-8 encoding (MIME:ROMAN-8)" :coding-type charset :mnemonic 42 :charset-list (hp-roman8) :mime-charset hp-roman8))
+    (ruscii . (:ascii-compatible-p t :category coding-category-charset :name cp1125 :docstring "cp1125 8-bit encoding for Cyrillic" :coding-type charset :mnemonic 42 :charset-list (cp1125)))
+    (shift_jis . (:ascii-compatible-p t :category coding-category-sjis :name japanese-shift-jis :docstring "Shift-JIS 8-bit encoding for Japanese (MIME:SHIFT_JIS)" :coding-type shift-jis :mnemonic 83 :charset-list (ascii katakana-jisx0201 japanese-jisx0208) :mime-charset shift_jis))
+    (shift_jis-2004 . (:ascii-compatible-p t :category coding-category-sjis :name japanese-shift-jis-2004 :docstring "Shift_JIS 8-bit encoding for Japanese (MIME:SHIFT_JIS-2004)" :coding-type shift-jis :mnemonic 83 :charset-list (ascii katakana-jisx0201 japanese-jisx0213.2004-1 japanese-jisx0213-2)))
+    (sjis . (:ascii-compatible-p t :category coding-category-sjis :name japanese-shift-jis :docstring "Shift-JIS 8-bit encoding for Japanese (MIME:SHIFT_JIS)" :coding-type shift-jis :mnemonic 83 :charset-list (ascii katakana-jisx0201 japanese-jisx0208) :mime-charset shift_jis))
+    (tcvn . (:ascii-compatible-p nil :category coding-category-charset :name vietnamese-vscii :docstring "8-bit encoding for Vietnamese VSCII-1 (TCVN-5712)." :coding-type charset :mnemonic 118 :charset-list (vscii) :suitable-for-file-name t))
+    (tcvn-5712 . (:ascii-compatible-p nil :category coding-category-charset :name vietnamese-vscii :docstring "8-bit encoding for Vietnamese VSCII-1 (TCVN-5712)." :coding-type charset :mnemonic 118 :charset-list (vscii) :suitable-for-file-name t))
+    (th-tis620 . (:ascii-compatible-p t :category coding-category-charset :name thai-tis620 :docstring "8-bit encoding for ASCII (MSB=0) and Thai TIS620 (MSB=1)." :coding-type charset :mnemonic 84 :charset-list (tis620-2533)))
+    (thai-tis620 . (:ascii-compatible-p t :category coding-category-charset :name thai-tis620 :docstring "8-bit encoding for ASCII (MSB=0) and Thai TIS620 (MSB=1)." :coding-type charset :mnemonic 84 :charset-list (tis620-2533)))
+    (tibetan . (:ascii-compatible-p t :category coding-category-iso-8-2 :name tibetan-iso-8bit :docstring "8-bit encoding for ASCII (MSB=0) and TIBETAN (MSB=1)." :coding-type iso-2022 :mnemonic 81 :designation [ascii tibetan nil nil] :charset-list (ascii tibetan)))
+    (tibetan-iso-8bit . (:ascii-compatible-p t :category coding-category-iso-8-2 :name tibetan-iso-8bit :docstring "8-bit encoding for ASCII (MSB=0) and TIBETAN (MSB=1)." :coding-type iso-2022 :mnemonic 81 :designation [ascii tibetan nil nil] :charset-list (ascii tibetan)))
+    (tis-620 . (:ascii-compatible-p t :category coding-category-charset :name thai-tis620 :docstring "8-bit encoding for ASCII (MSB=0) and Thai TIS620 (MSB=1)." :coding-type charset :mnemonic 84 :charset-list (tis620-2533)))
+    (tis620 . (:ascii-compatible-p t :category coding-category-charset :name thai-tis620 :docstring "8-bit encoding for ASCII (MSB=0) and Thai TIS620 (MSB=1)." :coding-type charset :mnemonic 84 :charset-list (tis620-2533)))
+    (undecided . (:ascii-compatible-p t :category coding-category-undecided :name undecided :mnemonic 45 :coding-type undecided :ascii-compatible-p t :charset-list (ascii) :for-unibyte nil :docstring "No conversion on encoding, automatic conversion on decoding." :eol-type nil))
+    (us-ascii . (:ascii-compatible-p t :category coding-category-charset :name us-ascii :docstring "Encode ASCII as-is and encode non-ASCII characters to `?'." :coding-type charset :mnemonic 45 :charset-list (ascii) :default-char 63 :mime-charset us-ascii))
+    (utf-16 . (:ascii-compatible-p nil :category coding-category-utf-16-auto :name utf-16 :docstring "UTF-16 (detect endian on decoding, use big endian on encoding with BOM)." :coding-type utf-16 :mnemonic 85 :charset-list (unicode) :bom (utf-16le-with-signature . utf-16be-with-signature) :endian big :mime-text-unsuitable t :mime-charset utf-16))
+    (utf-16-be . (:ascii-compatible-p nil :category coding-category-utf-16-be :name utf-16be-with-signature :docstring "UTF-16 (big endian, with signature (BOM))." :coding-type utf-16 :mnemonic 85 :charset-list (unicode) :bom t :endian big :mime-text-unsuitable t :mime-charset utf-16))
+    (utf-16-le . (:ascii-compatible-p nil :category coding-category-utf-16-le :name utf-16le-with-signature :docstring "UTF-16 (little endian, with signature (BOM))." :coding-type utf-16 :mnemonic 85 :charset-list (unicode) :bom t :endian little :mime-text-unsuitable t :mime-charset utf-16))
+    (utf-16be . (:ascii-compatible-p nil :category coding-category-utf-16-be-nosig :name utf-16be :docstring "UTF-16BE (big endian, no signature (BOM))." :coding-type utf-16 :mnemonic 85 :charset-list (unicode) :endian big :mime-text-unsuitable t :mime-charset utf-16be))
+    (utf-16be-with-signature . (:ascii-compatible-p nil :category coding-category-utf-16-be :name utf-16be-with-signature :docstring "UTF-16 (big endian, with signature (BOM))." :coding-type utf-16 :mnemonic 85 :charset-list (unicode) :bom t :endian big :mime-text-unsuitable t :mime-charset utf-16))
+    (utf-16le . (:ascii-compatible-p nil :category coding-category-utf-16-le-nosig :name utf-16le :docstring "UTF-16LE (little endian, no signature (BOM))." :coding-type utf-16 :mnemonic 85 :charset-list (unicode) :endian little :mime-text-unsuitable t :mime-charset utf-16le))
+    (utf-16le-with-signature . (:ascii-compatible-p nil :category coding-category-utf-16-le :name utf-16le-with-signature :docstring "UTF-16 (little endian, with signature (BOM))." :coding-type utf-16 :mnemonic 85 :charset-list (unicode) :bom t :endian little :mime-text-unsuitable t :mime-charset utf-16))
+    (utf-7 . (:ascii-compatible-p nil :category coding-category-utf-8 :name utf-7 :docstring "UTF-7 encoding of Unicode (RFC 2152)." :coding-type utf-8 :mnemonic 117 :mime-charset utf-7 :charset-list (unicode) :pre-write-conversion utf-7-pre-write-conversion :post-read-conversion utf-7-post-read-conversion))
+    (utf-7-imap . (:ascii-compatible-p nil :category coding-category-utf-8 :name utf-7-imap :docstring "UTF-7 encoding of Unicode, IMAP version (RFC 2060)" :coding-type utf-8 :mnemonic 117 :charset-list (unicode) :pre-write-conversion utf-7-imap-pre-write-conversion :post-read-conversion utf-7-imap-post-read-conversion))
+    (utf-8 . (:ascii-compatible-p t :category coding-category-utf-8 :name utf-8 :docstring "UTF-8 (no signature (BOM))" :coding-type utf-8 :mnemonic 85 :charset-list (unicode) :mime-charset utf-8))
+    (utf-8-auto . (:ascii-compatible-p nil :category coding-category-utf-8-auto :name utf-8-auto :docstring "UTF-8 (auto-detect signature (BOM))" :coding-type utf-8 :mnemonic 85 :charset-list (unicode) :bom (utf-8-with-signature . utf-8)))
+    (utf-8-emacs . (:ascii-compatible-p t :category coding-category-utf-8 :name utf-8-emacs :docstring "Support for all Emacs characters (including non-Unicode characters)." :coding-type utf-8 :mnemonic 85 :charset-list (emacs)))
+    (utf-8-hfs . (:ascii-compatible-p t :category coding-category-utf-8 :name utf-8-hfs :docstring "UTF-8 based coding system for macOS HFS file names.
+    The singleton characters in HFS normalization exclusion will not
+    be decomposed." :coding-type utf-8 :mnemonic 85 :charset-list (unicode) :post-read-conversion ucs-normalize-hfs-nfd-post-read-conversion :pre-write-conversion ucs-normalize-hfs-nfd-pre-write-conversion decomposed-characters t))
+    (utf-8-nfd . (:ascii-compatible-p t :category coding-category-utf-8 :name utf-8-hfs :docstring "UTF-8 based coding system for macOS HFS file names.
+    The singleton characters in HFS normalization exclusion will not
+    be decomposed." :coding-type utf-8 :mnemonic 85 :charset-list (unicode) :post-read-conversion ucs-normalize-hfs-nfd-post-read-conversion :pre-write-conversion ucs-normalize-hfs-nfd-pre-write-conversion decomposed-characters t))
+    (utf-8-with-signature . (:ascii-compatible-p nil :category coding-category-utf-8-sig :name utf-8-with-signature :docstring "UTF-8 (with signature (BOM))" :coding-type utf-8 :mnemonic 85 :charset-list (unicode) :bom t))
+    (vietnamese-tcvn . (:ascii-compatible-p nil :category coding-category-charset :name vietnamese-vscii :docstring "8-bit encoding for Vietnamese VSCII-1 (TCVN-5712)." :coding-type charset :mnemonic 118 :charset-list (vscii) :suitable-for-file-name t))
+    (vietnamese-viqr . (:ascii-compatible-p t :category coding-category-utf-8 :name vietnamese-viqr :docstring "Vietnamese latin transcription (VIQR)." :coding-type utf-8 :mnemonic 113 :charset-list (ascii viscii) :post-read-conversion viqr-post-read-conversion :pre-write-conversion viqr-pre-write-conversion))
+    (vietnamese-viscii . (:ascii-compatible-p nil :category coding-category-charset :name vietnamese-viscii :docstring "8-bit encoding for Vietnamese VISCII 1.1 (MIME:VISCII)." :coding-type charset :mnemonic 86 :charset-list (viscii) :mime-charset viscii :suitable-for-file-name t))
+    (vietnamese-vscii . (:ascii-compatible-p nil :category coding-category-charset :name vietnamese-vscii :docstring "8-bit encoding for Vietnamese VSCII-1 (TCVN-5712)." :coding-type charset :mnemonic 118 :charset-list (vscii) :suitable-for-file-name t))
+    (viqr . (:ascii-compatible-p t :category coding-category-utf-8 :name vietnamese-viqr :docstring "Vietnamese latin transcription (VIQR)." :coding-type utf-8 :mnemonic 113 :charset-list (ascii viscii) :post-read-conversion viqr-post-read-conversion :pre-write-conversion viqr-pre-write-conversion))
+    (viscii . (:ascii-compatible-p nil :category coding-category-charset :name vietnamese-viscii :docstring "8-bit encoding for Vietnamese VISCII 1.1 (MIME:VISCII)." :coding-type charset :mnemonic 86 :charset-list (viscii) :mime-charset viscii :suitable-for-file-name t))
+    (vscii . (:ascii-compatible-p nil :category coding-category-charset :name vietnamese-vscii :docstring "8-bit encoding for Vietnamese VSCII-1 (TCVN-5712)." :coding-type charset :mnemonic 118 :charset-list (vscii) :suitable-for-file-name t))
+    (windows-1250 . (:ascii-compatible-p t :category coding-category-charset :name windows-1250 :docstring "windows-1250 (Central European) encoding (MIME: WINDOWS-1250)" :coding-type charset :mnemonic 42 :charset-list (windows-1250) :mime-charset windows-1250))
+    (windows-1251 . (:ascii-compatible-p t :category coding-category-charset :name windows-1251 :docstring "windows-1251 8-bit encoding for Cyrillic (MIME: WINDOWS-1251)" :coding-type charset :mnemonic 98 :charset-list (windows-1251) :mime-charset windows-1251))
+    (windows-1252 . (:ascii-compatible-p t :category coding-category-charset :name windows-1252 :docstring "windows-1252 (Western European) encoding (MIME: WINDOWS-1252)" :coding-type charset :mnemonic 42 :charset-list (windows-1252) :mime-charset windows-1252))
+    (windows-1253 . (:ascii-compatible-p t :category coding-category-charset :name windows-1253 :docstring "windows-1253 encoding for Greek" :coding-type charset :mnemonic 103 :charset-list (windows-1253) :mime-charset windows-1253))
+    (windows-1254 . (:ascii-compatible-p t :category coding-category-charset :name windows-1254 :docstring "windows-1254 (Turkish) encoding (MIME: WINDOWS-1254)" :coding-type charset :mnemonic 42 :charset-list (windows-1254) :mime-charset windows-1254))
+    (windows-1255 . (:ascii-compatible-p t :category coding-category-charset :name windows-1255 :docstring "windows-1255 (Hebrew) encoding (MIME: WINDOWS-1255)" :coding-type charset :mnemonic 104 :charset-list (windows-1255) :mime-charset windows-1255))
+    (windows-1256 . (:ascii-compatible-p t :category coding-category-charset :name windows-1256 :docstring "windows-1256 (Arabic) encoding (MIME: WINDOWS-1256)" :coding-type charset :mnemonic 65 :charset-list (windows-1256) :mime-charset windows-1256))
+    (windows-1257 . (:ascii-compatible-p t :category coding-category-charset :name windows-1257 :docstring "windows-1257 (Baltic) encoding (MIME: WINDOWS-1257)" :coding-type charset :mnemonic 42 :charset-list (windows-1257) :mime-charset windows-1257))
+    (windows-1258 . (:ascii-compatible-p t :category coding-category-charset :name windows-1258 :docstring "windows-1258 encoding for Vietnamese (MIME: WINDOWS-1258)" :coding-type charset :mnemonic 42 :charset-list (windows-1258) :mime-charset windows-1258))
+    (windows-936 . (:ascii-compatible-p t :category coding-category-charset :name chinese-gbk :docstring "GBK encoding for Chinese (MIME:GBK)." :coding-type charset :mnemonic 99 :charset-list (ascii chinese-gbk) :mime-charset gbk))
+    (x-ctext . (:ascii-compatible-p nil :category coding-category-iso-8-else :name compound-text :docstring "Compound text based generic encoding.
+    This coding system is an extension of X's \"Compound Text Encoding\".
+    It encodes many characters using the normal ISO-2022 designation sequences,
+    but it doesn't support extended segments of CTEXT." :coding-type iso-2022 :mnemonic 120 :charset-list iso-2022 :designation [(ascii 94) (latin-iso8859-1 katakana-jisx0201 96) nil nil] :flags (ascii-at-eol ascii-at-cntl long-form designation locking-shift single-shift composition) :mime-charset x-ctext))
+    (x-ctext-with-extensions . (:ascii-compatible-p nil :category coding-category-iso-8-else :name compound-text-with-extensions :docstring "Compound text encoding with ICCCM Extended Segment extensions.
+    
+    See the variables `ctext-standard-encodings' and
+    `ctext-non-standard-encodings-alist' for the detail about how
+    extended segments are handled.
+    
+    This coding system should be used only for X selections.  It is inappropriate
+    for decoding and encoding files, process I/O, etc." :coding-type iso-2022 :mnemonic 120 :charset-list iso-2022 :designation [(ascii 94) (latin-iso8859-1 katakana-jisx0201 96) nil nil] :flags (ascii-at-eol ascii-at-cntl long-form designation locking-shift single-shift) :post-read-conversion ctext-post-read-conversion :pre-write-conversion ctext-pre-write-conversion :mime-charset x-ctext))
+)
+  "GNU 31 `coding-system-plist' data for every defined coding-system name.")
+
 ;; ---------- buffer macros ----------
 
 (defmacro with-temp-buffer (&rest body)
@@ -59,6 +581,37 @@ inclusive, to COUNT, exclusive."
                       (list 'and
                             (list 'buffer-name temp-buffer)
                             (list 'kill-buffer temp-buffer)))))))
+
+(defmacro with-syntax-table (table &rest body)
+  "Evaluate BODY with syntax table of current buffer set to TABLE.
+The syntax table of the current buffer is saved, BODY is evaluated, and
+the saved table is restored, even in case of an abnormal exit.
+Value is what BODY returns."
+  (let ((tbl (make-symbol "table"))
+        (buf (make-symbol "buffer")))
+    (list 'let (list (list tbl '(syntax-table))
+                     (list buf '(current-buffer)))
+          (list 'unwind-protect
+                (cons 'progn (cons (list 'set-syntax-table table) body))
+                (list 'save-current-buffer
+                      (list 'set-buffer buf)
+                      (list 'set-syntax-table tbl))))))
+
+;; GNU case-table.el.
+(defun char-uppercase-p (char)
+  "Return non-nil if CHAR is an uppercase character."
+  (and (characterp char)
+       (not (eq (downcase char) char))
+       (eq (upcase char) char)))
+
+(defun copy-case-table (case-table)
+  "Return a new case table that is a copy of CASE-TABLE.
+It copies the case-table itself and each of its extra-slot tables."
+  (let ((new (copy-sequence case-table)))
+    (dotimes (i 4)
+      (set-char-table-extra-slot
+       new i (copy-sequence (char-table-extra-slot case-table i))))
+    new))
 
 (defmacro with-temp-file (file &rest body)
   "Create a temporary buffer, evaluate BODY, write it to FILE."
@@ -77,19 +630,48 @@ inclusive, to COUNT, exclusive."
 ;; `save-current-buffer' is a primitive special form (as in GNU), not a
 ;; macro — see special.rs.
 
+;; `push'/`pop' are GNU subr.el defmacros, verbatim (the symbol fast-path
+;; avoids triggering GV; other places expand through `gv-letplace').
 (defmacro push (newelt place)
-  "Add NEWELT to the list stored in symbol PLACE."
-  (let ((v (if (and (consp place) (eq (car place) 'quote))
-               (cadr place)
-             place)))
-    (list 'setq v (list 'cons newelt v))))
+  "Add NEWELT to the list stored in the generalized variable PLACE.
+
+This is morally equivalent to (setf PLACE (cons NEWELT PLACE)),
+except that PLACE is evaluated only once (after NEWELT).
+
+For more information about generalized variables, see Info node
+`(elisp) Generalized Variables'."
+  (declare (debug (form gv-place)))
+  (if (symbolp place)
+      ;; Important special case, to avoid triggering GV too early in
+      ;; the bootstrap.
+      (list 'setq place
+            (list 'cons newelt place))
+    (require 'macroexp)
+    (macroexp-let2 macroexp-copyable-p x newelt
+      (gv-letplace (getter setter) place
+        (funcall setter `(cons ,x ,getter))))))
 
 (defmacro pop (place)
-  "Return and remove the first element of the list in PLACE."
-  (let ((v (if (and (consp place) (eq (car place) 'quote))
-               (cadr place)
-             place)))
-    (list 'prog1 (list 'car v) (list 'setq v (list 'cdr v)))))
+  "Return the first element of PLACE's value, and remove it from the list.
+
+PLACE must be a generalized variable whose value is a list.
+If the value is nil, `pop' returns nil but does not actually
+change the list.
+
+For more information about generalized variables, see Info node
+`(elisp) Generalized Variables'."
+  (declare (debug (gv-place)))
+  ;; We use `car-safe' here instead of `car' because the behavior is the same
+  ;; (if it's not a cons cell, the `cdr' would have signaled an error already),
+  ;; but `car-safe' is total, so the byte-compiler can safely remove it if the
+  ;; result is not used.
+  `(car-safe
+    ,(if (symbolp place)
+         ;; So we can use `pop' in the bootstrap before `gv' can be used.
+         (list 'prog1 place (list 'setq place (list 'cdr place)))
+       (gv-letplace (getter setter) place
+         (macroexp-let2 macroexp-copyable-p x getter
+           `(prog1 ,x ,(funcall setter `(cdr ,x))))))))
 
 (defmacro setq-local (var val)
   "Make variable VAR buffer-local and set it to VAL."
@@ -3298,7 +3880,7 @@ places where expressions are evaluated and inserted or spliced in."
 (autoload 'kmacro-name-last-macro "kmacro"
   "Assign a name to the last keyboard macro defined." t)
 (autoload 'gv-get "gv"
-  "Build the code that applies DO to PLACE." nil t)
+  "Build the code that applies DO to PLACE.")
 (autoload 'gv-letplace "gv"
   "Build the code manipulating the generalized variable PLACE." nil t)
 (autoload 'gv-define-expander "gv"
@@ -3307,12 +3889,18 @@ places where expressions are evaluated and inserted or spliced in."
   "Define a setter method for generalized variable NAME." nil t)
 (autoload 'gv-define-simple-setter "gv"
   "Define a simple setter method for generalized variable NAME." nil t)
+(autoload 'setf "gv"
+  "Set each PLACE to the value of its VAL." nil t)
+(autoload 'incf "gv"
+  "Increment generalized variable PLACE by DELTA (default to 1)." nil t)
+(autoload 'decf "gv"
+  "Decrement generalized variable PLACE by DELTA (default to 1)." nil t)
+(autoload 'gv-ref "gv"
+  "Return a reference to PLACE." nil t)
 (autoload 'defclass "eieio"
   "Define NAME as a class." nil t)
 (autoload 'make-instance "eieio"
   "Create an instance of CLASS." nil nil)
-(autoload 'gv-ref "gv"
-  "Return a reference to PLACE." nil t)
 
 ;; thingatpt.el autoloads (GNU loaddefs registers exactly these).
 (autoload 'forward-thing "thingatpt"
@@ -3673,155 +4261,34 @@ one or more of those symbols."
        (setq ,name (define-keymap ,@pairs))
        ,name)))
 
-;; ---------- minimal setf/generalized-place machinery ----------
+;; ---------- generalized variables ----------
+;; `setf'/`incf'/`decf' are autoloaded from gv.el (GNU parity: they are
+;; `;;;###autoload' entries in gv.el, so `symbol-function' yields an
+;; autoload cell until first use).  `cl-psetf', `cl-rotatef', `cl-shiftf',
+;; `cl-remf', `cl-pushnew' and friends live in cl-macs.el / cl-lib.el and
+;; are *not* defined at startup (GNU Emacs 31 parity).
 
-(defun cl--setf-pair (place val)
-  "Return a form evaluating to `(setf PLACE VAL)' for common places."
-  (cond
-   ((symbolp place) (list 'setq place val))
-   ((consp place)
-    (let ((op (car place)))
-      (cond
-       ;; Expand macro-headed places (GNU gv does this) so e.g.
-       ;; `(oref o s)' exposes its `(setf eieio-oref)'-able form.
-       ((and (symbolp op)
-             (not (memq op '(car cdr caar cadr cddr nth elt nthcdr aref
-                             get gethash symbol-value symbol-function
-                             symbol-plist plist-get alist-get gv-deref)))
-             (macrop (symbol-function op)))
-        (cl--setf-pair (macroexpand-1 place) val))
-       ((eq op 'car) `(setcar ,(cadr place) ,val))
-       ((eq op 'cdr) `(setcdr ,(cadr place) ,val))
-       ((eq op 'caar) `(setcar (car ,(cadr place)) ,val))
-       ((eq op 'cadr) `(setcar (cdr ,(cadr place)) ,val))
-       ((eq op 'cddr) `(setcdr (cdr ,(cadr place)) ,val))
-       ((eq op 'nth) `(setcar (nthcdr ,(cadr place) ,(caddr place)) ,val))
-       ((eq op 'elt) `(setcar (nthcdr ,(caddr place) ,(cadr place)) ,val))
-       ((eq op 'nthcdr)
-        `(setcdr (nthcdr ,(caddr place) ,(cadr place)) ,val))
-       ((eq op 'aref) `(aset ,(cadr place) ,(caddr place) ,val))
-       ((eq op 'get) `(put ,(cadr place) ,(caddr place) ,val))
-       ((eq op 'gethash) `(puthash ,(caddr place) ,val ,(cadr place)))
-       ((eq op 'symbol-value) `(set ,(cadr place) ,val))
-       ((eq op 'symbol-function) `(fset ,(cadr place) ,val))
-       ((eq op 'symbol-plist) `(setplist ,(cadr place) ,val))
-       ((eq op 'plist-get)
-        `(progn (setq ,(cadr place)
-                      (plist-put ,(cadr place) ,(caddr place) ,val))
-                ,(caddr place)))
-       ((eq op 'alist-get)
-        ;; GNU gv-define-expander for alist-get: the lookup is testfn
-        ;; aware (nil/'eq => assq, else assoc TESTFN); setting an
-        ;; existing pair does setcdr, else pushes (cons key val); when
-        ;; REMOVE is given, assigning DEFAULT (eql) deletes the pair.
-        (let ((k (make-symbol "k")) (v (make-symbol "v"))
-              (a (make-symbol "a")) (d (make-symbol "d"))
-              (tf (make-symbol "tf")) (p (make-symbol "p")))
-          `(let* ((,k ,(cadr place)) (,a ,(caddr place))
-                  (,d ,(nth 3 place)) (,tf ,(nth 5 place))
-                  (,v ,val)
-                  (,p (if (memq ,tf '(nil eq #'eq))
-                          (assq ,k ,a)
-                        (assoc ,k ,a ,tf))))
-             ,(if (null (nth 4 place))
-                  `(if ,p
-                       (progn (setcdr ,p ,v) ,v)
-                     (setf ,(caddr place) (cons (setq ,p (cons ,k ,v)) ,a))
-                     ,v)
-                `(progn
-                   (cond
-                    ((not (eql ,d ,v))
-                     (if ,p
-                         (setcdr ,p ,v)
-                       (setf ,(caddr place)
-                             (cons (setq ,p (cons ,k ,v)) ,a))))
-                    (,p (setf ,(caddr place) (delq ,p ,a))))
-                   ,v)))))
-       ((eq op 'gv-deref) `(funcall (cdr ,(cadr place)) ,val))
-       ;; Fallback like GNU's gv-setter: call the `(setf OP)' function.
-       ((symbolp op)
-        `(funcall ',(intern (format "(setf %s)" op)) ,val
-                  ,@(cdr place)))
-       (t (error "setf: unsupported place %s" place)))))
-   (t (error "setf: unsupported place %s" place))))
-
-(defmacro setf (&rest args)
-  "Set each generalized PLACE to VALUE.  Supports symbol, car, cdr,
-nth, elt, aref, get, gethash, plist-get, symbol-* places."
-  ;; GNU autoloads `setf' itself from gv.el, so expanding a `setf' form
-  ;; loads that file and defines gv-ref/gv-letplace/gv-get.  Mirror the
-  ;; observable autoload timing.
-  (when (autoloadp (symbol-function 'gv-get))
-    (load "gv"))
-  (cons 'progn
-        (let ((out nil) (rest args))
-          (while rest
-            (push (cl--setf-pair (car rest) (cadr rest)) out)
-            (setq rest (cddr rest)))
-          (nreverse out))))
-
-(defmacro psetf (&rest args)
-  "Like `setf' but evaluate all values before assigning."
-  ;; GNU autoloads `psetf' from gv.el — expanding it loads gv.
-  (when (autoloadp (symbol-function 'gv-get))
-    (load "gv"))
-  (let ((temps nil) (sets nil) (rest args))
-    (while rest
-      (let ((tmp (gensym)))
-        (push (list tmp (cadr rest)) temps)
-        (push (cl--setf-pair (car rest) tmp) sets))
-      (setq rest (cddr rest)))
-    `(let ,(nreverse temps) ,@(nreverse sets))))
-
-(defalias 'cl-psetf 'psetf)
-
-(defmacro incf (place &optional delta)
-  "Increment PLACE by DELTA (default 1)."
-  `(setf ,place (+ ,place ,(or delta 1))))
-
-(defmacro decf (place &optional delta)
-  "Decrement PLACE by DELTA (default 1)."
-  `(setf ,place (- ,place ,(or delta 1))))
+;; GNU's cl-preloaded defstruct/class machinery marks every slot name
+;; with `slot-name' t during the dump; reproduce those plist entries so
+;; `symbol-plist' output matches (e.g. on `car'/`cdr').
+(dolist (s '(allparents args barrier base buffer call-con car
+             case-fold-search cdr children-sym comment-depth
+             comment-or-string-start comment-style data day depth dirname
+             dispatches docstring dst error file forward fun function
+             high-seconds hour how idle-delay if index index-table
+             initform innermost-start insert-func integral-multiple
+             jump-func last-complete-sexp-start lazy-function low-seconds
+             match-data message method-table min-depth minute month name
+             named non-abstract-supertype open-parens options other-end
+             parents point pop-fun ppss ppss-point print print-func
+             priority proposed props psecs qualifiers quoted-p repeat-delay
+             second slot slots specializers specializers-function stack
+             string string-terminator success symbol tag tagcode-function
+             triggered two-character-syntax type usecs weekday word
+             wrapped year zone))
+  (put s 'slot-name t))
 
 (defalias 'cl-incf 'incf)
-(defalias 'cl-decf 'decf)
-
-(defmacro cl-pushnew (val place &rest keys)
-  "Push VAL onto PLACE's list unless already `eql' to a member."
-  `(let ((v ,val))
-     (unless (apply #'cl-member v ,place (list ,@keys))
-       (setf ,place (cons v ,place)))))
-
-(defmacro cl-remf (place item)
-  "Remove the first element `eql' to ITEM from the list in PLACE."
-  `(setf ,place (cl--do-remf ,place ,item)))
-
-(defun cl--do-remf (list item)
-  (if (and (consp list) (eql (car list) item))
-      (cdr list)
-    (let ((tail list))
-      (while (and (cdr tail) (not (eql (cadr tail) item)))
-        (setq tail (cdr tail)))
-      (when (cdr tail) (setcdr tail (cddr tail)))
-      list)))
-
-(defmacro cl-rotatef (&rest args)
-  "Rotate the values of ARGS leftward."
-  (let ((tmps (mapcar (lambda (_) (gensym)) args))
-        (sets nil) (i 0) (n (length args)))
-    (while (< i n)
-      (push (cl--setf-pair (nth (mod (1+ i) n) args) (nth i tmps)) sets)
-      (setq i (1+ i)))
-    `(let ,(cl--zip tmps args) ,@(nreverse sets) nil)))
-
-(defmacro cl-shiftf (&rest args)
-  "Shift each ARG left: (cl-shiftf a b ... v) sets a←b ... returns old a."
-  (let ((tmps (mapcar (lambda (_) (gensym)) args))
-        (sets nil) (i 0) (n (length args)))
-    (while (< (1+ i) n)
-      (push (cl--setf-pair (nth i args) (nth (1+ i) tmps)) sets)
-      (setq i (1+ i)))
-    `(let ,(cl--zip tmps args) ,@(nreverse sets) ,(car tmps))))
 
 ;; ---------- simple.el / timer.el / subr.el additions ----------
 
@@ -5549,18 +6016,11 @@ equivalence ignoring int/float distinction."
 
 (defmacro cl-assert (form &optional show-args string &rest args)
   "Signal an error unless FORM is non-nil."
-  `(or ,form
-       (signal 'cl-assertion-failed
-               (list ',form ,show-args ,string ,@args))))
+  `(unless ,form
+     (signal 'cl-assertion-failed
+             (list ',form ,show-args ,string ,@args))))
 
 ;; ---------- cl-macs subset ----------
-
-(defun cl--zip (xs ys)
-  "Zip XS and YS into a list of two-element lists."
-  (let ((res nil))
-    (while xs
-      (push (list (pop xs) (pop ys)) res))
-    (nreverse res)))
 
 (defmacro cl-defun (name args &rest body)
   "Like `defun' with CL arglist support (subset: &key handled)."
@@ -5674,6 +6134,116 @@ equivalence ignoring int/float distinction."
       (push (apply function (mapcar #'car lists)) res)
       (setq lists (mapcar #'cdr lists)))
     (nreverse res)))
+
+;; GNU seq.el (bodies verbatim; declared cl-defgeneric there but a
+;; single default implementation covers all sequence types).
+(defun seq-do-indexed (function sequence)
+  "Apply FUNCTION to each element of SEQUENCE and return nil.
+Unlike `seq-map', FUNCTION takes two arguments: the element of
+the sequence, and its index within the sequence."
+  (let ((index 0))
+    (seq-do (lambda (elt)
+              (funcall function elt index)
+              (setq index (1+ index)))
+            sequence))
+  nil)
+
+(defun seq-map-indexed (function sequence)
+  "Return the result of applying FUNCTION to each element of SEQUENCE.
+Unlike `seq-map', FUNCTION takes two arguments: the element of
+the sequence, and its index within the sequence."
+  (let ((index 0))
+    (seq-map (lambda (elt)
+               (prog1
+                   (funcall function elt index)
+                 (setq index (1+ index))))
+             sequence)))
+
+(defun seq-sort-by (function pred sequence)
+  "Sort SEQUENCE transformed by FUNCTION using PRED as the comparison function.
+Elements of SEQUENCE are transformed by FUNCTION before being
+sorted.  FUNCTION must be a function of one argument.  The sort
+operates on a copy of SEQUENCE and does not modify SEQUENCE."
+  (seq-sort (lambda (a b)
+              (funcall pred
+                       (funcall function a)
+                       (funcall function b)))
+            sequence))
+
+(defun seq-positions (sequence elt &optional testfn)
+  "Return list of indices of SEQUENCE elements for which TESTFN returns non-nil.
+
+TESTFN is a two-argument function which is called with each element of
+SEQUENCE as the first argument and ELT as the second.
+TESTFN defaults to `equal'.
+
+The result is a list of (zero-based) indices."
+  (let ((result '()))
+    (seq-do-indexed
+     (lambda (e index)
+       (when (funcall (or testfn #'equal) e elt)
+         (push index result)))
+     sequence)
+    (nreverse result)))
+
+(defun seq-union (sequence1 sequence2 &optional testfn)
+  "Return a list of all the elements that appear in either SEQUENCE1 or SEQUENCE2.
+\"Equality\" of elements is defined by the function TESTFN, which
+defaults to `equal'.
+This does not modify SEQUENCE1 or SEQUENCE2."
+  (let* ((accum (lambda (acc elt)
+                  (if (seq-contains-p acc elt testfn)
+                      acc
+                    (cons elt acc))))
+         (result (seq-reduce accum sequence2
+                          (seq-reduce accum sequence1 '()))))
+    (nreverse result)))
+
+(defun seq-intersection (sequence1 sequence2 &optional testfn)
+  "Return copy of SEQUENCE1 with elements that do not appear in SEQUENCE2 removed.
+\"Equality\" of elements is defined by the function TESTFN, which
+defaults to `equal'.
+This does not modify SEQUENCE1 or SEQUENCE2."
+  (seq-reduce (lambda (acc elt)
+                (if (seq-contains-p sequence2 elt testfn)
+                    (cons elt acc)
+                  acc))
+              (seq-reverse sequence1)
+              '()))
+
+(defun seq-random-elt (sequence)
+  "Return a randomly chosen element from SEQUENCE.
+Signal an error if SEQUENCE is empty."
+  (if (seq-empty-p sequence)
+      (error "Sequence cannot be empty")
+    (seq-elt sequence (random (seq-length sequence)))))
+
+(defun seq-split (sequence length)
+  "Split SEQUENCE into a list of sub-sequences of at most LENGTH elements.
+All the sub-sequences will be LENGTH long, except the last one,
+which may be shorter.  This does not modify SEQUENCE."
+  (when (< length 1)
+    (error "Sub-sequence length must be larger than zero"))
+  (let ((result nil)
+        (seq-length (length sequence))
+        (start 0))
+    (while (< start seq-length)
+      (push (seq-subseq sequence start
+                        (setq start (min seq-length (+ start length))))
+            result))
+    (nreverse result)))
+
+(defun seq-keep (function sequence)
+  "Apply FUNCTION to SEQUENCE and return the list of all the non-nil results.
+This does not modify SEQUENCE."
+  (delq nil (seq-map function sequence)))
+
+(defun seq-mapcat (function sequence &optional type)
+  "Concatenate the results of applying FUNCTION to each element of SEQUENCE.
+The result is a sequence of type TYPE; TYPE defaults to `list'.
+This does not modify SEQUENCE."
+  (apply #'seq-concatenate (or type 'list)
+         (seq-map function sequence)))
 
 (defalias 'cl-dolist 'dolist)
 (defalias 'cl-dotimes 'dotimes)

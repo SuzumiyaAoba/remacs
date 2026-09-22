@@ -29,9 +29,41 @@ mod coverage_tests {
             fn $name() {
                 let _lock = PROBE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
                 let mut i = Interp::new();
-                match i.eval_str(include_str!(concat!("../tests/", $file))) {
+                let src = include_str!(concat!("../tests/", $file));
+                match i.eval_str(src) {
                     Ok(_) => {}
-                    Err(f) => panic!("probe {} failed: {:?}", $file, f),
+                    Err(f) => {
+                        // Bisect to the failing top-level form so
+                        // flaky failures identify themselves.
+                        let mut pos = 0usize;
+                        let mut report = String::new();
+                        loop {
+                            let next = {
+                                let mut r = crate::lisp::reader::Reader::new(&mut i, src);
+                                r.set_position(pos);
+                                match r.read() {
+                                    Ok(Some(_)) => r.position(),
+                                    _ => break,
+                                }
+                            };
+                            let form_src = &src[pos..next];
+                            let form = {
+                                let mut r = crate::lisp::reader::Reader::new(&mut i, form_src);
+                                match r.read() {
+                                    Ok(Some(v)) => v,
+                                    _ => break,
+                                }
+                            };
+                            match i.eval(&form) {
+                                Err(e) => {
+                                    report = format!(" at byte {pos}: {form_src} => {e:?}");
+                                    break;
+                                }
+                                Ok(_) => pos = next,
+                            }
+                        }
+                        panic!("probe {} failed: {:?}{}", $file, f, report);
+                    }
                 }
             }
         };

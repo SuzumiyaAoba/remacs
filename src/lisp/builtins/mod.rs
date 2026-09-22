@@ -5,6 +5,7 @@
 
 pub(crate) mod arith;
 pub(crate) mod charset;
+pub(crate) mod enc_tables;
 pub(crate) mod data;
 pub(crate) mod evalfn;
 pub(crate) mod hashfn;

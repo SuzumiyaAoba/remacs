@@ -138,6 +138,11 @@ pub struct Interp {
     pub charset_aliases: Vec<(String, String)>,
     /// Coding systems defined via `define-coding-system-internal`.
     pub extra_coding_systems: Vec<String>,
+    /// Current `terminal-coding-system' value (nil after set-nil).
+    pub terminal_coding: Value,
+    /// Current `keyboard-coding-system' value (no-conversion after
+    /// set-nil).
+    pub keyboard_coding: Value,
     /// Key events queued by `execute-kbd-macro`; the key loop replays
     /// them ahead of real input.
     pub macro_replay: std::collections::VecDeque<i128>,
@@ -216,6 +221,18 @@ pub struct Interp {
     /// `tty-color-values' was called — GNU's tty color database also
     /// initializes `x-color-values' (but not the `xw-*' functions).
     pub color_db_init: bool,
+    /// StrRef identity → liveness for strings produced by unibyte
+    /// encoders (`encode-coding-char'/`-string').  `prin1' prints
+    /// byte-chars ≥0x80 of marked strings as `\NNN' octal escapes
+    /// like GNU's unibyte strings.  The Weak guards against address
+    /// reuse: a dead entry never upgrades, so a fresh allocation at
+    /// the same address is never mis-marked.
+    pub unibyte_strings:
+        std::collections::HashMap<usize, std::rc::Weak<std::cell::RefCell<String>>>,
+    /// Strings produced by multibyte decoders — `multibyte-string-p'
+    /// is t for them even when their contents are pure ASCII.
+    pub multibyte_strings:
+        std::collections::HashMap<usize, std::rc::Weak<std::cell::RefCell<String>>>,
 }
 
 /// Result of a minibuffer read from the front-end.
@@ -360,6 +377,8 @@ impl Interp {
             charsets: Vec::new(),
             charset_aliases: Vec::new(),
             extra_coding_systems: Vec::new(),
+            terminal_coding: Value::Nil,
+            keyboard_coding: Value::Nil,
             macro_replay: std::collections::VecDeque::new(),
             macro_replaying: false,
             kbd_macro_events: Vec::new(),
@@ -397,6 +416,8 @@ impl Interp {
             terminal_params: Vec::new(),
             x_display_attempted: false,
             color_db_init: false,
+            unibyte_strings: std::collections::HashMap::new(),
+            multibyte_strings: std::collections::HashMap::new(),
         };
         crate::lisp::builtins::install(&mut interp);
         crate::buffer::install_primitives(&mut interp);
@@ -424,6 +445,10 @@ impl Interp {
             }
         }
         crate::editor::install_primitives(&mut interp);
+        // Locale-derived tty defaults (GNU: utf-8 with unix EOL).
+        let u8u = interp.intern("utf-8-unix");
+        interp.terminal_coding = Value::Sym(u8u);
+        interp.keyboard_coding = Value::Sym(u8u);
         // Load the Lisp prelude (subr.el subset). Errors here indicate a
         // broken prelude, but don't abort startup.
         let _ = interp.eval_str(crate::lisp::prelude::PRELUDE);
@@ -521,6 +546,40 @@ impl Interp {
             }
         }
         v.clone()
+    }
+
+    /// Mark a string as unibyte (encoder output); `prin1' escapes
+    /// its ≥0x80 byte-chars as `\NNN' octal like GNU.
+    pub fn mark_unibyte(&mut self, s: &crate::lisp::value::StrRef) {
+        self.unibyte_strings.insert(
+            std::rc::Rc::as_ptr(s) as usize,
+            std::rc::Rc::downgrade(s),
+        );
+    }
+
+    /// Is this string a marked unibyte string?  A stale map entry
+    /// (dead Weak, address since reused) never reports true.
+    pub fn is_unibyte_str(&self, s: &crate::lisp::value::StrRef) -> bool {
+        self.unibyte_strings
+            .get(&(std::rc::Rc::as_ptr(s) as usize))
+            .and_then(|w| w.upgrade())
+            .is_some()
+    }
+
+    /// Mark a string as multibyte (decoder output).
+    pub fn mark_multibyte(&mut self, s: &crate::lisp::value::StrRef) {
+        self.multibyte_strings.insert(
+            std::rc::Rc::as_ptr(s) as usize,
+            std::rc::Rc::downgrade(s),
+        );
+    }
+
+    /// Is this string a marked multibyte string?
+    pub fn is_multibyte_str(&self, s: &crate::lisp::value::StrRef) -> bool {
+        self.multibyte_strings
+            .get(&(std::rc::Rc::as_ptr(s) as usize))
+            .and_then(|w| w.upgrade())
+            .is_some()
     }
 
     /// Follow a symbol's function-alias chain; return the final
@@ -1031,6 +1090,31 @@ impl Interp {
         let v = self.symbol_value(id);
         if let Value::Sym(s) = &v {
             if *s == sym::UNBOUND {
+                if std::env::var("DBG_VOID").is_ok() {
+                    let name = self.obarray.symbol(id).name.clone();
+                    let mut depth = 0;
+                    let mut env = &self.lexenv;
+                    let mut found = false;
+                    while let Some(f) = env {
+                        depth += 1;
+                        if f.vars.borrow().contains_key(&id) {
+                            found = true;
+                        }
+                        env = &f.parent;
+                    }
+                    eprintln!(
+                        "DBG void-var {} special={} lexdepth={} lexhas={} specbinds={} case_handlers={}",
+                        name,
+                        self.obarray.symbol(id).special,
+                        depth,
+                        found,
+                        self.specbind
+                            .iter()
+                            .filter(|s| s.sym == id)
+                            .count(),
+                        self.case_handlers.len(),
+                    );
+                }
                 return Err(self.signal_data(sym::VOID_VARIABLE, vec![Value::Sym(id)]));
             }
         }
@@ -3024,6 +3108,10 @@ impl Interp {
             ),
             (
                 "default-file-name-coding-system",
+                Value::Sym(self.intern("utf-8-unix")),
+            ),
+            (
+                "default-terminal-coding-system",
                 Value::Sym(self.intern("utf-8-unix")),
             ),
             ("file-name-shadow-mode", Value::Sym(sym::T)),

@@ -212,7 +212,6 @@
   (ignore-errors (copy-syntax-table st))
   (ignore-errors (standard-syntax-table)))
 ;; read-* noninteractive fallbacks
-(ignore-errors (read-char))
 (ignore-errors (read-buffer "P: "))
 (ignore-errors (read-buffer "P: " "def"))
 (ignore-errors (read-buffer "P: " nil t))

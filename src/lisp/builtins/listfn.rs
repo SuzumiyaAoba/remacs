@@ -636,7 +636,8 @@ fn member_impl(
                     return Err(err_circular(i));
                 }
             }
-            _ => return Ok(Value::Nil),
+            Value::Nil => return Ok(Value::Nil),
+            other => return Err(i.wrong_type_mut("listp", other)),
         }
     }
 }
@@ -690,7 +691,8 @@ fn assoc_impl(
                     return Err(err_circular(i));
                 }
             }
-            _ => return Ok(Value::Nil),
+            Value::Nil => return Ok(Value::Nil),
+            other => return Err(i.wrong_type_mut("listp", other)),
         }
     }
 }
@@ -913,7 +915,8 @@ fn f_delete(i: &mut Interp, args: Vec<Value>) -> EvalResult {
                 .collect();
             Ok(Value::Vec(std::rc::Rc::new(std::cell::RefCell::new(kept))))
         }
-        _ => del_impl(i, &args[0], &args[1], false),
+        Value::Cons(_) | Value::Nil => del_impl(i, &args[0], &args[1], false),
+        other => Err(i.wrong_type_mut("sequencep", other)),
     }
 }
 fn f_copy_alist(i: &mut Interp, args: Vec<Value>) -> EvalResult {

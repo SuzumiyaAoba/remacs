@@ -108,8 +108,26 @@ impl Interp {
                 let nl = self.print_escape_newlines();
                 let mb = self.print_escape_multibyte();
                 out.push('"');
-                for c in s.borrow().chars() {
-                    escape_char_for_string(c, out, nl, mb);
+                if self.is_unibyte_str(s) {
+                    // Unibyte strings (encoder output): byte-chars
+                    // ≥0x80 print as `\NNN' octal escapes like GNU.
+                    for c in s.borrow().chars() {
+                        if (c as u32) >= 0x80 {
+                            let _ = write!(out, "\\{:03o}", c as u32);
+                        } else {
+                            escape_char_for_string(c, out, nl, mb);
+                        }
+                    }
+                } else {
+                    for c in s.borrow().chars() {
+                        // Eight-bit chars print as their byte's octal
+                        // escape even in multibyte strings.
+                        if let Some(b) = crate::lisp::value::eight_bit_byte(c) {
+                            let _ = write!(out, "\\{:03o}", b);
+                        } else {
+                            escape_char_for_string(c, out, nl, mb);
+                        }
+                    }
                 }
                 out.push('"');
             }

@@ -6,8 +6,9 @@ use crate::lisp::error::{EvalResult, Flow};
 use crate::lisp::obarray::sym;
 use crate::lisp::value::{Subr, Value};
 
-fn arith_err(i: &Interp, msg: &str) -> Flow {
-    i.signal_data(sym::ARITH_ERROR, vec![Value::string(msg)])
+fn arith_err(i: &Interp, _msg: &str) -> Flow {
+    // GNU signals bare (arith-error) with no payload.
+    i.signal_data(sym::ARITH_ERROR, vec![])
 }
 
 fn overflow_err(i: &mut Interp, v: &Value) -> Flow {
@@ -380,7 +381,14 @@ fn f_mod_fn(i: &mut Interp, args: Vec<Value>) -> EvalResult {
             let r = xf.rem_euclid(yf);
             Ok(Value::Float(if yf < 0.0 && r != 0.0 { r + yf } else { r }))
         }
-        _ => Err(i.wrong_type_mut("number-or-marker-p", &args[0])),
+        _ => {
+            let bad = if to_num(&args[0]).is_none() {
+                &args[0]
+            } else {
+                &args[1]
+            };
+            Err(i.wrong_type_mut("number-or-marker-p", bad))
+        }
     }
 }
 
@@ -407,13 +415,16 @@ fn f_1minus(i: &mut Interp, args: Vec<Value>) -> EvalResult {
 }
 
 fn f_abs(i: &mut Interp, args: Vec<Value>) -> EvalResult {
+    if matches!(&args[0], Value::Marker(_)) {
+        return Err(i.wrong_type_mut("numberp", &args[0]));
+    }
     match to_num(&args[0]) {
         Some(Num::I(n)) => n
             .checked_abs()
             .map(Value::Int)
             .ok_or_else(|| overflow_err(i, &args[0])),
         Some(Num::F(f)) => Ok(Value::Float(f.abs())),
-        None => Err(i.wrong_type_mut("number-or-marker-p", &args[0])),
+        None => Err(i.wrong_type_mut("numberp", &args[0])),
     }
 }
 
@@ -524,15 +535,30 @@ fn f_number_or_marker_p(_i: &mut Interp, args: Vec<Value>) -> EvalResult {
 /// Rounding: f(x) or f(x/y) with optional divisor. Always returns an
 /// integer (possibly a bignum) in Emacs, even for float inputs.
 fn round_with(i: &mut Interp, args: &[Value], mode: u8) -> EvalResult {
-    let (x, y) = (to_num(&args[0]), args.get(1).map(to_num).flatten());
+    // Markers fail the `numberp' check in GNU's rounding functions.
+    for a in args {
+        if matches!(a, Value::Marker(_)) {
+            return Err(i.wrong_type_mut("numberp", a));
+        }
+    }
+    let x = match to_num(&args[0]) {
+        Some(n) => n,
+        None => return Err(i.wrong_type_mut("numberp", &args[0])),
+    };
+    let y = match args.get(1) {
+        None => None,
+        Some(v) => match to_num(v) {
+            Some(n) => Some(n),
+            None => return Err(i.wrong_type_mut("numberp", v)),
+        },
+    };
     let (xf, yf) = match (x, y) {
-        (Some(Num::I(a)), None) => (a as f64, 1.0),
-        (Some(Num::I(a)), Some(Num::I(b))) => (a as f64, b as f64),
-        (Some(Num::I(a)), Some(Num::F(b))) => (a as f64, b),
-        (Some(Num::F(a)), None) => (a, 1.0),
-        (Some(Num::F(a)), Some(Num::I(b))) => (a, b as f64),
-        (Some(Num::F(a)), Some(Num::F(b))) => (a, b),
-        _ => return Err(i.wrong_type_mut("number-or-marker-p", &args[0])),
+        (Num::I(a), None) => (a as f64, 1.0),
+        (Num::I(a), Some(Num::I(b))) => (a as f64, b as f64),
+        (Num::I(a), Some(Num::F(b))) => (a as f64, b),
+        (Num::F(a), None) => (a, 1.0),
+        (Num::F(a), Some(Num::I(b))) => (a, b as f64),
+        (Num::F(a), Some(Num::F(b))) => (a, b),
     };
     if yf == 0.0 {
         return Err(arith_err(i, "Division by zero"));
@@ -564,11 +590,36 @@ fn f_round(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     round_with(i, &args, 3)
 }
 
+/// Like `want_num` but signals `numberp' — GNU's pure-math functions
+/// (float, sqrt, expt, ...) reject markers with that predicate.
+fn want_number(i: &mut Interp, v: &Value) -> Result<f64, Flow> {
+    match v {
+        Value::Int(n) => Ok(*n as f64),
+        Value::Float(f) => Ok(*f),
+        _ => Err(i.wrong_type_mut("numberp", v)),
+    }
+}
+
+/// Integer or marker → position.  GNU's bitwise/oddp functions use
+/// `integer-or-marker-p' as their error predicate.
+fn want_int_or_marker(i: &mut Interp, v: &Value) -> Result<i128, Flow> {
+    match v {
+        Value::Int(n) => Ok(*n),
+        Value::Marker(m) => Ok(m.borrow().position as i128 + 1),
+        _ => Err(i.wrong_type_mut("integer-or-marker-p", v)),
+    }
+}
+
 fn f_float(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    Ok(Value::Float(want_num(i, &args[0])?))
+    Ok(Value::Float(want_number(i, &args[0])?))
 }
 
 fn f_expt(i: &mut Interp, args: Vec<Value>) -> EvalResult {
+    for a in &args {
+        if matches!(a, Value::Marker(_)) {
+            return Err(i.wrong_type_mut("numberp", a));
+        }
+    }
     match (to_num(&args[0]), to_num(&args[1])) {
         (Some(Num::I(x)), Some(Num::I(y))) => {
             if y >= 0 {
@@ -590,42 +641,49 @@ fn f_expt(i: &mut Interp, args: Vec<Value>) -> EvalResult {
             };
             Ok(Value::Float(xf.powf(yf)))
         }
-        _ => Err(i.wrong_type_mut("numberp", &args[0])),
+        _ => {
+            let bad = if to_num(&args[0]).is_none() {
+                &args[0]
+            } else {
+                &args[1]
+            };
+            Err(i.wrong_type_mut("numberp", bad))
+        }
     }
 }
 
 fn f_sqrt(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    Ok(Value::Float(want_num(i, &args[0])?.sqrt()))
+    Ok(Value::Float(want_number(i, &args[0])?.sqrt()))
 }
 fn f_exp(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    Ok(Value::Float(want_num(i, &args[0])?.exp()))
+    Ok(Value::Float(want_number(i, &args[0])?.exp()))
 }
 fn f_sin(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    Ok(Value::Float(want_num(i, &args[0])?.sin()))
+    Ok(Value::Float(want_number(i, &args[0])?.sin()))
 }
 fn f_cos(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    Ok(Value::Float(want_num(i, &args[0])?.cos()))
+    Ok(Value::Float(want_number(i, &args[0])?.cos()))
 }
 fn f_tan(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    Ok(Value::Float(want_num(i, &args[0])?.tan()))
+    Ok(Value::Float(want_number(i, &args[0])?.tan()))
 }
 fn f_asin(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    Ok(Value::Float(want_num(i, &args[0])?.asin()))
+    Ok(Value::Float(want_number(i, &args[0])?.asin()))
 }
 fn f_acos(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    Ok(Value::Float(want_num(i, &args[0])?.acos()))
+    Ok(Value::Float(want_number(i, &args[0])?.acos()))
 }
 fn f_atan(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    let y = want_num(i, &args[0])?;
+    let y = want_number(i, &args[0])?;
     match args.get(1) {
-        Some(x) => Ok(Value::Float(y.atan2(want_num(i, x)?))),
+        Some(x) => Ok(Value::Float(y.atan2(want_number(i, x)?))),
         None => Ok(Value::Float(y.atan())),
     }
 }
 fn f_log(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    let n = want_num(i, &args[0])?;
+    let n = want_number(i, &args[0])?;
     match args.get(1) {
-        Some(b) => Ok(Value::Float(n.log(want_num(i, b)?))),
+        Some(b) => Ok(Value::Float(n.log(want_number(i, b)?))),
         None => Ok(Value::Float(n.ln())),
     }
 }
@@ -633,26 +691,26 @@ fn f_log(i: &mut Interp, args: Vec<Value>) -> EvalResult {
 fn f_logand(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     let mut acc = -1i128;
     for a in &args {
-        acc &= want_int(i, a)?;
+        acc &= want_int_or_marker(i, a)?;
     }
     Ok(Value::Int(acc))
 }
 fn f_logior(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     let mut acc = 0i128;
     for a in &args {
-        acc |= want_int(i, a)?;
+        acc |= want_int_or_marker(i, a)?;
     }
     Ok(Value::Int(acc))
 }
 fn f_logxor(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     let mut acc = 0i128;
     for a in &args {
-        acc ^= want_int(i, a)?;
+        acc ^= want_int_or_marker(i, a)?;
     }
     Ok(Value::Int(acc))
 }
 fn f_lognot(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    Ok(Value::Int(!want_int(i, &args[0])?))
+    Ok(Value::Int(!want_int_or_marker(i, &args[0])?))
 }
 fn f_ash(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     let v = want_int(i, &args[0])?;
@@ -675,7 +733,15 @@ fn f_ash(i: &mut Interp, args: Vec<Value>) -> EvalResult {
 /// unsigned fixnum then shifts; left shift is a signed shift whose
 /// result may promote to a bignum. (Matches Emacs's mixed semantics.)
 fn f_lsh(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    let v = want_int(i, &args[0])?;
+    // GNU checks arg1 with `number-or-marker-p' but then coerces to an
+    // integer, so floats and markers signal `integerp'.
+    let v = match &args[0] {
+        Value::Int(n) => *n,
+        Value::Float(_) | Value::Marker(_) => {
+            return Err(i.wrong_type_mut("integerp", &args[0]));
+        }
+        other => return Err(i.wrong_type_mut("number-or-marker-p", other)),
+    };
     let c = want_int(i, &args[1])?;
     const U62: u64 = 0x3fff_ffff_ffff_ffff; // 62-bit mask
     Ok(Value::Int(if c >= 0 {
@@ -751,7 +817,7 @@ fn f_eql(i: &mut Interp, args: Vec<Value>) -> EvalResult {
 // ---------- float decomposition & misc ----------
 
 fn f_frexp(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    let x = want_num(i, &args[0])?;
+    let x = want_number(i, &args[0])?;
     if x == 0.0 || x.is_nan() || x.is_infinite() {
         return Ok(Value::cons(Value::Float(x), Value::Int(0)));
     }
@@ -761,10 +827,10 @@ fn f_frexp(i: &mut Interp, args: Vec<Value>) -> EvalResult {
 }
 
 fn f_ldexp(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    let x = want_num(i, &args[0])?;
-    let e = match args.get(1) {
-        Some(Value::Int(n)) => *n as i32,
-        _ => 0,
+    let x = want_number(i, &args[0])?;
+    let e = match &args[1] {
+        Value::Int(n) => *n as i32,
+        other => return Err(i.wrong_type_mut("fixnump", other)),
     };
     Ok(Value::Float(x * 2f64.powi(e)))
 }
@@ -807,7 +873,7 @@ fn f_copysign(i: &mut Interp, args: Vec<Value>) -> EvalResult {
 }
 
 fn f_logb(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    let x = want_num(i, &args[0])?;
+    let x = want_number(i, &args[0])?;
     if x == 0.0 {
         return Ok(Value::Float(f64::NEG_INFINITY));
     }
@@ -821,7 +887,7 @@ fn f_logb(i: &mut Interp, args: Vec<Value>) -> EvalResult {
 }
 
 fn f_isnan(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    let x = want_num(i, &args[0])?;
+    let x = want_float(i, &args[0])?;
     Ok(Value::from_bool(x.is_nan()))
 }
 
@@ -843,10 +909,10 @@ fn f_minusp(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     Ok(Value::from_bool(want_num(i, &args[0])? < 0.0))
 }
 fn f_oddp(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    Ok(Value::from_bool(want_int(i, &args[0])? % 2 != 0))
+    Ok(Value::from_bool(want_int_or_marker(i, &args[0])? % 2 != 0))
 }
 fn f_evenp(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    Ok(Value::from_bool(want_int(i, &args[0])? % 2 == 0))
+    Ok(Value::from_bool(want_int_or_marker(i, &args[0])? % 2 == 0))
 }
 fn f_fixnump(_i: &mut Interp, args: Vec<Value>) -> EvalResult {
     Ok(Value::from_bool(args[0].fixnump()))

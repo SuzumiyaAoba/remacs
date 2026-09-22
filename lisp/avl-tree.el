@@ -60,16 +60,22 @@
 ;; ----------------------------------------------------------------
 ;; Functions and macros handling an AVL tree.
 
-(cl-defstruct (avl-tree-
-            ;; A tagged list is the pre-defstruct representation.
-            ;; (:type list)
-            :named
-            (:constructor nil)
-            (:constructor avl-tree--create (cmpfun))
-            (:predicate avl-tree-p)
-            (:copier nil))
-  (dummyroot (avl-tree--node-create nil nil nil 0))
-  cmpfun)
+;; Hand-expanded from the GNU cl-defstruct (remacs's cl-defstruct
+;; subset lacks :constructor/:type/:predicate options).  Layout:
+;; a :named record [avl-tree- dummyroot cmpfun].
+(defun avl-tree--create (cmpfun)
+  (record 'avl-tree- (avl-tree--node-create nil nil nil 0) cmpfun))
+
+(defun avl-tree-p (object)
+  "Return t if OBJECT is an avl-tree, nil otherwise."
+  (and (recordp object) (eq (aref object 0) 'avl-tree-)))
+
+(defun avl-tree--dummyroot (tree) (aref tree 1))
+(defun avl-tree--cmpfun (tree) (aref tree 2))
+(fset (intern "(setf avl-tree--dummyroot)")
+      (lambda (v tree) (aset tree 1 v)))
+(fset (intern "(setf avl-tree--cmpfun)")
+      (lambda (v tree) (aset tree 2 v)))
 
 (defmacro avl-tree--root (tree)
   "Return the root node for an AVL TREE.  INTERNAL USE ONLY."
@@ -78,16 +84,23 @@
 ;; ----------------------------------------------------------------
 ;; Functions and macros handling an AVL tree node.
 
-(cl-defstruct (avl-tree--node
-            ;; We force a representation without tag so it matches the
-            ;; pre-defstruct representation. Also we use the underlying
-            ;; representation in the implementation of
-            ;; avl-tree--node-branch.
-            (:type vector)
-            (:constructor nil)
-            (:constructor avl-tree--node-create (left right data balance))
-            (:copier nil))
-  left right data balance)
+;; Hand-expanded from the GNU cl-defstruct: (:type vector), so a node
+;; is the untagged vector [left right data balance].
+(defun avl-tree--node-create (left right data balance)
+  (vector left right data balance))
+
+(defun avl-tree--node-left (node) (aref node 0))
+(defun avl-tree--node-right (node) (aref node 1))
+(defun avl-tree--node-data (node) (aref node 2))
+(defun avl-tree--node-balance (node) (aref node 3))
+(fset (intern "(setf avl-tree--node-left)")
+      (lambda (v node) (aset node 0 v)))
+(fset (intern "(setf avl-tree--node-right)")
+      (lambda (v node) (aset node 1 v)))
+(fset (intern "(setf avl-tree--node-data)")
+      (lambda (v node) (aset node 2 v)))
+(fset (intern "(setf avl-tree--node-balance)")
+      (lambda (v node) (aset node 3 v)))
 
 
 (defalias 'avl-tree--node-branch #'aref
@@ -100,10 +113,11 @@ NODE is the node, and BRANCH is the branch.
 \n(fn BRANCH NODE)")
 
 
-;; The funcall/aref trick wouldn't work for the setf method, unless we
-;; tried to access the underlying setter function, but this wouldn't be
-;; portable either.
-(gv-define-simple-setter avl-tree--node-branch aset)
+;; GNU uses (gv-define-simple-setter avl-tree--node-branch aset); our
+;; setf falls back to a `(setf NAME)' function called as (FN v node
+;; branch).
+(fset (intern "(setf avl-tree--node-branch)")
+      (lambda (v node branch) (aset node branch v)))
 
 
 
@@ -386,17 +400,24 @@ This function is highly recursive."
      (avl-tree--node-data root)
      (avl-tree--node-balance root))))
 
-(cl-defstruct (avl-tree--stack
-	    (:constructor nil)
-	    (:constructor avl-tree--stack-create
-			  (tree &optional reverse
-				&aux
-				(store
-				 (if (avl-tree-empty tree)
-				     nil
-				   (list (avl-tree--root tree))))))
-	    (:copier nil))
-  reverse store)
+;; Hand-expanded from the GNU cl-defstruct: a named record
+;; [avl-tree--stack reverse store].
+(defun avl-tree--stack-create (tree &optional reverse)
+  (record 'avl-tree--stack
+          reverse
+          (if (avl-tree-empty tree)
+              nil
+            (list (avl-tree--root tree)))))
+
+(defun avl-tree--stack-p (object)
+  (and (recordp object) (eq (aref object 0) 'avl-tree--stack)))
+
+(defun avl-tree--stack-reverse (stack) (aref stack 1))
+(defun avl-tree--stack-store (stack) (aref stack 2))
+(fset (intern "(setf avl-tree--stack-reverse)")
+      (lambda (v stack) (aset stack 1 v)))
+(fset (intern "(setf avl-tree--stack-store)")
+      (lambda (v stack) (aset stack 2 v)))
 
 (defalias 'avl-tree-stack-p #'avl-tree--stack-p
   "Return t if OBJ is an avl-tree-stack, nil otherwise.

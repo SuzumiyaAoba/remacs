@@ -55,9 +55,9 @@
 (require 'macroexp)
 
 ;; --- remacs shims -------------------------------------------------------
-;; The prelude does not yet provide the parts of macroexp.el below, and its
-;; `macroexp-let2'/`macroexp-let*' are incompatible internal subrs, so the
-;; real definitions from GNU macroexp.el are reproduced here.
+;; `macroexp-let2'/`macroexp-let*'/`macroexp-copyable-p'/
+;; `macroexp-warn-and-return' are provided by the prelude's macroexp.el
+;; block (GNU-compatible definitions), so they are not reproduced here.
 ;; `built-in-class-p' is deliberately left undefined so that
 ;; `pcase--subtype-bitsets' takes its bootstrap (empty-table) path.
 
@@ -74,47 +74,6 @@ not record the definition site in `current-load-list'."
 (defun macroexp-file-name ()
   "Return the name of the file from which the code comes."
   nil)
-
-(defun macroexp-warn-and-return (_msg form &rest _)
-  "Return code equivalent to FORM; warnings are not emitted."
-  form)
-
-(defun macroexp-copyable-p (exp)
-  "Return non-nil if EXP can be copied without extra cost."
-  (or (symbolp exp) (macroexp-const-p exp)))
-
-(defun macroexp-let* (bindings exp)
-  "Return an expression equivalent to \\=`(let* ,BINDINGS ,EXP)."
-  (cond
-   ((null bindings) exp)
-   ((eq 'let* (car-safe exp)) `(let* (,@bindings ,@(cadr exp)) ,@(cddr exp)))
-   (t `(let* ,bindings ,exp))))
-
-(defmacro macroexp-let2 (test sym exp &rest body)
-  "Evaluate BODY with SYM bound to an expression for EXP's value.
-The intended usage is that BODY generates an expression that
-will refer to EXP's value multiple times, but will evaluate
-EXP only once.  As BODY generates that expression, it should
-use SYM to stand for the value of EXP.
-
-If EXP is a simple, safe expression, then SYM's value is EXP itself.
-Otherwise, SYM's value is a symbol which holds the value produced by
-evaluating EXP.  The return value incorporates the value of BODY, plus
-additional code to evaluate EXP once and save the result so SYM can
-refer to it.
-
-TEST is a predicate to determine whether EXP qualifies as simple and
-safe; if TEST is nil, only constant expressions qualify."
-  (declare (indent 3))
-  (let ((bodysym (make-symbol "body"))
-        (expsym (make-symbol "exp")))
-    `(let* ((,expsym ,exp)
-            (,sym (if (funcall #',(or test #'macroexp-const-p) ,expsym)
-                      ,expsym (make-symbol ,(symbol-name sym))))
-            (,bodysym ,(macroexp-progn body)))
-       (if (eq ,sym ,expsym) ,bodysym
-         (macroexp-let* (list (list ,sym ,expsym))
-                        ,bodysym)))))
 
 (defun macroexp--fgrep (bindings sexp)
   "Return those of the BINDINGS which might be used in SEXP.

@@ -203,7 +203,7 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!(
         "make-char-table",
         1,
-        3,
+        2,
         f_make_char_table,
         "Make a char-table (approx: vector)."
     ),
@@ -218,7 +218,7 @@ pub(crate) fn seq_to_vec(i: &mut Interp, v: &Value) -> Result<Vec<Value>, super:
     match v {
         Value::Nil => Ok(Vec::new()),
         Value::Cons(_) => want_list(i, v),
-        Value::Str(s) => Ok(s.borrow().chars().map(|c| Value::Int(c as i128)).collect()),
+        Value::Str(s) => Ok(s.borrow().chars().map(|c| Value::Int(crate::lisp::value::lisp_char_code(c))).collect()),
         Value::Vec(vec) => Ok(vec.borrow().clone()),
         other => Err(i.wrong_type_mut("sequencep", other)),
     }
@@ -271,7 +271,7 @@ fn f_elt(i: &mut Interp, args: Vec<Value>) -> EvalResult {
                     vec![args[0].clone(), args[1].clone()],
                 ));
             }
-            Ok(Value::Int(chars[n as usize] as i128))
+            Ok(Value::Int(crate::lisp::value::lisp_char_code(chars[n as usize])))
         }
         Value::Vec(v) => {
             let items = v.borrow();
@@ -352,7 +352,7 @@ fn f_aset(i: &mut Interp, args: Vec<Value>) -> EvalResult {
                 Value::Int(x) => *x,
                 _ => return Err(i.wrong_type_mut("characterp", &args[2])),
             };
-            let c = char::from_u32(nch as u32)
+            let c = crate::lisp::value::lisp_char(nch as u32)
                 .ok_or_else(|| i.wrong_type_mut("characterp", &args[2]))?;
             let mut chars: Vec<char> = s.borrow().chars().collect();
             if n < 0 || n as usize >= chars.len() {
@@ -424,6 +424,10 @@ fn f_copy_sequence(i: &mut Interp, args: Vec<Value>) -> EvalResult {
             Ok(Value::list(items))
         }
         Value::Str(_) | Value::Nil | Value::Vec(_) | Value::Hash(_) => Ok(args[0].clone()),
+        // Char-tables (our Record repr) are copyable sequences in GNU.
+        Value::Record(r) => Ok(Value::Record(std::rc::Rc::new(std::cell::RefCell::new(
+            r.borrow().clone(),
+        )))),
         other => Err(i.wrong_type_mut("sequencep", other)),
     }
 }
@@ -446,7 +450,7 @@ fn map_seq(
         Value::Str(s) => {
             let chars: Vec<char> = s.borrow().chars().collect();
             for c in chars {
-                f(i, &Value::Int(c as i128))?;
+                f(i, &Value::Int(crate::lisp::value::lisp_char_code(c)))?;
             }
             Ok(())
         }
@@ -624,7 +628,7 @@ fn f_sort(i: &mut Interp, args: Vec<Value>) -> EvalResult {
             }
         }
         Value::Nil => Ok(Value::Nil),
-        other => Err(i.wrong_type_mut("listp", other)),
+        other => Err(i.wrong_type_mut("list-or-vector-p", other)),
     }
 }
 
@@ -824,7 +828,7 @@ fn f_nreverse_seq(i: &mut Interp, args: Vec<Value>) -> EvalResult {
             Ok(args[0].clone())
         }
         Value::Nil => Ok(Value::Nil),
-        other => Err(i.wrong_type_mut("sequencep", other)),
+        other => Err(i.wrong_type_mut("arrayp", other)),
     }
 }
 
@@ -849,7 +853,6 @@ fn f_seq_concatenate(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     let list_id = i.intern("list");
     let vec_id = i.intern("vector");
     let str_id = i.intern("string");
-    let bv_id = i.intern("bool-vector");
     Ok(if ty == list_id {
         Value::list(items)
     } else if ty == vec_id {
@@ -864,10 +867,12 @@ fn f_seq_concatenate(i: &mut Interp, args: Vec<Value>) -> EvalResult {
             }
         }
         Value::string(s)
-    } else if ty == bv_id {
-        super::misc::make_bool_vector(i, items.iter().map(|v| !v.is_nil()).collect())
     } else {
-        Value::list(items)
+        let name = match &args[0] {
+            Value::Sym(s) => i.obarray.name(*s).to_string(),
+            other => format!("{:?}", other),
+        };
+        return Err(i.error(&format!("Not a sequence type name: {}", name)));
     })
 }
 
@@ -1160,7 +1165,8 @@ fn f_seq_uniq(i: &mut Interp, args: Vec<Value>) -> EvalResult {
 }
 fn f_make_char_table(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     // Char-table = #s(char-table SUBTYPE [256 slots]) — a Record so
-    // `char-table-p'/`char-table-subtype' are exact.
+    // `char-table-p'/`char-table-subtype' are exact.  GNU 31 takes
+    // only SUBTYPE and INIT (extra slots signal args-out-of-range).
     let subtype = arg(&args, 0);
     let init = arg(&args, 1);
     let vec = Value::Vec(std::rc::Rc::new(std::cell::RefCell::new(vec![init; 256])));
