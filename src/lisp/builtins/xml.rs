@@ -4,10 +4,10 @@
 //!   (TAG ((ATTR-SYM . "value") ...) CHILD ...)  for elements
 //!   (comment nil "text")                        for comments
 //!   nil                                         for PIs (a GNU quirk)
-//! Top level: a single node is returned bare; multiple nodes get a
-//! synthetic `top' wrapper.  XML parse errors yield nil; the HTML parser
-//! (html5ever) is lenient like libxml2's HTML mode and implies
-//! html/body structure.
+//! Text and CDATA are separate string children.  Top level: a single
+//! node is returned bare; multiple nodes get a synthetic `top' wrapper.
+//! XML parse errors yield nil; the HTML parser (html5ever) is lenient
+//! like libxml2's HTML mode and implies html/body structure.
 
 use html5ever::tendril::TendrilSink;
 
@@ -44,60 +44,175 @@ fn attr_cons(i: &mut Interp, name: &str, val: &str) -> Value {
     ))
 }
 
-// ---------- XML via roxmltree ----------
+// ---------- XML via quick-xml (event-driven, keeps CDATA separate) ----------
 
-fn xml_node(i: &mut Interp, n: roxmltree::Node<'_, '_>, out: &mut Vec<Value>) {
-    match n.node_type() {
-        roxmltree::NodeType::Element => {
-            let attrs: Vec<Value> = n
-                .attributes()
-                .map(|a| attr_cons(i, a.name(), a.value()))
-                .collect();
-            let mut node = vec![
-                Value::Sym(i.intern(n.tag_name().name())),
-                Value::list(attrs),
-            ];
-            let mut kids = Vec::new();
-            for c in n.children() {
-                xml_node(i, c, &mut kids);
-            }
-            node.extend(kids);
-            out.push(Value::list(node));
+/// Namespace prefixes don't appear in GNU's DOM: `x:r` → `r',
+/// `x:a' → `a', and xmlns declarations are dropped.
+fn local_name(qname: &[u8]) -> &str {
+    let s = std::str::from_utf8(qname).unwrap_or("");
+    s.rsplit(':').next().unwrap_or(s)
+}
+
+struct XmlFrame {
+    name: Vec<u8>,
+    attrs: Vec<Value>,
+    kids: Vec<Value>,
+    /// Last kid came from CDATA: libxml2 keeps CDATA as its own string
+    /// node, so plain text must not merge into it.
+    tail_cdata: bool,
+}
+
+/// Append character data to the current frame.  libxml2 merges adjacent
+/// text/entity content into one string node; CDATA stands alone.
+fn push_text(f: &mut XmlFrame, s: &str, cdata: bool) {
+    if s.is_empty() {
+        return;
+    }
+    if !cdata && !f.tail_cdata {
+        if let Some(Value::Str(prev)) = f.kids.last_mut() {
+            prev.borrow_mut().push_str(s);
+            return;
         }
-        roxmltree::NodeType::Text => {
-            if let Some(t) = n.text() {
-                out.push(Value::string(t));
-            }
+    }
+    f.kids.push(Value::string(s));
+    f.tail_cdata = cdata;
+}
+
+fn push_node(f: &mut XmlFrame, v: Value) {
+    f.kids.push(v);
+    f.tail_cdata = false;
+}
+
+/// Resolve `&name;' / `&#NNN;' references.  None = undeclared entity,
+/// which makes libxml2 fail the document.
+fn resolve_ref(name: &str) -> Option<String> {
+    match name {
+        "amp" => Some("&".into()),
+        "lt" => Some("<".into()),
+        "gt" => Some(">".into()),
+        "quot" => Some("\"".into()),
+        "apos" => Some("'".into()),
+        _ => {
+            let rest = name.strip_prefix('#')?;
+            let n = if let Some(h) = rest.strip_prefix(['x', 'X']) {
+                u32::from_str_radix(h, 16).ok()?
+            } else {
+                rest.parse().ok()?
+            };
+            Some(char::from_u32(n)?.to_string())
         }
-        roxmltree::NodeType::Comment => {
-            out.push(Value::list(vec![
-                Value::Sym(i.intern("comment")),
-                Value::Nil,
-                Value::string(n.text().unwrap_or("")),
-            ]));
-        }
-        // GNU emits a bare nil for processing instructions.
-        roxmltree::NodeType::PI => out.push(Value::Nil),
-        _ => {}
     }
 }
 
-fn parse_xml(i: &mut Interp, text: &str) -> Value {
-    let doc = match roxmltree::Document::parse_with_options(
-        text,
-        roxmltree::ParsingOptions {
-            allow_dtd: true,
-            ..Default::default()
-        },
-    ) {
-        Ok(d) => d,
-        Err(_) => return Value::Nil,
+fn parse_xml(i: &mut Interp, text: &str, drop_comments: bool) -> Value {
+    use quick_xml::events::Event;
+    let mut r = quick_xml::Reader::from_str(text);
+    r.config_mut().check_end_names = true;
+    // Bottom frame is a virtual root collecting top-level nodes.
+    let mut stack = vec![XmlFrame {
+        name: Vec::new(),
+        attrs: Vec::new(),
+        kids: Vec::new(),
+        tail_cdata: false,
+    }];
+    let xml_attrs = |i: &mut Interp,
+                     e: &quick_xml::events::BytesStart<'_>,
+                     r: &quick_xml::Reader<&[u8]>|
+     -> Vec<Value> {
+        let mut attrs = Vec::new();
+        for a in e.attributes().with_checks(false).flatten() {
+            if a.key.as_ref().starts_with(b"xmlns") {
+                continue;
+            }
+            let v = a
+                .decode_and_unescape_value(r.decoder())
+                .map(|v| v.into_owned())
+                .unwrap_or_default();
+            attrs.push(attr_cons(i, local_name(a.key.as_ref()), &v));
+        }
+        attrs
     };
-    let mut out = Vec::new();
-    for n in doc.root().children() {
-        xml_node(i, n, &mut out);
+    loop {
+        match r.read_event() {
+            Ok(Event::Start(e)) => {
+                stack.push(XmlFrame {
+                    name: e.name().as_ref().to_vec(),
+                    attrs: xml_attrs(i, &e, &r),
+                    kids: Vec::new(),
+                    tail_cdata: false,
+                });
+            }
+            Ok(Event::Empty(e)) => {
+                let node = Value::list(vec![
+                    Value::Sym(i.intern(local_name(e.name().as_ref()))),
+                    Value::list(xml_attrs(i, &e, &r)),
+                ]);
+                push_node(stack.last_mut().unwrap(), node);
+            }
+            Ok(Event::End(e)) => {
+                if stack.len() <= 1 {
+                    return Value::Nil; // stray close tag
+                }
+                let f = stack.pop().unwrap();
+                if f.name != e.name().as_ref() {
+                    return Value::Nil;
+                }
+                let mut node = vec![
+                    Value::Sym(i.intern(local_name(&f.name))),
+                    Value::list(f.attrs),
+                ];
+                node.extend(f.kids);
+                push_node(stack.last_mut().unwrap(), Value::list(node));
+            }
+            Ok(Event::Text(e)) => {
+                if let Ok(t) = e.decode() {
+                    push_text(stack.last_mut().unwrap(), &t, false);
+                }
+            }
+            Ok(Event::CData(e)) => {
+                if let Ok(t) = e.decode() {
+                    push_text(stack.last_mut().unwrap(), &t, true);
+                }
+            }
+            Ok(Event::Comment(e)) => {
+                // GNU's DISCARD-COMMENTS drops only top-level comments.
+                if !(drop_comments && stack.len() == 1) {
+                    let t = e.decode().map(|t| t.into_owned()).unwrap_or_default();
+                    push_node(
+                        stack.last_mut().unwrap(),
+                        Value::list(vec![
+                            Value::Sym(i.intern("comment")),
+                            Value::Nil,
+                            Value::string(t),
+                        ]),
+                    );
+                }
+            }
+            // GNU emits a bare nil for processing instructions.
+            Ok(Event::PI(_)) => push_node(stack.last_mut().unwrap(), Value::Nil),
+            Ok(Event::Decl(_)) | Ok(Event::DocType(_)) => {}
+            Ok(Event::GeneralRef(e)) => {
+                let name = e.decode().map(|n| n.into_owned()).unwrap_or_default();
+                match resolve_ref(&name) {
+                    Some(s) => push_text(stack.last_mut().unwrap(), &s, false),
+                    None => return Value::Nil,
+                }
+            }
+            Ok(Event::Eof) => break,
+            Err(_) => return Value::Nil,
+        }
+    }
+    if stack.len() != 1 {
+        return Value::Nil; // unclosed elements
+    }
+    let mut out = stack.pop().unwrap().kids;
+    // Non-whitespace text outside the root is a parse error for libxml2.
+    out.retain(|v| !matches!(v, Value::Str(s) if s.borrow().trim().is_empty()));
+    if out.iter().any(|v| matches!(v, Value::Str(_))) {
+        return Value::Nil;
     }
     match out.as_slice() {
+        [] => Value::Nil,
         [single] => single.clone(),
         _ => {
             let mut top = vec![Value::Sym(i.intern("top")), Value::Nil];
@@ -183,7 +298,8 @@ fn parse_html(i: &mut Interp, text: &str) -> Value {
 
 fn f_libxml_parse_xml_region(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let text = region_text(i, &a)?;
-    Ok(parse_xml(i, &text))
+    let drop_comments = arg(&a, 3).truthy();
+    Ok(parse_xml(i, &text, drop_comments))
 }
 
 fn f_libxml_parse_html_region(i: &mut Interp, a: Vec<Value>) -> EvalResult {

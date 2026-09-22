@@ -267,7 +267,7 @@ fn f_sqlite_close(i: &mut Interp, a: Vec<Value>) -> EvalResult {
             e.conn = None;
         }
     });
-    Ok(Value::Nil)
+    Ok(Value::Sym(1))
 }
 
 fn f_sqlite_execute(i: &mut Interp, a: Vec<Value>) -> EvalResult {
