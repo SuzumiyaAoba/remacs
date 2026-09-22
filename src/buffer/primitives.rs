@@ -2612,7 +2612,7 @@ fn f_eolp(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
     ))
 }
 
-fn new_marker_at(i: &mut Interp, buf: usize, pos: usize) -> Value {
+pub(crate) fn new_marker_at(i: &mut Interp, buf: usize, pos: usize) -> Value {
     let m = Rc::new(RefCell::new(Marker {
         buffer: Some(buf),
         position: pos,

@@ -952,14 +952,14 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!("window-normalize-window", 1, 1, f_window_normalize, ""),
     S!("window-normalize-buffer", 1, 1, f_window_norm_buffer, ""),
     S!("window-normalize-frame", 0, 1, f_window_norm_frame, ""),
-    S!("delete-windows-on", 0, 3, f_nil, ""),
+    S!("delete-windows-on", 0, 3, f_delete_windows_on, ""),
     // `split-window-sensibly' is Lisp (GNU window.el) — see prelude.
     S!("window-child", 1, 1, f_window_valid_nil, ""),
     S!("window-child-count", 1, 1, f_window_valid_zero, ""),
     S!("window-combined-p", 0, 2, f_window_combined_p, ""),
     // `window-leftmost-p'/`-rightmost-p'/`-topmost-p'/`-bottommost-p'
     // do not exist in GNU.
-    S!("window-at-side-p", 1, 2, f_t, ""),
+    S!("window-at-side-p", 0, 2, f_window_at_side_p, ""),
     S!("window-in-direction", 1, 5, f_window_in_direction, ""),
     S!("window-main-window", 0, 1, f_window_main_window, ""),
     S!("get-mru-window", 0, 2, f_selected_window, ""),
@@ -1149,16 +1149,16 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!("scroll-bar-scale", 2, 2, f_nil, ""),
     S!("popup-menu", 1, 2, f_nil, ""),
     S!("set-frame-font", 1, 3, f_nil, ""),
-    S!("set-keyboard-coding-system", 1, 2, f_nil, ""),
-    S!("set-terminal-coding-system", 1, 2, f_nil, ""),
+    S!("set-keyboard-coding-system", 1, 2, f_set_keyboard_coding_system, ""),
+    S!("set-terminal-coding-system", 1, 2, f_set_terminal_coding_system, ""),
     S!("set-mouse-absolute-pixel-position", 2, 2, f_nil, ""),
     S!("tooltip-mode", 0, 1, f_tooltip_mode, ""),
     S!("keymap-of", 1, 1, f_keymap_of, ""),
     // ---------- display/font/image stubs (no GUI) ----------
     S!("default-font-width", 0, 0, f_one, "Char cell width."),
     S!("default-font-height", 0, 0, f_one, "Char cell height."),
-    S!("window-font-width", 0, 1, f_one, "Char cell width."),
-    S!("window-font-height", 0, 1, f_one, "Char cell height."),
+    S!("window-font-width", 0, 1, f_window_font_metric, "Char cell width."),
+    S!("window-font-height", 0, 1, f_window_font_metric, "Char cell height."),
     S!("color-distance", 2, 4, f_color_distance, "RGB distance."),
     S!(
         "frame-geometry",
@@ -1181,7 +1181,7 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!("font-face-attributes", 1, 2, f_nil, ""),
     S!("font-spec", many 0, f_font_spec, ""),
     S!("face-font", 1, 2, f_face_font, ""),
-    S!("face-documentation", 1, 1, f_nil, ""),
+    S!("face-documentation", 1, 1, f_face_documentation, ""),
     S!("face-attributes-as-vector", 1, 1, f_face_attributes_as_vector, ""),
     S!("image-flush", 1, 2, f_nil, ""),
     S!("image-mask-p", 1, 2, f_nil, ""),
@@ -1238,7 +1238,7 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!("current-input-mode", 0, 0, f_current_input_mode, ""),
     S!("set-input-mode", 3, 4, f_nil, ""),
     S!("set-input-interrupt-mode", 1, 1, f_nil, ""),
-    S!("set-input-meta-mode", 1, 2, f_nil, ""),
+    S!("set-input-meta-mode", 1, 2, f_set_input_meta_mode, ""),
     S!(
         "current-bidi-paragraph-direction",
         0,
@@ -1404,7 +1404,7 @@ pub(crate) static SUBRS: &[Subr] = &[
         f_nil,
         "Set safe terminal coding system."
     ),
-    S!("window-cursor-info", 0, 1, f_nil, "Cursor info for WINDOW."),
+    S!("window-cursor-info", 0, 1, f_window_cursor_info, "Cursor info for WINDOW."),
     S!("profiler-cpu-log", 0, 0, f_nil, "CPU profiler log."),
     S!(
         "profiler-cpu-stop",
@@ -1562,7 +1562,7 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!("set-process-thread", 2, 2, f_process_arg_err, ""),
     S!("process-thread", 1, 1, f_process_arg_err, ""),
     // ---------- reader/printer/composition internals ----------
-    S!("lread--substitute-object-in-subtree", 3, 3, f_nil, ""),
+    S!("lread--substitute-object-in-subtree", 2, 2, f_nil, ""),
     S!("print--preprocess", 1, 1, f_arg0, ""),
     S!("clear-composition-cache", 0, 0, f_nil, ""),
     S!("help--describe-vector", 7, 7, f_nil, ""),
@@ -5091,6 +5091,133 @@ fn f_terminal_coding_system(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     Ok(Value::Sym(i.intern("utf-8-unix")))
 }
 
+/// `window-at-side-p' — valid-window check (GNU's plain "N is not a
+/// valid window" error), then SIDE must be nil or one of
+/// left/top/right/bottom; anything else fails GNU's side decode with
+/// `wrong-type-argument integerp nil'.  Our single window spans all
+/// sides, so a valid call yields t.
+fn f_window_at_side_p(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    match arg(&a, 0) {
+        Value::Nil | Value::Window(_) => {}
+        other => {
+            let shown = i.princ_to_string(&other);
+            return Err(i.error(format!("{shown} is not a valid window")));
+        }
+    }
+    match arg(&a, 1) {
+        Value::Nil => Ok(Value::t()),
+        Value::Sym(s)
+            if matches!(
+                i.symbol_name(s).as_str(),
+                "left" | "top" | "right" | "bottom"
+            ) =>
+        {
+            Ok(Value::t())
+        }
+        _ => Err(i.wrong_type_mut("integerp", &Value::Nil)),
+    }
+}
+
+/// `window-font-width' / `window-font-height' — 1 (char cells) on a
+/// tty; GNU uses the plain "N is not a live window" error here.
+fn f_window_font_metric(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    match arg(&a, 0) {
+        Value::Nil | Value::Window(_) => Ok(Value::Int(1)),
+        other => {
+            let shown = i.princ_to_string(&other);
+            Err(i.error(format!("{shown} is not a live window")))
+        }
+    }
+}
+
+/// `window-cursor-info' — nil on tty; a typed window-live-p check.
+fn f_window_cursor_info(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    match arg(&a, 0) {
+        Value::Nil | Value::Window(_) => Ok(Value::Nil),
+        other => Err(i.wrong_type_mut("window-live-p", &other)),
+    }
+}
+
+/// `set-input-meta-mode' — META arg is ignored on our model; GNU
+/// checks the optional TERMINAL with terminal-live-p.
+fn f_set_input_meta_mode(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    match arg(&a, 1) {
+        Value::Nil => Ok(Value::Nil),
+        w if crate::editor::is_terminal(i, &w) => Ok(Value::Nil),
+        other => Err(i.wrong_type_mut("terminal-live-p", &other)),
+    }
+}
+
+/// Shared body for `set-terminal-coding-system' /
+/// `set-keyboard-coding-system': symbolp check first, then the
+/// coding-system-name check (coding-system-error), then the optional
+/// TERMINAL (terminal-live-p).
+fn set_coding_system(i: &mut Interp, a: Vec<Value>, ret_name: bool) -> EvalResult {
+    let name = match &a[0] {
+        Value::Sym(_) => match coding_known(i, &a[0]) {
+            Some(n) => n,
+            None => {
+                let s = i.intern("coding-system-error");
+                return Err(i.signal_data(s, vec![a[0].clone()]));
+            }
+        },
+        other => return Err(i.wrong_type_mut("symbolp", other)),
+    };
+    match arg(&a, 1) {
+        Value::Nil => {}
+        w if crate::editor::is_terminal(i, &w) => {}
+        other => return Err(i.wrong_type_mut("terminal-live-p", &other)),
+    }
+    if !ret_name {
+        return Ok(Value::Nil);
+    }
+    // GNU's keyboard coding gains the platform EOL suffix.
+    let bare = name
+        .strip_suffix("-unix")
+        .or_else(|| name.strip_suffix("-dos"))
+        .or_else(|| name.strip_suffix("-mac"))
+        .is_some();
+    let out = if bare { name } else { format!("{name}-unix") };
+    Ok(Value::Sym(i.intern(&out)))
+}
+
+fn f_set_terminal_coding_system(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    set_coding_system(i, a, false)
+}
+
+fn f_set_keyboard_coding_system(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    set_coding_system(i, a, true)
+}
+
+/// `delete-windows-on' — resolves BUFFER-OR-NAME (GNU's "No such
+/// buffer" error for the unresolvable); our single window is never
+/// deleted, so nil.
+fn f_delete_windows_on(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    match arg(&a, 0) {
+        Value::Nil => Ok(Value::Nil),
+        Value::Buffer(_) => Ok(Value::Nil),
+        Value::Str(s) => {
+            let name = s.borrow().clone();
+            match i.buffers.by_name(&name) {
+                Some(_) => Ok(Value::Nil),
+                None => Err(i.error(format!("No such buffer {name}"))),
+            }
+        }
+        other => {
+            let shown = i.princ_to_string(&other);
+            Err(i.error(format!("No such buffer {shown}")))
+        }
+    }
+}
+
+/// `face-documentation' — GNU reads the symbol's `face-documentation'
+/// property; nil for unknown faces (no facep check).
+fn f_face_documentation(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let id = want_sym(i, &a[0])?;
+    let prop = i.intern("face-documentation");
+    Ok(i.get_prop(id, prop))
+}
+
 fn f_detect_coding_string(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
     Ok(Value::list(vec![Value::Sym(i.intern("undecided"))]))
 }
@@ -5270,7 +5397,8 @@ fn f_tooltip_mode(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let sid = i.intern("tooltip-mode");
     let cur = i.symbol_value(sid).truthy();
     let on = match arg(&a, 0) {
-        Value::Nil => cur,
+        // GNU minor-mode commands called from Lisp treat nil as ON.
+        Value::Nil => true,
         Value::Sym(s) if i.symbol_name(s) == "toggle" => !cur,
         Value::Int(n) => n > 0,
         _ => true,
@@ -5354,9 +5482,6 @@ fn f_identity(_i: &mut Interp, a: Vec<Value>) -> EvalResult {
 
 // ---------- display / frames ----------
 
-fn f_t(_i: &mut Interp, _a: Vec<Value>) -> EvalResult {
-    Ok(Value::t())
-}
 fn f_not_useful(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
     Ok(Value::Sym(i.intern("not-useful")))
 }

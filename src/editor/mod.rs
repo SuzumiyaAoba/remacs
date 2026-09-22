@@ -588,8 +588,8 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!("window-configuration-p", 1, 1, f_window_configuration_p, ""),
     S!("current-window-configuration", 0, 1, f_current_window_configuration, ""),
     S!("set-window-configuration", 1, 3, f_set_window_configuration, ""),
-    S!("window-state-get", 0, 2, f_nil, ""),
-    S!("window-state-put", 1, 3, f_nil, ""),
+    S!("window-state-get", 0, 2, f_window_state_get, ""),
+    S!("window-state-put", 1, 3, f_window_state_put, ""),
     // frames
     S!(
         "selected-frame",
@@ -1488,7 +1488,7 @@ pub(crate) static SUBRS: &[Subr] = &[
         f_minibuffer_prompt,
         "Minibuffer prompt text."
     ),
-    S!("minibuffer-prompt-end", 0, 0, f_one, ""),
+    S!("minibuffer-prompt-end", 0, 0, f_minibuffer_prompt_end, ""),
     S!(
         "active-minibuffer-window",
         0,
@@ -1980,7 +1980,7 @@ pub(crate) static SUBRS: &[Subr] = &[
     ),
     S!("set-face-attribute", many 2, f_set_face_attribute, ""),
     S!("face-attribute", 2, 4, f_face_attribute, ""),
-    S!("face-attribute-relative-p", 2, 2, f_nil, ""),
+    S!("face-attribute-relative-p", 2, 2, f_face_attribute_relative_p, ""),
     S!("merge-face-attribute", 3, 3, f_merge_face_attribute, ""),
     S!("face-all-attributes", 1, 2, f_face_all_attributes, ""),
     S!("face-list", 0, 0, f_face_list, ""),
@@ -2024,10 +2024,10 @@ pub(crate) static SUBRS: &[Subr] = &[
     // cursor/display misc
     // `cursor-type` is a variable in Emacs, not a function —
     // calling it signals void-function like GNU.
-    S!("blink-cursor-mode", 0, 1, f_nil, ""),
+    S!("blink-cursor-mode", 0, 1, f_blink_cursor_mode, ""),
     S!("internal-show-cursor", 2, 2, f_nil, ""),
     S!("internal-show-cursor-p", 0, 1, f_show_cursor_p, ""),
-    S!("set-window-cursor-type", 2, 2, f_nil, ""),
+    S!("set-window-cursor-type", 2, 3, f_set_window_cursor_type, ""),
     // `make-display-table', `display-table-slot', `set-display-table-slot'
     // are Lisp in GNU (disp-table.el) — see prelude.rs.
     S!("describe-display-table", 1, 1, f_nil, ""),
@@ -2054,7 +2054,7 @@ pub(crate) static SUBRS: &[Subr] = &[
         f_documentation_property,
         "Prop on symbol."
     ),
-    S!("Snarf-documentation", 1, 1, f_nil, ""),
+    S!("Snarf-documentation", 1, 1, f_snarf_documentation, ""),
     S!(
         "documentation",
         1,
@@ -2095,9 +2095,6 @@ fn f_nil(_i: &mut Interp, _a: Vec<Value>) -> EvalResult {
 }
 fn f_t(_i: &mut Interp, _a: Vec<Value>) -> EvalResult {
     Ok(Value::t())
-}
-fn f_one(_i: &mut Interp, _a: Vec<Value>) -> EvalResult {
-    Ok(Value::Int(1))
 }
 fn f_identity(_i: &mut Interp, a: Vec<Value>) -> EvalResult {
     Ok(a.into_iter().next().unwrap_or(Value::Nil))
@@ -6869,6 +6866,241 @@ fn f_minibuffer_depth(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
 }
 fn f_minibuffer_prompt(_i: &mut Interp, _a: Vec<Value>) -> EvalResult {
     Ok(Value::string(""))
+}
+
+/// `minibuffer-prompt-end' — GNU returns the buffer position right
+/// after the prompt; with no minibuffer active that is point-min.
+fn f_minibuffer_prompt_end(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
+    Ok(Value::Int(crate::buffer::primitives::cur(i).borrow().begv as i128 + 1))
+}
+
+/// `blink-cursor-mode' — a GNU minor-mode command: called from Lisp,
+/// nil means enable (not toggle), `toggle' toggles, non-positive
+/// numbers disable, anything else enables; returns the new state.
+fn f_blink_cursor_mode(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let sid = i.intern("blink-cursor-mode");
+    let cur = i.symbol_value(sid).truthy();
+    let on = match arg(&a, 0) {
+        Value::Nil => true,
+        Value::Sym(s) if i.symbol_name(s) == "toggle" => !cur,
+        Value::Int(n) => n > 0,
+        _ => true,
+    };
+    let v = Value::from_bool(on);
+    let _ = i.set_symbol(sid, v.clone());
+    Ok(v)
+}
+
+/// `face-attribute-relative-p' — in GNU only `:height' is a
+/// "relative" attribute; any other name (known or not) yields nil.
+fn f_face_attribute_relative_p(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    match &a[0] {
+        Value::Sym(s) => Ok(Value::from_bool(i.symbol_name(*s) == ":height")),
+        _ => Ok(Value::Nil),
+    }
+}
+
+/// `set-window-cursor-type' — window-live-p check, then no-op on
+/// our flat tty model; GNU returns t.
+fn f_set_window_cursor_type(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    match &a[0] {
+        Value::Nil | Value::Window(_) => Ok(Value::t()),
+        other => Err(i.wrong_type_mut("window-live-p", other)),
+    }
+}
+
+/// `window-state-get' — the leaf-window state alist GNU's window.c
+/// produces.  WRITABLE non-nil substitutes the buffer name and
+/// integer positions for buffer/marker objects.
+fn f_window_state_get(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let w = match arg(&a, 0) {
+        Value::Nil => sel_window(i).ok_or_else(|| i.error("No window"))?,
+        Value::Window(w) => w.clone(),
+        other => {
+            let shown = i.princ_to_string(&other);
+            return Err(i.error(format!("{shown} is not a live or internal window")));
+        }
+    };
+    let writable = arg(&a, 1).truthy();
+    let (ww, wh, bufid, point, start, selected, ml, mr) = {
+        let wb = w.borrow();
+        let point = window_point(i, &w) + 1;
+        let sel = sel_window(i).map(|s| s.borrow().id) == Some(wb.id);
+        (
+            wb.width,
+            wb.height,
+            wb.buffer,
+            point,
+            wb.start + 1,
+            sel,
+            wb.margins.0 as i128,
+            wb.margins.1 as i128,
+        )
+    };
+    let ac = |i: &mut Interp, k: &str, v: Value| Value::cons(Value::Sym(i.intern(k)), v);
+    let ai = |i: &mut Interp, k: &str, n: i128| ac(i, k, Value::Int(n));
+    // GNU's ignore-widths add the margins to the safe minimum.
+    let w_ignore = 2 + ml + mr;
+    let header = Value::list(vec![
+        ai(i, "min-height", 4),
+        ai(i, "min-width", 10),
+        ai(i, "min-height-ignore", 2),
+        ai(i, "min-width-ignore", w_ignore),
+        ai(i, "min-height-safe", 1),
+        ai(i, "min-width-safe", 2),
+        ai(i, "min-pixel-height", 4),
+        ai(i, "min-pixel-width", 10),
+        ai(i, "min-pixel-height-ignore", 2),
+        ai(i, "min-pixel-width-ignore", w_ignore),
+        ai(i, "min-pixel-height-safe", 1),
+        ai(i, "min-pixel-width-safe", 2),
+    ]);
+    let (buf_obj, point_obj, start_obj) = if writable {
+        let name = i
+            .buffers
+            .get(bufid)
+            .map(|b| b.borrow().name.clone())
+            .unwrap_or_default();
+        (
+            Value::string(name),
+            Value::Int(point as i128),
+            Value::Int(start as i128),
+        )
+    } else {
+        let buf = i
+            .buffers
+            .get(bufid)
+            .map(|b| Value::Buffer(b.clone()))
+            .unwrap_or(Value::Nil);
+        (
+            buf,
+            // Markers hold 0-based positions internally.
+            crate::buffer::primitives::new_marker_at(i, bufid, point.saturating_sub(1)),
+            crate::buffer::primitives::new_marker_at(i, bufid, start.saturating_sub(1)),
+        )
+    };
+    let buf_state = Value::list(vec![
+        buf_obj,
+        ac(i, "selected", Value::from_bool(selected)),
+        ac(i, "hscroll", Value::Int(0)),
+        Value::list(vec![
+            Value::Sym(i.intern("fringes")),
+            Value::Int(0),
+            Value::Int(0),
+            Value::Nil,
+            Value::Nil,
+        ]),
+        {
+            // (margins [LEFT [RIGHT]]) — nonzero widths only.
+            let mut m = vec![Value::Sym(i.intern("margins"))];
+            if ml > 0 || mr > 0 {
+                m.push(Value::Int(ml));
+            }
+            if mr > 0 {
+                m.push(Value::Int(mr));
+            }
+            if m.len() == 1 {
+                m.push(Value::Nil);
+            }
+            Value::list(m)
+        },
+        Value::list(vec![
+            Value::Sym(i.intern("scroll-bars")),
+            Value::Nil,
+            Value::Int(0),
+            Value::t(),
+            Value::Nil,
+            Value::Int(0),
+            Value::t(),
+            Value::Nil,
+        ]),
+        ac(i, "vscroll", Value::Int(0)),
+        Value::list(vec![Value::Sym(i.intern("dedicated"))]),
+        ac(i, "point", point_obj),
+        ac(i, "start", start_obj),
+    ]);
+    let mut items = vec![
+        header,
+        Value::Sym(i.intern("leaf")),
+        ai(i, "pixel-width", ww as i128),
+        ai(i, "pixel-height", wh as i128),
+        ai(i, "total-width", ww as i128),
+        ai(i, "total-height", wh as i128),
+        ac(i, "normal-height", Value::Float(1.0)),
+        ac(i, "normal-width", Value::Float(1.0)),
+    ];
+    if !writable {
+        items.push(Value::list(vec![
+            Value::Sym(i.intern("parameters")),
+            Value::cons(
+                Value::Sym(i.intern("clone-of")),
+                Value::Window(w.clone()),
+            ),
+        ]));
+    }
+    // The buffer spec is (buffer BUF . STATE), a cons.
+    items.push(Value::cons(Value::Sym(i.intern("buffer")), buf_state));
+    Ok(Value::list(items))
+}
+
+/// `window-state-put' — validates the WINDOW argument (a plain
+/// "N is not a valid window" error) and the state shape; applying a
+/// leaf state to our flat model is a no-op returning nil.
+fn f_window_state_put(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    if let Some(v) = a.get(1) {
+        match v {
+            Value::Nil | Value::Window(_) => {}
+            other => {
+                let shown = i.princ_to_string(other);
+                return Err(i.error(format!("{shown} is not a valid window")));
+            }
+        }
+    }
+    // A well-formed state is (HEADER TYPE . STATE); malformed states
+    // die inside GNU's walker on a number-or-marker-p check.
+    let ok = a[0]
+        .list_to_vec()
+        .map(|items| {
+            items.len() >= 2
+                && matches!(&items[0], Value::Cons(_) | Value::Nil)
+                && matches!(&items[1], Value::Sym(_))
+        })
+        .unwrap_or(false);
+    if ok {
+        Ok(Value::Nil)
+    } else {
+        Err(i.wrong_type_mut("number-or-marker-p", &Value::Nil))
+    }
+}
+
+/// `Snarf-documentation' — opens FILE inside `doc-directory'; GNU
+/// signals file-missing when the doc file is absent.
+fn f_snarf_documentation(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let name = match &a[0] {
+        Value::Str(s) => s.borrow().clone(),
+        other => return Err(i.wrong_type_mut("stringp", other)),
+    };
+    let dir_sym = i.intern("doc-directory");
+    let dir = match i.symbol_value(dir_sym) {
+        Value::Str(s) => s.borrow().clone(),
+        _ => String::new(),
+    };
+    let path = if name.starts_with('/') {
+        name
+    } else {
+        format!("{dir}{name}")
+    };
+    if std::path::Path::new(&path).exists() {
+        // Real doc-file parsing is not wired up; an existing file
+        // still yields nil rather than a doc string here.
+        return Ok(Value::Nil);
+    }
+    let s = i.intern("file-missing");
+    Err(i.signal_data(s, vec![
+        Value::string("Opening doc string file"),
+        Value::string("No such file or directory"),
+        Value::string(path),
+    ]))
 }
 
 fn f_minibuffer_message(i: &mut Interp, a: Vec<Value>) -> EvalResult {

@@ -1426,6 +1426,9 @@ thus showing a page other than the one point was originally in."
 			(point)))))
 (put 'narrow-to-page 'disabled t)
 
+;; GNU faces.el: the built-in `default' face's doc string.
+(put 'default 'face-documentation "Basic default face.")
+
 (defun page--count-lines-page ()
   "Return a list of line counts on the current page.
 The list is on the form (TOTAL BEFORE AFTER), where TOTAL is the

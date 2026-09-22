@@ -8,7 +8,7 @@ use std::rc::Rc;
 use crate::editor::{frame_of, is_terminal, sel_frame, sel_window, terminal_token, win_of};
 use crate::lisp::Interp;
 use crate::lisp::builtins::{S, arg, want_int};
-use crate::lisp::error::EvalResult;
+use crate::lisp::error::{EvalResult, Flow};
 use crate::lisp::sym;
 use crate::lisp::value::{Subr, Value};
 
@@ -118,7 +118,7 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!("window-max-delta", 0, 5, f_zero, ""),
     S!("window-min-delta", 0, 5, f_zero, ""),
     S!("window-sizable-p", 1, 4, f_t, ""),
-    S!("window-size-fixed-p", 0, 2, f_false, ""),
+    S!("window-size-fixed-p", 0, 2, f_window_size_fixed_p, ""),
     S!(
         "window-resize",
         3,
@@ -207,7 +207,7 @@ pub(crate) static SUBRS: &[Subr] = &[
         f_zero4,
         "(l r w out) fringe widths."
     ),
-    S!("set-window-fringes", 2, 5, f_nil, ""),
+    S!("set-window-fringes", 2, 5, f_set_window_fringes, ""),
     S!(
         "window-margins",
         0,
@@ -215,11 +215,11 @@ pub(crate) static SUBRS: &[Subr] = &[
         f_window_margins,
         "(left . right) margin widths."
     ),
-    S!("set-window-margins", 2, 3, f_nil, ""),
+    S!("set-window-margins", 2, 3, f_set_window_margins, ""),
     S!("window-scroll-bars", 0, 1, f_zero4, ""),
-    S!("set-window-scroll-bars", 2, 5, f_nil, ""),
+    S!("set-window-scroll-bars", 1, 6, f_set_window_scroll_bars, ""),
     S!("window-current-scroll-bars", 0, 1, f_zero4, ""),
-    S!("window-mode-line-height", 0, 1, f_one, ""),
+    S!("window-mode-line-height", 0, 1, f_window_mode_line_height, ""),
     S!("window-header-line-height", 0, 1, f_zero, ""),
     S!("window-tab-line-height", 0, 1, f_zero, ""),
     S!("window-bottom-divider-width", 0, 1, f_zero, ""),
@@ -235,7 +235,7 @@ pub(crate) static SUBRS: &[Subr] = &[
         f_window_screen_lines,
         "Lines visible."
     ),
-    S!("truncated-partial-width-window-p", 0, 1, f_false, ""),
+    S!("truncated-partial-width-window-p", 0, 1, f_truncated_partial_width, ""),
     // --- pixel measurements (tty: 1 char = 1 col) ---
     S!(
         "window-text-height",
@@ -310,7 +310,7 @@ pub(crate) static SUBRS: &[Subr] = &[
         "The minibuffer window."
     ),
     S!("frame-parent", 0, 1, f_nil, ""),
-    S!("frame-ancestor-p", 2, 2, f_false, ""),
+    S!("frame-ancestor-p", 2, 2, f_frame_ancestor_p, ""),
     S!("frame-old-selected-window", 0, 1, f_frame_sel_window, ""),
     S!("frame-root-frame", 0, 1, f_frame_self, ""),
     S!(
@@ -428,11 +428,11 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!("run-window-configuration-change-hook", 0, 1, f_nil, ""),
     S!("run-window-scroll-functions", 0, 1, f_nil, ""),
     S!("set-window-new-total", 2, 3, f_set_window_new_total, ""),
-    S!("set-window-new-normal", 2, 3, f_nil, ""),
-    S!("set-window-new-pixel", 2, 3, f_nil, ""),
-    S!("set-window-combination-limit", 2, 2, f_nil, ""),
-    S!("set-window-next-buffers", 2, 2, f_nil, ""),
-    S!("set-window-prev-buffers", 2, 2, f_nil, ""),
+    S!("set-window-new-normal", 1, 2, f_set_window_new_normal, ""),
+    S!("set-window-new-pixel", 2, 3, f_set_window_new_pixel, ""),
+    S!("set-window-combination-limit", 2, 2, f_set_window_combination_limit, ""),
+    S!("set-window-next-buffers", 2, 2, f_set_window_next_buffers, ""),
+    S!("set-window-prev-buffers", 2, 2, f_set_window_prev_buffers, ""),
     S!("force-window-update", 0, 1, f_force_window_update, ""),
     S!("resize-mini-window-internal", 1, 1, f_nil, ""),
 ];
@@ -983,6 +983,128 @@ fn f_window_valid_nil(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     match arg(&a, 0) {
         Value::Nil | Value::Window(_) => Ok(Value::Nil),
         other => Err(i.wrong_type_mut("window-valid-p", &other)),
+    }
+}
+
+/// GNU's plain `error "N is not a valid window"' (window.c signals a
+/// bare `error', not a typed one, for these predicates).
+fn err_not_valid_window(i: &mut Interp, v: &Value) -> Flow {
+    let shown = i.princ_to_string(v);
+    i.error(format!("{shown} is not a valid window"))
+}
+
+/// Same pattern for live-window checks ("N is not a live window").
+fn err_not_live_window(i: &mut Interp, v: &Value) -> Flow {
+    let shown = i.princ_to_string(v);
+    i.error(format!("{shown} is not a live window"))
+}
+
+/// `window-size-fixed-p' — nil on our model (nothing is size-fixed).
+fn f_window_size_fixed_p(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    match arg(&a, 0) {
+        Value::Nil | Value::Window(_) => Ok(Value::Nil),
+        other => Err(err_not_valid_window(i, &other)),
+    }
+}
+
+/// `truncated-partial-width-window-p' — nil; GNU checks the window
+/// is live with the plain "not a live window" error.
+fn f_truncated_partial_width(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    match arg(&a, 0) {
+        Value::Nil | Value::Window(_) => Ok(Value::Nil),
+        other => Err(err_not_live_window(i, &other)),
+    }
+}
+
+/// `window-mode-line-height' — 1 on tty; GNU uses a typed
+/// `window-live-p' check here (unlike the predicates above).
+fn f_window_mode_line_height(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    match arg(&a, 0) {
+        Value::Nil | Value::Window(_) => Ok(Value::Int(1)),
+        other => Err(i.wrong_type_mut("window-live-p", &other)),
+    }
+}
+
+/// `frame-ancestor-p' — both args must be live frames; our single
+/// frame is no one's ancestor.
+fn f_frame_ancestor_p(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    for v in &a[..2] {
+        match v {
+            Value::Frame(_) => {}
+            other => return Err(i.wrong_type_mut("frame-live-p", other)),
+        }
+    }
+    Ok(Value::Nil)
+}
+
+/// `set-window-new-normal' — window-valid-p check (nil means the
+/// selected window); GNU returns the SIZE argument (nil when omitted).
+fn f_set_window_new_normal(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    match &a[0] {
+        Value::Nil | Value::Window(_) => Ok(arg(&a, 1)),
+        other => Err(i.wrong_type_mut("window-valid-p", other)),
+    }
+}
+
+/// `set-window-new-pixel' — window-valid-p check, then nil.
+fn f_set_window_new_pixel(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    match &a[0] {
+        Value::Nil | Value::Window(_) => Ok(Value::Nil),
+        other => Err(i.wrong_type_mut("window-valid-p", other)),
+    }
+}
+
+/// `set-window-combination-limit' — a leaf window cannot hold a
+/// combination limit; GNU signals a plain error.
+fn f_set_window_combination_limit(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    match &a[0] {
+        Value::Nil | Value::Window(_) => {
+            Err(i.error("Combination limit is meaningful for internal windows only"))
+        }
+        other => Err(i.wrong_type_mut("window-valid-p", other)),
+    }
+}
+
+/// `set-window-next-buffers' / `set-window-prev-buffers' —
+/// window-live-p check, then nil (no buffer history recorded).
+fn f_set_window_next_buffers(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    match &a[0] {
+        Value::Nil | Value::Window(_) => Ok(Value::Nil),
+        other => Err(i.wrong_type_mut("window-live-p", other)),
+    }
+}
+
+fn f_set_window_prev_buffers(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    f_set_window_next_buffers(i, a)
+}
+
+/// `set-window-margins' — window-live-p check (nil = selected
+/// window), stores the margin widths on the window; GNU returns t.
+fn f_set_window_margins(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let w = match &a[0] {
+        Value::Nil => sel_window(i).ok_or_else(|| i.error("No window"))?,
+        Value::Window(w) => w.clone(),
+        other => return Err(i.wrong_type_mut("window-live-p", other)),
+    };
+    let l = arg(&a, 1).int().unwrap_or(0).max(0) as usize;
+    let r = arg(&a, 2).int().unwrap_or(0).max(0) as usize;
+    w.borrow_mut().margins = (l, r);
+    Ok(Value::t())
+}
+
+/// `set-window-fringes' — window-live-p check; GNU returns t.
+fn f_set_window_fringes(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    match &a[0] {
+        Value::Nil | Value::Window(_) => Ok(Value::t()),
+        other => Err(i.wrong_type_mut("window-live-p", other)),
+    }
+}
+
+/// `set-window-scroll-bars' — window-live-p check; GNU returns nil.
+fn f_set_window_scroll_bars(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    match &a[0] {
+        Value::Nil | Value::Window(_) => Ok(Value::Nil),
+        other => Err(i.wrong_type_mut("window-live-p", other)),
     }
 }
 

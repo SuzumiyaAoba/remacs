@@ -2374,6 +2374,8 @@ impl Interp {
             ("buffer-display-table", Value::Nil),
             ("window-size-fixed", Value::Nil),
             ("tooltip-mode", Value::t()),
+            // GNU -Q batch starts with blink-cursor-mode off.
+            ("blink-cursor-mode", Value::Nil),
             (
                 "split-window-preferred-direction",
                 Value::Sym(self.intern("longest")),
