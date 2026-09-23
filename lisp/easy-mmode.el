@@ -64,12 +64,19 @@ are the mode's body, run on each toggle."
            ,variable)
          (defvar ,hook nil)
          ,@(when global `((put ',mode 'global-minor-mode t)))
-         ;; Register the lighter on minor-mode-alist.
+         ;; Register the lighter on minor-mode-alist.  GNU stores the
+         ;; lighter spec verbatim: a string as-is, a form unevaluated
+         ;; (it's a mode-line construct evaluated at display time).
          (let ((cell (assq ',variable minor-mode-alist)))
            (if cell
-               (setcdr cell (list ,lighter-val))
+               (setcdr cell ,(if (stringp lighter)
+                                 `(list ,lighter-val)
+                               `(list ',lighter)))
              (setq minor-mode-alist
-                   (cons (list ',variable ,lighter-val) minor-mode-alist))))
+                   (cons ,(if (stringp lighter)
+                              `(list ',variable ,lighter-val)
+                            `(list ',variable ',lighter))
+                         minor-mode-alist))))
          ',mode))))
 
 (defmacro define-globalized-minor-mode (global-mode mode turn-on &rest keys)

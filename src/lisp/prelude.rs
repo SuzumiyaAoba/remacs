@@ -25643,6 +25643,587 @@ Value is t if the function succeeds in setting the attributes."
 
     result))
 
+;; ---------- face-remap / text-scale (GNU face-remap.el) ----------
+
+(defvar-local face-remapping-alist nil
+  "Alist of face remappings for the current buffer.")
+
+(defvar internal-lisp-face-attributes
+  [nil
+   :family :foundry :width :height :weight :slant :underline
+   :inverse-video
+   :foreground :background :stipple :overline :strike-through :box
+   :font :inherit :fontset :distant-foreground :extend :vector])
+
+(defun face-attrs--make-indirect-safe ()
+  "Deep-copy the buffer's `face-remapping-alist' upon cloning the buffer."
+  (setq-local face-remapping-alist
+              (mapcar #'copy-tree face-remapping-alist)))
+
+(add-hook 'clone-indirect-buffer-hook #'face-attrs--make-indirect-safe)
+
+(defun face-attrs-more-relative-p (attrs1 attrs2)
+  "Return non-nil if ATTRS1 is \"more relative\" than ATTRS2.
+We define this as meaning that ATTRS1 contains a greater number of
+relative face-attributes than ATTRS2.  A face attribute is considered
+relative if `face-attribute-relative-p' returns non-nil.
+
+ATTRS1 and ATTRS2 may be any value suitable for a `face' text
+property, including face names, lists of face names,
+face-attribute plists, etc.
+
+This function can be used as a predicate with `sort', to sort
+face lists so that more specific faces are located near the end."
+  (unless (vectorp attrs1)
+    (setq attrs1 (face-attributes-as-vector attrs1)))
+  (unless (vectorp attrs2)
+    (setq attrs2 (face-attributes-as-vector attrs2)))
+  (let ((rel1-count 0) (rel2-count 0))
+    (dotimes (i (length attrs1))
+      (let ((attr (aref internal-lisp-face-attributes i)))
+	(when attr
+	  (when (face-attribute-relative-p attr (aref attrs1 i))
+	    (setq rel1-count (+ rel1-count 1)))
+	  (when (face-attribute-relative-p attr (aref attrs2 i))
+	    (setq rel2-count (+ rel2-count 1))))))
+    (< rel1-count rel2-count)))
+
+(defun face-remap-order (entry)
+  "Order ENTRY so that more relative face specs are near the beginning.
+The list structure of ENTRY may be destructively modified."
+  (setq entry (nreverse entry))
+  (setcdr entry (sort (cdr entry) #'face-attrs-more-relative-p))
+  (nreverse entry))
+
+(defun face-remap-add-relative (face &rest specs)
+  "Add a face remapping entry of FACE to SPECS in the current buffer.
+Return a cookie which can be used to delete this remapping with
+`face-remap-remove-relative'.
+
+The remaining arguments, SPECS, should form a list of faces.
+Each list element should be either a face name or a property list
+of face attribute/value pairs.  If more than one face is listed,
+that specifies an aggregate face, in the same way as in a `face'
+text property, except for possible priority changes noted below.
+
+If a face property list specifies `:font', the value should be
+either a font-spec object or the return value of `font-face-attributes'
+called with a font object, font spec, or font entity.
+
+The face remapping specified by SPECS takes effect alongside the
+remappings from other calls to `face-remap-add-relative' for the
+same FACE, as well as the normal definition of FACE (at lowest
+priority).  This function tries to sort multiple remappings for
+the same face, so that remappings specifying relative face
+attributes are applied after remappings specifying absolute face
+attributes.
+
+The base (lowest priority) remapping may be set to something
+other than the normal definition of FACE via `face-remap-set-base'."
+  (while (and (consp specs) (null (cdr specs)))
+    (setq specs (car specs)))
+  (make-local-variable 'face-remapping-alist)
+  (let ((entry (assq face face-remapping-alist)))
+    (when (null entry)
+      (setq entry (list face face))	; explicitly merge with global def
+      (push entry face-remapping-alist))
+    (let ((faces (cdr entry)))
+      (if (symbolp faces)
+	  (setq faces (list faces)))
+      (setcdr entry (face-remap-order (cons specs faces)))
+      ;; Force redisplay of this buffer.
+      (force-mode-line-update))
+    (cons face specs)))
+
+(defun face-remap-remove-relative (cookie)
+  "Remove a face remapping previously added by `face-remap-add-relative'.
+COOKIE should be the return value from that function."
+  (let ((remapping (assq (car cookie) face-remapping-alist)))
+    (when remapping
+      (let ((updated-entries (remq (cdr cookie) (cdr remapping))))
+	(unless (eq updated-entries (cdr remapping))
+	  (setcdr remapping updated-entries)
+	  (when (or (null updated-entries)
+		    (and (eq (car-safe updated-entries) (car cookie))
+			 (null (cdr updated-entries))))
+	    (setq face-remapping-alist
+		  (remq remapping face-remapping-alist))
+	    ;; Force redisplay of this buffer.
+	    (force-mode-line-update))
+	  (cdr cookie))))))
+
+(defun face-remap-reset-base (face)
+  "Set the base remapping of FACE to the normal definition of FACE.
+This causes the remappings specified by `face-remap-add-relative'
+to apply on top of the normal definition of FACE."
+  (let ((entry (assq face face-remapping-alist)))
+    (when entry
+      ;; If there's nothing except a base remapping, we simply remove
+      ;; the entire remapping entry, as setting the base to the default
+      ;; would be the same as the global definition.  Otherwise, we
+      ;; modify the base remapping.
+      (if (null (cddr entry))		; nothing except base remapping
+	  (setq face-remapping-alist	; so remove entire entry
+		(remq entry face-remapping-alist))
+	(setcar (last entry) face))
+      ;; Force redisplay of this buffer.
+      (force-mode-line-update))))  ; otherwise, just inherit global def
+
+(defun face-remap-set-base (face &rest specs)
+  "Set the base remapping of FACE in the current buffer to SPECS.
+This causes the remappings specified by `face-remap-add-relative'
+to apply on top of the face specification given by SPECS.
+
+The remaining arguments, SPECS, specify the base of the remapping.
+Each one of SPECS should be either a face name or a property list
+of face attribute/value pairs, like in a `face' text property.
+
+If a face property list specifies `:font', the value should be
+either a font-spec object or the return value of `font-face-attributes'
+called with a font object, font spec, or font entity.
+
+If SPECS is empty or a single face `eq' to FACE, call `face-remap-reset-base'
+to use the normal definition of FACE as the base remapping; note that
+this is different from SPECS containing a single value nil, which means
+not to inherit from the global definition of FACE at all."
+  ;; Simplify the specs in the case where it's just a single face (and
+  ;; it's not a list with just a nil).
+  (while (and (consp specs) (not (null (car specs))) (null (cdr specs)))
+    (setq specs (car specs)))
+  (if (or (null specs)
+	  (eq specs face)) ; default
+      ;; Set entry back to default
+      (face-remap-reset-base face)
+    ;; Set the base remapping
+    (make-local-variable 'face-remapping-alist)
+    (let ((entry (assq face face-remapping-alist)))
+      (if entry
+	  (setcar (last entry) specs)	; overwrite existing base entry
+	(push (list face specs) face-remapping-alist)))
+    ;; Force redisplay of this buffer.
+    (force-mode-line-update)))
+
+(defcustom text-scale-mode-step 1.2
+  "Scale factor used by `text-scale-mode'.
+Each positive or negative step scales the size of the `default'
+face's font by this amount."
+  :group 'display
+  :type 'number)
+
+(defvar-local text-scale-mode-remapping nil
+  "Current remapping cookie for `text-scale-mode'.")
+
+(defvar-local text-scale-mode-lighter "+0"
+  "Lighter displayed for `text-scale-mode' in mode-line minor-mode list.")
+
+(defvar-local text-scale-mode-amount 0
+  "Number of steps that `text-scale-mode' will increase/decrease text height.")
+
+(defvar-local text-scale-remap-header-line nil
+  "If non-nil, text scaling may change font size of header lines too.")
+
+(defun face-remap--clear-remappings ()
+  (dolist (remapping
+           ;; This is a bit messy to stay backwards compatible.
+           ;; In the future, this can be simplified to just use
+           ;; `text-scale-mode-remapping'.
+           (if (consp (car-safe text-scale-mode-remapping))
+               text-scale-mode-remapping
+             (list text-scale-mode-remapping)))
+    (face-remap-remove-relative remapping))
+  (setq text-scale-mode-remapping nil))
+
+(defun face-remap--remap-face (sym)
+  (push (face-remap-add-relative sym
+                       :height
+                       (expt text-scale-mode-step
+                             text-scale-mode-amount))
+        text-scale-mode-remapping))
+
+(define-minor-mode text-scale-mode
+  "Minor mode for displaying buffer text in a larger/smaller font.
+
+The amount of scaling is determined by the variable
+`text-scale-mode-amount': one step scales the global default
+face size by the value of the variable `text-scale-mode-step'
+\(a negative amount shrinks the text).
+
+The `text-scale-increase', `text-scale-decrease', and
+`text-scale-set' functions may be used to interactively modify
+the variable `text-scale-mode-amount' (they also enable or
+disable `text-scale-mode' as necessary).
+
+If `text-scale-remap-header-line' is non-nil, also change
+the font size of the header line."
+  :lighter (" " text-scale-mode-lighter)
+  (face-remap--clear-remappings)
+  (setq text-scale-mode-lighter
+	(format (if (>= text-scale-mode-amount 0) "+%d" "%d")
+		text-scale-mode-amount))
+  (when text-scale-mode
+    (face-remap--remap-face 'default)
+    (when text-scale-remap-header-line
+      (face-remap--remap-face 'header-line)))
+  (force-window-update (current-buffer)))
+
+(defun text-scale--refresh (symbol newval operation where)
+  "Watcher for `text-scale-remap-header-line'.
+See `add-variable-watcher'."
+  (when (and (eq symbol 'text-scale-remap-header-line)
+             (eq operation 'set)
+             text-scale-mode)
+    (with-current-buffer where
+      (let ((text-scale-remap-header-line newval))
+        (text-scale-mode 1)))))
+(add-variable-watcher 'text-scale-remap-header-line #'text-scale--refresh)
+
+(defun text-scale-min-amount ()
+  "Return the minimum amount of text-scaling we allow."
+  ;; When the resulting pixel-height of characters will become smaller
+  ;; than 1 pixel, we can expect trouble from the display engine.
+  ;; E.g., it requires that the character glyph's ascent is
+  ;; non-negative.
+  (log (/ 1.0 (frame-char-height)) text-scale-mode-step))
+
+(defun text-scale-max-amount ()
+  "Return the maximum amount of text-scaling we allow."
+  ;; The display engine uses a 16-bit short for pixel-width of
+  ;; characters, thus the 0xffff limitation.  It also makes no sense
+  ;; to have characters wider than the display.
+  (log (/ (min (display-pixel-width) #xffff)
+          (frame-char-width))
+       text-scale-mode-step))
+
+(defun text-scale-set (level)
+  "Set the scale factor of the default face in the current buffer to LEVEL.
+If LEVEL is non-zero, `text-scale-mode' is enabled, otherwise it is disabled.
+
+LEVEL is a number of steps, with 0 representing the default size.
+Each step scales the height of the default face by the variable
+`text-scale-mode-step' (a negative number decreases the height by
+the same amount)."
+  (interactive "p")
+  (setq text-scale-mode-amount
+        (max (min level (text-scale-max-amount)) (text-scale-min-amount)))
+  (text-scale-mode (if (zerop text-scale-mode-amount) -1 1)))
+
+(defun text-scale-increase (inc)
+  "Increase the font size of the default face in current buffer by INC steps.
+If the new height is other than the default, `text-scale-mode' is enabled.
+
+Each step scales the height of the default face by the variable
+`text-scale-mode-step' (a negative number of steps decreases the
+height by the same amount).  As a special case, an argument of 0
+will remove any scaling currently active."
+  (interactive "p")
+  (let* ((current-value (if text-scale-mode text-scale-mode-amount 0))
+         (new-value (if (= inc 0) 0 (+ current-value inc))))
+    (if (or (> new-value (text-scale-max-amount))
+            (< new-value (text-scale-min-amount)))
+        (user-error "Cannot %s the font size any further"
+                    (if (> inc 0) "increase" "decrease")))
+    (setq text-scale-mode-amount new-value))
+  (text-scale-mode (if (zerop text-scale-mode-amount) -1 1)))
+
+(defun text-scale-decrease (dec)
+  "Decrease the font size of the default face in the current buffer by DEC steps.
+See `text-scale-increase' for more details."
+  (interactive "p")
+  (text-scale-increase (- dec)))
+
+(defun text-scale-adjust (inc)
+  "Adjust the font size in the current buffer by INC steps.
+Interactively, INC is the prefix numeric argument, and defaults to 1.
+
+The actual adjustment made depends on the final component of the
+keybinding used to invoke the command, with all modifiers removed:
+
+   \\`+', \\`='   Increase font size in current buffer by one step
+   \\`-'      Decrease font size in current buffer by one step
+   \\`0'      Reset the font size to the global default
+
+After adjusting, continue to read input events and further adjust
+the font size as long as the input event (with all modifiers removed)
+is one of the above characters.
+
+Each step scales the height of the default face by the factor that
+is the value of `text-scale-mode-step' (a negative number of steps
+decreases the height by that factor).  As a special case, an argument
+of 0 will remove any scaling currently active, thus resetting the
+font size to the original value."
+  (interactive "p")
+  (let ((ev last-command-event)
+	(echo-keystrokes nil))
+    (let* ((base (event-basic-type ev))
+           (step
+            (pcase base
+              ((or ?+ ?=) inc)
+              (?- (- inc))
+              (?0 0)
+              (_ inc))))
+      (text-scale-increase step)
+      (set-transient-map
+       (let ((map (make-sparse-keymap)))
+         (dolist (mods '(() (control)))
+           (dolist (key '(?+ ?= ?- ?0)) ;; = is often unshifted +.
+             (define-key map (vector (append mods (list key)))
+               (lambda () (interactive) (text-scale-adjust (abs inc))))))
+         map)
+       nil nil
+       "Use %k for further adjustment"))))
+
+(defvar-local text-scale--pinch-start-scale 0
+  "The text scale at the start of a pinch sequence.")
+
+(defun text-scale-pinch (event)
+  "Adjust the height of the default face by the scale in the pinch event EVENT."
+  (interactive "e")
+  (when (not (eq (event-basic-type event) 'pinch))
+    (error "`text-scale-pinch' bound to bad event type"))
+  (let ((window (posn-window (nth 1 event)))
+        (scale (nth 4 event))
+        (dx (nth 2 event))
+        (dy (nth 3 event))
+        (angle (nth 5 event)))
+    (with-selected-window window
+      (when (and (zerop dx)
+                 (zerop dy)
+                 (zerop angle))
+        (setq text-scale--pinch-start-scale
+              (if text-scale-mode text-scale-mode-amount 0)))
+      (text-scale-set
+       (+ text-scale--pinch-start-scale
+          (round (log scale text-scale-mode-step)))))))
+
+(defcustom global-text-scale-adjust-resizes-frames nil
+  "Whether `global-text-scale-adjust' resizes the frames."
+  :type '(choice (const :tag "Off" nil)
+                 (const :tag "On" t))
+  :group 'display)
+
+(defcustom global-text-scale-adjust-limits '(10 . 500)
+  "Min/max values for `global-text-scale-adjust'.
+This is a cons cell where the `car' has the minimum font size and
+the `cdr' has the maximum font size, in units of 1/10 pt."
+  :group 'display
+  :type '(cons (integer :tag "Min")
+               (integer :tag "Max")))
+
+(defvar global-text-scale-adjust--default-height nil)
+
+(defvar global-text-scale-adjust--increment-factor 5)
+
+(defun global-text-scale-adjust (increment)
+  "Change (a.k.a. \"adjust\") the font size of all faces by INCREMENT."
+  (interactive "p")
+  (when (display-graphic-p)
+    (unless global-text-scale-adjust--default-height
+      (setq global-text-scale-adjust--default-height
+            (face-attribute 'default :height)))
+    (let* ((key (event-basic-type last-command-event))
+           (echo-keystrokes nil)
+           (cur (face-attribute 'default :height))
+           (inc
+            (pcase key
+              (?- (* (- increment)
+                     global-text-scale-adjust--increment-factor))
+              (?0 (- global-text-scale-adjust--default-height cur))
+              (_ (* increment
+                    global-text-scale-adjust--increment-factor))))
+           (new (+ cur inc)))
+      (when (< (car global-text-scale-adjust-limits)
+               new
+               (cdr global-text-scale-adjust-limits))
+        (let ((frame-inhibit-implied-resize
+               (not global-text-scale-adjust-resizes-frames)))
+          (set-face-attribute 'default nil :height new)
+          (redisplay 'force)
+          (when (and (not (and (characterp key) (= key ?0)))
+                     (= cur (face-attribute 'default :height)))
+            (setq global-text-scale-adjust--increment-factor
+                  (1+ global-text-scale-adjust--increment-factor))
+            (global-text-scale-adjust increment))))
+      (when (characterp key)
+        (set-transient-map
+         (let ((map (make-sparse-keymap)))
+           (dolist (mod '(() (control meta)))
+             (dolist (key '(?+ ?= ?- ?0))
+               (define-key map (vector (append mod (list key)))
+                 'global-text-scale-adjust)))
+           map)
+       nil nil
+       "Use %k for further adjustment")))))
+
+(defvar face-name-history nil
+  "History of face names read via `read-face-name'.")
+(defvar read-face-name-sample-text "SAMPLE"
+  "Text used to display face samples in `read-face-name' completion.")
+(defvar crm-separator ","
+  "Separator regexp used by `completing-read-multiple'.")
+(defvar frame-inhibit-implied-resize '(tab-bar-lines)
+  "List of frame parameters that should not be resized by `set-frame-height'.")
+
+(defun read-face-name (prompt &optional default multiple)
+  "Read and return one or more face names, strings, prompting with PROMPT.
+PROMPT should not end in a space or a colon.
+
+If DEFAULT is non-nil, it should be a face (a symbol) or a face
+name (a string).  It can also be a list of faces or face names.
+
+If MULTIPLE is non-nil, the return value from this function is a
+list of faces.  Otherwise a single face is returned.
+
+If the user enter the empty string at the prompt, DEFAULT is
+returned after a possible transformation according to MULTIPLE.
+That is, if DEFAULT is a list and MULTIPLE is nil, the first
+element of DEFAULT is returned.  If DEFAULT isn't a list, but
+MULTIPLE is non-nil, a one-element list containing DEFAULT is
+returned.  Otherwise, DEFAULT is returned verbatim."
+  (let (defaults)
+    (setq default (ensure-list default))
+    (when default
+      (setq default
+            (if multiple
+                (mapconcat (lambda (f) (if (symbolp f) (symbol-name f) f))
+                           default ", ")
+              ;; If we only want one, and the default is more than one,
+              ;; discard the unwanted ones and use them only in the
+              ;; "future history" retrieved via `M-n M-n ...'.
+              (setq defaults default default (car default))
+              (if (symbolp default)
+                  (symbol-name default)
+                default))))
+    (when (and default (not multiple))
+      (require 'crm)
+      ;; For compatibility with `completing-read-multiple' use `crm-separator'
+      ;; to define DEFAULT if MULTIPLE is nil.
+      (setq default (car (split-string default crm-separator t))))
+
+    ;; Older versions of `read-face-name' did not append ": " to the
+    ;; prompt, so there are third party libraries that have that in the
+    ;; prompt.  If so, remove it.
+    (setq prompt (replace-regexp-in-string ": ?\\'" "" prompt))
+    (let ((prompt (if default
+                      (format-prompt prompt default)
+                    (format "%s: " prompt)))
+          aliasfaces nonaliasfaces table)
+      ;; Build up the completion tables.
+      (mapatoms (lambda (s)
+                  (if (facep s)
+                      (if (get s 'face-alias)
+                          (push (symbol-name s) aliasfaces)
+                        (push (symbol-name s) nonaliasfaces)))))
+      (setq table
+            (completion-table-with-metadata
+             (completion-table-in-turn nonaliasfaces aliasfaces)
+             `((affixation-function
+                . ,(lambda (faces)
+                     (mapcar
+                      (lambda (face)
+                        (list face
+                              (concat (propertize read-face-name-sample-text
+                                                  'face face)
+                                      "\t")
+                              ""))
+                      faces))))))
+      (if multiple
+          (let (faces)
+            (dolist (face (completing-read-multiple prompt table nil t nil
+                                                    'face-name-history default))
+              ;; Ignore elements that are not faces
+              ;; (for example, because DEFAULT was "all faces")
+              (if (facep face) (push (if (stringp face)
+                                         (intern face)
+                                       face)
+                                     faces)))
+            (nreverse faces))
+        (let ((face (completing-read prompt table nil t nil
+                                     'face-name-history defaults)))
+          (when (facep face) (if (stringp face)
+                                 (intern face)
+                               face)))))))
+
+(defcustom buffer-face-mode-face 'variable-pitch
+  "The face specification used by `buffer-face-mode'.
+It may contain any value suitable for a `face' text property,
+including a face name, a list of face names, a face attribute
+plist, etc."
+  :type '(choice (face)
+		 (repeat :tag "List of faces" face)
+		 (plist :tag "Face property list"))
+  :group 'display)
+
+(defvar-local buffer-face-mode-remapping nil)
+
+(define-minor-mode buffer-face-mode
+  "Minor mode for a buffer-specific default face.
+
+When enabled, the face specified by the variable
+`buffer-face-mode-face' is used to display the buffer text."
+  :lighter " BufFace"
+  (when buffer-face-mode-remapping
+    (face-remap-remove-relative buffer-face-mode-remapping))
+  (setq buffer-face-mode-remapping
+	(and buffer-face-mode
+	     (face-remap-add-relative 'default buffer-face-mode-face)))
+  (force-window-update (current-buffer)))
+
+(defun buffer-face-set (&rest specs)
+  "Enable `buffer-face-mode', using face specs SPECS.
+Each argument in SPECS should be a face, i.e. either a face name
+or a property list of face attributes and values.  If more than
+one face is listed, that specifies an aggregate face, like in a
+`face' text property.  If SPECS is nil or omitted, disable
+`buffer-face-mode'."
+  (interactive (list (read-face-name "Set buffer face" (face-at-point t))))
+  (while (and (consp specs) (null (cdr specs)))
+    (setq specs (car specs)))
+  (if (null specs)
+      (buffer-face-mode 0)
+    (setq-local buffer-face-mode-face specs)
+    (buffer-face-mode t)))
+
+(defun buffer-face-toggle (&rest specs)
+  "Toggle `buffer-face-mode', using face specs SPECS.
+Each argument in SPECS should be a face, i.e. either a face name
+or a property list of face attributes and values.  If more than
+one face is listed, that specifies an aggregate face, like in a
+`face' text property.
+
+If `buffer-face-mode' is already enabled, and is currently using
+the face specs SPECS, then it is disabled; if `buffer-face-mode'
+is disabled, or is enabled and currently displaying some other
+face, then is left enabled, but the face changed to reflect SPECS."
+  (interactive (list buffer-face-mode-face))
+  (while (and (consp specs) (null (cdr specs)))
+    (setq specs (car specs)))
+  (if (or (null specs)
+	  (and buffer-face-mode (equal buffer-face-mode-face specs)))
+      (buffer-face-mode 0)
+    (setq-local buffer-face-mode-face specs)
+    (buffer-face-mode t)))
+
+(defun buffer-face-mode-invoke (specs arg &optional interactive)
+  "Enable or disable `buffer-face-mode' using face specs SPECS.
+ARG controls whether the mode is enabled or disabled, and is
+interpreted in the usual manner for minor-mode commands."
+  (let ((last-message (current-message)))
+    (if (or (eq arg 'toggle) (not arg))
+	(buffer-face-toggle specs)
+      (buffer-face-set (and (> (prefix-numeric-value arg) 0) specs)))
+    (when interactive
+      (unless (and (current-message)
+		   (not (equal last-message (current-message))))
+	(message "Buffer-Face mode %sabled"
+		 (if buffer-face-mode "en" "dis"))))))
+
+(defun variable-pitch-mode (&optional arg)
+  "Variable-pitch default-face mode.
+An interface to `buffer-face-mode' which uses the `variable-pitch' face."
+  (interactive (list (or current-prefix-arg 'toggle)))
+  (buffer-face-mode-invoke 'variable-pitch (or arg t)
+			   (called-interactively-p 'interactive)))
+
 ;; *scratch* starts in lisp-interaction-mode (GNU batch behavior too).
 (when (get-buffer "*scratch*")
   (with-current-buffer "*scratch*"
