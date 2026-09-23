@@ -8341,16 +8341,18 @@ fn f_kill_whole_line(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 
 fn f_kill_word(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let n = arg(&a, 0).int().unwrap_or(1);
+    let syn = syntax_table_entries(i);
+    let wordp = |c: char| syntax_entry_code(syn.as_ref(), c) == b'w';
     let b = cur(i);
     let mut bb = b.borrow_mut();
     let start = bb.point();
     let mut p = start;
     let len = bb.text_len();
     for _ in 0..n.max(0) {
-        while p < len && !bb.text.char_at(p).is_alphanumeric() {
+        while p < len && !wordp(bb.text.char_at(p)) {
             p += 1;
         }
-        while p < len && bb.text.char_at(p).is_alphanumeric() {
+        while p < len && wordp(bb.text.char_at(p)) {
             p += 1;
         }
     }
@@ -8362,15 +8364,17 @@ fn f_kill_word(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 
 fn f_backward_kill_word(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let n = arg(&a, 0).int().unwrap_or(1);
+    let syn = syntax_table_entries(i);
+    let wordp = |c: char| syntax_entry_code(syn.as_ref(), c) == b'w';
     let b = cur(i);
     let mut bb = b.borrow_mut();
     let end = bb.point();
     let mut p = end;
     for _ in 0..n.max(0) {
-        while p > 0 && !bb.text.char_at(p - 1).is_alphanumeric() {
+        while p > 0 && !wordp(bb.text.char_at(p - 1)) {
             p -= 1;
         }
-        while p > 0 && bb.text.char_at(p - 1).is_alphanumeric() {
+        while p > 0 && wordp(bb.text.char_at(p - 1)) {
             p -= 1;
         }
     }

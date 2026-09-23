@@ -2572,6 +2572,11 @@ fn f_backward_char(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 
 fn f_forward_word(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let n = a.get(0).and_then(|v| v.int()).unwrap_or(1);
+    // GNU scan_words: word constituents = syntax class 'w' in the
+    // buffer's syntax table.  Fetch the chain before borrowing the
+    // buffer (the lookup itself touches the buffer).
+    let syn = crate::editor::syntax_table_entries(i);
+    let wordp = |c: char| crate::editor::syntax_entry_code(syn.as_ref(), c) == b'w';
     let b = cur(i);
     let mut bb = b.borrow_mut();
     // GNU returns t on success, nil when point can't move (buffer edge).
@@ -2581,10 +2586,10 @@ fn f_forward_word(i: &mut Interp, a: Vec<Value>) -> EvalResult {
             let mut p = bb.point();
             let len = bb.text_len();
             // skip non-word, then word
-            while p < len && !is_word(bb.text.char_at(p)) {
+            while p < len && !wordp(bb.text.char_at(p)) {
                 p += 1;
             }
-            while p < len && is_word(bb.text.char_at(p)) {
+            while p < len && wordp(bb.text.char_at(p)) {
                 p += 1;
             }
             if p == bb.point() {
@@ -2595,10 +2600,10 @@ fn f_forward_word(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     } else {
         for _ in 0..-n {
             let mut p = bb.point();
-            while p > bb.begv && !is_word(bb.text.char_at(p - 1)) {
+            while p > bb.begv && !wordp(bb.text.char_at(p - 1)) {
                 p -= 1;
             }
-            while p > bb.begv && is_word(bb.text.char_at(p - 1)) {
+            while p > bb.begv && wordp(bb.text.char_at(p - 1)) {
                 p -= 1;
             }
             if p == bb.point() {
@@ -2613,10 +2618,6 @@ fn f_forward_word(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 fn f_backward_word(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let n = a.get(0).and_then(|v| v.int()).unwrap_or(1);
     f_forward_word(i, vec![Value::Int(-n)])
-}
-
-fn is_word(c: char) -> bool {
-    c.is_alphanumeric()
 }
 
 fn f_forward_line(i: &mut Interp, a: Vec<Value>) -> EvalResult {
