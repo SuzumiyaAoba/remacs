@@ -2639,6 +2639,14 @@ fn window_configuration(i: &mut Interp) -> Value {
     ])))
 }
 
+/// Integer field N of a saved window spec (0 when absent/non-integer).
+fn spec_int(v: &[Value], n: usize) -> i128 {
+    match v.get(n) {
+        Some(Value::Int(x)) => *x,
+        _ => 0,
+    }
+}
+
 fn window_config_parts(tag: SymId, v: &Value) -> Option<(Value, Vec<Value>, Value)> {
     let r = match v {
         Value::Record(r) => r.clone(),
@@ -2737,11 +2745,15 @@ pub(crate) fn f_set_window_configuration(i: &mut Interp, a: Vec<Value>) -> EvalR
         }
         let (mut t, mut l, mut b, mut r) = (i128::MAX, i128::MAX, i128::MIN, i128::MIN);
         for v in specs {
-            let geti = |n: usize| v.get(n).and_then(|x| match x {
-                Value::Int(i) => Some(*i),
-                _ => None,
-            });
-            let (wt, wh, wl, ww) = (geti(5)?, geti(6)?, geti(7)?, geti(8)?);
+            if !(5..=8).all(|n| matches!(v.get(n), Some(Value::Int(_)))) {
+                return None;
+            }
+            let (wt, wh, wl, ww) = (
+                spec_int(v, 5),
+                spec_int(v, 6),
+                spec_int(v, 7),
+                spec_int(v, 8),
+            );
             t = t.min(wt);
             l = l.min(wl);
             b = b.max(wt + wh);
@@ -2767,19 +2779,13 @@ pub(crate) fn f_set_window_configuration(i: &mut Interp, a: Vec<Value>) -> EvalR
             continue;
         }
         if let Some(Value::Window(w)) = v.first() {
-            let int_at = |n: usize| -> i128 {
-                match v.get(n) {
-                    Some(Value::Int(x)) => *x,
-                    _ => 0,
-                }
-            };
             let mut wb = w.borrow_mut();
-            wb.top = int_at(5).max(0) as usize;
-            wb.height = int_at(6).max(0) as usize;
-            wb.left = int_at(7).max(0) as usize;
-            wb.width = int_at(8).max(0) as usize;
+            wb.top = spec_int(&v, 5).max(0) as usize;
+            wb.height = spec_int(&v, 6).max(0) as usize;
+            wb.left = spec_int(&v, 7).max(0) as usize;
+            wb.width = spec_int(&v, 8).max(0) as usize;
             wb.dead = false;
-            mini_top = Some(int_at(5));
+            mini_top = Some(spec_int(&v, 5));
         }
     }
     let map = extent_of(&content_specs)
@@ -2801,21 +2807,25 @@ pub(crate) fn f_set_window_configuration(i: &mut Interp, a: Vec<Value>) -> EvalR
             Some(Value::Window(w)) => w.clone(),
             _ => continue,
         };
-        let int_at = |n: usize| -> i128 {
-            match v.get(n) {
-                Some(Value::Int(x)) => *x,
-                _ => 0,
-            }
-        };
         {
             let mut wb = w.borrow_mut();
-            wb.buffer = int_at(1).max(0) as usize;
-            wb.point = int_at(2).max(0) as usize;
-            wb.start = int_at(3).max(0) as usize;
-            wb.hscroll = int_at(4).max(0) as usize;
+            wb.buffer = spec_int(v, 1).max(0) as usize;
+            wb.point = spec_int(v, 2).max(0) as usize;
+            wb.start = spec_int(v, 3).max(0) as usize;
+            wb.hscroll = spec_int(v, 4).max(0) as usize;
             let (nt, nh, nl, nw) = match &map {
-                Some(m) => m(int_at(5), int_at(6), int_at(7), int_at(8)),
-                None => (int_at(5), int_at(6), int_at(7), int_at(8)),
+                Some(m) => m(
+                    spec_int(v, 5),
+                    spec_int(v, 6),
+                    spec_int(v, 7),
+                    spec_int(v, 8),
+                ),
+                None => (
+                    spec_int(v, 5),
+                    spec_int(v, 6),
+                    spec_int(v, 7),
+                    spec_int(v, 8),
+                ),
             };
             wb.top = nt.max(0) as usize;
             wb.height = nh.max(0) as usize;
@@ -2828,7 +2838,7 @@ pub(crate) fn f_set_window_configuration(i: &mut Interp, a: Vec<Value>) -> EvalR
             wb.dead = false;
         }
         if let Some(Value::Int(m)) = v.get(14) {
-            marks.push((int_at(1).max(0) as usize, (*m).max(0) as usize));
+            marks.push((spec_int(v, 1).max(0) as usize, (*m).max(0) as usize));
         }
         new_windows.push(w);
     }
