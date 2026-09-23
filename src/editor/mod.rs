@@ -8512,83 +8512,91 @@ fn f_transpose_lines(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     Ok(Value::Nil)
 }
 
-fn region_op(i: &mut Interp, a: &[Value], op: fn(&str) -> String) -> EvalResult {
+fn region_op(i: &mut Interp, a: &[Value], op: crate::lisp::builtins::strfn::CaseOp) -> EvalResult {
+    use crate::lisp::builtins::strfn::{case_extra, case_str};
     let b = cur(i);
-    let mut bb = b.borrow_mut();
-    let len = bb.text.len();
-    let (s, e) = region_bounds(i, &a[0], &a[1], len);
-    let (s, e) = (s.min(e), s.max(e));
-    let old = bb.text.substring(s, e);
-    let new = op(&old);
-    bb.delete_region(s, e);
-    bb.insert_at(s, &new);
+    let down = i.current_case_table();
+    let up = case_extra(&down, 0).unwrap_or_else(|| down.clone());
+    let (s, e, old) = {
+        let bb = b.borrow();
+        let len = bb.text.len();
+        let (s, e) = region_bounds(i, &a[0], &a[1], len);
+        let (s, e) = (s.min(e), s.max(e));
+        (s, e, bb.text.substring(s, e))
+    };
+    let new = case_str(i, &old, op, &down, &up);
+    if new != old {
+        let mut bb = b.borrow_mut();
+        bb.delete_region(s, e);
+        bb.insert_at(s, &new);
+    }
     Ok(Value::Nil)
 }
 
 fn f_upcase_region(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    region_op(i, &a, |s| s.to_uppercase())
+    region_op(i, &a, crate::lisp::builtins::strfn::CaseOp::Up)
 }
 fn f_downcase_region(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    region_op(i, &a, |s| s.to_lowercase())
+    region_op(i, &a, crate::lisp::builtins::strfn::CaseOp::Down)
 }
 fn f_capitalize_region(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    region_op(i, &a, |s| {
-        let mut out = String::with_capacity(s.len());
-        let mut in_word = false;
-        for c in s.chars() {
-            if c.is_alphanumeric() {
-                if in_word {
-                    out.push(c.to_lowercase().next().unwrap_or(c));
-                } else {
-                    out.push(c.to_uppercase().next().unwrap_or(c));
-                    in_word = true;
-                }
-            } else {
-                in_word = false;
-                out.push(c);
-            }
-        }
-        out
-    })
+    region_op(i, &a, crate::lisp::builtins::strfn::CaseOp::Cap)
 }
 
-fn word_op(i: &mut Interp, a: &[Value], op: fn(&str) -> String) -> EvalResult {
+fn word_op(i: &mut Interp, a: &[Value], op: crate::lisp::builtins::strfn::CaseOp) -> EvalResult {
+    use crate::lisp::builtins::strfn::{case_extra, case_str};
     let n = arg(a, 0).int().unwrap_or(1);
     let b = cur(i);
-    let mut bb = b.borrow_mut();
-    let start = bb.point();
+    let down = i.current_case_table();
+    let up = case_extra(&down, 0).unwrap_or_else(|| down.clone());
+    let syn = syntax_table_entries(i);
+    let wordp = |c: char| syntax_entry_code(syn.as_ref(), c) == b'w';
+    let start = b.borrow().point();
+    let len = b.borrow().text_len();
     let mut p = start;
-    let len = bb.text_len();
-    for _ in 0..n.max(0) {
-        while p < len && !bb.text.char_at(p).is_alphanumeric() {
-            p += 1;
+    if n >= 0 {
+        for _ in 0..n {
+            while p < len && !wordp(b.borrow().text.char_at(p)) {
+                p += 1;
+            }
+            while p < len && wordp(b.borrow().text.char_at(p)) {
+                p += 1;
+            }
         }
-        while p < len && bb.text.char_at(p).is_alphanumeric() {
-            p += 1;
+    } else {
+        for _ in 0..-n {
+            while p > 0 && !wordp(b.borrow().text.char_at(p - 1)) {
+                p -= 1;
+            }
+            while p > 0 && wordp(b.borrow().text.char_at(p - 1)) {
+                p -= 1;
+            }
         }
     }
-    let old = bb.text.substring(start, p);
-    let new = op(&old);
-    bb.delete_region(start, p);
-    bb.insert_at(start, &new);
-    bb.set_point(start + new.chars().count());
+    let (s, e) = (start.min(p), start.max(p));
+    let old = b.borrow().text.substring(s, e);
+    let new = case_str(i, &old, op, &down, &up);
+    let mut bb = b.borrow_mut();
+    if new != old {
+        bb.delete_region(s, e);
+        bb.insert_at(s, &new);
+    }
+    // GNU moves point over the changed words for positive args and
+    // leaves it alone for negative args.
+    if n >= 0 {
+        bb.set_point(s + new.chars().count());
+    }
     Ok(Value::Nil)
 }
 
 fn f_upcase_word(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    word_op(i, &a, |s| s.to_uppercase())
+    word_op(i, &a, crate::lisp::builtins::strfn::CaseOp::Up)
 }
 fn f_downcase_word(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    word_op(i, &a, |s| s.to_lowercase())
+    word_op(i, &a, crate::lisp::builtins::strfn::CaseOp::Down)
 }
 fn f_capitalize_word(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    word_op(i, &a, |s| {
-        let mut cs = s.chars();
-        match cs.next() {
-            Some(c) => c.to_uppercase().collect::<String>() + &cs.as_str().to_lowercase(),
-            None => String::new(),
-        }
-    })
+    word_op(i, &a, crate::lisp::builtins::strfn::CaseOp::Cap)
 }
 
 fn f_indent_line_to(i: &mut Interp, a: Vec<Value>) -> EvalResult {

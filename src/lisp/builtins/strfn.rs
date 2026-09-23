@@ -173,7 +173,13 @@ pub(crate) static SUBRS: &[Subr] = &[
         f_string_lines,
         "Split STRING on newlines."
     ),
-    S!("upcase-initials-region", 2, 2, f_region_stub, ""),
+    S!(
+        "upcase-initials-region",
+        2,
+        2,
+        f_upcase_initials_region,
+        ""
+    ),
     S!(
         "string-to-multibyte",
         1,
@@ -390,40 +396,6 @@ pub(crate) static SUBRS: &[Subr] = &[
     ),
     S!("char-charset", 1, 2, f_char_charset, "Charset of CH."),
 ];
-
-/// `upcase-initials-region' — GNU casefiddle: validates the region
-/// like Fcheck_region, then capitalizes the first letter of each word
-/// in the region in place, returning nil.
-fn f_region_stub(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    crate::lisp::builtins::misc::check_region_positions(i, &args)?;
-    let Some(b) = i.buffers.get(i.current_buffer) else {
-        return Ok(Value::Nil);
-    };
-    let (Value::Int(s), Value::Int(e)) = (&args[0], &args[1]) else {
-        return Ok(Value::Nil);
-    };
-    let mut bb = b.borrow_mut();
-    let (start, end) = ((*s - 1) as usize, (*e - 1) as usize);
-    let mut p = start;
-    while p < end {
-        let c = bb.text.char_at(p);
-        if c.is_alphanumeric() {
-            // First word char after a non-word char (or region start):
-            // uppercase it, then skip the rest of the word.
-            let up: String = c.to_uppercase().collect();
-            if up != c.to_string() {
-                bb.text.delete(p, p + 1);
-                bb.text.insert(p, &up);
-            }
-            while p < end && bb.text.char_at(p).is_alphanumeric() {
-                p += 1;
-            }
-        } else {
-            p += 1;
-        }
-    }
-    Ok(Value::Nil)
-}
 
 fn f_char_identity(_i: &mut Interp, args: Vec<Value>) -> EvalResult {
     Ok(args[0].clone())
@@ -648,7 +620,7 @@ fn f_string_compare(i: &mut Interp, args: Vec<Value>) -> EvalResult {
 // special-* expansions (ß -> "SS") and the final-sigma rule.
 
 #[derive(Clone, Copy, PartialEq)]
-enum CaseOp {
+pub(crate) enum CaseOp {
     Up,
     Down,
     Cap,
@@ -656,7 +628,7 @@ enum CaseOp {
 }
 
 /// Extra slot N of a case table (record slots 3+).
-fn case_extra(ct: &Value, slot: usize) -> Option<Value> {
+pub(crate) fn case_extra(ct: &Value, slot: usize) -> Option<Value> {
     match ct {
         Value::Record(r) => r.borrow().get(3 + slot).cloned(),
         _ => None,
@@ -722,59 +694,95 @@ fn casify(i: &mut Interp, arg: &Value, op: CaseOp) -> EvalResult {
             Ok(Value::Int(r as i128))
         }
         Value::Str(s) => {
-            let chars: Vec<char> = s.borrow().chars().collect();
-            let syn = crate::editor::syntax_table_entries(i);
-            let wordp = |c: char| crate::editor::syntax_entry_code(syn.as_ref(), c) == b'w';
-            let mut out = String::new();
-            let mut in_word = false;
-            for (idx, &c) in chars.iter().enumerate() {
-                let cp = c as u32;
-                match op {
-                    CaseOp::Up => {
-                        if let Some(sp) =
-                            special_lookup(crate::lisp::ctdata::SPECIAL_UPPER, c)
-                        {
-                            out.push_str(sp);
-                        } else {
-                            out.push(char::from_u32(ct_case(i, &up, cp)).unwrap_or(c));
-                        }
-                    }
-                    CaseOp::Down => {
-                        let prev_word = idx > 0 && wordp(chars[idx - 1]);
-                        let next_word = idx + 1 < chars.len() && wordp(chars[idx + 1]);
-                        push_down(i, &down, &mut out, c, cp, prev_word, next_word);
-                    }
-                    _ => {
-                        if wordp(c) {
-                            if !in_word {
-                                if let Some(sp) =
-                                    special_lookup(crate::lisp::ctdata::SPECIAL_TITLE, c)
-                                {
-                                    out.push_str(sp);
-                                } else {
-                                    out.push(
-                                        char::from_u32(title_char(i, &up, cp)).unwrap_or(c),
-                                    );
-                                }
-                                in_word = true;
-                            } else if op == CaseOp::Cap {
-                                let next_word =
-                                    idx + 1 < chars.len() && wordp(chars[idx + 1]);
-                                push_down(i, &down, &mut out, c, cp, true, next_word);
-                            } else {
-                                out.push(c);
-                            }
-                        } else {
-                            in_word = false;
-                            out.push(c);
-                        }
-                    }
-                }
-            }
-            Ok(Value::string(out))
+            let src = s.borrow().clone();
+            Ok(Value::string(case_str(i, &src, op, &down, &up)))
         }
         other => Err(i.wrong_type_mut("char-or-string-p", other)),
     }
+}
+
+/// Casify a source string per GNU casefiddle (shared by the string
+/// functions, the *-region commands, and the *-word commands).
+pub(crate) fn case_str(
+    i: &mut Interp,
+    src: &str,
+    op: CaseOp,
+    down: &Value,
+    up: &Value,
+) -> String {
+    let chars: Vec<char> = src.chars().collect();
+    let syn = crate::editor::syntax_table_entries(i);
+    let wordp = |c: char| crate::editor::syntax_entry_code(syn.as_ref(), c) == b'w';
+    let mut out = String::new();
+    let mut in_word = false;
+    for (idx, &c) in chars.iter().enumerate() {
+        let cp = c as u32;
+        match op {
+            CaseOp::Up => {
+                if let Some(sp) = special_lookup(crate::lisp::ctdata::SPECIAL_UPPER, c) {
+                    out.push_str(sp);
+                } else {
+                    out.push(char::from_u32(ct_case(i, up, cp)).unwrap_or(c));
+                }
+            }
+            CaseOp::Down => {
+                let prev_word = idx > 0 && wordp(chars[idx - 1]);
+                let next_word = idx + 1 < chars.len() && wordp(chars[idx + 1]);
+                push_down(i, down, &mut out, c, cp, prev_word, next_word);
+            }
+            _ => {
+                if wordp(c) {
+                    if !in_word {
+                        if let Some(sp) =
+                            special_lookup(crate::lisp::ctdata::SPECIAL_TITLE, c)
+                        {
+                            out.push_str(sp);
+                        } else {
+                            out.push(char::from_u32(title_char(i, up, cp)).unwrap_or(c));
+                        }
+                        in_word = true;
+                    } else if op == CaseOp::Cap {
+                        let next_word = idx + 1 < chars.len() && wordp(chars[idx + 1]);
+                        push_down(i, down, &mut out, c, cp, true, next_word);
+                    } else {
+                        out.push(c);
+                    }
+                } else {
+                    in_word = false;
+                    out.push(c);
+                }
+            }
+        }
+    }
+    out
+}
+
+/// `upcase-region', `downcase-region', `capitalize-region',
+/// `upcase-initials-region': recase the region in place via the
+/// buffer's case table, returning nil.
+fn casify_region(i: &mut Interp, args: &[Value], op: CaseOp) -> EvalResult {
+    crate::lisp::builtins::misc::check_region_positions(i, args)?;
+    let Some(b) = i.buffers.get(i.current_buffer) else {
+        return Ok(Value::Nil);
+    };
+    let (Value::Int(s), Value::Int(e)) = (&args[0], &args[1]) else {
+        return Ok(Value::Nil);
+    };
+    let down = i.current_case_table();
+    let up = case_extra(&down, 0).unwrap_or_else(|| down.clone());
+    let (start, end) = ((*s - 1) as usize, (*e - 1) as usize);
+    let old = b.borrow().text.substring(start, end);
+    let new = case_str(i, &old, op, &down, &up);
+    if new != old {
+        let mut bb = b.borrow_mut();
+        bb.delete_region(start, end);
+        bb.insert_at(start, &new);
+    }
+    Ok(Value::Nil)
+}
+
+fn f_upcase_initials_region(i: &mut Interp, args: Vec<Value>) -> EvalResult {
+    casify_region(i, &args, CaseOp::CapUp)
 }
 
 fn f_upcase(i: &mut Interp, args: Vec<Value>) -> EvalResult {
