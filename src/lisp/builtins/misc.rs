@@ -42,13 +42,8 @@ pub(crate) static SUBRS: &[Subr] = &[
         f_make_interpreted_closure,
         "Build a closure from args/env/body."
     ),
-    S!(
-        "obarray-clear",
-        0,
-        1,
-        f_obarray_clear,
-        "Empty the obarray (keeps core syms)."
-    ),
+    // `obarray-clear' is registered in data.rs; a stub here previously
+    // shadowed it.
     S!(
         "getenv-internal",
         1,
@@ -1697,8 +1692,29 @@ fn f_interpreted_function_p(_i: &mut Interp, args: Vec<Value>) -> EvalResult {
 
 fn f_make_interpreted_closure(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     // (make-interpreted-closure ARGS BODY ENV) → Lambda value.
+    Ok(make_interpreted_closure(
+        i,
+        &args[0],
+        &args[1],
+        &args[2],
+        false,
+    ))
+}
+
+/// Build an interpreted-closure Lambda from ARGLIST, BODY (a list of
+/// body forms) and ENV (nil → dynamic, `(t)' → dynamic top-level,
+/// otherwise an alist lexical frame).  `plain' mirrors `Lambda.plain':
+/// the printer shows `nil' for the env of plain lambdas, `(t)' for
+/// defun-produced ones — matching Emacs 31's `#[args body env]' repr.
+pub(crate) fn make_interpreted_closure(
+    i: &mut Interp,
+    arglist_v: &Value,
+    body_v: &Value,
+    env_v: &Value,
+    plain: bool,
+) -> Value {
     // Parse ARGS (a list arglist) into required/optional/rest.
-    let arglist = args[0].list_to_vec().unwrap_or_default();
+    let arglist = arglist_v.list_to_vec().unwrap_or_default();
     let mut required = Vec::new();
     let mut optional = Vec::new();
     let mut rest = None;
@@ -1730,9 +1746,16 @@ fn f_make_interpreted_closure(i: &mut Interp, args: Vec<Value>) -> EvalResult {
             }
         }
     }
-    let body = args[1].list_to_vec().unwrap_or_default();
-    let env = match &args[2] {
+    let body = body_v.list_to_vec().unwrap_or_default();
+    let env = match env_v {
         Value::Nil => None,
+        // `(t)' — GNU's printed env for a top-level dynamic function.
+        Value::Cons(c)
+            if matches!(&c.borrow().cdr, Value::Nil)
+                && matches!(&c.borrow().car, Value::Sym(s) if *s == crate::lisp::obarray::sym::T) =>
+        {
+            None
+        }
         // An env value is a list of binding alists — model as a flat
         // alist lexical frame.
         alist => {
@@ -1767,7 +1790,7 @@ fn f_make_interpreted_closure(i: &mut Interp, args: Vec<Value>) -> EvalResult {
             }))
         }
     };
-    Ok(Value::Lambda(Rc::new(Lambda {
+    Value::Lambda(Rc::new(Lambda {
         is_macro: false,
         required,
         optional,
@@ -1778,17 +1801,12 @@ fn f_make_interpreted_closure(i: &mut Interp, args: Vec<Value>) -> EvalResult {
         interactive: None,
         name: None,
         bad_arglist: false,
-        arglist: None,
-        plain: false,
-    })))
+        arglist: Some(arglist_v.clone()),
+        plain,
+    }))
 }
 
-fn f_obarray_clear(_i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    // Symbol ids are positional across the whole runtime (buffer locals,
-    // specbind), so actually clearing the obarray would corrupt state.
-    // Treat as a no-op that returns its argument.
-    Ok(arg(&args, 0))
-}
+
 
 fn f_getenv_internal(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     let name = want_string(i, &args[0])?;

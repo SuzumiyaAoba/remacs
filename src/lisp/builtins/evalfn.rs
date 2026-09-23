@@ -94,7 +94,7 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!(
         "ignore-errors",
         raw,
-        f_ignore_error_raw,
+        f_ignore_errors_raw,
         "Eval body ignoring errors."
     ),
     S!("featurep", 1, 2, f_featurep, "t if FEATURE is provided."),
@@ -753,24 +753,48 @@ fn f_condition_case_raw(i: &mut Interp, _args: Vec<Value>) -> EvalResult {
 }
 
 /// `(ignore-errors BODY...)` and `(with-demoted-errors BODY...)`.
-fn f_ignore_error_raw(i: &mut Interp, args: Vec<Value>) -> EvalResult {
+fn f_ignore_errors_raw(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     let body = args.into_iter().next().unwrap_or(Value::Nil);
-    // Register `error' as claimed so handler-bind handlers don't run
-    // for signals this form will swallow (GNU suppresses them via the
-    // no-debugger-entry rule).
-    let err_id = i.intern("error");
-    i.case_handlers.push(Value::list(vec![Value::Sym(err_id)]));
-    let r = i.eval_progn(&body);
+    let err = Value::Sym(i.intern("error"));
+    ignore_body_forms(i, &err, &body)
+}
+
+/// `(ignore-error CONDITION BODY...)` — GNU's two-arg form: the first
+/// raw arg element is the error-condition spec, the rest is body.
+fn f_ignore_error_raw(i: &mut Interp, args: Vec<Value>) -> EvalResult {
+    let all = args.into_iter().next().unwrap_or(Value::Nil);
+    let (cond, body) = match &all {
+        Value::Cons(c) => {
+            let b = c.borrow();
+            (b.car.clone(), b.cdr.clone())
+        }
+        _ => (Value::Nil, Value::Nil),
+    };
+    ignore_body_forms(i, &cond, &body)
+}
+
+fn ignore_body_forms(i: &mut Interp, cond: &Value, body: &Value) -> EvalResult {
+    // Register the claimed condition so handler-bind handlers don't
+    // run for signals this form will swallow (GNU suppresses them via
+    // the no-debugger-entry rule).
+    i.case_handlers.push(Value::list(vec![cond.clone()]));
+    let r = i.eval_progn(body);
     i.case_handlers.pop();
     match r {
         Ok(v) => Ok(v),
-        Err(Flow::Signal(_, _, _)) => Ok(Value::Nil),
+        Err(Flow::Signal(sig, data, offered)) => {
+            if i.signal_matches(&sig, cond) {
+                Ok(Value::Nil)
+            } else {
+                Err(Flow::Signal(sig, data, offered))
+            }
+        }
         Err(e) => Err(e),
     }
 }
 
 fn f_with_demoted_errors(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    f_ignore_error_raw(i, args)
+    f_ignore_errors_raw(i, args)
 }
 
 fn f_featurep(i: &mut Interp, args: Vec<Value>) -> EvalResult {

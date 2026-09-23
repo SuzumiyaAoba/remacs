@@ -632,6 +632,21 @@ impl<'a> Reader<'a> {
                 // `#(' is not Emacs read syntax (vectors are `[...]').
                 Err(read_err_sym(self.interp, "#"))
             }
+            Some('[') => {
+                // `#[ARGLIST BODY ENV]' — a function object.  GNU reads
+                // byte-code here; ours is an interpreted Lambda.
+                self.pos += 2;
+                let items = self.read_seq(']')?;
+                let arglist = items.first().cloned().unwrap_or(Value::Nil);
+                let body = items.get(1).cloned().unwrap_or(Value::Nil);
+                let env = items.get(2).cloned().unwrap_or(Value::Nil);
+                // `#[... nil]' prints with a `nil' env (plain lambda);
+                // `#[... (t)]' is a top-level dynamic function.
+                let plain = env.is_nil();
+                Ok(crate::lisp::builtins::misc::make_interpreted_closure(
+                    self.interp, &arglist, &body, &env, plain,
+                ))
+            }
             Some('s') => {
                 // `#s(...)' — record object.
                 self.pos += 2;

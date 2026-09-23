@@ -1327,6 +1327,31 @@ mod tests {
         assert_eq!(b.borrow().text.text(), "a");
     }
 
+    #[test]
+    fn dispatch_self_insert_expands_abbrev() {
+        let (t, _out) = test_term(20, 5);
+        let term = Rc::new(RefCell::new(t));
+        let mut i = interp_with_frame("");
+        i.eval_str(
+            "(define-abbrev global-abbrev-table \"tq\" \"quick\") (abbrev-mode 1)",
+        )
+        .unwrap();
+        let mut keys = Vec::new();
+        let mut arg_mode = false;
+        dispatch_key(&term, &mut i, b't' as i128, &mut keys, &mut arg_mode).unwrap();
+        dispatch_key(&term, &mut i, b'q' as i128, &mut keys, &mut arg_mode).unwrap();
+        dispatch_key(&term, &mut i, b' ' as i128, &mut keys, &mut arg_mode).unwrap();
+        let b = i.current_buffer_ref().unwrap();
+        assert_eq!(b.borrow().text.text(), "quick ");
+        // With abbrev-mode off, no expansion happens.
+        i.eval_str("(abbrev-mode 0)").unwrap();
+        let mut keys = Vec::new();
+        dispatch_key(&term, &mut i, b't' as i128, &mut keys, &mut arg_mode).unwrap();
+        dispatch_key(&term, &mut i, b'q' as i128, &mut keys, &mut arg_mode).unwrap();
+        dispatch_key(&term, &mut i, b' ' as i128, &mut keys, &mut arg_mode).unwrap();
+        assert_eq!(b.borrow().text.text(), "quick tq ");
+    }
+
     fn ev(code: KeyCode, mods: KeyModifiers) -> KeyEvent {
         KeyEvent {
             code,

@@ -282,6 +282,20 @@ impl Interp {
                         let _ = write!(out, "#<window-configuration>");
                         return;
                     }
+                    // Obarrays print `#<obarray n=COUNT>' — COUNT is
+                    // the number of interned symbols.
+                    if self.symbol_name(*t) == "obarray" {
+                        let n = match rr.get(1) {
+                            Some(Value::Vec(syms)) => syms
+                                .borrow()
+                                .iter()
+                                .filter(|x| matches!(x, Value::Sym(_)))
+                                .count(),
+                            _ => 0,
+                        };
+                        let _ = write!(out, "#<obarray n={}>", n);
+                        return;
+                    }
                     // Terminals print `#<terminal N on NAME>'.
                     if self.symbol_name(*t) == "terminal" {
                         if let [_, Value::Int(n), Value::Str(name)] =
@@ -426,7 +440,10 @@ impl Interp {
                 self.prin1_inner(&body, out, depth + 1, bq);
                 out.push(' ');
                 match &l.env {
-                    None => out.push_str("nil"),
+                    // Emacs 31 prints `(t)' for a top-level dynamic
+                    // function, `nil' for a plainly-wrapped lambda.
+                    None if l.plain => out.push_str("nil"),
+                    None => out.push_str("(t)"),
                     Some(frame) => {
                         let env = lex_frame_to_value(self, frame);
                         self.prin1_inner(&env, out, depth + 1, bq);

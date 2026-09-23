@@ -1,6 +1,6 @@
 //! Type predicates and symbol-manipulation subrs.
 
-use super::{S, eq_values, equal_values, want_sym};
+use super::{S, arg, eq_values, equal_values, want_sym};
 use crate::lisp::Interp;
 use crate::lisp::error::{EvalResult, Flow};
 use crate::lisp::obarray::sym;
@@ -363,11 +363,11 @@ pub(crate) static SUBRS: &[Subr] = &[
     ),
     S!("obarrayp", 1, 1, f_obarrayp, "t if OBJECT is an obarray."),
     S!(
-        "obarray-size",
+        "obarray-clear",
+        0,
         1,
-        1,
-        f_obarray_size,
-        "Number of slots in OBARRAY."
+        f_obarray_clear,
+        "Remove all symbols from OBARRAY."
     ),
 ];
 
@@ -1186,25 +1186,26 @@ fn f_obarray_make(i: &mut Interp, _args: Vec<Value>) -> EvalResult {
 fn f_obarrayp(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     Ok(Value::from_bool(is_obarray(i, &args[0])))
 }
-fn f_obarray_size(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    match &args[0] {
-        Value::Record(r) => {
-            let rr = r.borrow();
-            if !rr
-                .first()
-                .map(|t| eq_values(t, &obarray_tag(i)))
-                .unwrap_or(false)
-            {
-                return Err(i.wrong_type_mut("obarrayp", &args[0]));
-            }
-            match rr.get(1) {
-                Some(Value::Vec(v)) => Ok(Value::Int(v.borrow().len() as i128)),
-                _ => Ok(Value::Int(0)),
-            }
-        }
-        other => Err(i.wrong_type_mut("obarrayp", other)),
+/// `(obarray-clear &optional OBARRAY)' — unintern every symbol in OBARRAY.
+/// With a nil/missing argument GNU would clear the global obarray, which
+/// would corrupt this runtime's positional symbol ids; treat that as a
+/// no-op returning the argument.
+fn f_obarray_clear(i: &mut Interp, args: Vec<Value>) -> EvalResult {
+    let ob = arg(&args, 0);
+    if ob.is_nil() {
+        return Ok(ob);
     }
+    if !is_obarray(i, &ob) {
+        return Err(i.wrong_type_mut("obarrayp", &ob));
+    }
+    if let Value::Record(r) = &ob {
+        if let Some(Value::Vec(v)) = r.borrow().get(1) {
+            v.borrow_mut().clear();
+        }
+    }
+    Ok(Value::Nil)
 }
+
 /// Normalize a function definition for `fset`/`defalias`: `(macro . f)`
 /// becomes a macro Lambda when f is a lambda.
 fn normalize_fn_def(i: &mut Interp, def: Value) -> Value {

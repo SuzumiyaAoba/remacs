@@ -4814,10 +4814,62 @@ fn f_self_insert_command(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         _ => None,
     };
     if let Some(c) = c {
+        // GNU `internal_self_insert': before inserting a character
+        // with non-word syntax, expand the abbrev before point when
+        // `abbrev-mode' is on; an abbrev hook with a non-nil
+        // `no-self-insert' property suppresses the insertion.
+        if n > 0 && self_insert_expand_abbrev(i, c)? {
+            return Ok(Value::Nil);
+        }
         let s: String = std::iter::repeat(c).take(n as usize).collect();
         insert_str_at_point(i, &s, false)?;
     }
     Ok(Value::Nil)
+}
+
+/// GNU's abbrev check in `internal_self_insert' (src/cmds.c): when
+/// `abbrev-mode' is on, the buffer is writable, point is after BEGV,
+/// the char being inserted has non-word syntax and the previous char
+/// has word syntax, call `expand-abbrev'.  Returns true when the
+/// inserted char should be suppressed.
+fn self_insert_expand_abbrev(i: &mut Interp, c: char) -> Result<bool, Flow> {
+    let amode = match i.intern_soft("abbrev-mode") {
+        Some(id) => i.symbol_value(id),
+        None => return Ok(false),
+    };
+    if amode.is_nil() || crate::editor::syntax_code_buf(i, c) == b'w' {
+        return Ok(false);
+    }
+    {
+        let b = cur(i);
+        let bb = b.borrow();
+        let ro = i
+            .intern_soft("buffer-read-only")
+            .map(|id| i.symbol_value(id))
+            .unwrap_or(Value::Nil);
+        if ro.truthy() || bb.point() <= bb.begv {
+            return Ok(false);
+        }
+        match bb.text.char_at(bb.point() - 1) {
+            prev if crate::editor::syntax_code_buf(i, prev) == b'w' => {}
+            _ => return Ok(false),
+        }
+    }
+    let expand = match i.intern_soft("expand-abbrev") {
+        Some(id) => i.sym(id),
+        None => return Ok(false),
+    };
+    let expanded = i.apply(&expand, vec![])?;
+    if let Value::Sym(abbr) = expanded {
+        let hook = i.symbol_function(abbr);
+        if let Value::Sym(hsym) = hook {
+            let pid = i.intern("no-self-insert");
+            if i.get_prop(hsym, pid).truthy() {
+                return Ok(true);
+            }
+        }
+    }
+    Ok(false)
 }
 
 fn f_newline(i: &mut Interp, a: Vec<Value>) -> EvalResult {
@@ -6880,9 +6932,15 @@ pub(crate) fn search_common(
     needle: Option<&str>,
     backward: bool,
 ) -> EvalResult {
-    let bound = a.get(1).and_then(|v| v.int());
+    let bound = match a.get(1) {
+        Some(Value::Nil) | None => None,
+        Some(v) => Some(want_int(i, v)?),
+    };
     let noerror = a.get(2).map(|v| v.truthy()).unwrap_or(false);
-    let count = a.get(3).and_then(|v| v.int()).unwrap_or(1);
+    let count = match a.get(3) {
+        Some(Value::Nil) | None => 1,
+        Some(v) => want_int(i, v)?,
+    };
     // GNU: a negative COUNT reverses the search direction (and BOUND
     // then limits the flipped direction).
     let backward = backward != (count < 0);
@@ -6898,6 +6956,17 @@ pub(crate) fn search_common(
             bb.begv,
         )
     };
+    // GNU: COUNT = 0 performs no search and returns point.
+    if count == 0 {
+        return Ok(Value::Int((pos + begv + 1) as i128));
+    }
+    if let Some(lim) = bound {
+        // GNU: bound on the wrong side of point signals an error.
+        let pt = (pos + begv + 1) as i128;
+        if (!backward && lim < pt) || (backward && lim > pt) {
+            return Err(i.error("Invalid search bound (wrong side of point)"));
+        }
+    }
     let bound_idx = bound
         .map(|p| (p.max(1) as usize - 1).saturating_sub(begv))
         .unwrap_or(if backward { 0 } else { text.len() });

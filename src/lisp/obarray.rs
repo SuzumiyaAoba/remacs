@@ -218,6 +218,7 @@ impl Obarray {
         // nil and t are self-evaluating constants.
         ob.symbols[sym::NIL as usize].constant = true;
         ob.symbols[sym::NIL as usize].special = true;
+        ob.symbols[sym::NIL as usize].value = Value::Nil;
         ob.symbols[sym::T as usize].constant = true;
         ob.symbols[sym::T as usize].special = true;
         ob.symbols[sym::T as usize].value = Value::Sym(sym::T);
