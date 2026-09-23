@@ -1,5 +1,6 @@
 //! Printing Lisp objects (`prin1`-style readable syntax).
 
+use std::cell::RefCell;
 use std::fmt::Write;
 use std::rc::Rc;
 
@@ -65,6 +66,45 @@ impl Interp {
         let mut s = String::new();
         self.princ_inner(v, &mut s, 0, false);
         s
+    }
+
+    /// When ITEMS is an `[overlay BID IDX]' handle, produce GNU's
+    /// `#<overlay from B to E in NAME>' (or `#<overlay in no buffer>'
+    /// once detached/killed).
+    fn overlay_repr(&self, items: &Rc<RefCell<Vec<Value>>>) -> Option<String> {
+        let vv = items.borrow();
+        if vv.len() != 3 {
+            return None;
+        }
+        let (bid, idx) = match (&vv[0], &vv[1], &vv[2]) {
+            (Value::Sym(tag), Value::Int(b), Value::Int(x))
+                if Some(*tag) == self.intern_soft("overlay") =>
+            {
+                (*b as usize, *x as usize)
+            }
+            _ => return None,
+        };
+        let ov = match self
+            .buffers
+            .get(bid)
+            .and_then(|b| b.borrow().overlays.get(idx).cloned())
+        {
+            Some(o) => o,
+            // Detached/killed handles still print as overlays.
+            None => return Some("#<overlay in no buffer>".into()),
+        };
+        match ov
+            .buffer
+            .and_then(|id| self.buffers.get(id).map(|b| b.borrow().name.clone()))
+        {
+            Some(name) => Some(format!(
+                "#<overlay from {} to {} in {}>",
+                ov.start + 1,
+                ov.end + 1,
+                name
+            )),
+            None => Some("#<overlay in no buffer>".into()),
+        }
     }
 
     fn prin1_inner(&self, v: &Value, out: &mut String, depth: usize, bq: bool) {
@@ -200,6 +240,11 @@ impl Interp {
             }
             Value::Cons(_) => self.print_list(v, out, depth, bq),
             Value::Vec(items) => {
+                // `[overlay BID IDX]' handles print like GNU overlays.
+                if let Some(r) = self.overlay_repr(items) {
+                    out.push_str(&r);
+                    return;
+                }
                 let limit = self.print_length_limit();
                 out.push('[');
                 let mut n = 0usize;
@@ -481,6 +526,10 @@ impl Interp {
             Value::Process(p) => out.push_str(&p.borrow().name),
             Value::Cons(_) => self.print_list_princ(v, out, depth, bq),
             Value::Vec(items) => {
+                if let Some(r) = self.overlay_repr(items) {
+                    out.push_str(&r);
+                    return;
+                }
                 out.push('[');
                 for (i, item) in items.borrow().iter().enumerate() {
                     if i > 0 {

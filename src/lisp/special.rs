@@ -271,15 +271,14 @@ fn sf_or(i: &mut Interp, args: Value) -> EvalResult {
     }
 }
 
-/// Parse a `let`/`let*` varspec list into (sym, init-form) pairs.
-fn parse_let_specs(i: &mut Interp, specs: &Value) -> Result<Vec<(SymId, Value)>, Flow> {
+/// Validate a let-style VARLIST, returning (VAR . VALUEFORM) pairs.
+/// VAR is returned unchecked: GNU defers the `symbolp' test until bind
+/// time so that value-forms evaluate before it fires.
+fn parse_let_specs(i: &mut Interp, specs: &Value) -> Result<Vec<(Value, Value)>, Flow> {
     match specs {
         Value::Nil => return Ok(Vec::new()),
-        Value::Sym(id) => {
-            // (let (var) ...) — bare symbol in the list
-            return Ok(vec![(*id, Value::Nil)]);
-        }
-        _ => {}
+        Value::Cons(_) => {}
+        _ => return Err(i.wrong_type_mut("listp", specs)),
     }
     let mut out = Vec::new();
     let mut cur = specs.clone();
@@ -291,53 +290,77 @@ fn parse_let_specs(i: &mut Interp, specs: &Value) -> Result<Vec<(SymId, Value)>,
                     let b = c.borrow();
                     (b.car.clone(), b.cdr.clone())
                 };
-                match &spec {
-                    Value::Sym(id) => out.push((*id, Value::Nil)),
-                    Value::Cons(_) => {
-                        let pair = spec
-                            .list_to_vec()
-                            .map_err(|_| i.error("Bad binding in `let'"))?;
-                        let s = pair
-                            .first()
-                            .and_then(|v| i.sym_id(v))
-                            .ok_or_else(|| i.error("Bad binding in `let'"))?;
-                        out.push((s, pair.get(1).cloned().unwrap_or(Value::Nil)));
+                if matches!(spec, Value::Sym(_)) {
+                    out.push((spec, Value::Nil));
+                } else {
+                    // GNU: (cdr (cdr SPEC)) must be nil; the value-form
+                    // is (car (cdr SPEC)).
+                    let tail = let_cdr(i, &spec)?;
+                    if !let_cdr(i, &tail)?.is_nil() {
+                        return Err(i.signal_data(
+                            sym::ERROR,
+                            vec![
+                                Value::string(
+                                    "`let' bindings can have only one value-form",
+                                ),
+                                spec.clone(),
+                            ],
+                        ));
                     }
-                    _ => return Err(i.error("Bad binding in `let'")),
+                    out.push((let_car(i, &spec)?, let_car(i, &tail)?));
                 }
                 cur = next;
             }
-            _ => return Err(i.error("Bad binding list in `let'")),
+            _ => return Err(i.wrong_type_mut("listp", &cur)),
         }
     }
+}
+
+/// `car'/`cdr' with GNU error behavior: nil → nil, other non-cons
+/// atoms → wrong-type-argument (listp V).
+fn let_car(i: &mut Interp, v: &Value) -> Result<Value, Flow> {
+    match v {
+        Value::Nil => Ok(Value::Nil),
+        Value::Cons(c) => Ok(c.borrow().car.clone()),
+        _ => Err(i.wrong_type_mut("listp", v)),
+    }
+}
+
+fn let_cdr(i: &mut Interp, v: &Value) -> Result<Value, Flow> {
+    match v {
+        Value::Nil => Ok(Value::Nil),
+        Value::Cons(c) => Ok(c.borrow().cdr.clone()),
+        _ => Err(i.wrong_type_mut("listp", v)),
+    }
+}
+
+/// The variable of a let binding spec, checked GNU-late: the `symbolp'
+/// test runs at bind time so value-forms evaluate first.
+fn let_var(i: &mut Interp, v: &Value) -> Result<SymId, Flow> {
+    i.sym_id(v).ok_or_else(|| i.wrong_type_mut("symbolp", v))
 }
 
 fn sf_let(i: &mut Interp, args: Value) -> EvalResult {
     let specs = parse_let_specs(i, &car(&args))?;
     let body = cdr(&args);
+    // GNU evaluates all value-forms first, then checks/binds the
+    // variables (parallel binding).
+    let mut evaluated = Vec::with_capacity(specs.len());
+    for (var, init) in &specs {
+        evaluated.push((var.clone(), i.eval(init)?));
+    }
     if i.lexical_binding_active() {
-        // Parallel binding: evaluate all inits in the outer env first.
-        let mut evaluated = Vec::with_capacity(specs.len());
-        for (s, init) in &specs {
-            let v = if init.is_nil()
-                && matches!(&car(&args), Value::Cons(c) if {
-                    let b = c.borrow();
-                    matches!(&b.car, Value::Cons(_) | Value::Nil) || b.car.is_nil()
-                }) {
-                i.eval(init)?
-            } else {
-                i.eval(init)?
-            };
-            evaluated.push((*s, v));
-        }
         let frame = Rc::new(LexFrame {
             vars: RefCell::new(HashMap::new()),
             parent: i.lexenv.clone(),
         });
         let mark = i.specbind_depth();
         let mut r = Ok(Value::Nil);
-        for (s, v) in evaluated {
-            r = i.bind_var(Some(&frame), s, v).map(|_| Value::Nil);
+        for (v, val) in evaluated {
+            r = match let_var(i, &v) {
+                Ok(s) => i.bind_var(Some(&frame), s, val).map(|_| Value::Nil),
+                Err(e) => Err(e),
+            };
             if r.is_err() {
                 break;
             }
@@ -351,25 +374,19 @@ fn sf_let(i: &mut Interp, args: Value) -> EvalResult {
         r
     } else {
         let mark = i.specbind_depth();
-        // Evaluate all inits first (parallel binding).
-        let mut evaluated = Vec::with_capacity(specs.len());
-        let mut err = None;
-        for (s, init) in &specs {
-            match i.eval(init) {
-                Ok(v) => evaluated.push((*s, v)),
-                Err(e) => {
-                    err = Some(e);
-                    break;
-                }
+        let mut r = Ok(Value::Nil);
+        for (v, val) in evaluated {
+            r = match let_var(i, &v) {
+                Ok(s) => i.specbind(s, val).map(|_| Value::Nil),
+                Err(e) => Err(e),
+            };
+            if r.is_err() {
+                break;
             }
         }
-        if let Some(e) = err {
-            return Err(e);
+        if r.is_ok() {
+            r = i.eval_progn(&body);
         }
-        for (s, v) in evaluated {
-            i.specbind(s, v)?;
-        }
-        let r = i.eval_progn(&body);
         i.unbind_to(mark)?;
         r
     }
@@ -386,18 +403,14 @@ fn sf_let_star(i: &mut Interp, args: Value) -> EvalResult {
         let mark = i.specbind_depth();
         let saved = std::mem::replace(&mut i.lexenv, Some(frame.clone()));
         let mut r = Ok(Value::Nil);
-        for (s, init) in &specs {
-            match i.eval(init) {
-                Ok(v) => {
-                    if let Err(e) = i.bind_var(Some(&frame), *s, v) {
-                        r = Err(e);
-                        break;
-                    }
-                }
-                Err(e) => {
-                    r = Err(e);
-                    break;
-                }
+        for (var, init) in &specs {
+            r = i.eval(init).and_then(|v| {
+                let_var(i, var)
+                    .and_then(|s| i.bind_var(Some(&frame), s, v))
+                    .map(|_| Value::Nil)
+            });
+            if r.is_err() {
+                break;
             }
         }
         if r.is_ok() {
@@ -409,18 +422,13 @@ fn sf_let_star(i: &mut Interp, args: Value) -> EvalResult {
     } else {
         let mark = i.specbind_depth();
         let mut r = Ok(Value::Nil);
-        for (s, init) in &specs {
-            match i.eval(init) {
-                Ok(v) => {
-                    if let Err(e) = i.specbind(*s, v) {
-                        r = Err(e);
-                        break;
-                    }
-                }
-                Err(e) => {
-                    r = Err(e);
-                    break;
-                }
+        for (var, init) in &specs {
+            r = i
+                .eval(init)
+                .and_then(|v| let_var(i, var).and_then(|s| i.specbind(s, v)))
+                .map(|_| Value::Nil);
+            if r.is_err() {
+                break;
             }
         }
         if r.is_ok() {
@@ -672,7 +680,10 @@ fn sf_condition_case(i: &mut Interp, args: Value) -> EvalResult {
                                 Some(f) => std::mem::replace(&mut i.lexenv, Some(f.clone())),
                                 None => None,
                             };
-                            if let Some(vid) = i.sym_id(&var_v) {
+                            // GNU binds VAR only when it is non-nil.
+                            if let Some(vid) =
+                                i.sym_id(&var_v).filter(|_| !var_v.is_nil())
+                            {
                                 if let Err(e) =
                                     i.bind_var(lex_frame.as_ref(), vid, err_val)
                                 {

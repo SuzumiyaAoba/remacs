@@ -833,6 +833,9 @@ impl Interp {
 
     /// Push a dynamic binding for `sym` to `val`.
     pub fn specbind(&mut self, id: SymId, val: Value) -> Result<(), Flow> {
+        if self.obarray.symbol(id).constant {
+            return Err(self.signal_data(sym::SETTING_CONSTANT, vec![self.sym(id)]));
+        }
         let is_auto_local = self.obarray.symbol(id).make_local_if_set;
         let mut bound_buf = None;
         if let Some(b) = self.buffers.get(self.current_buffer) {
@@ -4036,8 +4039,11 @@ impl Interp {
             if let Some(b) = self.buffers.get(mb) {
                 let mut bb = b.borrow_mut();
                 let tl = bb.text.len();
+                let n = s.chars().count();
                 bb.text.insert(tl, s);
-                bb.text.insert(tl + s.chars().count(), "\n");
+                bb.adjust_markers_insert(tl, n, false);
+                bb.text.insert(tl + n, "\n");
+                bb.adjust_markers_insert(tl + n, 1, false);
             }
         }
         if let Some(OutputSink::Buffer(buf)) = &self.output {

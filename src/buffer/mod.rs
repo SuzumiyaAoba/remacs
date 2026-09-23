@@ -224,11 +224,25 @@ pub struct TextProp {
 }
 
 /// A simplified overlay (start, end, plist).
+///
+/// Entries are never removed from `Buffer::overlays' (handles hold
+/// `(buffer-id, index)` pairs); `buffer' becomes `None' when the
+/// overlay is deleted or moved to another buffer.
 #[derive(Clone)]
 pub struct Overlay {
     pub start: usize,
     pub end: usize,
+    /// Buffer the overlay is attached to; `None' after `delete-overlay'
+    /// or `kill-buffer' (GNU: `overlay-buffer' returns nil).
+    pub buffer: Option<usize>,
     pub plist: Value,
+    /// `front-advance': insertions exactly at `start' push it forward.
+    pub front_advance: bool,
+    /// `rear-advance': insertions exactly at `end' push it forward.
+    pub rear_advance: bool,
+    /// The canonical `[overlay BID IDX]' Lisp handle — reused by
+    /// `overlays-at' & friends so `eq' holds for the same overlay.
+    pub handle: Value,
 }
 
 impl Buffer {
@@ -428,6 +442,63 @@ impl Buffer {
         if self.zv >= pos {
             self.zv += n;
         }
+        self.adjust_overlays_insert(pos, n, before_markers);
+    }
+
+    /// GNU `adjust_markers_for_insert' applied to overlays: boundaries
+    /// strictly past POS shift; a boundary at POS follows its own
+    /// advance flag (`front-advance' for start, `rear-advance' for
+    /// end), or always shifts for `insert-before-markers'.
+    fn adjust_overlays_insert(&mut self, pos: usize, n: usize, before: bool) {
+        for ov in &mut self.overlays {
+            if ov.buffer != Some(self.id) {
+                continue;
+            }
+            if ov.start > pos || (ov.start == pos && (before || ov.front_advance)) {
+                ov.start += n;
+            }
+            if ov.end > pos || (ov.end == pos && (before || ov.rear_advance)) {
+                ov.end += n;
+            }
+        }
+    }
+
+    /// GNU `adjust_markers_for_delete': positions inside [START, END)
+    /// clamp to START, positions at or past END shift down by the
+    /// removed length.  Overlays follow the same rule.
+    pub fn adjust_markers_delete(&mut self, start: usize, end: usize) {
+        let n = end - start;
+        for w in &self.markers {
+            if let Some(m) = w.upgrade() {
+                let mut mm = m.borrow_mut();
+                if mm.buffer == Some(self.id) {
+                    if mm.position >= end {
+                        mm.position -= n;
+                    } else if mm.position > start {
+                        mm.position = start;
+                    }
+                }
+            }
+        }
+        self.adjust_overlays_delete(start, end);
+    }
+
+    /// GNU `adjust_markers_for_delete' applied to overlays: boundaries
+    /// inside the deleted span clamp to START, those past END shift.
+    fn adjust_overlays_delete(&mut self, start: usize, end: usize) {
+        let n = end - start;
+        for ov in &mut self.overlays {
+            if ov.buffer != Some(self.id) {
+                continue;
+            }
+            for p in [&mut ov.start, &mut ov.end] {
+                if *p >= end {
+                    *p -= n;
+                } else if *p > start {
+                    *p = start;
+                }
+            }
+        }
     }
 
     /// Delete `[start, end)`, adjusting everything.
@@ -454,18 +525,7 @@ impl Buffer {
                 self.mark = Some(start);
             }
         }
-        for w in &self.markers {
-            if let Some(m) = w.upgrade() {
-                let mut mm = m.borrow_mut();
-                if mm.buffer == Some(self.id) {
-                    if mm.position >= end {
-                        mm.position -= n;
-                    } else if mm.position > start {
-                        mm.position = start;
-                    }
-                }
-            }
-        }
+        self.adjust_markers_delete(start, end);
         if self.zv >= end {
             self.zv -= n;
         } else if self.zv > start {
@@ -806,6 +866,10 @@ impl BufferSet {
                 }
             }
             bb.markers.clear();
+            // Overlays detach too (`overlay-buffer' → nil).
+            for ov in &mut bb.overlays {
+                ov.buffer = None;
+            }
         }
         let name = self.bufs[id].as_ref().unwrap().borrow().name.clone();
         self.name_map.remove(&name);
