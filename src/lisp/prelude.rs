@@ -3992,8 +3992,718 @@ FUN is called with the advice function and its property alist."
 
 ;;; -*- Compatibility support for fill.el / newcomment.el ports -*-
 
-(defmacro defcustom (var value &optional doc &rest _keys)
-  (list 'defvar var value doc))
+;; ---------- custom.el core (GNU data API) ----------
+
+(defvar custom-enabled-themes nil
+  "Themes that are enabled for this Emacs session.")
+
+(defvar custom-known-themes '(user changed)
+  "Themes that have been defined with `deftheme'.")
+
+(defvar custom-theme-load-path (list 'custom-theme-directory t)
+  "List of directories to search for custom theme files.
+Each element is either a directory name (a string); the symbol
+`custom-theme-directory' (meaning the value of that variable), or
+t (meaning the built-in themes directory).")
+
+(defvar custom-theme-directory nil
+  "Directory in which to look for user themes.")
+
+(defvar custom-delayed-init-variables nil
+  "List of variables whose initialization is delayed.
+See `custom-initialize-delay'.")
+
+(defvar custom-file nil
+  "File used for storing customization information.")
+
+(defvar custom-local-buffer nil
+  "Non-nil means, in customization, to operate on buffer-local settings.")
+
+(defun custom-add-to-group (group member type)
+  "To existing GROUP add a new MEMBER of type TYPE.
+If there already is an entry for MEMBER, change its type to TYPE."
+  (let* ((mems (get group 'custom-group))
+         (elt (assq member mems)))
+    (if elt
+        (setcar (cdr elt) type)
+      (put group 'custom-group (append mems (list (list member type)))))))
+
+(defun custom-add-link (symbol widget)
+  "To the custom option SYMBOL add the link WIDGET."
+  (unless (member widget (get symbol 'custom-links))
+    (put symbol 'custom-links (cons widget (get symbol 'custom-links)))))
+
+(defun custom-add-version (symbol version)
+  "To the custom option SYMBOL add the version VERSION."
+  (put symbol 'custom-version version))
+
+(defun custom-add-load (symbol load)
+  "To the custom option SYMBOL add the dependency LOAD.
+LOAD should be either a library file name, or a feature name."
+  (unless (member load (get symbol 'custom-loads))
+    (put symbol 'custom-loads (cons load (get symbol 'custom-loads)))))
+
+(defun custom-autoload (symbol load)
+  "Mark SYMBOL as autoloaded custom option needing LOAD.
+See `custom-declare-variable' and `custom-declare-group'."
+  (put symbol 'custom-autoload load))
+
+(defun custom-load-symbol (symbol)
+  "Load all dependencies for SYMBOL given by `custom-loads'."
+  (unless (get symbol 'custom-autoload)
+    (let ((loads (get symbol 'custom-loads)))
+      (put symbol 'custom-loads nil)
+      ;; Mark against recursive loads.
+      (put symbol 'custom-autoload 'loads)
+      (dolist (load loads)
+        (condition-case nil
+            (if (symbolp load) (require load) (load load))
+          (error nil))))))
+
+(defun custom-handle-keyword (symbol keyword value type)
+  "For customization option SYMBOL, handle KEYWORD with VALUE.
+TYPE should be `custom-face', `custom-variable' or `custom-group'."
+  (unless (listp value)
+    (setq value (list value)))
+  (cond ((eq keyword :group)
+         (custom-add-to-group (car value) symbol type))
+        ((eq keyword :link)
+         (custom-add-link symbol value))
+        ((eq keyword :load)
+         (custom-add-load symbol value))
+        ((eq keyword :version)
+         (custom-add-version symbol (car value)))
+        ((eq keyword :set)
+         (put symbol 'custom-set (car value)))
+        ((eq keyword :get)
+         (put symbol 'custom-get (car value)))
+        ((eq keyword :set-after)
+         (put symbol 'custom-dependencies (nreverse value)))
+        ((eq keyword :type)
+         (put symbol 'custom-type value))
+        ((eq keyword :options)
+         (put symbol 'custom-options value))
+        ((eq keyword :value)
+         (put symbol 'custom-value value))
+        ((eq keyword :require)
+         (put symbol 'custom-requests
+              (append (get symbol 'custom-requests) value)))
+        ((eq keyword :risky)
+         (put symbol 'risky-local-variable (car value)))
+        ((eq keyword :safe)
+         (put symbol 'safe-local-variable (car value)))
+        ((eq keyword :package-version)
+         (put symbol 'custom-package-version value))
+        ((eq keyword :tag)
+         (put symbol 'custom-tag (car value)))
+        ;; Keywords handled elsewhere, or accepted with no plist effect.
+        ((memq keyword '(:initialize :local :indent :debug :doc-string
+                         :no-autoload :obsolete))
+         nil)
+        (t (error "Unknown keyword %s" keyword))))
+
+(defun custom-quote (x)
+  "Apply `custom-quote' to X: evaluate `(custom-quote Y)' forms within X.
+This is obsolete; use `quote' instead."
+  (if (consp x)
+      (if (eq (car x) 'custom-quote)
+          (eval (car (cdr x)))
+        (cons (custom-quote (car x)) (custom-quote (cdr x))))
+    x))
+
+;;; initialization
+
+(defun custom-initialize-default (symbol exp)
+  "Initialize SYMBOL based on EXP.
+Set the symbol, using its `:set' function (or `set-default' if it has
+none); the variable's default value is what gets set."
+  (funcall (or (get symbol 'custom-set) 'set-default) symbol (eval exp)))
+
+(defun custom-initialize-set (symbol exp)
+  "Initialize SYMBOL based on EXP.
+Set the symbol, using its `:set' function (or `set' if it has none)."
+  (funcall (or (get symbol 'custom-set) 'set) symbol (eval exp)))
+
+(defun custom-initialize-reset (symbol exp)
+  "Initialize SYMBOL based on EXP.
+Set the symbol, using its `:set' function (or `set-default' if it has none)."
+  (funcall (or (get symbol 'custom-set) 'set-default) symbol (eval exp)))
+
+(defun custom-initialize-changed (symbol exp)
+  "Initialize SYMBOL based on EXP.
+Set the symbol, using its `:set' function (or `set' if it has none),
+unless it is already bound."
+  (unless (default-boundp symbol)
+    (funcall (or (get symbol 'custom-set) 'set) symbol (eval exp))))
+
+(defun custom-initialize-delay (symbol exp)
+  "Delay initialization of SYMBOL to the next `custom-delayed-init' call.
+This is used in files that are preloaded (or for autoloads), so that the
+init-code can be evaluated once it is safe (e.g. after theme loading)."
+  (unless (memq symbol custom-delayed-init-variables)
+    (push symbol custom-delayed-init-variables))
+  (put symbol 'custom-delayed-init (list exp)))
+
+;;; declare group
+
+(defun custom-declare-group (group members doc &rest args)
+  "Like `defgroup', but GROUP is evaluated as a normal argument."
+  (unless (symbolp group)
+    (error "Invalid group name `%s'" group))
+  (put group 'group-documentation doc)
+  (dolist (member members)
+    (custom-add-to-group group (car member) (car (cdr member))))
+  (let ((rest args))
+    (while rest
+      (let ((key (car rest)))
+        (cond
+         ((null (cdr rest))
+          (error "Keyword %s is missing an argument" key))
+         ((not (symbolp key))
+          (error "Junk in args %S" args))
+         ((eq key :prefix)
+          (put group 'custom-prefix (car (cdr rest))))
+         ((eq key :group)
+          (custom-add-to-group (car (cdr rest)) group 'custom-group))
+         (t
+          (custom-handle-keyword group key (car (cdr rest))
+                                 'custom-group))))
+      (setq rest (cdr (cdr rest)))))
+  group)
+
+(defmacro defgroup (group members doc &rest args)
+  "Declare GROUP as a customization group containing MEMBERS.
+GROUP should be a symbol; MEMBERS a list of (MEMBER TYPE) entries.
+DOC is a doc string.  Keyword ARGS are as for `defcustom'."
+  (declare (doc-string 3) (indent 1))
+  `(custom-declare-group ',group ,members ,doc ,@args))
+
+(defun custom-group-list (group)
+  "Return list of groups inside GROUP."
+  (let (list)
+    (dolist (entry (get group 'custom-group) (nreverse list))
+      (when (eq (car (cdr entry)) 'custom-group)
+        (push (car entry) list)))))
+
+(defun custom-group-of-mode (mode)
+  "Return the custom group for MODE, or nil if it has none."
+  (or (get mode 'custom-mode-group)
+      (get mode 'custom-group)
+      (let ((parent (get mode 'derived-mode-parent)))
+        (and parent (custom-group-of-mode parent)))))
+
+;;; declare variable
+
+(defun custom-declare-variable (variable requests doc &rest args)
+  "Like `defcustom', but VARIABLE and REQUESTS are evaluated as normal args.
+REQUESTS should be an expression to evaluate to compute the value —
+`defcustom' passes a form of the shape (funcall (function (lambda ()
+INIT)))."
+  (unless (symbolp variable)
+    (error "Invalid variable name `%s'" variable))
+  ;; Record the standard value unless the user already saved one.
+  (unless (get variable 'saved-value)
+    (put variable 'standard-value (list requests)))
+  (put variable 'variable-documentation doc)
+  ;; Process keyword arguments; `:initialize' selects the init function
+  ;; and is not recorded on the plist.
+  (let ((initialize 'custom-initialize-default)
+        (rest args))
+    (while rest
+      (let ((key (car rest)))
+        (cond
+         ((null (cdr rest))
+          (error "Keyword %s is missing an argument" key))
+         ((eq key :initialize)
+          (setq initialize (car (cdr rest))))
+         (t
+          (unless (symbolp key)
+            (error "Junk in args %S" args))
+          (custom-handle-keyword variable key (car (cdr rest))
+                                 'custom-variable))))
+      (setq rest (cdr (cdr rest))))
+    ;; Initialize, unless the variable is already bound.
+    (unless (default-boundp variable)
+      (funcall initialize variable requests)))
+  variable)
+
+(defmacro defcustom (symbol initial doc &rest args)
+  "Declare SYMBOL as a customizable variable that defaults to INITIAL.
+INITIAL is a Lisp expression evaluated to give the default.
+DOC is the variable documentation string.  Keyword ARGS:
+`:group', `:type', `:options', `:set', `:get', `:initialize',
+`:risky', `:safe', `:require', `:set-after', `:version',
+`:package-version', `:link', `:tag', `:load', `:local'."
+  (declare (doc-string 3) (indent 1))
+  `(custom-declare-variable
+    ',symbol
+    '(funcall #'(lambda () ,initial))
+    ,doc
+    ,@args))
+
+(defun custom-variable-p (arg)
+  "Return non-nil if ARG is a customizable variable.
+A customizable variable is a `defcustom' variable, or an autoloaded
+one, or one that has been set through Custom."
+  (and (symbolp arg)
+       (or (get arg 'standard-value)
+           (get arg 'custom-autoload)
+           (get arg 'customized-value))))
+
+(defun custom-variable-state (variable)
+  "Return the state of VARIABLE as seen by Customize.
+The state is `hidden', `standard', `saved', `set' or `themed'."
+  (cond ((get variable 'saved-value) 'saved)
+        ((get variable 'customized-value) 'set)
+        ((get variable 'theme-value) 'themed)
+        ((get variable 'standard-value) 'standard)
+        (t 'hidden)))
+
+(defun custom-note-var-changed (symbol)
+  "Inform Custom that SYMBOL has been set (changed) programmatically.
+This records the current value in SYMBOL's `customized-value' property."
+  (put symbol 'customized-value
+       (list (custom-quote (symbol-value symbol)))))
+
+(defun custom-set-default (variable value)
+  "Default :set function for a customizable variable.
+VALUE is evaluated; the variable's default is set to the result."
+  (set-default variable value))
+
+(defun custom-set-minor-mode (variable value)
+  ":set function for minor mode variables.
+Normally, this sets the default value of VARIABLE to nil if VALUE
+is nil and to t otherwise, but it calls VARIABLE as a function with
+argument 1 (enable) or -1 (disable), like minor-mode functions do."
+  (funcall variable (if value 1 -1)))
+
+(defun custom-reevaluate-setting (symbol)
+  "Re-execute :set function of SYMBOL with the saved/customized value."
+  (interactive "vVariable: ")
+  (funcall (or (get symbol 'custom-set) 'set) symbol
+           (eval (car (or (get symbol 'saved-value)
+                          (get symbol 'standard-value))))))
+
+;;; declare face
+
+(defun face-spec-set (face spec &optional _frame)
+  "Override the face attributes of FACE according to SPEC.
+SPEC is a list of (DISPLAY ATTRS) entries; this implementation
+applies the attributes of the `t' entries, falling back to `default'."
+  (put face 'face-override-spec spec)
+  (let ((default-attrs nil) (applied nil))
+    (dolist (entry spec)
+      (let ((display (car entry)) (attrs (car (cdr entry))))
+        (cond
+         ((eq display t)
+          (apply 'set-face-attribute face nil attrs)
+          (setq applied t))
+         ((eq display 'default)
+          (setq default-attrs attrs)))))
+    (when (and (not applied) default-attrs)
+      (apply 'set-face-attribute face nil default-attrs))))
+
+(defun custom-declare-face (face spec doc &rest args)
+  "Like `defface', but FACE is evaluated as a normal argument."
+  (unless (internal-lisp-face-p face)
+    (internal-make-lisp-face face))
+  (unless (get face 'face-defface-spec)
+    (put face 'face-defface-spec spec)
+    (when (and spec (not (get face 'saved-face)))
+      ;; Respect faces already set by the user.
+      (face-spec-set face spec))
+    (put face 'face-documentation doc))
+  (let ((rest args))
+    (while rest
+      (let ((key (car rest)))
+        (if (null (cdr rest))
+            (error "Keyword %s is missing an argument" key)
+          (custom-handle-keyword face key (car (cdr rest))
+                                 'custom-face)))
+      (setq rest (cdr (cdr rest)))))
+  face)
+
+(defmacro defface (face spec doc &rest args)
+  "Define FACE (a symbol) as a customizable face with SPEC and DOC.
+SPEC is a list of (DISPLAY . PLIST) entries; ARGS are custom keywords."
+  (declare (doc-string 3))
+  `(custom-declare-face ',face ,spec ,doc ,@args))
+
+(defun custom-facep (face)
+  "Return non-nil if FACE is a customizable face."
+  (and (symbolp face)
+       (get face 'face-defface-spec)
+       (facep face)))
+
+(defun custom-face-state (face)
+  "Return the state of FACE as seen by Customize."
+  (cond ((get face 'saved-face) 'saved)
+        ((get face 'customized-face) 'set)
+        ((get face 'theme-face) 'themed)
+        ((get face 'face-defface-spec) 'standard)
+        (t 'hidden)))
+
+;;; themes
+
+(defun custom-make-theme-feature (theme)
+  "Given a symbol THEME, create a new symbol named THEME-theme.
+This is used to convert a symbol into a feature name."
+  (intern (concat (symbol-name theme) "-theme")))
+
+(defun custom-declare-theme (theme &optional doc)
+  "Like `deftheme', but THEME is evaluated as a normal argument."
+  (unless (memq theme custom-known-themes)
+    (push theme custom-known-themes))
+  (put theme 'theme-feature (custom-make-theme-feature theme))
+  (put theme 'theme-documentation doc)
+  theme)
+
+(defmacro deftheme (theme &optional doc)
+  "Define THEME (a symbol) as a custom theme, and return THEME.
+Optional argument DOC is a doc string describing the theme."
+  `(custom-declare-theme ',theme ,doc))
+
+(defun custom-theme-p (theme)
+  "Return non-nil if THEME is a valid custom theme name."
+  (memq theme custom-known-themes))
+
+(defun custom-check-theme (theme)
+  "Check THEME for validity.
+Raise an error if THEME is not a custom theme; return nil otherwise."
+  (unless (custom-theme-p theme)
+    (error "Unknown theme `%s'" theme)))
+
+(defun provide-theme (theme)
+  "Indicate that this file provides THEME feature."
+  (provide (custom-make-theme-feature theme)))
+
+(defun custom-push-theme (prop symbol theme mode value)
+  "Add (PROP SYMBOL THEME VALUE) to the THEME's `theme-settings' property.
+If THEME is `user', instead record a (THEME VALUE) entry in SYMBOL's
+PROP property (a user setting stored on the symbol itself).
+MODE `set' or `set-buffer' records a new setting; `reset' removes none
+here (removal is done by `custom-theme-reset-variables' et al)."
+  (if (eq theme 'user)
+      (put symbol prop (cons (list theme value) (get symbol prop)))
+    (when (memq mode '(set set-buffer))
+      (put theme 'theme-settings
+           (cons (list prop symbol theme value)
+                 (get theme 'theme-settings))))))
+
+(defun custom-theme-set-variables (theme &rest args)
+  "Record a list of variable settings for THEME.
+Each argument in ARGS should be a list of the form (VAR EXP [NOW
+[REQUEST [COMMENT]]]); only VAR and EXP are recorded."
+  (custom-check-theme theme)
+  (dolist (entry args)
+    (custom-push-theme 'theme-value (car entry) theme 'set
+                       (car (cdr entry)))))
+
+(defun custom-theme-set-faces (theme &rest args)
+  "Record a list of face settings for THEME.
+Each argument in ARGS should be a list of the form (FACE SPEC
+[NOW [COMMENT]]); only FACE and SPEC are recorded."
+  (custom-check-theme theme)
+  (dolist (entry args)
+    (custom-push-theme 'theme-face (car entry) theme 'set
+                       (car (cdr entry)))))
+
+(defun custom--settings-delete (settings prop symbol)
+  "Delete the (PROP SYMBOL ...) entries from a `theme-settings' list."
+  (let (out)
+    (dolist (e settings (nreverse out))
+      (unless (and (eq (car e) prop) (eq (car (cdr e)) symbol))
+        (push e out)))))
+
+(defun custom--theme-entry-delete (entries theme)
+  "Delete the (THEME ...) entries from a `theme-value'/`theme-face' list."
+  (let (out)
+    (dolist (e entries (nreverse out))
+      (unless (eq (car e) theme)
+        (push e out)))))
+
+(defun custom-theme-reset-variables (theme &rest args)
+  "Reset the value of the variables to values previously recorded.
+Each element of ARGS is a variable name, or a list (VAR VAL)."
+  (custom-check-theme theme)
+  (dolist (arg args)
+    (let ((var (if (consp arg) (car arg) arg)))
+      (put theme 'theme-settings
+           (custom--settings-delete (get theme 'theme-settings)
+                                    'theme-value var))
+      (when (memq theme custom-enabled-themes)
+        (put var 'theme-value
+             (custom--theme-entry-delete (get var 'theme-value) theme))
+        (custom-theme-recalc-variable var)))))
+
+(defun custom-theme-reset-faces (theme &rest args)
+  "Reset the specs of the faces to values previously recorded.
+Each element of ARGS is a face name, or a list (FACE SPEC)."
+  (custom-check-theme theme)
+  (dolist (arg args)
+    (let ((face (if (consp arg) (car arg) arg)))
+      (put theme 'theme-settings
+           (custom--settings-delete (get theme 'theme-settings)
+                                    'theme-face face))
+      (when (memq theme custom-enabled-themes)
+        (put face 'theme-face
+             (custom--theme-entry-delete (get face 'theme-face) theme))
+        (custom-theme-recalc-face face)))))
+
+(defun custom-theme-recalc-variable (variable &optional _frame)
+  "Set the default value of VARIABLE to a theme setting, if one exists.
+This consults VARIABLE's `theme-value' property for settings made by
+enabled themes (or `user'), falling back to a `changed' entry, then
+`saved-value' and `customized-value'."
+  (let ((theme-values (get variable 'theme-value))
+        (rest custom-enabled-themes)
+        (set (or (get variable 'custom-set) 'set))
+        winner)
+    (while (and rest (not winner))
+      (let ((e (assq (car rest) theme-values)))
+        (when e (setq winner e)))
+      (setq rest (cdr rest)))
+    (unless winner (setq winner (assq 'user theme-values)))
+    (cond
+     (winner
+      (funcall set variable (car (cdr winner))))
+     ((assq 'changed theme-values)
+      (funcall set variable (car (cdr (assq 'changed theme-values)))))
+     ((get variable 'saved-value)
+      (funcall set variable (eval (car (get variable 'saved-value)))))
+     ((get variable 'customized-value)
+      (funcall set variable (car (get variable 'customized-value))))
+     ((get variable 'standard-value)
+      (funcall set variable (eval (car (get variable 'standard-value))))))))
+
+(defun custom-theme-recalc-face (face &optional _frame)
+  "Set the attributes of FACE to a theme spec, if one exists.
+This consults FACE's `theme-face' property for specs made by enabled
+themes (or `user'), falling back to `face-defface-spec'."
+  (let ((theme-faces (get face 'theme-face))
+        (rest custom-enabled-themes)
+        winner)
+    (while (and rest (not winner))
+      (let ((e (assq (car rest) theme-faces)))
+        (when e (setq winner e)))
+      (setq rest (cdr rest)))
+    (unless winner (setq winner (assq 'user theme-faces)))
+    (cond
+     (winner (face-spec-set face (car (cdr winner))))
+     ((get face 'face-defface-spec)
+      (face-spec-set face (get face 'face-defface-spec))))))
+
+(defun enable-theme (theme)
+  "Reenable all variable and face settings defined by THEME.
+THEME should be either `user', or a theme defined via `deftheme'."
+  (interactive "SEnable custom theme: ")
+  (if (memq theme custom-enabled-themes)
+      (message "Theme `%s' is already enabled" theme)
+    (custom-check-theme theme)
+    ;; Record `changed' entries for variables that differ from their
+    ;; standard value, then record the theme's settings on the symbols.
+    (dolist (setting (get theme 'theme-settings))
+      (let ((prop (nth 0 setting)) (symbol (nth 1 setting))
+            (val (nth 3 setting)))
+        (when (eq prop 'theme-value)
+          ;; Record the pre-theme value as `changed' — but only when the
+          ;; variable is not already under theme control, and only when
+          ;; its current value differs from the standard value.
+          (when (and (null (get symbol prop)) (boundp symbol))
+            (let ((std (car (get symbol 'standard-value))))
+              (unless (and std
+                           (equal (eval std) (default-value symbol)))
+                (put symbol prop
+                     (list (list 'changed (default-value symbol))))))))
+        (put symbol prop
+             (cons (list theme val) (get symbol prop)))))
+    (push theme custom-enabled-themes)
+    (dolist (setting (get theme 'theme-settings))
+      (let ((prop (nth 0 setting)) (symbol (nth 1 setting)))
+        (cond ((eq prop 'theme-value)
+               (custom-theme-recalc-variable symbol))
+              ((eq prop 'theme-face)
+               (custom-theme-recalc-face symbol))))))
+  theme)
+
+(defun disable-theme (theme)
+  "Disable all variable and face settings defined by THEME."
+  (interactive "SDisable custom theme: ")
+  (custom-check-theme theme)
+  (if (not (memq theme custom-enabled-themes))
+      (message "%s theme is not currently enabled" theme)
+    (setq custom-enabled-themes (delq theme custom-enabled-themes))
+    (dolist (setting (get theme 'theme-settings))
+      (let ((prop (nth 0 setting)) (symbol (nth 1 setting)))
+        (put symbol prop
+             (custom--theme-entry-delete (get symbol prop) theme))
+        (cond ((eq prop 'theme-value)
+               (custom-theme-recalc-variable symbol))
+              ((eq prop 'theme-face)
+               (custom-theme-recalc-face symbol))))))
+  theme)
+
+(defun custom-theme-load-themes (&optional _update)
+  "Load themes specified by the variable `custom-enabled-themes'."
+  (dolist (theme custom-enabled-themes)
+    (load-theme theme)))
+
+(defun custom-available-themes ()
+  "Return a list of available custom themes (symbols like `foo-theme')."
+  (let (out)
+    (dolist (dir custom-theme-load-path)
+      (when (eq dir 'custom-theme-directory)
+        (setq dir custom-theme-directory))
+      (when (eq dir t)
+        (setq dir (bound-and-true-p data-directory)))
+      (when (and (stringp dir) (file-directory-p dir))
+        (dolist (file (directory-files dir nil "-theme\\.el\\'"))
+          ;; "foo-theme.el" names the theme `foo'.
+          (let ((theme (intern (substring file 0 (- (length file) 9)))))
+            (unless (memq theme out)
+              (push theme out))))))
+    (nreverse out)))
+
+(defun load-theme (theme &optional _no-confirm no-enable)
+  "Load Custom theme THEME from its file and enable it.
+The theme file is named THEME-theme.el; it is searched in
+`custom-theme-load-path' and `load-path'."
+  (interactive "SLoad custom theme: ")
+  (unless (custom-theme-p theme)
+    ;; Search theme dirs, then the regular load-path.
+    (let ((file (concat (symbol-name theme) "-theme"))
+          (found nil))
+      (dolist (dir custom-theme-load-path)
+        (when (eq dir 'custom-theme-directory)
+          (setq dir custom-theme-directory))
+        (when (eq dir t)
+          (setq dir (bound-and-true-p data-directory)))
+        (when (and (not found) (stringp dir) (file-directory-p dir))
+          (let ((full (expand-file-name (concat file ".el") dir)))
+            (when (file-exists-p full)
+              (load full nil t)
+              (setq found t)))))
+      (unless found
+        (load file nil t))))
+  (if (not (custom-theme-p theme))
+      (error "Unable to find theme file for `%s'" theme)
+    (unless no-enable
+      (enable-theme theme)))
+  theme)
+
+;;; set/get user values
+
+(defun custom-set-variables (&rest args)
+  "Initialize variables according to user specifications.
+Each argument should be a list of the form (VAR VALUE [NOW [REQUEST
+[COMMENT]]]).  VALUE is evaluated to give the value; REQUEST is a list
+of features to load; COMMENT is a comment string."
+  (dolist (entry args)
+    (let ((var (nth 0 entry)) (val (nth 1 entry))
+          (requests (nth 3 entry)) (comment (nth 4 entry)))
+      (when requests
+        (put var 'custom-requests
+             (append (get var 'custom-requests) requests)))
+      ;; Record the setting as a user (pseudo-theme) setting.
+      (put var 'saved-value (list val))
+      (put var 'saved-variable-comment comment)
+      (custom-push-theme 'theme-value var 'user 'set (eval val))
+      ;; If VAR is a declared customizable variable, apply now.
+      (when (custom-variable-p var)
+        (custom-theme-recalc-variable var)))))
+
+(defun custom-set-faces (&rest args)
+  "Initialize faces according to user specifications.
+Each argument should be a list of the form (FACE SPEC [NOW
+[COMMENT]])."
+  (dolist (entry args)
+    (let ((face (nth 0 entry)) (spec (nth 1 entry))
+          (comment (nth 3 entry)))
+      (put face 'saved-face spec)
+      (put face 'saved-face-comment comment)
+      (custom-push-theme 'theme-face face 'user 'set spec)
+      (when (custom-facep face)
+        (custom-theme-recalc-face face)))))
+
+(defun customize-set-variable (variable value &optional comment)
+  "Set the default value of VARIABLE to VALUE, and return VALUE.
+VALUE is a Lisp object.
+If COMMENT is non-nil, set `customized-variable-comment' to it."
+  (interactive "vCustomize set variable: \nxExpression: ")
+  (custom-load-symbol variable)
+  (put variable 'customized-value (list (custom-quote value)))
+  (put variable 'customized-variable-comment comment)
+  (custom-push-theme 'theme-value variable 'user 'set value)
+  (funcall (or (get variable 'custom-set) 'set) variable value)
+  value)
+
+(defun customize-set-value (variable value &optional comment)
+  "Set VARIABLE to VALUE.  VALUE is a Lisp object.
+If `custom-file' is non-nil, record the setting so it can be saved;
+otherwise just set it and warn that the change is temporary."
+  (interactive "vCustomize set variable: \nxExpression (value): ")
+  (custom-load-symbol variable)
+  (if (bound-and-true-p custom-file)
+      (progn
+        (unless (get variable 'saved-value)
+          (put variable 'standard-value
+               (list (custom-quote
+                      (if (default-boundp variable)
+                          (default-value variable) nil)))))
+        (put variable 'customized-value (list (custom-quote value)))
+        (put variable 'customized-variable-comment comment)
+        (custom-push-theme 'theme-value variable 'user 'set value)
+        (funcall (or (get variable 'custom-set) 'set) variable value))
+    (message "Setting `%s' temporarily since \"emacs -q\" would overwrite customizations"
+             variable)
+    (funcall (or (get variable 'custom-set) 'set) variable value)))
+
+(defun customize-save-variable (variable value &optional comment)
+  "Set the default value of VARIABLE to VALUE, and return VALUE.
+Like `customize-set-variable', but records VALUE as `saved-value'."
+  (interactive "vCustomize set and save variable: \nxExpression: ")
+  (custom-load-symbol variable)
+  (put variable 'saved-value (list (custom-quote value)))
+  (put variable 'saved-variable-comment comment)
+  (custom-push-theme 'theme-value variable 'user 'set value)
+  (funcall (or (get variable 'custom-set) 'set) variable value)
+  value)
+
+(defun custom-add-frequent-value (variable value)
+  "Add VALUE to the list of frequently used values of VARIABLE."
+  (let ((options (get variable 'custom-options)))
+    (unless (member value options)
+      (put variable 'custom-options (cons value options)))))
+
+(defun custom-unlispify-menu-entry (symbol &optional no-suffix)
+  "Convert SYMBOL into a menu-friendly version."
+  (let ((name (replace-regexp-in-string
+               "-" " "
+               (replace-regexp-in-string "\\(-mode\\)?\\'" ""
+                                         (symbol-name symbol)))))
+    (concat (upcase (substring name 0 1)) (substring name 1)
+            (cond (no-suffix "")
+                  ((boundp symbol) " (variable)")
+                  ((facep symbol) " (face)")
+                  (t " (group)")))))
+
+(defun custom-variable-tag (variable)
+  "Return the `:tag' of VARIABLE or its unlispified name."
+  (or (get variable 'custom-tag)
+      (format "Customize option: `%s'"
+              (custom-unlispify-menu-entry variable))))
+
+(defun custom-face-tag (face)
+  "Return the `:tag' of FACE or its unlispified name."
+  (or (get face 'custom-tag)
+      (format "Customize face: `%s'"
+              (custom-unlispify-menu-entry face))))
+
+(defun custom-group-tag (group)
+  "Return the `:tag' of GROUP or its unlispified name."
+  (or (get group 'custom-tag)
+      (format "Customize group: `%s'"
+              (custom-unlispify-menu-entry group))))
 
 (defmacro defvar-local (var value &optional docstring)
   (list 'progn
@@ -4297,11 +5007,47 @@ one or more of those symbols."
 With positive numeric ARG, enable; with non-positive, disable;
 with no ARG (or 'toggle), toggle."
   (interactive (list (or current-prefix-arg 'toggle)))
+  ;; GNU's minor-mode body is a plain setq on the global variable; it is
+  ;; `activate-mark' (via setq-local) that creates buffer-local values.
   (setq transient-mark-mode
         (cond ((eq arg 'toggle) (not transient-mark-mode))
               ((null arg) t)
               (t (> (prefix-numeric-value arg) 0))))
   nil)
+
+;; GNU simple.el: extraction/insertion of region contents is indirected
+;; through these variables so rectangular regions can hook in.
+(setq region-extract-function
+      (lambda (method)
+        (let ((beg (region-beginning)))
+          (cond
+           ((eq method 'bounds)
+            (list (cons beg (region-end))))
+           ((eq method 'delete-only)
+            (delete-region beg (region-end)))
+           (t
+            (filter-buffer-substring beg (region-end) method))))))
+
+(defun region-bounds ()
+  "Return the boundaries of the region.
+Value is a list of one or more cons cells of the form (START . END)."
+  (funcall region-extract-function 'bounds))
+
+(defun region-noncontiguous-p ()
+  "Return non-nil if the region contains several pieces."
+  (let ((bounds (region-bounds))) (and (cdr bounds) bounds)))
+
+(defun use-region-beginning ()
+  "Return the start of the region if `use-region-p' returns non-nil."
+  (and (use-region-p) (region-beginning)))
+
+(defun use-region-end ()
+  "Return the end of the region if `use-region-p' returns non-nil."
+  (and (use-region-p) (region-end)))
+
+(defun use-region-noncontiguous-p ()
+  "Return non-nil for a non-contiguous region if `use-region-p'."
+  (and (use-region-p) (region-noncontiguous-p)))
 
 (defun read-minibuffer (prompt &optional initial-contents)
   "Return a Lisp object read using the minibuffer, unevaluated."
@@ -7336,23 +8082,8 @@ Obsolete: use `set-face-attribute' instead."
   (when inverse-p
     (set-face-attribute face frame :inverse-video inverse-p)))
 
-(defmacro defface (face spec doc &rest args)
-  "Define FACE (subset: registers the name and applies SPEC's
-`default'/`t' entry attributes)."
-  (declare (indent 1))
-  (let* ((specv (if (and (consp spec) (eq (car spec) 'quote))
-                    (cadr spec)
-                  spec))
-         (plist (cadr (or (assq t specv) (car specv)))))
-    `(progn
-       (set-face-attribute ',face nil
-         ,@(mapcan (lambda (kw)
-                     (let ((v (plist-get plist kw)))
-                       (if v (list kw (list 'quote v)) nil)))
-                   '(:foreground :background :weight :slant
-                                 :underline :inverse-video
-                                 :stipple :height)))
-       ',face)))
+;; `defface' is defined earlier with the custom.el core (it calls
+;; `custom-declare-face').
 
 (defmacro define-generic-mode (&rest args)
   "Define a generic mode (subset: aliases define-derived-mode)."

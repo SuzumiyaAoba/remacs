@@ -48,6 +48,7 @@ probe!(probe_uncovered_subrs, "probe_gap.el");
 probe!(probe_lisp_edges, "probe_lisp3.el");
 probe!(probe_editor_kill_files, "probe_editor6.el");
 probe!(probe_file_locking, "probe_filelock.el");
+probe!(probe_custom_api, "probe_custom.el");
 probe!(probe_json, "probe_json.el");
 probe!(probe_timer, "probe_timer.el");
 probe!(probe_buffer_motion, "probe_buffer5.el");

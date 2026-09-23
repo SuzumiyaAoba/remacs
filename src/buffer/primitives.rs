@@ -933,7 +933,7 @@ pub(crate) static SUBRS: &[Subr] = &[
         f_operate_on_rectangle,
         "Call FUNCTION for each line segment of rectangle START..END."
     ),
-    S!("activate-mark", 0, 0, f_activate_mark, "Activate the mark."),
+    S!("activate-mark", 0, 1, f_activate_mark, "Activate the mark."),
     S!(
         "exchange-point-and-mark",
         0,
@@ -2262,7 +2262,6 @@ fn f_make_indirect_buffer(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         if clone {
             n.point = bb.point;
             n.mark = bb.mark;
-            n.mark_active = bb.mark_active;
             n.begv = bb.begv;
             n.zv = bb.zv;
             n.locals = bb.locals.clone();
@@ -2287,7 +2286,6 @@ fn clone_buffer(i: &mut Interp, name: &str) -> Value {
         n.base_buffer = Some(base_id);
         n.point = bb.point;
         n.mark = bb.mark;
-        n.mark_active = bb.mark_active;
         n.begv = bb.begv;
         n.zv = bb.zv;
         n.locals = bb.locals.clone();
@@ -5102,13 +5100,102 @@ fn f_word_at_point(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 
 // ---------- mark & region ----------
 
-fn f_mark(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
+fn ma_id(i: &Interp) -> crate::lisp::value::SymId {
+    i.intern_soft("mark-active").unwrap_or(0)
+}
+
+fn tmm_id(i: &Interp) -> crate::lisp::value::SymId {
+    i.intern_soft("transient-mark-mode").unwrap_or(0)
+}
+
+/// Buffer-local binding if present, else the global value.  Works while
+/// the buffer is already mutably borrowed (symbol_value would only see
+/// the global binding then).
+fn buf_var(i: &Interp, bb: &Buffer, id: crate::lisp::value::SymId) -> Value {
+    match bb.locals.get(&id) {
+        Some(v) => v.clone(),
+        None => i.symbol_value(id),
+    }
+}
+
+fn mark_active(i: &Interp, bb: &Buffer) -> bool {
+    bb.locals
+        .get(&ma_id(i))
+        .map(|v| v.truthy())
+        .unwrap_or(false)
+}
+
+/// GNU `region-active-p': `(and transient-mark-mode mark-active)'.
+fn region_active(i: &Interp, bb: &Buffer) -> bool {
+    buf_var(i, bb, tmm_id(i)).truthy() && mark_active(i, bb)
+}
+
+/// `(car-safe X)' is 'only'.
+fn car_is_only(v: &Value, i: &Interp) -> bool {
+    let only = i.intern_soft("only").unwrap_or(0);
+    matches!(v, Value::Cons(c) if matches!(&c.borrow().car, Value::Sym(s) if *s == only))
+}
+
+/// GNU `deactivate-mark': gated on (region-active-p) unless FORCE;
+/// unwinds a temporary ('only . X) or 'lambda transient-mark-mode, then
+/// clears mark-active.
+fn deactivate_mark(i: &mut Interp, bb: &mut Buffer, force: bool) {
+    if !(force || region_active(i, bb)) {
+        return;
+    }
+    let tmm = tmm_id(i);
+    let tmmv = buf_var(i, bb, tmm);
+    let lambda = i.intern_soft("lambda").unwrap_or(0);
+    if car_is_only(&tmmv, i) {
+        let nv = match &tmmv {
+            Value::Cons(c) => c.borrow().cdr.clone(),
+            _ => Value::Nil,
+        };
+        // GNU's (setq tmm ...) writes the innermost binding: the
+        // buffer-local one if present, else the dynamic/global value.
+        if bb.locals.contains_key(&tmm) {
+            bb.locals.insert(tmm, nv.clone());
+        } else {
+            i.obarray.symbol_mut(tmm).value = nv.clone();
+        }
+        // (if (eq tmm (default-value 'tmm)) (kill-local-variable 'tmm))
+        let dv = i.obarray.symbol(tmm).value.clone();
+        if crate::lisp::eq_values(&nv, &dv) {
+            bb.locals.remove(&tmm);
+        }
+    } else if matches!(&tmmv, Value::Sym(s) if *s == lambda) {
+        bb.locals.remove(&tmm);
+    }
+    bb.locals.insert(ma_id(i), Value::Nil);
+}
+
+/// GNU `activate-mark' core: set mark-active; with NO-TMM leave
+/// transient-mark-mode alone, else set it buffer-locally to 'lambda
+/// when unset.  Only runs when the mark exists and region is inactive.
+fn activate_mark(i: &Interp, bb: &mut Buffer, no_tmm: bool) {
+    if bb.mark.is_none() || region_active(i, bb) {
+        return;
+    }
+    bb.locals.insert(ma_id(i), Value::t());
+    let tmm = tmm_id(i);
+    if !(buf_var(i, bb, tmm).truthy() || no_tmm) {
+        let lambda = i.intern_soft("lambda").unwrap_or(0);
+        bb.locals.insert(tmm, Value::Sym(lambda));
+    }
+}
+
+fn f_mark(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let b = cur(i);
     let bb = b.borrow();
-    // GNU: the mark marker always exists once the buffer is live, so an
-    // unset mark yields nil, not an error.  (The "mark is not set"
-    // error comes from region-beginning/region-end, not `mark`.)
+    // GNU: (or force (not tmm) mark-active mark-even-if-inactive) else
+    // signal 'mark-inactive.
+    let mei = i.intern_soft("mark-even-if-inactive").unwrap_or(0);
+    let ok = a.get(0).map(|v| v.truthy()).unwrap_or(false)
+        || !buf_var(i, &bb, tmm_id(i)).truthy()
+        || mark_active(i, &bb)
+        || buf_var(i, &bb, mei).truthy();
     match bb.mark {
+        _ if !ok => Err(err_sym(i, "mark-inactive", vec![])),
         Some(m) => Ok(Value::Int(m as i128 + 1)),
         None => Ok(Value::Nil),
     }
@@ -5117,13 +5204,24 @@ fn f_mark(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
 fn f_set_mark(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let b = cur(i);
     let mut bb = b.borrow_mut();
-    let len = bb.text.len();
-    let p = match &a[0] {
-        Value::Marker(m) => m.borrow().position,
-        v => pos_idx(len, want_int(i, v)?),
-    };
-    bb.mark = Some(p);
-    Ok(Value::Int(p as i128 + 1))
+    if a[0].truthy() {
+        let len = bb.text.len();
+        let p = match &a[0] {
+            Value::Marker(m) => m.borrow().position,
+            v => pos_idx(len, want_int(i, v)?),
+        };
+        bb.mark = Some(p);
+        // (activate-mark 'no-tmm): mark-active on, tmm untouched.
+        if !region_active(i, &bb) {
+            bb.locals.insert(ma_id(i), Value::t());
+        }
+    } else {
+        // (deactivate-mark t) then clear the mark in any mode.
+        deactivate_mark(i, &mut bb, true);
+        bb.locals.insert(ma_id(i), Value::Nil);
+        bb.mark = None;
+    }
+    Ok(Value::Nil)
 }
 
 fn f_mark_marker(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
@@ -5143,33 +5241,71 @@ fn f_push_mark(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         Some(v) if v.truthy() => pos_idx(len, want_int(i, v)?),
         _ => bb.point(),
     };
-    bb.mark = Some(p);
-    // push onto mark-ring (a buffer-local list var)
     let ring_sym = i.intern_soft("mark-ring").unwrap_or(0);
-    let cur_ring = bb.locals.get(&ring_sym).cloned().unwrap_or(Value::Nil);
-    let mut items = cur_ring.list_to_vec().unwrap_or_default();
-    let m = Rc::new(RefCell::new(Marker {
-        buffer: Some(bb.id),
-        position: p,
-        insertion_type: false,
-    }));
-    bb.register_marker(&m);
-    items.push(marker_value(m));
-    let max = i
-        .symbol_value(i.intern_soft("mark-ring-max").unwrap_or(0))
-        .int()
-        .unwrap_or(16) as usize;
-    if items.len() > max {
-        items.remove(0);
+    // GNU pushes the OLD mark onto mark-ring before installing the new
+    // one: (add-to-history 'mark-ring (copy-marker (mark-marker)) max).
+    if let Some(old) = bb.mark {
+        let mut items = bb
+            .locals
+            .get(&ring_sym)
+            .cloned()
+            .unwrap_or(Value::Nil)
+            .list_to_vec()
+            .unwrap_or_default();
+        let m = Rc::new(RefCell::new(Marker {
+            buffer: Some(bb.id),
+            position: old,
+            insertion_type: false,
+        }));
+        bb.register_marker(&m);
+        items.insert(0, marker_value(m));
+        let max = buf_var(i, &bb, i.intern_soft("mark-ring-max").unwrap_or(0))
+            .int()
+            .unwrap_or(16) as usize;
+        items.truncate(max);
+        bb.locals.insert(ring_sym, Value::list(items));
     }
-    bb.locals.insert(ring_sym, Value::list(items));
-    if a.get(2).map(|v| v.truthy()).unwrap_or(false) {
-        bb.mark_active = true;
+    bb.mark = Some(p);
+    // GNU pushes the new mark onto `global-mark-ring' unless its car is
+    // already in this buffer.
+    let gmr = i.intern_soft("global-mark-ring").unwrap_or(0);
+    let gring = i.symbol_value(gmr).list_to_vec().unwrap_or_default();
+    let same_buf = matches!(
+        gring.first(),
+        Some(Value::Marker(m)) if m.borrow().buffer == Some(bb.id)
+    );
+    if !same_buf {
+        let m = Rc::new(RefCell::new(Marker {
+            buffer: Some(bb.id),
+            position: p,
+            insertion_type: false,
+        }));
+        bb.register_marker(&m);
+        let mut items = gring;
+        items.insert(0, marker_value(m));
+        let max = i
+            .symbol_value(i.intern_soft("global-mark-ring-max").unwrap_or(0))
+            .int()
+            .unwrap_or(16) as usize;
+        items.truncate(max);
+        i.set_symbol(gmr, Value::list(items))?;
     }
-    // GNU (push-mark LOCATION NOMSG ACTIVATE): messages unless NOMSG.
+    // (if (or activate (not transient-mark-mode)) (set-mark (mark t)))
+    let activate = a.get(2).map(|v| v.truthy()).unwrap_or(false);
+    if activate || !buf_var(i, &bb, tmm_id(i)).truthy() {
+        // set-mark on the same position: activates mark-active only.
+        if !region_active(i, &bb) {
+            bb.locals.insert(ma_id(i), Value::t());
+        }
+    }
     let nomsg = a.get(1).map(|v| v.truthy()).unwrap_or(false);
+    let kmacro = buf_var(i, &bb, i.intern_soft("executing-kbd-macro").unwrap_or(0)).truthy();
+    let in_mini = buf_var(i, &bb, i.intern_soft("minibuffer-depth").unwrap_or(0))
+        .int()
+        .unwrap_or(0)
+        > 0;
     drop(bb);
-    if !nomsg {
+    if !(nomsg || kmacro || in_mini) {
         i.message("Mark set");
     }
     Ok(Value::Nil)
@@ -5179,17 +5315,38 @@ fn f_pop_mark(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
     let b = cur(i);
     let mut bb = b.borrow_mut();
     let ring_sym = i.intern_soft("mark-ring").unwrap_or(0);
-    let ring = bb.locals.get(&ring_sym).cloned().unwrap_or(Value::Nil);
-    let mut items = ring.list_to_vec().unwrap_or_default();
-    if let Some(m) = items.pop() {
-        if let Value::Marker(mm) = &m {
-            bb.mark = Some(mm.borrow().position);
-            bb.set_point(mm.borrow().position);
+    let mut items = bb
+        .locals
+        .get(&ring_sym)
+        .cloned()
+        .unwrap_or(Value::Nil)
+        .list_to_vec()
+        .unwrap_or_default();
+    if !items.is_empty() {
+        // GNU: (nconc mark-ring (list (copy-marker (mark-marker)))) then
+        // take (car mark-ring) — the ring is a rotation, not a stack.
+        if let Some(mpos) = bb.mark {
+            let m = Rc::new(RefCell::new(Marker {
+                buffer: Some(bb.id),
+                position: mpos,
+                insertion_type: false,
+            }));
+            bb.register_marker(&m);
+            items.push(marker_value(m));
         }
-    } else {
-        bb.mark = None;
+        if let Value::Marker(mm) = &items[0] {
+            bb.mark = Some(mm.borrow().position.min(bb.text.len()));
+        }
+        // (set-marker (car mark-ring) nil): kill the popped marker.
+        if let Value::Marker(mm) = &items[0] {
+            mm.borrow_mut().buffer = None;
+        }
+        items.remove(0);
+        bb.locals.insert(ring_sym, Value::list(items));
     }
-    bb.locals.insert(ring_sym, Value::list(items));
+    // GNU's pop-mark calls (deactivate-mark) unconditionally; it is
+    // itself gated on (region-active-p).
+    deactivate_mark(i, &mut bb, false);
     Ok(Value::Nil)
 }
 
@@ -6276,12 +6433,22 @@ fn f_operate_on_rectangle(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     Ok(Value::Nil)
 }
 
+/// GNU signals `(error "The mark is not set now, so there is no region")'
+/// from region-beginning/region-end when the buffer has no mark.
+fn no_region_err(i: &mut Interp) -> Flow {
+    let e = i.intern("error");
+    i.signal_data(
+        e,
+        vec![Value::string("The mark is not set now, so there is no region")],
+    )
+}
+
 fn f_region_beginning(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
     let b = cur(i);
     let bb = b.borrow();
     match bb.mark {
         Some(m) => Ok(Value::Int((m.min(bb.point()) + 1) as i128)),
-        None => Err(err_sym(i, "mark-inactive", vec![])),
+        None => Err(no_region_err(i)),
     }
 }
 
@@ -6290,57 +6457,108 @@ fn f_region_end(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
     let bb = b.borrow();
     match bb.mark {
         Some(m) => Ok(Value::Int((m.max(bb.point()) + 1) as i128)),
-        None => Err(err_sym(i, "mark-inactive", vec![])),
+        None => Err(no_region_err(i)),
     }
 }
 
 fn f_region_active_p(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
     let b = cur(i);
     let bb = b.borrow();
-    let tmm = i
-        .symbol_value(i.intern_soft("transient-mark-mode").unwrap_or(0))
-        .truthy();
-    Ok(Value::from_bool(
-        bb.mark.is_some() && (bb.mark_active || !tmm),
-    ))
+    Ok(Value::from_bool(region_active(i, &bb)))
 }
 
-fn f_deactivate_mark(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
+fn f_deactivate_mark(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let b = cur(i);
-    b.borrow_mut().mark_active = false;
+    let mut bb = b.borrow_mut();
+    let force = a.get(0).map(|v| v.truthy()).unwrap_or(false);
+    deactivate_mark(i, &mut bb, force);
     Ok(Value::Nil)
 }
 
-fn f_activate_mark(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
+fn f_activate_mark(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let b = cur(i);
     let mut bb = b.borrow_mut();
-    if bb.mark.is_some() {
-        bb.mark_active = true;
-        Ok(Value::t())
-    } else {
-        Ok(Value::Nil)
-    }
+    let no_tmm = a.get(0).map(|v| v.truthy()).unwrap_or(false);
+    activate_mark(i, &mut bb, no_tmm);
+    Ok(Value::Nil)
 }
 
 fn f_exchange_point_and_mark(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let b = cur(i);
     let mut bb = b.borrow_mut();
-    match bb.mark {
-        Some(m) => {
-            let p = bb.point();
-            bb.set_point(m);
-            bb.mark = Some(p);
-            if !a.get(0).map(|v| v.truthy()).unwrap_or(false) {
-                bb.mark_active = true;
-            }
-            Ok(Value::Nil)
-        }
-        None => Err(err_sym(i, "mark-inactive", vec![])),
+    // GNU's defun: (mark t) omark; (set-mark (point)); (goto-char omark);
+    // then deactivate or activate per ARG and the region state.
+    let Some(omark) = bb.mark else {
+        let ue = i.intern("user-error");
+        return Err(i.signal_data(
+            ue,
+            vec![Value::string("No mark set in this buffer")],
+        ));
+    };
+    let was_active = region_active(i, &bb);
+    let tmmv = buf_var(i, &bb, tmm_id(i));
+    let temp_highlight = car_is_only(&tmmv, i);
+    let p = bb.point();
+    bb.mark = Some(p);
+    if !region_active(i, &bb) {
+        bb.locals.insert(ma_id(i), Value::t());
     }
+    bb.set_point(omark);
+    if temp_highlight {
+        return Ok(Value::Nil);
+    }
+    let hl = buf_var(
+        i,
+        &bb,
+        i.intern_soft("exchange-point-and-mark-highlight-region")
+            .unwrap_or(0),
+    )
+    .truthy();
+    // (xor arg (if epamhr (not (region-active-p)) (not was-active)))
+    let rhs = if hl {
+        !region_active(i, &bb)
+    } else {
+        !was_active
+    };
+    let arg = a.get(0).map(|v| v.truthy()).unwrap_or(false);
+    if arg != rhs {
+        deactivate_mark(i, &mut bb, false);
+    } else {
+        activate_mark(i, &mut bb, false);
+    }
+    Ok(Value::Nil)
 }
 
-fn f_use_region_p(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    f_region_active_p(i, a)
+fn f_use_region_p(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
+    let b = cur(i);
+    let bb = b.borrow();
+    // GNU: (and (region-active-p) (or (/= beg end) (and
+    // use-empty-active-region (not down-mouse-1) (not mouse-movement)))).
+    if !region_active(i, &bb) {
+        return Ok(Value::Nil);
+    }
+    // GNU calls (region-end)/(region-beginning) here, which signal when
+    // mark-active is non-nil but the mark was never set.
+    let Some(m) = bb.mark else {
+        return Err(no_region_err(i));
+    };
+    if m != bb.point() {
+        return Ok(Value::t());
+    }
+    let uear = i.intern_soft("use-empty-active-region").unwrap_or(0);
+    if !buf_var(i, &bb, uear).truthy() {
+        return Ok(Value::Nil);
+    }
+    let lie = buf_var(i, &bb, i.intern_soft("last-input-event").unwrap_or(0));
+    let dm1 = i.intern_soft("down-mouse-1").unwrap_or(0);
+    let mm = i.intern_soft("mouse-movement").unwrap_or(0);
+    let car = match &lie {
+        Value::Cons(c) => c.borrow().car.clone(),
+        _ => Value::Nil,
+    };
+    let ok = !matches!(&car, Value::Sym(s) if *s == dm1)
+        && !matches!(&car, Value::Sym(s) if *s == mm);
+    Ok(Value::from_bool(ok))
 }
 
 // ---------- narrowing ----------

@@ -1759,7 +1759,11 @@ fn f_smae_save(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
     };
     let (mark, active) = {
         let bb = b.borrow();
-        (bb.mark, bb.mark_active)
+        let ma = i.intern_soft("mark-active").unwrap_or(0);
+        (
+            bb.mark,
+            bb.locals.get(&ma).map(|v| v.truthy()).unwrap_or(false),
+        )
     };
     let m = match mark {
         Some(pos) => {
@@ -1786,11 +1790,15 @@ fn f_smae_restore(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         };
         let buf = i.current_buffer;
         if let Some(b) = i.buffers.get(buf) {
+            let ma = i.intern_soft("mark-active").unwrap_or(0);
             let mut bb = b.borrow_mut();
             if let Value::Marker(m) = &mk {
                 bb.mark = Some(m.borrow().position.min(bb.text.len()));
             }
-            bb.mark_active = act.truthy();
+            bb.locals.insert(
+                ma,
+                if act.truthy() { Value::t() } else { Value::Nil },
+            );
         }
     }
     Ok(Value::Nil)

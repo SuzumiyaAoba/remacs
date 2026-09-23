@@ -6398,7 +6398,8 @@ fn f_copy_region_as_kill(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     };
     crate::buffer::primitives::push_kill_ring(i, text);
     // deactivate mark per Emacs
-    b.borrow_mut().mark_active = false;
+    let ma = i.intern_soft("mark-active").unwrap_or(0);
+    b.borrow_mut().locals.insert(ma, Value::Nil);
     Ok(Value::Nil)
 }
 

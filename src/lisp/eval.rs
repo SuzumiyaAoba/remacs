@@ -2447,6 +2447,10 @@ impl Interp {
             "buffer-undo-list",
             "mark-ring",
             "mark-active",
+            "mark-even-if-inactive",
+            "use-empty-active-region",
+            "exchange-point-and-mark-highlight-region",
+            "global-mark-ring",
             "local-keymap",
             "list-buffers-directory",
             "buffer-saved-size",
@@ -2624,7 +2628,6 @@ impl Interp {
             "undo-no-pull",
             "mark-ring",
             "mark-active",
-            "transient-mark-mode",
             "deactivate-mark",
             "permanent-local-variables",
             "file-local-variables-alist",
@@ -2888,6 +2891,9 @@ impl Interp {
             ("text-quoting-style", Value::Sym(self.intern("curve"))),
             ("transient-mark-mode", Value::Nil),
             ("mark-even-if-inactive", Value::t()),
+            ("use-empty-active-region", Value::Nil),
+            ("exchange-point-and-mark-highlight-region", Value::t()),
+            ("global-mark-ring", Value::Nil),
             ("shift-select-mode", Value::t()),
             ("delete-active-region", Value::t()),
             ("inhibit-read-only", Value::Nil),
@@ -3776,12 +3782,17 @@ impl Interp {
     /// `save_mark` additionally records the mark (`save-mark-and-excursion`).
     pub fn save_excursion_state(&mut self, save_mark: bool) -> ExcursionState {
         let buf = self.current_buffer;
+        let ma = self.intern_soft("mark-active").unwrap_or(0);
         let (point, mark, mark_active) = self
             .buffers
             .get(buf)
             .map(|r| {
                 let bb = r.borrow();
-                (bb.point, bb.mark, bb.mark_active)
+                (
+                    bb.point,
+                    bb.mark,
+                    bb.locals.get(&ma).map(|v| v.truthy()).unwrap_or(false),
+                )
             })
             .unwrap_or((0, None, false));
         let mut mk = |pos| {
@@ -3806,12 +3817,20 @@ impl Interp {
     pub fn restore_excursion_state(&mut self, s: ExcursionState) {
         if let Some(b) = self.buffers.get(s.buffer) {
             {
+                let ma = self.intern_soft("mark-active").unwrap_or(0);
                 let mut bb = b.borrow_mut();
                 bb.set_point(s.point.borrow().position);
                 if let Some(m) = &s.mark {
                     let p = m.borrow().position;
                     bb.mark = Some(p.min(bb.text.len()));
-                    bb.mark_active = s.mark_active;
+                    bb.locals.insert(
+                        ma,
+                        if s.mark_active {
+                            Value::t()
+                        } else {
+                            Value::Nil
+                        },
+                    );
                 }
             }
             self.set_current_buffer(s.buffer);

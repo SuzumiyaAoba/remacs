@@ -26,7 +26,6 @@ pub struct Buffer {
     pub point: usize,
     /// The mark (0-based), if set.
     pub mark: Option<usize>,
-    pub mark_active: bool,
     /// Narrowing bounds (0-based, inclusive-exclusive).
     pub begv: usize,
     pub zv: usize,
@@ -240,7 +239,6 @@ impl Buffer {
             text: GapBuffer::new(),
             point: 0,
             mark: None,
-            mark_active: false,
             begv: 0,
             zv: 0,
             locals: HashMap::new(),
