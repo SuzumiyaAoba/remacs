@@ -23059,6 +23059,349 @@ SEQUENCE2 may be a list, vector, or string."
   (defun yaml-ts-mode-maybe () "Stub for `yaml-ts-mode-maybe'."
     (if (fboundp 'yaml-mode) (funcall 'yaml-mode) (prog-mode))))
 
+;; ---------- buffer-match-p + hl-line (GNU subr.el / hl-line.el) ----------
+
+(defvar buffer-match-p--past-warnings nil
+  "Alist of conditions already warned about in `buffer-match-p'.")
+
+(defun buffer-match-p (condition buffer-or-name &rest args)
+  "Return non-nil if BUFFER-OR-NAME matches CONDITION."
+  (letrec
+      ((buffer (get-buffer buffer-or-name))
+       (match
+        (lambda (conditions)
+          (catch 'match
+            (dolist (condition conditions)
+              (when (pcase condition
+                      ('t t)
+                      ((pred stringp)
+                       (string-match-p condition (buffer-name buffer)))
+                      ((pred functionp)
+                       (if (cdr args)
+                           (apply condition buffer-or-name args)
+                         (condition-case-unless-debug err
+                             (apply condition buffer-or-name args)
+                           (wrong-number-of-arguments
+                            (unless (member condition
+                                            buffer-match-p--past-warnings)
+                              (message "%s" (error-message-string err))
+                              (push condition buffer-match-p--past-warnings))
+                            (apply condition buffer-or-name
+                                   (if args nil '(nil)))))))
+                      (`(category . ,category)
+                       (eq (alist-get 'category (cdar args)) category))
+                      (`(this-command . ,command-or-commands)
+                       (if (listp command-or-commands)
+                           (memq this-command command-or-commands)
+                         (eq this-command command-or-commands)))
+                      (`(major-mode . ,mode)
+                       (eq
+                        (buffer-local-value 'major-mode buffer)
+                        mode))
+                      (`(derived-mode . ,mode)
+                       (provided-mode-derived-p
+                        (buffer-local-value 'major-mode buffer)
+                        mode))
+                      (`(not . ,cond)
+                       (not (funcall match cond)))
+                      (`(or . ,args)
+                       (funcall match args))
+                      (`(and . ,args)
+                       (catch 'fail
+                         (dolist (c args)
+                           (unless (funcall match (list c))
+                             (throw 'fail nil)))
+                         t)))
+                (throw 'match t)))))))
+    (funcall match (list condition))))
+
+(defun match-buffers (condition &optional buffers &rest args)
+  "Return a list of buffers that match CONDITION, or nil if none match.
+See `buffer-match-p' for various supported CONDITIONs.
+By default all buffers are checked, but the optional BUFFERS argument,
+if non-nil, restricts the buffers that are checked."
+  (mapcan
+   (lambda (buffer)
+     (and (apply #'buffer-match-p condition buffer args)
+          (list buffer)))
+   (or buffers (buffer-list))))
+
+;; Redisplay overlay helpers (GNU simple.el).
+(defun redisplay--unhighlight-overlay-function (rol)
+  "If ROL is an overlay, call `delete-overlay'."
+  (when (overlayp rol) (delete-overlay rol)))
+
+(defvar redisplay-unhighlight-region-function
+  #'redisplay--unhighlight-overlay-function
+  "Function to remove the region-highlight overlay.")
+
+(defun redisplay--highlight-overlay-function (start end window rol &optional face)
+  "Update the overlay ROL in WINDOW with FACE in range START-END."
+  (unless face (setq face 'region))
+  (if (not (overlayp rol))
+      (let ((nrol (make-overlay start end)))
+        (funcall redisplay-unhighlight-region-function rol)
+        (overlay-put nrol 'window window)
+        (overlay-put nrol 'face face)
+        (overlay-put nrol 'priority '(nil . 100))
+        nrol)
+    (unless (eq (overlay-get rol 'face) face)
+      (overlay-put rol 'face face))
+    (unless (and (eq (overlay-buffer rol) (current-buffer))
+                 (eq (overlay-start rol) start)
+                 (eq (overlay-end rol) end))
+      (move-overlay rol start end (current-buffer)))
+    rol))
+
+(defvar redisplay-highlight-region-function
+  #'redisplay--highlight-overlay-function
+  "Function to move the region-highlight overlay.")
+
+;; hl-line.el (GNU port).
+(defvar-local hl-line-overlay nil
+  "Overlay used by Hl-Line mode to highlight the current line.")
+(defvar-local global-hl-line-overlay nil
+  "Overlay used by Global-Hl-Line mode to highlight the current line.")
+(defvar global-hl-line-overlays nil
+  "Active overlays used by Global-Hl-Line mode in all buffers.")
+
+(defface hl-line
+  '((t :inherit highlight :extend t))
+  "Default face for highlighting the current line in Hl-Line mode."
+  :version "22.1"
+  :group 'hl-line)
+
+(defface hl-line-nonselected
+  '((t :inherit hl-line :extend t))
+  "Face for highlighting the line with non-selected window's point."
+  :version "31.1"
+  :group 'hl-line)
+
+(defcustom hl-line-face 'hl-line
+  "Face with which to highlight the current line in Hl-Line mode."
+  :type 'face
+  :group 'hl-line
+  :set (lambda (symbol value)
+         (set symbol value)
+         (dolist (buffer (buffer-list))
+           (with-current-buffer buffer
+             (when (overlayp hl-line-overlay)
+               (overlay-put hl-line-overlay 'face hl-line-face))
+             (when (overlayp global-hl-line-overlay)
+               (overlay-put global-hl-line-overlay 'face hl-line-face))))))
+
+(defcustom hl-line-sticky-flag t
+  "Non-nil means the HL-Line mode highlight appears in all windows."
+  :type 'boolean
+  :version "22.1"
+  :group 'hl-line)
+
+(defcustom global-hl-line-sticky-flag nil
+  "Non-nil means the Global HL-Line mode highlight appears in all windows."
+  :type '(choice (const :tag "Disable" nil)
+                 (const :tag "Enable for buffer in multiple windows" t)
+                 (const :tag "Enable and update in all windows" all)
+                 (const :tag "Highlight window-point lines" window))
+  :version "24.1"
+  :group 'hl-line)
+
+(defvar cursor-face-highlight-mode nil)
+(make-variable-buffer-local 'cursor-face-highlight-mode)
+(defvar pre-redisplay-functions nil)
+
+(defcustom global-hl-line-buffers
+  '(not (or (lambda (b) (buffer-local-value 'cursor-face-highlight-mode b))
+            (lambda (b) (string-match-p "\\` " (buffer-name b)))
+            minibufferp))
+  "Whether the Global HL-Line mode should be enabled in a buffer."
+  :type '(buffer-predicate :tag "Predicate for `buffer-match-p'")
+  :version "31.1")
+
+(defvar hl-line-range-function nil
+  "If non-nil, function to call to return highlight range.")
+
+(defvar hl-line-overlay-buffer nil
+  "Most recently visited buffer in which Hl-Line mode is enabled.")
+
+(defcustom hl-line-overlay-priority -50
+  "Priority used on the overlay used by hl-line."
+  :type 'integer
+  :version "28.1"
+  :group 'hl-line)
+
+(define-minor-mode hl-line-mode
+  "Toggle highlighting of the current line (Hl-Line mode)."
+  :group 'hl-line
+  (when (and global-hl-line-mode
+             (eq arg 'toggle))
+    (setq hl-line-mode nil)
+    (setq-local global-hl-line-mode nil)
+    (global-hl-line-unhighlight))
+  (if hl-line-mode
+      (progn
+        (add-hook 'change-major-mode-hook #'hl-line-unhighlight nil t)
+        (hl-line-highlight)
+        (setq hl-line-overlay-buffer (current-buffer))
+        (add-hook 'post-command-hook #'hl-line-highlight nil t))
+    (remove-hook 'post-command-hook #'hl-line-highlight t)
+    (hl-line-unhighlight)
+    (remove-hook 'change-major-mode-hook #'hl-line-unhighlight t)))
+
+(defun hl-line-make-overlay ()
+  (let ((ol (make-overlay (point) (point))))
+    (overlay-put ol 'priority hl-line-overlay-priority)
+    (overlay-put ol 'face hl-line-face)
+    ol))
+
+(defun hl-line-highlight ()
+  "Activate the Hl-Line overlay on the current line."
+  (if hl-line-mode
+      (progn
+        (unless (overlayp hl-line-overlay)
+          (setq hl-line-overlay (hl-line-make-overlay)))
+        (overlay-put hl-line-overlay
+                     'window (unless hl-line-sticky-flag (selected-window)))
+        (hl-line-move hl-line-overlay)
+        (hl-line-maybe-unhighlight))
+    (hl-line-unhighlight)))
+
+(defun hl-line-unhighlight ()
+  "Deactivate the Hl-Line overlay on the current line."
+  (when (overlayp hl-line-overlay)
+    (delete-overlay hl-line-overlay)
+    (setq hl-line-overlay nil)))
+
+(defun hl-line-maybe-unhighlight ()
+  "Maybe deactivate the Hl-Line overlay on the current line."
+  (let ((hlob hl-line-overlay-buffer)
+        (curbuf (current-buffer)))
+    (when (and (buffer-live-p hlob)
+               (not hl-line-sticky-flag)
+               (not (eq curbuf hlob))
+               (not (minibufferp)))
+      (with-current-buffer hlob
+        (hl-line-unhighlight)))
+    (when (and (overlayp hl-line-overlay)
+               (eq (overlay-buffer hl-line-overlay) curbuf))
+      (setq hl-line-overlay-buffer curbuf))))
+
+(define-minor-mode global-hl-line-mode
+  "Toggle line highlighting in all buffers (Global Hl-Line mode)."
+  :global t
+  :group 'hl-line
+  (if global-hl-line-mode
+      (cond
+       ((eq global-hl-line-sticky-flag 'window)
+        (add-hook 'pre-redisplay-functions
+                  #'global-hl-line-window-redisplay))
+       (t
+        (add-hook 'change-major-mode-hook #'global-hl-line-unhighlight)
+        (global-hl-line-highlight-all)
+        (add-hook 'post-command-hook (if (eq global-hl-line-sticky-flag 'all)
+                                         #'global-hl-line-highlight-all
+                                       #'global-hl-line-highlight))))
+    (cond
+     ((eq global-hl-line-sticky-flag 'window)
+      (remove-hook 'pre-redisplay-functions
+                   #'global-hl-line-window-redisplay)
+      (walk-windows (lambda (window)
+                      (redisplay--unhighlight-overlay-function
+                       (window-parameter window 'hl-line-overlay))
+                      (set-window-parameter window 'hl-line-overlay nil))
+                    t t))
+     (t
+      (global-hl-line-unhighlight-all)
+      (remove-hook 'post-command-hook #'global-hl-line-highlight)
+      (remove-hook 'post-command-hook #'global-hl-line-highlight-all)
+      (remove-hook 'change-major-mode-hook #'global-hl-line-unhighlight)))))
+
+(defun global-hl-line-highlight ()
+  "Highlight the current line in the current window."
+  (when (and global-hl-line-mode
+             (buffer-match-p global-hl-line-buffers (current-buffer)))
+    (unless (window-minibuffer-p)
+      (unless (overlayp global-hl-line-overlay)
+        (setq global-hl-line-overlay (hl-line-make-overlay)))
+      (unless (member global-hl-line-overlay global-hl-line-overlays)
+        (push global-hl-line-overlay global-hl-line-overlays))
+      (overlay-put global-hl-line-overlay 'window
+                   (unless global-hl-line-sticky-flag
+                     (selected-window)))
+      (hl-line-move global-hl-line-overlay)
+      (global-hl-line-maybe-unhighlight))))
+
+(defun global-hl-line-highlight-all ()
+  "Highlight the current line in all live windows."
+  (walk-windows (lambda (w)
+                  (with-current-buffer (window-buffer w)
+                    (global-hl-line-highlight)))
+                nil t))
+
+(defun global-hl-line-unhighlight ()
+  "Deactivate the Global-Hl-Line overlay on the current line."
+  (when (overlayp global-hl-line-overlay)
+    (delete-overlay global-hl-line-overlay)
+    (setq global-hl-line-overlay nil)))
+
+(defun global-hl-line-maybe-unhighlight ()
+  "Maybe deactivate the Global-Hl-Line overlay on the current line."
+  (setq global-hl-line-overlays
+        (seq-remove (lambda (ov) (not (overlay-buffer ov)))
+                    global-hl-line-overlays))
+  (mapc (lambda (ov)
+          (let ((ovb (overlay-buffer ov)))
+            (when (and (not global-hl-line-sticky-flag)
+                       (not (eq ovb (current-buffer)))
+                       (not (minibufferp)))
+              (with-current-buffer ovb
+                (global-hl-line-unhighlight)))))
+        global-hl-line-overlays))
+
+(defun global-hl-line-unhighlight-all ()
+  "Deactivate all Global-Hl-Line overlays."
+  (mapc (lambda (ov)
+          (let ((ovb (overlay-buffer ov)))
+            (when (bufferp ovb)
+              (with-current-buffer ovb
+                (global-hl-line-unhighlight)))))
+        global-hl-line-overlays)
+  (setq global-hl-line-overlays nil))
+
+(defun global-hl-line-window-redisplay (window)
+  "Highlight the overlay that indicates the line with window's point."
+  (let ((rol (window-parameter window 'hl-line-overlay)))
+    (with-current-buffer (window-buffer window)
+      (if (buffer-match-p global-hl-line-buffers (current-buffer))
+          (let* ((bounds (save-excursion
+                           (goto-char (window-point window))
+                           (if hl-line-range-function
+                               (funcall hl-line-range-function)
+                             (cons (line-beginning-position)
+                                   (line-beginning-position 2)))))
+                 (new (redisplay--highlight-overlay-function
+                       (car bounds) (cdr bounds)
+                       window rol 'hl-line-nonselected)))
+            (unless (eq new rol)
+              (set-window-parameter window 'hl-line-overlay new)))
+        (redisplay--unhighlight-overlay-function rol)))))
+
+(defun hl-line-move (overlay)
+  "Move the Hl-Line overlay.
+If `hl-line-range-function' is non-nil, move the OVERLAY to the position
+where the function returns.  If `hl-line-range-function' is nil, fill
+the line including the point by OVERLAY."
+  (let (tmp b e)
+    (if hl-line-range-function
+        (setq tmp (funcall hl-line-range-function)
+              b   (car tmp)
+              e   (cdr tmp))
+      (setq tmp t
+            b (line-beginning-position)
+            e (line-beginning-position 2)))
+    (if tmp
+        (move-overlay overlay b e)
+      (move-overlay overlay 1 1))))
+
 ;; *scratch* starts in lisp-interaction-mode (GNU batch behavior too).
 (when (get-buffer "*scratch*")
   (with-current-buffer "*scratch*"
