@@ -1546,6 +1546,13 @@ pub(crate) static SUBRS: &[Subr] = &[
         "Return the boundaries of the completions."
     ),
     S!(
+        "completion--flex-cost-gotoh",
+        2,
+        2,
+        f_completion_flex_cost_gotoh,
+        "Compute cost of PAT matching STR using modified Gotoh\nalgorithm.  Return nil if no match found, else return (COST . MATCHES)\nwhere COST is a fixnum (lower is better) and MATCHES is a list of the\nsame length as PAT.  Each i-th element is a FIXNUM indicating where in\nSTR the i-th character of PAT matched."
+    ),
+    S!(
         "internal-complete-buffer",
         3,
         3,
@@ -9196,10 +9203,14 @@ fn f_completing_read(i: &mut Interp, a: Vec<Value>) -> EvalResult {
             return Ok(arg(&a, 6));
         }
         // Complete: exact match, else unique prefix completion.
-        if cands.iter().any(|c| c == &input) {
+        if cands.iter().any(|(_, es)| cand_text(es).as_deref() == Some(input.as_str())) {
             return Ok(Value::string(input));
         }
-        let matches: Vec<&String> = cands.iter().filter(|c| c.starts_with(&input)).collect();
+        let matches: Vec<String> = cands
+            .iter()
+            .filter_map(|(_, es)| cand_text(es))
+            .filter(|c| c.starts_with(&input))
+            .collect();
         return Ok(Value::string(match matches.len() {
             1 => matches[0].clone(),
             _ => input,
@@ -9218,27 +9229,47 @@ fn f_completing_read(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     }
 }
 
-/// Resolve a completion TABLE to a list of candidate strings.
-fn completion_candidates(i: &mut Interp, table: &Value) -> Vec<String> {
+/// Resolve a completion TABLE to (ELT, ELTSTRING) pairs.  ELTSTRING
+/// keeps its original `Value::Str' so text properties survive into
+/// try/all-completion results, as in GNU's C code.
+fn completion_candidates(i: &mut Interp, table: &Value) -> Vec<(Value, Value)> {
+    let eltstring = |i: &mut Interp, v: &Value| -> Value {
+        match v {
+            s @ Value::Str(_) => s.clone(),
+            Value::Sym(s) => Value::string(i.symbol_name(*s)),
+            other => Value::string(i.princ_to_string(other)),
+        }
+    };
     match table {
         Value::Cons(_) => {
             let items = table.list_to_vec().unwrap_or_default();
             items
                 .iter()
-                .map(|v| match v {
-                    Value::Str(s) => s.borrow().clone(),
-                    Value::Sym(s) => i.symbol_name(*s),
-                    Value::Cons(c) => {
-                        let b = c.borrow();
-                        i.princ_to_string(&b.car)
-                    }
-                    _ => String::new(),
+                .map(|v| {
+                    let es = match v {
+                        Value::Cons(c) => eltstring(i, &c.borrow().car.clone()),
+                        _ => eltstring(i, v),
+                    };
+                    (v.clone(), es)
                 })
                 .collect()
         }
-        Value::Vec(v) => v.borrow().iter().map(|x| i.princ_to_string(x)).collect(),
+        Value::Vec(v) => v
+            .borrow()
+            .iter()
+            .map(|x| (x.clone(), eltstring(i, x)))
+            .collect(),
         Value::Nil => Vec::new(),
         _ => Vec::new(),
+    }
+}
+
+/// ELTSTRING's text, if it is a string (GNU's STRINGP test).
+fn cand_text(v: &Value) -> Option<String> {
+    if let Value::Str(s) = v {
+        Some(s.borrow().clone())
+    } else {
+        None
     }
 }
 
@@ -9258,6 +9289,126 @@ fn table_is_callable(i: &mut Interp, table: &Value) -> bool {
     }
 }
 
+/// `completion-ignore-case' as a bool.
+fn completion_ignore_case(i: &Interp) -> bool {
+    i.intern_soft("completion-ignore-case")
+        .map(|id| i.symbol_value(id).truthy())
+        .unwrap_or(false)
+}
+
+/// GNU's `compare-strings' prefix check with `completion-ignore-case':
+/// CAND has S as a prefix (case-insensitive when IGNORE_CASE).
+fn completion_prefix_p(cand: &str, s: &str, ignore_case: bool) -> bool {
+    if cand.chars().count() < s.chars().count() {
+        return false;
+    }
+    if ignore_case {
+        cand.chars()
+            .take(s.chars().count())
+            .flat_map(|c| c.to_lowercase())
+            .eq(s.chars().flat_map(|c| c.to_lowercase()))
+    } else {
+        cand.starts_with(s)
+    }
+}
+
+/// GNU's `match_regexps': S must match every regexp in
+/// `completion-regexp-list' (search semantics, `completion-ignore-case'
+/// case-folding).  Bad regexps are ignored.
+fn completion_match_regexps(i: &Interp, s: &str, ignore_case: bool) -> bool {
+    let Some(id) = i.intern_soft("completion-regexp-list") else {
+        return true;
+    };
+    let mut cur = i.symbol_value(id);
+    let chars: Vec<char> = s.chars().collect();
+    loop {
+        match cur {
+            Value::Cons(c) => {
+                let (re_v, next) = {
+                    let b = c.borrow();
+                    (b.car.clone(), b.cdr.clone())
+                };
+                if let Value::Str(rs) = &re_v {
+                    if let Ok(re) = crate::lisp::regexp::compile_case(&rs.borrow(), ignore_case) {
+                        if crate::lisp::regexp::search(&re, &chars, 0).is_none() {
+                            return false;
+                        }
+                    }
+                }
+                cur = next;
+            }
+            _ => return true,
+        }
+    }
+}
+
+/// The shared collection-side filter of GNU's try/all/test-completion:
+/// prefix match, `completion-regexp-list', and PRED applied to ELT
+/// (the collection element itself, as in GNU's C code).
+fn completion_candidate_ok(
+    i: &mut Interp,
+    elt: &Value,
+    c: &str,
+    s: &str,
+    pred: &Value,
+    ignore_case: bool,
+) -> Result<bool, Flow> {
+    if !completion_prefix_p(c, s, ignore_case) || !completion_match_regexps(i, c, ignore_case) {
+        return Ok(false);
+    }
+    if pred.truthy() {
+        let r = i.apply(pred, vec![elt.clone()])?;
+        if !r.truthy() {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
+/// GNU's `compare-strings' over the first N chars of A and B: length
+/// of the common prefix (case-folded when IGNORE_CASE), capped at N.
+fn common_prefix_len(a: &str, b: &str, n: usize, ignore_case: bool) -> usize {
+    let ac: Vec<char> = a.chars().take(n).collect();
+    let bc: Vec<char> = b.chars().take(n).collect();
+    let mut k = 0;
+    while k < ac.len().min(bc.len()) {
+        let eq = if ignore_case {
+            ac[k].to_lowercase().eq(bc[k].to_lowercase())
+        } else {
+            ac[k] == bc[k]
+        };
+        if !eq {
+            break;
+        }
+        k += 1;
+    }
+    k
+}
+
+/// `substring(BESTMATCH, 0, N)' for a string Value, preserving text
+/// properties like GNU's Fsubstring.
+fn substring_str_value(i: &mut Interp, v: &Value, n: usize) -> Value {
+    let Value::Str(src) = v else {
+        return v.clone();
+    };
+    let text: String = src.borrow().chars().take(n).collect();
+    let ns = std::rc::Rc::new(std::cell::RefCell::new(text));
+    if i.has_str_props(src) {
+        let ivs: Vec<(usize, usize, Vec<Value>)> = i
+            .str_props(src)
+            .iter()
+            .filter_map(|(a, b, pl)| {
+                let lo = *a;
+                let hi = (*b).min(n);
+                (lo < hi)
+                    .then(|| (lo, hi, crate::buffer::primitives::plist_pairs_rev(pl)))
+            })
+            .collect();
+        i.set_str_props(&ns, ivs);
+    }
+    Value::Str(ns)
+}
+
 fn f_try_completion(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let s = want_str(i, &a[0])?;
     try_completions(i, &s, &a[1], &arg(&a, 2))
@@ -9268,19 +9419,70 @@ fn try_completions(i: &mut Interp, s: &str, table: &Value, pred: &Value) -> Eval
         return i.apply(table, vec![Value::string(s), pred.clone(), Value::Nil]);
     }
     let cands = completion_candidates(i, table);
-    let matches: Vec<String> = cands.into_iter().filter(|c| c.starts_with(s)).collect();
-    if matches.is_empty() {
-        return Ok(Value::Nil);
+    let ignore_case = completion_ignore_case(i);
+    let s_chars = s.chars().count();
+    // Port of GNU minibuf.c Ftry_completion: track the bestmatch
+    // element string and shrink it to the common prefix; the result is
+    // a substring of bestmatch, preserving its text properties.
+    let mut bestmatch: Option<Value> = None;
+    let mut bestmatchsize: usize = 0;
+    let mut matchcount = 0usize;
+    for (elt, eltstring) in cands {
+        let Some(text) = cand_text(&eltstring) else {
+            continue;
+        };
+        let eltlen = text.chars().count();
+        if eltlen < s_chars || !completion_candidate_ok(i, &elt, &text, s, pred, ignore_case)? {
+            continue;
+        }
+        match &bestmatch {
+            None => {
+                matchcount = 1;
+                bestmatchsize = eltlen;
+                bestmatch = Some(eltstring);
+            }
+            Some(bm) => {
+                let bm_text = cand_text(bm).unwrap_or_default();
+                let compare = bestmatchsize.min(eltlen);
+                let matchsize = common_prefix_len(&bm_text, &text, compare, ignore_case);
+                if ignore_case {
+                    let elt_exact = matchsize == eltlen;
+                    let bm_exact = matchsize == bm_text.chars().count();
+                    if (elt_exact && matchsize < bm_text.chars().count())
+                        || (elt_exact == bm_exact
+                            && common_prefix_len(&text, s, s_chars, false) == s_chars
+                            && common_prefix_len(&bm_text, s, s_chars, false) != s_chars)
+                    {
+                        bestmatch = Some(eltstring.clone());
+                    }
+                }
+                // GNU only counts non-duplicate strings: a candidate is
+                // a duplicate when it is identical to old_bestmatch
+                // (case-sensitively even under ignore-case) over the
+                // compared range.
+                let dup = bestmatchsize == eltlen
+                    && bestmatchsize == matchsize
+                    && (!ignore_case
+                        || common_prefix_len(&bm_text, &text, compare, false) == compare);
+                if !dup {
+                    matchcount += usize::from(matchcount <= 1);
+                }
+                bestmatchsize = matchsize;
+                if matchsize <= s_chars && !ignore_case && matchcount > 1 {
+                    break;
+                }
+            }
+        }
     }
-    if matches.len() == 1 && matches[0] == s {
+    let Some(bm) = bestmatch else {
+        return Ok(Value::Nil);
+    };
+    let bm_text = cand_text(&bm).unwrap_or_default();
+    // t only when the single match equals the input string.
+    if matchcount == 1 && bm_text == s {
         return Ok(Value::t());
     }
-    let lcp = longest_common_prefix(&matches);
-    if lcp == s && matches.iter().any(|m| m == &lcp) {
-        Ok(Value::t())
-    } else {
-        Ok(Value::string(lcp))
-    }
+    Ok(substring_str_value(i, &bm, bestmatchsize))
 }
 
 fn f_all_completions(i: &mut Interp, a: Vec<Value>) -> EvalResult {
@@ -9289,13 +9491,138 @@ fn f_all_completions(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         return i.apply(&a[1], vec![Value::string(s), arg(&a, 2), Value::t()]);
     }
     let cands = completion_candidates(i, &a[1]);
-    Ok(Value::list(
-        cands
-            .into_iter()
-            .filter(|c| c.starts_with(&s))
-            .map(Value::string)
-            .collect(),
-    ))
+    let pred = arg(&a, 2);
+    let ignore_case = completion_ignore_case(i);
+    let mut out: Vec<Value> = Vec::new();
+    for (elt, eltstring) in cands {
+        if let Some(c) = cand_text(&eltstring) {
+            if c.chars().count() >= s.chars().count()
+                && completion_candidate_ok(i, &elt, &c, &s, &pred, ignore_case)?
+            {
+                // Keep the original eltstring Value so text properties
+                // survive (GNU returns the candidate objects).
+                out.push(eltstring);
+            }
+        }
+    }
+    Ok(Value::list(out))
+}
+
+// Direct port of GNU minibuf.c Fcompletion__flex_cost_gotoh: modified
+// Gotoh algorithm scoring PAT as a subsequence of STR.
+fn f_completion_flex_cost_gotoh(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    const FLEX_MAX_STR_SIZE: usize = 512;
+    const FLEX_MAX_PAT_SIZE: usize = 128;
+    const FLEX_MAX_MATRIX_SIZE: usize = FLEX_MAX_PAT_SIZE * FLEX_MAX_STR_SIZE;
+    const GAP_OPEN_COST: i64 = 10;
+    const GAP_EXTEND_COST: i64 = 1;
+    const POS_INF: i64 = i64::MAX / 2;
+    let mat = |m: &Vec<i64>, width: usize, i: isize, j: isize| -> i64 {
+        m[((i + 1) as usize) * width + ((j + 1) as usize)]
+    };
+
+    let pat_s = want_str(i, &a[0])?;
+    let str_s = want_str(i, &a[1])?;
+    let pat: Vec<char> = pat_s.chars().collect();
+    let st: Vec<char> = str_s.chars().collect();
+    let patlen = pat.len();
+    let strlen = st.len();
+    let width = strlen + 1;
+    let size = (patlen + 1) * width;
+
+    // Bail if strings are empty or matrix too large.
+    if patlen == 0 || strlen == 0 || size > FLEX_MAX_MATRIX_SIZE {
+        return Ok(Value::Nil);
+    }
+
+    let ignore_case = i
+        .symbol_value(i.intern_soft("completion-ignore-case").unwrap_or(0))
+        .truthy();
+
+    // Cheap subsequence check before the O(N*M) DP.
+    if !ignore_case {
+        let mut pi = 0usize;
+        for &sc in st.iter() {
+            if pi < patlen && sc == pat[pi] {
+                pi += 1;
+            }
+        }
+        if pi < patlen {
+            return Ok(Value::Nil);
+        }
+    }
+
+    let mut m: Vec<i64> = vec![POS_INF; size];
+    let mut d: Vec<i64> = vec![POS_INF; size];
+    // D[-1,-1]=0 to promote matches at the beginning; rest of the
+    // first D row gets gap_open/2 for cheaper leading gaps.
+    for j in 0..width {
+        d[j] = GAP_OPEN_COST / 2;
+    }
+    d[0] = 0;
+
+    // Position of first match found in the previous row.
+    let mut prev_match = 0usize;
+
+    // Forward pass.
+    for pi in 0..patlen {
+        let pat_char = pat[pi];
+        let mut match_seen = false;
+        let mut j = prev_match;
+        while j < strlen {
+            let jcopy = j;
+            let str_char = st[j];
+            let cmatch = if ignore_case {
+                pat_char.to_lowercase().next() == str_char.to_lowercase().next()
+            } else {
+                pat_char == str_char
+            };
+            if cmatch {
+                if !match_seen {
+                    match_seen = true;
+                    prev_match = jcopy;
+                }
+                let mm = mat(&m, width, pi as isize - 1, j as isize - 1);
+                let dd = mat(&d, width, pi as isize - 1, j as isize - 1);
+                let idx = (pi + 1) * width + (j + 1);
+                m[idx] = mm.min(dd);
+            }
+            let mleft = mat(&m, width, pi as isize, j as isize - 1);
+            let dleft = mat(&d, width, pi as isize, j as isize - 1);
+            let idx = (pi + 1) * width + (j + 1);
+            d[idx] = (mleft + GAP_OPEN_COST).min(dleft + GAP_EXTEND_COST);
+            j += 1;
+        }
+    }
+
+    // Find lowest cost in last row.
+    let mut best_cost = POS_INF;
+    let mut lastcol: isize = -1;
+    for j in 0..strlen {
+        let cost = mat(&m, width, patlen as isize - 1, j as isize);
+        if cost < best_cost {
+            best_cost = cost;
+            lastcol = j as isize;
+        }
+    }
+    if lastcol < 0 || best_cost >= POS_INF {
+        return Ok(Value::Nil);
+    }
+
+    // Go backwards to build match positions list.
+    let mut matches = Value::Nil;
+    matches = Value::cons(Value::Int(lastcol as i128), matches);
+    let mut l = lastcol;
+    for pi2 in (0..patlen as isize - 1).rev() {
+        loop {
+            l -= 1;
+            if !(l >= 0 && mat(&m, width, pi2, l) >= mat(&d, width, pi2, l)) {
+                break;
+            }
+        }
+        matches = Value::cons(Value::Int(l as i128), matches);
+    }
+    Ok(Value::cons(Value::Int(best_cost as i128), matches))
 }
 
 fn f_test_completion(i: &mut Interp, a: Vec<Value>) -> EvalResult {
@@ -9309,7 +9636,37 @@ fn f_test_completion(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         return Ok(Value::from_bool(r.truthy()));
     }
     let cands = completion_candidates(i, &a[1]);
-    Ok(Value::from_bool(cands.iter().any(|c| c == &s)))
+    let pred = arg(&a, 2);
+    let ignore_case = completion_ignore_case(i);
+    // GNU Ftest_completion: S must equal a candidate (obeying
+    // `completion-ignore-case'), match `completion-regexp-list', and
+    // satisfy PRED (called on ELT, not the string).
+    for (elt, eltstring) in &cands {
+        let Some(c) = cand_text(eltstring) else {
+            continue;
+        };
+        let eq = if ignore_case {
+            c.chars()
+                .flat_map(|x| x.to_lowercase())
+                .eq(s.chars().flat_map(|x| x.to_lowercase()))
+        } else {
+            c == s
+        };
+        if eq
+            && completion_match_regexps(i, &c, ignore_case)
+            && {
+                let r = if pred.truthy() {
+                    i.apply(&pred, vec![elt.clone()])?.truthy()
+                } else {
+                    true
+                };
+                r
+            }
+        {
+            return Ok(Value::t());
+        }
+    }
+    Ok(Value::Nil)
 }
 
 fn f_internal_complete_buffer(i: &mut Interp, a: Vec<Value>) -> EvalResult {
@@ -9334,15 +9691,15 @@ fn f_internal_complete_buffer(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         Value::Nil => try_completions(i, &s, &table, &Value::Nil),
         Value::Sym(sym) if i.symbol_name(*sym) == "lambda" => {
             let cands = completion_candidates(i, &table);
-            Ok(Value::from_bool(cands.iter().any(|c| c == &s)))
+            Ok(Value::from_bool(cands.iter().any(|(_, es)| cand_text(es).as_deref() == Some(s.as_str()))))
         }
         Value::Sym(sym) if i.symbol_name(*sym) == "t" => {
             let cands = completion_candidates(i, &table);
             Ok(Value::list(
                 cands
                     .into_iter()
-                    .filter(|c| c.starts_with(&s))
-                    .map(Value::string)
+                    .filter(|(_, es)| cand_text(es).map(|c| c.starts_with(&s)).unwrap_or(false))
+                    .map(|(_, es)| es)
                     .collect(),
             ))
         }
@@ -9357,11 +9714,11 @@ fn f_completion_boundaries(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     // override via the `boundaries' action.
     let s = want_str(i, &a[0])?;
     if table_is_callable(i, &a[1]) {
+        // GNU calls the table with action (boundaries . SUFFIX) and
+        // expects (boundaries START . END) back.
         let bw = i.intern("boundaries");
-        let r = i.apply(
-            &a[1],
-            vec![Value::string(s.clone()), arg(&a, 2), Value::Sym(bw)],
-        )?;
+        let act = Value::cons(Value::Sym(bw), arg(&a, 3));
+        let r = i.apply(&a[1], vec![Value::string(s), arg(&a, 2), act])?;
         if let Value::Cons(c) = &r {
             let (car, cdr) = {
                 let b = c.borrow();
@@ -9369,13 +9726,28 @@ fn f_completion_boundaries(i: &mut Interp, a: Vec<Value>) -> EvalResult {
             };
             if let Value::Sym(k) = &car {
                 if i.symbol_name(*k) == "boundaries" {
-                    if let Value::Cons(c2) = &cdr {
-                        let (start, end) = {
-                            let b = c2.borrow();
-                            (b.car.clone(), b.cdr.clone())
-                        };
-                        return Ok(Value::cons(start, end));
-                    }
+                    // (cadr boundaries) → START, (cddr) → END.
+                    let start = match &cdr {
+                        Value::Cons(c2) => c2.borrow().car.clone(),
+                        _ => Value::Nil,
+                    };
+                    let end = match &cdr {
+                        Value::Cons(c2) => match &c2.borrow().cdr {
+                            Value::Cons(c3) => c3.borrow().cdr.clone(),
+                            other => other.clone(),
+                        },
+                        _ => Value::Nil,
+                    };
+                    let end = match &end {
+                        Value::Nil => match &a[3] {
+                            Value::Str(s) => {
+                                Value::Int(s.borrow().chars().count() as i128)
+                            }
+                            _ => Value::Int(0),
+                        },
+                        e => e.clone(),
+                    };
+                    return Ok(Value::cons(start, end));
                 }
             }
         }

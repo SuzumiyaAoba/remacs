@@ -512,3 +512,7 @@
 (shrink-window-if-larger-than-buffer)
 (window-fixed-size-p (selected-window) 'width)
 (command-error-default-function 'a 'b 'c)
+(replace-regexp-in-string "\\$" (lambda (d) (concat d d)) "a$b")
+(replace-regexp-in-string "\\(a\\)\\(b\\)" (lambda (m) (concat "[" m "]" (match-string 1 m))) "xaby")
+(minibuffer--double-dollars "a$b")
+(minibuffer-maybe-quote-filename "/a/b")

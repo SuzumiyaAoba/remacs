@@ -1960,9 +1960,49 @@ fn expand_rep(
     Ok(())
 }
 
+/// Propertized char-slice of `src` (a `Value::Str`) over [f, t), matching
+/// GNU's `substring` (plist reversal on copy, per copy_text_properties).
+fn str_slice(i: &mut Interp, src: &Value, f: usize, t: usize) -> Value {
+    let s = match src {
+        Value::Str(s) => s.borrow().clone(),
+        _ => return src.clone(),
+    };
+    let chars: Vec<char> = s.chars().collect();
+    let ns = std::rc::Rc::new(std::cell::RefCell::new(
+        chars[f.min(chars.len())..t.min(chars.len())]
+            .iter()
+            .collect::<String>(),
+    ));
+    if let Value::Str(src_s) = src {
+        if i.has_str_props(src_s) {
+            let ivs: Vec<(usize, usize, Vec<Value>)> = i
+                .str_props(src_s)
+                .iter()
+                .filter_map(|(a, b, pl)| {
+                    let lo = (*a).max(f);
+                    let hi = (*b).min(t);
+                    (lo < hi)
+                        .then(|| (lo - f, hi - f, crate::buffer::primitives::plist_pairs_rev(pl)))
+                })
+                .collect();
+            i.set_str_props(&ns, ivs);
+        }
+    }
+    Value::Str(ns)
+}
+
 fn f_replace_regexp_in_string(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let pat = want_string(i, &a[0])?;
-    let rep = want_string(i, &a[1])?;
+    // GNU's REP may be a string or a function called with the matched
+    // text (subr.el `replace-regexp-in-string').
+    let rep_fn = match &a[1] {
+        Value::Str(_) => None,
+        f => Some(f.clone()),
+    };
+    let rep = match &a[1] {
+        Value::Str(s) => s.borrow().clone(),
+        _ => String::new(),
+    };
     let s = want_string(i, &a[2])?;
     let literal = !arg(&a, 4).is_nil();
     let subexp = match arg(&a, 5) {
@@ -1990,6 +2030,25 @@ fn f_replace_regexp_in_string(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     while let Some(regs) = crate::lisp::regexp::search_full(&re, &chars, pos) {
         let (ms, me) = (regs[0].unwrap_or(0), regs[1].unwrap_or(0));
         out.extend(&chars[pos..ms]);
+        // GNU: for a function REP, the match data is translated to the
+        // matched substring and REP is called with `match-string 0'; the
+        // result then undergoes replace-match's \-expansion unless LITERAL.
+        let rep_text;
+        let rep = if let Some(f) = &rep_fn {
+            let saved_md = i.match_data.clone();
+            i.match_data = Some(crate::lisp::eval::MatchData {
+                regs: regs.iter().map(|r| r.map(|x| x - ms)).collect(),
+                in_buffer: false,
+                base: 0,
+            });
+            let mstr = str_slice(i, &a[2], ms, me);
+            let rv = i.apply(f, vec![mstr]);
+            i.match_data = saved_md;
+            rep_text = want_string(i, &rv?)?;
+            rep_text.as_str()
+        } else {
+            rep.as_str()
+        };
         if subexp > 0 {
             // Replace only the SUBEXP group inside the match.
             if let (Some(gs), Some(ge)) = (
@@ -1997,13 +2056,13 @@ fn f_replace_regexp_in_string(i: &mut Interp, a: Vec<Value>) -> EvalResult {
                 regs.get(2 * subexp + 1).copied().flatten(),
             ) {
                 out.extend(&chars[ms..gs]);
-                expand_rep(i, &rep, &regs, &chars, &mut out, literal)?;
+                expand_rep(i, rep, &regs, &chars, &mut out, literal)?;
                 out.extend(&chars[ge..me]);
             } else {
                 out.extend(&chars[ms..me]);
             }
         } else {
-            expand_rep(i, &rep, &regs, &chars, &mut out, literal)?;
+            expand_rep(i, rep, &regs, &chars, &mut out, literal)?;
         }
         pos = if me > ms { me } else { me + 1 };
         n += 1;

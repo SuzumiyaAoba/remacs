@@ -525,17 +525,33 @@ fn f_mapconcat(i: &mut Interp, args: Vec<Value>) -> EvalResult {
         .map(|v| want_string(i, v))
         .transpose()?
         .unwrap_or_default();
+    // GNU's mapconcat concatenates the mapped strings directly, so
+    // text properties of the parts are carried into the result.
     let mut out = String::new();
+    let mut ivs: Vec<(usize, usize, Vec<Value>)> = Vec::new();
+    let mut saw_props = false;
     for (k, p) in parts.iter().enumerate() {
         if k > 0 {
             out.push_str(&sep);
         }
-        match p {
-            Value::Str(s) => out.push_str(&s.borrow()),
-            other => out.push_str(&i.princ_to_string(other)),
+        let off = out.chars().count();
+        if let Value::Str(s) = p {
+            if i.has_str_props(s) {
+                saw_props = true;
+                for (s0, e0, pl) in i.str_props(s) {
+                    ivs.push((s0 + off, e0 + off, crate::buffer::primitives::plist_pairs_rev(pl)));
+                }
+            }
+            out.push_str(&s.borrow());
+        } else {
+            out.push_str(&i.princ_to_string(p));
         }
     }
-    Ok(Value::string(out))
+    let ns = std::rc::Rc::new(std::cell::RefCell::new(out));
+    if saw_props {
+        i.set_str_props(&ns, ivs);
+    }
+    Ok(Value::Str(ns))
 }
 
 fn f_maphash(i: &mut Interp, args: Vec<Value>) -> EvalResult {

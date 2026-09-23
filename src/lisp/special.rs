@@ -739,9 +739,14 @@ fn sf_save_current_buffer(i: &mut Interp, args: Value) -> EvalResult {
 
 fn sf_with_current_buffer(i: &mut Interp, args: Value) -> EvalResult {
     let buf_v = i.eval(&car(&args))?;
+    // GNU's set-buffer/get_buffer: a buffer or its name string;
+    // anything else is a `stringp' type error.
+    if !matches!(buf_v, Value::Buffer(_) | Value::Str(_)) {
+        return Err(i.wrong_type_mut("stringp", &buf_v));
+    }
     let buf_id = i
         .buffer_id_of(&buf_v)
-        .ok_or_else(|| i.wrong_type_mut("bufferp", &buf_v))?;
+        .ok_or_else(|| i.wrong_type_mut("stringp", &buf_v))?;
     let old = i.current_buffer;
     i.set_current_buffer(buf_id);
     let body = cdr(&args);

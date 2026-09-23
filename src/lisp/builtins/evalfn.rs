@@ -947,13 +947,18 @@ fn f_run_hook_until_success(i: &mut Interp, args: Vec<Value>) -> EvalResult {
 
 fn f_run_hook_wrapped(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     // (run-hook-wrapped HOOK WRAP-FUNCTION &rest ARGS)
+    // GNU eval.c: each hook function is called through WRAP-FUNCTION;
+    // if a call returns non-nil, hook processing aborts and returns it.
     let hook = args[0].clone();
     let wrap = args[1].clone();
     let fns = hook_fns(i, &hook);
     for f in fns {
         let mut call_args = vec![f];
         call_args.extend(args[2..].iter().cloned());
-        i.apply(&wrap, call_args)?;
+        let res = i.apply(&wrap, call_args)?;
+        if res.truthy() {
+            return Ok(res);
+        }
     }
     Ok(Value::Nil)
 }

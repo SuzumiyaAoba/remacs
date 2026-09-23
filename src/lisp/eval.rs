@@ -1630,11 +1630,12 @@ impl Interp {
         }
 
         if l.env.is_some() {
-            // Lexical closure: extend captured env.
+            // Lexical closure: extend captured env.  Parameters that are
+            // `defvar'd special are bound dynamically (GNU specbind);
+            // lookups for them bypass the lexical env.
             let vars = RefCell::new(HashMap::new());
-            self.bind_lambda_args(&l.clone(), &argv, |sym, val| {
-                vars.borrow_mut().insert(sym, val);
-            });
+            let mark = self.specbind_depth();
+            let bind_result = self.bind_lambda_args_lexical(&l.clone(), &argv, &vars);
             // `&optional` defaults may need evaluation in the new env;
             // evaluate them after the frame exists.
             let frame = Rc::new(LexFrame {
@@ -1642,8 +1643,10 @@ impl Interp {
                 parent: l.env.clone(),
             });
             let saved = std::mem::replace(&mut self.lexenv, Some(frame.clone()));
-            let mark = self.specbind_depth();
-            let r = self.fill_optional_defaults(l, &argv, &frame);
+            let r = match bind_result {
+                Ok(()) => self.fill_optional_defaults(l, &argv, &frame),
+                Err(e) => Err(e),
+            };
             let result = match r {
                 Ok(()) => self.eval_body(&l.body),
                 Err(e) => Err(e),
@@ -1683,13 +1686,63 @@ impl Interp {
                     Some(d) => self.eval(d)?,
                     None => Value::Nil,
                 };
-                frame.vars.borrow_mut().insert(opt.sym, v);
+                if self.obarray.symbol(opt.sym).special {
+                    self.specbind(opt.sym, v)?;
+                } else {
+                    frame.vars.borrow_mut().insert(opt.sym, v);
+                }
             }
             i += 1;
         }
         Ok(())
     }
 
+    /// Lexical-closure argument binding: params go into the new frame's
+    /// `vars`, except `defvar'd specials which get dynamic specbinds.
+    fn bind_lambda_args_lexical(
+        &mut self,
+        l: &Rc<Lambda>,
+        argv: &[Value],
+        vars: &RefCell<HashMap<SymId, Value>>,
+    ) -> Result<(), Flow> {
+        let bind = |this: &mut Self, sym: SymId, val: Value| -> Result<(), Flow> {
+            if this.obarray.symbol(sym).special {
+                this.specbind(sym, val)
+            } else {
+                vars.borrow_mut().insert(sym, val);
+                Ok(())
+            }
+        };
+        let mut i = 0;
+        for s in l.required.clone() {
+            bind(self, s, argv[i].clone())?;
+            i += 1;
+        }
+        for opt in l.optional.clone() {
+            let given = i < argv.len();
+            let v = if given {
+                argv[i].clone()
+            } else {
+                opt.default.clone().unwrap_or(Value::Nil)
+            };
+            bind(self, opt.sym, v)?;
+            if let Some(sp) = opt.supplied {
+                bind(self, sp, Value::from_bool(given))?;
+            }
+            i += 1;
+        }
+        if let Some(rest) = l.rest {
+            let tail = if i < argv.len() {
+                Value::list(argv[i..].to_vec())
+            } else {
+                Value::Nil
+            };
+            bind(self, rest, tail)?;
+        }
+        Ok(())
+    }
+
+    #[allow(dead_code)]
     fn bind_lambda_args(&self, l: &Rc<Lambda>, argv: &[Value], mut f: impl FnMut(SymId, Value)) {
         let mut i = 0;
         for s in &l.required {

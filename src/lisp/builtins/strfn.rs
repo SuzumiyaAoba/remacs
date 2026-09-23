@@ -463,7 +463,9 @@ fn f_concat(i: &mut Interp, args: Vec<Value>) -> EvalResult {
             if i.has_str_props(s) {
                 saw_props = true;
                 for (s0, e0, pl) in i.str_props(s) {
-                    ivs.push((s0 + off, e0 + off, pl.clone()));
+                    // GNU's concat copies props through
+                    // copy_text_properties, reversing plist order.
+                    ivs.push((s0 + off, e0 + off, crate::buffer::primitives::plist_pairs_rev(pl)));
                 }
             }
         }
@@ -559,7 +561,10 @@ fn f_substring(i: &mut Interp, args: Vec<Value>) -> EvalResult {
                     .filter_map(|(a, b, pl)| {
                         let lo = (*a).max(f0);
                         let hi = (*b).min(t0);
-                        (lo < hi).then(|| (lo - f0, hi - f0, pl.clone()))
+                        // GNU's substring copies properties via
+                        // copy_text_properties, reversing plist order.
+                        (lo < hi)
+                            .then(|| (lo - f0, hi - f0, crate::buffer::primitives::plist_pairs_rev(pl)))
                     })
                     .collect();
                 i.set_str_props(&ns, ivs);

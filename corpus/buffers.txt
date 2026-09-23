@@ -172,3 +172,7 @@
 (with-temp-buffer (insert "x\ny") (goto-char 4) (pos-eol))
 (with-temp-buffer (insert "a\nb") (goto-char 3) (pos-bol))
 (with-temp-buffer (insert "xy") (goto-char 1) (pos-eol))
+(with-temp-buffer (insert "(a (b) c)") (goto-char 9) (backward-list) (point))
+(with-temp-buffer (insert "(a (b) c)") (goto-char 1) (backward-up-list) (point))
+(with-temp-buffer (insert "(a (b) c)") (goto-char 2) (forward-list) (point))
+(with-temp-buffer (insert "(a (b) c)") (goto-char 7) (backward-up-list) (point))

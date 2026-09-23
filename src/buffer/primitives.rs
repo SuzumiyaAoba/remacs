@@ -1964,7 +1964,8 @@ pub(crate) fn buf_of(
                     )
                 })
         }
-        other => Err(i.wrong_type_mut("bufferp", other)),
+        // GNU's Fget_buffer signals stringp for non-buffer/non-name args.
+        other => Err(i.wrong_type_mut("stringp", other)),
     }
 }
 
@@ -2115,6 +2116,11 @@ fn f_other_buffer(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 }
 
 fn f_set_buffer(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    // GNU: Fget_buffer signals `stringp' for non-buffer/non-name args;
+    // a missing name is a plain "No buffer named" error.
+    if !matches!(a[0], Value::Buffer(_) | Value::Str(_)) {
+        return Err(i.wrong_type_mut("stringp", &a[0]));
+    }
     let id = i
         .buffer_id_of(&a[0])
         .ok_or_else(|| i.error(format!("No buffer named {}", i.princ_to_string(&a[0]))))?;
@@ -4741,17 +4747,20 @@ fn copy_str_props(i: &mut Interp, s: &crate::lisp::value::StrRef, base: usize) {
     let b = cur(i);
     let mut bb = b.borrow_mut();
     for (st, en, plist) in ivs {
-        let mut k = 0;
-        while k + 1 < plist.len() {
-            if let Some(p) = i.sym_id(&plist[k]) {
+        // `insert' preserves the source plist order; since the
+        // buffer's emitted plist is newest-first (records scanned in
+        // reverse), push the pairs back-to-front.
+        let mut k = plist.len();
+        while k >= 2 {
+            if let Some(p) = i.sym_id(&plist[k - 2]) {
                 bb.text_props.push(TextProp {
                     start: base + st,
                     end: base + en,
                     prop: p,
-                    value: plist[k + 1].clone(),
+                    value: plist[k - 1].clone(),
                 });
             }
-            k += 2;
+            k -= 2;
         }
     }
     bb.note_prop_modified();
@@ -5108,6 +5117,22 @@ fn f_append_next_kill(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
 /// Build a (start, end, plist) interval list for buffer range [S,E),
 /// rebased to 0 — the inverse of `copy_str_props': each maximal run of
 /// positions sharing the same property set becomes one interval.
+/// Reverse a flat plist's (PROP VALUE) pairs.  GNU's
+/// `copy_text_properties' plputs each source pair in turn, so
+/// string→string copies (substring, concat, mapconcat) yield plists
+/// in reversed order; verbatim copies (insert, copy-sequence,
+/// buffer-substring) preserve it.
+pub(crate) fn plist_pairs_rev(pl: &[Value]) -> Vec<Value> {
+    let mut out = Vec::with_capacity(pl.len());
+    let mut k = pl.len();
+    while k >= 2 {
+        out.push(pl[k - 2].clone());
+        out.push(pl[k - 1].clone());
+        k -= 2;
+    }
+    out
+}
+
 fn buf_props_as_ivs(
     props: &[TextProp],
     s: usize,
@@ -5131,11 +5156,26 @@ fn buf_props_as_ivs(
         if a >= b {
             continue;
         }
+        // GNU's plist order is newest-first: `put-text-property'
+        // prepends each property, so the effective plist lists the
+        // most recently added props first.
         let mut plist: Vec<Value> = Vec::new();
-        for tp in props {
+        for tp in props.iter().rev() {
             if tp.start <= a && tp.end >= b {
-                plist.push(Value::Sym(tp.prop));
-                plist.push(tp.value.clone());
+                let psym = Value::Sym(tp.prop);
+                let mut dup = false;
+                let mut k = 0;
+                while k + 1 < plist.len() {
+                    if crate::lisp::builtins::eq_values(&plist[k], &psym) {
+                        dup = true;
+                        break;
+                    }
+                    k += 2;
+                }
+                if !dup {
+                    plist.push(psym);
+                    plist.push(tp.value.clone());
+                }
             }
         }
         ivs.push((a - s, b - s, plist));
@@ -8254,22 +8294,25 @@ fn f_text_properties_at(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let pos = pos_idx(len, want_int(i, &a[0])?);
     let b = cur(i);
     let bb = b.borrow();
-    // Collect props in write order (later overrides earlier).
+    // GNU's plist is newest-first (put-text-property prepends):
+    // iterate records in reverse and keep the newest value per prop.
     let mut plist: Vec<Value> = Vec::new();
-    for tp in &bb.text_props {
+    for tp in bb.text_props.iter().rev() {
         if pos >= tp.start && pos < tp.end {
             let psym = i.sym(tp.prop);
-            // remove earlier entry for same prop
+            let mut dup = false;
             let mut k = 0;
             while k + 1 < plist.len() {
                 if crate::lisp::builtins::eq_values(&plist[k], &psym) {
-                    plist.drain(k..k + 2);
-                } else {
-                    k += 2;
+                    dup = true;
+                    break;
                 }
+                k += 2;
             }
-            plist.push(psym);
-            plist.push(tp.value.clone());
+            if !dup {
+                plist.push(psym);
+                plist.push(tp.value.clone());
+            }
         }
     }
     if plist.is_empty() {
