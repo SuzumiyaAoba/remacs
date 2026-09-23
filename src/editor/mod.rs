@@ -3386,24 +3386,15 @@ fn f_new_fontset(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     Ok(a[0].clone())
 }
 
-/// `internal-char-font' — bounds-check POS against the current
-/// buffer; tty text carries no font so the result is nil.
+/// `internal-char-font' — GNU signature is (FRAME &optional CH); nil
+/// FRAME means the selected frame.  We track no font info, so nil.
 fn f_internal_char_font(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let pos = match &a[0] {
-        Value::Int(n) => *n,
-        other => return Err(i.wrong_type_mut("integerp", other)),
-    };
-    let len = i
-        .buffers
-        .get(i.current_buffer)
-        .map(|b| b.borrow().text_len() as i128)
-        .unwrap_or(0);
-    if pos < 1 || pos > len {
-        let sym = i.intern("args-out-of-range");
-        return Err(i.signal_data(
-            sym,
-            vec![Value::Int(pos), Value::Int(1), Value::Int(len + 1)],
-        ));
+    let _ = i;
+    match a.get(1) {
+        None | Some(Value::Nil) => {}
+        Some(v) => {
+            want_int(i, v)?;
+        }
     }
     Ok(Value::Nil)
 }

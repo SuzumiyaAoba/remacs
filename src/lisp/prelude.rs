@@ -4633,6 +4633,7 @@ Leave one space or none, according to the context."
           (n (length hits)))
       (with-current-buffer ob
         (erase-buffer)
+        (setq-local occur-revert-arguments (list regexp nlines (list src)))
         (insert (format "%d %s for \"%s\" in buffer: %s\n"
                         n (if (= n 1) "match" "matches") regexp
                         (buffer-name src)))
@@ -4641,6 +4642,341 @@ Leave one space or none, according to the context."
       (message "Searched 1 buffer; %d %s for \"%s\""
                n (if (= n 1) "match" "matches") regexp)
       (display-buffer ob))))
+
+;; `defvar-local' is defined later in the prelude; spell it out.
+(defvar occur-revert-arguments nil
+  "Arguments to pass to `occur-1' to revert an Occur buffer.")
+(make-variable-buffer-local 'occur-revert-arguments)
+(put 'occur-revert-arguments 'permanent-local t)
+
+(defun occur-rename-buffer (&optional unique-p interactive-p)
+  "Rename the current *Occur* buffer to *Occur: original-buffer-name*."
+  (interactive "P\np")
+  (with-current-buffer
+      (if (eq major-mode 'occur-mode) (current-buffer) (get-buffer "*Occur*"))
+    (rename-buffer (concat "*Occur: "
+                           (mapconcat (lambda (boo)
+                                        (buffer-name (if (overlayp boo)
+                                                         (overlay-buffer boo)
+                                                       boo)))
+                                      (car (cddr occur-revert-arguments)) "/")
+                           "*")
+                   (or unique-p (not interactive-p)))))
+
+(defalias 'delete-matching-lines 'flush-lines)
+
+;; ---------- misc.el / subr.el / simple.el ports ----------
+
+(defvar read-char-history nil
+  "The default history for the `read-char-from-minibuffer' function.")
+
+(defvar read-char-from-minibuffer-map
+  (let ((map (make-sparse-keymap)))
+    (set-keymap-parent map minibuffer-local-map)
+    (define-key map [remap exit-minibuffer] #'read-char-from-minibuffer-insert-other)
+    (define-key map [remap recenter-top-bottom] #'minibuffer-recenter-top-bottom)
+    (define-key map [remap scroll-up-command] #'minibuffer-scroll-up-command)
+    (define-key map [remap scroll-down-command] #'minibuffer-scroll-down-command)
+    (define-key map [remap scroll-other-window] #'minibuffer-scroll-other-window)
+    (define-key map [remap scroll-other-window-down] #'minibuffer-scroll-other-window-down)
+    map)
+  "Keymap for the `read-char-from-minibuffer' function.")
+
+(defconst read-char-from-minibuffer-map-hash
+  (make-hash-table :test 'equal))
+
+(defun read-char-from-minibuffer-insert-char ()
+  "Insert the character you type into the minibuffer and exit minibuffer."
+  (interactive)
+  (when (minibufferp)
+    (delete-minibuffer-contents)
+    (insert last-command-event)
+    (exit-minibuffer)))
+
+(defun read-char-from-minibuffer-insert-other ()
+  "Reject a disallowed character typed into the minibuffer."
+  (interactive)
+  (when (minibufferp)
+    (delete-minibuffer-contents)
+    (ding)
+    (discard-input)
+    (minibuffer-message "Wrong answer")
+    (sit-for 2)))
+
+(defvar overriding-text-conversion-style nil)
+(defvar text-conversion-style nil)
+(defvar help-form nil)
+(defvar help-char ?\C-h)
+(defun help-form-show ()
+  "Display the output of a non-nil `help-form'."
+  (interactive)
+  (when help-form (message "%s" (eval help-form))))
+
+(defun read-char-from-minibuffer (prompt &optional chars history)
+  "Read a character from the minibuffer, prompting for it with PROMPT."
+  (when (and (bound-and-true-p overriding-text-conversion-style)
+             (bound-and-true-p text-conversion-style))
+    (force-mode-line-update))
+  (let* ((overriding-text-conversion-style nil)
+         (map (if (consp chars)
+                  (or (gethash (list help-form (cons help-char chars))
+                               read-char-from-minibuffer-map-hash)
+                      (let ((map (make-sparse-keymap))
+                            (msg help-form))
+                        (set-keymap-parent map read-char-from-minibuffer-map)
+                        (when help-form
+                          (define-key map (vector help-char)
+                                      (lambda ()
+                                        (interactive)
+                                        (let ((help-form msg))
+                                          (help-form-show)))))
+                        (dolist (char chars)
+                          (define-key map (vector char)
+                                      #'read-char-from-minibuffer-insert-char))
+                        (define-key map [remap self-insert-command]
+                                    #'read-char-from-minibuffer-insert-other)
+                        (puthash (list help-form (cons help-char chars))
+                                 map read-char-from-minibuffer-map-hash)
+                        map))
+                read-char-from-minibuffer-map))
+         (this-command this-command)
+         (result (minibuffer-with-setup-hook
+		     (lambda ()
+		       (setq-local post-self-insert-hook nil)
+		       (add-hook 'post-command-hook
+				 (lambda ()
+				   (if (<= (1+ (minibuffer-prompt-end))
+					  (point-max))
+                                       (exit-minibuffer)))
+				 nil 'local))
+                   (when (fboundp 'set-text-conversion-style)
+                     (set-text-conversion-style text-conversion-style))
+                   (read-from-minibuffer prompt nil map nil (or history t))))
+         (char
+          (if (plusp (length result))
+              (elt result 0)
+            (when history (push "\r" (symbol-value history)))
+            ?\r)))
+    (message "%s%s" prompt (char-to-string char))
+    char))
+
+(defun zap-up-to-char (arg char &optional interactive)
+  "Kill up to, but not including ARGth occurrence of CHAR."
+  (interactive (list (prefix-numeric-value current-prefix-arg)
+		     (read-char-from-minibuffer "Zap up to char: "
+						nil 'read-char-history)
+                     t))
+  (let ((direction (if (>= arg 0) 1 -1))
+        (case-fold-search (if (and interactive (char-uppercase-p char))
+                              nil
+                            case-fold-search)))
+    (kill-region (point)
+		 (progn
+		   (forward-char direction)
+		   (unwind-protect
+		       (search-forward (char-to-string char) nil nil arg)
+		     (backward-char direction))
+		   (point)))))
+
+(defun date-to-day (date)
+  "Return the absolute date of DATE, a date-time string."
+  (time-to-days (date-to-time date)))
+
+(defun days-between (date1 date2)
+  "Return the number of days between DATE1 and DATE2."
+  (- (date-to-day date1) (date-to-day date2)))
+
+(defun date-leap-year-p (year)
+  "Return t if YEAR is a leap year."
+  (or (and (zerop (% year 4))
+	   (not (zerop (% year 100))))
+      (zerop (% year 400))))
+
+(defun find-file-read-args (prompt mustmatch)
+  (list (read-file-name prompt nil default-directory mustmatch)
+	t))
+
+(defun file-name-history--add (file)
+  "Add FILE to `file-name-history'."
+  (add-to-history 'file-name-history (abbreviate-file-name file)))
+
+(defun find-file-other-window (filename &optional wildcards)
+  "Edit file FILENAME, in another window."
+  (interactive
+   (find-file-read-args "Find file in other window: "
+                        (confirm-nonexistent-file-or-buffer)))
+  (let ((value (find-file-noselect filename nil nil wildcards)))
+    (if (listp value)
+	(progn
+	  (setq value (nreverse value))
+	  (switch-to-buffer-other-window (car value))
+	  (mapc 'switch-to-buffer (cdr value))
+	  value)
+      (switch-to-buffer-other-window value))))
+
+;; ---------- eval-expression display (simple.el) ----------
+
+(defun prin1-char (char)
+  "Return a string representing CHAR as a character rather than as an integer.
+If CHAR is not a character, return nil."
+  (and (integerp char)
+       (eventp char)
+       (let ((c (event-basic-type char))
+	     (mods (event-modifiers char))
+	     string)
+	 (if (and (memq 'shift mods)
+		  (zerop (logand char ?\S-\^@))
+		  (not (let ((case-fold-search nil))
+			 (char-equal c (upcase c)))))
+	     (setq c (upcase c) mods nil))
+	 (condition-case nil
+	     (setq string
+		   (concat
+		    "?"
+		    (mapconcat
+		     (lambda (modif)
+		       (cond ((eq modif 'super) "\\s-")
+			     (t (string ?\\ (upcase (aref (symbol-name modif) 0)) ?-))))
+		     mods)
+		    (cond
+		     ((memq c '(?\; ?\( ?\) ?\{ ?\} ?\[ ?\] ?\" ?\' ?\\)) (string ?\\ c))
+		     ((eq c 127) "\\C-?")
+		     (t
+		      (string c)))))
+	   (error nil))
+	 (and string
+	      (= (car (read-from-string string)) char)
+	      string))))
+
+(defun char-displayable-p (char)
+  "Return non-nil if we should be able to display CHAR."
+  (cond ((< char 128)
+	 t)
+	((not enable-multibyte-characters)
+	 nil)
+	(t
+	 (let ((font-glyph (internal-char-font nil char)))
+	   (if font-glyph
+	       (if (consp font-glyph)
+		   (car font-glyph)
+		 (<= 0 font-glyph))
+	     t)))))
+
+(defun eval-expression-print-format (value)
+  "If VALUE is an integer, return a specially formatted string."
+  (when (integerp value)
+    (let ((char-string
+           (and (characterp value)
+                (<= value eval-expression-print-maximum-character)
+                (char-displayable-p value)
+                (prin1-char value))))
+      (if char-string
+          (format " (#o%o, #x%x, %s)" value value char-string)
+        (format " (#o%o, #x%x)" value value)))))
+
+;; ---------- elisp-mode.el eval machinery ----------
+
+(defvar edebug-all-defs nil)
+(defvar elisp--eval-defun-result)
+(defvar face--new-frame-defaults (make-hash-table :test 'eq)
+  "Table mapping face names to their default specs.")
+
+(defun eval-sexp-add-defvars (exp &optional pos)
+  "Prepend EXP with all the `defvar's that precede it in the buffer."
+  (if (not lexical-binding)
+      exp
+    (save-excursion
+      (unless pos (setq pos (point)))
+      (let ((vars ()))
+        (goto-char (point-min))
+        (while (re-search-forward
+                "(def\\(?:var\\|const\\|custom\\)[ \t\n]+\\([^; '()\n\t]+\\)"
+                pos t)
+          (let ((var (intern (match-string 1))))
+            (unless (or (special-variable-p var)
+                        (syntax-ppss-toplevel-pos
+                         (save-excursion
+                           (syntax-ppss (match-beginning 0)))))
+              (push var vars))))
+        `(progn ,@(mapcar (lambda (v) `(defvar ,v)) vars) ,exp)))))
+
+(defun elisp--eval-defun-1 (form)
+  "Treat some expressions in FORM specially.
+Reset the `defvar' and `defcustom' variables to the initial value."
+  (cond ((not (listp form))
+	 form)
+	((and (eq (car form) 'defvar)
+	      (cdr-safe (cdr-safe form))
+	      (boundp (cadr form)))
+	 `(progn (defvar ,(nth 1 form) nil ,@(nthcdr 3 form))
+		 (setq-default ,(nth 1 form) ,(nth 2 form))))
+	((and (eq (car form) 'custom-declare-variable)
+	      (default-boundp (eval (nth 1 form) lexical-binding)))
+	 (let ((setfunc (memq :set form)))
+	   (when setfunc
+	     (setq setfunc (car-safe (cdr-safe setfunc)))
+	     (or (functionp setfunc) (setq setfunc nil)))
+	   (funcall (or setfunc 'set-default)
+		    (eval (nth 1 form) lexical-binding)
+		    (eval (eval (nth 2 form) lexical-binding) t)))
+	 form)
+	((eq (car form) 'custom-declare-face)
+	 (let ((face-symbol (eval (nth 1 form) lexical-binding)))
+	   (remhash face-symbol face--new-frame-defaults)
+	   (put face-symbol 'face-defface-spec nil)
+	   (put face-symbol 'face-override-spec nil))
+	 form)
+	((eq (car form) 'progn)
+	 (cons 'progn (mapcar #'elisp--eval-defun-1 (cdr form))))
+	(t form)))
+
+(defun eval-expression--debug (err)
+  "Signal ERR (stand-in for entering the debugger)."
+  (signal (car err) (cdr err)))
+
+(defun elisp--eval-defun ()
+  "Evaluate defun that point is in or before.
+The value is displayed in the echo area."
+  (defvar elisp--eval-defun-result)
+  (let ((edebugging edebug-all-defs)
+        elisp--eval-defun-result)
+    (save-excursion
+      (let ((standard-output t)
+            beg end form)
+        (save-excursion
+          (end-of-defun)
+          (beginning-of-defun)
+          (setq beg (point))
+          (setq form (funcall load-read-function (current-buffer)))
+          (setq end (point)))
+        (let* ((form `(let ((print-level ,print-level)
+                            (print-length ,print-length))
+                        ,(eval-sexp-add-defvars
+                          (elisp--eval-defun-1
+                           (macroexpand form)))))
+               (eval-result (eval form lexical-binding))
+               (print-length eval-expression-print-length)
+	       (print-level eval-expression-print-level)
+               (should-print (if (not edebugging) standard-output)))
+          (goto-char end)
+          (setq elisp--eval-defun-result eval-result)
+          (when should-print
+            (prin1 eval-result)))))
+    (let ((str (eval-expression-print-format elisp--eval-defun-result)))
+      (if str (princ str)))
+    elisp--eval-defun-result))
+
+(defun eval-defun (edebug-it)
+  "Evaluate top-level form around point and instrument it if EDEBUG-IT is non-nil."
+  (interactive "P")
+  (cond (edebug-it
+	 (require 'edebug)
+	 (defvar edebug-all-defs)
+	 (eval-defun (not edebug-all-defs)))
+	(t
+	 (handler-bind ((error (if eval-expression-debug-on-error
+	                           #'eval-expression--debug #'ignore)))
+	   (elisp--eval-defun)))))
 
 (defun display-buffer (buffer &optional action)
   "Make BUFFER visible in a window without selecting it."

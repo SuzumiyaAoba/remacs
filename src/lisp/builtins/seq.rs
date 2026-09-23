@@ -33,8 +33,8 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!("mapcan", 2, 2, f_mapcan, "Mapcar + nconc."),
     S!(
         "mapconcat",
+        2,
         3,
-        4,
         f_mapconcat,
         "Map FUNCTION over SEQUENCE, join results."
     ),

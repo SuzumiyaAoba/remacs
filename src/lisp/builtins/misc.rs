@@ -4946,6 +4946,11 @@ fn event_mod_list(i: &Interp, ev: &Value) -> Vec<String> {
             if (0..=31).contains(n) {
                 mods.push("control".to_string());
             }
+            // Uppercase ASCII carries an implicit shift modifier.
+            let c = n & !(CHAR_ALT | CHAR_CTL | CHAR_HYPER | CHAR_META | CHAR_SHIFT | CHAR_SUPER);
+            if (65..=90).contains(&c) {
+                mods.push("shift".to_string());
+            }
         }
         Value::Sym(s) => {
             mods.extend(event_sym_elements(&i.symbol_name(*s)).1);
@@ -4988,10 +4993,14 @@ fn event_basic(i: &mut Interp, ev: &Value) -> Value {
         }
         Value::Int(n) => {
             let c = n & !(CHAR_ALT | CHAR_CTL | CHAR_HYPER | CHAR_META | CHAR_SHIFT | CHAR_SUPER);
+            // GNU: an uppercase ASCII base is the lowercase letter with
+            // an implicit shift modifier.
             Value::Int(if (1..=26).contains(&c) {
                 c + 96
             } else if (0..=31).contains(&c) {
                 c + 64
+            } else if (65..=90).contains(&c) {
+                c + 32
             } else {
                 c
             })
