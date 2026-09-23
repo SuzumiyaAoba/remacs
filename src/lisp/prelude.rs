@@ -5590,7 +5590,7 @@ INIT)))."
       (funcall initialize variable requests)))
   variable)
 
-(defmacro defcustom (symbol initial doc &rest args)
+(defmacro defcustom (symbol initial &optional doc &rest args)
   "Declare SYMBOL as a customizable variable that defaults to INITIAL.
 INITIAL is a Lisp expression evaluated to give the default.
 DOC is the variable documentation string.  Keyword ARGS:
@@ -5691,7 +5691,7 @@ applies the attributes of the `t' entries, falling back to `default'."
       (setq rest (cdr (cdr rest)))))
   face)
 
-(defmacro defface (face spec doc &rest args)
+(defmacro defface (face spec &optional doc &rest args)
   "Define FACE (a symbol) as a customizable face with SPEC and DOC.
 SPEC is a list of (DISPLAY . PLIST) entries; ARGS are custom keywords."
   (declare (doc-string 3))
@@ -6814,6 +6814,796 @@ do that, use `get-text-property' and `get-char-property'."
     (if multiple
         (delete-dups (nreverse faces))
       (car (last faces)))))
+
+;; ---------- window excursions (window.el / subr.el) ----------
+
+(defmacro save-selected-window (&rest body)
+  "Execute BODY, then restore the previously selected window."
+  (declare (indent 0))
+  (let ((win (make-symbol "save-selected-window--window")))
+    `(let ((,win (selected-window)))
+       (unwind-protect
+           (progn ,@body)
+         (select-window ,win)))))
+
+(defmacro save-window-excursion (&rest body)
+  "Execute BODY, preserving window sizes and contents."
+  (declare (indent 0))
+  (let ((conf (make-symbol "save-window-excursion--config")))
+    `(let ((,conf (current-window-configuration)))
+       (unwind-protect
+           (progn ,@body)
+         (set-window-configuration ,conf)))))
+
+;; ---------- next-error machinery (simple.el) ----------
+
+(defcustom next-error-highlight 0.5)
+(defcustom next-error-highlight-no-select 0.5)
+(defcustom next-error-recenter nil)
+(defcustom next-error-message-highlight nil)
+(defcustom next-error-hook nil)
+(defcustom next-error-verbose t)
+
+(defvar next-error-highlight-timer nil)
+(defvar overlay-arrow-variable-list nil)
+
+(defvar next-error-overlay-arrow-position nil)
+(put 'next-error-overlay-arrow-position 'overlay-arrow-string "=>")
+(add-to-list 'overlay-arrow-variable-list 'next-error-overlay-arrow-position)
+
+(defvar next-error-last-buffer nil
+  "The most recent `next-error' buffer.")
+
+(defvar-local next-error-buffer nil
+  "The buffer-local value of the most recent `next-error' buffer.")
+
+(defvar-local next-error-function nil
+  "Function to use to find the next error in the current buffer.")
+
+(defvar-local next-error-move-function nil
+  "Function to use to move to an error locus.")
+
+(defsubst next-error-buffer-p (buffer
+			       &optional avoid-current
+			       extra-test-inclusive
+			       extra-test-exclusive)
+  "Return non-nil if BUFFER is a `next-error' capable buffer."
+  (and (buffer-name buffer)
+       (not (and avoid-current (eq buffer (current-buffer))))
+       (with-current-buffer buffer
+	 (if next-error-function
+	     (if extra-test-exclusive
+		 (funcall extra-test-exclusive)
+	       t)
+	   (and extra-test-inclusive
+		(funcall extra-test-inclusive))))))
+
+(defcustom next-error-find-buffer-function #'ignore)
+
+(defun next-error-buffer-on-selected-frame (&optional _avoid-current
+                                                      extra-test-inclusive
+                                                      extra-test-exclusive)
+  "Return a single visible `next-error' buffer on the selected frame."
+  (let ((window-buffers
+         (delete-dups
+          (delq nil (mapcar (lambda (w)
+                              (if (next-error-buffer-p
+				   (window-buffer w)
+                                   t
+                                   extra-test-inclusive extra-test-exclusive)
+                                  (window-buffer w)))
+                            (window-list))))))
+    (if (eq (length window-buffers) 1)
+        (car window-buffers))))
+
+(defun next-error-buffer-unnavigated-current (&optional avoid-current
+                                                        extra-test-inclusive
+                                                        extra-test-exclusive)
+  "Try the current buffer when outside navigation."
+  (if (and (not (local-variable-p 'next-error-buffer))
+           (next-error-buffer-p (current-buffer) avoid-current
+                                extra-test-inclusive extra-test-exclusive))
+      (current-buffer)))
+
+(defun next-error-find-buffer (&optional avoid-current
+					 extra-test-inclusive
+					 extra-test-exclusive)
+  "Return a `next-error' capable buffer."
+  (or
+   (funcall next-error-find-buffer-function avoid-current
+                                            extra-test-inclusive
+                                            extra-test-exclusive)
+   (if (and next-error-last-buffer
+            (next-error-buffer-p next-error-last-buffer avoid-current
+                                 extra-test-inclusive extra-test-exclusive))
+       next-error-last-buffer)
+   (if (next-error-buffer-p (current-buffer) avoid-current
+			    extra-test-inclusive extra-test-exclusive)
+       (current-buffer))
+   (let ((buffers (buffer-list)))
+     (while (and buffers
+                 (not (next-error-buffer-p
+		       (car buffers) avoid-current
+		       extra-test-inclusive extra-test-exclusive)))
+       (setq buffers (cdr buffers)))
+     (car buffers))
+   (and avoid-current
+	(next-error-buffer-p (current-buffer) nil
+			     extra-test-inclusive extra-test-exclusive)
+	(progn
+	  (message "This is the only buffer with error message locations")
+	  (current-buffer)))
+   (error "No buffers contain error message locations")))
+
+(defun next-error (&optional arg reset)
+  "Visit next `next-error' message and corresponding source code."
+  (interactive "P")
+  (if (consp arg) (setq reset t arg nil))
+  (let ((buffer (next-error-find-buffer)))
+    (when buffer
+      (with-current-buffer buffer
+        (funcall next-error-function (prefix-numeric-value arg) reset)
+        (let ((prev next-error-last-buffer))
+          (next-error-found buffer (current-buffer))
+          (when (or next-error-verbose
+                    (not (eq prev next-error-last-buffer)))
+            (message "%s locus from %s"
+                     (cond (reset                             "First")
+                           ((eq (prefix-numeric-value arg) 0) "Current")
+                           ((< (prefix-numeric-value arg) 0)  "Previous")
+                           (t                                 "Next"))
+                     next-error-last-buffer)))))))
+
+(defun next-error-internal ()
+  "Visit the source code corresponding to the `next-error' message at point."
+  (let ((buffer (current-buffer)))
+    (funcall next-error-function 0 nil)
+    (let ((prev next-error-last-buffer))
+      (next-error-found buffer (current-buffer))
+      (when (or next-error-verbose
+                (not (eq prev next-error-last-buffer)))
+        (message "Current locus from %s" next-error-last-buffer)))))
+
+(defun next-error-quit-window (from-buffer to-buffer)
+  "Quit window of FROM-BUFFER when the prefix arg is 0."
+  (when (and (eq current-prefix-arg 0) from-buffer
+             (not (eq from-buffer to-buffer)))
+    (let ((window (get-buffer-window from-buffer)))
+      (when (window-live-p window)
+        (quit-restore-window window)))))
+
+(defcustom next-error-found-function #'ignore)
+
+(defun next-error-found (&optional from-buffer to-buffer)
+  "Function to call when the next locus is found and displayed."
+  (setq next-error-last-buffer (or from-buffer (current-buffer)))
+  (when to-buffer
+    (with-current-buffer to-buffer
+      (setq next-error-buffer from-buffer)))
+  (when next-error-recenter
+    (recenter next-error-recenter))
+  (funcall next-error-found-function from-buffer to-buffer)
+  (next-error-message-highlight from-buffer)
+  (run-hooks 'next-error-hook))
+
+(defun next-error-select-buffer (buffer)
+  "Select a `next-error' capable BUFFER and set it as the last used."
+  (interactive
+   (list (get-buffer
+          (read-buffer "Select next-error buffer: " nil nil
+                       (lambda (b) (next-error-buffer-p (cdr b)))))))
+  (setq next-error-last-buffer buffer))
+
+(defalias 'goto-next-locus 'next-error)
+(defalias 'next-match 'next-error)
+
+(defun previous-error (&optional n)
+  "Visit previous `next-error' message and corresponding source code."
+  (interactive "p")
+  (next-error (- (or n 1))))
+
+(defun first-error (&optional n)
+  "Restart at the first error."
+  (interactive "p")
+  (next-error n t))
+
+(defvar display-buffer-overriding-action nil)
+
+(defun next-error-no-select (&optional n)
+  "Move point to the next error in the `next-error' buffer and highlight match."
+  (interactive "p")
+  (save-selected-window
+    (let ((next-error-highlight next-error-highlight-no-select)
+          (display-buffer-overriding-action
+           '(nil (inhibit-same-window . t))))
+      (next-error n))))
+
+(defun next-error-this-buffer-no-select (&optional n)
+  "Move point to the next error in the current buffer and highlight match."
+  (interactive "p")
+  (next-error-select-buffer (current-buffer))
+  (next-error-no-select n))
+
+(defun previous-error-no-select (&optional n)
+  "Move point to the previous error in the `next-error' buffer and highlight match."
+  (interactive "p")
+  (next-error-no-select (- (or n 1))))
+
+(defun previous-error-this-buffer-no-select (&optional n)
+  "Move point to the previous error in the current buffer and highlight match."
+  (interactive "p")
+  (next-error-select-buffer (current-buffer))
+  (previous-error-no-select n))
+
+(defvar next-error-follow-last-line nil)
+
+(define-minor-mode next-error-follow-minor-mode
+  "Minor mode for compilation, occur and diff modes."
+  :group 'next-error :init-value nil :lighter " Fol"
+  (if (not next-error-follow-minor-mode)
+      (remove-hook 'post-command-hook 'next-error-follow-mode-post-command-hook t)
+    (add-hook 'post-command-hook 'next-error-follow-mode-post-command-hook nil t)
+    (make-local-variable 'next-error-follow-last-line)))
+
+(defvar compilation-context-lines 0)
+(defvar compilation-current-error nil)
+
+(defun next-error-follow-mode-post-command-hook ()
+  (unless (equal next-error-follow-last-line (line-number-at-pos))
+    (setq next-error-follow-last-line (line-number-at-pos))
+    (condition-case nil
+	(let ((compilation-context-lines nil))
+	  (setq compilation-current-error (point))
+	  (next-error-no-select 0))
+      (error t))))
+
+(defvar-local next-error--message-highlight-overlay nil)
+(defface next-error-message '((t (:inherit highlight))))
+
+(defun next-error-message-highlight (error-buffer)
+  "Highlight the current error message in the `next-error' buffer."
+  (when next-error-message-highlight
+    (with-current-buffer error-buffer
+      (when (and next-error--message-highlight-overlay
+                 (not (eq next-error-message-highlight 'keep)))
+        (delete-overlay next-error--message-highlight-overlay))
+      (let ((ol (make-overlay (line-beginning-position) (1+ (line-end-position)))))
+        (overlay-put ol 'priority -50)
+        (overlay-put ol 'face 'next-error-message)
+        (overlay-put ol 'window (get-buffer-window))
+        (setf next-error--message-highlight-overlay ol)))))
+
+(defun recenter-current-error (&optional arg)
+  "Recenter the current displayed error in the `next-error' buffer."
+  (interactive "P")
+  (save-selected-window
+    (let ((next-error-highlight next-error-highlight-no-select)
+          (display-buffer-overriding-action
+           '(nil (inhibit-same-window . t))))
+      (next-error 0)
+      (set-buffer (window-buffer))
+      (recenter-top-bottom arg))))
+
+
+
+;; ---------- shell-command machinery (simple.el) ----------
+
+(defcustom shell-command-buffer-name "*Shell Command Output*")
+(defcustom shell-command-buffer-name-async "*Async Shell Command*")
+(defcustom shell-command-dont-erase-buffer nil)
+(defvar shell-command-saved-pos nil)
+(defvar shell-command-history nil)
+(defvar minibuffer-default-add-function nil)
+(defcustom async-shell-command-buffer 'confirm-new-buffer)
+(defcustom async-shell-command-display-buffer t)
+(defcustom async-shell-command-width nil)
+(defcustom shell-command-prompt-show-cwd nil)
+(defvar async-shell-command-mode 'shell-command-mode)
+(defvar mode-line-process nil)
+
+;; `define-derived-mode' is defined later; spell out a minimal mode.
+(defvar shell-command-mode-hook nil)
+(defun shell-command-mode ()
+  "Major mode for the output of `shell-command' and `async-shell-command'."
+  (interactive)
+  (fundamental-mode)
+  (setq major-mode 'shell-command-mode)
+  (setq mode-name "Shell Command")
+  (run-hooks 'shell-command-mode-hook))
+
+(defun file-attribute-size (attributes)
+  "The file size in bytes as an integer.  Accessor for `file-attributes'."
+  (nth 7 attributes))
+
+(defun format-insert-file (filename format)
+  "Insert the contents of FILENAME using data format FORMAT."
+  (insert-file-contents filename)
+  nil)
+
+(defun call-process-shell-command (command &optional infile destination display)
+  "Take command, execute it, and deposit the result in the current buffer."
+  (apply #'call-process shell-file-name infile destination display
+         (list shell-command-switch command)))
+
+(defun call-shell-region (&optional start end command delete destination)
+  "Deprecated.  Use `call-process-region' with the shell as PROGRAM."
+  (apply #'call-process-region start end shell-file-name
+         delete destination nil (list shell-command-switch command)))
+
+(defun start-process-shell-command (name buffer command)
+  "Start a program in a subprocess.  Return the process object for it."
+  (start-process name buffer shell-file-name shell-command-switch command))
+
+(defun start-file-process-shell-command (name buffer command)
+  "Start a program in a subprocess.  Return the process object for it."
+  (start-file-process name buffer shell-file-name shell-command-switch command))
+
+(defun process-file (program &optional infile buffer display &rest args)
+  "Process files synchronously in a separate process that runs PROGRAM.
+Similar to `call-process', but may invoke a file name handler based on
+`default-directory'."
+  (let ((fh (find-file-name-handler default-directory 'process-file))
+        lc stderr-file)
+    (unwind-protect
+        (if fh (apply fh 'process-file program infile buffer display args)
+          (when infile (setq lc (file-local-copy infile)))
+          (setq stderr-file (when (and (consp buffer) (stringp (cadr buffer)))
+                              (make-temp-file "emacs")))
+          (prog1
+              (apply 'call-process program
+                     (or lc infile)
+                     (if stderr-file (list (car buffer) stderr-file) buffer)
+                     display args)
+            (when stderr-file (copy-file stderr-file (cadr buffer) t))))
+      (when stderr-file (delete-file stderr-file))
+      (when lc (delete-file lc)))))
+
+(defvar process-file-side-effects t)
+(defcustom process-file-return-signal-string nil)
+
+(defun start-file-process (name buffer program &rest program-args)
+  "Start a program in a subprocess.  Return the process object for it.
+Similar to `start-process', but may invoke a file name handler based on
+`default-directory'."
+  (let ((fh (find-file-name-handler default-directory 'start-file-process)))
+    (if fh (apply fh 'start-file-process name buffer program program-args)
+      (apply 'start-process name buffer program program-args))))
+
+(defun shell-command-save-pos-or-erase (&optional output-to-current-buffer)
+  "Store a buffer position or erase the buffer.
+Optional argument OUTPUT-TO-CURRENT-BUFFER, if non-nil, means that the output
+of the shell command goes to the caller current buffer.
+See `shell-command-dont-erase-buffer'."
+  (let ((sym shell-command-dont-erase-buffer)
+        pos)
+    (setq buffer-read-only nil)
+    (setq pos
+          (cond ((eq sym 'save-point)
+                 (if (not output-to-current-buffer)
+                     (point)))
+                ((eq sym 'beg-last-out)
+                 (if (not output-to-current-buffer)
+                     (point-max)))
+                ((or (eq sym 'erase)
+                     (and (null sym) (not output-to-current-buffer)))
+                 (let ((inhibit-read-only t))
+                   (erase-buffer) nil))))
+    (when pos
+      (goto-char (point-max))
+      (push (cons (current-buffer) pos)
+            shell-command-saved-pos))))
+
+(defun shell-command-set-point-after-cmd (&optional buffer)
+  "Set point in BUFFER after command complete."
+  (when shell-command-dont-erase-buffer
+    (let* ((sym  shell-command-dont-erase-buffer)
+           (buf  (or buffer (current-buffer)))
+           (pos  (alist-get buf shell-command-saved-pos)))
+      (setq shell-command-saved-pos
+            (assq-delete-all buf shell-command-saved-pos))
+      (when (buffer-live-p buf)
+        (let ((win   (car (get-buffer-window-list buf)))
+              (pmax  (with-current-buffer buf (point-max))))
+          (unless (and pos (memq sym '(save-point beg-last-out end-last-out)))
+            (setq pos pmax))
+          (if win
+              (set-window-point win pos)
+            (when pos
+              (with-current-buffer buf (goto-char pos)))
+            (save-window-excursion
+              (let ((win (display-buffer
+                          buf
+                          '(nil (inhibit-switch-frame . t)))))
+                (set-window-point win pos)))))))))
+
+(defun shell-command-sentinel (process signal)
+  (when (memq (process-status process) '(exit signal))
+    (shell-command-set-point-after-cmd (process-buffer process))
+    (message "%s: %s."
+             (car (cdr (cdr (or (process-get process 'remote-command)
+                                (process-command process)))))
+             (substring signal 0 -1))))
+
+(defun shell-command--same-buffer-confirm (action)
+  (let ((help-form
+         (format
+          "There's a command already running in the default buffer,
+so we can't start a new one in the same one.
+
+Answering \"yes\" will %s.
+
+Answering \"no\" will exit without doing anything, and won't
+start the new command.
+
+Also see the `async-shell-command-buffer' variable."
+          (downcase action))))
+    (unless (yes-or-no-p
+             (format "A command is running in the default buffer.  %s? "
+                     action))
+      (user-error "Shell command in progress"))))
+
+(defun async-shell-command (command &optional output-buffer error-buffer)
+  "Execute string COMMAND asynchronously in background.
+Like `shell-command', but adds `&' at the end of COMMAND
+to execute it asynchronously."
+  (interactive
+   (list
+    (read-shell-command (if shell-command-prompt-show-cwd
+                            (format-message "Async shell command in `%s': "
+                                            (abbreviate-file-name
+                                             default-directory))
+                          "Async shell command: ")
+                        nil nil
+			(let ((filename
+			       (cond
+				(buffer-file-name)
+				((eq major-mode 'dired-mode)
+				 (dired-get-filename nil t)))))
+			  (and filename (file-relative-name filename))))
+    nil
+    shell-command-default-error-buffer))
+  (unless (string-match "&[ \t]*\\'" command)
+    (setq command (concat command " &")))
+  (shell-command command output-buffer error-buffer))
+
+(defun shell-command (command &optional output-buffer error-buffer)
+  "Execute string COMMAND in inferior shell; display output, if any.
+With prefix argument, insert the COMMAND's output at point."
+  (interactive
+   (list
+    (read-shell-command (if shell-command-prompt-show-cwd
+                            (format-message "Shell command in `%s': "
+                                            (abbreviate-file-name
+                                             default-directory))
+                          "Shell command: ")
+                        nil nil
+			(let ((filename
+			       (cond
+				(buffer-file-name)
+				((eq major-mode 'dired-mode)
+				 (dired-get-filename nil t)))))
+			  (and filename (file-relative-name filename))))
+    current-prefix-arg
+    shell-command-default-error-buffer))
+  (let ((handler
+	 (find-file-name-handler (directory-file-name default-directory)
+				 'shell-command)))
+    (if handler
+	(funcall handler 'shell-command command output-buffer error-buffer)
+      (if (and output-buffer
+               (not (string-match "[ \t]*&[ \t]*\\'" command))
+               (or (eq output-buffer (current-buffer))
+                   (and (stringp output-buffer) (eq (get-buffer output-buffer) (current-buffer)))
+	           (not (or (bufferp output-buffer) (stringp output-buffer)))))
+	  ;; Synchronous command with output in current buffer.
+	  (let ((error-file
+                 (and error-buffer
+                      (make-temp-file
+                       (expand-file-name "scor"
+                                         (or small-temporary-file-directory
+                                             temporary-file-directory))))))
+	    (barf-if-buffer-read-only)
+	    (push-mark nil t)
+            (shell-command-save-pos-or-erase 'output-to-current-buffer)
+            (call-process-shell-command command nil (if error-file
+                                                        (list t error-file)
+                                                      t))
+	    (when (and error-file (file-exists-p error-file))
+              (when (< 0 (file-attribute-size (file-attributes error-file)))
+                (with-current-buffer (get-buffer-create error-buffer)
+                  (let ((pos-from-end (- (point-max) (point))))
+                    (or (bobp)
+                        (insert "\f\n"))
+                    (format-insert-file error-file nil)
+                    (goto-char (- (point-max) pos-from-end)))
+                  (display-buffer (current-buffer))))
+	      (delete-file error-file))
+	    (goto-char (prog1 (mark t)
+			 (set-marker (mark-marker) (point)
+				     (current-buffer)))))
+	;; Output goes in a separate buffer.
+	(if (string-match "[ \t]*&[ \t]*\\'" command)
+	    ;; Command ending with ampersand means asynchronous.
+            (let* ((_ (or (null output-buffer)
+                          (bufferp output-buffer)
+                          (stringp output-buffer)
+                          (error "Asynchronous shell commands cannot output to current buffer")))
+                   (command (substring command 0 (match-beginning 0)))
+                   (_ (or (not (string= command ""))
+                          (error "Empty asynchronous command")))
+                   (buffer (get-buffer-create
+                            (or output-buffer shell-command-buffer-name-async)))
+                   (bname (buffer-name buffer))
+                   (proc (get-buffer-process buffer))
+                   (directory default-directory))
+	      (when proc
+		(cond
+		 ((eq async-shell-command-buffer 'confirm-kill-process)
+                  (shell-command--same-buffer-confirm "Kill it")
+		  (kill-process proc))
+		 ((eq async-shell-command-buffer 'confirm-new-buffer)
+                  (shell-command--same-buffer-confirm "Use a new buffer")
+                  (setq buffer (generate-new-buffer bname)))
+		 ((eq async-shell-command-buffer 'new-buffer)
+                  (setq buffer (generate-new-buffer bname)))
+		 ((eq async-shell-command-buffer 'confirm-rename-buffer)
+                  (shell-command--same-buffer-confirm "Rename it")
+		  (with-current-buffer buffer
+		    (rename-uniquely))
+                  (setq buffer (get-buffer-create bname)))
+		 ((eq async-shell-command-buffer 'rename-buffer)
+		  (with-current-buffer buffer
+		    (rename-uniquely))
+                  (setq buffer (get-buffer-create bname)))))
+	      (with-current-buffer buffer
+                (shell-command-save-pos-or-erase)
+		(setq default-directory directory)
+                (kill-local-variable 'shell-file-name)
+                (kill-local-variable 'shell-command-switch)
+                (let ((process-environment
+                       (append
+                        (and (natnump async-shell-command-width)
+                             (list
+                              (format "COLUMNS=%d"
+                                      async-shell-command-width)))
+                        (and (fboundp 'comint-term-environment)
+                             (comint-term-environment))
+                        process-environment)))
+		  (setq proc
+			(start-process-shell-command "Shell" buffer command)))
+		(setq mode-line-process '(":%s"))
+                (funcall async-shell-command-mode)
+                (setq-local revert-buffer-function
+                            (lambda (&rest _)
+                              (async-shell-command command buffer)))
+                (set-process-sentinel proc #'shell-command-sentinel)
+                (when (fboundp 'comint-output-filter)
+                  (set-process-filter proc #'comint-output-filter))
+                (if async-shell-command-display-buffer
+                    (display-buffer buffer '(nil (allow-no-window . t)))
+                  (let ((nonce (make-symbol "nonce")))
+                    (add-function :before (process-filter proc)
+                                  (lambda (proc _string)
+                                    (let ((buf (process-buffer proc)))
+                                      (when (buffer-live-p buf)
+                                        (remove-function (process-filter proc)
+                                                         nonce)
+                                        (display-buffer buf '(nil (allow-no-window . t))))))
+                                  `((name . ,nonce)))))))
+	  ;; Otherwise, command is executed synchronously.
+	  (shell-command-on-region (point) (point) command
+				   output-buffer nil error-buffer))))))
+
+(defun shell-command-on-region (start end command
+				      &optional output-buffer replace
+				      error-buffer display-error-buffer
+				      region-noncontiguous-p)
+  "Execute string COMMAND in inferior shell with region as input.
+Normally display output (if any) in temp buffer specified
+by `shell-command-buffer-name'; prefix arg means replace the region
+with it.  Return the exit code of COMMAND."
+  (interactive (let (string)
+		 (unless (mark)
+		   (user-error "The mark is not set now, so there is no region"))
+		 (setq string (read-shell-command "Shell command on region: "))
+		 (list (region-beginning) (region-end)
+		       string
+		       current-prefix-arg
+		       current-prefix-arg
+		       shell-command-default-error-buffer
+		       t
+		       (region-noncontiguous-p))))
+  (let ((error-file
+	 (if error-buffer
+	     (make-temp-file
+	      (expand-file-name "scor"
+				(or small-temporary-file-directory
+				    temporary-file-directory)))
+	   nil))
+	exit-status)
+    (if region-noncontiguous-p
+        (let ((input (concat (funcall region-extract-function (when replace 'delete)) "\n"))
+              output)
+          (with-temp-buffer
+            (insert input)
+            (call-process-region (point-min) (point-max)
+                                 shell-file-name t t
+                                 nil shell-command-switch
+                                 command)
+            (setq output (split-string (buffer-substring
+                                        (point-min)
+                                        (if (eq (char-before (point-max)) ?\n)
+                                            (1- (point-max))
+                                          (point-max)))
+                                       "\n")))
+          (cond
+           (replace
+            (goto-char start)
+            (funcall region-insert-function output))
+           (t
+            (let ((buffer (get-buffer-create
+                           (or output-buffer shell-command-buffer-name))))
+              (with-current-buffer buffer
+                (erase-buffer)
+                (funcall region-insert-function output))
+              (display-message-or-buffer buffer)))))
+      (if (or replace
+              (and output-buffer
+                   (not (or (bufferp output-buffer) (stringp output-buffer)))))
+          ;; Replace specified region with output from command.
+          (let ((swap (and replace (< start end))))
+            (goto-char start)
+            (when (and replace
+                       (not (eq replace 'no-mark)))
+              (push-mark (point) 'nomsg))
+            (setq exit-status
+                  (call-shell-region start end command replace
+                                       (if error-file
+                                           (list t error-file)
+                                         t)))
+            (when (and replace swap
+                       (not (eq replace 'no-mark)))
+              (exchange-point-and-mark)))
+        ;; No prefix argument: put the output in a temp buffer.
+        (let ((buffer (get-buffer-create
+                       (or output-buffer shell-command-buffer-name))))
+          (set-buffer-major-mode buffer)
+          (unwind-protect
+              (if (and (eq buffer (current-buffer))
+                       (or (memq shell-command-dont-erase-buffer '(nil erase))
+                           (and (not (eq buffer (get-buffer
+                                                 shell-command-buffer-name)))
+                                (not (region-active-p)))))
+                  (progn (setq buffer-read-only nil)
+                         (delete-region (max start end) (point-max))
+                         (delete-region (point-min) (min start end))
+                         (setq exit-status
+                               (call-process-region (point-min) (point-max)
+                                                    shell-file-name t
+                                                    (if error-file
+                                                        (list t error-file)
+                                                      t)
+                                                    nil shell-command-switch
+                                                    command)))
+                (let ((directory default-directory))
+                  (with-current-buffer buffer
+                    (if (not output-buffer)
+                        (setq default-directory directory))
+                    (shell-command-save-pos-or-erase)))
+                (setq exit-status
+                      (call-shell-region start end command nil
+                                           (if error-file
+                                               (list buffer error-file)
+                                             buffer))))
+            (with-current-buffer buffer
+              (setq-local revert-buffer-function
+                          (lambda (&rest _)
+                            (shell-command command)))
+              (setq mode-line-process
+                    (cond ((null exit-status)
+                           " - Error")
+                          ((stringp exit-status)
+                           (format " - Signal [%s]" exit-status))
+                          ((not (equal 0 exit-status))
+                           (format " - Exit [%d]" exit-status)))))
+            (if (with-current-buffer buffer (> (point-max) (point-min)))
+                (progn
+                  (display-message-or-buffer buffer)
+                  (shell-command-set-point-after-cmd buffer))
+              (let ((output
+                     (if (and error-file
+                              (< 0 (file-attribute-size
+				    (file-attributes error-file))))
+                         (format "some error output%s"
+                                 (if shell-command-default-error-buffer
+                                     (format " to the \"%s\" buffer"
+                                             shell-command-default-error-buffer)
+                                   ""))
+                       "no output")))
+                (cond ((null exit-status)
+                       (message "(Shell command failed with error)"))
+                      ((equal 0 exit-status)
+                       (message "(Shell command succeeded with %s)"
+                                output))
+                      ((stringp exit-status)
+                       (message "(Shell command killed by signal %s)"
+                                exit-status))
+                      (t
+                       (message "(Shell command failed with code %d and %s)"
+                                exit-status output)))))))))
+    (when (and error-file (file-exists-p error-file))
+      (if (< 0 (file-attribute-size (file-attributes error-file)))
+	  (with-current-buffer (get-buffer-create error-buffer)
+            (goto-char (point-max))
+	    (unless (bobp)
+	      (insert "\f\n"))
+	    (format-insert-file error-file nil)
+	    (and display-error-buffer
+		 (display-buffer (current-buffer)))))
+      (delete-file error-file))
+    exit-status))
+
+(defun minibuffer-default-add-shell-commands ()
+  "Return a list of all commands associated with the current file."
+  (let* ((filename (and (atom minibuffer-default)
+		        minibuffer-default))
+	 (commands (and filename
+                        (fboundp 'shell-command-guess)
+                        (shell-command-guess (list filename)))))
+    (setq commands (mapcar (lambda (command)
+			     (concat command " " filename))
+			   commands))
+    (if (listp minibuffer-default)
+	(append minibuffer-default commands)
+      (cons minibuffer-default commands))))
+
+(defvar minibuffer-local-shell-command-map
+  (let ((map (make-sparse-keymap)))
+    (set-keymap-parent map minibuffer-local-map)
+    (define-key map "\t"       #'completion-at-point)
+    (define-key map [M-up]     #'minibuffer-previous-completion)
+    (define-key map [M-down]   #'minibuffer-next-completion)
+    (define-key map [?\M-\r]   #'minibuffer-choose-completion)
+    map)
+  "Keymap used for completing shell commands in minibuffer.")
+
+(defun read-shell-command (prompt &optional initial-contents hist &rest args)
+  "Read a shell command from the minibuffer, and return it as a string."
+  (minibuffer-with-setup-hook
+      (lambda ()
+        (when (fboundp 'shell-completion-vars) (shell-completion-vars))
+        (setq-local minibuffer-default-add-function
+                    #'minibuffer-default-add-shell-commands))
+    (apply #'read-from-minibuffer prompt initial-contents
+	   minibuffer-local-shell-command-map
+	   nil
+	   (or hist 'shell-command-history)
+	   args)))
+
+(defvar region-insert-function
+  (lambda (lines)
+    (let ((first t))
+      (while lines
+        (or first
+            (insert ?\n))
+        (insert (car lines))
+        (setq lines (cdr lines)
+              first nil))))
+  "Function to insert the region's content.")
+
+(defun rename-uniquely ()
+  "Rename current buffer to a similar name not already taken."
+  (interactive)
+  (save-match-data
+    (let ((base-name (buffer-name)))
+      (and (string-match "<[0-9]+>\\'" base-name)
+	   (not (and buffer-file-name
+		     (string= base-name
+			      (file-name-nondirectory buffer-file-name))))
+	   (setq base-name (substring base-name 0 (match-beginning 0))))
+      (rename-buffer (generate-new-buffer-name base-name))
+      (force-mode-line-update))))
+
 
 ;; ---------- text-property-search.el (GNU port) ----------
 

@@ -518,7 +518,7 @@ fn poll_proc(i: &mut Interp, pref: &ProcessRef) -> Result<bool, Flow> {
 }
 
 /// Poll all live processes once; returns true if anything happened.
-fn poll_all(i: &mut Interp) -> Result<bool, Flow> {
+pub(crate) fn poll_all(i: &mut Interp) -> Result<bool, Flow> {
     let procs = i.processes.clone();
     let mut did = false;
     for p in procs {

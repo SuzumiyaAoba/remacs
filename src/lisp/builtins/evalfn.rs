@@ -1384,6 +1384,9 @@ fn sleep_firing_timers(i: &mut Interp, secs: f64) -> EvalResult {
         std::time::Instant::now() + std::time::Duration::from_secs_f64(secs.min(3600.0));
     loop {
         timer_check(i)?;
+        // GNU's wait also drains subprocess output (filters/buffers/
+        // sentinels) — sit-for/sleep-for both pump.
+        crate::lisp::process::poll_all(i)?;
         let rest = deadline.saturating_duration_since(std::time::Instant::now());
         if rest.is_zero() {
             break;
@@ -1391,6 +1394,7 @@ fn sleep_firing_timers(i: &mut Interp, secs: f64) -> EvalResult {
         std::thread::sleep(rest.min(std::time::Duration::from_millis(20)));
     }
     timer_check(i)?;
+    crate::lisp::process::poll_all(i)?;
     Ok(Value::Nil)
 }
 

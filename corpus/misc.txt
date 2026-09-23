@@ -523,3 +523,6 @@
 (char-displayable-p 65)
 (event-basic-type 65)
 (event-modifiers 65)
+(with-temp-buffer (insert "a b c") (shell-command-on-region (point-min) (point-max) "wc -w" nil t) (buffer-string))
+(with-temp-buffer (insert "x\ny\n") (call-shell-region (point-min) (point-max) "wc -l" nil t) (buffer-string))
+(with-temp-buffer (process-file "cat" nil t nil) (buffer-string))
