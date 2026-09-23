@@ -136,10 +136,19 @@ fn eval_file_lex(i: &mut Interp, path: &str, force_lex: bool) -> EvalResult {
         }
     };
     // Track load-file-name / load-in-progress like Emacs does.
-    // Emacs stores the canonical (symlink-resolved) file name.
-    let canon = std::fs::canonicalize(path)
-        .map(|p| p.to_string_lossy().into_owned())
-        .unwrap_or_else(|_| path.to_string());
+    // GNU's `load' records the name as found (absolutized, but NOT
+    // symlink-resolved); `--script' canonicalizes it.
+    let canon = if force_lex {
+        std::fs::canonicalize(path)
+            .map(|p| p.to_string_lossy().into_owned())
+            .unwrap_or_else(|_| path.to_string())
+    } else if std::path::Path::new(path).is_absolute() {
+        path.to_string()
+    } else {
+        std::env::current_dir()
+            .map(|d| d.join(path).to_string_lossy().into_owned())
+            .unwrap_or_else(|_| path.to_string())
+    };
     eval_src(i, &canon, &src, force_lex)
 }
 
@@ -175,9 +184,21 @@ fn eval_src(i: &mut Interp, file: &str, src: &str, force_lex: bool) -> EvalResul
         Value::list(i.features.iter().map(|s| i.sym(*s)).collect::<Vec<_>>());
     let fid = i.intern("features");
     i.obarray.symbol_mut(fid).value = flist;
+    i.specbind(cll, Value::Nil)?;
     let r = eval_str_for_load(i, &src);
     if r.is_ok() {
-        let _ = cll;
+        // GNU records the file in `load-history': (FILE . ENTRIES),
+        // newest file first, entries in evaluation order.
+        let mut entries = i.symbol_value(cll).list_to_vec().unwrap_or_default();
+        entries.reverse();
+        let entry = Value::cons(Value::string(file), Value::list(entries));
+        let lh = i.intern("load-history");
+        let cur = match i.symbol_value(lh) {
+            // Loads can run before the prelude `defvar' initializes it.
+            Value::Sym(s) if s == crate::lisp::sym::UNBOUND => Value::Nil,
+            v => v,
+        };
+        i.obarray.symbol_mut(lh).value = Value::cons(entry, cur);
         run_after_load(i, file);
     }
     i.unbind_to(mark)?;
@@ -295,12 +316,101 @@ fn eval_for_load(i: &mut Interp, form: Value) -> EvalResult {
         return Ok(last);
     }
     match i.eval(&expanded) {
-        Ok(v) => Ok(v),
+        Ok(v) => {
+            record_load_entry(i, &expanded);
+            Ok(v)
+        }
         Err(crate::lisp::Flow::Throw(tag, val)) => {
             let nc = i.intern("no-catch");
             Err(i.signal_data(nc, vec![tag, val]))
         }
         Err(f) => Err(f),
+    }
+}
+
+/// Record a `load-history' entry for a successfully evaluated top-level
+/// form during `load', pushing onto `current-load-list' the way GNU's
+/// lread.c does.  GNU's entry shapes: `(defun . SYM)' for function-ish
+/// definitions (defun/defmacro/defsubst/defalias/autoload, plus the
+/// `defun' leaf that mode/defgeneric macros expand into), bare `SYM'
+/// for variables, `(defface . SYM)', `(provide . FEAT)' and
+/// `(require . FEAT)'.
+fn record_load_entry(i: &mut Interp, form: &Value) {
+    let Some(items) = form.list_to_vec().ok() else { return };
+    let Some(&Value::Sym(head)) = items.first() else {
+        return;
+    };
+    // NAME is (cadr FORM); unwrap a `quote' wrapper (`provide' et al).
+    let quote_id = i.intern("quote");
+    let name = |items: &[Value]| -> Option<Value> {
+        match items.get(1)? {
+            v @ Value::Sym(_) => Some(v.clone()),
+            Value::Cons(_) => {
+                let q = items[1].list_to_vec().ok()?;
+                if q.len() == 2
+                    && matches!(&q[0], Value::Sym(s) if *s == quote_id)
+                {
+                    Some(q[1].clone())
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        }
+    };
+    const DEFUN_HEADS: &[&str] = &[
+        "defun",
+        "defmacro",
+        "defsubst",
+        "defalias",
+        "autoload",
+        "cl-defun",
+        "cl-defmacro",
+        "define-minor-mode",
+        "define-derived-mode",
+        "cl-defgeneric",
+        "cl-defmethod",
+        "define-obsolete-function-alias",
+    ];
+    const DEFVAR_HEADS: &[&str] = &[
+        "defvar",
+        "defconst",
+        "defvar-local",
+        "defcustom",
+        "defvar-keymap",
+        "custom-declare-variable",
+        "define-obsolete-variable-alias",
+    ];
+    let head_name = i.symbol_name(head).to_string();
+    let defun_id = i.intern("defun");
+    let defface_id = i.intern("defface");
+    let provide_id = i.intern("provide");
+    let require_id = i.intern("require");
+    let entry = match head_name.as_str() {
+        h if DEFUN_HEADS.contains(&h) => {
+            name(&items).map(|nm| Value::cons(i.sym(defun_id), nm))
+        }
+        h if DEFVAR_HEADS.contains(&h) => name(&items),
+        // `defface' expands to `custom-declare-face' before eval; GNU's
+        // C subr attaches (defface . FACE) to `current-load-list'.
+        "defface" | "custom-declare-face" => {
+            name(&items).map(|nm| Value::cons(i.sym(defface_id), nm))
+        }
+        "provide" => {
+            name(&items).map(|nm| Value::cons(i.sym(provide_id), nm))
+        }
+        "require" => {
+            name(&items).map(|nm| Value::cons(i.sym(require_id), nm))
+        }
+        _ => None,
+    };
+    if let Some(e) = entry {
+        let cll = i.intern("current-load-list");
+        let cur = match i.symbol_value(cll) {
+            Value::Sym(s) if s == crate::lisp::sym::UNBOUND => Value::Nil,
+            v => v,
+        };
+        i.obarray.symbol_mut(cll).value = Value::cons(e, cur);
     }
 }
 

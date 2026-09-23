@@ -37,7 +37,6 @@ are the mode's body, run on each toggle."
            (map-sym (intern (concat name "-map"))))
       `(progn
          (defvar ,variable ,init-value ,doc)
-         (defvar ,hook nil)
          ,@(when keymap `((defvar ,map-sym ,keymap)))
          (defun ,mode (&optional arg)
            ,doc
@@ -63,6 +62,7 @@ are the mode's body, run on each toggle."
              (message "%s mode %s" ,pretty
                       (if ,variable "enabled" "disabled")))
            ,variable)
+         (defvar ,hook nil)
          ,@(when global `((put ',mode 'global-minor-mode t)))
          ;; Register the lighter on minor-mode-alist.
          (let ((cell (assq ',variable minor-mode-alist)))

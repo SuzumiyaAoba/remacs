@@ -1080,7 +1080,8 @@ fn f_autoload(i: &mut Interp, args: Vec<Value>) -> EvalResult {
         cell.extend(args[2..].iter().cloned());
         i.fset(fid, Value::list(cell));
     }
-    Ok(Value::Nil)
+    // GNU's `autoload' returns FUNCTION.
+    Ok(args[0].clone())
 }
 fn f_autoloadp(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     let auto_id = i.intern("autoload");
