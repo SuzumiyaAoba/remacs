@@ -871,7 +871,7 @@ fn format_g(x: f64, prec: usize) -> String {
 /// `1.5`, `1.0`, `1e+20`, `1.0e+INF`, `-1.0e+INF`, `0.0e+NaN`.
 pub fn format_float(f: f64) -> String {
     if f.is_nan() {
-        return "0.0e+NaN".into();
+        return if f.is_sign_negative() { "-0.0e+NaN" } else { "0.0e+NaN" }.into();
     }
     if f.is_infinite() {
         return if f > 0.0 { "1.0e+INF" } else { "-1.0e+INF" }.into();

@@ -916,8 +916,25 @@ fn parse_float(tok: &str) -> Option<f64> {
     if i < bytes.len() && (bytes[i] == b'e' || bytes[i] == b'E') {
         saw_exp = true;
         i += 1;
+        let mut exp_sign = None;
         if i < bytes.len() && (bytes[i] == b'+' || bytes[i] == b'-') {
+            exp_sign = Some(bytes[i]);
             i += 1;
+        }
+        // GNU's special literals: `[eE]+NaN' and `[eE]+INF' — the
+        // exponent sign must be `+', the suffix is case-sensitive.
+        if exp_sign == Some(b'+') {
+            let rest = &tok[i..];
+            if rest == "NaN" || rest == "INF" {
+                let neg = tok.starts_with('-');
+                return Some(if rest == "NaN" {
+                    if neg { -f64::NAN } else { f64::NAN }
+                } else if neg {
+                    f64::NEG_INFINITY
+                } else {
+                    f64::INFINITY
+                });
+            }
         }
         let es = i;
         while i < bytes.len() && bytes[i].is_ascii_digit() {
