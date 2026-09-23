@@ -943,9 +943,16 @@ pub(crate) static SUBRS: &[Subr] = &[
     // `window-leftmost-p'/`-rightmost-p'/`-topmost-p'/`-bottommost-p'
     // do not exist in GNU.
     S!("window-at-side-p", 0, 2, f_window_at_side_p, ""),
-    S!("window-in-direction", 1, 5, f_window_in_direction, ""),
+    S!(
+        "window-in-direction",
+        1,
+        6,
+        f_window_in_direction,
+        "Return window in DIRECTION as seen from WINDOW."
+    ),
     S!("window-main-window", 0, 1, f_window_main_window, ""),
-    S!("get-mru-window", 0, 2, f_selected_window, ""),
+    // `get-mru-window' lives in editor::winxtra with the real
+    // use-time scan.
     S!("get-window-with-predicate", 1, 3, f_get_window_pred, ""),
     // ---------- keymap ops ----------
     S!("suppress-keymap", 1, 2, f_suppress_keymap, ""),
@@ -6646,31 +6653,81 @@ fn f_keyboard_coding_system(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     Ok(i.keyboard_coding.clone())
 }
 
-/// `window-at-side-p' — valid-window check (GNU's plain "N is not a
-/// valid window" error), then SIDE must be nil or one of
-/// left/top/right/bottom; anything else fails GNU's side decode with
-/// `wrong-type-argument integerp nil'.  Our single window spans all
-/// sides, so a valid call yields t.
+/// `window-at-side-p' — GNU's plain "N is not a valid window" error
+/// for a bad window, then SIDE nil/left/top/right/bottom selects the
+/// edge; anything else fails GNU's side decode with
+/// `wrong-type-argument integerp nil'.
 fn f_window_at_side_p(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    match arg(&a, 0) {
-        Value::Nil | Value::Window(_) => {}
+    // GNU window.el: WINDOW's SIDE edge equals the same edge of the
+    // frame's root window.  Our flat model has no root window object;
+    // the root extent is (0,0,frame-width,minibuffer-top) — i.e. the
+    // frame minus the echo area.
+    let w = match arg(&a, 0) {
+        Value::Nil => crate::editor::sel_window(i)
+            .ok_or_else(|| i.error("no selected window"))?,
+        Value::Window(w) => w,
         other => {
             let shown = i.princ_to_string(&other);
             return Err(i.error(format!("{shown} is not a valid window")));
         }
-    }
-    match arg(&a, 1) {
-        Value::Nil => Ok(Value::t()),
-        Value::Sym(s)
-            if matches!(
-                i.symbol_name(s).as_str(),
-                "left" | "top" | "right" | "bottom"
-            ) =>
-        {
-            Ok(Value::t())
-        }
-        _ => Err(i.wrong_type_mut("integerp", &Value::Nil)),
-    }
+    };
+    let side = match arg(&a, 1) {
+        Value::Nil => 3,
+        Value::Sym(s) => match i.symbol_name(s).as_str() {
+            "left" => 0,
+            "top" => 1,
+            "right" => 2,
+            "bottom" => 3,
+            _ => return Err(i.wrong_type_mut("integerp", &Value::Nil)),
+        },
+        _ => return Err(i.wrong_type_mut("integerp", &Value::Nil)),
+    };
+    let wid = w.borrow().id;
+    let frame = i.frames.iter().find(|f| {
+        f.borrow().windows.iter().any(|w2| w2.borrow().id == wid)
+            || f
+                .borrow()
+                .minibuffer
+                .as_ref()
+                .map(|m| m.borrow().id == wid)
+                .unwrap_or(false)
+    });
+    let Some(frame) = frame.cloned() else {
+        return Ok(Value::Nil);
+    };
+    let (root_l, root_t, root_r, root_b) = {
+        let f = frame.borrow();
+        let mini_top = f
+            .minibuffer
+            .as_ref()
+            .map(|m| m.borrow().top as i128)
+            .unwrap_or(f.height as i128);
+        // Root top = topmost content edge (0 unsplit, 1 after GNU's
+        // menu-bar row materializes on the first split).
+        let top = f
+            .windows
+            .iter()
+            .map(|w| w.borrow().top as i128)
+            .min()
+            .unwrap_or(0);
+        (0i128, top, f.width as i128, mini_top)
+    };
+    let (wl, wt, wr, wb) = {
+        let b = w.borrow();
+        (
+            b.left as i128,
+            b.top as i128,
+            (b.left + b.width) as i128,
+            (b.top + b.height) as i128,
+        )
+    };
+    let at = match side {
+        0 => wl == root_l,
+        1 => wt == root_t,
+        2 => wr == root_r,
+        _ => wb == root_b,
+    };
+    Ok(Value::from_bool(at))
 }
 
 /// `window-font-width' / `window-font-height' — 1 (char cells) on a
@@ -8038,8 +8095,295 @@ fn f_selected_window(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
 }
 
 fn f_window_in_direction(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let _ = &a;
-    f_selected_window(i, vec![])
+    // GNU window.el `window-in-direction' — nearest window in
+    // DIRECTION seen from WINDOW's reference position.
+    enum Dir {
+        Above,
+        Below,
+        Left,
+        Right,
+    }
+    let dir = match i
+        .sym_id(&a[0])
+        .map(|s| i.symbol_name(s))
+        .as_deref()
+    {
+        Some("up") | Some("above") => Dir::Above,
+        Some("down") | Some("below") => Dir::Below,
+        Some("left") => Dir::Left,
+        Some("right") => Dir::Right,
+        _ => {
+            return Err(i.error(format!(
+                "Wrong direction {}",
+                i.princ_to_string(&a[0])
+            )))
+        }
+    };
+    // window-normalize-window WINDOW t — nil means selected.
+    let window = match arg(&a, 1) {
+        Value::Nil => crate::editor::sel_window(i)
+            .ok_or_else(|| i.error("no selected window"))?,
+        Value::Window(w) if !w.borrow().dead => w,
+        other => {
+            return Err(i.error(format!(
+                "{} is not a live window",
+                i.princ_to_string(&other)
+            )))
+        }
+    };
+    let ignore = arg(&a, 2).truthy();
+    let sign = arg(&a, 3).int().unwrap_or(0);
+    let wrap = arg(&a, 4).truthy();
+    let minibuf = arg(&a, 5);
+
+    let wid = window.borrow().id;
+    let frame = i
+        .frames
+        .iter()
+        .find(|f| {
+            f.borrow().windows.iter().any(|w| w.borrow().id == wid)
+                || f
+                    .borrow()
+                    .minibuffer
+                    .as_ref()
+                    .map(|m| m.borrow().id == wid)
+                    .unwrap_or(false)
+        })
+        .cloned();
+    let Some(frame) = frame else {
+        return Ok(Value::Nil);
+    };
+
+    let (wtop, wleft, wwid, whgt, wpt) = {
+        let w = window.borrow();
+        (
+            w.top as i128,
+            w.left as i128,
+            w.width as i128,
+            w.height as i128,
+            w.point,
+        )
+    };
+    let hor = matches!(dir, Dir::Left | Dir::Right);
+    let first = if hor { wleft } else { wtop };
+    let last = first + if hor { wwid } else { whgt };
+    let posn = if sign < 0 {
+        if hor { wtop + whgt - 1 } else { wleft + wwid - 1 }
+    } else if sign > 0 {
+        if hor { wtop } else { wleft }
+    } else {
+        // GNU takes (nth 2 (posn-at-point ...)) = (COL . ROW); nil in
+        // batch → the (or .. 1) fallbacks.
+        let pap_sym = i.intern("posn-at-point");
+        let pap = i.apply(
+            &Value::Sym(pap_sym),
+            vec![Value::Int(wpt as i128 + 1), Value::Window(window.clone())],
+        )?;
+        let posn_cons = pap
+            .list_to_vec()
+            .ok()
+            .and_then(|v| v.get(2).cloned())
+            .unwrap_or(Value::Nil);
+        let (pcar, pcdr) = match &posn_cons {
+            Value::Cons(c) => {
+                let b = c.borrow();
+                (b.car.int(), b.cdr.int())
+            }
+            _ => (None, None),
+        };
+        if hor {
+            pcdr.unwrap_or(1) + wtop
+        } else {
+            pcar.unwrap_or(1) + wleft
+        }
+    };
+
+    let (fwidth, frame_bot, root_top, mini_top) = {
+        let f = frame.borrow();
+        let (mini_t, mini_b) = f
+            .minibuffer
+            .as_ref()
+            .map(|m| {
+                let b = m.borrow();
+                (b.top as i128, (b.top + b.height) as i128)
+            })
+            .unwrap_or((f.height as i128, f.height as i128));
+        // `frame-pixel-height' = frame bottom including the echo
+        // area; `root_top' = topmost content edge (0 unsplit, 1
+        // once the menu-bar row materialized).
+        (
+            f.width as i128,
+            mini_b,
+            f.windows
+                .iter()
+                .map(|w| w.borrow().top as i128)
+                .min()
+                .unwrap_or(0),
+            mini_t,
+        )
+    };
+    let mut best_edge = match dir {
+        Dir::Below => frame_bot,
+        Dir::Right => fwidth,
+        _ => -1,
+    };
+    let mut best_edge_2 = best_edge;
+    let mut best_diff_2 = if hor { frame_bot } else { fwidth };
+    let mut best: Option<WindowRef> = None;
+    let mut best_2: Option<WindowRef> = None;
+
+    // walk-window-tree's minibuf arg: t → always include FRAME's
+    // minibuffer window; nil → only when active; other → never.
+    let mut cands: Vec<WindowRef> = frame.borrow().windows.clone();
+    if let Some(mini) = frame.borrow().minibuffer.clone() {
+        let include = match &minibuf {
+            Value::Sym(s) if i.symbol_name(*s) == "t" => true,
+            Value::Nil => i.minibuf_level > 0,
+            _ => false,
+        };
+        if include && !mini.borrow().dead {
+            cands.push(mini);
+        }
+    }
+    let iwp = i
+        .symbol_value(i.intern_soft("ignore-window-parameters").unwrap_or(0))
+        .truthy();
+    let no_ow = i.intern("no-other-window");
+    let active_mini = i.minibuf_level > 0;
+
+    // window-at-side-p against the root extent (0,root_top,fwidth,
+    // mini_top).
+    let at_side = |w: &WindowRef, s: usize| -> bool {
+        let b = w.borrow();
+        let (l, t, r, bt) = (
+            b.left as i128,
+            b.top as i128,
+            (b.left + b.width) as i128,
+            (b.top + b.height) as i128,
+        );
+        match s {
+            0 => l == 0,
+            1 => t == root_top,
+            2 => r == fwidth,
+            _ => bt == mini_top,
+        }
+    };
+
+    for w in cands {
+        if w.borrow().id == wid || w.borrow().dead {
+            continue;
+        }
+        if !ignore && !iwp {
+            let no_other =
+                crate::lisp::eval::plist_get(&w.borrow().params, no_ow);
+            if no_other.truthy() {
+                continue;
+            }
+        }
+        let (wt, wl, ww, wh) = {
+            let b = w.borrow();
+            (
+                b.top as i128,
+                b.left as i128,
+                b.width as i128,
+                b.height as i128,
+            )
+        };
+        if hor {
+            if wt <= posn && posn < wt + wh {
+                // W covers the reference row.
+                let ok = match dir {
+                    Dir::Left => {
+                        (wl <= first && wl > best_edge)
+                            || (wrap && at_side(&window, 0) && at_side(&w, 2))
+                    }
+                    Dir::Right => {
+                        (wl >= last && wl < best_edge)
+                            || (wrap && at_side(&window, 2) && at_side(&w, 0))
+                    }
+                    _ => false,
+                };
+                if ok {
+                    best_edge = wl;
+                    best = Some(w.clone());
+                }
+            } else if (matches!(dir, Dir::Left) && wl + ww <= first)
+                || (matches!(dir, Dir::Right) && last <= wl)
+            {
+                // W is on the right side axis but doesn't cover posn.
+                let diff = if wt > posn {
+                    wt - posn
+                } else {
+                    posn - wt - wh
+                };
+                if diff < best_diff_2
+                    || (diff == best_diff_2
+                        && match dir {
+                            Dir::Left => wl > best_edge_2,
+                            _ => wl < best_edge_2,
+                        })
+                {
+                    best_edge_2 = wl;
+                    best_diff_2 = diff;
+                    best_2 = Some(w.clone());
+                }
+            }
+        } else {
+            if wl <= posn && posn < wl + ww {
+                // W covers the reference column.
+                let ok = match dir {
+                    Dir::Above => {
+                        (wt <= first && wt > best_edge)
+                            || (wrap
+                                && at_side(&window, 1)
+                                && if active_mini {
+                                    w.borrow().minibuffer && i.minibuf_level > 0
+                                } else {
+                                    at_side(&w, 3)
+                                })
+                    }
+                    Dir::Below => {
+                        (wt >= first && wt < best_edge)
+                            || (wrap
+                                && if active_mini {
+                                    window.borrow().minibuffer && i.minibuf_level > 0
+                                } else {
+                                    at_side(&window, 3)
+                                }
+                                && at_side(&w, 1))
+                    }
+                    _ => false,
+                };
+                if ok {
+                    best_edge = wt;
+                    best = Some(w.clone());
+                }
+            } else if (matches!(dir, Dir::Above) && wt + wh <= first)
+                || (matches!(dir, Dir::Below) && last <= wt)
+            {
+                let diff = if wl > posn {
+                    wl - posn
+                } else {
+                    posn - wl - ww
+                };
+                if diff < best_diff_2
+                    || (diff == best_diff_2
+                        && match dir {
+                            Dir::Above => wt > best_edge_2,
+                            _ => wt < best_edge_2,
+                        })
+                {
+                    best_edge_2 = wt;
+                    best_diff_2 = diff;
+                    best_2 = Some(w.clone());
+                }
+            }
+        }
+    }
+    Ok(best
+        .or(best_2)
+        .map(Value::Window)
+        .unwrap_or(Value::Nil))
 }
 
 fn f_window_normalize(i: &mut Interp, a: Vec<Value>) -> EvalResult {

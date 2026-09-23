@@ -5105,14 +5105,186 @@ Return WINDOW if BUFFER and WINDOW are live."
       (set-window-prev-buffers window nil))
     window))
 
+;; GNU window.el: window size predicates over the frame root window.
+(defun window-full-height-p (&optional window)
+  "Return t if WINDOW is as high as its containing frame.
+More precisely, return t if and only if the total height of
+WINDOW equals the total height of the root window of WINDOW's
+frame.  WINDOW must be a valid window and defaults to the
+selected one."
+  (setq window (window-normalize-window window))
+  (if (window-minibuffer-p window)
+      (eq window (frame-root-window (window-frame window)))
+    (= (window-pixel-height window)
+       (window-pixel-height (frame-root-window window)))))
+
+(defun window-full-width-p (&optional window)
+  "Return t if WINDOW is as wide as its containing frame.
+More precisely, return t if and only if the total width of WINDOW
+equals the total width of the root window of WINDOW's frame.
+WINDOW must be a valid window and defaults to the selected one."
+  (setq window (window-normalize-window window))
+  (= (window-pixel-width window)
+     (window-pixel-width (frame-root-window window))))
+
+;; Flat-model stubs for the frame/evening helpers GNU calls from
+;; `display-buffer-use-some-window'.
+(defun window--frame-usable-p (frame)
+  "Return FRAME if it can be used to display a buffer."
+  (and (frame-live-p frame) frame))
+
+(defun window--maybe-raise-frame (frame)
+  "Raise FRAME if needed.  No-op on the single-frame tty model."
+  frame)
+
+(defun window--even-window-sizes (_window)
+  "Even window sizes — a no-op in the flat window model."
+  nil)
+
+;; GNU window.el `display-buffer--lru-window' (verbatim).
+(defun display-buffer--lru-window (alist)
+  "Return the least recently used window according to ALIST.
+Do not return a minibuffer window or a window dedicated to its
+buffer.  ALIST is a buffer display action alist as compiled by
+`display-buffer'.  The following ALIST entries are honored:
+
+- `lru-frames' specifies the frames to investigate and has the
+  same meaning as the ALL-FRAMES argument of `get-lru-window'.
+
+- `lru-time' specifies a use time.  Do not return a window whose
+  use time is higher than this.
+
+- `window-min-width' specifies a preferred minimum width in
+  canonical frame columns.  If it is the symbol `full-width',
+  prefer a full-width window.
+
+- `window-min-height' specifies a preferred minimum height in
+  canonical frame lines.  If it is the symbol `full-height',
+  prefer a full-height window.
+
+If ALIST contains a non-nil `inhibit-same-window' entry, do not
+return the selected window."
+  (let ((windows
+         (window-list-1 nil 'nomini (cdr (assq 'lru-frames alist))))
+        (lru-time (cdr (assq 'lru-time alist)))
+        (min-width (cdr (assq 'window-min-width alist)))
+        (min-height (cdr (assq 'window-min-height alist)))
+        (not-this-window (cdr (assq 'inhibit-same-window alist)))
+        best-window best-time second-best-window second-best-time time)
+    (dolist (window windows)
+      (when (and (not (window-dedicated-p window))
+		 (or (not not-this-window)
+                     (not (eq window (selected-window)))))
+	(setq time (window-use-time window))
+        (unless (and (numberp lru-time) (> time lru-time))
+	  (if (or (eq window (selected-window))
+                  (and min-width
+                       (or (and (numberp min-width)
+                                (< (window-width window) min-width))
+                           (and (eq min-width 'full-width)
+                                (not (window-full-width-p window)))))
+                  (and min-height
+                       (or (and (numberp min-height)
+                                (< (window-height window) min-height))
+                           (and (eq min-height 'full-height)
+                                (not (window-full-height-p window))))))
+              ;; This window is either selected or does not meet the size
+              ;; restrictions - so it's only a second best choice.  Try to
+              ;; find a more recently used one that fits.
+	      (when (or (not second-best-time) (< time second-best-time))
+	        (setq second-best-time time)
+	        (setq second-best-window window))
+            ;; This window is not selected and does meet the size
+            ;; restrictions.  It's the best choice so far.
+	    (when (or (not best-time) (< time best-time))
+	      (setq best-time time)
+	      (setq best-window window))))))
+    (or best-window second-best-window)))
+
+;; GNU window.el `display-buffer-use-some-window', flat model: the
+;; cross-frame fallbacks collapse onto the selected frame.
+(defun display-buffer-use-some-window (buffer alist)
+  "Display BUFFER in an existing window.
+Search for a usable window, set that window to the buffer, and
+return the window.  If no suitable window is found, return nil.
+
+ALIST is an association list of action symbols and values.  See
+Info node `(elisp) Buffer Display Action Alists' for details of
+such alists.
+
+If ALIST has a non-nil `inhibit-switch-frame' entry, then in the
+event that a window on another frame is chosen, avoid raising
+that frame.
+
+If ALIST contains a non-nil `some-window' entry, then prefer the least
+recently used window if the entry's value is `lru' or nil, or the most
+recently used window if it's `mru'.  If the value is a function, it is
+called with two arguments: a buffer and an alist, and should return
+the window where to display the buffer.
+
+This is an action function for buffer display, see Info
+node `(elisp) Buffer Display Action Functions'.  It should be
+called only by `display-buffer' or a function directly or
+indirectly called by the latter."
+  (let* ((not-this-window (cdr (assq 'inhibit-same-window alist)))
+	 (some-window-method (cdr (assq 'some-window alist)))
+	 (frame (or (window--frame-usable-p (selected-frame))
+		    (window--frame-usable-p (last-nonminibuffer-frame))))
+	 (window
+	  ;; Reuse an existing window.
+	  (or (cond
+	       ((memq some-window-method '(nil lru))
+		(display-buffer--lru-window
+		 ;; If ALIST specifies 'lru-frames' or 'window-min-width'
+		 ;; let them prevail.
+		 (append alist `((lru-frames . ,frame)
+				 (window-min-width . full-width)))))
+	       ((eq some-window-method 'mru)
+		(get-mru-window nil nil t))
+	       ((functionp some-window-method)
+		(funcall some-window-method buffer alist)))
+	      (let ((window (get-buffer-window buffer 'visible)))
+		(unless (and not-this-window
+			     (eq window (selected-window)))
+		  window))
+	      (get-largest-window 'visible nil not-this-window)
+	      (let ((window (get-buffer-window buffer 0)))
+		(unless (and not-this-window
+			     (eq window (selected-window)))
+		  window))
+	      (get-largest-window 0 nil not-this-window))))
+    (when (window-live-p window)
+      (prog1
+	  (window--display-buffer buffer window 'reuse alist)
+	(window--even-window-sizes window)
+	(unless (cdr (assq 'inhibit-switch-frame alist))
+	  (window--maybe-raise-frame (window-frame window)))))))
+
 (defun display-buffer (buffer &optional action)
   "Make BUFFER visible in a window without selecting it.
 Return the window used to display BUFFER, like GNU's
 `window--display-buffer' callers expect."
   (let* ((buffer (get-buffer-create buffer))
-         ;; `display-buffer-reuse-window': a window already showing
-         ;; BUFFER (selected window first, then any frame window).
-         (window (get-buffer-window buffer)))
+         (window nil))
+    ;; GNU tries `display-buffer-overriding-action' (then the user
+    ;; action lists) before the fallback actions.  Each entry is
+    ;; (FUNCTIONS . ALIST); FUNCTIONS is a function or list of
+    ;; functions called with (BUFFER ALIST) until one returns a window.
+    (catch 'done
+      (dolist (act (list display-buffer-overriding-action action))
+        (when (consp act)
+          (let ((functions (car act))
+                (alist (cdr act)))
+            (unless (listp functions)
+              (setq functions (list functions)))
+            (dolist (fun functions)
+              (when (and fun (functionp fun)
+                         (setq window (funcall fun buffer alist)))
+                (throw 'done window)))))))
+    (unless window
+      ;; `display-buffer-reuse-window': a window already showing
+      ;; BUFFER (selected window first, then any frame window).
+      (setq window (get-buffer-window buffer)))
     (unless window
       ;; `display-buffer-in-previous-window': a window that showed
       ;; BUFFER before.
@@ -5123,8 +5295,13 @@ Return the window used to display BUFFER, like GNU's
 	    (throw 'prev nil)))))
     (if window
 	(window--display-buffer buffer window 'reuse)
-      ;; `display-buffer-below-selected': split a new window.
-      (window--display-buffer buffer (split-window) 'window))))
+      ;; `display-buffer-use-some-window': GNU's last reuse attempt
+      ;; before popping a new window.
+      (setq window (display-buffer-use-some-window buffer nil))
+      (if window
+	  window
+	;; `display-buffer-below-selected': split a new window.
+	(window--display-buffer buffer (split-window) 'window)))))
 
 ;; ---------- subr.el-level utilities ----------
 (defalias 'cl-subseq #'seq-subseq)
@@ -5524,6 +5701,17 @@ See `custom-initialize-delay'.")
 (defvar custom-local-buffer nil
   "Non-nil means, in customization, to operate on buffer-local settings.")
 
+(defvar custom-dont-initialize nil
+  "Non-nil means `defcustom' should not initialize the variable.
+That is used for the sake of `custom-make-dependencies'.
+Users should not set it.")
+
+(defvar custom-current-group-alist nil
+  "Alist of (FILE . GROUP) indicating the current group to use for FILE.")
+
+(defvar custom-define-hook nil
+  "Hook called after defining each customization option.")
+
 (defun custom-add-to-group (group member type)
   "To existing GROUP add a new MEMBER of type TYPE.
 If there already is an entry for MEMBER, change its type to TYPE."
@@ -5541,6 +5729,42 @@ If there already is an entry for MEMBER, change its type to TYPE."
 (defun custom-add-version (symbol version)
   "To the custom option SYMBOL add the version VERSION."
   (put symbol 'custom-version version))
+
+(defun custom-add-package-version (symbol version)
+  "To the custom option SYMBOL add the package version VERSION."
+  (put symbol 'custom-package-version version))
+
+(defun custom-add-option (symbol option)
+  "To the variable SYMBOL add OPTION.
+
+If SYMBOL's custom type is a hook, OPTION should be a hook member.
+If SYMBOL's custom type is an alist, OPTION specifies a symbol
+to offer to the user as a possible key in the alist.
+For other custom types, this has no effect."
+  (let ((options (get symbol 'custom-options)))
+    (unless (member option options)
+      (put symbol 'custom-options (cons option options)))))
+
+(defun custom-add-dependencies (symbol value)
+  "To the custom option SYMBOL add dependencies VALUE.
+VALUE should be a list of symbols.  For each symbol in that list,
+this specifies that SYMBOL should be set after the specified symbol,
+if both appear in constructs like `custom-set-variables'."
+  (unless (listp value)
+    (error "Invalid custom dependencies `%s'" value))
+  (let* ((deps (get symbol 'custom-dependencies))
+	 (new-deps deps))
+    (while value
+      (let ((dep (car value)))
+	(unless (symbolp dep)
+	  (error "Invalid custom dependency `%s'" dep))
+	(unless (memq dep new-deps)
+	  (setq new-deps (cons dep new-deps)))
+	(setq value (cdr value))))
+    (put symbol 'custom-dependencies new-deps)))
+
+(defun custom-current-group ()
+  (cdr (assoc load-file-name custom-current-group-alist)))
 
 (defun custom-add-load (symbol load)
   "To the custom option SYMBOL add the dependency LOAD.
@@ -5565,47 +5789,44 @@ See `custom-declare-variable' and `custom-declare-group'."
             (if (symbolp load) (require load) (load load))
           (error nil))))))
 
+(defun custom-handle-all-keywords (symbol args type)
+  "For customization option SYMBOL, handle keyword arguments ARGS.
+Third argument TYPE is the custom option type."
+  (unless (memq :group args)
+    (let ((cg (custom-current-group)))
+      (when cg
+        (custom-add-to-group cg symbol type))))
+  (while args
+    (let ((arg (car args)))
+      (setq args (cdr args))
+      (unless (symbolp arg)
+	(error "Junk in args %S" args))
+      (let ((keyword arg)
+	    (value (car args)))
+	(unless args
+	  (error "Keyword %s is missing an argument" keyword))
+	(setq args (cdr args))
+	(custom-handle-keyword symbol keyword value type)))))
+
 (defun custom-handle-keyword (symbol keyword value type)
   "For customization option SYMBOL, handle KEYWORD with VALUE.
-TYPE should be `custom-face', `custom-variable' or `custom-group'."
-  (unless (listp value)
-    (setq value (list value)))
+Fourth argument TYPE is the custom option type."
   (cond ((eq keyword :group)
-         (custom-add-to-group (car value) symbol type))
-        ((eq keyword :link)
-         (custom-add-link symbol value))
-        ((eq keyword :load)
-         (custom-add-load symbol value))
-        ((eq keyword :version)
-         (custom-add-version symbol (car value)))
-        ((eq keyword :set)
-         (put symbol 'custom-set (car value)))
-        ((eq keyword :get)
-         (put symbol 'custom-get (car value)))
-        ((eq keyword :set-after)
-         (put symbol 'custom-dependencies (nreverse value)))
-        ((eq keyword :type)
-         (put symbol 'custom-type value))
-        ((eq keyword :options)
-         (put symbol 'custom-options value))
-        ((eq keyword :value)
-         (put symbol 'custom-value value))
-        ((eq keyword :require)
-         (put symbol 'custom-requests
-              (append (get symbol 'custom-requests) value)))
-        ((eq keyword :risky)
-         (put symbol 'risky-local-variable (car value)))
-        ((eq keyword :safe)
-         (put symbol 'safe-local-variable (car value)))
-        ((eq keyword :package-version)
-         (put symbol 'custom-package-version value))
-        ((eq keyword :tag)
-         (put symbol 'custom-tag (car value)))
-        ;; Keywords handled elsewhere, or accepted with no plist effect.
-        ((memq keyword '(:initialize :local :indent :debug :doc-string
-                         :no-autoload :obsolete))
-         nil)
-        (t (error "Unknown keyword %s" keyword))))
+	 (custom-add-to-group value symbol type))
+	((eq keyword :version)
+	 (custom-add-version symbol value))
+	((eq keyword :package-version)
+	 (custom-add-package-version symbol value))
+	((eq keyword :link)
+	 (custom-add-link symbol value))
+	((eq keyword :load)
+	 (custom-add-load symbol value))
+	((eq keyword :tag)
+	 (put symbol 'custom-tag value))
+	((eq keyword :set-after)
+	 (custom-add-dependencies symbol value))
+	(t
+	 (error "Unknown keyword %s" keyword))))
 
 (defun custom-quote (x)
   "Apply `custom-quote' to X: evaluate `(custom-quote Y)' forms within X.
@@ -5619,35 +5840,130 @@ This is obsolete; use `quote' instead."
 ;;; initialization
 
 (defun custom-initialize-default (symbol exp)
-  "Initialize SYMBOL based on EXP.
-Set the symbol, using its `:set' function (or `set-default' if it has
-none); the variable's default value is what gets set."
-  (funcall (or (get symbol 'custom-set) 'set-default) symbol (eval exp)))
+  "Initialize SYMBOL with EXP.
+This will do nothing if symbol already has a default binding.
+Otherwise, if symbol has a `saved-value' property, it will evaluate
+the car of that and use it as the default binding for symbol.
+Otherwise, EXP will be evaluated and used as the default binding for
+symbol."
+  (condition-case nil
+      (default-toplevel-value symbol)   ;Test presence of default value.
+    (void-variable
+     ;; The var is not initialized yet.
+     (set-default-toplevel-value
+      symbol (eval (let ((sv (get symbol 'saved-value)))
+                     (if sv (car sv) exp))
+                   t)))))
 
 (defun custom-initialize-set (symbol exp)
   "Initialize SYMBOL based on EXP.
-Set the symbol, using its `:set' function (or `set' if it has none)."
-  (funcall (or (get symbol 'custom-set) 'set) symbol (eval exp)))
+If the symbol doesn't have a default binding already, then set it
+using its `:set' function (or `set-default-toplevel-value' if it
+has none).
 
+The value is either the value in the symbol's `saved-value' property,
+if any, or the value of EXP."
+  (condition-case nil
+      (default-toplevel-value symbol)
+    (error
+     (funcall (or (get symbol 'custom-set) #'set-default-toplevel-value)
+              symbol
+              (eval (let ((sv (get symbol 'saved-value)))
+                      (if sv (car sv) exp)))))))
+
+(declare-function widget-apply "wid-edit" (widget property &rest args))
 (defun custom-initialize-reset (symbol exp)
   "Initialize SYMBOL based on EXP.
-Set the symbol, using its `:set' function (or `set-default' if it has none)."
-  (funcall (or (get symbol 'custom-set) 'set-default) symbol (eval exp)))
+Set the symbol, using its `:set' function (or `set-default-toplevel-value'
+if it has none).
+
+The value is either the symbol's current value
+ (as obtained using the `:get' function), if any,
+or the value in the symbol's `saved-value' property if any,
+or (last of all) the value of EXP."
+  ;; If this value has been set with `setopt' (for instance in
+  ;; ~/.emacs), we didn't necessarily know the type of the user option
+  ;; then.  So check now, and issue a warning if it's wrong.
+  (let ((value (get symbol 'custom-check-value)))
+    (when value
+      (let ((type (get symbol 'custom-type)))
+        (when (and type
+                   (boundp symbol)
+                   (eq (car value) (symbol-value symbol))
+                   ;; Check that the type is correct.
+                   (not (widget-apply (widget-convert type)
+                                      :match (car value))))
+          (warn "Value `%S' for `%s' does not match type %s"
+                value symbol type)))))
+  (funcall (or (get symbol 'custom-set) #'set-default-toplevel-value)
+           symbol
+           (condition-case nil
+               (let ((def (default-toplevel-value symbol))
+                     (getter (get symbol 'custom-get)))
+                 (if getter (funcall getter symbol) def))
+             (error
+              (eval (let ((sv (get symbol 'saved-value)))
+                      (if sv (car sv) exp)))))))
 
 (defun custom-initialize-changed (symbol exp)
-  "Initialize SYMBOL based on EXP.
-Set the symbol, using its `:set' function (or `set' if it has none),
-unless it is already bound."
-  (unless (default-boundp symbol)
-    (funcall (or (get symbol 'custom-set) 'set) symbol (eval exp))))
+  "Initialize SYMBOL with EXP.
+Like `custom-initialize-reset', but only use the `:set' function if
+not using the standard setting.
+For the standard setting, use `set-default-toplevel-value'."
+  (condition-case nil
+      (let ((def (default-toplevel-value symbol)))
+        (funcall (or (get symbol 'custom-set) #'set-default-toplevel-value)
+                 symbol
+                 (let ((getter (get symbol 'custom-get)))
+                   (if getter (funcall getter symbol) def))))
+    (error
+     (cond
+      ((get symbol 'saved-value)
+       (funcall (or (get symbol 'custom-set) #'set-default-toplevel-value)
+                symbol
+                (eval (car (get symbol 'saved-value)))))
+      (t
+       (set-default-toplevel-value symbol (eval exp)))))))
 
-(defun custom-initialize-delay (symbol exp)
-  "Delay initialization of SYMBOL to the next `custom-delayed-init' call.
-This is used in files that are preloaded (or for autoloads), so that the
-init-code can be evaluated once it is safe (e.g. after theme loading)."
-  (unless (memq symbol custom-delayed-init-variables)
-    (push symbol custom-delayed-init-variables))
-  (put symbol 'custom-delayed-init (list exp)))
+(defun custom-initialize-delay (symbol value)
+  "Delay initialization of SYMBOL to the next Emacs start.
+This is used in files that are preloaded (or for autoloaded
+variables), so that the initialization is done in the run-time
+context rather than the build-time context.  This also has the
+side-effect that the (delayed) initialization is performed with
+the :set function."
+  ;; Defvar it so as to mark it special, etc (bug#25770).
+  (internal--define-uninitialized-variable symbol)
+  ;; Until the var is actually initialized, it is kept unbound.
+  ;; This seemed to be at least as good as setting it to an arbitrary
+  ;; value like nil (evaluating `value` is not an option because it
+  ;; may have undesirable side-effects).
+  (if (listp custom-delayed-init-variables)
+      (push symbol custom-delayed-init-variables)
+    ;; In case this is called after startup, there is no "later" to which to
+    ;; delay it, so initialize it "normally" (bug#47072).
+    (custom-initialize-reset symbol value))
+  (put symbol 'custom-delayed-init (list value)))
+
+(defun custom-initialize-after-file-load (symbol value)
+  "Delay initialization to after the current file is loaded.
+This is handy when the initialization needs functions defined after the
+variable, such as for global minor modes."
+  ;; Defvar it so as to mark it special, etc (bug#25770).
+  (internal--define-uninitialized-variable symbol)
+  ;; Until the var is actually initialized, it is kept unbound.
+  ;; This seemed to be at least as good as setting it to an arbitrary
+  ;; value like nil (evaluating `value` is not an option because it
+  ;; may have undesirable side-effects).
+  (if (not load-file-name)
+      ;; There's no "after file" to speak of.
+      (custom-initialize-set symbol value)
+    (let ((thisfile load-file-name))
+      (letrec ((f (lambda (file)
+                    (when (equal file thisfile)
+                      (remove-hook 'after-load-functions f)
+                      (custom-initialize-set symbol value)))))
+        (add-hook 'after-load-functions f)))))
 
 ;;; declare group
 
@@ -5668,12 +5984,15 @@ init-code can be evaluated once it is safe (e.g. after theme loading)."
           (error "Junk in args %S" args))
          ((eq key :prefix)
           (put group 'custom-prefix (car (cdr rest))))
-         ((eq key :group)
-          (custom-add-to-group (car (cdr rest)) group 'custom-group))
          (t
           (custom-handle-keyword group key (car (cdr rest))
                                  'custom-group))))
       (setq rest (cdr (cdr rest)))))
+  ;; Record the group on the `current' list.
+  (let ((elt (assoc load-file-name custom-current-group-alist)))
+    (if elt (setcdr elt group)
+      (push (cons load-file-name group) custom-current-group-alist)))
+  (run-hooks 'custom-define-hook)
   group)
 
 (defmacro defgroup (group members doc &rest args)
@@ -5699,38 +6018,99 @@ DOC is a doc string.  Keyword ARGS are as for `defcustom'."
 
 ;;; declare variable
 
-(defun custom-declare-variable (variable requests doc &rest args)
-  "Like `defcustom', but VARIABLE and REQUESTS are evaluated as normal args.
-REQUESTS should be an expression to evaluate to compute the value —
-`defcustom' passes a form of the shape (funcall (function (lambda ()
-INIT)))."
-  (unless (symbolp variable)
-    (error "Invalid variable name `%s'" variable))
-  ;; Record the standard value unless the user already saved one.
-  (unless (get variable 'saved-value)
-    (put variable 'standard-value (list requests)))
-  (put variable 'variable-documentation doc)
-  ;; Process keyword arguments; `:initialize' selects the init function
-  ;; and is not recorded on the plist.
-  (let ((initialize 'custom-initialize-default)
-        (rest args))
-    (while rest
-      (let ((key (car rest)))
-        (cond
-         ((null (cdr rest))
-          (error "Keyword %s is missing an argument" key))
-         ((eq key :initialize)
-          (setq initialize (car (cdr rest))))
-         (t
-          (unless (symbolp key)
-            (error "Junk in args %S" args))
-          (custom-handle-keyword variable key (car (cdr rest))
-                                 'custom-variable))))
-      (setq rest (cdr (cdr rest))))
-    ;; Initialize, unless the variable is already bound.
-    (unless (default-boundp variable)
-      (funcall initialize variable requests)))
-  variable)
+(defun custom-declare-variable (symbol default doc &rest args)
+  "Like `defcustom', but SYMBOL and DEFAULT are evaluated as normal arguments.
+DEFAULT should be an expression to evaluate to compute the default value,
+not the default value itself.
+
+DEFAULT is stored as SYMBOL's standard value, in SYMBOL's property
+`standard-value'.  At the same time, SYMBOL's property `force-value'
+is set to nil, as the value is no longer rogue."
+  (unless (symbolp symbol)
+    (error "Invalid variable name `%s'" symbol))
+  (put symbol 'standard-value (list default))
+  ;; Maybe this option was rogue in an earlier version.  It no longer is.
+  (when (get symbol 'force-value)
+    (put symbol 'force-value nil))
+  (when (keywordp doc)
+    (error "Doc string is missing"))
+  (let ((initialize #'custom-initialize-reset)
+        (requests nil)
+        ;; Whether automatically buffer-local.
+        buffer-local)
+    (unless (memq :group args)
+      (let ((cg (custom-current-group)))
+        (when cg
+          (custom-add-to-group cg symbol 'custom-variable))))
+    (while args
+      (let ((keyword (car args)))
+        (setq args (cdr args))
+        (unless (symbolp keyword)
+          (error "Junk in args %S" args))
+        (unless args
+          (error "Keyword %s is missing an argument" keyword))
+        (let ((value (car args)))
+          (setq args (cdr args))
+          ;; Can't use `pcase' because it is loaded after `custom.el'
+          ;; during bootstrap.  See `loadup.el'.
+          (cond ((eq keyword :initialize)
+                 (setq initialize value))
+                ((eq keyword :set)
+                 (put symbol 'custom-set value))
+                ((eq keyword :get)
+                 (put symbol 'custom-get value))
+                ((eq keyword :require)
+                 (push value requests))
+                ((eq keyword :risky)
+                 (put symbol 'risky-local-variable value))
+                ((eq keyword :safe)
+                 (put symbol 'safe-local-variable value))
+                ((eq keyword :local)
+                 (when (memq value '(t permanent))
+                   (setq buffer-local t))
+                 (when (memq value '(permanent permanent-only))
+                   (put symbol 'permanent-local t)))
+                ((eq keyword :type)
+                 (put symbol 'custom-type value))
+                ((eq keyword :options)
+                 (if (get symbol 'custom-options)
+                     ;; Slow safe code to avoid duplicates.
+                     (dolist (option value)
+                       (custom-add-option symbol option))
+                   ;; Fast code for the common case.
+                   (put symbol 'custom-options (copy-sequence value))))
+                (t
+                 (custom-handle-keyword symbol keyword value
+                                        'custom-variable))))))
+    ;; Set the docstring, record the var on load-history, as well
+    ;; as set the special-variable-p flag.
+    (internal--define-uninitialized-variable symbol doc)
+    ;; Our `internal--define-uninitialized-variable' does not store the
+    ;; docstring (unlike GNU's); record it explicitly.
+    (put symbol 'variable-documentation doc)
+    (put symbol 'custom-requests requests)
+    ;; Do the actual initialization.
+    (unless custom-dont-initialize
+      (funcall initialize symbol default)
+      ;; If there is a value under saved-value that wasn't saved by the user,
+      ;; reset it: we used that property to stash the value, but we don't need
+      ;; it anymore.
+      ;; This can happen given the following:
+      ;; 1. The user loaded a theme that had a setting for an unbound
+      ;; variable, so we stashed the theme setting under the saved-value
+      ;; property in `custom-theme-recalc-variable'.
+      ;; 2. Then, Emacs evaluated the defcustom for the option
+      ;; (e.g., something required the file where the option is defined).
+      ;; If we don't reset it and the user later sets this variable via
+      ;; Customize, we might end up saving the theme setting in the custom-file.
+      ;; See the test `custom-test-no-saved-value-after-customizing-option'.
+      (let ((theme (caar (get symbol 'theme-value))))
+        (when (and theme (not (eq theme 'user)) (get symbol 'saved-value))
+          (put symbol 'saved-value nil))))
+    (when buffer-local
+      (make-variable-buffer-local symbol)))
+  (run-hooks 'custom-define-hook)
+  symbol)
 
 (defmacro defcustom (symbol initial &optional doc &rest args)
   "Declare SYMBOL as a customizable variable that defaults to INITIAL.
@@ -5815,22 +6195,19 @@ applies the attributes of the `t' entries, falling back to `default'."
 
 (defun custom-declare-face (face spec doc &rest args)
   "Like `defface', but FACE is evaluated as a normal argument."
+  (when (and doc (not (documentation-stringp doc)))
+    (error "Invalid (or missing) doc string %S" doc))
   (unless (internal-lisp-face-p face)
     (internal-make-lisp-face face))
   (unless (get face 'face-defface-spec)
     (put face 'face-defface-spec spec)
+    (push (cons 'defface face) current-load-list)
     (when (and spec (not (get face 'saved-face)))
       ;; Respect faces already set by the user.
       (face-spec-set face spec))
-    (put face 'face-documentation doc))
-  (let ((rest args))
-    (while rest
-      (let ((key (car rest)))
-        (if (null (cdr rest))
-            (error "Keyword %s is missing an argument" key)
-          (custom-handle-keyword face key (car (cdr rest))
-                                 'custom-face)))
-      (setq rest (cdr (cdr rest)))))
+    (put face 'face-documentation doc)
+    (custom-handle-all-keywords face args 'custom-face)
+    (run-hooks 'custom-define-hook))
   face)
 
 (defmacro defface (face spec &optional doc &rest args)
@@ -6179,11 +6556,7 @@ Like `customize-set-variable', but records VALUE as `saved-value'."
   (funcall (or (get variable 'custom-set) 'set) variable value)
   value)
 
-(defun custom-add-frequent-value (variable value)
-  "Add VALUE to the list of frequently used values of VARIABLE."
-  (let ((options (get variable 'custom-options)))
-    (unless (member value options)
-      (put variable 'custom-options (cons value options)))))
+(defalias 'custom-add-frequent-value #'custom-add-option)
 
 (defun custom-unlispify-menu-entry (symbol &optional no-suffix)
   "Convert SYMBOL into a menu-friendly version."
@@ -7785,7 +8158,96 @@ do that, use `get-text-property' and `get-char-property'."
   (interactive "p")
   (next-error n t))
 
-(defvar display-buffer-overriding-action nil)
+;; GNU window.el: overriding action for `display-buffer', a cons
+;; (FUNCTIONS . ALIST) where FUNCTIONS is a function or list of
+;; functions called with (BUFFER ALIST).
+(defvar display-buffer-overriding-action '(nil . nil))
+(put 'display-buffer-overriding-action 'risky-local-variable t)
+
+;; GNU window.el: when non-nil, `switch-to-buffer'-family functions
+;; respect the display-buffer action lists.
+(defvar switch-to-buffer-obey-display-actions nil)
+
+;; GNU window.el: functions run to echo prefix-command keystrokes.
+(defvar prefix-command-echo-keystrokes-functions nil)
+
+;; GNU keyboard.c `mouse-event-p': a list whose head's `event-kind'
+;; is mouse-click, mouse-movement or mouse-wheel.
+(defun mouse-event-p (object)
+  "Return non-nil if OBJECT is a mouse event."
+  (and (consp object)
+       (symbolp (car object))
+       (memq (get (car object) 'event-kind)
+             '(mouse-click mouse-movement mouse-wheel))
+       t))
+
+;; GNU window.el `display-buffer-override-next-command'.
+(defun display-buffer-override-next-command (pre-function &optional post-function echo)
+  "Set `display-buffer-overriding-action' for the next command.
+`pre-function' is called to prepare the window where the buffer should be
+displayed.  This function takes two arguments `buffer' and `alist', and
+should return a cons with the displayed window and its type.  See the
+meaning of these values in `window--display-buffer'.
+Optional `post-function' is called after the buffer is displayed in the
+window; the function takes two arguments: an old and new window.
+Optional string argument `echo' can be used to add a prefix to the
+command echo keystrokes that should describe the current prefix state.
+This returns an \"exit function\", which can be called with no argument
+to deactivate this overriding action."
+  (let* ((old-window (or (minibuffer-selected-window) (selected-window)))
+         (new-window nil)
+         (minibuffer-depth (minibuffer-depth))
+         (obey-display switch-to-buffer-obey-display-actions)
+         (clearfun (make-symbol "clear-display-buffer-overriding-action"))
+         (postfun (make-symbol "post-display-buffer-override-next-command"))
+         (action (lambda (buffer alist)
+                   (unless (> (minibuffer-depth) minibuffer-depth)
+                     (let* ((ret (funcall pre-function buffer alist))
+                            (window (car ret))
+                            (type (cdr ret)))
+                       (setq new-window (window--display-buffer buffer window
+                                                                type alist))
+                       ;; Reset display-buffer-overriding-action
+                       ;; after the first display-buffer action (bug#39722).
+                       (funcall clearfun)
+                       new-window))))
+         (command this-command)
+         (echofun (when echo (lambda () echo)))
+         (exitfun
+          (lambda ()
+            (funcall clearfun)
+            (remove-hook 'post-command-hook postfun)
+            (remove-hook 'prefix-command-echo-keystrokes-functions echofun)
+            (when (functionp post-function)
+              (funcall post-function old-window new-window)))))
+    (fset clearfun
+          (lambda ()
+            (setq switch-to-buffer-obey-display-actions obey-display)
+            (setcar display-buffer-overriding-action
+                    (delq action (car display-buffer-overriding-action)))))
+    (fset postfun
+          (lambda ()
+            (unless (or
+                     ;; Remove the hook immediately
+                     ;; after exiting the minibuffer.
+                     (> (minibuffer-depth) minibuffer-depth)
+                     ;; But don't remove immediately after
+                     ;; adding the hook by the same command below.
+                     (eq this-command command)
+                     ;; Don't exit on mouse events in anticipation
+                     ;; of more related events like double click.
+                     (mouse-event-p last-input-event))
+              (funcall exitfun))))
+    ;; Call post-function after the next command finishes (bug#49057).
+    (add-hook 'post-command-hook postfun)
+    (when echofun
+      (add-hook 'prefix-command-echo-keystrokes-functions echofun))
+    (setq switch-to-buffer-obey-display-actions t)
+    (unless (listp (car display-buffer-overriding-action))
+      (setcar display-buffer-overriding-action
+              (list (car display-buffer-overriding-action))))
+    (push action (car display-buffer-overriding-action))
+    exitfun))
 
 (defun next-error-no-select (&optional n)
   "Move point to the next error in the `next-error' buffer and highlight match."
@@ -30007,6 +30469,170 @@ To record all your input, use `open-dribble-file'."
 (defvar uniquify-possibly-resolvable nil)
 (defvar uniquify--stateless-curname nil)
 (load "uniquify")
+
+;; ---------- GNU window.el window-selection helpers ----------
+;; `ignore-window-parameters' + `window-no-other-p' +
+;; `window--in-direction-2' are preloaded in GNU's window.el.
+(defvar ignore-window-parameters nil
+  "If non-nil, standard functions ignore window parameters.
+The functions currently affected by this are `split-window',
+`delete-window', `delete-other-windows' and `other-window'.
+
+An application may bind this to a non-nil value around calls to
+these functions to inhibit processing of window parameters.")
+
+(defun window-no-other-p (&optional window)
+  "Return non-nil if WINDOW should not be used as \"other\" window.
+WINDOW must be a live window and defaults to the selected one.
+
+Return non-nil if the `no-other-window' parameter of WINDOW is non-nil
+and `ignore-window-parameters' is nil.  Return nil in any other case."
+  (setq window (window-normalize-window window t))
+  (and (not ignore-window-parameters)
+       (window-parameter window 'no-other-window)))
+
+(defun window--in-direction-2 (window posn &optional horizontal)
+  "Support function for `window-in-direction'."
+  (if horizontal
+      (let ((top (window-pixel-top window)))
+	(if (> top posn)
+	    (- top posn)
+	  (- posn top (window-pixel-height window))))
+    (let ((left (window-pixel-left window)))
+      (if (> left posn)
+	  (- left posn)
+	(- posn left (window-pixel-width window))))))
+
+;; ---------- windmove (GNU windmove.el) ----------
+;; Not preloaded in GNU: the movement commands are autoload cookies,
+;; so only the autoload cells are visible at startup and the library's
+;; defcustoms stay unbound until first use.
+(autoload 'windmove-left "windmove"
+  "Select the window to the left of the current one.
+With no prefix argument, or with prefix argument equal to zero,
+\"left\" is relative to the position of point in the window; otherwise
+it is relative to the top edge (for positive ARG) or the bottom edge
+\(for negative ARG) of the current window.
+If no window is at the desired location, an error is signaled
+unless `windmove-create-window' is non-nil and a new window is created.
+
+If `windmove-allow-repeated-command-override' is true and this command
+stopped because it wouldn't move into a window marked with
+`no-other-window', repeating the command will move into that window." t nil)
+(autoload 'windmove-up "windmove"
+  "Select the window above the current one.
+With no prefix argument, or with prefix argument equal to zero, \"up\"
+is relative to the position of point in the window; otherwise it is
+relative to the left edge (for positive ARG) or the right edge (for
+negative ARG) of the current window.
+If no window is at the desired location, an error is signaled
+unless `windmove-create-window' is non-nil and a new window is created.
+
+If `windmove-allow-repeated-command-override' is true and this command
+stopped because it wouldn't move into a window marked with
+`no-other-window', repeating the command will move into that window." t nil)
+(autoload 'windmove-right "windmove"
+  "Select the window to the right of the current one.
+With no prefix argument, or with prefix argument equal to zero,
+\"right\" is relative to the position of point in the window;
+otherwise it is relative to the top edge (for positive ARG) or the
+bottom edge (for negative ARG) of the current window.
+If no window is at the desired location, an error is signaled
+unless `windmove-create-window' is non-nil and a new window is created.
+
+If `windmove-allow-repeated-command-override' is true and this command
+stopped because it wouldn't move into a window marked with
+`no-other-window', repeating the command will move into that window." t nil)
+(autoload 'windmove-down "windmove"
+  "Select the window below the current one.
+With no prefix argument, or with prefix argument equal to zero,
+\"down\" is relative to the position of point in the window;
+otherwise it is relative to the left edge (for positive ARG) or the
+right edge (for negative ARG) of the current window.
+If no window is at the desired location, an error is signaled
+unless `windmove-create-window' is non-nil and a new window is created.
+
+If `windmove-allow-repeated-command-override' is true and this command
+stopped because it wouldn't move into a window marked with
+`no-other-window', repeating the command will move into that window." t nil)
+(autoload 'windmove-mode "windmove"
+  "Global minor mode for default windmove commands." t nil)
+(autoload 'windmove-display-left "windmove"
+  "Display the next buffer in window to the left of the current one.
+See the logic of the prefix ARG and `windmove-display-no-select'
+in `windmove-display-in-direction'." t nil)
+(autoload 'windmove-display-up "windmove"
+  "Display the next buffer in window above the current one.
+See the logic of the prefix ARG and `windmove-display-no-select'
+in `windmove-display-in-direction'." t nil)
+(autoload 'windmove-display-right "windmove"
+  "Display the next buffer in window to the right of the current one.
+See the logic of the prefix ARG and `windmove-display-no-select'
+in `windmove-display-in-direction'." t nil)
+(autoload 'windmove-display-down "windmove"
+  "Display the next buffer in window below the current one.
+See the logic of the prefix ARG and `windmove-display-no-select'
+in `windmove-display-in-direction'." t nil)
+(autoload 'windmove-display-same-window "windmove"
+  "Display the next buffer in the same window." t nil)
+(autoload 'windmove-display-new-frame "windmove"
+  "Display the next buffer in a new frame." t nil)
+(autoload 'windmove-display-new-tab "windmove"
+  "Display the next buffer in a new tab." t nil)
+(autoload 'windmove-display-default-keybindings "windmove"
+  "Set up keybindings for directional buffer display.
+Keys are bound to commands that display the next buffer in the specified
+direction.  Keybindings are of the form MODIFIERS-{left,right,up,down},
+where MODIFIERS is either a list of modifiers or a single modifier.
+If MODIFIERS is `none', the keybindings will be directly bound to the
+arrow keys.
+Default value of MODIFIERS is `shift-meta'." t nil)
+(autoload 'windmove-delete-left "windmove"
+  "Delete the window to the left of the current one.
+If prefix ARG is \\[universal-argument], delete the selected window and
+select the window that was to the left of the current one." t nil)
+(autoload 'windmove-delete-up "windmove"
+  "Delete the window above the current one.
+If prefix ARG is \\[universal-argument], delete the selected window and
+select the window that was above the current one." t nil)
+(autoload 'windmove-delete-right "windmove"
+  "Delete the window to the right of the current one.
+If prefix ARG is \\[universal-argument], delete the selected window and
+select the window that was to the right of the current one." t nil)
+(autoload 'windmove-delete-down "windmove"
+  "Delete the window below the current one.
+If prefix ARG is \\[universal-argument], delete the selected window and
+select the window that was below the current one." t nil)
+(autoload 'windmove-delete-default-keybindings "windmove"
+  "Set up keybindings for directional window deletion.
+Keys are bound to commands that delete windows in the specified
+direction.  Keybindings are of the form PREFIX MODIFIERS-{left,right,up,down},
+where PREFIX is a prefix key and MODIFIERS is either a list of modifiers or
+a single modifier.
+If PREFIX is `none', no prefix is used.  If MODIFIERS is `none',
+the keybindings are directly bound to the arrow keys.
+Default value of PREFIX is \\`C-x' and MODIFIERS is `shift'." t nil)
+(autoload 'windmove-swap-states-left "windmove"
+  "Swap the states with the window on the left from the current one." t nil)
+(autoload 'windmove-swap-states-up "windmove"
+  "Swap the states with the window above from the current one." t nil)
+(autoload 'windmove-swap-states-down "windmove"
+  "Swap the states with the window below from the current one." t nil)
+(autoload 'windmove-swap-states-right "windmove"
+  "Swap the states with the window on the right from the current one." t nil)
+(autoload 'windmove-swap-states-default-keybindings "windmove"
+  "Set up keybindings for directional window swap states.
+Keys are bound to commands that swap the states of the selected window
+with the window in the specified direction.  Keybindings are of the form
+MODIFIERS-{left,right,up,down}, where MODIFIERS is either a list of modifiers
+or a single modifier.
+If MODIFIERS is `none', the keybindings will be directly bound to the
+arrow keys.
+Default value of MODIFIERS is `shift-super'." t nil)
+;; The *-default-keybindings defcustoms autoload through their setter.
+(autoload 'windmove-default-keybindings "windmove"
+  "Default keybindings for regular windmove commands.
+See `windmove-default-keybindings' for more detail." nil nil)
 
 ;; ---------- minibuf-eldef (GNU minibuf-eldef.el) ----------
 ;; Not preloaded in GNU: `minibuffer-electric-default-mode' is an

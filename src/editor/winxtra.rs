@@ -5,7 +5,10 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use crate::editor::{frame_of, is_terminal, sel_frame, sel_window, terminal_token, win_of};
+use crate::editor::{
+    Window, WindowRef, f_window_list, frame_of, is_terminal, sel_frame, sel_window,
+    terminal_token, win_of,
+};
 use crate::lisp::Interp;
 use crate::lisp::builtins::{S, arg, want_int};
 use crate::lisp::error::{EvalResult, Flow};
@@ -175,7 +178,20 @@ pub(crate) static SUBRS: &[Subr] = &[
         f_get_lru_window,
         "Least recently used window."
     ),
-    S!("get-largest-window", 0, 3, f_get_lru_window, ""),
+    S!(
+        "get-mru-window",
+        0,
+        3,
+        f_get_mru_window,
+        "Most recently used window."
+    ),
+    S!(
+        "get-largest-window",
+        0,
+        3,
+        f_get_largest_window,
+        "Largest window by pixel area."
+    ),
     S!(
         "other-window-for-scrolling",
         0,
@@ -266,8 +282,8 @@ pub(crate) static SUBRS: &[Subr] = &[
         "Width in pixels (==cols)."
     ),
     S!("window-pixel-height", 0, 1, f_window_height_px, ""),
-    S!("window-pixel-left", 0, 1, f_zero, ""),
-    S!("window-pixel-top", 0, 1, f_zero, ""),
+    S!("window-pixel-left", 0, 1, f_window_left_px, ""),
+    S!("window-pixel-top", 0, 1, f_window_top_px, ""),
     S!(
         "window-pixel-edges",
         0,
@@ -655,6 +671,16 @@ fn f_window_width_px(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     Ok(Value::Int(w.borrow().width as i128))
 }
 
+fn f_window_left_px(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let w = win_of(i, &arg(&a, 0))?;
+    Ok(Value::Int(w.borrow().left as i128))
+}
+
+fn f_window_top_px(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let w = win_of(i, &arg(&a, 0))?;
+    Ok(Value::Int(w.borrow().top as i128))
+}
+
 fn f_window_point1(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let w = win_of(i, &arg(&a, 0))?;
     Ok(Value::Int(w.borrow().point as i128 + 1))
@@ -733,18 +759,37 @@ fn f_window_resize(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 }
 
 fn f_window_list1(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let _ = a;
+    // (window-list-1 WINDOW MINIBUF ALL-FRAMES): flat model — same
+    // filtering as `window-list' on WINDOW's frame (the selected one).
+    f_window_list(i, vec![Value::Nil, arg(&a, 1)])
+}
+
+/// Candidate windows for `get-lru-window'/`get-mru-window'/
+/// `get-largest-window': the live, non-minibuffer windows of the
+/// selected frame.  DEDICATED (arg 1) non-nil includes windows
+/// dedicated to their buffers; NOT-SELECTED (arg 2) non-nil excludes
+/// the selected window.
+fn some_window_candidates(i: &mut Interp, a: &[Value]) -> Vec<WindowRef> {
+    let dedicated_ok = a.get(1).is_some_and(|v| v.truthy());
+    let not_selected = a.get(2).is_some_and(|v| v.truthy());
+    let sel = sel_frame(i).map(|f| f.borrow().selected.clone());
     match sel_frame(i) {
-        Some(f) => {
-            let ws: Vec<Value> = f
-                .borrow()
-                .windows
-                .iter()
-                .map(|w| Value::Window(w.clone()))
-                .collect();
-            Ok(Value::list(ws))
-        }
-        None => Ok(Value::Nil),
+        Some(f) => f
+            .borrow()
+            .windows
+            .iter()
+            .filter(|w| {
+                let wb = w.borrow();
+                !wb.minibuffer
+                    && (dedicated_ok || !wb.dedicated)
+                    && !(not_selected
+                        && sel.as_ref().map_or(false, |s| {
+                            s.borrow().id == wb.id
+                        }))
+            })
+            .cloned()
+            .collect(),
+        None => Vec::new(),
     }
 }
 
@@ -829,8 +874,43 @@ fn f_delete_window_internal(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     Ok(Value::Nil)
 }
 
-fn f_get_lru_window(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
-    f_sel_window(i, vec![])
+fn f_get_lru_window(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    // GNU Fget_lru_window: lowest use-time among the candidates.
+    match some_window_candidates(i, &a)
+        .iter()
+        .min_by_key(|w| w.borrow().use_time)
+    {
+        Some(w) => Ok(Value::Window(w.clone())),
+        None => Ok(Value::Nil),
+    }
+}
+
+fn f_get_mru_window(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    // GNU Fget_mru_window: highest use-time among the candidates
+    // (rev() so ties keep the first, matching GNU's strict-> scan).
+    match some_window_candidates(i, &a)
+        .iter()
+        .rev()
+        .max_by_key(|w| w.borrow().use_time)
+    {
+        Some(w) => Ok(Value::Window(w.clone())),
+        None => Ok(Value::Nil),
+    }
+}
+
+fn f_get_largest_window(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    // GNU Fget_largest_window: maximum pixel area (ties keep the
+    // first, i.e. the least recently used among equals).
+    match some_window_candidates(i, &a)
+        .iter()
+        .rev()
+        .max_by_key(|w| {
+            let wb = w.borrow();
+            wb.width * wb.height
+        }) {
+        Some(w) => Ok(Value::Window(w.clone())),
+        None => Ok(Value::Nil),
+    }
 }
 
 fn f_posn_at_point(i: &mut Interp, a: Vec<Value>) -> EvalResult {
@@ -954,11 +1034,45 @@ fn f_window_screen_lines(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 
 fn f_frame_root_window(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let f = frame_of(i, &arg(&a, 0))?;
-    let fb = f.borrow();
-    match fb.windows.first() {
-        Some(w) => Ok(Value::Window(w.clone())),
-        None => Ok(Value::Window(fb.selected.clone())),
+    // GNU: with one live window that window IS the root; otherwise a
+    // covering internal window spanning the frame minus the echo area.
+    let live: Vec<WindowRef> = f
+        .borrow()
+        .windows
+        .iter()
+        .filter(|w| !w.borrow().dead)
+        .cloned()
+        .collect();
+    if live.len() == 1 {
+        return Ok(Value::Window(live[0].clone()));
     }
+    let mut fb = f.borrow_mut();
+    if fb.root.is_none() {
+        let r = Window::new(usize::MAX);
+        {
+            let mini_top = fb
+                .minibuffer
+                .as_ref()
+                .map(|m| m.borrow().top)
+                .unwrap_or(fb.height);
+            // The root covers the content area: from the topmost
+            // child edge (0 before the first split, 1 once GNU's
+            // menu-bar row materialized) down to the echo area.
+            let top = fb
+                .windows
+                .iter()
+                .map(|w| w.borrow().top)
+                .min()
+                .unwrap_or(0);
+            let mut rb = r.borrow_mut();
+            rb.left = 0;
+            rb.top = top;
+            rb.width = fb.width;
+            rb.height = mini_top.saturating_sub(top);
+        }
+        fb.root = Some(r);
+    }
+    Ok(Value::Window(fb.root.as_ref().unwrap().clone()))
 }
 
 fn f_frame_sel_window(i: &mut Interp, a: Vec<Value>) -> EvalResult {

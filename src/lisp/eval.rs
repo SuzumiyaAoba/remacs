@@ -2958,6 +2958,10 @@ impl Interp {
             ("print-length", Value::Nil),
             ("print-circle", Value::Nil),
             ("load-path", Value::Nil),
+            // GNU: `load-file-name' is a C variable bound to nil
+            // outside of `load' (Vload_file_name), so it is always
+            // readable (e.g. by `custom-current-group').
+            ("load-file-name", Value::Nil),
             (
                 "default-directory",
                 Value::string({

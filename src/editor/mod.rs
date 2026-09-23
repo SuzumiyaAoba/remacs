@@ -62,6 +62,11 @@ pub struct Frame {
     pub selected: WindowRef,
     /// The minibuffer window (echo area in ttys).
     pub minibuffer: Option<WindowRef>,
+    /// Synthetic root window — spans the frame minus the echo area,
+    /// created lazily by `frame-root-window' once the frame holds more
+    /// than one live window (with a single window that window IS the
+    /// root in GNU).
+    pub root: Option<WindowRef>,
     pub width: usize,
     pub height: usize,
     pub params: Value,
@@ -112,7 +117,21 @@ impl Frame {
     pub fn new_tty(buffer: usize, minibuf: usize, width: usize, height: usize) -> FrameRef {
         let main = Window::new(buffer);
         let mb = Window::new(minibuf);
-        mb.borrow_mut().minibuffer = true;
+        {
+            // GNU tty layout: the root window spans the frame minus the
+            // echo area; the minibuffer window occupies the last line.
+            let mut m = main.borrow_mut();
+            m.left = 0;
+            m.top = 0;
+            m.width = width;
+            m.height = height.saturating_sub(1);
+            let mut e = mb.borrow_mut();
+            e.minibuffer = true;
+            e.left = 0;
+            e.top = height.saturating_sub(1);
+            e.width = width;
+            e.height = 1;
+        }
         // The frame's main window is the one selected at setup (GNU:
         // window_select_count bump), so its use-time starts at 1.
         main.borrow_mut().use_time = next_use_time();
@@ -122,6 +141,7 @@ impl Frame {
             windows: vec![main.clone()],
             selected: main,
             minibuffer: Some(mb),
+            root: None,
             width,
             height,
             params: Value::Nil,
@@ -242,7 +262,7 @@ pub(crate) static SUBRS: &[Subr] = &[
         f_minibuffer_window_active_p,
         "t if WINDOW is an active minibuffer."
     ),
-    S!("split-window", 0, 3, f_split_window, "Split WINDOW."),
+    S!("split-window", 0, 4, f_split_window, "Split WINDOW."),
     S!(
         "split-window-below",
         0,
@@ -2343,7 +2363,7 @@ fn f_window_frame(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     Ok(Value::Nil)
 }
 
-fn f_window_list(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+pub(crate) fn f_window_list(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let f = frame_of(i, &arg(&a, 0))?;
     // GNU: MINIBUF t = always include the minibuffer window; nil =
     // include only when active; any other non-nil = never include.
@@ -2351,18 +2371,25 @@ fn f_window_list(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         Some(v) if v.truthy() => i.sym_id(v) == Some(sym::T),
         _ => i.minibuf_level > 0,
     };
-    let mut out: Vec<Value> = f
-        .borrow()
-        .windows
-        .iter()
-        .map(|w| Value::Window(w.clone()))
-        .collect();
-    if include_mini {
-        if let Some(mb) = &f.borrow().minibuffer {
-            out.push(Value::Window(mb.clone()));
+    // GNU returns the frame's window chain in cyclic order starting
+    // at the SELECTED window — the minibuffer window (when included)
+    // sits in the chain after the last content window.
+    let (mut ws, sel_id) = {
+        let fb = f.borrow();
+        let mut ws = fb.windows.clone();
+        if include_mini {
+            if let Some(mb) = &fb.minibuffer {
+                ws.push(mb.clone());
+            }
         }
+        (ws, fb.selected.borrow().id)
+    };
+    if let Some(pos) = ws.iter().position(|w| w.borrow().id == sel_id) {
+        ws.rotate_left(pos);
     }
-    Ok(Value::list(out))
+    Ok(Value::list(
+        ws.iter().map(|w| Value::Window(w.clone())).collect(),
+    ))
 }
 
 fn f_window_minibuffer_p(i: &mut Interp, a: Vec<Value>) -> EvalResult {
@@ -2644,24 +2671,101 @@ fn f_minibuffer_window_active_p(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 
 fn f_split_window(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let w = win_of(i, &arg(&a, 0))?;
-    let side_sym = a.get(2).and_then(|v| i.sym_id(v)).map(|s| i.symbol_name(s));
-    let _ = side_sym; // vertical vs horizontal — tty splits vertically
+    // GNU Fsplit_window: `above'/`below' split vertically, `left'
+    // horizontally with the new window on the left, and ANY other
+    // non-nil side (including `right', t, bogus) horizontally with
+    // the new window on the right.
+    let side = match a.get(2).and_then(|v| i.sym_id(v)).map(|s| i.symbol_name(s)).as_deref() {
+        Some("above") => 1,
+        Some("left") => 3,
+        Some("below") | None => 0,
+        _ => 2,
+    };
+    let hor = side >= 2;
+    // GNU: positive SIZE is the part the PARENT keeps; negative SIZE
+    // is the size of the NEW window; nil halves the parent.
+    let size = arg(&a, 1).int();
+    // GNU batch/tty quirk: the first split materializes the
+    // menu-bar line — the content area shifts down one row and the
+    // minibuffer window moves down with it (`frame-height' keeps
+    // reporting the old value; observed GNU -Q: root becomes
+    // (0 1 80 25), minibuffer (0 25 80 26)).
+    if let Some(f) = sel_frame(i) {
+        let ff = f.borrow();
+        if ff.windows.len() == 1 && w.borrow().top == 0 {
+            w.borrow_mut().top = 1;
+            if let Some(mb) = &ff.minibuffer {
+                let top = mb.borrow().top;
+                mb.borrow_mut().top = top + 1;
+            }
+        }
+    }
     let buf = w.borrow().buffer;
     let new = Window::new(buf);
-    // Halve the height of the original.
     {
         let mut ww = w.borrow_mut();
-        let half = ww.height / 2;
-        ww.height = half;
-        new.borrow_mut().top = ww.top + half;
-        new.borrow_mut().height = ww.height;
-        new.borrow_mut().width = ww.width;
-        new.borrow_mut().left = ww.left;
-        new.borrow_mut().point = ww.point;
-        new.borrow_mut().start = ww.start;
+        let mut nw = new.borrow_mut();
+        nw.point = ww.point;
+        nw.start = ww.start;
+        if hor {
+            let total = ww.width;
+            let (keep, sz) = match size {
+                Some(s) if s >= 0 => ((s.max(0) as usize).min(total), total.saturating_sub(s.max(0) as usize)),
+                Some(s) => {
+                    let n = (-s).max(0) as usize;
+                    (total.saturating_sub(n), n.min(total))
+                }
+                None => (total / 2, total - total / 2),
+            };
+            nw.top = ww.top;
+            nw.height = ww.height;
+            if side == 2 {
+                ww.width = keep;
+                nw.left = ww.left + keep;
+                nw.width = sz;
+            } else {
+                nw.left = ww.left;
+                nw.width = sz;
+                ww.left += sz;
+                ww.width = keep;
+            }
+        } else {
+            let total = ww.height;
+            let (keep, sz) = match size {
+                Some(s) if s >= 0 => ((s.max(0) as usize).min(total), total.saturating_sub(s.max(0) as usize)),
+                Some(s) => {
+                    let n = (-s).max(0) as usize;
+                    (total.saturating_sub(n), n.min(total))
+                }
+                None => (total / 2, total - total / 2),
+            };
+            nw.left = ww.left;
+            nw.width = ww.width;
+            if side == 0 {
+                ww.height = keep;
+                nw.top = ww.top + keep;
+                nw.height = sz;
+            } else {
+                nw.top = ww.top;
+                nw.height = sz;
+                ww.top += sz;
+                ww.height = keep;
+            }
+        }
     }
     let f = sel_frame(i).unwrap();
-    f.borrow_mut().windows.push(new.clone());
+    // GNU inserts the new window adjacent to its parent in the
+    // window-list order: after it for below/right, before it for
+    // above/left.
+    let mut ff = f.borrow_mut();
+    let wid = w.borrow().id;
+    let idx = ff
+        .windows
+        .iter()
+        .position(|w2| w2.borrow().id == wid)
+        .unwrap_or(ff.windows.len());
+    ff.windows
+        .insert(idx + usize::from(side == 0 || side == 2), new.clone());
     Ok(Value::Window(new))
 }
 
@@ -2674,10 +2778,55 @@ fn f_delete_window(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         if ff.windows.len() <= 1 {
             return Err(i.error("Attempt to delete the only window"));
         }
+        // GNU gives the deleted window's space to its sibling.  Flat
+        // model: merge into the first remaining window that shares a
+        // full edge (same left+width for vertical neighbors, same
+        // top+height for horizontal ones).
+        {
+            let d = w.borrow();
+            let (dl, dt, dr, db) =
+                (d.left, d.top, d.left + d.width, d.top + d.height);
+            for r in ff.windows.iter() {
+                if r.borrow().id == wid {
+                    continue;
+                }
+                let mut rb = r.borrow_mut();
+                let (rl, rt, rr, rb2) =
+                    (rb.left, rb.top, rb.left + rb.width, rb.top + rb.height);
+                if rl == dl && rb.width == dr - dl && rb2 == dt {
+                    // R directly above D: extend down over D's area.
+                    rb.height += db - dt;
+                    break;
+                } else if rl == dl && rb.width == dr - dl && rt == db {
+                    // R directly below D: extend up.
+                    rb.top = dt;
+                    rb.height += db - dt;
+                    break;
+                } else if rt == dt && rb.height == db - dt && rr == dl {
+                    // R directly left of D: extend right.
+                    rb.width += dr - dl;
+                    break;
+                } else if rt == dt && rb.height == db - dt && rl == dr {
+                    // R directly right of D: extend left.
+                    rb.left = dl;
+                    rb.width += dr - dl;
+                    break;
+                }
+            }
+        }
+        let del_idx = ff
+            .windows
+            .iter()
+            .position(|w2| w2.borrow().id == wid)
+            .unwrap_or(0);
+        let sel_dead = ff.selected.borrow().id == wid;
         ff.windows.retain(|w2| w2.borrow().id != wid);
         w.borrow_mut().dead = true;
-        if ff.selected.borrow().id == wid {
-            ff.selected = ff.windows[0].clone();
+        if sel_dead {
+            // GNU: deleting the selected window selects the window
+            // FOLLOWING it in the frame's window chain.
+            let idx = del_idx % ff.windows.len().max(1);
+            ff.selected = ff.windows[idx].clone();
         }
     }
     Ok(Value::Nil)
@@ -2688,6 +2837,20 @@ fn f_delete_other_windows(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let wid = w.borrow().id;
     let f = sel_frame(i).unwrap();
     let mut ff = f.borrow_mut();
+    // GNU expands the kept window over the whole root area: frame
+    // width x (topmost content edge .. minibuffer top).
+    let root_top = ff
+        .windows
+        .iter()
+        .map(|w2| w2.borrow().top)
+        .min()
+        .unwrap_or(0);
+    let root_bot = ff
+        .minibuffer
+        .as_ref()
+        .map(|m| m.borrow().top)
+        .unwrap_or(ff.height);
+    let fwidth = ff.width;
     ff.windows.retain(|w2| {
         let keep = w2.borrow().id == wid;
         if !keep {
@@ -2695,6 +2858,13 @@ fn f_delete_other_windows(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         }
         keep
     });
+    {
+        let mut wb = w.borrow_mut();
+        wb.left = 0;
+        wb.top = root_top;
+        wb.width = fwidth;
+        wb.height = root_bot.saturating_sub(root_top);
+    }
     ff.selected = w.clone();
     Ok(Value::Nil)
 }
@@ -7266,6 +7436,12 @@ fn f_file_name_as_directory(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 }
 fn f_directory_file_name(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let s = want_str(i, &a[0])?;
+    // GNU (fileio.c): strip trailing slashes, but a name made solely
+    // of slashes is already a directory name and stays unchanged
+    // (`directory-file-name' of "/" is "/", of "//" is "//").
+    if s.chars().all(|c| c == '/') {
+        return Ok(Value::string(s));
+    }
     Ok(Value::string(s.trim_end_matches('/').to_string()))
 }
 fn f_file_name_concat(i: &mut Interp, a: Vec<Value>) -> EvalResult {
@@ -12239,24 +12415,16 @@ fn f_minimize_window(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 }
 
 fn f_split_window_vertically(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    // GNU order: (split-window-vertically &optional SIZE WINDOW-TO-SPLIT).
-    let win_v = arg(&a, 1);
-    let w = win_of(i, &win_v)?;
-    let total = w.borrow().height;
-    let new = f_split_window(i, vec![win_v.clone(), Value::Nil])?;
-    if let Value::Int(size) = arg(&a, 0) {
-        let size = size.max(0) as usize;
-        w.borrow_mut().height = total.saturating_sub(size).max(WINDOW_MIN_HEIGHT);
-        if let Value::Window(nw) = &new {
-            nw.borrow_mut().height = size.max(WINDOW_MIN_HEIGHT).min(total);
-        }
-    }
-    Ok(new)
+    // GNU's `split-window-below' (and its `split-window-vertically'
+    // alias): (SIZE WINDOW-TO-SPLIT) → `split-window' with side nil.
+    f_split_window(i, vec![arg(&a, 1), arg(&a, 0)])
 }
 fn f_split_window_horizontally(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let new = f_split_window_vertically(i, a)?;
-    // Our model splits vertically; mark the intent via the side param.
-    Ok(new)
+    // GNU: (split-window-horizontally &optional SIZE WINDOW-TO-SPLIT)
+    // puts a new window of SIZE columns on the right of
+    // WINDOW-TO-SPLIT — i.e. `split-window' with side `right'.
+    let right = Value::Sym(i.intern("right"));
+    f_split_window(i, vec![arg(&a, 1), arg(&a, 0), right])
 }
 
 fn f_switch_to_buffer_other_window(i: &mut Interp, a: Vec<Value>) -> EvalResult {
