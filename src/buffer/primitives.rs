@@ -1270,7 +1270,6 @@ pub(crate) static SUBRS: &[Subr] = &[
     // `text-props-copy' does not exist in GNU.
     S!("object-intervals", 1, 1, f_object_intervals, ""),
     // --- undo ---
-    S!("undo", 0, 1, f_undo, "Undo some changes."),
     S!(
         "primitive-undo",
         2,
@@ -1278,8 +1277,6 @@ pub(crate) static SUBRS: &[Subr] = &[
         f_primitive_undo,
         "Apply undo entries."
     ),
-    S!("undo-start", 0, 0, f_undo_start, ""),
-    S!("undo-more", 1, 1, f_undo, ""),
     S!("undo-auto-amalgamate", 0, 0, f_noop, ""),
     S!("cancel-change-group", 0, 0, f_noop, ""),
     S!("activate-change-group", 0, 0, f_noop, ""),
@@ -2489,17 +2486,20 @@ fn f_copy_case_table(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 }
 
 fn f_buffer_disable_undo(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    // GNU defun: (with-current-buffer buffer (setq buffer-undo-list t))
     let b = buf_of(i, &arg(&a, 0))?;
     let mut bb = b.borrow_mut();
-    bb.undo_enabled = false;
-    bb.undo.clear();
+    bb.set_undo_list(Value::t());
     Ok(Value::t())
 }
 
 fn f_buffer_enable_undo(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    // GNU subr: reset buffer-undo-list to nil only when disabled (t).
     let b = buf_of(i, &arg(&a, 0))?;
     let mut bb = b.borrow_mut();
-    bb.undo_enabled = true;
+    if bb.undo_disabled() {
+        bb.set_undo_list(Value::Nil);
+    }
     Ok(Value::Nil)
 }
 
@@ -2960,8 +2960,7 @@ fn f_move_to_column(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         let pad = (goal - col) as usize;
         let s: String = " ".repeat(pad);
         let at = bb.text.line_end(bb.point());
-        bb.text.insert(at, &s);
-        bb.zv += pad;
+        bb.insert_at(at, &s);
         bb.set_point(at + pad);
         Ok(Value::Int(goal))
     } else {
@@ -7566,13 +7565,42 @@ pub(crate) fn f_put_text_property(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let prop = want_sym(i, &a[2])?;
     let b = cur(i);
     let mut bb = b.borrow_mut();
+    buf_record_prop(&mut bb, s, e, &a[2], prop, &a[3]);
     bb.text_props.push(TextProp {
         start: s,
         end: e,
         prop,
         value: a[3].clone(),
     });
+    bb.note_prop_modified();
     Ok(Value::Nil)
+}
+
+/// GNU `record_property_change' over [S,E) (0-based): push one
+/// `(nil PROP OLD BEG . END)' undo entry per contiguous run of OLD
+/// values that are not `eq' NEW.
+fn buf_record_prop(
+    bb: &mut Buffer,
+    s: usize,
+    e: usize,
+    prop: &Value,
+    pid: u32,
+    new: &Value,
+) {
+    let mut p = s;
+    while p < e {
+        let old = bb.prop_value_at(p, pid);
+        if crate::lisp::builtins::eq_values(&old, new) {
+            p += 1;
+            continue;
+        }
+        let mut q = p + 1;
+        while q < e && crate::lisp::builtins::eq_values(&bb.prop_value_at(q, pid), &old) {
+            q += 1;
+        }
+        bb.record_prop_change(prop.clone(), old, p + 1, q + 1);
+        p = q;
+    }
 }
 
 // ---------- string-object text properties ----------
@@ -7783,13 +7811,30 @@ fn f_add_text_properties(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let plist = a[2].list_to_vec().unwrap_or_default();
     let b = cur(i);
     let mut bb = b.borrow_mut();
+    buf_add_props(&mut bb, i, s, e, &plist, true)
+}
+
+/// Buffer side of `add-text-properties': records undo entries for
+/// each property pair (when RECORD), pushes the flat entries, and
+/// returns t when a value actually changed.
+fn buf_add_props(
+    bb: &mut Buffer,
+    i: &Interp,
+    s: usize,
+    e: usize,
+    plist: &[Value],
+    record: bool,
+) -> EvalResult {
     let mut changed = false;
     let mut k = 0;
     while k + 1 < plist.len() {
         if let Some(p) = i.sym_id(&plist[k]) {
             // GNU: t only when the value actually changes somewhere.
-            if !buf_prop_uniform(&bb, s, e, p, &plist[k + 1]) {
+            if !buf_prop_uniform(bb, s, e, p, &plist[k + 1]) {
                 changed = true;
+            }
+            if record {
+                buf_record_prop(bb, s, e, &plist[k], p, &plist[k + 1]);
             }
             bb.text_props.push(TextProp {
                 start: s,
@@ -7800,6 +7845,7 @@ fn f_add_text_properties(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         }
         k += 2;
     }
+    bb.note_prop_modified();
     Ok(Value::from_bool(changed))
 }
 
@@ -7883,9 +7929,13 @@ pub(crate) fn f_remove_text_properties(i: &mut Interp, a: Vec<Value>) -> EvalRes
         .collect();
     let b = cur(i);
     let mut bb = b.borrow_mut();
+    for (n, &p) in props.iter().enumerate() {
+        buf_record_prop(&mut bb, s, e, &plist[n * 2], p, &Value::Nil);
+    }
     let before = bb.text_props.len();
     bb.text_props
         .retain(|tp| !(props.contains(&tp.prop) && tp.start < e && tp.end > s));
+    bb.note_prop_modified();
     Ok(Value::from_bool(bb.text_props.len() != before))
 }
 
@@ -7909,14 +7959,64 @@ fn f_set_text_properties(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let len = cur(i).borrow().text.len();
     let s = pos_idx(len, want_int(i, &a[0])?);
     let e = pos_idx(len, want_int(i, &a[1])?);
+    let plist = a[2].list_to_vec().unwrap_or_default();
+    let b = cur(i);
     {
-        let b = cur(i);
-        b.borrow_mut()
-            .text_props
+        let mut bb = b.borrow_mut();
+        buf_record_set(&mut bb, i, s, e, &plist);
+        bb.text_props
             .retain(|tp| !(tp.start < e && tp.end > s));
     }
-    f_add_text_properties(i, a)?;
+    {
+        let mut bb = b.borrow_mut();
+        buf_add_props(&mut bb, i, s, e, &plist, false)?;
+    }
     Ok(Value::t())
+}
+
+/// GNU `set_properties' undo recording for `set-text-properties':
+/// over each contiguous run sharing an old plist, record `(nil SYM
+/// OLD BEG . END)' for each old property missing-or-different in the
+/// new plist, and `(nil SYM nil BEG . END)' for each new property
+/// absent from the old one.
+fn buf_record_set(bb: &mut Buffer, i: &Interp, s: usize, e: usize, plist: &[Value]) {
+    let mut p = s;
+    while p < e {
+        let old = bb.plist_at(p);
+        let mut q = p + 1;
+        while q < e {
+            let pl = bb.plist_at(q);
+            if pl.len() != old.len()
+                || !pl
+                    .iter()
+                    .all(|(k, v)| old.get(k).is_some_and(|o| crate::lisp::builtins::eq_values(o, v)))
+            {
+                break;
+            }
+            q += 1;
+        }
+        for (pid, oldv) in &old {
+            let newv = plist
+                .chunks(2)
+                .find(|c| c.len() == 2 && i.sym_id(&c[0]) == Some(*pid))
+                .map(|c| c[1].clone())
+                .unwrap_or(Value::Nil);
+            if !crate::lisp::builtins::eq_values(&newv, oldv) {
+                bb.record_prop_change(Value::Sym(*pid), oldv.clone(), p + 1, q + 1);
+            }
+        }
+        for c in plist.chunks(2) {
+            if c.len() != 2 {
+                continue;
+            }
+            if let Some(pid) = i.sym_id(&c[0]) {
+                if !old.contains_key(&pid) {
+                    bb.record_prop_change(c[0].clone(), Value::Nil, p + 1, q + 1);
+                }
+            }
+        }
+        p = q;
+    }
 }
 
 pub(crate) fn prop_at(i: &mut Interp, pos: usize, prop: u32) -> Value {
@@ -8223,9 +8323,13 @@ pub(crate) fn f_remove_list_of_text_properties(i: &mut Interp, a: Vec<Value>) ->
     let props: Vec<u32> = names.iter().filter_map(|v| i.sym_id(v)).collect();
     let b = cur(i);
     let mut bb = b.borrow_mut();
+    for (n, &p) in props.iter().enumerate() {
+        buf_record_prop(&mut bb, s, e, &names[n], p, &Value::Nil);
+    }
     let before = bb.text_props.len();
     bb.text_props
         .retain(|tp| !(props.contains(&tp.prop) && tp.start < e && tp.end > s));
+    bb.note_prop_modified();
     Ok(Value::from_bool(bb.text_props.len() != before))
 }
 
@@ -8419,41 +8523,329 @@ fn f_propertize(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 
 // ---------- undo ----------
 
-fn f_undo(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let n = a.get(0).and_then(|v| v.int()).unwrap_or(1).max(1) as usize;
-    let b = cur(i);
-    let mut bb = b.borrow_mut();
-    for _ in 0..n {
-        // Undo one "change group": entries up to the last Boundary.
-        // First, if the last entry is a Boundary, pop it.
-        if matches!(bb.undo.last(), Some(crate::buffer::UndoEntry::Boundary)) {
-            bb.undo.pop();
+/// The error GNU's `primitive-undo' signals when an entry's positions
+/// fall outside the accessible (visible) portion of the buffer.
+fn undo_oob_err(i: &mut Interp) -> Flow {
+    i.signal_data(
+        sym::ERROR,
+        vec![Value::string(
+            "Changes to be undone are outside visible portion of buffer",
+        )],
+    )
+}
+
+/// GNU `time-equal-p' restricted to the shapes we store in `(t . TIME)'
+/// undo entries (fixnum 0 for non-file buffers, or a Lisp timestamp).
+fn undo_time_equal(i: &Interp, a: &Value, b: &Value) -> bool {
+    match (a, b) {
+        (Value::Int(x), Value::Int(y)) => x == y,
+        _ => crate::lisp::builtins::equal_values(i, a, b),
+    }
+}
+
+/// Apply one non-nil undo element (the `pcase' dispatch of GNU's
+/// `primitive-undo').  Returns the remaining LIST after consuming any
+/// (MARKER . ADJUSTMENT) records that follow a (TEXT . POS) entry.
+fn undo_apply_one(
+    i: &mut Interp,
+    b: &Rc<RefCell<crate::buffer::Buffer>>,
+    next: &Value,
+    list: &mut Value,
+) -> Result<(), Flow> {
+    match next {
+        // POSITION: `(goto-char next)'.
+        Value::Int(p) => {
+            let mut bb = b.borrow_mut();
+            let idx = pos_idx(bb.text.len(), *p);
+            bb.point = idx.max(bb.begv).min(bb.text_len());
         }
-        // Collect entries until we hit a Boundary.
-        let mut group = Vec::new();
-        while let Some(e) = bb.undo.pop() {
-            if matches!(e, crate::buffer::UndoEntry::Boundary) {
+        Value::Cons(cell) => {
+            let (car, cdr) = {
+                let cc = cell.borrow();
+                (cc.car.clone(), cc.cdr.clone())
+            };
+            if matches!(car, Value::Sym(s) if s == crate::lisp::sym::T) {
+                // (t . TIME): previous modtime record; if it matches the
+                // visited file's time, mark the buffer unmodified.
+                let vft = {
+                    let bb = b.borrow();
+                    if bb.file_modtime_ns < 0 {
+                        Value::Int(-2 - bb.file_modtime_ns)
+                    } else {
+                        crate::lisp::builtins::misc::ns_to_lisp_time(bb.file_modtime_ns)
+                    }
+                };
+                if undo_time_equal(i, &cdr, &vft) {
+                    f_unlock_buffer(i, vec![])?;
+                    f_set_buffer_modified_p(i, vec![Value::Nil])?;
+                }
+            } else if matches!(car, Value::Nil) {
+                // (nil PROP VAL BEG . END): text property change.
+                let (prop, val, tail) = {
+                    let (p, r1) = match &cdr {
+                        Value::Cons(c) => {
+                            let cc = c.borrow();
+                            (cc.car.clone(), cc.cdr.clone())
+                        }
+                        _ => return Err(undo_unrecognized(i, next)),
+                    };
+                    let (v, r2) = match &r1 {
+                        Value::Cons(c) => {
+                            let cc = c.borrow();
+                            (cc.car.clone(), cc.cdr.clone())
+                        }
+                        _ => return Err(undo_unrecognized(i, next)),
+                    };
+                    (p, v, r2)
+                };
+                let (beg, end) = match &tail {
+                    Value::Cons(c) => {
+                        let cc = c.borrow();
+                        (cc.car.clone(), cc.cdr.clone())
+                    }
+                    _ => return Err(undo_unrecognized(i, next)),
+                };
+                let (Some(beg), Some(end)) = (beg.int(), end.int()) else {
+                    return Err(undo_unrecognized(i, next));
+                };
+                {
+                    let bb = b.borrow();
+                    if beg < bb.begv as i128 + 1 || end > bb.text_len() as i128 + 1 {
+                        drop(bb);
+                        return Err(undo_oob_err(i));
+                    }
+                }
+                f_put_text_property(
+                    i,
+                    vec![Value::Int(beg), Value::Int(end), prop, val],
+                )?;
+            } else if matches!(car, Value::Sym(s) if s == i.intern("apply")) {
+                // (apply . FUN-ARGS): function undo record.
+                let currbuff = i.current_buffer;
+                let fun_args = cdr.list_to_vec().map_err(|_| undo_unrecognized(i, next));
+                match fun_args {
+                    Ok(v) if v.first().and_then(|x| x.int()).is_some() => {
+                        // Long format: (apply DELTA START END FUN . ARGS)
+                        if v.len() < 4 {
+                            return Err(undo_unrecognized(i, next));
+                        }
+                        let delta = v[0].int().unwrap();
+                        let start = v[1].int().unwrap();
+                        let end = v[2].int().unwrap();
+                        let fun = v[3].clone();
+                        let args = v[4..].to_vec();
+                        {
+                            let bb = b.borrow();
+                            if start < bb.begv as i128 + 1
+                                || end > bb.text_len() as i128 + 1
+                            {
+                                drop(bb);
+                                return Err(undo_oob_err(i));
+                            }
+                        }
+                        let sm = f_copy_marker(i, vec![Value::Int(start), Value::Nil])?;
+                        let em = f_copy_marker(i, vec![Value::Int(end), Value::t()])?;
+                        i.apply(&fun, args)?;
+                        let (sp, ep) = match (&sm, &em) {
+                            (Value::Marker(s), Value::Marker(e)) => (
+                                s.borrow().position as i128,
+                                e.borrow().position as i128,
+                            ),
+                            _ => unreachable!(),
+                        };
+                        if sp + 1 != start || ep + 1 != end + delta {
+                            return Err(i.signal_data(
+                                sym::ERROR,
+                                vec![Value::string(
+                                    "Changes undone by function are different from the announced ones",
+                                )],
+                            ));
+                        }
+                        f_set_marker(i, vec![sm, Value::Nil])?;
+                        f_set_marker(i, vec![em, Value::Nil])?;
+                    }
+                    Ok(v) => {
+                        // Short format: (apply FUN . ARGS)
+                        let (fun, args) = match v.split_first() {
+                            Some((f, r)) => (f.clone(), r.to_vec()),
+                            None => return Err(undo_unrecognized(i, next)),
+                        };
+                        i.apply(&fun, args)?;
+                    }
+                    Err(e) => return Err(e),
+                }
+                if i.current_buffer != currbuff {
+                    return Err(i.signal_data(
+                        sym::ERROR,
+                        vec![Value::string("Undo function switched buffer")],
+                    ));
+                }
+            } else if let (Some(beg), Some(end)) = (car.int(), cdr.int()) {
+                // (BEG . END): range was inserted — delete it.
+                {
+                    let bb = b.borrow();
+                    if beg < bb.begv as i128 + 1 || end > bb.text_len() as i128 + 1 {
+                        drop(bb);
+                        return Err(undo_oob_err(i));
+                    }
+                }
+                let mut bb = b.borrow_mut();
+                let s = (beg - 1).max(0) as usize;
+                bb.set_point(s);
+                bb.delete_region((beg - 1).max(0) as usize, (end - 1).max(0) as usize);
+            } else if let Value::Str(text) = &car {
+                // (STRING . POS): STRING was deleted — reinsert it.
+                let Some(pos) = cdr.int() else {
+                    return Err(undo_unrecognized(i, next));
+                };
+                let apos = pos.unsigned_abs() as usize;
+                {
+                    let bb = b.borrow();
+                    if apos < bb.begv + 1 || apos > bb.text_len() + 1 {
+                        drop(bb);
+                        return Err(undo_oob_err(i));
+                    }
+                }
+                // Consume following (MARKER . ADJUSTMENT) entries whose
+                // marker still sits at APOS in this buffer.
+                let mut valid_adjs = Vec::new();
+                loop {
+                    let peek = match list {
+                        Value::Cons(c) => c.borrow().car.clone(),
+                        _ => break,
+                    };
+                    let is_madj = match &peek {
+                        Value::Cons(e) => {
+                            let ee = e.borrow();
+                            matches!(ee.car, Value::Marker(_)) && ee.cdr.int().is_some()
+                        }
+                        _ => false,
+                    };
+                    if !is_madj {
+                        break;
+                    }
+                    let madj = peek;
+                    *list = match list {
+                        Value::Cons(c) => c.borrow().cdr.clone(),
+                        _ => break,
+                    };
+                    if let Value::Cons(e) = &madj {
+                        let ee = e.borrow();
+                        if let Value::Marker(m) = &ee.car {
+                            let mm = m.borrow();
+                            if mm.buffer == Some(b.borrow().id)
+                                && apos as i128 == mm.position as i128 + 1
+                            {
+                                valid_adjs.push(madj.clone());
+                            }
+                        }
+                    }
+                }
+                let buf_id = b.borrow().id;
+                let _ = buf_id;
+                {
+                    let mut bb = b.borrow_mut();
+                    if pos < 0 {
+                        bb.set_point((-pos - 1).max(0) as usize);
+                        bb.insert(&text.borrow());
+                    } else {
+                        bb.set_point((pos - 1).max(0) as usize);
+                        bb.insert(&text.borrow());
+                        bb.set_point((pos - 1).max(0) as usize);
+                    }
+                }
+                // Apply validated marker adjustments.
+                for adj in valid_adjs {
+                    if let Value::Cons(e) = &adj {
+                        let ee = e.borrow();
+                        if let (Value::Marker(m), Some(off)) = (&ee.car, ee.cdr.int()) {
+                            if m.borrow().buffer.is_some() {
+                                let np = m.borrow().position as i128 + 1 - off;
+                                m.borrow_mut().position = np.max(0) as usize;
+                            }
+                        }
+                    }
+                }
+            } else if let Value::Marker(m) = &car {
+                // (MARKER . OFFSET) with no matching (TEXT . POS).
+                let _ = crate::lisp::builtins::evalfn::f_warn(
+                    i,
+                    vec![
+                        Value::string(
+                            "Encountered %S entry in undo list with no matching (TEXT . POS) entry",
+                        ),
+                        next.clone(),
+                    ],
+                );
+                if let Some(off) = cdr.int() {
+                    if m.borrow().buffer.is_some() {
+                        let np = m.borrow().position as i128 + 1 - off;
+                        m.borrow_mut().position = np.max(0) as usize;
+                    }
+                }
+            } else {
+                return Err(undo_unrecognized(i, next));
+            }
+        }
+        _ => return Err(undo_unrecognized(i, next)),
+    }
+    Ok(())
+}
+
+fn undo_unrecognized(i: &mut Interp, next: &Value) -> Flow {
+    i.signal_data(
+        sym::ERROR,
+        vec![Value::string(format!(
+            "Unrecognized entry in undo list {}",
+            i.prin1_to_string(next)
+        ))],
+    )
+}
+
+fn f_primitive_undo(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    // (primitive-undo N LIST) — GNU defun (simple.el): N counts undo
+    // boundaries crossed, not entries.  Returns the remaining list.
+    let mut arg = a[0].int().unwrap_or(0);
+    let mut list = a[1].clone();
+    let b = cur(i);
+    let oldlist = b.borrow().undo_list();
+    let mut did_apply = false;
+    while arg > 0 {
+        // Inner loop: apply entries until a nil boundary or list end.
+        loop {
+            let (next, rest) = match &list {
+                Value::Cons(c) => {
+                    let cc = c.borrow();
+                    (cc.car.clone(), cc.cdr.clone())
+                }
+                // GNU `pop' on a non-nil atom signals like `car'.
+                Value::Nil => break,
+                _ => return Err(i.wrong_type_mut("listp", &list)),
+            };
+            list = rest;
+            if matches!(next, Value::Nil) {
                 break;
             }
-            group.push(e);
+            undo_apply_one(i, &b, &next, &mut list)?;
+            did_apply = true;
         }
-        if group.is_empty() {
-            // Nothing left to undo.
-            let msg = if bb.undo_enabled {
-                "No further undo information"
-            } else {
-                "No undo information in this buffer"
-            };
-            drop(bb);
-            let sym = i.intern("user-error");
-            return Err(i.signal_data(sym, vec![Value::string(msg)]));
-        }
-        // Apply in reverse.
-        for e in group.into_iter().rev() {
-            apply_undo(&mut bb, &e);
+        arg -= 1;
+    }
+    if did_apply {
+        // If the applied entries produced no new undo records (e.g.
+        // recording disabled), push an `(apply cdr nil)' marker so
+        // `undo' can still tell a change happened.
+        let mut bb = b.borrow_mut();
+        if crate::lisp::builtins::eq_values(&oldlist, &bb.undo_list()) {
+            let entry = Value::list(vec![
+                Value::Sym(i.intern("apply")),
+                Value::Sym(i.intern("cdr")),
+                Value::Nil,
+            ]);
+            bb.push_undo(entry);
         }
     }
-    Ok(Value::Nil)
+    Ok(list)
 }
 
 fn f_delete_blank_lines(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
@@ -8523,87 +8915,6 @@ fn f_delete_blank_lines(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
     let np = s.min(bb.text.len());
     bb.set_point(np);
     Ok(Value::Nil)
-}
-
-fn f_undo_start(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
-    // Push an undo boundary so the next `undo` treats preceding
-    // records as one group (like Emacs's undo-start).
-    let b = cur(i);
-    b.borrow_mut().undo.push(crate::buffer::UndoEntry::Boundary);
-    let _ = i;
-    Ok(Value::Nil)
-}
-
-fn apply_undo(bb: &mut crate::buffer::Buffer, e: &crate::buffer::UndoEntry) {
-    match e {
-        crate::buffer::UndoEntry::Insertion { start, end } => {
-            let s = (*start).min(bb.text.len());
-            let en = (*end).min(bb.text.len());
-            bb.text.delete(s, en);
-        }
-        crate::buffer::UndoEntry::Deletion { pos, text } => {
-            let s = *pos;
-            bb.text.insert(s.min(bb.text.len()), text);
-        }
-        crate::buffer::UndoEntry::Point(p) => {
-            bb.point = (*p).min(bb.text.len());
-        }
-        crate::buffer::UndoEntry::Boundary => {}
-    }
-    if bb.zv > bb.text.len() {
-        bb.zv = bb.text.len();
-    }
-}
-
-fn f_primitive_undo(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    // (primitive-undo N LIST)
-    let n = a[0].int().unwrap_or(0).max(0) as usize;
-    let items = a[1].list_to_vec().unwrap_or_default();
-    let b = cur(i);
-    let mut bb = b.borrow_mut();
-    let mut applied = 0;
-    let mut rest = Vec::new();
-    for (k, item) in items.iter().enumerate() {
-        if applied >= n {
-            rest = items[k..].to_vec();
-            break;
-        }
-        match item {
-            Value::Nil => {}
-            Value::Cons(c) => {
-                let (car, cdr) = {
-                    let cc = c.borrow();
-                    (cc.car.clone(), cc.cdr.clone())
-                };
-                match (car.int(), cdr.int()) {
-                    (Some(s), Some(e)) => {
-                        // (beg . end) insertion
-                        let s0 = (s - 1).max(0) as usize;
-                        let e0 = (e - 1).max(0) as usize;
-                        let tlen = bb.text.len();
-                        bb.text.delete(s0.min(tlen), e0.min(tlen));
-                        applied += 1;
-                    }
-                    _ => {
-                        // (text . pos) deletion
-                        if let Value::Str(t) = &car {
-                            let p = cdr.int().unwrap_or(1).max(1) as usize - 1;
-                            let tlen = bb.text.len();
-                            bb.text.insert(p.min(tlen), &t.borrow());
-                            applied += 1;
-                        }
-                    }
-                }
-            }
-            Value::Int(p) => {
-                bb.point = (*p - 1).max(0) as usize;
-                applied += 1;
-            }
-            _ => {}
-        }
-    }
-    bb.zv = bb.text.len();
-    Ok(Value::list(rest))
 }
 
 // ---------- misc ----------

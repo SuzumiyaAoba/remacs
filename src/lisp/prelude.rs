@@ -1496,15 +1496,420 @@ a buffer-local setting."
       (transpose-subr-1 pos1 pos2)
       (goto-char (+ (car pos2) (- (cdr pos1) (car pos1))))))))
 
+;; ---------- undo (GNU simple.el) ----------
+
+(defconst undo-equiv-table (make-hash-table :test 'eq :weakness t)
+  "Translation table of `undo-list' elements, used to locate state after redo.")
+
+(defvar undo-in-region nil
+  "Non-nil if `pending-undo-list' is not just a tail of `buffer-undo-list'.")
+
+(defvar undo-no-redo nil
+  "If t, `undo' doesn't go through redo entries.")
+
+(defvar pending-undo-list nil
+  "Within a run of consecutive undo commands, list remaining to be undone.
+If t, we undid all the way to the end of it.")
+
+(defun undo--last-change-was-undo-p (undo-list)
+  "Return non-nil if the last change was the result of an undo.
+The result is usually nil but can be a list of undo elements that
+were produced by the undo."
+  (while (and (consp undo-list) (eq (car undo-list) nil))
+    (setq undo-list (cdr undo-list)))
+  (gethash undo-list undo-equiv-table))
+
+(defun undo (&optional arg)
+  "Undo some previous changes.
+Repeat this command to undo more changes.
+A numeric ARG serves as a repeat count.
+
+In Transient Mark mode when the mark is active, undo changes only within
+the current region.  Similarly, when not in Transient Mark mode, just \\[universal-argument]
+as an argument limits undo to changes within the current region."
+  (interactive "*P")
+  ;; Make last-command indicate for the next command that this was an undo.
+  ;; That way, another undo will undo more.
+  ;; If we get to the end of the undo history and get an error,
+  ;; another undo command will find the undo history empty
+  ;; and will get another error.  To begin undoing the undos,
+  ;; you must type some other command.
+  (let* ((modified (buffer-modified-p))
+	 ;; For an indirect buffer, look in the base buffer for the
+	 ;; auto-save data.
+	 (base-buffer (or (buffer-base-buffer) (current-buffer)))
+	 (recent-save (with-current-buffer base-buffer
+			(recent-auto-save-p)))
+         ;; Allow certain commands to inhibit an immediately following
+         ;; undo-in-region.
+         (inhibit-region (and (symbolp last-command)
+                              (get last-command 'undo-inhibit-region)))
+	 message)
+    ;; If we get an error in undo-start,
+    ;; the next command should not be a "consecutive undo".
+    ;; So set `this-command' to something other than `undo'.
+    (setq this-command 'undo-start)
+    ;; Here we decide whether to break the undo chain.  If the
+    ;; previous command is `undo', we don't call `undo-start', i.e.,
+    ;; don't break the undo chain.
+    (unless (and (eq last-command 'undo)
+		 (or (eq pending-undo-list t)
+		     ;; If something (a timer or filter?) changed the buffer
+		     ;; since the previous command, don't continue the undo seq.
+		     (undo--last-change-was-undo-p buffer-undo-list)))
+      (setq undo-in-region
+	    (and (or (region-active-p) (and arg (not (numberp arg))))
+                 (not inhibit-region)))
+      (if undo-in-region
+	  (undo-start (region-beginning) (region-end))
+	(undo-start))
+      ;; get rid of initial undo boundary
+      (undo-more 1))
+    ;; If we got this far, the next command should be a consecutive undo.
+    (setq this-command 'undo)
+    ;; Check to see whether we're hitting a redo record, and if
+    ;; so, ask the user whether she wants to skip the redo/undo pair.
+    (let ((equiv (gethash pending-undo-list undo-equiv-table)))
+      (or (eq (selected-window) (active-minibuffer-window))
+	  (setq message (format "%s%s"
+                                (if (or undo-no-redo (not equiv))
+                                    "Undo" "Redo")
+                                (if undo-in-region " in region" ""))))
+      (when (and (consp equiv) undo-no-redo)
+	;; The equiv entry might point to another redo record if we have done
+	;; undo-redo-undo-redo-... so skip to the very last equiv.
+	(while (let ((next (gethash equiv undo-equiv-table)))
+		 (if next (setq equiv next))))
+	(setq pending-undo-list (if (consp equiv) equiv t))))
+    (undo-more
+     (if (numberp arg)
+	 (prefix-numeric-value arg)
+       1))
+    ;; Record the fact that the just-generated undo records come from an
+    ;; undo operation--that is, they are redo records.
+    ;; In the ordinary case (not within a region), map the redo
+    ;; record to the following undos.
+    ;; I don't know how to do that in the undo-in-region case.
+    (let ((list buffer-undo-list))
+      ;; Strip any leading undo boundaries there might be, like we do
+      ;; above when checking.
+      (while (eq (car list) nil)
+	(setq list (cdr list)))
+      (puthash list
+               (cond
+                (undo-in-region 'undo-in-region)
+                ;; Prevent identity mapping.  This can happen if
+                ;; consecutive nils are erroneously in undo list.  It
+                ;; has to map to _something_ so that the next `undo'
+                ;; command recognizes that the previous command is
+                ;; `undo' and doesn't break the undo chain.
+                ((eq list pending-undo-list)
+                 (or (gethash list undo-equiv-table)
+                     'empty))
+                (t pending-undo-list))
+	       undo-equiv-table))
+    ;; Don't specify a position in the undo record for the undo command.
+    ;; Instead, undoing this should move point to where the change is.
+    (let ((tail buffer-undo-list)
+	  (prev nil))
+      (while (car tail)
+	(when (integerp (car tail))
+	  (let ((pos (car tail)))
+	    (if prev
+		(setcdr prev (cdr tail))
+	      (setq buffer-undo-list (cdr tail)))
+	    (setq tail (cdr tail))
+	    (while (car tail)
+	      (if (eq pos (car tail))
+		  (if prev
+		      (setcdr prev (cdr tail))
+		    (setq buffer-undo-list (cdr tail)))
+		(setq prev tail))
+	      (setq tail (cdr tail)))
+	    (setq tail nil)))
+	(setq prev tail tail (cdr tail))))
+    ;; Record what the current undo list says,
+    ;; so the next command can tell if the buffer was modified in between.
+    (and modified (not (buffer-modified-p))
+	 (with-current-buffer base-buffer
+	   (delete-auto-save-file-if-necessary recent-save)))
+    ;; Display a message announcing success.
+    (if message
+	(message "%s" message))))
+
+(defun delete-auto-save-file-if-necessary (&optional _force)
+  "Delete the auto-save file if it is no longer needed.
+Called from `undo' when a save state has been restored; remacs does
+not write auto-save files, so there is nothing to delete."
+  nil)
+
+(defun undo-ignore-read-only (&optional arg)
+  "Perform `undo', ignoring the buffer's read-only status.
+A numeric ARG serves as a repeat count."
+  (interactive "P")
+  (let ((inhibit-read-only t))
+    (undo arg)))
+
+(defun buffer-disable-undo (&optional buffer)
+  "Make BUFFER stop keeping undo information.
+No argument or nil as argument means do this for the current buffer."
+  (interactive)
+  (with-current-buffer (if buffer (get-buffer buffer) (current-buffer))
+    (setq buffer-undo-list t)))
+
 (defun undo-only (&optional arg)
-  "Undo some previous changes (no redo)."
-  (interactive "p")
-  (undo arg))
+  "Undo some previous changes.
+Repeat this command to undo more changes.
+A numeric ARG serves as a repeat count.
+Contrary to `undo', this will not redo a previous undo."
+  (interactive "*p")
+  (let ((undo-no-redo t)) (undo arg)))
 
 (defun undo-redo (&optional arg)
-  "Redo some previously undone changes."
-  (interactive "p")
-  (undo arg))
+  "Undo the last ARG undos, i.e., redo the last ARG changes.
+Interactively, ARG is the prefix numeric argument and defaults to 1."
+  (interactive "*p")
+  (cond
+   ((not (undo--last-change-was-undo-p buffer-undo-list))
+    (user-error "No undone changes to redo"))
+   (t
+    (let* ((ul buffer-undo-list)
+           (new-ul
+            (let ((undo-in-progress t))
+              (while (and (consp ul) (eq (car ul) nil))
+                (setq ul (cdr ul)))
+              (primitive-undo (or arg 1) ul)))
+           (new-pul (undo--last-change-was-undo-p new-ul)))
+      (message "Redo%s" (if undo-in-region " in region" ""))
+      (setq this-command 'undo)
+      (setq pending-undo-list new-pul)
+      (setq buffer-undo-list new-ul)))))
+
+(defun undo-more (n)
+  "Undo back N undo-boundaries beyond what was already undone recently.
+Call `undo-start' to get ready to undo recent changes,
+then call `undo-more' one or more times to undo them."
+  (or (listp pending-undo-list)
+      (user-error (concat "No further undo information"
+                          (and undo-in-region " for region"))))
+  (let ((undo-in-progress t))
+    ;; Note: The following, while pulling elements off
+    ;; `pending-undo-list' will call primitive change functions which
+    ;; will push more elements onto `buffer-undo-list'.
+    (setq pending-undo-list (primitive-undo n pending-undo-list))
+    (if (null pending-undo-list)
+	(setq pending-undo-list t))))
+
+(defun undo-start (&optional beg end)
+  "Set `pending-undo-list' to the front of the undo list.
+The next call to `undo-more' will undo the most recently made change.
+If BEG and END are specified, then undo only elements
+that apply to text between BEG and END are used; other undo elements
+are ignored.  If BEG and END are nil, all undo elements are used."
+  (if (eq buffer-undo-list t)
+      (user-error "No undo information in this buffer"))
+  (setq pending-undo-list
+	(if (and beg end (not (= beg end)))
+	    (undo-make-selective-list (min beg end) (max beg end))
+	  buffer-undo-list)))
+
+;; Deep copy of a list
+(defun undo-copy-list (list)
+  "Make a copy of undo list LIST."
+  (mapcar 'undo-copy-list-1 list))
+
+(defun undo-copy-list-1 (elt)
+  (if (consp elt)
+      (cons (car elt) (undo-copy-list-1 (cdr elt)))
+    elt))
+
+(defun undo-make-selective-list (start end)
+  "Return a list of undo elements for the region START to END.
+The elements come from `buffer-undo-list', but we keep only the
+elements inside this region, and discard those outside this
+region.  The elements' positions are adjusted so as the returned
+list can be applied to the current buffer."
+  (let ((ulist buffer-undo-list)
+        ;; A list of position adjusted undo elements in the region.
+        (selective-list (list nil))
+        ;; A list of undo-deltas for out of region undo elements.
+        undo-deltas
+        undo-elt)
+    (while ulist
+      (when undo-no-redo
+        (while (consp (gethash ulist undo-equiv-table))
+          (setq ulist (gethash ulist undo-equiv-table))))
+      (setq undo-elt (car ulist))
+      (cond
+       ((null undo-elt)
+        ;; Don't put two nils together in the list
+        (when (car selective-list)
+          (push nil selective-list)))
+       ((and (consp undo-elt) (eq (car undo-elt) t))
+        ;; This is a "was unmodified" element.  Keep it
+        ;; if we have kept everything thus far.
+        (when (not undo-deltas)
+          (push undo-elt selective-list)))
+       ;; Skip over marker adjustments, instead relying
+       ;; on finding them after (TEXT . POS) elements
+       ((markerp (car-safe undo-elt))
+        nil)
+       (t
+        (let ((adjusted-undo-elt (undo-adjust-elt undo-elt
+                                                  undo-deltas)))
+          (if (undo-elt-in-region adjusted-undo-elt start end)
+              (progn
+                (setq end (+ end (cdr (undo-delta adjusted-undo-elt))))
+                (push adjusted-undo-elt selective-list)
+                ;; Keep (MARKER . ADJUSTMENT) if their (TEXT . POS) was
+                ;; kept.  primitive-undo may discard them later.
+                (when (and (stringp (car-safe adjusted-undo-elt))
+                           (integerp (cdr-safe adjusted-undo-elt)))
+                  (let ((list-i (cdr ulist)))
+                    (while (markerp (car-safe (car list-i)))
+                      (push (pop list-i) selective-list)))))
+            (let ((delta (undo-delta undo-elt)))
+              (when (/= 0 (cdr delta))
+                (push delta undo-deltas)))))))
+      (pop ulist))
+    (nreverse selective-list)))
+
+(defun undo-elt-in-region (undo-elt start end)
+  "Determine whether UNDO-ELT falls inside the region START ... END.
+If it crosses the edge, we return nil.
+
+Generally this function is not useful for determining
+whether (MARKER . ADJUSTMENT) undo elements are in the region,
+because markers can be arbitrarily relocated.  Instead, pass the
+marker adjustment's corresponding (TEXT . POS) element."
+  (cond ((integerp undo-elt)
+         (<= start undo-elt end))
+	((eq undo-elt nil)
+	 t)
+	((atom undo-elt)
+	 nil)
+	((stringp (car undo-elt))
+	 ;; (TEXT . POSITION)
+	 (<= start (abs (cdr undo-elt)) end))
+	((and (consp undo-elt) (markerp (car undo-elt)))
+	 ;; (MARKER . ADJUSTMENT)
+         (<= start (car undo-elt) end))
+	((null (car undo-elt))
+	 ;; (nil PROPERTY VALUE BEG . END)
+	 (let ((tail (nthcdr 3 undo-elt)))
+	   (and (>= (car tail) start)
+		(<= (cdr tail) end))))
+	((integerp (car undo-elt))
+	 ;; (BEGIN . END)
+	 (and (>= (car undo-elt) start)
+	      (<= (cdr undo-elt) end)))))
+
+(defun undo-elt-crosses-region (undo-elt start end)
+  "Test whether UNDO-ELT crosses one edge of that region START ... END.
+This assumes we have already decided that UNDO-ELT
+is not *inside* the region START...END."
+  (declare (obsolete nil "25.1"))
+  (cond ((atom undo-elt) nil)
+	((null (car undo-elt))
+	 ;; (nil PROPERTY VALUE BEG . END)
+	 (let ((tail (nthcdr 3 undo-elt)))
+	   (and (< (car tail) end)
+		(> (cdr tail) start))))
+	((integerp (car undo-elt))
+	 ;; (BEGIN . END)
+	 (and (< (car undo-elt) end)
+	      (> (cdr undo-elt) start)))))
+
+(defun undo-adjust-elt (elt deltas)
+  "Return adjustment of undo element ELT by the undo DELTAS list."
+  (cond
+   ;; POSITION
+   ((integerp elt)
+    (undo-adjust-pos elt deltas))
+   ((consp elt)
+    (cond
+     ;; (BEG . END)
+     ((and (integerp (car elt)) (integerp (cdr elt)))
+      (undo-adjust-beg-end (car elt) (cdr elt) deltas))
+     ;; (TEXT . POSITION)
+     ((and (stringp (car elt)) (integerp (cdr elt)))
+      (cons (car elt) (* (if (< (cdr elt) 0) -1 1)
+			 (undo-adjust-pos (abs (cdr elt)) deltas))))
+     ;; (nil PROPERTY VALUE BEG . END)
+     ((null (car elt))
+      (let* ((l (cdr elt))
+	     (prop (car l))
+	     (val (cadr l))
+	     (tail (nthcdr 2 l)))
+	(list nil prop val
+	      (car (undo-adjust-beg-end (car tail) (cdr tail) deltas))
+	      (cdr (undo-adjust-beg-end (car tail) (cdr tail) deltas)))))
+     ;; (apply DELTA START END FUN . ARGS)
+     ;; FIXME
+     ;; All others return same elt
+     (t elt)))
+   (t elt)))
+
+;; (BEG . END) can adjust to the same positions, commonly when an
+;; insertion was undone and they are out of region, for example:
+;;
+;; buf pos:
+;; 123456789 buffer-undo-list undo-deltas
+;; --------- ---------------- -----------
+;; [...]
+;; abbaa     (2 . 4)          (2 . -2)
+;; aaa       ("bb" . 2)       (2 . 2)
+;; [...]
+;;
+;; "bb" insertion (2 . 4) adjusts to (2 . 2) because of the subsequent
+;; undo.  Further adjustments to such an element should be the same as
+;; for (TEXT . POSITION) elements.  The options are:
+;;
+;;   1: POSITION adjusts using <= (use-< nil), resulting in behavior
+;;      analogous to marker insertion-type t.
+;;
+;;   2: POSITION adjusts using <, resulting in behavior analogous to
+;;      marker insertion-type nil.
+;;
+;; There was no strong reason to prefer one or the other, except that
+;; the first is more consistent with prior undo in region behavior.
+(defun undo-adjust-beg-end (beg end deltas)
+  "Return cons of adjustments to BEG and END by the undo DELTAS list."
+  (let ((adj-beg (undo-adjust-pos beg deltas)))
+    ;; Note: option 2 above would be like (cons (min ...) adj-end)
+    (cons adj-beg
+          (max adj-beg (undo-adjust-pos end deltas t)))))
+
+(defun undo-adjust-pos (pos deltas &optional use-<)
+  "Return adjustment of POS by the undo DELTAS list, comparing
+with < or <= based on USE-<."
+  (dolist (d deltas pos)
+    (when (if use-<
+              (< (car d) pos)
+            (<= (car d) pos))
+      (setq pos
+            ;; Don't allow pos to become less than the undo-delta
+            ;; position.  This edge case is described in the overview
+            ;; comments.
+            (max (car d) (- pos (cdr d)))))))
+
+;; Return the first affected buffer position and the delta for an undo element
+;; delta is defined as the change in subsequent buffer positions if we *did*
+;; the undo.
+(defun undo-delta (undo-elt)
+  (if (consp undo-elt)
+      (cond ((stringp (car undo-elt))
+	     ;; (TEXT . POSITION)
+	     (cons (abs (cdr undo-elt)) (length (car undo-elt))))
+	    ((integerp (car undo-elt))
+	     ;; (BEGIN . END)
+	     (cons (car undo-elt) (- (car undo-elt) (cdr undo-elt))))
+	    ;; (apply DELTA BEG END FUNC . ARGS)
+	    ((and (eq (car undo-elt) 'apply) (integerp (nth 1 undo-elt)))
+	     (cons (nth 2 undo-elt) (nth 1 undo-elt)))
+	    (t
+	     '(0 . 0)))
+    '(0 . 0)))
 
 (defun revert-buffer (&rest _ignore)
   "Replace the buffer text with the contents of the visited file."

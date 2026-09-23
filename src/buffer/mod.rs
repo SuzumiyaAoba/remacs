@@ -37,12 +37,26 @@ pub struct Buffer {
     pub file_name: Option<String>,
     /// Modified since last save.
     pub modified: bool,
-    /// Undo records.
-    pub undo: Vec<UndoEntry>,
-    /// Inhibit undo recording.
-    pub undo_enabled: bool,
+    /// SymId of `buffer-undo-list'.  The undo list itself is the
+    /// buffer-local variable binding (`locals[undo_sym]'), a Lisp list
+    /// in GNU's format: (BEG . END) insertions, (TEXT . POS) deletions,
+    /// integer point entries, (t . MODTIME) first-change records,
+    /// (MARKER . ADJ) marker adjustments, and nil boundaries.
+    pub undo_sym: SymId,
+    /// Shared flag mirroring the global `undo-inhibit-record-point'
+    /// variable's current dynamic value; the interpreter keeps it in
+    /// sync so `record_point' can consult it without the evaluator.
+    pub undo_inhibit: Rc<std::cell::Cell<bool>>,
+    /// GNU `point_before_last_command_or_undo': point (1-based) at the
+    /// last undo boundary/command, or None when this buffer was not
+    /// current at that time (GNU's `buffer_before_last_command_or_undo').
+    pub undo_pt_before: Option<usize>,
     /// Time of last modification (for tick tracking).
     pub mod_tick: u64,
+    /// GNU SAVE_MODIFF: `mod_tick' at the last save or
+    /// `set-buffer-modified-p' nil.  When `mod_tick <= save_tick' the
+    /// next recorded change pushes a `(t . MODTIME)' first-change entry.
+    pub save_tick: u64,
     /// Text property intervals (start, end, property, value).
     /// Simplified model: a linear list, last write wins.
     pub text_props: Vec<TextProp>,
@@ -217,22 +231,19 @@ pub struct Overlay {
     pub plist: Value,
 }
 
-/// Undo record kinds (mirroring buffer-undo-list semantics loosely).
-#[derive(Clone)]
-pub enum UndoEntry {
-    /// Text inserted at `start..end` — undo = delete.
-    Insertion { start: usize, end: usize },
-    /// Text deleted at `pos` — undo = reinsert.
-    Deletion { pos: usize, text: String },
-    /// Point was at `pos` before the command.
-    Point(usize),
-    /// Boundary marker (nil in the undo list).
-    Boundary,
-}
-
 impl Buffer {
-    pub fn new(id: usize, name: String) -> Buffer {
-        let undo_enabled = !name.starts_with(' ');
+    pub fn new(
+        id: usize,
+        name: String,
+        undo_sym: SymId,
+        undo_inhibit: Rc<std::cell::Cell<bool>>,
+    ) -> Buffer {
+        let mut locals = HashMap::new();
+        // Buffers with space-prefixed (internal) names start with undo
+        // disabled, like GNU get-buffer-create (undo_list = Qt).
+        if name.starts_with(' ') {
+            locals.insert(undo_sym, Value::t());
+        }
         Buffer {
             id,
             name,
@@ -241,17 +252,17 @@ impl Buffer {
             mark: None,
             begv: 0,
             zv: 0,
-            locals: HashMap::new(),
+            locals,
             markers: Vec::new(),
             file_name: None,
             modified: false,
-            undo: Vec::new(),
-            // Buffers with space-prefixed (internal) names start with
-            // undo disabled, like GNU get-buffer-create.
-            undo_enabled,
+            undo_sym,
+            undo_inhibit,
+            undo_pt_before: None,
             // Creation counts as the first modification (Emacs's
             // fresh buffers report buffer-modified-tick = 1).
             mod_tick: 1,
+            save_tick: 1,
             text_props: Vec::new(),
             overlays: Vec::new(),
             live: true,
@@ -273,6 +284,11 @@ impl Buffer {
     /// (filelock.c `lock_file' via `prepare_to_modify_buffer'), and
     /// becoming unmodified releases our lock (`unlock_file').
     pub fn note_modified(&mut self, flag: bool) {
+        if !flag {
+            // GNU Fset_buffer_modified_p: SAVE_MODIFF = MODIFF, so the
+            // next recorded change pushes a `(t . MODTIME)' entry.
+            self.save_tick = self.mod_tick;
+        }
         if flag == self.modified {
             return;
         }
@@ -339,12 +355,7 @@ impl Buffer {
         if n == 0 {
             return;
         }
-        if self.undo_enabled {
-            self.undo.push(UndoEntry::Insertion {
-                start: pos,
-                end: pos + n,
-            });
-        }
+        self.record_insert(pos, n);
         self.text.insert(pos, s);
         self.adjust_insert(pos, n, before_markers_flag(pos, self.point));
         self.note_modified(true);
@@ -357,12 +368,10 @@ impl Buffer {
     pub fn insert(&mut self, s: &str) {
         let p = self.point();
         let n = s.chars().count();
-        if self.undo_enabled {
-            self.undo.push(UndoEntry::Insertion {
-                start: p,
-                end: p + n,
-            });
+        if n == 0 {
+            return;
         }
+        self.record_insert(p, n);
         self.text.insert(p, s);
         self.point = p + n;
         self.adjust_markers_insert(p, n, false);
@@ -374,12 +383,10 @@ impl Buffer {
     pub fn insert_before_markers(&mut self, s: &str) {
         let p = self.point();
         let n = s.chars().count();
-        if self.undo_enabled {
-            self.undo.push(UndoEntry::Insertion {
-                start: p,
-                end: p + n,
-            });
+        if n == 0 {
+            return;
         }
+        self.record_insert(p, n);
         self.text.insert(p, s);
         self.point = p + n;
         self.adjust_markers_insert(p, n, true);
@@ -431,12 +438,7 @@ impl Buffer {
             return String::new();
         }
         let removed = self.text.substring(start, end);
-        if self.undo_enabled {
-            self.undo.push(UndoEntry::Deletion {
-                pos: start,
-                text: removed.clone(),
-            });
-        }
+        self.record_delete(start, removed.clone());
         self.text.delete(start, end);
         let n = end - start;
         // Point: Emacs clamps it into [start] if inside, shifts if after.
@@ -482,6 +484,213 @@ impl Buffer {
     pub fn register_marker(&mut self, m: &Rc<RefCell<Marker>>) {
         self.markers.push(Rc::downgrade(m));
     }
+
+    // ---------- undo recording (GNU undo.c) ----------
+
+    /// Current `buffer-undo-list' value (nil when unbound).
+    pub fn undo_list(&self) -> Value {
+        match self.locals.get(&self.undo_sym) {
+            Some(Value::Sym(s)) if *s == crate::lisp::sym::UNBOUND => Value::Nil,
+            Some(v) => v.clone(),
+            None => Value::Nil,
+        }
+    }
+
+    /// Set `buffer-undo-list' buffer-locally (what `setq' sees).
+    pub fn set_undo_list(&mut self, v: Value) {
+        self.locals.insert(self.undo_sym, v);
+    }
+
+    /// Undo recording is disabled iff `buffer-undo-list' is `t'.
+    pub fn undo_disabled(&self) -> bool {
+        matches!(self.undo_list(), Value::Sym(s) if s == crate::lisp::sym::T)
+    }
+
+    /// Cons an entry onto `buffer-undo-list'.
+    pub fn push_undo(&mut self, entry: Value) {
+        let list = self.undo_list();
+        self.set_undo_list(Value::cons(entry, list));
+    }
+
+    /// GNU `record_first_change': push `(t . MODTIME)' where MODTIME is
+    /// `buffer_visited_file_modtime' (0 for non-file buffers).
+    fn record_first_change(&mut self) {
+        let mt = if self.file_name.is_none() {
+            Value::Int(0)
+        } else if self.file_modtime_ns < 0 {
+            Value::Int(-2 - self.file_modtime_ns)
+        } else {
+            crate::lisp::builtins::misc::ns_to_lisp_time(self.file_modtime_ns)
+        };
+        self.push_undo(Value::cons(Value::t(), mt));
+    }
+
+    /// GNU `record_point': BEG is the 1-based position that the undo
+    /// record about to be pushed will restore point to.
+    fn record_point(&mut self, beg: usize) {
+        // `undo_inhibit_record_point' suppresses the point record and
+        // the first-change timestamp it would otherwise write.
+        if self.undo_inhibit.get() {
+            return;
+        }
+        let at_boundary = match &self.undo_list() {
+            Value::Cons(c) => matches!(c.borrow().car, Value::Nil),
+            _ => true,
+        };
+        // First change since save gets a timestamp record.
+        if self.mod_tick <= self.save_tick {
+            self.record_first_change();
+        }
+        // Right after a boundary, record where point was before the
+        // command started so undo can restore it.
+        if at_boundary
+            && self.undo_pt_before.map_or(false, |p| p != beg)
+        {
+            let p = self.undo_pt_before.unwrap();
+            self.push_undo(Value::Int(p as i128));
+        }
+    }
+
+    /// GNU `record_insert': LENGTH chars were inserted at BEG (0-based).
+    pub fn record_insert(&mut self, beg: usize, length: usize) {
+        if self.undo_disabled() {
+            return;
+        }
+        self.record_point(beg + 1);
+        // Amalgamate with a preceding consecutive insertion record.
+        if let Value::Cons(top) = self.undo_list() {
+            let car = top.borrow().car.clone();
+            if let Value::Cons(elt) = &car {
+                let (ebeg, eend) = {
+                    let e = elt.borrow();
+                    (e.car.clone(), e.cdr.clone())
+                };
+                if let (Value::Int(_), Value::Int(end)) = (&ebeg, &eend) {
+                    if *end == beg as i128 + 1 {
+                        elt.borrow_mut().cdr =
+                            Value::Int(beg as i128 + 1 + length as i128);
+                        return;
+                    }
+                }
+            }
+        }
+        self.push_undo(Value::cons(
+            Value::Int(beg as i128 + 1),
+            Value::Int(beg as i128 + 1 + length as i128),
+        ));
+    }
+
+    /// GNU `record_delete': TEXT is about to be deleted at BEG (0-based).
+    /// The position is recorded negative when point is right after the
+    /// deleted text (so undo leaves point before the reinserted text).
+    pub fn record_delete(&mut self, beg: usize, text: String) {
+        if self.undo_disabled() {
+            return;
+        }
+        self.record_point(beg + 1);
+        let n = text.chars().count();
+        let sbeg = if self.point + 1 == beg + 1 + n {
+            -(beg as i128 + 1)
+        } else {
+            beg as i128 + 1
+        };
+        self.record_marker_adjustments(beg, beg + n);
+        self.push_undo(Value::cons(Value::string(text), Value::Int(sbeg)));
+    }
+
+    /// The effective value of PROP (last write wins) at 0-based POS,
+    /// or nil when no covering entry exists.
+    pub fn prop_value_at(&self, pos: usize, prop: u32) -> Value {
+        for tp in self.text_props.iter().rev() {
+            if tp.prop == prop && tp.start <= pos && pos < tp.end {
+                return tp.value.clone();
+            }
+        }
+        Value::Nil
+    }
+
+    /// The effective plist (prop -> value, last write wins) at POS.
+    pub fn plist_at(&self, pos: usize) -> std::collections::BTreeMap<u32, Value> {
+        let mut m = std::collections::BTreeMap::new();
+        for tp in self.text_props.iter().rev() {
+            if tp.start <= pos && pos < tp.end {
+                m.entry(tp.prop).or_insert_with(|| tp.value.clone());
+            }
+        }
+        m
+    }
+
+    /// GNU `record_property_change': push `(nil PROP OLD BEG . END)'.
+    /// BEG/END are 1-based Lisp positions.  Property changes bump
+    /// MODIFF like text changes, so the first record after a save
+    /// also writes the `(t . MODTIME)' entry.
+    pub fn record_prop_change(&mut self, prop: Value, old: Value, beg: usize, end: usize) {
+        if self.undo_disabled() {
+            return;
+        }
+        if self.mod_tick <= self.save_tick {
+            self.record_first_change();
+        }
+        let entry = Value::cons(
+            Value::Nil,
+            Value::cons(
+                prop,
+                Value::cons(
+                    old,
+                    Value::cons(Value::Int(beg as i128), Value::Int(end as i128)),
+                ),
+            ),
+        );
+        self.push_undo(entry);
+        self.mod_tick += 1;
+        self.note_modified(true);
+    }
+
+    /// Text-property modifications bump MODIFF even when undo is off.
+    pub fn note_prop_modified(&mut self) {
+        self.mod_tick += 1;
+        self.note_modified(true);
+    }
+
+    /// GNU `record_marker_adjustments': markers inside [FROM, TO] get
+    /// (MARKER . ADJUSTMENT) entries pushed before the deletion record.
+    fn record_marker_adjustments(&mut self, from: usize, to: usize) {
+        let mut adjs = Vec::new();
+        for w in &self.markers {
+            if let Some(m) = w.upgrade() {
+                let mm = m.borrow();
+                if mm.buffer == Some(self.id)
+                    && from <= mm.position
+                    && mm.position <= to
+                {
+                    let base = if mm.insertion_type { to } else { from };
+                    let adj = base as i128 - mm.position as i128;
+                    if adj != 0 {
+                        adjs.push((m.clone(), adj));
+                    }
+                }
+            }
+        }
+        for (m, adj) in adjs {
+            self.push_undo(Value::cons(Value::Marker(m), Value::Int(adj)));
+        }
+    }
+
+    /// GNU `undo-boundary': push nil unless the list already starts
+    /// with a boundary; always records the pre-command point.
+    pub fn undo_boundary(&mut self) {
+        if self.undo_disabled() {
+            return;
+        }
+        let at_boundary = match &self.undo_list() {
+            Value::Cons(c) => matches!(c.borrow().car, Value::Nil),
+            _ => false,
+        };
+        if !at_boundary {
+            self.push_undo(Value::Nil);
+        }
+        self.undo_pt_before = Some(self.point() + 1);
+    }
 }
 
 fn before_markers_flag(_pos: usize, _point: usize) -> bool {
@@ -496,6 +705,11 @@ pub struct BufferSet {
     order: Vec<usize>,
     name_map: HashMap<String, usize>,
     counter: u64,
+    /// SymId of `buffer-undo-list', stamped onto new buffers (set by
+    /// the interpreter once the obarray exists).
+    undo_sym: SymId,
+    /// Shared `undo-inhibit-record-point' flag for all buffers.
+    undo_inhibit: Rc<std::cell::Cell<bool>>,
 }
 
 impl BufferSet {
@@ -505,6 +719,30 @@ impl BufferSet {
             order: Vec::new(),
             name_map: HashMap::new(),
             counter: 0,
+            undo_sym: 0,
+            undo_inhibit: Rc::new(std::cell::Cell::new(false)),
+        }
+    }
+
+    /// The shared `undo-inhibit-record-point' flag cell.
+    pub fn undo_inhibit_cell(&self) -> Rc<std::cell::Cell<bool>> {
+        self.undo_inhibit.clone()
+    }
+
+    /// Set the `buffer-undo-list' SymId for all buffers (existing and
+    /// future).  Called by `Interp::new' after the obarray is seeded.
+    pub fn set_undo_sym(&mut self, sym: SymId) {
+        self.undo_sym = sym;
+        for b in self.bufs.iter().flatten() {
+            let mut bb = b.borrow_mut();
+            if bb.undo_sym != sym {
+                // Re-key the space-name `t' seed planted with sym 0.
+                let old = bb.undo_sym;
+                if let Some(v) = bb.locals.remove(&old) {
+                    bb.locals.insert(sym, v);
+                }
+                bb.undo_sym = sym;
+            }
         }
     }
 
@@ -517,7 +755,12 @@ impl BufferSet {
             n += 1;
         }
         let id = self.bufs.len();
-        let buf = Buffer::new(id, final_name.clone());
+        let buf = Buffer::new(
+            id,
+            final_name.clone(),
+            self.undo_sym,
+            self.undo_inhibit.clone(),
+        );
         self.bufs.push(Some(Rc::new(RefCell::new(buf))));
         self.name_map.insert(final_name, id);
         self.order.push(id);
@@ -528,7 +771,12 @@ impl BufferSet {
     /// Create a buffer with exactly this name (kills none; used at init).
     pub fn create_exact(&mut self, name: &str) -> usize {
         let id = self.bufs.len();
-        let buf = Buffer::new(id, name.to_string());
+        let buf = Buffer::new(
+            id,
+            name.to_string(),
+            self.undo_sym,
+            self.undo_inhibit.clone(),
+        );
         self.bufs.push(Some(Rc::new(RefCell::new(buf))));
         self.name_map.insert(name.to_string(), id);
         self.order.push(id);

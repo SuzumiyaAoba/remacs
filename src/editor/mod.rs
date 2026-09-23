@@ -6489,7 +6489,7 @@ fn f_copy_to_buffer(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         // copy-to-buffer replaces the target's entire contents.
         let mut bb = b.borrow_mut();
         let len = bb.text.len();
-        bb.text.delete(0, len);
+        bb.delete_region(0, len);
         bb.set_point(0);
         bb.insert(&text);
         bb.set_point(0);
@@ -8489,10 +8489,16 @@ fn f_transpose_chars(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let c2 = bb.text.char_at(p);
     let s2 = c2.to_string();
     let s1 = c1.to_string();
+    bb.record_delete(p, s2.clone());
     bb.text.delete(p, p + 1);
+    bb.record_insert(p, s1.chars().count());
     bb.text.insert(p, &s1);
+    bb.record_delete(p - 1, s1);
     bb.text.delete(p - 1, p);
+    bb.record_insert(p - 1, s2.chars().count());
     bb.text.insert(p - 1, &s2);
+    bb.note_modified(true);
+    bb.mod_tick += 1;
     bb.set_point(p + 1);
     Ok(Value::Nil)
 }
@@ -8512,8 +8518,13 @@ fn f_transpose_lines(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let l2e = bb.text.line_end(l2s);
     let l1 = bb.text.substring(l1s, l1e);
     let l2 = bb.text.substring(l2s, l2e);
+    bb.record_delete(l1s, format!("{}\n{}", l1, l2));
     bb.text.delete(l1s, l2e);
-    bb.text.insert(l1s, &format!("{}\n{}", l2, l1));
+    let new = format!("{}\n{}", l2, l1);
+    bb.record_insert(l1s, new.chars().count());
+    bb.text.insert(l1s, &new);
+    bb.note_modified(true);
+    bb.mod_tick += 1;
     Ok(Value::Nil)
 }
 
@@ -8756,8 +8767,12 @@ fn f_untabify(i: &mut Interp, a: Vec<Value>) -> EvalResult {
             let ls = bb.text.line_start(bb.text.line_of_pos(pos));
             let col = pos - ls;
             let spaces = tab_width - (col % tab_width);
+            bb.record_delete(pos, "\t".to_string());
             bb.text.delete(pos, pos + 1);
+            bb.record_insert(pos, spaces);
             bb.text.insert(pos, &" ".repeat(spaces));
+            bb.note_modified(true);
+            bb.mod_tick += 1;
             pos += spaces;
         } else {
             pos += 1;
@@ -8838,7 +8853,7 @@ fn f_delete_minibuffer_contents(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
         if let Some(b) = i.buffers.get(id) {
             let mut bb = b.borrow_mut();
             let tlen = bb.text.len();
-            bb.text.delete(0, tlen);
+            bb.delete_region(0, tlen);
             bb.set_point(0);
         }
     }

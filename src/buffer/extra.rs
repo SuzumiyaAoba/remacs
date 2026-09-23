@@ -2580,6 +2580,6 @@ fn f_b64_decode_region(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 fn f_undo_boundary(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
     let b = cur(i);
     let mut bb = b.borrow_mut();
-    bb.undo.push(crate::buffer::UndoEntry::Boundary);
+    bb.undo_boundary();
     Ok(Value::Nil)
 }

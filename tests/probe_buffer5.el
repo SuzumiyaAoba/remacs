@@ -136,6 +136,7 @@
       (primitive-undo 2 buffer-undo-list)))
   (with-current-buffer (get-buffer-create "undo3-buf")
     (insert "zz")
+    (undo-boundary)
     (undo 1)
     (prin1 (buffer-string))
     (condition-case e

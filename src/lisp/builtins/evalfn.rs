@@ -1265,7 +1265,7 @@ fn f_lwarn(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     i.message(&text);
     Ok(Value::string(text))
 }
-fn f_warn(i: &mut Interp, args: Vec<Value>) -> EvalResult {
+pub(crate) fn f_warn(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     let fmt = match &args[0] {
         Value::Str(s) => s.borrow().clone(),
         _ => "%s".into(),

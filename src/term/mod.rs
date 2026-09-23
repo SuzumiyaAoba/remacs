@@ -433,7 +433,9 @@ fn dispatch_key<T: KeyIo>(
                     "digit-argument"
                 };
                 let id = i.intern(name);
-                let _ = i.command_execute(&Value::Sym(id));
+                if i.command_execute(&Value::Sym(id)).is_ok() {
+                    post_command_undo_boundary(i);
+                }
                 return Ok(());
             }
             *arg_mode = false;
@@ -484,10 +486,14 @@ fn dispatch_key<T: KeyIo>(
                 };
                 if let Some((back, re)) = isearch {
                     isearch_loop(term, i, back, re)?;
+                    post_command_undo_boundary(i);
                     return Ok(());
                 }
+                let mut boundary = false;
                 match i.command_execute(&cmd) {
-                    Ok(_) => {}
+                    Ok(_) => {
+                        boundary = true;
+                    }
                     Err(crate::lisp::error::Flow::Quit) => {
                         i.message("Quit");
                     }
@@ -518,6 +524,9 @@ fn dispatch_key<T: KeyIo>(
                         i.quit_editor = true;
                     }
                 }
+                if boundary {
+                    post_command_undo_boundary(i);
+                }
                 // Continue arg entry after C-u / M-digit / M--.
                 if let Value::Sym(id) = &cmd {
                     let n = i.symbol_name(*id);
@@ -543,6 +552,7 @@ fn dispatch_key<T: KeyIo>(
                                 b.borrow_mut().insert(&ch.to_string());
                             }
                             keys.clear();
+                            post_command_undo_boundary(i);
                             return Ok(());
                         }
                         if k == b'\r' as i128 {
@@ -550,6 +560,7 @@ fn dispatch_key<T: KeyIo>(
                                 b.borrow_mut().insert("\n");
                             }
                             keys.clear();
+                            post_command_undo_boundary(i);
                             return Ok(());
                         }
                         if k == 127 {
@@ -561,6 +572,7 @@ fn dispatch_key<T: KeyIo>(
                                 }
                             }
                             keys.clear();
+                            post_command_undo_boundary(i);
                             return Ok(());
                         }
                     }
@@ -794,13 +806,24 @@ fn isearch_loop<T: KeyIo>(
                     other,
                 )])));
                 if let LookupResult::Command(cmd) = lookup_command(i, &seq) {
-                    let _ = i.command_execute(&cmd);
+                    if i.command_execute(&cmd).is_ok() {
+                        post_command_undo_boundary(i);
+                    }
                 }
                 break;
             }
         }
     }
     Ok(())
+}
+
+/// GNU `command_loop_1' calls `undo-boundary' after each successfully
+/// executed command; this pushes a nil boundary into the current
+/// buffer's `buffer-undo-list' unless one is already there.
+fn post_command_undo_boundary(i: &mut Interp) {
+    if let Some(b) = i.current_buffer_ref() {
+        b.borrow_mut().undo_boundary();
+    }
 }
 
 enum LookupResult {
@@ -1285,6 +1308,23 @@ mod tests {
     fn nonblocking_sleep_short() {
         let mut i = crate::lisp::Interp::new();
         nonblocking_sleep(&mut i, Duration::from_millis(1)).unwrap();
+    }
+
+    #[test]
+    fn dispatch_inserts_undo_boundaries_per_command() {
+        let (t, _out) = test_term(20, 5);
+        let term = Rc::new(RefCell::new(t));
+        let mut i = interp_with_frame("");
+        let mut keys = Vec::new();
+        let mut arg_mode = false;
+        // Each self-insert char is one command → one undo boundary.
+        dispatch_key(&term, &mut i, b'a' as i128, &mut keys, &mut arg_mode).unwrap();
+        dispatch_key(&term, &mut i, b'b' as i128, &mut keys, &mut arg_mode).unwrap();
+        let b = i.current_buffer_ref().unwrap();
+        assert_eq!(b.borrow().text.text(), "ab");
+        // C-/ runs `undo' → removes the last command's "b" insertion.
+        dispatch_key(&term, &mut i, 31, &mut keys, &mut arg_mode).unwrap();
+        assert_eq!(b.borrow().text.text(), "a");
     }
 
     fn ev(code: KeyCode, mods: KeyModifiers) -> KeyEvent {

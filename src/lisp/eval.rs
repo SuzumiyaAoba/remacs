@@ -80,13 +80,15 @@ pub struct Interp {
     pub quit_flag: bool,
     /// Values pushed by `throw` for debugging — not needed.
     pub catch_tags: Vec<Value>,
-    /// True while evaluating a function call's arguments.
-    pub undo_list: Vec<crate::buffer::UndoEntry>,
     /// Set by `append-next-kill': the next kill appends to the last
     /// kill-ring entry.
     pub append_next_kill: bool,
     /// `inhibit-read-only` dynamic override.
     pub standard_output_sym: SymId,
+    /// SymId of `undo-inhibit-record-point' — its dynamic value is
+    /// mirrored into `buffers.undo_inhibit' so `record_point' (which
+    /// runs without interpreter access) can consult it.
+    pub undo_inhibit_sym: SymId,
     /// Command-loop state used by `interactive` specs.
     pub command_args: Vec<Value>,
     /// The symbol currently being defined by `defun` for recursion.
@@ -369,9 +371,10 @@ impl Interp {
             explicit_eval_depth: 0,
             quit_flag: false,
             catch_tags: Vec::new(),
-            undo_list: Vec::new(),
+
             append_next_kill: false,
             standard_output_sym,
+            undo_inhibit_sym: 0,
             command_args: Vec::new(),
             defining_symbol: None,
             read_expression_history: Value::Nil,
@@ -442,6 +445,11 @@ impl Interp {
         crate::buffer::install_primitives(&mut interp);
         interp.define_error_conditions();
         interp.define_special_variables();
+        // Undo recording writes into the `buffer-undo-list' buffer-local
+        // variable; buffers need the symbol's id before creation.
+        let us = interp.intern("buffer-undo-list");
+        interp.buffers.set_undo_sym(us);
+        interp.undo_inhibit_sym = interp.intern("undo-inhibit-record-point");
         // The initial buffers every Emacs session has, in GNU's
         // buffer-list order: (scratch Minibuf-0 Messages load
         // Warnings). New buffers append at the end of the order.
@@ -765,7 +773,18 @@ impl Interp {
             }
         }
         self.obarray.symbol_mut(id).value = val.clone();
+        self.sync_undo_inhibit(id, &val);
         self.fire_var_watchers(id, &val, "set", None)
+    }
+
+    /// Mirror `undo-inhibit-record-point' writes into the shared cell
+    /// consulted by `Buffer::record_point'.
+    fn sync_undo_inhibit(&mut self, id: SymId, val: &Value) {
+        if self.undo_inhibit_sym != 0 && id == self.undo_inhibit_sym {
+            self.buffers
+                .undo_inhibit_cell()
+                .set(!val.is_nil());
+        }
     }
 
     /// Set the global (default) value regardless of buffer-local bindings.
@@ -774,6 +793,7 @@ impl Interp {
             return Err(self.signal_data(sym::SETTING_CONSTANT, vec![self.sym(id)]));
         }
         self.obarray.symbol_mut(id).value = val.clone();
+        self.sync_undo_inhibit(id, &val);
         self.fire_var_watchers(id, &val, "set", None)
     }
 
@@ -831,6 +851,7 @@ impl Interp {
         if bound_buf.is_none() {
             let old = self.obarray.symbol(id).value.clone();
             self.obarray.symbol_mut(id).value = val.clone();
+            self.sync_undo_inhibit(id, &val);
             self.specbind.push(SpecBind {
                 sym: id,
                 buf: None,
@@ -863,7 +884,8 @@ impl Interp {
                 None => {
                     if let Some(v) = sb.old {
                         restored = v.clone();
-                        self.obarray.symbol_mut(sb.sym).value = v;
+                        self.obarray.symbol_mut(sb.sym).value = v.clone();
+                        self.sync_undo_inhibit(sb.sym, &v);
                     }
                 }
             }
@@ -2420,6 +2442,10 @@ impl Interp {
             "text-quoting-style",
             "undo-in-region",
             "undo-in-progress",
+            "undo-no-redo",
+            "undo-no-pull",
+            "pending-undo-list",
+            "undo-inhibit-record-point",
             "shift-select-mode",
             "delete-active-region",
             "yank-handled-properties",
@@ -2622,10 +2648,6 @@ impl Interp {
             "coding-system-for-read",
             "enable-multibyte-characters",
             "buffer-read-only",
-            "undo-in-progress",
-            "undo-in-region",
-            "undo-no-redo",
-            "undo-no-pull",
             "mark-ring",
             "mark-active",
             "deactivate-mark",
@@ -2809,6 +2831,10 @@ impl Interp {
             ("undo-limit", Value::Int(160_000)),
             ("undo-strong-limit", Value::Int(240_000)),
             ("undo-outer-limit", Value::Int(24_000_000)),
+            ("pending-undo-list", Value::Nil),
+            ("undo-in-region", Value::Nil),
+            ("undo-no-redo", Value::Nil),
+            ("undo-inhibit-record-point", Value::Nil),
             ("echo-keystrokes", Value::Int(1)),
             ("auto-save-interval", Value::Int(300)),
             ("auto-save-timeout", Value::Int(30)),
