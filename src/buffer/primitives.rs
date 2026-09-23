@@ -8523,6 +8523,32 @@ fn f_propertize(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 
 // ---------- undo ----------
 
+/// Deconstruct a cons cell into (car, cdr), or None for atoms.
+fn cons_parts(v: &Value) -> Option<(Value, Value)> {
+    match v {
+        Value::Cons(c) => {
+            let cc = c.borrow();
+            Some((cc.car.clone(), cc.cdr.clone()))
+        }
+        _ => None,
+    }
+}
+
+/// True when the (BEG . END) or (STRING . POS) positions fall outside
+/// the accessible portion of BUFFER (GNU: "outside visible portion").
+fn undo_pos_oob(b: &Rc<RefCell<crate::buffer::Buffer>>, beg: i128, end: i128) -> bool {
+    let bb = b.borrow();
+    beg < bb.begv as i128 + 1 || end > bb.text_len() as i128 + 1
+}
+
+/// GNU marker-adjustment: marker position minus OFFSET (1-based).
+fn undo_marker_adjust(m: &crate::lisp::value::MarkerRef, off: i128) {
+    if m.borrow().buffer.is_some() {
+        let np = m.borrow().position as i128 + 1 - off;
+        m.borrow_mut().position = np.max(0) as usize;
+    }
+}
+
 /// The error GNU's `primitive-undo' signals when an entry's positions
 /// fall outside the accessible (visible) portion of the buffer.
 fn undo_oob_err(i: &mut Interp) -> Flow {
@@ -8559,11 +8585,8 @@ fn undo_apply_one(
             let idx = pos_idx(bb.text.len(), *p);
             bb.point = idx.max(bb.begv).min(bb.text_len());
         }
-        Value::Cons(cell) => {
-            let (car, cdr) = {
-                let cc = cell.borrow();
-                (cc.car.clone(), cc.cdr.clone())
-            };
+        Value::Cons(_) => {
+            let (car, cdr) = cons_parts(next).unwrap();
             if matches!(car, Value::Sym(s) if s == crate::lisp::sym::T) {
                 // (t . TIME): previous modtime record; if it matches the
                 // visited file's time, mark the buffer unmodified.
@@ -8582,38 +8605,17 @@ fn undo_apply_one(
             } else if matches!(car, Value::Nil) {
                 // (nil PROP VAL BEG . END): text property change.
                 let (prop, val, tail) = {
-                    let (p, r1) = match &cdr {
-                        Value::Cons(c) => {
-                            let cc = c.borrow();
-                            (cc.car.clone(), cc.cdr.clone())
-                        }
-                        _ => return Err(undo_unrecognized(i, next)),
-                    };
-                    let (v, r2) = match &r1 {
-                        Value::Cons(c) => {
-                            let cc = c.borrow();
-                            (cc.car.clone(), cc.cdr.clone())
-                        }
-                        _ => return Err(undo_unrecognized(i, next)),
-                    };
+                    let (p, r1) = cons_parts(&cdr).ok_or_else(|| undo_unrecognized(i, next))?;
+                    let (v, r2) = cons_parts(&r1).ok_or_else(|| undo_unrecognized(i, next))?;
                     (p, v, r2)
                 };
-                let (beg, end) = match &tail {
-                    Value::Cons(c) => {
-                        let cc = c.borrow();
-                        (cc.car.clone(), cc.cdr.clone())
-                    }
-                    _ => return Err(undo_unrecognized(i, next)),
-                };
+                let (beg, end) =
+                    cons_parts(&tail).ok_or_else(|| undo_unrecognized(i, next))?;
                 let (Some(beg), Some(end)) = (beg.int(), end.int()) else {
                     return Err(undo_unrecognized(i, next));
                 };
-                {
-                    let bb = b.borrow();
-                    if beg < bb.begv as i128 + 1 || end > bb.text_len() as i128 + 1 {
-                        drop(bb);
-                        return Err(undo_oob_err(i));
-                    }
+                if undo_pos_oob(b, beg, end) {
+                    return Err(undo_oob_err(i));
                 }
                 f_put_text_property(
                     i,
@@ -8634,14 +8636,8 @@ fn undo_apply_one(
                         let end = v[2].int().unwrap();
                         let fun = v[3].clone();
                         let args = v[4..].to_vec();
-                        {
-                            let bb = b.borrow();
-                            if start < bb.begv as i128 + 1
-                                || end > bb.text_len() as i128 + 1
-                            {
-                                drop(bb);
-                                return Err(undo_oob_err(i));
-                            }
+                        if undo_pos_oob(b, start, end) {
+                            return Err(undo_oob_err(i));
                         }
                         let sm = f_copy_marker(i, vec![Value::Int(start), Value::Nil])?;
                         let em = f_copy_marker(i, vec![Value::Int(end), Value::t()])?;
@@ -8682,12 +8678,8 @@ fn undo_apply_one(
                 }
             } else if let (Some(beg), Some(end)) = (car.int(), cdr.int()) {
                 // (BEG . END): range was inserted — delete it.
-                {
-                    let bb = b.borrow();
-                    if beg < bb.begv as i128 + 1 || end > bb.text_len() as i128 + 1 {
-                        drop(bb);
-                        return Err(undo_oob_err(i));
-                    }
+                if undo_pos_oob(b, beg, end) {
+                    return Err(undo_oob_err(i));
                 }
                 let mut bb = b.borrow_mut();
                 let s = (beg - 1).max(0) as usize;
@@ -8699,50 +8691,34 @@ fn undo_apply_one(
                     return Err(undo_unrecognized(i, next));
                 };
                 let apos = pos.unsigned_abs() as usize;
-                {
-                    let bb = b.borrow();
-                    if apos < bb.begv + 1 || apos > bb.text_len() + 1 {
-                        drop(bb);
-                        return Err(undo_oob_err(i));
-                    }
+                if undo_pos_oob(b, apos as i128, apos as i128) {
+                    return Err(undo_oob_err(i));
                 }
                 // Consume following (MARKER . ADJUSTMENT) entries whose
                 // marker still sits at APOS in this buffer.
                 let mut valid_adjs = Vec::new();
                 loop {
-                    let peek = match list {
-                        Value::Cons(c) => c.borrow().car.clone(),
-                        _ => break,
-                    };
-                    let is_madj = match &peek {
-                        Value::Cons(e) => {
-                            let ee = e.borrow();
-                            matches!(ee.car, Value::Marker(_)) && ee.cdr.int().is_some()
-                        }
-                        _ => false,
-                    };
-                    if !is_madj {
-                        break;
-                    }
-                    let madj = peek;
-                    *list = match list {
-                        Value::Cons(c) => c.borrow().cdr.clone(),
-                        _ => break,
-                    };
-                    if let Value::Cons(e) = &madj {
-                        let ee = e.borrow();
-                        if let Value::Marker(m) = &ee.car {
-                            let mm = m.borrow();
-                            if mm.buffer == Some(b.borrow().id)
-                                && apos as i128 == mm.position as i128 + 1
+                    let madj = match cons_parts(list) {
+                        Some((e, rest)) => match cons_parts(&e) {
+                            Some((Value::Marker(_), cdr))
+                                if cdr.int().is_some() =>
                             {
-                                valid_adjs.push(madj.clone());
+                                (e, rest)
                             }
+                            _ => break,
+                        },
+                        _ => break,
+                    };
+                    *list = madj.1;
+                    if let Some((Value::Marker(m), _)) = cons_parts(&madj.0) {
+                        let mm = m.borrow();
+                        if mm.buffer == Some(b.borrow().id)
+                            && apos as i128 == mm.position as i128 + 1
+                        {
+                            valid_adjs.push(madj.0.clone());
                         }
                     }
                 }
-                let buf_id = b.borrow().id;
-                let _ = buf_id;
                 {
                     let mut bb = b.borrow_mut();
                     if pos < 0 {
@@ -8756,13 +8732,9 @@ fn undo_apply_one(
                 }
                 // Apply validated marker adjustments.
                 for adj in valid_adjs {
-                    if let Value::Cons(e) = &adj {
-                        let ee = e.borrow();
-                        if let (Value::Marker(m), Some(off)) = (&ee.car, ee.cdr.int()) {
-                            if m.borrow().buffer.is_some() {
-                                let np = m.borrow().position as i128 + 1 - off;
-                                m.borrow_mut().position = np.max(0) as usize;
-                            }
+                    if let Some((Value::Marker(m), cdr)) = cons_parts(&adj) {
+                        if let Some(off) = cdr.int() {
+                            undo_marker_adjust(&m, off);
                         }
                     }
                 }
@@ -8778,10 +8750,7 @@ fn undo_apply_one(
                     ],
                 );
                 if let Some(off) = cdr.int() {
-                    if m.borrow().buffer.is_some() {
-                        let np = m.borrow().position as i128 + 1 - off;
-                        m.borrow_mut().position = np.max(0) as usize;
-                    }
+                    undo_marker_adjust(m, off);
                 }
             } else {
                 return Err(undo_unrecognized(i, next));
@@ -8814,10 +8783,7 @@ fn f_primitive_undo(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         // Inner loop: apply entries until a nil boundary or list end.
         loop {
             let (next, rest) = match &list {
-                Value::Cons(c) => {
-                    let cc = c.borrow();
-                    (cc.car.clone(), cc.cdr.clone())
-                }
+                Value::Cons(_) => cons_parts(&list).unwrap(),
                 // GNU `pop' on a non-nil atom signals like `car'.
                 Value::Nil => break,
                 _ => return Err(i.wrong_type_mut("listp", &list)),
