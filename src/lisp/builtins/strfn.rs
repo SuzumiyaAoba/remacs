@@ -1046,9 +1046,73 @@ fn f_string_replace(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     let to = want_string(i, &args[1])?;
     let s = want_string(i, &args[2])?;
     if from.is_empty() {
-        return Ok(Value::string(s));
+        let sym = i.intern("wrong-length-argument");
+        return Err(i.signal_data(sym, vec![Value::Int(0)]));
     }
-    Ok(Value::string(s.replace(&from, &to)))
+    // GNU's string-replace keeps the text properties of the
+    // non-replaced runs (verbatim, like copy-sequence); the
+    // replacement text itself gets no properties.
+    let schars: Vec<char> = s.chars().collect();
+    let fchars: Vec<char> = from.chars().collect();
+    let flen = fchars.len();
+    let mut out = String::new();
+    // Kept source runs as (src_beg, src_end, dst_beg), all char indices.
+    let mut runs: Vec<(usize, usize, usize)> = Vec::new();
+    let mut pos = 0usize;
+    let mut changed = false;
+    while pos + flen <= schars.len() {
+        if schars[pos..pos + flen] == fchars[..] {
+            out.push_str(&to);
+            pos += flen;
+            changed = true;
+        } else {
+            let dst = out.chars().count();
+            out.push(schars[pos]);
+            if let Some(last) = runs.last_mut() {
+                if last.1 == pos {
+                    last.1 = pos + 1;
+                    pos += 1;
+                    continue;
+                }
+            }
+            runs.push((pos, pos + 1, dst));
+            pos += 1;
+        }
+    }
+    while pos < schars.len() {
+        let dst = out.chars().count();
+        out.push(schars[pos]);
+        if let Some(last) = runs.last_mut() {
+            if last.1 == pos {
+                last.1 = pos + 1;
+                pos += 1;
+                continue;
+            }
+        }
+        runs.push((pos, pos + 1, dst));
+        pos += 1;
+    }
+    if !changed {
+        // GNU returns the original object when nothing matched.
+        return Ok(args[2].clone());
+    }
+    let ns = std::rc::Rc::new(std::cell::RefCell::new(out));
+    if let Value::Str(src) = &args[2] {
+        if i.has_str_props(src) {
+            let mut ivs: Vec<(usize, usize, Vec<Value>)> = Vec::new();
+            for (a, b, pl) in i.str_props(src) {
+                for &(s0, s1, d0) in &runs {
+                    let lo = (*a).max(s0);
+                    let hi = (*b).min(s1);
+                    if lo < hi {
+                        ivs.push((d0 + (lo - s0), d0 + (hi - s0), pl.clone()));
+                    }
+                }
+            }
+            i.set_str_props(&ns, ivs);
+        }
+    }
+    Ok(Value::Str(ns))
 }
 fn f_string_chop_newline(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     let s = want_string(i, &args[0])?;

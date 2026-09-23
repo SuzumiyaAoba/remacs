@@ -746,7 +746,7 @@ fn sf_with_current_buffer(i: &mut Interp, args: Value) -> EvalResult {
     }
     let buf_id = i
         .buffer_id_of(&buf_v)
-        .ok_or_else(|| i.wrong_type_mut("stringp", &buf_v))?;
+        .ok_or_else(|| i.error(format!("No buffer named {}", i.princ_to_string(&buf_v))))?;
     let old = i.current_buffer;
     i.set_current_buffer(buf_id);
     let body = cdr(&args);

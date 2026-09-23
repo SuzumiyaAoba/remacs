@@ -532,3 +532,8 @@
 (buffer-match-p '(and t "\\*") "*scratch*")
 (mapcar 'buffer-name (match-buffers "scratch"))
 (with-temp-buffer (hl-line-mode 1) (insert "a\nb") (goto-char 3) (hl-line-highlight) (list (overlayp hl-line-overlay) (overlay-start hl-line-overlay) (overlay-end hl-line-overlay)) (hl-line-mode -1))
+(string-replace "b" "XY" #("abc" 0 3 (p t)))
+(eq #("abc" 0 1 (p t)) (let ((s (propertize "abc" 'p t))) (string-replace "z" "y" s)))
+(condition-case e (string-replace "" "X" "abc") (error (car e)))
+(with-temp-buffer (insert "foo a\nbar b\nfoo c\n") (occur "foo" 0) (with-current-buffer "*Occur*" (buffer-substring-no-properties (point-min) (point-max))))
+(let ((b1 (get-buffer-create "mo1")) (b2 (get-buffer-create "mo2"))) (unwind-protect (progn (with-current-buffer b1 (insert "hit\n")) (with-current-buffer b2 (insert "x\nhit\n")) (multi-occur (list b1 b2) "hit") (with-current-buffer "*Occur*" (buffer-substring-no-properties (point-min) (point-max)))) (kill-buffer "*Occur*") (kill-buffer b1) (kill-buffer b2)))

@@ -2130,6 +2130,11 @@ impl Interp {
             &["wrong-number-of-arguments", "error"],
         );
         put(self, "args-out-of-range", &["args-out-of-range", "error"]);
+        put(
+            self,
+            "wrong-length-argument",
+            &["wrong-length-argument", "error"],
+        );
         put(self, "void-function", &["void-function", "error"]);
         put(self, "void-variable", &["void-variable", "error"]);
         put(self, "setting-constant", &["setting-constant", "error"]);
@@ -2241,6 +2246,7 @@ impl Interp {
             ("wrong-type-argument", "Wrong type argument"),
             ("wrong-number-of-arguments", "Wrong number of arguments"),
             ("args-out-of-range", "Args out of range"),
+            ("wrong-length-argument", "Wrong length argument"),
             ("void-function", "Symbol's function definition is void"),
             ("void-variable", "Symbol's value as variable is void"),
             ("setting-constant", "Attempt to set a constant symbol"),

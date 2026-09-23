@@ -4614,56 +4614,6 @@ Leave one space or none, according to the context."
   (kill-buffer (current-buffer))
   (find-file filename))
 
-(defun occur (regexp &optional nlines)
-  "Show all lines in the current buffer matching REGEXP in *Occur*."
-  (interactive "sList lines matching: \nP")
-  (let ((src (current-buffer))
-        (hits '()))
-    (save-excursion
-      (goto-char (point-min))
-      (let ((ln 1))
-        (while (not (eobp))
-          (let ((line (buffer-substring (line-beginning-position)
-                                        (line-end-position))))
-            (when (string-match regexp line)
-              (push (format "%7d:%s" ln line) hits)))
-          (forward-line 1)
-          (setq ln (1+ ln)))))
-    (let ((ob (get-buffer-create "*Occur*"))
-          (n (length hits)))
-      (with-current-buffer ob
-        (erase-buffer)
-        (setq-local occur-revert-arguments (list regexp nlines (list src)))
-        (insert (format "%d %s for \"%s\" in buffer: %s\n"
-                        n (if (= n 1) "match" "matches") regexp
-                        (buffer-name src)))
-        (dolist (l (nreverse hits))
-          (insert l "\n")))
-      (message "Searched 1 buffer; %d %s for \"%s\""
-               n (if (= n 1) "match" "matches") regexp)
-      (display-buffer ob))))
-
-;; `defvar-local' is defined later in the prelude; spell it out.
-(defvar occur-revert-arguments nil
-  "Arguments to pass to `occur-1' to revert an Occur buffer.")
-(make-variable-buffer-local 'occur-revert-arguments)
-(put 'occur-revert-arguments 'permanent-local t)
-
-(defun occur-rename-buffer (&optional unique-p interactive-p)
-  "Rename the current *Occur* buffer to *Occur: original-buffer-name*."
-  (interactive "P\np")
-  (with-current-buffer
-      (if (eq major-mode 'occur-mode) (current-buffer) (get-buffer "*Occur*"))
-    (rename-buffer (concat "*Occur: "
-                           (mapconcat (lambda (boo)
-                                        (buffer-name (if (overlayp boo)
-                                                         (overlay-buffer boo)
-                                                       boo)))
-                                      (car (cddr occur-revert-arguments)) "/")
-                           "*")
-                   (or unique-p (not interactive-p)))))
-
-(defalias 'delete-matching-lines 'flush-lines)
 
 ;; ---------- misc.el / subr.el / simple.el ports ----------
 
@@ -23058,6 +23008,1014 @@ SEQUENCE2 may be a list, vector, or string."
 (unless (fboundp 'yaml-ts-mode-maybe)
   (defun yaml-ts-mode-maybe () "Stub for `yaml-ts-mode-maybe'."
     (if (fboundp 'yaml-mode) (funcall 'yaml-mode) (prog-mode))))
+
+;; ---------- GNU replace.el: occur subsystem (verbatim port) ----------
+
+(defconst face-attribute-name-alist
+  '((:family . "font family")
+    (:foundry . "font foundry")
+    (:width . "character set width")
+    (:height . "height in 1/10 pt")
+    (:weight . "weight")
+    (:slant . "slant")
+    (:underline . "underline")
+    (:overline . "overline")
+    (:extend . "extend")
+    (:strike-through . "strike-through")
+    (:box . "box")
+    (:inverse-video . "inverse-video display")
+    (:foreground . "foreground color")
+    (:background . "background color")
+    (:stipple . "background stipple")
+    (:inherit . "inheritance"))
+  "An alist of descriptive names for face attributes.")
+
+(defun face-differs-from-default-p (face &optional frame)
+  "Return non-nil if FACE displays differently from the default face."
+  (let ((attrs
+         (delq :inherit
+               (delq :extend (mapcar 'car face-attribute-name-alist))))
+        (differs nil))
+    (while (and attrs (not differs))
+      (let* ((attr (pop attrs))
+             (attr-val (face-attribute face attr frame t)))
+        (when (and
+               (not (eq attr-val 'unspecified))
+               (display-supports-face-attributes-p (list attr attr-val)
+                                                   frame))
+          (setq differs attr))))
+    differs))
+
+(defvar minibuffer-default-prompt-format " (default %s)"
+  "Format string used for the default value in prompts.")
+
+(defun format-prompt (prompt default &rest format-args)
+  "Format PROMPT with DEFAULT according to `minibuffer-default-prompt-format'."
+  (concat
+   (if (null format-args)
+       (substitute-command-keys prompt)
+     (apply #'format (substitute-command-keys prompt) format-args))
+   (and default
+        (or (not (stringp default))
+            (length> default 0))
+        (format (substitute-command-keys minibuffer-default-prompt-format)
+                (if (consp default)
+                    (car default)
+                  default)))
+   ": "))
+
+(defcustom search-upper-case 'not-yanks
+  "If non-nil, upper case chars disable case fold searching."
+  :type '(choice (const :tag "off" nil)
+                 (const not-yanks)
+                 (other :tag "on" t)))
+
+(defun isearch-no-upper-case-p (string regexp-flag)
+  "Return t if there are no upper case chars in STRING.
+If REGEXP-FLAG is non-nil, disregard letters preceded by `\\' (but not `\\\\')
+since they have special meaning in a regexp."
+  (let (quote-flag (i 0) (len (length string)) found)
+    (while (and (not found) (< i len))
+      (let ((char (aref string i)))
+        (if (and regexp-flag (eq char ?\\))
+            (setq quote-flag (not quote-flag))
+          (if (and (not quote-flag) (not (eq char (downcase char))))
+              (setq found t))
+          (setq quote-flag nil)))
+      (setq i (1+ i)))
+    (not (or found
+             (and regexp-flag (string-match "\\[:\\(upp\\|low\\)er:]" string)
+                  (condition-case err
+                      (progn
+                        (string-match (substring string 0 (match-beginning 0))
+                                      "")
+                        nil)
+                    (invalid-regexp
+                     (equal "Unmatched [ or [^" (cadr err)))))))))
+
+(defun set-buffer-file-coding-system (coding &optional force nodelay)
+  "Set `buffer-file-coding-system' to CODING."
+  (setq buffer-file-coding-system coding))
+
+(defvar last-nonmenu-event nil)
+(defvar regexp-history nil)
+(defvar overlay-arrow-position nil)
+(make-variable-buffer-local 'overlay-arrow-position)
+(defvar revert-buffer-function nil)
+(make-variable-buffer-local 'revert-buffer-function)
+(defvar kill-buffer-hook nil)
+(make-variable-buffer-local 'kill-buffer-hook)
+
+(defcustom list-matching-lines-default-context-lines 0
+  "Default number of context lines included around `list-matching-lines' matches."
+  :type 'integer
+  :group 'matching)
+
+(defcustom list-matching-lines-face 'match
+  "Face used by \\[list-matching-lines] to show the text that matches."
+  :type '(choice (const :tag "Don't highlight matching portions" nil)
+                 face)
+  :group 'matching)
+
+(defcustom list-matching-lines-buffer-name-face 'underline
+  "Face used by \\[list-matching-lines] to show the names of buffers."
+  :type '(choice (const :tag "Don't highlight buffer names" nil)
+                 face)
+  :group 'matching)
+
+(defcustom list-matching-lines-current-line-face 'lazy-highlight
+  "Face used by \\[list-matching-lines] to highlight the current line."
+  :type 'face
+  :group 'matching
+  :version "26.1")
+
+(defcustom list-matching-lines-jump-to-current-line nil
+  "If non-nil, \\[list-matching-lines] shows the current line highlighted."
+  :type 'boolean
+  :group 'matching
+  :version "26.1")
+
+(defcustom list-matching-lines-prefix-face 'shadow
+  "Face used by \\[list-matching-lines] to show the prefix column."
+  :type 'face
+  :group 'matching
+  :version "24.4")
+
+(defcustom occur-excluded-properties
+  '(read-only invisible intangible field mouse-face help-echo local-map keymap
+    yank-handler follow-link)
+  "Text properties to discard when copying lines to the *Occur* buffer."
+  :type '(choice (const :tag "All" t) (repeat symbol))
+  :group 'matching
+  :version "22.1")
+
+(defvar occur-highlight-overlays nil)
+(make-variable-buffer-local 'occur-highlight-overlays)
+(defvar occur-collect-regexp-history '("\\1"))
+(defvar occur--final-pos nil)
+(defvar ido-ignore-item-temp-list nil)
+(defvar occur-menu-map (make-sparse-keymap "Occur"))
+
+(defcustom occur-mode-hook '(turn-on-font-lock)
+  "Hook run when entering Occur mode."
+  :type 'hook
+  :group 'matching)
+
+(defcustom occur-hook nil
+  "Hook run by Occur when there are any matches."
+  :type 'hook
+  :group 'matching)
+
+(defcustom occur-mode-find-occurrence-hook nil
+  "Hook run by Occur after locating an occurrence."
+  :type 'hook
+  :group 'matching)
+
+(defvar occur-mode-map
+  (let ((map (make-sparse-keymap)))
+    (define-key map [mouse-2] 'occur-mode-mouse-goto)
+    (define-key map "\C-c\C-c" 'occur-mode-goto-occurrence)
+    (define-key map "e" 'occur-edit-mode)
+    (define-key map "\C-m" 'occur-mode-goto-occurrence)
+    (define-key map "o" 'occur-mode-goto-occurrence-other-window)
+    (define-key map "\C-o" 'occur-mode-display-occurrence)
+    (define-key map "n" 'next-error-no-select)
+    (define-key map "p" 'previous-error-no-select)
+    (define-key map "l" 'recenter-current-error)
+    (define-key map "\M-n" 'occur-next)
+    (define-key map "\M-p" 'occur-prev)
+    (define-key map "r" 'occur-rename-buffer)
+    (define-key map "c" 'clone-buffer)
+    (define-key map "\C-c\C-f" 'next-error-follow-minor-mode)
+    (define-key map [menu-bar occur] (cons "Occur" occur-menu-map))
+    map)
+  "Keymap for `occur-mode'.")
+
+(defvar-local occur-revert-arguments nil
+  "Arguments to pass to `occur-1' to revert an Occur mode buffer.
+See `occur-revert-function'.")
+(put 'occur-revert-arguments 'permanent-local t)
+
+(defun occur--garbage-collect-revert-args ()
+  (dolist (boo (nth 2 occur-revert-arguments))
+    (when (overlayp boo) (delete-overlay boo)))
+  (kill-local-variable 'occur-revert-arguments))
+
+(defun occur-revert-function (_ignore1 _ignore2)
+  "Handle `revert-buffer' for Occur mode buffers."
+  (apply #'occur-1 (append occur-revert-arguments (list (buffer-name)))))
+
+(defun occur-mode-find-occurrence ()
+  "Return a marker to the first match of the line at point."
+  (occur--targets-start (occur-mode--find-occurrences)))
+
+(defun occur-mode--find-occurrences ()
+  (let* ((targets (get-text-property (point) 'occur-target))
+         (start (occur--targets-start targets)))
+    (unless targets
+      (error "No occurrence on this line"))
+    (unless (buffer-live-p (marker-buffer start))
+      (error "Buffer for this occurrence was killed"))
+    targets))
+
+(defun occur--targets-start (targets)
+  "First marker of the `occur-target' property value TARGETS."
+  (if (consp targets)
+      (caar targets)
+    targets))
+
+(defun occur--set-arrow ()
+  "Set the overlay arrow at the first line of the occur match at point."
+  (save-excursion
+    (let ((target (get-text-property (point) 'occur-target))
+          (prev (previous-single-property-change (point) 'occur-target)))
+      (when (and prev (eq (get-text-property prev 'occur-target) target))
+        (goto-char prev))
+      (setq overlay-arrow-position
+            (set-marker (or overlay-arrow-position (make-marker))
+                        (line-beginning-position))))))
+
+(defalias 'occur-mode-mouse-goto 'occur-mode-goto-occurrence)
+(defun occur-mode-goto-occurrence (&optional event)
+  "Go to the occurrence specified by EVENT, a mouse click."
+  (interactive (list last-nonmenu-event))
+  (let* ((buffer (when event (current-buffer)))
+         (targets
+          (if (null event)
+              (occur-mode--find-occurrences)
+            (with-current-buffer (window-buffer (posn-window (event-end event)))
+              (save-excursion
+                (goto-char (posn-point (event-end event)))
+                (occur-mode--find-occurrences)))))
+         (pos (occur--targets-start targets)))
+    (occur--set-arrow)
+    (pop-to-buffer (marker-buffer pos))
+    (goto-char pos)
+    (occur--highlight-occurrences targets)
+    (when buffer (next-error-found buffer (current-buffer)))
+    (run-hooks 'occur-mode-find-occurrence-hook)))
+
+(defun occur-mode-goto-occurrence-other-window ()
+  "Go to the occurrence the current line describes, in another window."
+  (interactive)
+  (let ((buffer (current-buffer))
+        (pos (occur--targets-start (occur-mode--find-occurrences))))
+    (occur--set-arrow)
+    (switch-to-buffer-other-window (marker-buffer pos))
+    (goto-char pos)
+    (next-error-found buffer (current-buffer))
+    (run-hooks 'occur-mode-find-occurrence-hook)))
+
+(defun occur-goto-locus-delete-o ()
+  (mapc #'delete-overlay occur-highlight-overlays)
+  (setq occur-highlight-overlays nil)
+  (if (timerp next-error-highlight-timer)
+      (cancel-timer next-error-highlight-timer))
+  (remove-hook 'pre-command-hook
+               #'occur-goto-locus-delete-o))
+
+(defun occur--highlight-occurrences (targets)
+  (let ((start-marker (occur--targets-start targets)))
+    (occur-goto-locus-delete-o)
+    (with-current-buffer (marker-buffer start-marker)
+      (when (or (eq next-error-highlight t)
+                (numberp next-error-highlight))
+        (setq occur-highlight-overlays
+              (mapcar (lambda (target)
+                        (let ((o (make-overlay (car target) (cdr target))))
+                          (overlay-put o 'face 'next-error)
+                          o))
+                      (if (listp targets)
+                          targets
+                        (let ((end-pos (save-excursion
+                                         (goto-char start-marker)
+                                         (line-end-position))))
+                          (list (cons start-marker end-pos))))))
+        (add-hook 'pre-command-hook #'occur-goto-locus-delete-o)
+        (when (numberp next-error-highlight)
+          (setq next-error-highlight-timer
+                (run-at-time next-error-highlight nil
+                             'occur-goto-locus-delete-o))))
+      (when (eq next-error-highlight 'fringe-arrow)
+        (setq next-error-overlay-arrow-position
+              (copy-marker (line-beginning-position)))))))
+
+(defun occur-mode-display-occurrence ()
+  "Display in another window the occurrence the current line describes."
+  (interactive)
+  (let* ((buffer (current-buffer))
+         (targets (occur-mode--find-occurrences))
+         (pos (occur--targets-start targets))
+         (next-error-highlight next-error-highlight-no-select)
+         (display-buffer-overriding-action
+          '(nil (inhibit-same-window . t)))
+         window)
+    (setq window (display-buffer (marker-buffer pos) t))
+    (occur--set-arrow)
+    (save-selected-window
+      (select-window window)
+      (goto-char pos)
+      (occur--highlight-occurrences targets)
+      (next-error-found buffer (current-buffer))
+      (run-hooks 'occur-mode-find-occurrence-hook))))
+
+(defun occur-find-match (n search message)
+  (if (not n) (setq n 1))
+  (let ((r))
+    (while (> n 0)
+      (setq r (funcall search (point) 'occur-match))
+      (and r
+           (get-text-property r 'occur-match)
+           (setq r (funcall search r 'occur-match)))
+      (if r
+          (goto-char r)
+        (user-error message))
+      (setq n (1- n)))))
+
+(defun occur-next (&optional n)
+  "Move to the Nth (default 1) next match in an Occur mode buffer."
+  (interactive "p")
+  (occur-find-match n #'next-single-property-change "No more matches"))
+
+(defun occur-prev (&optional n)
+  "Move to the Nth (default 1) previous match in an Occur mode buffer."
+  (interactive "p")
+  (occur-find-match n #'previous-single-property-change "No earlier matches"))
+
+(defun occur-next-error (&optional argp reset)
+  "Move to the ARGPth (default 1) next match in an Occur mode buffer."
+  (interactive "p")
+  (goto-char (cond (reset (point-min))
+                   ((< argp 0) (line-beginning-position))
+                   ((> argp 0) (line-end-position))
+                   ((point))))
+  (occur-find-match
+   (abs argp)
+   (if (> 0 argp)
+       #'previous-single-property-change
+     #'next-single-property-change)
+   "No more matches")
+  (let ((win (get-buffer-window (current-buffer) t)))
+    (if win (set-window-point win (point))))
+  (occur-mode-goto-occurrence))
+
+(defvar occur-edit-mode-map
+  (let ((map (make-sparse-keymap)))
+    (set-keymap-parent map text-mode-map)
+    (define-key map [mouse-2] 'occur-mode-mouse-goto)
+    (define-key map "\C-c\C-c" 'occur-cease-edit)
+    (define-key map "\C-o" 'occur-mode-display-occurrence)
+    (define-key map "\C-c\C-f" 'next-error-follow-minor-mode)
+    (define-key map [menu-bar occur] (cons "Occur" occur-menu-map))
+    map)
+  "Keymap for `occur-edit-mode'.")
+
+(defun occur-cease-edit ()
+  "Switch from Occur Edit mode to Occur mode."
+  (interactive)
+  (when (derived-mode-p 'occur-edit-mode)
+    (occur-mode)
+    (message "Switching to Occur mode.")))
+
+(defun occur-regexp-descr (regexp)
+  (format " for %s\"%s\""
+          (or (get-text-property 0 'isearch-regexp-function-descr regexp)
+              "")
+          (if (get-text-property 0 'isearch-string regexp)
+              (propertize
+               (query-replace-descr
+                (get-text-property 0 'isearch-string regexp))
+               'help-echo regexp)
+            (query-replace-descr regexp))))
+
+(defun occur-1 (regexp nlines bufs &optional buf-name)
+  ;; BUFS is a list of buffer-or-overlay!
+  (unless (and regexp (not (equal regexp "")))
+    (error "Occur doesn't work with the empty regexp"))
+  (unless buf-name
+    (setq buf-name "*Occur*"))
+  (let (occur-buf
+        (active-bufs
+         (delq nil (mapcar (lambda (boo)
+                             (when (or (buffer-live-p boo)
+                                       (and (overlayp boo)
+                                            (overlay-buffer boo)))
+                               boo))
+                           bufs)))
+        (source-buffer-default-directory default-directory))
+    (when (member buf-name
+                  (mapcar
+                   (lambda (boo)
+                     (buffer-name (if (overlayp boo) (overlay-buffer boo) boo)))
+                   active-bufs))
+      (with-current-buffer buf-name
+        (rename-uniquely)))
+    (setq occur-buf (get-buffer-create buf-name))
+    (with-current-buffer occur-buf
+      (setq default-directory source-buffer-default-directory)
+      (setq overlay-arrow-position nil)
+      (if (stringp nlines)
+          (fundamental-mode)
+        (occur-mode))
+      (let ((inhibit-read-only t)
+            (buffer-undo-list t)
+            (occur--final-pos nil))
+        (erase-buffer)
+        (let ((count
+               (if (stringp nlines)
+                   (let ((count 0))
+                     (dolist (boo active-bufs)
+                       (with-current-buffer
+                           (if (overlayp boo) (overlay-buffer boo) boo)
+                         (save-excursion
+                           (goto-char
+                            (if (overlayp boo) (overlay-start boo) (point-min)))
+                           (let ((end (if (overlayp boo) (overlay-end boo))))
+                             (while (re-search-forward regexp end t)
+                               (let ((str (match-substitute-replacement
+                                           nlines)))
+                                 (if str
+                                     (with-current-buffer occur-buf
+                                       (insert str)
+                                       (setq count (1+ count))
+                                       (or (zerop (current-column))
+                                           (insert "\n"))))))))))
+                     count)
+                 (occur-engine
+                  regexp active-bufs occur-buf
+                  (or nlines list-matching-lines-default-context-lines)
+                  (if (and case-fold-search search-upper-case)
+                      (isearch-no-upper-case-p regexp t)
+                    case-fold-search)
+                  list-matching-lines-buffer-name-face
+                  (if (face-differs-from-default-p list-matching-lines-prefix-face)
+                      list-matching-lines-prefix-face)
+                  list-matching-lines-face
+                  (not (eq occur-excluded-properties t))))))
+          (let* ((bufcount (length active-bufs))
+                 (diff (- (length bufs) bufcount)))
+            (message "Searched %d %s%s; %s %s%s"
+                     bufcount
+                     (ngettext "buffer" "buffers" bufcount)
+                     (if (zerop diff) "" (format " (%d killed)" diff))
+                     (if (zerop count) "no" (format "%d" count))
+                     (ngettext "match" "matches" count)
+                     (if (> (+ (length (or (get-text-property 0 'isearch-string regexp)
+                                           regexp))
+                               42)
+                            (window-width))
+                         "" (occur-regexp-descr regexp))))
+          (unless (eq bufs (nth 2 occur-revert-arguments))
+            (occur--garbage-collect-revert-args))
+          (setq occur-revert-arguments (list regexp nlines bufs))
+          (if (= count 0)
+              (kill-buffer occur-buf)
+            (display-buffer occur-buf)
+            (when occur--final-pos
+              (set-window-point
+               (get-buffer-window occur-buf 'all-frames)
+               occur--final-pos))
+            (setq next-error-last-buffer occur-buf)
+            (setq buffer-read-only t)
+            (set-buffer-modified-p nil)
+            (run-hooks 'occur-hook)))))))
+
+(defun occur-engine (regexp buffers out-buf nlines case-fold
+                            title-face prefix-face match-face keep-props)
+  ;; BUFFERS is a list of buffer-or-overlay!
+  (with-current-buffer out-buf
+    (let ((global-lines 0)    ;; total count of matching lines
+          (global-matches 0)  ;; total count of matches
+          (coding nil)
+          (case-fold-search case-fold)
+          (multi-occur-p (cdr buffers)))
+      (dolist (boo buffers)
+        (when (if (overlayp boo) (overlay-buffer boo) (buffer-live-p boo))
+          (with-current-buffer (if (overlayp boo) (overlay-buffer boo) boo)
+            (let ((inhibit-field-text-motion t)
+                  (lines 0)               ; count of matching lines
+                  (matches 0)             ; count of matches
+                  (headerpt (with-current-buffer out-buf (point)))
+                  (orig-line (if (not (overlayp boo))
+                                 (line-number-at-pos)
+                               (line-number-at-pos
+                                (overlay-get boo 'occur--orig-point)))))
+              (save-excursion
+                (goto-char (if (overlayp boo) (overlay-start boo) (point-min)))
+                (forward-line 0)
+                (let* ((limit (if (overlayp boo) (overlay-end boo) (point-max)))
+                       (start-line (line-number-at-pos))
+                       (curr-line start-line)
+                       (orig-line-shown-p)
+                       (prev-line nil)
+                       (prev-after-lines nil)
+                       (matchbeg 0)
+                       (origpt nil)
+                       (begpt nil)
+                       (endpt nil)
+                       markers
+                       (curstring "")
+                       (ret nil)
+                       (case-fold-search case-fold))
+                  (or coding
+                      (not (local-variable-p 'buffer-file-coding-system))
+                      (setq coding buffer-file-coding-system))
+                  (while (< (point) limit)
+                    (setq origpt (point))
+                    (when (setq endpt (re-search-forward regexp limit t))
+                      (setq lines (1+ lines))
+                      (setq matchbeg (match-beginning 0))
+                      (save-excursion
+                        (goto-char matchbeg)
+                        (setq begpt (line-beginning-position))
+                        (goto-char endpt)
+                        (setq endpt (line-end-position)))
+                      (setq curr-line (+ curr-line (count-lines origpt begpt)))
+                      (setq markers nil)
+                      (setq curstring (occur-engine-line begpt endpt keep-props))
+                      (let ((len (length curstring))
+                            (start 0))
+                        (when (zerop len)
+                          (setq matches (1+ matches)))
+                        (when (and list-matching-lines-jump-to-current-line
+                                   (not multi-occur-p))
+                          (or orig-line (setq orig-line 1))
+                          (or nlines (setq nlines (line-number-at-pos (point-max))))
+                          (when (= curr-line orig-line)
+                            (add-face-text-property
+                             0 len list-matching-lines-current-line-face nil curstring)
+                            (add-text-properties 0 len '(current-line t) curstring))
+                          (when (and (>= orig-line (- curr-line nlines))
+                                     (<= orig-line (+ curr-line nlines)))
+                            (setq orig-line-shown-p t)))
+                        (while (and (< start len)
+                                    (string-match regexp curstring start))
+                          (push (cons (set-marker (make-marker)
+                                                  (+ begpt (match-beginning 0)))
+                                      (set-marker (make-marker)
+                                                  (+ begpt (match-end 0))))
+                                markers)
+                          (setq matches (1+ matches))
+                          (add-text-properties
+                           (match-beginning 0) (match-end 0)
+                           '(occur-match t) curstring)
+                          (when match-face
+                            (add-face-text-property
+                             (match-beginning 0) (match-end 0)
+                             match-face nil curstring))
+                          (let ((end (match-end 0)))
+                            (setq start (if (= start end) (1+ start) end)))))
+                      (setq markers (nreverse markers))
+                      (let* ((match-prefix
+                              (apply #'propertize (format "%7d:" curr-line)
+                                     (append
+                                      (when prefix-face
+                                        `(font-lock-face ,prefix-face))
+                                      `(occur-prefix t
+                                                     front-sticky t
+                                                     rear-nonsticky t
+                                                     read-only t
+                                                     occur-target ,markers
+                                                     follow-link t
+                                                     help-echo "mouse-2: go to this occurrence"))))
+                             (match-str
+                              (propertize curstring
+                                          'occur-target markers
+                                          'follow-link t
+                                          'help-echo
+                                          "mouse-2: go to this occurrence"))
+                             (out-line
+                              (concat
+                               (string-replace
+                                "\n"
+                                (if prefix-face
+                                    (propertize
+                                     "\n       :" 'font-lock-face prefix-face
+                                     'occur-target markers)
+                                  (propertize
+                                   "\n       :" 'occur-target markers))
+                                (propertize (concat match-prefix match-str)
+                                            'mouse-face 'highlight))
+                               (propertize "\n" 'occur-target markers)))
+                             (data
+                              (if (= nlines 0)
+                                  out-line
+                                (setq ret (occur-context-lines
+                                           out-line nlines keep-props begpt
+                                           endpt curr-line prev-line
+                                           prev-after-lines prefix-face
+                                           orig-line multi-occur-p))
+                                (setq prev-after-lines (nth 1 ret))
+                                (nth 0 ret)))
+                             (orig-line-str
+                              (when (and list-matching-lines-jump-to-current-line
+                                         (null orig-line-shown-p)
+                                         (> curr-line orig-line))
+                                (setq orig-line-shown-p t)
+                                (save-excursion
+                                  (goto-char (point-min))
+                                  (forward-line (1- orig-line))
+                                  (occur-engine-line (line-beginning-position)
+                                                     (line-end-position) keep-props)))))
+                        (with-current-buffer out-buf
+                          (when orig-line-str
+                            (add-face-text-property
+                             0 (length orig-line-str)
+                             list-matching-lines-current-line-face nil orig-line-str)
+                            (add-text-properties 0 (length orig-line-str)
+                                                 '(current-line t) orig-line-str)
+                            (insert (car (occur-engine-add-prefix
+                                          (list orig-line-str) prefix-face))))
+                          (insert data)))
+                      (goto-char endpt))
+                    (if endpt
+                        (progn
+                          (setq curr-line (+ curr-line (count-lines begpt endpt)
+                                             (if (and (bolp) (eolp)) 1 0)))
+                          (forward-line 1))
+                      (goto-char (point-max)))
+                    (setq prev-line (1- curr-line)))
+                  (when prev-after-lines
+                    (with-current-buffer out-buf
+                      (insert (apply #'concat (occur-engine-add-prefix
+                                               prev-after-lines prefix-face)))))
+                  (when (and list-matching-lines-jump-to-current-line
+                             (null orig-line-shown-p))
+                    (setq orig-line-shown-p t)
+                    (let ((orig-line-str
+                           (save-excursion
+                             (goto-char (point-min))
+                             (forward-line (1- orig-line))
+                             (occur-engine-line (line-beginning-position)
+                                                (line-end-position) keep-props))))
+                      (add-face-text-property
+                       0 (length orig-line-str)
+                       list-matching-lines-current-line-face nil orig-line-str)
+                      (add-text-properties 0 (length orig-line-str)
+                                           '(current-line t) orig-line-str)
+                      (with-current-buffer out-buf
+                        (insert (car (occur-engine-add-prefix
+                                      (list orig-line-str) prefix-face))))))))
+              (when (not (zerop lines))
+                (setq global-lines (+ global-lines lines)
+                      global-matches (+ global-matches matches))
+                (with-current-buffer out-buf
+                  (goto-char headerpt)
+                  (let ((beg (point))
+                        end)
+                    (insert (propertize
+                             (format "%d %s%s%s in buffer: %s%s\n"
+                                     matches
+                                     (ngettext "match" "matches" matches)
+                                     (if (= lines matches)
+                                         "" (format " in %d %s"
+                                                    lines
+                                                    (ngettext "line" "lines" lines)))
+                                     (if (> (length buffers) 1)
+                                         "" (occur-regexp-descr regexp))
+                                     (buffer-name (if (overlayp boo) (overlay-buffer boo) boo))
+                                     (if (overlayp boo)
+                                         (format " within region: %d-%d"
+                                                 (overlay-start boo)
+                                                 (overlay-end boo))
+                                       ""))
+                             'read-only t))
+                    (setq end (point))
+                    (when title-face
+                      (add-face-text-property beg end title-face))
+                    (goto-char (if (and list-matching-lines-jump-to-current-line
+                                        (not multi-occur-p))
+                                   (setq occur--final-pos
+                                         (and (goto-char (point-max))
+                                              (or (previous-single-property-change (point) 'current-line)
+                                                  (point-max))))
+                                 (point-min))))))))))
+      (when (and (not (zerop global-lines)) (> (length buffers) 1))
+        (goto-char (point-min))
+        (let ((beg (point))
+              end)
+          (insert (format "%d %s%s total%s:\n"
+                          global-matches
+                          (ngettext "match" "matches" global-matches)
+                          (if (= global-lines global-matches)
+                              "" (format " in %d %s"
+                                         global-lines
+                                         (ngettext "line" "lines" global-lines)))
+                          (occur-regexp-descr regexp)))
+          (setq end (point))
+          (when title-face
+            (add-face-text-property beg end title-face)))
+        (goto-char (point-min)))
+      (if coding
+          (set-buffer-file-coding-system coding))
+      global-matches)))
+
+(defun occur-engine-line (beg end &optional keep-props)
+  (if (and keep-props font-lock-mode)
+      (font-lock-ensure beg end))
+  (if (and keep-props (not (eq occur-excluded-properties t)))
+      (let ((str (buffer-substring beg end)))
+        (remove-list-of-text-properties
+         0 (length str) occur-excluded-properties str)
+        str)
+    (buffer-substring-no-properties beg end)))
+
+(defun occur-engine-add-prefix (lines &optional prefix-face)
+  (mapcar
+   (lambda (line)
+     (concat (if prefix-face
+                 (propertize "       :" 'font-lock-face prefix-face)
+               "       :")
+             line "\n"))
+   lines))
+
+(defun occur-accumulate-lines (count &optional keep-props pt)
+  (save-excursion
+    (when pt
+      (goto-char pt))
+    (let ((forwardp (> count 0))
+          result beg end moved)
+      (while (not (or (zerop count)
+                      (if forwardp
+                          (eobp)
+                        (and (bobp) (not moved)))))
+        (setq count (+ count (if forwardp -1 1)))
+        (setq beg (line-beginning-position)
+              end (line-end-position))
+        (push (occur-engine-line beg end keep-props) result)
+        (setq moved (= 0 (forward-line (if forwardp 1 -1)))))
+      (nreverse result))))
+
+(defun occur-context-lines (out-line nlines keep-props begpt endpt
+                                     curr-line prev-line prev-after-lines
+                                     &optional prefix-face
+                                     orig-line multi-occur-p)
+  (let ((before-lines
+         (nreverse (cdr (occur-accumulate-lines
+                         (- (1+ (abs nlines))) keep-props begpt))))
+        (after-lines
+         (cdr (occur-accumulate-lines
+               (1+ nlines) keep-props endpt)))
+        separator)
+    (when (and list-matching-lines-jump-to-current-line
+               (not multi-occur-p))
+      (when (and (>= orig-line (- curr-line nlines))
+                 (< orig-line curr-line))
+        (let ((curstring (nth (- (length before-lines) (- curr-line orig-line)) before-lines)))
+          (add-face-text-property
+           0 (length curstring)
+           list-matching-lines-current-line-face nil curstring)
+          (add-text-properties 0 (length curstring)
+                               '(current-line t) curstring)))
+      (when (and (<= orig-line (+ curr-line nlines))
+                 (> orig-line curr-line))
+        (let ((curstring (nth (- orig-line curr-line 1) after-lines)))
+          (add-face-text-property
+           0 (length curstring)
+           list-matching-lines-current-line-face nil curstring)
+          (add-text-properties 0 (length curstring)
+                               '(current-line t) curstring))))
+
+    ;; Combine after-lines of the previous match
+    ;; with before-lines of the current match.
+    (when prev-after-lines
+      ;; Don't overlap prev after-lines with current before-lines.
+      (if (>= (+ prev-line (length prev-after-lines))
+              (- curr-line (length before-lines)))
+          (setq prev-after-lines
+                (take (- curr-line prev-line (length before-lines) 1)
+                      prev-after-lines))
+        ;; Separate non-overlapping context lines with a dashed line.
+        (setq separator "-------\n")))
+
+    (when prev-line
+      ;; Don't overlap current before-lines with previous match line.
+      (if (<= (- curr-line (length before-lines))
+              prev-line)
+          (setq before-lines
+                (nthcdr (- (length before-lines)
+                           (- curr-line prev-line 1))
+                        before-lines))
+        ;; Separate non-overlapping before-context lines.
+        (unless (> nlines 0)
+          (setq separator "-------\n"))))
+
+    (list
+     ;; Return a list where the first element is the output line.
+     (apply #'concat
+            (append
+             (if prev-after-lines
+                 (occur-engine-add-prefix prev-after-lines prefix-face))
+             (if separator
+                 (list (if prefix-face
+                           (propertize separator 'font-lock-face prefix-face)
+                         separator)))
+             (occur-engine-add-prefix before-lines prefix-face)
+             (list out-line)))
+     ;; And the second element is the list of context after-lines.
+     (if (> nlines 0) after-lines))))
+
+(defalias 'list-matching-lines 'occur)
+(defun occur-read-primary-args ()
+  (let* ((perform-collect (consp current-prefix-arg))
+         (regexp (read-regexp (if perform-collect
+                                  "Collect strings matching regexp"
+                                "List lines matching regexp")
+                              'regexp-history-last)))
+    (list regexp
+          (if perform-collect
+              (if (zerop (regexp-opt-depth regexp))
+                  "\\&"
+                (let ((default (car occur-collect-regexp-history)))
+                  (read-regexp
+                   (format-prompt "Regexp to collect" default)
+                   default 'occur-collect-regexp-history)))
+            (when current-prefix-arg
+              (prefix-numeric-value current-prefix-arg))))))
+
+(defun occur-rename-buffer (&optional unique-p interactive-p)
+  "Rename the current *Occur* buffer to *Occur: original-buffer-name*."
+  (interactive "P\np")
+  (with-current-buffer
+      (if (eq major-mode 'occur-mode) (current-buffer) (get-buffer "*Occur*"))
+    (rename-buffer (concat "*Occur: "
+                           (mapconcat (lambda (boo)
+                                        (buffer-name (if (overlayp boo)
+                                                         (overlay-buffer boo)
+                                                       boo)))
+                                      (car (cddr occur-revert-arguments)) "/")
+                           "*")
+                   (or unique-p (not interactive-p)))))
+
+(defun occur (regexp &optional nlines region)
+  "Show all lines in the current buffer containing a match for REGEXP."
+  (interactive
+   (nconc (occur-read-primary-args)
+          (and (use-region-p) (list (region-bounds)))))
+  (let* ((start (and (caar region) (max (caar region) (point-min))))
+         (end (and (cdar region) (min (cdar region) (point-max))))
+         (in-region (or start end))
+         (bufs (if (not in-region) (list (current-buffer))
+                 (let ((ol (make-overlay
+                            (or start (point-min))
+                            (or end (point-max)))))
+                   (overlay-put ol 'occur--orig-point (point))
+                   (list ol)))))
+    (occur-1 regexp nlines bufs)))
+
+(defun multi-occur--prompt ()
+  (concat
+   "Next buffer to search "
+   "(RET to end): "))
+
+(defun multi-occur (bufs regexp &optional nlines)
+  "Show all lines in buffers BUFS containing a match for REGEXP."
+  (interactive
+   (cons
+    (let* ((bufs (list (read-buffer "First buffer to search: "
+                                    (current-buffer) t)))
+           (buf nil)
+           (ido-ignore-item-temp-list bufs))
+      (while (not (string-equal
+                   (setq buf (read-buffer (multi-occur--prompt) nil t))
+                   ""))
+        (pushnew buf bufs)
+        (setq ido-ignore-item-temp-list bufs))
+      (nreverse (mapcar #'get-buffer bufs)))
+    (occur-read-primary-args)))
+  (occur-1 regexp nlines bufs))
+
+(defun multi-occur-in-matching-buffers (bufregexp regexp &optional allbufs)
+  "Show all lines matching REGEXP in buffers specified by BUFREGEXP."
+  (interactive
+   (cons
+    (let* ((default (car regexp-history))
+           (input
+            (read-regexp
+             (if current-prefix-arg
+                 "List lines in buffers whose names match regexp: "
+               "List lines in buffers whose filenames match regexp: "))))
+      (if (equal input "")
+          default
+        input))
+    (occur-read-primary-args)))
+  (when bufregexp
+    (occur-1 regexp nil
+             (delq nil
+                   (mapcar (lambda (buf)
+                             (when (if allbufs
+                                       (string-match bufregexp
+                                                     (buffer-name buf))
+                                     (and (buffer-file-name buf)
+                                          (string-match bufregexp
+                                                        (buffer-file-name buf))))
+                               buf))
+                           (buffer-list))))))
+
+(defun turn-on-font-lock ()
+  "Unconditionally turn on Font Lock mode."
+  (font-lock-mode 1))
+
+(defun query-replace-descr (string)
+  (setq string (copy-sequence string))
+  (dotimes (i (length string))
+    (let ((c (aref string i)))
+      (cond
+       ((< c ?\s) (add-text-properties
+                   i (1+ i)
+                   `(display ,(propertize (format "^%c" (+ c 64)) 'face 'escape-glyph))
+                   string))
+       ((= c ?\^?) (add-text-properties
+                    i (1+ i)
+                    `(display ,(propertize "^?" 'face 'escape-glyph))
+                    string)))))
+  string)
+
+(defalias 'delete-matching-lines 'flush-lines)
+
+;; ---------- occur modes (need define-derived-mode) ----------
+
+(put 'occur-mode 'mode-class 'special)
+(define-derived-mode occur-mode special-mode "Occur"
+  "Major mode for output from \\[occur].
+\\<occur-mode-map>Move point to one of the items in this buffer, then use
+\\[occur-mode-goto-occurrence] to go to the occurrence that the item refers to.
+Alternatively, click \\[occur-mode-mouse-goto] on an item to go to it.
+
+\\{occur-mode-map}"
+  (setq-local revert-buffer-function #'occur-revert-function)
+  (add-hook 'kill-buffer-hook #'occur--garbage-collect-revert-args nil t)
+  (setq next-error-function #'occur-next-error))
+
+(define-derived-mode occur-edit-mode occur-mode "Occur-Edit"
+  "Major mode for editing *Occur* buffers.
+In this mode, changes to the *Occur* buffer are also applied to
+the originating buffer.
+
+To return to ordinary Occur mode, use \\[occur-cease-edit]."
+  (setq buffer-read-only nil)
+  (add-hook 'after-change-functions #'occur-after-change-function nil t)
+  (message (substitute-command-keys
+            "Editing: Type \\[occur-cease-edit] to return to Occur mode.")))
+
+(defun occur-after-change-function (beg end length)
+  (save-excursion
+    (goto-char beg)
+    (let* ((line-beg (line-beginning-position))
+           (targets (get-text-property line-beg 'occur-target))
+           (m (occur--targets-start targets))
+           (buf (marker-buffer m))
+           col)
+      (when (and (get-text-property line-beg 'occur-prefix)
+                 (not (get-text-property end 'occur-prefix)))
+        (when (= length 0)
+          (put-text-property beg end 'occur-target targets)
+          (save-excursion
+            (and (search-forward "\n" end t)
+                 (delete-region (1- (point)) end))))
+        (let* ((line (- (line-number-at-pos)
+                        (line-number-at-pos (window-start))))
+               (readonly (with-current-buffer buf buffer-read-only))
+               (win (or (get-buffer-window buf)
+                        (display-buffer buf
+                                        '(nil (inhibit-same-window . t)
+                                              (inhibit-switch-frame . t)))))
+               (line-end (line-end-position))
+               (text (save-excursion
+                       (goto-char (next-single-property-change
+                                   line-beg 'occur-prefix nil
+                                   line-end))
+                       (setq col (- (point) line-beg))
+                       (buffer-substring-no-properties (point) line-end))))
+          (with-selected-window win
+            (goto-char m)
+            (recenter line)
+            (if readonly
+                (message "Buffer `%s' is read only." buf)
+              (let* ((beg-pos (line-beginning-position))
+                     (end-pos (line-end-position))
+                     (buf-str (buffer-substring-no-properties beg-pos end-pos))
+                     (common-prefix
+                      (lambda (s1 s2)
+                        (let ((c (compare-strings s1 nil nil s2 nil nil)))
+                          (if (numberp c)
+                              (1- (abs c))
+                            (length s1)))))
+                     (prefix-len (funcall common-prefix buf-str text))
+                     (suffix-len (funcall common-prefix
+                                          (reverse (substring
+                                                    buf-str prefix-len))
+                                          (reverse (substring
+                                                    text prefix-len)))))
+                (setq beg-pos (+ beg-pos prefix-len))
+                (setq end-pos (- end-pos suffix-len))
+                (setq text (substring text prefix-len
+                                      (and (not (zerop suffix-len))
+                                           (- suffix-len))))
+                (delete-region beg-pos end-pos)
+                (goto-char beg-pos)
+                (insert text)))
+            (move-to-column col)))))))
 
 ;; ---------- buffer-match-p + hl-line (GNU subr.el / hl-line.el) ----------
 
