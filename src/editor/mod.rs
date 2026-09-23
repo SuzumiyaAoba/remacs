@@ -714,7 +714,7 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!(
         "define-key",
         3,
-        3,
+        4,
         f_define_key,
         "Bind KEY to DEF in KEYMAP."
     ),
@@ -4701,8 +4701,79 @@ fn f_define_key(i: &mut Interp, a: Vec<Value>) -> EvalResult {
             )));
         }
     }
-    set_binding(i, &km, keys[keys.len() - 1], def.clone());
+    // GNU's optional 4th arg REMOVE removes the binding entirely
+    // (parent maps show through) instead of storing nil.
+    let remove = a.get(3).map(|v| v.truthy()).unwrap_or(false);
+    if remove {
+        remove_binding(i, &km, keys[keys.len() - 1]);
+    } else {
+        set_binding(i, &km, keys[keys.len() - 1], def.clone());
+    }
     Ok(def)
+}
+
+/// GNU `store_in_keymap' with REMOVE: delete KEY's own binding — the
+/// alist cons is dropped (a parent map's binding shows through) and
+/// char-table/vector slots reset to nil (not the `t' unbind marker).
+pub(crate) fn remove_binding(i: &mut Interp, km: &Value, key: i128) {
+    if let Value::Cons(head) = km {
+        let mut cur = head.borrow().cdr.clone();
+        // (PREV . CUR) cons cells; we relink PREV's cdr past the hit.
+        let mut prev: Option<Value> = None;
+        loop {
+            let rc = match &cur {
+                Value::Cons(rc) => rc.clone(),
+                _ => break,
+            };
+            if is_keymap(i, &cur) {
+                break;
+            }
+            let (car, next) = {
+                let b = rc.borrow();
+                (b.car.clone(), b.cdr.clone())
+            };
+            if crate::lisp::builtins::misc::is_char_table(i, &car) {
+                if key >= 0
+                    && key & CHAR_MODIFIER_MASK == 0
+                    && key <= crate::lisp::builtins::misc::CT_MAX_CHAR as i128
+                {
+                    crate::lisp::builtins::misc::ct_set(
+                        i,
+                        &car,
+                        key as u32,
+                        Value::Nil,
+                    );
+                    return;
+                }
+            } else if let Value::Vec(vv) = &car {
+                if key >= 0 && (key as usize) < vv.borrow().len() {
+                    vv.borrow_mut()[key as usize] = Value::Nil;
+                    return;
+                }
+            } else if let Value::Cons(pair) = &car {
+                let kk = match &pair.borrow().car {
+                    Value::Int(n) => Some(*n),
+                    Value::Sym(s) => {
+                        Some(event_code_for(&i.symbol_name(*s)))
+                    }
+                    _ => None,
+                };
+                if kk == Some(key) {
+                    match &prev {
+                        Some(Value::Cons(p)) => {
+                            p.borrow_mut().cdr = next;
+                        }
+                        // Front of the alist: splice into the
+                        // keymap head's cdr.
+                        _ => head.borrow_mut().cdr = next,
+                    }
+                    return;
+                }
+            }
+            prev = Some(cur.clone());
+            cur = next;
+        }
+    }
 }
 
 /// GNU `store_in_keymap': set KEY's binding to DEF.  Plain character
