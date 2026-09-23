@@ -24017,6 +24017,209 @@ To return to ordinary Occur mode, use \\[occur-cease-edit]."
                 (insert text)))
             (move-to-column col)))))))
 
+;; ---------- reposition-window (GNU reposition.el) ----------
+
+(defun reposition-window (&optional arg interactive)
+  "Make the current definition and/or comment visible.
+Further invocations move it to the top of the window or toggle the
+visibility of comments that precede it."
+  (interactive "P\nd")
+  (if interactive
+      (condition-case e
+          (reposition-window arg nil)
+        (scan-error (user-error (cadr e))))
+    (let* ((here (point))
+           (ht (- (window-height) 2))
+           (line (repos-count-screen-lines (window-start) (point)))
+           (comment-height
+            (max 0
+                 (repos-count-screen-lines-signed
+                  (save-excursion
+                    (if (not (eobp)) (forward-char 1))
+                    (end-of-defun -1)
+                    (if (re-search-forward "[^ \t\n\f]" nil t)
+                        (backward-char 1))
+                    (point))
+                  here)))
+           (defun-height
+             (repos-count-screen-lines-signed
+              (save-excursion
+                (end-of-defun 1)
+                (beginning-of-defun 1)
+                (point))
+              here))
+           (defun-depth (repos-count-screen-lines here
+                                                  (save-excursion
+                                                    (end-of-defun 1)
+                                                    (point))))
+           (defun-line-onscreen-p
+             (and (<= defun-height line)
+                  (<= (- line defun-height) ht))))
+      (cond ((or (= comment-height line)
+                 (and (= line ht)
+                      (> comment-height line)
+                      defun-line-onscreen-p))
+             (if (and arg (> defun-depth (1+ ht)))
+                 (progn (end-of-defun) (beginning-of-defun) (recenter 0))
+               (recenter (max defun-height 0))))
+            ((or (= defun-height line)
+                 (= line 0)
+                 (and (< line comment-height)
+                      (< defun-height 0)))
+             (cond ((= line ht)
+                    (if arg (progn (end-of-defun) (beginning-of-defun)))
+                    (recenter 0))
+                   ((and arg (< ht comment-height))
+                    (forward-line (- comment-height))
+                    (beginning-of-line)
+                    (recenter 0))
+                   (t
+                    (recenter (min ht comment-height)))))
+            ((and (> (+ line defun-depth -1) ht)
+                  defun-line-onscreen-p)
+             (recenter (max 0 (1+ (- ht defun-depth)) defun-height)))
+            (t
+             (if (and arg (< ht comment-height))
+                 (progn (forward-line (- defun-height))
+                        (beginning-of-line)
+                        (reposition-window))
+               (recenter (min ht comment-height))))))))
+
+(defun repos-count-screen-lines (start end)
+  (save-excursion
+    (save-restriction
+      (narrow-to-region (point-min) end)
+      (goto-char start)
+      (vertical-motion (- (point-max) (point-min))))))
+
+(defun repos-count-screen-lines-signed (start end)
+  (let ((lines (repos-count-screen-lines start end)))
+    (if (< start end)
+        lines
+      (- lines))))
+
+;; ---------- electric.el: layout mode + newline commands ----------
+
+(defvar post-self-insert-hook nil
+  "Hook run at the end of `self-insert-command'.")
+
+(defvar-local electric-indent-inhibit nil
+  "If non-nil, reindentation is not appropriate for this buffer.")
+
+(defun electric--after-char-pos ()
+  "Return the position after the char we just inserted.
+Returns nil when we can't find this char."
+  (let ((pos (point)))
+    (when (or (eq (char-before) last-command-event)
+              (save-excursion
+                (or (progn (skip-chars-backward " \t")
+                           (setq pos (point))
+                           (eq (char-before) last-command-event))
+                    (progn (skip-chars-backward " \n\t")
+                           (setq pos (point))
+                           (eq (char-before) last-command-event)))))
+      pos)))
+
+(defun electric-indent-just-newline (arg)
+  "Insert just a newline, without any auto-indentation."
+  (interactive "*P")
+  (let ((electric-indent-mode nil))
+    (newline arg 'interactive)))
+
+(defun electric-newline-and-maybe-indent ()
+  "Insert a newline.
+If `electric-indent-mode' is enabled, that's that, but if it
+is *disabled* then additionally indent according to major mode."
+  (interactive "*")
+  (if electric-indent-mode
+      (electric-indent-just-newline nil)
+    (newline-and-indent)))
+
+(defvar electric-layout-rules nil
+  "List of rules saying where to automatically insert newlines.")
+(make-variable-buffer-local 'electric-layout-rules)
+
+(defvar electric-layout-allow-duplicate-newlines nil
+  "If non-nil, allow duplication of `before' newlines.")
+(make-variable-buffer-local 'electric-layout-allow-duplicate-newlines)
+
+(defvar electric-layout-allow-in-comment-or-string nil
+  "If non-nil, allow inserting newlines inside a comment or string.")
+(make-variable-buffer-local 'electric-layout-allow-in-comment-or-string)
+
+(defvar electric-pair-open-newline-between-pairs)
+
+(defun electric-layout-post-self-insert-function ()
+  (when electric-layout-mode
+    (electric-layout-post-self-insert-function-1)))
+
+(defun electric-layout-post-self-insert-function-1 ()
+  (let* ((pos (electric--after-char-pos))
+         probe
+         (rules electric-layout-rules)
+         (rule
+          (catch 'done
+            (when pos
+              (while (setq probe (pop rules))
+                (cond ((and (consp probe)
+                            (eq (car probe) last-command-event))
+                       (throw 'done (cdr probe)))
+                      ((functionp probe)
+                       (let ((res
+                              (save-excursion
+                                (goto-char pos)
+                                (funcall probe last-command-event))))
+                         (when res (throw 'done res))))))))))
+    (when (and rule
+               (or electric-layout-allow-in-comment-or-string
+                   (not (nth 8 (save-excursion (syntax-ppss pos))))))
+      (goto-char pos)
+      (when (functionp rule) (setq rule (funcall rule)))
+      (dolist (sym (if (symbolp rule) (list rule) rule))
+        (let* ((nl-after
+                (lambda ()
+                  (let ((electric-layout-mode nil)
+                        (electric-pair-open-newline-between-pairs nil))
+                    (newline 1 t))))
+               (nl-before
+                (lambda ()
+                  (save-excursion
+                    (goto-char (1- pos))
+                    (unless (and (not electric-layout-allow-duplicate-newlines)
+                                 (progn (skip-chars-backward " \t")
+                                        (bolp)))
+                      (let ((electric-indent-inhibit 'electric-layout-mode))
+                        (funcall nl-after)))))))
+            (pcase sym
+              ('before (funcall nl-before))
+              ('after  (funcall nl-after))
+              ('after-stay (save-excursion (funcall nl-after)))
+              ('around (funcall nl-before) (funcall nl-after))))))))
+
+(define-minor-mode electric-layout-mode
+  "Automatically insert newlines around some chars.
+
+The variable `electric-layout-rules' says when and how to insert newlines."
+  :global t :group 'electricity
+  (cond (electric-layout-mode
+         (add-hook 'post-self-insert-hook
+                   #'electric-layout-post-self-insert-function
+                   40))
+        (t
+         (remove-hook 'post-self-insert-hook
+                      #'electric-layout-post-self-insert-function))))
+
+(define-minor-mode electric-layout-local-mode
+  "Toggle `electric-layout-mode' only in this buffer."
+  :variable ( electric-layout-mode .
+              (lambda (val) (setq-local electric-layout-mode val)))
+  (cond
+   ((eq electric-layout-mode (default-value 'electric-layout-mode))
+    (kill-local-variable 'electric-layout-mode))
+   ((not (default-value 'electric-layout-mode))
+    (electric-layout-mode 1)
+    (setq-default electric-layout-mode nil))))
+
 ;; ---------- buffer-match-p + hl-line (GNU subr.el / hl-line.el) ----------
 
 (defvar buffer-match-p--past-warnings nil

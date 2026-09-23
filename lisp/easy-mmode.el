@@ -22,7 +22,11 @@ are the mode's body, run on each toggle."
            (lighter (plist-get kw :lighter))
            (keymap (plist-get kw :keymap))
            (global (plist-get kw :global))
-           (variable (or (plist-get kw :variable) mode))
+           (variable-spec (or (plist-get kw :variable) mode))
+           ;; GNU's :variable can be (VAR . SETTER) where SETTER
+           ;; takes the new value (e.g. setq-local).
+           (variable (if (consp variable-spec) (car variable-spec) variable-spec))
+           (variable-setter (and (consp variable-spec) (cdr variable-spec)))
            (name (symbol-name mode))
            (pretty (capitalize
                     (if (string-suffix-p "-mode" name)
@@ -38,13 +42,21 @@ are the mode's body, run on each toggle."
          (defun ,mode (&optional arg)
            ,doc
            (interactive (list (or current-prefix-arg 'toggle)))
-           (setq ,variable
-                 (cond ((eq arg 'toggle) (not ,variable))
-                       ((null arg) t)
-                       ((and (consp arg)
-                             (eq (car arg) 'toggle))
-                        (not ,variable))
-                       (t (> (prefix-numeric-value arg) 0))))
+           ,(if variable-setter
+                `(funcall ,variable-setter
+                          (cond ((eq arg 'toggle) (not ,variable))
+                                ((null arg) t)
+                                ((and (consp arg)
+                                      (eq (car arg) 'toggle))
+                                 (not ,variable))
+                                (t (> (prefix-numeric-value arg) 0))))
+              `(setq ,variable
+                     (cond ((eq arg 'toggle) (not ,variable))
+                           ((null arg) t)
+                           ((and (consp arg)
+                                 (eq (car arg) 'toggle))
+                            (not ,variable))
+                           (t (> (prefix-numeric-value arg) 0)))))
            ,@body
            (run-hooks ',hook)
            (when (called-interactively-p 'interactive)
