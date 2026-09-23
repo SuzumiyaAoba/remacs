@@ -111,13 +111,17 @@
       (insert "X")
       (insert-file-contents f)
       (prin1 (buffer-string)))
+    ;; VISIT=t on a non-empty buffer errors like GNU; REPLACE is arg 5.
     (with-temp-buffer
       (insert "ABC")
-      (insert-file-contents f t)
+      (condition-case e (insert-file-contents f t) (error (prin1 e)))
+      (prin1 (buffer-string)))
+    (with-temp-buffer
+      (insert "ABC")
+      (insert-file-contents f nil nil nil t)
       (prin1 (buffer-string)))
     (delete-file f))
-  ;; ---- minibuffer / y-or-n-p / read-char paths ----------------------
-  (prin1 (y-or-n-p "q?"))
+  ;; y-or-n-p reads input — blocks in batch; not probeable
   ;; ---- with-timeout ----------------------------------------------
   (prin1 (with-timeout (1 'timed-out) (sleep-for 0.01) 'done))
   (prin1 'done))

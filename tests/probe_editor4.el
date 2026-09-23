@@ -158,7 +158,8 @@
   (insert "(defun f (x)\n  (let ((y 1))\n    (+ x y)))\n\n(defun g () 2)\n")
   (goto-char (point-min))
   (parse-partial-sexp 1 20)
-  (parse-partial-sexp 1 20 0 nil (syntax-table))
+  ;; GNU signals (listp CHAR-TABLE) — TARGET must be a list.
+  (condition-case e (parse-partial-sexp 1 20 0 nil (syntax-table)) (error e))
   (beginning-of-defun)
   (end-of-defun)
   (condition-case e (forward-list) (error e))
@@ -270,7 +271,7 @@
   (condition-case e (scroll-down-line) (error e)))
 
 ;; ---- completion ----
-(completing-read "P: " '("aa" "ab" "ba") nil t)
+(condition-case e (completing-read "P: " '("aa" "ab" "ba") nil t) (error e))
 (condition-case e (completing-read "P: " '((("a" . 1)) ("b")) nil nil "a") (error e))
 (condition-case e (try-completion "a" '("aa" "ab" "ba")) (error e))
 (condition-case e (all-completions "a" '("aa" "ab" "ba")) (error e))
@@ -343,7 +344,6 @@
 (condition-case e (defining-kbd-macro t) (error e))
 (condition-case e (store-kbd-macro-event ?a) (error e))
 (condition-case e (catch 'exit-recursive-edit (exit-recursive-edit)) (error e))
-(condition-case e (command-error-default-function nil nil nil) (error e))
 (condition-case e (emacs-version) (error e))
 (condition-case e (emacs-pid) (error e))
 (condition-case e (emacs-repository-version) (error e))
@@ -352,3 +352,5 @@
 (condition-case e (dump-emacs-portable "x") (error e))
 (condition-case e (dump-emacs "x" "y") (error e))
 (condition-case e (recent-save-hooks) (error e))
+;; command-error-default-function kills the batch job in GNU
+;; (kill-emacs -1) — unprobeable in-process; covered in corpus/misc.txt.

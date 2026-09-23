@@ -52,9 +52,9 @@
 (key-binding (kbd "C-c z"))
 
 ;; ---- completion / reading ----
-(completing-read "P: " '("aa" "ab" "b"))
-(completing-read "P: " '("aa" "ab") nil t "a")
-(completing-read "P: " '(("x" . 1) ("y" . 2)))
+(condition-case e (completing-read "P: " '("aa" "ab" "b")) (error e))
+(condition-case e (completing-read "P: " '("aa" "ab") nil t "a") (error e))
+(condition-case e (completing-read "P: " '(("x" . 1) ("y" . 2))) (error e))
 (try-completion "a" '("aa" "ab" "b"))
 (all-completions "a" '("aa" "ab" "b"))
 (test-completion "aa" '("aa" "ab"))
@@ -153,8 +153,8 @@ default-directory
 (color-defined-p "red")
 (color-defined-p "notacolor-xyz")
 (color-defined-p "#ff0000")
-(y-or-n-p "q?")
-(yes-or-no-p "q?")
+(condition-case e (y-or-n-p "q?") (error e))
+(condition-case e (yes-or-no-p "q?") (error e))
 (digit-argument nil)
 (digit-argument '(4))
 (condition-case e (yank-pop) (error e))

@@ -307,7 +307,7 @@ pub(crate) fn want_int(i: &mut Interp, v: &Value) -> Result<i128, Flow> {
 pub(crate) fn want_num(i: &mut Interp, v: &Value) -> Result<f64, Flow> {
     match v {
         Value::Int(n) => Ok(*n as f64),
-        Value::Float(f) => Ok(*f),
+        Value::Float(f) => Ok(**f),
         Value::Marker(m) => Ok(m.borrow().position as f64 + 1.0),
         _ => Err(i.wrong_type_mut("number-or-marker-p", v)),
     }
@@ -350,13 +350,8 @@ pub fn eq_values(a: &Value, b: &Value) -> bool {
         (Value::Nil, Value::Nil) => true,
         (Value::Nil, Value::Sym(0)) | (Value::Sym(0), Value::Nil) => true,
         (Value::Int(x), Value::Int(y)) => x == y,
-        (Value::Float(x), Value::Float(y)) => {
-            // Floats are stored by value, so there is no object identity to
-            // compare; two reads of the same variable must be `eq' (GNU t),
-            // while `(eq 3.5 3.5)' on distinct literals is unspecified in GNU.
-            // Comparing bits gives the right answer for the shared-value case.
-            x.to_bits() == y.to_bits()
-        }
+        // Emacs floats are heap objects: `eq' compares object identity.
+        (Value::Float(x), Value::Float(y)) => std::rc::Rc::ptr_eq(x, y),
         (Value::Sym(x), Value::Sym(y)) => x == y,
         (Value::Cons(x), Value::Cons(y)) => std::rc::Rc::ptr_eq(x, y),
         (Value::Str(x), Value::Str(y)) => std::rc::Rc::ptr_eq(x, y),
@@ -381,7 +376,7 @@ pub fn eq_values(a: &Value, b: &Value) -> bool {
 /// `eql` — eq, or equal numbers of the same type (int vs float differ).
 pub fn eql_values(a: &Value, b: &Value) -> bool {
     match (a, b) {
-        (Value::Float(x), Value::Float(y)) => x == y,
+        (Value::Float(x), Value::Float(y)) => **x == **y,
         _ => eq_values(a, b),
     }
 }

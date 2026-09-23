@@ -55,20 +55,20 @@ fn f_noop(_i: &mut Interp, _args: Vec<Value>) -> EvalResult {
 
 fn f_prin1(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     let s = i.print_to_string(&args[0]);
-    i.write_output_to(&s, &arg(&args, 1));
+    i.write_output_to(&s, &arg(&args, 1))?;
     Ok(args[0].clone())
 }
 
 fn f_princ(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     let s = i.princ_to_string(&args[0]);
-    i.write_output_to(&s, &arg(&args, 1));
+    i.write_output_to(&s, &arg(&args, 1))?;
     Ok(args[0].clone())
 }
 
 fn f_print(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     let s = i.print_to_string(&args[0]);
     // GNU's print emits a newline before and after the object.
-    i.write_output_to(&format!("\n{}\n", s), &arg(&args, 1));
+    i.write_output_to(&format!("\n{}\n", s), &arg(&args, 1))?;
     Ok(args[0].clone())
 }
 
@@ -97,7 +97,7 @@ fn f_terpri(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     if ensure && i.output_at_bol(&stream) {
         return Ok(Value::Nil);
     }
-    i.write_output_to("\n", &stream);
+    i.write_output_to("\n", &stream)?;
     Ok(Value::Sym(sym::T))
 }
 
@@ -105,7 +105,7 @@ fn f_write_char(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     if let Value::Int(n) = &args[0] {
         if let Some(c) = char::from_u32(*n as u32) {
             let mut s = [0u8; 4];
-            i.write_output_to(c.encode_utf8(&mut s), &arg(&args, 1));
+            i.write_output_to(c.encode_utf8(&mut s), &arg(&args, 1))?;
         }
     }
     Ok(args[0].clone())

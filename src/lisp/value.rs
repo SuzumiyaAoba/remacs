@@ -74,7 +74,9 @@ pub const FIXNUM_MIN: i128 = -(1i128 << 61);
 pub enum Value {
     Nil,
     Int(i128),
-    Float(f64),
+    /// Emacs floats are heap objects: two reads of `1.0` are distinct
+    /// objects, so `eq` compares identity (Rc pointer), not value.
+    Float(Rc<f64>),
     Sym(SymId),
     Cons(ConsRef),
     Str(StrRef),
@@ -302,6 +304,11 @@ impl Value {
         Value::Str(Rc::new(RefCell::new(s.into())))
     }
 
+    /// A fresh float object (each call yields a distinct `eq' identity).
+    pub fn float(x: f64) -> Value {
+        Value::Float(Rc::new(x))
+    }
+
     pub fn list(items: Vec<Value>) -> Value {
         let mut tail = Value::Nil;
         for item in items.into_iter().rev() {
@@ -379,7 +386,7 @@ impl fmt::Debug for Value {
         match self {
             Value::Nil => write!(f, "nil"),
             Value::Int(i) => write!(f, "{i}"),
-            Value::Float(x) => write!(f, "{x}"),
+            Value::Float(x) => write!(f, "{}", **x),
             Value::Sym(id) => write!(f, "Sym({id})"),
             Value::Cons(_) => write!(f, "Cons(..)"),
             Value::Str(s) => write!(f, "{:?}", s.borrow()),
@@ -418,7 +425,7 @@ mod tests {
         let cases: Vec<(Value, &str)> = vec![
             (Value::Nil, "nil"),
             (Value::Int(3), "3"),
-            (Value::Float(1.5), "1.5"),
+            (Value::float(1.5), "1.5"),
             (Value::Sym(7), "Sym(7)"),
             (Value::cons(Value::Nil, Value::Nil), "Cons(..)"),
             (Value::string("hi"), "\"hi\""),

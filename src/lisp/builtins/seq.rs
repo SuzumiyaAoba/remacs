@@ -293,22 +293,16 @@ fn f_elt(i: &mut Interp, args: Vec<Value>) -> EvalResult {
             }
             Ok(Value::from_bool(bits[n as usize]))
         }
-        Value::Record(r) if super::misc::is_char_table(i, &args[0]) => {
-            // Char-table: elt/aref index into the data vector.
-            let rr = r.borrow();
-            match rr.get(2) {
-                Some(Value::Vec(v)) => {
-                    let items = v.borrow();
-                    if n < 0 || n as usize >= items.len() {
-                        return Err(i.signal_data(
-                            sym::ARGS_OUT_OF_RANGE,
-                            vec![args[0].clone(), args[1].clone()],
-                        ));
-                    }
-                    Ok(items[n as usize].clone())
-                }
-                _ => Err(i.wrong_type_mut("char-table-p", &args[0])),
+        Value::Record(_) if super::misc::is_char_table(i, &args[0]) => {
+            // GNU `char_table_ref': content slot → defalt → parent
+            // chain; any valid character index is readable.
+            if n < 0 || n > 0x3FFFFF {
+                return Err(i.signal_data(
+                    sym::ARGS_OUT_OF_RANGE,
+                    vec![args[0].clone(), args[1].clone()],
+                ));
             }
+            Ok(super::misc::char_table_ref(i, &args[0], n as usize))
         }
         other => Err(i.wrong_type_mut("sequencep", other)),
     }
@@ -381,23 +375,15 @@ fn f_aset(i: &mut Interp, args: Vec<Value>) -> EvalResult {
             bits[n as usize] = Value::Int(if args[2].is_nil() { 0 } else { 1 });
             Ok(args[2].clone())
         }
-        Value::Record(r) if super::misc::is_char_table(i, &args[0]) => {
-            // Char-table: (aset CT CHAR VALUE) writes the data vector.
-            let vec = {
-                let rr = r.borrow();
-                match rr.get(2) {
-                    Some(Value::Vec(v)) => v.clone(),
-                    _ => return Err(i.wrong_type_mut("char-table-p", &args[0])),
-                }
-            };
-            let mut items = vec.borrow_mut();
-            if n < 0 || n as usize >= items.len() {
+        Value::Record(_) if super::misc::is_char_table(i, &args[0]) => {
+            // Char-table: (aset CT CHAR VALUE) → `char_table_set'.
+            if n < 0 || n > super::misc::CT_MAX_CHAR as i128 {
                 return Err(i.signal_data(
                     sym::ARGS_OUT_OF_RANGE,
                     vec![args[0].clone(), args[1].clone()],
                 ));
             }
-            items[n as usize] = args[2].clone();
+            super::misc::ct_set(i, &args[0], n as u32, args[2].clone());
             Ok(args[2].clone())
         }
         Value::Record(r) => {
@@ -423,8 +409,27 @@ fn f_copy_sequence(i: &mut Interp, args: Vec<Value>) -> EvalResult {
             let items = want_list(i, &args[0])?;
             Ok(Value::list(items))
         }
-        Value::Str(_) | Value::Nil | Value::Vec(_) | Value::Hash(_) => Ok(args[0].clone()),
-        // Char-tables (our Record repr) are copyable sequences in GNU.
+        Value::Str(s) => {
+            // A real copy: new identity, own copy of prop intervals.
+            let ns = std::rc::Rc::new(std::cell::RefCell::new(s.borrow().clone()));
+            if i.has_str_props(s) {
+                let ivs = i.str_props(s).to_vec();
+                i.set_str_props(&ns, ivs);
+            }
+            if i.is_unibyte_str(s) {
+                i.mark_unibyte(&ns);
+            }
+            if i.is_multibyte_str(s) {
+                i.mark_multibyte(&ns);
+            }
+            Ok(Value::Str(ns))
+        }
+        Value::Nil | Value::Vec(_) | Value::Hash(_) => Ok(args[0].clone()),
+        // Char-tables copy through `copy_char_table' (deep trie copy,
+        // shared slot objects); other Records shallow-copy the vec.
+        Value::Record(_) if super::misc::is_char_table(i, &args[0]) => {
+            Ok(super::misc::ct_copy(i, &args[0]))
+        }
         Value::Record(r) => Ok(Value::Record(std::rc::Rc::new(std::cell::RefCell::new(
             r.borrow().clone(),
         )))),
@@ -1164,13 +1169,32 @@ fn f_seq_uniq(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     Ok(seq_from_like(i, &args[0], out))
 }
 fn f_make_char_table(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    // Char-table = #s(char-table SUBTYPE [256 slots]) — a Record so
-    // `char-table-p'/`char-table-subtype' are exact.  GNU 31 takes
-    // only SUBTYPE and INIT (extra slots signal args-out-of-range).
+    // Char-table = #s(char-table SUBTYPE [65 slots] EXTRA...) — a
+    // Record so `char-table-p'/`char-table-subtype' are exact.  The
+    // contents vec is the GNU trie root: [0] is the ASCII cache slot,
+    // [1..=64] the top-level 65536-char blocks, all initialized to
+    // INIT (GNU `make_vector' fills every slot incl. the defalt).
+    // GNU sizes the extras from the subtype's `char-table-extra-slots'
+    // property (e.g. disp-table.el puts 18 on `display-table').
     let subtype = arg(&args, 0);
     let init = arg(&args, 1);
-    let vec = Value::Vec(std::rc::Rc::new(std::cell::RefCell::new(vec![init; 256])));
-    Ok(Value::Record(std::rc::Rc::new(std::cell::RefCell::new(
-        vec![Value::Sym(i.intern("char-table")), subtype, vec],
-    ))))
+    let vec = Value::Vec(std::rc::Rc::new(std::cell::RefCell::new(vec![
+        init.clone();
+        65
+    ])));
+    let prop = i.intern("char-table-extra-slots");
+    let n = match crate::lisp::builtins::data::f_get(
+        i,
+        vec![subtype.clone(), Value::Sym(prop)],
+    )? {
+        Value::Int(n) if n > 0 => n as usize,
+        _ => 0,
+    };
+    let mut rec = vec![Value::Sym(i.intern("char-table")), subtype, vec];
+    rec.resize(3 + n, Value::Nil);
+    let t = Value::Record(std::rc::Rc::new(std::cell::RefCell::new(rec)));
+    if !init.is_nil() {
+        i.set_char_table_defalt(&t, init);
+    }
+    Ok(t)
 }

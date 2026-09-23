@@ -4,6 +4,7 @@ use crate::lisp::Interp;
 use crate::lisp::error::EvalResult;
 use crate::lisp::value::Value;
 use std::path::{Path, PathBuf};
+use std::rc::Rc;
 
 /// Candidate paths for library NAME under DIR (with .elc/.el suffixes).
 fn candidates(dir: &Path, name: &str) -> Vec<PathBuf> {
@@ -103,6 +104,17 @@ fn embedded(name: &str) -> Option<&'static str> {
 /// Read the file at PATH and evaluate all forms in it.
 /// Binds `load-file-name` and `load-in-progress` like Emacs `load`.
 pub fn eval_file(i: &mut Interp, path: &str) -> EvalResult {
+    eval_file_lex(i, path, false)
+}
+
+/// `--script FILE`: like `load`, but `lexical-binding' is forced on —
+/// GNU's `command-line--load-script' does `setq-local lexical-binding t'
+/// before eval-buffer, independent of any file cookie.
+pub fn eval_file_script(i: &mut Interp, path: &str) -> EvalResult {
+    eval_file_lex(i, path, true)
+}
+
+fn eval_file_lex(i: &mut Interp, path: &str, force_lex: bool) -> EvalResult {
     let src = match std::fs::read_to_string(path) {
         Ok(s) => s,
         Err(e) => {
@@ -128,12 +140,12 @@ pub fn eval_file(i: &mut Interp, path: &str) -> EvalResult {
     let canon = std::fs::canonicalize(path)
         .map(|p| p.to_string_lossy().into_owned())
         .unwrap_or_else(|_| path.to_string());
-    eval_src(i, &canon, &src)
+    eval_src(i, &canon, &src, force_lex)
 }
 
 /// Evaluate SRC as if loaded from file FILE (binds load-file-name,
 /// load-in-progress, lexical-binding cookie; runs after-load hooks).
-fn eval_src(i: &mut Interp, file: &str, src: &str) -> EvalResult {
+fn eval_src(i: &mut Interp, file: &str, src: &str, force_lex: bool) -> EvalResult {
     let lfn = i.intern("load-file-name");
     let lip = i.intern("load-in-progress");
     let cll = i.intern("current-load-list");
@@ -143,7 +155,7 @@ fn eval_src(i: &mut Interp, file: &str, src: &str) -> EvalResult {
     // Emacs: `load' honors a `lexical-binding' file cookie on the first
     // line (or the second, after a `#!' line); absent → dynamic eval.
     let lex_id = i.intern("lexical-binding");
-    let lex_on = file_lexical_binding(&src);
+    let lex_on = force_lex || file_lexical_binding(&src);
     i.specbind(lex_id, if lex_on { Value::t() } else { Value::Nil })?;
     // GNU's load machinery autoloads these preloaded libraries on the
     // first `load' of any file — before the file's own forms run.
@@ -216,11 +228,12 @@ fn run_after_load(i: &mut Interp, file: &str) {
 /// what resolves macro autoloads (e.g. `define-minor-mode') at load
 /// time rather than first call.
 fn eval_str_for_load(i: &mut Interp, src: &str) -> EvalResult {
+    let chars: Rc<Vec<char>> = Rc::new(src.chars().collect());
     let mut pos = 0usize;
     let mut last = Value::Nil;
     loop {
         let next = {
-            let mut reader = crate::lisp::reader::Reader::new(i, src);
+            let mut reader = crate::lisp::reader::Reader::with_chars(i, chars.clone());
             reader.set_position(pos);
             match reader.read()? {
                 Some(f) => Some((f, reader.position())),
@@ -330,7 +343,7 @@ pub(crate) fn load_library(i: &mut Interp, name: &str) -> Result<bool, crate::li
         None => match embedded(name) {
             Some(src) => {
                 let virtual_path = format!("builtin:{}", name);
-                eval_src(i, &virtual_path, src)?;
+                eval_src(i, &virtual_path, src, false)?;
                 Ok(true)
             }
             None => Ok(false),

@@ -87,14 +87,14 @@ pub(crate) static SUBRS: &[Subr] = &[
     ),
     S!(
         "how-many",
-        2,
+        1,
         4,
         f_how_many,
         "Count regexp matches in region."
     ),
     S!(
         "count-matches",
-        2,
+        1,
         4,
         f_how_many,
         "Count regexp matches in region."
@@ -205,20 +205,6 @@ pub(crate) static SUBRS: &[Subr] = &[
         "Adjust match data (no-op)."
     ),
     S!(
-        "text-property-any",
-        4,
-        5,
-        f_text_property_any,
-        "First pos in region where PROP is VALUE."
-    ),
-    S!(
-        "text-property-not-all",
-        4,
-        5,
-        f_text_property_not_all,
-        "First pos where PROP differs from VALUE."
-    ),
-    S!(
         "field-beginning",
         0,
         3,
@@ -242,13 +228,7 @@ pub(crate) static SUBRS: &[Subr] = &[
         f_constrain_to_field,
         "Clamp NEW-POS to field of OLD-POS."
     ),
-    S!(
-        "get-pos-property",
-        2,
-        3,
-        f_get_pos_property,
-        "Property at POS (0-based-ish)."
-    ),
+
     S!(
         "get-char-property-and-overlay",
         2,
@@ -256,27 +236,7 @@ pub(crate) static SUBRS: &[Subr] = &[
         f_get_char_prop_and_overlay,
         "Prop + overlay at POS."
     ),
-    S!(
-        "put-char-property",
-        4,
-        5,
-        f_put_char_property,
-        "put-text-property (same)."
-    ),
-    S!(
-        "remove-list-of-text-properties",
-        3,
-        4,
-        f_remove_list_of_props,
-        "Remove named props in region."
-    ),
-    S!(
-        "add-face-text-property",
-        3,
-        5,
-        f_add_face_text_property,
-        "Add face property to region."
-    ),
+
     S!(
         "next-char-property-change",
         1,
@@ -361,13 +321,8 @@ pub(crate) static SUBRS: &[Subr] = &[
         f_b64url_encode_region,
         "Base64url encode region."
     ),
-    S!(
-        "secure-hash-region",
-        3,
-        3,
-        f_secure_hash_region,
-        "Hash region bytes."
-    ),
+    // `secure-hash-region' is not a GNU primitive (secure-hash takes
+    // a buffer/string object instead) — intentionally unregistered.
     S!(
         "undo-boundary",
         0,
@@ -627,7 +582,7 @@ fn f_buffer_line_statistics(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
     Ok(Value::list(vec![
         Value::Int(lines as i128),
         Value::Int(longest as i128),
-        Value::Float(mean),
+        Value::float(mean),
     ]))
 }
 
@@ -1025,11 +980,11 @@ fn sort_engine_inner(
         match kind {
             Kind::Num => {
                 let x = a.key.int().map(|n| n as f64).or_else(|| match &a.key {
-                    Value::Float(f) => Some(*f),
+                    Value::Float(f) => Some(**f),
                     _ => None,
                 });
                 let y = b.key.int().map(|n| n as f64).or_else(|| match &b.key {
-                    Value::Float(f) => Some(*f),
+                    Value::Float(f) => Some(**f),
                     _ => None,
                 });
                 Ok(match (x, y) {
@@ -1836,7 +1791,11 @@ fn f_delete_duplicate_lines(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 
 fn f_how_many(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let pat = want_string(i, &a[0])?;
-    let (s, e) = beg_end(i, &a, 1, 2)?;
+    // GNU defaults RSTART to point (not point-min) when nil.
+    let (mut s, e) = beg_end(i, &a, 1, 2)?;
+    if a.get(1).map(|v| v.is_nil()).unwrap_or(true) {
+        s = cur(i).borrow().point.min(e);
+    }
     let case_fold = i
         .symbol_value(i.intern_soft("case-fold-search").unwrap_or(0))
         .truthy();
@@ -2102,41 +2061,32 @@ fn f_translate_region(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     check_writable(i)?;
     let (s, e) = beg_end(i, &a, 0, 1)?;
     // TABLE: string of 256 chars mapping byte->char, or char-table.
-    // Simple version: treat a string as a lookup table indexed by char.
-    let table: Vec<char> = match &a[2] {
-        Value::Str(t) => t.borrow().chars().collect(),
-        Value::Record(r) => {
-            // Char-table (e.g. from make-translation-table-from-alist):
-            // aref[c] gives the replacement char.
-            let rr = r.borrow();
-            match rr.get(2) {
-                Some(Value::Vec(v)) => v
-                    .borrow()
-                    .iter()
-                    .map(|x| match x {
-                        Value::Int(n) => char::from_u32(*n as u32).unwrap_or('\0'),
-                        _ => '\0',
-                    })
-                    .collect(),
-                _ => Vec::new(),
-            }
-        }
-        _ => Vec::new(),
+    let strtab: Option<Vec<char>> = match &a[2] {
+        Value::Str(t) => Some(t.borrow().chars().collect()),
+        _ => None,
     };
-    if table.is_empty() {
+    let is_ct = crate::lisp::builtins::misc::is_char_table(i, &a[2]);
+    if strtab.is_none() && !is_ct {
         return Ok(Value::Nil);
     }
     let b = cur(i);
     let mut bb = b.borrow_mut();
     let region = bb.text.substring(s, e);
+    let ii: &Interp = i;
     let out: String = region
         .chars()
         .map(|c| {
-            table
-                .get(c as usize)
-                .copied()
-                .filter(|t| *t != '\0')
-                .unwrap_or(c)
+            if let Some(t) = &strtab {
+                return t
+                    .get(c as usize)
+                    .copied()
+                    .filter(|t| *t != '\0')
+                    .unwrap_or(c);
+            }
+            match crate::lisp::builtins::misc::char_table_ref(ii, &a[2], c as usize) {
+                Value::Int(n) => char::from_u32(n as u32).unwrap_or(c),
+                _ => c,
+            }
         })
         .collect();
     bb.delete_region(s, e);
@@ -2146,7 +2096,8 @@ fn f_translate_region(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 
 fn f_make_translation_table_from_alist(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let items = a[0].list_to_vec().unwrap_or_default();
-    let mut vec = vec![Value::Nil; 256];
+    let tag = Value::Sym(i.intern("translation-table"));
+    let tbl = crate::lisp::builtins::misc::make_ct(i, tag, Value::Nil, vec![]);
     for item in items {
         if let Value::Cons(c) = &item {
             let (from, to) = {
@@ -2154,19 +2105,18 @@ fn f_make_translation_table_from_alist(i: &mut Interp, a: Vec<Value>) -> EvalRes
                 (b.car.clone(), b.cdr.clone())
             };
             if let (Value::Int(f), Value::Int(t)) = (from, to) {
-                if (0..256).contains(&f) {
-                    vec[f as usize] = Value::Int(t);
+                if (0..=crate::lisp::builtins::misc::CT_MAX_CHAR as i128).contains(&f) {
+                    crate::lisp::builtins::misc::ct_set(
+                        i,
+                        &tbl,
+                        f as u32,
+                        Value::Int(t),
+                    );
                 }
             }
         }
     }
-    Ok(Value::Record(std::rc::Rc::new(std::cell::RefCell::new(
-        vec![
-            Value::Sym(i.intern("char-table")),
-            Value::Sym(i.intern("translation-table")),
-            Value::Vec(std::rc::Rc::new(std::cell::RefCell::new(vec))),
-        ],
-    ))))
+    Ok(tbl)
 }
 
 fn f_buffer_swap_text(i: &mut Interp, a: Vec<Value>) -> EvalResult {
@@ -2238,36 +2188,6 @@ fn f_store_match_data(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 }
 
 // ---------- text-property scans ----------
-
-fn f_text_property_any(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let prop = crate::buffer::primitives::want_sym(i, &a[2])?;
-    let (s, e) = beg_end(i, &a, 0, 1)?;
-    let want = &a[3];
-    let b = cur(i);
-    let bb = b.borrow();
-    for p in s..e {
-        let v = prop_at_pos(&bb, p, prop);
-        if crate::lisp::builtins::eq_values(&v, want) {
-            return Ok(Value::Int(p as i128 + 1));
-        }
-    }
-    Ok(Value::Nil)
-}
-
-fn f_text_property_not_all(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let prop = crate::buffer::primitives::want_sym(i, &a[2])?;
-    let (s, e) = beg_end(i, &a, 0, 1)?;
-    let want = &a[3];
-    let b = cur(i);
-    let bb = b.borrow();
-    for p in s..e {
-        let v = prop_at_pos(&bb, p, prop);
-        if !crate::lisp::builtins::eq_values(&v, want) {
-            return Ok(Value::Int(p as i128 + 1));
-        }
-    }
-    Ok(Value::Nil)
-}
 
 fn prop_at_pos(bb: &crate::buffer::Buffer, pos: usize, prop: u32) -> Value {
     for tp in bb.text_props.iter().rev() {
@@ -2384,14 +2304,6 @@ fn f_constrain_to_field(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     Ok(Value::Int(clamped as i128 + 1))
 }
 
-fn f_get_pos_property(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    // (get-pos-property POS PROP) — PROP at POS.
-    let prop = crate::buffer::primitives::want_sym(i, &a[1])?;
-    let len = cur(i).borrow().text_len();
-    let pos = pos_idx(len, a[0].int().unwrap_or(1));
-    Ok(prop_at_pos(&cur(i).borrow(), pos, prop))
-}
-
 fn f_get_char_prop_and_overlay(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     // Return (PROPVAL . OVERLAY) — we merge overlay plists.
     let prop = crate::buffer::primitives::want_sym(i, &a[1])?;
@@ -2412,41 +2324,13 @@ fn f_get_char_prop_and_overlay(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     Ok(Value::cons(v, Value::Nil))
 }
 
-fn f_put_char_property(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    crate::buffer::primitives::f_put_text_property(
-        i,
-        vec![a[0].clone(), a[0].clone(), a[1].clone(), a[2].clone()],
-    )
-}
-
-fn f_remove_list_of_props(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let len = cur(i).borrow().text_len();
-    let s = pos_idx(len, a[0].int().unwrap_or(1));
-    let e = pos_idx(len, a[1].int().unwrap_or(1));
-    let names: Vec<u32> = a[2]
-        .list_to_vec()
-        .unwrap_or_default()
-        .iter()
-        .filter_map(|v| i.sym_id(v))
-        .collect();
-    let b = cur(i);
-    let mut bb = b.borrow_mut();
-    let before = bb.text_props.len();
-    bb.text_props
-        .retain(|tp| !(names.contains(&tp.prop) && tp.start < e && tp.end > s));
-    Ok(Value::from_bool(bb.text_props.len() != before))
-}
-
-fn f_add_face_text_property(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let fid = i.intern("face");
-    crate::buffer::primitives::f_put_text_property(
-        i,
-        vec![a[0].clone(), a[1].clone(), Value::Sym(fid), a[2].clone()],
-    )
-}
-
 fn f_next_prop_change_fwd(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     // Like next-property-change but also considers overlays.
+    if matches!(a.get(1), Some(Value::Str(_))) {
+        // String objects have no overlays — same as
+        // next-property-change.
+        return crate::buffer::primitives::f_next_property_change(i, a);
+    }
     let r = crate::buffer::primitives::f_next_property_change(i, a.clone());
     // Check overlay boundaries too.
     if let Ok(v) = &r {
@@ -2470,6 +2354,9 @@ fn f_next_prop_change_fwd(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 }
 
 fn f_prev_prop_change(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    if matches!(a.get(1), Some(Value::Str(_))) {
+        return crate::buffer::primitives::f_prev_property_change(i, a);
+    }
     let len = cur(i).borrow().text_len();
     let pos = pos_idx(len, a[0].int().unwrap_or(1));
     let b = cur(i);
@@ -2652,14 +2539,14 @@ fn f_b64_encode_region(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         base64::engine::general_purpose::STANDARD
     };
     let encoded = eng.encode(text.as_bytes());
-    // Emacs replaces the region contents.
+    // Emacs replaces the region contents and returns its new length.
     check_writable(i)?;
     let (s, e, _) = region_text(i, &a)?;
     let b = cur(i);
     let mut bb = b.borrow_mut();
     bb.delete_region(s, e);
     bb.insert_at(s, &encoded);
-    Ok(Value::Nil)
+    Ok(Value::Int(encoded.chars().count() as i128))
 }
 
 fn f_b64url_encode_region(i: &mut Interp, a: Vec<Value>) -> EvalResult {
@@ -2671,7 +2558,7 @@ fn f_b64url_encode_region(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let mut bb = b.borrow_mut();
     bb.delete_region(s, e);
     bb.insert_at(s, &encoded);
-    Ok(Value::Nil)
+    Ok(Value::Int(encoded.chars().count() as i128))
 }
 
 fn f_b64_decode_region(i: &mut Interp, a: Vec<Value>) -> EvalResult {
@@ -2687,31 +2574,7 @@ fn f_b64_decode_region(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let mut bb = b.borrow_mut();
     bb.delete_region(s, e);
     bb.insert_at(s, &decoded);
-    Ok(Value::Nil)
-}
-
-fn f_secure_hash_region(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let (_s, _e, text) = region_text(i, &a)?;
-    let algo = i.symbol_name(i.sym_id(&a[0]).unwrap_or(0));
-    use sha2::Digest;
-    let out = match algo.as_str() {
-        "md5" => md5::Md5::digest(text.as_bytes()).to_vec(),
-        "sha1" => sha1::Sha1::digest(text.as_bytes()).to_vec(),
-        "sha224" => sha2::Sha224::digest(text.as_bytes()).to_vec(),
-        "sha256" => sha2::Sha256::digest(text.as_bytes()).to_vec(),
-        "sha384" => sha2::Sha384::digest(text.as_bytes()).to_vec(),
-        "sha512" => sha2::Sha512::digest(text.as_bytes()).to_vec(),
-        _ => {
-            return Err(err_sym(
-                i,
-                "error",
-                vec![Value::string(format!("Unknown algorithm {}", algo))],
-            ));
-        }
-    };
-    Ok(Value::string(
-        out.iter().map(|b| format!("{:02x}", b)).collect::<String>(),
-    ))
+    Ok(Value::Int(decoded.chars().count() as i128))
 }
 
 fn f_undo_boundary(i: &mut Interp, _a: Vec<Value>) -> EvalResult {

@@ -261,8 +261,8 @@ fn minibuf_quit_signals() {
 
 #[test]
 fn read_minibuffer_absent_hook() {
-    // Without a front-end, reads fall back gracefully rather than panic.
-    assert_eq!(ev("(read-string \"P: \")"), "nil");
+    // Without a front-end, GNU batch signals end-of-file reading stdin.
+    assert_eq!(ev_err("(read-string \"P: \")"), "end-of-file");
 }
 
 // ---------- prefix arg plumbing ----------
@@ -370,9 +370,10 @@ fn load_missing_signals() {
 
 #[test]
 fn substitute_command_keys_basic() {
+    // GNU propertizes the substituted key with help-key-binding.
     assert_eq!(
         ev("(substitute-command-keys \"Press \\\\[forward-char]\")"),
-        "\"Press C-f\""
+        "#(\"Press C-f\" 6 9 (font-lock-face help-key-binding face help-key-binding))"
     );
     assert_eq!(
         ev("(substitute-command-keys \"\\\\=\\[not-a-key]\")"),
@@ -404,15 +405,19 @@ fn completing_read_paths() {
     canned(&mut i, vec![MinibufInput::Text("a".into())]);
     let v = ev_in(&mut i, "(completing-read \"P: \" '(\"a1\" \"a2\"))");
     assert_eq!(i.prin1_to_string(&v), "\"a\"");
-    // Batch: no reader → falls back to table/default resolution.
+    // Batch: no reader → GNU signals end-of-file reading stdin.
     let (mut j, _) = interp();
-    let v = ev_in(&mut j, "(completing-read \"P: \" '(\"alpha\" \"beta\"))");
-    let _ = v; // any non-panic result is acceptable in batch
-    let v = ev_in(
-        &mut j,
-        "(completing-read \"P: \" '(\"alpha\") nil nil \"init\")",
+    assert_eq!(
+        ev_err_in(&mut j, "(completing-read \"P: \" '(\"alpha\" \"beta\"))"),
+        "end-of-file"
     );
-    assert_eq!(i.prin1_to_string(&v), "\"init\"");
+    assert_eq!(
+        ev_err_in(
+            &mut j,
+            "(completing-read \"P: \" '(\"alpha\") nil nil \"init\")"
+        ),
+        "end-of-file"
+    );
 }
 
 #[test]
@@ -425,10 +430,9 @@ fn y_or_n_p_reprompt_and_quit() {
     // C-g/C-c quits.
     canned(&mut i, vec![MinibufInput::Key(7)]);
     assert_eq!(ev_err_in(&mut i, "(y-or-n-p \"Q? \")"), "quit");
-    // Batch default path (no reader): returns nil without hanging.
+    // Batch default path (no reader): GNU signals end-of-file.
     let (mut j, _) = interp();
-    let v = ev_in(&mut j, "(y-or-n-p \"Q? \")");
-    assert_eq!(i.prin1_to_string(&v), "nil");
+    assert_eq!(ev_err_in(&mut j, "(y-or-n-p \"Q? \")"), "end-of-file");
 }
 
 #[test]
@@ -496,9 +500,9 @@ fn current_kill_and_yank_paths() {
     // current-kill rotates.
     let v = ev_in(&mut i, "(current-kill 0 t)");
     let _ = v;
-    // kill-new pushes and returns the string.
+    // kill-new pushes and (per GNU) returns nil.
     let v = ev_in(&mut i, "(kill-new \"xyz\")");
-    assert_eq!(i.prin1_to_string(&v), "\"xyz\"");
+    assert_eq!(i.prin1_to_string(&v), "nil");
     let v = ev_in(&mut i, "(current-kill 0)");
     assert_eq!(i.prin1_to_string(&v), "\"xyz\"");
 }

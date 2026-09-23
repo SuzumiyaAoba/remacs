@@ -25,7 +25,7 @@ pub const CHAR_META: i128 = 0x0800_0000;
 const MAX_CHAR: i128 = 0x3f_ffff;
 
 pub struct Reader<'a> {
-    chars: Vec<char>,
+    chars: Rc<Vec<char>>,
     pos: usize,
     interp: &'a mut Interp,
     /// `#N=` labels seen so far (shared structure refs via `#N#`).
@@ -72,8 +72,14 @@ fn eof_err(interp: &mut Interp) -> Flow {
 
 impl<'a> Reader<'a> {
     pub fn new(interp: &'a mut Interp, src: &str) -> Reader<'a> {
+        Reader::with_chars(interp, Rc::new(src.chars().collect()))
+    }
+
+    /// A reader over pre-collected chars — callers that re-read the
+    /// same source in a loop share one buffer instead of re-collecting.
+    pub fn with_chars(interp: &'a mut Interp, chars: Rc<Vec<char>>) -> Reader<'a> {
         Reader {
-            chars: src.chars().collect(),
+            chars,
             pos: 0,
             interp,
             labels: HashMap::new(),
@@ -832,7 +838,7 @@ pub fn parse_number(tok: &str) -> Option<Value> {
         return Some(Value::Int(i));
     }
     if let Some(f) = parse_float(tok) {
-        return Some(Value::Float(f));
+        return Some(Value::float(f));
     }
     // `123.` (digits + trailing dot, no exponent) => integer.
     if let Some(head) = tok.strip_suffix('.') {

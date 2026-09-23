@@ -163,8 +163,13 @@ fn gensym() {
 fn symbol_misc() {
     assert_eq!(ev("(documentation-stringp \"x\")"), "t");
     assert_eq!(ev("(documentation-stringp 1)"), "nil");
-    assert_eq!(ev("(subr-arity #'car)"), "(1 . 1)");
-    assert_eq!(ev("(subr-arity #'+)"), "(0 . many)");
+    // GNU requires the subr object; a symbol signals (subrp SYM).
+    assert_eq!(ev("(subr-arity (symbol-function 'car))"), "(1 . 1)");
+    assert_eq!(ev("(subr-arity (symbol-function '+))"), "(0 . many)");
+    assert_eq!(
+        ev("(condition-case e (subr-arity 'car) (error e))"),
+        "(wrong-type-argument subrp car)"
+    );
 }
 
 #[test]

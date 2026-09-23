@@ -57,7 +57,7 @@ fn main() {
             "--script" => {
                 idx += 1;
                 if idx < args.len() {
-                    if !load_file(&mut i, &args[idx]) {
+                    if !load_file_script(&mut i, &args[idx]) {
                         exit = 1;
                     }
                     std::process::exit(exit);
@@ -130,6 +130,25 @@ fn load_file(i: &mut Interp, path: &str) -> bool {
         Err(Flow::Exit(code)) => std::process::exit(code as i32),
         Err(flow) => {
             // Reuse run_batch's error formatting on the stored flow.
+            report_flow(i, flow);
+            false
+        }
+    }
+}
+
+/// `--script FILE`: batch load with `lexical-binding' forced on,
+/// matching GNU's `command-line--load-script'.
+fn load_file_script(i: &mut Interp, path: &str) -> bool {
+    i.noninteractive = true;
+    if i.output.is_none() {
+        i.output = Some(OutputSink::Stdout);
+    }
+    let nid = i.intern("noninteractive");
+    let _ = i.set_symbol_default(nid, Value::t());
+    match remacs::lisp::load::eval_file_script(i, path) {
+        Ok(_) => true,
+        Err(Flow::Exit(code)) => std::process::exit(code as i32),
+        Err(flow) => {
             report_flow(i, flow);
             false
         }

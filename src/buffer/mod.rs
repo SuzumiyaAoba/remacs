@@ -92,18 +92,34 @@ pub struct Buffer {
 }
 
 /// Resolve symlinks like GNU's `file-truename'.  When FILE doesn't
-/// exist, canonicalize resolves nothing — resolve the parent
-/// directory and reattach the basename instead.
+/// exist, canonicalize resolves nothing — resolve the longest
+/// existing ancestor and reattach the missing tail instead.
 pub(crate) fn file_truename(path: &str) -> String {
-    match std::fs::canonicalize(path) {
-        Ok(real) => real.to_string_lossy().into_owned(),
-        Err(_) => match path.rfind('/') {
-            Some(pos) => match std::fs::canonicalize(&path[..pos.max(1)]) {
-                Ok(dir) => format!("{}/{}", dir.to_string_lossy(), &path[pos + 1..]),
-                Err(_) => path.to_string(),
-            },
-            None => path.to_string(),
-        },
+    let mut missing: Vec<&str> = Vec::new();
+    let mut rest = path;
+    loop {
+        if let Ok(real) = std::fs::canonicalize(rest) {
+            let mut out = real.to_string_lossy().into_owned();
+            for c in missing.iter().rev() {
+                if !out.ends_with('/') {
+                    out.push('/');
+                }
+                out.push_str(c);
+            }
+            return out;
+        }
+        match rest.rfind('/') {
+            Some(0) => {
+                // Only "/" remains; it always canonicalizes, so the
+                // loop above must have returned — unreachable.
+                return path.to_string();
+            }
+            Some(pos) => {
+                missing.push(&rest[pos + 1..]);
+                rest = &rest[..pos];
+            }
+            None => return path.to_string(),
+        }
     }
 }
 

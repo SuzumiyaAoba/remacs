@@ -277,10 +277,10 @@ fn f_hash_table_weakness(_i: &mut Interp, _args: Vec<Value>) -> EvalResult {
     Ok(Value::Nil)
 }
 fn f_hash_table_rehash_size(_i: &mut Interp, _args: Vec<Value>) -> EvalResult {
-    Ok(Value::Float(1.5))
+    Ok(Value::float(1.5))
 }
 fn f_hash_table_rehash_threshold(_i: &mut Interp, _args: Vec<Value>) -> EvalResult {
-    Ok(Value::Float(0.8125))
+    Ok(Value::float(0.8125))
 }
 fn f_hash_table_size(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     match &args[0] {
@@ -300,8 +300,9 @@ fn f_copy_hash_table(i: &mut Interp, args: Vec<Value>) -> EvalResult {
         other => Err(i.wrong_type_mut("hash-table-p", other)),
     }
 }
-fn f_define_hash_table_test(_i: &mut Interp, _args: Vec<Value>) -> EvalResult {
-    Ok(Value::Nil)
+fn f_define_hash_table_test(_i: &mut Interp, args: Vec<Value>) -> EvalResult {
+    // GNU registers NAME as (TEST HASH-FN) and returns that list.
+    Ok(Value::list(vec![args[1].clone(), args[2].clone()]))
 }
 
 /// GNU returns a list of buckets; each bucket is a list of

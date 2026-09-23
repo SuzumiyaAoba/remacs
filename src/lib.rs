@@ -35,11 +35,16 @@ mod coverage_tests {
                     Err(f) => {
                         // Bisect to the failing top-level form so
                         // flaky failures identify themselves.
+                        let chars: std::rc::Rc<Vec<char>> =
+                            std::rc::Rc::new(src.chars().collect());
                         let mut pos = 0usize;
                         let mut report = String::new();
                         loop {
                             let next = {
-                                let mut r = crate::lisp::reader::Reader::new(&mut i, src);
+                                let mut r = crate::lisp::reader::Reader::with_chars(
+                                    &mut i,
+                                    chars.clone(),
+                                );
                                 r.set_position(pos);
                                 match r.read() {
                                     Ok(Some(_)) => r.position(),

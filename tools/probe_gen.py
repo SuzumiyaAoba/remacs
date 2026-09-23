@@ -61,30 +61,75 @@ def unwrap_progn(expr):
     # Drop the final close paren of the progn itself.
     if inner.rstrip().endswith(")"):
         inner = inner.rstrip()[:-1]
-    parts, buf, depth, instr, esc = [], [], 0, False, False
+    parts, buf, depth, instr, esc = [], "", 0, False, False
+    atom = ""
+    def flush_atom():
+        nonlocal atom
+        s = atom.strip()
+        if s and not s.startswith(";"):
+            parts.append(s)
+        atom = ""
+    def flush_buf():
+        nonlocal buf
+        s = buf.strip()
+        if s and not s.startswith(";"):
+            parts.append(s)
+        buf = ""
     for line in inner.split("\n"):
-        buf.append(line)
         for c in line:
             if esc:
+                if depth == 0:
+                    atom += c
+                else:
+                    buf += c
                 esc = False
             elif c == "\\":
+                if depth == 0:
+                    atom += c
+                else:
+                    buf += c
                 esc = True
             elif instr:
+                if depth == 0:
+                    atom += c
+                else:
+                    buf += c
                 if c == '"':
                     instr = False
             elif c == '"':
+                if depth == 0:
+                    atom += c
+                else:
+                    buf += c
                 instr = True
-            elif c == ";":
+            elif c == ";" and depth == 0:
                 break
             elif c in "([":
+                if depth == 0:
+                    flush_atom()
+                    buf = c
+                else:
+                    buf += c
                 depth += 1
             elif c in ")]":
                 depth -= 1
+                buf += c
+                if depth <= 0:
+                    flush_buf()
+                    depth = 0
+            elif depth == 0:
+                if c.isspace():
+                    flush_atom()
+                else:
+                    atom += c
+            else:
+                buf += c
         if depth <= 0 and buf:
-            parts.append("\n".join(buf))
-            buf, depth = [], 0
+            flush_buf()
+            depth = 0
+    flush_atom()
     if buf:
-        parts.append("\n".join(buf))
+        parts.append(buf)
     return [p for p in parts if p.strip() and not p.strip().startswith(";")]
 
 
@@ -128,8 +173,8 @@ def run(prog_argv, exprs, outfile):
     with open("/tmp/probe.el", "w") as f:
         f.write(wrap(exprs, outfile))
     p = subprocess.run(prog_argv[:-1] + ["/tmp/probe.el"],
-                       capture_output=True, text=True, timeout=300)
-    return records(outfile), p.stderr
+                       capture_output=True, timeout=300)
+    return records(outfile), p.stderr.decode("utf-8", errors="replace")
 
 def main():
     verbose = "-v" in sys.argv
@@ -138,7 +183,7 @@ def main():
 
     gl, gerr = run([EMACS, "--batch", "-Q", "-l", "/tmp/probe.el"],
                    exprs, "/tmp/probe-recs-gnu.txt")
-    rl, rerr = run([remacs, "--script", "/tmp/probe.el"],
+    rl, rerr = run([remacs, "-l", "/tmp/probe.el"],
                    exprs, "/tmp/probe-recs-remacs.txt")
     match, mism = 0, []
     for i, e in enumerate(exprs):

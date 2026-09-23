@@ -667,8 +667,32 @@ fn f_indirect_variable(i: &mut Interp, args: Vec<Value>) -> EvalResult {
 fn f_makunbound(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     let id = want_sym(i, &args[0])?;
     let id = i.var_alias_target(id);
-    i.obarray.symbol_mut(id).value = Value::Sym(sym::UNBOUND);
-    i.fire_var_watchers(id, &Value::Nil, "makunbound", None)?;
+    // GNU refuses to unbind C-backed variables.
+    if i.obarray.symbol(id).builtin_variable {
+        return Err(i.error(format!(
+            "Built-in variable may not be unbound : {}",
+            i.symbol_name(id)
+        )));
+    }
+    // GNU: when the variable has a buffer-local binding in the current
+    // buffer (or is buffer-local whenever set), only the local binding
+    // becomes void — the default value survives.
+    let local = i.obarray.symbol(id).make_local_if_set
+        || i.buffers
+            .get(i.current_buffer)
+            .and_then(|b| b.try_borrow().ok().map(|bb| bb.locals.contains_key(&id)))
+            .unwrap_or(false);
+    if local {
+        if let Some(b) = i.buffers.get(i.current_buffer) {
+            if let Ok(mut bb) = b.try_borrow_mut() {
+                bb.locals.insert(id, Value::Sym(sym::UNBOUND));
+            }
+        }
+        i.fire_var_watchers(id, &Value::Nil, "makunbound", Some(i.current_buffer))?;
+    } else {
+        i.obarray.symbol_mut(id).value = Value::Sym(sym::UNBOUND);
+        i.fire_var_watchers(id, &Value::Nil, "makunbound", None)?;
+    }
     Ok(args[0].clone())
 }
 
@@ -790,7 +814,7 @@ fn f_fmakunbound(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     i.obarray.symbol_mut(id).function = Value::Sym(sym::UNBOUND);
     Ok(args[0].clone())
 }
-fn f_get(i: &mut Interp, args: Vec<Value>) -> EvalResult {
+pub(crate) fn f_get(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     let id = want_sym(i, &args[0])?;
     let prop = want_sym(i, &args[1])?;
     Ok(i.get_prop(id, prop))

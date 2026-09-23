@@ -61,8 +61,7 @@
   (prin1 (minibuffer-prompt-end))
   (prin1 (minibuffer-contents))
   (prin1 (active-minibuffer-window))
-  ;; ---- y-or-n-p batch ------------------------------------------------------------
-  (prin1 (y-or-n-p "q? "))
+  ;; y-or-n-p reads input — blocks in batch; not probeable
   ;; ---- syntax table ----------------------------------------------------------------
   (let ((st (copy-syntax-table)))
     (set-syntax-table st)
@@ -70,12 +69,7 @@
     (prin1 (char-syntax ?a))
     (modify-syntax-entry ?b "w" st)
     (prin1 (char-syntax ?b)))
-  ;; ---- interactive specs batch fallbacks --------------------------------------------
-  (prin1 (call-interactively (lambda (n) (interactive "nN: ") n)))
-  (prin1 (call-interactively (lambda (k) (interactive "kK: ") k)))
-  (prin1 (call-interactively (lambda (x) (interactive "xE: ") x)))
-  (prin1 (call-interactively (lambda (c) (interactive "cC: ") c)))
-  (prin1 (call-interactively (lambda (e) (interactive "eE: ") e)))
+  ;; interactive spec codes that read input block in batch; not probeable
   ;; ---- condition-case multi-symbol handler ------------------------------------------
   (prin1 (condition-case v
              (signal 'arith-error '(x))
@@ -84,9 +78,12 @@
   (let ((standard-output (get-buffer-create " *so-buf*")))
     (princ "to-buf")
     (prin1 (with-current-buffer standard-output (buffer-string))))
-  (let ((standard-output (lambda (s) (setq so-seen (concat so-seen s))))
-        (so-seen ""))
+  ;; GNU calls a function print stream once per character; under
+  ;; --script's lexical binding the lambda must capture so-seen via let*.
+  (let* ((so-seen "")
+         (standard-output (lambda (s) (setq so-seen (concat so-seen (string s))))))
     (princ "to-fn")
+    (setq standard-output t)
     (prin1 so-seen))
   ;; ---- message / error paths ------------------------------------------------------------
   (message "msg %d" 7)
@@ -138,12 +135,15 @@
     (define-key km "x" 'ignore)
     (map-keymap (lambda (ev def) (prin1 (list ev def))) km))
   ;; ---- make-temp-file-internal dir + text ----------------------------------------------------------
-  (let* ((base (expand-file-name "rtk-mtf" temporary-file-directory))
-         (f (make-temp-file-internal base nil ".s" "TXT"))
-         (d (make-temp-file-internal base t nil nil)))
-    (prin1 (with-temp-buffer (insert-file-contents f) (buffer-string)))
-    (prin1 (file-directory-p d))
-    (delete-file f) (delete-directory d))
+  ;; GNU signals (stringp nil) on nil SUFFIX — wrap like other fatal forms.
+  (condition-case __e
+      (let* ((base (expand-file-name "rtk-mtf" temporary-file-directory))
+             (f (make-temp-file-internal base nil ".s" "TXT"))
+             (d (make-temp-file-internal base t nil nil)))
+        (prin1 (with-temp-buffer (insert-file-contents f) (buffer-string)))
+        (prin1 (file-directory-p d))
+        (delete-file f) (delete-directory d))
+    (error (prin1 __e)))
   ;; ---- help-function-arglist -----------------------------------------------------------------------
   (prin1 (help-function-arglist 'car))
   (prin1 (help-function-arglist 'car t))

@@ -224,9 +224,9 @@ pub(crate) static SUBRS: &[Subr] = &[
         "(left . right) margin widths."
     ),
     S!("set-window-margins", 2, 3, f_set_window_margins, ""),
-    S!("window-scroll-bars", 0, 1, f_zero4, ""),
+    S!("window-scroll-bars", 0, 1, f_window_scroll_bars, ""),
     S!("set-window-scroll-bars", 1, 6, f_set_window_scroll_bars, ""),
-    S!("window-current-scroll-bars", 0, 1, f_zero4, ""),
+    S!("window-current-scroll-bars", 0, 1, f_window_current_scroll_bars, ""),
     S!("window-mode-line-height", 0, 1, f_window_mode_line_height, ""),
     S!("window-header-line-height", 0, 1, f_zero, ""),
     S!("window-tab-line-height", 0, 1, f_zero, ""),
@@ -545,7 +545,7 @@ fn f_one(_i: &mut Interp, _a: Vec<Value>) -> EvalResult {
 }
 
 fn f_one_f(_i: &mut Interp, _a: Vec<Value>) -> EvalResult {
-    Ok(Value::Float(1.0))
+    Ok(Value::float(1.0))
 }
 
 fn f_zero4(_i: &mut Interp, _a: Vec<Value>) -> EvalResult {
@@ -555,6 +555,33 @@ fn f_zero4(_i: &mut Interp, _a: Vec<Value>) -> EvalResult {
         Value::Int(0),
         Value::Nil,
     ]))
+}
+
+/// `window-scroll-bars' — window-live-p check; batch GNU reports
+/// (WIDTH COLS VT HEIGHT LINES HT PERSISTENT) = (nil 0 t nil 0 t nil)
+/// on a tty frame with no scroll bars.
+fn f_window_scroll_bars(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    match arg(&a, 0) {
+        Value::Nil | Value::Window(_) => Ok(Value::list(vec![
+            Value::Nil,
+            Value::Int(0),
+            Value::t(),
+            Value::Nil,
+            Value::Int(0),
+            Value::t(),
+            Value::Nil,
+        ])),
+        other => Err(i.wrong_type_mut("window-live-p", &other)),
+    }
+}
+
+/// `window-current-scroll-bars' — window-live-p check; batch GNU
+/// reports the cons (WIDTH . HEIGHT) = (nil . nil) on a tty frame.
+fn f_window_current_scroll_bars(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    match arg(&a, 0) {
+        Value::Nil | Value::Window(_) => Ok(Value::cons(Value::Nil, Value::Nil)),
+        other => Err(i.wrong_type_mut("window-live-p", &other)),
+    }
 }
 
 fn f_nil_win(i: &mut Interp, a: Vec<Value>) -> EvalResult {
@@ -855,7 +882,8 @@ fn f_posn_pair(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 
 fn f_set_window_vscroll(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let _ = win_of(i, &arg(&a, 0))?;
-    Ok(Value::Nil)
+    // A tty window has no vscroll; GNU reports 0.
+    Ok(Value::Int(0))
 }
 
 fn f_scroll_left(i: &mut Interp, a: Vec<Value>) -> EvalResult {
@@ -874,16 +902,16 @@ fn f_scroll_right(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 }
 
 fn f_window_margins(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let w = win_of(i, &arg(&a, 0))?;
+    let w = match &arg(&a, 0) {
+        Value::Nil => sel_window(i).ok_or_else(|| i.error("No window"))?,
+        Value::Window(w) if !w.borrow().dead => w.clone(),
+        other => return Err(i.wrong_type_mut("window-live-p", other)),
+    };
     let m = w.borrow().margins;
-    if m.0 == 0 && m.1 == 0 {
-        Ok(Value::Nil)
-    } else {
-        Ok(Value::cons(
-            Value::Int(m.0 as i128),
-            Value::Int(m.1 as i128),
-        ))
-    }
+    // GNU always returns (LEFT . RIGHT), nil sides for zero margins.
+    let lv = if m.0 == 0 { Value::Nil } else { Value::Int(m.0 as i128) };
+    let rv = if m.1 == 0 { Value::Nil } else { Value::Int(m.1 as i128) };
+    Ok(Value::cons(lv, rv))
 }
 
 fn f_window_edges4(i: &mut Interp, a: Vec<Value>) -> EvalResult {
@@ -911,7 +939,7 @@ fn f_window_body_edges4(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 
 fn f_window_screen_lines(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let w = win_of(i, &arg(&a, 0))?;
-    Ok(Value::Float(w.borrow().height as f64))
+    Ok(Value::float(w.borrow().height as f64))
 }
 
 // ---------- frames ----------
@@ -1222,7 +1250,7 @@ fn f_set_window_combination_limit(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 fn f_set_window_next_buffers(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     match &a[0] {
         Value::Nil | Value::Window(_) => Ok(Value::Nil),
-        other => Err(i.wrong_type_mut("window-live-p", other)),
+        other => Err(i.wrong_type_mut("window-live-p", &other)),
     }
 }
 
@@ -1248,7 +1276,7 @@ fn f_set_window_margins(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 fn f_set_window_fringes(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     match &a[0] {
         Value::Nil | Value::Window(_) => Ok(Value::t()),
-        other => Err(i.wrong_type_mut("window-live-p", other)),
+        other => Err(i.wrong_type_mut("window-live-p", &other)),
     }
 }
 
@@ -1256,7 +1284,7 @@ fn f_set_window_fringes(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 fn f_set_window_scroll_bars(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     match &a[0] {
         Value::Nil | Value::Window(_) => Ok(Value::Nil),
-        other => Err(i.wrong_type_mut("window-live-p", other)),
+        other => Err(i.wrong_type_mut("window-live-p", &other)),
     }
 }
 
@@ -1401,9 +1429,11 @@ fn f_controlling_tty_p(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 }
 
 fn f_terminal_live_p(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    // Our only terminal is the singleton record (nil = default terminal).
+    // Our only terminal is the singleton record (nil = default
+    // terminal); a live frame means its terminal is live.
     Ok(Value::from_bool(match &a[0] {
         Value::Nil => true,
+        Value::Frame(f) => !f.borrow().dead,
         v => is_terminal(i, v),
     }))
 }

@@ -51,9 +51,14 @@
   (let ((m (with-current-buffer (get-buffer-create " *mk8*") (point-marker))))
     (let ((standard-output m)) (princ "MM"))
     (prin1 (with-current-buffer (marker-buffer m) (buffer-string))))
+  ;; Function-valued standard-output: called per character; pp8-seen
+  ;; must be special for the global defun to see it under lexical binding.
   (let ((standard-output 'pp8))
-    (defun pp8 (s) (setq pp8-seen (concat pp8-seen s)))
-    (let ((pp8-seen "")) (princ "vv") (prin1 pp8-seen)))
+    (defvar pp8-seen "")
+    (defun pp8 (s) (setq pp8-seen (concat pp8-seen (string s))))
+    (princ "vv")
+    (setq standard-output t)
+    (prin1 pp8-seen))
   ;; ---- bool-vector-not target ------------------------------------------------------
   (let ((dst (make-bool-vector 3 nil)))
     (prin1 (eq (bool-vector-not (bool-vector t nil t) dst) dst))

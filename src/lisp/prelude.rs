@@ -604,14 +604,8 @@ Value is what BODY returns."
        (not (eq (downcase char) char))
        (eq (upcase char) char)))
 
-(defun copy-case-table (case-table)
-  "Return a new case table that is a copy of CASE-TABLE.
-It copies the case-table itself and each of its extra-slot tables."
-  (let ((new (copy-sequence case-table)))
-    (dotimes (i 4)
-      (set-char-table-extra-slot
-       new i (copy-sequence (char-table-extra-slot case-table i))))
-    new))
+;; `copy-case-table' is a subr in GNU 31 (the case-table.el defun is
+;; dead code there — its `dotimes (i 4)' overruns the 3 extra slots).
 
 (defmacro with-temp-file (file &rest body)
   "Create a temporary buffer, evaluate BODY, write it to FILE."
@@ -2140,7 +2134,8 @@ The line number is relative to the start of the page."
       (erase-buffer)
       (insert (key-description key) " runs the command "
               (prin1-to-string def) "\n"))
-    (pop-to-buffer b)))
+    (pop-to-buffer b)
+    nil))
 
 (defun describe-bindings (&optional prefix buffer)
   "Display a list of key bindings."
@@ -2161,7 +2156,8 @@ The line number is relative to the start of the page."
                           (t (single-key-description k)))
                     "\t\t"
                     (prin1-to-string (cdr cell)) "\n")))))
-    (pop-to-buffer b)))
+    (pop-to-buffer b)
+    nil))
 
 (defun describe-mode (&optional buffer)
   "Display the current buffer's mode."
@@ -3562,8 +3558,12 @@ Leave one space or none, according to the context."
       (let ((fixed '())
             (binds '())
             (cur (cdr m))
-            (tail nil))
+            (tail nil)
+            (seen nil))
         (while (consp cur)
+          (if (memq cur seen)
+              (error "cyclic keymap alist at prefix %S" (car e))
+            (push cur seen))
           (cond ((eq (car cur) 'keymap)
                  (setq tail cur)
                  (setq cur nil))
@@ -7165,7 +7165,13 @@ See `event-start' for a description of the value returned."
 
 (defmacro define-derived-mode (variant parent name &optional docstring
                                        &rest body)
-  "Define VARIANT as a major mode derived from PARENT (subset)."
+  "Define VARIANT as a major mode derived from PARENT (subset).
+Mirrors GNU's `define-derived-mode' syntax-table handling: each mode
+gets a `<mode>-syntax-table' var (created empty via
+`make-syntax-table' unless already bound); at activation the table's
+parent is redirected to the buffer's previous syntax table when it
+still points at `standard-syntax-table', and the buffer's
+`syntax-table' is then set to it."
   (let* ((map-sym (intern (concat (symbol-name variant) "-map")))
          (hook-sym (intern (concat (symbol-name variant) "-hook")))
          (syntax-sym (intern (concat (symbol-name variant)
@@ -7182,7 +7188,11 @@ See `event-start' for a description of the value returned."
                        m)
                   '(make-sparse-keymap))
                ,(concat "Keymap for `" (symbol-name variant) "'."))
-       (defvar ,syntax-sym (copy-syntax-table))
+       (defvar ,syntax-sym)
+       (unless (boundp ',syntax-sym)
+         (put ',syntax-sym 'definition-name ',variant)
+         (defvar ,syntax-sym (make-syntax-table)
+           ,(concat "Syntax table for `" (symbol-name variant) "'.")))
        (defvar ,hook-sym nil)
        (defun ,variant ()
          ,@(when docstring (list docstring))
@@ -7194,7 +7204,15 @@ See `event-start' for a description of the value returned."
                '((kill-all-local-variables)))
         (setq major-mode ',variant
                mode-name ,name)
+         ;; GNU derived.el: inherit the buffer's previous syntax
+         ;; table as the mode table's parent unless it already has a
+         ;; non-standard parent.
+         (let ((parent (char-table-parent ,syntax-sym)))
+           (unless (and parent
+                      (not (eq parent (standard-syntax-table))))
+             (set-char-table-parent ,syntax-sym (syntax-table))))
          (use-local-map ,map-sym)
+         (set-syntax-table ,syntax-sym)
          ,@body
          (run-mode-hooks ',hook-sym))
        ,@(when parent
@@ -10800,33 +10818,68 @@ Called with two arguments (START END) covering the text to propertize.")
   (let ((m (make-sparse-keymap))) m)
   "Keymap for Lisp mode.")
 
+;; GNU 31's lisp-mode.el: `lisp-data-mode-syntax-table' holds the
+;; Lisp-dialect overrides; `lisp-mode-syntax-table' and
+;; `emacs-lisp-mode-syntax-table' are `make-syntax-table' copies of
+;; it (empty char-tables parented to it) plus their own tweaks.
+(defvar lisp-data-mode-syntax-table
+  (let ((table (make-syntax-table))
+        (i 0))
+    (while (< i ?0)
+      (modify-syntax-entry i "_   " table)
+      (setq i (1+ i)))
+    (setq i (1+ ?9))
+    (while (< i ?A)
+      (modify-syntax-entry i "_   " table)
+      (setq i (1+ i)))
+    (setq i (1+ ?Z))
+    (while (< i ?a)
+      (modify-syntax-entry i "_   " table)
+      (setq i (1+ i)))
+    (setq i (1+ ?z))
+    (while (< i 128)
+      (modify-syntax-entry i "_   " table)
+      (setq i (1+ i)))
+    (modify-syntax-entry ?\s "    " table)
+    ;; Non-break space acts as whitespace.
+    (modify-syntax-entry ?\xa0 "    " table)
+    (modify-syntax-entry ?\t "    " table)
+    (modify-syntax-entry ?\f "    " table)
+    (modify-syntax-entry ?\n ">   " table)
+    (modify-syntax-entry ?\; "<   " table)
+    (modify-syntax-entry ?` "'   " table)
+    (modify-syntax-entry ?' "'   " table)
+    (modify-syntax-entry ?, "'   " table)
+    (modify-syntax-entry ?@ "_ p" table)
+    ;; Used to be singlequote; changed for flonums.
+    (modify-syntax-entry ?. "_   " table)
+    (modify-syntax-entry ?# "'   " table)
+    (modify-syntax-entry ?\" "\"    " table)
+    (modify-syntax-entry ?\\ "\\   " table)
+    (modify-syntax-entry ?\( "()  " table)
+    (modify-syntax-entry ?\) ")(  " table)
+    (modify-syntax-entry ?\[ "(]  " table)
+    (modify-syntax-entry ?\] ")[  " table)
+    table)
+  "Parent syntax table used in Lisp modes.")
+
+(defvar lisp-mode-syntax-table
+  (let ((table (make-syntax-table lisp-data-mode-syntax-table)))
+    (modify-syntax-entry ?\[ "_   " table)
+    (modify-syntax-entry ?\] "_   " table)
+    (modify-syntax-entry ?# "' 14" table)
+    (modify-syntax-entry ?| "\" 23bn" table)
+    table)
+  "Syntax table used in `lisp-mode'.")
+
 (defvar emacs-lisp-mode-syntax-table
-  (let ((st (make-syntax-table)))
-    ;; Replicates GNU's emacs-lisp-mode-syntax-table (lisp-mode.el):
-    ;; all ASCII non-word chars are symbol constituents, then the
-    ;; exceptions below.
-    (dotimes (c 128) (modify-syntax-entry c "_" st))
-    (modify-syntax-entry ?\t " " st)
-    (modify-syntax-entry ?\n ">" st)
-    (modify-syntax-entry ?\f " " st)
-    (modify-syntax-entry ?\s " " st)
-    (modify-syntax-entry ?\" "\"" st)
-    (modify-syntax-entry ?# "'" st)
-    (modify-syntax-entry ?' "'" st)
-    (modify-syntax-entry ?\( "()" st)
-    (modify-syntax-entry ?\) ")(" st)
-    (modify-syntax-entry ?, "'" st)
-    (modify-syntax-entry ?\; "<" st)
-    (modify-syntax-entry ?\[ "(]" st)
-    (modify-syntax-entry ?\] ")[" st)
-    (modify-syntax-entry ?\\ "\\" st)
-    (modify-syntax-entry ?\` "'" st)
-    (dotimes (i 10) (modify-syntax-entry (+ ?0 i) "w" st))
-    (dotimes (i 26)
-      (modify-syntax-entry (+ ?A i) "w" st)
-      (modify-syntax-entry (+ ?a i) "w" st))
-    st)
-  "Syntax table for Emacs Lisp mode.")
+  (let ((table (make-syntax-table lisp-data-mode-syntax-table)))
+    ;; Remove the "p" flag from the entry of `@' because we use instead
+    ;; `syntax-propertize' to take care of `,@', which is more precise.
+    ;; FIXME: We should maybe do the same in other Lisp modes?  (bug#24542)
+    (modify-syntax-entry ?@ "_" table)
+    table)
+  "Syntax table used in `emacs-lisp-mode'.")
 
 ;; `lisp-indent-function' properties, matching GNU (set via `declare'
 ;; and lisp-mode.el dolists upstream).
@@ -10846,16 +10899,19 @@ Called with two arguments (START END) covering the text to propertize.")
              (combine-after-change-calls . 0)))
   (put (car x) 'lisp-indent-function (cdr x)))
 
-(define-derived-mode lisp-mode prog-mode "Lisp"
+(define-derived-mode lisp-data-mode prog-mode "Lisp-Data"
+  "Major mode for editing Lisp data (as opposed to code)."
+  (setq-local comment-start ";")
+  (setq-local comment-start-skip ";+ *"))
+
+(define-derived-mode lisp-mode lisp-data-mode "Lisp"
   "Major mode for editing Lisp code."
-  (set-syntax-table emacs-lisp-mode-syntax-table)
   (setq-local indent-line-function #'lisp-indent-line)
   (setq-local comment-start ";")
   (setq-local comment-start-skip ";+ *"))
 
-(define-derived-mode emacs-lisp-mode prog-mode "Emacs-Lisp"
+(define-derived-mode emacs-lisp-mode lisp-data-mode "Emacs-Lisp"
   "Major mode for editing Emacs Lisp code."
-  (set-syntax-table emacs-lisp-mode-syntax-table)
   (setq-local indent-line-function #'lisp-indent-line)
   (setq-local comment-start ";")
   (setq-local comment-start-skip ";+ *")
@@ -11266,6 +11322,19 @@ With arg N, put point N/10 of the way from the true end."
     (recenter '(t))))
 
 ;; disp-table.el cluster (verbatim GNU).
+;;
+;; GNU sizes a char-table's extra slots from the subtype's
+;; `char-table-extra-slots' property, read by `make-char-table' at
+;; creation.  The C-level inits give case-table 3, category-table 2,
+;; char-code-property-table 5, syntax-table and
+;; keyboard-translate-table 0; disp-table.el puts 18 on display-table.
+
+(put 'case-table 'char-table-extra-slots 3)
+(put 'category-table 'char-table-extra-slots 2)
+(put 'char-code-property-table 'char-table-extra-slots 5)
+(put 'syntax-table 'char-table-extra-slots 0)
+(put 'keyboard-translate-table 'char-table-extra-slots 0)
+(put 'display-table 'char-table-extra-slots 18)
 
 (defun make-display-table ()
   "Return a new, empty display table."
@@ -11734,6 +11803,13 @@ into NEWNAME instead."
       ;; Compute target name.
       (setq directory (directory-file-name (expand-file-name directory))
 	    newname (expand-file-name newname))
+
+      ;; GNU signals before creating anything when NEWNAME is inside
+      ;; DIRECTORY itself.
+      (when (string-prefix-p (file-name-as-directory (file-truename directory))
+			     (file-name-as-directory (file-truename newname)))
+	(error "Cannot copy ‘%s’ into its subdirectory ‘%s’"
+	       directory newname))
 
       ;; If DIRECTORY is a symlink, create a symlink with the same target.
       (if (and (file-symlink-p directory)

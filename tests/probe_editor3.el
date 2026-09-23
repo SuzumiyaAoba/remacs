@@ -287,10 +287,10 @@
 (called-interactively-p 'interactive)
 (interactive-p)
 (command-execute 'ignore)
-(read-number "n: " 5)
-(read-string "s: " "def")
-(read-variable 'next-line)
-(read-regexp "re: ")
+(condition-case e (read-number "n: " 5) (error e))
+(condition-case e (read-string "s: " "def") (error e))
+(condition-case e (read-variable 'next-line) (error e))
+(condition-case e (read-regexp "re: ") (error e))
 
 ;; ---- shell command ----
 (shell-command-to-string "echo probe")

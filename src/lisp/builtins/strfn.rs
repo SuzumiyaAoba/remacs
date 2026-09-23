@@ -482,10 +482,26 @@ fn concat_seq(i: &mut Interp, v: &Value, out: &mut String) -> Result<(), super::
 
 fn f_concat(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     let mut out = String::new();
+    let mut ivs: Vec<(usize, usize, Vec<Value>)> = Vec::new();
+    let mut saw_props = false;
     for a in &args {
+        // GNU concat carries each source string's text properties.
+        let off = out.chars().count();
+        if let Value::Str(s) = a {
+            if i.has_str_props(s) {
+                saw_props = true;
+                for (s0, e0, pl) in i.str_props(s) {
+                    ivs.push((s0 + off, e0 + off, pl.clone()));
+                }
+            }
+        }
         concat_seq(i, a, &mut out)?;
     }
-    Ok(Value::string(out))
+    let ns = std::rc::Rc::new(std::cell::RefCell::new(out));
+    if saw_props {
+        i.set_str_props(&ns, ivs);
+    }
+    Ok(Value::Str(ns))
 }
 
 fn f_ngettext(i: &mut Interp, args: Vec<Value>) -> EvalResult {
@@ -551,7 +567,7 @@ fn f_substring(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     if is_vec {
         Ok(Value::Vec(std::rc::Rc::new(std::cell::RefCell::new(slice))))
     } else {
-        Ok(Value::string(
+        let ns = std::rc::Rc::new(std::cell::RefCell::new(
             slice
                 .iter()
                 .filter_map(|v| match v {
@@ -559,7 +575,25 @@ fn f_substring(i: &mut Interp, args: Vec<Value>) -> EvalResult {
                     _ => None,
                 })
                 .collect::<String>(),
-        ))
+        ));
+        // GNU substring copies the source's text properties on the
+        // sliced range (shifted to 0-based on the result).
+        if let Value::Str(src) = &args[0] {
+            if i.has_str_props(src) {
+                let (f0, t0) = (f as usize, t as usize);
+                let ivs: Vec<(usize, usize, Vec<Value>)> = i
+                    .str_props(src)
+                    .iter()
+                    .filter_map(|(a, b, pl)| {
+                        let lo = (*a).max(f0);
+                        let hi = (*b).min(t0);
+                        (lo < hi).then(|| (lo - f0, hi - f0, pl.clone()))
+                    })
+                    .collect();
+                i.set_str_props(&ns, ivs);
+            }
+        }
+        Ok(Value::Str(ns))
     }
 }
 
@@ -766,7 +800,7 @@ fn scan_digits(cs: &[char], mut p: usize) -> usize {
 fn f_number_to_string(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     match &args[0] {
         Value::Int(n) => Ok(Value::string(n.to_string())),
-        Value::Float(f) => Ok(Value::string(crate::lisp::print::format_float(*f))),
+        Value::Float(f) => Ok(Value::string(crate::lisp::print::format_float(**f))),
         other => Err(i.wrong_type_mut("numberp", other)),
     }
 }
@@ -1498,7 +1532,7 @@ fn format_impl(i: &mut Interp, fmt: &str, args: &[Value]) -> EvalResult {
             'd' | 'i' => {
                 let n = match &a {
                     Value::Int(n) => *n,
-                    Value::Float(f) => *f as i128,
+                    Value::Float(f) => **f as i128,
                     Value::Marker(m) => m.borrow().position as i128 + 1,
                     _ => return Err(fmt_type_err(i)),
                 };
@@ -1648,7 +1682,7 @@ fn fmt_type_err(i: &Interp) -> super::Flow {
 fn int_of(i: &mut Interp, v: &Value) -> Result<i128, super::Flow> {
     match v {
         Value::Int(n) => Ok(*n),
-        Value::Float(f) => Ok(*f as i128),
+        Value::Float(f) => Ok(**f as i128),
         _ => Err(fmt_type_err(i)),
     }
 }
@@ -1656,7 +1690,7 @@ fn int_of(i: &mut Interp, v: &Value) -> Result<i128, super::Flow> {
 fn float_of(i: &mut Interp, v: &Value) -> Result<f64, super::Flow> {
     match v {
         Value::Int(n) => Ok(*n as f64),
-        Value::Float(f) => Ok(*f),
+        Value::Float(f) => Ok(**f),
         _ => Err(fmt_type_err(i)),
     }
 }

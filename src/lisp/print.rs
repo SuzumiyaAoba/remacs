@@ -90,7 +90,7 @@ impl Interp {
                 let _ = write!(out, "{i}");
             }
             Value::Float(f) => {
-                let _ = write!(out, "{}", format_float(*f));
+                let _ = write!(out, "{}", format_float(**f));
             }
             Value::Sym(id) => {
                 if self.obarray.symbol(*id).uninterned && self.print_gensym() {
@@ -107,6 +107,65 @@ impl Interp {
             Value::Str(s) => {
                 let nl = self.print_escape_newlines();
                 let mb = self.print_escape_multibyte();
+                // GNU prints #("..." s e (plist) ...) when the string
+                // carries non-empty text-property intervals.  The
+                // `charset' prop is hidden unless
+                // `print-charset-text-property' is t (or `default',
+                // which shows only map-based charsets).
+                let pct = self.print_var("print-charset-text-property");
+                let charset_id = self.intern_soft("charset");
+                // nil → hide all charset props; `default' → only
+                // map-based charsets; anything else → show all.
+                let show_all = charset_id.is_none()
+                    || (!pct.is_nil()
+                        && !matches!(pct, Value::Sym(s) if self.symbol_name(s) == "default"));
+                let visible = |pl: &Vec<Value>| -> Vec<Value> {
+                    if show_all {
+                        return pl.clone();
+                    }
+                    let hide_all = pct.is_nil();
+                    const MAP_CHARSETS: &[&str] = &[
+                        "iso-8859-1", "iso-8859-2", "iso-8859-3", "iso-8859-4",
+                        "iso-8859-5", "iso-8859-6", "iso-8859-7", "iso-8859-8",
+                        "iso-8859-9", "iso-8859-10", "iso-8859-11", "iso-8859-13",
+                        "iso-8859-14", "iso-8859-15", "iso-8859-16",
+                        "koi8", "koi8-r", "windows-1251", "mac-roman",
+                        "big5", "chinese-gb2312",
+                    ];
+                    let cid = charset_id.unwrap();
+                    let mut out: Vec<Value> = Vec::new();
+                    let mut k = 0;
+                    while k + 1 < pl.len() {
+                        let hide = if self.sym_id(&pl[k]) == Some(cid) {
+                            if hide_all {
+                                true
+                            } else {
+                                let name = match &pl[k + 1] {
+                                    Value::Sym(id) => self.symbol_name(*id),
+                                    _ => String::new(),
+                                };
+                                !MAP_CHARSETS.contains(&name.as_str())
+                            }
+                        } else {
+                            false
+                        };
+                        if !hide {
+                            out.push(pl[k].clone());
+                            out.push(pl[k + 1].clone());
+                        }
+                        k += 2;
+                    }
+                    out
+                };
+                let ivs = self.str_props(s);
+                let printed: Vec<(usize, usize, Vec<Value>)> = ivs
+                    .iter()
+                    .map(|(a, b, pl)| (*a, *b, visible(pl)))
+                    .filter(|(_, _, pl)| !pl.is_empty())
+                    .collect();
+                if !printed.is_empty() {
+                    out.push_str("#(");
+                }
                 out.push('"');
                 if self.is_unibyte_str(s) {
                     // Unibyte strings (encoder output): byte-chars
@@ -130,6 +189,14 @@ impl Interp {
                     }
                 }
                 out.push('"');
+                let wrapped = !printed.is_empty();
+                for (a, b, pl) in printed {
+                    let _ = write!(out, " {a} {b} ");
+                    self.prin1_inner(&Value::list(pl), out, depth + 1, bq);
+                }
+                if wrapped {
+                    out.push(')');
+                }
             }
             Value::Cons(_) => self.print_list(v, out, depth, bq),
             Value::Vec(items) => {
@@ -184,15 +251,33 @@ impl Interp {
                             return;
                         }
                     }
+                    // Sub char tables print `#^^[DEPTH MIN-CHAR
+                    // SLOTS...]' — GNU's trie nodes.
+                    if self.symbol_name(*t) == "sub-char-table" {
+                        out.push_str("#^^[");
+                        if let Some(d) = rr.get(1) {
+                            self.prin1_inner(d, out, depth + 1, bq);
+                        }
+                        out.push(' ');
+                        if let Some(m) = rr.get(2) {
+                            self.prin1_inner(m, out, depth + 1, bq);
+                        }
+                        for s in &rr[3..] {
+                            out.push(' ');
+                            self.prin1_inner(s, out, depth + 1, bq);
+                        }
+                        out.push(']');
+                        return;
+                    }
                     // Char tables print `#^[defalt parent purpose
                     // ascii contents[64] extras...]' — GNU's
-                    // pseudovector layout.  Our contents are a flat
-                    // 256-entry Vec; emit GNU's sub-char-table trie
-                    // (`#^^[DEPTH MIN ...]') for whatever is set.
+                    // pseudovector layout.
                     if self.symbol_name(*t) == "char-table" {
                         if let Some(Value::Vec(slots)) = rr.get(2) {
+                            let ptr = std::rc::Rc::as_ptr(items) as usize;
                             let slots = slots.borrow();
                             self.print_char_table(
+                                ptr,
                                 rr.as_slice(),
                                 slots.as_slice(),
                                 out,
@@ -447,91 +532,47 @@ impl Interp {
 
     /// GNU char-table printing: `#^[DEFALT PARENT PURPOSE ASCII
     /// CONTENTS[64] EXTRAS...]'.  Our Record layout is
-    /// `[char-table SUBTYPE VEC256 EXTRAS...]'.  Sub-ranges that are
-    /// uniformly one value print as that atom; mixed ranges print as
-    /// `#^^[DEPTH MIN SLOTS...]' sub-char-tables.  Slots our flat
-    /// Vec can't represent (chars ≥ 256) print nil.
+    /// `[char-table SUBTYPE VEC65 EXTRAS...]' where VEC65 is the trie
+    /// root: slot 0 = ASCII cache (scalar or the `#^^[3 0' leaf),
+    /// slots 1-64 = top-level blocks.  Sub-char-tables print through
+    /// `prin1_inner's `sub-char-table' Record branch as `#^^[...]'.
     fn print_char_table(
         &self,
+        ptr: usize,
         rr: &[Value],
         slots: &[Value],
         out: &mut String,
         depth: usize,
         bq: bool,
     ) {
-        let eq = crate::lisp::builtins::eq_values;
-        let uniform = |vals: &[Value]| -> Option<Value> {
-            let first = vals.first()?.clone();
-            vals.iter().all(|v| eq(v, &first)).then_some(first)
-        };
-        // Emit one 128-slot level-3 sub-table or its atom equivalent.
-        let emit_d3 = |out: &mut String, vals: &[Value], min: usize| {
-            match uniform(vals) {
-                Some(v) => self.prin1_inner(&v, out, depth + 1, bq),
-                None => {
-                    out.push_str("#^^[3 ");
-                    let _ = write!(out, "{}", min);
-                    for v in vals {
-                        out.push(' ');
-                        self.prin1_inner(v, out, depth + 1, bq);
-                    }
-                    out.push(']');
-                }
-            }
-        };
         out.push_str("#^[");
-        let whole = uniform(&slots[..256.min(slots.len())]);
-        // defalt
-        match &whole {
-            Some(v) => self.prin1_inner(v, out, depth + 1, bq),
-            None => out.push_str("nil"),
-        }
+        // defalt (side-table keyed on the Record pointer)
+        let defalt = self
+            .char_table_defalts
+            .iter()
+            .find(|(k, _)| *k == ptr)
+            .map(|(_, v)| v.clone())
+            .unwrap_or(Value::Nil);
+        self.prin1_inner(&defalt, out, depth + 1, bq);
         out.push(' ');
-        // parent (from the side-table keyed on the Record pointer)
-        out.push_str("nil");
+        // parent (side-table keyed on the Record pointer)
+        let parent = self
+            .char_table_parents
+            .iter()
+            .find(|(k, _)| *k == ptr)
+            .map(|(_, v)| v.clone())
+            .unwrap_or(Value::Nil);
+        self.prin1_inner(&parent, out, depth + 1, bq);
         out.push(' ');
         // purpose
         match rr.get(1) {
             Some(p) => self.prin1_inner(p, out, depth + 1, bq),
             None => out.push_str("nil"),
         }
-        out.push(' ');
-        // ascii: chars 0..128
-        emit_d3(out, &slots[..128.min(slots.len())], 0);
-        // contents[0]: chars 0..32767 — our 0..255 via the d1/d2 chain.
-        out.push(' ');
-        match &whole {
-            Some(v) => self.prin1_inner(v, out, depth + 1, bq),
-            None => {
-                out.push_str("#^^[1 0 ");
-                // d2 covering 0..2047: d3(0..128), d3(128..256), rest nil.
-                out.push_str("#^^[2 0 ");
-                emit_d3(out, &slots[..128.min(slots.len())], 0);
-                out.push(' ');
-                if slots.len() > 128 {
-                    emit_d3(out, &slots[128..], 128);
-                } else {
-                    out.push_str("nil");
-                }
-                for _ in 0..14 {
-                    out.push_str(" nil");
-                }
-                out.push(']');
-                for _ in 0..15 {
-                    out.push_str(" nil");
-                }
-                out.push(']');
-            }
-        }
-        // contents[1..63]: beyond our flat table's reach.
-        for _ in 1..64 {
-            match &whole {
-                Some(v) => {
-                    out.push(' ');
-                    self.prin1_inner(v, out, depth + 1, bq);
-                }
-                None => out.push_str(" nil"),
-            }
+        // ASCII cache + contents[0..64]
+        for s in slots {
+            out.push(' ');
+            self.prin1_inner(s, out, depth + 1, bq);
         }
         // extra slots
         for e in &rr[3..] {
@@ -748,25 +789,25 @@ impl Interp {
 
 /// Convert a lexical environment chain to a printable alist-of-frames.
 fn lex_frame_to_value(i: &Interp, frame: &Rc<crate::lisp::eval::LexFrame>) -> Value {
-    let mut frames: Vec<Value> = Vec::new();
+    // GNU prints the environment as a single alist — the visible
+    // bindings innermost-first — or nil when empty.
+    let mut pairs: Vec<Value> = Vec::new();
     let mut cur = Some(frame.clone());
     while let Some(f) = cur {
-        let mut pairs: Vec<Value> = Vec::new();
         for (sym_id, val) in f.vars.borrow().iter() {
             pairs.push(Value::cons(Value::Sym(*sym_id), val.clone()));
         }
-        pairs.sort_by_key(|v| {
-            if let Value::Cons(c) = v {
-                if let Value::Sym(s) = &c.borrow().car {
-                    return i.symbol_name(*s).to_string();
-                }
-            }
-            String::new()
-        });
-        frames.push(Value::list(pairs));
         cur = f.parent.clone();
     }
-    Value::list(frames)
+    pairs.sort_by_key(|v| {
+        if let Value::Cons(c) = v {
+            if let Value::Sym(s) = &c.borrow().car {
+                return i.symbol_name(*s).to_string();
+            }
+        }
+        String::new()
+    });
+    Value::list(pairs)
 }
 
 /// C `%.{prec}g` formatting: `prec` significant digits, scientific

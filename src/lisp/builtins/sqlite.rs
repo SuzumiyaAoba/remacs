@@ -200,7 +200,7 @@ fn bind_val(i: &mut Interp, v: &Value) -> Result<rusqlite::types::Value, Flow> {
         Value::Int(n) => R::Integer(i64::try_from(*n).map_err(|_| {
             sqlite_err(i, vec![Value::string("integer out of range")])
         })?),
-        Value::Float(f) => R::Real(*f),
+        Value::Float(f) => R::Real(**f),
         Value::Str(s) => R::Text(s.borrow().clone()),
         // GNU binds `t' as 1.
         Value::Sym(s) if *s == crate::lisp::obarray::sym::T => R::Integer(1),
@@ -235,7 +235,7 @@ fn row_val(v: rusqlite::types::ValueRef<'_>) -> SVal {
 fn sval_to_value(s: &SVal) -> Value {
     match s {
         SVal::I(n) => Value::Int(*n as i128),
-        SVal::F(f) => Value::Float(*f),
+        SVal::F(f) => Value::float(*f),
         SVal::T(t) => Value::string(t.clone()),
         // Strings are UTF-8; blobs degrade lossily (GNU uses unibyte).
         SVal::B(b) => Value::string(String::from_utf8_lossy(b).into_owned()),

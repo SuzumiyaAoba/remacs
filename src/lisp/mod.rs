@@ -3,6 +3,7 @@
 
 pub mod builtins;
 pub(crate) mod cjk_tables;
+pub(crate) mod ctdata;
 pub mod error;
 pub mod eval;
 pub mod load;

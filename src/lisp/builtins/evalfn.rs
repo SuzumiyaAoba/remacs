@@ -473,13 +473,24 @@ pub(crate) static SUBRS: &[Subr] = &[
 ];
 
 fn f_eval(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    // (eval FORM &optional LEXICAL) — lexical arg binds lexical-binding.
-    let lex = arg(&args, 1).truthy();
+    // (eval FORM &optional LEXICAL) — a list LEXICAL is the lexical
+    // environment itself; other non-nil values just select lexical
+    // scoping.
+    let lex = arg(&args, 1);
+    let lexenv = if matches!(lex, Value::Cons(_)) {
+        Some(parse_lexenv_spec(i, &lex))
+    } else {
+        None
+    };
     i.explicit_eval_depth += 1;
-    let r = if lex {
+    let r = if lex.truthy() {
         let id = i.intern("lexical-binding");
         i.specbind(id, Value::t())?;
+        let saved = lexenv.map(|env| std::mem::replace(&mut i.lexenv, env));
         let r = i.eval(&args[0]);
+        if let Some(env) = saved {
+            i.lexenv = env;
+        }
         i.unbind(1)?;
         r
     } else {
@@ -1357,7 +1368,7 @@ fn sleep_firing_timers(i: &mut Interp, secs: f64) -> EvalResult {
 fn f_sleep_for(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     let secs = match &args[0] {
         Value::Int(n) => *n as f64,
-        Value::Float(f) => *f,
+        Value::Float(f) => **f,
         _ => 0.0,
     } + args
         .get(1)
@@ -1372,7 +1383,7 @@ fn f_sit_for(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     // Batch: no input to wait for — GNU sleeps the full time, firing timers.
     let secs = match args.get(0) {
         Some(Value::Int(n)) => *n as f64,
-        Some(Value::Float(f)) => *f,
+        Some(Value::Float(f)) => **f,
         _ => 0.0,
     };
     sleep_firing_timers(i, secs)?;
@@ -1427,7 +1438,7 @@ fn f_float_time(i: &mut Interp, args: Vec<Value>) -> EvalResult {
         Some(v) => super::misc::lisp_time_to_ps(i, v)?,
         None => super::misc::lisp_time_to_ps(i, &Value::Nil)?,
     };
-    Ok(Value::Float(t as f64 / 1e12))
+    Ok(Value::float(t as f64 / 1e12))
 }
 fn f_format_time_string(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     let fmt = match &args[0] {
@@ -1558,14 +1569,19 @@ fn f_top_level(_i: &mut Interp, _args: Vec<Value>) -> EvalResult {
 }
 fn f_exit_recursive_edit(i: &mut Interp, _args: Vec<Value>) -> EvalResult {
     if i.recursion_depth == 0 {
-        return Err(i.error("No recursive edit is in progress"));
+        let ue = i.intern("user-error");
+        return Err(i.signal_data(ue, vec![Value::string("No recursive edit is in progress")]));
     }
     Err(Flow::Throw(
         Value::Sym(sym::EXIT_RECURSIVE_EDIT),
         Value::Nil,
     ))
 }
-fn f_abort_recursive_edit(_i: &mut Interp, _args: Vec<Value>) -> EvalResult {
+fn f_abort_recursive_edit(i: &mut Interp, _args: Vec<Value>) -> EvalResult {
+    if i.recursion_depth == 0 {
+        let ue = i.intern("user-error");
+        return Err(i.signal_data(ue, vec![Value::string("No recursive edit is in progress")]));
+    }
     Err(Flow::Throw(Value::Sym(sym::QUIT), Value::Nil))
 }
 fn f_recursion_depth(i: &mut Interp, _args: Vec<Value>) -> EvalResult {
@@ -1604,10 +1620,69 @@ fn f_internal_make_closure(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     Ok(Value::Lambda(std::rc::Rc::new(lam)))
 }
 
-/// Convert the alist-ish ENV argument used by byte-compiled closures
-/// into a LexEnv.
-fn parse_lexenv_spec(_i: &mut Interp, _env_v: &Value) -> crate::lisp::LexEnv {
-    None
+/// Convert the alist-ish ENV argument used by `eval'/byte-compiled
+/// closures into a LexEnv. Elements that are (VAR . VAL) pairs go in
+/// the innermost frame; elements that are proper lists of such pairs
+/// become enclosing frames.
+fn parse_lexenv_spec(i: &mut Interp, env_v: &Value) -> crate::lisp::LexEnv {
+    use crate::lisp::eval::LexFrame;
+    use std::collections::HashMap;
+    let mut inner: Option<std::rc::Rc<LexFrame>> = None;
+    let mut parents: Vec<std::rc::Rc<LexFrame>> = Vec::new();
+    let is_pair = |v: &Value| -> bool {
+        matches!(v, Value::Cons(c) if matches!(c.borrow().car, Value::Sym(_))
+            && !matches!(c.borrow().cdr, Value::Cons(_)))
+    };
+    let frame_of = |vars: Vec<(Value, Value)>| -> std::rc::Rc<LexFrame> {
+        let mut m = HashMap::new();
+        for (k, v) in vars {
+            if let Value::Sym(id) = k {
+                m.insert(id, v);
+            }
+        }
+        std::rc::Rc::new(LexFrame {
+            vars: std::cell::RefCell::new(m),
+            parent: None,
+        })
+    };
+    let mut first: Vec<(Value, Value)> = Vec::new();
+    for elt in env_v.list_to_vec().unwrap_or_default() {
+        if is_pair(&elt) {
+            if let Value::Cons(c) = &elt {
+                let b = c.borrow();
+                first.push((b.car.clone(), b.cdr.clone()));
+            }
+        } else if let Value::Cons(_) = elt {
+            // A nested list of pairs = an enclosing let frame.
+            let vars: Vec<(Value, Value)> = elt
+                .list_to_vec()
+                .unwrap_or_default()
+                .into_iter()
+                .filter_map(|p| {
+                    if let Value::Cons(c) = &p {
+                        let b = c.borrow();
+                        Some((b.car.clone(), b.cdr.clone()))
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+            parents.push(frame_of(vars));
+        }
+    }
+    if !first.is_empty() || !parents.is_empty() {
+        inner = Some(frame_of(first));
+    }
+    // Chain: innermost first, then the enclosing frames in order.
+    for p in parents.into_iter().rev() {
+        let q = std::rc::Rc::new(LexFrame {
+            vars: p.vars.clone(),
+            parent: inner.take(),
+        });
+        inner = Some(q);
+    }
+    let _ = i;
+    inner
 }
 fn f_macroexp_parse_body(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     let items = want_list(i, &args[0])?;

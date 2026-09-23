@@ -346,7 +346,7 @@ impl<'a> Parser<'a> {
             }
         }
         txt.parse::<f64>()
-            .map(Value::Float)
+            .map(Value::float)
             .map_err(|_| self.err(false))
     }
 

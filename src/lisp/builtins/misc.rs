@@ -9,7 +9,7 @@ use super::{S, arg, want_int, want_list, want_string, want_sym};
 use crate::lisp::Interp;
 use crate::lisp::error::{EvalResult, Flow};
 use crate::lisp::obarray::sym;
-use crate::lisp::value::{Arity, Lambda, Subr, SymId, Value};
+use crate::lisp::value::{Arity, Lambda, StrRef, Subr, SymId, Value};
 
 pub(crate) static SUBRS: &[Subr] = &[
     S!("gensym", 0, 1, f_gensym, "New uninterned symbol gN."),
@@ -24,7 +24,7 @@ pub(crate) static SUBRS: &[Subr] = &[
         "subr-arity",
         1,
         1,
-        f_func_arity,
+        f_subr_arity,
         "Return (MIN . MAX) arity of subr."
     ),
     S!("closurep", 1, 1, f_closurep, "t if OBJECT is a closure."),
@@ -1599,6 +1599,12 @@ fn f_gensym(i: &mut Interp, args: Vec<Value>) -> EvalResult {
 }
 
 fn f_func_arity(i: &mut Interp, args: Vec<Value>) -> EvalResult {
+    // GNU signals void-function for unbound symbols (indirect-function).
+    if let Value::Sym(id) = &args[0] {
+        if matches!(i.symbol_function(*id), Value::Sym(s) if s == sym::UNBOUND) {
+            return Err(i.signal_data(sym::VOID_FUNCTION, vec![args[0].clone()]));
+        }
+    }
     let fun = i.indirect_function_value(&args[0]);
     // A `(lambda ARGLIST ...)' or `(closure ENV ARGLIST ...)' list.
     let mut list_arity = |v: &Value| -> Option<Arity> {
@@ -1663,6 +1669,22 @@ fn f_func_arity(i: &mut Interp, args: Vec<Value>) -> EvalResult {
         }
     };
     Ok(Value::cons(Value::Int(min as i128), max))
+}
+
+fn f_subr_arity(i: &mut Interp, args: Vec<Value>) -> EvalResult {
+    // GNU requires the subr object itself (not a symbol naming one).
+    let Value::Subr(s) = &args[0] else {
+        return Err(i.wrong_type_mut("subrp", &args[0]));
+    };
+    let (min, max) = match s.arity {
+        Arity::Range { min, max } => (min as i128, Value::Int(max as i128)),
+        Arity::Many { min } => (min as i128, Value::Sym(i.intern("many"))),
+        Arity::Unevalled => (
+            crate::lisp::special::special_form_min_args(i.intern(s.name)) as i128,
+            Value::Sym(i.intern("unevalled")),
+        ),
+    };
+    Ok(Value::cons(Value::Int(min), max))
 }
 
 fn f_closurep(_i: &mut Interp, args: Vec<Value>) -> EvalResult {
@@ -2054,7 +2076,7 @@ fn f_keymap_get_keyelt(_i: &mut Interp, args: Vec<Value>) -> EvalResult {
 }
 
 fn f_describe_bindings(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
-    i.write_output("Key bindings not implemented\n");
+    i.write_output("Key bindings not implemented\n")?;
     Ok(Value::Nil)
 }
 
@@ -2406,7 +2428,7 @@ pub(crate) fn lisp_time_to_us(i: &mut Interp, v: &Value) -> Result<i128, Flow> {
             Ok(now.as_micros() as i128)
         }
         Value::Int(n) => Ok(*n as i128 * 1_000_000),
-        Value::Float(f) => Ok((*f * 1e6) as i128),
+        Value::Float(f) => Ok((**f * 1e6) as i128),
         Value::Cons(_) => {
             // Walk the conses — a dotted tail means (TICKS . HZ).
             let mut elems: Vec<i128> = Vec::new();
@@ -2582,7 +2604,7 @@ pub(crate) fn lisp_time_to_ps(i: &mut Interp, v: &Value) -> Result<i128, Flow> {
             };
             Ok(ticks * 1_000_000_000_000 + n(2) * 1_000_000 + n(3))
         }
-        Value::Float(f) => Ok((*f * 1e12) as i128),
+        Value::Float(f) => Ok((**f * 1e12) as i128),
         _ => Ok(lisp_time_to_us(i, v)? * 1_000_000),
     }
 }
@@ -2768,7 +2790,7 @@ fn decode_ticks_hz(i: &mut Interp, v: &Value) -> Result<(i128, i128), Flow> {
             Ok((ps, 1_000_000_000_000))
         }
         Value::Int(n) => Ok((*n, 1)),
-        Value::Float(f) => Ok(((*f * 1e12) as i128, 1_000_000_000_000)),
+        Value::Float(f) => Ok(((**f * 1e12) as i128, 1_000_000_000_000)),
         Value::Cons(_) => {
             let mut elems: Vec<i128> = Vec::new();
             let mut tail = v.clone();
@@ -3219,7 +3241,7 @@ fn f_make_temp_file_internal(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     let dir_flag = !arg(&args, 1).is_nil();
     let suffix = match arg(&args, 2) {
         Value::Str(s) => s.borrow().clone(),
-        _ => String::new(),
+        v => return Err(i.wrong_type_mut("stringp", &v)),
     };
     let text = match arg(&args, 3) {
         Value::Str(s) => s.borrow().clone(),
@@ -3896,14 +3918,14 @@ fn f_format_mode_line(_i: &mut Interp, _a: Vec<Value>) -> EvalResult {
 /// Build a category table value. `standard` populates GNU's ASCII
 /// membership and label docstrings.
 pub(crate) fn make_category_table_value(i: &mut Interp, standard: bool) -> Value {
-    let slots = Rc::new(RefCell::new(vec![Value::Nil; 256]));
-    let docs = Rc::new(RefCell::new(vec![Value::Nil; 128]));
-    let t = Value::Record(Rc::new(RefCell::new(vec![
-        Value::Sym(i.intern("char-table")),
-        Value::Sym(i.intern("category-table")),
-        Value::Vec(slots.clone()),
-        Value::Vec(docs.clone()),
-    ])));
+    // GNU extra slot 0: docstring vector of 95 (indexed by cat - 32);
+    // extra slot 1: an `equal' hash-table of category-set data.
+    let docs = Rc::new(RefCell::new(vec![Value::Nil; 95]));
+    let hash = Value::Hash(Rc::new(RefCell::new(
+        crate::lisp::value::LispHash::new(crate::lisp::value::HashTest::Equal),
+    )));
+    let tag = Value::Sym(i.intern("category-table"));
+    let t = make_ct(i, tag, Value::Nil, vec![Value::Vec(docs.clone()), hash]);
     if standard {
         // GNU's standard-category-table ASCII defaults.
         const DOCS: &[(usize, &str)] = &[
@@ -3953,11 +3975,10 @@ pub(crate) fn make_category_table_value(i: &mut Interp, standard: bool) -> Value
         {
             let mut d = docs.borrow_mut();
             for &(label, doc) in DOCS {
-                d[label] = Value::string(doc);
+                d[label - 32] = Value::string(doc);
             }
         }
-        let mut sv = slots.borrow_mut();
-        for ch in 32usize..=126 {
+        for ch in 32u32..=126 {
             let mut bits = vec![false; 128];
             for b in [46usize, 97, 108] {
                 bits[b] = true;
@@ -3965,14 +3986,15 @@ pub(crate) fn make_category_table_value(i: &mut Interp, standard: bool) -> Value
             if ch != 32 && ch != 92 && ch != 126 {
                 bits[114] = true;
             }
-            let c = char::from_u32(ch as u32).unwrap();
+            let c = char::from_u32(ch).unwrap();
             if c.is_ascii_alphabetic() {
                 bits[76] = true;
             }
             if c.is_ascii_digit() {
                 bits[54] = true;
             }
-            sv[ch] = make_bool_vector(i, bits);
+            let bv = make_bool_vector(i, bits);
+            ct_set(i, &t, ch, bv);
         }
     }
     t
@@ -4008,7 +4030,7 @@ fn cat_docs(v: &Rc<RefCell<Vec<Value>>>) -> Rc<RefCell<Vec<Value>>> {
     let rr = v.borrow();
     match rr.get(3) {
         Some(Value::Vec(d)) => d.clone(),
-        _ => Rc::new(RefCell::new(vec![Value::Nil; 128])),
+        _ => Rc::new(RefCell::new(vec![Value::Nil; 95])),
     }
 }
 
@@ -4044,21 +4066,7 @@ fn f_set_category_table(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 
 fn f_copy_category_table(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let src = want_category_table(i, &arg(&a, 0))?;
-    let rr = src.borrow();
-    let contents = match rr.get(2) {
-        Some(Value::Vec(v)) => v.clone(),
-        _ => Rc::new(RefCell::new(vec![Value::Nil; 256])),
-    };
-    let docs = cat_docs(&src);
-    drop(rr);
-    // Fcopy_sequence-style: share the per-char category sets and the
-    // docstring table, copy the top-level vec.
-    Ok(Value::Record(Rc::new(RefCell::new(vec![
-        Value::Sym(i.intern("char-table")),
-        Value::Sym(i.intern("category-table")),
-        Value::Vec(Rc::new(RefCell::new(contents.borrow().clone()))),
-        Value::Vec(docs),
-    ]))))
+    Ok(ct_copy(i, &Value::Record(src)))
 }
 
 fn f_define_category(i: &mut Interp, a: Vec<Value>) -> EvalResult {
@@ -4069,7 +4077,7 @@ fn f_define_category(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let doc = want_string(i, &a[1])?;
     let t = want_category_table(i, &arg(&a, 2))?;
     let docs = cat_docs(&t);
-    if !docs.borrow()[cat as usize].is_nil() {
+    if !docs.borrow()[cat as usize - 32].is_nil() {
         return Err(i.signal_data(
             sym::ERROR,
             vec![Value::string(format!(
@@ -4078,7 +4086,7 @@ fn f_define_category(i: &mut Interp, a: Vec<Value>) -> EvalResult {
             ))],
         ));
     }
-    docs.borrow_mut()[cat as usize] = Value::string(doc);
+    docs.borrow_mut()[cat as usize - 32] = Value::string(doc);
     Ok(Value::Nil)
 }
 
@@ -4088,7 +4096,7 @@ fn f_category_docstring(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         return Err(i.wrong_type_mut("categoryp", &a[0]));
     }
     let t = want_category_table(i, &arg(&a, 1))?;
-    Ok(cat_docs(&t).borrow()[cat as usize].clone())
+    Ok(cat_docs(&t).borrow()[cat as usize - 32].clone())
 }
 
 fn f_get_unused_category(i: &mut Interp, a: Vec<Value>) -> EvalResult {
@@ -4096,7 +4104,7 @@ fn f_get_unused_category(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let docs = cat_docs(&t);
     let dd = docs.borrow();
     for c in 32usize..=126 {
-        if dd[c].is_nil() {
+        if dd[c - 32].is_nil() {
             return Ok(Value::Int(c as i128));
         }
     }
@@ -4122,7 +4130,7 @@ fn f_modify_category_entry(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     }
     let reset = !arg(&a, 3).is_nil();
     let t = want_category_table(i, &arg(&a, 2))?;
-    if cat_docs(&t).borrow()[cat as usize].is_nil() {
+    if cat_docs(&t).borrow()[cat as usize - 32].is_nil() {
         return Err(i.signal_data(
             sym::ERROR,
             vec![Value::string(format!(
@@ -4131,29 +4139,25 @@ fn f_modify_category_entry(i: &mut Interp, a: Vec<Value>) -> EvalResult {
             ))],
         ));
     }
-    let contents = match char_table_vec(&Value::Record(t.clone())) {
-        Some(v) => v,
-        None => return Ok(Value::Nil),
-    };
+    let table = Value::Record(t.clone());
     for ch in lo..=hi {
-        if !(0..256).contains(&ch) {
+        if !(0..=CT_MAX_CHAR as i128).contains(&ch) {
             continue;
         }
         let mut bits = vec![false; 128];
-        let mut cv = contents.borrow_mut();
         if !reset {
-            if let Some(old) = cv.get(ch as usize) {
-                if let Ok(b) = bool_vec_of(i, old) {
-                    for (k, v) in b.iter().enumerate() {
-                        if k < 128 {
-                            bits[k] = *v;
-                        }
+            let old = char_table_raw(i, &table, ch as usize);
+            if let Ok(b) = bool_vec_of(i, &old) {
+                for (k, v) in b.iter().enumerate() {
+                    if k < 128 {
+                        bits[k] = *v;
                     }
                 }
             }
         }
         bits[cat as usize] = true;
-        cv[ch as usize] = make_bool_vector(i, bits);
+        let bv = make_bool_vector(i, bits);
+        ct_set(i, &table, ch as u32, bv);
     }
     Ok(Value::Nil)
 }
@@ -4161,13 +4165,9 @@ fn f_modify_category_entry(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 fn f_char_category_set(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let ch = want_int(i, &a[0])?;
     let t = want_category_table(i, &Value::Nil)?;
-    let contents = match char_table_vec(&Value::Record(t)) {
-        Some(v) => v,
-        None => return Ok(Value::Nil),
-    };
-    let cv = contents.borrow();
-    Ok(match cv.get(ch as usize) {
-        Some(v) if !v.is_nil() => v.clone(),
+    let table = Value::Record(t);
+    Ok(match char_table_ref(i, &table, ch as usize) {
+        v if !v.is_nil() => v,
         _ => make_bool_vector(i, vec![false; 128]),
     })
 }
@@ -4774,7 +4774,7 @@ fn f_bool_vector_consec(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 // ---------- events ----------
 
 use crate::editor::{
-    CHAR_ALT, CHAR_CTL, CHAR_HYPER, CHAR_META, CHAR_SHIFT, CHAR_SUPER, WindowRef, apply_mods,
+    CHAR_ALT, CHAR_CTL, CHAR_HYPER, CHAR_META, CHAR_SHIFT, CHAR_SUPER, WindowRef,
     is_keymap, key_seq, parse_key_token, sel_frame, sel_window,
 };
 
@@ -5054,6 +5054,22 @@ fn f_event_convert_list(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         return Ok(Value::Nil);
     }
     let basic = event_basic(i, items.last().unwrap());
+    // A base symbol with a single-char name is that char event
+    // (`(hyper a)' → hyper|?a).
+    let basic = match &basic {
+        Value::Nil => match items.last().unwrap() {
+            Value::Sym(s) => {
+                let name = i.symbol_name(*s);
+                let mut cs = name.chars();
+                match (cs.next(), cs.next()) {
+                    (Some(ch), None) => Value::Int(ch as i128),
+                    _ => basic,
+                }
+            }
+            _ => basic,
+        },
+        _ => basic,
+    };
     let mut mods = 0i128;
     let mut kmasks = 0i128;
     for m in &items[..items.len() - 1] {
@@ -5086,8 +5102,31 @@ fn f_event_convert_list(i: &mut Interp, a: Vec<Value>) -> EvalResult {
             mods |= bit;
         }
     }
+    // A base symbol with a single-char name is that char event
+    // (`(hyper a)' → hyper|?a).
+    let basic = match &basic {
+        Value::Sym(s) => {
+            let name = i.symbol_name(*s);
+            let mut cs = name.chars();
+            match (cs.next(), cs.next()) {
+                (Some(ch), None) => Value::Int(ch as i128),
+                _ => basic.clone(),
+            }
+        }
+        v => v.clone(),
+    };
     Ok(match basic {
-        Value::Int(c) => Value::Int(apply_mods(c, mods) | kmasks & !0x20),
+        Value::Int(c) => {
+            // Like keyboard input, shift folds a-z to A-Z and drops
+            // its bit; on other chars the bit stays.
+            let mut m = mods;
+            let mut ch = c;
+            if m & CHAR_SHIFT != 0 && (97..123).contains(&ch) {
+                ch -= 32;
+                m &= !CHAR_SHIFT;
+            }
+            Value::Int(crate::editor::apply_mods_ev(ch, m, true) | kmasks & !0x20)
+        }
         Value::Sym(s) => {
             // GNU name order: A- C- H- M- S- s- double- triple- down- drag- click-.
             let mut prefix = String::new();
@@ -5392,27 +5431,68 @@ fn f_help_function_arglist(i: &mut Interp, a: Vec<Value>) -> EvalResult {
             }
             Ok(Value::list(v))
         }
-        Value::Subr(s) => Ok(match s.arity {
-            Arity::Range { min, max } => {
-                let mut v = Vec::new();
-                for k in 0..min {
-                    v.push(Value::Sym(i.intern(&format!("arg{}", k + 1))));
+        Value::Subr(s) => {
+            // PRESERVE-NAMES: GNU recovers the real arg names from the
+            // docstring's `(fn ARGLIST)' trailer, lowercased.
+            if a.get(1).map(|v| v.truthy()).unwrap_or(false) {
+                let doc = doc_text(i, &format!("F{}", s.name))
+                    .unwrap_or_else(|| s.doc.to_string());
+                if let Some(list) = doc_arglist(i, &doc) {
+                    return Ok(list);
                 }
-                if max > min {
-                    v.push(Value::Sym(i.intern("&optional")));
-                    for k in min..max {
+            }
+            Ok(match s.arity {
+                Arity::Range { min, max } => {
+                    let mut v = Vec::new();
+                    for k in 0..min {
                         v.push(Value::Sym(i.intern(&format!("arg{}", k + 1))));
                     }
+                    if max > min {
+                        v.push(Value::Sym(i.intern("&optional")));
+                        for k in min..max {
+                            v.push(Value::Sym(i.intern(&format!("arg{}", k + 1))));
+                        }
+                    }
+                    Value::list(v)
                 }
-                Value::list(v)
-            }
-            Arity::Many { .. } | Arity::Unevalled => Value::list(vec![
-                Value::Sym(i.intern("&rest")),
-                Value::Sym(i.intern("args")),
-            ]),
-        }),
+                Arity::Many { .. } | Arity::Unevalled => Value::list(vec![
+                    Value::Sym(i.intern("&rest")),
+                    Value::Sym(i.intern("rest")),
+                ]),
+            })
+        }
         _ => Ok(Value::Nil),
     }
+}
+
+/// Parse the `(fn ARGS...)' trailer of a subr docstring into a list of
+/// lowercased arg-name symbols (GNU's PRESERVE-NAMES path).
+fn doc_arglist(i: &mut Interp, doc: &str) -> Option<Value> {
+    let start = doc.rfind("(fn ")?;
+    let inner = &doc[start + 4..];
+    let mut depth = 1i32;
+    let mut end = inner.len();
+    for (off, c) in inner.char_indices() {
+        match c {
+            '(' => depth += 1,
+            ')' => {
+                depth -= 1;
+                if depth == 0 {
+                    end = off;
+                    break;
+                }
+            }
+            _ => {}
+        }
+    }
+    if depth != 0 {
+        return None;
+    }
+    let names: Vec<Value> = inner[..end]
+        .split_whitespace()
+        .map(|t| Value::Sym(i.intern(&t.to_lowercase())))
+        .collect();
+    Some(Value::list(names))
 }
 
 // ---------- GNU DOC file ----------
@@ -7260,6 +7340,91 @@ fn decode_bytes(canonical: &str, bytes: &[u8]) -> String {
     String::from_utf8_lossy(bytes).into_owned()
 }
 
+/// GNU records the decoding charset of each produced char as a
+/// `charset' text property.  Single-charset coding systems mark every
+/// char (incl. ASCII) once any non-ASCII char exists; multi-charset
+/// systems (gb2312, euc-jp, sjis, big5) mark a char with the charset
+/// that decoded it, and ASCII chars inherit the "current" charset
+/// (unmarked before the first non-ASCII char).  utf-8 et al. record
+/// nothing.
+fn attach_decode_charset_props(i: &mut Interp, r: &StrRef, canonical: &str) {
+    enum Mode {
+        Single(&'static str),
+        Multi(&'static [&'static str]),
+    }
+    let mode = match canonical {
+        "iso-latin-1" => Mode::Single("iso-8859-1"),
+        "iso-latin-2" => Mode::Single("iso-8859-2"),
+        "iso-latin-3" => Mode::Single("iso-8859-3"),
+        "iso-latin-4" => Mode::Single("iso-8859-4"),
+        "iso-latin-5" => Mode::Single("iso-8859-9"),
+        "iso-latin-9" => Mode::Single("iso-8859-15"),
+        "iso-latin-10" => Mode::Single("iso-8859-16"),
+        "cyrillic-koi8" => Mode::Single("koi8-r"),
+        "windows-1251" => Mode::Single("windows-1251"),
+        "mac-roman" => Mode::Single("mac-roman"),
+        "japanese-shift-jis" | "japanese-cp932" => {
+            Mode::Multi(&["ascii", "katakana-jisx0201", "japanese-jisx0208"])
+        }
+        "japanese-iso-8bit" => Mode::Multi(&[
+            "ascii",
+            "latin-jisx0201",
+            "japanese-jisx0208",
+            "katakana-jisx0201",
+            "japanese-jisx0212",
+            "japanese-jisx0208-1978",
+        ]),
+        "chinese-big5" => Mode::Multi(&["ascii", "big5"]),
+        "chinese-iso-8bit" | "chinese-gbk" => Mode::Multi(&["ascii", "chinese-gb2312"]),
+        _ => return,
+    };
+    let chars: Vec<char> = r.borrow().chars().collect();
+    if !chars.iter().any(|&c| (c as u32) >= 0x80) {
+        return;
+    }
+    let charset_id = i.intern("charset");
+    let mk = |i: &mut Interp, name: &str| -> Vec<Value> {
+        vec![Value::Sym(charset_id), Value::Sym(i.intern(name))]
+    };
+    match mode {
+        Mode::Single(name) => {
+            let pl = mk(i, name);
+            i.set_str_props(r, vec![(0, chars.len(), pl)]);
+        }
+        Mode::Multi(restriction) => {
+            // Runs of (start, end, charset-name); merged at the end.
+            let mut runs: Vec<(usize, usize, &'static str)> = Vec::new();
+            let mut cur: Option<&'static str> = None;
+            for (ix, &c) in chars.iter().enumerate() {
+                let u = c as u32;
+                if u >= 0x80 {
+                    if let Some(name) =
+                        crate::lisp::builtins::strfn::char_charset_in(u as i128, restriction)
+                    {
+                        cur = Some(name);
+                    }
+                }
+                if let Some(name) = cur {
+                    if let Some(last) = runs.last_mut() {
+                        if last.1 == ix && last.2 == name {
+                            last.1 = ix + 1;
+                            continue;
+                        }
+                    }
+                    runs.push((ix, ix + 1, name));
+                }
+            }
+            if !runs.is_empty() {
+                let ivs: Vec<(usize, usize, Vec<Value>)> = runs
+                    .into_iter()
+                    .map(|(s, e, name)| (s, e, mk(i, name)))
+                    .collect();
+                i.set_str_props(r, ivs);
+            }
+        }
+    }
+}
+
 fn f_decode_coding_string(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     // (decode-coding-string STRING CODING-SYSTEM &optional NOCOPY BUFFER)
     let s = want_string(i, &a[0])?;
@@ -7270,6 +7435,7 @@ fn f_decode_coding_string(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let sv = Value::string(decode_bytes(&canonical, &bytes));
     if let Value::Str(r) = &sv {
         i.mark_multibyte(r);
+        attach_decode_charset_props(i, r, &canonical);
     }
     Ok(sv)
 }
@@ -7710,9 +7876,23 @@ fn f_set_transient_map(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     Ok(Value::Nil)
 }
 
-// ---------- char tables (vec-approximated like seq::make-char-table)
+// ---------- char tables (GNU chartab.c trie: 64/16/32/128)
 
-/// The slot vector of a char-table (Record form or legacy bare Vec).
+/// Number of characters covered by one slot of each trie level:
+/// top-level slots cover 65536, `#^^[1' slots 4096, `#^^[2' slots
+/// 128, `#^^[3' leaves one char per slot.
+const CHARTAB_BITS: [u32; 4] = [16, 12, 7, 0];
+/// Slot count of each trie level (the top level is indexed
+/// separately — a depth-0 "table" is the char-table's own contents).
+const CHARTAB_SIZE: [usize; 4] = [64, 16, 32, 128];
+/// `MAX_CHAR'.
+pub(crate) const CT_MAX_CHAR: u32 = 0x3f_ffff;
+
+/// The contents vector of a char-table: 65 slots where [0] is the
+/// ASCII cache slot (a scalar, or the `#^^[3' leaf covering chars
+/// 0-127) and [1..=64] are the top-level slots covering 65536
+/// characters each.  Sub-tables are Records of the form
+/// [sub-char-table DEPTH MIN-CHAR S0 .. SN].
 pub(crate) fn char_table_vec(v: &Value) -> Option<Rc<RefCell<Vec<Value>>>> {
     match v {
         Value::Vec(v) => Some(v.clone()),
@@ -7738,6 +7918,777 @@ pub(crate) fn is_char_table(i: &Interp, v: &Value) -> bool {
     }
 }
 
+/// Build a char-table: Record [char-table SUBTYPE CONTENTS65 EXTRAS..]
+/// where CONTENTS65 is the 65-slot trie root ([0] ASCII cache,
+/// [1..=64] top blocks), every slot = INIT.  GNU's `make_vector'
+/// also initializes the defalt slot to INIT.
+pub(crate) fn make_ct(i: &mut Interp, subtype: Value, init: Value, extras: Vec<Value>) -> Value {
+    let vec = Value::Vec(Rc::new(RefCell::new(vec![init.clone(); 65])));
+    let mut rec = vec![Value::Sym(i.intern("char-table")), subtype, vec];
+    rec.extend(extras);
+    let t = Value::Record(Rc::new(RefCell::new(rec)));
+    if !init.is_nil() {
+        i.set_char_table_defalt(&t, init);
+    }
+    t
+}
+
+/// A sub-char-table (`#^^[DEPTH MIN-CHAR S0 .. SN]') is stored as a
+/// Record headed by the `sub-char-table' symbol.  Users can fake the
+/// tag, but GNU is similarly permissive about stored values.
+fn is_sub_ct(i: &Interp, v: &Value) -> bool {
+    match i.intern_soft("sub-char-table") {
+        Some(tag) => is_sub_ct_tag(tag, v),
+        None => false,
+    }
+}
+
+/// `is_sub_ct' with a precomputed tag id (no `&Interp' needed).
+pub(crate) fn is_sub_ct_tag(tag: SymId, v: &Value) -> bool {
+    match v {
+        Value::Record(r) => {
+            let b = r.borrow();
+            matches!(b.first(), Some(Value::Sym(s)) if *s == tag)
+                && matches!(b.get(1), Some(Value::Int(d)) if (1..=3).contains(d))
+                && matches!(b.get(2), Some(Value::Int(_)))
+        }
+        _ => false,
+    }
+}
+
+/// (depth, min_char, record) of a sub-char-table value.
+fn sub_ct_parts(v: &Value) -> Option<(usize, u32, Rc<RefCell<Vec<Value>>>)> {
+    let Value::Record(r) = v else {
+        return None;
+    };
+    let b = r.borrow();
+    let d = match b.get(1) {
+        Some(Value::Int(n)) => *n as usize,
+        _ => return None,
+    };
+    let m = match b.get(2) {
+        Some(Value::Int(n)) => *n as u32,
+        _ => return None,
+    };
+    Some((d, m, r.clone()))
+}
+
+fn make_sub_ct(i: &mut Interp, depth: usize, min_char: u32, fill: Value) -> Value {
+    let mut v = Vec::with_capacity(3 + CHARTAB_SIZE[depth]);
+    v.push(Value::Sym(i.intern("sub-char-table")));
+    v.push(Value::Int(depth as i128));
+    v.push(Value::Int(min_char as i128));
+    v.extend(std::iter::repeat_n(fill, CHARTAB_SIZE[depth]));
+    Value::Record(Rc::new(RefCell::new(v)))
+}
+
+/// Raw value stored for C in the 65-slot contents vec CB — no
+/// defalt or parent inheritance (GNU's raw `contents' walk).
+fn ct_raw(i: &Interp, cb: &[Value], c: u32) -> Value {
+    ct_raw_tag(i.intern_soft("sub-char-table"), cb, c)
+}
+
+/// `ct_raw' with the `sub-char-table' tag id (None = no sub-tables
+/// can exist, so every slot is scalar).  Usable from `Syn' snapshots
+/// and other `&Interp'-free contexts.
+pub(crate) fn ct_raw_tag(
+    tag: Option<SymId>,
+    cb: &[Value],
+    c: u32,
+) -> Value {
+    let is_sub = |v: &Value| tag.is_some_and(|t| is_sub_ct_tag(t, v));
+    if c > CT_MAX_CHAR {
+        return Value::Nil;
+    }
+    if c < 128 {
+        return match cb.first() {
+            Some(s) if is_sub(s) => sub_ct_parts(s)
+                .and_then(|(_, _, r)| r.borrow().get(3 + c as usize).cloned())
+                .unwrap_or(Value::Nil),
+            Some(v) => v.clone(),
+            None => Value::Nil,
+        };
+    }
+    let mut cur = cb.get(1 + (c >> 16) as usize).cloned().unwrap_or(Value::Nil);
+    loop {
+        match cur {
+            v if is_sub(&v) => {
+                let Some((d, m, r)) = sub_ct_parts(&v) else {
+                    return Value::Nil;
+                };
+                let idx = (c.saturating_sub(m) >> CHARTAB_BITS[d]) as usize;
+                cur = match r.borrow().get(3 + idx) {
+                    Some(x) => x.clone(),
+                    None => return Value::Nil,
+                };
+            }
+            v => return v,
+        }
+    }
+}
+
+/// `char_table_ascii': the value of chars 0-127, derived by walking
+/// contents[0]'s 0-index chain (scalar, or the `#^^[3' leaf).
+fn ct_ascii(i: &Interp, cb: &[Value]) -> Value {
+    let s1 = cb.get(1).cloned().unwrap_or(Value::Nil);
+    if !is_sub_ct(i, &s1) {
+        return s1;
+    }
+    let s2 = sub_ct_parts(&s1)
+        .and_then(|(_, _, r)| r.borrow().get(3).cloned())
+        .unwrap_or(Value::Nil);
+    if !is_sub_ct(i, &s2) {
+        return s2;
+    }
+    sub_ct_parts(&s2)
+        .and_then(|(_, _, r)| r.borrow().get(3).cloned())
+        .unwrap_or(Value::Nil)
+}
+
+/// Store `ct_ascii' into the contents vector's ASCII cache slot.
+fn ct_refresh_ascii(i: &Interp, contents: &Rc<RefCell<Vec<Value>>>) {
+    let v = {
+        let cb = contents.borrow();
+        ct_ascii(i, &cb)
+    };
+    contents.borrow_mut()[0] = v;
+}
+
+/// GNU `sub_char_table_set': write VAL for C inside sub-table SUB,
+/// lazily materializing deeper levels.
+fn sub_ct_set(i: &mut Interp, sub: &Value, c: u32, val: Value) {
+    let Some((depth, min, r)) = sub_ct_parts(sub) else {
+        return;
+    };
+    let idx = (c.saturating_sub(min) >> CHARTAB_BITS[depth]) as usize;
+    if depth == 3 {
+        r.borrow_mut()[3 + idx] = val;
+        return;
+    }
+    let child = r.borrow().get(3 + idx).cloned().unwrap_or(Value::Nil);
+    let child = if is_sub_ct(i, &child) {
+        child
+    } else {
+        let n = make_sub_ct(i, depth + 1, min + (idx as u32) * (1 << CHARTAB_BITS[depth]), child);
+        r.borrow_mut()[3 + idx] = n.clone();
+        n
+    };
+    sub_ct_set(i, &child, c, val);
+}
+
+/// GNU `char_table_set': write VAL for C, splitting the path and
+/// refreshing the ASCII cache as needed.
+pub(crate) fn ct_set(i: &mut Interp, table: &Value, c: u32, val: Value) {
+    let Some(contents) = char_table_vec(table) else {
+        return;
+    };
+    if c > CT_MAX_CHAR {
+        return;
+    }
+    if c < 128 {
+        let hit = {
+            let cb = contents.borrow();
+            cb.first().map(|v| is_sub_ct(i, v)).unwrap_or(false)
+        };
+        if hit {
+            if let Some(a) = contents.borrow().first().cloned() {
+                if let Some((_, _, r)) = sub_ct_parts(&a) {
+                    r.borrow_mut()[3 + c as usize] = val;
+                    return;
+                }
+            }
+        }
+    }
+    let ti = 1 + (c >> 16) as usize;
+    let sub = contents.borrow().get(ti).cloned().unwrap_or(Value::Nil);
+    let sub = if is_sub_ct(i, &sub) {
+        sub
+    } else {
+        let n = make_sub_ct(i, 1, (c >> 16) << 16, sub);
+        contents.borrow_mut()[ti] = n.clone();
+        n
+    };
+    sub_ct_set(i, &sub, c, val);
+    if c < 128 {
+        ct_refresh_ascii(i, &contents);
+    }
+}
+
+/// GNU `sub_char_table_set_range': block-optimized range write —
+/// fully covered slots are overwritten with the scalar (collapsing
+/// any sub-table), partial slots are materialized and descended.
+fn sub_ct_set_range(i: &mut Interp, sub: &Value, from: u32, to: u32, val: &Value) {
+    let Some((depth, min, r)) = sub_ct_parts(sub) else {
+        return;
+    };
+    let chars = 1u32 << CHARTAB_BITS[depth];
+    let lim = CHARTAB_SIZE[depth];
+    let from = from.max(min);
+    let mut idx = (from.saturating_sub(min) >> CHARTAB_BITS[depth]) as usize;
+    let mut c = min + chars * idx as u32;
+    while idx < lim && c <= to {
+        if from <= c && c + chars - 1 <= to {
+            r.borrow_mut()[3 + idx] = val.clone();
+        } else {
+            let child = r.borrow()[3 + idx].clone();
+            let child = if is_sub_ct(i, &child) {
+                child
+            } else {
+                let n = make_sub_ct(i, depth + 1, c, child);
+                r.borrow_mut()[3 + idx] = n.clone();
+                n
+            };
+            sub_ct_set_range(i, &child, from, to, val);
+        }
+        idx += 1;
+        c += chars;
+    }
+}
+
+/// GNU `char_table_set_range': range write with whole-block
+/// collapsing (FROM and TO inclusive).
+pub(crate) fn ct_set_range(i: &mut Interp, table: &Value, from: u32, to: u32, val: Value) {
+    if from == to {
+        ct_set(i, table, from, val);
+        return;
+    }
+    let Some(contents) = char_table_vec(table) else {
+        return;
+    };
+    let to = to.min(CT_MAX_CHAR);
+    let mut ti = (from >> 16) as usize;
+    let lim = (to >> 16) as usize;
+    while ti <= lim {
+        let c = (ti as u32) << 16;
+        if c > to {
+            break;
+        }
+        if from <= c && c + 65535 <= to {
+            contents.borrow_mut()[1 + ti] = val.clone();
+        } else {
+            let sub = contents.borrow()[1 + ti].clone();
+            let sub = if is_sub_ct(i, &sub) {
+                sub
+            } else {
+                let n = make_sub_ct(i, 1, c, sub);
+                contents.borrow_mut()[1 + ti] = n.clone();
+                n
+            };
+            sub_ct_set_range(i, &sub, from, to, &val);
+        }
+        ti += 1;
+    }
+    if from < 128 {
+        ct_refresh_ascii(i, &contents);
+    }
+}
+
+/// Deep copy of a sub-char-table value (`copy_sub_char_table').
+fn sub_ct_copy(i: &mut Interp, v: &Value) -> Value {
+    let Some((depth, min, r)) = sub_ct_parts(v) else {
+        return v.clone();
+    };
+    let n = CHARTAB_SIZE[depth];
+    let mut rec = Vec::with_capacity(3 + n);
+    rec.push(Value::Sym(i.intern("sub-char-table")));
+    rec.push(Value::Int(depth as i128));
+    rec.push(Value::Int(min as i128));
+    {
+        let b = r.borrow();
+        for slot in b.iter().skip(3).take(n) {
+            rec.push(if is_sub_ct(i, slot) {
+                sub_ct_copy(i, slot)
+            } else {
+                slot.clone()
+            });
+        }
+    }
+    Value::Record(Rc::new(RefCell::new(rec)))
+}
+
+/// `copy_char_table': deep copy of TABLE's contents (recursive
+/// sub-tables), defalt, parent, purpose and extra slots.  The ASCII
+/// slot is re-derived from the copied trie.
+pub(crate) fn ct_copy(i: &mut Interp, table: &Value) -> Value {
+    let Value::Record(r) = table else {
+        return table.clone();
+    };
+    let (subtype, contents, extras) = {
+        let b = r.borrow();
+        let subtype = b.get(1).cloned().unwrap_or(Value::Nil);
+        let contents = match b.get(2) {
+            Some(Value::Vec(v)) => Some(v.clone()),
+            _ => None,
+        };
+        let extras: Vec<Value> = b.iter().skip(3).cloned().collect();
+        (subtype, contents, extras)
+    };
+    let Some(contents) = contents else {
+        return table.clone();
+    };
+    let copied: Vec<Value> = {
+        let b = contents.borrow();
+        b.iter()
+            .skip(1)
+            .map(|v| {
+                if is_sub_ct(i, v) {
+                    sub_ct_copy(i, v)
+                } else {
+                    v.clone()
+                }
+            })
+            .collect()
+    };
+    let mut nv = Vec::with_capacity(65);
+    nv.push(Value::Nil);
+    nv.extend(copied);
+    let contents_rc = Rc::new(RefCell::new(nv));
+    ct_refresh_ascii(i, &contents_rc);
+    let mut rec = vec![
+        Value::Sym(i.intern("char-table")),
+        subtype,
+        Value::Vec(contents_rc),
+    ];
+    rec.extend(extras);
+    let t = Value::Record(Rc::new(RefCell::new(rec)));
+    let defalt = i.char_table_defalt(table);
+    if !defalt.is_nil() {
+        i.set_char_table_defalt(&t, defalt);
+    }
+    let parent = i.char_table_parent(table);
+    if !parent.is_nil() {
+        i.set_char_table_parent(&t, parent);
+    }
+    t
+}
+
+/// Replay GNU-extracted `(R LO HI VAL)'/`(L OFF VALS)' ops (see
+/// `ctdata.rs') into TABLE — reproduces GNU's exact trie structure
+/// and contents.  Range ops first is not required: every slot GNU
+/// shows gets its own op.
+pub(crate) fn ct_replay(i: &mut Interp, table: &Value, ops_src: &str) {
+    if std::env::var_os("REMACS_TRACE_EVAL").is_some() {
+        eprintln!("[ct_replay] start");
+    }
+    let mut r = crate::lisp::reader::Reader::new(i, ops_src);
+    let ops = match r.read() {
+        Ok(Some(v)) => v,
+        _ => return,
+    };
+    if std::env::var_os("REMACS_TRACE_EVAL").is_some() {
+        eprintln!("[ct_replay] read done");
+    }
+    let mut n = 0usize;
+    ops.each_car(|op| {
+        n += 1;
+        if std::env::var_os("REMACS_TRACE_EVAL").is_some() {
+            eprintln!("[ct_replay] op {}", n);
+        }
+        let items = op.list_to_vec().unwrap_or_default();
+        let tag = match items.first() {
+            Some(Value::Sym(s)) => i.symbol_name(*s).to_string(),
+            _ => return,
+        };
+        match tag.as_str() {
+            "R" => {
+                if let (Some(Value::Int(lo)), Some(Value::Int(hi)), Some(v)) =
+                    (items.get(1), items.get(2), items.get(3))
+                {
+                    ct_set_range(i, table, *lo as u32, *hi as u32, v.clone());
+                }
+            }
+            "L" => {
+                if let (Some(Value::Int(off)), Some(vals)) = (items.get(1), items.get(2)) {
+                    if let Some(vs) = vals.list_to_vec().ok() {
+                        for (k, v) in vs.iter().enumerate() {
+                            ct_set(i, table, *off as u32 + k as u32, v.clone());
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+    });
+}
+
+/// `optimize_sub_char_table': collapse a sub-table whose slots all
+/// compare equal (default `equal'; `eq' optimized).  Children are
+/// optimized bottom-up first.
+fn ct_same(i: &mut Interp, a: &Value, b: &Value, test: &Value, eq_test: bool) -> bool {
+    if eq_test {
+        super::eq_values(a, b)
+    } else if test.is_nil() {
+        super::equal_values(i, a, b)
+    } else {
+        i.call_function(test, &Value::list(vec![a.clone(), b.clone()]), None)
+            .map(|v| !v.is_nil())
+            .unwrap_or(false)
+    }
+}
+
+fn sub_ct_optimize(i: &mut Interp, sub: &Value, test: &Value) -> Value {
+    let Some((depth, _, r)) = sub_ct_parts(sub) else {
+        return sub.clone();
+    };
+    let n = CHARTAB_SIZE[depth];
+    let eq_test = matches!(test, Value::Sym(s) if i.symbol_name(*s) == "eq");
+    let test_fn = test.clone();
+    let mut first = {
+        let b = r.borrow();
+        b.get(3).cloned().unwrap_or(Value::Nil)
+    };
+    if is_sub_ct(i, &first) {
+        first = sub_ct_optimize(i, &first, &test_fn);
+        r.borrow_mut()[3] = first.clone();
+    }
+    let mut optimizable = !is_sub_ct(i, &first);
+    for k in 1..n {
+        let mut this = {
+            let b = r.borrow();
+            b.get(3 + k).cloned().unwrap_or(Value::Nil)
+        };
+        if is_sub_ct(i, &this) {
+            this = sub_ct_optimize(i, &this, &test_fn);
+            r.borrow_mut()[3 + k] = this.clone();
+        }
+        if optimizable && !ct_same(i, &this, &first, &test_fn, eq_test) {
+            optimizable = false;
+        }
+    }
+    if optimizable {
+        first
+    } else {
+        sub.clone()
+    }
+}
+
+/// `Foptimize_char_table' inner: optimize each top-level slot and
+/// refresh the ASCII cache.
+fn ct_optimize(i: &mut Interp, table: &Value, test: &Value) {
+    let Some(contents) = char_table_vec(table) else {
+        return;
+    };
+    for ti in 1..=64usize {
+        let sub = contents.borrow()[ti].clone();
+        if is_sub_ct(i, &sub) {
+            let newv = sub_ct_optimize(i, &sub, test);
+            contents.borrow_mut()[ti] = newv;
+        }
+    }
+    ct_refresh_ascii(i, &contents);
+}
+
+/// Raw contents of TABLE for char C — no defalt/parent inheritance.
+pub(crate) fn char_table_raw(i: &Interp, v: &Value, idx: usize) -> Value {
+    match char_table_vec(v) {
+        Some(vec) => {
+            let b = vec.borrow();
+            // Flat legacy tables (bare vectors / old-style 256-vec
+            // contents) index directly.
+            if b.len() == 256 {
+                return b.get(idx).cloned().unwrap_or(Value::Nil);
+            }
+            ct_raw(i, &b, idx as u32)
+        }
+        None => Value::Nil,
+    }
+}
+
+/// `char_table_ref_simple' top-level step: raw value for C, falling
+/// back to this table's own defalt (never the parent — GNU's
+/// cons-range `char-table-range' semantics).
+fn ct_ref_defalt(i: &Interp, table: &Value, idx: usize) -> Value {
+    let raw = char_table_raw(i, table, idx);
+    if !raw.is_nil() {
+        return raw;
+    }
+    i.char_table_defalt(table)
+}
+
+/// GNU `char_table_ref': raw content slot → this table's defalt →
+/// parent chain (defalt checked at each level before following the
+/// parent link).  Used by `aref'/`elt' and syntax lookups; NOT by
+/// `char-table-range' with a cons range (which skips the parent).
+pub(crate) fn char_table_ref(i: &Interp, table: &Value, idx: usize) -> Value {
+    let mut cur = table.clone();
+    for _ in 0..64 {
+        let val = match char_table_vec(&cur) {
+            Some(v) => {
+                let b = v.borrow();
+                if b.len() == 256 {
+                    b.get(idx).cloned().unwrap_or(Value::Nil)
+                } else {
+                    ct_raw(i, &b, idx as u32)
+                }
+            }
+            None => return Value::Nil,
+        };
+        if !val.is_nil() {
+            return val;
+        }
+        let defalt = i.char_table_defalt(&cur);
+        if !defalt.is_nil() {
+            return defalt;
+        }
+        let parent = i.char_table_parent(&cur);
+        if parent.is_nil() {
+            return Value::Nil;
+        }
+        cur = parent;
+    }
+    Value::Nil
+}
+
+fn f_char_table_range(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    // GNU `Fchar_table_range': nil RANGE reads the table's own
+    // default; a character RANGE resolves via `char_table_ref'
+    // (raw → defalt → parent); a cons (FROM . TO) returns the value
+    // for FROM via `char_table_ref_and_range' (raw → defalt, no
+    // parent).  Other ranges are an error.
+    if !is_char_table(i, &a[0]) {
+        return Err(i.wrong_type_mut("char-table-p", &a[0]));
+    }
+    match &a[1] {
+        Value::Nil => Ok(i.char_table_defalt(&a[0])),
+        Value::Int(n) => {
+            if !(0..=CT_MAX_CHAR as i128).contains(n) {
+                return Err(i.wrong_type_mut("characterp", &a[1]));
+            }
+            Ok(char_table_ref(i, &a[0], *n as usize))
+        }
+        Value::Cons(c) => {
+            let (from, to) = {
+                let cc = c.borrow();
+                (cc.car.clone(), cc.cdr.clone())
+            };
+            let from = match &from {
+                Value::Int(f) if (0..=CT_MAX_CHAR as i128).contains(f) => *f as usize,
+                _ => return Err(i.wrong_type_mut("characterp", &from)),
+            };
+            match &to {
+                Value::Int(t) if (0..=CT_MAX_CHAR as i128).contains(t) => {}
+                _ => return Err(i.wrong_type_mut("characterp", &to)),
+            }
+            Ok(ct_ref_defalt(i, &a[0], from))
+        }
+        _ => Err(i.error("Invalid RANGE argument to `char-table-range'")),
+    }
+}
+
+fn f_char_table_parent(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    if !is_char_table(i, &a[0]) {
+        return Err(i.wrong_type_mut("char-table-p", &a[0]));
+    }
+    Ok(i.char_table_parent(&a[0]))
+}
+
+fn f_set_char_table_parent(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    if !is_char_table(i, &a[0]) {
+        return Err(i.wrong_type_mut("char-table-p", &a[0]));
+    }
+    if !a[1].is_nil() && !is_char_table(i, &a[1]) {
+        return Err(i.wrong_type_mut("char-table-p", &a[1]));
+    }
+    // GNU: "Attempt to make a chartable be its own parent".
+    let mut temp = a[1].clone();
+    for _ in 0..64 {
+        if temp.is_nil() {
+            break;
+        }
+        if super::eq_values(&temp, &a[0]) {
+            return Err(i.error("Attempt to make a chartable be its own parent"));
+        }
+        temp = i.char_table_parent(&temp);
+    }
+    i.set_char_table_parent(&a[0], a[1].clone());
+    Ok(a[1].clone())
+}
+
+fn f_set_char_table_range(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    // GNU `Fset_char_table-range': RANGE t sets the ASCII slot and
+    // all 64 top-level slots (defalt untouched); nil sets the defalt;
+    // a char splits the trie path; a cons does a block-optimized
+    // range write.  Returns VALUE.
+    if !is_char_table(i, &a[0]) {
+        return Err(i.wrong_type_mut("char-table-p", &a[0]));
+    }
+    let val = a[2].clone();
+    match &a[1] {
+        Value::Sym(s) if i.symbol_name(*s) == "t" => {
+            if let Some(v) = char_table_vec(&a[0]) {
+                let mut vv = v.borrow_mut();
+                for slot in vv.iter_mut() {
+                    *slot = val.clone();
+                }
+            }
+        }
+        Value::Nil => {
+            i.set_char_table_defalt(&a[0], val.clone());
+        }
+        Value::Int(n) => {
+            if !(0..=CT_MAX_CHAR as i128).contains(n) {
+                return Err(i.wrong_type_mut("characterp", &a[1]));
+            }
+            ct_set(i, &a[0], *n as u32, val.clone());
+        }
+        Value::Cons(c) => {
+            let (from, to) = {
+                let cc = c.borrow();
+                (cc.car.clone(), cc.cdr.clone())
+            };
+            let from = match &from {
+                Value::Int(f) if (0..=CT_MAX_CHAR as i128).contains(f) => *f as u32,
+                _ => return Err(i.wrong_type_mut("characterp", &from)),
+            };
+            let to = match &to {
+                Value::Int(t) if (0..=CT_MAX_CHAR as i128).contains(t) => *t as u32,
+                _ => return Err(i.wrong_type_mut("characterp", &to)),
+            };
+            if from > to {
+                return Err(i.signal_data(
+                    sym::ARGS_OUT_OF_RANGE,
+                    vec![a[0].clone(), a[1].clone()],
+                ));
+            }
+            ct_set_range(i, &a[0], from, to, val.clone());
+        }
+        _ => return Err(i.error("Invalid RANGE argument to `set-char-table-range'")),
+    }
+    Ok(val)
+}
+
+/// Walk the raw trie in char order, producing (FROM TO VAL) spans —
+/// every character is covered by exactly one span (scalar slots
+/// report their whole block).  Used by `map-char-table' and the
+/// keymap iterators.
+fn ct_walk(i: &Interp, v: &Value, from: u32, to: u32, out: &mut Vec<(u32, u32, Value)>) {
+    if is_sub_ct(i, v) {
+        if let Some((depth, min, r)) = sub_ct_parts(v) {
+            let b = r.borrow();
+            for k in 0..CHARTAB_SIZE[depth] {
+                let lo = min + (k as u32) * (1 << CHARTAB_BITS[depth]);
+                let hi = lo + (1 << CHARTAB_BITS[depth]) - 1;
+                let child = b.get(3 + k).cloned().unwrap_or(Value::Nil);
+                ct_walk(i, &child, lo, hi.min(to), out);
+            }
+        }
+        return;
+    }
+    out.push((from, to, v.clone()));
+}
+
+/// `ct_walk' over the whole table — 64 top slots of 65536 chars.
+fn ct_spans(i: &Interp, table: &Value) -> Vec<(u32, u32, Value)> {
+    let mut out = Vec::new();
+    if let Some(contents) = char_table_vec(table) {
+        let b = contents.borrow();
+        for k in 0..64usize {
+            let lo = (k as u32) << 16;
+            let slot = b.get(1 + k).cloned().unwrap_or(Value::Nil);
+            ct_walk(i, &slot, lo, lo + 65535, &mut out);
+        }
+    }
+    out
+}
+
+/// Merge adjacent spans with `eq' values (GNU's range coalescing).
+fn merge_runs(spans: Vec<(u32, u32, Value)>) -> Vec<(u32, u32, Value)> {
+    let mut out: Vec<(u32, u32, Value)> = Vec::with_capacity(spans.len());
+    for (f, t, v) in spans {
+        if let Some((_, pt, pv)) = out.last_mut() {
+            if super::eq_values(pv, &v) && *pt + 1 == f {
+                *pt = t;
+                continue;
+            }
+        }
+        out.push((f, t, v));
+    }
+    out
+}
+
+/// Effective (raw → defalt) runs of TABLE; nil-value regions are
+/// spliced with the parent's own runs when `with_parent' — GNU's
+/// `map_char_table' semantics (the parent's own parent is excluded).
+fn ct_effective_runs(i: &Interp, table: &Value, with_parent: bool) -> Vec<(u32, u32, Value)> {
+    let defalt = i.char_table_defalt(table);
+    let spans = ct_spans(i, table)
+        .into_iter()
+        .map(|(f, t, v)| {
+            (
+                f,
+                t,
+                if v.is_nil() { defalt.clone() } else { v },
+            )
+        })
+        .collect();
+    let runs = merge_runs(spans);
+    let parent = i.char_table_parent(table);
+    if with_parent && !parent.is_nil() {
+        let parent_runs = ct_effective_runs(i, &parent, false);
+        let mut out = Vec::new();
+        for (f, t, v) in runs {
+            if v.is_nil() {
+                // Splice parent's own runs clipped to [f, t].
+                let mut any = false;
+                for (pf, pt, pv) in &parent_runs {
+                    let (lo, hi) = ((*pf).max(f), (*pt).min(t));
+                    if lo <= hi {
+                        out.push((lo, hi, pv.clone()));
+                        any = true;
+                    }
+                }
+                if !any {
+                    out.push((f, t, Value::Nil));
+                }
+            } else {
+                out.push((f, t, v));
+            }
+        }
+        merge_runs(out)
+    } else {
+        runs
+    }
+}
+
+/// Raw non-nil runs of TABLE — for keymap iteration, which treats
+/// nil slots as unbound.
+pub(crate) fn ct_collect(i: &Interp, table: &Value) -> Vec<(u32, u32, Value)> {
+    merge_runs(ct_spans(i, table))
+        .into_iter()
+        .filter(|(_, _, v)| !v.is_nil())
+        .collect()
+}
+
+fn f_map_char_table(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    if !is_char_table(i, &a[1]) {
+        return Err(i.wrong_type_mut("char-table-p", &a[1]));
+    }
+    let runs = ct_effective_runs(i, &a[1], true);
+    for (from, to, val) in runs {
+        let key = if from == to {
+            Value::Int(from as i128)
+        } else {
+            Value::cons(Value::Int(from as i128), Value::Int(to as i128))
+        };
+        i.call_function(
+            &a[0],
+            &Value::list(vec![quoted(key), quoted(val)]),
+            None,
+        )?;
+    }
+    Ok(Value::Nil)
+}
+
+fn f_suppress_keymap(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    if !is_keymap(i, &a[0]) {
+        return Err(i.wrong_type_mut("keymapp", &a[0]));
+    }
+    // GNU returns the NODIGITS argument (nil by default) after
+    // rebinding printable chars to `undefined'.
+    Ok(arg(&a, 1))
+}
+
+/// Record slot 1 of a char-table holds its subtype symbol.
 fn char_table_subtype_of(v: &Value) -> Value {
     match v {
         Value::Record(r) => r.borrow().get(1).cloned().unwrap_or(Value::Nil),
@@ -7749,115 +8700,10 @@ fn f_char_table_p(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     Ok(Value::from_bool(is_char_table(i, &a[0])))
 }
 
-fn f_char_table_range(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    // GNU: when a slot is nil, the parent chain supplies the value.
-    let mut cur = a[0].clone();
-    let mut guard = 0;
-    loop {
-        if let Some(v) = char_table_vec(&cur) {
-            let idx = match &a[1] {
-                Value::Int(n) if *n >= 0 => *n as usize,
-                Value::Nil => 0,
-                _ => return Ok(v.borrow().first().cloned().unwrap_or(Value::Nil)),
-            };
-            let got = v.borrow().get(idx).cloned().unwrap_or(Value::Nil);
-            if !got.is_nil() {
-                return Ok(got);
-            }
-        } else {
-            return Ok(Value::Nil);
-        }
-        guard += 1;
-        if guard > 32 {
-            return Ok(Value::Nil);
-        }
-        let id = match &cur {
-            Value::Record(r) => Rc::as_ptr(r) as usize,
-            Value::Vec(r) => Rc::as_ptr(r) as usize,
-            _ => return Ok(Value::Nil),
-        };
-        match i.char_table_parents.iter().find(|(k, _)| *k == id) {
-            Some((_, p)) => cur = p.clone(),
-            None => return Ok(Value::Nil),
-        }
-    }
-}
-
-fn f_char_table_parent(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+fn f_char_table_subtype(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     if !is_char_table(i, &a[0]) {
         return Err(i.wrong_type_mut("char-table-p", &a[0]));
     }
-    let id = match &a[0] {
-        Value::Record(r) => Rc::as_ptr(r) as usize,
-        _ => return Ok(Value::Nil),
-    };
-    Ok(i
-        .char_table_parents
-        .iter()
-        .find(|(k, _)| *k == id)
-        .map(|(_, v)| v.clone())
-        .unwrap_or(Value::Nil))
-}
-
-fn f_set_char_table_parent(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    if !is_char_table(i, &a[0]) {
-        return Err(i.wrong_type_mut("char-table-p", &a[0]));
-    }
-    if !a[1].is_nil() && !is_char_table(i, &a[1]) {
-        return Err(i.wrong_type_mut("char-table-p", &a[1]));
-    }
-    let id = match &a[0] {
-        Value::Record(r) => Rc::as_ptr(r) as usize,
-        _ => return Ok(a[1].clone()),
-    };
-    i.char_table_parents.retain(|(k, _)| *k != id);
-    if !a[1].is_nil() {
-        i.char_table_parents.push((id, a[1].clone()));
-    }
-    Ok(a[1].clone())
-}
-
-fn f_set_char_table_range(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    if let Some(v) = char_table_vec(&a[0]) {
-        let (lo, hi) = match &a[1] {
-            Value::Int(n) => (*n as usize, *n as usize),
-            Value::Nil | Value::Cons(_) => (0, 255),
-            Value::Sym(s) if i.symbol_name(*s) == "t" => (0, 255),
-            _ => return Ok(Value::Nil),
-        };
-        let mut vv = v.borrow_mut();
-        for k in lo..=hi.min(vv.len().saturating_sub(1)) {
-            if k < vv.len() {
-                vv[k] = a[2].clone();
-            }
-        }
-    }
-    Ok(Value::Nil)
-}
-
-fn f_map_char_table(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    if let Some(v) = char_table_vec(&a[1]) {
-        let items: Vec<Value> = v.borrow().clone();
-        for (k, val) in items.iter().enumerate() {
-            i.call_function(
-                &a[0],
-                &Value::list(vec![quoted(Value::Int(k as i128)), quoted(val.clone())]),
-                None,
-            )?;
-        }
-    }
-    Ok(Value::Nil)
-}
-
-fn f_suppress_keymap(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    if !is_keymap(i, &a[0]) {
-        return Err(i.wrong_type_mut("keymapp", &a[0]));
-    }
-    // Emacs returns nil after rebinding printable chars to `undefined'.
-    Ok(Value::Nil)
-}
-
-fn f_char_table_subtype(_i: &mut Interp, a: Vec<Value>) -> EvalResult {
     Ok(char_table_subtype_of(&a[0]))
 }
 
@@ -7958,8 +8804,8 @@ fn f_value_lt(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     } else {
         match (x, y) {
             (Value::Int(p), Value::Int(q)) => p < q,
-            (Value::Int(p), Value::Float(q)) => (*p as f64) < *q,
-            (Value::Float(p), Value::Int(q)) => *p < (*q as f64),
+            (Value::Int(p), Value::Float(q)) => (*p as f64) < **q,
+            (Value::Float(p), Value::Int(q)) => **p < (*q as f64),
             (Value::Float(p), Value::Float(q)) => p < q,
             (Value::Sym(p), Value::Sym(q)) => i.symbol_name(*p) < i.symbol_name(*q),
             (Value::Str(p), Value::Str(q)) => *p.borrow() < *q.borrow(),
@@ -7996,7 +8842,7 @@ fn f_time_to_day_in_year(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 fn f_days_to_time(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let days = match &a[0] {
         Value::Int(n) => *n,
-        Value::Float(f) => *f as i128,
+        Value::Float(f) => **f as i128,
         other => return Err(i.wrong_type_mut("numberp", other)),
     };
     // GNU returns the (HIGH LOW) seconds form, not a full time value.
@@ -8531,12 +9377,14 @@ fn f_thread_blocker(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     Ok(Value::Nil)
 }
 
-/// `optimize-char-table` — GNU char-table-p-checks TABLE; ours are
-/// already flat, so nil.
+/// `optimize-char-table' — collapse uniform sub-tables bottom-up
+/// (TEST defaults to `equal'; `eq' uses identity).
 fn f_optimize_char_table(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     if !is_char_table(i, &a[0]) {
         return Err(i.wrong_type_mut("char-table-p", &a[0]));
     }
+    let test = arg(&a, 1);
+    ct_optimize(i, &a[0].clone(), &test);
     Ok(Value::Nil)
 }
 
@@ -8630,7 +9478,7 @@ fn f_pdumper_stats(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
             Value::Sym(i.intern("dumped-with-pdumper")),
             Value::Nil,
         ),
-        Value::cons(Value::Sym(i.intern("load-time")), Value::Float(0.0)),
+        Value::cons(Value::Sym(i.intern("load-time")), Value::float(0.0)),
         Value::cons(Value::Sym(i.intern("dump-file-name")), Value::Nil),
     ]))
 }

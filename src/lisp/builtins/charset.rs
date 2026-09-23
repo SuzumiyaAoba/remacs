@@ -8,8 +8,8 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use super::{S, arg, eq_values};
-use super::misc::{char_table_vec, coding_known, is_char_table};
+use super::{S, arg, eq_values, misc};
+use super::misc::{coding_known, is_char_table};
 use crate::lisp::error::Flow;
 use crate::lisp::value::{Subr, Value};
 use crate::lisp::{EvalResult, Interp};
@@ -324,7 +324,7 @@ fn f_define_char_code_property(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let sid = want_sym(i, &a[0])?;
     let name = i.symbol_name(sid);
     match &a[1] {
-        v if char_table_vec(v).is_some() => {
+        v if is_char_table(i, v) => {
             // Keep the char-table as the property's backing store.
             prop_table(i, &name);
             i.char_code_prop_tables.retain(|(n, _)| n != &name);
@@ -383,12 +383,10 @@ fn get_char_prop(i: &mut Interp, ch: i64, prop: &str) -> Value {
     }
     // Check a char-table backing store.
     if let Some((_, tbl)) = i.char_code_prop_tables.iter().find(|(n, _)| n == prop) {
-        if let Some(v) = char_table_vec(tbl) {
-            let vv = v.borrow();
-            if let Some(val) = vv.get(ch.max(0) as usize) {
-                if !val.is_nil() {
-                    return val.clone();
-                }
+        if is_char_table(i, tbl) {
+            let val = misc::char_table_ref(i, tbl, ch.max(0) as usize);
+            if !val.is_nil() {
+                return val;
             }
         }
     }
@@ -547,11 +545,11 @@ fn f_char_code_property_description(i: &mut Interp, a: Vec<Value>) -> EvalResult
 // ---------- translation tables ----------
 
 fn f_make_translation_table(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    // (make-translation-table &optional arg1 arg2) — char-table-like record.
-    let tag = symv(i, "char-table");
-    let subtype = symv(i, "translation-table");
-    let mut slots = vec![Value::Nil; 256];
+    // (make-translation-table &optional arg1 arg2) — char-table record.
+    let tag = symv(i, "translation-table");
+    let t = misc::make_ct(i, tag, Value::Nil, vec![]);
     for arg in &a {
+        let t2 = t.clone();
         arg.each_car(|pair| {
             if let Value::Cons(c) = pair {
                 let (k, v) = {
@@ -559,18 +557,14 @@ fn f_make_translation_table(i: &mut Interp, a: Vec<Value>) -> EvalResult {
                     (b.car.clone(), b.cdr.clone())
                 };
                 if let (Value::Int(k), Value::Int(vv)) = (k, v) {
-                    if (0..256).contains(&k) {
-                        slots[k as usize] = Value::Int(vv);
+                    if (0..=misc::CT_MAX_CHAR as i128).contains(&k) {
+                        misc::ct_set(i, &t2, k as u32, Value::Int(vv));
                     }
                 }
             }
         });
     }
-    Ok(Value::Record(Rc::new(RefCell::new(vec![
-        tag,
-        subtype,
-        Value::Vec(Rc::new(RefCell::new(slots))),
-    ]))))
+    Ok(t)
 }
 
 fn f_define_translation_table(i: &mut Interp, a: Vec<Value>) -> EvalResult {
@@ -597,13 +591,14 @@ fn f_make_translation_table_from_vector(i: &mut Interp, a: Vec<Value>) -> EvalRe
         }
         _ => return Err(i.wrong_type_mut("vectorp", &a[0])),
     };
-    let tag = symv(i, "char-table");
-    let subtype = symv(i, "translation-table");
-    Ok(Value::Record(Rc::new(RefCell::new(vec![
-        tag,
-        subtype,
-        Value::Vec(Rc::new(RefCell::new(slots))),
-    ]))))
+    let tag = symv(i, "translation-table");
+    let t = misc::make_ct(i, tag, Value::Nil, vec![]);
+    for (k, v) in slots.iter().enumerate() {
+        if !v.is_nil() {
+            misc::ct_set(i, &t, k as u32, v.clone());
+        }
+    }
+    Ok(t)
 }
 
 fn f_set_translation_table(i: &mut Interp, a: Vec<Value>) -> EvalResult {
@@ -885,12 +880,8 @@ fn unicode_prop_table(i: &mut Interp, prop: &str) -> Value {
     if let Some((_, t)) = i.char_code_prop_tables.iter().find(|(n, _)| n == prop) {
         return t.clone();
     }
-    let vec = Value::Vec(Rc::new(RefCell::new(vec![Value::Nil; 256])));
-    let t = Value::Record(Rc::new(RefCell::new(vec![
-        Value::Sym(i.intern("char-table")),
-        symv(i, "char-code-property-table"),
-        vec,
-    ])));
+    let tag = symv(i, "char-code-property-table");
+    let t = misc::make_ct(i, tag, Value::Nil, vec![]);
     i.char_code_prop_tables.push((prop.to_string(), t.clone()));
     t
 }
@@ -922,8 +913,7 @@ fn f_get_unicode_property_internal(i: &mut Interp, a: Vec<Value>) -> EvalResult 
         // general-category) still show through unset slots.
         return Ok(get_char_prop(i, ch, &prop));
     }
-    let v = char_table_vec(&a[0]).unwrap();
-    Ok(v.borrow().get(ch.max(0) as usize).cloned().unwrap_or(Value::Nil))
+    Ok(misc::char_table_ref(i, &a[0], ch.max(0) as usize))
 }
 
 fn f_put_unicode_property_internal(i: &mut Interp, a: Vec<Value>) -> EvalResult {
@@ -934,12 +924,7 @@ fn f_put_unicode_property_internal(i: &mut Interp, a: Vec<Value>) -> EvalResult 
         Value::Int(n) if *n >= 0 => *n as usize,
         _ => return Err(i.wrong_type_mut("characterp", &a[1])),
     };
-    let v = char_table_vec(&a[0]).unwrap();
-    let mut vv = v.borrow_mut();
-    if ch >= vv.len() {
-        vv.resize(ch + 1, Value::Nil);
-    }
-    vv[ch] = a[2].clone();
+    misc::ct_set(i, &a[0], ch as u32, a[2].clone());
     Ok(Value::Nil)
 }
 

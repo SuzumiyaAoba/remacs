@@ -135,10 +135,11 @@ fn frame_params() {
 
 #[test]
 fn window_params_and_margins() {
-    assert_eq!(ev("(window-margins)"), "nil");
+    // GNU batch: margins is the cons (nil . nil).
+    assert_eq!(ev("(window-margins)"), "(nil)");
     assert_eq!(ev("(window-vscroll)"), "0");
     assert_eq!(ev("(window-has-parameters)"), "nil");
-    assert_eq!(ev("(window-scroll-bars)"), "(0 0 0 nil)");
+    assert_eq!(ev("(window-scroll-bars)"), "(nil 0 t nil 0 t nil)");
 }
 
 #[test]

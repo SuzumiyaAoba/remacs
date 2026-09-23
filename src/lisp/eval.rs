@@ -200,6 +200,11 @@ pub struct Interp {
     /// Char-table parents live outside the record so existing record
     /// layouts are untouched.
     pub char_table_parents: Vec<(usize, Value)>,
+    /// Char-table default values, same registry style as parents
+    /// (record identity → defalt).  GNU has no Lisp accessor for the
+    /// defalt; it shows in `#^[...]' printing and feeds
+    /// `char-table-range' misses.
+    pub char_table_defalts: Vec<(usize, Value)>,
     /// Fingerprint seen by the last `frame-or-buffer-changed-p' call.
     pub frame_state_seen: Option<u64>,
     /// Live Lisp call frames `(FUNCTION . ARGS)', outermost first.
@@ -233,6 +238,18 @@ pub struct Interp {
     /// is t for them even when their contents are pure ASCII.
     pub multibyte_strings:
         std::collections::HashMap<usize, std::rc::Weak<std::cell::RefCell<String>>>,
+    /// Text properties attached to string objects: pointer identity →
+    /// (weak backref, sorted disjoint intervals (start, end, plist)).
+    /// GNU keeps dead interval boundaries after property removal, so
+    /// a true interval model is needed (not last-write-wins).  The
+    /// Weak guards against address reuse like the unibyte map.
+    pub string_props: std::collections::HashMap<
+        usize,
+        (
+            std::rc::Weak<std::cell::RefCell<String>>,
+            Vec<(usize, usize, Vec<Value>)>,
+        ),
+    >,
 }
 
 /// Result of a minibuffer read from the front-end.
@@ -409,6 +426,7 @@ impl Interp {
             advices: Vec::new(),
             advice_links: Vec::new(),
             char_table_parents: Vec::new(),
+            char_table_defalts: Vec::new(),
             frame_state_seen: None,
             lisp_stack: Vec::new(),
             cpu_profiler: false,
@@ -418,6 +436,7 @@ impl Interp {
             color_db_init: false,
             unibyte_strings: std::collections::HashMap::new(),
             multibyte_strings: std::collections::HashMap::new(),
+            string_props: std::collections::HashMap::new(),
         };
         crate::lisp::builtins::install(&mut interp);
         crate::buffer::install_primitives(&mut interp);
@@ -445,13 +464,74 @@ impl Interp {
             }
         }
         crate::editor::install_primitives(&mut interp);
+        // GNU's startup `*scratch*' gets its syntax-table chain from
+        // `lisp-interaction-mode' (run by the prelude below):
+        // lisp-interaction-mode-syntax-table →
+        // emacs-lisp-mode-syntax-table → lisp-data-mode-syntax-table
+        // → prog-mode-syntax-table → standard-syntax-table.  Every
+        // other buffer resolves to `standard-syntax-table'.
         // Locale-derived tty defaults (GNU: utf-8 with unix EOL).
         let u8u = interp.intern("utf-8-unix");
         interp.terminal_coding = Value::Sym(u8u);
         interp.keyboard_coding = Value::Sym(u8u);
         // Load the Lisp prelude (subr.el subset). Errors here indicate a
         // broken prelude, but don't abort startup.
-        let _ = interp.eval_str(crate::lisp::prelude::PRELUDE);
+        let prelude_max: usize = std::env::var("PRELUDE_MAX")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(usize::MAX);
+        if std::env::var("REMACS_NO_PRELUDE").is_ok() {
+            // Debug escape: skip prelude evaluation entirely.
+        } else if std::env::var("PRELUDE_TRACE").is_ok() || prelude_max != usize::MAX {
+            let src = crate::lisp::prelude::PRELUDE;
+            let chars: Rc<Vec<char>> = Rc::new(src.chars().collect());
+            let mut pos = 0usize;
+            let mut k = 0;
+            loop {
+                if k >= prelude_max {
+                    break;
+                }
+                let next = {
+                    let mut reader =
+                        crate::lisp::reader::Reader::with_chars(&mut interp, chars.clone());
+                    reader.set_position(pos);
+                    match reader.read() {
+                        Ok(f) => f.map(|v| (v, reader.position())),
+                        Err(_) => None,
+                    }
+                };
+                match next {
+                    Some((form, end)) => {
+                        pos = end;
+                        k += 1;
+                        eprintln!(
+                            "prelude form {k} @{pos}: {}",
+                            interp
+                                .prin1_to_string(&form)
+                                .chars()
+                                .take(120)
+                                .collect::<String>()
+                        );
+                        if std::env::var("PRELUDE_TRACE_MX").is_ok() {
+                            if let Ok(x) = interp.macroexpand(&form) {
+                                eprintln!(
+                                    "  expands to: {}",
+                                    interp
+                                        .prin1_to_string(&x)
+                                        .chars()
+                                        .take(800)
+                                        .collect::<String>()
+                                );
+                            }
+                        }
+                        let _ = interp.eval(&form);
+                    }
+                    None => break,
+                }
+            }
+        } else {
+            let _ = interp.eval_str(crate::lisp::prelude::PRELUDE);
+        }
         // Boot-time autoloads (easy-mmode & co.) correspond to GNU's
         // dumped loadup; the user-visible `features' list must match the
         // post-dump set.
@@ -580,6 +660,45 @@ impl Interp {
             .get(&(std::rc::Rc::as_ptr(s) as usize))
             .and_then(|w| w.upgrade())
             .is_some()
+    }
+
+    /// Text-prop interval list for a string object (empty when none).
+    pub fn str_props(&self, s: &crate::lisp::value::StrRef) -> &[(usize, usize, Vec<Value>)] {
+        match self.string_props.get(&(std::rc::Rc::as_ptr(s) as usize)) {
+            Some((w, v)) if w.upgrade().is_some() => v.as_slice(),
+            _ => &[],
+        }
+    }
+
+    /// Mutable text-prop interval list for a string (creates entry).
+    pub fn str_props_mut(
+        &mut self,
+        s: &crate::lisp::value::StrRef,
+    ) -> &mut Vec<(usize, usize, Vec<Value>)> {
+        &mut self
+            .string_props
+            .entry(std::rc::Rc::as_ptr(s) as usize)
+            .or_insert_with(|| (std::rc::Rc::downgrade(s), Vec::new()))
+            .1
+    }
+
+    /// Does a prop interval tree exist for this string?  GNU's
+    /// `object-intervals' returns nil before the first prop op but a
+    /// full nil-plist cover afterwards, so presence must be tracked
+    /// separately from the interval list.
+    pub fn has_str_props(&self, s: &crate::lisp::value::StrRef) -> bool {
+        self.string_props
+            .get(&(std::rc::Rc::as_ptr(s) as usize))
+            .map(|(w, _)| w.upgrade().is_some())
+            .unwrap_or(false)
+    }
+
+    /// Replace a string's prop intervals wholesale (copy ops).  An
+    /// empty list still materializes the interval tree (GNU keeps a
+    /// single nil-plist interval covering the string).
+    pub fn set_str_props(&mut self, s: &crate::lisp::value::StrRef, v: Vec<(usize, usize, Vec<Value>)>) {
+        self.string_props
+            .insert(std::rc::Rc::as_ptr(s) as usize, (std::rc::Rc::downgrade(s), v));
     }
 
     /// Follow a symbol's function-alias chain; return the final
@@ -906,12 +1025,14 @@ impl Interp {
     /// Read and evaluate all top-level forms in `src`.
     /// Returns the last value.
     pub fn eval_str(&mut self, src: &str) -> EvalResult {
-        // The reader borrows `self`, so create/drop it per form.
+        // The reader borrows `self`, so create/drop it per form — but
+        // share one collected char buffer across all reads.
+        let chars: Rc<Vec<char>> = Rc::new(src.chars().collect());
         let mut pos = 0usize;
         let mut last = Value::Nil;
         loop {
             let next = {
-                let mut reader = Reader::new(self, src);
+                let mut reader = Reader::with_chars(self, chars.clone());
                 reader.set_position(pos);
                 match reader.read()? {
                     Some(f) => Some((f, reader.position())),
@@ -921,6 +1042,9 @@ impl Interp {
             match next {
                 Some((form, end)) => {
                     pos = end;
+                    if std::env::var_os("REMACS_TRACE_EVAL").is_some() {
+                        eprintln!("[eval@{}] {}", end, self.princ_to_string(&form).chars().take(80).collect::<String>());
+                    }
                     match self.eval(&form) {
                         Ok(v) => last = v,
                         // An uncaught throw is a `no-catch' error.
@@ -1372,6 +1496,12 @@ impl Interp {
     /// what backtraces display as the callee — the symbol when the call
     /// came through a symbol's function cell, else the function itself.
     fn apply_resolved(&mut self, fun: &Value, argv: Vec<Value>, shown: Value) -> EvalResult {
+        if std::env::var_os("REMACS_TRACE_CALL").is_some() {
+            eprintln!(
+                "[call] {}",
+                self.princ_to_string(&shown).chars().take(90).collect::<String>()
+            );
+        }
         match fun {
             Value::Subr(s) => match s.arity {
                 Arity::Unevalled => {
@@ -1636,6 +1766,13 @@ impl Interp {
 
     /// Expand a macro call: call the macro's function on raw args.
     pub fn macro_expand_call(&mut self, mac: &Value, args: &Value) -> EvalResult {
+        if std::env::var("PRELUDE_TRACE").is_ok() {
+            eprintln!(
+                "mxcall {} <- {}",
+                self.prin1_to_string(mac).chars().take(90).collect::<String>(),
+                self.prin1_to_string(args).chars().take(90).collect::<String>()
+            );
+        }
         let argv = match args.list_to_vec() {
             Ok(v) => v,
             Err(_) => return Err(self.error("bad macro args")),
@@ -1670,7 +1807,12 @@ impl Interp {
     /// `macroexpand`: repeatedly expand while the form is a macro call.
     pub fn macroexpand(&mut self, form: &Value) -> EvalResult {
         let mut cur = form.clone();
+        let mut iters = 0;
         loop {
+            iters += 1;
+            if std::env::var("PRELUDE_TRACE").is_ok() && iters > 500 {
+                eprintln!("macroexpand iter {iters}: {}", self.prin1_to_string(&cur).chars().take(200).collect::<String>());
+            }
             let next = match &cur {
                 Value::Cons(c) => {
                     let (car, cdr) = {
@@ -2514,6 +2656,116 @@ impl Interp {
             self.obarray.symbol_mut(id).special = true;
         }
 
+        // GNU's C-backed variables: `makunbound' refuses on them
+        // (the "Built-in variable may not be unbound" set, verified
+        // against GNU 31.1).
+        let builtin_locals: &[&str] = &[
+            "abbrev-mode",
+            "after-change-functions",
+            "before-change-functions",
+            "bidi-display-reordering",
+            "bidi-inhibit-bpa",
+            "bidi-paragraph-direction",
+            "bidi-paragraph-start-re",
+            "buffer-auto-save-file-name",
+            "buffer-backed-up",
+            "buffer-display-table",
+            "buffer-file-coding-system",
+            "buffer-file-name",
+            "buffer-file-truename",
+            "buffer-invisibility-spec",
+            "buffer-read-only",
+            "buffer-saved-size",
+            "buffer-undo-list",
+            "cache-long-scans",
+            "case-fold-search",
+            "change-major-mode-hook",
+            "char-property-alias-alist",
+            "coding-system-for-read",
+            "coding-system-for-write",
+            "cursor-in-non-selected-windows",
+            "cursor-type",
+            "deactivate-mark",
+            "default-directory",
+            "default-text-properties",
+            "delayed-warnings-list",
+            "delete-exited-processes",
+            "display-fill-column-indicator",
+            "display-fill-column-indicator-character",
+            "display-fill-column-indicator-column",
+            "display-line-numbers",
+            "display-line-numbers-current-absolute",
+            "display-line-numbers-major-tick",
+            "display-line-numbers-minor-tick",
+            "display-line-numbers-offset",
+            "display-line-numbers-widen",
+            "display-line-numbers-width",
+            "double-click-fuzz",
+            "double-click-time",
+            "emulation-mode-map-alists",
+            "fill-column",
+            "first-change-hook",
+            "fringes-outside-margins",
+            "header-line-format",
+            "horizontal-scroll-bar",
+            "indent-tabs-mode",
+            "indicate-buffer-boundaries",
+            "indicate-empty-lines",
+            "inhibit-field-text-motion",
+            "inhibit-point-motion-hooks",
+            "left-fringe-width",
+            "left-margin",
+            "left-margin-width",
+            "lexical-binding",
+            "line-prefix",
+            "line-spacing",
+            "local-abbrev-table",
+            "major-mode",
+            "mark-active",
+            "menu-prompting",
+            "minibuffer-prompt-properties",
+            "minor-mode-map-alist",
+            "mode-line-format",
+            "mode-name",
+            "next-screen-context-lines",
+            "overwrite-mode",
+            "post-command-hook",
+            "post-self-insert-hook",
+            "pre-command-hook",
+            "print-continuous-numbering",
+            "print-escape-newlines",
+            "print-gensym",
+            "print-number-table",
+            "print-quoted",
+            "process-connection-type",
+            "right-fringe-width",
+            "right-margin-width",
+            "scroll-bar-height",
+            "scroll-bar-width",
+            "scroll-conservatively",
+            "scroll-down-aggressively",
+            "scroll-margin",
+            "scroll-preserve-screen-position",
+            "scroll-up-aggressively",
+            "selective-display",
+            "selective-display-ellipses",
+            "shell-file-name",
+            "show-trailing-whitespace",
+            "tab-line-format",
+            "tab-width",
+            "text-quoting-style",
+            "transient-mark-mode",
+            "truncate-lines",
+            "use-dialog-box",
+            "vertical-scroll-bar",
+            "word-wrap",
+            "wrap-prefix",
+        ];
+        for name in builtin_locals {
+            let id = self.intern(name);
+            self.obarray.symbol_mut(id).builtin_variable = true;
+        }
+
         // Initial values.
         let defs: &[(&str, Value)] = &[
             ("emacs-major-version", Value::Int(31)),
@@ -2561,7 +2813,7 @@ impl Interp {
             ("double-click-fuzz", Value::Int(3)),
             ("minibuffer-message-timeout", Value::Int(2)),
             ("read-process-output-max", Value::Int(65536)),
-            ("max-mini-window-height", Value::Float(0.25)),
+            ("max-mini-window-height", Value::float(0.25)),
             ("window-min-height", Value::Int(4)),
             ("window-min-width", Value::Int(10)),
             ("window-safe-min-height", Value::Int(1)),
@@ -2748,7 +3000,7 @@ impl Interp {
             ("hscroll-margin", Value::Int(5)),
             ("hscroll-step", Value::Int(0)),
             ("auto-hscroll-mode", Value::Sym(sym::T)),
-            ("polling-period", Value::Float(0.5)),
+            ("polling-period", Value::float(0.5)),
             ("visible-bell", Value::Nil),
             ("ring-bell-function", Value::Nil),
             ("cursor-type", Value::Sym(sym::T)),
@@ -2772,7 +3024,7 @@ impl Interp {
             ("jit-lock-stealth-time", Value::Nil),
             ("jit-lock-stealth-load", Value::Int(200)),
             ("jit-lock-defer-time", Value::Int(0)),
-            ("jit-lock-context-time", Value::Float(0.5)),
+            ("jit-lock-context-time", Value::float(0.5)),
             ("jit-lock-functions", Value::Nil),
             ("jit-lock-contextually", Value::Nil),
             ("font-lock-mode", Value::Nil),
@@ -2808,8 +3060,8 @@ impl Interp {
             ("eval-expression-debug-on-error", Value::Sym(sym::T)),
             ("find-file-existing-other-name", Value::Sym(sym::T)),
             ("find-file-visit-truename", Value::Nil),
-            ("gc-cons-percentage", Value::Float(1.0)),
-            ("idle-update-delay", Value::Float(0.5)),
+            ("gc-cons-percentage", Value::float(1.0)),
+            ("idle-update-delay", Value::float(0.5)),
             ("input-method-function", Value::Nil),
             ("insert-default-directory", Value::Sym(sym::T)),
             ("isearch-allow-scroll", Value::Nil),
@@ -2826,7 +3078,7 @@ impl Interp {
             ("make-backup-files", Value::Sym(sym::T)),
             ("message-log-max", Value::Int(1000)),
             ("mode-require-final-newline", Value::Sym(sym::T)),
-            ("next-error-highlight", Value::Float(0.5)),
+            ("next-error-highlight", Value::float(0.5)),
             ("no-redraw-on-reenter", Value::Nil),
             (
                 "normal-erase-is-backspace",
@@ -2968,7 +3220,7 @@ impl Interp {
             ("isearch-resume-in-command-history", Value::Nil),
             ("isearch-allow-prefix", Value::Nil),
             ("isearch-push-state-function", Value::Nil),
-            ("lazy-highlight-initial-delay", Value::Float(0.25)),
+            ("lazy-highlight-initial-delay", Value::float(0.25)),
             ("lazy-highlight-interval", Value::Int(0)),
             ("lazy-highlight-max-at-a-time", Value::Int(20)),
             ("lazy-highlight-cleanup", Value::Sym(sym::T)),
@@ -3005,7 +3257,7 @@ impl Interp {
             ("load-prefer-newer", Value::Nil),
             ("load-read-function", Value::Sym(self.intern("read"))),
             ("obarray-size", Value::Int(15121)),
-            ("max-image-size", Value::Float(10.0)),
+            ("max-image-size", Value::float(10.0)),
             ("image-scaling-factor", Value::string("auto")),
             ("use-short-answers", Value::Nil),
             ("yes-or-no-prompt", Value::Nil),
@@ -3397,18 +3649,92 @@ impl Interp {
     }
 
     /// `standard-case-table': the shared case-table char-table.
+    /// GNU's layout: contents = downcase map, extra slots =
+    /// {upcase, canonicalize, equivalency} char-tables.  All four are
+    /// replayed from GNU Emacs 31's printed tries (see ctdata.rs),
+    /// giving exact >255 contents and trie structure.
     pub fn standard_case_table(&mut self) -> Value {
         if let Some(v) = &self.standard_case_table {
             return v.clone();
         }
-        let slots = std::rc::Rc::new(std::cell::RefCell::new(vec![Value::Nil; 256]));
-        let t = Value::Record(std::rc::Rc::new(std::cell::RefCell::new(vec![
-            Value::Sym(self.intern("char-table")),
-            Value::Sym(self.intern("case-table")),
-            Value::Vec(slots),
-        ])));
-        self.standard_case_table = Some(t.clone());
-        t
+        use crate::lisp::builtins::misc::{ct_replay, make_ct};
+        let case_tag = Value::Sym(self.intern("case-table"));
+        // GNU's case tables physically carry 3 extra slots each
+        // (`char-table-extra-slots' = 3); most stay nil.
+        let build = |i: &mut Self, ops: &str| {
+            let t = make_ct(
+                i,
+                case_tag.clone(),
+                Value::Nil,
+                vec![Value::Nil, Value::Nil, Value::Nil],
+            );
+            ct_replay(i, &t, ops);
+            t
+        };
+        use crate::lisp::ctdata::*;
+        let up = build(self, CASE_UP_OPS);
+        let canon = build(self, CASE_CANON_OPS);
+        let equiv = build(self, CASE_EQUIV_OPS);
+        let down = build(self, CASE_OPS);
+        if let (Value::Record(d), Value::Record(c)) = (&down, &canon) {
+            let mut rr = d.borrow_mut();
+            rr[3] = up;
+            rr[4] = canon.clone();
+            rr[5] = equiv.clone();
+            // GNU's canon table shares the equivalencies table in its
+            // own third extra slot.
+            c.borrow_mut()[5] = equiv;
+        }
+        self.standard_case_table = Some(down.clone());
+        down
+    }
+
+    /// Char-table parent accessor (record identity → parent value).
+    pub fn char_table_parent(&self, table: &Value) -> Value {
+        let id = match table {
+            Value::Record(r) => std::rc::Rc::as_ptr(r) as usize,
+            _ => return Value::Nil,
+        };
+        self.char_table_parents
+            .iter()
+            .find(|(k, _)| *k == id)
+            .map(|(_, v)| v.clone())
+            .unwrap_or(Value::Nil)
+    }
+
+    /// Set a char-table's parent (side-table; record layout untouched).
+    pub fn set_char_table_parent(&mut self, table: &Value, parent: Value) {
+        if let Value::Record(r) = table {
+            let id = std::rc::Rc::as_ptr(r) as usize;
+            self.char_table_parents.retain(|(k, _)| *k != id);
+            if !parent.is_nil() {
+                self.char_table_parents.push((id, parent));
+            }
+        }
+    }
+
+    /// Char-table defalt accessor (record identity → defalt value).
+    pub fn char_table_defalt(&self, table: &Value) -> Value {
+        let id = match table {
+            Value::Record(r) => std::rc::Rc::as_ptr(r) as usize,
+            _ => return Value::Nil,
+        };
+        self.char_table_defalts
+            .iter()
+            .find(|(k, _)| *k == id)
+            .map(|(_, v)| v.clone())
+            .unwrap_or(Value::Nil)
+    }
+
+    /// Set a char-table's defalt (side-table; record layout untouched).
+    pub fn set_char_table_defalt(&mut self, table: &Value, defalt: Value) {
+        if let Value::Record(r) = table {
+            let id = std::rc::Rc::as_ptr(r) as usize;
+            self.char_table_defalts.retain(|(k, _)| *k != id);
+            if !defalt.is_nil() {
+                self.char_table_defalts.push((id, defalt));
+            }
+        }
     }
 
     /// `standard-category-table': the shared category table, with
@@ -3523,7 +3849,7 @@ impl Interp {
 
     /// Send printed output to the current destination
     /// (`standard-output`, capture buffer, or the editor's sink).
-    pub fn write_output(&mut self, s: &str) {
+    pub fn write_output(&mut self, s: &str) -> Result<(), Flow> {
         self.write_output_to(s, &Value::Nil)
     }
 
@@ -3564,13 +3890,13 @@ impl Interp {
 
     /// Send printed output to STREAM (nil → `standard-output', t → the
     /// real output sink, buffer/marker → insert, function → call).
-    pub fn write_output_to(&mut self, s: &str, stream: &Value) {
+    pub fn write_output_to(&mut self, s: &str, stream: &Value) -> Result<(), Flow> {
         if let Some(c) = s.chars().last() {
             self.out_last_char = Some(c);
         }
         if self.capture_output {
             self.output_buffer.push_str(s);
-            return;
+            return Ok(());
         }
         // `standard-output` may name a buffer, a marker, a function, or t.
         let dest = match stream {
@@ -3596,19 +3922,22 @@ impl Interp {
                 }
             }
             // GNU calls a function print stream once per character.
-            Value::Lambda(_) => {
+            Value::Lambda(_) | Value::Subr(_) => {
                 for ch in s.chars() {
-                    let _ = self.apply(&dest, vec![Value::Int(ch as i128)]);
+                    self.apply(&dest, vec![Value::Int(ch as i128)])?;
+                }
+            }
+            Value::Cons(ref c) if {
+                let cb = c.borrow();
+                matches!(&cb.car, Value::Sym(s) if *s == self.intern("lambda") || *s == self.intern("closure"))
+            } => {
+                for ch in s.chars() {
+                    self.apply(&dest, vec![Value::Int(ch as i128)])?;
                 }
             }
             Value::Sym(sid) if sid != sym::T => {
                 for ch in s.chars() {
-                    let _ = self.apply(&dest, vec![Value::Int(ch as i128)]);
-                }
-            }
-            Value::Subr(_) => {
-                for ch in s.chars() {
-                    let _ = self.apply(&dest, vec![Value::Int(ch as i128)]);
+                    self.apply(&dest, vec![Value::Int(ch as i128)])?;
                 }
             }
             _ => {
@@ -3631,6 +3960,7 @@ impl Interp {
                 }
             }
         }
+        Ok(())
     }
 
     /// `message` — show a string in the echo area (and log to *Messages*).
