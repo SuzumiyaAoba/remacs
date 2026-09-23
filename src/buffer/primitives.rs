@@ -5055,7 +5055,7 @@ fn f_buffer_substring_with_bidi_context(i: &mut Interp, a: Vec<Value>) -> EvalRe
     ))
 }
 
-fn thing_bounds(i: &mut Interp, pred: fn(char) -> bool) -> Option<(usize, usize)> {
+fn thing_bounds(i: &mut Interp, pred: impl Fn(char) -> bool) -> Option<(usize, usize)> {
     let b = i.current_buffer_ref()?;
     let bb = b.borrow();
     let p = bb.point();
@@ -5082,7 +5082,12 @@ fn thing_bounds(i: &mut Interp, pred: fn(char) -> bool) -> Option<(usize, usize)
 }
 
 fn f_current_word(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
-    match thing_bounds(i, |c| c.is_alphanumeric() || c == '_') {
+    // GNU's `current-word' (simple.el) grabs syntaxes "w_" — word OR
+    // symbol constituents — via the buffer's syntax table.
+    let syn = crate::editor::syntax_table_entries(i);
+    match thing_bounds(i, |c| {
+        matches!(crate::editor::syntax_entry_code(syn.as_ref(), c), b'w' | b'_')
+    }) {
         Some((s, e)) => {
             let b = cur(i);
             Ok(Value::string(b.borrow().text.substring(s, e)))
