@@ -54,10 +54,16 @@ pub(crate) static SUBRS: &[Subr] = &[
         "window-next-buffers",
         0,
         1,
-        f_window_live_nil,
-        "Recently shown buffers (nil)."
+        f_window_next_buffers,
+        "List of buffers recently re-shown in WINDOW."
     ),
-    S!("window-prev-buffers", 0, 1, f_window_live_nil, ""),
+    S!(
+        "window-prev-buffers",
+        0,
+        1,
+        f_window_prev_buffers,
+        "List of buffers previously shown in WINDOW."
+    ),
     S!("window-normal-size", 0, 3, f_one_f, "Normal size (1.0)."),
     S!(
         "window-new-total",
@@ -784,6 +790,8 @@ fn f_split_window_internal(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         params: Value::Nil,
         margins: (0, 0),
         use_time: 0,
+        prev_buffers: Value::Nil,
+        next_buffers: Value::Nil,
         dead: false,
     };
     if horizontal {
@@ -1245,17 +1253,45 @@ fn f_set_window_combination_limit(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     }
 }
 
-/// `set-window-next-buffers' / `set-window-prev-buffers' —
-/// window-live-p check, then nil (no buffer history recorded).
-fn f_set_window_next_buffers(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    match &a[0] {
-        Value::Nil | Value::Window(_) => Ok(Value::Nil),
-        other => Err(i.wrong_type_mut("window-live-p", &other)),
-    }
+/// `window-next-buffers' — list of buffers recorded by
+/// `unrecord-window-buffer'/quit-restore; nil selects the selected
+/// window.
+fn f_window_next_buffers(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let w = match arg(&a, 0) {
+        Value::Nil => sel_window(i).ok_or_else(|| i.error("No window"))?,
+        other => win_of(i, &other)?,
+    };
+    Ok(w.borrow().next_buffers.clone())
 }
 
+/// `window-prev-buffers' — list of `(buffer start point)' entries
+/// for buffers previously shown in WINDOW.
+fn f_window_prev_buffers(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let w = match arg(&a, 0) {
+        Value::Nil => sel_window(i).ok_or_else(|| i.error("No window"))?,
+        other => win_of(i, &other)?,
+    };
+    Ok(w.borrow().prev_buffers.clone())
+}
+
+/// `set-window-next-buffers' — replace WINDOW's next-buffers list.
+fn f_set_window_next_buffers(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let w = match &a[0] {
+        Value::Nil => sel_window(i).ok_or_else(|| i.error("No window"))?,
+        other => win_of(i, other)?,
+    };
+    w.borrow_mut().next_buffers = arg(&a, 1);
+    Ok(Value::Nil)
+}
+
+/// `set-window-prev-buffers' — replace WINDOW's prev-buffers list.
 fn f_set_window_prev_buffers(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    f_set_window_next_buffers(i, a)
+    let w = match &a[0] {
+        Value::Nil => sel_window(i).ok_or_else(|| i.error("No window"))?,
+        other => win_of(i, other)?,
+    };
+    w.borrow_mut().prev_buffers = arg(&a, 1);
+    Ok(Value::Nil)
 }
 
 /// `set-window-margins' — window-live-p check (nil = selected

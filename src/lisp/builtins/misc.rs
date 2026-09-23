@@ -4930,27 +4930,32 @@ fn event_mod_list(i: &Interp, ev: &Value) -> Vec<String> {
             }
         }
         Value::Int(n) => {
+            // GNU orders modifiers of an integer event by ascending
+            // bit: A- s- H- S- C- M-.  The basic char (modifiers
+            // stripped) decides implicit modifiers: control chars
+            // 0-31 carry control, uppercase ASCII carries shift.
+            let mut bits =
+                *n & (CHAR_ALT | CHAR_CTL | CHAR_HYPER | CHAR_META | CHAR_SHIFT | CHAR_SUPER);
+            let c = *n & !bits;
+            if (0..=31).contains(&c) {
+                bits |= CHAR_CTL;
+            }
+            if (65..=90).contains(&c) {
+                bits |= CHAR_SHIFT;
+            }
             for (bit, name) in [
                 (CHAR_ALT, "alt"),
-                (CHAR_CTL, "control"),
-                (CHAR_HYPER, "hyper"),
-                (CHAR_META, "meta"),
-                (CHAR_SHIFT, "shift"),
                 (CHAR_SUPER, "super"),
+                (CHAR_HYPER, "hyper"),
+                (CHAR_SHIFT, "shift"),
+                (CHAR_CTL, "control"),
+                (CHAR_META, "meta"),
             ] {
-                if n & bit != 0 {
+                if bits & bit != 0 {
                     mods.push(name.to_string());
                 }
             }
-            // Control chars 0-31 carry an implicit control modifier.
-            if (0..=31).contains(n) {
-                mods.push("control".to_string());
-            }
-            // Uppercase ASCII carries an implicit shift modifier.
-            let c = n & !(CHAR_ALT | CHAR_CTL | CHAR_HYPER | CHAR_META | CHAR_SHIFT | CHAR_SUPER);
-            if (65..=90).contains(&c) {
-                mods.push("shift".to_string());
-            }
+            return mods;
         }
         Value::Sym(s) => {
             mods.extend(event_sym_elements(&i.symbol_name(*s)).1);
@@ -5079,7 +5084,7 @@ fn f_event_basic_type(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     Ok(event_basic(i, &a[0]))
 }
 
-fn f_event_convert_list(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+pub(crate) fn f_event_convert_list(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let items = a[0].list_to_vec().unwrap_or_default();
     if items.is_empty() {
         return Ok(Value::Nil);
@@ -7744,8 +7749,15 @@ fn f_pos_visible(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     };
     let ok = match w {
         Some(w) => {
-            let w = w.borrow();
-            pos >= w.start
+            // GNU computes visibility from the window's glyph
+            // matrix — in batch there is no display, so positions
+            // are never visible.
+            if i.noninteractive {
+                false
+            } else {
+                let w = w.borrow();
+                pos >= w.start
+            }
         }
         None => true,
     };

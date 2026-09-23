@@ -667,9 +667,40 @@ For more information about generalized variables, see Info node
          (macroexp-let2 macroexp-copyable-p x getter
            `(prog1 ,x ,(funcall setter `(cdr ,x))))))))
 
-(defmacro setq-local (var val)
-  "Make variable VAR buffer-local and set it to VAL."
-  (list 'set (list 'make-local-variable (list 'quote var)) val))
+;; GNU's `setq-local' takes VARIABLE/VALUE pairs (subr.el).
+(defmacro setq-local (&rest pairs)
+  "Make each VARIABLE local to current buffer and set it to corresponding VALUE.
+
+The arguments are variable/value pairs.  For each VARIABLE in a pair,
+make VARIABLE buffer-local in the current buffer and assign to it the
+corresponding VALUE of the pair.  The VARIABLEs are literal symbols
+and should not be quoted.
+
+The VALUE of the Nth pair is not computed until after the VARIABLE
+of the (N-1)th pair is set; thus, each VALUE can use the new VALUEs
+of VARIABLEs set by earlier pairs.
+
+The return value of the `setq-local' form is the VALUE of the last
+pair.
+
+\(fn [VARIABLE VALUE]...)"
+  (declare (debug setq))
+  (unless (evenp (length pairs))
+    (signal 'wrong-number-of-arguments (list 'setq-local (length pairs))))
+  (let ((expr nil))
+    (while pairs
+      (unless (symbolp (car pairs))
+        (error "Attempting to set a non-symbol: %s" (car pairs)))
+      ;; Can't use backquote here, it's too early in the bootstrap.
+      (setq expr
+            (cons
+             (list 'setq (car pairs)
+                   (list 'prog1
+                    (car (cdr pairs))
+                    (list 'make-local-variable (list 'quote (car pairs)))))
+             expr))
+      (setq pairs (cdr (cdr pairs))))
+    (macroexp-progn (nreverse expr))))
 
 ;; ---------- small functions ----------
 
@@ -3380,10 +3411,40 @@ spaced `tab-width' columns apart.")
   (interactive)
   (indent-relative t))
 
-(defun indent-according-to-mode ()
-  "Indent line in proper way for current major mode."
+(defvar indent-line-ignored-functions '(indent-relative
+                                        indent-relative-maybe
+                                        indent-relative-first-indent-point)
+  "Values that are ignored by `indent-according-to-mode'.")
+
+(defun indent-according-to-mode (&optional inhibit-widen)
+  "Indent line in proper way for current major mode.
+Normally, this is done by calling the function specified by the
+variable `indent-line-function'.  However, if the value of that
+variable is present in the `indent-line-ignored-functions' variable,
+handle it specially (since those functions are used for tabbing);
+in that case, indent by aligning to the previous non-blank line.
+
+Ignore restriction, unless the optional argument INHIBIT-WIDEN is
+non-nil."
   (interactive)
-  (funcall indent-line-function))
+  (save-restriction
+    (unless inhibit-widen
+      (widen))
+  (syntax-propertize (line-end-position))
+  (if (memq indent-line-function indent-line-ignored-functions)
+      ;; These functions are used for tabbing, but can't be used for
+      ;; indenting.  Replace with something ad-hoc.
+      (let ((column (save-excursion
+		      (beginning-of-line)
+		      (if (bobp) 0
+                        (beginning-of-line 0)
+                        (if (looking-at "[ \t]*$") 0
+                          (current-indentation))))))
+	(if (<= (current-column) (current-indentation))
+	    (indent-line-to column)
+	  (save-excursion (indent-line-to column))))
+    ;; The normal case.
+    (funcall indent-line-function))))
 
 (defun indent-region (start end &optional column)
   "Indent each nonblank line in the region using `indent-line-function'."
@@ -4746,6 +4807,38 @@ Leave one space or none, according to the context."
   (list (read-file-name prompt nil default-directory mustmatch)
 	t))
 
+;; GNU files.el (31.1): buffer creation for file visits — always makes
+;; a fresh buffer (generate-new-buffer uniquifies the name itself),
+;; then hands it to the uniquify advice for directory-style renaming.
+(defun create-file-buffer (filename)
+  "Create a suitably named buffer for visiting FILENAME, and return it.
+FILENAME (sans directory) is used unchanged if that name is free;
+otherwise the buffer is renamed according to
+`uniquify-buffer-name-style' to get an unused name.
+
+Emacs treats buffers whose names begin with a space as internal buffers.
+To avoid confusion when visiting a file whose name begins with a space,
+this function prepends a \"|\" to the final result if necessary."
+  (let* ((lastname (file-name-nondirectory (directory-file-name filename)))
+         (lastname (if (string= lastname "") ; FILENAME is a root directory
+                       filename lastname))
+         (lastname (cond
+                    ((not (and uniquify-trailing-separator-flag
+                               (file-directory-p filename)))
+                     lastname)
+                    ((eq uniquify-buffer-name-style 'forward)
+	             (file-name-as-directory lastname))
+	            ((eq uniquify-buffer-name-style 'reverse)
+	             (concat (or uniquify-separator "\\") lastname))
+                    (t lastname)))
+         (basename (if (string-prefix-p " " lastname)
+		       (concat "|" lastname)
+		     lastname))
+	 (buf (generate-new-buffer basename)))
+    (if (fboundp 'uniquify--create-file-buffer-advice)
+	(uniquify--create-file-buffer-advice buf filename basename))
+    buf))
+
 (defun file-name-history--add (file)
   "Add FILE to `file-name-history'."
   (add-to-history 'file-name-history (abbreviate-file-name file)))
@@ -4928,11 +5021,110 @@ The value is displayed in the echo area."
 	                           #'eval-expression--debug #'ignore)))
 	   (elisp--eval-defun)))))
 
+;; GNU window.el: `display-buffer' machinery.  `window-point-insertion-type'
+;; is a buffer-local C variable in GNU.
+(defvar window-point-insertion-type nil
+  "Insertion type of the marker used by `window-point-insertion-type'.")
+(make-variable-buffer-local 'window-point-insertion-type)
+
+(defun display-buffer-record-window (type window buffer)
+  "Record information for window used by `display-buffer'.
+WINDOW is the window used for or created by a buffer display
+action function.  BUFFER is the buffer to display.  Note that
+this function must be called before BUFFER is explicitly made
+WINDOW's buffer (although WINDOW may show BUFFER already).
+
+TYPE specifies the type of the calling operation and must be one
+of the symbols `reuse' (meaning that WINDOW exists already and
+will be used for displaying BUFFER), `window' (WINDOW was created
+on an already existing frame), `frame' (WINDOW was created on a
+new frame) or `tab' (WINDOW is the selected window and BUFFER was
+created in a new tab).
+
+This function installs or updates the `quit-restore' parameter of
+WINDOW."
+  (cond
+   ((eq type 'reuse)
+    (let ((quit-restore (window-parameter window 'quit-restore)))
+      (if (eq (window-buffer window) buffer)
+	  ;; WINDOW shows BUFFER already.  Update WINDOW's quit-restore
+	  ;; parameter, if any.
+	  (when (consp quit-restore)
+	    (setcar quit-restore 'same)
+	    ;; The selected-window might have changed in
+	    ;; between (Bug#20353).
+	    (unless (or (eq window (selected-window))
+			(eq window (nth 2 quit-restore)))
+	      (setcar (cddr quit-restore) (selected-window))))
+	;; WINDOW shows another buffer.
+	(with-current-buffer (window-buffer window)
+	  (set-window-parameter
+	   window (if quit-restore 'quit-restore-prev 'quit-restore)
+	   (list 'other
+		 ;; A quadruple of WINDOW's buffer, start, point and height.
+		 (list (current-buffer) (window-start window)
+		       ;; Preserve window-point-insertion-type (Bug#12855).
+		       (copy-marker
+			(window-point window) window-point-insertion-type)
+		       (if (window-combined-p window)
+                           (window-total-height window)
+			 (window-total-width window)))
+		 (selected-window) buffer))))))
+   ((eq type 'window)
+    ;; WINDOW has been created on an existing frame.
+    (set-window-parameter
+     window 'quit-restore
+     (list 'window 'window (selected-window) buffer)))
+   ((eq type 'frame)
+    ;; WINDOW has been created on a new frame.
+    (set-window-parameter
+     window 'quit-restore
+     (list 'frame 'frame (selected-window) buffer)))
+   ((eq type 'tab)
+    ;; WINDOW has been created on a new tab.
+    (set-window-parameter
+     window 'quit-restore
+     (list 'tab 'tab (selected-window) buffer)))))
+
+(defun window--display-buffer (buffer window type &optional alist)
+  "Display BUFFER in WINDOW.
+WINDOW must be a live window chosen by a buffer display action
+function for showing BUFFER.  TYPE tells whether WINDOW existed
+already before that action function was called or is a new window
+created by that function.  ALIST is a buffer display action alist
+as compiled by `display-buffer'.
+
+Return WINDOW if BUFFER and WINDOW are live."
+  (when (and (buffer-live-p buffer) (window-live-p window))
+    (display-buffer-record-window type window buffer)
+    (unless (eq buffer (window-buffer window))
+      ;; Unless WINDOW already shows BUFFER reset its dedicated flag.
+      (set-window-dedicated-p window nil)
+      (set-window-buffer window buffer))
+    (when (memq type '(window frame tab))
+      (set-window-prev-buffers window nil))
+    window))
+
 (defun display-buffer (buffer &optional action)
-  "Make BUFFER visible in a window without selecting it."
-  (let ((w (or (get-buffer-window buffer) (selected-window))))
-    (set-window-buffer w buffer))
-  buffer)
+  "Make BUFFER visible in a window without selecting it.
+Return the window used to display BUFFER, like GNU's
+`window--display-buffer' callers expect."
+  (let* ((buffer (get-buffer-create buffer))
+         ;; `display-buffer-reuse-window': a window already showing
+         ;; BUFFER (selected window first, then any frame window).
+         (window (get-buffer-window buffer)))
+    (unless window
+      ;; `display-buffer-in-previous-window': a window that showed
+      ;; BUFFER before.
+      (catch 'prev
+	(dolist (w (window-list nil 'no-mini))
+	  (when (assq buffer (window-prev-buffers w))
+	    (setq window w)
+	    (throw 'prev nil)))))
+    (if window
+	(window--display-buffer buffer window 'reuse)
+      ;; `display-buffer-below-selected': split a new window.
+      (window--display-buffer buffer (split-window) 'window))))
 
 ;; ---------- subr.el-level utilities ----------
 (defalias 'cl-subseq #'seq-subseq)
@@ -8618,6 +8810,17 @@ Also see `completion-category-overrides' and `completion-category-get'.")
                                              &optional when access-type)
   "Make the byte-compiler warn that OBSOLETE-NAME is obsolete."
   (put obsolete-name 'byte-obsolete-variable
+       (purecopy (list current-name when access-type))))
+
+(defun make-obsolete (obsolete-name current-name when &optional access-type)
+  "Make the byte-compiler warn that OBSOLETE-NAME is obsolete.
+The warning will say that CURRENT-NAME should be used instead.
+If CURRENT-NAME is a string, that is the `replacement' text.
+WHEN should be a string indicating when the function
+was first made obsolete, for example a date or a release number.
+ACCESS-TYPE if nonnil should specify the kind of access that will trigger
+  obsolescence warnings; it can be either `get' or `set'."
+  (put obsolete-name 'byte-obsolete-info
        (purecopy (list current-name when access-type))))
 
 ;; GNU defaults: (basic partial-completion emacs22).
@@ -19875,15 +20078,21 @@ On error, location of point is unspecified."
   (put obsolete-name 'byte-obsolete-function t)
   obsolete-name)
 
-(defun provided-mode-derived-p (mode &rest modes)
-  "Non-nil if MODE is a major mode derived from one of MODES."
-  (let ((m mode)
-        (found nil))
-    (while (and m (not found))
-      (if (memq m modes)
-          (setq found t)
-        (setq m (get m 'derived-mode-parent))))
-    found))
+;; GNU subr.el: the variable-alias counterpart.  The byte-compiler's
+;; `byte-obsolete-variable' triple gets (CURRENT WHEN ACCESS-TYPE); an
+;; older alias defined before ACCESS-TYPE existed defaults to `set'.
+(defun define-obsolete-variable-alias (obsolete-name current-name
+                                                     &optional when docstring)
+  "Make OBSOLETE-NAME a variable alias for CURRENT-NAME."
+  (let ((where (get obsolete-name 'byte-obsolete-variable)))
+    (put obsolete-name 'byte-obsolete-variable
+         (purecopy (list current-name when
+                         (if (and where (symbolp (car where)))
+                             'set
+                           (nth 2 where)))))
+    (defvaralias obsolete-name current-name docstring)
+    (put obsolete-name 'saved-var-name current-name)
+    obsolete-name))
 
 (defvar file-name-version-regexp
   "\\(?:~\\|\\.~[-[:alnum:]:#@^._]+\\(?:~[[:digit:]]+\\)?~\\)"
@@ -26223,6 +26432,2927 @@ An interface to `buffer-face-mode' which uses the `variable-pitch' face."
   (interactive (list (or current-prefix-arg 'toggle)))
   (buffer-face-mode-invoke 'variable-pitch (or arg t)
 			   (called-interactively-p 'interactive)))
+
+;; ---------- window-swap-states ----------
+
+;; GNU's window-normalize-window (window.el) takes a LIVE-ONLY arg; it
+;; shadows the 1-arity subr.
+(defun window-normalize-window (window &optional live-only)
+  "Return window specified by WINDOW.
+If WINDOW is nil, return the selected window.  Otherwise, if
+WINDOW is a live or an internal window, return WINDOW; if
+LIVE-ONLY is non-nil, return WINDOW for a live window only.
+Otherwise, signal an error.
+
+This function is commonly used to process the (usually optional)
+\"WINDOW\" argument of window related functions where nil stands
+for the selected window."
+  (cond
+   ((null window)
+    (selected-window))
+   (live-only
+    (if (window-live-p window)
+	window
+      (error "%s is not a live window" window)))
+   ((window-valid-p window)
+    window)
+   (t
+    (error "%s is not a valid window" window))))
+
+;; GNU tracks a preserved window size across resize operations; remacs
+;; doesn't yet, so this reports nil like GNU does when nothing is
+;; preserved.
+(defun window-preserved-size (&optional window horizontal)
+  "Return preserved size of WINDOW."
+  nil)
+
+(defun window-swap-states (&optional window-1 window-2 size)
+  "Swap the states of live windows WINDOW-1 and WINDOW-2.
+WINDOW-1 must specify a live window and defaults to the selected
+one.  WINDOW-2 must specify a live window and defaults to the
+window following WINDOW-1 in the cyclic ordering of windows,
+excluding minibuffer windows and including live windows on all
+visible frames.
+
+Optional argument SIZE non-nil means to try swapping the sizes of
+WINDOW-1 and WINDOW-2 as well.  A value of `height' means to swap
+heights only, a value of `width' means to swap widths only, while
+t means to swap both widths and heights, if possible.  Frames are
+not resized by this function."
+  (interactive)
+  (setq window-1 (window-normalize-window window-1 t))
+  (if window-2
+      (unless (window-live-p window-2)
+        (error "%s is not a live window" window-2))
+    (setq window-2 (next-window window-1 'nomini 'visible)))
+  (unless (eq window-1 window-2)
+    (let* ((height (memq size '(t height)))
+           (width (memq size '(t width)))
+           (state-1 (window-state-get window-1))
+           (width-1 (and width (window-text-width window-1 t)))
+           (height-1 (and height (window-text-height window-1 t)))
+           (state-2 (window-state-get window-2))
+           (width-2 (and width (window-text-width window-2 t)))
+           (height-2 (and height (window-text-height window-2 t)))
+           old preserved)
+      ;; Swap basic states.
+      (window-state-put state-1 window-2 t)
+      (window-state-put state-2 window-1 t)
+      ;; Swap overlays with `window' property.
+      (with-current-buffer (window-buffer window-1)
+        (dolist (overlay (overlays-in (point-min) (point-max)))
+          (let ((window (overlay-get overlay 'window)))
+            (cond
+             ((not window))
+             ((eq window window-1)
+              (overlay-put overlay 'window window-2))
+             ((eq window window-2)
+              (overlay-put overlay 'window window-1))))))
+      (unless (eq (window-buffer window-1) (window-buffer window-2))
+        (with-current-buffer (window-buffer window-2)
+          (dolist (overlay (overlays-in (point-min) (point-max)))
+            (let ((window (overlay-get overlay 'window)))
+              (cond
+               ((not window))
+               ((eq window window-1)
+                (overlay-put overlay 'window window-2))
+               ((eq window window-2)
+                (overlay-put overlay 'window window-1)))))))
+      ;; Try to swap window sizes.
+      (when size
+        (unless (= (setq old (window-text-width window-1 t)) width-2)
+          (window-resize-no-error window-1 (- width-2 old) t t t))
+        (unless (= (setq old (window-text-width window-2 t)) width-1)
+          (setq preserved (window-preserved-size window-1 t))
+          (window-preserve-size window-1 t t)
+          (window-resize-no-error window-2 (- width-1 old) t t t)
+          (window-preserve-size window-1 t preserved))
+        (unless (= (setq old (window-text-height window-1 t)) height-2)
+          (window-resize-no-error window-1 (- height-2 old) nil t t))
+        (unless (= (setq old (window-text-height window-2 t)) height-1)
+          (setq preserved (window-preserved-size window-1))
+          (window-preserve-size window-1 nil t)
+          (window-resize-no-error window-2 (- height-1 old) nil t t)
+          (window-preserve-size window-1 nil preserved))))))
+
+;; ---------- basic faces needed by help/button ----------
+
+(defface shadow
+  '((((class color grayscale) (min-colors 88) (background light))
+     :foreground "grey50")
+    (((class color grayscale) (min-colors 88) (background dark))
+     :foreground "grey70")
+    (((class color) (min-colors 8) (background light))
+     :foreground "green")
+    (((class color) (min-colors 8) (background dark))
+     :foreground "yellow"))
+  "Basic face for shadowed text."
+  :group 'basic-faces
+  :version "22.1")
+
+(defface link
+  '((((class color) (min-colors 88) (background light))
+     :foreground "RoyalBlue3" :underline t)
+    (((class color) (background light))
+     :foreground "blue" :underline t)
+    (((class color) (min-colors 88) (background dark))
+     :foreground "cyan1" :underline t)
+    (((class color) (background dark))
+     :foreground "cyan" :underline t)
+    (t :inherit underline))
+  "Basic face for unvisited links."
+  :group 'basic-faces
+  :version "22.1")
+
+(defface link-visited
+  '((default :inherit link)
+    (((class color) (background light)) :foreground "magenta4")
+    (((class color) (background dark)) :foreground "violet"))
+  "Basic face for visited links."
+  :group 'basic-faces
+  :version "22.1")
+
+(defface highlight
+  '((((class color) (min-colors 88) (background light))
+     :background "darkseagreen2")
+    (((class color) (min-colors 88) (background dark))
+     :background "darkolivegreen")
+    (((class color) (min-colors 16) (background light))
+     :background "darkseagreen2")
+    (((class color) (min-colors 16) (background dark))
+     :background "darkolivegreen")
+    (((class color) (min-colors 8))
+     :background "green" :foreground "black")
+    (t :inverse-video t))
+  "Basic face for highlighting."
+  :group 'basic-faces)
+
+(defface tool-bar
+  '((default
+     :box (:line-width 1 :style released-button)
+     :foreground "black")
+    (((type haiku))
+     :foreground "B_MENU_ITEM_TEXT_COLOR"
+     :background "B_MENU_BACKGROUND_COLOR")
+    (((type x w32 ns pgtk android) (class color))
+     :background "grey75")
+    (((type x) (class mono))
+     :background "grey"))
+  "Basic tool-bar face."
+  :version "21.1"
+  :group 'basic-faces)
+
+(defface help-key-binding
+  '((((class color) (min-colors 88) (background light))
+     :background "grey96" :foreground "DarkBlue"
+     :box (:line-width (-1 . -1) :color "grey80") :inherit fixed-pitch)
+    (((class color) (min-colors 88) (background dark))
+     :background "grey19" :foreground "LightBlue"
+     :box (:line-width (-1 . -1) :color "grey35") :inherit fixed-pitch)
+    (((class color grayscale) (background light))
+     :background "grey90" :inherit fixed-pitch)
+    (((class color grayscale) (background dark))
+     :background "grey25" :inherit fixed-pitch)
+    (t :background "grey90" :inherit fixed-pitch))
+  "Default face for displaying key bindings in *Help* buffers."
+  :group 'help
+  :version "30.1")
+
+;; ---------- menu/tool-bar plumbing ----------
+
+(defvar menu-bar-separator '("--")
+  "Separator for menus.")
+
+;; GNU's `define-key-after' is a C subr; this is a Lisp port for our
+;; alist keymaps (used by tool-bar and easymenu helpers).
+(defun define-key-after (keymap key binding &optional after)
+  "Define a binding in KEYMAP for KEY, after the binding for AFTER.
+This is like `define-key' but it puts the new binding right after the
+binding of event AFTER.  If AFTER is t or omitted, the binding goes at
+the beginning of the list.  If AFTER is non-nil and there is no binding
+for AFTER in KEYMAP, the new binding goes at the end of the list.
+BINDING nil means remove the binding for KEY."
+  (unless (keymapp keymap)
+    (signal 'wrong-type-argument (list 'keymapp keymap)))
+  ;; GNU accepts a 1-element vector (e.g. tool-bar.el passes [quit]).
+  (when (vectorp key)
+    (setq key (aref key 0)))
+  (let* ((tail (cdr keymap))
+         ;; Skip the optional prompt string: the bindings are the cdr
+         ;; after it.
+         (bindings (if (and (consp tail) (stringp (car tail)))
+                       (cdr tail)
+                     tail))
+         ;; `head' is the cons cell whose cdr is BINDINGS.
+         (head (if (and (consp tail) (stringp (car tail))) tail keymap))
+         (newpair (cons key binding))
+         aftercell)
+    ;; Remove any existing binding for KEY; find the cell holding AFTER.
+    (let ((prev head) (rest bindings))
+      (while (consp rest)
+        (let ((item (car rest)))
+          (if (and (consp item) (equal (car item) key))
+              ;; Delete this element.
+              (progn
+                (setcdr prev (cdr rest))
+                (setq rest (cdr prev)))
+            (when (and (consp item) (equal (car item) after))
+              (setq aftercell rest))
+            (setq prev rest
+                  rest (cdr rest)))))
+      (when binding
+        (cond
+         ((null after)
+          ;; Insert at the beginning of the binding list.
+          (setcdr head (cons newpair (cdr head))))
+         (aftercell
+          ;; Insert right after AFTER's cell.
+          (setcdr aftercell (cons newpair (cdr aftercell))))
+         (t
+          ;; AFTER not found: append at the end.
+          (setcdr prev (cons newpair nil))))))
+    binding))
+
+(defvar tool-bar-map (make-sparse-keymap)
+  "Keymap for the global tool bar.")
+
+(defvar tool-bar-keymap-cache (make-hash-table :test 'equal)
+  "Hash table holding cached tool bar contents.")
+
+(defvar secondary-tool-bar-map nil
+  "Keymap for the secondary tool bar.")
+
+(defvar tool-bar-separator-image-expression nil
+  "Expression evaluating to the image spec for tool-bar separators.")
+
+(defun tool-bar--flush-cache ()
+  "Remove all cached entries that refer to the current `tool-bar-map'."
+  (let ((id (sxhash-eq tool-bar-map))
+        (secondary-id (and secondary-tool-bar-map
+                           (sxhash-eq secondary-tool-bar-map)))
+        (entries nil))
+    (maphash (lambda (k _)
+               (when (or (equal (cdr k) id)
+                         (equal (cdr k) secondary-id))
+                 (push k entries)))
+             tool-bar-keymap-cache)
+    (dolist (k entries)
+      (remhash k tool-bar-keymap-cache))))
+
+(defun tool-bar--image-expression (icon)
+  "Return an expression that evaluates to an image spec for ICON."
+  (let* ((fg (face-attribute 'tool-bar :foreground))
+	 (bg (face-attribute 'tool-bar :background))
+	 (colors (nconc (if (eq fg 'unspecified) nil (list :foreground fg))
+			(if (eq bg 'unspecified) nil (list :background bg))))
+	 (xpm-spec (list :type 'xpm :file (concat icon ".xpm")))
+	 (xpm-lo-spec (list :type 'xpm :file
+			    (concat "low-color/" icon ".xpm")))
+	 (pbm-spec (append (list :type 'pbm :file
+                                 (concat icon ".pbm")) colors))
+	 (xbm-spec (append (list :type 'xbm :file
+                                 (concat icon ".xbm")) colors)))
+    `(find-image ',(list xpm-lo-spec xpm-spec pbm-spec xbm-spec))))
+
+(defun tool-bar-local-item (icon def key map &rest props)
+  "Add an item to the tool bar in map MAP.
+ICON names the image, DEF is the key definition and KEY is a symbol
+for the fake function key in the menu keymap.  Remaining arguments
+PROPS are additional items to add to the menu item specification.  See
+Info node `(elisp)Tool Bar'.  Items are added from left to right.
+
+ICON is the base name of a file containing the image to use.  The
+function will first try to use low-color/ICON.xpm if `display-color-cells'
+is less or equal to 256, then ICON.xpm, then ICON.pbm, and finally
+ICON.xbm, using `find-image'."
+  (let* ((image-exp (tool-bar--image-expression icon)))
+    (define-key-after map (vector key)
+      `(menu-item ,(symbol-name key) ,def :image ,image-exp ,@props))
+    (tool-bar--flush-cache)
+    (force-mode-line-update)))
+
+(defun tool-bar-local-item-from-menu (command icon in-map &optional from-map &rest props)
+  "Define local tool bar binding for COMMAND using the given ICON.
+This makes a binding for COMMAND in IN-MAP, copying its binding from
+the menu bar in FROM-MAP (which defaults to `global-map'), but
+modifies the binding by adding an image specification for ICON.  It
+finds ICON just like `tool-bar-add-item'.  PROPS are additional
+properties to add to the binding.
+
+FROM-MAP must contain appropriate binding for `[menu-bar]' which
+holds a keymap."
+  (unless from-map
+    (setq from-map global-map))
+  (let* ((menu-bar-map (lookup-key from-map [menu-bar]))
+	 (keys (where-is-internal command menu-bar-map))
+	 (image-exp (tool-bar--image-expression icon))
+	 submap key)
+    ;; We'll pick up the last valid entry in the list of keys if
+    ;; there's more than one.
+    ;; FIXME: Aren't they *all* "valid"??  --Stef
+    (dolist (k keys)
+      ;; We're looking for a binding of the command in a submap of
+      ;; the menu bar map, so the key sequence must be two or more
+      ;; long.
+      (if (and (vectorp k)
+               (> (length k) 1))
+          (let ((m (lookup-key menu-bar-map (substring k 0 -1)))
+                ;; Last element in the bound key sequence:
+                (kk (aref k (1- (length k)))))
+            (if (and (keymapp m)
+                     (symbolp kk))
+                (setq submap m
+                      key kk)))))
+    (when (and (symbolp submap) (boundp submap))
+      (setq submap (eval submap)))
+    (let ((defn (assq key (cdr submap))))
+      (if (eq (cadr defn) 'menu-item)
+          (define-key-after in-map (vector key)
+            (append (cdr defn) (list :image image-exp) props))
+        (setq defn (cdr defn))
+        (define-key-after in-map (vector key)
+          (let ((rest (cdr defn)))
+            ;; If the rest of the definition starts
+            ;; with a list of menu cache info, get rid of that.
+            (if (and (consp rest) (consp (car rest)))
+                (setq rest (cdr rest)))
+            (append `(menu-item ,(car defn) ,rest)
+                    (list :image image-exp) props))))
+      (tool-bar--flush-cache)
+      (force-mode-line-update))))
+
+;; ---------- easymenu ----------
+
+(defsubst easy-menu-intern (s)
+  (if (stringp s) (intern s) s))
+
+(defmacro easy-menu-define (symbol maps doc menu)
+  "Define a pop-up menu and/or menu bar menu specified by MENU.
+If SYMBOL is non-nil, define SYMBOL as a function to pop up the
+submenu defined by MENU, with DOC as its doc string.  Also define
+SYMBOL as a variable whose value is the menu.
+
+MAPS, if non-nil, should be a keymap or a list of keymaps; add
+the submenu defined by MENU to the keymap or each of the keymaps,
+as a top-level menu bar item.
+
+The first element of MENU must be a string.  It is the menu bar
+item name.  The rest of the elements in MENU are menu items."
+  (declare (indent defun) (debug (symbolp body)) (doc-string 3))
+  `(progn
+     ,(if symbol `(defvar ,symbol nil ,doc))
+     (easy-menu-do-define (quote ,symbol) ,maps ,doc ,menu)))
+
+(defun easy-menu-binding (menu &optional item-name)
+  "Return a binding suitable to pass to `define-key'.
+This is expected to be bound to a mouse event."
+  (let ((props (if (symbolp menu)
+                   (prog1 (get menu 'menu-prop)
+                     (setq menu (symbol-function menu))))))
+    (cons 'menu-item
+          (cons (if (eq :label (car props))
+                    (prog1 (cadr props)
+                      (setq props (cddr props)))
+                  (or item-name
+                      (if (keymapp menu)
+                          (keymap-prompt menu))
+                      ""))
+                (cons menu props)))))
+
+(defun easy-menu-do-define (symbol maps doc menu)
+  (let ((keymap (easy-menu-create-menu (car menu) (cdr menu))))
+    (when symbol
+      (set symbol keymap)
+      (defalias symbol
+	(lambda (event) (:documentation doc) (interactive "@e")
+	   (x-popup-menu event
+			 (or (and (symbolp keymap)
+				  (funcall
+				   (or (plist-get (get keymap 'menu-prop)
+						  :filter)
+                                       #'identity)
+				   (symbol-function keymap)))
+			     keymap))))
+      (function-put symbol 'completion-predicate #'ignore))
+    (dolist (map (if (keymapp maps) (list maps) maps))
+      (define-key map
+        (vector 'menu-bar (if (symbolp (car menu))
+                              (car menu)
+                            ;; If a string, then use the downcased
+                            ;; version for greater backwards compatibility.
+                            (intern (downcase (car menu)))))
+        (easy-menu-binding keymap (car menu))))))
+
+(defun easy-menu-filter-return (menu &optional name)
+ "Convert MENU to the right thing to return from a menu filter.
+MENU is a menu as computed by `easy-menu-define' or `easy-menu-create-menu' or
+a symbol whose value is such a menu.
+In Emacs a menu filter must return a menu (a keymap), in XEmacs a filter must
+return a menu items list (without menu name and keywords).
+This function returns the right thing in the two cases.
+If NAME is provided, it is used for the keymap."
+ (cond
+  ((and (not (keymapp menu)) (consp menu))
+   ;; If it's a cons but not a keymap, then it can't be right
+   ;; unless it's an XEmacs menu.
+   (setq menu (easy-menu-create-menu (or name "") menu)))
+  ((vectorp menu)
+   ;; It's just a menu entry.
+   (setq menu (cdr (easy-menu-convert-item menu)))))
+ menu)
+
+(defvar easy-menu-avoid-duplicate-keys t
+  "Dynamically scoped var to register already used keys in a menu.
+If it holds a list, this is expected to be a list of keys already seen in the
+menu we're processing.  Else it means we're not processing a menu.")
+
+(defun easy-menu-create-menu (menu-name menu-items)
+  "Create a menu called MENU-NAME with items described in MENU-ITEMS.
+MENU-NAME is a string, the name of the menu.  MENU-ITEMS is a list of items
+possibly preceded by keyword pairs as described in `easy-menu-define'."
+  (let ((menu (make-sparse-keymap menu-name))
+        (easy-menu-avoid-duplicate-keys nil)
+	prop keyword label enable filter visible help)
+    ;; Look for keywords.
+    (while (and menu-items
+		(cdr menu-items)
+		(keywordp (setq keyword (car menu-items))))
+      (let ((arg (cadr menu-items)))
+        (setq menu-items (cddr menu-items))
+        (pcase keyword
+          (:filter
+           (setq filter (lambda (menu)
+                          (easy-menu-filter-return (funcall arg menu)
+                                                   menu-name))))
+          ((or :enable :active) (setq enable (or arg ''nil)))
+          (:label (setq label arg))
+          (:help (setq help arg))
+          ((or :included :visible) (setq visible (or arg ''nil))))))
+    (if (equal visible ''nil)
+	nil				; Invisible menu entry, return nil.
+      (if (and visible (not (easy-menu-always-true-p visible)))
+	  (setq prop (cons :visible (cons visible prop))))
+      (if (and enable (not (easy-menu-always-true-p enable)))
+	  (setq prop (cons :enable (cons enable prop))))
+      (if filter (setq prop (cons :filter (cons filter prop))))
+      (if help (setq prop (cons :help (cons help prop))))
+      (if label (setq prop (cons :label (cons label prop))))
+      (setq menu (if filter
+                     ;; The filter expects the menu in its XEmacs form and the
+                     ;; pre-filter form will only be passed to the filter
+                     ;; anyway, so we'd better not convert it at all (it will
+                     ;; be converted on the fly by easy-menu-filter-return).
+                     menu-items
+                   (append menu (mapcar #'easy-menu-convert-item menu-items))))
+      (when prop
+	(setq menu (easy-menu-make-symbol menu 'noexp))
+	(put menu 'menu-prop prop))
+      menu)))
+
+;; Known button types.
+(defvar easy-menu-button-prefix
+  '((radio . :radio) (toggle . :toggle)))
+
+(defvar easy-menu-converted-items-table (make-hash-table :test 'equal))
+
+(defun easy-menu-convert-item (item)
+  "Memoize the value returned by `easy-menu-convert-item-1' called on ITEM.
+This makes key-shortcut-caching work a *lot* better when this
+conversion is done from within a filter.
+This also helps when the NAME of the entry is recreated each time:
+since the menu is built and traversed separately, the lookup
+would always fail because the key is `equal' but not `eq'."
+  (let* ((cache (gethash item easy-menu-converted-items-table))
+	 (result (or cache (easy-menu-convert-item-1 item)))
+	 (key (car-safe result)))
+    (when (and (listp easy-menu-avoid-duplicate-keys) (symbolp key))
+      ;; Merging multiple entries with the same name is sometimes what we
+      ;; want, but not when the entries are actually different (e.g. same
+      ;; name but different :suffix as seen in cal-menu.el) and appear in
+      ;; the same menu.  So we try to detect and resolve conflicts.
+      (while (memq key easy-menu-avoid-duplicate-keys)
+	;; We need to use some distinct object, ideally a symbol, ideally
+	;; related to the `name'.  Uninterned symbols do not work (they
+	;; are apparently turned into strings and re-interned later on).
+	(setq key (intern (format "%s-%d" (symbol-name key)
+				  (length easy-menu-avoid-duplicate-keys))))
+	(setq result (cons key (cdr result))))
+      (push key easy-menu-avoid-duplicate-keys))
+
+    (unless cache (puthash item result easy-menu-converted-items-table))
+    result))
+
+(defun easy-menu-convert-item-1 (item)
+  "Parse an item description and convert it to a menu keymap element.
+ITEM defines an item as in `easy-menu-define'."
+  (let (name command label prop remove)
+    (cond
+     ((stringp item)			; An item or separator.
+      (setq label item))
+     ((consp item)			; A sub-menu
+      (setq label (setq name (car item)))
+      (setq command (cdr item))
+      (if (not (keymapp command))
+	  (setq command (easy-menu-create-menu name command)))
+      (if (null command)
+	  ;; Invisible menu item. Don't insert into keymap.
+	  (setq remove t)
+	(when (and (symbolp command) (setq prop (get command 'menu-prop)))
+	  (when (eq :label (car prop))
+	    (setq label (cadr prop))
+	    (setq prop (cddr prop)))
+	  (setq command (symbol-function command)))))
+     ((vectorp item)			; An item.
+      (let* ((ilen (length item))
+	     (active (if (> ilen 2) (or (aref item 2) ''nil) t))
+	     (no-name (not (symbolp (setq command (aref item 1)))))
+	     cache cache-specified)
+	(setq label (setq name (aref item 0)))
+	(if no-name (setq command (easy-menu-make-symbol command)))
+	(if (keywordp active)
+	    (let ((count 2)
+		  keyword arg suffix visible style selected keys)
+	      (setq active nil)
+	      (while (> ilen count)
+		(setq keyword (aref item count))
+		(setq arg (aref item (1+ count)))
+		(setq count (+ 2 count))
+		(pcase keyword
+                  ((or :included :visible) (setq visible (or arg ''nil)))
+                  (:key-sequence (setq cache arg cache-specified t))
+                  (:keys (setq keys arg no-name nil))
+                  (:label (setq label arg))
+                  ((or :active :enable) (setq active (or arg ''nil)))
+                  (:help (setq prop (cons :help (cons arg prop))))
+                  (:suffix (setq suffix arg))
+                  (:style (setq style arg))
+                  (:selected (setq selected (or arg ''nil)))))
+	      (if suffix
+		  (setq label
+			(if (stringp suffix)
+			    (if (stringp label) (concat label " " suffix)
+			      `(concat ,label ,(concat " " suffix)))
+			  (if (stringp label)
+			      `(concat ,(concat label " ") ,suffix)
+			    `(concat ,label " " ,suffix)))))
+	      (cond
+	       ((eq style 'button)
+		(setq label (if (stringp label) (concat "[" label "]")
+			      `(concat "[" ,label "]"))))
+	       ((and selected
+		     (setq style (assq style easy-menu-button-prefix)))
+		(setq prop (cons :button
+				 (cons (cons (cdr style) selected) prop)))))
+	      (when (stringp keys)
+                (if (string-match "^[^\\]*\\(\\\\\\[\\([^]]+\\)]\\)[^\\]*$"
+                                  keys)
+                    (let ((prefix
+                           (if (< (match-beginning 0) (match-beginning 1))
+                               (substring keys 0 (match-beginning 1))))
+                          (postfix
+                           (if (< (match-end 1) (match-end 0))
+                               (substring keys (match-end 1))))
+                          (cmd (intern (match-string 2 keys))))
+                      (setq keys (and (or prefix postfix)
+                                      (cons prefix postfix)))
+                      (setq keys
+                            (and (or keys (not (eq command cmd)))
+                                 (cons cmd keys))))
+                  (setq cache-specified nil))
+                (if keys (setq prop (cons :keys (cons keys prop)))))
+	      (if (and visible (not (easy-menu-always-true-p visible)))
+		  (if (equal visible ''nil)
+		      ;; Invisible menu item. Don't insert into keymap.
+		      (setq remove t)
+		    (setq prop (cons :visible (cons visible prop)))))))
+	(if (and active (not (easy-menu-always-true-p active)))
+	    (setq prop (cons :enable (cons active prop))))
+	(if (and (or no-name cache-specified)
+		 (or (null cache) (stringp cache) (vectorp cache)))
+	    (setq prop (cons :key-sequence (cons cache prop))))))
+     (t (error "Invalid menu item in easymenu")))
+    ;; `intern' the name so as to merge multiple entries with the same name.
+    ;; It also makes it easier/possible to lookup/change menu bindings
+    ;; via keymap functions.
+    (let ((key (easy-menu-intern name)))
+      (cons key
+            (and (not remove)
+                 (if (and (stringp label)
+                          (seq-every-p (lambda (c) (char-equal c ?-)) label))
+                     menu-bar-separator
+                   (cons 'menu-item
+                         (cons label
+                               (and name
+                                    (cons command prop))))))))))
+
+(defun easy-menu-define-key (menu key item &optional before)
+  "Add binding in MENU for KEY => ITEM.  Similar to `define-key-after'.
+If KEY is not nil then delete any duplications.
+If ITEM is nil, then delete the definition of KEY.
+
+Optional argument BEFORE is nil or a key in MENU.  If BEFORE is not nil,
+put binding before the item in MENU named BEFORE; otherwise,
+if a binding for KEY is already present in MENU, just change it;
+otherwise put the new binding last in MENU.
+BEFORE can be either a string (menu item name) or a symbol
+\(the fake function key for the menu item).
+KEY does not have to be a symbol, and comparison is done with equal."
+  (if (symbolp menu) (setq menu (indirect-function menu)))
+  (let ((inserted (null item))		; Fake already inserted.
+	tail done)
+    (while (not done)
+      (cond
+       ((or (setq done (or (null (cdr menu)) (keymapp (cdr menu))))
+	    (and before (easy-menu-name-match before (cadr menu))))
+	;; If key is nil, stop here, otherwise keep going past the
+	;; inserted element so we can delete any duplications that come
+	;; later.
+	(if (null key) (setq done t))
+	(unless inserted		; Don't insert more than once.
+	  (setcdr menu (cons (cons key item) (cdr menu)))
+	  (setq inserted t)
+	  (setq menu (cdr menu)))
+	(setq menu (cdr menu)))
+       ((and key (equal (car-safe (cadr menu)) key))
+	(if (or inserted		; Already inserted or
+		(and before		;  wanted elsewhere and
+		     (setq tail (cddr menu)) ; not last item and not
+		     (not (keymapp tail))
+		     (not (easy-menu-name-match
+			   before (car tail))))) ; in position
+	    (setcdr menu (cddr menu))	; Remove item.
+	  (setcdr (cadr menu) item)	; Change item.
+	  (setq inserted t)
+	  (setq menu (cdr menu))))
+       (t (setq menu (cdr menu)))))))
+
+(defun easy-menu-name-match (name item)
+  "Return t if NAME is the name of menu item ITEM.
+NAME can be either a string, or a symbol.
+ITEM should be a keymap binding of the form (KEY . MENU-ITEM)."
+  (if (consp item)
+      (if (symbolp name)
+	  (eq (car-safe item) name)
+	(if (stringp name)
+	    ;; Match against the text that is displayed to the user.
+	    (or (condition-case nil (member-ignore-case name item)
+		  (error nil))		;`item' might not be a proper list.
+		;; Also check the string version of the symbol name,
+		;; for backwards compatibility.
+		(eq (car-safe item) (intern name)))))))
+
+(defun easy-menu-always-true-p (x)
+  "Return true if form X never evaluates to nil."
+  (if (consp x) (and (eq (car x) 'quote) (cadr x))
+    (or (eq x t) (not (symbolp x)))))
+
+(defvar easy-menu-item-count 0)
+
+(defun easy-menu-make-symbol (callback &optional noexp)
+  "Return a unique symbol with CALLBACK as function value.
+When non-nil, NOEXP indicates that CALLBACK cannot be an expression
+\(i.e. does not need to be turned into a function)."
+  (let ((command
+	 (make-symbol (format "menu-function-%d" easy-menu-item-count))))
+    (setq easy-menu-item-count (1+ easy-menu-item-count))
+    (fset command
+	  (if (or (keymapp callback) (commandp callback)
+                  ;; `functionp' is probably not needed.
+                  (functionp callback) noexp)
+              callback
+	    (eval `(lambda () (interactive) ,callback) t)))
+    command))
+
+(defun easy-menu-change (path name items &optional before map)
+  "Change menu found at PATH as item NAME to contain ITEMS."
+  (easy-menu-add-item map path (easy-menu-create-menu name items) before))
+
+(defalias 'easy-menu-remove #'ignore)
+(make-obsolete 'easy-menu-remove "this was always a no-op in Emacs \
+and can be safely removed." "28.1")
+
+(defalias 'easy-menu-add #'ignore)
+(make-obsolete 'easy-menu-add "this was always a no-op in Emacs \
+and can be safely removed." "28.1")
+
+(defun add-submenu (menu-path submenu &optional before in-menu)
+  "Add submenu SUBMENU in the menu at MENU-PATH.
+This is a compatibility function; use `easy-menu-add-item'."
+  (declare (obsolete easy-menu-add-item "28.1"))
+  (easy-menu-add-item (or in-menu (current-global-map))
+		      (cons "menu-bar" menu-path)
+		      submenu before))
+
+(defun easy-menu-add-item (map path item &optional before)
+  "To the submenu of MAP with path PATH, add ITEM."
+  (setq map (easy-menu-get-map map path
+			       (and (null map) (null path)
+				    (stringp (car-safe item))
+				    (car item))))
+  (if (and (consp item) (consp (cdr item)) (eq (cadr item) 'menu-item))
+      ;; This is a value returned by `easy-menu-item-present-p' or
+      ;; `easy-menu-remove-item'.
+      (easy-menu-define-key map (easy-menu-intern (car item))
+			    (cdr item) before)
+    (if (or (keymapp item)
+	    (and (symbolp item) (keymapp (symbol-value item))
+		 (setq item (symbol-value item))))
+	;; Item is a keymap, find the prompt string and use as item name.
+	(setq item (cons (keymap-prompt item) item)))
+    (setq item (easy-menu-convert-item item))
+    (easy-menu-define-key map (easy-menu-intern (car item)) (cdr item) before)))
+
+(defun easy-menu-item-present-p (map path name)
+  "In submenu of MAP with path PATH, return non-nil if item NAME is present."
+  (easy-menu-return-item (easy-menu-get-map map path) name))
+
+(defun easy-menu-remove-item (map path name)
+  "From submenu of MAP with path PATH remove item NAME."
+  (setq map (easy-menu-get-map map path))
+  (let ((ret (easy-menu-return-item map name)))
+    (if ret (easy-menu-define-key map (easy-menu-intern name) nil))
+    ret))
+
+(defun easy-menu-return-item (menu name)
+  "In menu MENU try to look for menu item with name NAME.
+If a menu item is found, return (NAME . item), otherwise return nil.
+If item is an old format item, a new format item is returned."
+  (let ((item (or (cdr (assq name menu))
+                  (lookup-key menu (vector (easy-menu-intern name)))))
+	ret enable cache label)
+    (cond
+     ((stringp (car-safe item))
+      ;; This is the old menu format. Convert it to new format.
+      (setq label (car item))
+      (when (stringp (car (setq item (cdr item)))) ; Got help string
+	(setq ret (list :help (car item)))
+	(setq item (cdr item)))
+      (when (and (consp item) (consp (car item))
+		 (or (null (caar item)) (numberp (caar item))))
+	(setq cache (car item))		; Got cache
+	(setq item (cdr item)))
+      (and (symbolp item) (setq enable (get item 'menu-enable))	; Got enable
+	   (setq ret (cons :enable (cons enable ret))))
+      (if cache (setq ret (cons cache ret)))
+      (cons name (cons 'menu-enable (cons label (cons item ret)))))
+     (item ; (or (symbolp item) (keymapp item) (eq (car-safe item) 'menu-item))
+      (cons name item))			; Keymap or new menu format
+     )))
+
+(defun easy-menu-lookup-name (map name)
+  "Lookup menu item NAME in keymap MAP.
+Like `lookup-key' except that NAME is not an array but just a single key
+and that NAME can be a string representing the menu item's name."
+  (or (lookup-key map (vector (easy-menu-intern name)))
+      (when (stringp name)
+	;; `lookup-key' failed and we have a menu item name: look at the
+	;; actual menu entries's names.
+	(catch 'found
+	  (map-keymap (lambda (key item)
+			(if (condition-case nil (member name item)
+			      (error nil))
+			    ;; Found it!!  Look for it again with
+			    ;; `lookup-key' so as to handle inheritance and
+			    ;; to extract the actual command/keymap bound to
+			    ;; `name' from the item (via get_keyelt).
+			    (throw 'found (lookup-key map (vector key)))))
+		      map)))))
+
+(defun easy-menu-get-map (map path &optional to-modify)
+  "Return a sparse keymap in which to add or remove an item."
+  (setq map
+	(catch 'found
+	  (if (and map (symbolp map) (not (keymapp map)))
+	      (setq map (symbol-value map)))
+	  (let ((maps (if map (if (keymapp map) (list map) map)
+			(current-active-maps))))
+	    ;; Look for PATH in each map.
+	    (unless map (push 'menu-bar path))
+	    (dolist (name path)
+	      (setq maps
+		    (delq nil (mapcar (lambda (map)
+					(setq map (easy-menu-lookup-name
+						   map name))
+					(and (keymapp map) map))
+				      maps))))
+
+	    ;; Prefer a map that already contains the to-be-modified entry.
+	    (when to-modify
+	      (dolist (map maps)
+		(when (easy-menu-lookup-name map to-modify)
+		  (throw 'found map))))
+	    ;; Use the first valid map.
+	    (when maps (throw 'found (car maps)))
+
+	    ;; Otherwise, make one up.
+	    (let* ((name (if path (format "%s" (car (reverse path)))))
+		   (newmap (make-sparse-keymap name)))
+	      (define-key (or map (current-local-map))
+		(apply #'vector (mapcar #'easy-menu-intern path))
+		(if name (cons name newmap) newmap))
+	      newmap))))
+  (or (keymapp map) (error "Malformed menu in easy-menu: (%s)" map))
+  map)
+
+;; ---------- buffer-local-set-state (subr.el) ----------
+
+(defun buffer-local-set-state--get (vars)
+  (let ((states nil))
+    (dolist (var vars)
+      (push (list var
+                  (and (boundp var)
+                       (local-variable-p var))
+                  (and (boundp var)
+                       (symbol-value var)))
+            states))
+    (nreverse states)))
+
+(defun buffer-local-restore-state (states)
+  "Restore values of buffer-local variables recorded in STATES.
+STATES should be an object returned by `buffer-local-set-state'."
+  (pcase-dolist (`(,variable ,local ,value) states)
+    (if local
+        (set variable value)
+      (kill-local-variable variable))))
+
+(defmacro buffer-local-set-state (&rest pairs)
+  "Like `setq-local', but allow restoring the previous state of locals later.
+This macro returns an object that can be passed to `buffer-local-restore-state'
+in order to restore the state of the local variables set via this macro.
+
+\(fn [VARIABLE VALUE]...)"
+  (declare (debug setq))
+  (unless (evenp (length pairs))
+    (signal 'wrong-number-of-arguments (list 'buffer-local-set-state (length pairs))))
+  (let ((vars nil)
+        (tmp pairs))
+    (while tmp (push (car tmp) vars) (setq tmp (cddr tmp)))
+    (setq vars (nreverse vars))
+    `(prog1
+         (buffer-local-set-state--get ',vars)
+       (setq-local ,@pairs))))
+
+(defvar search-default-mode nil
+  "Default mode to use for finding letters in isearch.
+It is used to search for characters which are \"equivalent\".
+This variable is set up by `isearch-define-mode-toggle'.")
+
+(defvar isearch-fold-quotes-mode--state)
+(define-minor-mode isearch-fold-quotes-mode
+  "Minor mode to aid searching for \\=` characters in help modes."
+  :lighter ""
+  (if isearch-fold-quotes-mode
+      (setq-local isearch-fold-quotes-mode--state
+                  (buffer-local-set-state
+                   search-default-mode
+                   (lambda (string &optional _lax)
+                     (thread-last
+                       (regexp-quote string)
+                       (replace-regexp-in-string "`" "[`‘]")
+                       (replace-regexp-in-string "'" "['’]")
+                       (replace-regexp-in-string "\"" "[\"“”]")))))
+    (buffer-local-restore-state isearch-fold-quotes-mode--state)))
+
+;; ---------- button.el ----------
+
+(defface button '((t :inherit link))
+  "Default face used for buttons."
+  :group 'basic-faces)
+
+(defvar-keymap button-buffer-map
+  :doc "Keymap useful for buffers containing buttons.
+Mode-specific keymaps may want to use this as their parent keymap."
+  "TAB" #'forward-button
+  "ESC TAB" #'backward-button
+  "<backtab>" #'backward-button)
+
+(defvar-keymap button-map
+  :doc "Keymap used by buttons."
+  :parent button-buffer-map
+  "RET" #'push-button
+  "<mouse-2>" #'push-button
+  "<follow-link>" 'mouse-face
+  "<mode-line> <mouse-2>" #'push-button
+  "<header-line> <mouse-2>" #'push-button
+  "<mode-line> <touchscreen-down>" #'push-button
+  "<header-line> <touchscreen-down>" #'push-button
+  "<touchscreen-down>" #'push-button)
+
+(define-minor-mode button-mode
+  "A minor mode for navigating to buttons with the TAB key.
+
+Disabling the mode will remove all buttons in the current buffer."
+  :keymap button-buffer-map
+  (when (not button-mode)
+    (save-excursion
+      (save-restriction
+        (widen)
+        (unbuttonize-region (point-min) (point-max))))))
+
+;; Default properties for buttons.
+(put 'default-button 'face 'button)
+(put 'default-button 'mouse-face 'highlight)
+(put 'default-button 'keymap button-map)
+(put 'default-button 'type 'button)
+;; `action' may be either a function to call, or a marker to go to.
+(put 'default-button 'action #'ignore)
+(put 'default-button 'help-echo "mouse-2, RET: Push this button")
+;; Make overlay buttons go away if their underlying text is deleted.
+(put 'default-button 'evaporate t)
+;; Prevent insertions adjacent to text-property buttons from
+;; inheriting their properties.
+(put 'default-button 'rear-nonsticky t)
+
+;; A `category-symbol' property for the default button type.
+(put 'button 'button-category-symbol 'default-button)
+
+(defsubst button-category-symbol (type)
+  "Return the symbol used by `button-type' TYPE to store properties.
+Buttons inherit them by setting their `category' property to that symbol."
+  (or (get type 'button-category-symbol)
+      (error "Unknown button type `%s'" type)))
+
+(defun define-button-type (name &rest properties)
+  "Define a `button type' called NAME (a symbol).
+The remaining PROPERTIES arguments form a plist of PROPERTY VALUE
+pairs, specifying properties to use as defaults for buttons with
+this type (a button's type may be set by giving it a `type'
+property when creating the button, using the :type keyword
+argument).
+
+In addition, the keyword argument :supertype may be used to specify a
+`button-type' from which NAME inherits its default property values
+\(however, the inheritance happens only when NAME is defined; subsequent
+changes to a supertype are not reflected in its subtypes)."
+  (declare (indent defun))
+  (let ((catsym (make-symbol (concat (symbol-name name) "-button")))
+	(super-catsym
+	 (button-category-symbol
+	  (or (plist-get properties 'supertype)
+	      (plist-get properties :supertype)
+	      'button))))
+    ;; Provide a link so that it's easy to find the real symbol.
+    (put name 'button-category-symbol catsym)
+    ;; Initialize NAME's properties using the global defaults.
+    (let ((default-props (symbol-plist super-catsym)))
+      (while default-props
+	(put catsym (pop default-props) (pop default-props))))
+    ;; Add NAME as the `type' property, which will then be returned as
+    ;; the type property of individual buttons.
+    (put catsym 'type name)
+    ;; Add the properties in PROPERTIES to the real symbol.
+    (while properties
+      (let ((prop (pop properties)))
+	(when (eq prop :supertype)
+	  (setq prop 'supertype))
+	(put catsym prop (pop properties))))
+    ;; Make sure there's a `supertype' property.
+    (unless (get catsym 'supertype)
+      (put catsym 'supertype 'button))
+    name))
+
+(defun button-type-put (type prop val)
+  "Set the `button-type' TYPE's PROP property to VAL."
+  (put (button-category-symbol type) prop val))
+
+(defun button-type-get (type prop)
+  "Get the property of `button-type' TYPE named PROP."
+  (get (button-category-symbol type) prop))
+
+(defun button-type-subtype-p (type supertype)
+  "Return non-nil if `button-type' TYPE is a subtype of SUPERTYPE."
+  (or (eq type supertype)
+      (and type
+	   (button-type-subtype-p (button-type-get type 'supertype)
+				  supertype))))
+
+(defun button-start (button)
+  "Return the position at which BUTTON starts.
+
+This function only works when BUTTON is in the current buffer."
+  (if (overlayp button)
+      (overlay-start button)
+    ;; Must be a text-property button.
+    (or (previous-single-property-change (1+ button) 'button)
+	(point-min))))
+
+(defun button-end (button)
+  "Return the position at which BUTTON ends.
+
+This function only works when BUTTON is in the current buffer."
+  (if (overlayp button)
+      (overlay-end button)
+    ;; Must be a text-property button.
+    (or (next-single-property-change button 'button)
+	(point-max))))
+
+(defun button-get (button prop)
+  "Get the property of button BUTTON named PROP.
+
+This function only works when BUTTON is in the current buffer."
+  (cond ((overlayp button)
+	 (overlay-get button prop))
+	((button--area-button-p button)
+	 (get-text-property (cdr button)
+			    prop (button--area-button-string button)))
+	((markerp button)
+	 (get-text-property button prop (marker-buffer button)))
+	(t ; Must be a text-property button.
+	 (get-text-property button prop))))
+
+(defun button-put (button prop val)
+  "Set BUTTON's PROP property to VAL.
+
+This function only works when BUTTON is in the current buffer."
+  ;; Treat some properties specially.
+  (cond ((memq prop '(type :type))
+         ;; We translate a `type' property to a `category' property,
+         ;; since that's what's actually used by overlay and
+         ;; text-property buttons for inheriting properties.
+	 (setq prop 'category)
+	 (setq val (button-category-symbol val)))
+	((eq prop 'category)
+	 ;; Disallow updating the `category' property directly.
+	 (error "Button `category' property may not be set directly")))
+  ;; Add the property.
+  (cond ((overlayp button)
+	 (overlay-put button prop val))
+	((button--area-button-p button)
+	 (setq button (button--area-button-string button))
+	 (put-text-property 0 (length button) prop val button))
+	(t ; Must be a text-property button.
+	 (put-text-property
+	  (or (previous-single-property-change (1+ button) 'button)
+	      (point-min))
+	  (or (next-single-property-change button 'button)
+	      (point-max))
+	  prop val))))
+
+(defun button-activate (button &optional use-mouse-action)
+  "Call BUTTON's `action' property.
+If USE-MOUSE-ACTION is non-nil, invoke the button's `mouse-action'
+property instead of `action'; if the button has no `mouse-action',
+the value of `action' is used instead.
+
+The action can either be a marker or a function.  If it's a
+marker then goto it.  Otherwise if it is a function then it is
+called with BUTTON as only argument.  BUTTON is either an
+overlay, a buffer position, or (for buttons in the mode-line or
+header-line) a string.
+
+If BUTTON has a `button-data' value, call the function with this
+value instead of BUTTON.
+
+This function only works when BUTTON is in the current buffer."
+  (let ((action (or (and use-mouse-action (button-get button 'mouse-action))
+		    (button-get button 'action)))
+        (data (button-get button 'button-data)))
+    (if (markerp action)
+	(save-selected-window
+	  (select-window (display-buffer (marker-buffer action)))
+	  (goto-char action)
+	  (recenter 0))
+      (funcall action (or data button)))))
+
+(defun button-label (button)
+  "Return BUTTON's text label.
+
+This function only works when BUTTON is in the current buffer."
+  (if (button--area-button-p button)
+      (substring-no-properties (button--area-button-string button))
+    (buffer-substring-no-properties (button-start button)
+				    (button-end button))))
+
+(defsubst button-type (button)
+  "Return BUTTON's `button-type'."
+  (button-get button 'type))
+
+(defun button-has-type-p (button type)
+  "Return non-nil if BUTTON has `button-type' TYPE, or one of its subtypes."
+  (button-type-subtype-p (button-get button 'type) type))
+
+(defun button--area-button-p (b)
+  "Return non-nil if BUTTON is an area button.
+Such area buttons are used for buttons in the mode-line and header-line."
+  (stringp (car-safe b)))
+
+(defalias 'button--area-button-string #'car
+  "Return area button BUTTON's button-string.")
+
+(defun make-button (beg end &rest properties)
+  "Make a button from BEG to END in the current buffer.
+The remaining PROPERTIES arguments form a plist of PROPERTY VALUE
+pairs, specifying properties to add to the button.
+In addition, the keyword argument :type may be used to specify a
+`button-type' from which to inherit other properties; see
+`define-button-type'.
+
+Also see `make-text-button', `insert-button'."
+  (let ((overlay (make-overlay beg end nil t nil)))
+    (while properties
+      (button-put overlay (pop properties) (pop properties)))
+    ;; Put a pointer to the button in the overlay, so it's easy to get
+    ;; when we don't actually have a reference to the overlay.
+    (overlay-put overlay 'button overlay)
+    ;; If the user didn't specify a type, use the default.
+    (unless (overlay-get overlay 'category)
+      (overlay-put overlay 'category 'default-button))
+    ;; OVERLAY is the button, so return it.
+    overlay))
+
+(defun insert-button (label &rest properties)
+  "Insert a button with the label LABEL.
+The remaining arguments form a plist of PROPERTY VALUE pairs,
+specifying properties to add to the button.
+In addition, the keyword argument :type may be used to specify a
+`button-type' from which to inherit other properties; see
+`define-button-type'.
+
+Also see `insert-text-button', `make-button'."
+  (apply #'make-button
+	 (prog1 (point) (insert label))
+	 (point)
+	 properties))
+
+(defun make-text-button (beg end &rest properties)
+  "Make a button from BEG to END in the current buffer.
+The remaining PROPERTIES arguments form a plist of PROPERTY VALUE
+pairs, specifying properties to add to the button.
+In addition, the keyword argument :type may be used to specify a
+`button-type' from which to inherit other properties; see
+`define-button-type'.
+
+This function is like `make-button', except that the button is actually
+part of the text instead of being a property of the buffer.  That is,
+this function uses text properties, the other uses overlays.
+Creating large numbers of buttons can also be somewhat faster
+using `make-text-button'.  Note, however, that if there is an existing
+face property at the site of the button, the button face may not be visible.
+You may want to use `make-button' in that case.
+
+If the property `button-data' is present, it will later be used
+as the argument for the `action' callback function instead of the
+default argument, which is the button itself.
+
+BEG can also be a string, in which case a copy of it is made into
+a button and returned.
+
+Also see `insert-text-button'."
+  (let ((object nil)
+        (type-entry
+	 (or (plist-member properties 'type)
+	     (plist-member properties :type))))
+    ;; Disallow setting the `category' property directly.
+    (when (plist-get properties 'category)
+      (error "Button `category' property may not be set directly"))
+    (if (null type-entry)
+	;; The user didn't specify a `type' property, use the default.
+	(setq properties (cons 'category (cons 'default-button properties)))
+      ;; The user did specify a `type' property.  Translate it into a
+      ;; `category' property, which is what's actually used by
+      ;; text-properties for inheritance.
+      (setcar type-entry 'category)
+      (setcar (cdr type-entry)
+              (button-category-symbol (cadr type-entry))))
+    (when (stringp beg)
+      (setq object (copy-sequence beg))
+      (setq beg 0)
+      (setq end (length object)))
+    ;; Now add all the text properties at once.
+    (add-text-properties beg end
+                         ;; Each button should have a non-eq `button'
+                         ;; property so that next-single-property-change can
+                         ;; detect boundaries reliably.
+                         (cons 'button (cons (list t) properties))
+                         object)
+    ;; Return something that can be used to get at the button.
+    (or object beg)))
+
+(defun insert-text-button (label &rest properties)
+  "Insert a button with the label LABEL.
+The remaining arguments form a plist of PROPERTY VALUE pairs,
+specifying properties to add to the button.
+In addition, the keyword argument :type may be used to specify a
+`button-type' from which to inherit other properties; see
+`define-button-type'.
+
+This function is like `insert-button', except that the button is
+actually part of the text instead of being a property of the buffer.
+Creating large numbers of buttons can also be somewhat faster using
+`insert-text-button'.
+
+Also see `make-text-button'."
+  (apply #'make-text-button
+	 (prog1 (point) (insert label))
+	 (point)
+	 properties))
+
+(defun button-at (pos)
+  "Return the button at position POS in the current buffer, or nil.
+If the button at POS is a text property button, the return value
+is a marker pointing to POS."
+  (let ((button (get-char-property pos 'button)))
+    (and button (get-char-property pos 'category)
+         (if (overlayp button)
+             button
+           ;; Must be a text-property button;
+           ;; return a marker pointing to it.
+           (copy-marker pos t)))))
+
+(defun next-button (pos &optional count-current)
+  "Return the next button after position POS in the current buffer.
+If COUNT-CURRENT is non-nil, count any button at POS in the search,
+instead of starting at the next button."
+    (unless count-current
+      ;; Search for the next button boundary.
+      (setq pos (next-single-char-property-change pos 'button)))
+    (and (< pos (point-max))
+	 (or (button-at pos)
+	     ;; We must have originally been on a button, and are now in
+	     ;; the inter-button space.  Recurse to find a button.
+	     (next-button pos))))
+
+(defun previous-button (pos &optional count-current)
+  "Return the previous button before position POS in the current buffer.
+If COUNT-CURRENT is non-nil, count any button at POS in the search,
+instead of starting at the next button."
+  (let ((button (button-at pos)))
+    (if button
+	(if count-current
+	    button
+	  ;; We started out on a button, so move to its start and look
+	  ;; for the previous button boundary.
+	  (setq pos (previous-single-char-property-change
+		     (button-start button) 'button))
+	  (let ((new-button (button-at pos)))
+	    (if new-button
+		;; We are in a button again; this can happen if there
+		;; are adjacent buttons (or at bob).
+		(unless (= pos (button-start button)) new-button)
+	      ;; We are now in the space between buttons.
+	      (previous-button pos))))
+      ;; We started out in the space between buttons.
+      (setq pos (previous-single-char-property-change pos 'button))
+      (or (button-at pos)
+	  (and (> pos (point-min))
+	       (button-at (1- pos)))))))
+
+(defun push-button (&optional pos use-mouse-action)
+  "Perform the action specified by a button at location POS.
+POS may be either a buffer position, a mouse-event, or a
+`touchscreen-down' event.  If USE-MOUSE-ACTION is non-nil, invoke
+the button's `mouse-action' property instead of its `action'
+property; if the button has no `mouse-action', the value of
+`action' is used instead.
+
+If POS is a `touchscreen-down' event, wait for the corresponding
+`touchscreen-up' event before calling `push-button'.
+
+The action in both cases may be either a function to call or a
+marker to display and is invoked using `button-activate' (which
+see).
+
+POS defaults to point, except when `push-button' is invoked
+interactively as the result of a mouse-event or touchscreen
+event, in which case, the position in the event event is used.
+
+If there's no button at POS, do nothing and return nil, otherwise
+return t.
+
+To get a description of the function that will be invoked when
+pushing a button, use the `button-describe' command."
+  (interactive
+   (list (if (integerp last-command-event) (point) last-command-event)))
+  (if (and (not (integerp pos)) (eventp pos))
+      ;; POS is a mouse event; switch to the proper window/buffer
+      (let ((posn (event-start pos)))
+	(with-current-buffer (window-buffer (posn-window posn))
+          (let* ((str (posn-string posn))
+                 (str-button (and str (get-text-property (cdr str) 'button (car str)))))
+	    (if str-button
+	        ;; mode-line, header-line, or display string event.
+	        (button-activate str t)
+              (if (eq (car-safe pos) 'touchscreen-down)
+                  ;; If touch-screen-track tap returns nil, then the
+                  ;; tap was canceled.
+                  (when (touch-screen-track-tap pos nil nil t)
+                    (push-button (posn-point posn) t))
+                (push-button (posn-point posn) t))))))
+    ;; POS is just normal position
+    (let ((button (button-at (or pos (point)))))
+      (when button
+	(button-activate button use-mouse-action)
+	t))))
+
+(defun button--help-echo (button)
+  "Evaluate BUTTON's `help-echo' property and return its value.
+If the result is non-nil, pass it through `substitute-command-keys'
+before returning it, as is done for `show-help-function'."
+  (let* ((help (button-get button 'help-echo))
+         (help (if (functionp help)
+                   (funcall help
+                            (selected-window)
+                            (if (overlayp button) button (current-buffer))
+                            (button-start button))
+                 (eval help lexical-binding))))
+    (and help (substitute-command-keys help))))
+
+(defun forward-button (n &optional wrap display-message no-error)
+  "Move to the Nth next button, or Nth previous button if N is negative.
+If N is 0, move to the start of any button at point.
+If WRAP is non-nil, moving past either end of the buffer continues from the
+other end.
+If DISPLAY-MESSAGE is non-nil, the button's `help-echo' property
+is displayed.  Any button with a non-nil `skip' property is
+skipped over.
+
+If NO-ERROR, return nil if no further buttons could be found
+instead of erroring out.
+
+Returns the button found."
+  (interactive "p\nd\nd")
+  (let (button)
+    (if (zerop n)
+	;; Move to start of current button
+	(if (setq button (button-at (point)))
+	    (goto-char (button-start button)))
+      ;; Move to Nth next button
+      (let ((iterator (if (> n 0) #'next-button #'previous-button))
+	    (wrap-start (if (> n 0) (point-min) (point-max)))
+	    opoint fail)
+	(setq n (abs n))
+	(setq button t)			; just to start the loop
+	(while (and (null fail) (> n 0) button)
+	  (setq button (funcall iterator (point)))
+	  (when (and (not button) wrap)
+	    (setq button (funcall iterator wrap-start t)))
+	  (when button
+	    (goto-char (button-start button))
+	    ;; Avoid looping forever (e.g., if all the buttons have
+	    ;; the `skip' property).
+	    (cond ((null opoint)
+		   (setq opoint (point)))
+		  ((= opoint (point))
+		   (setq fail t)))
+	    (unless (button-get button 'skip)
+	      (setq n (1- n)))))))
+    (if (null button)
+        (unless no-error
+	  (user-error (if wrap "No buttons!" "No more buttons")))
+      (let ((msg (and display-message (button--help-echo button))))
+	(when msg
+	  (message "%s" msg)))
+      button)))
+
+(defun backward-button (n &optional wrap display-message no-error)
+  "Move to the Nth previous button, or Nth next button if N is negative.
+If N is 0, move to the start of any button at point.
+If WRAP is non-nil, moving past either end of the buffer continues from the
+other end.
+If DISPLAY-MESSAGE is non-nil, the button's `help-echo' property
+is displayed.  Any button with a non-nil `skip' property is
+skipped over.
+
+If NO-ERROR, return nil if no further buttons could be found
+instead of erroring out.
+
+Returns the button found."
+  (interactive "p\nd\nd")
+  (forward-button (- n) wrap display-message no-error))
+
+(defun button--describe (properties)
+  "Describe a button's PROPERTIES (an alist) in a *Help* buffer.
+This is a helper function for `button-describe', in order to be possible to
+use `help-setup-xref'.
+
+Each element of PROPERTIES should be of the form (PROPERTY . VALUE)."
+  (help-setup-xref (list #'button--describe properties)
+                   (called-interactively-p 'interactive))
+  (with-help-window (help-buffer)
+    (with-current-buffer (help-buffer)
+      (insert (format-message "This button's type is `%s'."
+                              (alist-get 'type properties)))
+      (dolist (prop '(action mouse-action))
+        (let ((name (symbol-name prop))
+              (val (alist-get prop properties)))
+          (when (functionp val)
+            (insert "\n\n"
+                    (propertize (capitalize name) 'face 'bold)
+                    "\nThe " name " of this button is")
+            (if (symbolp val)
+                (progn
+                  (insert (format-message " `%s',\nwhich is " val))
+                  (describe-function-1 val))
+              (insert "\n")
+              (princ val))))))))
+
+(defun button-describe (&optional button-or-pos)
+  "Display a buffer with information about the button at point.
+
+When called from Lisp, pass BUTTON-OR-POS as the button to describe, or a
+buffer position where a button is present.  If BUTTON-OR-POS is nil, the
+button at point is the button to describe."
+  (interactive "d")
+  (let* ((help-buffer-under-preparation t)
+         (button (cond ((integer-or-marker-p button-or-pos)
+                        (button-at button-or-pos))
+                       ((null button-or-pos) (button-at (point)))
+                       ((overlayp button-or-pos) button-or-pos)))
+         (props (and button
+                     (mapcar (lambda (prop)
+                               (cons prop (button-get button prop)))
+                             '(type action mouse-action)))))
+    (when props
+      (button--describe props)
+      t)))
+
+(define-obsolete-function-alias 'button-buttonize #'buttonize "29.1")
+
+(defun buttonize (string callback &optional data help-echo)
+  "Make STRING into a button and return it.
+When clicked, CALLBACK will be called with the DATA as the
+function argument.  If DATA isn't present (or is nil), the button
+itself will be used instead as the function argument.
+
+If HELP-ECHO, use that as the `help-echo' property.
+
+Also see `buttonize-region'."
+  (let ((string
+         (apply #'propertize string
+                (button--properties callback data help-echo))))
+    ;; Add the face to the end so that it can be overridden.
+    (add-face-text-property 0 (length string) 'button t string)
+    string))
+
+(defun button--properties (callback data help-echo)
+  (append
+   (list 'font-lock-face 'button
+         'mouse-face 'highlight
+         'button t
+         'follow-link t
+         'category t
+         'button-data data
+         'keymap button-map
+         'action callback)
+   (and help-echo
+        (list 'help-echo help-echo
+              ;; Record that button.el is responsible for this property.
+              'help-echo-button t))))
+
+(defun buttonize-region (start end callback &optional data help-echo)
+  "Make the region between START and END into a button.
+When clicked, CALLBACK will be called with the DATA as the
+function argument.  If DATA isn't present (or is nil), the button
+itself will be used instead as the function argument.
+
+If HELP-ECHO, use that as the `help-echo' property.
+
+Also see `buttonize' and `unbuttonize-region'."
+  (add-text-properties start end (button--properties callback data help-echo))
+  (add-face-text-property start end 'button t))
+
+(defun unbuttonize-region (start end)
+  "Remove all the buttons between START and END.
+This removes both text-property and overlay based buttons."
+  (dolist (o (overlays-in start end))
+    (when (overlay-get o 'button)
+      (delete-overlay o)))
+  (with-silent-modifications
+    (remove-text-properties
+     start end
+     (append
+      (button--properties nil nil nil)
+      ;; Only remove help-echo if it was added by button.el.
+      (and (get-text-property start 'help-echo-button)
+           (list 'help-echo nil
+                 'help-echo-button nil))))
+    (add-face-text-property start end
+                            'button nil)))
+
+;; ---------- temp-buffer window machinery (window.el) ----------
+
+(defvar temp-buffer-window-setup-hook nil
+  "Normal hook run by `with-temp-buffer-window' before buffer display.
+This hook is run by `with-temp-buffer-window' with the buffer to be
+displayed current.")
+
+(defvar temp-buffer-window-show-hook nil
+  "Normal hook run by `with-temp-buffer-window' after buffer display.
+This hook is run by `with-temp-buffer-window' with the buffer
+displayed and current and its window selected.")
+
+(defun temp-buffer-window-setup (buffer-or-name)
+  "Set up temporary buffer specified by BUFFER-OR-NAME.
+Return the buffer."
+  (let ((old-dir default-directory)
+	(buffer (get-buffer-create buffer-or-name)))
+    (with-current-buffer buffer
+      (kill-all-local-variables)
+      (setq default-directory old-dir)
+      (delete-all-overlays)
+      (setq buffer-read-only nil)
+      (setq buffer-file-name nil)
+      (setq buffer-undo-list t)
+      (let ((inhibit-read-only t)
+	    (inhibit-modification-hooks t))
+	(erase-buffer)
+	(run-hooks 'temp-buffer-window-setup-hook))
+      ;; Return the buffer.
+      buffer)))
+
+;; Defined in help.el.
+(defvar resize-temp-buffer-window-inhibit)
+
+;; GNU window.el defvar; default is `window-size'.
+(defvar window-combination-limit 'window-size
+  "If non-nil, splitting a window makes a new parent window.")
+
+(defun temp-buffer-window-show (buffer &optional action)
+  "Show temporary buffer BUFFER in a window.
+Return the window showing BUFFER.  Pass ACTION as action argument
+to `display-buffer'."
+  (let (resize-temp-buffer-window-inhibit window)
+    (with-current-buffer buffer
+      (set-buffer-modified-p nil)
+      (setq buffer-read-only t)
+      (goto-char (point-min))
+      (when (let ((window-combination-limit
+		   ;; When `window-combination-limit' equals
+		   ;; `temp-buffer' or `temp-buffer-resize' and
+		   ;; `temp-buffer-resize-mode' is enabled in this
+		   ;; buffer bind it to t so resizing steals space
+		   ;; preferably from the window that was split.
+		   (if (or (eq window-combination-limit 'temp-buffer)
+			   (and (eq window-combination-limit
+				    'temp-buffer-resize)
+				temp-buffer-resize-mode))
+		       t
+		     window-combination-limit)))
+	      (setq window (display-buffer buffer action)))
+	(setq minibuffer-scroll-window window)
+	(set-window-hscroll window 0)
+	(with-selected-window window
+	  (run-hooks 'temp-buffer-window-show-hook)
+	  (when temp-buffer-resize-mode
+	    (resize-temp-buffer-window window)))
+	;; Return the window.
+	window))))
+
+;; ---------- temp-buffer-resize-mode (help.el) ----------
+
+(defcustom temp-buffer-max-height
+  (lambda (_buffer)
+    (if (and (display-graphic-p) (eq (selected-window) (frame-root-window)))
+	(/ (x-display-pixel-height) (frame-char-height) 2)
+      (/ (- (frame-height) 2) 2)))
+  "Maximum height of a window displaying a temporary buffer.
+This is effective only when Temp Buffer Resize mode is enabled.
+The value is the maximum height (in lines) which
+`resize-temp-buffer-window' will give to a window displaying a
+temporary buffer.  It can also be a function to be called to
+choose the height for such a buffer.  It gets one argument, the
+buffer, and should return a positive integer.  At the time the
+function is called, the window to be resized is selected."
+  :type '(choice integer function)
+  :group 'help
+  :version "24.3")
+
+(defcustom temp-buffer-max-width
+  (lambda (_buffer)
+    (if (and (display-graphic-p) (eq (selected-window) (frame-root-window)))
+	(/ (x-display-pixel-width) (frame-char-width) 2)
+      (/ (- (frame-width) 2) 2)))
+  "Maximum width of a window displaying a temporary buffer.
+This is effective only when Temp Buffer Resize mode is enabled.
+The value is the maximum width (in columns) which
+`resize-temp-buffer-window' will give to a window displaying a
+temporary buffer.  It can also be a function to be called to
+choose the width for such a buffer.  It gets one argument, the
+buffer, and should return a positive integer.  At the time the
+function is called, the window to be resized is selected."
+  :type '(choice integer function)
+  :group 'help
+  :version "24.4")
+
+(define-minor-mode temp-buffer-resize-mode
+  "Toggle auto-resizing temporary buffer windows (Temp Buffer Resize Mode).
+
+When Temp Buffer Resize mode is enabled, the windows in which Emacs
+shows a temporary buffer are automatically resized in height to
+fit the buffer's contents, but never more than
+`temp-buffer-max-height' nor less than `window-min-height'.
+
+When this mode is enabled, a window is resized only if it has been
+specially created for a temporary buffer.  Windows that have shown
+another buffer before being reused for displaying a temporary buffer
+are not resized (but note that if `even-window-sizes' is non-nil, they
+might be resized in some situations anyway).  A frame is resized only
+if `fit-frame-to-buffer' is non-nil.
+
+This mode is used by `help', `apropos' and `completion' buffers,
+and some others, when they display their pop-up buffers."
+  :global t :group 'help
+  (if temp-buffer-resize-mode
+      ;; `help-make-xrefs' may add a `back' button and thus increase the
+      ;; text size, so `resize-temp-buffer-window' must be run *after* it.
+      (add-hook 'temp-buffer-show-hook #'resize-temp-buffer-window 'append)
+    (remove-hook 'temp-buffer-show-hook #'resize-temp-buffer-window)))
+
+(defvar resize-temp-buffer-window-inhibit nil
+  "Non-nil means `resize-temp-buffer-window' should not resize.")
+
+(defvar fit-frame-to-buffer nil
+  "Non-nil means `fit-frame-to-buffer' can resize frames to fit a buffer.")
+
+(defvar fit-window-to-buffer-horizontally nil
+  "Non-nil means `fit-window-to-buffer' can resize windows horizontally.")
+
+(defun resize-temp-buffer-window (&optional window)
+  "Resize WINDOW to fit its contents.
+WINDOW must be a live window and defaults to the selected one."
+  (setq window (window-normalize-window window t))
+  (let* ((buffer (window-buffer window))
+         (height (if (functionp temp-buffer-max-height)
+		     (with-selected-window window
+		       (funcall temp-buffer-max-height buffer))
+		   temp-buffer-max-height))
+	 (width (if (functionp temp-buffer-max-width)
+		    (with-selected-window window
+		      (funcall temp-buffer-max-width buffer))
+		  temp-buffer-max-width))
+	 (quit-cadr (cadr (window-parameter window 'quit-restore))))
+    ;; Resize WINDOW only if it was made by `display-buffer'.
+    (when (or (and (eq quit-cadr 'window)
+                   ;; When WINDOW was reused, its buffer must be the one
+                   ;; initially shown in it (Bug#81207).
+                   (eq buffer (nth 3 (window-parameter window 'quit-restore)))
+                   (or (and (window-combined-p window)
+			    (not (eq fit-window-to-buffer-horizontally
+				     'only))
+			    (pos-visible-in-window-p
+                             (with-current-buffer buffer (point-min))
+                             window)
+                            (not resize-temp-buffer-window-inhibit))
+		       (and (window-combined-p window t)
+			    fit-window-to-buffer-horizontally
+                            (not resize-temp-buffer-window-inhibit))))
+	      (and (eq quit-cadr 'frame)
+                   fit-frame-to-buffer
+                   (eq window (frame-root-window window))
+                   (not resize-temp-buffer-window-inhibit)))
+      (fit-window-to-buffer window height nil width nil t))))
+
+;; ---------- help windows (help.el) ----------
+
+;; used by `view-lossage' to assert that the last keystrokes are always
+;; visible.
+(defvar help-window-point-marker (make-marker)
+  "Marker to override default `window-point' in help windows.")
+
+(defvar help-window-old-frame nil
+  "Frame selected at the time `with-help-window' is invoked.")
+
+(defvar help-buffer-under-preparation nil
+  "Whether a *Help* buffer is being prepared.
+This variable is bound to t during the preparation of a *Help*
+buffer.")
+
+(defcustom help-window-select nil
+  "Non-nil means select help window for viewing.
+Choices are:
+
+ never (nil) Select help window only if there is no other window
+             on its frame.
+
+ other       Select help window if and only if it appears on the
+             previously selected frame, that frame contains at
+             least two other windows and the help window is
+             either new or showed a different buffer before.
+
+ always (t)  Always select the help window.
+
+If this option is non-nil and the help window appears on another
+frame, then give that frame input focus too.  Note also that if
+the help window appears on another frame, it may get selected and
+its frame get input focus even if this option is nil.
+
+This option has effect if and only if the help window was created
+by `with-help-window'.
+
+Also see `help-window-keep-selected'."
+  :type '(choice (const :tag "never (nil)" nil)
+		 (const :tag "other" other)
+		 (const :tag "always (t)" t))
+  :group 'help
+  :version "23.1")
+
+(defcustom help-window-keep-selected nil
+  "If non-nil, navigation commands in the *Help* buffer will reuse the window.
+If nil, many commands in the *Help* buffer, like \\<help-mode-map>\\[help-view-source] and \\[help-goto-info], will
+pop to a different window to display the results.
+
+Also see `help-window-select'."
+  :type 'boolean
+  :group 'help
+  :version "29.1")
+
+(defun help-window-display-message (quit-part window &optional scroll)
+  "Display message telling how to quit and scroll help window.
+QUIT-PART is a string telling how to quit the help window WINDOW.
+Optional argument SCROLL non-nil means tell how to scroll WINDOW.
+SCROLL equal `other' means tell how to scroll the \"other\"
+window."
+  (let ((scroll-part
+	 (cond
+	  ;; If we don't have QUIT-PART we probably reuse a window
+	  ;; showing the same buffer so we don't show any message.
+	  ((not quit-part) nil)
+	  ((pos-visible-in-window-p
+	    (with-current-buffer (window-buffer window)
+	      (point-max)) window t)
+	   ;; Buffer end is at least partially visible, no need to talk
+	   ;; about scrolling.
+	   ".")
+	  ((eq scroll 'other)
+	   ", \\[scroll-other-window] to scroll help.")
+          (scroll ", \\[scroll-up-command] to scroll help."))))
+    (message "%s"
+     (substitute-command-keys (concat quit-part scroll-part)))))
+
+(defun help-window-setup (window &optional value)
+  "Set up help window WINDOW for `with-help-window'.
+WINDOW is the window used for displaying the help buffer.
+Return VALUE."
+  (let* ((help-buffer (when (window-live-p window)
+			(window-buffer window)))
+	 (help-setup (when (window-live-p window)
+		       (car (window-parameter window 'quit-restore))))
+	 (frame (window-frame window)))
+
+    (when help-buffer
+      ;; Handle `help-window-point-marker'.
+      (when (eq (marker-buffer help-window-point-marker) help-buffer)
+	(set-window-point window help-window-point-marker)
+	;; Reset `help-window-point-marker'.
+	(set-marker help-window-point-marker nil))
+
+      ;; If the help window appears on another frame, select it if
+      ;; `help-window-select' is non-nil and give that frame input focus
+      ;; too.  See also Bug#19012.
+      (when (and help-window-select
+		 (frame-live-p help-window-old-frame)
+		 (not (eq frame help-window-old-frame)))
+	(select-window window)
+	(select-frame-set-input-focus frame))
+
+      (cond
+       ((or (eq window (selected-window))
+	    ;; If the help window is on the selected frame, select
+	    ;; it if `help-window-select' is t or `help-window-select'
+	    ;; is 'other, the frame contains at least three windows, and
+	    ;; the help window did show another buffer before.  See also
+	    ;; Bug#11039.
+	    (and (eq frame (selected-frame))
+		 (or (eq help-window-select t)
+		     (and (eq help-window-select 'other)
+			  (> (length (window-list nil 'no-mini)) 2)
+			  (not (eq help-setup 'same))))
+		 (select-window window)))
+	;; The help window is or gets selected ...
+	(help-window-display-message
+	 (cond
+	  ((eq help-setup 'window)
+	   ;; ... and is new, ...
+           "Type \\<help-map>\\[help-quit] to delete help window")
+	  ((eq help-setup 'frame)
+	   ;; ... on a new frame, ...
+           "Type \\<help-map>\\[help-quit] to quit the help frame")
+	  ((eq help-setup 'other)
+	   ;; ... or displayed some other buffer before.
+           "Type \\<help-map>\\[help-quit] to restore previous buffer"))
+	 window t))
+       ((and (eq (window-frame window) help-window-old-frame)
+	     (= (length (window-list nil 'no-mini)) 2))
+	;; There are two windows on the help window's frame and the
+	;; other one is the selected one.
+	(help-window-display-message
+	 (cond
+	  ((eq help-setup 'window)
+	   "Type \\[delete-other-windows] to delete the help window")
+	  ((eq help-setup 'other)
+           "Type \\<help-map>\\[help-quit] in help window to restore its previous buffer"))
+	 window 'other))
+       (t
+	;; The help window is not selected ...
+	(help-window-display-message
+	 (cond
+	  ((eq help-setup 'window)
+	   ;; ... and is new, ...
+           "Type \\<help-map>\\[help-quit] in help window to delete it")
+	  ((eq help-setup 'other)
+	   ;; ... or displayed some other buffer before.
+           "Type \\<help-map>\\[help-quit] in help window to restore previous buffer"))
+	 window))))
+    ;; Return VALUE.
+    value))
+
+(defmacro with-help-window (buffer-or-name &rest body)
+  "Evaluate BODY, send output to BUFFER-OR-NAME and show in a help window.
+The return value from BODY will be returned.
+
+The help window will be selected if `help-window-select' is
+non-nil.
+
+The `temp-buffer-window-setup-hook' hook is called."
+  (declare (indent 1) (debug t))
+  `(help--window-setup ,buffer-or-name (lambda () ,@body)))
+
+(defun help--window-setup (buffer callback)
+  (setq help-window-old-frame (selected-frame))
+  ;; Make `help-window-point-marker' point nowhere.  The only place
+  ;; where this should be set to a buffer position is within BODY.
+  (set-marker help-window-point-marker nil)
+  (with-current-buffer (get-buffer-create buffer)
+    (unless (derived-mode-p 'help-mode)
+      (help-mode))
+    (setq buffer-read-only t
+          buffer-file-name nil)
+    (setq-local help-mode--current-data nil)
+    (buffer-disable-undo)
+    (let ((inhibit-read-only t))
+      (erase-buffer)
+      (delete-all-overlays)
+      (prog1
+          (let ((standard-output (current-buffer)))
+            (prog1
+                (funcall callback)
+              (run-hooks 'temp-buffer-window-setup-hook)))
+        (help-make-xrefs (current-buffer))
+        ;; This must be done after the buffer has been completely
+        ;; generated, since `temp-buffer-resize-mode' may be enabled.
+        (help-window-setup (temp-buffer-window-show (current-buffer)))))))
+
+;; ---------- help-mode.el ----------
+
+(defvar-keymap help-mode-map
+  :doc "Keymap for Help mode."
+  :parent (make-composed-keymap button-buffer-map
+                                special-mode-map)
+  "n"             #'help-goto-next-page
+  "p"             #'help-goto-previous-page
+  "l"             #'help-go-back
+  "r"             #'help-go-forward
+  "C-c C-b"       #'help-go-back
+  "C-c C-f"       #'help-go-forward
+  "<XF86Back>"    #'help-go-back
+  "<XF86Forward>" #'help-go-forward
+  "C-c C-c"       #'help-follow-symbol
+  "s"             #'help-view-source
+  "I"             #'help-goto-lispref-info
+  "i"             #'help-goto-info
+  "c"             #'help-customize)
+
+(easy-menu-define help-mode-menu help-mode-map
+  "Menu for Help mode."
+  '("Help-Mode"
+    ["Show Help for Symbol" help-follow-symbol
+     :help "Show the docs for the symbol at point"]
+    ["Previous Topic" help-go-back
+     :help "Go back to previous topic in this help buffer"
+     :active help-xref-stack]
+    ["Next Topic" help-go-forward
+     :help "Go back to next topic in this help buffer"
+     :active help-xref-forward-stack]
+    ["Move to Previous Button" backward-button
+     :help "Move to the Previous Button in the help buffer"]
+    ["Move to Next Button" forward-button
+     :help "Move to the Next Button in the help buffer"]
+    ["View Source" help-view-source
+     :help "Go to the source file for the current help item"]
+    ["Goto Info" help-goto-info
+     :help "Go to the info node for the current help item"]
+    ["Customize" help-customize
+     :help "Customize variable or face"]))
+
+(defvar context-menu-functions nil
+  "Abnormal hook run to add entries to context menus.")
+
+(defun help-mode-context-menu (menu click)
+  "Populate MENU with Help mode commands at CLICK."
+  (define-key menu [help-mode-separator] menu-bar-separator)
+  (let ((easy-menu (make-sparse-keymap "Help-Mode")))
+    (easy-menu-define nil easy-menu nil
+      '("Help-Mode"
+        ["Previous Topic" help-go-back
+         :help "Go back to previous topic in this help buffer"
+         :active help-xref-stack]
+        ["Next Topic" help-go-forward
+         :help "Go back to next topic in this help buffer"
+         :active help-xref-forward-stack]))
+    (dolist (item (reverse (lookup-key easy-menu [menu-bar help-mode])))
+      (when (consp item)
+        (define-key menu (vector (car item)) (cdr item)))))
+
+  (when (mouse-posn-property (event-start click) 'mouse-face)
+    (define-key menu [help-mode-push-button]
+      `(menu-item "Follow Link" ,(lambda (event)
+                                   (interactive "e")
+                                   (push-button event))
+                  :help "Follow the link at click")))
+
+  menu)
+
+(defvar help-mode-tool-bar-map
+  (let ((map (make-sparse-keymap)))
+    (tool-bar-local-item "close" 'quit-window 'quit map
+                         :help "Quit help"
+                         :vert-only t)
+    (define-key-after map [separator-1] menu-bar-separator)
+    (tool-bar-local-item "search" 'isearch-forward 'search map
+                         :help "Search" :vert-only t)
+    (tool-bar-local-item-from-menu 'help-go-back "left-arrow" map help-mode-map
+                                   :rtl "right-arrow" :vert-only t)
+    (tool-bar-local-item-from-menu 'help-go-forward "right-arrow" map help-mode-map
+                                   :rtl "left-arrow" :vert-only t)
+    map))
+
+(defvar-local help-xref-stack nil
+  "A stack of ways by which to return to help buffers after following xrefs.
+Used by `help-follow-symbol' and `help-xref-go-back'.
+An element looks like (POSITION FUNCTION ARGS...).
+To use the element, do (apply FUNCTION ARGS) then goto the point.")
+(put 'help-xref-stack 'permanent-local t)
+
+(defvar-local help-xref-forward-stack nil
+  "A stack used to navigate help forwards after using the back button.
+Used by `help-follow-symbol' and `help-xref-go-forward'.
+An element looks like (POSITION FUNCTION ARGS...).
+To use the element, do (apply FUNCTION ARGS) then goto the point.")
+(put 'help-xref-forward-stack 'permanent-local t)
+
+(defvar-local help-xref-stack-item nil
+  "An item for `help-follow-symbol' to push onto `help-xref-stack'.
+The format is (FUNCTION ARGS...).")
+(put 'help-xref-stack-item 'permanent-local t)
+
+(defvar-local help-xref-stack-forward-item nil
+  "An item for `help-go-back' to push onto `help-xref-forward-stack'.
+The format is (FUNCTION ARGS...).")
+(put 'help-xref-stack-forward-item 'permanent-local t)
+
+(setq-default help-xref-stack nil help-xref-stack-item nil)
+(setq-default help-xref-forward-stack nil help-xref-forward-stack-item nil)
+
+(defvar help-mode-syntax-table
+  (let ((table (make-syntax-table emacs-lisp-mode-syntax-table)))
+    ;; Treat single quotes as parens so that forward-sexp does not
+    ;; break when a quoted string contains punctuation.
+    (modify-syntax-entry ?‘ "(’  " table)
+    (modify-syntax-entry ?’ ")‘  " table)
+    ;; `;' doesn't start a comment.
+    (modify-syntax-entry ?\; "." table)
+    table)
+  "Syntax table used in `help-mode'.")
+
+(defcustom help-mode-hook nil
+  "Hook run by `help-mode'."
+  :type 'hook
+  :group 'help)
+
+;; Button types used by help
+
+(define-button-type 'help-xref
+  'follow-link t
+  'action #'help-button-action)
+
+(defun help-button-action (button)
+  "Call BUTTON's help function."
+  (help-do-xref nil
+		(button-get button 'help-function)
+		(button-get button 'help-args)))
+
+;; These 6 calls to define-button-type were generated in a dolist
+;; loop, but that is bad because it means these button types don't
+;; have an easily found definition.
+
+(define-button-type 'help-function
+  :supertype 'help-xref
+  'help-function 'describe-function
+  'help-echo "mouse-2, RET: describe this function")
+
+(define-button-type 'help-variable
+  :supertype 'help-xref
+  'help-function 'describe-variable
+  'help-echo "mouse-2, RET: describe this variable")
+
+(define-button-type 'help-type
+  :supertype 'help-xref
+  'help-function #'cl-describe-type
+  'help-echo "mouse-2, RET: describe this type")
+
+(define-button-type 'help-face
+  :supertype 'help-xref
+  'help-function 'describe-face
+  'help-echo "mouse-2, RET: describe this face")
+
+(define-button-type 'help-coding-system
+  :supertype 'help-xref
+  'help-function 'describe-coding-system
+  'help-echo "mouse-2, RET: describe this coding system")
+
+(define-button-type 'help-input-method
+  :supertype 'help-xref
+  'help-function 'describe-input-method
+  'help-echo "mouse-2, RET: describe this input method")
+
+(define-button-type 'help-character-set
+  :supertype 'help-xref
+  'help-function 'describe-character-set
+  'help-echo "mouse-2, RET: describe this character set")
+
+;; Make some more idiosyncratic button types.
+
+(define-button-type 'help-symbol
+  :supertype 'help-xref
+  'help-function #'describe-symbol
+  'help-echo "mouse-2, RET: describe this symbol")
+
+(define-button-type 'help-back
+  :supertype 'help-xref
+  'help-function #'help-xref-go-back
+  'help-echo "mouse-2, RET: go back to previous help buffer")
+
+(define-button-type 'help-forward
+  :supertype 'help-xref
+  'help-function #'help-xref-go-forward
+  'help-echo "mouse-2, RET: move forward to next help buffer")
+
+(define-button-type 'help-info-variable
+  :supertype 'help-xref
+  ;; the name of the variable is put before the argument to Info
+  'help-function (lambda (_a v) (info v))
+  'help-echo "mouse-2, RET: read this Info node")
+
+(define-button-type 'help-info
+  :supertype 'help-xref
+  'help-function #'info
+  'help-echo "mouse-2, RET: read this Info node")
+
+(define-button-type 'help-man
+  :supertype 'help-xref
+  'help-function #'man
+  'help-echo "mouse-2, RET: read this man page")
+
+(define-button-type 'help-customization-group
+  :supertype 'help-xref
+  'help-function #'customize-group
+  'help-echo "mouse-2, RET: display this customization group")
+
+(define-button-type 'help-url
+  :supertype 'help-xref
+  'help-function #'browse-url
+  'help-echo "mouse-2, RET: view this URL in a browser")
+
+(define-button-type 'help-customize-variable
+  :supertype 'help-xref
+  'help-function (lambda (v)
+               (customize-variable v))
+  'help-echo "mouse-2, RET: customize variable")
+
+(define-button-type 'help-customize-face
+  :supertype 'help-xref
+  'help-function (lambda (v)
+               (customize-face v))
+  'help-echo "mouse-2, RET: customize face")
+
+(defun help-function-def--button-function (fun &optional file type)
+  (or file
+      (setq file (find-lisp-object-file-name fun type)))
+  (if (not file)
+      (message "Unable to find defining file")
+    (require 'find-func)
+    (when (eq file 'C-source)
+      (setq file
+            (if (memq type '(variable defvar))
+                (help-C-file-name fun 'var)
+              (help-C-file-name (indirect-function fun) 'fun))))
+    ;; Don't use find-function-noselect because it follows
+    ;; aliases (which fails for built-in functions).
+    (let* ((location
+            (find-function-search-for-symbol fun type file))
+           (position (cdr location)))
+      (if help-window-keep-selected
+          (pop-to-buffer-same-window (car location))
+        (pop-to-buffer (car location)))
+      (run-hooks 'find-function-after-hook)
+      (if position
+          (progn
+            ;; Widen the buffer if necessary to go to this position.
+            (when (or (< position (point-min))
+                      (> position (point-max)))
+              (widen))
+            ;; Save mark for the old location, unless the point is not
+            ;; actually going to move.
+            (unless (= (point) position)
+              (push-mark nil t))
+            (goto-char position))
+        (message "Unable to find location in file")))))
+
+(define-button-type 'help-function-def
+  :supertype 'help-xref
+  'help-function #'help-function-def--button-function
+  'help-echo "mouse-2, RET: find function's definition")
+
+(define-button-type 'help-function-cmacro ; FIXME: Obsolete since 24.4.
+  :supertype 'help-xref
+  'help-function (lambda (fun file)
+		   (setq file (locate-library file t))
+		   (if (and file (file-readable-p file))
+		       (progn
+                         (if help-window-keep-selected
+			     (pop-to-buffer-same-window
+                              (find-file-noselect file))
+                           (pop-to-buffer (find-file-noselect file)))
+                         (widen)
+			 (goto-char (point-min))
+			 (if (re-search-forward
+			      (format "^[ \t]*(\\(cl-\\)?define-compiler-macro[ \t]+%s"
+				      (regexp-quote (symbol-name fun)))
+                              nil t)
+			     (forward-line 0)
+			   (message "Unable to find location in file")))
+		     (message "Unable to find file")))
+  'help-echo "mouse-2, RET: find function's compiler macro")
+
+(define-button-type 'help-variable-def
+  :supertype 'help-xref
+  'help-function (lambda (var &optional file)
+		   (when (eq file 'C-source)
+		     (setq file (help-C-file-name var 'var)))
+		   (let* ((location (find-variable-noselect var file))
+                          (position (cdr location)))
+                     (if help-window-keep-selected
+		         (pop-to-buffer-same-window (car location))
+                       (pop-to-buffer (car location)))
+		     (run-hooks 'find-function-after-hook)
+                     (if position
+                           (progn
+                             ;; Widen the buffer if necessary to go to this position.
+                             (when (or (< position (point-min))
+                                       (> position (point-max)))
+                               (widen))
+                             (goto-char position))
+                       (message "Unable to find location in file"))))
+  'help-echo "mouse-2, RET: find variable's definition")
+
+(define-button-type 'help-face-def
+  :supertype 'help-xref
+  'help-function (lambda (fun file)
+		   (require 'find-func)
+		   ;; Don't use find-function-noselect because it follows
+		   ;; aliases (which fails for built-in functions).
+		   (let* ((location
+			  (find-function-search-for-symbol fun 'defface file))
+                         (position (cdr location)))
+                     (if help-window-keep-selected
+                         (pop-to-buffer-same-window (car location))
+		       (pop-to-buffer (car location)))
+                     (if position
+                           (progn
+                             ;; Widen the buffer if necessary to go to this position.
+                             (when (or (< position (point-min))
+                                       (> position (point-max)))
+                               (widen))
+                             (goto-char position))
+                       (message "Unable to find location in file"))))
+  'help-echo "mouse-2, RET: find face's definition")
+
+(define-button-type 'help-package
+  :supertype 'help-xref
+  'help-function 'describe-package
+  'help-echo "mouse-2, RET: Describe package")
+
+(define-button-type 'help-package-def
+  :supertype 'help-xref
+  'help-function #'dired
+  'help-echo "mouse-2, RET: visit package directory")
+
+(define-button-type 'help-theme-def
+  :supertype 'help-xref
+  'help-function #'find-file
+  'help-echo "mouse-2, RET: visit theme file")
+
+(define-button-type 'help-theme-edit
+  :supertype 'help-xref
+  'help-function #'customize-create-theme
+  'help-echo "mouse-2, RET: edit this theme file")
+
+(define-button-type 'help-dir-local-var-def
+  :supertype 'help-xref
+  'help-function (lambda (_var &optional file)
+		   ;; FIXME: this should go to the point where the
+		   ;; local variable was defined.
+		   (find-file file))
+  'help-echo "mouse-2, RET: open directory-local variables file")
+
+(define-button-type 'help-news
+  :supertype 'help-xref
+  'help-function
+  (lambda (file pos)
+    (if help-window-keep-selected
+        (view-file file)
+      (view-file-other-window file))
+    (goto-char pos))
+  'help-echo "mouse-2, RET: show corresponding NEWS announcement")
+
+(defun help-mode--add-function-link (str fun)
+  (make-text-button (copy-sequence str) nil
+                    'type 'help-function
+                    'help-args (list fun)))
+
+(defvar bookmark-make-record-function)
+(defvar help-mode--current-data nil)
+
+(define-derived-mode help-mode special-mode "Help"
+  "Major mode for viewing help text and navigating references in it.
+Also see the `help-enable-variable-value-editing' variable.
+
+Commands:
+\\{help-mode-map}"
+  (setq-local revert-buffer-function
+              #'help-mode-revert-buffer)
+  (add-hook 'context-menu-functions #'help-mode-context-menu 5 t)
+  (setq-local tool-bar-map
+              help-mode-tool-bar-map)
+  (setq-local help-mode--current-data nil)
+  (setq-local bookmark-make-record-function
+              #'help-bookmark-make-record)
+  (unless search-default-mode
+    (isearch-fold-quotes-mode)))
+
+(defun help-mode-setup ()
+  "Enter Help mode in the current buffer."
+  (declare (obsolete nil "29.1"))
+  (help-mode)
+  (setq buffer-read-only nil))
+
+(defun help-mode-finish ()
+  "Finalize Help mode setup in current buffer."
+  (declare (obsolete nil "29.1"))
+  (when (derived-mode-p 'help-mode)
+    (setq buffer-read-only t)
+    (help-make-xrefs (current-buffer))))
+
+;; Grokking cross-reference information in doc strings and
+;; hyperlinking it.
+
+(defvar help-back-label "[back]"
+  "Label to use by `help-make-xrefs' for the go-back reference.")
+
+(defvar help-forward-label "[forward]"
+  "Label to use by `help-make-xrefs' for the go-forward reference.")
+
+(defconst help-xref-symbol-regexp
+  (concat "\\(\\<\\(\\(variable\\|option\\)\\|"  ; Link to var
+          "\\(function\\|command\\|call\\)\\|"   ; Link to function
+          "\\(face\\)\\|"                        ; Link to face
+          "\\(symbol\\|program\\|property\\)\\|" ; Don't link
+          "\\(source \\(?:code \\)?\\(?:of\\|for\\)\\)\\)"
+          "[ \t\n]+\\)?"
+          "\\(\\\\\\+\\)?"
+          "['`‘]\\(\\(?:\\sw\\|\\s_\\)+\\|`\\)['’]")
+  "Regexp matching doc string references to symbols.
+
+The words preceding the quoted symbol can be used in doc strings to
+distinguish references to variables, functions and symbols.")
+
+(defvar help-xref-mule-regexp nil
+  "Regexp matching doc string references to MULE-related keywords.
+
+It is usually nil, and is temporarily bound to an appropriate regexp
+when help commands related to multilingual environment (e.g.,
+`describe-coding-system') are invoked.")
+
+
+(defconst help-xref-info-regexp
+  "\\<[Ii]nfo[ \t\n]+\\(node\\|anchor\\)[ \t\n]+['`‘]\\([^'’]+\\)['’]"
+  "Regexp matching doc string references to an Info node.")
+
+(defconst help-xref-man-regexp
+  "\\<[Mm]an[ \t\n]+page[ \t\n]+\\(?:for[ \t\n]+\\)?['`‘\"]\\([^'’\"]+\\)['’\"]"
+  "Regexp matching doc string references to a man page.")
+
+(defconst help-xref-customization-group-regexp
+  "\\<[Cc]ustomization[ \t\n]+[Gg]roup[ \t\n]+['`‘]\\([^'’]+\\)['’]"
+  "Regexp matching doc string references to a customization group.")
+
+(defconst help-xref-url-regexp
+  "\\<[Uu][Rr][Ll][ \t\n]+['`‘]\\([^'’]+\\)['’]"
+  "Regexp matching doc string references to a URL.")
+
+(defun help-setup-xref (item interactive-p)
+  "Invoked from commands using the \"*Help*\" buffer to install some xref info.
+
+ITEM is a (FUNCTION . ARGS) pair appropriate for recreating the help
+buffer after following a reference.  INTERACTIVE-P is non-nil if the
+calling command was invoked interactively.  In this case the stack of
+items for help buffer \"back\" buttons is cleared.
+
+This function also re-enables the major mode of the buffer, thus
+resetting local variables to the values set by the mode and running the
+mode hooks.
+
+So this should be called very early, before the output buffer is
+cleared, also because we want to record the \"previous\" position of
+point so we can restore it properly when going back."
+  (with-current-buffer (help-buffer)
+    ;; Re-enable major mode, killing all unrelated local vars.
+    (funcall major-mode)
+    (when help-xref-stack-item
+      (push (cons (point) help-xref-stack-item) help-xref-stack)
+      (setq help-xref-forward-stack nil))
+    (when interactive-p
+      (let ((tail (nthcdr 10 help-xref-stack)))
+        ;; Truncate the stack.
+        (if tail (setcdr tail nil))))
+    (setq help-xref-stack-item item)))
+
+(defvar help-xref-following nil
+  "Non-nil when following a help cross-reference.")
+
+;; GNU's help-buffer consults `help-xref-following'; this replaces the
+;; earlier simple definition.
+(defun help-buffer ()
+  "Return the name of a buffer for inserting help.
+If `help-xref-following' is non-nil and the current buffer is
+derived from `help-mode', this is the name of the current buffer.
+
+Otherwise, return \"*Help*\", creating a buffer with that name if
+it does not already exist."
+  (buffer-name                         ;for with-output-to-temp-buffer
+   (if (and help-xref-following
+            (derived-mode-p 'help-mode))
+       (current-buffer)
+     (get-buffer-create "*Help*"))))
+
+(defvar describe-symbol-backends
+  `((nil ,#'fboundp ,(lambda (s _b _f) (describe-function s)))
+    (nil
+     ,(lambda (symbol)
+        (or (and (boundp symbol) (not (keywordp symbol)))
+            (get symbol 'variable-documentation)))
+     ,#'describe-variable)
+    ;; FIXME: We could go crazy and add another entry so describe-symbol can be
+    ;; used with the slot names of CL structs (and/or EIEIO objects).
+    ("type" ,#'cl-find-class ,#'cl-describe-type)
+    ("face" ,#'facep ,(lambda (s _b _f) (describe-face s))))
+  "List of providers of information about symbols.
+Each element has the form (NAME TESTFUN DESCFUN) where:
+  NAME is a string naming a category of object, such as \"type\" or \"face\".
+  TESTFUN is a predicate which takes a symbol and returns non-nil if the
+    symbol is such an object.
+  DESCFUN is a function which takes three arguments (a symbol, a buffer,
+    and a frame), inserts the description of that symbol in the current buffer
+    and returns that text as well.")
+
+(defcustom help-clean-buttons nil
+  "If non-nil, remove quotes around link buttons."
+  :version "29.1"
+  :type 'boolean
+  :group 'help)
+
+(defun help-make-xrefs (&optional buffer)
+  "Parse and hyperlink documentation cross-references in the given BUFFER.
+
+Find cross-reference information in a buffer and activate such cross
+references for selection with `help-follow-symbol'.  Cross-references have
+the canonical form `...'  and the type of reference may be
+disambiguated by the preceding word(s) used in
+`help-xref-symbol-regexp'.  Faces only get cross-referenced if
+preceded or followed by the word `face'.  Variables without
+variable documentation do not get cross-referenced, unless
+preceded by the word `variable' or `option'.
+
+If the variable `help-xref-mule-regexp' is non-nil, find also
+cross-reference information related to multilingual environment
+\(e.g., coding-systems).  This variable is also used to disambiguate
+the type of reference as the same way as `help-xref-symbol-regexp'.
+
+A special reference `back' is made to return back through a stack of
+help buffers.  Variable `help-back-label' specifies the text for
+that."
+  (interactive "b")
+  (with-current-buffer (or buffer (current-buffer))
+    (save-excursion
+      (goto-char (point-min))
+      ;; Skip the first bit, which has already been buttonized.
+      (forward-paragraph)
+      (let ((old-modified (buffer-modified-p)))
+        (let ((case-fold-search t)
+              (inhibit-read-only t))
+          (with-syntax-table help-mode-syntax-table
+            ;; The following should probably be abstracted out.
+            ;; Info references
+            (save-excursion
+              (while (re-search-forward help-xref-info-regexp nil t)
+                (let ((data (match-string 2)))
+                  (save-match-data
+                    (unless (string-match "^([^)]+)" data)
+                      (setq data (concat "(emacs)" data)))
+		    (setq data ;; possible newlines if para filled
+			  (replace-regexp-in-string "[ \t\n]+" " " data t t)))
+                  (help-xref-button 2 'help-info data))))
+            ;; Man references
+            (save-excursion
+              (while (re-search-forward help-xref-man-regexp nil t)
+                (help-xref-button 1 'help-man (match-string 1))))
+            ;; Customization groups.
+            (save-excursion
+              (while (re-search-forward
+                      help-xref-customization-group-regexp nil t)
+                (help-xref-button 1 'help-customization-group
+                                  (intern (match-string 1)))))
+            ;; URLs
+            (save-excursion
+              (while (re-search-forward help-xref-url-regexp nil t)
+                (let ((data (match-string 1)))
+                  (help-xref-button 1 'help-url data))))
+            ;; Mule related keywords.  Do this before trying
+            ;; `help-xref-symbol-regexp' because some of Mule
+            ;; keywords have variable or function definitions.
+            (if help-xref-mule-regexp
+                (save-excursion
+                  (while (re-search-forward help-xref-mule-regexp nil t)
+                    (let* ((data (match-string 7))
+                           (sym (intern-soft data)))
+                      (cond
+                       ((match-string 3) ; coding system
+                        (and sym (coding-system-p sym)
+                             (help-xref-button 6 'help-coding-system sym)))
+                       ((match-string 4) ; input method
+                        (and (assoc data input-method-alist)
+                             (help-xref-button 7 'help-input-method data)))
+                       ((or (match-string 5) (match-string 6)) ; charset
+                        (and sym (charsetp sym)
+                             (help-xref-button 7 'help-character-set sym)))
+                       ((assoc data input-method-alist)
+                        (help-xref-button 7 'help-input-method data))
+                       ((and sym (coding-system-p sym))
+                        (help-xref-button 7 'help-coding-system sym))
+                       ((and sym (charsetp sym))
+                        (help-xref-button 7 'help-character-set sym)))))))
+            ;; Quoted symbols
+            (save-excursion
+              (while (re-search-forward help-xref-symbol-regexp nil t)
+                (when-let* ((sym (intern-soft (match-string 9))))
+                  (if (match-string 8)
+                      (delete-region (match-beginning 8)
+                                     (match-end 8))
+                    (cond
+                     ((match-string 3)          ; `variable' &c
+                      (and (or (boundp sym) ; `variable' doesn't ensure
+                                            ; it's actually bound
+                               (get sym 'variable-documentation))
+                           (help-xref-button 9 'help-variable sym)))
+                     ((match-string 4)       ; `function' &c
+                      (and (fboundp sym)     ; similarly
+                           (help-xref-button 9 'help-function sym)))
+                     ((match-string 5)  ; `face'
+                      (and (facep sym)
+                           (help-xref-button 9 'help-face sym)))
+                     ((match-string 6)) ; nothing for `symbol'
+                     ((match-string 7)
+                      (help-xref-button 9 'help-function-def sym))
+                     ((cl-some (lambda (x) (funcall (nth 1 x) sym))
+                               describe-symbol-backends)
+                      (help-xref-button 9 'help-symbol sym)))))))
+            ;; An obvious case of a key substitution:
+            (save-excursion
+              (while (re-search-forward
+                      ;; Assume command name is only word and symbol
+                      ;; characters to get things like `use M-x foo->bar'.
+                      ;; Command required to end with word constituent
+                      ;; to avoid `.' at end of a sentence.
+                      "\\<M-x\\s-+\\(\\sw\\(\\sw\\|\\s_\\)*\\sw\\)" nil t)
+                (let ((sym (intern-soft (match-string 1))))
+                  (if (fboundp sym)
+                      (help-xref-button 1 'help-function sym))))))
+          ;; Delete extraneous newlines at the end of the docstring
+          (goto-char (point-max))
+          (while (and (not (bobp)) (bolp))
+            (delete-char -1))
+          (insert "\n")
+          (help-xref--navigation-buttons))
+        (set-buffer-modified-p old-modified)))))
+
+(defun help-xref--navigation-buttons ()
+  (let ((inhibit-read-only t))
+    (when (or help-xref-stack help-xref-forward-stack)
+      (ensure-empty-lines 1))
+    ;; Make a back-reference in this buffer if appropriate.
+    (when help-xref-stack
+      (help-insert-xref-button help-back-label 'help-back
+                               (current-buffer)))
+    ;; Make a forward-reference in this buffer if appropriate.
+    (when help-xref-forward-stack
+      (when help-xref-stack
+        (insert "\t"))
+      (help-insert-xref-button help-forward-label 'help-forward
+                               (current-buffer)))
+    (unless (bolp)
+      (insert "\n"))))
+
+(defun help-xref-button (match-number type &rest args)
+  "Make a hyperlink for cross-reference text previously matched.
+MATCH-NUMBER is the subexpression of interest in the last matched
+regexp.  TYPE is the type of button to use.  Any remaining arguments are
+passed to the button's help-function when it is invoked.
+See `help-make-xrefs'.
+
+This function removes quotes surrounding the match if the
+variable `help-clean-buttons' is non-nil."
+  ;; Don't mung properties we've added specially in some instances.
+  (let ((beg (match-beginning match-number))
+        (end (match-end match-number)))
+    (unless (button-at beg)
+      (make-text-button beg end 'type type 'help-args args)
+      (when (and help-clean-buttons
+                 (> beg (point-min))
+                 (save-excursion
+                   (goto-char (1- beg))
+                   (looking-at "['`‘]"))
+                 (< end (point-max))
+                 (save-excursion
+                   (goto-char end)
+                   (looking-at "['’]")))
+        (delete-region end (1+ end))
+        (delete-region (1- beg) beg)))))
+
+(defun help-insert-xref-button (string type &rest args)
+  "Insert STRING and make a hyperlink from cross-reference text on it.
+TYPE is the type of button to use.  Any remaining arguments are passed
+to the button's help-function when it is invoked.
+See `help-make-xrefs'."
+  (unless (button-at (point))
+    (insert-text-button string 'type type 'help-args args)))
+
+(defun help-xref-on-pp (from to)
+  "Add xrefs for symbols in `pp's output between FROM and TO."
+  (if (> (- to from) 5000) nil
+    (with-syntax-table help-mode-syntax-table
+      (save-excursion
+	(save-restriction
+	  (narrow-to-region from to)
+	  (goto-char (point-min))
+	  (ignore-errors
+	    (while (not (eobp))
+	      (cond
+	       ((looking-at-p "\"") (forward-sexp 1))
+	       ((looking-at-p "#<") (search-forward ">" nil 'move))
+	       ((looking-at "\\(\\(\\sw\\|\\s_\\)+\\)")
+		(let* ((sym (intern-soft (match-string 1)))
+		       (type (cond ((fboundp sym) 'help-function)
+				   ((or (memq sym '(t nil))
+					(keywordp sym))
+				    nil)
+				   ((and sym
+					 (or (boundp sym)
+					     (get sym
+						  'variable-documentation)))
+				    'help-variable))))
+		  (when type (help-xref-button 1 type sym)))
+		(goto-char (match-end 1)))
+	       (t (forward-char 1))))))))))
+
+;; Additional functions for (re-)creating types of help buffers.
+
+(define-obsolete-function-alias 'help-xref-interned #'describe-symbol "25.1")
+
+;; Navigation/hyperlinking with xrefs
+
+(defun help-xref-go-back (buffer)
+  "From BUFFER, go back to previous help buffer text using `help-xref-stack'."
+  (let (item position method args)
+    (with-current-buffer buffer
+      (push (cons (point) help-xref-stack-item) help-xref-forward-stack)
+      (when help-xref-stack
+	(setq item (pop help-xref-stack)
+	      ;; Clear the current item so that it won't get pushed
+	      ;; by the function we're about to call.
+	      help-xref-stack-item nil
+	      position (car item)
+	      method (cadr item)
+	      args (cddr item))))
+    (apply method args)
+    (with-current-buffer buffer
+      (if (get-buffer-window buffer)
+	  (set-window-point (get-buffer-window buffer) position)
+	(goto-char position)))))
+
+(defun help-xref-go-forward (buffer)
+  "From BUFFER, go forward to next help buffer."
+  (let (item position method args)
+    (with-current-buffer buffer
+      (push (cons (point) help-xref-stack-item) help-xref-stack)
+      (when help-xref-forward-stack
+	(setq item (pop help-xref-forward-stack)
+	      ;; Clear the current item so that it won't get pushed
+	      ;; by the function we're about to call.
+	      help-xref-stack-item nil
+	      position (car item)
+	      method (cadr item)
+	      args (cddr item))))
+    (apply method args)
+    (with-current-buffer buffer
+      (if (get-buffer-window buffer)
+	  (set-window-point (get-buffer-window buffer) position)
+	(goto-char position)))))
+
+(defun help-go-back ()
+  "Go back to previous topic in this help buffer."
+  (interactive)
+  (if help-xref-stack
+      (help-xref-go-back (current-buffer))
+    (user-error "No previous help buffer")))
+
+(defun help-go-forward ()
+  "Go to the next topic in this help buffer."
+  (interactive)
+  (if help-xref-forward-stack
+      (help-xref-go-forward (current-buffer))
+    (user-error "No next help buffer")))
+
+(defun help-goto-next-page ()
+  "Go to the next page (if any) in the current buffer.
+The help buffers are divided into \"pages\" by the ^L character."
+  (interactive nil help-mode)
+  (push-mark)
+  (forward-page)
+  (unless (eobp)
+    (forward-line 1)))
+
+(defun help-goto-previous-page ()
+  "Go to the previous page (if any) in the current buffer.
+\(If not at the start of a page, go to the start of the current page.)
+
+The help buffers are divided into \"pages\" by the ^L character."
+  (interactive nil help-mode)
+  (push-mark)
+  (backward-page (if (looking-back "\f\n" (- (point) 5)) 2 1))
+  (unless (bobp)
+    (forward-line 1)))
+
+(defun help-view-source ()
+  "View the source of the current help item."
+  (interactive nil help-mode)
+  (unless (plist-get help-mode--current-data :file)
+    (error "Source file for the current help item is not defined"))
+  (help-function-def--button-function
+   (plist-get help-mode--current-data :symbol)
+   (plist-get help-mode--current-data :file)
+   (plist-get help-mode--current-data :type)))
+
+(defun help-goto-info ()
+  "View the *info* node of the current help item."
+  (interactive nil help-mode)
+  (unless help-mode--current-data
+    (error "No symbol to look up in the current buffer"))
+  (info-lookup-symbol (plist-get help-mode--current-data :symbol)
+                      'emacs-lisp-mode
+                      help-window-keep-selected))
+
+(defun help-goto-lispref-info ()
+  "View the Emacs Lisp manual *info* node of the current help item."
+  (interactive nil help-mode)
+  (unless help-mode--current-data
+    (error "No symbol to look up in the current buffer"))
+  (info-lookup-symbol (plist-get help-mode--current-data :symbol)
+                      'emacs-lisp-only))
+
+(defun help-customize ()
+  "Customize variable or face whose doc string is shown in the current buffer."
+  (interactive nil help-mode)
+  (let ((sym (plist-get help-mode--current-data :symbol)))
+    (unless (or (boundp sym) (facep sym))
+      (user-error "No variable or face to customize"))
+    (cond
+     ((boundp sym) (customize-variable sym))
+     ((facep sym) (customize-face sym)))))
+
+(defun help-do-xref (_pos function args)
+  "Call the help cross-reference function FUNCTION with args ARGS.
+Things are set up properly so that the resulting help buffer has
+a proper [back] button."
+  ;; There is a reference at point.  Follow it.
+  (let ((help-xref-following t))
+    (apply function (if (eq function 'info)
+                        (append args (list (generate-new-buffer-name "*info*")))
+                      args))))
+
+;; The doc string is meant to explain what buttons do.
+(defun help-follow-mouse ()
+  "Follow the cross-reference that you click on."
+  (declare (obsolete nil "28.1"))
+  (interactive)
+  (error "No cross-reference here"))
+
+;; The doc string is meant to explain what buttons do.
+(defun help-follow ()
+  "Follow cross-reference at point.
+
+For the cross-reference format, see `help-make-xrefs'."
+  (declare (obsolete nil "28.1"))
+  (interactive)
+  (user-error "No cross-reference here"))
+
+(defun help-follow-symbol (&optional pos)
+  "In help buffer, show docs for symbol at POS, defaulting to point.
+Show all docs for that symbol as either a variable, function or face."
+  (interactive "d")
+  (unless pos
+    (setq pos (point)))
+  ;; check if the symbol under point is a function, variable or face
+  (let ((sym
+	 (intern
+	  (save-excursion
+	    (goto-char pos) (skip-syntax-backward "w_")
+	    (buffer-substring (point)
+			      (progn (skip-syntax-forward "w_")
+				     (point)))))))
+    (if (or (boundp sym)
+	    (get sym 'variable-documentation)
+	    (fboundp sym) (facep sym))
+        (help-do-xref pos #'describe-symbol (list sym))
+      (user-error "No symbol here"))))
+
+(defun help-mode-revert-buffer (_ignore-auto _noconfirm)
+  (let ((pos (point))
+	(item help-xref-stack-item)
+	;; Pretend there is no current item to add to the history.
+	(help-xref-stack-item nil)
+	;; Use the current buffer.
+	(help-xref-following t))
+    (apply (car item) (cdr item))
+    (goto-char pos)))
+
+(defun help-insert-string (string)
+  "Insert STRING to the help buffer and install xref info for it.
+This function can be used to restore the old contents of the help buffer
+when going back to the previous topic in the xref stack.  It is needed
+in case when it is impossible to recompute the old contents of the
+help buffer by other means."
+  (setq help-xref-stack-item (list #'help-insert-string string))
+  (with-output-to-temp-buffer (help-buffer)
+    (insert string)))
+
+;; GNU's `cl-find-class' lives in eieio; our class lookup is `find-class'.
+(defalias 'cl-find-class #'find-class
+  "Return the class named SYM, or nil.")
+
+;; `ensure-empty-lines' (GNU subr.el).
+(defun ensure-empty-lines (&optional lines)
+  "Ensure that there are LINES number of empty lines before point.
+If LINES is nil or omitted, ensure that there is a single empty
+line before point.
+
+If called interactively, LINES is given by the prefix argument.
+
+If there are more than LINES empty lines before point, the number
+of empty lines is reduced to LINES.
+
+If point is not at the beginning of a line, a newline character
+is inserted before adjusting the number of empty lines."
+  (interactive "p")
+  (unless (bolp)
+    (insert "\n"))
+  (let ((lines (or lines 1))
+        (start (save-excursion
+                 (if (re-search-backward "[^\n]" nil t)
+                     (+ (point) 2)
+                   (point-min)))))
+    (cond
+     ((> (- (point) start) lines)
+      (delete-region (point) (- (point) (- (point) start lines))))
+     ((< (- (point) start) lines)
+      (insert (make-string (- lines (- (point) start)) ?\n))))))
+
+;; ---------- lossage (help.el) ----------
+
+(defcustom view-lossage-auto-refresh nil
+  "Whether to auto-refresh the lossage buffer.
+If non-nil, the lossage buffer will be refreshed automatically for each
+new input keystroke and command performed."
+  :type 'boolean
+  :group 'help
+  :version "31.1")
+
+(defvar-local help--lossage-update nil
+  "Variable used to determine if lossage buffer should be refreshed.")
+
+(defun help--lossage-make-recent-keys (&optional most-recent)
+  "Return a string containing all the recent keys and its commands.
+If MOST-RECENT is non-nil, only return the most recent key and its
+command."
+  (let ((keys
+         (if most-recent
+             `[,@(this-single-command-raw-keys) (nil . ,this-command)]
+           (recent-keys 'include-cmds))))
+    (mapconcat
+     (lambda (key)
+       (cond
+        ((and (consp key) (null (car key)))
+         (concat
+          ";; "
+          (if (symbolp (cdr key))
+              (buttonize
+               (symbol-name (cdr key))
+               (lambda (&rest _)
+                 (interactive)
+                 (describe-function (cdr key)))
+               "mouse-1: go to the documentation for this command.")
+	    (propertize "anonymous-command" 'face 'shadow))
+          "\n"))
+        ((or (integerp key) (symbolp key) (listp key))
+         (propertize (single-key-description key)
+                     'face 'help-key-binding
+                     'rear-nonsticky t))
+        (t
+         (propertize (prin1-to-string key nil)
+                     'face 'help-key-binding
+                     'rear-nonsticky t))))
+     keys
+     " ")))
+
+(defun help--refresh-lossage-buffer ()
+  (if-let* ((buf (get-buffer "*Help*"))
+            (_ (buffer-local-value 'help--lossage-update buf)))
+      (with-current-buffer buf
+        (let ((inhibit-read-only t))
+          (save-excursion
+            (goto-char (point-max))
+            (insert-before-markers
+             (concat " " (help--lossage-make-recent-keys :most-recent)))
+            (forward-line -1)
+            (comment-indent))))
+    (remove-hook 'post-command-hook #'help--refresh-lossage-buffer)))
+
+(defun view-lossage (&optional auto-refresh)
+  "Display last few input keystrokes and the commands run.
+For convenience this uses the same format as
+`edit-last-kbd-macro'.
+See `lossage-size' to update the number of recorded keystrokes.
+
+With argument, auto-refresh the lossage buffer for each new input
+keystroke, see also `view-lossage-auto-refresh'.
+
+To record all your input, use `open-dribble-file'."
+  (interactive "P")
+  (let ((help-buffer-under-preparation t)
+        (view-lossage-auto-refresh
+         (if auto-refresh t view-lossage-auto-refresh)))
+    (unless view-lossage-auto-refresh
+      ;; `view-lossage-auto-refresh' conflicts with xref buttons, add
+      ;; them if `view-lossage-auto-refresh' is nil.
+      (help-setup-xref (list #'view-lossage)
+		       (called-interactively-p 'interactive)))
+    (with-help-window (help-buffer)
+      (princ " ")
+      (insert (help--lossage-make-recent-keys))
+      (with-current-buffer standard-output
+	(goto-char (point-min))
+        (setq-local comment-start ";; "
+                    ;; Prevent 'comment-indent' from handling a single
+                    ;; semicolon as the beginning of a comment.
+                    comment-start-skip ";; "
+                    comment-use-syntax nil
+                    comment-column 24)
+	(while (not (eobp))
+          (comment-indent)
+	  (forward-line 1))
+	;; Show point near the end of "lossage", as we did in Emacs 24.
+	(set-marker help-window-point-marker (point))
+
+        (when view-lossage-auto-refresh
+          (setq-local help--lossage-update t)
+          (add-hook 'post-command-hook #'help--refresh-lossage-buffer))))
+
+    ;; `help-make-xrefs' adds a newline at the end of the buffer, which
+    ;; makes impossible to reposition point in `with-help-window'.
+    (when view-lossage-auto-refresh
+      (set-window-point (get-buffer-window (help-buffer)) (point-max)))))
+
+;; ---------- uniquify (GNU loadup) ----------
+
+;; GNU's loadup loads uniquify.el during the dump, so its functions and
+;; the `uniquify' feature are already present in a fresh Emacs.  Its
+;; buffer-local state variables are likewise pre-bound; bind them before
+;; the load so the :set refresh that runs mid-file sees them.
+(defvar uniquify-managed nil)
+(make-variable-buffer-local 'uniquify-managed)
+(put 'uniquify-managed 'permanent-local t)
+(defvar uniquify-possibly-resolvable nil)
+(defvar uniquify--stateless-curname nil)
+(load "uniquify")
 
 ;; *scratch* starts in lisp-interaction-mode (GNU batch behavior too).
 (when (get-buffer "*scratch*")

@@ -43,6 +43,11 @@ pub struct Window {
     pub margins: (usize, usize),
     /// `window-use-time': tick of the last creation/selection.
     pub use_time: u64,
+    /// Buffers previously shown here — list of
+    /// `(buffer start-marker point-marker)' triples, newest first.
+    pub prev_buffers: Value,
+    /// Buffers recorded by `unrecord-window-buffer'/quit-restore.
+    pub next_buffers: Value,
     pub dead: bool,
 }
 
@@ -96,6 +101,8 @@ impl Window {
             // GNU bumps the use tick on selection, not creation; a
             // fresh window reports 0 until first selected.
             use_time: 0,
+            prev_buffers: Value::Nil,
+            next_buffers: Value::Nil,
             dead: false,
         }))
     }
@@ -2203,9 +2210,46 @@ fn f_set_window_buffer(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let bid = i
         .buffer_id_of(&a[1])
         .ok_or_else(|| i.error(format!("No buffer named {}", i.princ_to_string(&a[1]))))?;
-    w.borrow_mut().buffer = bid;
-    w.borrow_mut().point = 0;
-    w.borrow_mut().start = 0;
+    let (old_bid, start, point) = {
+        let pt = window_point(i, &w);
+        let wb = w.borrow();
+        (wb.buffer, wb.start, pt)
+    };
+    if old_bid != bid {
+        // GNU `unshow_buffer': prepend a (buffer start point) entry
+        // for the old buffer to `window-prev-buffers', deduplicated,
+        // and drop the new buffer's own entry.
+        let old_buf = i
+            .buffers
+            .get(old_bid)
+            .map(Value::Buffer)
+            .unwrap_or(Value::Nil);
+        let entry = Value::list(vec![
+            old_buf,
+            crate::buffer::primitives::new_marker_at(i, old_bid, start),
+            crate::buffer::primitives::new_marker_at(i, old_bid, point),
+        ]);
+        let mut kept: Vec<Value> = Vec::new();
+        let prev = w.borrow().prev_buffers.clone();
+        if let Ok(items) = prev.list_to_vec() {
+            for e in items {
+                if let Value::Cons(c) = &e {
+                    if let Value::Buffer(b) = &c.borrow().car {
+                        let id = b.borrow().id;
+                        if id == old_bid || id == bid {
+                            continue;
+                        }
+                    }
+                }
+                kept.push(e);
+            }
+        }
+        kept.insert(0, entry);
+        w.borrow_mut().prev_buffers = Value::list(kept);
+        w.borrow_mut().buffer = bid;
+        w.borrow_mut().point = 0;
+        w.borrow_mut().start = 0;
+    }
     // Displaying a buffer makes it most-recent in buffer-list order.
     i.buffers.touch(bid);
     Ok(Value::Nil)
@@ -2301,7 +2345,12 @@ fn f_window_frame(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 
 fn f_window_list(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let f = frame_of(i, &arg(&a, 0))?;
-    let include_mini = a.get(1).map(|v| v.truthy()).unwrap_or(false);
+    // GNU: MINIBUF t = always include the minibuffer window; nil =
+    // include only when active; any other non-nil = never include.
+    let include_mini = match a.get(1) {
+        Some(v) if v.truthy() => i.sym_id(v) == Some(sym::T),
+        _ => i.minibuf_level > 0,
+    };
     let mut out: Vec<Value> = f
         .borrow()
         .windows
@@ -2974,6 +3023,11 @@ fn f_scroll_other_window(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 }
 
 fn f_pos_visible_in_window_p(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    // GNU computes visibility from the window's glyph matrix — in
+    // batch there is no display, so nothing is ever visible.
+    if i.noninteractive {
+        return Ok(Value::Nil);
+    }
     let pos = arg(&a, 0)
         .int()
         .unwrap_or_else(|| cur(i).borrow().point() as i128 + 1);
@@ -4171,6 +4225,35 @@ fn f_set_keymap_parent(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     Ok(a[1].clone())
 }
 
+/// One element of a key sequence.  GNU converts "Lucid-style" event
+/// lists like `(control meta ?c)' via `event-convert-list' inside
+/// `Fdefine_key'/`Flookup_key'; other elements are ints or symbols.
+fn key_seq_elt(i: &mut Interp, x: &Value) -> Result<Option<i128>, Flow> {
+    match x {
+        Value::Int(n) => Ok(Some(*n)),
+        Value::Sym(s) => Ok(Some(event_code_for(&i.symbol_name(*s)))),
+        Value::Cons(c) => {
+            // A (LO . HI) character range isn't a Lucid event list —
+            // GNU keeps it as a range key, which our i128 codes can't
+            // express; skip rather than feed it to event-convert-list.
+            if matches!(&c.borrow().car, Value::Int(_)) {
+                return Ok(None);
+            }
+            match crate::lisp::builtins::misc::f_event_convert_list(
+                i,
+                vec![x.clone()],
+            )? {
+                Value::Int(n) => Ok(Some(n)),
+                Value::Sym(s) => {
+                    Ok(Some(event_code_for(&i.symbol_name(s))))
+                }
+                _ => Ok(None),
+            }
+        }
+        _ => Ok(None),
+    }
+}
+
 /// Parse a key sequence (string or vector) into event codes.
 pub(crate) fn key_seq(i: &mut Interp, v: &Value) -> Result<Vec<i128>, Flow> {
     match v {
@@ -4187,26 +4270,25 @@ pub(crate) fn key_seq(i: &mut Interp, v: &Value) -> Result<Vec<i128>, Flow> {
                 }
             })
             .collect()),
-        Value::Vec(vec) => Ok(vec
-            .borrow()
-            .iter()
-            .filter_map(|x| match x {
-                Value::Int(n) => Some(*n),
-                Value::Sym(s) => Some(event_code_for(&i.symbol_name(*s))),
-                _ => None,
-            })
-            .collect()),
+        Value::Vec(vec) => {
+            let mut out = Vec::new();
+            for x in vec.borrow().iter() {
+                if let Some(n) = key_seq_elt(i, x)? {
+                    out.push(n);
+                }
+            }
+            Ok(out)
+        }
         Value::Int(n) => Ok(vec![*n]),
-        Value::Cons(_) => Ok(v
-            .list_to_vec()
-            .unwrap_or_default()
-            .iter()
-            .filter_map(|x| match x {
-                Value::Int(n) => Some(*n),
-                Value::Sym(s) => Some(event_code_for(&i.symbol_name(*s))),
-                _ => None,
-            })
-            .collect()),
+        Value::Cons(_) => {
+            let mut out = Vec::new();
+            for x in v.list_to_vec().unwrap_or_default().iter() {
+                if let Some(n) = key_seq_elt(i, x)? {
+                    out.push(n);
+                }
+            }
+            Ok(out)
+        }
         Value::Sym(id) => {
             // A symbol key like `quit` or `f1`.
             let name = i.symbol_name(*id);
@@ -5095,10 +5177,34 @@ fn args0(a: &[Value]) -> Value {
     a[0].clone()
 }
 
+/// GNU `Fcommand_remapping': look up the two-event pseudo-sequence
+/// `[remap COMMAND]' — in the currently active maps, or in KEYMAPS
+/// (a single map means it plus the global map; a cons whose car is a
+/// keymap is taken as the whole list).  A "too long" fixnum result
+/// counts as no remapping.
 fn f_command_remapping(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    // No remapping table yet: nil (not the command itself).
-    let _ = (i, a);
-    Ok(Value::Nil)
+    let Value::Sym(cmd) = a[0] else {
+        return Ok(Value::Nil);
+    };
+    let position = a.get(1).cloned().unwrap_or(Value::Nil);
+    let keymaps = a.get(2).cloned().unwrap_or(Value::Nil);
+    let key = Value::Vec(Rc::new(RefCell::new(vec![
+        Value::Sym(i.intern("remap")),
+        Value::Sym(cmd),
+    ])));
+    let v = if keymaps.is_nil() {
+        f_key_binding(
+            i,
+            vec![key, Value::Nil, Value::Sym(sym::T), position],
+        )?
+    } else {
+        f_lookup_key(i, vec![keymaps, key, Value::Nil])?
+    };
+    Ok(if matches!(v, Value::Int(_)) {
+        Value::Nil
+    } else {
+        v
+    })
 }
 
 /// All modifier bits in GNU's event encoding (CHAR_MODIFIER_MASK).
@@ -5201,8 +5307,33 @@ fn lookup_event(
             lookup_in_keymap(i, map, code, t_ok)
         }
         Value::Cons(c) => {
-            let head = c.borrow().car.clone();
-            lookup_event(i, map, &head, t_ok)
+            let (car, cdr) = {
+                let b = c.borrow();
+                (b.car.clone(), b.cdr.clone())
+            };
+            if let (Value::Int(lo), Value::Int(hi)) = (&car, &cdr) {
+                // A (LO . HI) range key: GNU's access_keymap returns
+                // the binding only when it covers the whole range —
+                // check both endpoints resolve identically.
+                let v_lo = lookup_in_keymap(i, map, *lo, t_ok)?;
+                if lo == hi {
+                    return Ok(v_lo);
+                }
+                let v_hi = lookup_in_keymap(i, map, *hi, t_ok)?;
+                return Ok(if equal_values(i, &v_lo, &v_hi) {
+                    v_lo
+                } else {
+                    Value::Nil
+                });
+            }
+            // A Lucid-style event list like `(control meta ?c)' —
+            // convert, then look up the resulting event (GNU
+            // `Flookup_key' calls `Fevent_convert_list').
+            let conv = crate::lisp::builtins::misc::f_event_convert_list(
+                i,
+                vec![ev.clone()],
+            )?;
+            lookup_event(i, map, &conv, t_ok)
         }
         Value::Str(_) => {
             for (k, d) in keymap_all_bindings(i, map) {
@@ -5352,6 +5483,23 @@ fn where_is_collect(
                     || (matches!(definition, Value::Cons(_))
                         && equal_values(i, &binding, definition));
                 if !matched {
+                    continue;
+                }
+                // A `t' default binding covers the whole key space;
+                // GNU's map_keymap reports it as the char ranges it
+                // spans — [(32 . 126)] and [(128 . 4194303)].
+                if matches!(&key, Value::Sym(s) if i.symbol_name(*s) == "t") {
+                    for (lo, hi) in
+                        [(32i128, 126i128), (128i128, 4194303i128)]
+                    {
+                        let cell =
+                            Value::cons(Value::Int(lo), Value::Int(hi));
+                        let mut v = elts.clone();
+                        v.push(cell);
+                        sequences.push(Value::Vec(Rc::new(
+                            RefCell::new(v),
+                        )));
+                    }
                     continue;
                 }
                 // [META-PREFIX CHAR] folds to [M-CHAR].
@@ -5564,56 +5712,6 @@ fn f_where_is_internal(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         }
     }
     Ok(found.first().cloned().unwrap_or(Value::Nil))
-}
-
-fn collect_keys_for(
-    i: &mut Interp,
-    km: &Value,
-    cmd: &Value,
-    prefix: &mut Vec<Value>,
-    out: &mut Vec<Value>,
-) {
-    // GNU's where_is scans each map via the C `map_keymap': char-table
-    // contents (as compressed range keys), alist pairs, embedded
-    // keymaps in place, and parent elements — all in spine order.
-    for (k, d) in keymap_all_bindings(i, km) {
-        // Menu-item wrappers: the real def follows the label.
-        let d = menu_label_def(i, d);
-        // Prefix symbols (Control-X-prefix etc.) resolve through
-        // their function cell — autoload keymaps are not loaded here.
-        let dd = match &d {
-            Value::Sym(s) => {
-                let f = i.symbol_function(*s);
-                if is_keymap(i, &f) {
-                    f
-                } else {
-                    d.clone()
-                }
-            }
-            _ => d.clone(),
-        };
-        if is_keymap(i, &dd) {
-            prefix.push(k);
-            collect_keys_for(i, &dd, cmd, prefix, out);
-            prefix.pop();
-            continue;
-        }
-        if !eq_values(&dd, cmd) {
-            continue;
-        }
-        // `t` is the default binding, not a real key. Emacs reports
-        // it as the char ranges it covers.
-        if matches!(&k, Value::Sym(s) if i.symbol_name(*s) == "t") {
-            for (lo, hi) in [(32i128, 126i128), (128i128, 4194303i128)] {
-                let cell = Value::cons(Value::Int(lo), Value::Int(hi));
-                out.push(Value::Vec(Rc::new(RefCell::new(vec![cell]))));
-            }
-            continue;
-        }
-        let mut seq = prefix.clone();
-        seq.push(k);
-        out.push(Value::Vec(Rc::new(RefCell::new(seq))));
-    }
 }
 
 /// `kbd` — parse "C-x", "M-f", "S-<return>" etc.
@@ -5856,9 +5954,57 @@ pub(crate) fn apply_mods_ev(c: i128, mods: i128, evconv: bool) -> i128 {
 }
 
 fn f_key_description(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let keys = key_seq(i, &a[0])?;
-    let parts: Vec<String> = keys.iter().map(|k| describe_key(*k)).collect();
+    let elts = seq_events(&a[0]);
+    let parts: Vec<String> = elts
+        .iter()
+        .map(|e| describe_key_value(i, e))
+        .collect();
     Ok(Value::string(parts.join(" ")))
+}
+
+/// `push_key_description' on one event: integer events print as
+/// modified keys, symbols by name, and a (LO . HI) range prints
+/// "LO..HI" (GNU's `[(32 . 126)]' → "SPC..~").
+fn describe_key_value(i: &mut Interp, ev: &Value) -> String {
+    match ev {
+        Value::Int(n) => describe_key(*n),
+        Value::Sym(s) => {
+            // Symbol events print as <name>; leading character
+            // modifiers (A- C- H- M- S- s-) print outside the
+            // brackets: `M-next' → "M-<next>", `f1' → "<f1>".
+            let mut name = i.symbol_name(*s).to_string();
+            let mut pfx = String::new();
+            loop {
+                let mut hit = false;
+                for p in ["A-", "C-", "H-", "M-", "S-", "s-"] {
+                    if name.starts_with(p) && name.len() > p.len() {
+                        pfx.push_str(p);
+                        name = name[p.len()..].to_string();
+                        hit = true;
+                        break;
+                    }
+                }
+                if !hit {
+                    break;
+                }
+            }
+            format!("{pfx}<{name}>")
+        }
+        Value::Cons(c) => {
+            let (car, cdr) = {
+                let b = c.borrow();
+                (b.car.clone(), b.cdr.clone())
+            };
+            match (&car, &cdr) {
+                (Value::Int(lo), Value::Int(hi)) => {
+                    format!("{}..{}", describe_key(*lo), describe_key(*hi))
+                }
+                _ => describe_key_value(i, &car),
+            }
+        }
+        Value::Str(s) => s.borrow().clone(),
+        _ => String::new(),
+    }
 }
 
 pub(crate) fn describe_key_pub(k: i128) -> String {
@@ -6060,18 +6206,43 @@ fn f_substitute_command_keys(i: &mut Interp, a: Vec<Value>) -> EvalResult {
                 '[' => {
                     if let Some((name, next)) = take_until(&chars, pos + 2, ']') {
                         let cmd = Value::Sym(i.intern(&name));
-                        let keys = f_where_is_internal(i, vec![cmd.clone()]).unwrap_or(Value::Nil);
+                        // GNU doc.c: `\[command]' uses
+                        // `where-is-internal' with FIRSTONLY = t.
+                        let keys = f_where_is_internal(
+                            i,
+                            vec![
+                                cmd.clone(),
+                                Value::Nil,
+                                Value::Sym(sym::T),
+                                Value::Nil,
+                                Value::Nil,
+                            ],
+                        )
+                        .unwrap_or(Value::Nil);
                         // Restrict to the \<map> context if one was set.
                         let first_key = if let Some(km) = &ctx_map {
-                            let mut found = Vec::new();
-                            if is_keymap(i, km) {
-                                collect_keys_for(i, km, &cmd, &mut Vec::new(), &mut found);
+                            let ctx_keys = f_where_is_internal(
+                                i,
+                                vec![
+                                    cmd.clone(),
+                                    km.clone(),
+                                    Value::Sym(sym::T),
+                                    Value::Nil,
+                                    Value::Nil,
+                                ],
+                            )
+                            .unwrap_or(Value::Nil);
+                            match ctx_keys {
+                                Value::Nil => keys,
+                                k => k,
                             }
-                            found.into_iter().next().or_else(|| {
-                                keys.list_to_vec().unwrap_or_default().into_iter().next()
-                            })
                         } else {
-                            keys.list_to_vec().unwrap_or_default().into_iter().next()
+                            keys
+                        };
+                        let first_key = match first_key {
+                            v @ Value::Vec(_) => Some(v),
+                            Value::Nil => None,
+                            other => Some(other),
                         };
                         match first_key {
                             Some(k) => {
@@ -7644,7 +7815,18 @@ fn f_find_file_noselect(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_else(|| path.clone());
-    let bid = i.buffers.create(&name);
+    // GNU files.el creates file-visiting buffers through
+    // `create-file-buffer', which invokes the uniquify advice when
+    // uniquify is loaded; fall back to a direct create otherwise.
+    let cfb = i.intern("create-file-buffer");
+    let bid = if i.fbound_p(cfb) {
+        match i.apply(&Value::Sym(cfb), vec![Value::string(path.clone())])? {
+            Value::Buffer(b) => b.borrow().id,
+            _ => i.buffers.create(&name),
+        }
+    } else {
+        i.buffers.create(&name)
+    };
     {
         let b = i.buffers.get(bid).unwrap();
         let mut bb = b.borrow_mut();
@@ -11035,7 +11217,26 @@ fn f_overlay_get(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let (bid, idx) = overlay_of(i, &a[0])?;
     let ps = want_sym(i, &a[1])?;
     Ok(match overlay_slot(i, bid, idx) {
-        Some(ov) => crate::lisp::eval::plist_get(&ov.plist, ps),
+        Some(ov) => {
+            // GNU `lookup_char_property': a present key wins even
+            // when its value is nil; else fall back to the
+            // `category' symbol's plist.
+            match crate::lisp::eval::plist_lookup(&ov.plist, ps) {
+                Some(v) => v,
+                None => {
+                    let cat = i.intern_soft("category");
+                    match cat.and_then(|c| {
+                        match crate::lisp::eval::plist_get(&ov.plist, c) {
+                            Value::Sym(s) => Some(s),
+                            _ => None,
+                        }
+                    }) {
+                        Some(cs) => i.get_prop(cs, ps),
+                        None => Value::Nil,
+                    }
+                }
+            }
+        }
         _ => Value::Nil,
     })
 }

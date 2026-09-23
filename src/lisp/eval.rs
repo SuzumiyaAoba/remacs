@@ -4553,6 +4553,47 @@ pub fn plist_get(plist: &Value, prop: SymId) -> Value {
     }
 }
 
+/// Presence-aware variant of `plist_get': `Some(v)' iff the key
+/// exists, even when its value is nil (GNU `lookup_char_property'
+/// returns the slot value directly when found).
+pub fn plist_lookup(plist: &Value, prop: SymId) -> Option<Value> {
+    let mut cur = plist.clone();
+    let mut n = 0;
+    loop {
+        match cur {
+            Value::Cons(c) => {
+                let (car, next) = {
+                    let b = c.borrow();
+                    (b.car.clone(), b.cdr.clone())
+                };
+                if let Value::Sym(s) = car {
+                    if s == prop {
+                        if let Value::Cons(c2) = &next {
+                            return Some(c2.borrow().car.clone());
+                        }
+                        return Some(Value::Nil);
+                    }
+                }
+                match next {
+                    Value::Cons(c2) => {
+                        let n2 = {
+                            let b = c2.borrow();
+                            b.cdr.clone()
+                        };
+                        cur = n2;
+                    }
+                    _ => return None,
+                }
+                n += 1;
+                if n > 10000 {
+                    return None;
+                }
+            }
+            _ => return None,
+        }
+    }
+}
+
 /// `put` on a plist value — returns a new plist with prop set.
 /// Mutates in place when possible (Emacs mutates the plist).
 pub fn plist_put(plist: &Value, prop: SymId, val: Value) -> Value {

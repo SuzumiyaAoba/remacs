@@ -2094,7 +2094,33 @@ fn f_kill_buffer(i: &mut Interp, a: Vec<Value>) -> EvalResult {
             .buffer_id_of(v)
             .ok_or_else(|| i.error(format!("No buffer named {}", i.princ_to_string(&v))))?,
     };
-    Ok(Value::from_bool(kill_buffer_keep_current(i, id)))
+    // GNU Fkill_buffer: first run `kill-buffer-query-functions' (each
+    // returning nil aborts the kill), then run the buffer-local
+    // `kill-buffer-hook' with the doomed buffer current.
+    let prev = i.current_buffer;
+    i.set_current_buffer(id);
+    let outcome = (|| -> Result<bool, Flow> {
+        let q = i.intern("kill-buffer-query-functions");
+        if matches!(i.symbol_value(q), Value::Cons(_)) {
+            let runf = i.intern("run-hook-with-args-until-failure");
+            let r = i.apply(&Value::Sym(runf), vec![Value::Sym(q)])?;
+            if r.is_nil() {
+                return Ok(false);
+            }
+        }
+        let h = i.intern("kill-buffer-hook");
+        let rh = i.intern("run-hooks");
+        i.apply(&Value::Sym(rh), vec![Value::Sym(h)])?;
+        Ok(true)
+    })();
+    if i.current_buffer == id && i.buffers.get(prev).is_some() {
+        i.set_current_buffer(prev);
+    }
+    match outcome {
+        Ok(true) => Ok(Value::from_bool(kill_buffer_keep_current(i, id))),
+        Ok(false) => Ok(Value::Nil),
+        Err(e) => Err(e),
+    }
 }
 
 fn f_buffer_list(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
@@ -2149,6 +2175,31 @@ fn f_rename_buffer(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         }
         i.buffers.rename(i.current_buffer, &name)
     };
+    // GNU buffer.c: when `uniquify-buffer-name-style' is non-nil, the
+    // subr hands the rename to `uniquify--rename-buffer-advice' (which
+    // may rename the buffer again, adding directory components).  The
+    // variable is preset non-nil here, so guard on fboundp too.
+    let ustyle = i.intern_soft("uniquify-buffer-name-style");
+    if ustyle
+        .map(|s| i.symbol_value(s).truthy())
+        .unwrap_or(false)
+    {
+        let adv = i.intern("uniquify--rename-buffer-advice");
+        if i.fbound_p(adv) {
+            i.apply(
+                &Value::Sym(adv),
+                vec![
+                    Value::string(name.clone()),
+                    if unique { Value::t() } else { Value::Nil },
+                ],
+            )?;
+            // The advice may have renamed the buffer again.
+            if let Some(cur) = i.buffers.get(i.current_buffer) {
+                return Ok(Value::string(cur.borrow().name.clone()));
+            }
+            return Ok(Value::string(actual));
+        }
+    }
     Ok(Value::string(actual))
 }
 
@@ -7862,6 +7913,22 @@ fn str_plist_get(pl: &[Value], id: u32, i: &Interp) -> Option<Value> {
     None
 }
 
+/// GNU `lookup_char_property' fallback: when PROP isn't in the plist
+/// directly, look it up on the `category' symbol's plist.
+fn str_plist_get_cat(pl: &[Value], id: u32, i: &Interp) -> Option<Value> {
+    if let Some(v) = str_plist_get(pl, id, i) {
+        return Some(v);
+    }
+    let cat = i.intern_soft("category")?;
+    match str_plist_get(pl, cat, i) {
+        Some(Value::Sym(c)) => match i.get_prop(c, id) {
+            Value::Nil => None,
+            v => Some(v),
+        },
+        _ => None,
+    }
+}
+
 /// GNU plput: update in place when the prop exists, else prepend.
 fn str_plist_put(pl: &mut Vec<Value>, sym: &Value, val: &Value) {
     let mut k = 0;
@@ -8259,12 +8326,26 @@ fn buf_record_set(bb: &mut Buffer, i: &Interp, s: usize, e: usize, plist: &[Valu
 }
 
 pub(crate) fn prop_at(i: &mut Interp, pos: usize, prop: u32) -> Value {
+    let cat = i.intern_soft("category");
     let b = cur(i);
     let bb = b.borrow();
     // Last write wins.
+    let mut catval = Value::Nil;
     for tp in bb.text_props.iter().rev() {
-        if tp.prop == prop && pos >= tp.start && pos < tp.end {
-            return tp.value.clone();
+        if pos >= tp.start && pos < tp.end {
+            if tp.prop == prop {
+                return tp.value.clone();
+            }
+            if Some(tp.prop) == cat && catval.is_nil() {
+                catval = tp.value.clone();
+            }
+        }
+    }
+    // GNU `lookup_char_property' fallback: consult the `category'
+    // symbol's plist when PROP isn't present directly.
+    if cat.is_some() {
+        if let Value::Sym(cs) = catval {
+            return i.get_prop(cs, prop);
         }
     }
     Value::Nil
@@ -8276,7 +8357,7 @@ pub(crate) fn f_get_text_property(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         let pos = want_int(i, &a[0])?.max(0) as usize;
         let prop = want_sym(i, &a[1])?;
         let pl = str_plist_at(i.str_props(s), pos);
-        return Ok(str_plist_get(&pl, prop, i).unwrap_or(Value::Nil));
+        return Ok(str_plist_get_cat(&pl, prop, i).unwrap_or(Value::Nil));
     }
     let len = cur(i).borrow().text.len();
     let pos = pos_idx(len, want_int(i, &a[0])?);
@@ -8426,7 +8507,8 @@ pub(crate) fn f_next_property_change(i: &mut Interp, a: Vec<Value>) -> EvalResul
 /// differs from its value at P-1. No change → LIMIT (defaults:
 /// point-max / point-min for buffers, len / 0 for strings).
 fn single_prop_change(i: &mut Interp, a: &[Value], forward: bool) -> EvalResult {
-    let pos_v = a[0].int().unwrap_or(0);
+    // GNU accepts an integer or a marker for POSITION and LIMIT.
+    let pos_v = want_int(i, &a[0])?;
     let prop = want_sym(i, &a[1])?;
     let object = a.get(2);
     let limit = a.get(3);
@@ -8435,18 +8517,21 @@ fn single_prop_change(i: &mut Interp, a: &[Value], forward: bool) -> EvalResult 
     // changes — LIMIT is only returned when it's non-nil.
     if let Some(Value::Str(s)) = object {
         let len = str_len(s) as i128;
+        // Compute LIMIT before borrowing the interval set.
+        let str_lim = match limit {
+            Some(v) if v.truthy() => Some(want_int(i, v)?),
+            _ => None,
+        };
         let ivs = i.str_props(s);
         let at = |p: i128| -> Value {
             if p < 0 || p >= len {
                 return Value::Nil;
             }
-            str_plist_get(&str_plist_at(ivs, p as usize), prop, i).unwrap_or(Value::Nil)
+            // GNU `textget' is category-aware.
+            str_plist_get_cat(&str_plist_at(ivs, p as usize), prop, i).unwrap_or(Value::Nil)
         };
         let pos = pos_v.clamp(0, len);
-        let lim = match limit {
-            Some(v) if v.truthy() => Some(v.int().unwrap_or(if forward { len } else { 0 })),
-            _ => None,
-        };
+        let lim = str_lim;
         if forward {
             let mut p = pos + 1;
             while p < lim.unwrap_or(len) {
@@ -8472,6 +8557,11 @@ fn single_prop_change(i: &mut Interp, a: &[Value], forward: bool) -> EvalResult 
             None => Value::Nil,
         });
     }
+    // LIMIT coercion happens before the buffer borrow.
+    let buf_lim = match limit {
+        Some(v) if v.truthy() => Some(want_int(i, v)?),
+        _ => None,
+    };
     let b = match object {
         Some(v) if v.truthy() => buf_of(i, v)?,
         _ => cur(i),
@@ -8480,14 +8570,25 @@ fn single_prop_change(i: &mut Interp, a: &[Value], forward: bool) -> EvalResult 
     let len = bb.text.len() as i128;
     // pos is a 1-based Lisp position; char index = pos-1.
     let pos = pos_v.clamp(1, len + 1);
+    let cat = i.intern_soft("category");
     let at = |p: i128| -> Value {
         if p < 1 || p > len {
             return Value::Nil;
         }
+        let mut catval = Value::Nil;
         for tp in bb.text_props.iter().rev() {
-            if tp.prop == prop && (p as usize - 1) >= tp.start && (p as usize - 1) < tp.end {
-                return tp.value.clone();
+            if (p as usize - 1) >= tp.start && (p as usize - 1) < tp.end {
+                if tp.prop == prop {
+                    return tp.value.clone();
+                }
+                if Some(tp.prop) == cat && catval.is_nil() {
+                    catval = tp.value.clone();
+                }
             }
+        }
+        // GNU `textget' is category-aware.
+        if let Value::Sym(cs) = catval {
+            return i.get_prop(cs, prop);
         }
         Value::Nil
     };
@@ -8495,11 +8596,8 @@ fn single_prop_change(i: &mut Interp, a: &[Value], forward: bool) -> EvalResult 
     // GNU: a nil/absent LIMIT means "no limit"; when no change is
     // found the result is nil then — LIMIT is returned only when the
     // caller explicitly passed one.
-    let explicit = matches!(limit, Some(v) if v.truthy());
-    let lim = match limit {
-        Some(v) if v.truthy() => v.int().unwrap_or(default_limit),
-        _ => default_limit,
-    };
+    let explicit = buf_lim.is_some();
+    let lim = buf_lim.unwrap_or(default_limit);
     let no_change = || {
         if explicit {
             Value::Int(lim)
@@ -8600,7 +8698,8 @@ fn text_prop_any(i: &mut Interp, a: &[Value], any: bool) -> EvalResult {
         let mut p = st;
         while p < en {
             let pl = str_plist_at(ivs, p as usize);
-            let v = str_plist_get(&pl, prop, i).unwrap_or(Value::Nil);
+            // GNU `textget' is category-aware.
+            let v = str_plist_get_cat(&pl, prop, i).unwrap_or(Value::Nil);
             if crate::lisp::builtins::eq_values(&v, &want) == any {
                 return Ok(Value::Int(p));
             }
@@ -8675,7 +8774,8 @@ pub(crate) fn f_add_face_text_property(i: &mut Interp, a: Vec<Value>) -> EvalRes
             s0,
             e0,
             |pl| {
-                let old = str_plist_get(pl, fid, ii).unwrap_or(Value::Nil);
+                // GNU `textget' is category-aware.
+                let old = str_plist_get_cat(pl, fid, ii).unwrap_or(Value::Nil);
                 let nv = combine(&old);
                 if nv.is_nil() {
                     str_plist_remove(pl, fid, ii);
@@ -8692,15 +8792,28 @@ pub(crate) fn f_add_face_text_property(i: &mut Interp, a: Vec<Value>) -> EvalRes
     let s = pos_idx(len, want_int(i, &a[0])?);
     let e = pos_idx(len, want_int(i, &a[1])?);
     let fid = want_sym(i, &face_sym)?;
+    let cat = i.intern_soft("category");
     let mut p = s;
     let b = cur(i);
     let mut bb = b.borrow_mut();
     while p < e {
         let mut old = Value::Nil;
+        let mut catval = Value::Nil;
         for tp in bb.text_props.iter().rev() {
-            if tp.prop == fid && p >= tp.start && p < tp.end {
-                old = tp.value.clone();
-                break;
+            if p >= tp.start && p < tp.end {
+                if tp.prop == fid {
+                    old = tp.value.clone();
+                    break;
+                }
+                if Some(tp.prop) == cat && catval.is_nil() {
+                    catval = tp.value.clone();
+                }
+            }
+        }
+        // GNU `textget' is category-aware.
+        if old.is_nil() {
+            if let Value::Sym(cs) = catval {
+                old = i.get_prop(cs, fid);
             }
         }
         bb.text_props.push(TextProp {
