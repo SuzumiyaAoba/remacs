@@ -555,6 +555,7 @@ fn sf_defun(i: &mut Interp, args: Value) -> EvalResult {
     // dynamic model; under lexical-binding it captures the file env.
     lambda.env = i.lambda_env();
     i.fset(sid, Value::Lambda(Rc::new(lambda)));
+    eval_defun_declarations(i, &name_v, &params, &body, false)?;
     Ok(name_v)
 }
 
@@ -571,7 +572,114 @@ fn sf_defmacro(i: &mut Interp, args: Value) -> EvalResult {
     lambda.is_macro = true;
     lambda.env = i.lambda_env();
     i.fset(sid, Value::Lambda(Rc::new(lambda)));
+    eval_defun_declarations(i, &name_v, &params, &body, true)?;
     Ok(name_v)
+}
+
+/// GNU `macroexp--defun-declarations': each `(declare (PROP . ARGS))'
+/// spec in BODY dispatches to the handler bound in
+/// `defun-declarations-alist' (or `macro-declarations-alist' for
+/// defmacro), called as (FN NAME ARGLIST . ARGS); the form it returns
+/// is evaluated.  Unknown PROP specs are ignored.
+fn eval_defun_declarations(
+    i: &mut Interp,
+    name_v: &Value,
+    params: &Value,
+    body: &[Value],
+    is_macro: bool,
+) -> EvalResult {
+    let alist_name = if is_macro {
+        "macro-declarations-alist"
+    } else {
+        "defun-declarations-alist"
+    };
+    let alist_id = match i.intern_soft(alist_name) {
+        Some(id) => id,
+        None => return Ok(Value::Nil),
+    };
+    let alist = i.symbol_value(alist_id);
+    if !matches!(alist, Value::Cons(_)) {
+        return Ok(Value::Nil);
+    }
+    let declare_id = i.intern("declare");
+    // Scan past the optional docstring, then collect `declare' forms.
+    let mut start = 0;
+    if matches!(body.first(), Some(Value::Str(_))) && body.len() > 1 {
+        start = 1;
+    }
+    let mut extra_forms: Vec<Value> = Vec::new();
+    for f in body.iter().skip(start) {
+        let is_decl = match f {
+            Value::Cons(c) => {
+                let b = c.borrow();
+                i.sym_is(&b.car, declare_id)
+            }
+            _ => false,
+        };
+        if !is_decl {
+            break;
+        }
+        let specs = match cdr(f).list_to_vec() {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+        for spec in specs {
+            let (prop, dargs) = match &spec {
+                Value::Cons(c) => {
+                    let b = c.borrow();
+                    (b.car.clone(), b.cdr.clone())
+                }
+                _ => continue,
+            };
+            // assq over the handler alist.
+            let mut cur = alist.clone();
+            let handler = loop {
+                match cur {
+                    Value::Cons(c) => {
+                        let (entry, rest) = {
+                            let b = c.borrow();
+                            (b.car.clone(), b.cdr.clone())
+                        };
+                        let hit = match &entry {
+                            Value::Cons(e) => {
+                                let b = e.borrow();
+                                crate::lisp::eq_values(&b.car, &prop)
+                            }
+                            _ => false,
+                        };
+                        if hit {
+                            break match &entry {
+                                Value::Cons(e) => {
+                                    let b = e.borrow();
+                                    match &b.cdr {
+                                        Value::Cons(c2) => {
+                                            Some(c2.borrow().car.clone())
+                                        }
+                                        other => Some(other.clone()),
+                                    }
+                                }
+                                _ => None,
+                            };
+                        }
+                        cur = rest;
+                    }
+                    _ => break None,
+                }
+            };
+            if let Some(h) = handler {
+                let mut call = vec![name_v.clone(), params.clone()];
+                call.extend(dargs.list_to_vec().unwrap_or_default());
+                let form = i.apply(&h, call)?;
+                // GNU splices the returned form's progn into the
+                // expansion; evaluating the form is equivalent.
+                extra_forms.push(form);
+            }
+        }
+    }
+    for form in extra_forms {
+        i.eval(&form)?;
+    }
+    Ok(Value::Nil)
 }
 
 fn sf_lambda(i: &mut Interp, args: Value) -> EvalResult {

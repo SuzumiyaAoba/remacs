@@ -540,6 +540,27 @@ impl Interp {
         } else {
             let _ = interp.eval_str(crate::lisp::prelude::PRELUDE);
         }
+        // GNU's `global-eldoc-mode' installs eldoc functions
+        // buffer-locally on the command hooks; in `-Q --batch' only
+        // `*scratch*' carries those local bindings (verified), which is
+        // why `local-variable-p' reports t there.  The default value of
+        // `pre-command-hook' is (tooltip-hide) in batch.
+        let pch = interp.intern("post-command-hook");
+        let eldoc = interp.intern("eldoc-schedule-timer");
+        let prech = interp.intern("pre-command-hook");
+        let eldoc_pre = interp.intern("eldoc-pre-command-refresh-echo-area");
+        if let Some(b) = interp.buffers.get(scratch) {
+            let mut br = b.borrow_mut();
+            br.locals
+                .insert(pch, Value::list(vec![Value::Sym(eldoc), Value::t()]));
+            br.locals.insert(
+                prech,
+                Value::list(vec![Value::Sym(eldoc_pre), Value::t()]),
+            );
+        }
+        let tooltip_hide = interp.intern("tooltip-hide");
+        interp.obarray.symbol_mut(prech).value =
+            Value::list(vec![Value::Sym(tooltip_hide)]);
         // Boot-time autoloads (easy-mmode & co.) correspond to GNU's
         // dumped loadup; the user-visible `features' list must match the
         // post-dump set.
@@ -762,7 +783,8 @@ impl Interp {
             // nil/t can't be set at all.
             return Err(self.signal_data(sym::SETTING_CONSTANT, vec![self.sym(id)]));
         }
-        let is_auto_local = self.obarray.symbol(id).make_local_if_set;
+        let sym = self.obarray.symbol(id);
+        let is_auto_local = sym.make_local_if_set || sym.always_local;
         if let Some(b) = self.buffers.get(self.current_buffer) {
             if let Ok(mut bb) = b.try_borrow_mut() {
                 if is_auto_local || bb.locals.contains_key(&id) {
@@ -795,6 +817,25 @@ impl Interp {
         self.obarray.symbol_mut(id).value = val.clone();
         self.sync_undo_inhibit(id, &val);
         self.fire_var_watchers(id, &val, "set", None)
+    }
+
+    /// `functionp' on a value: subrs, lambdas, `(lambda ...)' conses,
+    /// and symbols whose function cell holds a non-macro definition.
+    pub fn function_p(&self, v: &Value) -> bool {
+        match v {
+            Value::Subr(_) | Value::Lambda(_) => true,
+            Value::Cons(c) => self.sym_is(&c.borrow().car, sym::LAMBDA),
+            Value::Sym(id) => match self.symbol_function(*id) {
+                Value::Subr(s) => self
+                    .intern_soft(s.name)
+                    .and_then(|x| crate::lisp::special::special_form(x))
+                    .is_none(),
+                Value::Lambda(l) => !l.is_macro,
+                Value::Cons(c) => self.sym_is(&c.borrow().car, sym::LAMBDA),
+                _ => false,
+            },
+            _ => false,
+        }
     }
 
     pub fn symbol_function(&self, id: SymId) -> Value {
@@ -836,7 +877,8 @@ impl Interp {
         if self.obarray.symbol(id).constant {
             return Err(self.signal_data(sym::SETTING_CONSTANT, vec![self.sym(id)]));
         }
-        let is_auto_local = self.obarray.symbol(id).make_local_if_set;
+        let sym = self.obarray.symbol(id);
+        let is_auto_local = sym.make_local_if_set || sym.always_local;
         let mut bound_buf = None;
         if let Some(b) = self.buffers.get(self.current_buffer) {
             let mut bb = b.borrow_mut();
@@ -2598,58 +2640,23 @@ impl Interp {
             self.obarray.symbol_mut(id).value = Value::Nil;
         }
 
-        // Variables that are automatically buffer-local when set.
+        // Variables that are automatically buffer-local when set
+        // (`make-variable-buffer-local' / DEFVAR_PER_BUFFER semantics in
+        // GNU).  Set verified against GNU 31.1 `-Q --batch' via
+        // `local-variable-if-set-p' in a fresh buffer.
         let auto_locals = [
-            "buffer-read-only",
-            "default-directory",
             "tab-width",
             "fill-column",
             "indent-tabs-mode",
             "truncate-lines",
+            "word-wrap",
             "case-fold-search",
-            "major-mode",
-            "mode-name",
-            "buffer-file-name",
-            "buffer-file-truename",
-            "buffer-undo-list",
-            "local-keymap",
-            "mark-active",
             "mark-ring",
-            "buffer-saved-size",
-            "buffer-backed-up",
-            "buffer-auto-save-file-name",
-            "comment-start",
-            "comment-end",
-            "comment-start-skip",
-            "comment-end-skip",
             "comment-column",
-            "comment-padding",
-            "comment-multi-line",
-            "comment-indent-function",
-            "comment-empty-lines",
-            "comment-use-syntax",
-            "paragraph-start",
-            "paragraph-separate",
-            "paragraph-ignore-fill-prefix",
-            "page-delimiter",
-            "sentence-end",
-            "sentence-end-base",
-            "sentence-end-double-space",
-            "sentence-end-without-period",
-            "sentence-end-without-space",
-            "adaptive-fill-mode",
-            "adaptive-fill-regexp",
-            "adaptive-fill-first-line-regexp",
-            "adaptive-fill-function",
             "fill-prefix",
-            "fill-paragraph-function",
-            "fill-nobreak-predicate",
-            "fill-nospace-between-words",
-            "abbrev-table",
             "local-abbrev-table",
             "window-size-fixed",
             "abbrev-mode",
-            "case-fold-search",
             "overwrite-mode",
             "buffer-display-table",
             "selective-display",
@@ -2657,14 +2664,7 @@ impl Interp {
             "indicate-empty-lines",
             "indicate-buffer-boundaries",
             "left-margin",
-            "tab-always-indent",
-            "standard-indent",
             "goal-column",
-            "next-screen-context-lines",
-            "scroll-preserve-screen-position",
-            "scroll-error-top-bottom",
-            "scroll-conservatively",
-            "scroll-margin",
             "scroll-up-aggressively",
             "scroll-down-aggressively",
             "left-fringe-width",
@@ -2674,25 +2674,18 @@ impl Interp {
             "scroll-bar-height",
             "vertical-scroll-bar",
             "horizontal-scroll-bar",
-            "buffer-invisibility-spec",
             "line-spacing",
             "left-margin-width",
             "right-margin-width",
-            "buffer-face-mode-face",
-            "text-scale-mode-amount",
             "cursor-type",
             "cursor-in-non-selected-windows",
             "mode-line-format",
             "header-line-format",
             "tab-line-format",
             "display-line-numbers",
-            "display-line-numbers-type",
             "display-line-numbers-offset",
             "display-line-numbers-width",
             "display-line-numbers-widen",
-            "display-line-numbers-current-absolute",
-            "display-line-numbers-major-tick",
-            "display-line-numbers-minor-tick",
             "wrap-prefix",
             "line-prefix",
             "display-fill-column-indicator",
@@ -2701,42 +2694,46 @@ impl Interp {
             "show-trailing-whitespace",
             "bidi-paragraph-direction",
             "bidi-paragraph-start-re",
-            "bidi-inhibit-bpa",
             "bidi-display-reordering",
             "buffer-file-coding-system",
             "save-buffer-coding-system",
-            "enable-multibyte-characters",
-            "buffer-read-only",
-            "mark-ring",
-            "mark-active",
             "deactivate-mark",
-            "permanent-local-variables",
             "file-local-variables-alist",
             "lexical-binding",
-            "eval-expression-print-level",
-            "eval-expression-print-length",
-            "backup-enable-predicate",
             "buffer-offer-save",
-            "find-file-literally",
-            "revert-buffer-function",
-            "revert-buffer-in-progress-p",
-            "revert-buffer-preserve-modes",
-            "before-change-functions",
-            "after-change-functions",
-            "first-change-hook",
-            "activate-mark-hook",
-            "deactivate-mark-hook",
-            "post-command-hook",
-            "pre-command-hook",
-            "post-self-insert-hook",
-            "delay-mode-hooks",
-            "change-major-mode-hook",
-            "after-change-major-mode-hook",
-            "text-scale-mode-amount",
+            "font-lock-defaults",
+            "current-input-method",
+            "text-property-default-nonsticky",
         ];
         for name in &auto_locals {
             let id = self.intern(name);
             self.obarray.symbol_mut(id).make_local_if_set = true;
+            self.obarray.symbol_mut(id).special = true;
+        }
+
+        // GNU `DEFVAR_PER_BUFFER' variables: a real slot in every
+        // buffer, so `local-variable-p' is t even before any `setq'
+        // (set verified against GNU 31.1 in a fresh buffer).
+        let per_buffer: &[&str] = &[
+            "buffer-auto-save-file-name",
+            "buffer-backed-up",
+            "buffer-display-count",
+            "buffer-file-format",
+            "buffer-file-name",
+            "buffer-file-truename",
+            "buffer-invisibility-spec",
+            "buffer-read-only",
+            "buffer-saved-size",
+            "buffer-undo-list",
+            "default-directory",
+            "enable-multibyte-characters",
+            "major-mode",
+            "mark-active",
+            "mode-name",
+        ];
+        for name in per_buffer {
+            let id = self.intern(name);
+            self.obarray.symbol_mut(id).always_local = true;
             self.obarray.symbol_mut(id).special = true;
         }
 

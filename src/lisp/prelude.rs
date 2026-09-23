@@ -5022,10 +5022,9 @@ The value is displayed in the echo area."
 	   (elisp--eval-defun)))))
 
 ;; GNU window.el: `display-buffer' machinery.  `window-point-insertion-type'
-;; is a buffer-local C variable in GNU.
+;; is a plain variable in GNU 31.1 (verified: not buffer-local in batch).
 (defvar window-point-insertion-type nil
   "Insertion type of the marker used by `window-point-insertion-type'.")
-(make-variable-buffer-local 'window-point-insertion-type)
 
 (defun display-buffer-record-window (type window buffer)
   "Record information for window used by `display-buffer'.
@@ -5579,6 +5578,18 @@ places where expressions are evaluated and inserted or spliced in."
   "Decrement generalized variable PLACE by DELTA (default to 1)." nil t)
 (autoload 'gv-ref "gv"
   "Return a reference to PLACE." nil t)
+;; gv.el registers these `declare' handlers via autoload cookies; the
+;; alist entries must exist before gv.el loads so `defun''s dispatch
+;; reaches them (the autoload cell funcalls into the real library).
+(autoload 'gv--expander-defun-declaration "gv" nil nil)
+(autoload 'gv--setter-defun-declaration "gv" nil nil)
+(or (assq 'gv-expander defun-declarations-alist)
+    (let ((x (list 'gv-expander #'gv--expander-defun-declaration)))
+      (push x macro-declarations-alist)
+      (push x defun-declarations-alist)))
+(or (assq 'gv-setter defun-declarations-alist)
+    (push (list 'gv-setter #'gv--setter-defun-declaration)
+          defun-declarations-alist))
 (autoload 'defclass "eieio"
   "Define NAME as a class." nil t)
 (autoload 'make-instance "eieio"
@@ -10114,7 +10125,6 @@ non-nil.  Elements should have lower-case names (because of
   "Alist of known symbol-name shorthands.
 This variable's value can only be set by file-local variables.
 See Info node `(elisp)Shorthand Symbols' for more details.")
-(make-variable-buffer-local 'read-symbol-shorthands)
 
 (defun font-lock--add-text-property (start end prop value object append)
   "Add an element to a property of the text from START to END.
@@ -11727,6 +11737,20 @@ for a match.  Return the absolute directory name, or nil."
   :global t)
 (define-minor-mode menu-bar-mode "Toggle the menu bar." :global t)
 (define-minor-mode tool-bar-mode "Toggle the tool bar." :global t)
+;; GNU eldoc.el: `global-eldoc-mode' installs `eldoc-schedule-timer'
+;; buffer-locally on `post-command-hook'; in `-Q --batch' it is only
+;; observed in `*scratch*' (verified).  The real eldoc library is not
+;; loaded in batch, so this stub just needs to be a defined function.
+(defun eldoc-schedule-timer ()
+  "Schedule the ElDoc timer (stub; real timer machinery unimplemented)."
+  nil)
+(defun eldoc-pre-command-refresh-echo-area ()
+  "Refresh the ElDoc echo area before a command (stub)."
+  nil)
+;; GNU tooltip.el sits on the default `pre-command-hook' in batch.
+(defun tooltip-hide (&optional _ignored)
+  "Hide the tooltip (stub; no GUI tooltips in batch)."
+  nil)
 (define-minor-mode eldoc-mode "Toggle echo-area documentation."
   :init-value t)
 (define-minor-mode visual-line-mode "Toggle visual word wrapping."
@@ -12603,25 +12627,49 @@ Subset: flat patterns with &optional/&rest support."
        (let ,(nreverse binds) ,@body))))
 
 (defmacro cl-letf (bindings &rest body)
-  "Bind generalized PLACEs temporarily (subset: symbols and
-\=(symbol-function SYM) places)."
-  (let ((saves nil) (sets nil) (rests nil))
-    (dolist (b bindings)
-      (let ((place (car b)) (val (cadr b)) (tmp (gensym)))
-        (cond
-         ((and (consp place) (eq (car place) 'symbol-function))
-          (push (list tmp `(symbol-function ,(cadr place))) saves)
-          (push `(fset ,(cadr place) ,tmp) rests)
-          (push `(fset ,(cadr place) ,val) sets))
-         ((symbolp place)
-          (push (list tmp place) saves)
-          (push `(setq ,place ,tmp) rests)
-          (push `(setq ,place ,val) sets))
-         (t (error "cl-letf: unsupported place %s" place)))))
-    `(let ,(nreverse saves)
-       (unwind-protect
-           (progn ,@(nreverse sets) ,@body)
-         ,@(nreverse rests)))))
+  "Temporarily bind to PLACEs.
+Analogue of `let' for generalized variables: each PLACE is set to
+the corresponding VALUE (if given), BODY runs, then PLACEs are
+restored on exit.  A bare (PLACE) spec only saves and restores."
+  (let ((exp (macroexp-progn body)))
+    (dolist (b (reverse bindings))
+      (let* ((place (car b))
+             (has-val (consp (cdr b)))
+             (val (cadr b))
+             (tmp (gensym "cl-letf")))
+        (setq exp
+              (cond
+               ((symbolp place)
+                (let ((marker (make-symbol "cl-letf-unbound")))
+                  `(let ((,tmp (condition-case nil ,place
+                                 (void-variable ',marker))))
+                     (unwind-protect
+                         (progn ,@(if has-val `((setq ,place ,val)))
+                                ,exp)
+                       (if (eq ,tmp ',marker)
+                           (makunbound ',place)
+                         (setq ,place ,tmp))))))
+               ((and (consp place) (eq (car place) 'symbol-function))
+                (let ((bound (gensym "cl-letf-bound")))
+                  `(let ((,bound (fboundp ,(cadr place)))
+                         (,tmp (and (fboundp ,(cadr place))
+                                    (symbol-function ,(cadr place)))))
+                     (unwind-protect
+                         (progn ,@(if has-val
+                                      `((fset ,(cadr place) ,val)))
+                                ,exp)
+                       (if ,bound
+                           (fset ,(cadr place) ,tmp)
+                         (fmakunbound ,(cadr place)))))))
+               (t
+                (gv-letplace (getter setter) place
+                  `(let ((,tmp ,getter))
+                     (unwind-protect
+                         (progn ,@(if has-val
+                                      (list (funcall setter val)))
+                                ,exp)
+                       ,(funcall setter tmp)))))))))
+    exp))
 
 (defmacro cl-letf* (bindings &rest body)
   "Like `cl-letf' but bindings are made sequentially."
@@ -12982,10 +13030,20 @@ Accumulation refers to the `cl--loop-list-acc' and
             (push `(> ,c 0) pretests)
             (push `(setq ,c (1- ,c)) steps)
             (setq i (+ i 2))))
+         ;; GNU tests `while'/`until' in textual order, after the
+         ;; preceding `for' clauses have stepped: they run in the
+         ;; body sequence (a `for' var may be referenced), exiting to
+         ;; the epilogue via `cl--loop-finish'.
          ((eq kw 'while)
-          (push (nth (1+ i) clauses) pretests) (setq i (+ i 2)))
+          (setq body (append body
+                             (list `(unless ,(nth (1+ i) clauses)
+                                      (throw 'cl--loop-finish nil))))
+                i (+ i 2)))
          ((eq kw 'until)
-          (push `(not ,(nth (1+ i) clauses)) pretests) (setq i (+ i 2)))
+          (setq body (append body
+                             (list `(when ,(nth (1+ i) clauses)
+                                      (throw 'cl--loop-finish nil))))
+                i (+ i 2)))
          ((memq kw '(if when unless))
           (let* ((raw (nth (1+ i) clauses))
                  (cnd (if (eq kw 'unless) `(not ,raw) raw))
@@ -13024,18 +13082,23 @@ Accumulation refers to the `cl--loop-list-acc' and
             (setq body (append body (car a))
                   kinds (append kinds (cadr a))
                   i (nth 2 a))))
-         (t (error "cl-loop: unknown clause %s" kw)))))
+         ;; GNU: a clause not starting with a keyword is a `do' form.
+         (t (setq body (append body (list kw))
+                  kinds (append kinds '(do))
+                  i (1+ i))))))
     `(let* ,(append inits
                     '((cl--loop-list-acc nil) (cl--loop-num-acc 0)
                       (cl--loop-ext-acc nil)))
        (catch 'cl--loop
-         ,@(nreverse initially)
-         (while (and ,@(nreverse pretests))
-           ,@(nreverse pre)
-           ,@body
-           ,@(nreverse steps))
-         ,@(nreverse finally)
-         ,(or finret
+         (cl-block nil
+           ,@(nreverse initially)
+           (catch 'cl--loop-finish
+             (while (and ,@(nreverse pretests))
+               ,@(nreverse pre)
+               ,@body
+               ,@(nreverse steps)))
+           ,@(nreverse finally)
+           ,(or finret
               (cond
                ((memq 'collect kinds) '(nreverse cl--loop-list-acc))
                ((or (memq 'append kinds) (memq 'nconc kinds))
@@ -13045,7 +13108,7 @@ Accumulation refers to the `cl--loop-list-acc' and
                ((or (memq 'always kinds) (memq 'never kinds)) t)
                ((or (memq 'max kinds) (memq 'min kinds))
                 'cl--loop-ext-acc)
-               (t nil)))))))
+               (t nil))))))))
 
 (defun cl--sm-subst (form bindings)
   "Substitute symbol-macrolet BINDINGS ((SYM FORM)...) in FORM tree.
@@ -20796,6 +20859,49 @@ With arg N, put point N/10 of the way from the true end."
       (end-of-buffer arg))
     (recenter '(t))))
 
+;; GNU subr.el `with-selected-frame' (verbatim).
+(defmacro with-selected-frame (frame &rest body)
+  "Execute the forms in BODY with FRAME as the selected frame.
+The value returned is the value of the last form in BODY.
+
+This macro saves and restores the selected frame, and changes the
+order of neither the recently selected windows nor the buffers in
+the buffer list."
+  (declare (indent 1) (debug t))
+  (let ((old-frame (make-symbol "old-frame"))
+	(old-buffer (make-symbol "old-buffer")))
+    `(let ((,old-frame (selected-frame))
+	   (,old-buffer (current-buffer)))
+       (unwind-protect
+	   (progn (select-frame ,frame 'norecord)
+		  ,@body)
+	 (when (frame-live-p ,old-frame)
+	   (select-frame ,old-frame 'norecord))
+	 (when (buffer-live-p ,old-buffer)
+	   (set-buffer ,old-buffer))))))
+
+;; GNU cus-edit `setopt' machinery: set via the variable's custom
+;; :set function (or `set-default').
+(defun setopt--set (variable value)
+  "Set VARIABLE to VALUE via its `custom-set' function."
+  (funcall (or (get variable 'custom-set) #'set-default)
+           variable value))
+
+(defmacro setopt (&rest pairs)
+  "Set each VARIABLE to VALUE, honoring custom :set functions.
+This is like `setq', but is meant for user options, and it uses the
+variable's :set function if it has one."
+  (declare (debug (&rest sexp form)))
+  (let (res)
+    (while pairs
+      (push `(setopt--set ',(car pairs) ,(cadr pairs)) res)
+      (setq pairs (cddr pairs)))
+    `(progn ,@(nreverse res))))
+
+;; GNU select.el default.
+(defvar select-enable-primary nil
+  "Non-nil means cutting and pasting uses the primary selection.")
+
 ;; disp-table.el cluster (verbatim GNU).
 ;;
 ;; GNU sizes a char-table's extra slots from the subtype's
@@ -21863,7 +21969,8 @@ constraints do not force a specific format."
   :version "27.1")
 
 ;; subr.el: mode-hook machinery (verbatim GNU).
-(defvar-local delay-mode-hooks nil
+;; `delay-mode-hooks' is a plain defvar in GNU (verified: not buffer-local).
+(defvar delay-mode-hooks nil
   "If non-nil, `run-mode-hooks' should delay running the hooks.")
 (defvar-local delayed-mode-hooks nil
   "List of delayed mode hooks waiting to be run.")
@@ -24399,11 +24506,8 @@ since they have special meaning in a regexp."
 (defvar last-nonmenu-event nil)
 (defvar regexp-history nil)
 (defvar overlay-arrow-position nil)
-(make-variable-buffer-local 'overlay-arrow-position)
 (defvar revert-buffer-function nil)
-(make-variable-buffer-local 'revert-buffer-function)
 (defvar kill-buffer-hook nil)
-(make-variable-buffer-local 'kill-buffer-hook)
 
 (defcustom list-matching-lines-default-context-lines 0
   "Default number of context lines included around `list-matching-lines' matches."
@@ -24449,7 +24553,6 @@ since they have special meaning in a regexp."
   :version "22.1")
 
 (defvar occur-highlight-overlays nil)
-(make-variable-buffer-local 'occur-highlight-overlays)
 (defvar occur-collect-regexp-history '("\\1"))
 (defvar occur--final-pos nil)
 (defvar ido-ignore-item-temp-list nil)
@@ -25436,15 +25539,12 @@ is *disabled* then additionally indent according to major mode."
 
 (defvar electric-layout-rules nil
   "List of rules saying where to automatically insert newlines.")
-(make-variable-buffer-local 'electric-layout-rules)
 
 (defvar electric-layout-allow-duplicate-newlines nil
   "If non-nil, allow duplication of `before' newlines.")
-(make-variable-buffer-local 'electric-layout-allow-duplicate-newlines)
 
 (defvar electric-layout-allow-in-comment-or-string nil
   "If non-nil, allow inserting newlines inside a comment or string.")
-(make-variable-buffer-local 'electric-layout-allow-in-comment-or-string)
 
 (defvar electric-pair-open-newline-between-pairs)
 
@@ -27117,16 +27217,18 @@ face's font by this amount."
   :group 'display
   :type 'number)
 
-(defvar-local text-scale-mode-remapping nil
+(defvar text-scale-mode-remapping nil
   "Current remapping cookie for `text-scale-mode'.")
 
-(defvar-local text-scale-mode-lighter "+0"
+(defvar text-scale-mode-lighter "+0"
   "Lighter displayed for `text-scale-mode' in mode-line minor-mode list.")
 
-(defvar-local text-scale-mode-amount 0
+;; GNU face-remap.el marks these buffer-local when the library is
+;; loaded; in `-Q --batch' they are plain variables (verified).
+(defvar text-scale-mode-amount 0
   "Number of steps that `text-scale-mode' will increase/decrease text height.")
 
-(defvar-local text-scale-remap-header-line nil
+(defvar text-scale-remap-header-line nil
   "If non-nil, text scaling may change font size of header lines too.")
 
 (defun face-remap--clear-remappings ()
@@ -30647,6 +30749,25 @@ the default when it's applicable -- that is, when hitting RET
 would yield the default value.  If the user modifies the input
 such that hitting RET would enter a non-default value, the prompt
 is modified to remove the default indication." t nil)
+
+;; ---------- winner (GNU winner.el) ----------
+;; Not preloaded in GNU: `winner-mode' is an autoload cookie, so only
+;; the autoload cell is visible at startup.
+(autoload 'winner-mode "winner"
+  "Toggle Winner mode on or off.
+
+Winner mode is a global minor mode that records the changes in
+the window configuration (i.e. how the frames are partitioned
+into windows) so that the changes can be \"undone\" using the
+command `winner-undo'.  By default this one is bound to the key
+sequence \\`C-c <left>'.  If you change your mind (while undoing),
+you can press \\`C-c <right>' (calling `winner-redo').
+
+If you use `tab-bar-mode', consider using `tab-bar-history-mode', as
+`winner-mode' is unaware of tab switching, and might turn the window
+configuration of the current tab to another's (old) window
+configuration.  `tab-bar-history-mode' provides tab-specific window
+configuration history avoiding this problem." t nil)
 
 ;; *scratch* starts in lisp-interaction-mode (GNU batch behavior too).
 (when (get-buffer "*scratch*")

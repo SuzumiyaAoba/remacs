@@ -877,18 +877,39 @@ fn f_require(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     }
 }
 
+/// Normalize a hook value to a function list (a single non-list
+/// function counts as one element).
+fn hook_list(v: &Value) -> Vec<Value> {
+    match v {
+        Value::Cons(_) => v.list_to_vec().unwrap_or_default(),
+        Value::Sym(s) if *s == sym::UNBOUND => Vec::new(),
+        Value::Nil => Vec::new(),
+        other => vec![other.clone()],
+    }
+}
+
 fn hook_fns(i: &Interp, hook: &Value) -> Vec<Value> {
     let id = match i.sym_id(hook) {
         Some(s) => s,
         None => return Vec::new(),
     };
-    let v = i.symbol_value(id);
-    // A hook var may hold a single function or a list.
-    match &v {
-        Value::Cons(_) => v.list_to_vec().unwrap_or_default(),
-        Value::Sym(s) if *s == sym::UNBOUND => Vec::new(),
-        Value::Nil => Vec::new(),
-        other => vec![other.clone()],
+    // GNU `run-hooks': when the buffer-local binding contains `t' as
+    // an element, the global (default) value is run at the end.
+    let local = i
+        .buffers
+        .get(i.current_buffer)
+        .and_then(|b| b.try_borrow().ok().and_then(|bb| bb.locals.get(&id).cloned()));
+    match local {
+        Some(v) => {
+            let mut fns = hook_list(&v);
+            if fns.iter().any(|f| matches!(f, Value::Sym(s) if *s == sym::T)) {
+                fns.retain(|f| !matches!(f, Value::Sym(s) if *s == sym::T));
+                let mut globals = hook_list(&i.obarray.symbol(id).value);
+                fns.append(&mut globals);
+            }
+            fns
+        }
+        None => hook_list(&i.obarray.symbol(id).value),
     }
 }
 
@@ -963,47 +984,286 @@ fn f_run_hook_wrapped(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     Ok(Value::Nil)
 }
 
+// `add-hook'/`remove-hook' mirror GNU 31.1's Lisp definitions in
+// subr.el, including depth bookkeeping via the `hook--depth-alist'
+// symbol property (an uninterned symbol whose value is an alist).
+
+fn hook_is_local(i: &Interp, id: SymId) -> bool {
+    i.obarray.symbol(id).always_local || {
+        i.buffers
+            .get(i.current_buffer)
+            .map(|b| b.borrow().locals.contains_key(&id))
+            .unwrap_or(false)
+    }
+}
+
+fn hook_local_if_set(i: &Interp, id: SymId) -> bool {
+    let s = i.obarray.symbol(id);
+    s.make_local_if_set || s.always_local
+}
+
+fn hook_boundp(i: &Interp, id: SymId) -> bool {
+    !matches!(i.symbol_value(id), Value::Sym(s) if s == sym::UNBOUND)
+}
+
+fn hook_default_boundp(i: &Interp, id: SymId) -> bool {
+    !matches!(i.obarray.symbol(id).value, Value::Sym(s) if s == sym::UNBOUND)
+}
+
+/// `(make-local-variable SYM)': create the buffer-local binding (seeded
+/// with the default value) when absent.
+fn hook_make_local(i: &mut Interp, id: SymId) {
+    let seed = i.obarray.symbol(id).value.clone();
+    if let Some(b) = i.buffers.get(i.current_buffer) {
+        if let Ok(mut bb) = b.try_borrow_mut() {
+            bb.locals.entry(id).or_insert(seed);
+        }
+    }
+}
+
+/// `(local-variable-p HOOK) and value lacks a `t' member' — GNU treats
+/// a global add/remove on such a hook as local (make-local-variable
+/// compatibility).
+fn hook_force_local(i: &mut Interp, id: SymId) -> bool {
+    if !hook_is_local(i, id) {
+        return false;
+    }
+    let v = i.symbol_value(id);
+    match v.list_to_vec() {
+        Ok(list) => !list.iter().any(|x| matches!(x, Value::Sym(s) if *s == sym::T)),
+        Err(_) => true,
+    }
+}
+
+/// The `hook--depth-alist' property holds an uninterned symbol whose
+/// (possibly buffer-local) value is the fn->depth alist.
+fn hook_depth_alist(i: &mut Interp, hook_id: SymId, local: bool, create: bool) -> Option<Vec<(Value, i128)>> {
+    let prop_sym = i.intern("hook--depth-alist");
+    let prop = i.get_prop(hook_id, prop_sym);
+    let dsym = match prop {
+        Value::Sym(s) => s,
+        _ => {
+            if !create {
+                return None;
+            }
+            let s = i.obarray.make_symbol("depth-alist");
+            i.set_symbol_default(s, Value::Nil).ok()?;
+            i.put_prop(hook_id, prop_sym, Value::Sym(s));
+            s
+        }
+    };
+    if local && create {
+        hook_make_local(i, dsym);
+    }
+    let v = if local {
+        i.symbol_value(dsym)
+    } else {
+        i.obarray.symbol(dsym).value.clone()
+    };
+    match v.list_to_vec() {
+        Ok(items) => Some(
+            items
+                .iter()
+                .filter_map(|x| match x {
+                    Value::Cons(c) => {
+                        let b = c.borrow();
+                        match b.cdr {
+                            Value::Int(n) => Some((b.car.clone(), n)),
+                            _ => None,
+                        }
+                    }
+                    _ => None,
+                })
+                .collect(),
+        ),
+        Err(_) => Some(Vec::new()),
+    }
+}
+
+fn hook_set_depth_alist(i: &mut Interp, hook_id: SymId, local: bool, alist: Vec<(Value, i128)>) {
+    let prop_sym = i.intern("hook--depth-alist");
+    let prop = i.get_prop(hook_id, prop_sym);
+    let dsym = match prop {
+        Value::Sym(s) => s,
+        _ => return,
+    };
+    let items: Vec<Value> = alist
+        .into_iter()
+        .map(|(f, d)| Value::cons(f, Value::Int(d)))
+        .collect();
+    let v = Value::list(items);
+    if local {
+        if let Some(b) = i.buffers.get(i.current_buffer) {
+            if let Ok(mut bb) = b.try_borrow_mut() {
+                if bb.locals.contains_key(&dsym) {
+                    bb.locals.insert(dsym, v);
+                    return;
+                }
+            }
+        }
+    }
+    i.obarray.symbol_mut(dsym).value = v;
+}
+
 fn f_add_hook(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     let hook_id = want_sym(i, &args[0])?;
     let fun = args[1].clone();
-    // &optional depth local — we support depth ordering by index.
-    let depth = args.get(2).map(|v| match v {
-        Value::Int(n) => *n,
-        _ => 0,
-    });
-    let cur = i.symbol_value(hook_id);
-    let mut list = match &cur {
-        Value::Cons(_) => cur.list_to_vec().unwrap_or_default(),
-        Value::Sym(s) if *s == sym::UNBOUND => Vec::new(),
-        Value::Nil => Vec::new(),
-        other => vec![other.clone()],
+    let depth = match args.get(2) {
+        Some(Value::Int(n)) => *n,
+        Some(Value::Nil) | None => 0,
+        Some(_) => 90, // any other non-nil symbol/object counts as 90
     };
-    // Don't add duplicates.
-    if !list.iter().any(|f| super::eq_values(f, &fun)) {
-        match depth {
-            Some(d) if d > 0 => list.push(fun),
-            Some(d) if d < 0 => list.insert(0, fun),
-            _ => list.push(fun),
+    let mut local = args.get(3).map(|v| v.truthy()).unwrap_or(false);
+    // (or (boundp hook) (set hook nil))
+    // (or (default-boundp hook) (set-default hook nil))
+    if !hook_boundp(i, hook_id) {
+        i.set_symbol(hook_id, Value::Nil)?;
+    }
+    if !hook_default_boundp(i, hook_id) {
+        i.set_symbol_default(hook_id, Value::Nil)?;
+    }
+    if local {
+        // Unless the var is automatically buffer-local, the binding
+        // is created fresh holding (t) -- the global value is not
+        // copied into the local list.
+        if !hook_local_if_set(i, hook_id) {
+            hook_make_local(i, hook_id);
+            i.set_symbol(hook_id, Value::list(vec![Value::Sym(sym::T)]))?;
+        }
+    } else if hook_force_local(i, hook_id) {
+        local = true;
+    }
+    let mut hook_value = if local {
+        i.symbol_value(hook_id)
+    } else {
+        i.obarray.symbol(hook_id).value.clone()
+    };
+    // GNU: `(or (not (listp hook-value)) (functionp hook-value))' is
+    // wrapped in a list -- a bare function value becomes one element.
+    if matches!(hook_value, Value::Sym(s) if s == sym::UNBOUND) {
+        hook_value = Value::Nil;
+    }
+    if hook_value.list_to_vec().is_err() || i.function_p(&hook_value) {
+        hook_value = Value::list(vec![hook_value]);
+    }
+    let mut list = hook_value.list_to_vec().unwrap_or_default();
+    // The membership test uses `equal' (GNU `member').
+    if !list.iter().any(|f| super::equal_values(i, f, &fun)) {
+        let mut alist = hook_depth_alist(i, hook_id, local, depth != 0).unwrap_or_default();
+        if depth != 0 {
+            alist.retain(|(f, _)| !crate::lisp::eq_values(f, &fun));
+            alist.push((fun.clone(), depth));
+            hook_set_depth_alist(i, hook_id, local, alist.clone());
+        }
+        if depth > 0 {
+            list.push(fun.clone());
+        } else {
+            list.insert(0, fun.clone());
+        }
+        // When a depth alist exists, stable-sort by recorded depth.
+        let depth_alist = hook_depth_alist(i, hook_id, local, false).unwrap_or_default();
+        if !depth_alist.is_empty() {
+            let d_of = |f: &Value| -> i128 {
+                depth_alist
+                    .iter()
+                    .find(|(x, _)| crate::lisp::eq_values(x, f))
+                    .map(|(_, d)| *d)
+                    .unwrap_or(0)
+            };
+            // stable sort keeps original order for equal depths only
+            // when the new element appended (>0); for <=0 GNU's `sort'
+            // puts equal-depth items after the consed newcomer anyway,
+            // matching: copy before sort when depth<=0 (GNU does
+            // copy-sequence for <=0 and sorts the fresh append for >0;
+            // sort is stable in both cases).
+            list.sort_by_key(|f| d_of(f));
         }
     }
-    i.obarray.symbol_mut(hook_id).value = Value::list(list);
+    if local {
+        // permanent-local-hook marking for mode-survival.
+        if let Value::Sym(fs) = fun {
+            let plh_sym = i.intern("permanent-local-hook");
+            let pl_sym = i.intern("permanent-local");
+            if i.get_prop(fs, plh_sym).truthy() && !i.get_prop(hook_id, pl_sym).truthy() {
+                i.put_prop(hook_id, pl_sym, Value::Sym(plh_sym));
+            }
+        }
+        i.set_symbol(hook_id, Value::list(list))?;
+    } else {
+        i.set_symbol_default(hook_id, Value::list(list))?;
+    }
     Ok(Value::Nil)
 }
 
 fn f_remove_hook(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     let hook_id = want_sym(i, &args[0])?;
     let fun = args[1].clone();
-    let cur = i.symbol_value(hook_id);
-    let list: Vec<Value> = match &cur {
-        Value::Cons(_) => cur
-            .list_to_vec()
-            .unwrap_or_default()
-            .into_iter()
-            .filter(|f| !super::eq_values(f, &fun))
-            .collect(),
-        _ => Vec::new(),
+    let mut local = args.get(2).map(|v| v.truthy()).unwrap_or(false);
+    if !hook_boundp(i, hook_id) {
+        i.set_symbol(hook_id, Value::Nil)?;
+    }
+    if !hook_default_boundp(i, hook_id) {
+        i.set_symbol_default(hook_id, Value::Nil)?;
+    }
+    // Do nothing if LOCAL is t but this hook has no local binding.
+    if local && !hook_is_local(i, hook_id) {
+        return Ok(Value::Nil);
+    }
+    if hook_force_local(i, hook_id) {
+        local = true;
+    }
+    let hook_value = if local {
+        i.symbol_value(hook_id)
+    } else {
+        i.obarray.symbol(hook_id).value.clone()
     };
-    i.obarray.symbol_mut(hook_id).value = Value::list(list);
+    let (list, removed) = match hook_value.list_to_vec() {
+        // A non-list value or a bare lambda form compares with `equal'.
+        Err(_) if super::equal_values(i, &hook_value, &fun) => {
+            (Vec::new(), Some(hook_value.clone()))
+        }
+        Err(_) => (Vec::new(), None),
+        Ok(items) => {
+            let is_lambda = matches!(items.first(), Some(Value::Sym(s)) if *s == sym::LAMBDA);
+            if is_lambda && super::equal_values(i, &hook_value, &fun) {
+                (Vec::new(), Some(hook_value.clone()))
+            } else {
+                // GNU: `(car (member ...))' locates with `equal';
+                // `remq' then removes that same object.
+                match items.iter().position(|f| super::equal_values(i, f, &fun)) {
+                    Some(p) => {
+                        let old = items[p].clone();
+                        let mut v = items;
+                        v.retain(|x| !crate::lisp::eq_values(x, &old));
+                        (v, Some(old))
+                    }
+                    None => (items, None),
+                }
+            }
+        }
+    };
+    if let Some(old) = removed {
+        // Drop the removed function's depth record.
+        if let Some(mut alist) = hook_depth_alist(i, hook_id, local, false) {
+            let before = alist.len();
+            alist.retain(|(f, _)| !crate::lisp::eq_values(f, &old));
+            if alist.len() != before {
+                hook_set_depth_alist(i, hook_id, local, alist);
+            }
+        }
+    }
+    if !local {
+        i.set_symbol_default(hook_id, Value::list(list))?;
+    } else if list.len() == 1 && matches!(&list[0], Value::Sym(s) if *s == sym::T) {
+        // A local value of exactly (t) kills the local binding.
+        if let Some(b) = i.buffers.get(i.current_buffer) {
+            if let Ok(mut bb) = b.try_borrow_mut() {
+                bb.locals.remove(&hook_id);
+            }
+        }
+    } else {
+        i.set_symbol(hook_id, Value::list(list))?;
+    }
     Ok(Value::Nil)
 }
 

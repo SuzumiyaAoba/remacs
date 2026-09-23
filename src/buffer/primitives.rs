@@ -2437,14 +2437,18 @@ pub(crate) fn f_kill_all_local_variables(i: &mut Interp, _a: Vec<Value>) -> Eval
 
 fn f_local_variable_p(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let sid = want_sym(i, &a[0])?;
+    // GNU `DEFVAR_PER_BUFFER' variables are local in every buffer.
+    if i.obarray.symbol(sid).always_local {
+        return Ok(Value::t());
+    }
     let b = buf_of(i, &arg(&a, 1))?;
     Ok(Value::from_bool(b.borrow().locals.contains_key(&sid)))
 }
 
 fn f_local_variable_if_set_p(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let sid = want_sym(i, &a[0])?;
-    let auto = i.obarray.symbol(sid).make_local_if_set;
-    if auto {
+    let sym = i.obarray.symbol(sid);
+    if sym.make_local_if_set || sym.always_local {
         return Ok(Value::t());
     }
     let b = buf_of(i, &arg(&a, 1))?;

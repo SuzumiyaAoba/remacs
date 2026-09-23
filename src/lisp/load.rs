@@ -90,6 +90,7 @@ static EMBEDDED_LISP: &[(&str, &str)] = &[
     ("time-date", include_str!("../../lisp/time-date.el")),
     ("uniquify", include_str!("../../lisp/uniquify.el")),
     ("windmove", include_str!("../../lisp/windmove.el")),
+    ("winner", include_str!("../../lisp/winner.el")),
 ];
 
 /// Embedded source for library NAME (with or without .el/.elc suffix).

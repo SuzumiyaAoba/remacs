@@ -2549,10 +2549,111 @@ fn f_fontset_list(_i: &mut Interp, _a: Vec<Value>) -> EvalResult {
 }
 
 /// Opaque window-configuration token (`#<window-configuration>').
+/// Record layout: [tag frame SPECS SELECTED] where SPECS is a list of
+/// vectors, one per live window in display order:
+///   [window buffer-id point start hscroll top height left width
+///    dedicated margins params prev-buffers next-buffers mark]
+/// GNU reuses the same window objects on restore, so the spec keeps the
+/// `window' reference and `set-window-configuration' writes the saved
+/// fields back into it (reviving it if it died in the meantime).
 fn window_configuration(i: &mut Interp) -> Value {
+    let tag = Value::Sym(i.intern("window-configuration"));
+    let frame_v = i
+        .selected_frame
+        .as_ref()
+        .map(|f| Value::Frame(f.clone()))
+        .unwrap_or(Value::Nil);
+    let mut specs = Vec::new();
+    let mut selected = Value::Nil;
+    if let Some(f) = i.selected_frame.as_ref() {
+        let fr = f.borrow();
+        let sel_id = fr.selected.borrow().id;
+        for w in &fr.windows {
+            let wb = w.borrow();
+            if wb.id == sel_id {
+                selected = Value::Window(w.clone());
+            }
+            let point = {
+                let sel = wb.id == sel_id;
+                if sel {
+                    i.buffers
+                        .get(wb.buffer)
+                        .map(|b| b.borrow().point())
+                        .unwrap_or(wb.point)
+                } else {
+                    wb.point
+                }
+            };
+            let mark = i
+                .buffers
+                .get(wb.buffer)
+                .and_then(|b| b.borrow().mark)
+                .map(|m| Value::Int(m as i128))
+                .unwrap_or(Value::Nil);
+            specs.push(Value::list(vec![
+                Value::Window(w.clone()),
+                Value::Int(wb.buffer as i128),
+                Value::Int(point as i128),
+                Value::Int(wb.start as i128),
+                Value::Int(wb.hscroll as i128),
+                Value::Int(wb.top as i128),
+                Value::Int(wb.height as i128),
+                Value::Int(wb.left as i128),
+                Value::Int(wb.width as i128),
+                Value::from_bool(wb.dedicated),
+                Value::from_bool(wb.minibuffer),
+                wb.params.clone(),
+                wb.prev_buffers.clone(),
+                wb.next_buffers.clone(),
+                mark,
+            ]));
+        }
+        // GNU configs record the minibuffer window's geometry too; it
+        // restores to its saved rectangle (no rescaling).
+        if let Some(m) = &fr.minibuffer {
+            let mb = m.borrow();
+            specs.push(Value::list(vec![
+                Value::Window(m.clone()),
+                Value::Int(mb.buffer as i128),
+                Value::Int(mb.point as i128),
+                Value::Int(mb.start as i128),
+                Value::Int(mb.hscroll as i128),
+                Value::Int(mb.top as i128),
+                Value::Int(mb.height as i128),
+                Value::Int(mb.left as i128),
+                Value::Int(mb.width as i128),
+                Value::from_bool(mb.dedicated),
+                Value::Sym(sym::T),
+                mb.params.clone(),
+                mb.prev_buffers.clone(),
+                mb.next_buffers.clone(),
+                Value::Nil,
+            ]));
+        }
+    }
     Value::Record(Rc::new(RefCell::new(vec![
-        Value::Sym(i.intern("window-configuration")),
+        tag,
+        frame_v,
+        Value::list(specs),
+        selected,
     ])))
+}
+
+fn window_config_parts(tag: SymId, v: &Value) -> Option<(Value, Vec<Value>, Value)> {
+    let r = match v {
+        Value::Record(r) => r.clone(),
+        _ => return None,
+    };
+    let cells = r.borrow();
+    if !matches!(cells.first(), Some(Value::Sym(s)) if *s == tag) {
+        return None;
+    }
+    let specs = cells.get(2)?.list_to_vec().ok()?;
+    Some((
+        cells.get(1).cloned().unwrap_or(Value::Nil),
+        specs,
+        cells.get(3).cloned().unwrap_or(Value::Nil),
+    ))
 }
 
 fn f_window_configuration_p(i: &mut Interp, a: Vec<Value>) -> EvalResult {
@@ -2576,19 +2677,234 @@ pub(crate) fn f_current_window_configuration(i: &mut Interp, a: Vec<Value>) -> E
     Ok(window_configuration(i))
 }
 
-fn f_set_window_configuration(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+pub(crate) fn f_set_window_configuration(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let tag = i.intern("window-configuration");
-    let ok = matches!(&a[0], Value::Record(r) if
-        matches!(r.borrow().first(), Some(Value::Sym(s)) if *s == tag));
-    if !ok {
-        return Err(i.wrong_type_mut("window-configuration-p", &a[0]));
+    let (_frame_v, specs, selected) = match window_config_parts(tag, &a[0]) {
+        Some(p) => p,
+        None => return Err(i.wrong_type_mut("window-configuration-p", &a[0])),
+    };
+    let f = sel_frame(i).ok_or_else(|| i.error("No frame"))?;
+    // Kill live windows that the configuration does not contain, then
+    // rebuild the frame's window list from the saved specs (GNU writes
+    // the saved contents back into the same window objects).
+    let saved_ids: Vec<usize> = specs
+        .iter()
+        .filter_map(|s| match s.list_to_vec().ok()?.first()? {
+            Value::Window(w) => Some(w.borrow().id),
+            _ => None,
+        })
+        .collect();
+    // The current root extent must be measured before any window is
+    // marked dead: it is the span of the live non-minibuffer windows.
+    let mut cur_specs: Vec<Vec<Value>> = Vec::new();
+    {
+        let fr = f.borrow();
+        for w in &fr.windows {
+            let wb = w.borrow();
+            if wb.dead || wb.minibuffer {
+                continue;
+            }
+            cur_specs.push(vec![
+                Value::Nil,
+                Value::Nil,
+                Value::Nil,
+                Value::Nil,
+                Value::Nil,
+                Value::Int(wb.top as i128),
+                Value::Int(wb.height as i128),
+                Value::Int(wb.left as i128),
+                Value::Int(wb.width as i128),
+            ]);
+        }
     }
-    // GNU re-selects the configuration's window, bumping its use-time.
-    if let Some(w) = sel_window(i) {
+    {
+        let fr = f.borrow_mut();
+        for w in &fr.windows {
+            if !saved_ids.contains(&w.borrow().id) {
+                w.borrow_mut().dead = true;
+            }
+        }
+    }
+    let mut new_windows: Vec<WindowRef> = Vec::new();
+    let mut marks: Vec<(usize, usize)> = Vec::new();
+    // GNU stores normalized sizes and re-lays the configuration out in
+    // the frame's current root extent: map each window's edges
+    // proportionally from the saved extent to the live one (identity
+    // when nothing resized, exact tiling via edge-based mapping).
+    let extent_of = |specs: &[Vec<Value>]| -> Option<(i128, i128, i128, i128)> {
+        if specs.is_empty() {
+            return None;
+        }
+        let (mut t, mut l, mut b, mut r) = (i128::MAX, i128::MAX, i128::MIN, i128::MIN);
+        for v in specs {
+            let geti = |n: usize| v.get(n).and_then(|x| match x {
+                Value::Int(i) => Some(*i),
+                _ => None,
+            });
+            let (wt, wh, wl, ww) = (geti(5)?, geti(6)?, geti(7)?, geti(8)?);
+            t = t.min(wt);
+            l = l.min(wl);
+            b = b.max(wt + wh);
+            r = r.max(wl + ww);
+        }
+        Some((t, l, b, r))
+    };
+    // GNU restores the minibuffer window to its saved rectangle; its
+    // top edge is the bottom of the root extent regular windows map
+    // into (persistent chrome like the tty menu row keeps the top).
+    let mut mini_top: Option<i128> = None;
+    let content_specs: Vec<Vec<Value>> = specs
+        .iter()
+        .filter_map(|s| s.list_to_vec().ok())
+        .filter(|v| !v.get(10).map(|x| x.truthy()).unwrap_or(false))
+        .collect();
+    for spec in &specs {
+        let v = match spec.list_to_vec() {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+        if !v.get(10).map(|x| x.truthy()).unwrap_or(false) {
+            continue;
+        }
+        if let Some(Value::Window(w)) = v.first() {
+            let int_at = |n: usize| -> i128 {
+                match v.get(n) {
+                    Some(Value::Int(x)) => *x,
+                    _ => 0,
+                }
+            };
+            let mut wb = w.borrow_mut();
+            wb.top = int_at(5).max(0) as usize;
+            wb.height = int_at(6).max(0) as usize;
+            wb.left = int_at(7).max(0) as usize;
+            wb.width = int_at(8).max(0) as usize;
+            wb.dead = false;
+            mini_top = Some(int_at(5));
+        }
+    }
+    let map = extent_of(&content_specs)
+        .zip(extent_of(&cur_specs))
+        .map(|((st, sl, sb, sr), (ct, cl, cb, cr))| {
+            let (sh, sw) = ((sb - st).max(1), (sr - sl).max(1));
+            let cb = mini_top.unwrap_or(cb);
+            let (ch, cw) = ((cb - ct).max(1), (cr - cl).max(1));
+            move |top: i128, height: i128, left: i128, width: i128| {
+                let nt = ct + (top - st) * ch / sh;
+                let nb = ct + (top + height - st) * ch / sh;
+                let nl = cl + (left - sl) * cw / sw;
+                let nr = cl + (left + width - sl) * cw / sw;
+                (nt, (nb - nt).max(0), nl, (nr - nl).max(0))
+            }
+        });
+    for v in &content_specs {
+        let w = match v.first() {
+            Some(Value::Window(w)) => w.clone(),
+            _ => continue,
+        };
+        let int_at = |n: usize| -> i128 {
+            match v.get(n) {
+                Some(Value::Int(x)) => *x,
+                _ => 0,
+            }
+        };
+        {
+            let mut wb = w.borrow_mut();
+            wb.buffer = int_at(1).max(0) as usize;
+            wb.point = int_at(2).max(0) as usize;
+            wb.start = int_at(3).max(0) as usize;
+            wb.hscroll = int_at(4).max(0) as usize;
+            let (nt, nh, nl, nw) = match &map {
+                Some(m) => m(int_at(5), int_at(6), int_at(7), int_at(8)),
+                None => (int_at(5), int_at(6), int_at(7), int_at(8)),
+            };
+            wb.top = nt.max(0) as usize;
+            wb.height = nh.max(0) as usize;
+            wb.left = nl.max(0) as usize;
+            wb.width = nw.max(0) as usize;
+            wb.dedicated = v.get(9).map(|x| x.truthy()).unwrap_or(false);
+            wb.params = v.get(11).cloned().unwrap_or(Value::Nil);
+            wb.prev_buffers = v.get(12).cloned().unwrap_or(Value::Nil);
+            wb.next_buffers = v.get(13).cloned().unwrap_or(Value::Nil);
+            wb.dead = false;
+        }
+        if let Some(Value::Int(m)) = v.get(14) {
+            marks.push((int_at(1).max(0) as usize, (*m).max(0) as usize));
+        }
+        new_windows.push(w);
+    }
+    {
+        let mut fr = f.borrow_mut();
+        fr.windows = new_windows;
+        // The synthetic root's extent depends on the live set.
+        fr.root = None;
+        match &selected {
+            Value::Window(w) => fr.selected = w.clone(),
+            _ => {
+                if let Some(w) = fr.windows.first() {
+                    fr.selected = w.clone();
+                }
+            }
+        }
+    }
+    // GNU re-selects the configuration's window, bumping its use-time,
+    // and makes its buffer current with the saved point.
+    if let Value::Window(w) = &selected {
         w.borrow_mut().use_time = next_use_time();
+        let (bid, pt) = {
+            let wb = w.borrow();
+            (wb.buffer, wb.point)
+        };
+        if let Some(b) = i.buffers.get(bid) {
+            b.borrow_mut().set_point(pt);
+            i.current_buffer = bid;
+        }
     }
-    // Frame/window args beyond CONFIGURATION are validated loosely.
+    for (bid, pos) in marks {
+        if let Some(b) = i.buffers.get(bid) {
+            b.borrow_mut().mark = Some(pos);
+        }
+    }
     Ok(Value::Sym(sym::T))
+}
+
+/// GNU `compare_window_configurations': equal means same buffers shown
+/// in windows of the same size/position, in the same order.
+pub(crate) fn f_window_configuration_equal_p(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let tag = i.intern("window-configuration");
+    for v in &a[..2] {
+        if window_config_parts(tag, v).is_none() {
+            return Err(i.wrong_type_mut("window-configuration-p", v));
+        }
+    }
+    let (_, s1, _) = window_config_parts(tag, &a[0]).unwrap();
+    let (_, s2, _) = window_config_parts(tag, &a[1]).unwrap();
+    if s1.len() != s2.len() {
+        return Ok(Value::Nil);
+    }
+    for (x, y) in s1.iter().zip(s2.iter()) {
+        let (xv, yv) = match (x.list_to_vec(), y.list_to_vec()) {
+            (Ok(xv), Ok(yv)) => (xv, yv),
+            _ => return Ok(Value::Nil),
+        };
+        // Compare buffer id, geometry, point and start (indices 1..7).
+        for n in 1..8 {
+            if !crate::lisp::eq_values(
+                xv.get(n).unwrap_or(&Value::Nil),
+                yv.get(n).unwrap_or(&Value::Nil),
+            ) {
+                return Ok(Value::Nil);
+            }
+        }
+    }
+    Ok(Value::Sym(sym::T))
+}
+
+pub(crate) fn f_window_configuration_frame(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let tag = i.intern("window-configuration");
+    match window_config_parts(tag, &a[0]) {
+        Some((frame_v, _, _)) => Ok(frame_v),
+        None => Err(i.wrong_type_mut("window-configuration-p", &a[0])),
+    }
 }
 
 fn f_frame_terminal(i: &mut Interp, a: Vec<Value>) -> EvalResult {

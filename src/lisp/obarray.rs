@@ -26,6 +26,10 @@ pub struct Symbol {
     /// `make-variable-buffer-local`: setting this var auto-creates a
     /// buffer-local binding in the current buffer.
     pub make_local_if_set: bool,
+    /// GNU `DEFVAR_PER_BUFFER': every buffer has a slot for this var;
+    /// `local-variable-p' is always t for it and `setq' writes the
+    /// buffer-local slot (e.g. `post-command-hook').
+    pub always_local: bool,
     /// A C-backed variable (GNU `DEFVAR_LISP'/`DEFVAR_PER_BUFFER'):
     /// `makunbound' refuses with "Built-in variable may not be unbound".
     pub builtin_variable: bool,
@@ -240,6 +244,7 @@ impl Obarray {
             special: false,
             constant: name.starts_with(':'),
             make_local_if_set: false,
+            always_local: false,
             builtin_variable: false,
             variable_documentation: None,
             uninterned: false,
@@ -271,6 +276,7 @@ impl Obarray {
             special: false,
             constant: false,
             make_local_if_set: false,
+            always_local: false,
             builtin_variable: false,
             variable_documentation: None,
             uninterned: true,

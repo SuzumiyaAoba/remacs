@@ -1063,7 +1063,9 @@ fn plist_scan(
                 }
                 cur = v.1;
             }
-            other => return Err(i.wrong_type_mut("listp", &other)),
+            // GNU's plist_get iterates while CONSP: a non-cons tail
+            // (or non-list PLIST) ends the scan with no match.
+            _ => return Ok(None),
         }
     }
 }
@@ -1107,7 +1109,8 @@ fn f_plist_get(i: &mut Interp, args: Vec<Value>) -> EvalResult {
                         _ => Value::Nil,
                     };
                 }
-                other => return Err(i.wrong_type_mut("listp", &other)),
+                // GNU: non-list PLIST ends the scan (returns nil).
+                _ => return Ok(Value::Nil),
             }
         }
     }
@@ -1156,7 +1159,8 @@ fn f_plist_member(i: &mut Interp, args: Vec<Value>) -> EvalResult {
                     _ => Value::Nil,
                 };
             }
-            other => return Err(i.wrong_type_mut("listp", &other)),
+            // GNU signals `plistp' (not `listp') on a non-list tail.
+            other => return Err(i.wrong_type_mut("plistp", &other)),
         }
     }
 }

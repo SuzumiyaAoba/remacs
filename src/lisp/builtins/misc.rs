@@ -1274,14 +1274,14 @@ pub(crate) static SUBRS: &[Subr] = &[
         "window-configuration-equal-p",
         2,
         2,
-        f_window_config_pred_err,
+        crate::editor::f_window_configuration_equal_p,
         ""
     ),
     S!(
         "window-configuration-frame",
         1,
         1,
-        f_window_config_pred_err,
+        crate::editor::f_window_configuration_frame,
         ""
     ),
     S!("internal-stack-stats", 0, 0, f_nil, ""),
@@ -9952,13 +9952,6 @@ fn f_lossage_size(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 
 fn f_mouse_position_root(_i: &mut Interp, _a: Vec<Value>) -> EvalResult {
     Ok(Value::cons(Value::Int(0), Value::Int(0)))
-}
-
-fn f_window_config_pred_err(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    // We have no window-configuration objects; every argument fails the
-    // type check like GNU's window-configuration-p.
-    let v = a.first().cloned().unwrap_or(Value::Nil);
-    Err(i.wrong_type_mut("window-configuration-p", &v))
 }
 
 fn f_make_terminal_frame(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
