@@ -4,7 +4,7 @@
 //! Supported syntax (per Emacs):
 //!   `.` `*` `+` `?` `*?` `+?` `??` `\{m\}` `\{m,n\}`
 //!   `[...]` `[^...]` ranges, `[:class:]` POSIX classes, `\sX` in classes
-//!   `^` `$` `` \` `` `\'` `\b` `\B` `\<` `\>` `\w` `\W` `\sX` `\SX`
+//!   `^` `$` `` \` `` `\'` `\b` `\B` `\<` `\>` `\_<` `\_>` `\w` `\W` `\sX` `\SX`
 //!   `\(...\)` `\(?:...\)` `\|` `\1`–`\9` backrefs
 
 /// A compiled regexp: instruction list + group count.
@@ -38,6 +38,9 @@ enum Inst {
     NotWordB,
     WordStart,
     WordEnd,
+    /// \_< \_> — symbol boundaries (word OR symbol syntax).
+    SymStart,
+    SymEnd,
     /// Split: try `a` first (greedy), else `b`.
     Split(usize, usize),
     Jmp(usize),
@@ -56,31 +59,31 @@ struct CharSet {
 }
 
 impl CharSet {
-    fn base_match(&self, c: char) -> bool {
+    fn base_match(&self, c: char, syn: SynFn) -> bool {
         self.singles.contains(&c)
             || self.ranges.iter().any(|(lo, hi)| c >= *lo && c <= *hi)
             || self
                 .posix
                 .iter()
-                .any(|(name, neg)| posix_match(name, c) != *neg)
+                .any(|(name, neg)| posix_match(name, c, syn) != *neg)
             || self
                 .syntax
                 .iter()
-                .any(|(code, neg)| syntax_match(*code, c) != *neg)
+                .any(|(code, neg)| syntax_match(*code, c, syn) != *neg)
     }
 
-    fn contains(&self, c: char, case_fold: bool) -> bool {
-        let mut found = self.base_match(c);
+    fn contains(&self, c: char, case_fold: bool, syn: SynFn) -> bool {
+        let mut found = self.base_match(c, syn);
         if !found && case_fold {
             for lc in c.to_lowercase() {
-                if lc != c && self.base_match(lc) {
+                if lc != c && self.base_match(lc, syn) {
                     found = true;
                     break;
                 }
             }
             if !found {
                 for uc in c.to_uppercase() {
-                    if uc != c && self.base_match(uc) {
+                    if uc != c && self.base_match(uc, syn) {
                         found = true;
                         break;
                     }
@@ -110,13 +113,13 @@ pub fn syntax_code(c: char) -> u8 {
     }
 }
 
-fn syntax_match(code: u8, c: char) -> bool {
-    let sc = syntax_code(c);
+fn syntax_match(code: u8, c: char, syn: SynFn) -> bool {
+    let sc = syn(c);
     // GNU accepts `-` as an alias for the whitespace class.
     sc == code || (code == b'-' && sc == b' ')
 }
 
-fn posix_match(name: &str, c: char) -> bool {
+fn posix_match(name: &str, c: char, syn: SynFn) -> bool {
     match name {
         "alnum" | "digit" | "xdigit" | "alpha" | "upper" | "lower" | "space" | "punct"
         | "graph" | "print" | "cntrl" | "blank" | "word" => {
@@ -133,7 +136,7 @@ fn posix_match(name: &str, c: char) -> bool {
                 "print" => !c.is_control(),
                 "cntrl" => c.is_control(),
                 "blank" => c == ' ' || c == '\t',
-                "word" => syntax_code(c) == b'w',
+                "word" => syn(c) == b'w',
                 _ => false,
             };
             r
@@ -142,8 +145,20 @@ fn posix_match(name: &str, c: char) -> bool {
     }
 }
 
-fn is_word_char(c: char) -> bool {
-    syntax_code(c) == b'w'
+pub type SynFn<'a> = &'a dyn Fn(char) -> u8;
+
+/// `syntax_code' (standard table) as a `SynFn' for callers without a
+/// buffer syntax table.
+pub fn std_syntax(c: char) -> u8 {
+    syntax_code(c)
+}
+
+fn is_word_char(c: char, syn: SynFn) -> bool {
+    syn(c) == b'w'
+}
+
+fn is_sym_char(c: char, syn: SynFn) -> bool {
+    matches!(syn(c), b'w' | b'_')
 }
 
 // ---------- parsing ----------
@@ -174,7 +189,7 @@ enum Ast {
         greedy: bool,
     },
     Backref(usize),
-    Anchor(char), // ^ $ ` ' b B < >
+    Anchor(char), // ^ $ ` ' b B < > l g (l/g = \_< \_>)
     SyntaxClass(u8, bool),
 }
 
@@ -329,19 +344,43 @@ impl Parser {
         match self.next() {
             None => Err(RegexError("trailing backslash".into())),
             Some('(') => {
-                // \( ... \) group; check for \(?:
-                if self.peek() == Some('?') && self.chars.get(self.pos + 1) == Some(&':') {
-                    self.pos += 2;
-                    let inner = self.parse_alt()?;
-                    self.expect_close()?;
-                    Ok(Ast::ShyGroup(Box::new(inner)))
-                } else {
-                    self.n_groups += 1;
-                    let g = self.n_groups;
-                    let inner = self.parse_alt()?;
-                    self.expect_close()?;
-                    Ok(Ast::Group(g, Box::new(inner)))
+                // \( ... \) group; \(?: ... \) shy group; \(?N: ... \)
+                // numbered group (GNU Emacs 29+).
+                if self.peek() == Some('?') {
+                    let save = self.pos;
+                    self.pos += 1;
+                    if self.peek() == Some(':') {
+                        self.pos += 1;
+                        let inner = self.parse_alt()?;
+                        self.expect_close()?;
+                        return Ok(Ast::ShyGroup(Box::new(inner)));
+                    }
+                    let mut digits = String::new();
+                    while let Some(c) = self.peek() {
+                        if c.is_ascii_digit() {
+                            digits.push(c);
+                            self.pos += 1;
+                        } else {
+                            break;
+                        }
+                    }
+                    if !digits.is_empty() && self.peek() == Some(':') {
+                        self.pos += 1;
+                        let g = digits.parse::<usize>().unwrap_or(0).min(63);
+                        if g > self.n_groups {
+                            self.n_groups = g;
+                        }
+                        let inner = self.parse_alt()?;
+                        self.expect_close()?;
+                        return Ok(Ast::Group(g, Box::new(inner)));
+                    }
+                    self.pos = save;
                 }
+                self.n_groups += 1;
+                let g = self.n_groups;
+                let inner = self.parse_alt()?;
+                self.expect_close()?;
+                Ok(Ast::Group(g, Box::new(inner)))
             }
             Some(')') => {
                 // stray \) — the caller (parse_alt) should have stopped;
@@ -359,6 +398,19 @@ impl Parser {
             Some('B') => Ok(Ast::Anchor('B')),
             Some('<') => Ok(Ast::Anchor('<')),
             Some('>') => Ok(Ast::Anchor('>')),
+            Some('_') => match self.peek() {
+                // GNU: `\_<' and `\_>' are symbol boundaries; a bare
+                // `\_' is a literal underscore.
+                Some('<') => {
+                    self.pos += 1;
+                    Ok(Ast::Anchor('l'))
+                }
+                Some('>') => {
+                    self.pos += 1;
+                    Ok(Ast::Anchor('g'))
+                }
+                _ => Ok(Ast::Char('_')),
+            },
             Some('w') => Ok(Ast::SyntaxClass(b'w', false)),
             Some('W') => Ok(Ast::SyntaxClass(b'w', true)),
             Some('s') => {
@@ -542,6 +594,12 @@ impl Codegen {
             Ast::Anchor('>') => {
                 self.push(Inst::WordEnd);
             }
+            Ast::Anchor('l') => {
+                self.push(Inst::SymStart);
+            }
+            Ast::Anchor('g') => {
+                self.push(Inst::SymEnd);
+            }
             Ast::Anchor(_) => {}
             Ast::SyntaxClass(code, neg) => {
                 let set = CharSet {
@@ -696,6 +754,7 @@ fn run(
     mut sp: usize,
     mut regs: Regs,
     depth: usize,
+    syn: SynFn,
 ) -> Option<Regs> {
     if depth > 10_000 {
         return None;
@@ -719,7 +778,7 @@ fn run(
                 }
             }
             Inst::Class(set) => {
-                if sp < text.len() && set.contains(text[sp], re.case_fold) {
+                if sp < text.len() && set.contains(text[sp], re.case_fold, syn) {
                     sp += 1;
                     pc += 1;
                 } else {
@@ -770,8 +829,8 @@ fn run(
                 }
             }
             Inst::WordB => {
-                let before = sp > 0 && is_word_char(text[sp - 1]);
-                let after = sp < text.len() && is_word_char(text[sp]);
+                let before = sp > 0 && is_word_char(text[sp - 1], syn);
+                let after = sp < text.len() && is_word_char(text[sp], syn);
                 if before != after {
                     pc += 1;
                 } else {
@@ -779,8 +838,8 @@ fn run(
                 }
             }
             Inst::NotWordB => {
-                let before = sp > 0 && is_word_char(text[sp - 1]);
-                let after = sp < text.len() && is_word_char(text[sp]);
+                let before = sp > 0 && is_word_char(text[sp - 1], syn);
+                let after = sp < text.len() && is_word_char(text[sp], syn);
                 if before == after {
                     pc += 1;
                 } else {
@@ -788,8 +847,8 @@ fn run(
                 }
             }
             Inst::WordStart => {
-                let before = sp > 0 && is_word_char(text[sp - 1]);
-                let after = sp < text.len() && is_word_char(text[sp]);
+                let before = sp > 0 && is_word_char(text[sp - 1], syn);
+                let after = sp < text.len() && is_word_char(text[sp], syn);
                 if !before && after {
                     pc += 1;
                 } else {
@@ -797,8 +856,26 @@ fn run(
                 }
             }
             Inst::WordEnd => {
-                let before = sp > 0 && is_word_char(text[sp - 1]);
-                let after = sp < text.len() && is_word_char(text[sp]);
+                let before = sp > 0 && is_word_char(text[sp - 1], syn);
+                let after = sp < text.len() && is_word_char(text[sp], syn);
+                if before && !after {
+                    pc += 1;
+                } else {
+                    return None;
+                }
+            }
+            Inst::SymStart => {
+                let before = sp > 0 && is_sym_char(text[sp - 1], syn);
+                let after = sp < text.len() && is_sym_char(text[sp], syn);
+                if !before && after {
+                    pc += 1;
+                } else {
+                    return None;
+                }
+            }
+            Inst::SymEnd => {
+                let before = sp > 0 && is_sym_char(text[sp - 1], syn);
+                let after = sp < text.len() && is_sym_char(text[sp], syn);
                 if before && !after {
                     pc += 1;
                 } else {
@@ -806,7 +883,7 @@ fn run(
                 }
             }
             Inst::Split(a, b) => {
-                if let Some(r) = run(re, text, *a, sp, regs.clone(), depth + 1) {
+                if let Some(r) = run(re, text, *a, sp, regs.clone(), depth + 1, syn) {
                     return Some(r);
                 }
                 pc = *b;
@@ -822,15 +899,20 @@ fn run(
 }
 
 /// Try to match at exactly `pos`. Returns regs on success.
-pub fn match_at(re: &Regex, text: &[char], pos: usize) -> Option<Regs> {
-    run(re, text, 0, pos, vec![None; 2 * (re.n_groups + 1)], 0)
+pub fn match_at(re: &Regex, text: &[char], pos: usize, syn: SynFn) -> Option<Regs> {
+    run(re, text, 0, pos, vec![None; 2 * (re.n_groups + 1)], 0, syn)
 }
 
 /// Search forward from `pos`; returns (match_start, match_end) of group 0.
-pub fn search(re: &Regex, text: &[char], pos: usize) -> Option<(usize, usize)> {
+pub fn search(
+    re: &Regex,
+    text: &[char],
+    pos: usize,
+    syn: SynFn,
+) -> Option<(usize, usize)> {
     let mut p = pos;
     while p <= text.len() {
-        if let Some(regs) = match_at(re, text, p) {
+        if let Some(regs) = match_at(re, text, p, syn) {
             let s = regs[0].unwrap_or(p);
             let e = regs[1].unwrap_or(p);
             return Some((s, e));
@@ -841,11 +923,16 @@ pub fn search(re: &Regex, text: &[char], pos: usize) -> Option<(usize, usize)> {
 }
 
 /// Search backward from `pos` (find the latest match starting <= pos).
-pub fn search_backward(re: &Regex, text: &[char], pos: usize) -> Option<(usize, usize)> {
+pub fn search_backward(
+    re: &Regex,
+    text: &[char],
+    pos: usize,
+    syn: SynFn,
+) -> Option<(usize, usize)> {
     let mut best: Option<(usize, usize)> = None;
     let mut p = 0;
     while p <= pos.min(text.len()) {
-        if let Some(regs) = match_at(re, text, p) {
+        if let Some(regs) = match_at(re, text, p, syn) {
             let s = regs[0].unwrap_or(p);
             let e = regs[1].unwrap_or(p);
             if s <= pos && e >= s {
@@ -865,10 +952,10 @@ pub struct FullMatch {
 }
 
 /// Search with full register info.
-pub fn search_full(re: &Regex, text: &[char], pos: usize) -> Option<Regs> {
+pub fn search_full(re: &Regex, text: &[char], pos: usize, syn: SynFn) -> Option<Regs> {
     let mut p = pos;
     while p <= text.len() {
-        if let Some(regs) = match_at(re, text, p) {
+        if let Some(regs) = match_at(re, text, p, syn) {
             return Some(regs);
         }
         p += 1;
@@ -878,11 +965,16 @@ pub fn search_full(re: &Regex, text: &[char], pos: usize) -> Option<Regs> {
 
 /// Backward search returning full regs: the match with the greatest
 /// start whose end is at or before `pos` (GNU semantics).
-pub fn search_backward_full(re: &Regex, text: &[char], pos: usize) -> Option<Regs> {
+pub fn search_backward_full(
+    re: &Regex,
+    text: &[char],
+    pos: usize,
+    syn: SynFn,
+) -> Option<Regs> {
     let mut best: Option<Regs> = None;
     let mut p = 0;
     while p <= pos.min(text.len()) {
-        if let Some(regs) = match_at(re, text, p) {
+        if let Some(regs) = match_at(re, text, p, syn) {
             let s = regs[0].unwrap_or(p);
             let e = regs[1].unwrap_or(p);
             if s <= pos && e <= pos {
@@ -898,6 +990,6 @@ pub fn search_backward_full(re: &Regex, text: &[char], pos: usize) -> Option<Reg
 /// convert buffer substrings are in the caller.
 
 /// Simple `looking-at` helper: match at pos.
-pub fn looking_at(re: &Regex, text: &[char], pos: usize) -> Option<Regs> {
-    match_at(re, text, pos)
+pub fn looking_at(re: &Regex, text: &[char], pos: usize, syn: SynFn) -> Option<Regs> {
+    match_at(re, text, pos, syn)
 }

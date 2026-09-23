@@ -1658,11 +1658,7 @@ pub(crate) static SUBRS: &[Subr] = &[
         f_pixel_scroll_precision_mode,
         ""
     ),
-    S!("font-lock-mode", 0, 1, f_font_lock_mode, ""),
-    S!("font-lock-ensure", 0, 2, f_font_lock_ensure, ""),
-    S!("font-lock-flush", 0, 2, f_font_lock_flush, ""),
-    S!("jit-lock-register", 1, 2, f_jit_lock_register, ""),
-    S!("jit-lock-unregister", 1, 1, f_jit_lock_unregister, ""),
+
     S!(
         "move-to-window-line-top-bottom",
         0,
@@ -7912,11 +7908,12 @@ fn f_directory_files(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     } else {
         format!("{}/", dir)
     };
+    let syn = crate::editor::re_syntax(i);
     let matches = |name: &str| -> bool {
         match &re {
             Some(r) => {
                 let chars: Vec<char> = name.chars().collect();
-                crate::lisp::regexp::search(r, &chars, 0).is_some()
+                crate::lisp::regexp::search(r, &chars, 0, &syn).is_some()
             }
             None => true,
         }
@@ -10126,6 +10123,7 @@ fn completion_match_regexps(i: &Interp, s: &str, ignore_case: bool) -> bool {
         return true;
     };
     let mut cur = i.symbol_value(id);
+    let syn = crate::editor::re_syntax(i);
     let chars: Vec<char> = s.chars().collect();
     loop {
         match cur {
@@ -10136,7 +10134,7 @@ fn completion_match_regexps(i: &Interp, s: &str, ignore_case: bool) -> bool {
                 };
                 if let Value::Str(rs) = &re_v {
                     if let Ok(re) = crate::lisp::regexp::compile_case(&rs.borrow(), ignore_case) {
-                        if crate::lisp::regexp::search(&re, &chars, 0).is_none() {
+                        if crate::lisp::regexp::search(&re, &chars, 0, &syn).is_none() {
                             return false;
                         }
                     }
@@ -11054,6 +11052,14 @@ pub(crate) fn syntax_code_buf(i: &Interp, c: char) -> u8 {
         Some(t) => syntax_entry_code(Some(&t), c),
         None => crate::lisp::regexp::syntax_code(c),
     }
+}
+
+/// Regex-ready syntax lookup for the current buffer's `syntax-table'
+/// (falls back to the standard table).  Construct BEFORE borrowing a
+/// buffer — the lookup itself touches the buffer.
+pub(crate) fn re_syntax(i: &Interp) -> impl Fn(char) -> u8 + 'static {
+    let syn = syntax_table_entries(i);
+    move |c| syntax_entry_code(syn.as_ref(), c)
 }
 
 /// Table-aware syntax classifier for the current buffer.  Construct
@@ -12076,8 +12082,9 @@ fn f_apropos_internal(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let mut out = Vec::new();
     for id in i.obarray.all_ids() {
         let name = i.symbol_name(id);
+        let syn = crate::editor::re_syntax(i);
         let chars: Vec<char> = name.chars().collect();
-        if crate::lisp::regexp::search(&re, &chars, 0).is_some() {
+        if crate::lisp::regexp::search(&re, &chars, 0, &syn).is_some() {
             out.push(i.sym(id));
         }
     }
@@ -13134,49 +13141,9 @@ fn f_pixel_scroll_mode(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 fn f_pixel_scroll_precision_mode(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     mode_toggle(i, &a, "pixel-scroll-precision-mode")
 }
-fn f_font_lock_mode(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let _ = mode_toggle(i, &a, "font-lock-mode")?;
-    Ok(Value::Nil)
-}
-fn f_font_lock_ensure(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let b = cur(i);
-    let bb = b.borrow();
-    let beg = a
-        .get(0)
-        .and_then(|v| v.int())
-        .unwrap_or(bb.begv as i128 + 1);
-    let end = a
-        .get(1)
-        .and_then(|v| v.int())
-        .unwrap_or(bb.text_len() as i128 + 1);
-    Ok(Value::cons(
-        Value::Sym(i.intern("jit-lock-bounds")),
-        Value::cons(Value::Int(beg), Value::Int(end)),
-    ))
-}
-fn f_font_lock_flush(_i: &mut Interp, _a: Vec<Value>) -> EvalResult {
-    Ok(Value::Nil)
-}
-fn f_jit_lock_register(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let sym = i.intern("jit-lock-functions");
-    let cur = i.symbol_value(sym);
-    let cur = if cur.truthy() { cur } else { Value::Nil };
-    let items = cur.list_to_vec().unwrap_or_default();
-    if !items.iter().any(|v| eq_values(v, &a[0])) {
-        i.obarray.symbol_mut(sym).value = Value::cons(a[0].clone(), Value::list(items));
-    }
-    // GNU returns the value of `jit-lock-stealth-fontify' → list of the
-    // default fontification function.
-    Ok(Value::list(vec![Value::Sym(i.intern("jit-lock-function"))]))
-}
-fn f_jit_lock_unregister(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let sym = i.intern("jit-lock-functions");
-    let cur = i.symbol_value(sym);
-    let items = cur.list_to_vec().unwrap_or_default();
-    let kept: Vec<Value> = items.into_iter().filter(|v| !eq_values(v, &a[0])).collect();
-    i.obarray.symbol_mut(sym).value = Value::list(kept);
-    Ok(Value::Nil)
-}
+// font-lock-mode, font-lock-ensure/flush and jit-lock-register/unregister are
+// implemented in Lisp (GNU font-core.el / font-lock.el / jit-lock.el ports in
+// the prelude).
 
 // ---------- command loop / terminal misc ----------
 

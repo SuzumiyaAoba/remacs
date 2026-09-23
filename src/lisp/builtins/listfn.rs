@@ -868,24 +868,40 @@ fn f_assoc_default(i: &mut Interp, args: Vec<Value>) -> EvalResult {
 }
 
 fn del_impl(i: &mut Interp, elt: &Value, list: &Value, use_eq: bool) -> EvalResult {
-    // Rebuild the list minus matching elements (like Emacs: conses are
-    // removed by relinking; rebuilding gives same observable result).
-    let items = match list {
-        Value::Nil => return Ok(Value::Nil),
-        Value::Cons(_) => want_list(i, list)?,
-        _ => return Err(i.wrong_type_mut("listp", list)),
-    };
-    let kept: Vec<Value> = items
-        .into_iter()
-        .filter(|v| {
-            if use_eq {
-                !eq_values(v, elt)
-            } else {
-                !equal_values(i, v, elt)
+    // `delete`/`delq` splice matching conses out of the original list
+    // structure (GNU semantics); callers holding the same tail observe
+    // the removal.
+    let mut result = list.clone();
+    let mut cur = list.clone();
+    let mut prev: Option<crate::lisp::value::ConsRef> = None;
+    loop {
+        match cur {
+            Value::Cons(c) => {
+                let (car, next) = {
+                    let b = c.borrow();
+                    (b.car.clone(), b.cdr.clone())
+                };
+                let matched = if use_eq {
+                    eq_values(&car, elt)
+                } else {
+                    equal_values(i, &car, elt)
+                };
+                if matched {
+                    match &prev {
+                        Some(p) => p.borrow_mut().cdr = next.clone(),
+                        None => result = next.clone(),
+                    }
+                    cur = next;
+                } else {
+                    prev = Some(c.clone());
+                    cur = next;
+                }
             }
-        })
-        .collect();
-    Ok(Value::list(kept))
+            Value::Nil => break,
+            _ => return Err(i.wrong_type_mut("listp", list)),
+        }
+    }
+    Ok(result)
 }
 
 fn f_delq(i: &mut Interp, args: Vec<Value>) -> EvalResult {
@@ -1419,11 +1435,11 @@ fn remove_impl(
                 .collect();
             Ok(Value::Vec(std::rc::Rc::new(std::cell::RefCell::new(kept))))
         }
-        _ => {
-            // List (or nil): splice out matching conses, Emacs-style.
-            let mut result = seq.clone();
+        Value::Cons(_) | Value::Nil => {
+            // List (or nil): GNU `remove`/`remq` copy the spine — the
+            // original list is left untouched.
+            let mut kept: Vec<Value> = Vec::new();
             let mut cur = seq.clone();
-            let mut prev: Option<crate::lisp::value::ConsRef> = None;
             loop {
                 match cur {
                     Value::Cons(c) => {
@@ -1431,23 +1447,18 @@ fn remove_impl(
                             let b = c.borrow();
                             (b.car.clone(), b.cdr.clone())
                         };
-                        if cmp(i, elt, &car) {
-                            match &prev {
-                                Some(p) => p.borrow_mut().cdr = next.clone(),
-                                None => result = next.clone(),
-                            }
-                            cur = next;
-                        } else {
-                            prev = Some(c.clone());
-                            cur = next;
+                        if !cmp(i, elt, &car) {
+                            kept.push(car);
                         }
+                        cur = next;
                     }
                     Value::Nil => break,
-                    other => return Err(i.wrong_type_mut("sequencep", &other)),
+                    other => return Err(i.wrong_type_mut("listp", &other)),
                 }
             }
-            Ok(result)
+            Ok(Value::list(kept))
         }
+        other => Err(i.wrong_type_mut("sequencep", other)),
     }
 }
 
@@ -1455,5 +1466,11 @@ fn f_remove(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     remove_impl(i, &args[0], &args[1], |ii, a, b| equal_values(ii, a, b))
 }
 fn f_remq(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    remove_impl(i, &args[0], &args[1], |_ii, a, b| eq_values(a, b))
+    // GNU `remq` is list-only (unlike sequence-generic `remove`).
+    match args[1] {
+        Value::Cons(_) | Value::Nil => {
+            remove_impl(i, &args[0], &args[1], |_ii, a, b| eq_values(a, b))
+        }
+        ref other => Err(i.wrong_type_mut("listp", other)),
+    }
 }
