@@ -4712,6 +4712,40 @@ fn f_define_key(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     Ok(def)
 }
 
+/// GNU `get_keyelt' (keymap.c): trace a slot's actual definition —
+/// `(menu-item NAME DEFN ...)' unwraps to DEFN (the `:filter' path is
+/// only used when AUTOLOAD, which `describe-vector' never passes),
+/// and `(MENUSTRING . DEFN)' strips the menu name.  Anything else is
+/// already the value.
+pub(crate) fn keyelt_value(i: &mut Interp, object: &Value) -> Value {
+    let menu_item = i.intern("menu-item");
+    let mut object = object.clone();
+    loop {
+        let Value::Cons(c) = &object else {
+            return object;
+        };
+        let (car, cdr) = {
+            let b = c.borrow();
+            (b.car.clone(), b.cdr.clone())
+        };
+        if matches!(&car, Value::Sym(s) if *s == menu_item) {
+            if let Value::Cons(tail) = &cdr {
+                let rest = tail.borrow().cdr.clone();
+                object = match &rest {
+                    Value::Cons(d) => d.borrow().car.clone(),
+                    _ => rest,
+                };
+            } else {
+                return object;
+            }
+        } else if matches!(&car, Value::Str(_)) {
+            object = cdr;
+        } else {
+            return object;
+        }
+    }
+}
+
 /// GNU `store_in_keymap' with REMOVE: delete KEY's own binding — the
 /// alist cons is dropped (a parent map's binding shows through) and
 /// char-table/vector slots reset to nil (not the `t' unbind marker).
@@ -6257,6 +6291,22 @@ fn f_substitute_command_keys(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     };
     // Map selected by \<name> for following \[cmd] lookups.
     let mut ctx_map: Option<Value> = None;
+    // Effective quoting style (nil variable → `curve'); `grave' keeps
+    // ` and ' verbatim, `straight' maps both to ASCII ', and any
+    // other value (including `quote') behaves as `curve'.
+    #[derive(Clone, Copy, PartialEq)]
+    enum QStyle {
+        Grave,
+        Ascii,
+        Curve,
+    }
+    let tqs_sym = i.intern("text-quoting-style");
+    let tqs = i.symbol_value(tqs_sym);
+    let qstyle = match &tqs {
+        Value::Sym(s) if i.symbol_name(*s) == "grave" => QStyle::Grave,
+        Value::Sym(s) if i.symbol_name(*s) == "straight" => QStyle::Ascii,
+        _ => QStyle::Curve,
+    };
     let take_until = |chars: &[char], from: usize, close: char| -> Option<(String, usize)> {
         let mut j = from;
         let mut name = String::new();
@@ -6446,8 +6496,18 @@ fn f_substitute_command_keys(i: &mut Interp, a: Vec<Value>) -> EvalResult {
                     pos += 1;
                 }
             }
+        } else if c == '`' {
+            out.push(match qstyle {
+                QStyle::Grave => '`',
+                QStyle::Ascii => '\'',
+                QStyle::Curve => '\u{2018}',
+            });
+            pos += 1;
         } else if c == '\'' {
-            out.push('\u{2019}');
+            out.push(match qstyle {
+                QStyle::Curve => '\u{2019}',
+                _ => '\'',
+            });
             pos += 1;
         } else {
             out.push(c);

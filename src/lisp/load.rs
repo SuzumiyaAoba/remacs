@@ -80,6 +80,7 @@ static EMBEDDED_LISP: &[(&str, &str)] = &[
     ("let-alist", include_str!("../../lisp/let-alist.el")),
     ("macros", include_str!("../../lisp/macros.el")),
     ("map", include_str!("../../lisp/map.el")),
+    ("minibuf-eldef", include_str!("../../lisp/minibuf-eldef.el")),
     ("pcase", include_str!("../../lisp/pcase.el")),
     ("pp", include_str!("../../lisp/pp.el")),
     ("ring", include_str!("../../lisp/ring.el")),

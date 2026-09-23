@@ -965,6 +965,7 @@ pub(crate) static SUBRS: &[Subr] = &[
         ""
     ),
     S!("char-table-range", 2, 2, f_char_table_range, ""),
+    S!("remacs--char-width-table", 0, 0, f_remacs_char_width_table, ""),
     S!("set-char-table-range", 3, 3, f_set_char_table_range, ""),
     S!("char-table-parent", 1, 1, f_char_table_parent, ""),
     S!(
@@ -1119,7 +1120,13 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!("locale-translate", 1, 1, f_identity, ""),
     S!("mapbacktrace", 1, 2, f_mapbacktrace, ""),
     // `internal-timer-start-idle' is Lisp (prelude timer.el port).
-    S!("internal-describe-syntax-value", 1, 1, f_identity, ""),
+    S!(
+        "internal-describe-syntax-value",
+        1,
+        1,
+        f_internal_describe_syntax_value,
+        "Insert a description of the internal syntax description SYNTAX at point."
+    ),
     S!("internal-copy-lisp-face", 4, 4, f_internal_copy_lisp_face, ""),
     S!("internal-make-lisp-face", 1, 2, f_internal_make_lisp_face, ""),
     S!(
@@ -2276,12 +2283,267 @@ fn f_command_line(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
     Err(i.error("command-line is for interactive use"))
 }
 
-fn f_describe_vector(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    match &a[0] {
-        Value::Vec(_) => Ok(Value::Nil),
-        v if is_char_table(i, v) => Ok(Value::Nil),
-        other => Err(i.wrong_type_mut("vector-or-char-table-p", other)),
+/// GNU `describe_vector_1'-equivalent for the two-argument
+/// `describe-vector' interface (keymap.c): iterate the indices,
+/// compress runs sharing the same definition, and print
+/// "KEY[.. KEY]" + indent + DESCRIBER output + newline per run.
+/// Char-table runs never straddle the MAX_5_BYTE_CHAR boundary and a
+/// non-nil `defalt' gets a trailing "default" entry.
+fn describe_vector_insert(i: &mut Interp, v: &Value, describer: &Value) -> Result<(), Flow> {
+    let is_ct = is_char_table(i, v);
+    let stop_at: i128 = if is_ct {
+        CT_MAX_CHAR as i128 + 1
+    } else {
+        match v {
+            Value::Vec(vv) => vv.borrow().len() as i128,
+            _ => 0,
+        }
+    };
+    let key_desc = Value::Sym(i.intern("key-description"));
+    let indent_to = Value::Sym(i.intern("indent-to"));
+    let mut first = true;
+    let mut c: i128 = 0;
+    while c < stop_at {
+        let starting = c;
+        // GNU's `char_table_ref_and_range' reads this table's own
+        // contents and defalt only — never the parent chain — so a
+        // char-table lists only its own entries here.
+        let val = if is_ct {
+            ct_ref_defalt(i, v, c as usize)
+        } else {
+            match v {
+                Value::Vec(vv) => vv.borrow()[c as usize].clone(),
+                _ => Value::Nil,
+            }
+        };
+        c += 1;
+        // `get_keyelt' resolves indirection; nil definitions are skipped.
+        let defn = crate::editor::keyelt_value(i, &val);
+        if defn.is_nil() {
+            continue;
+        }
+        // Compress the run: char-table ranges stop at the five-byte
+        // boundary (0x3FFF80) like GNU's char_table_ref_and_range.
+        let boundary = if is_ct && starting < 0x3FFF80 {
+            0x3FFF80
+        } else {
+            stop_at
+        };
+        while c < boundary {
+            let v2 = if is_ct {
+                ct_ref_defalt(i, v, c as usize)
+            } else {
+                match v {
+                    Value::Vec(vv) => vv.borrow()[c as usize].clone(),
+                    _ => Value::Nil,
+                }
+            };
+            let d2 = crate::editor::keyelt_value(i, &v2);
+            if d2.is_nil() || !crate::lisp::builtins::equal_values(i, &d2, &defn) {
+                break;
+            }
+            c += 1;
+        }
+        if first {
+            i.write_output_to("\n", &Value::Nil)?;
+            first = false;
+        }
+        let keyvec = |k: i128| {
+            Value::Vec(std::rc::Rc::new(std::cell::RefCell::new(vec![
+                Value::Int(k),
+            ])))
+        };
+        let desc = i.apply(&key_desc, vec![keyvec(starting)])?;
+        i.write_output_to(&i.princ_to_string(&desc), &Value::Nil)?;
+        if c - 1 != starting {
+            i.write_output_to(" .. ", &Value::Nil)?;
+            let desc = i.apply(&key_desc, vec![keyvec(c - 1)])?;
+            i.write_output_to(&i.princ_to_string(&desc), &Value::Nil)?;
+        }
+        // describe_vector_princ: indent to column 16, call DESCRIBER,
+        // then terpri.
+        i.apply(&indent_to, vec![Value::Int(16), Value::Int(1)])?;
+        i.apply(describer, vec![defn])?;
+        i.write_output_to("\n", &Value::Nil)?;
     }
+    if is_ct {
+        let defalt = i.char_table_defalt(v);
+        if !defalt.is_nil() {
+            i.write_output_to("default", &Value::Nil)?;
+            i.apply(&indent_to, vec![Value::Int(16), Value::Int(1)])?;
+            i.apply(describer, vec![defalt])?;
+            i.write_output_to("\n", &Value::Nil)?;
+        }
+    }
+    Ok(())
+}
+
+fn f_describe_vector(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let describer = match a.get(1) {
+        Some(v) if !v.is_nil() => v.clone(),
+        _ => Value::Sym(i.intern("princ")),
+    };
+    // GNU specbinds `standard-output' to the current buffer, then
+    // checks VECTOR-OR-CHAR-TABLE.
+    let depth = i.specbind_depth();
+    let curbuf = i.buffer_value(i.current_buffer).unwrap_or(Value::Nil);
+    i.specbind(i.standard_output_sym, curbuf)?;
+    let result = if !matches!(&a[0], Value::Vec(_)) && !is_char_table(i, &a[0]) {
+        Err(i.wrong_type_mut("vector-or-char-table-p", &a[0]))
+    } else {
+        describe_vector_insert(i, &a[0], &describer)
+    };
+    let _ = i.unbind_to(depth);
+    result.map(|_| Value::Nil)
+}
+
+/// GNU `Finternal_describe_syntax_value' (syntax.c): insert the
+/// human-readable description of a syntax-table entry at point —
+/// the code letter, matching char, flag letters, then a phrase.
+fn f_internal_describe_syntax_value(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    const SPEC: [char; 16] = [
+        ' ', '.', 'w', '_', '(', ')', '\'', '"', '$', '\\', '/', '<', '>', '@', '!', '|',
+    ];
+    const NAMES: [&str; 16] = [
+        "whitespace",
+        "punctuation",
+        "word",
+        "symbol",
+        "open",
+        "close",
+        "prefix",
+        "string",
+        "math",
+        "escape",
+        "charquote",
+        "comment",
+        "endcomment",
+        "inherit",
+        "comment fence",
+        "string fence",
+    ];
+    let value = a[0].clone();
+    let mut out = String::new();
+    if value.is_nil() {
+        out.push_str("default");
+    } else if is_char_table(i, &value) {
+        out.push_str("deeper char-table ...");
+    } else if let Value::Cons(cell) = &value {
+        let (first, match_lisp) = {
+            let b = cell.borrow();
+            (b.car.clone(), b.cdr.clone())
+        };
+        let match_char = match &match_lisp {
+            Value::Nil => None,
+            Value::Int(m) if *m >= 0 && *m <= CT_MAX_CHAR as i128 => {
+                Some(*m as u32)
+            }
+            _ => None,
+        };
+        let valid = matches!(first, Value::Int(_))
+            && (match_char.is_some() || match_lisp.is_nil());
+        if !valid {
+            out.push_str("invalid");
+        } else {
+            let Value::Int(syntax_code) = first else {
+                unreachable!()
+            };
+            let code = (syntax_code & 0o377) as usize;
+            if code >= 16 {
+                out.push_str("invalid");
+            } else {
+                let start1 = syntax_code & (1 << 16) != 0;
+                let start2 = syntax_code & (1 << 17) != 0;
+                let end1 = syntax_code & (1 << 18) != 0;
+                let end2 = syntax_code & (1 << 19) != 0;
+                let prefix = syntax_code & (1 << 20) != 0;
+                let comstyleb = syntax_code & (1 << 21) != 0;
+                let comnested = syntax_code & (1 << 22) != 0;
+                let comstylec = syntax_code & (1 << 23) != 0;
+                out.push(SPEC[code]);
+                match match_char {
+                    None => out.push(' '),
+                    Some(m) => {
+                        out.push(char::from_u32(m).unwrap_or('\u{FFFD}'))
+                    }
+                }
+                if start1 {
+                    out.push('1');
+                }
+                if start2 {
+                    out.push('2');
+                }
+                if end1 {
+                    out.push('3');
+                }
+                if end2 {
+                    out.push('4');
+                }
+                if prefix {
+                    out.push('p');
+                }
+                if comstyleb {
+                    out.push('b');
+                }
+                if comstylec {
+                    out.push('c');
+                }
+                if comnested {
+                    out.push('n');
+                }
+                out.push_str("\twhich means: ");
+                out.push_str(NAMES[code]);
+                if let Some(m) = match_char {
+                    out.push_str(", matches ");
+                    out.push(char::from_u32(m).unwrap_or('\u{FFFD}'));
+                }
+                if start1 {
+                    out.push_str(
+                        ",\n\t  is the first character of a comment-start sequence",
+                    );
+                }
+                if start2 {
+                    out.push_str(
+                        ",\n\t  is the second character of a comment-start sequence",
+                    );
+                }
+                if end1 {
+                    out.push_str(
+                        ",\n\t  is the first character of a comment-end sequence",
+                    );
+                }
+                if end2 {
+                    out.push_str(
+                        ",\n\t  is the second character of a comment-end sequence",
+                    );
+                }
+                if comstyleb {
+                    out.push_str(" (comment style b)");
+                }
+                if comstylec {
+                    out.push_str(" (comment style c)");
+                }
+                if comnested {
+                    out.push_str(" (nestable)");
+                }
+                if prefix {
+                    // GNU inserts `substitute-command-keys' of the
+                    // annotation (quote substitution turns `...' into
+                    // '...' or grave/curly quoting).
+                    let doc = Value::string(
+                        ",\n\t  is a prefix character for `backward-prefix-chars'",
+                    );
+                    let sck = Value::Sym(i.intern("substitute-command-keys"));
+                    let sub = i.apply(&sck, vec![doc])?;
+                    out.push_str(&i.princ_to_string(&sub));
+                }
+            }
+        }
+    } else {
+        out.push_str("invalid");
+    }
+    i.write_output_to(&out, &Value::Nil)?;
+    Ok(value)
 }
 
 /// GNU's optional FRAME argument check: nil ok, live frame ok, else
@@ -8224,6 +8486,22 @@ pub(crate) fn ct_set_range(i: &mut Interp, table: &Value, from: u32, to: u32, va
     if from < 128 {
         ct_refresh_ascii(i, &contents);
     }
+}
+
+/// GNU's `char-width-table' char-table: subtype nil, nil defalt, and
+/// a parent holding all the width data — replayed from
+/// CHAR_WIDTH_RANGES (extracted from Emacs 31's effective `aref'
+/// values).
+fn f_remacs_char_width_table(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
+    // GNU's `char-width-table' is an empty char-table whose parent
+    // holds all the width data (charset.c `syms_of_charset_for_lisp').
+    let parent = make_ct(i, Value::Nil, Value::Nil, vec![]);
+    for &(s, e, w) in crate::lisp::ctdata::CHAR_WIDTH_RANGES {
+        ct_set_range(i, &parent, s, e, Value::Int(w as i128));
+    }
+    let t = make_ct(i, Value::Nil, Value::Nil, vec![]);
+    i.set_char_table_parent(&t, parent);
+    Ok(t)
 }
 
 /// Deep copy of a sub-char-table value (`copy_sub_char_table').

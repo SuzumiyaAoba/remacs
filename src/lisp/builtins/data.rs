@@ -896,8 +896,20 @@ fn f_make_record(i: &mut Interp, args: Vec<Value>) -> EvalResult {
 }
 
 fn f_text_quoting_style(i: &mut Interp, _args: Vec<Value>) -> EvalResult {
+    // GNU's function: (or (car (memq text-quoting-style
+    //   '(grave straight curve))) 'curve) — only the three named
+    // styles report verbatim; nil and any other value give `curve'.
     let id = i.intern("text-quoting-style");
-    Ok(i.symbol_value(id))
+    match i.symbol_value(id) {
+        Value::Sym(s)
+            if i.symbol_name(s) == "grave"
+                || i.symbol_name(s) == "straight"
+                || i.symbol_name(s) == "curve" =>
+        {
+            Ok(Value::Sym(s))
+        }
+        _ => Ok(Value::Sym(i.intern("curve"))),
+    }
 }
 fn f_fmakunbound(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     let id = want_sym(i, &args[0])?;

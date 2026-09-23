@@ -6215,7 +6215,8 @@ Like `customize-set-variable', but records VALUE as `saved-value'."
       (format "Customize group: `%s'"
               (custom-unlispify-menu-entry group))))
 
-(defmacro defvar-local (var value &optional docstring)
+;; GNU `defvar-local' (subr.el): INITVALUE and DOCSTRING are optional.
+(defmacro defvar-local (var &optional value docstring)
   (list 'progn
         (list 'defvar var value docstring)
         (list 'make-variable-buffer-local (list 'quote var))))
@@ -6905,6 +6906,9 @@ This is the first translation applied to input events.")
   "Char-table for translating raw terminal character codes.
 If nil, no translation is performed.  Use `key-translate' or the
 lower-level `keyboard-translate' to modify it.")
+
+(defvar char-width-table (remacs--char-width-table)
+  "A char-table for width (columns) of each character.")
 
 ;; ---------- GNU `event-apply-*-modifier' commands ----------
 ;; In GNU these are C subrs that defer the modifier application to the
@@ -29827,6 +29831,24 @@ Show all docs for that symbol as either a variable, function or face."
     (apply (car item) (cdr item))
     (goto-char pos)))
 
+;; GNU help-fns.el `describe-syntax'.
+(defun describe-syntax (&optional buffer)
+  "Describe the syntax specifications in the syntax table of BUFFER.
+The descriptions are inserted in a help buffer, which is then displayed.
+BUFFER defaults to the current buffer."
+  (interactive)
+  (setq buffer (or buffer (current-buffer)))
+  (let ((help-buffer-under-preparation t))
+    (help-setup-xref (list #'describe-syntax buffer)
+		     (called-interactively-p 'interactive))
+    (with-help-window (help-buffer)
+      (let ((table (with-current-buffer buffer (syntax-table))))
+        (with-current-buffer standard-output
+	  (describe-vector table 'internal-describe-syntax-value)
+	  (while (setq table (char-table-parent table))
+	    (insert "\nThe parent syntax table is:")
+	    (describe-vector table 'internal-describe-syntax-value)))))))
+
 (defun help-insert-string (string)
   "Insert STRING to the help buffer and install xref info for it.
 This function can be used to restore the old contents of the help buffer
@@ -29985,6 +30007,20 @@ To record all your input, use `open-dribble-file'."
 (defvar uniquify-possibly-resolvable nil)
 (defvar uniquify--stateless-curname nil)
 (load "uniquify")
+
+;; ---------- minibuf-eldef (GNU minibuf-eldef.el) ----------
+;; Not preloaded in GNU: `minibuffer-electric-default-mode' is an
+;; autoload cookie, so only the autoload cell is visible at startup
+;; and the library's variables stay unbound until first use.
+(autoload 'minibuffer-electric-default-mode "minibuf-eldef"
+  "Toggle Minibuffer Electric Default mode.
+
+Minibuffer Electric Default mode is a global minor mode.  When
+enabled, minibuffer prompts that show a default value only show
+the default when it's applicable -- that is, when hitting RET
+would yield the default value.  If the user modifies the input
+such that hitting RET would enter a non-default value, the prompt
+is modified to remove the default indication." t nil)
 
 ;; *scratch* starts in lisp-interaction-mode (GNU batch behavior too).
 (when (get-buffer "*scratch*")

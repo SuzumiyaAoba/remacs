@@ -1548,12 +1548,7 @@ fn col_at(i: &Interp, p: usize) -> i128 {
     while k < p {
         match bb.text.char_at(k) {
             '\t' => col = (col / tab_width + 1) * tab_width,
-            c if (c as u32) < 0x20 || c == '\x7f' => col += 2,
-            c => {
-                col += unicode_width::UnicodeWidthChar::width(c)
-                    .unwrap_or(1)
-                    .max(1) as i128
-            }
+            c => col += crate::buffer::primitives::char_width(c),
         }
         k += 1;
     }
@@ -1563,13 +1558,15 @@ fn col_at(i: &Interp, p: usize) -> i128 {
 /// GNU move-to-column without FORCE: land on first char boundary with
 /// col >= goal (chars never split, short lines just stop at EOL).
 fn move_to_col(i: &mut Interp, goal: i128) -> EvalResult {
-    let b = cur(i);
-    let mut bb = b.borrow_mut();
+    // `tab-width' is buffer-local: read it before borrow_mut so
+    // `symbol_value' can see the local binding.
     let tab_width = i
         .symbol_value(i.intern_soft("tab-width").unwrap_or(0))
         .int()
         .unwrap_or(8)
         .max(1);
+    let b = cur(i);
+    let mut bb = b.borrow_mut();
     let p = bb.point();
     let ls = line_start(&bb.text, p);
     let le = line_end(&bb.text, p).min(bb.text_len());
@@ -1578,12 +1575,7 @@ fn move_to_col(i: &mut Interp, goal: i128) -> EvalResult {
     while k < le && col < goal {
         match bb.text.char_at(k) {
             '\t' => col = (col / tab_width + 1) * tab_width,
-            c if (c as u32) < 0x20 || c == '\x7f' => col += 2,
-            c => {
-                col += unicode_width::UnicodeWidthChar::width(c)
-                    .unwrap_or(1)
-                    .max(1) as i128
-            }
+            c => col += crate::buffer::primitives::char_width(c),
         }
         k += 1;
     }
@@ -2476,7 +2468,7 @@ fn f_compute_motion(i: &mut Interp, a: Vec<Value>) -> EvalResult {
             }
             c => {
                 last_bol = col;
-                col += unicode_width::UnicodeWidthChar::width(c).unwrap_or(0) as i128;
+                col += crate::buffer::primitives::char_width(c);
             }
         }
         p += 1;

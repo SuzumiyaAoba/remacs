@@ -2972,12 +2972,7 @@ fn f_current_column(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
     while k < p {
         match bb.text.char_at(k) {
             '\t' => col = (col / tab_width + 1) * tab_width,
-            c if (c as u32) < 0x20 || c == '\x7f' => col += 2,
-            c => {
-                col += unicode_width::UnicodeWidthChar::width(c)
-                    .unwrap_or(1)
-                    .max(1) as i128
-            }
+            c => col += char_width(c),
         }
         k += 1;
     }
@@ -2987,13 +2982,18 @@ fn f_current_column(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
 fn f_move_to_column(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let goal = want_int(i, &a[0])?.max(0);
     let force = a.get(1).map(|v| v.truthy()).unwrap_or(false);
-    let b = cur(i);
-    let mut bb = b.borrow_mut();
+    // Read buffer-local vars before borrow_mut: `symbol_value' can only
+    // see buffer-locals while the buffer is not mutably borrowed.
     let tab_width = i
         .symbol_value(i.intern_soft("tab-width").unwrap_or(0))
         .int()
         .unwrap_or(8)
         .max(1);
+    let tabs_on = i
+        .symbol_value(i.intern_soft("indent-tabs-mode").unwrap_or(0))
+        .truthy();
+    let b = cur(i);
+    let mut bb = b.borrow_mut();
     let ls = bb.text.line_start(bb.text.line_of_pos(bb.point()));
     let le = bb.text.line_end(bb.point());
     let mut col = 0i128;
@@ -3001,22 +3001,33 @@ fn f_move_to_column(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     while k < le && col < goal {
         match bb.text.char_at(k) {
             '\t' => col = (col / tab_width + 1) * tab_width,
-            c if (c as u32) < 0x20 || c == '\x7f' => col += 2,
-            c => {
-                col += unicode_width::UnicodeWidthChar::width(c)
-                    .unwrap_or(1)
-                    .max(1) as i128
-            }
+            c => col += char_width(c),
         }
         k += 1;
     }
     // GNU lands on the first char boundary where col >= goal (a char is
     // never split), then returns the column actually reached.
     if col < goal && force {
-        // Extend with spaces.
-        let pad = (goal - col) as usize;
-        let s: String = " ".repeat(pad);
+        // GNU calls `indent-to' (indent.c): pad with tabs to tab stops
+        // then spaces when `indent-tabs-mode' is on, else spaces only.
+        let mut s = String::new();
+        let mut c = col;
+        if tabs_on {
+            loop {
+                let next = (c / tab_width + 1) * tab_width;
+                if next > goal {
+                    break;
+                }
+                s.push('\t');
+                c = next;
+            }
+        }
+        while c < goal {
+            s.push(' ');
+            c += 1;
+        }
         let at = bb.text.line_end(bb.point());
+        let pad = s.chars().count();
         bb.insert_at(at, &s);
         bb.set_point(at + pad);
         Ok(Value::Int(goal))
@@ -5926,16 +5937,42 @@ enum RectForce {
     T,
 }
 
-/// Display width of one char (same rules as `current-column`).
+/// GNU's `char_width' (character.c): the display column width of one
+/// buffer character.  Control chars (with `ctl-arrow' t) render as
+/// `^X' = 2 columns; C1 chars render as octal `\NNN' = 4; everything
+/// else comes from `char-width-table' (CHAR_WIDTH_RANGES), which also
+/// covers zero-width (tag) chars and East-Asian double-width chars.
+/// TAB and newline are handled by the caller.
+pub(crate) fn char_width(c: char) -> i128 {
+    let n = c as u32;
+    if n < 0x20 || n == 0x7f {
+        return 2;
+    }
+    if n < 0x80 {
+        return 1;
+    }
+    let ranges = crate::lisp::ctdata::CHAR_WIDTH_RANGES;
+    let mut lo = 0usize;
+    let mut hi = ranges.len();
+    while lo < hi {
+        let mid = (lo + hi) / 2;
+        let (s, e, _) = ranges[mid];
+        if n < s {
+            hi = mid;
+        } else if n > e {
+            lo = mid + 1;
+        } else {
+            return ranges[mid].2 as i128;
+        }
+    }
+    // Characters above the table (0x110000+, unreachable in our
+    // UTF-8 text) display one column.
+    1
+}
+
 fn rect_char_width(c: char, tab: i128) -> i128 {
     let _ = tab;
-    if (c as u32) < 0x20 || c == '\x7f' {
-        2
-    } else {
-        unicode_width::UnicodeWidthChar::width(c)
-            .unwrap_or(1)
-            .max(1) as i128
-    }
+    char_width(c)
 }
 
 fn rect_tab_width(i: &Interp) -> i128 {
