@@ -23,6 +23,13 @@ pub(crate) static SUBRS: &[Subr] = &[
         f_equal,
         "t if two args have equal structure and contents."
     ),
+    S!(
+        "cl-equalp",
+        2,
+        2,
+        f_equalp,
+        "t if two args have similar structure and contents.\nNumbers compare with `='; characters and strings ignore case."
+    ),
     S!("consp", 1, 1, f_consp, "t if OBJECT is a cons cell."),
     S!("atom", 1, 1, f_atom, "t if OBJECT is not a cons cell."),
     S!(
@@ -374,6 +381,89 @@ fn f_null(_i: &mut Interp, args: Vec<Value>) -> EvalResult {
 
 fn f_equal(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     Ok(Value::from_bool(equal_values(i, &args[0], &args[1])))
+}
+
+/// GNU `cl-equalp' (cl-extra.el): numbers compare via `=' (chars are
+/// numbers — no case fold), strings fold case via the buffer's case
+/// table, conses/vectors/records recurse, everything else uses `equal'.
+fn equalp_values(i: &Interp, down: &Value, a: &Value, b: &Value) -> bool {
+    let down1 = |n: i128| {
+        match crate::lisp::builtins::misc::char_table_ref(i, down, n as usize) {
+            Value::Int(m) => m,
+            _ => n,
+        }
+    };
+    let numberp = |v: &Value| matches!(v, Value::Int(_) | Value::Float(_));
+    match (a, b) {
+        _ if numberp(a) => numberp(b) && num_eq(a, b),
+        (Value::Str(x), Value::Str(y)) => {
+            let (xs, ys) = (x.borrow(), y.borrow());
+            let xc: Vec<char> = xs.chars().collect();
+            let yc: Vec<char> = ys.chars().collect();
+            xc.len() == yc.len()
+                && xc
+                    .iter()
+                    .zip(yc.iter())
+                    .all(|(a, b)| down1(*a as i128) == down1(*b as i128))
+        }
+        (Value::Str(_), _) => false,
+        (Value::Cons(_), Value::Cons(_)) => {
+            let mut ax = a.clone();
+            let mut bx = b.clone();
+            let mut guard = 0usize;
+            loop {
+                guard += 1;
+                if guard > 100_000 {
+                    return false;
+                }
+                match (&ax, &bx) {
+                    (Value::Cons(ac), Value::Cons(bc)) => {
+                        let (acar, acdr) = {
+                            let ab = ac.borrow();
+                            (ab.car.clone(), ab.cdr.clone())
+                        };
+                        let (bcar, bcdr) = {
+                            let bb = bc.borrow();
+                            (bb.car.clone(), bb.cdr.clone())
+                        };
+                        if !equalp_values(i, down, &acar, &bcar) {
+                            return false;
+                        }
+                        ax = acdr;
+                        bx = bcdr;
+                    }
+                    _ => return equalp_values(i, down, &ax, &bx),
+                }
+            }
+        }
+        (Value::Vec(x), Value::Vec(y)) | (Value::Record(x), Value::Record(y)) => {
+            let xv = x.borrow();
+            let yv = y.borrow();
+            xv.len() == yv.len()
+                && xv
+                    .iter()
+                    .zip(yv.iter())
+                    .all(|(a, b)| equalp_values(i, down, a, b))
+        }
+        _ => equal_values(i, a, b),
+    }
+}
+
+fn num_eq(a: &Value, b: &Value) -> bool {
+    let f = |v: &Value| match v {
+        Value::Int(n) => Some(*n as f64),
+        Value::Float(x) => Some(**x),
+        _ => None,
+    };
+    match (f(a), f(b)) {
+        (Some(x), Some(y)) => x == y,
+        _ => false,
+    }
+}
+
+fn f_equalp(i: &mut Interp, args: Vec<Value>) -> EvalResult {
+    let down = i.current_case_table();
+    Ok(Value::from_bool(equalp_values(i, &down, &args[0], &args[1])))
 }
 
 fn f_consp(_i: &mut Interp, args: Vec<Value>) -> EvalResult {

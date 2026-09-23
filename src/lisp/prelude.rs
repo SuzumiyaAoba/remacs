@@ -5748,16 +5748,6 @@ VAR, (VAR TYPE), or (VAR (eql FORM))."
   "Random number < LIM (STATE ignored)."
   (random lim))
 
-(defun cl-equalp (x y)
-  "Like `equal' but case-insensitive for strings/chars and number
-equivalence ignoring int/float distinction."
-  (cond
-   ((and (numberp x) (numberp y)) (= x y))
-   ((and (stringp x) (stringp y)) (equal (downcase x) (downcase y)))
-   ((and (characterp x) (characterp y))
-    (= (downcase x) (downcase y)))
-   (t (equal x y))))
-
 (defun cl-copy-list (list) "Return a copy of LIST's spine."
   (copy-sequence list))
 
