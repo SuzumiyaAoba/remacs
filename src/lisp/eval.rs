@@ -3648,6 +3648,19 @@ impl Interp {
         self.buffers.get(self.current_buffer).is_some()
     }
 
+    /// `current-case-table': the buffer's local case table if set,
+    /// else `standard-case-table'.
+    pub fn current_case_table(&mut self) -> Value {
+        let local = self
+            .buffers
+            .get(self.current_buffer)
+            .and_then(|b| b.try_borrow().ok().and_then(|bb| bb.case_table.clone()));
+        match local {
+            Some(t) => t,
+            None => self.standard_case_table(),
+        }
+    }
+
     /// `standard-case-table': the shared case-table char-table.
     /// GNU's layout: contents = downcase map, extra slots =
     /// {upcase, canonicalize, equivalency} char-tables.  All four are

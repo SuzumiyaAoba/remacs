@@ -70,6 +70,29 @@ fn eof_err(interp: &mut Interp) -> Flow {
     Flow::Signal(Value::Sym(sym_id), Value::Nil, false)
 }
 
+/// GNU signals a plain `error' when a \u or \U escape exceeds the
+/// Unicode range: (error "Non-Unicode character: 0x%x").
+fn non_unicode_err(interp: &mut Interp, n: i128) -> Flow {
+    let sym_id = interp.intern("error");
+    Flow::Signal(
+        Value::Sym(sym_id),
+        Value::list(vec![Value::string(format!("Non-Unicode character: 0x{n:x}"))]),
+        false,
+    )
+}
+
+/// Byte8 chars 0x3FFF80..0x3FFFFF encode raw bytes 0x80..0xFF; `\x'
+/// escapes landing in that range fold back to the byte (GNU lread.c
+/// CHAR_TO_BYTE8), so `?\x3fffff' reads as 255 and a string escape
+/// becomes a raw byte rather than a multibyte char.
+fn byte8_fold(n: i128) -> i128 {
+    if (0x3f_ff80..=0x3f_ffff).contains(&n) {
+        n - 0x3f_ff80 + 0x80
+    } else {
+        n
+    }
+}
+
 impl<'a> Reader<'a> {
     pub fn new(interp: &'a mut Interp, src: &str) -> Reader<'a> {
         Reader::with_chars(interp, Rc::new(src.chars().collect()))
@@ -379,7 +402,7 @@ impl<'a> Reader<'a> {
             Some('t') => Ok(Some('\t')),
             Some('v') => Ok(Some('\x0b')),
             Some('x') => {
-                let n = self.read_radix_digits(16, 8)?;
+                let n = byte8_fold(self.read_radix_digits(16, 8)?);
                 Ok(char::from_u32(n as u32))
             }
             Some('u') => {
@@ -388,6 +411,9 @@ impl<'a> Reader<'a> {
             }
             Some('U') => {
                 let n = self.read_radix_digits(16, 8)?;
+                if n > 0x10_ffff {
+                    return Err(non_unicode_err(self.interp, n));
+                }
                 Ok(char::from_u32(n as u32))
             }
             Some('C') if self.peek() == Some('-') => {
@@ -496,9 +522,15 @@ impl<'a> Reader<'a> {
             Some('s') => Ok(32),
             Some('t') => Ok(9),
             Some('v') => Ok(11),
-            Some('x') => self.read_radix_digits(16, 8),
+            Some('x') => Ok(byte8_fold(self.read_radix_digits(16, 8)?)),
             Some('u') => self.read_radix_digits(16, 4),
-            Some('U') => self.read_radix_digits(16, 8),
+            Some('U') => {
+                let n = self.read_radix_digits(16, 8)?;
+                if n > 0x10_ffff {
+                    return Err(non_unicode_err(self.interp, n));
+                }
+                Ok(n)
+            }
             Some('^') => match self.next() {
                 None => Err(eof_err(self.interp)),
                 Some(c) => Ok(ctrl_of(c) as i128),

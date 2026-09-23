@@ -2439,15 +2439,7 @@ fn want_case_table(i: &mut Interp, v: &Value) -> Result<(), Flow> {
 }
 
 fn f_current_case_table(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
-    let local = i
-        .buffers
-        .get(i.current_buffer)
-        .and_then(|b| b.try_borrow().ok().map(|bb| bb.case_table.clone()))
-        .flatten();
-    match local {
-        Some(t) => Ok(t),
-        None => Ok(i.standard_case_table()),
-    }
+    Ok(i.current_case_table())
 }
 
 fn f_standard_case_table(i: &mut Interp, _a: Vec<Value>) -> EvalResult {

@@ -639,75 +639,155 @@ fn f_string_compare(i: &mut Interp, args: Vec<Value>) -> EvalResult {
         Value::t()
     })
 }
-fn f_upcase(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    match &args[0] {
-        Value::Str(s) => Ok(Value::string(s.borrow().to_uppercase())),
-        Value::Int(n) => {
-            let c = char::from_u32(*n as u32).unwrap_or('\0');
-            Ok(Value::Int(c.to_uppercase().next().unwrap_or(c) as i128))
+// --- GNU casefiddle.c casing ------------------------------------------
+// Case ops run through the current buffer's case table: contents is the
+// downcase map, extra slot 0 the upcase map.  Titlecase (capitalize /
+// upcase-initials first char) is GNU's hidden extras[3] table — the
+// upcase map plus TITLE_OVERRIDES (digraphs -> title form, Georgian
+// Mk -> identity, etc.).  String ops additionally apply the uniprop
+// special-* expansions (ß -> "SS") and the final-sigma rule.
+
+#[derive(Clone, Copy, PartialEq)]
+enum CaseOp {
+    Up,
+    Down,
+    Cap,
+    CapUp,
+}
+
+/// Extra slot N of a case table (record slots 3+).
+fn case_extra(ct: &Value, slot: usize) -> Option<Value> {
+    match ct {
+        Value::Record(r) => r.borrow().get(3 + slot).cloned(),
+        _ => None,
+    }
+}
+
+/// `CHAR_TABLE_REF' casing map: Int result -> that char, else unchanged.
+fn ct_case(i: &Interp, table: &Value, c: u32) -> u32 {
+    match crate::lisp::builtins::misc::char_table_ref(i, table, c as usize) {
+        Value::Int(n) if (0..=0x3f_ffff).contains(&n) => n as u32,
+        _ => c,
+    }
+}
+
+fn special_lookup(table: &[(u32, &'static str)], c: char) -> Option<&'static str> {
+    table
+        .binary_search_by_key(&(c as u32), |(k, _)| *k)
+        .ok()
+        .map(|idx| table[idx].1)
+}
+
+/// Single-char titlecase: TITLE_OVERRIDES first, then the upcase map.
+fn title_char(i: &Interp, up: &Value, c: u32) -> u32 {
+    crate::lisp::ctdata::TITLE_OVERRIDES
+        .binary_search_by_key(&c, |(k, _)| *k)
+        .ok()
+        .map(|idx| crate::lisp::ctdata::TITLE_OVERRIDES[idx].1)
+        .unwrap_or_else(|| ct_case(i, up, c))
+}
+
+/// Push the downcased form of C (char code CP); honors the final-sigma
+/// rule: capital sigma inside a word, at the word's last word-char
+/// position, downcases to U+03C2 rather than U+03C3.
+fn push_down(
+    i: &Interp,
+    down: &Value,
+    out: &mut String,
+    c: char,
+    cp: u32,
+    prev_word: bool,
+    next_word: bool,
+) {
+    if let Some(sp) = special_lookup(crate::lisp::ctdata::SPECIAL_LOWER, c) {
+        out.push_str(sp);
+    } else if cp == 0x3a3 && prev_word && !next_word {
+        out.push('\u{3c2}');
+    } else {
+        out.push(char::from_u32(ct_case(i, down, cp)).unwrap_or(c));
+    }
+}
+
+fn casify(i: &mut Interp, arg: &Value, op: CaseOp) -> EvalResult {
+    let down = i.current_case_table();
+    let up = case_extra(&down, 0).unwrap_or_else(|| down.clone());
+    match arg {
+        Value::Int(n) if (0..=0x3f_ffff).contains(n) => {
+            let cp = *n as u32;
+            let r = match op {
+                CaseOp::Up => ct_case(i, &up, cp),
+                CaseOp::Down => ct_case(i, &down, cp),
+                _ => title_char(i, &up, cp),
+            };
+            Ok(Value::Int(r as i128))
+        }
+        Value::Str(s) => {
+            let chars: Vec<char> = s.borrow().chars().collect();
+            let syn = crate::editor::syntax_table_entries(i);
+            let wordp = |c: char| crate::editor::syntax_entry_code(syn.as_ref(), c) == b'w';
+            let mut out = String::new();
+            let mut in_word = false;
+            for (idx, &c) in chars.iter().enumerate() {
+                let cp = c as u32;
+                match op {
+                    CaseOp::Up => {
+                        if let Some(sp) =
+                            special_lookup(crate::lisp::ctdata::SPECIAL_UPPER, c)
+                        {
+                            out.push_str(sp);
+                        } else {
+                            out.push(char::from_u32(ct_case(i, &up, cp)).unwrap_or(c));
+                        }
+                    }
+                    CaseOp::Down => {
+                        let prev_word = idx > 0 && wordp(chars[idx - 1]);
+                        let next_word = idx + 1 < chars.len() && wordp(chars[idx + 1]);
+                        push_down(i, &down, &mut out, c, cp, prev_word, next_word);
+                    }
+                    _ => {
+                        if wordp(c) {
+                            if !in_word {
+                                if let Some(sp) =
+                                    special_lookup(crate::lisp::ctdata::SPECIAL_TITLE, c)
+                                {
+                                    out.push_str(sp);
+                                } else {
+                                    out.push(
+                                        char::from_u32(title_char(i, &up, cp)).unwrap_or(c),
+                                    );
+                                }
+                                in_word = true;
+                            } else if op == CaseOp::Cap {
+                                let next_word =
+                                    idx + 1 < chars.len() && wordp(chars[idx + 1]);
+                                push_down(i, &down, &mut out, c, cp, true, next_word);
+                            } else {
+                                out.push(c);
+                            }
+                        } else {
+                            in_word = false;
+                            out.push(c);
+                        }
+                    }
+                }
+            }
+            Ok(Value::string(out))
         }
         other => Err(i.wrong_type_mut("char-or-string-p", other)),
     }
+}
+
+fn f_upcase(i: &mut Interp, args: Vec<Value>) -> EvalResult {
+    casify(i, &args[0], CaseOp::Up)
 }
 fn f_downcase(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    match &args[0] {
-        Value::Str(s) => Ok(Value::string(s.borrow().to_lowercase())),
-        Value::Int(n) => {
-            let c = char::from_u32(*n as u32).unwrap_or('\0');
-            Ok(Value::Int(c.to_lowercase().next().unwrap_or(c) as i128))
-        }
-        other => Err(i.wrong_type_mut("char-or-string-p", other)),
-    }
+    casify(i, &args[0], CaseOp::Down)
 }
 fn f_capitalize(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    match &args[0] {
-        Value::Str(s) => {
-            let mut out = String::new();
-            let mut new_word = true;
-            for c in s.borrow().chars() {
-                if c.is_alphanumeric() {
-                    if new_word {
-                        out.extend(c.to_uppercase());
-                        new_word = false;
-                    } else {
-                        out.extend(c.to_lowercase());
-                    }
-                } else {
-                    new_word = true;
-                    out.push(c);
-                }
-            }
-            Ok(Value::string(out))
-        }
-        Value::Int(n) => {
-            let c = char::from_u32(*n as u32).unwrap_or('\0');
-            Ok(Value::Int(c.to_uppercase().next().unwrap_or(c) as i128))
-        }
-        other => Err(i.wrong_type_mut("char-or-string-p", other)),
-    }
+    casify(i, &args[0], CaseOp::Cap)
 }
 fn f_upcase_initials(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    match &args[0] {
-        Value::Str(s) => {
-            let mut out = String::new();
-            let mut new_word = true;
-            for c in s.borrow().chars() {
-                if c.is_alphanumeric() {
-                    if new_word {
-                        out.extend(c.to_uppercase());
-                        new_word = false;
-                    } else {
-                        out.push(c);
-                    }
-                } else {
-                    new_word = true;
-                    out.push(c);
-                }
-            }
-            Ok(Value::string(out))
-        }
-        other => Err(i.wrong_type_mut("stringp", other)),
-    }
+    casify(i, &args[0], CaseOp::CapUp)
 }
 
 fn f_string_to_number(i: &mut Interp, args: Vec<Value>) -> EvalResult {
