@@ -1749,12 +1749,16 @@ pub(crate) fn make_interpreted_closure(
     let body = body_v.list_to_vec().unwrap_or_default();
     let env = match env_v {
         Value::Nil => None,
-        // `(t)' — GNU's printed env for a top-level dynamic function.
+        // `(t)' — GNU's printed env for a top-level lexical
+        // environment: an empty root frame (prints back as `(t)').
         Value::Cons(c)
             if matches!(&c.borrow().cdr, Value::Nil)
                 && matches!(&c.borrow().car, Value::Sym(s) if *s == crate::lisp::obarray::sym::T) =>
         {
-            None
+            Some(Rc::new(crate::lisp::LexFrame {
+                vars: RefCell::new(std::collections::HashMap::new()),
+                parent: None,
+            }))
         }
         // An env value is a list of binding alists — model as a flat
         // alist lexical frame.

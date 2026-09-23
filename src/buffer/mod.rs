@@ -443,6 +443,37 @@ impl Buffer {
             self.zv += n;
         }
         self.adjust_overlays_insert(pos, n, before_markers);
+        self.adjust_text_props_insert(pos, n);
+    }
+
+    /// GNU `insertion' of N chars at POS splits a covering text-property
+    /// interval — the new text is unpropertized (property inheritance
+    /// is a separate `insert-and-inherit' concern).  Intervals starting
+    /// at POS shift right wholesale.
+    fn adjust_text_props_insert(&mut self, pos: usize, n: usize) {
+        if self.text_props.is_empty() {
+            return;
+        }
+        let mut extra: Vec<TextProp> = Vec::new();
+        for tp in &mut self.text_props {
+            if tp.end <= pos {
+                continue;
+            }
+            if tp.start >= pos {
+                tp.start += n;
+                tp.end += n;
+            } else {
+                // pos strictly inside [start, end): split.
+                extra.push(TextProp {
+                    start: pos + n,
+                    end: tp.end + n,
+                    prop: tp.prop,
+                    value: tp.value.clone(),
+                });
+                tp.end = pos;
+            }
+        }
+        self.text_props.extend(extra);
     }
 
     /// GNU `adjust_markers_for_insert' applied to overlays: boundaries
@@ -481,6 +512,30 @@ impl Buffer {
             }
         }
         self.adjust_overlays_delete(start, end);
+        self.adjust_text_props_delete(start, end);
+    }
+
+    /// GNU `adjust_intervals_for_delete': interval boundaries inside the
+    /// deleted span clamp to START, those past END shift down; an
+    /// interval left empty is dropped.
+    fn adjust_text_props_delete(&mut self, start: usize, end: usize) {
+        if self.text_props.is_empty() {
+            return;
+        }
+        let n = end - start;
+        for tp in &mut self.text_props {
+            if tp.start >= end {
+                tp.start -= n;
+            } else if tp.start > start {
+                tp.start = start;
+            }
+            if tp.end >= end {
+                tp.end -= n;
+            } else if tp.end > start {
+                tp.end = start;
+            }
+        }
+        self.text_props.retain(|tp| tp.start < tp.end);
     }
 
     /// GNU `adjust_markers_for_delete' applied to overlays: boundaries

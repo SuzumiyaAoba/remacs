@@ -440,10 +440,9 @@ impl Interp {
                 self.prin1_inner(&body, out, depth + 1, bq);
                 out.push(' ');
                 match &l.env {
-                    // Emacs 31 prints `(t)' for a top-level dynamic
-                    // function, `nil' for a plainly-wrapped lambda.
-                    None if l.plain => out.push_str("nil"),
-                    None => out.push_str("(t)"),
+                    // A dynamic (non-lexical) lambda has no captured
+                    // environment: GNU prints `nil'.
+                    None => out.push_str("nil"),
                     Some(frame) => {
                         let env = lex_frame_to_value(self, frame);
                         self.prin1_inner(&env, out, depth + 1, bq);
@@ -864,6 +863,11 @@ fn lex_frame_to_value(i: &Interp, frame: &Rc<crate::lisp::eval::LexFrame>) -> Va
             pairs.push(Value::cons(Value::Sym(*sym_id), val.clone()));
         }
         cur = f.parent.clone();
+    }
+    // GNU's environment list is a flat alist innermost-first; the
+    // toplevel (empty) environment prints as `(t)'.
+    if pairs.is_empty() {
+        return Value::list(vec![Value::Sym(crate::lisp::obarray::sym::T)]);
     }
     pairs.sort_by_key(|v| {
         if let Value::Cons(c) = v {

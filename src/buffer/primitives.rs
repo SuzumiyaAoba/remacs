@@ -653,7 +653,7 @@ pub(crate) static SUBRS: &[Subr] = &[
         "buffer-substring-no-properties",
         2,
         2,
-        f_buffer_substring,
+        f_buffer_substring_no_properties,
         "Text without props."
     ),
     S!(
@@ -4726,13 +4726,48 @@ fn insert_str_at_point(i: &mut Interp, s: &str, before_markers: bool) -> Result<
     Ok(())
 }
 
+/// Copy a string arg's own text properties into the buffer for the
+/// just-inserted range [base, base+len).  GNU `insert' copies the
+/// string's properties verbatim (no inheritance from surrounding
+/// text — that is `insert-and-inherit's job).
+fn copy_str_props(i: &mut Interp, s: &crate::lisp::value::StrRef, base: usize) {
+    if !i.has_str_props(s) {
+        return;
+    }
+    let ivs: Vec<(usize, usize, Vec<Value>)> = i.str_props(s).to_vec();
+    if ivs.is_empty() {
+        return;
+    }
+    let b = cur(i);
+    let mut bb = b.borrow_mut();
+    for (st, en, plist) in ivs {
+        let mut k = 0;
+        while k + 1 < plist.len() {
+            if let Some(p) = i.sym_id(&plist[k]) {
+                bb.text_props.push(TextProp {
+                    start: base + st,
+                    end: base + en,
+                    prop: p,
+                    value: plist[k + 1].clone(),
+                });
+            }
+            k += 2;
+        }
+    }
+    bb.note_prop_modified();
+}
+
 fn f_insert(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     check_writable(i)?;
     for v in &a {
         match v {
             Value::Str(s) => {
                 let t = s.borrow().clone();
+                let n = t.chars().count();
+                let base = cur(i).borrow().point();
                 insert_str_at_point(i, &t, false)?;
+                copy_str_props(i, s, base);
+                debug_assert_eq!(cur(i).borrow().point(), base + n);
             }
             Value::Int(n) => {
                 if let Some(c) = char::from_u32(*n as u32) {
@@ -4753,7 +4788,9 @@ fn f_insert_before_markers(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         match v {
             Value::Str(s) => {
                 let t = s.borrow().clone();
+                let base = cur(i).borrow().point();
                 insert_str_at_point(i, &t, true)?;
+                copy_str_props(i, s, base);
             }
             Value::Int(n) => {
                 if let Some(c) = char::from_u32(*n as u32) {
@@ -4799,9 +4836,35 @@ fn f_insert_buffer_substring(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         .map(|p| pos_idx(len, p))
         .unwrap_or(len);
     let chars: Vec<char> = text.chars().collect();
-    let sub: String = chars[s.min(e)..e.max(s)].iter().collect();
+    let (lo, hi) = (s.min(e), e.max(s));
+    let sub: String = chars[lo..hi].iter().collect();
+    // GNU copies the source range's text properties along with the
+    // characters.
+    let props: Vec<TextProp> = src
+        .borrow()
+        .text_props
+        .iter()
+        .filter(|tp| tp.start < hi && tp.end > lo)
+        .map(|tp| TextProp {
+            start: tp.start.max(lo) - lo,
+            end: tp.end.min(hi) - lo,
+            prop: tp.prop,
+            value: tp.value.clone(),
+        })
+        .collect();
     check_writable(i)?;
+    let base = cur(i).borrow().point();
     insert_str_at_point(i, &sub, false)?;
+    if !props.is_empty() {
+        let b = cur(i);
+        let mut bb = b.borrow_mut();
+        for mut tp in props {
+            tp.start += base;
+            tp.end += base;
+            bb.text_props.push(tp);
+        }
+        bb.note_prop_modified();
+    }
     Ok(Value::Nil)
 }
 
@@ -5042,14 +5105,73 @@ fn f_append_next_kill(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
 
 // ---------- buffer text access ----------
 
-fn f_buffer_substring(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+/// Build a (start, end, plist) interval list for buffer range [S,E),
+/// rebased to 0 — the inverse of `copy_str_props': each maximal run of
+/// positions sharing the same property set becomes one interval.
+fn buf_props_as_ivs(
+    props: &[TextProp],
+    s: usize,
+    e: usize,
+) -> Vec<(usize, usize, Vec<Value>)> {
+    if !props.iter().any(|tp| tp.start < e && tp.end > s) {
+        return Vec::new();
+    }
+    let mut cuts: Vec<usize> = vec![s, e];
+    for tp in props {
+        if tp.start < e && tp.end > s {
+            cuts.push(tp.start.max(s));
+            cuts.push(tp.end.min(e));
+        }
+    }
+    cuts.sort_unstable();
+    cuts.dedup();
+    let mut ivs = Vec::new();
+    for w in cuts.windows(2) {
+        let (a, b) = (w[0], w[1]);
+        if a >= b {
+            continue;
+        }
+        let mut plist: Vec<Value> = Vec::new();
+        for tp in props {
+            if tp.start <= a && tp.end >= b {
+                plist.push(Value::Sym(tp.prop));
+                plist.push(tp.value.clone());
+            }
+        }
+        ivs.push((a - s, b - s, plist));
+    }
+    ivs
+}
+
+fn buffer_substring_impl(i: &mut Interp, a: &[Value], with_props: bool) -> EvalResult {
     let b = cur(i);
     let bb = b.borrow();
     let len = bb.text.len();
     let s = pos_idx(len, want_int(i, &a[0])?);
     let e = pos_idx(len, want_int(i, &a[1])?);
     let (s, e) = (s.min(e), s.max(e));
-    Ok(Value::string(bb.text.substring(s, e)))
+    let text = bb.text.substring(s, e);
+    let ivs = if with_props {
+        buf_props_as_ivs(&bb.text_props, s, e)
+    } else {
+        Vec::new()
+    };
+    drop(bb);
+    let v = Value::string(text);
+    if !ivs.is_empty() {
+        if let Value::Str(sr) = &v {
+            i.set_str_props(sr, ivs);
+        }
+    }
+    Ok(v)
+}
+
+fn f_buffer_substring(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    buffer_substring_impl(i, &a, true)
+}
+
+fn f_buffer_substring_no_properties(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    buffer_substring_impl(i, &a, false)
 }
 
 fn f_filter_buffer_substring(i: &mut Interp, a: Vec<Value>) -> EvalResult {
@@ -5099,9 +5221,17 @@ fn f_buffer_substring_with_bidi_context(i: &mut Interp, a: Vec<Value>) -> EvalRe
         drop(bb);
         return Err(i.signal_data(sym, args));
     }
-    Ok(Value::string(
-        bb.text.substring((s - 1) as usize, (e - 1) as usize),
-    ))
+    let (s0, e0) = ((s - 1) as usize, (e - 1) as usize);
+    let text = bb.text.substring(s0, e0);
+    let ivs = buf_props_as_ivs(&bb.text_props, s0, e0);
+    drop(bb);
+    let v = Value::string(text);
+    if !ivs.is_empty() {
+        if let Value::Str(sr) = &v {
+            i.set_str_props(sr, ivs);
+        }
+    }
+    Ok(v)
 }
 
 fn thing_bounds(i: &mut Interp, pred: impl Fn(char) -> bool) -> Option<(usize, usize)> {
@@ -8319,9 +8449,20 @@ fn single_prop_change(i: &mut Interp, a: &[Value], forward: bool) -> EvalResult 
         Value::Nil
     };
     let default_limit = if forward { len + 1 } else { 1 };
+    // GNU: a nil/absent LIMIT means "no limit"; when no change is
+    // found the result is nil then — LIMIT is returned only when the
+    // caller explicitly passed one.
+    let explicit = matches!(limit, Some(v) if v.truthy());
     let lim = match limit {
         Some(v) if v.truthy() => v.int().unwrap_or(default_limit),
         _ => default_limit,
+    };
+    let no_change = || {
+        if explicit {
+            Value::Int(lim)
+        } else {
+            Value::Nil
+        }
     };
     if forward {
         let mut p = pos + 1;
@@ -8331,7 +8472,7 @@ fn single_prop_change(i: &mut Interp, a: &[Value], forward: bool) -> EvalResult 
             }
             p += 1;
         }
-        Ok(Value::Int(lim))
+        Ok(no_change())
     } else {
         // Last change strictly before POS: a boundary at P counts when
         // at(P) != at(P-1); GNU never returns POS itself.
@@ -8342,7 +8483,7 @@ fn single_prop_change(i: &mut Interp, a: &[Value], forward: bool) -> EvalResult 
             }
             p -= 1;
         }
-        Ok(Value::Int(lim))
+        Ok(no_change())
     }
 }
 

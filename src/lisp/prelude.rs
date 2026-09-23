@@ -6081,6 +6081,622 @@ Value is a list of one or more cons cells of the form (START . END)."
   "Return non-nil for a non-contiguous region if `use-region-p'."
   (and (use-region-p) (region-noncontiguous-p)))
 
+;; ---------- rect.el (GNU port) ----------
+;; The region functions are hooked through `region-extract-function'/
+;; `region-insert-function' and :around advice so a rectangular
+;; region's bounds, extraction, and insertion all behave like GNU's.
+
+;; Crutches to let rectangle's corners be where point can't be
+;; (e.g. in the middle of a TAB, or past the EOL).
+
+(defvar-local rectangle--mark-crutches nil
+  "(POS . COL) to override the column to use for the mark.")
+
+(defun rectangle--pos-cols (start end &optional window)
+  ;; At this stage, we don't know which of start/end is point/mark :-(
+  ;; And in case start=end, it might still be that point and mark have
+  ;; different crutches!
+  (save-excursion
+    (let ((cw (window-parameter window 'rectangle--point-crutches)))
+      (cond
+       ((eq start (car cw))
+        (let ((sc (cdr cw))
+              (ec (if (eq end (car rectangle--mark-crutches))
+                      (cdr rectangle--mark-crutches)
+                    (if rectangle--mark-crutches
+                        (setq rectangle--mark-crutches nil))
+                    (goto-char end) (current-column))))
+          (if (eq start end) (cons (min sc ec) (max sc ec)) (cons sc ec))))
+       ((eq end (car cw))
+        (if (eq start (car rectangle--mark-crutches))
+            (cons (cdr rectangle--mark-crutches) (cdr cw))
+          (if rectangle--mark-crutches (setq rectangle--mark-crutches nil))
+          (cons (progn (goto-char start) (current-column)) (cdr cw))))
+       ((progn
+          (if cw (setf (window-parameter nil 'rectangle--point-crutches) nil))
+          (eq start (car rectangle--mark-crutches)))
+        (let ((sc (cdr rectangle--mark-crutches))
+              (ec (progn (goto-char end) (current-column))))
+          (if (eq start end) (cons (min sc ec) (max sc ec)) (cons sc ec))))
+       ((eq end (car rectangle--mark-crutches))
+        (cons (progn (goto-char start) (current-column))
+              (cdr rectangle--mark-crutches)))
+       (t
+        (if rectangle--mark-crutches (setq rectangle--mark-crutches nil))
+        (cons (progn (goto-char start) (current-column))
+              (progn (goto-char end) (current-column))))))))
+
+(defun rectangle--col-pos (col kind)
+  (let ((c (move-to-column col)))
+    (if (and (= c col) (not (eolp)))
+        (if (eq kind 'point)
+            (if (window-parameter nil 'rectangle--point-crutches)
+                (setf (window-parameter nil 'rectangle--point-crutches) nil))
+          (if rectangle--mark-crutches (setq rectangle--mark-crutches nil)))
+      ;; If move-to-column overshot, move back one char so we're
+      ;; at the position where rectangle--highlight-for-redisplay
+      ;; will add the overlay (so that the cursor can be drawn at the
+      ;; right place).
+      (when (> c col) (forward-char -1))
+      (setf (if (eq kind 'point)
+                (window-parameter nil 'rectangle--point-crutches)
+              rectangle--mark-crutches)
+            (cons (point) col)))))
+
+(defun rectangle--point-col (pos)
+  (let ((pc (window-parameter nil 'rectangle--point-crutches)))
+    (if (eq pos (car pc)) (cdr pc)
+      (goto-char pos)
+      (current-column))))
+
+(defun rectangle--crutches ()
+  (cons rectangle--mark-crutches
+        (window-parameter nil 'rectangle--point-crutches)))
+
+(defun rectangle--reset-point-crutches ()
+  (if (window-parameter nil 'rectangle--point-crutches)
+      (setf (window-parameter nil 'rectangle--point-crutches) nil)))
+
+(defun rectangle--reset-crutches ()
+  (kill-local-variable 'rectangle--mark-crutches)
+  (rectangle--reset-point-crutches))
+
+(defun rectangle--region-beginning (orig)
+  "Like `region-beginning' but supports rectangular regions."
+  (cond
+   ((not rectangle-mark-mode)
+    (funcall orig))
+   (t
+    (save-excursion
+      (let* ((pt (point))
+             (mk (mark))
+             (start (min pt mk))
+             (end (max pt mk))
+             (cols (rectangle--pos-cols start end))
+             (startcol (car cols))
+             (endcol (cdr cols)))
+        (goto-char start)
+        (move-to-column (min startcol endcol))
+        (point))))))
+
+(defun rectangle--region-end (orig)
+  "Like `region-end' but supports rectangular regions."
+  (cond
+   ((not rectangle-mark-mode)
+    (funcall orig))
+   (t
+    (save-excursion
+      (let* ((pt (point))
+             (mk (mark))
+             (start (min pt mk))
+             (end (max pt mk))
+             (cols (rectangle--pos-cols start end))
+             (startcol (car cols))
+             (endcol (cdr cols)))
+        (goto-char end)
+        (move-to-column (max startcol endcol))
+        (point))))))
+
+(defun rectangle--extract-region (orig &optional delete)
+  (cond
+   ((not rectangle-mark-mode)
+    (funcall orig delete))
+   ((eq delete 'bounds)
+    (extract-rectangle-bounds
+     ;; Avoid recursive calls from advice
+     (let (rectangle-mark-mode) (region-beginning))
+     (let (rectangle-mark-mode) (region-end))))
+   (t
+    (let* ((strs (funcall (if delete
+                              #'delete-extract-rectangle
+                            #'extract-rectangle)
+                          ;; Avoid recursive calls from advice
+                          (let (rectangle-mark-mode) (region-beginning))
+                          (let (rectangle-mark-mode) (region-end))))
+           (str (mapconcat #'identity strs "\n")))
+      (when (eq last-command 'kill-region)
+        ;; Try to prevent kill-region from appending this to some
+        ;; earlier element.
+        (setq last-command 'kill-region-dont-append))
+      (when strs
+        (put-text-property 0 (length str) 'yank-handler
+                           `(rectangle--insert-for-yank ,strs t)
+                           str)
+        str)))))
+
+(defun rectangle--insert-region (orig strings)
+  (cond
+   ((not rectangle-mark-mode)
+    (funcall orig strings))
+   (t
+    (funcall #'insert-rectangle strings))))
+
+(defun rectangle--insert-for-yank (strs)
+  (push (point) buffer-undo-list)
+  (let ((undo-at-start buffer-undo-list))
+    (insert-rectangle strs)
+    (setq yank-undo-function
+          (lambda (_start _end)
+            (undo-start)
+            (setcar undo-at-start nil)  ;Turn it into a boundary.
+            (while (not (eq pending-undo-list (cdr undo-at-start)))
+              (undo-more 1))))))
+
+;; GNU also advises `redisplay-highlight-region-function' and
+;; `redisplay-unhighlight-region-function' here; those C-level
+;; redisplay entry points do not exist in this runtime, so the two
+;; add-function calls are omitted (the rectangular-region highlight
+;; is a display-internal concern).  The region-extract/insert
+;; advices are installed lazily on first mode activation (see
+;; `rectangle-mark-mode'), matching GNU where rect.el is not loaded
+;; at startup.
+
+(defvar-keymap rectangle-mark-mode-map
+  :doc "Keymap used while marking a rectangular region."
+  "C-o" #'open-rectangle
+  "C-t" #'string-rectangle
+  "<remap> <exchange-point-and-mark>" #'rectangle-exchange-point-and-mark
+  "<remap> <right-char>"              #'rectangle-right-char
+  "<remap> <left-char>"               #'rectangle-left-char
+  "<remap> <forward-char>"            #'rectangle-forward-char
+  "<remap> <backward-char>"           #'rectangle-backward-char
+  "<remap> <next-line>"               #'rectangle-next-line
+  "<remap> <previous-line>"           #'rectangle-previous-line)
+
+(define-minor-mode rectangle-mark-mode
+  "Toggle the region as rectangular.
+
+Activates the region if it's inactive and Transient Mark mode is
+on.  Only lasts until the region is next deactivated."
+  :lighter nil
+  (rectangle--reset-crutches)
+  (when rectangle-mark-mode
+    ;; rect.el installs these at load; here first activation is the
+    ;; load-equivalent point.
+    (add-function :around region-extract-function
+                  #'rectangle--extract-region)
+    (add-function :around region-insert-function
+                  #'rectangle--insert-region)
+    (advice-add 'region-beginning :around #'rectangle--region-beginning)
+    (advice-add 'region-end :around #'rectangle--region-end)
+    (add-hook 'deactivate-mark-hook
+              (lambda () (rectangle-mark-mode -1)))
+    (unless (region-active-p)
+      (push-mark (point) t t)
+      (message "Mark set (rectangle mode)"))))
+
+(defun rectangle-exchange-point-and-mark (&optional arg)
+  "Like `exchange-point-and-mark' but cycles through the rectangle's corners."
+  (interactive "P")
+  (if arg
+      (progn
+        (setq this-command 'exchange-point-and-mark)
+        (exchange-point-and-mark arg))
+    (let* ((p (point))
+           (repeat (eq this-command last-command))
+	   (m (mark))
+           (p<m (< p m))
+           (cols (if p<m (rectangle--pos-cols p m) (rectangle--pos-cols m p)))
+           (cp (if p<m (car cols) (cdr cols)))
+           (cm (if p<m (cdr cols) (car cols))))
+      (if repeat (setq this-command 'exchange-point-and-mark))
+      (rectangle--reset-crutches)
+      (goto-char p)
+      (rectangle--col-pos (if repeat cm cp) 'mark)
+      (set-mark (point))
+      (goto-char m)
+      (rectangle--col-pos (if repeat cp cm) 'point))))
+
+(defun rectangle--*-char (cmd n &optional other-cmd)
+  ;; Part of the complexity here is that I'm trying to avoid making assumptions
+  ;; about the L2R/R2L direction of text around point, but this is largely
+  ;; useless since the rectangles implemented in this file are "logical
+  ;; rectangles" and not "visual rectangles", so in the presence of
+  ;; bidirectional text things won't work well anyway.
+  (if (< n 0) (rectangle--*-char other-cmd (- n))
+    (let ((col (rectangle--point-col (point)))
+          (step 1))
+      (while (> n 0)
+        (let* ((bol (line-beginning-position))
+               (eol (line-end-position))
+               (curcol (current-column))
+               (nextcol
+                (condition-case nil
+                    (save-excursion
+                      (funcall cmd step)
+                      (cond
+                       ((> bol (point)) (- curcol 1))
+                       ((< eol (point)) (+ col (1+ n)))
+                       (t (current-column))))
+                  (end-of-buffer (+ col (1+ n)))
+                  (beginning-of-buffer (- curcol 1))))
+               (diff (abs (- nextcol col))))
+          (cond
+           ((and (< nextcol curcol) (< curcol col))
+            (let ((curdiff (- col curcol)))
+              (if (<= curdiff n)
+                (progn (decf n curdiff) (setq col curcol))
+                (setq col (- col n) n 0))))
+           ((< nextcol 0) (ding) (setq n 0 col 0)) ;Bumping into BOL!
+           ((= nextcol curcol) (funcall cmd 1))
+           (t ;; (> nextcol curcol)
+            (if (<= diff n)
+                (progn (decf n diff) (setq col nextcol))
+              (setq col (if (< col nextcol) (+ col n) (- col n)) n 0))))
+          (setq step (1+ step))))
+      ;; FIXME: This rectangle--col-pos's move-to-column is wasted!
+      (rectangle--col-pos col 'point))))
+
+(defun rectangle-right-char (&optional n)
+  "Like `right-char' but steps into wide chars and moves past EOL."
+  (interactive "p") (rectangle--*-char #'right-char n #'left-char))
+(defun rectangle-left-char (&optional n)
+  "Like `left-char' but steps into wide chars and moves past EOL."
+  (interactive "p") (rectangle--*-char #'left-char n #'right-char))
+
+(defun rectangle-forward-char (&optional n)
+  "Like `forward-char' but steps into wide chars and moves past EOL."
+  (interactive "p") (rectangle--*-char #'forward-char n #'backward-char))
+(defun rectangle-backward-char (&optional n)
+  "Like `backward-char' but steps into wide chars and moves past EOL."
+  (interactive "p") (rectangle--*-char #'backward-char n #'forward-char))
+
+(defun rectangle-next-line (&optional n)
+  "Like `next-line' but steps into wide chars and moves past EOL.
+Ignores `line-move-visual'."
+  (interactive "p")
+  (let ((col (rectangle--point-col (point))))
+    (forward-line n)
+    (rectangle--col-pos col 'point)))
+(defun rectangle-previous-line (&optional n)
+  "Like `previous-line' but steps into wide chars and moves past EOL.
+Ignores `line-move-visual'."
+  (interactive "p")
+  (let ((col (rectangle--point-col (point))))
+    (forward-line (- n))
+    (rectangle--col-pos col 'point)))
+
+;; ---------- misc small functions (GNU ports) ----------
+
+(defun check-parens ()			; lame name?
+  "Check for unbalanced parentheses in the current buffer.
+More accurately, check the narrowed part of the buffer for unbalanced
+expressions (\"sexps\") in general.  This is done according to the
+current syntax table and will find unbalanced brackets or quotes as
+appropriate.  (See Info node `(emacs)Parentheses'.)  If imbalance is
+found, an error is signaled and point is left at the first unbalanced
+character."
+  (interactive)
+  (condition-case data
+      ;; Buffer can't have more than (point-max) sexps.
+      (scan-sexps (point-min) (point-max))
+    (scan-error (push-mark)
+		(goto-char (nth 2 data))
+		;; Could print (nth 1 data), which is either
+		;; "Containing expression ends prematurely" or
+		;; "Unbalanced parentheses", but those may not be so
+		;; accurate/helpful, e.g. quotes may actually be
+		;; mismatched.
+  		(user-error "Unmatched bracket or quote"))))
+
+(defmacro minibuffer-with-setup-hook (fun &rest body)
+  "Temporarily add FUN to `minibuffer-setup-hook' while executing BODY.
+
+By default, FUN is prepended to `minibuffer-setup-hook'.  But if FUN is of
+the form `(:append FUN1)', FUN1 will be appended to `minibuffer-setup-hook'
+instead of prepending it.
+
+BODY should use the minibuffer at most once.
+Recursive uses of the minibuffer are unaffected (FUN is not
+called additional times).
+
+This macro actually adds an auxiliary function that calls FUN,
+rather than FUN itself, to `minibuffer-setup-hook'."
+  (declare (indent 1) (debug ([&or (":append" form) [&or symbolp form]] body)))
+  (let ((hook (make-symbol "setup-hook"))
+        (funsym (make-symbol "fun"))
+        (append nil))
+    (when (eq (car-safe fun) :append)
+      (setq append '(t) fun (cadr fun)))
+    `(let ((,funsym ,fun)
+           ;; Use a symbol to make sure `add-hook' doesn't waste time
+           ;; in `equal'ity testing (bug#46326).
+           (,hook (make-symbol "minibuffer-setup")))
+       (fset ,hook (lambda ()
+                     ;; Clear out this hook so it does not interfere
+                     ;; with any recursive minibuffer usage.
+                     (remove-hook 'minibuffer-setup-hook ,hook)
+                     (funcall ,funsym)))
+       (unwind-protect
+           (progn
+             (add-hook 'minibuffer-setup-hook ,hook ,@append)
+             ,@body)
+         (remove-hook 'minibuffer-setup-hook ,hook)))))
+
+(defun face-list-p (face-or-list)
+  "True if FACE-OR-LIST is a list of faces.
+Return nil if FACE-OR-LIST is a non-nil atom, or a cons cell whose car
+is either `foreground-color', `background-color', or a keyword."
+  ;; The logic of merge_face_ref (xfaces.c) is recreated here.
+  (and (listp face-or-list)
+       (not (memq (car face-or-list)
+		  '(foreground-color background-color)))
+       (not (keywordp (car face-or-list)))))
+
+(defun face-at-point (&optional text multiple)
+  "Return a face name from point in the current buffer.
+This function is meant to be used as a conveniency function for
+providing defaults when prompting the user for a face name.
+
+If TEXT is non-nil, return the text at point if it names an
+existing face.
+
+Otherwise, look at the faces in effect at point as text
+properties or overlay properties, and return one of these face
+names.
+
+IF MULTIPLE is non-nil, return a list of faces.
+
+Return nil if there is no face at point.
+
+This function is not meant for handling faces programmatically; to
+do that, use `get-text-property' and `get-char-property'."
+  (let (faces)
+    (when text
+      ;; Try to get a face name from the buffer.
+      (when-let* ((face (thing-at-point 'face)))
+        (push face faces)))
+    ;; Add the named faces that the `read-face-name' or `face' property uses.
+    (let ((faceprop (or (get-char-property (point) 'read-face-name)
+                        (get-char-property (point) 'face))))
+      (cond ((facep faceprop)
+             (push faceprop faces))
+            ((face-list-p faceprop)
+             (dolist (face faceprop)
+               (if (facep face)
+                   (push face faces))))))
+    (if multiple
+        (delete-dups (nreverse faces))
+      (car (last faces)))))
+
+;; ---------- text-property-search.el (GNU port) ----------
+
+;; GNU defines `prop-match' via cl-defstruct; cl-defstruct is defined
+;; later in this file, so the constructor/predicate/accessors are
+;; spelled out (same record layout: #s(prop-match beginning end value)).
+(defun make-prop-match (&rest cl--keys)
+  (apply #'record 'prop-match
+         (list (plist-get cl--keys :beginning)
+               (plist-get cl--keys :end)
+               (plist-get cl--keys :value))))
+(defun prop-match-p (ob)
+  (and (recordp ob) (eq (aref ob 0) 'prop-match)))
+(defun prop-match-beginning (ob) (aref ob 1))
+(defun prop-match-end (ob) (aref ob 2))
+(defun prop-match-value (ob) (aref ob 3))
+
+(defun text-property-search-forward (property &optional value predicate
+                                              not-current)
+  "Search for next region of text where PREDICATE returns non-nil for PROPERTY.
+PREDICATE is used to decide whether the value of PROPERTY at a given
+buffer position should be considered as a match for VALUE.
+VALUE defaults to nil if omitted.
+
+If PREDICATE is a function, it will be called with two arguments:
+VALUE and the value of PROPERTY at some buffer position.  The function
+should return non-nil if these two values are to be considered a match.
+
+Two special values of PREDICATE can also be used:
+If PREDICATE is t, that means the value of PROPERTY must `equal' VALUE
+to be considered a match.
+If PREDICATE is nil (which is the default), the value of PROPERTY will
+match if it is not `equal' to VALUE.  Furthermore, a nil PREDICATE
+means that the match region ends where the value changes.  For
+instance, this means that if you loop with
+
+  (while (setq prop (text-property-search-forward \\='face))
+    ...)
+
+you will get all the distinct regions with non-nil `face' values in
+the buffer, and the `prop' object will have the details about the
+match.  See the manual for more details and examples about how
+VALUE and PREDICATE interact.
+
+If NOT-CURRENT is non-nil, current buffer position is not examined for
+matches: the function will search for the first region that doesn't
+include point and has a value of PROPERTY that matches VALUE.
+
+If no matches can be found, return nil and don't move point.
+If found, move point to the end of the region and return a
+`prop-match' object describing the match.  To access the details
+of the match, use `prop-match-beginning' and `prop-match-end' for
+the buffer positions that limit the region, and `prop-match-value'
+for the value of PROPERTY in the region."
+  (interactive
+   (list
+    (let ((string (completing-read "Search for property: " obarray)))
+      (when (> (length string) 0)
+        (intern string obarray)))))
+  (cond
+   ;; No matches at the end of the buffer.
+   ((eobp)
+    nil)
+   ;; We're standing in the property we're looking for, so find the
+   ;; end.
+   ((and (text-property--match-p value (get-text-property (point) property)
+                                 predicate)
+         (not not-current))
+    (text-property--find-end-forward (point) property value predicate))
+   (t
+    (let ((origin (point))
+          (ended nil)
+          pos)
+      ;; Find the next candidate.
+      (while (not ended)
+        (setq pos (next-single-property-change (point) property))
+        (if (not pos)
+            (progn
+              (goto-char origin)
+              (setq ended t))
+          (goto-char pos)
+          (if (text-property--match-p value (get-text-property (point) property)
+                                      predicate)
+              (setq ended
+                    (text-property--find-end-forward
+                     (point) property value predicate))
+            ;; Skip past this section of non-matches.
+            (setq pos (next-single-property-change (point) property))
+            (unless pos
+              (goto-char origin)
+              (setq ended t)))))
+      (and (not (eq ended t))
+           ended)))))
+
+(defun text-property--find-end-forward (start property value predicate)
+  (let (end)
+    (if (and value
+             (null predicate))
+        ;; This is the normal case: We're looking for areas where the
+        ;; values aren't, so we aren't interested in sub-areas where the
+        ;; property has different values, all non-matching value.
+        (let ((ended nil))
+          (while (not ended)
+            (setq end (next-single-property-change (point) property))
+            (if (not end)
+                (progn
+                  (goto-char (point-max))
+                  (setq end (point)
+                        ended t))
+              (goto-char end)
+              (unless (text-property--match-p
+                       value (get-text-property (point) property) predicate)
+                (setq ended t)))))
+      ;; End this at the first place the property changes value.
+      (setq end (next-single-property-change (point) property nil (point-max)))
+      (goto-char end))
+    (make-prop-match :beginning start
+                     :end end
+                     :value (get-text-property start property))))
+
+
+(defun text-property-search-backward (property &optional value predicate
+                                               not-current)
+  "Search for previous region of text where PREDICATE returns non-nil for PROPERTY.
+
+Like `text-property-search-forward', which see, but searches backward,
+and if a matching region is found, place point at the start of the region."
+  (interactive
+   (list
+    (let ((string (completing-read "Search for property: " obarray)))
+      (when (> (length string) 0)
+        (intern string obarray)))))
+  (cond
+   ;; We're at the start of the buffer; no previous matches.
+   ((bobp)
+    nil)
+   ;; We're standing in the property we're looking for, so find the
+   ;; end.
+   ((text-property--match-p
+     value (get-text-property (1- (point)) property)
+     predicate)
+    (let ((origin (point))
+          (match (text-property--find-end-backward
+                  (1- (point)) property value predicate)))
+      ;; When we want to ignore the current element, then repeat the
+      ;; search if we haven't moved out of it yet.
+      (if (and not-current
+               (equal (get-text-property (point) property)
+                      (get-text-property origin property)))
+          (text-property-search-backward property value predicate)
+        match)))
+   (t
+    (let ((origin (point))
+          (ended nil)
+          pos)
+      ;; Find the previous candidate.
+      (while (not ended)
+        (setq pos (previous-single-property-change (point) property))
+        (if (not pos)
+            (progn
+              (goto-char origin)
+              (setq ended t))
+          (goto-char (1- pos))
+          (if (text-property--match-p value (get-text-property (point) property)
+                                      predicate)
+              (setq ended
+                    (text-property--find-end-backward
+                     (point) property value predicate))
+            ;; Skip past this section of non-matches.
+            (setq pos (previous-single-property-change (point) property))
+            (unless pos
+              (goto-char origin)
+              (setq ended t)))))
+      (and (not (eq ended t))
+           ended)))))
+
+(defun text-property--find-end-backward (start property value predicate)
+  (let (end)
+    (if (and value
+             (null predicate))
+        ;; This is the normal case: We're looking for areas where the
+        ;; values aren't, so we aren't interested in sub-areas where the
+        ;; property has different values, all non-matching value.
+        (let ((ended nil))
+          (while (not ended)
+            (setq end (previous-single-property-change (point) property))
+            (if (not end)
+                (progn
+                  (goto-char (point-min))
+                  (setq end (point)
+                        ended t))
+              (goto-char (1- end))
+              (unless (text-property--match-p
+                       value (get-text-property (point) property) predicate)
+                (goto-char end)
+                (setq ended t)))))
+      ;; End this at the first place the property changes value.
+      (setq end
+            (if (and (> (point) (point-min))
+                     (text-property--match-p
+                      value (get-text-property (1- (point)) property)
+                      predicate))
+                (previous-single-property-change (point)
+                                                 property nil (point-min))
+              (point)))
+      (goto-char end))
+    (make-prop-match :beginning end
+                     :end (1+ start)
+                     :value (get-text-property end property))))
+
+(defun text-property--match-p (value prop-value predicate)
+  (cond
+   ((eq predicate t)
+    (setq predicate #'equal))
+   ((eq predicate nil)
+    (setq predicate (lambda (val p-val)
+                      (not (equal val p-val))))))
+  (funcall predicate value prop-value))
+
 (defun read-minibuffer (prompt &optional initial-contents)
   "Return a Lisp object read using the minibuffer, unevaluated."
   (read-from-minibuffer prompt initial-contents minibuffer-local-map

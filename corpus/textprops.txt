@@ -1,0 +1,36 @@
+;; GNU-compatible text properties: insert copies string props,
+;; buffer-substring carries props, intervals split on mid-region
+;; insert and clamp on delete, next/previous-single-property-change
+;; LIMIT semantics, text-property-search-forward/backward,
+;; check-parens, face-at-point/face-list-p, and rectangle-mark-mode
+;; region behavior.  Verified against GNU Emacs 31.1.
+(with-temp-buffer (insert (propertize "aaa" 'face 'bold) "bbb") (list (get-text-property 1 'face) (get-text-property 5 'face)))
+(with-temp-buffer (insert (propertize "aaa" 'face 'bold) "bbb") (next-single-property-change 1 'face))
+(with-temp-buffer (insert (propertize "aaa" 'face 'bold) "bbb") (next-single-property-change 1 'face nil 7))
+(with-temp-buffer (insert (propertize "aaa" 'face 'bold) "bbb") (previous-single-property-change 5 'face))
+(with-temp-buffer (insert (propertize "aaa" 'face 'bold) "bbb") (previous-single-property-change 5 'face nil 1))
+(with-temp-buffer (insert "aabbcc") (put-text-property 1 7 'face 'bold) (goto-char 4) (insert "XX") (list (get-text-property 3 'face) (get-text-property 5 'face) (get-text-property 6 'face) (get-text-property 8 'face)))
+(with-temp-buffer (insert "aabbcc") (put-text-property 2 6 'face 'bold) (delete-region 3 5) (list (get-text-property 2 'face) (get-text-property 3 'face) (get-text-property 4 'face) (get-text-property 5 'face)))
+(with-temp-buffer (insert "aabbcc") (put-text-property 2 5 'face 'italic) (let ((s (buffer-substring 1 5))) (list (get-text-property 0 'face s) (get-text-property 1 'face s) (get-text-property 3 'face s) (get-text-property 4 'face s))))
+(with-temp-buffer (insert "aabbcc") (put-text-property 2 5 'face 'italic) (let ((s (buffer-substring-no-properties 1 5))) (text-properties-at 1 s)))
+(with-temp-buffer (insert "x" (propertize "ab" 'face 'bold) "y" (propertize "cd" 'face 'italic)) (list (get-text-property 2 'face) (get-text-property 5 'face)))
+(with-temp-buffer (insert (propertize "a" 'display '(space :width 2) 'face 'bold)) (list (get-text-property 1 'display) (get-text-property 1 'face)))
+(with-temp-buffer (insert (propertize "aaa" 'face 'bold) "bbb" (propertize "ccc" 'face 'italic) "ddd") (goto-char 1) (let ((m (text-property-search-forward 'face))) (list (prop-match-beginning m) (prop-match-end m) (prop-match-value m) (point))))
+(with-temp-buffer (insert (propertize "aaa" 'face 'bold) "bbb" (propertize "ccc" 'face 'italic) "ddd") (goto-char 5) (let ((m (text-property-search-forward 'face))) (list (prop-match-beginning m) (prop-match-end m) (prop-match-value m))))
+(with-temp-buffer (insert (propertize "aaa" 'face 'bold) "bbb" (propertize "ccc" 'face 'italic) "ddd") (goto-char 15) (let ((m (text-property-search-backward 'face))) (list (prop-match-beginning m) (prop-match-end m) (prop-match-value m) (point))))
+(with-temp-buffer (insert (propertize "aaa" 'face 'bold) "bbb") (goto-char 1) (let ((m (text-property-search-forward 'face 'bold t))) (list (prop-match-beginning m) (prop-match-end m))))
+(with-temp-buffer (insert (propertize "aaa" 'face 'bold) "bbb" (propertize "ccc" 'face 'italic)) (goto-char 2) (let ((m (text-property-search-forward 'face nil nil t))) (list (prop-match-beginning m) (prop-match-end m))))
+(with-temp-buffer (insert "ab") (goto-char 3) (text-property-search-forward 'face))
+(with-temp-buffer (insert "ab") (goto-char 1) (text-property-search-backward 'face))
+(with-temp-buffer (insert "(a (b) c)") (check-parens))
+(with-temp-buffer (insert "(a (b") (condition-case e (check-parens) (error (list (car e) (point)))))
+(list (face-list-p 'bold) (face-list-p '(bold italic)) (face-list-p '(:foreground "red")) (face-list-p '(foreground-color . "red")))
+(with-temp-buffer (insert (propertize "abc" 'face 'bold)) (goto-char 2) (face-at-point))
+(with-temp-buffer (insert (propertize "abc" 'face '(bold italic))) (goto-char 2) (face-at-point nil t))
+(with-temp-buffer (transient-mark-mode 1) (insert "abcde\nfghij\nklmno\n") (goto-char 2) (rectangle-mark-mode 1) (goto-char 12) (list (region-beginning) (region-end) rectangle-mark-mode))
+(with-temp-buffer (transient-mark-mode 1) (insert "abcde\nfghij\nklmno\n") (goto-char 2) (push-mark 13 t t) (rectangle-mark-mode 1) (list (region-bounds) (region-noncontiguous-p)))
+(with-temp-buffer (transient-mark-mode 1) (insert "abcde\nfghij\nklmno\n") (goto-char 2) (push-mark 13 t t) (rectangle-mark-mode 1) (filter-buffer-substring (region-beginning) (region-end)))
+(with-temp-buffer (transient-mark-mode 1) (insert "abcde\nfghij\n") (goto-char 2) (push-mark 9 t t) (rectangle-mark-mode 1) (let ((this-command 'x) (last-command 'y)) (rectangle-exchange-point-and-mark) (list (point) (mark))))
+(fboundp 'rectangle-mark-mode)
+(fboundp 'minibuffer-with-setup-hook)
+(macrop 'minibuffer-with-setup-hook)
