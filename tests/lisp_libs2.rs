@@ -856,3 +856,54 @@ fn elide_head_loads() {
         "(t \"int main() {}\n\")"
     );
 }
+
+// ---------------------------------------------------------- regexp-opt
+
+#[test]
+fn regexp_opt_gnu_factoring() {
+    // GNU-verified on 31.1: the Lisp regexp-opt (shadowing the Rust
+    // subr) factors common prefixes/suffixes, merges single-char
+    // branches into charsets, and honors the PAREN variants.
+    assert_eq!(
+        ev("(list (regexp-opt '(\"abc\" \"abd\"))
+                 (regexp-opt '(\"authorization from the X Consortium.\"
+                               \"THE USE OR OTHER DEALINGS IN THE SOFTWARE.\"))
+                 (regexp-opt '(\"car\" \"cat\" \"cow\" \"dog\"))
+                 (regexp-opt '(\"a\" \"ab\" \"abc\"))
+                 (regexp-opt '(\"\" \"abc\"))
+                 (regexp-opt '(\"a\" \"b\" \"c\" \"d\"))
+                 (regexp-opt '(\"abc\" \"xbc\" \"ybc\"))
+                 (regexp-opt '(\"foo\" \"bar\") t)
+                 (regexp-opt '(\"foo\" \"bar\") 'words)
+                 (regexp-opt '(\"foo\" \"bar\") 'symbols)
+                 (regexp-opt '(\"foo\" \"bar\") \"\\\\(?1:\")
+                 (regexp-opt nil)
+                 (regexp-opt '(\"only\")))"),
+        "(\"\\\\(?:ab[cd]\\\\)\" \
+          \"\\\\(?:\\\\(?:THE USE OR OTHER DEALINGS IN THE SOFTWARE\\\\|authorization from the X Consortium\\\\)\\\\.\\\\)\" \
+          \"\\\\(?:c\\\\(?:a[rt]\\\\|ow\\\\)\\\\|dog\\\\)\" \
+          \"\\\\(?:a\\\\(?:bc?\\\\)?\\\\)\" \
+          \"\\\\(?:abc\\\\)?\" \
+          \"[a-d]\" \
+          \"\\\\(?:[axy]bc\\\\)\" \
+          \"\\\\(bar\\\\|foo\\\\)\" \
+          \"\\\\<\\\\(bar\\\\|foo\\\\)\\\\>\" \
+          \"\\\\_<\\\\(bar\\\\|foo\\\\)\\\\_>\" \
+          \"\\\\(?1:bar\\\\|foo\\\\)\" \
+          \"\\\\(?:\\\\`a\\\\`\\\\)\" \
+          \"\\\\(?:only\\\\)\")"
+    );
+}
+
+#[test]
+fn regexp_opt_charset_ranges() {
+    // GNU-verified on 31.1: ranges condensed, metachars repositioned.
+    assert_eq!(
+        ev("(list (regexp-opt-charset '(?a ?b ?c))
+                 (regexp-opt-charset '(?a ?z ?- ?^ ?\\]))
+                 (regexp-opt-charset '(?0 ?1 ?2 ?5 ?6 ?7))
+                 (regexp-opt-charset '(?a ?b ?c ?d))
+                 (regexp-opt-charset nil))"),
+        "(\"[abc]\" \"[]az^-]\" \"[012567]\" \"[a-d]\" \"\\\\`a\\\\`\")"
+    );
+}

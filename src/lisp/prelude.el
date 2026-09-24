@@ -22338,6 +22338,239 @@ It's also used so that `syntax-ppss-flush-cache' can be used from within
              (combine-after-change-calls . 0)))
   (put (car x) 'lisp-indent-function (cdr x)))
 
+;; ---------- GNU regexp-opt.el (verbatim) ----------
+;; The Rust `regexp-opt' subr exists but GNU's Lisp algorithm factors
+;; common prefixes/suffixes and merges charsets differently; these
+;; definitions shadow it so `regexp-opt' output is byte-identical to
+;; GNU 31.1 (matters for printed values like elide-head's
+;; `elide-head-headers-to-hide').
+
+(defun regexp-opt-group (strings &optional paren lax)
+  "Return a regexp to match a string in the sorted list STRINGS.
+If PAREN non-nil, output regexp parentheses around returned regexp.
+If LAX non-nil, don't output parentheses if it doesn't require them.
+Merges keywords to avoid backtracking in Emacs's regexp matcher."
+  ;; The basic idea is to find the shortest common prefix or suffix, remove it
+  ;; and recurse.  If there is no prefix, we divide the list into two so that
+  ;; (at least) one half will have at least a one-character common prefix.
+
+  ;; Also we delay the addition of grouping parenthesis as long as possible
+  ;; until we're sure we need them, and try to remove one-character sequences
+  ;; so we can use character sets rather than grouping parenthesis.
+  (let* ((open-group (cond ((stringp paren) paren) (paren "\\(?:") (t "")))
+	 (close-group (if paren "\\)" ""))
+	 (open-charset (if lax "" open-group))
+	 (close-charset (if lax "" close-group)))
+    (cond
+     ;;
+     ;; If there are no strings, just return the empty string.
+     ((= (length strings) 0)
+      "")
+     ;;
+     ;; If there is only one string, just return it.
+     ((= (length strings) 1)
+      (if (= (length (car strings)) 1)
+	  (concat open-charset (regexp-quote (car strings)) close-charset)
+	(concat open-group (regexp-quote (car strings)) close-group)))
+     ;;
+     ;; If there is an empty string, remove it and recurse on the rest.
+     ((= (length (car strings)) 0)
+      (concat open-charset
+	      (regexp-opt-group (cdr strings) t t) "?"
+	      close-charset))
+     ;;
+     ;; If there are several one-char strings, use charsets
+     ((and (= (length (car strings)) 1)
+           (any (lambda (s) (= (length s) 1)) (cdr strings)))
+      (let (letters rest)
+	;; Collect one-char strings
+	(dolist (s strings)
+	  (if (= (length s) 1) (push (string-to-char s) letters) (push s rest)))
+
+	(if rest
+	    ;; several one-char strings: take them and recurse
+	    ;; on the rest (first so as to match the longest).
+	    (concat open-group
+		    (regexp-opt-group (nreverse rest))
+		    "\\|" (regexp-opt-charset letters)
+		    close-group)
+	  ;; all are one-char strings: just return a character set.
+	  (concat open-charset
+		  (regexp-opt-charset letters)
+		  close-charset))))
+     ;;
+     ;; We have a list of different length strings.
+     (t
+      (let ((prefix (try-completion "" strings)))
+	(if (> (length prefix) 0)
+	    ;; common prefix: take it and recurse on the suffixes.
+	    (let* ((n (length prefix))
+		   (suffixes (mapcar (lambda (s) (substring s n)) strings)))
+	      (concat open-group
+		      (regexp-quote prefix)
+		      (regexp-opt-group suffixes t t)
+		      close-group))
+
+	  (let* ((sgnirts (mapcar #'reverse strings))
+		 (xiffus (try-completion "" sgnirts)))
+	    (if (> (length xiffus) 0)
+		;; common suffix: take it and recurse on the prefixes.
+		(let* ((n (- (length xiffus)))
+		       (prefixes
+			;; Sorting is necessary in cases such as ("ad" "d").
+			(sort (mapcar (lambda (s) (substring s 0 n)) strings)
+                              :in-place t)))
+		  (concat open-group
+			  (regexp-opt-group prefixes t t)
+			  (regexp-quote (nreverse xiffus))
+			  close-group))
+
+	      ;; Otherwise, divide the list into those that start with a
+	      ;; particular letter and those that do not, and recurse on them.
+	      (let* ((char (substring-no-properties (car strings) 0 1))
+		     (half1 (all-completions char strings))
+		     (half2 (nthcdr (length half1) strings)))
+		(concat open-group
+			(regexp-opt-group half1)
+			"\\|" (regexp-opt-group half2)
+			close-group))))))))))
+
+
+(defun regexp-opt (strings &optional paren)
+  "Return a regexp to match a string in the list STRINGS.
+Each member of STRINGS is treated as a fixed string, not as a regexp.
+Optional PAREN specifies how the returned regexp is surrounded by
+grouping constructs.
+
+If STRINGS is the empty list, the return value is a regexp that
+never matches anything.
+
+The optional argument PAREN can be any of the following:
+
+a string
+    the resulting regexp is preceded by PAREN and followed by
+    \\), e.g.  use \"\\\\(?1:\" to produce an explicitly numbered
+    group.
+
+`words'
+    the resulting regexp is surrounded by \\=\\<\\( and \\)\\>.
+
+`symbols'
+    the resulting regexp is surrounded by \\_<\\( and \\)\\_>.
+
+non-nil
+    the resulting regexp is surrounded by \\( and \\).
+
+nil
+    the resulting regexp is surrounded by \\(?: and \\), if it is
+    necessary to ensure that a postfix operator appended to it will
+    apply to the whole expression.
+
+The returned regexp is ordered in such a way that it will always
+match the longest string possible.
+
+Up to reordering, the resulting regexp is equivalent to but
+usually more efficient than that of a simplified version:
+
+ (defun simplified-regexp-opt (strings &optional paren)
+   (let ((parens
+          (cond ((stringp paren)       (cons paren \"\\\\)\"))
+                ((eq paren \\='words)    \\='(\"\\\\\\=<\\\\(\" . \"\\\\)\\\\>\"))
+                ((eq paren \\='symbols) \\='(\"\\\\_<\\\\(\" . \"\\\\)\\\\_>\"))
+                ((null paren)          \\='(\"\\\\(?:\" . \"\\\\)\"))
+                (t                       \\='(\"\\\\(\" . \"\\\\)\")))))
+     (concat (car parens)
+             (mapconcat \\='regexp-quote strings \"\\\\|\")
+             (cdr parens))))"
+  (declare (ftype (function (list &optional t) string))
+           (pure t) (side-effect-free t))
+  (save-match-data
+    ;; Recurse on the sorted list.
+    (let* ((max-lisp-eval-depth 10000)
+	   (completion-ignore-case nil)
+	   (completion-regexp-list nil)
+	   (open (cond ((stringp paren) paren) (paren "\\(")))
+	   (re (if strings
+                   (regexp-opt-group
+                    (delete-dups (sort strings))
+                    (or open t) (not open))
+                 ;; No strings: return an unmatchable regexp.
+                 (concat (or open "\\(?:") regexp-unmatchable "\\)"))))
+      (cond ((eq paren 'words)
+	     (concat "\\<" re "\\>"))
+	    ((eq paren 'symbols)
+	     (concat "\\_<" re "\\_>"))
+	    (t re)))))
+
+(defun regexp-opt-charset (chars)
+  "Return a regexp to match a character in CHARS.
+CHARS should be a list of characters.
+If CHARS is the empty list, the return value is a regexp that
+never matches anything."
+  (declare (pure t) (side-effect-free t))
+  ;; The basic idea is to find character ranges.  Also we take care in the
+  ;; position of character set meta characters in the character set regexp.
+  ;;
+  (let* ((charmap (make-char-table 'regexp-opt-charset))
+	 (start -1) (end -2)
+	 (charset "")
+	 (bracket "") (dash "") (caret ""))
+    ;;
+    ;; Make a character map but extract character set meta characters.
+    (dolist (char chars)
+      (cond
+       ((eq char ?\])
+	(setq bracket "]"))
+       ((eq char ?^)
+	(setq caret "^"))
+       ((eq char ?-)
+	(setq dash "-"))
+       (t
+	(aset charmap char t))))
+    ;;
+    ;; Make a character set from the map using ranges where applicable.
+    (map-char-table
+     (lambda (c v)
+       (when v
+	 (if (consp c)
+	     (if (= (1- (car c)) end) (setq end (cdr c))
+	       (if (> end (+ start 2))
+		   (setq charset (format "%s%c-%c" charset start end))
+		 (while (>= end start)
+		   (setq charset (format "%s%c" charset start))
+		   (setq start (1+ start))))
+	       (setq start (car c) end (cdr c)))
+	   (if (= (1- c) end) (setq end c)
+	     (if (> end (+ start 2))
+	       (setq charset (format "%s%c" charset start end))
+	     (while (>= end start)
+	       (setq charset (format "%s%c" charset start))
+	       (setq start (1+ start))))
+	     (setq start c end c)))))
+     charmap)
+    (when (>= end start)
+      (if (> end (+ start 2))
+	  (setq charset (format "%s%c-%c" charset start end))
+	(while (>= end start)
+	  (setq charset (format "%s%c" charset start))
+	  (setq start (1+ start)))))
+
+    ;; Make sure that ] is first, ^ is not first, - is first or last.
+    (let ((all (concat bracket charset caret dash)))
+      (pcase (length all)
+        (0 regexp-unmatchable)
+        (1 (regexp-quote all))
+        (_ (if (string-equal all "^-")
+               "[-^]"
+             (concat "[" all "]")))))))
+
+;; GNU subr-x.el: also defined there; keep a local copy so the above
+;; regexp-opt works even when subr-x is not loaded.
+(defconst regexp-unmatchable "\\`a\\`"
+  "A regexp that can never match anything.
+This is useful as a placeholder when the correct regexp is to be
+determined at run time.")
+
 ;; GNU lisp-mode.el (preloaded): symbol regexp + Imenu generic
 ;; expression for Lisp modes.  `(rx lisp-mode-symbol)' expands to the
 ;; literal regexp below on GNU (rx.el is not ported yet).
