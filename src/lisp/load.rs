@@ -184,6 +184,7 @@ static EMBEDDED_LISP: &[(&str, &str)] = &[
     ("tmm", include_str!("../../lisp/tmm.el")),
     ("text-property-search", include_str!("../../lisp/text-property-search.el")),
     ("yank-media", include_str!("../../lisp/yank-media.el")),
+    ("bs", include_str!("../../lisp/bs.el")),
     ("uniquify", include_str!("../../lisp/uniquify.el")),
     ("view", include_str!("../../lisp/view.el")),
     ("whitespace", include_str!("../../lisp/whitespace.el")),

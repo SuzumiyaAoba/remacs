@@ -1181,3 +1181,19 @@ fn text_property_search_prop_match() {
         "(1 3 bold)"
     );
 }
+
+#[test]
+fn bs_entry_points_and_config() {
+    // GNU-verified on 31.1.
+    assert_eq!(
+        ev("(progn (require 'bs)
+                  (list (fboundp 'bs-show)
+                        (fboundp 'bs--get-name)
+                        (boundp 'bs-configurations)
+                        (boundp 'bs-default-configuration)
+                        (length bs-configurations)
+                        bs-default-sort-name
+                        (assq 'files bs-configurations)))"),
+        "(t t t t 4 \"by nothing\" nil)"
+    );
+}
