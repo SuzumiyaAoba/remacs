@@ -577,6 +577,27 @@ if it's an autoloaded macro."
                             (list 'buffer-name temp-buffer)
                             (list 'kill-buffer temp-buffer)))))))
 
+;; GNU subr.el verbatim.
+(defmacro with-temp-file (file &rest body)
+  "Create a new buffer, evaluate BODY there, and write the buffer to FILE.
+The value returned is the value of the last form in BODY.
+The buffer does not run the hooks `kill-buffer-hook',
+`kill-buffer-query-functions', and `buffer-list-update-hook'.
+See also `with-temp-buffer'."
+  (declare (indent 1) (debug t))
+  (let ((temp-file (make-symbol "temp-file"))
+	(temp-buffer (make-symbol "temp-buffer")))
+    `(let ((,temp-file ,file)
+           (,temp-buffer (generate-new-buffer " *temp file*" t)))
+       (unwind-protect
+	   (prog1
+	       (with-current-buffer ,temp-buffer
+		 ,@body)
+	     (with-current-buffer ,temp-buffer
+	       (write-region nil nil ,temp-file nil 0)))
+	 (and (buffer-name ,temp-buffer)
+	      (kill-buffer ,temp-buffer))))))
+
 (defmacro with-syntax-table (table &rest body)
   "Evaluate BODY with syntax table of current buffer set to TABLE.
 The syntax table of the current buffer is saved, BODY is evaluated, and
@@ -2993,9 +3014,34 @@ thus showing a page other than the one point was originally in."
 			    (forward-line 1))
 			(point)))))
 (put 'narrow-to-page 'disabled t)
+;; GNU's remaining dumped `disabled' marks (bindings.el, simple.el,
+;; files.el, dired.el, thread.el, timer.el autoload cookies).
+(put 'narrow-to-region 'disabled t)
+(put 'scroll-left 'disabled t)
+(put 'set-goal-column 'disabled t)
+(put 'upcase-region 'disabled t)
+(put 'downcase-region 'disabled t)
+(put 'erase-buffer 'disabled t)
+(put 'dired-find-alternate-file 'disabled t)
+(put 'list-threads 'disabled "Beware: manually canceling threads can ruin your Emacs session.")
+(put 'list-timers 'disabled "Beware: manually canceling timers can ruin your Emacs session.")
+
+;; GNU novice.el autoload cookie: bound at startup so `command-execute'
+;; routes disabled commands through it.
+(defvar disabled-command-function 'disabled-command-function
+  "Function to call to handle disabled commands.
+If nil, the feature is disabled, i.e., all commands work normally.")
+(autoload 'disabled-command-function "novice"
+  "Handle commands that are disabled." nil)
+(autoload 'enable-command "novice"
+  "Enable COMMAND to be executed without special confirmation from now on." t)
+(autoload 'disable-command "novice"
+  "Disable COMMAND to require special confirmation before it can be executed." t)
 
 ;; GNU faces.el: the built-in `default' face's doc string.
 (put 'default 'face-documentation "Basic default face.")
+;; GNU: `default' is defined by C code; its defface spec is ((t nil)).
+(put 'default 'face-defface-spec '((t nil)))
 
 (defun page--count-lines-page ()
   "Return a list of line counts on the current page.
@@ -6259,8 +6305,7 @@ the :set function."
       (push symbol custom-delayed-init-variables)
     ;; In case this is called after startup, there is no "later" to which to
     ;; delay it, so initialize it "normally" (bug#47072).
-    (custom-initialize-reset symbol value))
-  (put symbol 'custom-delayed-init (list value)))
+    (custom-initialize-reset symbol value)))
 
 (defun custom-initialize-after-file-load (symbol value)
   "Delay initialization to after the current file is loaded.
@@ -21971,6 +22016,33 @@ It's also used so that `syntax-ppss-flush-cache' can be used from within
 
 (define-derived-mode messages-buffer-mode special-mode "Messages"
   "Major mode for the *Messages* buffer.")
+
+;; GNU simple.el: the completion list mode's map.
+(defvar completion-list-mode-map
+  (let ((map (make-sparse-keymap)))
+    (set-keymap-parent map special-mode-map)
+    (define-key map "g" nil) ;; There's nothing to revert from.
+    (define-key map [mouse-2] 'choose-completion)
+    (define-key map [follow-link] 'mouse-face)
+    (define-key map [down-mouse-2] nil)
+    (define-key map "\C-m" 'choose-completion)
+    (define-key map "\e\e\e" 'delete-completion-window)
+    (define-key map [remap keyboard-quit] #'delete-completion-window)
+    (define-key map [up] 'previous-line-completion)
+    (define-key map [down] 'next-line-completion)
+    (define-key map [left] 'previous-column-completion)
+    (define-key map [right] 'next-column-completion)
+    (define-key map [?\t] 'next-completion)
+    (define-key map [backtab] 'previous-completion)
+    (define-key map [M-up] 'minibuffer-previous-completion)
+    (define-key map [M-down] 'minibuffer-next-completion)
+    (define-key map "\M-\r" 'minibuffer-choose-completion)
+    (define-key map "z" 'kill-current-buffer)
+    (define-key map "n" 'next-completion)
+    (define-key map "p" 'previous-completion)
+    (define-key map "\M-g\M-c" 'switch-to-minibuffer)
+    map)
+  "Local map for completion list buffers.")
 
 (defvar text-mode-syntax-table
   (let ((st (make-syntax-table)))

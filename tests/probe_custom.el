@@ -55,9 +55,12 @@
   ;; Already-bound: initialize-changed leaves it alone.
   (custom-initialize-changed 'probe-ch1 40)
   (cl-assert (eq probe-ch1 4))
+  ;; Post-startup (`custom-delayed-init-variables' is t, bug#47072):
+  ;; initialize-delay resets immediately and records no delayed-init
+  ;; prop (GNU-verified).
   (custom-initialize-delay 'probe-dv 9)
-  (cl-assert (memq 'probe-dv custom-delayed-init-variables))
-  (cl-assert (equal (get 'probe-dv 'custom-delayed-init) '(9))))
+  (cl-assert (boundp 'probe-dv))
+  (cl-assert (null (get 'probe-dv 'custom-delayed-init))))
 
 ;; ---------- defgroup ----------
 (progn

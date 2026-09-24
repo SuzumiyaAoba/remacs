@@ -744,8 +744,24 @@ impl Interp {
             // defaults to t, so `eval_str' installs a `(t)' root env
             // and it evals lexically like GNU's dump does.
             let _ = interp.eval_str(crate::lisp::prelude::PRELUDE);
+            // env.el is preloaded into GNU's dump (loadup.el): its
+            // feature is already registered, but the definitions must
+            // exist too — `(require 'env)' short-circuits on the
+            // feature mark, so evaluate the embedded source now.
+            let _ = crate::lisp::load::load_library(&mut interp, "env");
         }
         interp.loading_dumped = false;
+        if std::env::var("REMACS_NO_PRELUDE").is_err() {
+            // startup.el processes variables whose defcustom used
+            // `custom-initialize-delay' via `custom-reevaluate-setting',
+            // then sets the list to a non-list so later :initialize calls
+            // (e.g. from `require') initialize immediately.
+            let _ = interp.eval_str(
+                "(progn (mapc #'custom-reevaluate-setting \
+                              (nreverse custom-delayed-init-variables)) \
+                         (setq custom-delayed-init-variables t))",
+            );
+        }
         if std::env::var("REMACS_NO_PRELUDE").is_err() {
             // GNU records every dumped library in `load-history'; do the
             // same for the embedded prelude so `symbol-file' and the
@@ -5039,6 +5055,33 @@ impl Interp {
     /// Execute a command by name (M-x dispatch entry point).
     /// The editor's command loop calls this with the command symbol.
     pub fn command_execute(&mut self, cmd: &Value) -> EvalResult {
+        // GNU `command-execute' (simple.el): a command symbol whose
+        // `disabled' property is non-nil is not run; instead
+        // `disabled-command-function' (a hook var naming a function,
+        // or a list of functions) handles it.  The `(query ...)'
+        // property form is handled by `command-execute--query' — not
+        // yet ported; such commands run normally for now.
+        if let Value::Sym(id) = cmd {
+            let dis_id = self.intern("disabled");
+            let dis = self.get_prop(*id, dis_id);
+            if !dis.is_nil() {
+                let q_id = self.intern("query");
+                let query = matches!(
+                    &dis,
+                    Value::Cons(c)
+                        if matches!(c.borrow().car, Value::Sym(s) if s == q_id)
+                );
+                if !query {
+                    let dcf = self.intern("disabled-command-function");
+                    if self.bound_p(dcf) && self.symbol_value(dcf).truthy() {
+                        return crate::lisp::builtins::evalfn::call_hook(
+                            self,
+                            "disabled-command-function",
+                        );
+                    }
+                }
+            }
+        }
         // Resolve to function, then call with interactive args.
         let fun = match cmd {
             Value::Sym(id) => self.symbol_function(*id),

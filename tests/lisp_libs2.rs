@@ -375,3 +375,148 @@ fn dabbrev_and_tq_features() {
         "(t t t t)"
     );
 }
+
+// ---------------------------------------------------------- timezone
+
+#[test]
+fn timezone_parse_and_format() {
+    // GNU-verified on 31.1.
+    assert_eq!(
+        ev("(progn (require 'timezone)
+                  (list (timezone-parse-date \"Mon, 15 Jan 2024 10:30:00 -0500\")
+                        (timezone-parse-time \"10:30:45\")
+                        (timezone-zone-to-minute \"PST\")
+                        (timezone-zone-to-minute \"-0500\")
+                        (timezone-make-arpa-date 2024 1 15 \"10:30:00\" \"PST\")
+                        (timezone-make-time-string 10 30 45)))"),
+        "([\"2024\" \"1\" \"15\" \"10:30:00\" \"-0500\"] [\"10\" \"30\" \"45\"] -480 -300 \"15 Jan 2024 10:30:00 PST\" \"10:30:45\")"
+    );
+}
+
+// ---------------------------------------------------------- delim-col
+
+#[test]
+fn delimit_columns_region_and_format() {
+    // GNU-verified on 31.1.
+    assert_eq!(
+        ev("(progn (require 'delim-col)
+                  (list (with-temp-buffer
+                          (insert \"a,b,c\\n1,22,3\\n\")
+                          (delimit-columns-region (point-min) (point-max))
+                          (buffer-string))
+                        (with-temp-buffer
+                          (delimit-columns-format \"  \")
+                          (buffer-string))))"),
+        "(\"a,b,c \n1,22,3\n\" \",   \")"
+    );
+}
+
+// ---------------------------------------------------------- cookie1
+
+#[test]
+fn cookie_snarf_parses_phrase_file() {
+    // GNU-verified: snarfed vector is reversed (last phrase first).
+    assert_eq!(
+        ev("(progn (require 'cookie1)
+                  (write-region \"hdr.\\n%%\\nFirst cookie.\\n%%\\nSecond cookie.\\n%%\\nThird one.\\n%%\\n\"
+                                nil \"/tmp/remacs-ck-test.txt\" nil 'quiet)
+                  (let ((v (cookie-snarf \"/tmp/remacs-ck-test.txt\")))
+                    (list (length v) (aref v 0) (aref v 2))))"),
+        "(3 \"Third one.\" \"First cookie.\")"
+    );
+}
+
+// ---------------------------------------------------------- env
+
+#[test]
+fn env_substitute_and_getenv_internal() {
+    // GNU-verified on 31.1: unset vars substitute as empty.
+    assert_eq!(
+        ev("(progn (require 'env)
+                  (let ((process-environment '(\"A=1\" \"B=2\")))
+                    (list (getenv-internal \"A\" process-environment)
+                          (getenv-internal \"ZZZ\" process-environment)
+                          (substitute-env-vars \"pre $A mid ${B} end $ZZZ\"))))"),
+        "(\"1\" nil \"pre 1 mid 2 end \")"
+    );
+}
+
+// ---------------------------------------------------------- novice
+
+#[test]
+fn disabled_command_routes_to_handler() {
+    // GNU-verified on 31.1 batch: `command-execute' on a `disabled'
+    // command runs `disabled-command-function' (autoloaded from
+    // novice.el), which errors in batch with args-out-of-range.
+    assert_eq!(
+        ev("(condition-case e
+                  (command-execute 'narrow-to-region)
+                (error (car e)))"),
+        "args-out-of-range"
+    );
+    // A non-disabled command dispatches normally.
+    assert_eq!(
+        ev("(command-execute 'self-insert-command)"),
+        "nil"
+    );
+    // GNU's dumped `disabled' marks.
+    assert_eq!(
+        ev("(list (get 'narrow-to-region 'disabled)
+                  (get 'upcase-region 'disabled)
+                  (get 'scroll-left 'disabled)
+                  (get 'scroll-right 'disabled))"),
+        "(t t t nil)"
+    );
+}
+
+// ---------------------------------------------------------- filecache
+
+#[test]
+fn file_cache_add_and_delete() {
+    // GNU-verified on 31.1.
+    assert_eq!(
+        ev("(progn (require 'filecache)
+                  (write-region \"x\" nil \"/tmp/remacs-fc-test.txt\" nil 'quiet)
+                  (file-cache-add-file \"/tmp/remacs-fc-test.txt\")
+                  (list (assoc \"remacs-fc-test.txt\" file-cache-alist)
+                        (assoc \"no-such\" file-cache-alist)
+                        (file-cache-delete-file \"/tmp/remacs-fc-test.txt\")
+                        (assoc \"remacs-fc-test.txt\" file-cache-alist)))"),
+        "((\"remacs-fc-test.txt\" \"/private/tmp/\") nil nil (\"remacs-fc-test.txt\" \"/private/tmp/\"))"
+    );
+}
+
+// ---------------------------------------------------------- align
+
+#[test]
+fn align_regexp_basic() {
+    // GNU-verified on 31.1.
+    assert_eq!(
+        ev("(progn (require 'align)
+                  (with-temp-buffer
+                    (insert \"a = 1;\\nbb = 22;\\nccc = 333;\\n\")
+                    (align-regexp (point-min) (point-max) \"\\\\(\\\\s-*\\\\)=\" 1 1 nil)
+                    (buffer-string)))"),
+        "\"a\t= 1;\nbb\t= 22;\nccc\t= 333;\n\""
+    );
+}
+
+// ---------------------------------------------------------- tildify
+
+#[test]
+fn tildify_region_inserts_hard_space() {
+    // GNU-verified on 31.1: the default pattern hardens spaces after
+    // single-letter words (I, A, O, ...); "a" is not one of them.
+    assert_eq!(
+        ev("(progn (require 'tildify)
+                  (list (with-temp-buffer
+                          (insert \"I think so, ok\")
+                          (tildify-region (point-min) (point-max) t)
+                          (buffer-string))
+                        (with-temp-buffer
+                          (insert \"a b  c\")
+                          (tildify-region (point-min) (point-max) t)
+                          (buffer-string))))"),
+        "(\"I\u{a0}think so, ok\" \"a b  c\")"
+    );
+}
