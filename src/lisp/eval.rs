@@ -130,6 +130,10 @@ pub struct Interp {
     /// `single_key` reads one event (y-or-n-p, read-char).
     pub minibuf_reader:
         Option<std::rc::Rc<dyn Fn(&mut Interp, &str, bool) -> Result<MinibufInput, Flow>>>,
+    /// Buffered stdin for noninteractive minibuffer reads (GNU
+    /// `read_minibuf_noninteractive'); buffered so line and char reads
+    /// share the stream the way `getchar' does.
+    pub batch_stdin: Option<std::io::BufReader<std::io::Stdin>>,
     /// Nesting depth of active minibuffer reads (`minibuffer-depth').
     pub minibuf_level: i32,
     /// User-defined faces: name → plist of attribute keywords.
@@ -491,6 +495,7 @@ impl Interp {
             selected_frame: None,
             quit_editor: false,
             minibuf_reader: None,
+            batch_stdin: None,
             minibuf_level: 0,
             face_table: Vec::new(),
             processes: Vec::new(),
@@ -1238,6 +1243,27 @@ impl Interp {
                 }
                 None => return Ok(last),
             }
+        }
+    }
+
+    /// `--eval` semantics: GNU's `command-line-1' reads ONE object from
+    /// the argument and evaluates it; trailing forms are ignored.
+    pub fn eval_first_form(&mut self, src: &str) -> EvalResult {
+        let chars: Rc<Vec<char>> = Rc::new(src.chars().collect());
+        let form = {
+            let mut reader = Reader::with_chars(self, chars);
+            reader.read()?
+        };
+        match form {
+            Some(f) => match self.eval(&f) {
+                Ok(v) => Ok(v),
+                Err(Flow::Throw(tag, val)) => {
+                    let nc = self.intern("no-catch");
+                    Err(self.signal_data(nc, vec![tag, val]))
+                }
+                Err(f) => Err(f),
+            },
+            None => Ok(Value::Nil),
         }
     }
 
@@ -2477,6 +2503,9 @@ impl Interp {
             "current-prefix-arg",
             "prefix-arg",
             "minibuffer-history",
+            "read-hide-char",
+            "yes-or-no-prompt",
+            "use-short-answers",
             "buffer-name-history",
             "read-expression-history",
             "command-line-args-left",
@@ -3173,6 +3202,8 @@ impl Interp {
             ("throw-on-input", Value::Nil),
             ("mark-active", Value::Nil),
             ("minibuffer-inactive-mode", Value::Nil),
+            ("read-hide-char", Value::Nil),
+            ("read-expression-history", Value::Nil),
             // Hook/option variables with GNU defaults.
             ("before-change-functions", Value::Nil),
             ("after-change-functions", Value::Nil),
@@ -3467,7 +3498,7 @@ impl Interp {
             ("max-image-size", Value::float(10.0)),
             ("image-scaling-factor", Value::string("auto")),
             ("use-short-answers", Value::Nil),
-            ("yes-or-no-prompt", Value::Nil),
+            ("yes-or-no-prompt", Value::string("(yes or no) ")),
             ("async-shell-command-display-buffer", Value::Sym(sym::T)),
             (
                 "shell-command-default-error-buffer",
@@ -4250,6 +4281,157 @@ impl Interp {
         }
     }
 
+    /// `(end-of-file "Error reading from stdin")' — the signal GNU
+    /// raises when noninteractive minibuffer input hits EOF.
+    pub fn batch_eof_flow(&mut self) -> Flow {
+        let eof = self.intern("end-of-file");
+        self.signal_data(eof, vec![Value::string("Error reading from stdin")])
+    }
+
+    /// GNU `read_minibuf_noninteractive': echo PROMPT on stdout and
+    /// read from stdin until `\n', `\r', or EOF.  A `\r' does not
+    /// consume a following `\n' (GNU's getchar loop stops at `\r').
+    /// EOF before any character signals `end-of-file'; a partial
+    /// line at EOF is still returned.  When `read-hide-char' is a
+    /// character, that many masking glyphs plus a newline are echoed.
+    pub fn batch_read_line(&mut self, prompt: &str) -> Result<String, Flow> {
+        use std::io::Write;
+        print!("{prompt}");
+        let _ = std::io::stdout().flush();
+        let hide = self
+            .intern_soft("read-hide-char")
+            .map(|id| self.symbol_value(id))
+            .and_then(|v| match v {
+                Value::Int(n) if (0..=0x10ffff).contains(&n) => char::from_u32(n as u32),
+                _ => None,
+            });
+        let mut line: Vec<u8> = Vec::new();
+        let mut got_eof = false;
+        {
+            use std::io::Read;
+            let stdin = self
+                .batch_stdin
+                .get_or_insert_with(|| std::io::BufReader::new(std::io::stdin()));
+            let mut b = [0u8; 1];
+            loop {
+                match stdin.read(&mut b) {
+                    Ok(0) | Err(_) => {
+                        got_eof = true;
+                        break;
+                    }
+                    Ok(_) if b[0] == b'\n' || b[0] == b'\r' => break,
+                    Ok(_) => line.push(b[0]),
+                }
+            }
+        }
+        if let Some(h) = hide {
+            let mut out = String::new();
+            for _ in 0..line.len() {
+                out.push(h);
+            }
+            out.push('\n');
+            print!("{out}");
+            let _ = std::io::stdout().flush();
+        }
+        self.minibuf_level += 1;
+        let r = if got_eof && line.is_empty() {
+            Err(self.batch_eof_flow())
+        } else {
+            Ok(String::from_utf8_lossy(&line).into_owned())
+        };
+        self.minibuf_level -= 1;
+        r
+    }
+
+    /// Read a single character from batch stdin (the way GNU's
+    /// `read-char' and `y-or-n-p' consume the same `getchar' stream).
+    /// EOF signals `end-of-file'.
+    pub fn batch_read_char(&mut self) -> Result<i128, Flow> {
+        use std::io::Read;
+        let mut b = [0u8; 1];
+        let r = {
+            let stdin = self
+                .batch_stdin
+                .get_or_insert_with(|| std::io::BufReader::new(std::io::stdin()));
+            stdin.read(&mut b)
+        };
+        match r {
+            Ok(0) | Err(_) => Err(self.batch_eof_flow()),
+            Ok(_) => Ok(b[0] as i128),
+        }
+    }
+
+    /// Minibuffer line input in batch: read one line from stdin when
+    /// running noninteractively.  Returns `None' when a front-end
+    /// reader should handle it instead.
+    pub fn batch_minibuf_line(&mut self, prompt: &str) -> Result<Option<String>, Flow> {
+        if self.minibuf_reader.is_none() && self.noninteractive {
+            return self.batch_read_line(prompt).map(Some);
+        }
+        Ok(None)
+    }
+
+    /// True when the selected window is the minibuffer window
+    /// (GNU `BASE_EQ (selected_window, minibuf_window)').
+    pub fn selected_window_is_minibuffer(&self) -> bool {
+        let Some(sel) = crate::editor::sel_window(self) else {
+            return false;
+        };
+        let Some(frame) = &self.selected_frame else {
+            return false;
+        };
+        match &frame.borrow().minibuffer {
+            Some(mb) => Rc::ptr_eq(&sel, mb),
+            None => false,
+        }
+    }
+
+    /// GNU `string_to_object' (minibuf.c): read a Lisp object from
+    /// VAL; an empty string falls back to DEFALT's string (or first
+    /// string element).  Trailing non-whitespace signals
+    /// `invalid-read-syntax'.
+    pub fn string_to_object(&mut self, val: &Value, defalt: &Value) -> EvalResult {
+        let mut text = match val {
+            Value::Str(s) => s.borrow().clone(),
+            _ => String::new(),
+        };
+        if text.is_empty() {
+            let d = match defalt {
+                Value::Cons(c) => c.borrow().car.clone(),
+                _ => defalt.clone(),
+            };
+            if let Value::Str(s) = &d {
+                text = s.borrow().clone();
+            }
+        }
+        match self.read_from_string(&text, 0) {
+            Ok((form, pos)) => {
+                // Only trailing whitespace may follow the form.
+                if text.chars().skip(pos).any(|c| !matches!(c, ' ' | '\t' | '\n')) {
+                    let irs = self.intern("invalid-read-syntax");
+                    return Err(self.signal_data(
+                        irs,
+                        vec![Value::string("Trailing garbage following expression")],
+                    ));
+                }
+                Ok(form)
+            }
+            Err(_) => {
+                let eof = self.intern("end-of-file");
+                Err(self.signal_data(eof, vec![Value::string("End of file during parsing")]))
+            }
+        }
+    }
+
+    /// Interactive-spec line input: front-end reader when available,
+    /// else batch stdin (GNU `read_minibuf_noninteractive'), else None.
+    fn spec_line(&mut self, prompt: &str) -> Result<Option<String>, Flow> {
+        if self.minibuf_reader.is_some() {
+            return self.minibuf_line(prompt).map(Some);
+        }
+        self.batch_minibuf_line(prompt)
+    }
+
     /// Value of `current-prefix-arg` (nil when unset).
     pub fn prefix_arg(&self) -> Value {
         self.intern_soft("current-prefix-arg")
@@ -4373,45 +4555,84 @@ impl Interp {
                         'n' | 'N' => {
                             let prompt = take_prompt(&chars, &mut pos);
                             let pa = self.prefix_arg();
-                            if !pa.is_nil() {
+                            // `N' uses a supplied prefix; `n' always
+                            // prompts (GNU callint.c).
+                            if c == 'N' && !pa.is_nil() {
                                 out.push(prefix_numeric(self, &pa));
                             } else if let Some(v) = self.command_args.first() {
                                 out.push(v.clone());
-                            } else if self.minibuf_reader.is_some() {
-                                let s = self.minibuf_line(&prompt)?;
-                                let n = s.trim().parse::<i128>().unwrap_or(0);
-                                out.push(Value::Int(n));
                             } else {
-                                out.push(Value::Nil);
+                                let rn = self.intern("read-number");
+                                out.push(
+                                    self.apply(&Value::Sym(rn), vec![Value::string(prompt)])?,
+                                );
                             }
                         }
-                        's' | 'B' | 'b' | 'F' | 'f' | 'D' | 'z' | 'Z' => {
+                        'b' | 'B' => {
                             let prompt = take_prompt(&chars, &mut pos);
                             if let Some(v) = self.command_args.first() {
                                 out.push(v.clone());
-                            } else if self.minibuf_reader.is_some() {
-                                let s = self.minibuf_line(&prompt)?;
-                                // `b' defaults to the current buffer on
-                                // empty input (Emacs spec semantics).
-                                if s.is_empty() && c == 'b' {
-                                    let n = self
-                                        .current_buffer_ref()
-                                        .map(|b| b.borrow().name.clone())
-                                        .unwrap_or_default();
-                                    out.push(Value::string(n));
-                                } else {
-                                    out.push(Value::string(s));
-                                }
                             } else {
-                                out.push(Value::Nil);
+                                // GNU callint.c: 'b' defaults to
+                                // other-buffer only when the minibuffer
+                                // window is selected; 'B' always uses
+                                // other-buffer ('b' => require-match t).
+                                let cur = self
+                                    .current_buffer_ref()
+                                    .map(|b| Value::Buffer(b.clone()))
+                                    .unwrap_or(Value::Nil);
+                                let def = if c == 'B' || self.selected_window_is_minibuffer() {
+                                    let ob = self.intern("other-buffer");
+                                    self.apply(&Value::Sym(ob), vec![cur])?
+                                } else {
+                                    cur
+                                };
+                                let rb = self.intern("read-buffer");
+                                let mut argv = vec![Value::string(prompt), def];
+                                if c == 'b' {
+                                    argv.push(Value::t());
+                                }
+                                out.push(self.apply(&Value::Sym(rb), argv)?);
+                            }
+                        }
+                        's' | 'M' => {
+                            let prompt = take_prompt(&chars, &mut pos);
+                            if let Some(v) = self.command_args.first() {
+                                out.push(v.clone());
+                            } else {
+                                let rs = self.intern("read-string");
+                                out.push(
+                                    self.apply(&Value::Sym(rs), vec![Value::string(prompt)])?,
+                                );
+                            }
+                        }
+                        'F' | 'f' | 'D' | 'G' => {
+                            let prompt = take_prompt(&chars, &mut pos);
+                            if let Some(v) = self.command_args.first() {
+                                out.push(v.clone());
+                            } else {
+                                let rfn = self.intern("read-file-name");
+                                out.push(
+                                    self.apply(&Value::Sym(rfn), vec![Value::string(prompt)])?,
+                                );
+                            }
+                        }
+                        'z' | 'Z' => {
+                            let prompt = take_prompt(&chars, &mut pos);
+                            if let Some(v) = self.command_args.first() {
+                                out.push(v.clone());
+                            } else {
+                                let rcs = self.intern("read-coding-system");
+                                out.push(
+                                    self.apply(&Value::Sym(rcs), vec![Value::string(prompt)])?,
+                                );
                             }
                         }
                         'a' | 'C' | 'S' | 'v' => {
                             let prompt = take_prompt(&chars, &mut pos);
                             if let Some(v) = self.command_args.first() {
                                 out.push(v.clone());
-                            } else if self.minibuf_reader.is_some() {
-                                let s = self.minibuf_line(&prompt)?;
+                            } else if let Some(s) = self.spec_line(&prompt)? {
                                 out.push(Value::Sym(self.intern(&s)));
                             } else {
                                 out.push(Value::Nil);
@@ -4422,8 +4643,41 @@ impl Interp {
                             if let Some(v) = self.command_args.first() {
                                 out.push(v.clone());
                             } else if self.minibuf_reader.is_some() {
-                                let s = self.minibuf_line(&prompt)?;
-                                out.push(Value::string(s));
+                                match self.minibuf_input(&prompt, true)? {
+                                    MinibufInput::Key(k) => {
+                                        if c == 'K' {
+                                            out.push(Value::Vec(Rc::new(RefCell::new(
+                                                vec![Value::Int(k)],
+                                            ))));
+                                        } else if k < 128 {
+                                            out.push(Value::string(
+                                                char::from_u32(k as u32)
+                                                    .unwrap_or(' ')
+                                                    .to_string(),
+                                            ));
+                                        } else {
+                                            out.push(Value::Vec(Rc::new(RefCell::new(
+                                                vec![Value::Int(k)],
+                                            ))));
+                                        }
+                                    }
+                                    MinibufInput::Text(t) => {
+                                        out.push(Value::string(t));
+                                    }
+                                }
+                            } else if self.noninteractive {
+                                // GNU batch (threadless builds): one
+                                // getchar yields a one-key sequence.
+                                let k = self.batch_read_char()?;
+                                if c == 'K' {
+                                    out.push(Value::Vec(Rc::new(RefCell::new(vec![
+                                        Value::Int(k),
+                                    ]))));
+                                } else {
+                                    out.push(Value::string(
+                                        char::from_u32(k as u32).unwrap_or(' ').to_string(),
+                                    ));
+                                }
                             } else {
                                 out.push(Value::Nil);
                             }
@@ -4432,22 +4686,18 @@ impl Interp {
                             let prompt = take_prompt(&chars, &mut pos);
                             if let Some(v) = self.command_args.first() {
                                 out.push(v.clone());
-                            } else if self.minibuf_reader.is_some() {
-                                let s = self.minibuf_line(&prompt)?;
-                                match self.read_from_string(&s, 0) {
-                                    Ok((form, _)) => {
-                                        let v = self.eval(&form)?;
-                                        if c == 'X' {
-                                            // 'X' also prints the result.
-                                            let pr = self.prin1_to_string(&v);
-                                            self.message(&pr);
-                                        }
-                                        out.push(v);
-                                    }
-                                    Err(_) => out.push(Value::Nil),
-                                }
                             } else {
-                                out.push(Value::Nil);
+                                // `x' reads a form (read-minibuffer);
+                                // `X' reads and evals (eval-minibuffer).
+                                let fname = if c == 'x' {
+                                    "read-minibuffer"
+                                } else {
+                                    "eval-minibuffer"
+                                };
+                                let f = self.intern(fname);
+                                out.push(
+                                    self.apply(&Value::Sym(f), vec![Value::string(prompt)])?,
+                                );
                             }
                         }
                         'c' | 'e' => {
@@ -4462,6 +4712,11 @@ impl Interp {
                                         out.push(Value::Int(n));
                                     }
                                 }
+                            } else if self.noninteractive {
+                                // GNU batch `read-char' consumes one
+                                // stdin character.
+                                let k = self.batch_read_char()?;
+                                out.push(Value::Int(k));
                             } else {
                                 out.push(Value::Nil);
                             }
@@ -4477,8 +4732,12 @@ impl Interp {
             }
             _ => {
                 // (interactive (list (read-string ...) ...)) — evaluate.
+                // GNU requires the result to be a list (callint.c).
                 let v = self.eval(&spec)?;
-                Ok(v.list_to_vec().unwrap_or_default())
+                match v.list_to_vec() {
+                    Ok(argv) => Ok(argv),
+                    Err(_) => Err(self.wrong_type_mut("listp", &v)),
+                }
             }
         }
     }

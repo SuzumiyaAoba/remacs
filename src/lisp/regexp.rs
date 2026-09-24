@@ -11,6 +11,9 @@
 pub struct Regex {
     prog: Vec<Inst>,
     pub n_groups: usize,
+    /// Extra registers (beyond the 2*(groups+1) match registers)
+    /// reserved for loop progress checks.
+    extra_regs: usize,
     pub case_fold: bool,
     /// Source pattern (for error messages).
     pub source: String,
@@ -44,6 +47,10 @@ enum Inst {
     /// Split: try `a` first (greedy), else `b`.
     Split(usize, usize),
     Jmp(usize),
+    /// Jump to `target` unless regs[`n`] == current position — a
+    /// repetition whose body matched empty stops looping (like GNU,
+    /// which doesn't re-enter a zero-progress iteration).
+    JmpUnlessSame(usize, usize),
     /// Record position into register n (2*g = start, 2*g+1 = end).
     Save(usize),
     Match,
@@ -547,6 +554,8 @@ impl Parser {
 
 struct Codegen {
     prog: Vec<Inst>,
+    /// Next free register slot for loop progress checks.
+    next_reg: usize,
 }
 
 impl Codegen {
@@ -655,18 +664,22 @@ impl Codegen {
                 }
                 match max {
                     None => {
-                        // loop: split(body, end) with back-jump
+                        // loop: split(body, end) with a progress-guarded
+                        // back-jump — an iteration that consumed no
+                        // input exits the loop instead of spinning.
+                        let k = self.next_reg;
+                        self.next_reg += 1;
+                        let head = self.push(Inst::Save(k));
                         let split = self.push(Inst::Split(0, 0));
                         let body_start = self.prog.len();
                         self.emit(node);
-                        self.push(Inst::Jmp(split));
+                        self.push(Inst::JmpUnlessSame(k, head));
                         let end = self.prog.len();
                         self.prog[split] = if *greedy {
                             Inst::Split(body_start, end)
                         } else {
                             Inst::Split(end, body_start)
                         };
-                        // lazy loop exit still needs to try body later
                     }
                     Some(m) => {
                         let optional = m - min;
@@ -713,6 +726,7 @@ pub fn compile_case(pattern: &str, case_fold: bool) -> Result<Regex, RegexError>
     }
     let mut cg = Codegen {
         prog: Vec::with_capacity(64),
+        next_reg: 2 * (p.n_groups + 1),
     };
     cg.push(Inst::Save(0));
     cg.emit(&ast);
@@ -721,6 +735,7 @@ pub fn compile_case(pattern: &str, case_fold: bool) -> Result<Regex, RegexError>
     Ok(Regex {
         prog: cg.prog,
         n_groups: p.n_groups,
+        extra_regs: cg.next_reg - 2 * (p.n_groups + 1),
         case_fold,
         source: pattern.to_string(),
     })
@@ -889,6 +904,13 @@ fn run(
                 pc = *b;
             }
             Inst::Jmp(x) => pc = *x,
+            Inst::JmpUnlessSame(n, target) => {
+                if regs[*n] == Some(sp) {
+                    pc += 1;
+                } else {
+                    pc = *target;
+                }
+            }
             Inst::Save(n) => {
                 regs[*n] = Some(sp);
                 pc += 1;
@@ -900,7 +922,15 @@ fn run(
 
 /// Try to match at exactly `pos`. Returns regs on success.
 pub fn match_at(re: &Regex, text: &[char], pos: usize, syn: SynFn) -> Option<Regs> {
-    run(re, text, 0, pos, vec![None; 2 * (re.n_groups + 1)], 0, syn)
+    run(
+        re,
+        text,
+        0,
+        pos,
+        vec![None; 2 * (re.n_groups + 1) + re.extra_regs],
+        0,
+        syn,
+    )
 }
 
 /// Search forward from `pos`; returns (match_start, match_end) of group 0.

@@ -13,7 +13,8 @@
   (prin1 (format "%d %d" 7 2.9))
   (with-temp-buffer
     (insert "xy")
-    (prin1 (format "%d" (point-marker))))
+    (condition-case e (format "%d" (point-marker))
+      (error (prin1 (car e)))))
   (condition-case e (format "%d" "s") (error (prin1 (car e))))
   ;; flags
   (prin1 (format "%+d %+d % d % d" 3 -3 4 -4))
@@ -27,19 +28,20 @@
   (condition-case e (format "%x" "s") (error (prin1 (car e))))
   ;; %e %f %g
   (prin1 (format "%e" 1234.5))
-  (prin1 (format "%E" 1234.5))
+  (condition-case e (format "%E" 1234.5) (error (prin1 (car e))))
   (prin1 (format "%.2e" 0.001234))
   (prin1 (format "%f %.2f %8.2f" 3.14159 3.14159 3.14159))
   (prin1 (format "%g %g %g" 0.00001 123456789.0 3.5))
   (prin1 (format "%.10g" 3.14159265358979))
   ;; literal % and trailing %
   (prin1 (format "100%%"))
-  (prin1 (format "end%"))
+  (condition-case e (format "end%") (error (prin1 (car e))))
   ;; error on unknown spec
   (condition-case e (format "%z" 1) (error (prin1 (car e))))
   (condition-case e (format "%s") (error (prin1 (car e))))
   ;; format-spec / format-message
-  (prin1 (format-spec "%a-%b-%z" '((?a . "A") (?b . 2))))
+  (condition-case e (format-spec "%a-%b-%z" '((?a . "A") (?b . 2)))
+    (error (prin1 (car e))))
   (prin1 (format-spec "%5a|%-5b|" '((?a . "x") (?b . "y"))))
   (prin1 (format-message "a `x' %s" 1))
   ;; prin1/princ via format

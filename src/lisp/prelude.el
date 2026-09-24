@@ -6772,6 +6772,38 @@ Like `customize-set-variable', but records VALUE as `saved-value'."
         (list 'defvar var value docstring)
         (list 'make-variable-buffer-local (list 'quote var))))
 
+;; imenu.el autoloads + loaddefs defvar-locals (must sit after
+;; `defvar-local').  `imenu--index-alist' stays unbound at -Q — only
+;; its risky-local-variable property is registered.
+(autoload 'imenu "imenu"
+  "Jump to a place in the buffer chosen using a buffer menu or mouse menu." t)
+(autoload 'imenu-add-to-menubar "imenu"
+  "Add an `imenu' entry to the menu bar for the current buffer." t)
+(autoload 'imenu-add-menubar-index "imenu"
+  "Add an Imenu \"Index\" entry on the menu bar for the current buffer." t)
+(defvar imenu-sort-function nil
+  "The function to use for sorting the index mouse-menu.")
+(defvar-local imenu-generic-expression nil
+  "List of definitions for index building in the current buffer.")
+(put 'imenu-generic-expression 'risky-local-variable t)
+(defvar-local imenu-create-index-function 'imenu-default-create-index-function
+  "The function to use for creating a buffer index.")
+(defvar-local imenu-submenus-on-top t
+  "Non-nil means alist submenus stay at the top of the index menu.")
+(defvar-local imenu-prev-index-position-function 'beginning-of-defun
+  "Function to find the next function/variable definition.")
+(defvar-local imenu-extract-index-name-function nil
+  "Function to extract the name for an index position.")
+(defvar-local imenu-name-lookup-function nil
+  "Function to compare a name against an index name.")
+(defvar-local imenu-default-goto-function 'imenu-default-goto-function
+  "The default function called when selecting an Imenu item.")
+(put 'imenu--index-alist 'risky-local-variable t)
+(defvar-local imenu-syntax-alist nil
+  "Alist of syntax-table elements for `imenu-default-create-index-function'.")
+(defvar-local imenu-case-fold-search t
+  "Non-nil means case-insensitive matching when creating the index.")
+
 (defmacro defsubst (name arglist &rest body)
   (cons 'defun (cons name (cons arglist body))))
 
@@ -15417,7 +15449,13 @@ elements that can be added."
             (cons (cons toggle keymap) minor-mode-map-alist)))))
 
 (defun event--posn-at-point ()
-  (if (fboundp 'posn-at-point) (posn-at-point)))
+  (if (fboundp 'posn-at-point)
+      (or (posn-at-point)
+          ;; GNU's C `event-start' still yields a minimal posn in
+          ;; batch mode (window, window-point, (0 . 0), 0) even
+          ;; though `posn-at-point' itself returns nil there.
+          (and noninteractive
+               (list (selected-window) (window-point) '(0 . 0) 0)))))
 
 (defun event-start (event)
   "Return the starting position of EVENT, a click or drag event.
@@ -19638,16 +19676,60 @@ It's also used so that `syntax-ppss-flush-cache' can be used from within
              (combine-after-change-calls . 0)))
   (put (car x) 'lisp-indent-function (cdr x)))
 
+;; GNU lisp-mode.el (preloaded): symbol regexp + Imenu generic
+;; expression for Lisp modes.  `(rx lisp-mode-symbol)' expands to the
+;; literal regexp below on GNU (rx.el is not ported yet).
+(eval-and-compile
+  (defconst lisp-mode-symbol-regexp "\\(?:\\w\\|\\s_\\|\\\\.\\)+"
+    "Regexp matching a Lisp symbol."))
+
+;; The regexps below are GNU `regexp-opt' expansions of the word
+;; lists in lisp-mode.el: "defun"/"defmacro"/"defun*"/"defsubst"/
+;; "define-inline"/"define-advice"/"defadvice"/"define-skeleton"/
+;; "define-compilation-mode"/"define-minor-mode"/"define-globalized-
+;; minor-mode"/"define-derived-mode"/"define-generic-mode"/
+;; "ert-deftest"/"cl-def*"/"define-modify-macro"/"defsetf"/
+;; "define-setf-expander"/"define-method-combination"/"defgeneric"/
+;; "defmethod" (and the Variables/Types lists).  Our regexp-opt
+;; factors differently, so the literals keep observable parity.
+(defvar lisp-imenu-generic-expression
+  (list
+   (list nil
+         "^\\s-*(\\(cl-def\\(?:generic\\|ine-compiler-macro\\|m\\(?:acro\\|ethod\\)\\|subst\\|un\\)\\|def\\(?:advice\\|generic\\|ine-\\(?:advice\\|compil\\(?:ation-mode\\|er-macro\\)\\|derived-mode\\|g\\(?:\\(?:eneric\\|lobalized-minor\\)-mode\\)\\|inline\\|m\\(?:ethod-combination\\|inor-mode\\|odify-macro\\)\\|s\\(?:etf-expander\\|keleton\\)\\)\\|m\\(?:acro\\|ethod\\)\\|s\\(?:etf\\|ubst\\)\\|un\\*?\\)\\|ert-deftest\\)\\s-+\\(\\(?:\\w\\|\\s_\\|\\\\.\\)+\\)"
+	 2)
+   ;; Like the previous, but uses a quoted symbol as the name.
+   (list nil
+         "^\\s-*(\\(def\\(?:\\(?:ine-obsolete-function-\\)?alias\\)\\)\\s-+'\\(\\(?:\\w\\|\\s_\\|\\\\.\\)+\\)"
+	 2)
+   (list "Variables"
+         "^\\s-*(\\(def\\(?:c\\(?:onst\\(?:ant\\)?\\|ustom\\)\\|ine-symbol-macro\\|parameter\\|var-keymap\\)\\)\\s-+\\(\\(?:\\w\\|\\s_\\|\\\\.\\)+\\)"
+	 2)
+   ;; For `defvar'/`defvar-local', we ignore (defvar FOO) constructs.
+   (list "Variables"
+         (concat "^\\s-*(defvar\\(?:-local\\)?\\s-+\\("
+                 lisp-mode-symbol-regexp "\\)"
+                 "[[:space:]\n]+[^)]")
+	 1)
+   (list "Types"
+         "^\\s-*(\\(cl-def\\(?:struct\\|type\\)\\|def\\(?:class\\|face\\|group\\|ine-\\(?:condition\\|error\\|widget\\)\\|package\\|struct\\|t\\(?:\\(?:hem\\|yp\\)e\\)\\)\\|oclosure-define\\)\\s-+'?\\(\\(?:\\w\\|\\s_\\|\\\\.\\)+\\)"
+	 2))
+  "Imenu generic expression for Lisp mode.  See `imenu-generic-expression'.")
+
 (define-derived-mode lisp-data-mode prog-mode "Lisp-Data"
   "Major mode for editing Lisp data (as opposed to code)."
   (setq-local comment-start ";")
-  (setq-local comment-start-skip ";+ *"))
+  (setq-local comment-start-skip ";+ *")
+  ;; GNU `lisp-mode-variables' sets these for every Lisp mode.
+  (setq-local imenu-generic-expression lisp-imenu-generic-expression)
+  (setq imenu-case-fold-search nil))
 
 (define-derived-mode lisp-mode lisp-data-mode "Lisp"
   "Major mode for editing Lisp code."
   (setq-local indent-line-function #'lisp-indent-line)
   (setq-local comment-start ";")
-  (setq-local comment-start-skip ";+ *"))
+  (setq-local comment-start-skip ";+ *")
+  ;; GNU lisp-mode.el: case-folding on for Imenu in Common Lisp.
+  (setq imenu-case-fold-search t))
 
 (define-derived-mode emacs-lisp-mode lisp-data-mode "Emacs-Lisp"
   "Major mode for editing Emacs Lisp code."
@@ -24654,7 +24736,8 @@ SEQUENCE2 may be a list, vector, or string."
 (define-derived-mode mixal-mode prog-mode "MIXAL")
 (define-derived-mode ses-mode prog-mode "SES")
 (define-derived-mode sieve-mode prog-mode "Sieve")
-(define-derived-mode lisp-data-mode prog-mode "Lisp-Data")
+;; `lisp-data-mode' has a real definition earlier in this file (with
+;; comment/imenu setup); don't clobber it with an empty stub here.
 (define-derived-mode autoconf-mode prog-mode "Autoconf")
 (define-derived-mode compilation-mode prog-mode "Compilation")
 (define-derived-mode ebrowse-tree-mode prog-mode "Ebrowse-Tree")

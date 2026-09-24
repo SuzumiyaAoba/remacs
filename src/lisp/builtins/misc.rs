@@ -2851,7 +2851,7 @@ pub(crate) fn lisp_time_to_us(i: &mut Interp, v: &Value) -> Result<i128, Flow> {
             };
             Ok(ticks * 1_000_000 + n(2))
         }
-        _ => Err(i.wrong_type_mut("listp", v)),
+        _ => Err(i.error("Invalid time specification")),
     }
 }
 
@@ -10124,21 +10124,18 @@ fn f_read_expression(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     };
     let input = if i.minibuf_reader.is_some() {
         i.minibuf_line(&prompt)?
+    } else if i.noninteractive {
+        // GNU `read_minibuf_noninteractive' reads a line from stdin.
+        i.batch_read_line(&prompt)?
     } else {
         // GNU reads an answer from the minibuffer; in batch that is
         // stdin and signals end-of-file with this message.
         let eof = i.intern("end-of-file");
         return Err(i.signal_data(eof, vec![Value::string("Error reading from stdin")]));
     };
-    let mut r = crate::lisp::reader::Reader::new(i, &input);
-    match r.read() {
-        Ok(Some(v)) => Ok(v),
-        Ok(None) => {
-            let eof = i.intern("end-of-file");
-            Err(i.signal_data(eof, vec![Value::string("End of file during parsing")]))
-        }
-        Err(f) => Err(f),
-    }
+    // GNU `string_to_object': parse the line; empty input has no
+    // default here, so it signals `end-of-file'.
+    i.string_to_object(&Value::string(input), &Value::Nil)
 }
 
 fn f_one(_i: &mut Interp, _a: Vec<Value>) -> EvalResult {

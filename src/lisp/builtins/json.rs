@@ -233,8 +233,10 @@ impl<'a> Parser<'a> {
 
     fn lit(&mut self, word: &str, v: Value) -> Result<Value, PErr> {
         for c in word.chars() {
+            // GNU signals json-parse-error (not json-end-of-file) for
+            // a truncated literal like "tru".
             if self.peek() != Some(c) {
-                return Err(self.err(self.peek().is_none()));
+                return Err(self.err(false));
             }
             self.pos += 1;
         }
@@ -455,7 +457,29 @@ fn f_json_parse_string(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let v = p.value()?;
     p.ws();
     if p.pos != p.s.len() {
-        return Err(p.err(false));
+        // GNU: leftover input after a valid value is a dedicated
+        // `json-trailing-content' error with (LINE nil POS) data.
+        let (pos, line) = (p.pos + 1, p.line as i128);
+        drop(p);
+        let e = i.intern("json-trailing-content");
+        // Lazily define the error's condition chain (as GNU's
+        // define_error does) so `condition-case ... (error ...)'
+        // catches it: (json-trailing-content json-parse-error
+        // json-error error).
+        let ec = i.intern("error-conditions");
+        if i.get_prop(e, ec).is_nil() {
+            let chain = Value::list(vec![
+                Value::Sym(e),
+                Value::Sym(i.intern("json-parse-error")),
+                Value::Sym(i.intern("json-error")),
+                Value::Sym(i.intern("error")),
+            ]);
+            i.put_prop(e, ec, chain);
+        }
+        return Err(i.signal_data(
+            e,
+            vec![Value::Int(line), Value::Nil, Value::Int(pos as i128)],
+        ));
     }
     Ok(v)
 }

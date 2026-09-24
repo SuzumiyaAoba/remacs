@@ -50,7 +50,7 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!("min", many 1, f_min, "Return smallest of arguments."),
     S!("max", many 1, f_max, "Return largest of arguments."),
     S!("=", many 1, f_numeq, "Return t if args, all numbers, are equal."),
-    S!("/=", many 1, f_numne, "Return t if no two args are equal."),
+    S!("/=", 2, 2, f_numne, "Return t if no two args are equal."),
     S!("<", many 1, f_lt, "Return t if args are increasing."),
     S!("<=", many 1, f_le, "Return t if args are non-decreasing."),
     S!(">", many 1, f_gt, "Return t if args are decreasing."),
@@ -430,6 +430,9 @@ fn f_abs(i: &mut Interp, args: Vec<Value>) -> EvalResult {
 
 fn f_min(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     let mut best = arg(&args, 0);
+    if to_num(&best).is_none() {
+        return Err(i.wrong_type_mut("number-or-marker-p", &best));
+    }
     for a in &args[1..] {
         if to_num(a).is_none() {
             return Err(i.wrong_type_mut("number-or-marker-p", a));
@@ -444,6 +447,9 @@ fn f_min(i: &mut Interp, args: Vec<Value>) -> EvalResult {
 
 fn f_max(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     let mut best = arg(&args, 0);
+    if to_num(&best).is_none() {
+        return Err(i.wrong_type_mut("number-or-marker-p", &best));
+    }
     for a in &args[1..] {
         if to_num(a).is_none() {
             return Err(i.wrong_type_mut("number-or-marker-p", a));

@@ -81,6 +81,8 @@ pub(crate) static SUBRS: &[Subr] = &[
     ),
     S!("setcar", 2, 2, f_setcar, "Set the car of CELL to NEWCAR."),
     S!("setcdr", 2, 2, f_setcdr, "Set the cdr of CELL to NEWCDR."),
+    S!("rplaca", 2, 2, f_setcar, "Set the car of CELL to NEWCAR."),
+    S!("rplacd", 2, 2, f_setcdr, "Set the cdr of CELL to NEWCDR."),
     S!(
         "member",
         2,
@@ -95,6 +97,20 @@ pub(crate) static SUBRS: &[Subr] = &[
         2,
         f_memql,
         "Tail of LIST whose car is ELT (eql)."
+    ),
+    S!(
+        "member-if",
+        2,
+        2,
+        f_member_if,
+        "Tail of LIST whose car satisfies PRED."
+    ),
+    S!(
+        "member-if-not",
+        2,
+        2,
+        f_member_if_not,
+        "Tail of LIST whose car fails PRED."
     ),
     S!(
         "assq",
@@ -650,6 +666,38 @@ fn f_memq(i: &mut Interp, args: Vec<Value>) -> EvalResult {
 }
 fn f_memql(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     member_impl(i, &args[0], &args[1], |_ii, a, b| super::eql_values(a, b))
+}
+
+fn member_if_impl(i: &mut Interp, pred: &Value, list: &Value, want: bool) -> EvalResult {
+    let mut cur = list.clone();
+    let mut guard = 0usize;
+    loop {
+        match &cur {
+            Value::Cons(c) => {
+                guard += 1;
+                if guard > 500_000 {
+                    return Err(err_circular(i));
+                }
+                let (car, next) = {
+                    let b = c.borrow();
+                    (b.car.clone(), b.cdr.clone())
+                };
+                if i.apply(pred, vec![car])?.truthy() == want {
+                    return Ok(cur);
+                }
+                cur = next;
+            }
+            Value::Nil => return Ok(Value::Nil),
+            other => return Err(i.wrong_type_mut("listp", other)),
+        }
+    }
+}
+
+fn f_member_if(i: &mut Interp, args: Vec<Value>) -> EvalResult {
+    member_if_impl(i, &args[0], &args[1], true)
+}
+fn f_member_if_not(i: &mut Interp, args: Vec<Value>) -> EvalResult {
+    member_if_impl(i, &args[0], &args[1], false)
 }
 
 fn assoc_impl(

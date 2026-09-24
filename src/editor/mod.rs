@@ -1738,7 +1738,7 @@ pub(crate) static SUBRS: &[Subr] = &[
         "Read one character."
     ),
     S!("y-or-n-p", 1, 1, f_y_or_n_p, "Ask yes/no (batch: t)."),
-    S!("yes-or-no-p", 1, 1, f_y_or_n_p, ""),
+    S!("yes-or-no-p", 1, 1, f_yes_or_no_p, ""),
     // commands/misc
     S!(
         "commandp",
@@ -7029,6 +7029,10 @@ fn f_text_char_description(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 
 /// Read one raw key event through the front-end hook.
 fn f_read_char(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
+    if i.minibuf_reader.is_none() && i.noninteractive {
+        // GNU batch `read-char' consumes one character from stdin.
+        return Ok(Value::Int(i.batch_read_char()?));
+    }
     if i.minibuf_reader.is_some() {
         match i.minibuf_input("", true)? {
             crate::lisp::eval::MinibufInput::Key(k) => {
@@ -7044,7 +7048,7 @@ fn f_read_char(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
 }
 
 fn f_read_key_sequence(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    // Read one key through the front-end; batch mode returns "".
+    // Read one key through the front-end; batch mode consumes a char.
     if i.minibuf_reader.is_some() {
         let prompt = match &a[0] {
             Value::Str(s) => s.borrow().clone(),
@@ -7059,10 +7063,21 @@ fn f_read_key_sequence(i: &mut Interp, a: Vec<Value>) -> EvalResult {
             return Ok(Value::Vec(Rc::new(RefCell::new(vec![Value::Int(k)]))));
         }
     }
+    if i.minibuf_reader.is_none() && i.noninteractive {
+        // GNU threadless builds: read-key-sequence getchars one key.
+        let k = i.batch_read_char()?;
+        return Ok(Value::string(
+            char::from_u32(k as u32).unwrap_or(' ').to_string(),
+        ));
+    }
     Ok(Value::string(""))
 }
-fn f_read_key_sequence_vector(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
-    let _ = i;
+fn f_read_key_sequence_vector(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    if i.minibuf_reader.is_none() && i.noninteractive {
+        let k = i.batch_read_char()?;
+        return Ok(Value::Vec(Rc::new(RefCell::new(vec![Value::Int(k)]))));
+    }
+    let _ = a;
     Ok(Value::Vec(Rc::new(RefCell::new(Vec::new()))))
 }
 fn f_this_command_keys(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
@@ -10096,57 +10111,204 @@ fn batch_eof(i: &mut Interp) -> Flow {
     i.signal_data(eof, vec![Value::string("Error reading from stdin")])
 }
 
-fn minibuf_or(i: &mut Interp, prompt: &Value, fallback: Value) -> Result<Option<String>, Flow> {
-    if i.minibuf_reader.is_none() {
-        return Err(batch_eof(i));
+/// `read-buffer' prompt (GNU Fread_buffer): when a default is given,
+/// strip a trailing ":", " ", or ": " from PROMPT and run it through
+/// `format-prompt' so "(default X)" lands before the colon.
+fn read_buffer_prompt(i: &mut Interp, prompt: &Value, default: &Value) -> String {
+    let mut p = match prompt {
+        Value::Str(s) => s.borrow().clone(),
+        _ => String::new(),
+    };
+    if default.is_nil() {
+        return p;
     }
+    if p.ends_with(": ") {
+        p.truncate(p.len() - 2);
+    } else if p.ends_with(':') || p.ends_with(' ') {
+        p.truncate(p.len() - 1);
+    }
+    let fp = i.intern("format-prompt");
+    match i.apply(
+        &Value::Sym(fp),
+        vec![Value::string(p.clone()), default.clone()],
+    ) {
+        Ok(Value::Str(s)) => s.borrow().clone(),
+        _ => p,
+    }
+}
+
+/// `read-number' prompt (GNU subr.el): when a default is given,
+/// insert " (default X)" before a trailing colon's preceding position
+/// ("Num: " → "Num (default 7): "); without a colon, trailing
+/// whitespace is replaced ("N?" → "N? (default 0)").
+fn read_number_prompt(i: &mut Interp, prompt: &Value, default: &Value) -> String {
     let p = match prompt {
         Value::Str(s) => s.borrow().clone(),
         _ => String::new(),
     };
+    let d1 = match default {
+        Value::Cons(c) => c.borrow().car.clone(),
+        _ => default.clone(),
+    };
+    if d1.is_nil() {
+        return p;
+    }
+    let ds = i.princ_to_string(&d1);
+    let trimmed = p.trim_end_matches([' ', '\t']);
+    if let Some(base) = trimmed.strip_suffix(':') {
+        // Insert before the colon, keeping it and the trailing space.
+        format!("{base} (default {ds}):{}", &p[trimmed.len()..])
+    } else {
+        format!("{trimmed} (default {ds})")
+    }
+}
+
+fn minibuf_or(i: &mut Interp, prompt: &Value, fallback: Value) -> Result<Option<String>, Flow> {
+    let p = match prompt {
+        Value::Str(s) => s.borrow().clone(),
+        _ => String::new(),
+    };
+    if let Some(line) = i.batch_minibuf_line(&p)? {
+        // GNU `read_minibuf_noninteractive' returns the raw line.
+        return Ok(Some(line));
+    }
+    if i.minibuf_reader.is_none() {
+        return Err(batch_eof(i));
+    }
     let _ = fallback;
     Ok(Some(i.minibuf_line(&p)?))
 }
 
 fn f_read_from_minibuffer(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    if let Some(s) = minibuf_or(i, &a[0], arg(&a, 4))? {
+    // Args: PROMPT INITIAL-CONTENTS KEYMAP READ HISTORY DEFAULT-VALUE
+    // INHERIT-INPUT-METHOD.
+    if let Some(s) = minibuf_or(i, &a[0], arg(&a, 5))? {
+        if !arg(&a, 3).is_nil() {
+            // READ flag: parse the line as a Lisp object
+            // (GNU `read_minibuf_noninteractive' expflag).
+            return i.string_to_object(&Value::string(s), &arg(&a, 5));
+        }
         return Ok(Value::string(s));
     }
-    Ok(arg(&a, 4))
+    Ok(arg(&a, 5))
 }
 fn f_read_buffer(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    if let Some(s) = minibuf_or(i, &a[0], arg(&a, 1))? {
+    // GNU Fread_buffer: a BUFFER default becomes its name.
+    let d = match arg(&a, 1) {
+        Value::Buffer(b) => Value::string(b.borrow().name.clone()),
+        v => v,
+    };
+    let p = read_buffer_prompt(i, &a[0], &d);
+    if let Some(line) = i.batch_minibuf_line(&p)? {
+        // GNU batch: empty input yields the default (or "").
+        if line.is_empty() {
+            return Ok(if d.is_nil() { Value::string("") } else { d });
+        }
+        return Ok(Value::string(line));
+    }
+    if let Some(s) = minibuf_or(i, &Value::string(p), d.clone())? {
+        if s.is_empty() {
+            return Ok(if d.is_nil() { Value::string("") } else { d });
+        }
         return Ok(Value::string(s));
     }
-    Ok(arg(&a, 1))
+    Ok(d)
 }
 fn f_read_file_name(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     if let Some(s) = minibuf_or(i, &a[0], arg(&a, 3))? {
+        // GNU batch `read-file-name' echoes the raw prompt and returns
+        // the raw line ("" for empty input).
         return Ok(Value::string(s));
     }
     Ok(arg(&a, 3))
 }
 fn f_read_number(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    if i.minibuf_reader.is_none() {
-        return Err(batch_eof(i));
-    }
-    match a.get(1) {
-        Some(v) => Ok(v.clone()),
-        _ => Ok(Value::Int(0)),
+    let prompt = read_number_prompt(i, a.get(0).unwrap_or(&Value::Nil), &arg(&a, 1));
+    // GNU read-number (subr.el): `read' the input; non-numbers and
+    // empty-without-default reprompt after "Please enter a number.".
+    loop {
+        let line = if i.minibuf_reader.is_none() && i.noninteractive {
+            i.batch_read_line(&prompt)?
+        } else if i.minibuf_reader.is_some() {
+            i.minibuf_line(&prompt)?
+        } else {
+            return Err(batch_eof(i));
+        };
+        let n = if line.is_empty() {
+            arg(&a, 1)
+        } else {
+            // GNU `(read str)' errors (e.g. unbalanced parens)
+            // propagate out of read-number.
+            i.read_from_string(&line, 0)?.0
+        };
+        match n {
+            Value::Int(_) | Value::Float(_) => return Ok(n),
+            _ => {
+                i.message("Please enter a number.");
+                std::thread::sleep(std::time::Duration::from_secs(1));
+            }
+        }
     }
 }
 fn f_read_regexp(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    // GNU read-regexp (replace.el): a prompt already ending in ":" is
+    // used as-is; otherwise format-prompt adds the default.  Empty
+    // input yields the default (car of a list).
+    let d = match &arg(&a, 1) {
+        Value::Cons(c) => c.borrow().car.clone(),
+        v => v.clone(),
+    };
+    let prompt = match a.get(0) {
+        Some(Value::Str(s)) => s.borrow().clone(),
+        _ => String::new(),
+    };
+    let trailing = prompt.trim_end_matches([' ', '\t']);
+    let p = if trailing.ends_with(':') {
+        prompt
+    } else if d.is_nil() {
+        prompt
+    } else {
+        let fp = i.intern("format-prompt");
+        match i.apply(
+            &Value::Sym(fp),
+            vec![Value::string(prompt.clone()), d.clone()],
+        ) {
+            Ok(Value::Str(s)) => s.borrow().clone(),
+            _ => prompt,
+        }
+    };
+    if let Some(line) = i.batch_minibuf_line(&p)? {
+        if line.is_empty() {
+            return Ok(d);
+        }
+        return Ok(Value::string(line));
+    }
     if i.minibuf_reader.is_none() {
         return Err(batch_eof(i));
     }
-    match a.get(1) {
-        Some(Value::Str(_s)) => Ok(a[1].clone()),
-        _ => Ok(Value::string("")),
+    let line = i.minibuf_line(&p)?;
+    if line.is_empty() {
+        return Ok(d);
     }
+    Ok(Value::string(line))
 }
 fn f_completing_read(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     // (completing-read PROMPT TABLE ...) — interactive: read a line and
-    // complete it against TABLE; batch: EOF on stdin.
+    // complete it against TABLE; batch: read the line from stdin.
+    if i.minibuf_reader.is_none() && i.noninteractive {
+        // GNU batch `read_minibuf_noninteractive': the raw line is
+        // returned verbatim — no completion runs; empty input yields
+        // DEF (arg 6).
+        let prompt = match &a[0] {
+            Value::Str(s) => s.borrow().clone(),
+            _ => String::new(),
+        };
+        let input = i.batch_read_line(&prompt)?;
+        if input.is_empty() {
+            return Ok(arg(&a, 6));
+        }
+        return Ok(Value::string(input));
+    }
     if i.minibuf_reader.is_none() {
         return Err(batch_eof(i));
     }
@@ -10719,24 +10881,86 @@ fn f_completion_boundaries(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 }
 
 fn f_read_string(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    if let Some(s) = minibuf_or(i, &a[0], arg(&a, 1))? {
+    // GNU Fread_string: empty input with a non-nil DEFAULT-VALUE
+    // (4th arg) yields the default (its car when a list).
+    let d = arg(&a, 3);
+    if let Some(s) = minibuf_or(i, &a[0], d.clone())? {
+        if s.is_empty() && !d.is_nil() {
+            return Ok(match &d {
+                Value::Cons(c) => c.borrow().car.clone(),
+                _ => d,
+            });
+        }
         return Ok(Value::string(s));
     }
-    Ok(arg(&a, 1))
+    Ok(d)
 }
 fn f_read_command(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    if let Some(s) = minibuf_or(i, &a[0], Value::Nil)? {
+    // GNU Fread_command: completing-read over commands; batch reads a
+    // raw line — empty input yields the default, else the name is
+    // interned (even when it names no command).
+    let d = arg(&a, 1);
+    if let Some(s) = minibuf_or(i, &a[0], d.clone())? {
+        if s.is_empty() && !d.is_nil() {
+            return Ok(match &d {
+                Value::Cons(c) => c.borrow().car.clone(),
+                _ => d,
+            });
+        }
         return Ok(Value::Sym(i.intern(&s)));
     }
-    match a.get(1) {
-        Some(v) => Ok(v.clone()),
-        None => Ok(Value::Nil),
-    }
+    Ok(d)
 }
 fn f_read_variable(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     f_read_command(i, a)
 }
+/// GNU `y-or-n-p' padding (subr.el): PROMPT plus a separating space
+/// when needed, then the "(y or n) " suffix.
+fn y_or_n_prompt(prompt: &str) -> String {
+    let mut p = prompt.to_string();
+    if !p.is_empty() && !p.ends_with(' ') {
+        p.push(' ');
+    }
+    p.push_str("(y or n) ");
+    p
+}
+
 fn f_y_or_n_p(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    if i.minibuf_reader.is_none() && i.noninteractive {
+        // GNU batch (subr.el): read-string loop — a full line of
+        // "y"/"Y"/"n"/"N" answers; anything else reprompts with a
+        // "Please answer y or n.  " prefix.
+        let prompt = match &a[0] {
+            Value::Str(s) => s.borrow().clone(),
+            _ => String::new(),
+        };
+        let padded = y_or_n_prompt(&prompt);
+        let mut temp = padded.clone();
+        loop {
+            let line = i.batch_read_line(&temp)?;
+            match line.as_str() {
+                "y" | "Y" => return Ok(Value::t()),
+                "n" | "N" => return Ok(Value::Nil),
+                "h" | "H" => {
+                    if i.intern_soft("help-form")
+                        .map(|id| !i.symbol_value(id).is_nil())
+                        .unwrap_or(false)
+                    {
+                        let hf_id = i.intern("help-form");
+                        let hf = i.symbol_value(hf_id);
+                        let evaled = i.eval(&hf)?;
+                        let pr = i.prin1_to_string(&evaled);
+                        use std::io::Write;
+                        println!("{pr}");
+                        let _ = std::io::stdout().flush();
+                    } else {
+                        temp = format!("Please answer y or n.  {padded}");
+                    }
+                }
+                _ => temp = format!("Please answer y or n.  {padded}"),
+            }
+        }
+    }
     if i.minibuf_reader.is_none() {
         return Err(batch_eof(i));
     }
@@ -10767,6 +10991,61 @@ fn f_y_or_n_p(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         }
     }
     Ok(Value::Nil)
+}
+
+fn f_yes_or_no_p(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    // GNU Fyes_or_no_p: `use-short-answers' delegates to y-or-n-p.
+    if i.intern_soft("use-short-answers")
+        .map(|id| !i.symbol_value(id).is_nil())
+        .unwrap_or(false)
+    {
+        return f_y_or_n_p(i, a);
+    }
+    let prompt = match &a[0] {
+        Value::Str(s) => s.borrow().clone(),
+        _ => String::new(),
+    };
+    let suffix = i
+        .intern_soft("yes-or-no-prompt")
+        .and_then(|id| match i.symbol_value(id) {
+            Value::Str(s) => Some(s.borrow().clone()),
+            _ => None,
+        })
+        .unwrap_or_else(|| "(yes or no) ".to_string());
+    let mut full = prompt;
+    if !full.is_empty() && !full.ends_with(' ') {
+        full.push(' ');
+    }
+    full.push_str(&suffix);
+    if i.minibuf_reader.is_none() && i.noninteractive {
+        use std::io::Write;
+        loop {
+            let line = i.batch_read_line(&full)?;
+            match line.to_lowercase().as_str() {
+                "yes" => return Ok(Value::t()),
+                "no" => return Ok(Value::Nil),
+                _ => {
+                    // GNU: ding (\a on stdout), message, sleep 2,
+                    // then reprompt with the same prompt.
+                    print!("\x07");
+                    let _ = std::io::stdout().flush();
+                    i.message("Please answer yes or no.");
+                    std::thread::sleep(std::time::Duration::from_secs(2));
+                }
+            }
+        }
+    }
+    if i.minibuf_reader.is_none() {
+        return Err(batch_eof(i));
+    }
+    loop {
+        let line = i.minibuf_line(&full)?;
+        match line.to_lowercase().as_str() {
+            "yes" => return Ok(Value::t()),
+            "no" => return Ok(Value::Nil),
+            _ => i.message("Please answer yes or no."),
+        }
+    }
 }
 
 // ---------- commands ----------
@@ -13256,14 +13535,9 @@ fn f_completing_read_multiple(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 }
 
 fn f_read_coding_system(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let prompt = match &a[0] {
-        Value::Str(s) => s.borrow().clone(),
-        _ => String::new(),
-    };
-    let input = if i.minibuf_reader.is_some() {
-        i.minibuf_line(&prompt)?
-    } else {
-        String::new()
+    let input = match minibuf_or(i, &arg(&a, 0), Value::Nil)? {
+        Some(s) => s,
+        None => String::new(),
     };
     let def = match a.get(1) {
         Some(Value::Sym(s)) => i.symbol_name(*s),
@@ -13274,14 +13548,9 @@ fn f_read_coding_system(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 }
 
 fn f_read_color(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let prompt = match a.first() {
-        Some(Value::Str(s)) => s.borrow().clone(),
-        _ => "Color name: ".to_string(),
-    };
-    let input = if i.minibuf_reader.is_some() {
-        i.minibuf_line(&prompt)?
-    } else {
-        String::new()
+    let input = match minibuf_or(i, &arg(&a, 0), Value::Nil)? {
+        Some(s) => s,
+        None => String::new(),
     };
     if input.is_empty() && !a.get(2).map(|v| v.truthy()).unwrap_or(false) {
         return Ok(Value::string(""));
@@ -13294,11 +13563,29 @@ fn f_read_passwd(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         Value::Str(s) => s.borrow().clone(),
         _ => String::new(),
     };
+    if i.minibuf_reader.is_none() && i.noninteractive {
+        // GNU (auth-source.el) binds `read-hide-char' to ?* around the
+        // minibuffer read; batch echoes one mask char per input char.
+        let hc = i.intern("read-hide-char");
+        let depth = i.specbind_depth();
+        i.specbind(hc, Value::Int('*' as i128))?;
+        let line = i.batch_read_line(&prompt);
+        i.unbind(i.specbind_depth() - depth)?;
+        let line = line?;
+        // Empty input yields DEFAULT (3rd arg).
+        if line.is_empty() && !arg(&a, 2).is_nil() {
+            return Ok(arg(&a, 2));
+        }
+        return Ok(Value::string(line));
+    }
     let input = if i.minibuf_reader.is_some() {
         i.minibuf_line(&prompt)?
     } else {
         return Err(batch_eof(i));
     };
+    if input.is_empty() && !arg(&a, 2).is_nil() {
+        return Ok(arg(&a, 2));
+    }
     Ok(Value::string(input))
 }
 

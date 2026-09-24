@@ -19,6 +19,7 @@ sha2 = "0.10.8"
 sha3 = "0.10.8"
 smol = "2.0.2"
 unicode-width = "0.2.2"
+unicode_names2 = "4.0.0"
 
 [dev-dependencies]
 gpui = { version = "0.2.2", features = ["runtime_shaders", "test-support"] }

@@ -2,7 +2,7 @@
 ;; --- printer: all value kinds ---
 (dolist (v '(nil t 42 -7 3.14 -0.5 1e10 1.5e-3 "str" "es\"c" "nl\n" "tab\t"
              sym |weird\ sym| ?a ?\n ?\C-a ?\M-x [1 2 3] (a b c) (a . b)
-             #&4"1010" #'car 'car))
+             #&4"\x0f" #'car 'car))
   (ignore-errors (prin1-to-string v))
   (ignore-errors (princ-to-string v)))
 (ignore-errors (prin1-to-string (make-marker)))

@@ -470,7 +470,18 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!("help--docstring-quote", 0, 0, f_noop, ""),
     S!("internal-doc-string-p", 0, 0, f_noop, ""),
     S!("declare-functionp", 1, 1, f_declare_functionp, ""),
+    S!("error-type", 1, 1, f_error_type, "Symbol naming the type of ERROR."),
 ];
+
+/// GNU cl-preloaded.el: an error object is a list `(TYPE . DATA)';
+/// `error-type' is its car (nil stays nil, non-lists signal `listp').
+fn f_error_type(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    match &a[0] {
+        Value::Cons(c) => Ok(c.borrow().car.clone()),
+        Value::Nil => Ok(Value::Nil),
+        other => Err(i.wrong_type_mut("listp", other)),
+    }
+}
 
 fn f_eval(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     // (eval FORM &optional LEXICAL) — a list LEXICAL is the lexical

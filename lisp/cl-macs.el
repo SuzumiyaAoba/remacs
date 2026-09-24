@@ -89,6 +89,23 @@ Thus, (cl-list* A B C) is equivalent to (cons A (cons B C))."
       (setq form `(cons ,(car args) ,form)))
     form))
 
+;;; Aliases (GNU cl-lib.el / cl-macs.el).
+
+(defalias 'cl-values #'list)
+(defalias 'cl-nth-value #'nth)
+(defalias 'cl-multiple-value-call #'apply)
+(defalias 'cl-svref #'aref)
+(defalias 'cl-copy-seq #'copy-sequence)
+
+;; GNU has `(defalias 'cl-locally #'progn)'; our evaluator cannot call a
+;; special form through a symbol alias, so expand to `progn' instead.
+(defmacro cl-locally (&rest body)
+  (cons 'progn body))
+
+(defsubst cl-floatp-safe (object)
+  "Return t if OBJECT is a floating point number."
+  (floatp object))
+
 ;;; callf/callf2.
 
 (defmacro cl-callf (func place &rest args)

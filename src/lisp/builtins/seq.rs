@@ -186,6 +186,13 @@ pub(crate) static SUBRS: &[Subr] = &[
     ),
     S!("seq-copy", 1, 1, f_copy_sequence, ""),
     S!("seq-into", 2, 2, f_seq_into, "Convert SEQ to TYPE."),
+    S!(
+        "seq-into-sequence",
+        1,
+        1,
+        f_seq_into_sequence,
+        "Return SEQ if it is a sequence."
+    ),
     S!("seq-empty-p", 1, 1, f_seq_empty_p, "t if SEQ is empty."),
     S!("seq-first", 1, 1, f_seq_first, "First element of SEQ."),
     S!("seq-rest", 1, 1, f_seq_rest, "SEQ minus first element."),
@@ -622,9 +629,10 @@ fn f_sort(i: &mut Interp, args: Vec<Value>) -> EvalResult {
             true,
         )
     };
-    // Default comparator is `<'.
+    // Default comparator is `value<' (GNU sorts any comparable
+    // values — numbers, strings, symbols — without a predicate).
     let lessp = match lessp {
-        Value::Nil => Value::Sym(i.intern("<")),
+        Value::Nil => Value::Sym(i.intern("value<")),
         f => f,
     };
     let spec = SortSpec {
@@ -944,7 +952,8 @@ fn f_seq_do(i: &mut Interp, args: Vec<Value>) -> EvalResult {
         i.apply(&fun, vec![v.clone()])?;
         Ok(())
     })?;
-    Ok(Value::Nil)
+    // GNU returns the sequence itself.
+    Ok(args[1].clone())
 }
 fn f_seq_map(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     let fun = args[0].clone();
@@ -964,7 +973,9 @@ fn f_seq_filter(i: &mut Interp, args: Vec<Value>) -> EvalResult {
         }
         Ok(())
     })?;
-    Ok(seq_from_like(i, &args[1], out))
+    // GNU seq.el always returns a list here, even for vector/string
+    // input.
+    Ok(Value::list(out))
 }
 fn f_seq_contains_p(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     let items = seq_to_vec(i, &args[0])?;
@@ -1057,7 +1068,8 @@ fn f_seq_remove(i: &mut Interp, args: Vec<Value>) -> EvalResult {
         }
         Ok(())
     })?;
-    Ok(seq_from_like(i, &args[1], out))
+    // GNU seq.el always returns a list here.
+    Ok(Value::list(out))
 }
 fn f_seq_reduce(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     let fun = args[0].clone();
@@ -1113,8 +1125,21 @@ fn f_seq_into(i: &mut Interp, args: Vec<Value>) -> EvalResult {
         }
         Value::string(s)
     } else {
-        return Err(i.wrong_type_mut("symbolp", &args[1]));
+        let name = match &args[1] {
+            Value::Sym(s) => i.obarray.name(*s).to_string(),
+            other => format!("{:?}", other),
+        };
+        return Err(i.error(&format!("Not a sequence type name: {}", name)));
     })
+}
+fn f_seq_into_sequence(i: &mut Interp, args: Vec<Value>) -> EvalResult {
+    match &args[0] {
+        Value::Nil | Value::Cons(_) | Value::Str(_) | Value::Vec(_) => Ok(args[0].clone()),
+        other => {
+            let msg = i.prin1_to_string(other);
+            Err(i.error(&format!("Cannot convert {} into a sequence", msg)))
+        }
+    }
 }
 fn f_seq_empty_p(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     Ok(Value::from_bool(seq_to_vec(i, &args[0])?.is_empty()))
@@ -1136,53 +1161,37 @@ fn f_seq_last(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     Ok(items.into_iter().last().unwrap_or(Value::Nil))
 }
 fn f_seq_min(i: &mut Interp, args: Vec<Value>) -> EvalResult {
+    // GNU's seq-min applies `min' across the elements, so an empty
+    // sequence fails with wrong-number-of-arguments and any
+    // non-number element is a type error.
     let items = seq_to_vec(i, &args[0])?;
-    let mut best: Option<f64> = None;
-    let mut bestv = Value::Nil;
-    for v in items {
-        if let Value::Int(n) = v {
-            let f = n as f64;
-            if best.map(|b| f < b).unwrap_or(true) {
-                best = Some(f);
-                bestv = v.clone();
-            }
-        }
-    }
-    if best.is_none() {
-        return Err(i.wrong_type_mut("sequencep", &args[0]));
-    }
-    Ok(bestv)
+    let f = Value::Sym(i.intern("min"));
+    i.apply(&f, items)
 }
 fn f_seq_max(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     let items = seq_to_vec(i, &args[0])?;
-    let mut best: Option<f64> = None;
-    let mut bestv = Value::Nil;
-    for v in items {
-        if let Value::Int(n) = v {
-            let f = n as f64;
-            if best.map(|b| f > b).unwrap_or(true) {
-                best = Some(f);
-                bestv = v.clone();
-            }
-        }
-    }
-    if best.is_none() {
-        return Err(i.wrong_type_mut("sequencep", &args[0]));
-    }
-    Ok(bestv)
+    let f = Value::Sym(i.intern("max"));
+    i.apply(&f, items)
 }
 fn f_seq_uniq(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     let items = seq_to_vec(i, &args[0])?;
+    let testfn = arg(&args, 1);
     let mut out: Vec<Value> = Vec::new();
     'outer: for v in items {
         for u in &out {
-            if equal_values(i, u, &v) {
+            let dup = if testfn.truthy() {
+                i.apply(&testfn, vec![u.clone(), v.clone()])?.truthy()
+            } else {
+                equal_values(i, u, &v)
+            };
+            if dup {
                 continue 'outer;
             }
         }
         out.push(v);
     }
-    Ok(seq_from_like(i, &args[0], out))
+    // GNU seq.el always returns a list here.
+    Ok(Value::list(out))
 }
 fn f_make_char_table(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     // Char-table = #s(char-table SUBTYPE [65 slots] EXTRA...) — a

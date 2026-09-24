@@ -4,7 +4,8 @@ use super::{S, arg, want_int, want_string};
 use crate::lisp::Interp;
 use crate::lisp::error::{EvalResult, Flow};
 use crate::lisp::obarray::sym;
-use crate::lisp::value::{Subr, Value, eight_bit_byte, lisp_char, lisp_char_code};
+use crate::lisp::value::{Subr, SymId, Value, eight_bit_byte, lisp_char, lisp_char_code};
+use std::rc::Rc;
 
 pub(crate) static SUBRS: &[Subr] = &[
     S!("string", many 0, f_string, "Concatenate characters into a string."),
@@ -84,6 +85,13 @@ pub(crate) static SUBRS: &[Subr] = &[
         1,
         f_number_to_string,
         "Return NUMBER as a string."
+    ),
+    S!(
+        "int-to-string",
+        1,
+        1,
+        f_number_to_string,
+        "Return INTEGER as a string."
     ),
     S!(
         "string-to-char",
@@ -290,9 +298,15 @@ pub(crate) static SUBRS: &[Subr] = &[
     ),
     S!("sxhash-equal", 1, 1, f_sxhash, "Hash of OBJECT."),
     S!("sxhash", 1, 1, f_sxhash, "Hash of OBJECT."),
-    S!("sxhash-eq", 1, 1, f_sxhash, "Hash of OBJECT."),
-    S!("sxhash-eql", 1, 1, f_sxhash, "Hash of OBJECT."),
-    S!("sxhash-equal-including-properties", 1, 1, f_sxhash, ""),
+    S!("sxhash-eq", 1, 1, f_sxhash_eq, "Hash of OBJECT."),
+    S!("sxhash-eql", 1, 1, f_sxhash_eql, "Hash of OBJECT."),
+    S!(
+        "sxhash-equal-including-properties",
+        1,
+        1,
+        f_sxhash_including_props,
+        ""
+    ),
     S!(
         "clear-string",
         1,
@@ -919,13 +933,13 @@ fn f_char_to_string(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     let c = char::from_u32((n & 0x3f_ffff) as u32).unwrap_or('\0');
     Ok(Value::string(c.to_string()))
 }
-/// `string-trim-left/right` use regexps (subr-x): strip the longest
-/// prefix/suffix matching `(?:TRIM)+`. TRIM defaults to whitespace.
+/// `string-trim-left/right` use regexps (subr-x): strip ONE match of
+/// TRIM at the edge. TRIM nil or absent defaults to whitespace.
 fn trim_re(i: &mut Interp, args: &[Value], idx: usize) -> Result<String, Flow> {
-    args.get(idx)
-        .map(|v| want_string(i, v))
-        .transpose()
-        .map(|o| o.unwrap_or_else(|| "[ \t\n\r]+".into()))
+    match args.get(idx) {
+        None | Some(Value::Nil) => Ok("[ \t\n\r]+".into()),
+        Some(v) => want_string(i, v),
+    }
 }
 
 fn f_string_trim(i: &mut Interp, args: Vec<Value>) -> EvalResult {
@@ -947,7 +961,9 @@ fn f_string_trim_right(i: &mut Interp, args: Vec<Value>) -> EvalResult {
 }
 
 fn trim_left_re(i: &mut Interp, s: &str, trim: &str) -> Result<String, Flow> {
-    let re = crate::lisp::regexp::compile(&format!("\\`\\(?:{}\\)+", trim))
+    // GNU: (string-match (concat "\\`" regexp) string) — a single
+    // match at the start is stripped (subr-x doesn't loop).
+    let re = crate::lisp::regexp::compile(&format!("\\`{}", trim))
         .map_err(|_| i.error("Invalid regexp"))?;
     let syn = crate::editor::re_syntax(i);
     let chars: Vec<char> = s.chars().collect();
@@ -961,7 +977,8 @@ fn trim_left_re(i: &mut Interp, s: &str, trim: &str) -> Result<String, Flow> {
 }
 
 fn trim_right_re(i: &mut Interp, s: &str, trim: &str) -> Result<String, Flow> {
-    let re = crate::lisp::regexp::compile(&format!("\\(?:{}\\)+\\'", trim))
+    // GNU: (string-match (concat regexp "\\'") string).
+    let re = crate::lisp::regexp::compile(&format!("{}\\'", trim))
         .map_err(|_| i.error("Invalid regexp"))?;
     let syn = crate::editor::re_syntax(i);
     let chars: Vec<char> = s.chars().collect();
@@ -1007,11 +1024,23 @@ fn f_string_join(i: &mut Interp, args: Vec<Value>) -> EvalResult {
 }
 fn f_split_string(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     let s = want_string(i, &args[0])?;
+    let sep_is_default = matches!(args.get(1), None | Some(Value::Nil));
     let sep = match args.get(1) {
         None | Some(Value::Nil) => "[ \u{0C}\t\n\r\u{0B}]+".into(),
         Some(v) => want_string(i, v)?,
     };
-    let omit_nulls = args.get(2).map(|v| v.truthy()).unwrap_or(false);
+    // GNU: when SEPARATORS is nil, OMIT-NULLS defaults to t.
+    let omit_nulls = match args.get(2) {
+        Some(v) if !v.is_nil() => true,
+        _ => sep_is_default,
+    };
+    // GNU's optional TRIM is a regexp stripped (one match per edge)
+    // from each substring before the OMIT-NULLS test; it must be a
+    // string or nil.
+    let trim: Option<String> = match args.get(3) {
+        None | Some(Value::Nil) => None,
+        Some(v) => Some(want_string(i, v)?),
+    };
     // If sep is a regex-ish, use our regexp engine; else literal split.
     let is_regex = sep.contains('\\')
         || sep.contains('[')
@@ -1021,7 +1050,7 @@ fn f_split_string(i: &mut Interp, args: Vec<Value>) -> EvalResult {
         || sep.contains('*')
         || sep.contains('+')
         || sep.contains('?');
-    let parts: Vec<String> = if is_regex {
+    let mut parts: Vec<String> = if is_regex {
         match crate::lisp::regexp::compile(&sep) {
             Ok(re) => {
                 let mut out = Vec::new();
@@ -1050,6 +1079,14 @@ fn f_split_string(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     } else {
         s.split(&sep as &str).map(|x| x.to_string()).collect()
     };
+    if let Some(t) = &trim {
+        let mut tp = Vec::with_capacity(parts.len());
+        for p in parts {
+            let a = trim_left_re(i, &p, t)?;
+            tp.push(trim_right_re(i, &a, t)?);
+        }
+        parts = tp;
+    }
     let filtered: Vec<Value> = parts
         .into_iter()
         .filter(|p| !omit_nulls || !p.is_empty())
@@ -1132,7 +1169,8 @@ fn f_string_replace(i: &mut Interp, args: Vec<Value>) -> EvalResult {
 }
 fn f_string_chop_newline(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     let s = want_string(i, &args[0])?;
-    Ok(Value::string(s.trim_end_matches('\n').to_string()))
+    // GNU removes only the final newline, not a run of them.
+    Ok(Value::string(s.strip_suffix('\n').unwrap_or(&s).to_string()))
 }
 /// Display column width of one character under GNU's `strwidth'
 /// rules: each character contributes its `char-width-table' width —
@@ -1278,14 +1316,98 @@ fn f_truncate_string_to_width(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     }
     Ok(Value::string(out))
 }
+/// `string-fill' — GNU's subr-x definition wraps `fill-region': the
+/// string is broken into words and whitespace runs (space, tab,
+/// newline only); each inter-word run becomes a single space or a
+/// newline so that filled lines stay within WIDTH columns. A run
+/// containing two or more newlines is a paragraph separator and is
+/// kept verbatim from its first newline on (leading whitespace before
+/// it is dropped). A leading run is kept verbatim, a trailing run is
+/// dropped unless it's a separator. Columns are display columns:
+/// tab advances to the next multiple of 8 and newline resets.
 fn f_string_fill(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    let _ = i;
-    Ok(args[0].clone())
+    let s = want_string(i, &args[0])?;
+    let width = want_int(i, &args[1])?;
+    let chars: Vec<char> = s.chars().collect();
+    let n = chars.len();
+    let is_ws = |c: char| c == ' ' || c == '\t' || c == '\n';
+    let adv = |col: usize, c: char| -> usize {
+        if c == '\n' {
+            0
+        } else if c == '\t' {
+            col + (8 - col % 8)
+        } else {
+            col + gnu_char_width(c)
+        }
+    };
+    let word_width = |mut pos: usize| -> usize {
+        let mut w = 0usize;
+        while pos < n && !is_ws(chars[pos]) {
+            w = adv(w, chars[pos]);
+            pos += 1;
+        }
+        w
+    };
+    let mut out = String::new();
+    let mut col = 0usize;
+    let mut pos = 0usize;
+    // Leading whitespace run: verbatim.
+    while pos < n && is_ws(chars[pos]) {
+        col = adv(col, chars[pos]);
+        out.push(chars[pos]);
+        pos += 1;
+    }
+    while pos < n {
+        // Word run.
+        while pos < n && !is_ws(chars[pos]) {
+            col = adv(col, chars[pos]);
+            out.push(chars[pos]);
+            pos += 1;
+        }
+        if pos >= n {
+            break;
+        }
+        // Whitespace gap.
+        let gstart = pos;
+        while pos < n && is_ws(chars[pos]) {
+            pos += 1;
+        }
+        let gap = &chars[gstart..pos];
+        let first_nl = gap.iter().position(|&c| c == '\n');
+        let nls = gap.iter().filter(|&&c| c == '\n').count();
+        if nls >= 2 || pos >= n {
+            // Paragraph separator (or trailing run): verbatim from the
+            // first newline on; a trailing run without two newlines is
+            // dropped entirely.
+            if let Some(f) = first_nl.filter(|_| nls >= 2) {
+                for &c in &gap[f..] {
+                    col = adv(col, c);
+                    out.push(c);
+                }
+            }
+        } else if col + 1 + word_width(pos) <= width.max(0) as usize {
+            out.push(' ');
+            col += 1;
+        } else {
+            out.push('\n');
+            col = 0;
+        }
+    }
+    Ok(Value::string(out))
 }
 fn f_string_lines(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     let s = want_string(i, &args[0])?;
+    let omit = arg(&args, 1).truthy();
+    let mut lines: Vec<&str> = s.split('\n').collect();
+    // GNU drops the empty element produced by a trailing newline.
+    if lines.len() > 1 && lines.last() == Some(&"") {
+        lines.pop();
+    }
+    if omit {
+        lines.retain(|l| !l.is_empty());
+    }
     Ok(Value::list(
-        s.split('\n').map(|l| Value::string(l)).collect(),
+        lines.into_iter().map(Value::string).collect(),
     ))
 }
 fn f_string_equal_ignore_case(i: &mut Interp, args: Vec<Value>) -> EvalResult {
@@ -1381,43 +1503,222 @@ fn f_string_glyph_split(i: &mut Interp, args: Vec<Value>) -> EvalResult {
         s.chars().map(|c| Value::string(c.to_string())).collect(),
     ))
 }
-fn f_sxhash(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    use std::collections::hash_map::DefaultHasher;
-    use std::hash::Hasher;
-    let mut h = DefaultHasher::new();
-    hash_value(i, &args[0], &mut h, 0);
-    Ok(Value::Int((h.finish() & (i128::MAX as u64)) as i128))
+// GNU sxhash (src/fns.c): EMACS_UINT is 64-bit, fixnums are 62-bit.
+// sxhash_combine (x, y) = (x << 4) + (x >> 60) + y   (wrapping)
+// SXHASH_REDUCE (x)     = (x ^ (x >> 2)) & (2^62 - 1)
+// The reduced value is stored via make_ufixnum, so bit 61 set reads
+// as a negative fixnum.
+const SXHASH_MAX_DEPTH: usize = 3;
+const SXHASH_MAX_LEN: usize = 7;
+
+fn sxhash_combine(x: u64, y: u64) -> u64 {
+    x.wrapping_shl(4)
+        .wrapping_add(x >> 60)
+        .wrapping_add(y)
 }
 
-fn hash_value(i: &Interp, v: &Value, h: &mut impl std::hash::Hasher, depth: usize) {
-    use std::hash::Hash;
-    if depth > 32 {
-        return;
+fn sxhash_reduce(x: u64) -> i128 {
+    let v = ((x ^ (x >> 2)) & 0x3fff_ffff_ffff_ffff) as i128;
+    if v >= (1i128 << 61) {
+        v - (1i128 << 62)
+    } else {
+        v
+    }
+}
+
+/// GNU `hash_char_array': byte-wise hash over the string's byte
+/// storage (Emacs internal UTF-8 — same bytes as our UTF-8 storage).
+fn sxhash_char_array(bytes: &[u8]) -> u64 {
+    let len = bytes.len();
+    let mut hash = len as u64;
+    let step = (len >> 3).max(8);
+    if len >= 8 {
+        let mut p = 0usize;
+        while p + 8 <= len {
+            let c = u64::from_le_bytes(bytes[p..p + 8].try_into().unwrap());
+            hash = sxhash_combine(hash, c);
+            p += step;
+        }
+        let c = u64::from_le_bytes(bytes[len - 8..len].try_into().unwrap());
+        hash = sxhash_combine(hash, c);
+    } else {
+        let mut tail: u64 = 0;
+        let mut p = 0usize;
+        if len >= 4 {
+            let c = u32::from_le_bytes(bytes[0..4].try_into().unwrap());
+            tail = c as u64;
+            p = 4;
+        }
+        if len - p >= 2 {
+            let c = u16::from_le_bytes(bytes[p..p + 2].try_into().unwrap());
+            tail = (tail << 16) + c as u64;
+            p += 2;
+        }
+        if p < len {
+            tail = (tail << 8) + bytes[p] as u64;
+        }
+        hash = sxhash_combine(hash, tail);
+    }
+    hash
+}
+
+/// GNU `sxhash_list': hash up to SXHASH_MAX_LEN cars, then the
+/// leftover tail (dotted or truncated); depth-capped so circular
+/// lists terminate.
+fn sxhash_list(i: &Interp, list: &Value, depth: usize) -> u64 {
+    let mut hash = 0u64;
+    let mut tail = list.clone();
+    if depth < SXHASH_MAX_DEPTH {
+        let mut n = 0;
+        while n < SXHASH_MAX_LEN {
+            let Value::Cons(c) = &tail else { break };
+            let (car, cdr) = {
+                let b = c.borrow();
+                (b.car.clone(), b.cdr.clone())
+            };
+            hash = sxhash_combine(hash, sxhash_obj(i, &car, depth + 1));
+            tail = cdr;
+            n += 1;
+        }
+    }
+    if !matches!(tail, Value::Nil) {
+        hash = sxhash_combine(hash, sxhash_obj(i, &tail, depth + 1));
+    }
+    hash
+}
+
+/// A stand-in for GNU's XHASH (raw pointer >> 2). Session-stable is
+/// all we need; GNU's value is the object's address.
+fn sxhash_xhash_ptr<T>(rc: &Rc<T>) -> u64 {
+    (Rc::as_ptr(rc) as usize as u64) >> 2
+}
+
+/// Symbol pseudo-address: symbols hash by XHASH in GNU (address of
+/// the struct), which is inherently unmatchable — any per-session
+/// constant per symbol preserves the eq ⇒ same-hash contract.
+fn sxhash_sym_hash(id: SymId) -> u64 {
+    (id as u64 + 1) << 4
+}
+
+fn sxhash_obj(i: &Interp, v: &Value, depth: usize) -> u64 {
+    if depth > SXHASH_MAX_DEPTH {
+        return 0;
     }
     match v {
-        Value::Nil => 0u8.hash(h),
-        Value::Int(n) => n.hash(h),
-        Value::Float(f) => f.to_bits().hash(h),
-        Value::Sym(id) => i.symbol_name(*id).hash(h),
-        Value::Str(s) => s.borrow().hash(h),
-        Value::Cons(c) => {
-            let b = c.borrow();
-            hash_value(i, &b.car, h, depth + 1);
-            hash_value(i, &b.cdr, h, depth + 1);
-        }
+        // XUFIXNUM: the fixnum's value bits — the low 62 bits of the
+        // two's-complement representation.
+        Value::Int(n) => (*n as u64) & 0x3fff_ffff_ffff_ffff,
+        // nil is a symbol in GNU; give it a fixed pseudo-address.
+        Value::Nil => 0x5d5d_5d5d,
+        Value::Sym(id) => sxhash_sym_hash(*id),
+        Value::Str(s) => sxhash_char_array(s.borrow().as_bytes()),
+        Value::Float(f) => (**f).to_bits(),
+        Value::Cons(_) => sxhash_list(i, v, depth),
         Value::Vec(vec) => {
-            for item in vec.borrow().iter() {
-                hash_value(i, item, h, depth + 1);
+            let vec = vec.borrow();
+            let mut hash = vec.len() as u64;
+            for item in vec.iter().take(SXHASH_MAX_LEN) {
+                hash = sxhash_combine(hash, sxhash_obj(i, item, depth + 1));
             }
+            hash
         }
-        _ => format!("{:?}", v).hash(h),
+        // Records, hash tables and other pseudovectors: GNU hashes
+        // them by address (XHASH).
+        Value::Record(r) => sxhash_xhash_ptr(r),
+        Value::Hash(h) => sxhash_xhash_ptr(h),
+        Value::Lambda(l) => sxhash_xhash_ptr(l),
+        Value::Buffer(b) => sxhash_xhash_ptr(b),
+        Value::Marker(m) => sxhash_xhash_ptr(m),
+        Value::Window(w) => sxhash_xhash_ptr(w),
+        Value::Frame(f) => sxhash_xhash_ptr(f),
+        Value::Process(p) => sxhash_xhash_ptr(p),
+        Value::Thread(t) => sxhash_xhash_ptr(t),
+        Value::Mutex(m) => sxhash_xhash_ptr(m),
+        Value::CondVar(c) => sxhash_xhash_ptr(c),
+        Value::Finalizer(f) => sxhash_xhash_ptr(f),
+        Value::Subr(s) => (*s as *const crate::lisp::value::Subr as usize as u64) >> 2,
     }
+}
+
+/// GNU `sxhash_eq' = XHASH (key) ^ XTYPE (key). The XTYPE tags with
+/// LSB tagging are: symbol 0, cons 3, string 4, vectorlike 5, int
+/// 2|6 (2 when the value is even), float 7.
+fn sxhash_eq(i: &Interp, v: &Value) -> u64 {
+    match v {
+        // XHASH ^ XTYPE: ints tag 2 (even) or 6 (odd).
+        Value::Int(n) => ((*n as u64) & 0x3fff_ffff_ffff_ffff) ^ (2 + 4 * (*n as u64 & 1)),
+        Value::Nil => 0x5d5d_5d5d,
+        Value::Sym(id) => sxhash_sym_hash(*id),
+        Value::Str(s) => sxhash_xhash_ptr(s) ^ 4,
+        Value::Cons(c) => sxhash_xhash_ptr(c) ^ 3,
+        Value::Float(f) => sxhash_xhash_ptr(f) ^ 7,
+        _ => {
+            // Everything else is vectorlike in GNU.
+            let _ = i;
+            sxhash_obj_ptr5(v)
+        }
+    }
+}
+
+fn sxhash_obj_ptr5(v: &Value) -> u64 {
+    let p = match v {
+        Value::Vec(x) | Value::Record(x) => Rc::as_ptr(x) as usize,
+        Value::Hash(x) => Rc::as_ptr(x) as usize,
+        Value::Lambda(x) => Rc::as_ptr(x) as usize,
+        Value::Buffer(x) => Rc::as_ptr(x) as usize,
+        Value::Marker(x) => Rc::as_ptr(x) as usize,
+        Value::Window(x) => Rc::as_ptr(x) as usize,
+        Value::Frame(x) => Rc::as_ptr(x) as usize,
+        Value::Process(x) => Rc::as_ptr(x) as usize,
+        Value::Thread(x) => Rc::as_ptr(x) as usize,
+        Value::Mutex(x) => Rc::as_ptr(x) as usize,
+        Value::CondVar(x) => Rc::as_ptr(x) as usize,
+        Value::Finalizer(x) => Rc::as_ptr(x) as usize,
+        Value::Subr(s) => *s as *const crate::lisp::value::Subr as usize,
+        _ => 0,
+    };
+    (p as u64 >> 2) ^ 5
+}
+
+fn f_sxhash(i: &mut Interp, args: Vec<Value>) -> EvalResult {
+    Ok(Value::Int(sxhash_reduce(sxhash_obj(i, &args[0], 0))))
+}
+
+fn f_sxhash_eq(i: &mut Interp, args: Vec<Value>) -> EvalResult {
+    Ok(Value::Int(sxhash_reduce(sxhash_eq(i, &args[0]))))
+}
+
+fn f_sxhash_eql(i: &mut Interp, args: Vec<Value>) -> EvalResult {
+    let h = match &args[0] {
+        // FLOATP or BIGNUMP → sxhash, else sxhash_eq.
+        Value::Float(_) => sxhash_obj(i, &args[0], 0),
+        _ => sxhash_eq(i, &args[0]),
+    };
+    Ok(Value::Int(sxhash_reduce(h)))
+}
+
+fn f_sxhash_including_props(i: &mut Interp, args: Vec<Value>) -> EvalResult {
+    let mut hash = sxhash_obj(i, &args[0], 0);
+    if let Value::Str(s) = &args[0] {
+        // GNU folds each interval's (position, length, plist) in.
+        for (start, end, plist) in i.str_props(s) {
+            hash = sxhash_combine(hash, *start as u64);
+            hash = sxhash_combine(hash, (end - start) as u64);
+            let pl = Value::list(plist.clone());
+            hash = sxhash_combine(hash, sxhash_obj(i, &pl, 0));
+        }
+    }
+    Ok(Value::Int(sxhash_reduce(hash)))
 }
 fn f_clear_string(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     match &args[0] {
         Value::Str(s) => {
-            s.borrow_mut().clear();
-            Ok(args[0].clone())
+            // GNU memsets the byte storage: the string keeps its
+            // length (in bytes) but becomes all NULs — and unibyte.
+            let n = s.borrow().len();
+            *s.borrow_mut() = "\0".repeat(n);
+            i.mark_unibyte(s);
+            Ok(Value::Nil)
         }
         other => Err(i.wrong_type_mut("stringp", other)),
     }
@@ -1493,9 +1794,9 @@ fn format_impl(i: &mut Interp, fmt: &str, args: &[Value]) -> EvalResult {
             continue;
         }
         p += 1;
+        // GNU: (error "Format string ends in middle of format specifier").
         if p >= fchars.len() {
-            out.push('%');
-            break;
+            return Err(i.error("Format string ends in middle of format specifier"));
         }
         // Positional arg: `%N$spec` uses arg N (1-based) without
         // advancing the sequential arg counter.
@@ -1572,9 +1873,9 @@ fn format_impl(i: &mut Interp, fmt: &str, args: &[Value]) -> EvalResult {
         }
         let letter = match fchars.get(p) {
             Some(l) => *l,
+            // GNU: (error "Format string ends in middle of format specifier").
             None => {
-                out.push('%');
-                break;
+                return Err(i.error("Format string ends in middle of format specifier"));
             }
         };
         p += 1;
@@ -1614,7 +1915,6 @@ fn format_impl(i: &mut Interp, fmt: &str, args: &[Value]) -> EvalResult {
                 let n = match &a {
                     Value::Int(n) => *n,
                     Value::Float(f) => **f as i128,
-                    Value::Marker(m) => m.borrow().position as i128 + 1,
                     _ => return Err(fmt_type_err(i)),
                 };
                 // C printf precision: minimum digit count, zero-padded
@@ -1657,36 +1957,43 @@ fn format_impl(i: &mut Interp, fmt: &str, args: &[Value]) -> EvalResult {
                 let ch = char::from_u32((n & 0x3f_ffff) as u32).unwrap_or('\0');
                 ch.to_string()
             }
-            'o' => {
+            'o' | 'x' | 'X' | 'b' => {
                 let n = int_of(i, &a)?;
-                let s = prec_pad_int(format!("{:o}", n), prec);
-                if alt && !s.starts_with('0') {
-                    format!("0{}", s)
-                } else {
-                    s
+                // GNU: the sign precedes any alt-form prefix, and the
+                // precision pads the digit run.
+                let digits = match letter {
+                    'o' => format!("{:o}", n.unsigned_abs()),
+                    'x' => format!("{:x}", n.unsigned_abs()),
+                    'X' => format!("{:X}", n.unsigned_abs()),
+                    _ => format!("{:b}", n.unsigned_abs()),
+                };
+                let digits = prec_pad_int(digits, prec);
+                let mut s = String::new();
+                if n < 0 {
+                    s.push('-');
                 }
-            }
-            'x' => {
-                let n = int_of(i, &a)?;
-                let s = prec_pad_int(format!("{:x}", n), prec);
-                if alt && n != 0 {
-                    format!("0x{}", s)
-                } else {
-                    s
+                match letter {
+                    'o' => {
+                        if alt && !digits.starts_with('0') {
+                            s.push('0');
+                        }
+                    }
+                    _ => {
+                        if alt && n != 0 {
+                            s.push_str(match letter {
+                                'x' => "0x",
+                                'X' => "0X",
+                                _ => "0b",
+                            });
+                        }
+                    }
                 }
+                s.push_str(&digits);
+                s
             }
-            'X' => {
-                let n = int_of(i, &a)?;
-                let s = prec_pad_int(format!("{:X}", n), prec);
-                if alt && n != 0 {
-                    format!("0X{}", s)
-                } else {
-                    s
-                }
-            }
-            'e' | 'E' => {
+            'e' => {
                 let f = float_of(i, &a)?;
-                format_e(f, prec.unwrap_or(6), letter == 'E')
+                format_e(f, prec.unwrap_or(6), false)
             }
             'f' => {
                 let f = float_of(i, &a)?;
@@ -1708,7 +2015,7 @@ fn format_impl(i: &mut Interp, fmt: &str, args: &[Value]) -> EvalResult {
                 let pad = w - plen;
                 if left {
                     format!("{}{}", piece, " ".repeat(pad))
-                } else if pad0 && matches!(letter, 'd' | 'i' | 'o' | 'x' | 'X' | 'e' | 'f' | 'g') {
+                } else if pad0 && matches!(letter, 'd' | 'i' | 'o' | 'x' | 'X' | 'b' | 'e' | 'f' | 'g') {
                     // zero-pad after any sign
                     if piece.starts_with('-') || piece.starts_with('+') || piece.starts_with(' ') {
                         let (sign, rest) = piece.split_at(1);
@@ -1968,15 +2275,19 @@ fn f_format_spec(i: &mut Interp, args: Vec<Value>) -> EvalResult {
         }
         let spec = match chars.next() {
             Some(s) => s,
-            None => break,
+            // GNU errors on a trailing lone `%'.
+            None => return Err(i.error("Invalid format character: `%'")),
         };
         if spec == '%' {
             out.push('%');
             continue;
         }
-        // Look up spec char in alist: key is a char (Int).
+        // Look up spec char in alist: key is a char (Int). GNU skips
+        // non-cons elements (assq semantics) but a non-list tail is a
+        // wrong-type-argument; a spec char with no entry is an error.
         let key = Value::Int(spec as i128);
         let mut val = Value::Nil;
+        let mut found = false;
         let mut cur = alist.clone();
         loop {
             match cur {
@@ -1993,13 +2304,17 @@ fn f_format_spec(i: &mut Interp, args: Vec<Value>) -> EvalResult {
                         };
                         if super::eq_values(&k, &key) {
                             val = v;
+                            found = true;
                             break;
                         }
                     }
                     cur = next;
                 }
-                _ => break,
+                other => return Err(i.wrong_type_mut("listp", &other)),
             }
+        }
+        if !found {
+            return Err(i.error(&format!("Invalid format character: `%{}'", spec)));
         }
         // Render val like princ, honoring width/precision.
         let mut text = match &val {

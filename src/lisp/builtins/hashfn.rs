@@ -161,28 +161,98 @@ fn equal_key(interp: &Interp, v: &Value) -> HashKey {
 }
 
 fn f_make_hash_table(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    // (make-hash-table &key test size rehash-size rehash-threshold weakness)
-    let mut test = HashTest::Eql;
+    // (make-hash-table &rest KEYWORD-ARGS) — GNU validates every
+    // keyword/value pair: odd arg count, a non-symbol key, an unknown
+    // keyword, or a bad value all signal `error'.
     let items = &args[..];
+    if items.len() % 2 != 0 {
+        return Err(i.error("Invalid keyword argument"));
+    }
+    let mut test = HashTest::Eql;
+    let mut weakness: Option<Value> = None;
     let mut k = 0;
-    while k + 1 < items.len() {
-        if let Value::Sym(s) = &items[k] {
-            let name = i.symbol_name(*s);
-            if name == ":test" {
-                let tname = i
-                    .sym_id(&items[k + 1])
-                    .map(|id| i.symbol_name(id).to_string())
-                    .unwrap_or_default();
+    while k < items.len() {
+        let name = match &items[k] {
+            Value::Sym(s) => i.symbol_name(*s).to_string(),
+            other => {
+                let msg = i.prin1_to_string(other);
+                return Err(i.error(&format!("Invalid keyword argument {}", msg)));
+            }
+        };
+        let val = &items[k + 1];
+        match name.as_str() {
+            ":test" => {
+                let tname = match val {
+                    Value::Sym(id) => i.symbol_name(*id).to_string(),
+                    other => {
+                        let msg = i.prin1_to_string(other);
+                        return Err(i.error(&format!("Invalid hash table test: {}", msg)));
+                    }
+                };
                 test = match tname.as_str() {
                     "eq" => HashTest::Eq,
+                    "eql" => HashTest::Eql,
                     "equal" => HashTest::Equal,
-                    _ => HashTest::Eql,
+                    _ => {
+                        // User-defined test from `define-hash-table-test'
+                        // (a `hash-table-test' symbol property, as in
+                        // GNU). remacs can't plug arbitrary test/hash
+                        // functions into the table — accept the name and
+                        // use `equal' semantics.
+                        let Value::Sym(id) = val else { unreachable!() };
+                        let prop = i.intern("hash-table-test");
+                        if !i.get_prop(*id, prop).is_nil() {
+                            HashTest::Equal
+                        } else {
+                            return Err(i.error(&format!(
+                                "Invalid hash table test: {}",
+                                tname
+                            )));
+                        }
+                    }
                 };
             }
+            ":weakness" => match val {
+                Value::Nil => {}
+                Value::Sym(id) => {
+                    let w = i.symbol_name(*id).to_string();
+                    match w.as_str() {
+                        // GNU: `t' is a synonym for `key-and-value'.
+                        "t" | "key" | "value" | "key-or-value" | "key-and-value" => {
+                            weakness = Some(val.clone());
+                        }
+                        _ => {
+                            return Err(i.error(&format!(
+                                "Invalid hash table weakness: {}",
+                                w
+                            )));
+                        }
+                    }
+                }
+                other => {
+                    let msg = i.prin1_to_string(other);
+                    return Err(i.error(&format!("Invalid hash table weakness: {}", msg)));
+                }
+            },
+            ":size" => match val {
+                Value::Int(n) if *n >= 0 => {}
+                other => {
+                    let msg = i.prin1_to_string(other);
+                    return Err(i.error(&format!("Invalid hash table size: {}", msg)));
+                }
+            },
+            ":rehash-size" | ":rehash-threshold" => match val {
+                Value::Int(_) | Value::Float(_) => {}
+                _ => return Err(i.wrong_type_mut("numberp", val)),
+            },
+            ":purecopy" => {}
+            _ => return Err(i.error(&format!("Invalid keyword argument {}", name))),
         }
         k += 2;
     }
-    Ok(Value::Hash(Rc::new(RefCell::new(LispHash::new(test)))))
+    let mut h = LispHash::new(test);
+    h.weakness = weakness;
+    Ok(Value::Hash(Rc::new(RefCell::new(h))))
 }
 
 fn f_gethash(i: &mut Interp, args: Vec<Value>) -> EvalResult {
@@ -273,8 +343,11 @@ fn f_hash_table_test(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     }
 }
 
-fn f_hash_table_weakness(_i: &mut Interp, _args: Vec<Value>) -> EvalResult {
-    Ok(Value::Nil)
+fn f_hash_table_weakness(i: &mut Interp, args: Vec<Value>) -> EvalResult {
+    match &args[0] {
+        Value::Hash(h) => Ok(h.borrow().weakness.clone().unwrap_or(Value::Nil)),
+        other => Err(i.wrong_type_mut("hash-table-p", other)),
+    }
 }
 fn f_hash_table_rehash_size(_i: &mut Interp, _args: Vec<Value>) -> EvalResult {
     Ok(Value::float(1.5))
@@ -295,14 +368,22 @@ fn f_copy_hash_table(i: &mut Interp, args: Vec<Value>) -> EvalResult {
             let mut nh = LispHash::new(hh.test);
             nh.map = hh.map.clone();
             nh.keys = hh.keys.clone();
+            nh.weakness = hh.weakness.clone();
             Ok(Value::Hash(Rc::new(RefCell::new(nh))))
         }
         other => Err(i.wrong_type_mut("hash-table-p", other)),
     }
 }
-fn f_define_hash_table_test(_i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    // GNU registers NAME as (TEST HASH-FN) and returns that list.
-    Ok(Value::list(vec![args[1].clone(), args[2].clone()]))
+fn f_define_hash_table_test(i: &mut Interp, args: Vec<Value>) -> EvalResult {
+    // GNU: (put NAME 'hash-table-test (list TEST HASH)) — the test is
+    // a symbol property, and the return value is (TEST HASH).
+    let Value::Sym(name) = &args[0] else {
+        return Err(i.wrong_type_mut("symbolp", &args[0]));
+    };
+    let entry = Value::list(vec![args[1].clone(), args[2].clone()]);
+    let prop = i.intern("hash-table-test");
+    i.put_prop(*name, prop, entry.clone());
+    Ok(entry)
 }
 
 /// GNU returns a list of buckets; each bucket is a list of

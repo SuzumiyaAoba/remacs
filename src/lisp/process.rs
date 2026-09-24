@@ -2499,6 +2499,20 @@ pub(crate) static SUBRS: &[Subr] = &[
         "Send region text to PROCESS."
     ),
     S!(
+        "send-string",
+        2,
+        2,
+        f_process_send_string,
+        "Send STRING to PROCESS."
+    ),
+    S!(
+        "send-region",
+        3,
+        3,
+        f_process_send_region,
+        "Send region text to PROCESS."
+    ),
+    S!(
         "process-send-eof",
         1,
         1,

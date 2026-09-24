@@ -444,6 +444,20 @@ pub(crate) static SUBRS: &[Subr] = &[
         "End of Nth line."
     ),
     S!(
+        "point-at-bol",
+        0,
+        1,
+        f_line_beginning_position,
+        "Start of Nth line."
+    ),
+    S!(
+        "point-at-eol",
+        0,
+        1,
+        f_line_end_position,
+        "End of Nth line."
+    ),
+    S!(
         "line-number-at-pos",
         0,
         2,

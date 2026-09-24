@@ -81,7 +81,42 @@ fn f_read_from_string(i: &mut Interp, args: Vec<Value>) -> EvalResult {
         Value::Str(s) => s.borrow().clone(),
         other => return Err(i.wrong_type_mut("stringp", other)),
     };
-    let start = args.get(1).and_then(|v| v.int()).unwrap_or(0).max(0) as usize;
-    let (v, end) = i.read_from_string(&src, start)?;
-    Ok(Value::cons(v, Value::Int(end as i128)))
+    let chars: Vec<char> = src.chars().collect();
+    let len = chars.len() as i128;
+    // START/END are character positions; nil END (or omitted) is the
+    // string's end. Out-of-range values signal args-out-of-range.
+    let start = match args.get(1) {
+        None | Some(Value::Nil) => 0,
+        Some(Value::Int(n)) => *n,
+        Some(other) => return Err(i.wrong_type_mut("integerp", other)),
+    };
+    let end = match args.get(2) {
+        None | Some(Value::Nil) => len,
+        Some(Value::Int(n)) => *n,
+        Some(other) => return Err(i.wrong_type_mut("integerp", other)),
+    };
+    // Negative START/END count from the end of the string (GNU).
+    let mut s = start;
+    let mut e = end;
+    if s < 0 {
+        s += len;
+    }
+    if e < 0 {
+        e += len;
+    }
+    if s < 0 || s > len || e < s || e > len {
+        let eid = i.intern("args-out-of-range");
+        return Err(i.signal_data(
+            eid,
+            vec![
+                args[0].clone(),
+                args.get(1).cloned().unwrap_or(Value::Int(0)),
+                args.get(2).cloned().unwrap_or(Value::Nil),
+            ],
+        ));
+    }
+    let (start, end) = (s, e);
+    let sub: String = chars[start as usize..end as usize].iter().collect();
+    let (v, pos) = i.read_from_string(&sub, 0)?;
+    Ok(Value::cons(v, Value::Int(start + pos as i128)))
 }

@@ -22,8 +22,6 @@ pub const CHAR_SHIFT: i128 = 0x0200_0000;
 pub const CHAR_CTL: i128 = 0x0400_0000;
 pub const CHAR_META: i128 = 0x0800_0000;
 
-const MAX_CHAR: i128 = 0x3f_ffff;
-
 pub struct Reader<'a> {
     chars: Rc<Vec<char>>,
     pos: usize,
@@ -70,6 +68,17 @@ fn eof_err(interp: &mut Interp) -> Flow {
     Flow::Signal(Value::Sym(sym_id), Value::Nil, false)
 }
 
+/// GNU `error ()' inside the reader (bad escapes, bad modifiers) —
+/// (error "msg"), distinct from `invalid-read-syntax'.
+fn plain_err(interp: &mut Interp, msg: &str) -> Flow {
+    let sym_id = interp.intern("error");
+    Flow::Signal(
+        Value::Sym(sym_id),
+        Value::list(vec![Value::string(msg)]),
+        false,
+    )
+}
+
 /// GNU signals a plain `error' when a \u or \U escape exceeds the
 /// Unicode range: (error "Non-Unicode character: 0x%x").
 fn non_unicode_err(interp: &mut Interp, n: i128) -> Flow {
@@ -79,18 +88,6 @@ fn non_unicode_err(interp: &mut Interp, n: i128) -> Flow {
         Value::list(vec![Value::string(format!("Non-Unicode character: 0x{n:x}"))]),
         false,
     )
-}
-
-/// Byte8 chars 0x3FFF80..0x3FFFFF encode raw bytes 0x80..0xFF; `\x'
-/// escapes landing in that range fold back to the byte (GNU lread.c
-/// CHAR_TO_BYTE8), so `?\x3fffff' reads as 255 and a string escape
-/// becomes a raw byte rather than a multibyte char.
-fn byte8_fold(n: i128) -> i128 {
-    if (0x3f_ff80..=0x3f_ffff).contains(&n) {
-        n - 0x3f_ff80 + 0x80
-    } else {
-        n
-    }
 }
 
 impl<'a> Reader<'a> {
@@ -160,20 +157,7 @@ impl<'a> Reader<'a> {
                         }
                     }
                 }
-                Some('#') if self.peek_at(1) == Some('@') => {
-                    // #@N — skip N chars (used by byte-compiled files).
-                    self.pos += 2;
-                    let mut n: usize = 0;
-                    while let Some(c) = self.peek() {
-                        if c.is_ascii_digit() {
-                            n = n * 10 + (c as usize - '0' as usize);
-                            self.pos += 1;
-                        } else {
-                            break;
-                        }
-                    }
-                    self.pos = (self.pos + n).min(self.chars.len());
-                }
+
                 _ => return Ok(false),
             }
         }
@@ -236,7 +220,32 @@ impl<'a> Reader<'a> {
             }
             Some('?') => {
                 self.pos += 1;
-                let n = self.read_char_literal()?;
+                let n = match self.next() {
+                    None => return Err(eof_err(self.interp)),
+                    // GNU accepts literal `? ' / `?\t' with no
+                    // delimiter check (so `(list ? x)' works).
+                    Some(' ') => 32,
+                    Some('\t') => 9,
+                    Some('\\') => {
+                        let v = self.read_char_escape()?;
+                        self.check_char_delim()?;
+                        v
+                    }
+                    Some(c) => {
+                        self.check_char_delim()?;
+                        c as i128
+                    }
+                };
+                // GNU folds byte8 chars (0x3FFF80..0x3FFFFF) back to
+                // the raw byte value: `?\x80' reads as 128.
+                const MODS: i128 =
+                    CHAR_CTL | CHAR_META | CHAR_SHIFT | CHAR_HYPER | CHAR_SUPER | CHAR_ALT;
+                let base = n & !MODS;
+                let n = if (0x3f_ff80..=0x3f_ffff).contains(&base) {
+                    (n & MODS) | (base - 0x3f_ff00)
+                } else {
+                    n
+                };
                 Ok(Value::Int(n))
             }
             Some('#') => self.read_dispatch(),
@@ -402,15 +411,19 @@ impl<'a> Reader<'a> {
             Some('t') => Ok(Some('\t')),
             Some('v') => Ok(Some('\x0b')),
             Some('x') => {
-                let n = byte8_fold(self.read_radix_digits(16, 8)?);
-                Ok(char::from_u32(n as u32))
+                let n = self.read_hex_char_escape()?;
+                if n & (CHAR_CTL | CHAR_META | CHAR_SHIFT | CHAR_HYPER | CHAR_SUPER | CHAR_ALT) != 0
+                {
+                    return Err(read_err(self.interp, "Invalid modifier in string"));
+                }
+                Ok(crate::lisp::value::lisp_char(n as u32))
             }
             Some('u') => {
-                let n = self.read_radix_digits(16, 4)?;
+                let n = self.read_exact_hex(4)?;
                 Ok(char::from_u32(n as u32))
             }
             Some('U') => {
-                let n = self.read_radix_digits(16, 8)?;
+                let n = self.read_exact_hex(8)?;
                 if n > 0x10_ffff {
                     return Err(non_unicode_err(self.interp, n));
                 }
@@ -423,7 +436,22 @@ impl<'a> Reader<'a> {
                 // char); a meta bit survives as base+128 (GNU 8-bit char).
                 let base =
                     v & !(CHAR_CTL | CHAR_META | CHAR_SHIFT | CHAR_HYPER | CHAR_SUPER | CHAR_ALT);
-                let mut ch = ctrl_of(char::from_u32(base as u32).unwrap_or('\0')) as i128;
+                // GNU allows \C-SPC / \^SPC as a literal NUL (bug#55738).
+                let mut ch = if base == 32 && v & CHAR_CTL != 0 {
+                    0
+                } else {
+                    match ctrl_fold(base) {
+                        Some(f) => f,
+                        // Non-foldable \C-x keeps CHAR_CTL — a modifier
+                        // GNU rejects inside strings.
+                        None => {
+                            return Err(read_err(
+                                self.interp,
+                                "Invalid modifier in string",
+                            ))
+                        }
+                    }
+                };
                 if v & CHAR_META != 0 && ch < 0x80 {
                     ch |= 0x80;
                 }
@@ -444,8 +472,16 @@ impl<'a> Reader<'a> {
             }
             Some('^') => match self.next() {
                 None => Err(eof_err(self.interp)),
-                Some(c) => Ok(Some(ctrl_of(c))),
+                Some(' ') => Ok(Some('\0')),
+                Some(c) => match ctrl_fold(c as i128) {
+                    Some(f) => Ok(char::from_u32(f as u32)),
+                    None => Err(read_err(self.interp, "Invalid modifier in string")),
+                },
             },
+            Some(c @ ('C' | 'M' | 'S' | 'H' | 'A')) => Err(read_err(
+                self.interp,
+                &format!("Invalid escape char syntax: \\{c} not followed by -"),
+            )),
             Some(c) if c.is_digit(8) => {
                 let mut n = (c as i128) - ('0' as i128);
                 for _ in 0..2 {
@@ -457,7 +493,11 @@ impl<'a> Reader<'a> {
                         _ => break,
                     }
                 }
-                Ok(char::from_u32(n as u32))
+                // GNU: octal escapes in 0x80..0xFF are raw bytes.
+                if (0x80..0x100).contains(&n) {
+                    n = 0x3F_FF00 + n;
+                }
+                Ok(crate::lisp::value::lisp_char(n as u32))
             }
             Some(c) => Ok(Some(c)),
         }
@@ -470,6 +510,128 @@ impl<'a> Reader<'a> {
             None => Err(eof_err(self.interp)),
             Some('\\') => self.read_char_escape(),
             Some(c) => Ok(c as i128),
+        }
+    }
+
+    /// GNU requires the char after a `?' literal to terminate it:
+    /// EOF, a control/space char (code ≤ 32), or one of
+    /// `"' ; ( ) [ ] # ? ` , .'.
+    fn check_char_delim(&mut self) -> Result<(), Flow> {
+        match self.peek() {
+            None => Ok(()),
+            Some(c) if (c as u32) <= 32 => Ok(()),
+            Some('"' | '\'' | ';' | '(' | ')' | '[' | ']' | '#' | '?' | '`' | ',' | '.') => Ok(()),
+            _ => Err(read_err(self.interp, "?")),
+        }
+    }
+
+    /// GNU `\x' escape: one or more hex digits. With 1–2 digits,
+    /// values ≥ 0x80 become byte8 chars (BYTE8_TO_CHAR → 0x3FFFxx).
+    /// Larger values may carry modifier bits.
+    fn read_hex_char_escape(&mut self) -> Result<i128, Flow> {
+        let mut val: i128 = 0;
+        let mut count = 0usize;
+        while let Some(c) = self.peek() {
+            match c.to_digit(16) {
+                Some(d) => {
+                    val = val
+                        .checked_mul(16)
+                        .and_then(|v| v.checked_add(d as i128))
+                        .unwrap_or(0x1000_0000);
+                    // GNU caps at CHAR_META | (CHAR_META - 1) = 0xFFFFFFF.
+                    if val > CHAR_META | (CHAR_META - 1) {
+                        return Err(plain_err(
+                            self.interp,
+                            &format!("Hex character out of range: \\x{val:x}"),
+                        ));
+                    }
+                    self.pos += 1;
+                    if count < 3 {
+                        count += 1;
+                    }
+                }
+                None => break,
+            }
+        }
+        if count == 0 {
+            return Err(plain_err(
+                self.interp,
+                "Invalid escape char syntax: \\x not followed by hex digit",
+            ));
+        }
+        if count < 3 && val >= 0x80 {
+            val = 0x3F_FF00 + val;
+        }
+        Ok(val)
+    }
+
+    /// GNU `\u'/`\U' escapes need exactly N hex digits; a non-hex
+    /// character or EOF is an error.
+    fn read_exact_hex(&mut self, n: usize) -> Result<i128, Flow> {
+        let mut v: i128 = 0;
+        for _ in 0..n {
+            match self.next() {
+                None => {
+                    return Err(plain_err(
+                        self.interp,
+                        &format!("Malformed Unicode escape: \\u{v:x}"),
+                    ));
+                }
+                Some(c) => match c.to_digit(16) {
+                    Some(d) => v = v * 16 + d as i128,
+                    None => {
+                        return Err(plain_err(
+                            self.interp,
+                            &format!("Non-hex character used for Unicode escape: {c}"),
+                        ));
+                    }
+                },
+            }
+        }
+        Ok(v)
+    }
+
+    /// GNU `\N{name}' — Unicode char name (whitespace normalized to a
+    /// single space) or `U+XXXX'.
+    fn read_named_char(&mut self) -> Result<i128, Flow> {
+        if self.next() != Some('{') {
+            return Err(read_err(self.interp, "Expected opening brace after \\N"));
+        }
+        let mut name = String::new();
+        let mut ws = false;
+        loop {
+            match self.next() {
+                None => return Err(eof_err(self.interp)),
+                Some('}') => break,
+                Some(c) if (c as u32) >= 0x80 => {
+                    return Err(read_err(
+                        self.interp,
+                        &format!("Invalid character U+{:04X} in character name", c as u32),
+                    ));
+                }
+                Some(c) if matches!(c, ' ' | '\t' | '\n' | '\r' | '\x0b' | '\x0c') => {
+                    if !ws {
+                        name.push(' ');
+                    }
+                    ws = true;
+                }
+                Some(c) => {
+                    ws = false;
+                    name.push(c);
+                }
+            }
+        }
+        if name.is_empty() {
+            return Err(read_err(self.interp, "Empty character name"));
+        }
+        let code: Option<i128> = if name.len() > 2 && name[..2].eq_ignore_ascii_case("u+") {
+            i128::from_str_radix(&name[2..], 16).ok()
+        } else {
+            unicode_names2::character(&name).map(|c| c as i128)
+        };
+        match code {
+            Some(n) if (0..=0x10_ffff).contains(&n) && !(0xd800..0xe000).contains(&n) => Ok(n),
+            _ => Err(read_err(self.interp, &format!("\\N{{{name}}}"))),
         }
     }
 
@@ -499,13 +661,7 @@ impl<'a> Reader<'a> {
                         CHAR_CTL | CHAR_META | CHAR_SHIFT | CHAR_HYPER | CHAR_SUPER | CHAR_ALT;
                     let base = inner & !ALL_MODS;
                     let mods = inner & (ALL_MODS & !CHAR_CTL);
-                    let folded = match base {
-                        32 => Some(0),
-                        63 => Some(127),
-                        b if (64..128).contains(&b) => Some(b & 0x1f),
-                        _ => None,
-                    };
-                    return Ok(match folded {
+                    return Ok(match ctrl_fold(base) {
                         Some(c) => mods | c,
                         None => mods | CHAR_CTL | base,
                     });
@@ -519,22 +675,46 @@ impl<'a> Reader<'a> {
             Some('f') => Ok(12),
             Some('n') => Ok(10),
             Some('r') => Ok(13),
+            // `\s' not followed by `-' is just a space (GNU).
             Some('s') => Ok(32),
             Some('t') => Ok(9),
             Some('v') => Ok(11),
-            Some('x') => Ok(byte8_fold(self.read_radix_digits(16, 8)?)),
-            Some('u') => self.read_radix_digits(16, 4),
-            Some('U') => {
-                let n = self.read_radix_digits(16, 8)?;
+            Some('x') => self.read_hex_char_escape(),
+            Some('u') => {
+                let n = self.read_exact_hex(4)?;
                 if n > 0x10_ffff {
                     return Err(non_unicode_err(self.interp, n));
                 }
                 Ok(n)
             }
-            Some('^') => match self.next() {
-                None => Err(eof_err(self.interp)),
-                Some(c) => Ok(ctrl_of(c) as i128),
-            },
+            Some('U') => {
+                let n = self.read_exact_hex(8)?;
+                if n > 0x10_ffff {
+                    return Err(non_unicode_err(self.interp, n));
+                }
+                Ok(n)
+            }
+            Some('N') => self.read_named_char(),
+            Some('^') => {
+                let inner = match self.next() {
+                    None => return Err(eof_err(self.interp)),
+                    Some('\\') => self.read_char_escape()?,
+                    Some(c) => c as i128,
+                };
+                const ALL_MODS: i128 =
+                    CHAR_CTL | CHAR_META | CHAR_SHIFT | CHAR_HYPER | CHAR_SUPER | CHAR_ALT;
+                let mods = inner & (ALL_MODS & !CHAR_CTL);
+                let base = inner & !ALL_MODS;
+                Ok(mods | ctrl_fold(base).unwrap_or(CHAR_CTL | base))
+            }
+            Some('\n') => Err(plain_err(
+                self.interp,
+                "Invalid escape char syntax: \\<newline>",
+            )),
+            Some(c @ ('C' | 'M' | 'S' | 'H' | 'A')) => Err(plain_err(
+                self.interp,
+                &format!("Invalid escape char syntax: \\{c} not followed by -"),
+            )),
             Some(c) if c.is_digit(8) => {
                 let mut n = (c as i128) - ('0' as i128);
                 for _ in 0..2 {
@@ -546,34 +726,14 @@ impl<'a> Reader<'a> {
                         _ => break,
                     }
                 }
+                // GNU: octal escapes in 0x80..0xFF are raw bytes.
+                if (0x80..0x100).contains(&n) {
+                    n = 0x3F_FF00 + n;
+                }
                 Ok(n)
             }
             Some(c) => Ok(c as i128),
         }
-    }
-
-    /// Read hex/octal/etc digits. `max_digits` caps consumption (0 = unbounded).
-    fn read_radix_digits(&mut self, radix: u32, max_digits: usize) -> Result<i128, Flow> {
-        let mut n: i128 = 0;
-        let mut count = 0;
-        while let Some(c) = self.peek() {
-            if !c.is_digit(radix) {
-                break;
-            }
-            if max_digits != 0 && count >= max_digits {
-                break;
-            }
-            n = n
-                .checked_mul(radix as i128)
-                .and_then(|x| x.checked_add(c.to_digit(radix).unwrap() as i128))
-                .unwrap_or(MAX_CHAR + 1);
-            self.pos += 1;
-            count += 1;
-        }
-        if count == 0 {
-            return Err(read_err(self.interp, "invalid radix"));
-        }
-        Ok(n)
     }
 
     /// `#`-dispatch read.
@@ -590,11 +750,9 @@ impl<'a> Reader<'a> {
             }
             Some(':') => {
                 self.pos += 2;
-                // Uninterned symbol.
+                // Uninterned symbol; GNU accepts an empty name (`#:'),
+                // which reads back as `##'.
                 let tok = self.read_symbol_token();
-                if tok.is_empty() {
-                    return Err(read_err(self.interp, "#: without symbol"));
-                }
                 Ok(Value::Sym(self.interp.make_symbol(&tok)))
             }
             Some('&') => {
@@ -611,13 +769,36 @@ impl<'a> Reader<'a> {
                     }
                 }
                 if self.next() != Some('"') {
-                    return Err(read_err_sym(self.interp, "#&"));
+                    return Err(read_err(self.interp, "#&"));
                 }
                 let s = self.read_string()?;
                 let bytes: Vec<u32> = match &s {
-                    Value::Str(s) => s.borrow().chars().map(|c| c as u32).collect(),
+                    Value::Str(s) => {
+                        // GNU rejects multibyte strings; raw bytes
+                        // (eight-bit proxies) count as their byte value.
+                        let mut v: Vec<u32> = Vec::new();
+                        for c in s.borrow().chars() {
+                            match crate::lisp::value::eight_bit_byte(c) {
+                                Some(b) => v.push(b as u32),
+                                None if (c as u32) < 0x80 => v.push(c as u32),
+                                None => {
+                                    return Err(read_err(self.interp, "#&..."));
+                                }
+                            }
+                        }
+                        v
+                    }
                     _ => vec![],
                 };
+                // GNU requires SCHARS == ceil(N/8); it also accepts the
+                // Emacs 19 form where N counts the string's total bits
+                // minus the last byte: N == (SCHARS-1)*8.
+                let schars = bytes.len();
+                if !(schars == (n as usize + 7) / 8
+                    || (schars >= 1 && n as usize == (schars - 1) * 8))
+                {
+                    return Err(read_err(self.interp, "#&..."));
+                }
                 let mut bits = Vec::with_capacity(n as usize);
                 for k in 0..n as usize {
                     let byte = bytes.get(k / 8).copied().unwrap_or(0);
@@ -627,6 +808,38 @@ impl<'a> Reader<'a> {
                     self.interp,
                     bits,
                 ))
+            }
+            Some('@') => {
+                // `#@NNN' — used by .elc files to skip lazy doc
+                // strings/byte-code.  For non-file sources GNU skips
+                // to the next \037 byte (or EOF), then re-reads.
+                // `#@00' skips to EOF and yields nil.
+                self.pos += 2;
+                let mut n: usize = 0;
+                let mut digits = 0;
+                while let Some(c) = self.peek() {
+                    if c.is_ascii_digit() {
+                        n = n * 10 + (c as usize - '0' as usize);
+                        self.pos += 1;
+                        digits += 1;
+                    } else {
+                        break;
+                    }
+                }
+                if digits == 2 && n == 0 {
+                    self.pos = self.chars.len();
+                    return Ok(Value::Nil);
+                }
+                while let Some(c) = self.peek() {
+                    self.pos += 1;
+                    if c == '\u{1f}' {
+                        break;
+                    }
+                }
+                if self.skip_layout()? {
+                    return Err(eof_err(self.interp));
+                }
+                self.read_object()
             }
             Some('(') => {
                 // `#(' is not Emacs read syntax (vectors are `[...]').
@@ -724,6 +937,16 @@ impl<'a> Reader<'a> {
                         let obj = self.read_object();
                         self.pending_labels.pop();
                         let obj = obj?;
+                        // `#N=#N#' — the labelled object is nothing but
+                        // the placeholder itself; GNU rejects it.
+                        if let Value::Sym(s) = &obj {
+                            if self.label_markers.get(&n) == Some(s) {
+                                return Err(read_err(
+                                    self.interp,
+                                    "nonsensical self-reference",
+                                ));
+                            }
+                        }
                         self.patch_label(n, &obj);
                         self.labels.insert(n, obj.clone());
                         Ok(obj)
@@ -740,7 +963,7 @@ impl<'a> Reader<'a> {
                                     }
                                     Ok(Value::Sym(self.label_markers[&n]))
                                 } else {
-                                    Err(read_err(self.interp, "#n# undefined"))
+                                    Err(read_err(self.interp, &format!("#{n}#")))
                                 }
                             }
                         }
@@ -867,9 +1090,14 @@ impl<'a> Reader<'a> {
     }
 }
 
-fn ctrl_of(c: char) -> char {
-    let n = c as u32;
-    char::from_u32(if (64..128).contains(&n) { n & 0x1f } else { n }).unwrap_or(c)
+/// GNU's control-char fold: `@'..`_' and `a'..'z' fold to &0x1f,
+/// `?' folds to 127. Anything else keeps the CHAR_CTL modifier.
+fn ctrl_fold(base: i128) -> Option<i128> {
+    match base {
+        63 => Some(127),
+        b if (64..96).contains(&b) || (97..123).contains(&b) => Some(b & 0x1f),
+        _ => None,
+    }
 }
 
 /// Try parsing a token as a number (int or float).

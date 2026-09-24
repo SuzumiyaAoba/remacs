@@ -26,7 +26,7 @@
   (condition-case e (read-from-string "#:") (error (prin1 (car e))))
   ;; ---- char literals ---------------------------------------------------
   (prin1 (list ?a ?\n ?\t ?\\ ?\d ?\s ?\^A ?\M-a ?\C-\M-b ?\S-a))
-  (prin1 (list ?\x41 ?\o101 ?\u0041))
+  (prin1 (list ?\x41 ?\101 ?\u0041))
   (condition-case e (car (read-from-string "?\\N{LATIN CAPITAL LETTER A}"))
     (error (prin1 (car e))))
   ;; ---- obarray ---------------------------------------------------------

@@ -406,3 +406,8 @@
 (let ((s (copy-sequence "abcd")))
   (add-text-properties 0 2 '(a 1 b 2) s)
   (object-intervals s))
+(int-to-string 42)
+(int-to-string -3)
+(int-to-string 1.5)
+(condition-case e (int-to-string "x") (error e))
+(fboundp 'int-to-string)

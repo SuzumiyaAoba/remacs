@@ -46,8 +46,39 @@ pub(crate) static SUBRS: &[Subr] = &[
     ),
     // print-escape-newlines / print-gensym / print-quoted are
     // VARIABLES in Emacs, not functions — defined in eval.rs.
+    S!(
+        "format-proper-list-p",
+        1,
+        1,
+        f_format_proper_list_p,
+        "Length of OBJECT if a proper list, nil otherwise."
+    ),
     S!("output-switches", many 0, f_noop, ""),
 ];
+
+/// GNU fns.c `format-proper-list-p': the `format' arg validator —
+/// length of a proper list, nil otherwise (no error on non-lists,
+/// dotted or circular lists).
+fn f_format_proper_list_p(_i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let mut cur = a[0].clone();
+    let mut n: i128 = 0;
+    let mut guard = 0usize;
+    loop {
+        match &cur {
+            Value::Cons(c) => {
+                guard += 1;
+                if guard > 500_000 {
+                    return Ok(Value::Nil);
+                }
+                let next = c.borrow().cdr.clone();
+                cur = next;
+                n += 1;
+            }
+            Value::Nil => return Ok(Value::Int(n)),
+            _ => return Ok(Value::Nil),
+        }
+    }
+}
 
 fn f_noop(_i: &mut Interp, _args: Vec<Value>) -> EvalResult {
     Ok(Value::Nil)

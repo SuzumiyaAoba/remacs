@@ -508,7 +508,9 @@ fn f_hash_table_p(_i: &mut Interp, args: Vec<Value>) -> EvalResult {
 fn f_functionp(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     let v = &args[0];
     let r = match v {
-        Value::Subr(_) | Value::Lambda(_) => true,
+        Value::Subr(s) => crate::lisp::special::special_form(i.intern(s.name)).is_none(),
+        // GNU `functionp' on a macro object (`(macro . fn)') is nil.
+        Value::Lambda(l) => !l.is_macro,
         Value::Sym(id) => {
             // a symbol is a function if its function cell is defined
             // (and isn't a macro).
@@ -520,7 +522,11 @@ fn f_functionp(i: &mut Interp, args: Vec<Value>) -> EvalResult {
                 Value::Lambda(l) => !l.is_macro,
                 Value::Cons(c) => {
                     let b = c.borrow();
-                    i.sym_is(&b.car, sym::LAMBDA)
+                    // GNU `functionp' on a symbol resolves the
+                    // function cell: `(lambda ...)' and `(autoload ...)'
+                    // conses both count as functions.
+                    let auto_id = i.intern("autoload");
+                    i.sym_is(&b.car, sym::LAMBDA) || i.sym_is(&b.car, auto_id)
                 }
                 _ => false,
             }

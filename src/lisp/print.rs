@@ -138,8 +138,11 @@ impl Interp {
                 }
                 let name = self.symbol_name(*id);
                 // Emacs escapes a symbol whose name would read back
-                // as a number (`\52') or a bare dot (`\.').
-                if super::reader::parse_number(&name).is_some() || name == "." {
+                // as a number (`\52') or one made solely of dots
+                // (`\.', `\..').
+                if super::reader::parse_number(&name).is_some()
+                    || (!name.is_empty() && name.chars().all(|c| c == '.'))
+                {
                     out.push('\\');
                 }
                 push_sym_name(&name, out);
@@ -464,7 +467,12 @@ impl Interp {
                     Some(buf) => {
                         let _ = write!(
                             out,
-                            "#<marker at {} in {}>",
+                            "#<marker {}at {} in {}>",
+                            if b.insertion_type {
+                                "(moves after insertion) "
+                            } else {
+                                ""
+                            },
                             b.position + 1,
                             self.buffer_name_by_id(buf)
                         );

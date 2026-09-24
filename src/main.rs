@@ -118,7 +118,7 @@ fn run_batch(i: &mut Interp, src: &str) -> bool {
     }
     let nid = i.intern("noninteractive");
     let _ = i.set_symbol_default(nid, Value::t());
-    match i.eval_str(src) {
+    match i.eval_first_form(src) {
         Ok(_) => true,
         Err(Flow::Exit(code)) => std::process::exit(code as i32),
         Err(flow) => {

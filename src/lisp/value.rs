@@ -124,6 +124,10 @@ pub struct LispHash {
     pub map: HashMap<HashKey, Value>,
     /// Keep original keys for `maphash`/`hash-table-keys`.
     pub keys: HashMap<HashKey, Value>,
+    /// :weakness argument recorded for `hash-table-weakness` (#<..>
+    /// printed representation). Weak references aren't implemented;
+    /// the tag is metadata only.
+    pub weakness: Option<Value>,
 }
 
 impl LispHash {
@@ -132,6 +136,7 @@ impl LispHash {
             test,
             map: HashMap::new(),
             keys: HashMap::new(),
+            weakness: None,
         }
     }
 }
