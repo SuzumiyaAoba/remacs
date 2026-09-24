@@ -3085,6 +3085,39 @@ If nil, the feature is disabled, i.e., all commands work normally.")
   "Get and apply EditorConfig properties to current buffer." t)
 (autoload 'editorconfig-find-current-editorconfig "editorconfig-tools"
   "Find the closest .editorconfig file for current file." t)
+
+;; GNU loaddefs.el autoload cookies: these libraries are not dumped
+;; but their entry points are autoloaded at -Q.
+(autoload 'benchmark-run "benchmark"
+  "(fn &optional REPETITIONS &rest FORMS)" nil t)
+(autoload 'benchmark-run-compiled "benchmark"
+  "(fn &optional REPETITIONS &rest FORMS)" nil t)
+(autoload 'benchmark-progn "benchmark"
+  "(fn &rest BODY)" nil t)
+(autoload 'benchmark "benchmark"
+  "(fn REPETITIONS FORM)" t nil)
+(autoload 'animate-string "animate"
+  "(fn STRING VPOS &optional HPOS)" nil nil)
+(autoload 'animate-sequence "animate"
+  "(fn LIST-OF-STRINGS SPACE)" nil nil)
+(autoload 'animate-birthday-present "animate"
+  "(fn &optional NAME)" t nil)
+(autoload 'cursor-sensor-mode "cursor-sensor"
+  "(fn &optional ARG)" t nil)
+(autoload 'cursor-intangible-mode "cursor-sensor"
+  "(fn &optional ARG)" t nil)
+(autoload 'Helper-help "helper"
+  "Provide help for current mode." t nil)
+(autoload 'Helper-describe-bindings "helper"
+  "Describe local key bindings of current mode." t nil)
+(autoload 'string-edit "string-edit"
+  "(fn PROMPT STRING SUCCESS-CALLBACK &key ABORT-CALLBACK MAJOR-MODE-SYM READ)"
+  nil nil)
+(autoload 'read-string-from-buffer "string-edit"
+  "(fn PROMPT STRING)" nil nil)
+(autoload 'list-timers "timer-list"
+  "(fn &optional IGNORE-AUTO NONCONFIRM)" t nil)
+
 (autoload 'editorconfig-display-current-properties "editorconfig-tools"
   "Display EditorConfig properties extracted for current buffer." t)
 (defalias 'describe-editorconfig-properties

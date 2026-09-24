@@ -1706,3 +1706,50 @@ fn cl_loop_hash_iteration() {
         "(((\"a\" . 1) (\"b\" . 2)) ((1 . \"a\") (2 . \"b\")))"
     );
 }
+
+
+// -------------------------------------- float-sup + autoloaded misc libs
+
+#[test]
+fn float_sup_is_dumped() {
+    // GNU 31.1 -Q: float-sup.el is dumped (`lisp-float-type' feature),
+    // so float-pi & the degree/radian converters are bound at startup.
+    assert_eq!(
+        ev("(list (boundp 'float-pi) float-pi
+                  (degrees-to-radians 180)
+                  (radians-to-degrees float-pi)
+                  (featurep 'lisp-float-type))"),
+        "(t 3.141592653589793 3.141592653589793 180.0 t)"
+    );
+}
+
+#[test]
+fn autoloaded_misc_libraries() {
+    // GNU 31.1 -Q registers these as autoloads (loaddefs.el); calling
+    // an entry point loads the library.  `benchmark-run' & friends are
+    // macro autoloads (TYPE = t).
+    assert_eq!(
+        ev("(list (autoloadp (symbol-function 'benchmark-run))
+                  (autoloadp (symbol-function 'animate-string))
+                  (autoloadp (symbol-function 'cursor-sensor-mode))
+                  (autoloadp (symbol-function 'Helper-help))
+                  (autoloadp (symbol-function 'string-edit))
+                  (autoloadp (symbol-function 'read-string-from-buffer))
+                  (autoloadp (symbol-function 'list-timers)))"),
+        "(t t t t t t t)"
+    );
+    // Calling resolves the autoload and defines the real function.
+    assert_eq!(
+        ev("(progn (benchmark-run 1 (+ 1 2))
+                  (list (fboundp 'benchmark-run)
+                        (fboundp 'benchmark-elapse)
+                        (progn (animate-string \"x\" 0) t)
+                        (fboundp 'animate-sequence)))"),
+        "(t t t t)"
+    );
+    assert_eq!(
+        ev("(progn (require 'bib-mode)
+                  (list (fboundp 'bib-mode) (fboundp 'bib-find-key)))"),
+        "(t t)"
+    );
+}

@@ -805,6 +805,9 @@ impl Interp {
             // `tooltip' feature mark alone would make `require' skip
             // the definitions.
             let _ = crate::lisp::load::load_library(&mut interp, "tooltip");
+            // float-sup.el is dumped too (`lisp-float-type' feature):
+            // `float-pi', `degrees-to-radians' & co. are bound at -Q.
+            let _ = crate::lisp::load::load_library(&mut interp, "float-sup");
         }
         interp.loading_dumped = false;
         // GNU resets `gensym-counter' to 0 when the dumped image starts
@@ -3535,6 +3538,11 @@ impl Interp {
             ("max-lisp-eval-depth", Value::Int(1600)),
             ("max-specpdl-size", Value::Int(2500)),
             ("gc-cons-threshold", Value::Int(800_000)),
+            // GNU's Vgc_elapsed/Vgcs_done (alloc.c): GC statistics
+            // variables.  Remacs has no tracing GC, so they stay at 0 —
+            // `benchmark-run' reads them.
+            ("gc-elapsed", Value::float(0.0)),
+            ("gcs-done", Value::Int(0)),
             ("history-length", Value::Int(60)),
             ("kill-ring-max", Value::Int(120)),
             ("mark-ring-max", Value::Int(16)),
