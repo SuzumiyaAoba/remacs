@@ -2240,6 +2240,58 @@ impl Interp {
                     };
                     match car {
                         Value::Sym(id) => {
+                            // GNU `macroexpand-1' consults the ENVIRONMENT
+                            // argument first; here that is the dynamically
+                            // bound `macroexpand-all-environment'.  An entry
+                            // (SYM . DEF) shadows SYM's global definition:
+                            // a nil DEF stops expansion, otherwise DEF is
+                            // applied to the form's argument list (this is
+                            // how GNU `cl-flet'/`rx-let' rewrite calls).
+                            let env_id = self.intern("macroexpand-all-environment");
+                            let env = self.symbol_value(env_id);
+                            let mut env_hit = false;
+                            let mut env_def = Value::Nil;
+                            let mut tail = env;
+                            loop {
+                                match tail {
+                                    Value::Cons(cc) => {
+                                        let (a, d) = {
+                                            let b = cc.borrow();
+                                            (b.car.clone(), b.cdr.clone())
+                                        };
+                                        if let Value::Cons(e) = &a {
+                                            let (ek, ev) = {
+                                                let b = e.borrow();
+                                                (b.car.clone(), b.cdr.clone())
+                                            };
+                                            if let Value::Sym(eid) = ek {
+                                                if eid == id {
+                                                    env_hit = true;
+                                                    env_def = ev;
+                                                }
+                                            }
+                                        }
+                                        tail = d;
+                                    }
+                                    _ => break,
+                                }
+                            }
+                            if env_hit {
+                                if env_def.is_nil() {
+                                    return Ok(cur);
+                                }
+                                let argl =
+                                    crate::lisp::builtins::want_list(self, &cdr)?;
+                                let new = self.apply(&env_def, argl)?;
+                                // GNU macroexpand-1 stops when the expander
+                                // returns the identical object (the
+                                // `cl--labels-convert' cache relies on it).
+                                if crate::lisp::builtins::eq_values(&new, &cur) {
+                                    return Ok(cur);
+                                }
+                                cur = new;
+                                continue;
+                            }
                             let mut f = self.symbol_function(id);
                             // Autoload cell: resolve macro autoloads
                             // (TYPE non-nil); others stop expansion.

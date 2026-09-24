@@ -693,3 +693,166 @@ fn eval_when_compile_evals_when_not_compiling() {
         "(3 t)"
     );
 }
+
+// ---------------------------------------------------------- cl-remove keywords
+
+#[test]
+fn cl_remove_keyword_semantics() {
+    // GNU-verified on 31.1, including the :from-end/:count quirk:
+    // GNU takes the from-end path only when `count < len/2' (integer
+    // division), so :count 2 on a 5-list removes from the FRONT.
+    assert_eq!(
+        ev("(progn (require 'cl-lib)
+                  (list (cl-remove 1 '(1 2 1 3 1) :if-not (lambda (x) (= x 1)))
+                        (cl-remove 1 '(1 2 1 3 1) :from-end t :count 1)
+                        (cl-remove 1 '(1 2 1 3 1) :from-end t :count 2)
+                        (cl-remove 1 '(1 2 1 3 1) :from-end t :count 3)
+                        (cl-remove 1 '(1 2 1 3 1) :start 1 :end 4)
+                        (cl-remove \"a\" '(\"a\" \"b\" \"A\") :test #'equal)
+                        (cl-remove 1 '(1 2 3) :test-not #'eql)
+                        (cl-remove 'x '((x . 1) (y . 2) (x . 3)) :key #'car)
+                        (cl-remove-if #'evenp '(1 2 3 4 5 6))
+                        (cl-remove-if-not #'evenp '(1 2 3 4 5 6))
+                        (cl-delete-if #'evenp '(1 2 3 4 5 6))))"),
+        "((1 1 1) (1 2 1 3) (2 3 1) (2 3) (1 2 3 1) (\"b\" \"A\") (1) ((y . 2)) (1 3 5) (2 4 6) (1 3 5))"
+    );
+}
+
+// ---------------------------------------------------------- cl-flet / cl-labels
+
+#[test]
+fn cl_flet_lexical_escape() {
+    // GNU cl-flet rewrites local calls to funcall on generated lexical
+    // vars; a lambda escaping the body still sees the binding.
+    // (eval FORM t) gives a fresh lexical env; under dynamic binding
+    // GNU likewise fails to capture, so lexical eval is required.
+    assert_eq!(
+        ev("(eval '(let ((f (cl-flet ((h (x) (* x 2)))
+                             (lambda (y) (h y)))))
+                   (funcall f 5)) t)"),
+        "10"
+    );
+}
+
+#[test]
+fn cl_labels_recursion() {
+    // GNU-verified on 31.1: direct recursion, mutual recursion, and an
+    // escaping closure over a recursive local function.
+    assert_eq!(
+        ev("(eval '(list (cl-labels ((f (n) (if (<= n 1) 1 (* n (f (1- n))))))
+                          (f 5))
+                        (cl-labels ((ev (n) (if (= n 0) t (od (1- n))))
+                                    (od (n) (if (= n 0) nil (ev (1- n)))))
+                          (ev 10))
+                        (let ((f (cl-labels ((g (n) (if (<= n 0) 0 (+ n (g (1- n))))))
+                                   (lambda (k) (g k)))))
+                          (funcall f 4))) t)"),
+        "(120 t 10)"
+    );
+}
+
+// ---------------------------------------------------------- macroexpand env
+
+#[test]
+fn macroexpand_environment_argument() {
+    // GNU `macroexpand-1'/`macroexpand' consult the optional
+    // ENVIRONMENT alist before global definitions; a nil definition
+    // shadows (stops expansion), an expander is applied to the
+    // argument list, and an identical result stops the loop.
+    assert_eq!(
+        ev("(list (macroexpand-1 '(f a b) '((f . (lambda (a b) `(g ,a ,b)))))
+                 (macroexpand-1 '(f a b) '((f . nil)))
+                 (macroexpand-1 '(f a b)))"),
+        "((g a b) (f a b) (f a b))"
+    );
+}
+
+// ---------------------------------------------------------- rx-let
+
+#[test]
+fn rx_let_local_definitions() {
+    // GNU-verified on 31.1: rx-let binds local rx symbols during
+    // macro expansion via `macroexpand-all-environment'.
+    assert_eq!(
+        ev("(progn (require 'rx)
+                  (list (let ((r (rx-let ((delim (+ (any \"xy\"))))
+                                   (rx (seq bol delim \"z\")))))
+                          r)
+                        (macroexpand '(rx-let ((delim (+ (any \"xy\"))))
+                                        (rx (seq bol delim \"z\"))))))"),
+        "(\"^[xy]+z\" (progn \"^[xy]+z\"))"
+    );
+}
+
+// ---------------------------------------------------------- md4
+
+#[test]
+fn md4_known_digests() {
+    // GNU-verified on 31.1 (RFC 1320 test vectors).
+    assert_eq!(
+        ev("(progn (require 'md4) (require 'hex-util)
+                  (list (encode-hex-string (md4 \"abc\" 3))
+                        (encode-hex-string (md4 \"\" 0))
+                        (encode-hex-string (md4 \"abcdefghijklmnopqrstuvwxyz\" 26))))"),
+        "(\"a448017aaf21d8525fc10ae87aa6729d\" \"31d6cfe0d16ae931b73c59d7e0c089c0\" \"d79e1c308aa5bbcdeea8ed63df412da9\")"
+    );
+}
+
+// ---------------------------------------------------------- external-completion
+
+#[test]
+fn external_completion_table_cl_flet() {
+    // GNU-verified on 31.1: `external-completion-table' returns a
+    // closure over a `cl-flet'-bound `lookup-internal' that keeps
+    // working after the cl-flet scope has exited.
+    assert_eq!(
+        ev("(progn (require 'external-completion)
+                  (eval '(let ((tbl (external-completion-table
+                                     'foo
+                                     (lambda (string point)
+                                       (cl-remove-if-not
+                                         (lambda (s) (string-prefix-p string s))
+                                         '(\"alpha\" \"alpine\" \"beta\"))))))
+                           (list (funcall tbl \"al\" nil 'lambda)
+                                 (funcall tbl \"al\" nil '(external-completion--allc . 2))
+                                 (funcall tbl \"al\" nil '(external-completion--tryc . 0))))
+                        t))"),
+        "(nil (external-completion--allc \"alpha\" \"alpine\") (external-completion--tryc \"al\" . 0))"
+    );
+}
+
+// ---------------------------------------------------------- case-table / chistory / midnight
+
+#[test]
+fn case_table_chistory_midnight_load() {
+    // GNU-verified on 31.1: embedded libs load and define their APIs.
+    // `describe-buffer-case-table' prints the case table; a fresh
+    // temp buffer's is empty.
+    assert_eq!(
+        ev("(progn (require 'case-table) (require 'chistory) (require 'midnight)
+                  (list (with-temp-buffer
+                          (describe-buffer-case-table)
+                          (buffer-string))
+                        (fboundp 'list-command-history)
+                        (fboundp 'clean-buffer-list)))"),
+        "(\"\" t t)"
+    );
+}
+
+// ---------------------------------------------------------- elide-head
+
+#[test]
+fn elide_head_loads() {
+    // GNU-verified on 31.1: elide-head loads (via rx-let) and binds
+    // the headers-to-hide alist; `elide-head' leaves a non-matching
+    // buffer unchanged.
+    assert_eq!(
+        ev("(progn (require 'elide-head)
+                  (list (consp elide-head-headers-to-hide)
+                        (with-temp-buffer
+                          (insert \"int main() {}\\n\")
+                          (elide-head)
+                          (buffer-string))))"),
+        "(t \"int main() {}\n\")"
+    );
+}

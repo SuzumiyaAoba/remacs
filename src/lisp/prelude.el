@@ -14630,25 +14630,59 @@ VAR, (VAR TYPE), or (VAR (eql FORM))."
     (car tail)))
 
 (defun cl-remove (item seq &rest keys)
-  "Copy of SEQ with elements equal to ITEM removed."
-  (let ((test (plist-get keys :test)) (key (cl--keyfn keys)) (res nil))
-    (dolist (x (append seq nil) (nreverse res))
-      (unless (if test (funcall test item (funcall key x))
-                (eql item (funcall key x)))
-        (push x res)))))
+  "Copy of SEQ with elements equal to ITEM removed.
+Keywords supported: :test :test-not :key :if :if-not :count :start :end
+:from-end (GNU cl-seq)."
+  (let* ((key (cl--keyfn keys))
+         (test (plist-get keys :test))
+         (test-not (plist-get keys :test-not))
+         (if-p (plist-get keys :if))
+         (if-not (plist-get keys :if-not))
+         (count (or (plist-get keys :count) most-positive-fixnum))
+         (start (or (plist-get keys :start) 0))
+         (end (or (plist-get keys :end) most-positive-fixnum))
+         (from-end (plist-get keys :from-end))
+         (l (append seq nil))
+         (n (length l))
+         (flags (make-vector n nil))
+         (fwd nil))
+    (dotimes (i n) (push i fwd))
+    ;; FWD is (n-1 ... 0); scanning it directly removes later matches
+    ;; first.  GNU cl-seq only takes the from-end path when
+    ;; `count < len/2' (an optimization), so mirror that condition:
+    ;; :from-end with a large :count removes from the front in GNU too.
+    (dolist (i (if (and from-end (< count (/ n 2))) fwd (nreverse fwd)))
+      (when (and (>= i start) (< i end) (> count 0)
+                 (let ((x (funcall key (nth i l))))
+                   (cond (if-p (funcall if-p x))
+                         (if-not (not (funcall if-not x)))
+                         (test (funcall test item x))
+                         (test-not (not (funcall test-not item x)))
+                         (t (eql item x)))))
+        (aset flags i t)
+        (setq count (1- count))))
+    (let (res (i -1))
+      (dolist (x l (nreverse res))
+        (setq i (1+ i))
+        (unless (aref flags i) (push x res))))))
 
 (defun cl-delete (item seq &rest keys)
   "Like `cl-remove' (non-destructive for our lists)."
   (apply #'cl-remove item seq keys))
 
-(defun cl-remove-if (pred seq &rest _keys)
+(defun cl-remove-if (pred seq &rest keys)
   "Copy of SEQ with elements satisfying PRED removed."
-  (let ((res nil))
-    (dolist (x (append seq nil) (nreverse res))
-      (unless (funcall pred x) (push x res)))))
+  (apply #'cl-remove nil seq :if pred keys))
+
+(defun cl-remove-if-not (pred seq &rest keys)
+  "Copy of SEQ with elements not satisfying PRED removed."
+  (apply #'cl-remove nil seq :if-not pred keys))
 
 (defun cl-delete-if (pred seq &rest keys)
-  (apply #'cl-remove-if pred seq keys))
+  (apply #'cl-remove nil seq :if pred keys))
+
+(defun cl-delete-if-not (pred seq &rest keys)
+  (apply #'cl-remove nil seq :if-not pred keys))
 
 (defun cl-substitute (new old seq &rest keys)
   "Copy of SEQ with OLD replaced by NEW."
@@ -15087,18 +15121,150 @@ restored on exit.  A bare (PLACE) spec only saves and restores."
     `(cl-letf (,(car bindings))
        (cl-letf* ,(cdr bindings) ,@body))))
 
+;;; GNU cl-macs.el: lexical function bindings via
+;;; `macroexpand-all-environment' (with `cl--labels-magic' plumbing).
+
+(defconst cl--labels-magic (make-symbol "cl--labels-magic"))
+
+(defvar cl--labels-convert-cache nil)
+
+(defun cl--labels-convert (f)
+  "Special macro-expander to rename (function F) references in `cl-labels'."
+  (cond
+   ;; ¡¡Big Ugly Hack!! We can't use a compiler-macro because those are checked
+   ;; *after* handling `function', but we want to stop macroexpansion from
+   ;; being applied infinitely, so we use a cache to return the exact `form'
+   ;; being expanded even though we don't receive it.
+   ((eq f (car cl--labels-convert-cache))
+    ;; This value should be `eq' to the `&whole' form.
+    ;; If this is not the case, we have a bug.
+    (prog1 (cdr cl--labels-convert-cache)
+      ;; Drop it, so it can't accidentally interfere with some
+      ;; unrelated subsequent use of `function' with the same symbol.
+      (setq cl--labels-convert-cache nil)))
+   (t
+    (let* ((found (assq f macroexpand-all-environment))
+           (replacement (and found
+                             (ignore-errors
+                               (funcall (cdr found) cl--labels-magic)))))
+      (if (and replacement (eq cl--labels-magic (car replacement)))
+          (nth 1 replacement)
+        ;; FIXME: Here, we'd like to return the `&whole' form, but since Elisp
+        ;; doesn't have that, we approximate it via `cl--labels-convert-cache'.
+        (let ((res `(function ,f)))
+          (setq cl--labels-convert-cache (cons f res))
+          res))))))
+
+(defmacro cl-function (func)
+  "Introduce a function.
+Like normal `function', except that if argument is a lambda form,
+its argument list allows full Common Lisp conventions."
+  ;; remacs lambda lists don't implement the full CL conventions, so
+  ;; `cl--transform-lambda' is a no-op here.
+  (if (eq (car-safe func) 'lambda)
+      `(function (lambda . ,(cdr func)))
+    `(function ,func)))
+
 (defmacro cl-flet (bindings &rest body)
-  "Bind function names locally (dynamic extent)."
-  (let ((lets nil))
-    (dolist (b bindings)
-      (push (list `(symbol-function ',(car b))
-                  `(lambda ,@(cdr b)))
-            lets))
-    `(cl-letf ,(nreverse lets) ,@body)))
+  "Make local function definitions.
+Each definition can take the form (FUNC EXP) where FUNC is the function
+name, and EXP is an expression that returns the function value to which
+it should be bound, or it can take the more common form (FUNC ARGLIST
+BODY...) which is a shorthand for (FUNC (lambda ARGLIST BODY))
+where BODY is wrapped in a `cl-block' named FUNC.
+
+FUNC is defined only within FORM, not BODY, so you can't write recursive
+function definitions.  Use `cl-labels' for that.
+
+\(fn ((FUNC ARGLIST BODY...) ...) FORM...)"
+  (declare (indent 1))
+  (let ((binds ()) (newenv macroexpand-all-environment))
+    (dolist (binding bindings)
+      (let* ((var (make-symbol (format "--cl-%s--" (car binding))))
+             (args-and-body (cdr binding))
+             (args (car args-and-body))
+             (body (cdr args-and-body)))
+        (if (and (null body)
+                 (macroexp-copyable-p args))
+            ;; Optimize (cl-flet ((fun var)) body).
+            (setq var args)
+          (push (list var (if (null body)
+                              args
+                            (let ((parsed-body (macroexp-parse-body body)))
+                              `(cl-function
+                                (lambda ,args
+                                  ,@(car parsed-body)
+                                  (cl-block ,(car binding)
+                                    ,@(cdr parsed-body)))))))
+                binds))
+	(push (cons (car binding)
+                    (lambda (&rest args)
+                      (if (eq (car args) cl--labels-magic)
+                          (list cl--labels-magic var)
+                        `(funcall ,var ,@args))))
+              newenv)))
+    (macroexp-let* (nreverse binds)
+                   (macroexpand-all
+                    `(progn ,@body)
+                    ;; Don't override lexical-let's macro-expander.
+                    (if (assq 'function newenv) newenv
+                      (cons (cons 'function #'cl--labels-convert) newenv))))))
+
+(defmacro cl-flet* (bindings &rest body)
+  "Make local function definitions.
+Like `cl-flet' but the definitions can refer to previous ones.
+
+\(fn ((FUNC ARGLIST BODY...) ...) FORM...)"
+  (declare (indent 1))
+  (cond
+   ((null bindings) (macroexp-progn body))
+   ((null (cdr bindings)) `(cl-flet ,bindings ,@body))
+   (t `(cl-flet (,(pop bindings)) (cl-flet* ,bindings ,@body)))))
 
 (defmacro cl-labels (bindings &rest body)
-  "Like `cl-flet' (labels are dynamically scoped in this dialect)."
-  `(cl-flet ,bindings ,@body))
+  "Make local (recursive) function definitions.
+Each definition can take the form (FUNC ARGLIST BODY...); FUNC is in
+scope in all of BODY, so recursive and mutually recursive definitions
+are allowed.
+
+\(fn ((FUNC ARGLIST BODY...) ...) FORM...)"
+  (declare (indent 1))
+  (let ((binds ()) (newenv macroexpand-all-environment))
+    (dolist (binding bindings)
+      (let ((var (make-symbol (format "--cl-%s--" (car binding)))))
+	(push (cons var binding) binds)
+	(push (cons (car binding)
+                    (lambda (&rest args)
+                      (if (eq (car args) cl--labels-magic)
+                          (list cl--labels-magic var)
+                        (cons 'funcall (cons var args)))))
+              newenv)))
+    ;; Don't override lexical-let's macro-expander.
+    (unless (assq 'function newenv)
+      (push (cons 'function #'cl--labels-convert) newenv))
+    ;; GNU additionally performs self-tail-call elimination here via
+    ;; `cl--self-tco-on-form'; we expand without it (same semantics,
+    ;; no TCO).
+    `(letrec ,(mapcar
+               (lambda (bind)
+                 (let* ((var (car bind)) (fun (nth 1 bind))
+                        (sargs (nth 2 bind)) (sbody (nthcdr 3 bind)))
+                   `(,var ,(macroexpand-all
+                            (if (null sbody)
+                                sargs ;A (FUNC EXP) definition.
+                              (let ((parsed-body
+                                     (macroexp-parse-body sbody)))
+                                `(cl-function
+                                  (lambda ,sargs
+                                    ,@(car parsed-body)
+                                    (cl-block ,fun
+                                      ,@(cdr parsed-body))))))
+                            newenv))))
+               (nreverse binds))
+       . ,(macroexp-unprogn
+           (macroexpand-all
+            (macroexp-progn body)
+            newenv)))))
 
 (defmacro cl-macrolet (bindings &rest body)
   "Bind macro names locally."
@@ -37333,3 +37499,142 @@ by `find-word-boundary-function-table'.  It is also not interactive."
   (defsubst hash-table-contains-p (key table)
     "Return non-nil if TABLE has an element with KEY."
     (not (eq (gethash key table missing) missing))))
+
+;;; GNU case-table.el (subrs in GNU 31; Lisp defs kept verbatim here,
+;;; minus `copy-case-table' which is already a working subr).
+
+(defun describe-buffer-case-table ()
+  "Describe the case table of the current buffer."
+  (interactive)
+  (let ((description (make-char-table 'case-table)))
+    (map-char-table
+     (lambda (key value)
+       (if (not (natnump value))
+           (if (consp key)
+               (set-char-table-range description key "case-invariant")
+             (aset description key "case-invariant"))
+         (let (from to)
+           (if (consp key)
+               (setq from (car key) to (cdr key))
+             (setq from (setq to key)))
+           (while (<= from to)
+             (aset
+              description from
+              (cond ((/= from (downcase from))
+                     (concat "uppercase, matches "
+                             (char-to-string (downcase from))))
+                    ((/= from (upcase from))
+                     (concat "lowercase, matches "
+                             (char-to-string (upcase from))))
+                    (t "case-invariant")))
+             (setq from (1+ from))))))
+     (current-case-table))
+    (save-excursion
+     (with-output-to-temp-buffer "*Help*"
+       (set-buffer standard-output)
+       (describe-vector description)
+       (help-mode)))))
+
+(defun case-table-get-table (case-table table)
+  "Return the TABLE of CASE-TABLE.
+TABLE can be `down', `up', `eqv' or `canon'."
+  (let ((slot-nb (cdr (assq table '((up . 0) (canon . 1) (eqv . 2))))))
+    (or (if (eq table 'down) case-table)
+        (char-table-extra-slot case-table slot-nb)
+        ;; Setup all extra slots of CASE-TABLE by temporarily selecting
+        ;; it as the standard case table.
+        (let ((old (standard-case-table)))
+          (unwind-protect
+              (progn
+                (set-standard-case-table case-table)
+                (char-table-extra-slot case-table slot-nb))
+            (or (eq case-table old)
+                (set-standard-case-table old)))))))
+
+(defun get-upcase-table (case-table)
+  "Return the upcase table of CASE-TABLE."
+  (case-table-get-table case-table 'up))
+(make-obsolete 'get-upcase-table 'case-table-get-table "24.4")
+
+(defun set-case-syntax-delims (l r table)
+  "Make characters L and R a matching pair of non-case-converting delimiters.
+This sets the entries for L and R in TABLE, which is a string
+that will be used as the downcase part of a case table.
+It also modifies `standard-syntax-table' to
+indicate left and right delimiters."
+  (aset table l l)
+  (aset table r r)
+  (let ((up (case-table-get-table table 'up)))
+    (aset up l l)
+    (aset up r r))
+  ;; Clear out the extra slots so that they will be
+  ;; recomputed from the main (downcase) table and upcase table.
+  (set-char-table-extra-slot table 1 nil)
+  (set-char-table-extra-slot table 2 nil)
+  (modify-syntax-entry l (concat "(" (char-to-string r) "  ")
+		       (standard-syntax-table))
+  (modify-syntax-entry r (concat ")" (char-to-string l) "  ")
+		       (standard-syntax-table)))
+
+(defun set-case-syntax-pair (uc lc table)
+  "Make characters UC and LC a pair of inter-case-converting letters.
+This sets the entries for characters UC and LC in TABLE, which is a string
+that will be used as the downcase part of a case table.
+It also modifies `standard-syntax-table' to give them the syntax of
+word constituents."
+  (aset table uc lc)
+  (aset table lc lc)
+  (let ((up (case-table-get-table table 'up)))
+    (aset up uc uc)
+    (aset up lc uc))
+  ;; Clear out the extra slots so that they will be
+  ;; recomputed from the main (downcase) table and upcase table.
+  (set-char-table-extra-slot table 1 nil)
+  (set-char-table-extra-slot table 2 nil)
+  (modify-syntax-entry lc "w   " (standard-syntax-table))
+  (modify-syntax-entry uc "w   " (standard-syntax-table)))
+
+(defun set-upcase-syntax (uc lc table)
+  "Make character UC an upcase of character LC.
+It also modifies `standard-syntax-table' to give them the syntax of
+word constituents."
+  (aset table lc lc)
+  (let ((up (case-table-get-table table 'up)))
+    (aset up uc uc)
+    (aset up lc uc))
+  ;; Clear out the extra slots so that they will be
+  ;; recomputed from the main (downcase) table and upcase table.
+  (set-char-table-extra-slot table 1 nil)
+  (set-char-table-extra-slot table 2 nil)
+  (modify-syntax-entry lc "w   " (standard-syntax-table))
+  (modify-syntax-entry uc "w   " (standard-syntax-table)))
+
+(defun set-downcase-syntax (uc lc table)
+  "Make character LC a downcase of character UC.
+It also modifies `standard-syntax-table' to give them the syntax of
+word constituents."
+  (aset table uc lc)
+  (aset table lc lc)
+  (let ((up (case-table-get-table table 'up)))
+    (aset up uc uc))
+  ;; Clear out the extra slots so that they will be
+  ;; recomputed from the main (downcase) table and upcase table.
+  (set-char-table-extra-slot table 1 nil)
+  (set-char-table-extra-slot table 2 nil)
+  (modify-syntax-entry lc "w   " (standard-syntax-table))
+  (modify-syntax-entry uc "w   " (standard-syntax-table)))
+
+(defun set-case-syntax (c syntax table)
+  "Make character C case-invariant with syntax SYNTAX.
+This sets the entry for character C in TABLE, which is a string
+that will be used as the downcase part of a case table.
+It also modifies `standard-syntax-table'.
+SYNTAX should be \" \", \"w\", \".\" or \"_\"."
+  (aset table c c)
+  (let ((up (case-table-get-table table 'up)))
+    (aset up c c))
+  ;; Clear out the extra slots so that they will be
+  ;; recomputed from the main (downcase) table and upcase table.
+  (set-char-table-extra-slot table 1 nil)
+  (set-char-table-extra-slot table 2 nil)
+  (modify-syntax-entry c syntax (standard-syntax-table)))

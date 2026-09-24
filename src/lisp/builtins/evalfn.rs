@@ -550,6 +550,15 @@ fn f_special_form_via_apply(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
 }
 
 fn f_macroexpand(i: &mut Interp, args: Vec<Value>) -> EvalResult {
+    // GNU: (macroexpand FORM &optional ENVIRONMENT); the env is
+    // consulted through `macroexpand-all-environment'.
+    if args.len() > 1 {
+        let id = i.intern("macroexpand-all-environment");
+        i.specbind(id, args[1].clone())?;
+        let r = i.macroexpand(&args[0]);
+        i.unbind(1)?;
+        return r;
+    }
     i.macroexpand(&args[0])
 }
 
@@ -562,6 +571,40 @@ fn f_macroexpand_1(i: &mut Interp, args: Vec<Value>) -> EvalResult {
                 let b = c.borrow();
                 (b.car.clone(), b.cdr.clone())
             };
+            // GNU `macroexpand-1' consults ENVIRONMENT (its second
+            // argument) before the global definition; remacs reads it
+            // from the dynamically bound `macroexpand-all-environment'.
+            if args.len() > 1 {
+                let env = &args[1];
+                let mut tail = env.clone();
+                loop {
+                    match tail {
+                        Value::Cons(cc) => {
+                            let (a, d) = {
+                                let b = cc.borrow();
+                                (b.car.clone(), b.cdr.clone())
+                            };
+                            if let Value::Cons(e) = &a {
+                                let (ek, ev) = {
+                                    let b = e.borrow();
+                                    (b.car.clone(), b.cdr.clone())
+                                };
+                                if let (Value::Sym(eid), Value::Sym(id)) = (ek, &car) {
+                                    if eid == *id {
+                                        if ev.is_nil() {
+                                            return Ok(form.clone());
+                                        }
+                                        let argl = want_list(i, &cdr)?;
+                                        return i.apply(&ev, argl);
+                                    }
+                                }
+                            }
+                            tail = d;
+                        }
+                        _ => break,
+                    }
+                }
+            }
             if let Value::Sym(id) = car {
                 let f = i.symbol_function(id);
                 let is_mac = match &f {
@@ -583,7 +626,15 @@ fn f_macroexpand_1(i: &mut Interp, args: Vec<Value>) -> EvalResult {
 }
 
 fn f_macroexpand_all(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    macroexpand_all(i, &args[0])
+    // GNU: ENVIRONMENT is passed through the dynamic variable
+    // `macroexpand-all-environment'; macros such as `rx'/`rx-let'
+    // consult it for local definitions.
+    let env = args.get(1).cloned().unwrap_or(Value::Nil);
+    let id = i.intern("macroexpand-all-environment");
+    i.specbind(id, env)?;
+    let r = macroexpand_all(i, &args[0]);
+    i.unbind(1)?;
+    r
 }
 
 /// Recursively expand macros throughout a form.
