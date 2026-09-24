@@ -24,9 +24,12 @@ are the mode's body, run on each toggle."
            (global (plist-get kw :global))
            (variable-spec (or (plist-get kw :variable) mode))
            ;; GNU's :variable can be (VAR . SETTER) where SETTER
-           ;; takes the new value (e.g. setq-local).
+           ;; takes the new value (e.g. setq-local).  GET may itself
+           ;; be a form like (get-scroll-bar-mode); then it is not a
+           ;; variable to defvar, just the state expression.
            (variable (if (consp variable-spec) (car variable-spec) variable-spec))
            (variable-setter (and (consp variable-spec) (cdr variable-spec)))
+           (variable-defvar (symbolp variable))
            (name (symbol-name mode))
            (pretty (capitalize
                     (if (string-suffix-p "-mode" name)
@@ -36,7 +39,8 @@ are the mode's body, run on each toggle."
            (hook (intern (concat name "-hook")))
            (map-sym (intern (concat name "-map"))))
       `(progn
-         (defvar ,variable ,init-value ,doc)
+         ,@(when variable-defvar
+             `((defvar ,variable ,init-value ,doc)))
          ,@(when keymap `((defvar ,map-sym ,keymap)))
          (defun ,mode (&optional arg)
            ,doc
@@ -67,20 +71,23 @@ are the mode's body, run on each toggle."
          ;; Register the lighter on minor-mode-alist.  GNU stores the
          ;; lighter spec verbatim: a string as-is, a form unevaluated
          ;; (it's a mode-line construct evaluated at display time).
-         (let ((cell (assq ',variable minor-mode-alist)))
-           (if cell
-               (setcdr cell ,(if (stringp lighter)
-                                 `(list ,lighter-val)
-                               `(list ',lighter)))
-             (setq minor-mode-alist
-                   (cons ,(if (stringp lighter)
-                              `(list ',variable ,lighter-val)
-                            `(list ',variable ',lighter))
-                         minor-mode-alist))))
+         ;; For a GET-form :variable there is no variable key to file
+         ;; under (GNU shows no alist entry for `scroll-bar-mode').
+         ,@(when variable-defvar
+             `((let ((cell (assq ',variable minor-mode-alist)))
+                 (if cell
+                     (setcdr cell ,(if (stringp lighter)
+                                       `(list ,lighter-val)
+                                     `(list ',lighter)))
+                   (setq minor-mode-alist
+                         (cons ,(if (stringp lighter)
+                                    `(list ',variable ,lighter-val)
+                                  `(list ',variable ',lighter))
+                               minor-mode-alist))))))
          ;; GNU's `add-minor-mode' also records the keymap on
          ;; `minor-mode-map-alist' (front for new entries, in-place
          ;; cdr update for existing ones).
-         ,@(when keymap
+         ,@(when (and keymap variable-defvar)
              `((let ((cell (assq ',variable minor-mode-map-alist)))
                  (if cell
                      (setcdr cell ,map-sym)

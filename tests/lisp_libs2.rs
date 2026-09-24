@@ -1393,3 +1393,47 @@ fn tool_bar_and_version_loaded() {
         "(t t t t t error)"
     );
 }
+
+#[test]
+fn reposition_reveal_dos_fns_sqlite_entry_points() {
+    // GNU-verified on 31.1: require loads each feature and binds its
+    // entry points (autoload-style in GNU's dump).
+    assert_eq!(
+        ev("(progn (require 'reposition)
+                  (list (fboundp 'reposition-window)
+                        (fboundp 'repos-count-screen-lines)))"),
+        "(t t)"
+    );
+    assert_eq!(
+        ev("(progn (require 'reveal)
+                  (list (fboundp 'reveal-mode)
+                        (boundp 'reveal-open-map)))"),
+        "(t nil)"
+    );
+    assert_eq!(
+        ev("(progn (require 'dos-fns)
+                  (list (fboundp 'dos-mode25)
+                        (fboundp 'dos-8+3-filename)))"),
+        "(t t)"
+    );
+    assert_eq!(
+        ev("(progn (require 'sqlite)
+                  (list (featurep 'sqlite)
+                        (fboundp 'sqlite-open)
+                        (boundp 'sqlite--allowed-words)))"),
+        "(t t nil)"
+    );
+}
+
+#[test]
+fn tty_tip_entry_points() {
+    // GNU-verified on 31.1: require 'tty-tip provides the feature and
+    // binds the minor mode.
+    assert_eq!(
+        ev("(progn (require 'tty-tip)
+                  (list (featurep 'tty-tip)
+                        (fboundp 'tty-tip-mode)
+                        (boundp 'tty-tip-mode)))"),
+        "(t t t)"
+    );
+}

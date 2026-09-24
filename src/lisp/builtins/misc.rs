@@ -6941,6 +6941,14 @@ fn f_coding_system_p(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 }
 
 fn f_check_coding_system(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    // GNU: nil is accepted (returned as-is), non-symbols signal
+    // `wrong-type-argument symbolp', unknown symbols signal
+    // `coding-system-error' (verified against 31.1).
+    match &a[0] {
+        Value::Nil => return Ok(Value::Nil),
+        Value::Sym(_) => {}
+        v => return Err(i.wrong_type_mut("symbolp", v)),
+    }
     match coding_known(i, &a[0]) {
         Some(_) => Ok(a[0].clone()),
         None => {
