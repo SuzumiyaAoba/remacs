@@ -907,3 +907,48 @@ fn regexp_opt_charset_ranges() {
         "(\"[abc]\" \"[]az^-]\" \"[012567]\" \"[a-d]\" \"\\\\`a\\\\`\")"
     );
 }
+
+// ---------------------------------------------------------- format-spec / tabify / obarray
+
+#[test]
+fn format_spec_flags_and_errors() {
+    // GNU-verified on 31.1: flag combos, missing/invalid specs.
+    assert_eq!(
+        ev("(progn (require 'format-spec)
+                  (list (format-spec \"%a %b %s\" '((?a . \"alpha\") (?b . \"beta\") (?s . \"str\")))
+                        (format-spec \"%05d %x\" '((?d . 42) (?x . 255)))
+                        (condition-case e (format-spec \"%z\" '((?a . 1)))
+                          (error e))
+                        (condition-case e (format-spec \"%a %u\" '((?a . \"x\")))
+                          (error (car e)))
+                        (format-spec \"%a %u\" '((?a . \"x\")) t)
+                        (format-spec \"%a%%b\" '((?a . \"x\")))
+                        (format-spec \"%-8s|\" '((?s . \"mid\")))
+                        (format-spec \"%^8s\" '((?s . \"mid\")))
+                        (format-spec-make \"foo\" 42 'sym \"str\")))"),
+        "(\"alpha beta str\" \"00042 255\" (error \"Invalid format character: ‘%z’\") error \"x %u\" \"x%b\" \"mid     |\" \"     MID\" ((\"foo\" . 42) (sym . \"str\")))"
+    );
+}
+
+#[test]
+fn tabify_untabify_obarray() {
+    // GNU-verified on 31.1.
+    assert_eq!(
+        ev("(progn (require 'tabify) (require 'obarray) (require 'scroll-lock)
+                  (list (with-temp-buffer
+                          (insert \"a        b\\n\")
+                          (untabify (point-min) (point-max))
+                          (buffer-string))
+                        (with-temp-buffer
+                          (insert \"a        b\\n\")
+                          (tabify (point-min) (point-max))
+                          (buffer-string))
+                        (with-temp-buffer
+                          (insert \"x   y\\n\")
+                          (tabify (point-min) (point-max))
+                          (buffer-string))
+                        (length (mapatoms (lambda (s) s) (obarray-make 10)))
+                        (fboundp 'scroll-lock-mode)))"),
+        "(\"a        b\n\" \"a\t b\n\" \"x   y\n\" 0 t)"
+    );
+}
