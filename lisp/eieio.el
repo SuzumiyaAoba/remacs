@@ -91,6 +91,10 @@ Each slot spec is (NAME [:initarg KEY] [:initform FORM] ...)."
             (list ',name parents slots initforms initargs))
        (set ',name (cons 'eieio--class-def
                          (get ',name 'eieio--class)))
+       ;; GNU defines the class name as a constructor function:
+       ;; `(registry-db :data ...)' == `(make-instance 'registry-db ...)'.
+       (defalias ',name
+         (lambda (&rest args) (apply #'make-instance ',name args)))
        ',name)))
 
 (defun find-class (name &rest _)
@@ -152,6 +156,10 @@ Each slot spec is (NAME [:initarg KEY] [:initform FORM] ...)."
               (signal 'invalid-slot-name (list name k)))
             (aset obj (eieio--slot-index name slot) v)
             (setq as (cddr as)))))
+      ;; GNU's make-instance runs `initialize-instance' so :before/:after
+      ;; cl-defmethods (e.g. registry-db's `data' hash setup) execute.
+      (when (fboundp 'initialize-instance)
+        (initialize-instance obj args))
       obj)))
 
 (defun eieio-oref (obj slot)
@@ -267,5 +275,12 @@ Matches GNU: `let*' binds OBJECT to a `object' temp, then
 ;; class dispatches on the object's class.
 (defun eieio--class-p (sym)
   (and (symbolp sym) (get sym 'eieio--class) t))
+
+;; GNU's eieio.el defines a default `initialize-instance' primary on
+;; `eieio-default-superclass' — the implicit root of every class.  Our
+;; subset treats `t' as that root so :before/:after methods (e.g.
+;; registry-db's `data' hash setup) always have a primary.
+(when (fboundp 'cl-defmethod)
+  (cl-defmethod initialize-instance ((_this t) &optional _args)))
 
 (provide 'eieio)

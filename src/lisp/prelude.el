@@ -15708,7 +15708,7 @@ nconc, sum, count, maximize, minimize, return, initially, finally."
     maximizing minimize minimizing return while until repeat
     initially finally from to upto below downto above upfrom
     downfrom in on across by = then and it being the elements
-    hash-key hash-keys hash-value hash-values of each
+    hash-key hash-keys hash-value hash-values of each using
     thereis always never into))
 
 (defun cl--loop-destruct-accessors (pat acc)
@@ -15842,6 +15842,12 @@ conditional."
       (list `(if ,cnd (progn ,@then-forms) ,@(when exp (list exp)))
             kinds j))))
 
+(defun cl--loop-hash-pairs (table)
+  "Return a list of (KEY . VALUE) pairs in hash TABLE."
+  (let (acc)
+    (maphash (lambda (k v) (push (cons k v) acc)) table)
+    (nreverse acc)))
+
 (defun cl--loop-expand (clauses)
   (let ((inits nil) (initially nil) (pretests nil) (pre nil)
         (steps nil) (body nil) (finally nil) (finret nil)
@@ -15912,20 +15918,55 @@ conditional."
                           (push `(progn ,@dsetqs) pre)))))
                    ((eq op 'being)
                     (when (eq (nth i clauses) 'the) (setq i (1+ i)))
-                    (when (memq (nth i clauses) '(elements element))
-                      (setq i (1+ i))
-                      (when (eq (nth i clauses) 'of) (setq i (1+ i)))
-                      (let ((v (gensym)) (ix (gensym)))
-                        (setq inits
-                              (append inits (list (list v (nth i clauses))
-                                                  (list ix 0)
-                                                  (list rvar nil))
-                                        dbinds))
-                        (push `(< ,ix (length ,v)) pretests)
-                        (push `(setq ,rvar (aref ,v ,ix)) pre)
-                        (when dsetqs (push `(progn ,@dsetqs) pre))
-                        (push `(setq ,ix (1+ ,ix)) steps)
-                        (setq i (1+ i)))))
+                    (let ((what (nth i clauses)))
+                      (cond
+                       ((memq what '(elements element))
+                        (setq i (1+ i))
+                        (when (eq (nth i clauses) 'of) (setq i (1+ i)))
+                        (let ((v (gensym)) (ix (gensym)))
+                          (setq inits
+                                (append inits (list (list v (nth i clauses))
+                                                    (list ix 0)
+                                                    (list rvar nil))
+                                          dbinds))
+                          (push `(< ,ix (length ,v)) pretests)
+                          (push `(setq ,rvar (aref ,v ,ix)) pre)
+                          (when dsetqs (push `(progn ,@dsetqs) pre))
+                          (push `(setq ,ix (1+ ,ix)) steps)
+                          (setq i (1+ i))))
+                       ;; GNU: `for VAR being the hash-keys of TABLE
+                       ;; [using (hash-values VAR2)]' (and vice versa).
+                       ((memq what '(hash-key hash-keys hash-value
+                                              hash-values))
+                        (setq i (1+ i))
+                        (when (memq (nth i clauses) '(of in))
+                          (setq i (1+ i)))
+                        (let ((src (nth i clauses))
+                              (pl (gensym)) (other nil))
+                          (setq i (1+ i))
+                          (when (eq (nth i clauses) 'using)
+                            (setq other (cadr (nth (1+ i) clauses))
+                                  i (+ i 2)))
+                          (setq inits
+                                (append inits
+                                        (list
+                                         (list pl `(cl--loop-hash-pairs ,src))
+                                         (list rvar nil))
+                                        dbinds
+                                        (and other (list (list other nil)))))
+                          (push `(consp ,pl) pretests)
+                          (push (if (memq what '(hash-key hash-keys))
+                                    `(progn (setq ,rvar (caar ,pl))
+                                            ,@(when other
+                                                (list `(setq ,other
+                                                             (cdar ,pl)))))
+                                  `(progn (setq ,rvar (cdar ,pl))
+                                          ,@(when other
+                                              (list `(setq ,other
+                                                           (caar ,pl))))))
+                                pre)
+                          (when dsetqs (push `(progn ,@dsetqs) pre))
+                          (push `(setq ,pl (cdr ,pl)) steps))))))
                    ((memq op '(from upfrom downfrom below above
                                   to upto downto))
                     (let ((down (memq op '(downfrom downto)))

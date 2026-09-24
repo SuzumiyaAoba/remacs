@@ -1664,3 +1664,45 @@ fn games_and_misc_tooling_entry_points() {
         "(t t t)"
     );
 }
+
+
+// ------------------------------------------------------- eieio + registry
+
+#[test]
+fn registry_db_insert_lookup_search() {
+    // GNU 31.1: `(registry-db)' constructor runs `initialize-instance'
+    // :before/:after methods (data/tracker hash setup); lookup returns
+    // (key entry) alists and misses yield nil.
+    assert_eq!(
+        ev("(progn (require 'registry)
+                  (let ((db (registry-db)))
+                    (registry-insert db \"k1\" 10)
+                    (registry-insert db \"k2\" 20)
+                    (list (registry-lookup db (list \"k1\"))
+                          (registry-lookup db (list \"none\"))
+                          (sort (registry-search db :all t)
+                                (lambda (a b) (string< a b)))
+                          (progn (registry-prune db) t))))"),
+        "(((\"k1\" 10)) nil (\"k1\" \"k2\") t)"
+    );
+}
+
+#[test]
+fn cl_loop_hash_iteration() {
+    // GNU cl-loop: `for VAR being the hash-keys of TABLE using
+    // (hash-values V)' and the hash-values counterpart.
+    assert_eq!(
+        ev("(let ((h (make-hash-table :test 'equal)))
+              (puthash \"a\" 1 h)
+              (puthash \"b\" 2 h)
+              (list (sort (cl-loop for k being the hash-keys of h
+                                   using (hash-values v)
+                                   collect (cons k v))
+                          (lambda (a b) (string< (car a) (car b))))
+                    (sort (cl-loop for v being the hash-values of h
+                                   using (hash-keys k)
+                                   collect (cons v k))
+                          (lambda (a b) (< (car a) (car b))))))"),
+        "(((\"a\" . 1) (\"b\" . 2)) ((1 . \"a\") (2 . \"b\")))"
+    );
+}

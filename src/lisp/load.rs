@@ -263,6 +263,8 @@ static EMBEDDED_LISP: &[(&str, &str)] = &[
     ("mail-utils", include_str!("../../lisp/mail-utils.el")),
     ("fortune", include_str!("../../lisp/fortune.el")),
     ("morse", include_str!("../../lisp/morse.el")),
+    ("eieio-base", include_str!("../../lisp/eieio-base.el")),
+    ("registry", include_str!("../../lisp/registry.el")),
     ("uniquify", include_str!("../../lisp/uniquify.el")),
     ("view", include_str!("../../lisp/view.el")),
     ("whitespace", include_str!("../../lisp/whitespace.el")),
