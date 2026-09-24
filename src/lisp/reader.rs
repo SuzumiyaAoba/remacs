@@ -756,7 +756,7 @@ impl<'a> Reader<'a> {
                 self.pos += 2;
                 // Uninterned symbol; GNU accepts an empty name (`#:'),
                 // which reads back as `##'.
-                let tok = self.read_symbol_token();
+                let (tok, _) = self.read_symbol_token();
                 Ok(Value::Sym(self.interp.make_symbol(&tok)))
             }
             Some('&') => {
@@ -893,7 +893,7 @@ impl<'a> Reader<'a> {
                 // `#_' — read the next token as an interned symbol
                 // (symbol-with-position marker in byte-compiled files).
                 self.pos += 2;
-                let tok = self.read_symbol_token();
+                let (tok, _) = self.read_symbol_token();
                 Ok(Value::Sym(self.interp.intern(&tok)))
             }
             Some('|') => Err(read_err_sym(self.interp, "#|")),
@@ -1060,8 +1060,11 @@ impl<'a> Reader<'a> {
     }
 
     /// Read a raw token (symbol constituent chars, `\` escapes included).
-    fn read_symbol_token(&mut self) -> String {
+    /// The returned bool reports whether any `\` escape was consumed, so
+    /// `read_atom' can tell `.' (dotting token) apart from `\.' (symbol).
+    fn read_symbol_token(&mut self) -> (String, bool) {
         let mut tok = String::new();
+        let mut escaped = false;
         while let Some(c) = self.peek() {
             if Self::is_terminator(c) {
                 break;
@@ -1070,6 +1073,7 @@ impl<'a> Reader<'a> {
                 self.pos += 1;
                 if let Some(e) = self.next() {
                     tok.push(e);
+                    escaped = true;
                     continue;
                 }
                 break;
@@ -1077,13 +1081,13 @@ impl<'a> Reader<'a> {
             tok.push(c);
             self.pos += 1;
         }
-        tok
+        (tok, escaped)
     }
 
     /// Read a token and classify: number, symbol, or error.
     fn read_atom(&mut self) -> Result<Value, Flow> {
         let start = self.pos;
-        let tok = self.read_symbol_token();
+        let (tok, escaped) = self.read_symbol_token();
         if tok.is_empty() {
             return Err(read_err(self.interp, "empty token"));
         }
@@ -1093,7 +1097,10 @@ impl<'a> Reader<'a> {
         match tok.as_str() {
             // `nil' reads as the nil object, not a symbol cell.
             "nil" => return Ok(Value::Nil),
-            // `.' is only a symbol when `)' or `]' follows directly.
+            // `.' is only a symbol when `)' or `]' follows directly;
+            // `\.' is always the symbol `.' (GNU reads (a \. b) as a
+            // 3-element list whose middle element is the `.' symbol).
+            "." if escaped => {}
             "." if matches!(self.peek(), Some(')') | Some(']')) => {}
             "." => return Err(read_err(self.interp, ".")),
             _ => {}
