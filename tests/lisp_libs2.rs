@@ -1277,3 +1277,50 @@ fn array_dos_vars_fringe_font_core_dynamic_setting() {
         "(t t 3 1 5 special t t t t t)"
     );
 }
+
+#[test]
+fn double_isearch_map_entry_points() {
+    // GNU-verified on 31.1: double.el binds [ignore] on both
+    // `double-map' and the dumped `isearch-mode-map'.
+    assert_eq!(
+        ev("(progn (require 'double)
+                  (list (fboundp 'double-mode)
+                        (fboundp 'double-translate-key)
+                        (fboundp 'double-read-event)
+                        (boundp 'double-map)
+                        (boundp 'isearch-mode-map)
+                        (lookup-key double-map [ignore])
+                        (functionp (lookup-key isearch-mode-map [ignore]))))"),
+        "(t t t t t nil t)"
+    );
+}
+
+#[test]
+fn generator_iter_defun_yields() {
+    // GNU-verified on 31.1: iter-defun generators yield in order and
+    // signal `iter-end-of-sequence' when exhausted.
+    assert_eq!(
+        ev("(progn (require 'generator)
+                  (eval '(progn
+                           (iter-defun cnt3 (n) (dotimes (i n) (iter-yield i)))
+                           (let ((it (cnt3 3)))
+                             (list (iter-next it) (iter-next it) (iter-next it)
+                                   (condition-case e (iter-next it)
+                                     (iter-end-of-sequence 'done)))))
+                        t))"),
+        "(0 1 2 done)"
+    );
+}
+
+#[test]
+fn fileloop_entry_points() {
+    // GNU-verified on 31.1.
+    assert_eq!(
+        ev("(progn (require 'fileloop)
+                  (list (fboundp 'fileloop-initialize)
+                        (fboundp 'fileloop-continue)
+                        (fboundp 'fileloop-initialize-replace)
+                        (fboundp 'fileloop-next-file)))"),
+        "(t t t t)"
+    );
+}

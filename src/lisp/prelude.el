@@ -3463,6 +3463,9 @@ With a non `-' prefix argument, print output into current buffer."
     (re-search-backward string nil t))
   string)
 
+(defvar isearch-mode-map (make-sparse-keymap)
+  "Keymap for `isearch-mode'.")
+
 (defun query-replace (from-string to-string &optional delimited)
   "Replace occurrences of FROM-STRING with TO-STRING, asking."
   (interactive "sQuery replace: \nsQuery replace %s with: ")
@@ -15311,13 +15314,18 @@ are allowed.
             newenv)))))
 
 (defmacro cl-macrolet (bindings &rest body)
-  "Bind macro names locally."
-  (let ((lets nil))
-    (dolist (b bindings)
-      (push (list `(symbol-function ',(car b))
-                  `(cons 'macro (lambda ,@(cdr b))))
-            lets))
-    `(cl-letf ,(nreverse lets) ,@body)))
+  "Make temporary macro definitions.
+This is like `cl-flet', but for macros instead of functions.
+Subset of GNU `cl-macrolet': expander bodies are used verbatim
+(GNU runs them through `cl--transform-lambda' for cl arglists)."
+  (if (cdr bindings)
+      `(cl-macrolet (,(car bindings)) (cl-macrolet ,(cdr bindings) ,@body))
+    (if (null bindings) (macroexp-progn body)
+      (let* ((name (caar bindings))
+             (res (cdar bindings)))
+        (macroexpand-all (macroexp-progn body)
+                         (cons (cons name (eval `(function (lambda ,@res)) t))
+                               macroexpand-all-environment))))))
 
 (defmacro cl-defstruct (name &rest slots)
   "Define structure NAME with SLOTS (subset of GNU `cl-defstruct').
