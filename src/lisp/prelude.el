@@ -5621,6 +5621,128 @@ places where expressions are evaluated and inserted or spliced in."
 (defvar pop-up-windows t
   "*Non-nil means `display-buffer' may make a new window.")
 
+;; GNU startup/files/warning vars bound at -Q (startup.el, files.el,
+;; warnings.el are all preloaded there).
+(defvar kill-emacs-hook nil
+  "Hook to be run when `kill-emacs' is called.")
+(defvar warning-inhibit-types nil
+  "List of warning types that should not be displayed.")
+(defvar dump-mode nil
+  "Non-nil when Emacs is dumping itself.")
+(defvar user-emacs-directory-warning t
+  "Whether to warn if unable to access or create `user-emacs-directory'.")
+
+;; GNU subr.el (preloaded).
+(defmacro with-file-modes (modes &rest body)
+  "Execute BODY with default file permissions temporarily set to MODES.
+MODES is as for `set-default-file-modes'."
+  (declare (indent 1) (debug t))
+  (let ((umask (make-symbol "umask")))
+    `(let ((,umask (default-file-modes)))
+       (unwind-protect
+           (progn
+             (set-default-file-modes ,modes)
+             ,@body)
+         (set-default-file-modes ,umask)))))
+
+;; GNU files.el (preloaded).  The cygwin/windows-nt/ms-dos branches are
+;; unreachable on this platform but kept for parity.
+(defun convert-standard-filename (filename)
+  "Convert a standard file's name to something suitable for the OS.
+This means to guarantee valid names and perhaps to canonicalize
+certain patterns.
+
+FILENAME should be an absolute file name since the conversion rules
+sometimes vary depending on the position in the file name.  E.g. c:/foo
+is a valid DOS file name, but c:/bar/c:/foo is not.
+
+This function's standard definition is trivial; it just returns
+the argument.  However, on Windows and DOS, replace invalid
+characters.  On DOS, make sure to obey the 8.3 limitations.
+In the native Windows build, turn Cygwin names into native names.
+
+See Info node `(elisp)Standard File Names' for more details."
+  (cond
+   ((eq system-type 'cygwin)
+    (let ((name (copy-sequence filename))
+	  (start 0))
+      ;; Replace invalid filename characters with !
+      (while (string-match "[?*:<>|\"\000-\037]" name start)
+	(aset name (match-beginning 0) ?!)
+	(setq start (match-end 0)))
+      name))
+   ((eq system-type 'windows-nt)
+    (w32-convert-standard-filename filename))
+   ((eq system-type 'ms-dos)
+    (dos-convert-standard-filename filename))
+   (t filename)))
+
+;; GNU files.el (preloaded).
+(defun locate-user-emacs-file (new-name &optional old-name)
+  "Return an absolute per-user Emacs-specific file name.
+If NEW-NAME exists in `user-emacs-directory', return it.
+Else if OLD-NAME is non-nil and ~/OLD-NAME exists, return ~/OLD-NAME.
+Else return NEW-NAME in `user-emacs-directory', creating the
+directory if it does not exist.
+
+NEW-NAME can also be a list, in which case consider all names in that
+list, from last to first, and use the first name that exists.  If none
+of them exists, use the `car' of that list."
+  (convert-standard-filename
+   (let* ((home (concat "~" (or init-file-user "")))
+	  (at-home (and old-name (expand-file-name old-name home)))
+          (bestname (abbreviate-file-name
+                     (if (listp new-name)
+                         (or (car (seq-filter
+                                   #'file-exists-p
+                                   (mapcar
+                                    (lambda (f)
+                                      (expand-file-name f user-emacs-directory))
+                                    (reverse new-name))))
+                             (expand-file-name (car new-name) user-emacs-directory))
+                       (expand-file-name new-name user-emacs-directory)))))
+     (if (and at-home (not (file-readable-p bestname))
+              (file-readable-p at-home))
+	 at-home
+       ;; Make sure `user-emacs-directory' exists,
+       ;; unless we're in batch mode or dumping Emacs.
+       (or noninteractive
+           dump-mode
+	   (let (errtype)
+	     (if (file-directory-p user-emacs-directory)
+		 (or (file-accessible-directory-p user-emacs-directory)
+		     (setq errtype "access"))
+               ;; We don't want to create HOME if it doesn't exist.
+               (if (and (not (file-exists-p "~"))
+                        (string-prefix-p
+                         (expand-file-name "~")
+                         (expand-file-name user-emacs-directory)))
+                   (setq errtype "create")
+                 ;; Create `user-emacs-directory'.
+	         (with-file-modes ?\700
+		   (condition-case nil
+		       (make-directory user-emacs-directory t)
+		     (error (setq errtype "create"))))))
+	     (when (and errtype
+			user-emacs-directory-warning
+			(not (get 'user-emacs-directory-warning 'this-session)))
+	       ;; Warn only once per Emacs session.
+	       (put 'user-emacs-directory-warning 'this-session t)
+	       (display-warning 'initialization
+				(format "\
+Unable to %s `user-emacs-directory' (%s).
+Any data that would normally be written there may be lost!
+If you never want to see this message again,
+customize the variable `user-emacs-directory-warning'."
+					errtype user-emacs-directory)))))
+       bestname))))
+
+;; savehist.el autoload (GNU loaddefs registers the mode's function
+;; and defvar).
+(defvar savehist-mode nil)
+(autoload 'savehist-mode "savehist"
+  "Toggle saving of minibuffer history (Savehist mode)." t)
+
 ;; hi-lock.el autoloads (GNU loaddefs registers exactly these).
 (autoload 'hi-lock-mode "hi-lock"
   "Toggle selective highlighting of patterns (Hi Lock mode)." t)

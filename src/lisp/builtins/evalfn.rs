@@ -1903,6 +1903,9 @@ fn f_memory_info(_i: &mut Interp, _args: Vec<Value>) -> EvalResult {
     Ok(Value::Nil)
 }
 fn f_kill_emacs(i: &mut Interp, args: Vec<Value>) -> EvalResult {
+    // GNU's kill_emacs runs `kill-emacs-hook' before exiting in every
+    // case; a signaling hook function aborts the exit.
+    call_hook(i, "kill-emacs-hook")?;
     i.quit_editor = true;
     if i.noninteractive {
         // GNU batch: kill-emacs exits the process immediately; an

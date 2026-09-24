@@ -60,6 +60,10 @@ fn main() {
                     if !load_file_script(&mut i, &args[idx]) {
                         exit = 1;
                     }
+                    if let Err(flow) = i.eval_str("(run-hooks 'kill-emacs-hook)") {
+                        report_flow(&mut i, flow);
+                        exit = 1;
+                    }
                     std::process::exit(exit);
                 }
             }
@@ -72,6 +76,12 @@ fn main() {
     }
 
     if batch {
+        // GNU's `command-line-1' ends batch processing with
+        // (kill-emacs), which runs `kill-emacs-hook' before exiting.
+        if let Err(flow) = i.eval_str("(run-hooks 'kill-emacs-hook)") {
+            report_flow(&mut i, flow);
+            exit = 1;
+        }
         std::process::exit(exit);
     }
 
