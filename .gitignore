@@ -1,0 +1,6 @@
+/target
+*.profraw
+coverage.profdata
+mtf*
+pfx*
+remacs-*.profraw

@@ -1,0 +1,5 @@
+(fboundp 'send-string)
+(fboundp 'send-region)
+(fboundp 'process-send-string)
+(condition-case e (send-string nil "x") (error e))
+(condition-case e (send-region nil 1 2) (error e))

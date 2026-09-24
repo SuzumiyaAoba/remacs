@@ -1,0 +1,12 @@
+# The Nix-provided `cc` on this machine does not know the macOS SDK library
+# search paths, so linking fails with `ld: library not found for -liconv`.
+# Use the system compiler driver, which locates the SDK correctly.
+[target.aarch64-apple-darwin]
+linker = "/usr/bin/cc"
+
+# libtest spawns each #[test] on a plain `std::thread` (2MiB stacks),
+# while the evaluator legitimately recurses several MB deep on
+# realistic coverage probes — the real binary runs on the main
+# thread's 8MiB.  Give test threads the same headroom.
+[env]
+RUST_MIN_STACK = { value = "67108864", force = false }

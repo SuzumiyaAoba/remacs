@@ -1,0 +1,135 @@
+;; probe_eval9 — missing-subr sweep: faces, windows, overlays, reads, modes.
+(defun p (tag thunk)
+  (princ (format "%s=%S " tag (condition-case e (funcall thunk) (error (car e))))))
+
+;; faces
+(p "fa-default-weight" (lambda () (face-attribute 'default :weight)))
+(p "fa-bold-weight" (lambda () (face-attribute 'bold :weight)))
+(p "fa-italic-slant" (lambda () (face-attribute 'italic :slant)))
+(p "fa-underline" (lambda () (face-attribute 'underline :underline)))
+(p "fa-nope" (lambda () (face-attribute 'nope :weight)))
+(p "fb-default" (lambda () (face-background 'default)))
+(p "ff-default" (lambda () (face-foreground 'default)))
+(p "fbp-bold" (lambda () (face-bold-p 'bold)))
+(p "fip-italic" (lambda () (face-italic-p 'italic)))
+(p "fup-underline" (lambda () (face-underline-p 'underline)))
+(p "fbp-default" (lambda () (face-bold-p 'default)))
+(p "fp-bold" (lambda () (vectorp (facep 'bold))))
+(p "fp-nope" (lambda () (facep 'nope)))
+(p "fl-len" (lambda () (> (length (face-list)) 10)))
+(p "fid" (lambda () (integerp (face-id 'bold))))
+(p "feq" (lambda () (face-equal 'bold 'bold)))
+(p "faa" (lambda () (cdr (assq :weight (face-all-attributes 'bold)))))
+(make-face 'my-face)
+(set-face-attribute 'my-face nil :foreground "red" :weight 'extra-bold)
+(p "my-fg" (lambda () (face-attribute 'my-face :foreground)))
+(p "my-wt" (lambda () (face-attribute 'my-face :weight)))
+(p "my-bold-p" (lambda () (face-bold-p 'my-face)))
+(p "my-fp" (lambda () (vectorp (facep 'my-face))))
+(copy-face 'italic 'my-italic)
+(p "copy-slant" (lambda () (face-attribute 'my-italic :slant)))
+
+;; overlays
+(let ((o (make-overlay 1 2)))
+  (overlay-put o 'face 'bold)
+  (let ((c (copy-overlay o)))
+    (p "copy-ov" (lambda () (list (overlay-start c) (overlay-end c) (overlay-get c 'face))))))
+(p "ovl-empty" (lambda () (overlay-lists)))
+(p "ovr" (lambda () (overlay-recenter 1)))
+
+;; windows
+(p "wt" (lambda () (window-tree)))
+(p "swv" (lambda () (windowp (split-window-vertically))))
+(p "wt2" (lambda () (window-tree)))
+(p "swv-size" (lambda () (windowp (split-window-vertically 10))))
+(p "swh" (lambda () (windowp (split-window-horizontally))))
+(p "shw" (lambda () (shrink-window 1)))
+(p "ewh" (lambda () (enlarge-window-horizontally 1)))
+(p "swh2" (lambda () (shrink-window-horizontally 1)))
+(p "bw" (lambda () (balance-windows)))
+(p "awte" (lambda () (adjust-window-trailing-edge (selected-window) 1)))
+(p "max" (lambda () (maximize-window)))
+(p "min" (lambda () (minimize-window)))
+(p "stbow" (lambda () (bufferp (switch-to-buffer-other-window "*scratch*"))))
+(p "qw" (lambda () (quit-window)))
+(p "qrw" (lambda () (quit-restore-window)))
+(p "rbw" (lambda () (replace-buffer-in-windows)))
+(p "sow" (lambda () (scroll-other-window-down 1)))
+(p "ew-sole" (lambda () (enlarge-window 1000)))
+(delete-other-windows)
+(p "ew-err" (lambda () (enlarge-window 2)))
+(p "wcl" (lambda () (window-combination-limit (selected-window))))
+(p "sow-err" (lambda () (scroll-other-window-down 1)))
+(p "kbw-err" (lambda () (kill-buffer-and-window)))
+(p "stbof" (lambda () (switch-to-buffer-other-frame "*scratch*")))
+(p "dbof" (lambda () (display-buffer-other-frame "*scratch*")))
+
+;; reads / redisplay / misc
+(p "rkm-vec" (lambda () (read-kbd-macro "C-x C-f")))
+(p "rkm-str" (lambda () (read-kbd-macro "abc")))
+(p "crm" (lambda () (completing-read-multiple "p: " '("a" "b") nil t "x,y")))
+(p "crd" (lambda () (completing-read-default "p: " '("a" "b") nil t)))
+(p "rcs" (lambda () (read-coding-system "p: " 'utf-8)))
+(p "rc" (lambda () (read-color)))
+(p "rp" (lambda () (read-passwd "pw: ")))
+(p "tt" (lambda () (tooltip-show "tip")))
+(p "tth" (lambda () (tooltip-hide)))
+(p "teh" (lambda () (timer-event-handler 'timer)))
+(p "msd" (lambda () (momentary-string-display "hi" 1)))
+(p "mch" (lambda () (minibuffer-completion-help)))
+(p "dmob" (lambda () (display-message-or-buffer "msg" "*tmp*")))
+(p "redisplay" (lambda () (redisplay)))
+(p "fmlu" (lambda () (force-mode-line-update)))
+(p "inv" (lambda () (invisible-p 1)))
+(p "fbm" (lambda () (fringe-bitmaps-at-pos)))
+
+;; modes & jit-lock
+(p "flm" (lambda () (font-lock-mode)))
+(p "flm1" (lambda () (font-lock-mode 1)))
+(p "bom" (lambda () (binary-overwrite-mode)))
+(p "slm" (lambda () (scroll-lock-mode 1)))
+(p "slm0" (lambda () (scroll-lock-mode -1)))
+(p "psm" (lambda () (pixel-scroll-mode 1)))
+(p "pspm" (lambda () (pixel-scroll-precision-mode 1)))
+(p "fle" (lambda () (font-lock-ensure)))
+(p "fle-r" (lambda () (font-lock-ensure 1 5)))
+(p "flf" (lambda () (font-lock-flush)))
+(p "jlr" (lambda () (jit-lock-register #'ignore)))
+(p "jlf" (lambda () jit-lock-functions))
+(p "jlu" (lambda () (jit-lock-unregister #'ignore)))
+(p "jlf2" (lambda () jit-lock-functions))
+(p "acg" (lambda () (accept-change-group (activate-change-group))))
+
+;; thing bounds & substrings — GNU's `replace-buffer-in-windows' leaves
+;; read-only *Messages* current, so edit in a dedicated buffer.
+(with-temp-buffer
+  (insert "foo bar")
+  (goto-char 2)
+  (p "botap-word" (lambda () (bounds-of-thing-at-point 'word)))
+  (p "botap-sym" (lambda () (bounds-of-thing-at-point 'symbol)))
+  (p "bsbc" (lambda () (buffer-substring-with-bidi-context 1 4)))
+  (p "bsbc-err" (lambda () (buffer-substring-with-bidi-context 1 99)))
+  (p "bdel" (lambda () (progn (goto-char 4) (backward-delete-char-untabify 1) (buffer-string))))
+  (p "bvl" (lambda () (progn (beginning-of-visual-line) (point))))
+  (p "evl" (lambda () (progn (end-of-visual-line) (point))))
+  (p "fvl" (lambda () (forward-visible-line 1))))
+
+;; variables bound at init
+(p "vars" (lambda () (mapcar #'boundp '(last-command this-command prefix-arg
+             quit-flag mark-active cursor-type word-wrap scroll-step
+             hscroll-margin sentence-end print-readably mode-line-format
+             unread-command-events transient-mark-mode shift-select-mode
+             abbrev-mode comment-column ctl-arrow paragraph-separate
+             make-backup-files message-log-max window-min-height
+             buffer-file-coding-system jit-lock-functions font-lock-mode
+             scroll-lock-mode yank-excluded-properties kill-ring
+             require-final-newline resize-mini-windows))))
+
+;; a few of the new default values (GNU batch)
+(p "v-comment-column" (lambda () comment-column))
+(p "v-comment-end" (lambda () comment-end))
+(p "v-paragraph-sep" (lambda () paragraph-separate))
+(p "v-window-min-height" (lambda () window-min-height))
+(p "v-buffer-file-cs" (lambda () buffer-file-coding-system))
+(p "v-transient-mark" (lambda () transient-mark-mode))
+(p "v-tmm-val" (lambda () (boundp 'transient-mark-mode)))
