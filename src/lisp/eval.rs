@@ -2366,6 +2366,7 @@ impl Interp {
             "kill-ring-max",
             "last-command",
             "this-command",
+            "last-command-event",
             "current-prefix-arg",
             "prefix-arg",
             "minibuffer-history",
@@ -3300,7 +3301,10 @@ impl Interp {
             ("comment-use-syntax", Value::Sym(self.intern("undecided"))),
             ("fill-nospace-between-words", Value::Sym(sym::T)),
             ("auto-fill-function", Value::Nil),
-            ("normal-auto-fill-function", Value::Nil),
+            (
+                "normal-auto-fill-function",
+                Value::Sym(self.intern("do-auto-fill")),
+            ),
             ("adaptive-fill-mode", Value::Sym(sym::T)),
             (
                 "adaptive-fill-regexp",

@@ -1040,6 +1040,17 @@ pub(crate) fn signal_after_change(i: &mut Interp, beg1: usize, end1: usize, len:
     Ok(Value::Nil)
 }
 
+/// GNU `run_hook_with_args' with no args: apply each function bound
+/// on the hook variable NAME (buffer-local `t' splicing included).
+pub(crate) fn call_hook(i: &mut Interp, name: &str) -> EvalResult {
+    let id = i.intern(name);
+    let fns = hook_fns(i, &Value::Sym(id));
+    for f in fns {
+        i.apply(&f, vec![])?;
+    }
+    Ok(Value::Nil)
+}
+
 // `add-hook'/`remove-hook' mirror GNU 31.1's Lisp definitions in
 // subr.el, including depth bookkeeping via the `hook--depth-alist'
 // symbol property (an uninterned symbol whose value is an alist).

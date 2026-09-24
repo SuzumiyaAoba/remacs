@@ -18508,6 +18508,221 @@ and URL `https://rhodesmill.org/brandon/2012/one-sentence-per-line/'."
   "Major mode for the minibuffer when it is inactive.
 This is only used when the minibuffer area has no active minibuffer.")
 
+;; ---------- Auto Fill (GNU simple.el) ----------
+
+(defvar auto-fill-inhibit-regexp nil
+  "Regexp to match lines that should not be auto-filled.")
+
+(defvar comment-line-break-function 'comment-indent-new-line
+  "Mode-specific function that line breaks and continues a comment.
+This function is called during auto-filling when a comment syntax
+is defined.
+The function should take a single optional argument, which is a flag
+indicating whether it should use soft newlines.")
+
+(defun default-indent-new-line (&optional soft force)
+  "Break line at point and indent.
+If a comment syntax is defined, call `comment-line-break-function'.
+
+The inserted newline is marked hard if variable `use-hard-newlines' is true,
+unless optional argument SOFT is non-nil."
+  (interactive (list nil t))
+  (if comment-start
+      ;; Force breaking the line when called interactively.
+      (if force
+          (let ((comment-auto-fill-only-comments nil))
+            (funcall comment-line-break-function soft))
+        (funcall comment-line-break-function soft))
+    ;; Insert the newline before removing empty space so that markers
+    ;; get preserved better.
+    (if soft (insert-and-inherit ?\n) (newline 1))
+    (save-excursion (forward-char -1) (delete-horizontal-space))
+    (delete-horizontal-space)
+
+    (if (and fill-prefix (not adaptive-fill-mode))
+	;; Blindly trust a non-adaptive fill-prefix.
+	(progn
+	  (indent-to-left-margin)
+	  (insert-before-markers-and-inherit fill-prefix))
+
+      (cond
+       ;; If there's an adaptive prefix, use it unless we're inside
+       ;; a comment and the prefix is not a comment starter.
+       (fill-prefix
+	(indent-to-left-margin)
+	(insert-and-inherit fill-prefix))
+       ;; If we're not inside a comment, just try to indent.
+       (t (indent-according-to-mode))))))
+
+(defvar inhibit-auto-fill nil
+  "Non-nil means to do as if `auto-fill-mode' was disabled.")
+
+(defun do-auto-fill ()
+  "The default value for `normal-auto-fill-function'.
+This is the default auto-fill function, some major modes use a different one.
+Returns t if it really did any work."
+  (let (fc justify give-up
+	   (fill-prefix fill-prefix))
+    (if (or (not (setq justify (current-justification)))
+	    (null (setq fc (current-fill-column)))
+	    (and (eq justify 'left)
+		 (<= (current-column) fc))
+	    (and auto-fill-inhibit-regexp
+		 (save-excursion (beginning-of-line)
+				 (looking-at auto-fill-inhibit-regexp))))
+	nil ;; Auto-filling not required
+      (if (memq justify '(full center right))
+	  (save-excursion (unjustify-current-line)))
+
+      ;; Choose a fill-prefix automatically.
+      (when (and adaptive-fill-mode
+		 (or (null fill-prefix) (string= fill-prefix "")))
+	(let ((prefix
+	       (fill-context-prefix
+		(save-excursion (fill-forward-paragraph -1) (point))
+		(save-excursion (fill-forward-paragraph 1) (point)))))
+	  (and prefix (not (equal prefix ""))
+	       ;; Use auto-indentation rather than a guessed empty prefix.
+	       (not (and fill-indent-according-to-mode
+			 (string-match "\\`[ \t]*\\'" prefix)))
+	       (setq fill-prefix prefix))))
+
+      (while (and (not give-up) (> (current-column) fc))
+        ;; Determine where to split the line.
+        (let ((fill-point
+               (save-excursion
+                 (beginning-of-line)
+                 ;; Don't split earlier in the line than the length of the
+                 ;; fill prefix, since the resulting line would be longer.
+                 (when fill-prefix
+                   (move-to-column (string-width fill-prefix)))
+                 (let ((after-prefix (point)))
+                    (move-to-column (1+ fc))
+                    (fill-move-to-break-point after-prefix)
+                    (point)))))
+
+	  ;; See whether the place we found is any good.
+	  (if (save-excursion
+		(goto-char fill-point)
+		(or (bolp)
+		    ;; There is no use breaking at end of line.
+		    (save-excursion (skip-chars-forward " ") (eolp))
+		    ;; Don't split right after a comment starter
+		    ;; since we would just make another comment starter.
+		    (and comment-start-skip
+			 (let ((limit (point)))
+			   (beginning-of-line)
+			   (and (re-search-forward comment-start-skip
+						   limit t)
+				(eq (point) limit))))))
+	      ;; No good place to break => stop trying.
+	      (setq give-up t)
+	    ;; Ok, we have a useful place to break the line.  Do it.
+	    (let ((prev-column (current-column)))
+	      ;; If point is at the fill-point, do not `save-excursion'.
+	      ;; Otherwise, if a comment prefix or fill-prefix is inserted,
+	      ;; point will end up before it rather than after it.
+	      (if (save-excursion
+		    (skip-chars-backward " \t")
+		    (= (point) fill-point))
+		  (default-indent-new-line t)
+		(save-excursion
+		  (goto-char fill-point)
+		  (default-indent-new-line t)))
+	      ;; Now do justification, if required
+	      (if (not (eq justify 'left))
+		  (save-excursion
+		    (end-of-line 0)
+		    (justify-current-line justify nil t)))
+	      ;; If making the new line didn't reduce the hpos of
+	      ;; the end of the line, then give up now;
+	      ;; trying again will not help.
+	      (if (>= (current-column) prev-column)
+		  (setq give-up t))))))
+      ;; Justify last line.
+      (justify-current-line justify t t)
+      t)))
+
+(defun internal-auto-fill ()
+  "The function called by `self-insert-command' to perform auto-filling."
+  (unless (or inhibit-auto-fill
+              (and comment-start
+                   comment-auto-fill-only-comments
+                   (not (nth 4 (syntax-ppss)))))
+    (funcall auto-fill-function)))
+
+(defvar normal-auto-fill-function 'do-auto-fill
+  "The function to use for `auto-fill-function' if Auto Fill mode is turned on.
+Some major modes set this.")
+
+(defvar-local auto-fill-function nil
+  "Function called (if non-nil) to perform auto-fill.
+It is called after the char is inserted.")
+
+(put 'auto-fill-function :minor-mode-function 'auto-fill-mode)
+;; `functions' and `hooks' are usually unsafe to set, but setting
+;; auto-fill-function to nil in a file-local setting is safe and
+;; can be useful to prevent auto-filling.
+(put 'auto-fill-function 'safe-local-variable 'null)
+
+(define-minor-mode auto-fill-mode
+  "Toggle automatic line breaking (Auto Fill mode).
+
+When Auto Fill mode is enabled, inserting a space at a column
+beyond `current-fill-column' automatically breaks the line at a
+previous space.
+
+When `auto-fill-mode' is on, the `auto-fill-function' variable is
+non-nil.
+
+The value of `normal-auto-fill-function' specifies the function to use
+for `auto-fill-function' when turning Auto Fill mode on."
+  :variable (auto-fill-function
+             . (lambda (v) (setq auto-fill-function
+                            (if v normal-auto-fill-function)))))
+
+;; This holds a document string used to document auto-fill-mode.
+(defun auto-fill-function ()
+  "Automatically break line at a previous space, in insertion of text."
+  nil)
+
+(defun turn-on-auto-fill ()
+  "Unconditionally turn on Auto Fill mode."
+  (auto-fill-mode 1))
+
+(defun turn-off-auto-fill ()
+  "Unconditionally turn off Auto Fill mode."
+  (auto-fill-mode -1))
+
+(custom-add-option 'text-mode-hook 'turn-on-auto-fill)
+
+(defun set-fill-column (arg)
+  "Set `fill-column' to specified argument.
+Use \\[universal-argument] followed by a number to specify a column.
+Just \\[universal-argument] as argument means to use the current column."
+  (interactive
+   (list (or current-prefix-arg
+             ;; We used to use current-column silently, but C-x f is too easily
+             ;; typed as a typo for C-x C-f, so we turned it into an error and
+             ;; now an interactive prompt.
+             (read-number (format "Change fill-column from %s to: " fill-column)
+                          (current-column)))))
+  (if (consp arg)
+      (setq arg (current-column)))
+  (if (not (integerp arg))
+      ;; Disallow missing argument; it's probably a typo for C-x C-f.
+      (error "set-fill-column requires an explicit argument")
+    (message "Fill column set to %d (was %d)" arg fill-column)
+    (setq fill-column arg)))
+
+;; GNU creates this char-table in character.c with t at SPC and \n.
+(defvar auto-fill-chars
+  (let ((tbl (make-char-table 'auto-fill-chars nil)))
+    (aset tbl ?\s t)
+    (aset tbl ?\n t)
+    tbl)
+  "A char-table for chars which invoke auto-filling.")
+
 ;; ---------- Lisp indentation (lisp-mode.el subset) ----------
 
 (defvar lisp-indent-offset nil

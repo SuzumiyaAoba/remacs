@@ -1977,7 +1977,7 @@ pub(crate) fn cur(i: &Interp) -> Rc<RefCell<crate::buffer::Buffer>> {
 /// calls run with the buffer borrow released so hook functions can
 /// inspect (and even modify) the buffer; positions are 0-based here
 /// and converted to the 1-based values hooks receive.
-use crate::lisp::builtins::evalfn::{signal_after_change, signal_before_change};
+use crate::lisp::builtins::evalfn::{call_hook, signal_after_change, signal_before_change};
 
 /// `insert_at' (POS 0-based) with before/after-change signals.
 pub(crate) fn chg_insert(i: &mut Interp, pos: usize, s: &str) -> EvalResult {
@@ -5046,6 +5046,46 @@ fn f_self_insert_command(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         }
         let s: String = std::iter::repeat(c).take(n as usize).collect();
         insert_str_at_point(i, &s, false)?;
+        // GNU `internal_self_insert': when `auto-fill-function' is
+        // non-nil and the `auto-fill-chars' table maps the inserted
+        // char (non-table value falls back to SPC and \n), call
+        // `internal-auto-fill' — for '\n', on the previous line.
+        let aff = i
+            .intern_soft("auto-fill-function")
+            .map(|id| i.symbol_value(id))
+            .unwrap_or(Value::Nil);
+        if aff.truthy() && n > 0 {
+            let chars = i
+                .intern_soft("auto-fill-chars")
+                .map(|id| i.symbol_value(id))
+                .unwrap_or(Value::Nil);
+            let trigger = if crate::lisp::builtins::misc::is_char_table(i, &chars) {
+                crate::lisp::builtins::misc::char_table_ref(i, &chars, c as usize).truthy()
+            } else {
+                c == ' ' || c == '\n'
+            };
+            if trigger {
+                let zv = cur(i).borrow().zv;
+                if c == '\n' {
+                    let b = cur(i);
+                    let p = b.borrow().point();
+                    if p > 0 {
+                        b.borrow_mut().set_point(p - 1);
+                    }
+                }
+                let iaf = Value::Sym(i.intern("internal-auto-fill"));
+                let _ = i.apply(&iaf, vec![]);
+                if c == '\n' {
+                    let b = cur(i);
+                    let p = b.borrow().point();
+                    if p < zv {
+                        b.borrow_mut().set_point(p + 1);
+                    }
+                }
+            }
+        }
+        // GNU runs `post-self-insert-hook' after every insertion.
+        call_hook(i, "post-self-insert-hook")?;
     }
     Ok(Value::Nil)
 }
