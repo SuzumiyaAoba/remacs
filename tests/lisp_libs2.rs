@@ -1256,3 +1256,24 @@ fn epg_config_entry_points() {
         "(t t t t t t)"
     );
 }
+
+#[test]
+fn array_dos_vars_fringe_font_core_dynamic_setting() {
+    // GNU-verified on 31.1.
+    assert_eq!(
+        ev("(progn (require 'array) (require 'dos-vars) (require 'fringe)
+                  (require 'font-core) (require 'dynamic-setting)
+                  (list (fboundp 'array-mode)
+                        (boundp 'array-mode-map)
+                        (array--limit-index 3 5)
+                        (array--limit-index -1 5)
+                        (array--limit-index 9 5)
+                        (get 'array-mode 'mode-class)
+                        (fboundp 'fringe-mode)
+                        (boundp 'fringes-outside-margins)
+                        (boundp 'font-lock-mode)
+                        (fboundp 'dynamic-setting-handle-config-changed-event)
+                        (boundp 'special-event-map)))"),
+        "(t t 3 1 5 special t t t t t)"
+    );
+}

@@ -936,6 +936,9 @@ lines."
 (defvar overflow-newline-into-fringe nil
   "Non-nil means to display the newline on right fringe in a truncated line.")
 
+(defvar fringes-outside-margins nil
+  "Non-nil means to display fringes outside display margins.")
+
 (defun line-move-to-column (col)
   "Try to find column COL, considering invisibility.
 This function works only in certain cases,
@@ -7768,6 +7771,9 @@ keymaps.")
 (defvar input-decode-map (make-sparse-keymap)
   "Keymap for translating raw terminal input events.
 This is the first translation applied to input events.")
+
+(defvar special-event-map (make-sparse-keymap)
+  "Keymap of bindings for events that should be handled at a low level.")
 
 (defvar local-function-key-map
   (let ((map (make-sparse-keymap)))
