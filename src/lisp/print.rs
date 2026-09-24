@@ -48,11 +48,124 @@ fn push_sym_name(name: &str, out: &mut String) {
     }
 }
 
+thread_local! {
+    /// GNU print.c's `being_printed' stack (used when print-circle
+    /// is nil): every object printing at depth D sits in slot D, and
+    /// an object that reoccurs while still on the stack prints as
+    /// `#N' where N is its stack index.  Only containers can be
+    /// ancestors, so only they are tracked.
+    static BEING_PRINTED: RefCell<Vec<usize>> = const { RefCell::new(Vec::new()) };
+    /// `print-circle' state for the current top-level print call:
+    /// objects seen by the pre-scan, labels numbered at each shared
+    /// object's second encounter (GNU's `print_number_index' order),
+    /// and which labeled objects have already printed.
+    static CIRCLE: RefCell<Option<CircleCtx>> = const { RefCell::new(None) };
+}
+
+/// Per-print state for `print-circle'.
+struct CircleCtx {
+    /// Objects already seen by the pre-scan.
+    seen: std::collections::HashSet<usize>,
+    /// ptr -> label number, assigned at second encounter.
+    labels: std::collections::HashMap<usize, usize>,
+    /// Objects whose `#N=' form has already printed.
+    printed: std::collections::HashSet<usize>,
+    /// Next label index (GNU's print_number_index starts at 1).
+    next: usize,
+}
+
+/// Identity key for objects that can appear in the print stack —
+/// containers by `eq' identity (Rc pointer), like GNU's BASE_EQ.
+fn print_stack_key(v: &Value) -> Option<usize> {
+    match v {
+        Value::Cons(r) => Some(std::rc::Rc::as_ptr(r) as usize),
+        Value::Str(r) => Some(std::rc::Rc::as_ptr(r) as usize),
+        Value::Vec(r) => Some(std::rc::Rc::as_ptr(r) as usize),
+        Value::Record(r) => Some(std::rc::Rc::as_ptr(r) as usize),
+        Value::Hash(r) => Some(std::rc::Rc::as_ptr(r) as usize),
+        _ => None,
+    }
+}
+
+/// GNU's `print_preprocess' pass: depth-first walk of the object
+/// graph (car before cdr, like GNU's recursion), numbering each
+/// shared/cyclic object when it is encountered a second time.
+/// Already-seen objects are not descended into, so cycles terminate.
+fn count_print_refs(v: &Value, ctx: &mut CircleCtx) {
+    let mut stack = vec![v.clone()];
+    while let Some(x) = stack.pop() {
+        let Some(k) = print_stack_key(&x) else { continue };
+        if !ctx.seen.insert(k) {
+            // Second encounter: GNU assigns `print_number_index'
+            // here, not at print time.
+            if !ctx.labels.contains_key(&k) {
+                ctx.labels.insert(k, ctx.next);
+                ctx.next += 1;
+            }
+            continue;
+        }
+        match &x {
+            Value::Cons(c) => {
+                let (car, cdr) = {
+                    let b = c.borrow();
+                    (b.car.clone(), b.cdr.clone())
+                };
+                stack.push(cdr);
+                stack.push(car);
+            }
+            Value::Vec(r) | Value::Record(r) => {
+                stack.extend(r.borrow().iter().rev().cloned());
+            }
+            Value::Hash(h) => {
+                let hh = h.borrow();
+                for (_, orig) in hh.keys.iter() {
+                    stack.push(orig.clone());
+                }
+                stack.extend(hh.map.values().cloned());
+            }
+            _ => {}
+        }
+    }
+}
+
+/// Is `print-circle' handling active for the current print?
+fn circle_active() -> bool {
+    CIRCLE.with(|c| c.borrow().is_some())
+}
+
+/// In `print-circle' mode: if K's object was numbered by the
+/// pre-scan, return Some((label, true-if-first-occurrence)).
+/// None for singly referenced objects.
+fn circle_label(k: usize) -> Option<(usize, bool)> {
+    CIRCLE.with(|c| {
+        let mut binding = c.borrow_mut();
+        let ctx = binding.as_mut()?;
+        let n = ctx.labels.get(&k).copied()?;
+        Some((n, ctx.printed.insert(k)))
+    })
+}
+
+/// Does K's object need a `print-circle' label (shared/cyclic)?
+fn circle_counted(k: usize) -> bool {
+    CIRCLE.with(|c| {
+        c.borrow()
+            .as_ref()
+            .map(|ctx| ctx.labels.contains_key(&k))
+            .unwrap_or(false)
+    })
+}
+
 impl Interp {
     /// `prin1` representation: readable, escaped.
     pub fn print_to_string(&self, v: &Value) -> String {
         let mut s = String::new();
+        let mark = BEING_PRINTED.with(|bp| bp.borrow().len());
+        let prev_circle = self.install_circle_ctx(v);
         self.prin1_inner(v, &mut s, 0, false);
+        // Unwinding safety: restore the stack mark so a mid-print
+        // panic can't poison later prints.
+        CIRCLE.with(|c| *c.borrow_mut() = prev_circle);
+        BEING_PRINTED.with(|bp| bp.borrow_mut().truncate(mark));
         s
     }
 
@@ -64,8 +177,29 @@ impl Interp {
     /// `princ` representation: human-readable (strings unquoted).
     pub fn princ_to_string(&self, v: &Value) -> String {
         let mut s = String::new();
+        let mark = BEING_PRINTED.with(|bp| bp.borrow().len());
+        let prev_circle = self.install_circle_ctx(v);
         self.princ_inner(v, &mut s, 0, false);
+        CIRCLE.with(|c| *c.borrow_mut() = prev_circle);
+        BEING_PRINTED.with(|bp| bp.borrow_mut().truncate(mark));
         s
+    }
+
+    /// When `print-circle' is non-nil, pre-scan V for shared/cyclic
+    /// objects and install the per-print state.  Returns the previous
+    /// state so callers can restore it (nested print calls).
+    fn install_circle_ctx(&self, v: &Value) -> Option<CircleCtx> {
+        if !self.print_var("print-circle").truthy() {
+            return None;
+        }
+        let mut ctx = CircleCtx {
+            seen: std::collections::HashSet::new(),
+            labels: std::collections::HashMap::new(),
+            printed: std::collections::HashSet::new(),
+            next: 1,
+        };
+        count_print_refs(v, &mut ctx);
+        CIRCLE.with(|c| c.borrow_mut().replace(ctx))
     }
 
     /// When ITEMS is an `[overlay BID IDX]' handle, produce GNU's
@@ -108,7 +242,42 @@ impl Interp {
     }
 
     fn prin1_inner(&self, v: &Value, out: &mut String, depth: usize, bq: bool) {
-        if depth > 64 {
+        if let Some(k) = print_stack_key(v) {
+            if circle_active() {
+                // `print-circle': shared/cyclic objects print `#N='
+                // at first occurrence and `#N#' afterwards.
+                match circle_label(k) {
+                    Some((n, false)) => {
+                        let _ = write!(out, "#{n}#");
+                        return;
+                    }
+                    Some((n, true)) => {
+                        let _ = write!(out, "#{n}=");
+                    }
+                    None => {}
+                }
+                self.prin1_inner_obj(v, out, depth, bq);
+                return;
+            }
+            // GNU's being-printed check: an object still on the print
+            // stack prints as `#N' (its stack index).
+            let hit = BEING_PRINTED.with(|bp| bp.borrow().iter().position(|&x| x == k));
+            if let Some(i) = hit {
+                let _ = write!(out, "#{i}");
+                return;
+            }
+            BEING_PRINTED.with(|bp| bp.borrow_mut().push(k));
+            self.prin1_inner_obj(v, out, depth, bq);
+            BEING_PRINTED.with(|bp| {
+                bp.borrow_mut().pop();
+            });
+            return;
+        }
+        self.prin1_inner_obj(v, out, depth, bq);
+    }
+
+    fn prin1_inner_obj(&self, v: &Value, out: &mut String, depth: usize, bq: bool) {
+        if depth > 200 {
             out.push_str("##");
             return;
         }
@@ -406,6 +575,10 @@ impl Interp {
                 if let Some(t) = test {
                     let _ = write!(out, " test {}", t);
                 }
+                if let Some(w) = &hh.weakness {
+                    out.push_str(" weakness ");
+                    self.prin1_inner(w, out, depth + 1, bq);
+                }
                 if !empty {
                     out.push_str(" data (");
                     let mut first = true;
@@ -522,6 +695,38 @@ impl Interp {
     }
 
     fn princ_inner(&self, v: &Value, out: &mut String, depth: usize, bq: bool) {
+        if let Some(k) = print_stack_key(v) {
+            if circle_active() {
+                match circle_label(k) {
+                    Some((n, false)) => {
+                        let _ = write!(out, "#{n}#");
+                        return;
+                    }
+                    Some((n, true)) => {
+                        let _ = write!(out, "#{n}=");
+                    }
+                    None => {}
+                }
+                self.princ_inner_obj(v, out, depth, bq);
+                return;
+            }
+            // Same being-printed circularity check as prin1.
+            let hit = BEING_PRINTED.with(|bp| bp.borrow().iter().position(|&x| x == k));
+            if let Some(i) = hit {
+                let _ = write!(out, "#{i}");
+                return;
+            }
+            BEING_PRINTED.with(|bp| bp.borrow_mut().push(k));
+            self.princ_inner_obj(v, out, depth, bq);
+            BEING_PRINTED.with(|bp| {
+                bp.borrow_mut().pop();
+            });
+            return;
+        }
+        self.princ_inner_obj(v, out, depth, bq);
+    }
+
+    fn princ_inner_obj(&self, v: &Value, out: &mut String, depth: usize, bq: bool) {
         if let Some(level) = self.print_level_limit() {
             if depth >= level {
                 match v {
@@ -749,42 +954,66 @@ impl Interp {
         }
         let limit = self.print_length_limit();
         out.push('(');
-        let mut cur = v.clone();
-        let mut first = true;
-        let mut n = 0usize;
-        let mut seen = std::collections::HashSet::new();
+        // GNU print.c: `(' ELEM, then ` ' ELEM per continuation cell;
+        // a Brent-style tortoise walking the cdr chain detects a cdr
+        // cycle and prints `. #N)' with the tortoise's list index.
+        let Value::Cons(head) = v else { return };
+        let mut cur = {
+            let b = head.borrow();
+            let car = b.car.clone();
+            let next = b.cdr.clone();
+            drop(b);
+            if limit == Some(0) {
+                // GNU prints `(...)' when print-length is 0.
+                out.push_str("...)");
+                return;
+            }
+            self.prin1_inner(&car, out, depth + 1, bq);
+            next
+        };
+        let mut tortoise = v.clone();
+        let (mut n, mut m, mut idx) = (2usize, 2usize, 0usize);
+        let mut printed = 1usize;
         loop {
             match cur {
-                Value::Cons(c) => {
-                    let ptr = std::rc::Rc::as_ptr(&c) as usize;
-                    if !seen.insert(ptr) {
-                        out.push_str(" . #0");
+                Value::Cons(_) => {
+                    // `print-circle': a shared/cyclic tail prints as
+                    // `. #N=(...)' (first occurrence) or `. #N#';
+                    // GNU checks this before `print-length'.
+                    if circle_active()
+                        && print_stack_key(&cur).map(circle_counted).unwrap_or(false)
+                    {
+                        out.push_str(" . ");
+                        self.prin1_inner(&cur, out, depth + 1, bq);
                         out.push(')');
                         return;
                     }
-                    let (car, next) = {
-                        let b = c.borrow();
-                        (b.car.clone(), b.cdr.clone())
-                    };
                     if let Some(l) = limit {
-                        if n >= l {
-                            out.push_str(if n == 0 { "..." } else { " ..." });
+                        if printed >= l {
+                            out.push_str(" ...");
                             out.push(')');
                             return;
                         }
                     }
-                    if !first {
-                        out.push(' ');
-                    }
-                    first = false;
-                    self.prin1_inner(&car, out, depth + 1, bq);
-                    cur = next;
-                    n += 1;
-                    if n > 1000 {
-                        out.push_str(" ...");
-                        out.push(')');
+                    out.push(' ');
+                    n -= 1;
+                    if n == 0 {
+                        idx += m;
+                        m <<= 1;
+                        n = m;
+                        tortoise = cur.clone();
+                    } else if super::builtins::eq_values(&cur, &tortoise) {
+                        let _ = write!(out, ". #{idx})");
                         return;
                     }
+                    let Value::Cons(c) = &cur else { unreachable!() };
+                    let (car, next) = {
+                        let b = c.borrow();
+                        (b.car.clone(), b.cdr.clone())
+                    };
+                    printed += 1;
+                    self.prin1_inner(&car, out, depth + 1, bq);
+                    cur = next;
                 }
                 Value::Nil => {
                     out.push(')');
@@ -808,37 +1037,59 @@ impl Interp {
         }
         let limit = self.print_length_limit();
         out.push('(');
-        let mut cur = v.clone();
-        let mut first = true;
-        let mut n = 0usize;
-        let mut seen = std::collections::HashSet::new();
+        let Value::Cons(head) = v else { return };
+        let mut cur = {
+            let b = head.borrow();
+            let car = b.car.clone();
+            let next = b.cdr.clone();
+            drop(b);
+            if limit == Some(0) {
+                out.push_str("...)");
+                return;
+            }
+            self.princ_inner(&car, out, depth + 1, bq);
+            next
+        };
+        let mut tortoise = v.clone();
+        let (mut n, mut m, mut idx) = (2usize, 2usize, 0usize);
+        let mut printed = 1usize;
         loop {
             match cur {
-                Value::Cons(c) => {
-                    let ptr = std::rc::Rc::as_ptr(&c) as usize;
-                    if !seen.insert(ptr) {
-                        out.push_str(" . #0");
+                Value::Cons(_) => {
+                    if circle_active()
+                        && print_stack_key(&cur).map(circle_counted).unwrap_or(false)
+                    {
+                        out.push_str(" . ");
+                        self.princ_inner(&cur, out, depth + 1, bq);
                         out.push(')');
                         return;
                     }
-                    let (car, next) = {
-                        let b = c.borrow();
-                        (b.car.clone(), b.cdr.clone())
-                    };
                     if let Some(l) = limit {
-                        if n >= l {
-                            out.push_str(if n == 0 { "..." } else { " ..." });
+                        if printed >= l {
+                            out.push_str(" ...");
                             out.push(')');
                             return;
                         }
                     }
-                    if !first {
-                        out.push(' ');
+                    out.push(' ');
+                    n -= 1;
+                    if n == 0 {
+                        idx += m;
+                        m <<= 1;
+                        n = m;
+                        tortoise = cur.clone();
+                    } else if super::builtins::eq_values(&cur, &tortoise) {
+                        let _ = write!(out, ". #{idx})");
+                        return;
                     }
-                    first = false;
+                    let Value::Cons(c) = &cur else { unreachable!() };
+                    let (car, next) = {
+                        let b = c.borrow();
+                        (b.car.clone(), b.cdr.clone())
+                    };
+                    printed += 1;
                     self.princ_inner(&car, out, depth + 1, bq);
                     cur = next;
-                    n += 1;
                 }
                 Value::Nil => {
                     out.push(')');

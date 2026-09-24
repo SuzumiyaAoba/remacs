@@ -2650,12 +2650,17 @@ fn face_exists(i: &Interp, v: &Value) -> bool {
     crate::editor::face_known(i, &name)
 }
 
-/// `face-name` — GNU returns the face's name symbol; errors "Not a
-/// face: X" on anything that doesn't name an existing face.
+/// `face-name` — GNU faces.el returns the face's name as a *string*
+/// (`symbol-name`), rejects string args with `wrong-type-argument
+/// (symbolp ...)', and errors "Not a face: X" on anything else that
+/// doesn't name an existing face.
 fn f_face_name(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    if let Value::Sym(_) = a[0] {
+    if let Value::Str(_) = &a[0] {
+        return Err(i.wrong_type_mut("symbolp", &a[0]));
+    }
+    if let Value::Sym(s) = &a[0] {
         if face_exists(i, &a[0]) {
-            return Ok(a[0].clone());
+            return Ok(Value::string(i.symbol_name(*s)));
         }
     }
     Err(i.error(format!("Not a face: {}", i.princ_to_string(&a[0]))))
@@ -10123,7 +10128,14 @@ fn f_read_expression(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         _ => String::new(),
     };
     let input = if i.minibuf_reader.is_some() {
-        i.minibuf_line(&prompt)?
+        // GNU read--expression → read-from-minibuffer with
+        // `read-expression-history' as HISTVAR.
+        let args = crate::lisp::eval::MinibufArgs {
+            hist: Value::Sym(i.intern("read-expression-history")),
+            initial: a.get(1).cloned().unwrap_or(Value::Nil),
+            ..Default::default()
+        };
+        i.minibuf_read(&prompt, args)?
     } else if i.noninteractive {
         // GNU `read_minibuf_noninteractive' reads a line from stdin.
         i.batch_read_line(&prompt)?

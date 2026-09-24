@@ -49,8 +49,6 @@ struct Opts {
     array_list: bool,
     null_obj: Value,
     false_obj: Value,
-    /// For serialize: true when :object-type was explicitly given.
-    explicit_obj_type: bool,
 }
 
 fn plist_args(i: &mut Interp, args: &[Value]) -> Result<Vec<(String, Value)>, Flow> {
@@ -74,20 +72,16 @@ fn parse_opts(i: &mut Interp, rest: &[Value], for_serialize: bool) -> Result<Opt
         array_list: false,
         null_obj: Value::Sym(i.intern(":null")),
         false_obj: Value::Sym(i.intern(":false")),
-        explicit_obj_type: false,
     };
-    let mut obj_type_val = Value::Nil;
-    let mut saw_obj = false;
-    let mut saw_null = false;
-    let mut saw_false = false;
     let mut bad_obj: Option<Value> = None;
     let mut bad_arr: Option<Value> = None;
+    // For serialize: the value of the last :object-type/:array-type
+    // keyword in argument order (GNU rejects them there outright).
+    let mut last_ser_key: Option<Value> = None;
     for (k, v) in plist_args(i, rest)? {
         match k.as_str() {
             ":object-type" => {
-                saw_obj = true;
-                o.explicit_obj_type = true;
-                obj_type_val = v.clone();
+                last_ser_key = Some(v.clone());
                 let t = i.sym_id(&v).map(|s| i.symbol_name(s).to_string());
                 match t.as_deref() {
                     Some("hash-table") => o.obj = ObjType::Hash,
@@ -97,6 +91,7 @@ fn parse_opts(i: &mut Interp, rest: &[Value], for_serialize: bool) -> Result<Opt
                 }
             }
             ":array-type" => {
+                last_ser_key = Some(v.clone());
                 let t = i.sym_id(&v).map(|s| i.symbol_name(s).to_string());
                 match t.as_deref() {
                     Some("array") => o.array_list = false,
@@ -104,19 +99,25 @@ fn parse_opts(i: &mut Interp, rest: &[Value], for_serialize: bool) -> Result<Opt
                     _ => bad_arr = Some(v),
                 }
             }
-            ":null-object" => {
-                saw_null = true;
-                o.null_obj = v;
+            ":null-object" => o.null_obj = v,
+            ":false-object" => o.false_obj = v,
+            // GNU rejects unknown keywords outright.
+            _ => {
+                let e = i.intern("error");
+                return Err(i.signal_data(
+                    e,
+                    vec![
+                        Value::string(format!(
+                            "Keyword argument {} not one of (:object-type :array-type :null-object :false-object)",
+                            k
+                        )),
+                    ],
+                ));
             }
-            ":false-object" => {
-                saw_false = true;
-                o.false_obj = v;
-            }
-            _ => {}
         }
     }
     // GNU validates in this order: bad object-type first, then the
-    // null/false-object requirement, then bad array-type.
+    // serialize restriction, then bad array-type.
     if let Some(v) = bad_obj {
         let e = i.intern("error");
         return Err(i.signal_data(
@@ -127,15 +128,22 @@ fn parse_opts(i: &mut Interp, rest: &[Value], for_serialize: bool) -> Result<Opt
             ],
         ));
     }
-    if for_serialize && saw_obj && !(saw_null || saw_false) {
-        let e = i.intern("error");
-        return Err(i.signal_data(
-            e,
-            vec![
-                Value::string("One of :null-object or :false-object should be specified"),
-                obj_type_val,
-            ],
-        ));
+    // json-serialize accepts only :null-object and :false-object;
+    // a present :object-type/:array-type errors with its value
+    // (the last one in argument order when both appear).
+    if for_serialize {
+        if let Some(v) = last_ser_key {
+            let e = i.intern("error");
+            return Err(i.signal_data(
+                e,
+                vec![
+                    Value::string(
+                        "One of :null-object or :false-object should be specified",
+                    ),
+                    v,
+                ],
+            ));
+        }
     }
     if let Some(v) = bad_arr {
         let e = i.intern("error");
@@ -148,6 +156,30 @@ fn parse_opts(i: &mut Interp, rest: &[Value], for_serialize: bool) -> Result<Opt
         ));
     }
     Ok(o)
+}
+
+/// Lazily install a json error's `error-conditions' chain (as GNU's
+/// define_error does) so `condition-case' catches it by parent.
+fn json_cond_chain(i: &mut Interp, id: u32) {
+    let ec = i.intern("error-conditions");
+    if i.get_prop(id, ec).truthy() {
+        return;
+    }
+    let name = i.symbol_name(id).to_string();
+    // GNU json.c: escape-sequence and trailing-content sit under
+    // json-parse-error; invalid-surrogate sits directly under
+    // json-error (NOT caught by a json-parse-error handler).
+    let parents: &[&str] = match name.as_str() {
+        "json-escape-sequence-error" | "json-trailing-content" => {
+            &["json-parse-error", "json-error", "error"]
+        }
+        _ => &["json-error", "error"],
+    };
+    let mut chain = vec![Value::Sym(id)];
+    for p in parents {
+        chain.push(Value::Sym(i.intern(p)));
+    }
+    i.put_prop(id, ec, Value::list(chain));
 }
 
 // ---------- parser ----------
@@ -167,13 +199,21 @@ impl<'a> Parser<'a> {
     /// column is nil in GNU's reports, position is the 1-based char
     /// offset of the offending spot.
     fn err(&mut self, eof: bool) -> PErr {
-        let pos = if self.s.is_empty() { 0 } else { self.pos + 1 };
         let sym = if eof {
             "json-end-of-file"
         } else {
             "json-parse-error"
         };
+        self.err_sym(sym)
+    }
+
+    /// A json-family error by name, carrying GNU's (LINE COLUMN
+    /// POSITION) shape — column is nil, position the 1-based char
+    /// offset of the offending spot.
+    fn err_sym(&mut self, sym: &str) -> PErr {
+        let pos = if self.s.is_empty() { 0 } else { self.pos + 1 };
         let id = self.i.intern(sym);
+        json_cond_chain(self.i, id);
         self.i.signal_data(
             id,
             vec![
@@ -271,7 +311,8 @@ impl<'a> Parser<'a> {
                                 'u' => {
                                     let hi = self.hex4()?;
                                     let cp = if (0xd800..0xdc00).contains(&hi) {
-                                        // Surrogate pair.
+                                        // Surrogate pair is mandatory
+                                        // after a high surrogate.
                                         if self.peek() == Some('\\') {
                                             self.pos += 1;
                                             if self.peek() == Some('u') {
@@ -282,20 +323,33 @@ impl<'a> Parser<'a> {
                                                         + ((hi - 0xd800) << 10)
                                                         + (lo - 0xdc00)
                                                 } else {
-                                                    0xfffd
+                                                    return Err(self.err_sym(
+                                                        "json-invalid-surrogate-error",
+                                                    ));
                                                 }
                                             } else {
-                                                0xfffd
+                                                return Err(self.err_sym(
+                                                    "json-invalid-surrogate-error",
+                                                ));
                                             }
                                         } else {
-                                            0xfffd
+                                            return Err(self.err_sym(
+                                                "json-invalid-surrogate-error",
+                                            ));
                                         }
+                                    } else if (0xdc00..0xe000).contains(&hi) {
+                                        // A lone low surrogate.
+                                        return Err(
+                                            self.err_sym("json-invalid-surrogate-error")
+                                        );
                                     } else {
                                         hi
                                     };
                                     out.push(char::from_u32(cp).unwrap_or('\u{fffd}'));
                                 }
-                                _ => return Err(self.err(false)),
+                                _ => {
+                                    return Err(self.err_sym("json-escape-sequence-error"))
+                                }
                             }
                         }
                     }
@@ -319,26 +373,74 @@ impl<'a> Parser<'a> {
                     v = v * 16 + d;
                     self.pos += 1;
                 }
-                None => return Err(self.err(self.peek().is_none())),
+                // GNU signals json-escape-sequence-error for a
+                // non-hex char in \uXXXX (json-end-of-file at EOF).
+                None => {
+                    return Err(if self.peek().is_none() {
+                        self.err(true)
+                    } else {
+                        self.err_sym("json-escape-sequence-error")
+                    });
+                }
             }
         }
         Ok(v)
     }
 
+    /// JSON number grammar: -?(0|[1-9][0-9]*)(\.[0-9]+)?([eE][+-]?[0-9]+)?
+    /// A `0' is a complete integer part — "01" parses `0' and the
+    /// `1' is trailing content.  A missing required digit errors
+    /// (json-end-of-file at EOF, json-parse-error otherwise).
     fn number(&mut self) -> Result<Value, PErr> {
         let start = self.pos;
+        let mut is_float = false;
         if self.peek() == Some('-') {
             self.pos += 1;
         }
-        let mut is_float = false;
-        while let Some(c) = self.peek() {
-            match c {
-                '0'..='9' => self.pos += 1,
-                '.' | 'e' | 'E' | '+' | '-' => {
-                    is_float = true;
+        // Integer part.
+        match self.peek() {
+            Some('0') => self.pos += 1,
+            Some('1'..='9') => {
+                while matches!(self.peek(), Some(c) if c.is_ascii_digit()) {
                     self.pos += 1;
                 }
-                _ => break,
+            }
+            other => {
+                let eof = other.is_none();
+                return Err(self.err(eof));
+            }
+        }
+        // Fraction.
+        if self.peek() == Some('.') {
+            is_float = true;
+            self.pos += 1;
+            match self.peek() {
+                Some(c) if c.is_ascii_digit() => {}
+                other => {
+                    let eof = other.is_none();
+                    return Err(self.err(eof));
+                }
+            }
+            while matches!(self.peek(), Some(c) if c.is_ascii_digit()) {
+                self.pos += 1;
+            }
+        }
+        // Exponent.
+        if matches!(self.peek(), Some('e' | 'E')) {
+            is_float = true;
+            self.pos += 1;
+            if matches!(self.peek(), Some('+' | '-')) {
+                self.pos += 1;
+            }
+            match self.peek() {
+                Some(c) if c.is_ascii_digit() => {}
+                other => {
+                    let eof = other.is_none();
+                    return Err(self.err(eof));
+                }
+            }
+            while matches!(self.peek(), Some(c) if c.is_ascii_digit()) {
+                self.pos += 1;
             }
         }
         let txt: String = self.s[start..self.pos].iter().collect();
@@ -418,7 +520,7 @@ impl<'a> Parser<'a> {
                     let hk =
                         crate::lisp::builtins::hashfn::hash_key_for(self.i, &key, HashTest::Equal);
                     h.map.insert(hk.clone(), v);
-                    h.keys.insert(hk, key);
+                    h.put_key(hk, key);
                 }
                 Value::Hash(Rc::new(RefCell::new(h)))
             }
@@ -462,20 +564,7 @@ fn f_json_parse_string(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         let (pos, line) = (p.pos + 1, p.line as i128);
         drop(p);
         let e = i.intern("json-trailing-content");
-        // Lazily define the error's condition chain (as GNU's
-        // define_error does) so `condition-case ... (error ...)'
-        // catches it: (json-trailing-content json-parse-error
-        // json-error error).
-        let ec = i.intern("error-conditions");
-        if i.get_prop(e, ec).is_nil() {
-            let chain = Value::list(vec![
-                Value::Sym(e),
-                Value::Sym(i.intern("json-parse-error")),
-                Value::Sym(i.intern("json-error")),
-                Value::Sym(i.intern("error")),
-            ]);
-            i.put_prop(e, ec, chain);
-        }
+        json_cond_chain(i, e);
         return Err(i.signal_data(
             e,
             vec![Value::Int(line), Value::Nil, Value::Int(pos as i128)],
@@ -641,9 +730,10 @@ fn ser_value(i: &mut Interp, v: &Value, o: &Opts, out: &mut String) -> Result<()
             };
             out.push('{');
             for (n, (k, val)) in pairs.iter().enumerate() {
+                // GNU requires STRING hash keys for serialization
+                // (symbol keys signal wrong-type-argument stringp).
                 let name = match k {
                     Value::Str(s) => s.borrow().clone(),
-                    Value::Sym(id) => i.symbol_name(*id).to_string(),
                     other => return Err(i.wrong_type_mut("stringp", other)),
                 };
                 if n > 0 {

@@ -855,11 +855,17 @@ fn sf_with_current_buffer(i: &mut Interp, args: Value) -> EvalResult {
     let buf_id = i
         .buffer_id_of(&buf_v)
         .ok_or_else(|| i.error(format!("No buffer named {}", i.princ_to_string(&buf_v))))?;
+    // GNU's Fset_buffer signals on killed buffers.
+    if !i.buffer_live(buf_id) {
+        return Err(i.error("Selecting deleted buffer"));
+    }
     let old = i.current_buffer;
     i.set_current_buffer(buf_id);
     let body = cdr(&args);
     let r = i.eval_progn(&body);
-    i.set_current_buffer(old);
+    if i.buffer_live(old) {
+        i.set_current_buffer(old);
+    }
     r
 }
 

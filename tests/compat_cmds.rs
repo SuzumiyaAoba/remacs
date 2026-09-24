@@ -210,14 +210,66 @@ fn circular_safe_length_and_proper_list_p() {
 
 #[test]
 fn circular_list_printing() {
-    // Printers terminate on cdr-chain cycles with a ". #0" marker.
+    // Printers terminate on cdr-chain cycles: GNU repeats the list's
+    // elements until re-hitting the cons where the cycle was entered,
+    // then prints ". #N" (its `being_printed' stack index).
     assert_eq!(
         ev("(let ((l (list 1 2 3))) (setcdr (cddr l) l) (prin1-to-string l))"),
-        "\"(1 2 3 . #0)\""
+        "\"(1 2 3 1 2 . #2)\""
     );
     assert_eq!(
         ev("(let ((l (list 1 2))) (setcdr (cdr l) l) (format \"%s\" l))"),
-        "\"(1 2 . #0)\""
+        "\"(1 2 1 2 . #2)\""
+    );
+}
+
+#[test]
+fn print_circle_labels() {
+    // `print-circle': shared/cyclic objects get `#N=' at first
+    // occurrence and `#N#' afterwards; numbers are assigned at the
+    // object's second encounter during GNU's print_preprocess walk
+    // (car-first DFS), all verified against GNU 31.1.
+    let cases: &[(&str, &str)] = &[
+        (
+            "(let ((l (list 1 2))) (setcdr (cdr l) l) l)",
+            "\"#1=(1 2 . #1#)\"",
+        ),
+        ("(let ((x (list 5))) (list x x))", "\"(#1=(5) #1#)\""),
+        (
+            "(let ((x (list 5))) (cons 1 (cons x x)))",
+            "\"(1 #1=(5) . #1#)\"",
+        ),
+        (
+            "(let* ((x (list 1 2)) (y (list x x))) (list y y))",
+            "\"(#2=(#1=(1 2) #1#) #2#)\"",
+        ),
+        (
+            "(let* ((x (list 2)) (y (cons 1 x))) (list y x))",
+            "\"((1 . #1=(2)) #1#)\"",
+        ),
+        (
+            "(let* ((v (vector nil nil)) (l (list v)))
+              (aset v 0 l) (aset v 1 l) (list v l))",
+            "\"(#1=[#2=(#1#) #2#] #2#)\"",
+        ),
+        ("(let ((l (list 1))) (setcar l l) l)", "\"#1=(#1#)\""),
+        ("(let ((s \"ab\")) (list s s))", "\"(#1=\\\"ab\\\" #1#)\""),
+        (
+            "(let ((l (list 1 2 3))) (setcdr (cdr l) (cdr l)) l)",
+            "\"(1 . #1=(2 . #1#))\"",
+        ),
+    ];
+    for (form, want) in cases {
+        assert_eq!(
+            ev(&format!("(let ((print-circle t)) (prin1-to-string {form}))")),
+            *want,
+            "{form}"
+        );
+    }
+    // Without `print-circle', shared (non-cyclic) objects print plain.
+    assert_eq!(
+        ev("(let ((print-circle nil) (x (list 5))) (prin1-to-string (list x x)))"),
+        "\"((5) (5))\""
     );
 }
 

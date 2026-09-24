@@ -136,6 +136,14 @@ pub struct Interp {
     pub batch_stdin: Option<std::io::BufReader<std::io::Stdin>>,
     /// Nesting depth of active minibuffer reads (`minibuffer-depth').
     pub minibuf_level: i32,
+    /// ` *Minibuf-N*' buffer ids by depth — GNU's `Vminibuffer_list'.
+    /// Index 0 (` *Minibuf-0*') is the never-active null minibuffer;
+    /// a `usize::MAX` slot is a not-yet-created buffer.
+    pub minibuf_list: Vec<usize>,
+    /// Prompt strings of in-progress minibuffer reads, innermost
+    /// last — GNU's `minibuf_prompt' (saved per level in
+    /// `minibuf_save_list').
+    pub minibuf_prompts: Vec<String>,
     /// User-defined faces: name → plist of attribute keywords.
     /// Built-in faces (default, bold, italic, …) live in a static table.
     pub face_table: Vec<(String, Value)>,
@@ -268,6 +276,30 @@ pub enum MinibufInput {
     Text(String),
     /// A single raw key event code (modifier bits included).
     Key(i128),
+}
+
+/// Per-read arguments mirroring GNU `read_minibuf' (minibuf.c).
+pub struct MinibufArgs {
+    /// `read-from-minibuffer' HISTORY: nil/`t'/symbol/(HISTVAR . HISTPOS).
+    pub hist: Value,
+    /// DEFAULT-VALUE → specbound `minibuffer-default' and the
+    /// empty-input `histstring'.
+    pub defalt: Value,
+    /// INITIAL-CONTENTS: nil, string, or (STRING . POS).
+    pub initial: Value,
+    /// KEYMAP override; nil substitutes `minibuffer-local-map'.
+    pub keymap: Value,
+}
+
+impl Default for MinibufArgs {
+    fn default() -> Self {
+        MinibufArgs {
+            hist: Value::Nil,
+            defalt: Value::Nil,
+            initial: Value::Nil,
+            keymap: Value::Nil,
+        }
+    }
 }
 
 /// `<share>/emacs/<ver>/etc/` if it contains a DOC file.
@@ -497,6 +529,8 @@ impl Interp {
             minibuf_reader: None,
             batch_stdin: None,
             minibuf_level: 0,
+            minibuf_list: Vec::new(),
+            minibuf_prompts: Vec::new(),
             face_table: Vec::new(),
             processes: Vec::new(),
             charsets: Vec::new(),
@@ -3451,8 +3485,7 @@ impl Interp {
             ("yank-pop-change-selection", Value::Nil),
             ("x-select-request-type", Value::Nil),
             ("search-invisible", Value::Sym(self.intern("open"))),
-            ("search-spaces-regexp", Value::Nil),
-            ("search-whitespace-regexp", Value::string("[ \t\r\n]+")),
+            ("search-whitespace-regexp", Value::string("[ \t]+")),
             ("search-nonincremental-instead", Value::Sym(sym::T)),
             ("isearch-hide-immediately", Value::Sym(sym::T)),
             ("isearch-resume-in-command-history", Value::Nil),
@@ -4268,17 +4301,389 @@ impl Interp {
         }
     }
 
-    /// Read a full input line via the front-end hook.
-    pub fn minibuf_line(&mut self, prompt: &str) -> Result<String, Flow> {
+    /// GNU `get_minibuffer' (minibuf.c): the ` *Minibuf-{depth}*'
+    /// buffer for DEPTH, (re)creating dead or missing entries.
+    /// Depth 0 is ` *Minibuf-0*', the never-active null minibuffer.
+    pub fn get_minibuffer(&mut self, depth: usize) -> usize {
+        while self.minibuf_list.len() <= depth {
+            self.minibuf_list.push(usize::MAX);
+        }
+        let mut id = self.minibuf_list[depth];
+        if id == usize::MAX || !self.buffer_live(id) {
+            let name = format!(" *Minibuf-{depth}*");
+            id = self
+                .buffers
+                .by_name(&name)
+                .unwrap_or_else(|| self.buffers.create(&name));
+            self.minibuf_list[depth] = id;
+        }
+        id
+    }
+
+    /// Is `id` a real minibuffer (on `Vminibuffer_list')?
+    pub fn is_minibuffer(&self, id: usize) -> bool {
+        self.minibuf_list.iter().any(|&x| x == id)
+    }
+
+    /// Point `buf`'s frame minibuffer window at buffer `id`
+    /// (GNU `set_window_buffer (minibuf_window, buf)').
+    pub fn set_minibuf_window_buffer(&mut self, id: usize) {
+        if let Some(f) = &self.selected_frame {
+            if let Some(w) = &f.borrow().minibuffer {
+                w.borrow_mut().buffer = id;
+            }
+        }
+    }
+
+    /// GNU `read_minibuf' (minibuf.c), interactive path only:
+    /// switch to ` *Minibuf-{depth}*', install the prompt with its
+    /// `field'/`front-sticky'/`rear-nonsticky' and
+    /// `minibuffer-prompt-properties', run `minibuffer-setup-hook',
+    /// read input, then run `minibuffer-exit-hook' (safe) and unwind.
+    /// GNU runs the setup hook via `run_hook', so an error in it
+    /// aborts the read — but the exit hook and the state restoration
+    /// still run, exactly like the C unwind-protect chain.
+    pub fn minibuf_read(&mut self, prompt: &str, args: MinibufArgs) -> Result<String, Flow> {
+        // Fread_from_minibuffer's HIST handling: symbol → (sym . 0),
+        // cons → (HISTVAR . HISTPOS), nil HISTVAR → `minibuffer-history'.
+        let (histvar, histpos) = match &args.hist {
+            Value::Cons(c) => {
+                let (hv, hp) = {
+                    let cc = c.borrow();
+                    (cc.car.clone(), cc.cdr.int().unwrap_or(0))
+                };
+                (hv, hp)
+            }
+            v => (v.clone(), 0),
+        };
+        let histvar = if histvar.is_nil() {
+            Value::Sym(self.intern("minibuffer-history"))
+        } else {
+            histvar
+        };
+
+        // GNU: `enable-recursive-minibuffers' nil + already inside a
+        // minibuffer → `user-error' in the minibuffer window, else
+        // `throw 'exit' with the message.
+        if self.minibuf_level > 0 {
+            let erm = self
+                .intern_soft("enable-recursive-minibuffers")
+                .map(|id| self.symbol_value(id).truthy())
+                .unwrap_or(false);
+            if !erm {
+                let msg = "Command attempted to use minibuffer while in minibuffer";
+                if self.is_minibuffer(self.current_buffer) {
+                    let ue = self.intern("user-error");
+                    return Err(self.signal_data(ue, vec![Value::string(msg)]));
+                }
+                return Err(Flow::Throw(
+                    Value::Sym(self.intern("exit")),
+                    Value::string(msg),
+                ));
+            }
+        }
+
+        let mark = self.specbind_depth();
+        // specbind minibuffer-default ← DEFALT, inhibit-read-only ← nil.
+        let mdef = self.intern("minibuffer-default");
+        let _ = self.specbind(mdef, args.defalt.clone());
+        let iro = self.intern("inhibit-read-only");
+        let _ = self.specbind(iro, Value::Nil);
+        // specbind minibuffer-completing-file-name ← current value;
+        // a `lambda' on entry (t from an outer read) normalizes to nil.
+        let cf = self.intern("minibuffer-completing-file-name");
+        let cfv = self.symbol_value(cf);
+        let _ = self.specbind(cf, cfv.clone());
+        if matches!(cfv, Value::Sym(s) if self.symbol_name(s) == "lambda") {
+            let _ = self.set_symbol(cf, Value::Nil);
+        }
+
+        // GNU creates the depth-N minibuffer before bumping the level.
+        let depth = self.minibuf_level.max(0) as usize + 1;
+        let mb_id = self.get_minibuffer(depth);
         self.minibuf_level += 1;
-        let r = self.minibuf_input(prompt, false);
+        let saved_buf = self.current_buffer;
+
+        // minibuf_save_list vars (per-level dynamic state).
+        let mhp = self.intern("minibuffer-history-position");
+        let _ = self.specbind(mhp, Value::Int(histpos));
+        let mhv = self.intern("minibuffer-history-variable");
+        let _ = self.specbind(mhv, histvar.clone());
+        let hform = self
+            .intern_soft("minibuffer-help-form")
+            .map(|id| self.symbol_value(id))
+            .unwrap_or(Value::Nil);
+        let hf = self.intern("help-form");
+        let _ = self.specbind(hf, hform);
+        let cpa = self.intern("current-prefix-arg");
+        let cpav = self.symbol_value(cpa);
+        let _ = self.specbind(cpa, cpav);
+
+        // Non-nil completing-file-name becomes `lambda' for this read
+        // ("t here, nil for nested reads").
+        if self.symbol_value(cf).truthy() {
+            let lam = Value::Sym(self.intern("lambda"));
+            let _ = self.set_symbol(cf, lam);
+        }
+        // GNU: an unbound history variable is set to nil on entry.
+        if let Value::Sym(hsid) = &histvar {
+            if matches!(self.obarray.symbol(*hsid).value, Value::Sym(s) if s == sym::UNBOUND)
+                && !self.obarray.symbol(*hsid).constant
+            {
+                let _ = self.set_symbol(*hsid, Value::Nil);
+            }
+        }
+
+        self.minibuf_prompts.push(prompt.to_string());
+
+        // ---- enter the minibuffer ----
+        self.set_current_buffer(mb_id);
+        // GNU set_minibuffer_mode: `minibuffer-mode' if fbound (it
+        // resets locals and runs its mode hook).
+        let mm = self.intern("minibuffer-mode");
+        let mode_r = if self.fbound_p(mm) {
+            self.apply(&Value::Sym(mm), vec![])
+        } else {
+            Ok(Value::Nil)
+        };
+        // bset_truncate_lines (current_buffer, Qnil).
+        let tl = self.intern("truncate-lines");
+        if let Some(b) = self.buffers.get(mb_id) {
+            b.borrow_mut().locals.insert(tl, Value::Nil);
+        }
+        // Display the minibuffer in the mini window.
+        self.set_minibuf_window_buffer(mb_id);
+
+        // Erase, insert prompt + initial input — GNU binds
+        // inhibit-read-only and inhibit-modification-hooks around it.
+        let input_r = mode_r.and_then(|_| {
+            let m2 = self.specbind_depth();
+            let iro = self.intern("inhibit-read-only");
+            let imh = self.intern("inhibit-modification-hooks");
+            let _ = self.specbind(iro, Value::t());
+            let _ = self.specbind(imh, Value::t());
+            let r = self.minibuf_install(prompt, &args.initial, mb_id);
+            let _ = self.unbind_to(m2);
+            r
+        });
+
+        // Local keymap: KEYMAP arg or `minibuffer-local-map' (GNU
+        // substitutes it for nil before bset_keymap).
+        let input_r = input_r.and_then(|_| {
+            let map = if args.keymap.is_nil() {
+                self.intern_soft("minibuffer-local-map")
+                    .map(|id| self.symbol_value(id))
+                    .unwrap_or(Value::Nil)
+            } else {
+                args.keymap.clone()
+            };
+            let km = self.intern("local-keymap");
+            if let Some(b) = self.buffers.get(mb_id) {
+                b.borrow_mut().locals.insert(km, map);
+            }
+            // GNU: no undo past this point.
+            if let Some(b) = self.buffers.get(mb_id) {
+                b.borrow_mut().set_undo_list(Value::Nil);
+            }
+            // `minibuffer-setup-hook' — GNU `run_hook' (not safe):
+            // an error aborts the read after unwinding.
+            match crate::lisp::builtins::evalfn::call_hook(self, "minibuffer-setup-hook") {
+                Ok(_) => self.minibuf_input(prompt, false),
+                Err(f) => Err(f),
+            }
+        });
+
+        // ---- unwind: run_exit_minibuf_hook, then read_minibuf_unwind.
+        if self.buffer_live(mb_id) {
+            self.set_current_buffer(mb_id);
+        }
+        let hook_r = crate::lisp::builtins::evalfn::safe_call_hook(
+            self,
+            "minibuffer-exit-hook",
+        );
         self.minibuf_level -= 1;
-        match r? {
+        self.minibuf_prompts.pop();
+        let _ = self.unbind_to(mark);
+        // GNU calls `minibuffer-inactive-mode' in the expired
+        // minibuffer after restoring the per-level vars.
+        if self.buffer_live(mb_id) {
+            self.set_current_buffer(mb_id);
+            let im = self.intern("minibuffer-inactive-mode");
+            if self.fbound_p(im) {
+                let _ = self.apply(&Value::Sym(im), vec![]);
+            }
+        }
+        // The mini window shows the next-less-nested (null) minibuffer.
+        let idle = self.get_minibuffer(0);
+        self.set_minibuf_window_buffer(idle);
+        if self.buffer_live(saved_buf) {
+            self.set_current_buffer(saved_buf);
+        }
+        if let Err(f) = hook_r {
+            return Err(f);
+        }
+
+        let input = input_r?;
+
+        // History push — after restoring the calling buffer (GNU:
+        // "in case the history variable is buffer-local").
+        if let MinibufInput::Text(text) = &input {
+            let han = self
+                .intern_soft("history-add-new-input")
+                .map(|id| self.symbol_value(id).truthy())
+                .unwrap_or(true);
+            let histstring = if !text.is_empty() {
+                Some(text.clone())
+            } else {
+                match &args.defalt {
+                    Value::Str(s) => Some(s.borrow().clone()),
+                    Value::Cons(c) => {
+                        let h = c.borrow().car.clone();
+                        if let Value::Str(s) = h {
+                            Some(s.borrow().clone())
+                        } else {
+                            None
+                        }
+                    }
+                    _ => None,
+                }
+            };
+            if han && histstring.is_some() {
+                let ah = self.intern("add-to-history");
+                if self.fbound_p(ah) {
+                    let _ = self.apply(
+                        &Value::Sym(ah),
+                        vec![histvar.clone(), Value::string(histstring.unwrap())],
+                    );
+                }
+            }
+        }
+
+        match input {
             MinibufInput::Text(t) => Ok(t),
             MinibufInput::Key(k) => Ok(char::from_u32(k as u32)
                 .map(|c| c.to_string())
                 .unwrap_or_default()),
         }
+    }
+
+    /// Read a full input line via the front-end hook.
+    pub fn minibuf_line(&mut self, prompt: &str) -> Result<String, Flow> {
+        self.minibuf_read(prompt, MinibufArgs::default())
+    }
+
+    /// The minibuffer-enter half of GNU `read_minibuf': erase the
+    /// buffer, insert the prompt with `field'/`front-sticky'/
+    /// `rear-nonsticky' plus `minibuffer-prompt-properties' (faces
+    /// appended, not overwriting), then insert INITIAL-CONTENTS and
+    /// position point.
+    fn minibuf_install(&mut self, prompt: &str, initial: &Value, mb_id: usize) -> EvalResult {
+        if let Some(b) = self.buffers.get(mb_id) {
+            let mut bb = b.borrow_mut();
+            bb.overlays.clear();
+            let len = bb.text_len();
+            if len > 0 {
+                bb.delete_region(0, len);
+            }
+            bb.set_point(0);
+            if !prompt.is_empty() {
+                bb.insert(prompt);
+            }
+        }
+        let pend = prompt.chars().count();
+        // front-sticky t, rear-nonsticky t, field t over the prompt.
+        if pend > 0 {
+            for (key, val) in [
+                ("front-sticky", Value::t()),
+                ("rear-nonsticky", Value::t()),
+                ("field", Value::t()),
+            ] {
+                let ptp = self.intern("put-text-property");
+                let key_sym = self.intern(key);
+                let _ = self.apply(
+                    &Value::Sym(ptp),
+                    vec![
+                        Value::Int(1),
+                        Value::Int(pend as i128 + 1),
+                        Value::Sym(key_sym),
+                        val,
+                    ],
+                );
+            }
+            // minibuffer-prompt-properties plist: `face' is appended
+            // via add-face-text-property, others via put-text-property.
+            let mpp = self
+                .intern_soft("minibuffer-prompt-properties")
+                .map(|id| self.symbol_value(id))
+                .unwrap_or(Value::Nil);
+            if let Value::Cons(_) = &mpp {
+                let mut list = mpp.clone();
+                while let Value::Cons(c) = list {
+                    let (key, rest) = {
+                        let cc = c.borrow();
+                        (cc.car.clone(), cc.cdr.clone())
+                    };
+                    let (val, rest) = match &rest {
+                        Value::Cons(c2) => {
+                            let cc2 = c2.borrow();
+                            (cc2.car.clone(), cc2.cdr.clone())
+                        }
+                        _ => (Value::Nil, Value::Nil),
+                    };
+                    let is_face = matches!(&key, Value::Sym(s) if self.symbol_name(*s) == "face");
+                    let f = if is_face {
+                        self.intern("add-face-text-property")
+                    } else {
+                        self.intern("put-text-property")
+                    };
+                    let mut call = vec![
+                        Value::Int(1),
+                        Value::Int(pend as i128 + 1),
+                    ];
+                    if is_face {
+                        call.push(val);
+                        call.push(Value::t());
+                    } else {
+                        call.push(key);
+                        call.push(val);
+                    }
+                    let _ = self.apply(&Value::Sym(f), call);
+                    list = rest;
+                }
+            }
+        }
+        // Initial input: string, or (STRING . POS) where POS is a
+        // 1-based offset converted to distance-from-end.
+        let (init, pos) = match initial {
+            Value::Cons(c) => {
+                let (s, n) = {
+                    let cc = c.borrow();
+                    (cc.car.clone(), cc.cdr.clone())
+                };
+                let slen = match &s {
+                    Value::Str(t) => t.borrow().chars().count() as i128,
+                    _ => 0,
+                };
+                let p = match n.int() {
+                    Some(x) if x < 1 => -slen,
+                    Some(x) => x - 1 - slen,
+                    None => 0,
+                };
+                (s, p)
+            }
+            v => (v.clone(), 0),
+        };
+        if let Value::Str(s) = &init {
+            let s = s.borrow().clone();
+            if let Some(b) = self.buffers.get(mb_id) {
+                let mut bb = b.borrow_mut();
+                bb.insert(&s);
+                let len = bb.text_len();
+                let target = (bb.point() as i128 + pos).clamp(pend as i128, len as i128);
+                bb.set_point(target as usize);
+            }
+        }
+        Ok(Value::Nil)
     }
 
     /// `(end-of-file "Error reading from stdin")' — the signal GNU
@@ -4333,14 +4738,13 @@ impl Interp {
             print!("{out}");
             let _ = std::io::stdout().flush();
         }
-        self.minibuf_level += 1;
-        let r = if got_eof && line.is_empty() {
+        // GNU `read_minibuf_noninteractive' bypasses the minibuffer
+        // entirely — `minibuffer-depth' stays 0, no hooks run.
+        if got_eof && line.is_empty() {
             Err(self.batch_eof_flow())
         } else {
             Ok(String::from_utf8_lossy(&line).into_owned())
-        };
-        self.minibuf_level -= 1;
-        r
+        }
     }
 
     /// Read a single character from batch stdin (the way GNU's

@@ -3,7 +3,7 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use super::listfn::{err_circular, nthcdr_of};
+use super::listfn::err_circular;
 use super::{S, arg, eq_values, equal_values, want_int, want_list, want_string};
 use crate::lisp::Interp;
 use crate::lisp::error::EvalResult;
@@ -216,8 +216,108 @@ pub(crate) static SUBRS: &[Subr] = &[
     ),
 ];
 
-fn f_seq_let_raw(i: &mut Interp, _args: Vec<Value>) -> EvalResult {
-    Err(i.error("seq-let is defined as a Lisp macro"))
+/// Element IDX of a sequence, or nil when out of range or not a
+/// sequence — GNU seq.el's `seq--elt-safe' used by `seq-let'.
+fn seq_elt_safe(i: &mut Interp, seqv: &Value, idx: usize) -> Value {
+    match seqv {
+        Value::Nil => Value::Nil,
+        Value::Cons(_) => match super::listfn::nthcdr_strict(i, seqv, idx) {
+            Ok(Value::Cons(c)) => c.borrow().car.clone(),
+            _ => Value::Nil,
+        },
+        Value::Str(s) => s
+            .borrow()
+            .chars()
+            .nth(idx)
+            .map(|c| Value::Int(crate::lisp::value::lisp_char_code(c)))
+            .unwrap_or(Value::Nil),
+        Value::Vec(v) => v.borrow().get(idx).cloned().unwrap_or(Value::Nil),
+        _ => Value::Nil,
+    }
+}
+
+/// Bind one `seq-let' pattern element: a symbol binds directly, a
+/// nested list destructures recursively, nil just skips a position.
+fn seq_let_bind_one(
+    i: &mut Interp,
+    pat: &Value,
+    v: &Value,
+    nbind: &mut usize,
+) -> Result<(), super::Flow> {
+    match pat {
+        Value::Nil => Ok(()),
+        Value::Sym(s) => {
+            i.specbind(*s, v.clone())?;
+            *nbind += 1;
+            Ok(())
+        }
+        Value::Cons(_) => seq_let_bind(i, pat, v, nbind),
+        other => Err(i.wrong_type_mut("symbolp", other)),
+    }
+}
+
+/// `(seq-let ARGS SEQ ...)' destructuring — mirrors seq.el's
+/// seq--make-bindings: positional elements bind via `seq--elt-safe',
+/// `&rest' binds `seq-drop', `&optional' is a no-op marker.
+fn seq_let_bind(
+    i: &mut Interp,
+    spec: &Value,
+    seqv: &Value,
+    nbind: &mut usize,
+) -> Result<(), super::Flow> {
+    match spec {
+        Value::Nil => return Ok(()),
+        Value::Sym(s) => {
+            i.specbind(*s, seqv.clone())?;
+            *nbind += 1;
+            return Ok(());
+        }
+        Value::Cons(_) => {}
+        other => return Err(i.wrong_type_mut("listp", other)),
+    }
+    let elems = want_list(i, spec)?;
+    let amp_rest = i.intern("&rest");
+    let amp_opt = i.intern("&optional");
+    let (mut idx, mut pos) = (0usize, 0usize);
+    while pos < elems.len() {
+        let el = elems[pos].clone();
+        if i.sym_id(&el) == Some(amp_rest) {
+            let Some(name) = elems.get(pos + 1) else {
+                return Err(i.error("seq-let: &rest without variable"));
+            };
+            let v = f_seq_drop(i, vec![seqv.clone(), Value::Int(idx as i128)])?;
+            return seq_let_bind_one(i, name, &v, nbind);
+        }
+        if i.sym_id(&el) == Some(amp_opt) {
+            pos += 1;
+            continue;
+        }
+        let v = seq_elt_safe(i, seqv, idx);
+        seq_let_bind_one(i, &el, &v, nbind)?;
+        idx += 1;
+        pos += 1;
+    }
+    Ok(())
+}
+
+/// `(seq-let ARGS SEQ BODY...)': evaluate SEQ, destructure-bind ARGS
+/// against its elements, then run BODY (dynamic binding like `let').
+fn f_seq_let_raw(i: &mut Interp, args: Vec<Value>) -> EvalResult {
+    let all = arg(&args, 0);
+    let forms = match all.list_to_vec() {
+        Ok(v) => v,
+        Err(_) => return Err(i.wrong_type_mut("listp", &all)),
+    };
+    if forms.len() < 2 {
+        let s = Value::Sym(i.intern("seq-let"));
+        return Err(i.wrong_number_of_args(&s, forms.len() as i128));
+    }
+    let seqv = i.eval(&forms[1])?;
+    let mut nbind = 0usize;
+    let r = seq_let_bind(i, &forms[0], &seqv, &mut nbind)
+        .and_then(|()| i.eval_body(&forms[2..]));
+    let _ = i.unbind(nbind);
+    r
 }
 
 /// Convert sequence to Vec<Value> of its elements.
@@ -263,11 +363,12 @@ fn f_elt(i: &mut Interp, args: Vec<Value>) -> EvalResult {
         }
         Value::Cons(_) => {
             // Emacs: elt on a list is car(nthcdr(N, list)) — negative
-            // clamps to 0, out-of-range gives nil (never an error).
-            let tail = nthcdr_of(&args[0], n.max(0) as usize);
+            // clamps to 0; an improper tail is a wrong-type error.
+            let tail = super::listfn::nthcdr_strict(i, &args[0], n.max(0) as usize)?;
             match tail {
                 Value::Cons(c) => Ok(c.borrow().car.clone()),
-                _ => Ok(Value::Nil),
+                Value::Nil => Ok(Value::Nil),
+                ref other => Err(i.wrong_type_mut("listp", other)),
             }
         }
         Value::Str(s) => {
@@ -317,19 +418,24 @@ fn f_elt(i: &mut Interp, args: Vec<Value>) -> EvalResult {
 
 fn f_aref(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     // aref works on arrays including plain records (unlike elt, which
-    // rejects them — matching GNU).
-    if let Value::Record(r) = &args[0] {
-        if !super::misc::is_bool_vector(i, &args[0]) && !super::misc::is_char_table(i, &args[0]) {
-            let n = want_int(i, &args[1])?;
-            let items = r.borrow();
-            if n < 0 || n as usize >= items.len() {
-                return Err(i.signal_data(
-                    sym::ARGS_OUT_OF_RANGE,
-                    vec![args[0].clone(), args[1].clone()],
-                ));
+    // rejects them — matching GNU).  Lists/nil are not arrays.
+    match &args[0] {
+        Value::Str(_) | Value::Vec(_) => {}
+        Value::Record(r) => {
+            if !super::misc::is_bool_vector(i, &args[0]) && !super::misc::is_char_table(i, &args[0])
+            {
+                let n = want_int(i, &args[1])?;
+                let items = r.borrow();
+                if n < 0 || n as usize >= items.len() {
+                    return Err(i.signal_data(
+                        sym::ARGS_OUT_OF_RANGE,
+                        vec![args[0].clone(), args[1].clone()],
+                    ));
+                }
+                return Ok(items[n as usize].clone());
             }
-            return Ok(items[n as usize].clone());
         }
+        other => return Err(i.wrong_type_mut("arrayp", other)),
     }
     f_elt(i, args)
 }
@@ -506,14 +612,27 @@ fn f_mapcan(i: &mut Interp, args: Vec<Value>) -> EvalResult {
         .map(|s| seq_to_vec(i, s))
         .collect::<Result<_, _>>()?;
     let n = seqs.iter().map(|s| s.len()).min().unwrap_or(0);
-    let mut out = Vec::new();
+    let mut results = Vec::with_capacity(n);
     for k in 0..n {
         let argv: Vec<Value> = seqs.iter().map(|s| s[k].clone()).collect();
-        let r = i.apply(&fun, argv)?;
-        if let Value::Cons(_) = &r {
-            out.extend(want_list(i, &r)?);
-        } else if !r.is_nil() {
-            out.push(r);
+        results.push(i.apply(&fun, argv)?);
+    }
+    // nconc semantics: every result but the last must be a list;
+    // a non-list final result becomes the dotted tail.
+    let mut out = Vec::new();
+    let last_idx = results.len().saturating_sub(1);
+    for (idx, r) in results.iter().enumerate() {
+        match r {
+            Value::Nil => {}
+            Value::Cons(_) => out.extend(want_list(i, r)?),
+            other if idx == last_idx => {
+                let mut res = other.clone();
+                for v in out.into_iter().rev() {
+                    res = Value::cons(v, res);
+                }
+                return Ok(res);
+            }
+            other => return Err(i.wrong_type_mut("listp", other)),
         }
     }
     Ok(Value::list(out))
@@ -568,10 +687,9 @@ fn f_maphash(i: &mut Interp, args: Vec<Value>) -> EvalResult {
             let pairs: Vec<(Value, Value)> = {
                 let hh = h.borrow();
                 hh.keys
-                    .values()
-                    .map(|k| {
-                        let hk = super::hashfn::hash_key_for(i, k, hh.test);
-                        let val = hh.map.get(&hk).cloned().unwrap_or(Value::Nil);
+                    .iter()
+                    .map(|(hk, k)| {
+                        let val = hh.map.get(hk).cloned().unwrap_or(Value::Nil);
                         (k.clone(), val)
                     })
                     .collect()
@@ -644,7 +762,16 @@ fn f_sort(i: &mut Interp, args: Vec<Value>) -> EvalResult {
         Value::Cons(_) => {
             let mut items = want_list(i, &args[0])?;
             merge_sort(i, &mut items, &spec)?;
-            Ok(Value::list(items))
+            // GNU sort_list writes sorted values back into the
+            // argument's own conses — the result is `eq' to the input.
+            let mut tail = args[0].clone();
+            for v in items {
+                if let Value::Cons(c) = tail {
+                    c.borrow_mut().car = v;
+                    tail = c.borrow().cdr.clone();
+                }
+            }
+            Ok(args[0].clone())
         }
         Value::Vec(v) => {
             let mut items = v.borrow().clone();
@@ -908,21 +1035,28 @@ fn f_seq_concatenate(i: &mut Interp, args: Vec<Value>) -> EvalResult {
 fn f_seq_subseq(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     let items = seq_to_vec(i, &args[0])?;
     let len = items.len() as i128;
-    let start = want_int(i, &args[1])?.max(0).min(len) as usize;
-    let end = args
+    let start0 = want_int(i, &args[1])?;
+    let end0 = args
         .get(2)
         .map(|v| want_int(i, v))
         .transpose()?
-        .unwrap_or(len);
-    let e = if end < 0 {
-        (len + end).max(0)
-    } else {
-        end.min(len)
-    } as usize;
-    if start > e {
-        return Err(i.signal_data(sym::ARGS_OUT_OF_RANGE, vec![args[0].clone()]));
+        .unwrap_or(len)
+        .min(len);
+    // GNU: negative indices count from the end; anything outside
+    // [0,len] or a reversed range is a plain `error'.
+    let start = if start0 < 0 { start0 + len } else { start0 };
+    let end = if end0 < 0 { end0 + len } else { end0 };
+    if start < 0 || end < 0 || start > len || end > len || start > end {
+        return Err(i.error(&format!(
+            "Bad bounding indices: {}, {}",
+            start0, end0
+        )));
     }
-    Ok(seq_from_like(i, &args[0], items[start..e].to_vec()))
+    Ok(seq_from_like(
+        i,
+        &args[0],
+        items[start as usize..end as usize].to_vec(),
+    ))
 }
 
 fn f_seq_take(i: &mut Interp, args: Vec<Value>) -> EvalResult {

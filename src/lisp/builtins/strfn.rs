@@ -258,8 +258,27 @@ pub(crate) static SUBRS: &[Subr] = &[
         f_char_equal,
         "t if two chars are equal (case-fold-aware)."
     ),
-    S!("multibyte-char-to-unibyte", 1, 1, f_char_identity, ""),
-    S!("unibyte-char-to-multibyte", 1, 1, f_char_identity, ""),
+    S!(
+        "multibyte-char-to-unibyte",
+        1,
+        1,
+        f_multibyte_char_to_unibyte,
+        "Convert CH to unibyte, or -1."
+    ),
+    S!(
+        "unibyte-char-to-multibyte",
+        1,
+        1,
+        f_unibyte_char_to_multibyte,
+        "Convert unibyte BYTE to a char."
+    ),
+    S!(
+        "string-truncate-left",
+        2,
+        2,
+        f_string_truncate_left,
+        "Truncate STRING to LENGTH chars with a leading ellipsis."
+    ),
     S!("char-or-string-p", 1, 1, f_char_or_string_p, ""),
     S!(
         "string-search",
@@ -411,8 +430,48 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!("char-charset", 1, 2, f_char_charset, "Charset of CH."),
 ];
 
-fn f_char_identity(_i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    Ok(args[0].clone())
+/// GNU: ASCII/Latin-1 chars (0..=0xFF) are their own unibyte byte,
+/// eight-bit chars (0x3FFF80..) map to the raw byte; others → -1.
+fn f_multibyte_char_to_unibyte(i: &mut Interp, args: Vec<Value>) -> EvalResult {
+    let c = match &args[0] {
+        Value::Int(n) => *n,
+        v => return Err(i.wrong_type_mut("characterp", v)),
+    };
+    Ok(Value::Int(if (0..=0xFF).contains(&c) {
+        c
+    } else if (0x3FFF80..=0x3FFFFF).contains(&c) {
+        c - 0x3FFF00
+    } else {
+        -1
+    }))
+}
+
+/// GNU: bytes 0..=127 stay; 128..=255 become eight-bit chars
+/// (0x3FFF00 + byte); out of range → error.
+fn f_unibyte_char_to_multibyte(i: &mut Interp, args: Vec<Value>) -> EvalResult {
+    let b = match &args[0] {
+        Value::Int(n) => *n,
+        v => return Err(i.wrong_type_mut("characterp", v)),
+    };
+    match b {
+        0..=127 => Ok(Value::Int(b)),
+        128..=255 => Ok(Value::Int(0x3FFF00 + b)),
+        _ => Err(i.error(&format!("Unibyte char out of range: {}", b))),
+    }
+}
+
+/// GNU string-truncate-left: when STRING is longer than LENGTH,
+/// return "..." plus the last max(LENGTH-3, 1) characters.
+fn f_string_truncate_left(i: &mut Interp, args: Vec<Value>) -> EvalResult {
+    let s = want_string(i, &args[0])?;
+    let length = want_int(i, &args[1])?;
+    let chars: Vec<char> = s.chars().collect();
+    if chars.len() as i128 <= length {
+        return Ok(args[0].clone());
+    }
+    let keep = (length - 3).max(1).min(chars.len() as i128) as usize;
+    let tail: String = chars[chars.len() - keep..].iter().collect();
+    Ok(Value::string(format!("...{tail}")))
 }
 
 fn f_string(i: &mut Interp, args: Vec<Value>) -> EvalResult {
@@ -1396,6 +1455,10 @@ fn f_string_fill(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     Ok(Value::string(out))
 }
 fn f_string_lines(i: &mut Interp, args: Vec<Value>) -> EvalResult {
+    // GNU: nil splits to nil.
+    if args[0].is_nil() {
+        return Ok(Value::Nil);
+    }
     let s = want_string(i, &args[0])?;
     let omit = arg(&args, 1).truthy();
     let mut lines: Vec<&str> = s.split('\n').collect();
@@ -1463,17 +1526,68 @@ fn f_string_search(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     Ok(Value::Nil)
 }
 fn f_string_version_lessp(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    let a = want_string(i, &args[0])?;
-    let b = want_string(i, &args[1])?;
-    // Simple component-wise compare of digits.
-    let parse = |s: &str| -> Vec<i128> {
-        s.split(|c: char| !c.is_ascii_digit())
-            .filter(|p| !p.is_empty())
-            .filter_map(|p| p.parse().ok())
-            .collect()
-    };
-    let (va, vb) = (parse(&a), parse(&b));
-    Ok(Value::from_bool(va < vb))
+    // GNU calls gnulib's filenvercmp; symbols compare by name.
+    macro_rules! name_of {
+        ($v:expr) => {
+            match $v {
+                Value::Str(s) => s.borrow().clone(),
+                Value::Sym(s) => i.symbol_name(*s).to_string(),
+                _ => return Err(i.wrong_type_mut("stringp", $v)),
+            }
+        };
+    }
+    let a = name_of!(&args[0]);
+    let b = name_of!(&args[1]);
+    Ok(Value::from_bool(
+        filevercmp(&a.chars().collect::<Vec<_>>(), &b.chars().collect::<Vec<_>>())
+            == std::cmp::Ordering::Less,
+    ))
+}
+
+/// gnulib `filenvercmp': non-digit runs compare bytewise; digit runs
+/// compare numerically (leading zeros ignored — a run that differs
+/// only in zeros is the first_diff tiebreak at the end).
+fn filevercmp(s1: &[char], s2: &[char]) -> std::cmp::Ordering {
+    use std::cmp::Ordering;
+    let (mut p1, mut p2) = (0usize, 0usize);
+    while p1 < s1.len() || p2 < s2.len() {
+        // Non-digit runs.
+        while (p1 < s1.len() && !s1[p1].is_ascii_digit())
+            || (p2 < s2.len() && !s2[p2].is_ascii_digit())
+        {
+            let c1 = if p1 < s1.len() { s1[p1] as u32 } else { 0 };
+            let c2 = if p2 < s2.len() { s2[p2] as u32 } else { 0 };
+            if c1 != c2 {
+                return c1.cmp(&c2);
+            }
+            p1 += 1;
+            p2 += 1;
+        }
+        // Digit runs: skip leading zeros.
+        while p1 < s1.len() && s1[p1] == '0' {
+            p1 += 1;
+        }
+        while p2 < s2.len() && s2[p2] == '0' {
+            p2 += 1;
+        }
+        let (d1, d2) = (p1, p2);
+        while p1 < s1.len() && s1[p1].is_ascii_digit() {
+            p1 += 1;
+        }
+        while p2 < s2.len() && s2[p2].is_ascii_digit() {
+            p2 += 1;
+        }
+        let (l1, l2) = (p1 - d1, p2 - d2);
+        if l1 != l2 {
+            return l1.cmp(&l2);
+        }
+        for k in 0..l1 {
+            if s1[d1 + k] != s2[d2 + k] {
+                return s1[d1 + k].cmp(&s2[d2 + k]);
+            }
+        }
+    }
+    Ordering::Equal
 }
 fn f_string_distance(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     let a: Vec<char> = want_string(i, &args[0])?.chars().collect();

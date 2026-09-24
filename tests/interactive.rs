@@ -205,10 +205,19 @@ fn interactive_s_and_a_codes() {
 #[test]
 fn interactive_x_evals_input() {
     let (mut i, _) = interp();
+    // GNU callint.c: 'x' reads a Lisp object WITHOUT evaluating it
+    // (`eval-minibuffer' is 'X').
     canned(&mut i, vec![MinibufInput::Text("(+ 20 22)".into())]);
     let v = ev_in(
         &mut i,
         "(defun f (x) (interactive \"xEval: \") x) (call-interactively 'f)",
+    );
+    assert_eq!(i.prin1_to_string(&v), "(+ 20 22)");
+    // 'X' reads and evaluates.
+    canned(&mut i, vec![MinibufInput::Text("(+ 20 22)".into())]);
+    let v = ev_in(
+        &mut i,
+        "(defun f (x) (interactive \"XEval: \") x) (call-interactively 'f)",
     );
     assert_eq!(i.prin1_to_string(&v), "42");
 }
@@ -530,12 +539,14 @@ fn interactive_spec_codes_batch() {
         "(defun f (p) (interactive \"P\") p) (call-interactively 'f)",
     );
     assert_eq!(i.prin1_to_string(&v), "(4)");
-    // 'n' numeric prefix via reader-less fallback.
+    // 'n' reads a number through the reader even when a prefix is
+    // set (GNU callint.c: only 'N' consults the prefix).
+    canned(&mut i, vec![MinibufInput::Text("42".into())]);
     let v = ev_in(
         &mut i,
         "(defun f (n) (interactive \"nNum: \") n) (call-interactively 'f)",
     );
-    let _ = v; // batch fallback: prefix or 1
+    assert_eq!(i.prin1_to_string(&v), "42");
     // 'c' char, 'e' event via canned key.
     canned(&mut i, vec![MinibufInput::Key(65)]);
     let v = ev_in(
@@ -612,7 +623,8 @@ fn interactive_spec_codes_batch() {
 fn interactive_spec_command_args() {
     let (mut i, _) = interp();
     i.command_args = vec![Value::Int(42)];
-    // 'n' with a numeric prefix arg consults prefix_numeric first.
+    // 'N' (not 'n') consults a numeric prefix arg first
+    // (GNU callint.c).
     set(
         &mut i,
         "current-prefix-arg",
@@ -620,9 +632,13 @@ fn interactive_spec_command_args() {
     );
     let v = ev_in(
         &mut i,
-        "(defun f (n) (interactive \"nN: \") n) (call-interactively 'f)",
+        "(defun f (n) (interactive \"NNum: \") n) (call-interactively 'f)",
     );
     assert_eq!(i.prin1_to_string(&v), "4");
+    // 'n' ignores the prefix and takes command_args instead.
+    ev_in(&mut i, "(defun f (n) (interactive \"nNum: \") n)");
+    let v = ev_in(&mut i, "(call-interactively 'f)");
+    assert_eq!(i.prin1_to_string(&v), "42");
     // Without a prefix, command_args supplies the value.
     set(&mut i, "current-prefix-arg", Value::Nil);
     let v = ev_in(&mut i, "(call-interactively 'f)");
@@ -752,6 +768,83 @@ fn command_args_supply_spec_values() {
     assert_eq!(i.prin1_to_string(&v), "42");
 }
 
+// ---------- minibuffer lifecycle (GNU read_minibuf) ----------
+
+#[test]
+fn minibuf_read_runs_hooks_and_restores_state() {
+    let (mut i, _) = interp();
+    canned(&mut i, vec![MinibufInput::Text("answer".into())]);
+    // The setup hook runs with the minibuffer selected, depth 1,
+    // the prompt installed (a `field' prefix) and the exit hook
+    // queued.  Both run exactly once.
+    let v = ev_in(
+        &mut i,
+        "(let ((log nil))
+           (add-hook 'minibuffer-setup-hook
+                     (lambda ()
+                       (setq log
+                             (cons (list 'setup
+                                         (minibuffer-depth)
+                                         (minibufferp)
+                                         (minibuffer-prompt)
+                                         (minibuffer-prompt-end)
+                                         (buffer-name))
+                                   log))))
+           (add-hook 'minibuffer-exit-hook
+                     (lambda ()
+                       (setq log
+                             (cons (list 'exit
+                                         (minibuffer-depth)
+                                         (minibuffer-contents))
+                                   log))))
+           (list (read-from-minibuffer \"P: \") (nreverse log) (minibuffer-depth)))",
+    );
+    let s = i.prin1_to_string(&v);
+    assert!(s.contains("\"answer\""), "{}", s);
+    assert!(s.contains("setup"), "{}", s);
+    assert!(s.contains("exit"), "{}", s);
+    assert!(s.contains("\"P: \""), "{}", s);
+    assert!(s.contains("Minibuf"), "{}", s);
+}
+
+#[test]
+fn minibuf_read_history_and_defaults() {
+    let (mut i, _) = interp();
+    canned(&mut i, vec![
+        MinibufInput::Text("first".into()),
+        MinibufInput::Text("".into()), // empty → default lands in history
+    ]);
+    let v = ev_in(
+        &mut i,
+        "(progn
+           (read-from-minibuffer \"A: \" nil nil nil 'my-hist)
+           (read-from-minibuffer \"B: \" nil nil nil 'my-hist \"DEF\")
+           my-hist)",
+    );
+    // GNU pushes the entered string, then the default on empty input.
+    assert_eq!(i.prin1_to_string(&v), "(\"DEF\" \"first\")");
+}
+
+#[test]
+fn minibuf_read_setup_hook_error_unwinds() {
+    let (mut i, _) = interp();
+    canned(&mut i, vec![MinibufInput::Text("x".into())]);
+    // GNU `run_hook' for setup: an error aborts the read but the
+    // exit-hook/unwind chain still runs (depth back to 0).
+    let v = ev_in(
+        &mut i,
+        "(let ((exits 0))
+           (add-hook 'minibuffer-setup-hook (lambda () (error \"boom\")))
+           (add-hook 'minibuffer-exit-hook (lambda () (setq exits (1+ exits))))
+           (list (condition-case e
+                     (read-from-minibuffer \"P: \")
+                   (error 'caught))
+                 exits
+                 (minibuffer-depth)))",
+    );
+    assert_eq!(i.prin1_to_string(&v), "(caught 1 0)");
+}
+
 // ---------- standard-output destinations ----------
 
 #[test]
@@ -848,6 +941,6 @@ fn macroexpand_forms() {
     // Raw lambda list as function → invalid-function.
     assert_eq!(ev_err_in(&mut i, "(funcall '(a b) 1)"), "invalid-function");
     // read-from-string with START/END.
-    let v = ev_in(&mut i, "(read-from-string \"xy(1 2)z\" 2 6)");
+    let v = ev_in(&mut i, "(read-from-string \"xy(1 2)z\" 2 7)");
     assert!(i.prin1_to_string(&v).contains("(1 2)"));
 }

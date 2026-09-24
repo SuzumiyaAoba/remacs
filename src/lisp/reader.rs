@@ -429,6 +429,10 @@ impl<'a> Reader<'a> {
                 }
                 Ok(char::from_u32(n as u32))
             }
+            Some('N') => {
+                let n = self.read_named_char()?;
+                Ok(crate::lisp::value::lisp_char(n as u32))
+            }
             Some('C') if self.peek() == Some('-') => {
                 self.pos += 1;
                 let v = self.read_char_literal()?;
@@ -847,9 +851,18 @@ impl<'a> Reader<'a> {
             }
             Some('[') => {
                 // `#[ARGLIST BODY ENV]' — a function object.  GNU reads
-                // byte-code here; ours is an interpreted Lambda.
+                // byte-code here; ours is an interpreted Lambda.  Like
+                // GNU we reject the degenerate shapes `#[]' and `#[x]'
+                // (the first element must be a list or nil arglist).
                 self.pos += 2;
                 let items = self.read_seq(']')?;
+                match items.first() {
+                    None => return Err(read_err_sym(self.interp, "#[")),
+                    Some(v) if !v.is_nil() && !matches!(v, Value::Cons(_)) => {
+                        return Err(read_err_sym(self.interp, "#["));
+                    }
+                    _ => {}
+                }
                 let arglist = items.first().cloned().unwrap_or(Value::Nil);
                 let body = items.get(1).cloned().unwrap_or(Value::Nil);
                 let env = items.get(2).cloned().unwrap_or(Value::Nil);
@@ -868,6 +881,10 @@ impl<'a> Reader<'a> {
                 }
                 self.pos += 1;
                 let items = self.read_seq(')')?;
+                // `#s(TYPE ...)' — the type symbol is required.
+                if items.is_empty() {
+                    return Err(read_err_sym(self.interp, "#s"));
+                }
                 Ok(Value::Record(std::rc::Rc::new(std::cell::RefCell::new(
                     items,
                 ))))
@@ -992,6 +1009,9 @@ impl<'a> Reader<'a> {
     }
 
     fn read_radix_int(&mut self, radix: u32) -> Result<i128, Flow> {
+        if !(2..=36).contains(&radix) {
+            return Err(read_err_radix(self.interp, radix));
+        }
         let neg = match self.peek() {
             Some('-') => {
                 self.pos += 1;

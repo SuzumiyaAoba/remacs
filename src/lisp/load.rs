@@ -72,6 +72,8 @@ pub(crate) fn locate(i: &mut Interp, name: &str) -> Option<String> {
 static EMBEDDED_LISP: &[(&str, &str)] = &[
     ("avl-tree", include_str!("../../lisp/avl-tree.el")),
     ("cl-macs", include_str!("../../lisp/cl-macs.el")),
+    ("cl-seq", include_str!("../../lisp/cl-seq.el")),
+    ("cl-extra", include_str!("../../lisp/cl-extra.el")),
     ("color", include_str!("../../lisp/color.el")),
     ("dom", include_str!("../../lisp/dom.el")),
     ("easy-mmode", include_str!("../../lisp/easy-mmode.el")),
@@ -149,19 +151,20 @@ fn eval_file_lex(i: &mut Interp, path: &str, force_lex: bool) -> EvalResult {
         }
     };
     // Track load-file-name / load-in-progress like Emacs does.
-    // GNU's `load' records the name as found (absolutized, but NOT
-    // symlink-resolved); `--script' canonicalizes it.
-    let canon = if force_lex {
-        std::fs::canonicalize(path)
-            .map(|p| p.to_string_lossy().into_owned())
-            .unwrap_or_else(|_| path.to_string())
-    } else if std::path::Path::new(path).is_absolute() {
-        path.to_string()
-    } else {
-        std::env::current_dir()
-            .map(|d| d.join(path).to_string_lossy().into_owned())
-            .unwrap_or_else(|_| path.to_string())
-    };
+    // GNU resolves the file's truename for `load-file-name' (e.g.
+    // /tmp -> /private/tmp on macOS); fall back to the absolutized
+    // path when canonicalization fails.
+    let canon = std::fs::canonicalize(path)
+        .map(|p| p.to_string_lossy().into_owned())
+        .unwrap_or_else(|_| {
+            if std::path::Path::new(path).is_absolute() {
+                path.to_string()
+            } else {
+                std::env::current_dir()
+                    .map(|d| d.join(path).to_string_lossy().into_owned())
+                    .unwrap_or_else(|_| path.to_string())
+            }
+        });
     eval_src(i, &canon, &src, force_lex)
 }
 

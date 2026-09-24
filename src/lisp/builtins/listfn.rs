@@ -437,18 +437,40 @@ pub(crate) fn nthcdr_of(v: &Value, n: usize) -> Value {
     cur
 }
 
+/// cdr N times the way GNU does: Cons → cdr, nil → stays nil,
+/// any other atom → wrong-type-argument.
+pub(crate) fn nthcdr_strict(
+    i: &mut Interp,
+    v: &Value,
+    n: usize,
+) -> Result<Value, Flow> {
+    let mut cur = v.clone();
+    for _ in 0..n {
+        match cur {
+            Value::Cons(c) => {
+                let next = c.borrow().cdr.clone();
+                cur = next;
+            }
+            Value::Nil => {}
+            ref other => return Err(i.wrong_type_mut("listp", other)),
+        }
+    }
+    Ok(cur)
+}
+
 fn f_nth(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    // Emacs: a negative index behaves like 0.
+    // Emacs: a negative index behaves like 0; nth is car(nthcdr N).
     let n = want_int(i, &args[0])?.max(0);
-    let tail = nthcdr_of(&args[1], n as usize);
+    let tail = nthcdr_strict(i, &args[1], n as usize)?;
     match tail {
         Value::Cons(c) => Ok(c.borrow().car.clone()),
-        _ => Ok(Value::Nil),
+        Value::Nil => Ok(Value::Nil),
+        ref other => Err(i.wrong_type_mut("listp", other)),
     }
 }
 fn f_nthcdr(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     let n = want_int(i, &args[0])?.max(0);
-    Ok(nthcdr_of(&args[1], n as usize))
+    nthcdr_strict(i, &args[1], n as usize)
 }
 fn f_last(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     let k = args
@@ -833,7 +855,8 @@ fn f_assoc(i: &mut Interp, args: Vec<Value>) -> EvalResult {
                             return Err(err_circular(i));
                         }
                     }
-                    _ => return Ok(Value::Nil),
+                    Value::Nil => return Ok(Value::Nil),
+                    other => return Err(i.wrong_type_mut("listp", other)),
                 }
             }
         }
@@ -1018,7 +1041,7 @@ fn f_copy_tree(i: &mut Interp, args: Vec<Value>) -> EvalResult {
 }
 fn f_list_tail(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     let n = want_int(i, &args[1])?.max(0);
-    Ok(nthcdr_of(&args[0], n as usize))
+    nthcdr_strict(i, &args[0], n as usize)
 }
 
 // c[ad]+r combinations — implemented via composed car/cdr.
@@ -1408,13 +1431,31 @@ fn f_apply_partially(i: &mut Interp, args: Vec<Value>) -> EvalResult {
 }
 
 fn f_assoc_string(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    // (assoc-string KEY LIST CASE-FOLD) — KEY must be a string (or symbol
-    // name? Emacs requires string). Compare with equal or case-folded.
+    // (assoc-string KEY LIST CASE-FOLD) — KEY is a string or symbol
+    // (symbols compare by name).  Elements may be bare
+    // strings/symbols or conses whose car is a string/symbol;
+    // anything else is skipped.  GNU stops at a non-cons tail
+    // without a type check.
     let key = match &args[0] {
         Value::Str(s) => s.borrow().clone(),
+        Value::Sym(s) => i.symbol_name(*s).to_string(),
         _ => return Err(i.wrong_type_mut("stringp", &args[0])),
     };
     let fold = arg(&args, 2).truthy();
+    let name_of = |i: &Interp, v: &Value| -> Option<String> {
+        match v {
+            Value::Str(s) => Some(s.borrow().clone()),
+            Value::Sym(s) => Some(i.symbol_name(*s).to_string()),
+            _ => None,
+        }
+    };
+    let matches = |s: &str| -> bool {
+        if fold {
+            s.eq_ignore_ascii_case(&key)
+        } else {
+            s == key
+        }
+    };
     let mut cur = args[1].clone();
     let mut guard = 0usize;
     loop {
@@ -1423,29 +1464,27 @@ fn f_assoc_string(i: &mut Interp, args: Vec<Value>) -> EvalResult {
             return Err(err_circular(i));
         }
         match cur {
-            Value::Nil => return Ok(Value::Nil),
             Value::Cons(c) => {
                 let (elem, next) = {
                     let b = c.borrow();
                     (b.car.clone(), b.cdr.clone())
                 };
+                if let Some(s) = name_of(i, &elem) {
+                    if matches(&s) {
+                        return Ok(elem);
+                    }
+                }
                 if let Value::Cons(pair) = &elem {
                     let k = pair.borrow().car.clone();
-                    if let Value::Str(ks) = &k {
-                        let ks = ks.borrow().clone();
-                        let eq = if fold {
-                            ks.eq_ignore_ascii_case(&key)
-                        } else {
-                            ks == key
-                        };
-                        if eq {
+                    if let Some(s) = name_of(i, &k) {
+                        if matches(&s) {
                             return Ok(elem);
                         }
                     }
                 }
                 cur = next;
             }
-            other => return Err(i.wrong_type_mut("listp", &other)),
+            _ => return Ok(Value::Nil),
         }
     }
 }

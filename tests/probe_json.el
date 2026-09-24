@@ -64,21 +64,29 @@
 (let* ((h (make-hash-table)))
   (puthash "k" 7 h)
   (cl-assert (equal (json-serialize h) "{\"k\":7}")))
-(cl-assert (equal (json-serialize '((a . 1)) :object-type 'alist
-                                          :null-object :null)
-                  "{\"a\":1}"))
-(cl-assert (equal (json-serialize '(:a 1) :object-type 'plist
-                                          :null-object :null)
-                  "{\"a\":1}"))
+;; GNU's json-serialize rejects :object-type/:array-type outright
+;; (only :null-object/:false-object are legal keywords there).
+(cl-assert (consp (condition-case e
+                      (json-serialize '((a . 1)) :object-type 'alist
+                                      :null-object :null)
+                    (error e))))
+(cl-assert (consp (condition-case e
+                      (json-serialize '(:a 1) :object-type 'plist
+                                      :null-object :null)
+                    (error e))))
+;; A bare alist needs no :object-type to serialize as an object.
+(cl-assert (equal (json-serialize '((a . 1))) "{\"a\":1}"))
 ;; bare list of ints is treated as alist/plist -> symbolp error (GNU too)
 (cl-assert (consp (condition-case e (json-serialize '(1 2))
                     (error e))))
 (cl-assert (equal (json-serialize "s") "\"s\""))
 (cl-assert (equal (json-serialize 3.5) "3.5"))
-;; :null-object required with explicit :object-type on GNU
+;; :object-type errors on GNU even without the other keywords
 (cl-assert (consp (condition-case e
                       (json-serialize '((a . 1)) :object-type 'alist)
                     (error e))))
+;; plist serializes bare as an object on GNU
+(cl-assert (equal (json-serialize '(:a 1)) "{\"a\":1}"))
 ;; escaping in serialization
 (cl-assert (equal (json-serialize "a\"b\n") "\"a\\\"b\\n\""))
 ;; round-trip

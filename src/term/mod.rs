@@ -882,11 +882,27 @@ fn minibuf_loop<T: KeyIo>(
     single: bool,
 ) -> Result<crate::lisp::eval::MinibufInput, crate::lisp::error::Flow> {
     use crate::lisp::eval::MinibufInput;
-    let mut text = String::new();
+    // For line reads `minibuf_read' has already switched the current
+    // buffer to the active ` *Minibuf-N*' buffer and installed the
+    // prompt (a `field'-propped prefix) plus any initial input.  The
+    // loop edits that buffer at point — like GNU's recursive edit,
+    // where `self-insert-command'/`delete-backward-char' act on the
+    // minibuffer contents.  `minibuffer-contents' and friends are
+    // therefore live during the read.
+    let buf = i.buffers.get(i.current_buffer);
+    let prompt_end = prompt.chars().count();
     loop {
         {
             let mut t = term.borrow_mut();
-            let _ = t.draw_echo(&format!("{}{}", prompt, text));
+            let shown = if single {
+                prompt.to_string()
+            } else {
+                match &buf {
+                    Some(b) => b.borrow().text.text(),
+                    None => prompt.to_string(),
+                }
+            };
+            let _ = t.draw_echo(&shown);
         }
         let k = term
             .borrow_mut()
@@ -906,13 +922,36 @@ fn minibuf_loop<T: KeyIo>(
             return Err(crate::lisp::error::Flow::Quit);
         }
         match base {
-            13 => return Ok(MinibufInput::Text(text)), // RET
+            13 => {
+                // RET — `exit-minibuffer': the result is the buffer
+                // text after the prompt field.
+                let contents = match &buf {
+                    Some(b) => {
+                        let bb = b.borrow();
+                        let end = bb.text_len();
+                        bb.text.substring(prompt_end.min(end), end)
+                    }
+                    None => String::new(),
+                };
+                return Ok(MinibufInput::Text(contents));
+            }
             127 => {
-                text.pop();
+                // DEL — `delete-backward-char'; the `field' property
+                // keeps edits from eating the prompt.
+                if let Some(b) = &buf {
+                    let mut bb = b.borrow_mut();
+                    let p = bb.point();
+                    if p > prompt_end {
+                        bb.delete_region(p - 1, p);
+                    }
+                }
             }
             c if mods == 0 && (32..0x110000).contains(&c) => {
+                // `self-insert-command'.
                 if let Some(ch) = char::from_u32(c as u32) {
-                    text.push(ch);
+                    if let Some(b) = &buf {
+                        b.borrow_mut().insert(&ch.to_string());
+                    }
                 }
             }
             _ => {
@@ -1234,6 +1273,19 @@ mod tests {
 
     // ---------- input loops ----------
 
+    /// An Interp whose current buffer is a minibuffer that already
+    /// holds `prompt` (what `minibuf_read' leaves for the reader).
+    fn interp_with_minibuffer(prompt: &str) -> crate::lisp::Interp {
+        let mut i = crate::lisp::Interp::new();
+        let mb = i.buffers.create(" *Minibuf-1*");
+        {
+            let b = i.buffers.get(mb).unwrap();
+            b.borrow_mut().insert(prompt);
+        }
+        i.current_buffer = mb;
+        i
+    }
+
     #[test]
     fn minibuf_loop_reads_text() {
         let (t, _out) = test_term(20, 5);
@@ -1243,11 +1295,14 @@ mod tests {
         }
         // pending is a stack — reverse order.
         term.borrow_mut().pending.reverse();
-        let mut i = crate::lisp::Interp::new();
+        let mut i = interp_with_minibuffer("P: ");
         match minibuf_loop(&term, &mut i, "P: ", false) {
             Ok(crate::lisp::eval::MinibufInput::Text(s)) => assert_eq!(s, "ab"),
             other => panic!("expected Text, got {:?}", other.map(|_| ())),
         }
+        // The typed text lives in the minibuffer buffer.
+        let b = i.current_buffer_ref().unwrap();
+        assert_eq!(b.borrow().text.text(), "P: ab");
     }
 
     #[test]
@@ -1259,7 +1314,7 @@ mod tests {
             term.borrow_mut().unread(k);
         }
         term.borrow_mut().pending.reverse();
-        let mut i = crate::lisp::Interp::new();
+        let mut i = interp_with_minibuffer("");
         assert!(minibuf_loop(&term, &mut i, "", false).is_err());
     }
 

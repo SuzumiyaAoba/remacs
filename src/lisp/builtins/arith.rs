@@ -297,7 +297,8 @@ fn f_div(i: &mut Interp, args: Vec<Value>) -> EvalResult {
                 if n == 0 {
                     Err(arith_err(i, "Division by zero"))
                 } else {
-                    Ok(Value::float(1.0 / n as f64))
+                    // GNU: (/ N) with a fixnum is integer division.
+                    Ok(Value::Int(1 / n))
                 }
             }
             Some(Num::F(f)) => Ok(Value::float(1.0 / f)),
@@ -800,19 +801,28 @@ fn f_random(i: &mut Interp, args: Vec<Value>) -> EvalResult {
         x.wrapping_mul(0x2545F4914F6CDD1D)
     });
     let limit = match args.get(0) {
-        None => crate::lisp::value::FIXNUM_MAX,
-        // (random t) reseeds and returns a full-range fixnum.
-        Some(v @ Value::Sym(_)) if i.sym_is(v, i.intern_soft("t").unwrap_or(u32::MAX)) => {
-            crate::lisp::value::FIXNUM_MAX
-        }
-        Some(v @ Value::Sym(_)) => return Err(i.wrong_type_mut("integerp", v)),
         Some(Value::Int(n)) if *n > 0 => *n,
         Some(Value::Int(_)) => {
             let s = i.intern("args-out-of-range");
             return Err(i.signal_data(s, vec![args[0].clone()]));
         }
-        Some(other) => return Err(i.wrong_type_mut("integerp", other)),
+        // A string argument reseeds; any other non-fixnum limit
+        // (float, t, nil, ...) yields a full-range fixnum like GNU.
+        Some(Value::Str(s)) => {
+            let seed = s.borrow().bytes().fold(0xcbf29ce484222325u64, |h, b| {
+                (h ^ b as u64).wrapping_mul(0x100000001b3)
+            });
+            SEED.with(|x| x.set(seed | 1));
+            crate::lisp::value::FIXNUM_MAX
+        }
+        _ => crate::lisp::value::FIXNUM_MAX,
     };
+    if limit == crate::lisp::value::FIXNUM_MAX {
+        // Full range: any fixnum, signed — GNU spans
+        // [most-negative-fixnum, most-positive-fixnum].
+        let r = (next as i128 & 0x3fff_ffff_ffff_ffff) - 0x2000_0000_0000_0000;
+        return Ok(Value::Int(r));
+    }
     Ok(Value::Int(((next >> 1) as i128) % limit))
 }
 fn f_eql(i: &mut Interp, args: Vec<Value>) -> EvalResult {

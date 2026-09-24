@@ -92,7 +92,7 @@ fn string_funcs() {
     assert_eq!(ev("(string-trim-left \"xxhixx\" \"x+\")"), "\"hixx\"");
     assert_eq!(ev("(string-trim-right \"xxhixx\" \"x+\")"), "\"xxhi\"");
     assert_eq!(ev("(split-string \"a b  c\")"), "(\"a\" \"b\" \"c\")");
-    assert_eq!(ev("(split-string \" a \")"), "(\"\" \"a\" \"\")");
+    assert_eq!(ev("(split-string \" a \")"), "(\"a\")");
     assert_eq!(ev("(string-to-number \"10abc\")"), "10");
     assert_eq!(ev("(string-to-number \"-5x\")"), "-5");
     assert_eq!(ev("(string-to-number \".5x\")"), "0.5");

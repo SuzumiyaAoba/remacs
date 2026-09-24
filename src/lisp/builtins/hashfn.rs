@@ -170,6 +170,9 @@ fn f_make_hash_table(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     }
     let mut test = HashTest::Eql;
     let mut weakness: Option<Value> = None;
+    let mut size: i128 = 0;
+    let mut rehash_size = Value::float(1.5);
+    let mut rehash_threshold = Value::float(0.8125);
     let mut k = 0;
     while k < items.len() {
         let name = match &items[k] {
@@ -218,7 +221,10 @@ fn f_make_hash_table(i: &mut Interp, args: Vec<Value>) -> EvalResult {
                     let w = i.symbol_name(*id).to_string();
                     match w.as_str() {
                         // GNU: `t' is a synonym for `key-and-value'.
-                        "t" | "key" | "value" | "key-or-value" | "key-and-value" => {
+                        "t" => {
+                            weakness = Some(Value::Sym(i.intern("key-and-value")));
+                        }
+                        "key" | "value" | "key-or-value" | "key-and-value" => {
                             weakness = Some(val.clone());
                         }
                         _ => {
@@ -235,15 +241,21 @@ fn f_make_hash_table(i: &mut Interp, args: Vec<Value>) -> EvalResult {
                 }
             },
             ":size" => match val {
-                Value::Int(n) if *n >= 0 => {}
+                Value::Int(n) if *n >= 0 => size = *n,
                 other => {
                     let msg = i.prin1_to_string(other);
                     return Err(i.error(&format!("Invalid hash table size: {}", msg)));
                 }
             },
-            ":rehash-size" | ":rehash-threshold" => match val {
-                Value::Int(_) | Value::Float(_) => {}
-                _ => return Err(i.wrong_type_mut("numberp", val)),
+            // GNU stores numeric rehash values and silently ignores
+            // anything else (a symbol falls back to the default).
+            ":rehash-size" => match val {
+                Value::Int(_) | Value::Float(_) => rehash_size = val.clone(),
+                _ => {}
+            },
+            ":rehash-threshold" => match val {
+                Value::Int(_) | Value::Float(_) => rehash_threshold = val.clone(),
+                _ => {}
             },
             ":purecopy" => {}
             _ => return Err(i.error(&format!("Invalid keyword argument {}", name))),
@@ -252,6 +264,9 @@ fn f_make_hash_table(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     }
     let mut h = LispHash::new(test);
     h.weakness = weakness;
+    h.size = size;
+    h.rehash_size = rehash_size;
+    h.rehash_threshold = rehash_threshold;
     Ok(Value::Hash(Rc::new(RefCell::new(h))))
 }
 
@@ -276,7 +291,7 @@ fn f_puthash(i: &mut Interp, args: Vec<Value>) -> EvalResult {
             let key = hash_key_for(i, &args[0], h.borrow().test);
             let mut hh = h.borrow_mut();
             hh.map.insert(key.clone(), args[1].clone());
-            hh.keys.insert(key, args[0].clone());
+            hh.put_key(key, args[0].clone());
             Ok(args[1].clone())
         }
         other => Err(i.wrong_type_mut("hash-table-p", other)),
@@ -289,7 +304,7 @@ fn f_remhash(i: &mut Interp, args: Vec<Value>) -> EvalResult {
             let key = hash_key_for(i, &args[0], h.borrow().test);
             let mut hh = h.borrow_mut();
             hh.map.remove(&key);
-            hh.keys.remove(&key);
+            hh.remove_key(&key);
             Ok(Value::Nil)
         }
         other => Err(i.wrong_type_mut("hash-table-p", other)),
@@ -317,7 +332,13 @@ fn f_hash_table_count(i: &mut Interp, args: Vec<Value>) -> EvalResult {
 
 fn f_hash_table_keys(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     match &args[0] {
-        Value::Hash(h) => Ok(Value::list(h.borrow().keys.values().cloned().collect())),
+        Value::Hash(h) => Ok(Value::list(
+            h.borrow()
+                .keys
+                .iter()
+                .map(|(_, k)| k.clone())
+                .collect::<Vec<Value>>(),
+        )),
         other => Err(i.wrong_type_mut("hash-table-p", other)),
     }
 }
@@ -349,15 +370,21 @@ fn f_hash_table_weakness(i: &mut Interp, args: Vec<Value>) -> EvalResult {
         other => Err(i.wrong_type_mut("hash-table-p", other)),
     }
 }
-fn f_hash_table_rehash_size(_i: &mut Interp, _args: Vec<Value>) -> EvalResult {
-    Ok(Value::float(1.5))
+fn f_hash_table_rehash_size(i: &mut Interp, args: Vec<Value>) -> EvalResult {
+    match &args[0] {
+        Value::Hash(h) => Ok(h.borrow().rehash_size.clone()),
+        other => Err(i.wrong_type_mut("hash-table-p", other)),
+    }
 }
-fn f_hash_table_rehash_threshold(_i: &mut Interp, _args: Vec<Value>) -> EvalResult {
-    Ok(Value::float(0.8125))
+fn f_hash_table_rehash_threshold(i: &mut Interp, args: Vec<Value>) -> EvalResult {
+    match &args[0] {
+        Value::Hash(h) => Ok(h.borrow().rehash_threshold.clone()),
+        other => Err(i.wrong_type_mut("hash-table-p", other)),
+    }
 }
 fn f_hash_table_size(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     match &args[0] {
-        Value::Hash(h) => Ok(Value::Int(h.borrow().map.len().max(65) as i128)),
+        Value::Hash(h) => Ok(Value::Int(h.borrow().size)),
         other => Err(i.wrong_type_mut("hash-table-p", other)),
     }
 }
@@ -369,6 +396,9 @@ fn f_copy_hash_table(i: &mut Interp, args: Vec<Value>) -> EvalResult {
             nh.map = hh.map.clone();
             nh.keys = hh.keys.clone();
             nh.weakness = hh.weakness.clone();
+            nh.size = hh.size;
+            nh.rehash_size = hh.rehash_size.clone();
+            nh.rehash_threshold = hh.rehash_threshold.clone();
             Ok(Value::Hash(Rc::new(RefCell::new(nh))))
         }
         other => Err(i.wrong_type_mut("hash-table-p", other)),
@@ -398,7 +428,8 @@ fn f_hash_table_buckets(i: &mut Interp, args: Vec<Value>) -> EvalResult {
             }
             let buckets: Vec<Value> = hh
                 .keys
-                .values()
+                .iter()
+                .map(|(_, k)| k)
                 .enumerate()
                 .map(|(n, k)| {
                     Value::list(vec![Value::cons(

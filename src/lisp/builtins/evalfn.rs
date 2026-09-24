@@ -1062,6 +1062,64 @@ pub(crate) fn call_hook(i: &mut Interp, name: &str) -> EvalResult {
     Ok(Value::Nil)
 }
 
+/// GNU `safe_run_hooks' (keyboard.c): `inhibit-quit' is bound, and
+/// each hook function runs inside an error handler that messages
+/// "Error in HOOK (FUN): ERROR" and removes FUN from the hook.
+/// Signals and quits are swallowed; throws/exits still propagate.
+pub(crate) fn safe_call_hook(i: &mut Interp, name: &str) -> EvalResult {
+    let mark = i.specbind_depth();
+    let iq = i.intern("inhibit-quit");
+    if let Err(f) = i.specbind(iq, Value::t()) {
+        return Err(f);
+    }
+    let hook_id = i.intern(name);
+    let fns = hook_fns(i, &Value::Sym(hook_id));
+    for f in fns {
+        match i.apply(&f, vec![]) {
+            Ok(_) | Err(Flow::Quit) => {}
+            Err(Flow::Signal(sig, data, _)) => {
+                let err = Value::cons(sig.clone(), data.clone());
+                let msg = format!(
+                    "Error in {} ({}): {}",
+                    name,
+                    i.prin1_to_string(&f),
+                    i.prin1_to_string(&err)
+                );
+                i.message(&msg);
+                safe_remove_hook_fn(i, hook_id, &f);
+            }
+            Err(flow) => {
+                let _ = i.unbind_to(mark);
+                return Err(flow);
+            }
+        }
+    }
+    let _ = i.unbind_to(mark);
+    Ok(Value::Nil)
+}
+
+/// GNU `safe_run_hooks_error': drop FUN from HOOK's buffer-local list
+/// if present there, else from its global (default) value.
+fn safe_remove_hook_fn(i: &mut Interp, hook_id: SymId, f: &Value) {
+    if let Some(b) = i.buffers.get(i.current_buffer) {
+        let mut bb = b.borrow_mut();
+        if let Some(v) = bb.locals.get(&hook_id).cloned() {
+            let mut l = hook_list(&v);
+            if let Some(pos) = l.iter().position(|x| super::equal_values(i, x, f)) {
+                l.remove(pos);
+                bb.locals.insert(hook_id, Value::list(l));
+                return;
+            }
+        }
+    }
+    let v = i.obarray.symbol(hook_id).value.clone();
+    let mut l = hook_list(&v);
+    if let Some(pos) = l.iter().position(|x| super::equal_values(i, x, f)) {
+        l.remove(pos);
+        let _ = i.set_symbol(hook_id, Value::list(l));
+    }
+}
+
 // `add-hook'/`remove-hook' mirror GNU 31.1's Lisp definitions in
 // subr.el, including depth bookkeeping via the `hook--depth-alist'
 // symbol property (an uninterned symbol whose value is an alist).

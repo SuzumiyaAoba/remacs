@@ -213,6 +213,13 @@ pub(crate) static SUBRS: &[Subr] = &[
         "Value of SYMBOL in BUFFER."
     ),
     S!(
+        "buffer-local-boundp",
+        2,
+        2,
+        f_buffer_local_boundp,
+        "t if SYMBOL has a local binding in BUFFER."
+    ),
+    S!(
         "make-local-variable",
         1,
         1,
@@ -2112,7 +2119,12 @@ fn f_bufferp(_i: &mut Interp, a: Vec<Value>) -> EvalResult {
 
 fn f_buffer_name(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let b = buf_of(i, &arg(&a, 0))?;
-    Ok(Value::string(b.borrow().name.clone()))
+    // GNU Fbuffer_name: a killed buffer's name is nil.
+    Ok(if b.borrow().live {
+        Value::string(b.borrow().name.clone())
+    } else {
+        Value::Nil
+    })
 }
 
 fn f_get_buffer(i: &mut Interp, a: Vec<Value>) -> EvalResult {
@@ -2162,7 +2174,10 @@ fn f_generate_new_buffer_name(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 }
 
 fn f_buffer_live_p(_i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    Ok(Value::from_bool(matches!(&a[0], Value::Buffer(_))))
+    Ok(Value::from_bool(match &a[0] {
+        Value::Buffer(b) => b.borrow().live,
+        _ => false,
+    }))
 }
 
 /// Kill `id` and repair `current_buffer`: GNU always has a live
@@ -2245,6 +2260,12 @@ fn f_set_buffer(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     // a missing name is a plain "No buffer named" error.
     if !matches!(a[0], Value::Buffer(_) | Value::Str(_)) {
         return Err(i.wrong_type_mut("stringp", &a[0]));
+    }
+    // GNU Fset_buffer: selecting a killed buffer signals a plain error.
+    if let Value::Buffer(b) = &a[0] {
+        if !b.borrow().live {
+            return Err(i.error("Selecting deleted buffer"));
+        }
     }
     let id = i
         .buffer_id_of(&a[0])
@@ -2488,6 +2509,20 @@ fn f_buffer_local_value(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         return Err(i.signal_data(sym::VOID_VARIABLE, vec![a[0].clone()]));
     }
     Ok(v)
+}
+
+fn f_buffer_local_boundp(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let sid = want_sym(i, &a[0])?;
+    if !matches!(a[1], Value::Buffer(_)) {
+        return Err(i.wrong_type_mut("bufferp", &a[1]));
+    }
+    let b = buf_of(i, &a[1])?;
+    // GNU: an explicit local binding, or an always-local variable
+    // (defvar-buffer-local / make-variable-buffer-local) which has a
+    // slot in every buffer.
+    let bound = b.borrow().locals.contains_key(&sid)
+        || i.obarray.symbol(sid).make_local_if_set;
+    Ok(Value::from_bool(bound))
 }
 
 fn f_make_local_variable(i: &mut Interp, a: Vec<Value>) -> EvalResult {
@@ -2737,21 +2772,25 @@ fn f_forward_word(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let wordp = |c: char| crate::editor::syntax_entry_code(syn.as_ref(), c) == b'w';
     let b = cur(i);
     let mut bb = b.borrow_mut();
-    // GNU returns t on success, nil when point can't move (buffer edge).
+    // GNU scan_words: each iteration skips non-word constituents, then
+    // scans a word.  If a boundary is reached before completing ARG
+    // words, point still moves to the boundary and nil is returned;
+    // t is returned only when all ARG words were traversed.
     let mut ok = true;
     if n >= 0 {
+        let len = bb.text_len();
         for _ in 0..n {
             let mut p = bb.point();
-            let len = bb.text_len();
-            // skip non-word, then word
             while p < len && !wordp(bb.text.char_at(p)) {
                 p += 1;
             }
+            if p == len {
+                ok = false;
+                bb.set_point(p);
+                break;
+            }
             while p < len && wordp(bb.text.char_at(p)) {
                 p += 1;
-            }
-            if p == bb.point() {
-                ok = false;
             }
             bb.set_point(p);
         }
@@ -2761,11 +2800,13 @@ fn f_forward_word(i: &mut Interp, a: Vec<Value>) -> EvalResult {
             while p > bb.begv && !wordp(bb.text.char_at(p - 1)) {
                 p -= 1;
             }
+            if p == bb.begv {
+                ok = false;
+                bb.set_point(p);
+                break;
+            }
             while p > bb.begv && wordp(bb.text.char_at(p - 1)) {
                 p -= 1;
-            }
-            if p == bb.point() {
-                ok = false;
             }
             bb.set_point(p);
         }

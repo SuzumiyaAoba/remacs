@@ -9814,23 +9814,38 @@ fn minibuf_id(i: &Interp) -> Option<usize> {
 }
 
 fn f_minibufferp(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    // GNU Fminibufferp: (memq buffer Vminibuffer_list) — the arg
+    // defaults to the current buffer; ` *Minibuf-0*' counts too.
     match a.get(0) {
         None | Some(Value::Nil) => {
-            // current buffer is minibuffer?
-            Ok(Value::from_bool(minibuf_id(i) == Some(i.current_buffer)))
+            Ok(Value::from_bool(i.is_minibuffer(i.current_buffer)))
         }
         Some(v) => match i.buffer_id_of(v) {
-            Some(id) => Ok(Value::from_bool(minibuf_id(i) == Some(id))),
+            Some(id) => Ok(Value::from_bool(i.is_minibuffer(id))),
             None => Ok(Value::Nil),
         },
     }
 }
 
 fn f_minibuffer_contents(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
-    match minibuf_id(i).and_then(|id| i.buffers.get(id)) {
-        Some(b) => Ok(Value::string(b.borrow().text.text())),
-        None => Ok(Value::string("")),
+    // GNU Fminibuffer_contents: in a minibuffer, the text after the
+    // prompt; otherwise the whole buffer text.
+    let whole = match i.buffers.get(i.current_buffer) {
+        Some(b) => b.borrow().text.text(),
+        None => String::new(),
+    };
+    if !i.is_minibuffer(i.current_buffer) {
+        return Ok(Value::string(whole));
     }
+    let pe = match f_minibuffer_prompt_end(i, vec![])? {
+        Value::Int(n) => (n.max(1) - 1) as usize,
+        _ => 0,
+    };
+    let b = cur(i);
+    let bb = b.borrow();
+    let e = bb.text_len();
+    let s = pe.min(e);
+    Ok(Value::string(bb.text.substring(s, e)))
 }
 
 fn f_delete_minibuffer_contents(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
@@ -9850,17 +9865,42 @@ fn f_delete_minibuffer_contents(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
 fn f_minibuffer_depth(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
     Ok(Value::Int(i.minibuf_level as i128))
 }
-fn f_minibuffer_prompt(_i: &mut Interp, _a: Vec<Value>) -> EvalResult {
-    // GNU returns nil when no minibuffer is active.
-    Ok(Value::Nil)
+fn f_minibuffer_prompt(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
+    // GNU Fminibuffer_prompt: the innermost active minibuffer's
+    // prompt, nil when no minibuffer is active.
+    match i.minibuf_prompts.last() {
+        Some(p) => Ok(Value::string(p.clone())),
+        None => Ok(Value::Nil),
+    }
 }
 
-/// `minibuffer-prompt-end' — GNU returns the buffer position right
-/// after the prompt; with no minibuffer active that is point-min.
+/// `minibuffer-prompt-end' — GNU: (point-min) outside a minibuffer,
+/// else `field-end' of the prompt `field' region at BEGV (or BEGV when
+/// the field runs to ZV without a `field' property).
 fn f_minibuffer_prompt_end(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
-    Ok(Value::Int(
-        crate::buffer::primitives::cur(i).borrow().begv as i128 + 1,
-    ))
+    let beg = cur(i).borrow().begv as i128 + 1;
+    if !i.is_minibuffer(i.current_buffer) {
+        return Ok(Value::Int(beg));
+    }
+    let fe = i.intern("field-end");
+    let end = i.apply(
+        &Value::Sym(fe),
+        vec![Value::Int(beg), Value::Nil, Value::Nil],
+    )?;
+    let zv = cur(i).borrow().zv as i128 + 1;
+    let end_n = end.int().unwrap_or(zv);
+    if end_n == zv {
+        let gcp = i.intern("get-char-property");
+        let fld = i.intern("field");
+        let at_beg = i.apply(
+            &Value::Sym(gcp),
+            vec![Value::Int(beg), Value::Sym(fld), Value::Nil],
+        )?;
+        if at_beg.is_nil() {
+            return Ok(Value::Int(beg));
+        }
+    }
+    Ok(Value::Int(end_n))
 }
 
 /// `blink-cursor-mode' — a GNU minor-mode command: called from Lisp,
@@ -10163,7 +10203,11 @@ fn read_number_prompt(i: &mut Interp, prompt: &Value, default: &Value) -> String
     }
 }
 
-fn minibuf_or(i: &mut Interp, prompt: &Value, fallback: Value) -> Result<Option<String>, Flow> {
+fn minibuf_or(
+    i: &mut Interp,
+    prompt: &Value,
+    args: crate::lisp::eval::MinibufArgs,
+) -> Result<Option<String>, Flow> {
     let p = match prompt {
         Value::Str(s) => s.borrow().clone(),
         _ => String::new(),
@@ -10175,14 +10219,19 @@ fn minibuf_or(i: &mut Interp, prompt: &Value, fallback: Value) -> Result<Option<
     if i.minibuf_reader.is_none() {
         return Err(batch_eof(i));
     }
-    let _ = fallback;
-    Ok(Some(i.minibuf_line(&p)?))
+    Ok(Some(i.minibuf_read(&p, args)?))
 }
 
 fn f_read_from_minibuffer(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     // Args: PROMPT INITIAL-CONTENTS KEYMAP READ HISTORY DEFAULT-VALUE
     // INHERIT-INPUT-METHOD.
-    if let Some(s) = minibuf_or(i, &a[0], arg(&a, 5))? {
+    let args = crate::lisp::eval::MinibufArgs {
+        hist: arg(&a, 4),
+        defalt: arg(&a, 5),
+        initial: arg(&a, 1),
+        keymap: arg(&a, 2),
+    };
+    if let Some(s) = minibuf_or(i, &a[0], args)? {
         if !arg(&a, 3).is_nil() {
             // READ flag: parse the line as a Lisp object
             // (GNU `read_minibuf_noninteractive' expflag).
@@ -10206,7 +10255,12 @@ fn f_read_buffer(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         }
         return Ok(Value::string(line));
     }
-    if let Some(s) = minibuf_or(i, &Value::string(p), d.clone())? {
+    let args = crate::lisp::eval::MinibufArgs {
+        hist: Value::Sym(i.intern("buffer-name-history")),
+        defalt: d.clone(),
+        ..Default::default()
+    };
+    if let Some(s) = minibuf_or(i, &Value::string(p), args)? {
         if s.is_empty() {
             return Ok(if d.is_nil() { Value::string("") } else { d });
         }
@@ -10215,7 +10269,19 @@ fn f_read_buffer(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     Ok(d)
 }
 fn f_read_file_name(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    if let Some(s) = minibuf_or(i, &a[0], arg(&a, 3))? {
+    // GNU `read-file-name-default' let-binds
+    // `minibuffer-completing-file-name' to t for the read.
+    let mark = i.specbind_depth();
+    let cf = i.intern("minibuffer-completing-file-name");
+    let _ = i.specbind(cf, Value::t());
+    let args = crate::lisp::eval::MinibufArgs {
+        hist: Value::Sym(i.intern("file-name-history")),
+        defalt: arg(&a, 3),
+        ..Default::default()
+    };
+    let r = minibuf_or(i, &a[0], args);
+    let _ = i.unbind_to(mark);
+    if let Some(s) = r? {
         // GNU batch `read-file-name' echoes the raw prompt and returns
         // the raw line ("" for empty input).
         return Ok(Value::string(s));
@@ -10286,7 +10352,12 @@ fn f_read_regexp(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     if i.minibuf_reader.is_none() {
         return Err(batch_eof(i));
     }
-    let line = i.minibuf_line(&p)?;
+    let args = crate::lisp::eval::MinibufArgs {
+        hist: Value::Sym(i.intern("regexp-history")),
+        defalt: d.clone(),
+        ..Default::default()
+    };
+    let line = i.minibuf_read(&p, args)?;
     if line.is_empty() {
         return Ok(d);
     }
@@ -10317,8 +10388,25 @@ fn f_completing_read(i: &mut Interp, a: Vec<Value>) -> EvalResult {
             Value::Str(s) => s.borrow().clone(),
             _ => String::new(),
         };
+        // GNU Fcompleting_read specbinds the completion state for the
+        // minibuffer read (rfn-eshadow, icomplete & co. observe it).
+        let mark = i.specbind_depth();
+        let mct = i.intern("minibuffer-completion-table");
+        let _ = i.specbind(mct, arg(&a, 1));
+        let mcp = i.intern("minibuffer-completion-predicate");
+        let _ = i.specbind(mcp, arg(&a, 2));
+        let mcc = i.intern("minibuffer-completion-confirm");
+        let _ = i.specbind(mcc, arg(&a, 3));
         let cands = completion_candidates(i, &a[1]);
-        let input = i.minibuf_line(&prompt)?;
+        let args = crate::lisp::eval::MinibufArgs {
+            hist: arg(&a, 5),
+            defalt: arg(&a, 6),
+            initial: arg(&a, 4),
+            ..Default::default()
+        };
+        let input_r = i.minibuf_read(&prompt, args);
+        let _ = i.unbind_to(mark);
+        let input = input_r?;
         if input.is_empty() {
             // Empty input → DEF (arg 6) or "".
             return Ok(arg(&a, 6));
@@ -10884,7 +10972,11 @@ fn f_read_string(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     // GNU Fread_string: empty input with a non-nil DEFAULT-VALUE
     // (4th arg) yields the default (its car when a list).
     let d = arg(&a, 3);
-    if let Some(s) = minibuf_or(i, &a[0], d.clone())? {
+    let args = crate::lisp::eval::MinibufArgs {
+        defalt: d.clone(),
+        ..Default::default()
+    };
+    if let Some(s) = minibuf_or(i, &a[0], args)? {
         if s.is_empty() && !d.is_nil() {
             return Ok(match &d {
                 Value::Cons(c) => c.borrow().car.clone(),
@@ -10900,7 +10992,12 @@ fn f_read_command(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     // raw line — empty input yields the default, else the name is
     // interned (even when it names no command).
     let d = arg(&a, 1);
-    if let Some(s) = minibuf_or(i, &a[0], d.clone())? {
+    let args = crate::lisp::eval::MinibufArgs {
+        hist: Value::Sym(i.intern("extended-command-history")),
+        defalt: d.clone(),
+        ..Default::default()
+    };
+    if let Some(s) = minibuf_or(i, &a[0], args)? {
         if s.is_empty() && !d.is_nil() {
             return Ok(match &d {
                 Value::Cons(c) => c.borrow().car.clone(),
@@ -10969,24 +11066,17 @@ fn f_y_or_n_p(i: &mut Interp, a: Vec<Value>) -> EvalResult {
             Value::Str(s) => s.borrow().clone(),
             _ => String::new(),
         };
+        // GNU y-or-n-p → read-char-from-minibuffer → read-from-minibuffer:
+        // a real minibuffer read (setup/exit hooks run); only the first
+        // typed character counts.
         loop {
-            match i.minibuf_input(&format!("{} (y or n) ", prompt), true)? {
-                crate::lisp::eval::MinibufInput::Key(k) => {
-                    let base = k & 0x3f_ffff;
-                    match base {
-                        x if x == 'y' as i128 => return Ok(Value::t()),
-                        x if x == 'n' as i128 => return Ok(Value::Nil),
-                        7 | 3 => return Err(crate::lisp::error::Flow::Quit),
-                        _ => {
-                            i.message("Please answer y or n");
-                        }
-                    }
+            let line = i.minibuf_line(&y_or_n_prompt(&prompt))?;
+            match line.chars().next() {
+                Some('y') | Some('Y') => return Ok(Value::t()),
+                Some('n') | Some('N') => return Ok(Value::Nil),
+                _ => {
+                    i.message("Please answer y or n");
                 }
-                crate::lisp::eval::MinibufInput::Text(t) => match t.chars().next() {
-                    Some('y') => return Ok(Value::t()),
-                    Some('n') => return Ok(Value::Nil),
-                    _ => {}
-                },
             }
         }
     }
@@ -11092,7 +11182,11 @@ fn f_execute_extended_command(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let _ = &a;
     // Interactive: prompt "M-x " through the front-end.
     if i.minibuf_reader.is_some() {
-        let name = i.minibuf_line("M-x ")?;
+        let args = crate::lisp::eval::MinibufArgs {
+            hist: Value::Sym(i.intern("extended-command-history")),
+            ..Default::default()
+        };
+        let name = i.minibuf_read("M-x ", args)?;
         if name.is_empty() {
             return Ok(Value::Nil);
         }
@@ -13535,7 +13629,11 @@ fn f_completing_read_multiple(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 }
 
 fn f_read_coding_system(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let input = match minibuf_or(i, &arg(&a, 0), Value::Nil)? {
+    let args = crate::lisp::eval::MinibufArgs {
+        hist: Value::Sym(i.intern("coding-system-history")),
+        ..Default::default()
+    };
+    let input = match minibuf_or(i, &arg(&a, 0), args)? {
         Some(s) => s,
         None => String::new(),
     };
@@ -13548,7 +13646,11 @@ fn f_read_coding_system(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 }
 
 fn f_read_color(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let input = match minibuf_or(i, &arg(&a, 0), Value::Nil)? {
+    let args = crate::lisp::eval::MinibufArgs {
+        hist: Value::Sym(i.intern("color-history")),
+        ..Default::default()
+    };
+    let input = match minibuf_or(i, &arg(&a, 0), args)? {
         Some(s) => s,
         None => String::new(),
     };
@@ -13831,6 +13933,20 @@ pub fn install_primitives(i: &mut Interp) {
     // Wire the frame's window buffer linkage.
     i.selected_frame = Some(frame.clone());
     i.frames.push(frame);
+    // GNU `Vminibuffer_list': index 0 is ` *Minibuf-0*', the
+    // never-active null minibuffer.
+    if i.minibuf_list.is_empty() {
+        i.minibuf_list.push(mb);
+    }
+    // GNU C: `minibuffer-local-map' is a real (dense) keymap.
+    let mlm = i.intern("minibuffer-local-map");
+    if i.symbol_value(mlm).is_nil() {
+        let km = Value::cons(
+            Value::Sym(i.intern("keymap")),
+            Value::cons(keymap_char_table(i), Value::Nil),
+        );
+        i.obarray.symbol_mut(mlm).value = km;
+    }
     // global-map default: a dense keymap (char-table element), as in
     // GNU's `current-global-map'.
     let gm = i.intern("global-map");

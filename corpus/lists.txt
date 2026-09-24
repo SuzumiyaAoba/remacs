@@ -258,3 +258,8 @@
 (format-proper-list-p '(a . b))
 (format-proper-list-p 5)
 (fboundp 'format-proper-list-p)
+(assoc-string 'sym '((sym . 1) (x . 2)))
+(assoc-string 'sym '(sym x))
+(condition-case e (assoc-string 'sym '(a . b)) (error e))
+(condition-case e (nth 2 '(a b . c)) (error e))
+(nthcdr 2 '(a b . c))

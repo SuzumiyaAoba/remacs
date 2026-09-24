@@ -122,12 +122,20 @@ pub struct LispHash {
     pub test: HashTest,
     /// We key on a normalized form so `equal` keys hash correctly.
     pub map: HashMap<HashKey, Value>,
-    /// Keep original keys for `maphash`/`hash-table-keys`.
-    pub keys: HashMap<HashKey, Value>,
+    /// Original keys for `maphash`/`hash-table-keys`, kept in GNU's
+    /// slot order: entries append at the end, `remhash' leaves a
+    /// tombstone and the next `puthash' reuses the first free slot.
+    pub keys: KeySlots,
     /// :weakness argument recorded for `hash-table-weakness` (#<..>
     /// printed representation). Weak references aren't implemented;
     /// the tag is metadata only.
     pub weakness: Option<Value>,
+    /// The :size argument as given (GNU's `hash-table-size').
+    pub size: i128,
+    /// :rehash-size / :rehash-threshold values (GNU stores them and
+    /// returns them verbatim from the accessors).
+    pub rehash_size: Value,
+    pub rehash_threshold: Value,
 }
 
 impl LispHash {
@@ -135,9 +143,56 @@ impl LispHash {
         LispHash {
             test,
             map: HashMap::new(),
-            keys: HashMap::new(),
+            keys: KeySlots(Vec::new()),
             weakness: None,
+            size: 0,
+            rehash_size: Value::float(1.5),
+            rehash_threshold: Value::float(0.8125),
         }
+    }
+
+    /// Record an original key: an already-present normalized key
+    /// keeps its original object (as GNU's hash_put); otherwise the
+    /// key takes the first tombstone slot, or appends.
+    pub fn put_key(&mut self, hk: HashKey, k: Value) {
+        if self.keys.0.iter().flatten().any(|(e, _)| *e == hk) {
+            return;
+        }
+        match self.keys.0.iter_mut().find(|e| e.is_none()) {
+            Some(slot) => *slot = Some((hk, k)),
+            None => self.keys.0.push(Some((hk, k))),
+        }
+    }
+
+    pub fn remove_key(&mut self, hk: &HashKey) {
+        if let Some(e) = self
+            .keys
+            .0
+            .iter_mut()
+            .find(|e| matches!(e, Some((h, _)) if h == hk))
+        {
+            *e = None;
+        }
+    }
+}
+
+/// Insertion-ordered hash keys with tombstone slots, mirroring GNU's
+/// hash-table slot reuse. `iter' yields only live entries.
+#[derive(Clone)]
+pub struct KeySlots(pub Vec<Option<(HashKey, Value)>>);
+
+impl KeySlots {
+    pub fn iter(&self) -> impl Iterator<Item = &(HashKey, Value)> {
+        self.0.iter().filter_map(|e| e.as_ref())
+    }
+    pub fn is_empty(&self) -> bool {
+        self.0.iter().all(|e| e.is_none())
+    }
+    pub fn len(&self) -> usize {
+        self.0.iter().flatten().count()
+    }
+    pub fn clear(&mut self) {
+        self.0.clear();
     }
 }
 

@@ -106,6 +106,69 @@ Thus, (cl-list* A B C) is equivalent to (cons A (cons B C))."
   "Return t if OBJECT is a floating point number."
   (floatp object))
 
+;;; car/cdr accessor aliases (GNU cl-lib.el defines only the 3- and
+;;; 4-deep accessors, cl-caaar .. cl-cddddr).
+
+(defalias 'cl-caaar #'caaar)
+(defalias 'cl-caadr #'caadr)
+(defalias 'cl-cadar #'cadar)
+(defalias 'cl-caddr #'caddr)
+(defalias 'cl-cdaar #'cdaar)
+(defalias 'cl-cdadr #'cdadr)
+(defalias 'cl-cddar #'cddar)
+(defalias 'cl-cdddr #'cdddr)
+(defalias 'cl-caaaar #'caaaar)
+(defalias 'cl-caaadr #'caaadr)
+(defalias 'cl-caadar #'caadar)
+(defalias 'cl-caaddr #'caaddr)
+(defalias 'cl-cadaar #'cadaar)
+(defalias 'cl-cadadr #'cadadr)
+(defalias 'cl-caddar #'caddar)
+(defalias 'cl-cadddr #'cadddr)
+(defalias 'cl-cdaaar #'cdaaar)
+(defalias 'cl-cdaadr #'cdaadr)
+(defalias 'cl-cdadar #'cdadar)
+(defalias 'cl-cdaddr #'cdaddr)
+(defalias 'cl-cddaar #'cddaar)
+(defalias 'cl-cddadr #'cddadr)
+(defalias 'cl-cdddar #'cdddar)
+(defalias 'cl-cddddr #'cddddr)
+
+;;; Small cl-lib/cl-seq list helpers.
+
+(defun cl-acons (key value alist)
+  "Add KEY and VALUE to ALIST.
+Return a new list with (cons KEY VALUE) as car and ALIST as cdr."
+  (cons (cons key value) alist))
+
+(defsubst cl-assoc-if (cl-pred cl-list &rest cl-keys)
+  "Find the first item whose car satisfies PREDICATE in LIST.
+
+Keywords supported:  :key"
+  (let ((cl-key (car (cdr (memq :key cl-keys)))))
+    (while (and cl-list
+                (or (not (consp (car cl-list)))
+                    (not (funcall cl-pred
+                                  (if cl-key
+                                      (funcall cl-key (car (car cl-list)))
+                                    (car (car cl-list)))))))
+      (setq cl-list (cdr cl-list)))
+    (car cl-list)))
+
+(defsubst cl-assoc-if-not (cl-pred cl-list &rest cl-keys)
+  "Find the first item whose car does not satisfy PREDICATE in LIST.
+
+Keywords supported:  :key"
+  (let ((cl-key (car (cdr (memq :key cl-keys)))))
+    (while (and cl-list
+                (or (not (consp (car cl-list)))
+                    (funcall cl-pred
+                             (if cl-key
+                                 (funcall cl-key (car (car cl-list)))
+                               (car (car cl-list))))))
+      (setq cl-list (cdr cl-list)))
+    (car cl-list)))
+
 ;;; callf/callf2.
 
 (defmacro cl-callf (func place &rest args)
