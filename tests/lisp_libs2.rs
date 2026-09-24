@@ -1582,3 +1582,85 @@ fn w32_fns_and_ebuff_menu_entry_points() {
         "(t t t t)"
     );
 }
+
+#[test]
+fn games_and_misc_tooling_entry_points() {
+    // GNU-verified on 31.1: all twelve libraries load byte-identically
+    // and expose the same entry points.
+    assert_eq!(
+        ev("(progn (require 'zone)
+                  (list (featurep 'zone) (fboundp 'zone)
+                        (fboundp 'zone-when-idle)))"),
+        "(t t t)"
+    );
+    assert_eq!(
+        ev("(progn (require 'tooltip)
+                  (list (featurep 'tooltip) (fboundp 'tooltip-mode)
+                        (boundp 'tooltip-delay)))"),
+        "(t t t)"
+    );
+    assert_eq!(
+        ev("(progn (require 'ogonek)
+                  (list (featurep 'ogonek) (fboundp 'ogonek-jak)
+                        (fboundp 'ogonek-how)
+                        (fboundp 'ogonek-lookup-encoding)))"),
+        "(t t t t)"
+    );
+    assert_eq!(
+        ev("(progn (require 'kinsoku)
+                  (list (featurep 'kinsoku) (boundp 'kinsoku-limit)))"),
+        "(t t)"
+    );
+    assert_eq!(
+        ev("(progn (require 'utf-7)
+                  (list (featurep 'utf-7) (fboundp 'utf-7-encode)
+                        (fboundp 'utf-7-decode)))"),
+        "(t t t)"
+    );
+    assert_eq!(
+        ev("(progn (require 'mail-utils)
+                  (list (featurep 'mail-utils)
+                        (fboundp 'mail-strip-quoted-names)
+                        (fboundp 'mail-file-babyl-p)))"),
+        "(t t t)"
+    );
+    assert_eq!(
+        ev("(progn (require 'dissociate)
+                  (list (featurep 'dissociate)
+                        (fboundp 'dissociated-press)))"),
+        "(t t)"
+    );
+    assert_eq!(
+        ev("(progn (require 'fortune)
+                  (list (featurep 'fortune) (fboundp 'fortune)
+                        (fboundp 'fortune-message)))"),
+        "(t t t)"
+    );
+    assert_eq!(
+        ev("(progn (require 'gamegrid)
+                  (list (featurep 'gamegrid) (fboundp 'gamegrid-init)
+                        (fboundp 'gamegrid-set-cell)))"),
+        "(t t t)"
+    );
+    assert_eq!(
+        ev("(progn (require 'morse)
+                  (list (featurep 'morse) (fboundp 'morse-region)
+                        (fboundp 'unmorse-region)))"),
+        "(t t t)"
+    );
+    assert_eq!(
+        ev("(progn (require 'spook)
+                  (list (featurep 'spook) (fboundp 'spook)
+                        (fboundp 'snarf-spooks)
+                        (boundp 'spook-phrases-file)))"),
+        "(t t t t)"
+    );
+    // ls-lisp provides its own insert-directory, same as GNU.
+    assert_eq!(
+        ev("(progn (require 'ls-lisp)
+                  (list (featurep 'ls-lisp)
+                        (boundp 'ls-lisp-use-insert-directory-program)
+                        (fboundp 'insert-directory)))"),
+        "(t t t)"
+    );
+}

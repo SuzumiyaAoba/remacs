@@ -800,6 +800,11 @@ impl Interp {
             // (`vc-handled-backends', `vc-ignore-dir-regexp', ...) and
             // the vc-file-* property machinery are bound at -Q.
             let _ = crate::lisp::load::load_library(&mut interp, "vc-hooks");
+            // tooltip.el is dumped on window-system builds too: GNU has
+            // `tooltip-delay', `tooltip-mode' & co. bound at -Q, and the
+            // `tooltip' feature mark alone would make `require' skip
+            // the definitions.
+            let _ = crate::lisp::load::load_library(&mut interp, "tooltip");
         }
         interp.loading_dumped = false;
         // GNU resets `gensym-counter' to 0 when the dumped image starts
