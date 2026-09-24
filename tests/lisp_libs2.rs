@@ -1902,3 +1902,106 @@ fn executable_and_debug_early_parity() {
         "(t t)"
     );
 }
+
+// ------------------------------------ mail/international libraries
+
+#[test]
+fn mail_international_libraries_parity() {
+    // GNU 31.1 -Q: these entry points are loaddefs autoloads; the
+    // libraries themselves are not dumped (featurep nil at startup).
+    assert_eq!(
+        ev("(list (car (symbol-function 'binhex-decode-region))
+                  (car (symbol-function 'binhex-decode-region-external))
+                  (car (symbol-function 'binhex-decode-region-internal))
+                  (car (symbol-function 'fill-flowed))
+                  (car (symbol-function 'fill-flowed-encode))
+                  (car (symbol-function 'latexenc-coding-system-to-inputenc))
+                  (car (symbol-function 'latexenc-find-file-coding-system))
+                  (car (symbol-function 'latexenc-inputenc-to-coding-system))
+                  (car (symbol-function 'quoted-printable-decode-region))
+                  (car (symbol-function 'uudecode-decode-region))
+                  (car (symbol-function 'uudecode-decode-region-external))
+                  (car (symbol-function 'uudecode-decode-region-internal))
+                  (car (symbol-function 'yenc-decode-region))
+                  (car (symbol-function 'yenc-extract-filename))
+                  (featurep 'mm-util) (featurep 'rfc2047)
+                  (featurep 'ietf-drums) (featurep 'mail-parse)
+                  (featurep 'rfc6068) (featurep 'iso-ascii))"),
+        "(autoload autoload autoload autoload autoload autoload autoload autoload autoload autoload autoload autoload autoload autoload nil nil nil nil nil nil)"
+    );
+    // Autoload target library names (GNU-verified).
+    assert_eq!(
+        ev("(list (nth 1 (symbol-function 'binhex-decode-region))
+                  (nth 1 (symbol-function 'fill-flowed))
+                  (nth 1 (symbol-function 'quoted-printable-decode-region))
+                  (nth 1 (symbol-function 'uudecode-decode-region))
+                  (nth 1 (symbol-function 'yenc-decode-region))
+                  (nth 1 (symbol-function 'latexenc-inputenc-to-coding-system)))"),
+        "(\"binhex\" \"flow-fill\" \"qp\" \"uudecode\" \"yenc\" \"latexenc\")"
+    );
+    // GNU-verified functional results.
+    assert_eq!(
+        ev("(progn (dolist (l '(ietf-drums rfc6068 qp rfc2045 rfc2047 rfc2231
+                              mail-parse mm-util latexenc flow-fill mail-prsvr
+                              iso-ascii mailheader yenc uudecode binhex))
+                    (require l))
+                  (list (ietf-drums-parse-address \"user@example.com\")
+                        (ietf-drums-parse-address \"\\\"Joe\\\" <j@x.org>\")
+                        (rfc6068-parse-mailto-url \"mailto:a@b?subject=x\")
+                        (with-temp-buffer (insert \"abc=20def=0A\")
+                          (quoted-printable-decode-region (point-min) (point-max))
+                          (buffer-string))
+                        (rfc2045-encode-string \"name\" \"value\")
+                        (rfc2047-decode-string \"=?us-ascii?q?hello?=\")
+                        (rfc2231-parse-string \"foo=bar; baz=qux\")
+                        (mail-header-parse-address \"\\\"Joe\\\" <j@x.org>\")
+                        (mm-charset-to-coding-system 'us-ascii)
+                        (latexenc-inputenc-to-coding-system \"utf8\")
+                        (boundp 'mail-parse-charset) mail-parse-ignored-charsets
+                        (fboundp 'iso-ascii-mode)
+                        (with-temp-buffer (insert \"f=f! f=\\nf\")
+                          (fill-flowed) (buffer-string))
+                        (fboundp 'mail-header-extract)
+                        (fboundp 'uudecode-decode-region)
+                        (fboundp 'binhex-decode-region)
+                        (fboundp 'yenc-decode-region)
+                        (featurep 'mm-util) (featurep 'rfc2047)
+                        (featurep 'rfc2231) (featurep 'mail-parse)))"),
+        "((\"user@example.com\") (\"j@x.org\" . \"Joe\") ((\"To\" . \"a@b\") (\"Subject\" . \"x\")) \"abc def
+\" \"name=value\" \"hello\" (\"foo\") (\"j@x.org\" . \"Joe\") ascii utf-8 t nil t \"f=f! f=
+f\" t t t t t t t t)"
+    );
+    // rfc1843, ja-dic-utl and mailheader also `provide' their features.
+    assert_eq!(
+        ev("(progn (dolist (l '(rfc1843 ja-dic-utl mailheader)) (require l))
+                  (list (fboundp 'rfc1843-decode-region)
+                        (fboundp 'skkdic-lookup-key)
+                        (fboundp 'mail-header-extract)
+                        (featurep 'rfc1843) (featurep 'ja-dic-utl)
+                        (featurep 'mailheader)))"),
+        "(t t t t t t)"
+    );
+}
+
+#[test]
+fn inline_alias_and_coding_system_list_parity() {
+    // GNU: `inline' is a defalias to the `progn' special form (byte-run.el);
+    // eval resolves the alias and calls it with unevaluated arguments.
+    assert_eq!(
+        ev("(list (inline (+ 1 2))
+                  (inline (list 'a 'b) (+ 3 4))
+                  (fboundp 'inline))"),
+        "(3 7 t)"
+    );
+    // GNU: (coding-system-list &optional BASE-ONLY) accepts one optional
+    // argument; BASE-ONLY keeps base coding systems (utf-8 stays,
+    // utf-8-unix is not a base name in GNU either way).
+    assert_eq!(
+        ev("(list (not (null (memq 'utf-8 (coding-system-list))))
+                  (not (null (memq 'utf-8 (coding-system-list t))))
+                  (memq 'utf-8-unix (coding-system-list t))
+                  (condition-case e (coding-system-list t t)
+                    (wrong-number-of-arguments (list 'arity (car e)))))"),
+        "(t t nil (arity wrong-number-of-arguments))"
+    );
+}

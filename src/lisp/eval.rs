@@ -1772,6 +1772,13 @@ impl Interp {
                     if hops > 64 {
                         return Err(self.error("Function alias loop"));
                     }
+                    // GNU resolves defalias chains in `eval' before
+                    // dispatching, so an alias to a special form
+                    // (e.g. `inline' -> `progn') is called as a
+                    // special form with unevaluated arguments.
+                    if let Some(sf) = super::special::special_form(cur) {
+                        return sf(self, args.clone());
+                    }
                     if advised.is_none()
                         && self.advices.iter().any(|(s, a)| *s == cur && !a.is_empty())
                     {

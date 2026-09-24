@@ -852,7 +852,7 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!("minibuffer-depth", 0, 0, f_minibuffer_depth, ""),
     S!("detect-coding-string", 1, 2, f_detect_coding_string, ""),
     S!("detect-coding-region", 1, 3, f_detect_coding_region, ""),
-    S!("coding-system-list", 0, 0, f_coding_system_list, ""),
+    S!("coding-system-list", 0, 1, f_coding_system_list, ""),
     S!("coding-system-p", 1, 1, f_coding_system_p, ""),
     S!("check-coding-system", 1, 1, f_check_coding_system, ""),
     S!("coding-system-eol-type", 1, 1, f_coding_system_eol_type, ""),
@@ -6927,10 +6927,22 @@ pub(crate) fn coding_known(i: &Interp, v: &Value) -> Option<String> {
     }
 }
 
-fn f_coding_system_list(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
+fn f_coding_system_list(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    // GNU: (coding-system-list &optional BASE-ONLY) — BASE-ONLY drops
+    // the generated -unix/-dos/-mac EOL variants and the
+    // -with-signature/-auto detection variants, keeping base systems.
+    let base_only = arg(&a, 0).truthy();
+    let variant = |n: &&str| {
+        n.ends_with("-unix")
+            || n.ends_with("-dos")
+            || n.ends_with("-mac")
+            || n.ends_with("-with-signature")
+            || n.ends_with("-auto")
+    };
     Ok(Value::list(
         CODING_SYSTEMS
             .iter()
+            .filter(|n| !base_only || !variant(n))
             .map(|n| Value::Sym(i.intern(n)))
             .collect(),
     ))

@@ -3185,6 +3185,119 @@ If nil, the feature is disabled, i.e., all commands work normally.")
   "executable"
   "Make file executable according to umask if not already executable." nil nil)
 
+;; GNU byte-run.el: `inline' is a defalias to `progn' (the byte
+;; compiler does the real inlining); `eval' resolves the alias and
+;; calls the special form with unevaluated arguments.
+(defalias 'inline 'progn
+  "Like `progn', but when compiled inline top-level function calls in body.
+You don't need this.  (See bytecomp.el commentary for more details.)
+
+\(fn BODY...)")
+
+;; GNU simple.el startup variable.
+(defvar non-essential nil
+  "Whether the currently executing code is performing an essential task.
+This variable should be non-nil only when running code that should not
+disturb the user.  E.g., it can be used to prevent Tramp from prompting
+the user for a password when we are simply scanning a set of files in the
+background or displaying possible completions before the user even asked
+for it.")
+
+;; GNU mule-cmds.el support for the mail libraries (mm-util et al).
+;; The full language-environment machinery is not ported; this keeps
+;; GNU's effective behavior for the default environment: the most
+;; preferred coding system (car of `coding-system-priority-list')
+;; sorts first, the rest keep their given order.
+(defvar sort-coding-systems-predicate nil
+  "If non-nil, a predicate function to sort coding systems.
+
+It is called with two coding systems, and should return t if the first
+one is \"less\" than the second.
+
+The function `sort-coding-systems' use it.")
+(defun sort-coding-systems (codings)
+  "Sort coding system list CODINGS by a priority of each coding system.
+Return the sorted list.  CODINGS is modified by side effects.
+
+If the variable `sort-coding-systems-predicate' (which see) is
+non-nil, it is used to sort CODINGS instead."
+  (if sort-coding-systems-predicate
+      (sort codings sort-coding-systems-predicate)
+    (let ((most-preferred (car (coding-system-priority-list))))
+      (sort codings
+            (lambda (a b)
+              (and (eq a most-preferred)
+                   (not (eq b most-preferred))))))))
+
+;; GNU mail/international library autoloads (loaddefs.el).
+(autoload 'binhex-decode-region "binhex"
+  "Binhex decode region between START and END.
+
+\(fn START END)" t)
+(autoload 'binhex-decode-region-external "binhex"
+  "Binhex decode region between START and END using external decoder.
+
+\(fn START END)" t)
+(autoload 'binhex-decode-region-internal "binhex"
+  "Binhex decode region between START and END without using an external program.
+If HEADER-ONLY is non-nil only decode header and return filename.
+
+\(fn START END &optional HEADER-ONLY)" t)
+(autoload 'fill-flowed "flow-fill"
+  "Apply RFC2646 decoding to BUFFER.
+If BUFFER is nil, default to the current buffer.
+
+If DELETE-SPACE, delete RFC2646 spaces padding at the end of
+lines.
+
+\(fn &optional BUFFER DELETE-SPACE)")
+(autoload 'fill-flowed-encode "flow-fill"
+  "\n\n(fn &optional BUFFER)")
+(autoload 'latexenc-coding-system-to-inputenc "latexenc"
+  "Return the corresponding input encoding for the specified coding system.
+Return nil if no matching input encoding can be found.
+
+\(fn CS)")
+(autoload 'latexenc-find-file-coding-system "latexenc"
+  "Determine the coding system of a LaTeX file if it uses \"inputenc.sty\".
+The mapping from LaTeX's \"inputenc.sty\" encoding names to Emacs
+coding system names is determined from `latex-inputenc-coding-alist'.
+
+\(fn ARG-LIST)")
+(autoload 'latexenc-inputenc-to-coding-system "latexenc"
+  "Return the corresponding coding-system for the specified input encoding.
+Return nil if no matching coding system can be found.
+
+\(fn INPUTENC)")
+(autoload 'quoted-printable-decode-region "qp"
+  "Decode quoted-printable in the region between FROM and TO, per RFC 2045.
+If CODING-SYSTEM is non-nil, decode bytes into characters with that
+coding-system.
+
+\(fn FROM TO &optional CODING-SYSTEM)" t)
+(autoload 'uudecode-decode-region "uudecode"
+  "Uudecode region between START and END.
+If FILE-NAME is non-nil, save the result to FILE-NAME.
+
+\(fn START END &optional FILE-NAME)")
+(autoload 'uudecode-decode-region-external "uudecode"
+  "Uudecode region between START and END using external program.
+If FILE-NAME is non-nil, save the result to FILE-NAME.  The program
+used is specified by `uudecode-decoder-program'.
+
+\(fn START END &optional FILE-NAME)" t)
+(autoload 'uudecode-decode-region-internal "uudecode"
+  "Uudecode region between START and END without using an external program.
+If FILE-NAME is non-nil, save the result to FILE-NAME.
+
+\(fn START END &optional FILE-NAME)" t)
+(autoload 'yenc-decode-region "yenc"
+  "Yenc decode region between START and END using an internal decoder.
+
+\(fn START END)" t)
+(autoload 'yenc-extract-filename "yenc"
+  "Extract file name from an yenc header.")
+
 ;; GNU jka-compr.el autoload cookies (loaddefs.el): file-name handlers
 ;; installed by `auto-compression-mode' resolve the handler lazily —
 ;; e.g. `file-name-sans-versions' on a .gz name autoloads jka-compr.el.
