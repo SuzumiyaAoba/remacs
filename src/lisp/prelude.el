@@ -788,6 +788,12 @@ Symbols are also allowed; their print names are used instead."
       (setq n (1+ n)))
     (and (null tail) n)))
 
+(defun proper-list-p (object)
+  "Return OBJECT's length if it is a proper list, nil otherwise.
+A proper list is neither circular nor dotted (i.e., its last cdr is nil)."
+  (and (listp object)
+       (ignore-errors (length object))))
+
 ;; ---------- more subr.el-style helpers ----------
 
 (defmacro with-silent-modifications (&rest body)
@@ -3784,6 +3790,12 @@ Leave one space or none, according to the context."
 (define-key m [switch-frame] 'handle-switch-frame)
 )
 
+;; GNU menu-bar.el exposes the top-level menus as variables; libraries
+;; like hi-lock.el extend the Edit menu through `menu-bar-edit-menu'.
+(defvar menu-bar-edit-menu
+  (lookup-key (current-global-map) [menu-bar edit])
+  "Menu for the Edit menu.")
+
 (fset 'mode-specific-command-prefix
   (let ((s (make-sparse-keymap)))
   (define-key s [94] (let ((s (make-sparse-keymap)))
@@ -5423,6 +5435,31 @@ places where expressions are evaluated and inserted or spliced in."
   "Cleanup some blank problems at region." t)
 (autoload 'global-whitespace-newline-mode "whitespace"
   "Toggle global newline visualization." t)
+
+;; hi-lock.el autoloads (GNU loaddefs registers exactly these).
+(autoload 'hi-lock-mode "hi-lock"
+  "Toggle selective highlighting of patterns (Hi Lock mode)." t)
+(autoload 'global-hi-lock-mode "hi-lock"
+  "Toggle Hi Lock mode in all buffers." t)
+(autoload 'hi-lock-line-face-buffer "hi-lock"
+  "Highlight all lines that match REGEXP using FACE." t)
+(autoload 'hi-lock-face-buffer "hi-lock"
+  "Set face of each match of REGEXP to FACE." t)
+(autoload 'hi-lock-face-phrase-buffer "hi-lock"
+  "Set face of each match of phrase REGEXP to FACE." t)
+(autoload 'hi-lock-face-symbol-at-point "hi-lock"
+  "Highlight each instance of the symbol at point." t)
+(autoload 'hi-lock-unface-buffer "hi-lock"
+  "Remove highlighting of each match to REGEXP set by hi-lock." t)
+(autoload 'hi-lock-find-patterns "hi-lock"
+  "Add patterns from the current buffer to the list of hi-lock patterns." t)
+(autoload 'hi-lock-write-interactive-patterns "hi-lock"
+  "Write interactively added patterns into buffer at point." t)
+(defalias 'highlight-lines-matching-regexp 'hi-lock-line-face-buffer)
+(defalias 'highlight-regexp 'hi-lock-face-buffer)
+(defalias 'highlight-phrase 'hi-lock-face-phrase-buffer)
+(defalias 'highlight-symbol-at-point 'hi-lock-face-symbol-at-point)
+(defalias 'unhighlight-regexp 'hi-lock-unface-buffer)
 (autoload 'thing-at-point "thingatpt"
   "Return the THING at point.")
 (autoload 'bounds-of-thing-at-mouse "thingatpt"
@@ -26953,6 +26990,22 @@ If there is no tag at point, return nil."
 			  (get major-mode 'find-tag-default-function)
 			  #'find-tag-default))))
     (if tag (regexp-quote tag))))
+
+(defun find-tag-default-as-symbol-regexp ()
+  "Return regexp that matches the default tag at point as symbol.
+If there is no tag at point, return nil.
+
+When in a major mode that does not provide its own
+`find-tag-default-function', return a regexp that matches the
+symbol at point exactly."
+  (let ((tag-regexp (find-tag-default-as-regexp)))
+    (if (and tag-regexp
+	     (eq (or find-tag-default-function
+		     (get major-mode 'find-tag-default-function)
+		     #'find-tag-default)
+		 #'find-tag-default))
+	(format "\\_<%s\\_>" tag-regexp)
+      tag-regexp)))
 
 (defun function-called-at-point ()
   "Return a function around point or else called by the list containing point.

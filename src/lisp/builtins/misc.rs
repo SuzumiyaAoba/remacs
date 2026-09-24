@@ -1178,6 +1178,7 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!("font-family-list", 0, 1, f_nil, ""),
     S!("font-face-attributes", 1, 2, f_font_face_attributes, ""),
     S!("font-spec", many 0, f_font_spec, ""),
+    S!("face-name", 1, 1, f_face_name, ""),
     S!("face-font", 1, 2, f_face_font, ""),
     S!("face-documentation", 1, 1, f_face_documentation, ""),
     S!("face-attributes-as-vector", 1, 1, f_face_attributes_as_vector, ""),
@@ -2572,6 +2573,17 @@ fn face_exists(i: &Interp, v: &Value) -> bool {
         _ => return false,
     };
     crate::editor::face_known(i, &name)
+}
+
+/// `face-name` — GNU returns the face's name symbol; errors "Not a
+/// face: X" on anything that doesn't name an existing face.
+fn f_face_name(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    if let Value::Sym(_) = a[0] {
+        if face_exists(i, &a[0]) {
+            return Ok(a[0].clone());
+        }
+    }
+    Err(i.error(format!("Not a face: {}", i.princ_to_string(&a[0]))))
 }
 
 fn f_face_font(i: &mut Interp, a: Vec<Value>) -> EvalResult {

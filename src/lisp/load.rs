@@ -76,6 +76,7 @@ static EMBEDDED_LISP: &[(&str, &str)] = &[
     ("easy-mmode", include_str!("../../lisp/easy-mmode.el")),
     ("eieio", include_str!("../../lisp/eieio.el")),
     ("gv", include_str!("../../lisp/gv.el")),
+    ("hi-lock", include_str!("../../lisp/hi-lock.el")),
     ("kmacro", include_str!("../../lisp/kmacro.el")),
     ("let-alist", include_str!("../../lisp/let-alist.el")),
     ("macros", include_str!("../../lisp/macros.el")),
