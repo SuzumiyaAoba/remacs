@@ -191,3 +191,170 @@ fn mpuz_puzzle_board_shape() {
         "(10 t t)"
     );
 }
+
+// ---------------------------------------------------------- dotted lambda lists
+
+#[test]
+fn dotted_rest_lambda() {
+    // GNU accepts `(lambda (a . b) ...)' and `(lambda a ...)'
+    // alike; verified on GNU 31.1.
+    assert_eq!(
+        ev("(list (funcall (lambda (a . b) (list a b)) 1 2 3)
+                  (funcall (lambda a a) 1 2)
+                  (funcall (lambda (a b . c) (list a b c)) 1 2 3 4))"),
+        "((1 (2 3)) (1 2) (1 2 (3 4)))"
+    );
+}
+
+#[test]
+fn dotted_rest_defun() {
+    assert_eq!(
+        ev("(progn (defun drest (a . b) (cons a b))
+                  (drest 1 2 3))"),
+        "(1 2 3)"
+    );
+}
+
+// ------------------------------------- macroexpand-all: non-code positions
+
+#[test]
+fn macroexpand_all_preserves_arglists() {
+    // A parameter or binding variable named like a macro must not be
+    // expanded — GNU's `macroexp--expand-all' keeps these positions
+    // verbatim.  `(defmacro m () "X")' expands (m) to "X".
+    assert_eq!(
+        ev("(progn (defmacro m (&rest _a) \"X\")
+                  (list
+                    (macroexpand-all '(defun f (m) (list m 1)))
+                    (macroexpand-all '(lambda (m) m))
+                    (macroexpand-all '(let ((m 1)) m))
+                    (macroexpand-all '(function (lambda (m) m)))))"),
+        "((defun f (m) (list m 1)) (lambda (m) m) (let ((m 1)) m) #'(lambda (m) m))"
+    );
+}
+
+#[test]
+fn macroexpand_all_setq_condition_case() {
+    assert_eq!(
+        ev("(progn (defmacro mm (&rest _a) \"Y\")
+                  (list
+                    (macroexpand-all '(setq mm 1 mm (mm)))
+                    (macroexpand-all '(condition-case mm (mm) (mm (mm))))))"),
+        "((setq mm 1 mm \"Y\") (condition-case mm \"Y\" (mm \"Y\")))"
+    );
+}
+
+// ---------------------------------------------------------- cl.el names
+
+#[test]
+fn member_if_any() {
+    // GNU cl.el: member-if returns the tail cons at the first matching
+    // element; `any' is its alias — rx.el relies on it.
+    assert_eq!(
+        ev("(list (member-if #'oddp '(2 4 3 6))
+                  (any #'oddp '(2 4 6))
+                  (any #'oddp '(2 4 3)))"),
+        "((3 6) nil (3))"
+    );
+}
+
+// ---------------------------------------------------------- rx
+
+#[test]
+fn rx_to_string_basics() {
+    // GNU-verified on 31.1.
+    assert_eq!(
+        ev("(progn (require 'rx)
+                  (list
+                    (rx-to-string '(seq \"ab\" (repeat 2 digit)))
+                    (rx-to-string '(: \"x\" (* any)))
+                    (rx-to-string '(or \"a\" \"b\" \"c\"))
+                    (rx-to-string '(group-n 1 \"foo\" (* (any \"a-z\"))))
+                    (rx-to-string '(seq bol (one-or-more (not (any \" \\t\")))))
+                    (rx-to-string '(seq word-boundary (+ (any \"a-z\")) word-boundary))
+                    (rx-to-string '(seq (? \"a\") (>= 2 \"b\")))))"),
+        "(\"\\\\(?:ab[[:digit:]]\\\\{2\\\\}\\\\)\" \"\\\\(?:x.*\\\\)\" \"[abc]\" \"\\\\(?1:foo[a-z]*\\\\)\" \"\\\\(?:^[^\t ]+\\\\)\" \"\\\\(?:\\\\b[a-z]+\\\\b\\\\)\" \"\\\\(?:a?b\\\\{2,\\\\}\\\\)\")"
+    );
+}
+
+#[test]
+fn rx_macro_expand() {
+    // GNU-verified: the `rx' macro defers to `rx--to-expr', which
+    // yields a plain string here (no shy group) on 31.1.
+    assert_eq!(
+        ev("(progn (require 'rx)
+                  (macroexpand '(rx (seq \"a\" (* \"b\")))))"),
+        "\"ab*\""
+    );
+}
+
+// ---------------------------------------------------------- round-2 libs
+
+#[test]
+fn ewoc_create_and_collect() {
+    // ewoc prints a node list into the current buffer.
+    assert_eq!(
+        ev("(progn (require 'ewoc)
+                  (with-temp-buffer
+                    (let ((w (ewoc-create (lambda (d) (insert (format \"%s\" d)))
+                                          \"H\" \"F\")))
+                      (ewoc-enter-last w 1)
+                      (ewoc-enter-last w 2)
+                      (ewoc-refresh w)
+                      (buffer-string))))"),
+        "\"H\n1\n2\nF\n\""
+    );
+}
+
+#[test]
+fn ansi_color_apply_basic() {
+    assert_eq!(
+        ev("(progn (require 'ansi-color)
+                  (fboundp 'ansi-color-apply))"),
+        "t"
+    );
+}
+
+#[test]
+fn regi_compiles_frame() {
+    assert_eq!(
+        ev("(progn (require 'regi)
+                  (list (fboundp 'regi-interpret)
+                        (fboundp 'regi-pos)
+                        (fboundp 'regi-mapcar)))"),
+        "(t t t)"
+    );
+}
+
+#[test]
+fn tempo_template_functions() {
+    assert_eq!(
+        ev("(progn (require 'tempo)
+                  (list (fboundp 'tempo-insert-template)
+                        (fboundp 'tempo-define-template)))"),
+        "(t t)"
+    );
+}
+
+#[test]
+fn autoinsert_and_expand_features() {
+    // autoinsert needs `rx' at load time; expand needs skeleton.
+    assert_eq!(
+        ev("(progn (require 'autoinsert) (require 'expand)
+                  (list (featurep 'autoinsert) (featurep 'expand)
+                        (fboundp 'auto-insert)
+                        (fboundp 'expand-c-for-skeleton)))"),
+        "(t t t t)"
+    );
+}
+
+#[test]
+fn dabbrev_and_tq_features() {
+    assert_eq!(
+        ev("(progn (require 'dabbrev) (require 'tq)
+                  (list (featurep 'dabbrev) (featurep 'tq)
+                        (fboundp 'dabbrev-expand)
+                        (fboundp 'tq-create)))"),
+        "(t t t t)"
+    );
+}

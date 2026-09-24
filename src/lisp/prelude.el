@@ -14663,6 +14663,18 @@ VAR, (VAR TYPE), or (VAR (eql FORM))."
     (dolist (x (append seq nil) ok)
       (unless (funcall pred x) (setq ok nil)))))
 
+;; cl.el compatibility names (used by GNU sources such as rx.el).
+(defun member-if (pred list &rest _keys)
+  "First tail of LIST whose car satisfies PRED, or nil (cl.el name)."
+  (let ((tail list) (hit nil))
+    (while (and tail (not hit))
+      (when (funcall pred (car tail))
+        (setq hit tail))
+      (setq tail (cdr tail)))
+    hit))
+
+(defalias 'any 'member-if)
+
 (defun cl-check-type (val type &optional string)
   "Signal `wrong-type-argument' unless VAL is of TYPE."
   (unless (cl-typep val type)
@@ -15025,31 +15037,109 @@ restored on exit.  A bare (PLACE) spec only saves and restores."
     `(cl-letf ,(nreverse lets) ,@body)))
 
 (defmacro cl-defstruct (name &rest slots)
-  "Define a structure type NAME with SLOTS (subset: no options).
-Creates make-NAME, NAME-p, and NAME-SLOT accessors; objects are
-records whose first element is NAME."
-  (let* ((n (if (consp name) (car name) name))
-         (ctor (intern (concat "make-" (symbol-name n))))
-         (pred (intern (concat (symbol-name n) "-p")))
-         (slots (mapcar (lambda (x) (if (consp x) (car x) x)) slots))
-         (defs nil) (i 1))
-    (push `(defun ,ctor (&rest cl--keys)
-             (apply #'record ',n
-                    (mapcar (lambda (s)
-                              (plist-get cl--keys
-                                         (intern (concat ":"
-                                                         (symbol-name s)))))
-                            ',slots)))
-          defs)
-    (push `(defun ,pred (ob)
-             (and (recordp ob) (eq (aref ob 0) ',n)))
-          defs)
-    (dolist (slot slots)
-      (let* ((sn (if (consp slot) (car slot) slot))
-             (acc (intern (concat (symbol-name n) "-"
-                                  (symbol-name sn)))))
-        (push `(defun ,acc (ob) (aref ob ,i)) defs))
-      (setq i (1+ i)))
+  "Define structure NAME with SLOTS (subset of GNU `cl-defstruct').
+Supported options: :conc-name, :predicate, :copier, :type (vector
+or list), :named, and :constructor (nil | NAME | (NAME ARGLIST)).
+Slot specs may be (SLOT DEFAULT); objects are records by default."
+  (let* ((opts (if (consp name) (cdr name) nil))
+         (n (if (consp name) (car name) name))
+         (opt (lambda (kw) (assq kw opts)))
+         (conc (let ((o (funcall opt :conc-name)))
+                 (if o (cadr o) (intern (concat (symbol-name n) "-")))))
+         (type (let ((o (funcall opt :type))) (and o (cadr o))))
+         (named (or (assq :named opts) (null type)))
+         (base (if named 1 0))
+         (snames (mapcar (lambda (x) (if (consp x) (car x) x)) slots))
+         (sdefs (mapcar (lambda (x) (and (consp x) (cadr x))) slots))
+         (ctspecs (let ((cs nil))
+                    (dolist (o opts)
+                      (when (and (consp o) (eq (car o) :constructor))
+                        (push (cdr o) cs)))
+                    (or (nreverse cs)
+                        (list (list (intern (concat "make-"
+                                                    (symbol-name n))))))))
+         (defs nil)
+         (mk (cond ((eq type 'list) 'list)
+                   ((eq type 'vector) 'vector)
+                   (t 'record)))
+         (arglist-syms (lambda (al)
+                         (cl-remove-if
+                          (lambda (x) (memq x '(&optional &rest &key &aux)))
+                          (copy-sequence al)))))
+    ;; Constructors: each spec is (CTOR-NAME [ARGLIST]); nil name
+    ;; suppresses the default constructor.
+    (dolist (spec ctspecs)
+      (let ((ctor (car spec))
+            (cal (cadr spec)))
+        (when ctor
+          (if cal
+              ;; BOA-style positional constructor: arg names bind the
+              ;; eponymous slots; other slots take their defaults.
+              (let ((asyms (funcall arglist-syms cal))
+                    (vals nil) (tl1 snames) (tl2 sdefs))
+                (while tl1
+                  (push (if (memq (car tl1) asyms) (car tl1) (car tl2))
+                        vals)
+                  (setq tl1 (cdr tl1) tl2 (cdr tl2)))
+                (push
+                 `(defun ,ctor ,cal
+                    (,mk ,@(when named `(',n)) ,@(nreverse vals)))
+                 defs))
+            ;; Keyword constructor.
+            (let ((vals nil) (tl1 snames) (tl2 sdefs))
+              (while tl1
+                (let ((s (car tl1)) (d (car tl2)))
+                  (push
+                   (let ((k (intern (concat ":" (symbol-name s)))))
+                     `(if (plist-member cl--keys ',k)
+                          (plist-get cl--keys ',k)
+                        ,d))
+                   vals))
+                (setq tl1 (cdr tl1) tl2 (cdr tl2)))
+              (push
+               `(defun ,ctor (&rest cl--keys)
+                  (,mk ,@(when named `(',n)) ,@(nreverse vals)))
+               defs))))))
+    ;; Predicate.
+    (let ((po (funcall opt :predicate)))
+      (when (or (not po) (cadr po))
+        (let ((pred (if po (cadr po)
+                      (intern (concat (symbol-name n) "-p")))))
+          (push
+           `(defun ,pred (ob)
+              ,(cond
+                ((eq type 'vector)
+                 (if named
+                     `(and (vectorp ob) (eq (aref ob 0) ',n))
+                   `(vectorp ob)))
+                ((eq type 'list)
+                 (if named
+                     `(and (consp ob) (eq (car ob) ',n))
+                   `(listp ob)))
+                (t `(and (recordp ob) (eq (aref ob 0) ',n)))))
+           defs))))
+    ;; Copier.
+    (let ((co (funcall opt :copier)))
+      (when (or (not co) (cadr co))
+        (let ((copier (if co (cadr co)
+                        (intern (concat "copy-" (symbol-name n))))))
+          (push `(defun ,copier (ob) (copy-sequence ob)) defs))))
+    ;; Accessors (with their `(setf ACC)' setters, GNU-style).
+    (let ((i base))
+      (dolist (slot slots)
+        (let* ((sn (if (consp slot) (car slot) slot))
+               (acc (intern (concat (if conc (symbol-name conc) "")
+                                    (symbol-name sn)))))
+          (push `(defun ,acc (ob)
+                   ,(if (eq type 'list) `(nth ,i ob) `(aref ob ,i)))
+                defs)
+          (push
+           `(fset (intern (concat "(setf " (symbol-name ',acc) ")"))
+                  ,(if (eq type 'list)
+                       `(lambda (v ob) (setcar (nthcdr ,i ob) v))
+                     `(lambda (v ob) (aset ob ,i v))))
+           defs))
+        (setq i (1+ i))))
     `(progn ,@(nreverse defs) ',n)))
 
 ;; ---------- registers / misc ----------

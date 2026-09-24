@@ -2292,6 +2292,16 @@ impl Interp {
                     }
                     cur = next;
                 }
+                // A dotted tail `(a . b)' names the rest parameter —
+                // GNU accepts `(lambda a ...)' and `(lambda (a . b) ...)'
+                // alike, binding the full/remaining arg list to it.
+                Value::Sym(s) => {
+                    if rest.is_none() {
+                        rest = Some(s);
+                        break;
+                    }
+                    return Err(self.error("multiple &rest parameters"));
+                }
                 _ => return Err(self.error("dotted lambda list")),
             }
         }

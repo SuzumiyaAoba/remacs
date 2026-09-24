@@ -469,6 +469,9 @@ pub(crate) static SUBRS: &[Subr] = &[
     ),
     S!("help--docstring-quote", 0, 0, f_noop, ""),
     S!("internal-doc-string-p", 0, 0, f_noop, ""),
+    // GNU macroexp.el: non-nil inside byte compilation; remacs
+    // always interprets, so it's nil.  `rx' et al. consult it.
+    S!("macroexp-compiling-p", 0, 0, f_noop, ""),
     S!("declare-functionp", 1, 1, f_declare_functionp, ""),
     S!("error-type", 1, 1, f_error_type, "Symbol naming the type of ERROR."),
 ];
@@ -607,11 +610,128 @@ pub(crate) fn macroexpand_all(i: &mut Interp, form: &Value) -> EvalResult {
                 Ok(v) => v,
                 Err(_) => return Ok(expanded),
             };
+            let _ = cdr;
+            // Special forms whose non-code positions must not be
+            // expanded: a parameter or binding variable can share a
+            // name with a macro (e.g. `(defun f (rx) ...)'), and
+            // expanding it would rewrite the arglist into the macro's
+            // expansion — GNU's `macroexp--expand-all' keeps these
+            // positions verbatim.
+            let closure_id = i.intern("closure");
+            if let Some(id) = i.sym_id(&car) {
+                match id {
+                    // `(closure ENV ARGLIST BODY...)': env and arglist
+                    // are data positions like `lambda''s arglist.
+                    _ if id == closure_id && items.len() >= 3 => {
+                        let mut out = items[..3].to_vec();
+                        for it in &items[3..] {
+                            out.push(macroexpand_all(i, it)?);
+                        }
+                        return Ok(Value::list(out));
+                    }
+                    sym::DEFUN | sym::DEFMACRO if items.len() >= 3 => {
+                        let mut out = items[..3].to_vec();
+                        for it in &items[3..] {
+                            out.push(macroexpand_all(i, it)?);
+                        }
+                        return Ok(Value::list(out));
+                    }
+                    sym::LAMBDA if items.len() >= 2 => {
+                        let mut out = items[..2].to_vec();
+                        for it in &items[2..] {
+                            out.push(macroexpand_all(i, it)?);
+                        }
+                        return Ok(Value::list(out));
+                    }
+                    sym::FUNCTION if items.len() >= 2 => {
+                        let mut arg = items[1].clone();
+                        if let Value::Cons(lc) = &arg {
+                            let b = lc.borrow();
+                            if i.sym_is(&b.car, sym::LAMBDA) || i.sym_is(&b.car, closure_id) {
+                                drop(b);
+                                arg = macroexpand_all(i, &arg)?;
+                            }
+                        }
+                        return Ok(Value::list(vec![items[0].clone(), arg]));
+                    }
+                    sym::LET | sym::LET_STAR | sym::AND_LET_STAR if items.len() >= 2 => {
+                        let mut out = vec![items[0].clone()];
+                        match &items[1] {
+                            Value::Cons(_) => {
+                                let binds = want_list(i, &items[1]).unwrap_or_default();
+                                let mut bs = Vec::with_capacity(binds.len());
+                                for b in binds {
+                                    let keep_head = matches!(
+                                        &b,
+                                        Value::Cons(c)
+                                            if matches!(c.borrow().car, Value::Sym(_))
+                                    );
+                                    if keep_head {
+                                        let parts =
+                                            want_list(i, &b).unwrap_or_default();
+                                        if parts.is_empty() {
+                                            bs.push(b.clone());
+                                        } else {
+                                            let mut nb = vec![parts[0].clone()];
+                                            for p in &parts[1..] {
+                                                nb.push(macroexpand_all(i, p)?);
+                                            }
+                                            bs.push(Value::list(nb));
+                                        }
+                                    } else {
+                                        bs.push(macroexpand_all(i, &b)?);
+                                    }
+                                }
+                                out.push(Value::list(bs));
+                            }
+                            v => out.push(v.clone()),
+                        }
+                        for it in &items[2..] {
+                            out.push(macroexpand_all(i, it)?);
+                        }
+                        return Ok(Value::list(out));
+                    }
+                    sym::SETQ | sym::SETQ_DEFAULT => {
+                        let mut out = vec![items[0].clone()];
+                        for (k, it) in items[1..].iter().enumerate() {
+                            if k % 2 == 0 {
+                                out.push(it.clone());
+                            } else {
+                                out.push(macroexpand_all(i, it)?);
+                            }
+                        }
+                        return Ok(Value::list(out));
+                    }
+                    sym::CONDITION_CASE if items.len() >= 3 => {
+                        let mut out = vec![
+                            items[0].clone(),
+                            items[1].clone(),
+                            macroexpand_all(i, &items[2])?,
+                        ];
+                        for h in &items[3..] {
+                            let is_cons = matches!(h, Value::Cons(_));
+                            if is_cons {
+                                let parts = want_list(i, h).unwrap_or_default();
+                                if !parts.is_empty() {
+                                    let mut nh = vec![parts[0].clone()];
+                                    for p in &parts[1..] {
+                                        nh.push(macroexpand_all(i, p)?);
+                                    }
+                                    out.push(Value::list(nh));
+                                    continue;
+                                }
+                            }
+                            out.push(h.clone());
+                        }
+                        return Ok(Value::list(out));
+                    }
+                    _ => {}
+                }
+            }
             let mut out = Vec::with_capacity(items.len());
             for it in items {
                 out.push(macroexpand_all(i, &it)?);
             }
-            let _ = (car, cdr);
             Ok(Value::list(out))
         }
         _ => Ok(expanded),
