@@ -468,13 +468,7 @@ pub(crate) static SUBRS: &[Subr] = &[
         f_make_condition_variable,
         "Create a condition variable on MUTEX."
     ),
-    S!(
-        "condition-name",
-        1,
-        1,
-        f_condition_name,
-        "Name of CONDVAR."
-    ),
+    S!("condition-name", 1, 1, f_condition_name, "Name of CONDVAR."),
     S!(
         "condition-mutex",
         1,
@@ -535,7 +529,13 @@ pub(crate) static SUBRS: &[Subr] = &[
         f_nil,
         "t while waiting for user input."
     ),
-    S!("bitmap-spec-p", 1, 1, f_false, "t if OBJECT is a bitmap spec."),
+    S!(
+        "bitmap-spec-p",
+        1,
+        1,
+        f_false,
+        "t if OBJECT is a bitmap spec."
+    ),
     S!(
         "get-truename-buffer",
         1,
@@ -613,7 +613,13 @@ pub(crate) static SUBRS: &[Subr] = &[
         f_register_code_conversion_map,
         "Register MAP as code conversion map NAME."
     ),
-    S!("zlib-available-p", 0, 0, f_zlib_available_p, "t if zlib decompression is available."),
+    S!(
+        "zlib-available-p",
+        0,
+        0,
+        f_zlib_available_p,
+        "t if zlib decompression is available."
+    ),
     S!(
         "zlib-decompress-region",
         2,
@@ -628,7 +634,13 @@ pub(crate) static SUBRS: &[Subr] = &[
         f_find_buffer,
         "Return the buffer with buffer-local VARIABLE `equal' to VALUE."
     ),
-    S!("insert-byte", 2, 3, f_insert_byte, "Insert COUNT copies of BYTE."),
+    S!(
+        "insert-byte",
+        2,
+        3,
+        f_insert_byte,
+        "Insert COUNT copies of BYTE."
+    ),
     S!("set-quit-char", 1, 1, f_nil, "Set terminal quit char."),
     S!(
         "set-binary-mode",
@@ -651,7 +663,13 @@ pub(crate) static SUBRS: &[Subr] = &[
         f_nil,
         "Check the newline cache for sanity."
     ),
-    S!("tab-bar-height", 0, 2, f_tab_bar_height, "Height of the tab bar."),
+    S!(
+        "tab-bar-height",
+        0,
+        2,
+        f_tab_bar_height,
+        "Height of the tab bar."
+    ),
     S!(
         "insert-special-event",
         1,
@@ -673,13 +691,7 @@ pub(crate) static SUBRS: &[Subr] = &[
         f_format_mode_line,
         "Format a string using the mode line format."
     ),
-    S!(
-        "debugger-trap",
-        0,
-        0,
-        f_nil,
-        "Trap into the debugger."
-    ),
+    S!("debugger-trap", 0, 0, f_nil, "Trap into the debugger."),
     S!(
         "make-category-table",
         0,
@@ -829,7 +841,13 @@ pub(crate) static SUBRS: &[Subr] = &[
     ),
     S!("help-function-arglist", 1, 2, f_help_function_arglist, ""),
     S!("function-documentation", 1, 1, f_function_documentation, ""),
-    S!("command-error-default-function", 3, 3, f_command_error_default, ""),
+    S!(
+        "command-error-default-function",
+        3,
+        3,
+        f_command_error_default,
+        ""
+    ),
     S!("command-line", 0, 0, f_command_line, ""),
     S!("recursion-depth", 0, 0, f_zero, ""),
     S!("minibuffer-depth", 0, 0, f_zero, ""),
@@ -972,16 +990,16 @@ pub(crate) static SUBRS: &[Subr] = &[
         ""
     ),
     S!("char-table-range", 2, 2, f_char_table_range, ""),
-    S!("remacs--char-width-table", 0, 0, f_remacs_char_width_table, ""),
-    S!("set-char-table-range", 3, 3, f_set_char_table_range, ""),
-    S!("char-table-parent", 1, 1, f_char_table_parent, ""),
     S!(
-        "set-char-table-parent",
-        2,
-        2,
-        f_set_char_table_parent,
+        "remacs--char-width-table",
+        0,
+        0,
+        f_remacs_char_width_table,
         ""
     ),
+    S!("set-char-table-range", 3, 3, f_set_char_table_range, ""),
+    S!("char-table-parent", 1, 1, f_char_table_parent, ""),
+    S!("set-char-table-parent", 2, 2, f_set_char_table_parent, ""),
     S!("map-char-table", 2, 2, f_map_char_table, ""),
     S!("optimize-char-table", 1, 2, f_optimize_char_table, ""),
     S!("char-table-subtype", 1, 1, f_char_table_subtype, ""),
@@ -1121,7 +1139,13 @@ pub(crate) static SUBRS: &[Subr] = &[
         f_read_expression,
         "Read one form."
     ),
-    S!("read-positioning-symbols", 0, 1, f_read_positioning_symbols, ""),
+    S!(
+        "read-positioning-symbols",
+        0,
+        1,
+        f_read_positioning_symbols,
+        ""
+    ),
     S!("describe-vector", 1, 2, f_describe_vector, ""),
     S!("locale-info", 1, 1, f_locale_info, "Locale data for ITEM."),
     S!("locale-translate", 1, 1, f_identity, ""),
@@ -1134,8 +1158,20 @@ pub(crate) static SUBRS: &[Subr] = &[
         f_internal_describe_syntax_value,
         "Insert a description of the internal syntax description SYNTAX at point."
     ),
-    S!("internal-copy-lisp-face", 4, 4, f_internal_copy_lisp_face, ""),
-    S!("internal-make-lisp-face", 1, 2, f_internal_make_lisp_face, ""),
+    S!(
+        "internal-copy-lisp-face",
+        4,
+        4,
+        f_internal_copy_lisp_face,
+        ""
+    ),
+    S!(
+        "internal-make-lisp-face",
+        1,
+        2,
+        f_internal_make_lisp_face,
+        ""
+    ),
     S!(
         "frame-or-buffer-changed-p",
         0,
@@ -1146,16 +1182,40 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!("scroll-bar-scale", 2, 2, f_scroll_bar_scale, ""),
     S!("popup-menu", 1, 2, f_popup_menu, ""),
     S!("set-frame-font", 1, 3, f_set_frame_font, ""),
-    S!("set-keyboard-coding-system", 1, 2, f_set_keyboard_coding_system, ""),
-    S!("set-terminal-coding-system", 1, 2, f_set_terminal_coding_system, ""),
+    S!(
+        "set-keyboard-coding-system",
+        1,
+        2,
+        f_set_keyboard_coding_system,
+        ""
+    ),
+    S!(
+        "set-terminal-coding-system",
+        1,
+        2,
+        f_set_terminal_coding_system,
+        ""
+    ),
     S!("set-mouse-absolute-pixel-position", 2, 2, f_nil, ""),
     S!("tooltip-mode", 0, 1, f_tooltip_mode, ""),
     // `keymap-of' does not exist in GNU Emacs 31.
     // ---------- display/font/image stubs (no GUI) ----------
     S!("default-font-width", 0, 0, f_one, "Char cell width."),
     S!("default-font-height", 0, 0, f_one, "Char cell height."),
-    S!("window-font-width", 0, 1, f_window_font_metric, "Char cell width."),
-    S!("window-font-height", 0, 1, f_window_font_metric, "Char cell height."),
+    S!(
+        "window-font-width",
+        0,
+        1,
+        f_window_font_metric,
+        "Char cell width."
+    ),
+    S!(
+        "window-font-height",
+        0,
+        1,
+        f_window_font_metric,
+        "Char cell height."
+    ),
     S!("color-distance", 2, 4, f_color_distance, "RGB distance."),
     S!(
         "frame-geometry",
@@ -1181,7 +1241,13 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!("face-name", 1, 1, f_face_name, ""),
     S!("face-font", 1, 2, f_face_font, ""),
     S!("face-documentation", 1, 1, f_face_documentation, ""),
-    S!("face-attributes-as-vector", 1, 1, f_face_attributes_as_vector, ""),
+    S!(
+        "face-attributes-as-vector",
+        1,
+        1,
+        f_face_attributes_as_vector,
+        ""
+    ),
     S!("image-flush", 1, 2, f_image_flush, ""),
     S!("image-mask-p", 1, 2, f_image_spec_check, ""),
     S!("image-metadata", 1, 2, f_nil, ""),
@@ -1267,7 +1333,13 @@ pub(crate) static SUBRS: &[Subr] = &[
     ),
     S!("next-read-file-uses-dialog-p", 0, 0, f_nil, ""),
     S!("lossage-size", 0, 1, f_lossage_size, ""),
-    S!("mouse-position-in-root-frame", 0, 0, f_mouse_position_root, ""),
+    S!(
+        "mouse-position-in-root-frame",
+        0,
+        0,
+        f_mouse_position_root,
+        ""
+    ),
     S!("window-scroll-bar-width", 0, 1, f_zero, ""),
     S!("window-scroll-bar-height", 0, 1, f_zero, ""),
     S!("line-number-display-width", 0, 1, f_zero, ""),
@@ -1346,7 +1418,13 @@ pub(crate) static SUBRS: &[Subr] = &[
         "Wrap a byte-code prototype into a closure."
     ),
     S!("do-auto-save", 0, 2, f_nil, "Auto-save all buffers."),
-    S!("sqlitep", 1, 1, super::sqlite::f_sqlitep, "t if OBJECT is a SQLite handle."),
+    S!(
+        "sqlitep",
+        1,
+        1,
+        super::sqlite::f_sqlitep,
+        "t if OBJECT is a SQLite handle."
+    ),
     S!(
         "bidi-find-overridden-directionality",
         3,
@@ -1403,7 +1481,13 @@ pub(crate) static SUBRS: &[Subr] = &[
         f_nil,
         "Set safe terminal coding system."
     ),
-    S!("window-cursor-info", 0, 1, f_window_cursor_info, "Cursor info for WINDOW."),
+    S!(
+        "window-cursor-info",
+        0,
+        1,
+        f_window_cursor_info,
+        "Cursor info for WINDOW."
+    ),
     S!("profiler-cpu-log", 0, 0, f_nil, "CPU profiler log."),
     S!(
         "profiler-cpu-stop",
@@ -1535,7 +1619,13 @@ pub(crate) static SUBRS: &[Subr] = &[
         ""
     ),
     // ---------- thread/process internals ----------
-    S!("thread-buffer-disposition", 1, 1, f_thread_buffer_disposition, ""),
+    S!(
+        "thread-buffer-disposition",
+        1,
+        1,
+        f_thread_buffer_disposition,
+        ""
+    ),
     S!(
         "thread-set-buffer-disposition",
         2,
@@ -1574,10 +1664,28 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!("image-cache-size", 0, 0, f_zero, ""),
     S!("display--line-is-continued-p", 0, 0, f_nil, ""),
     S!("display--update-for-mouse-movement", 3, 3, f_nil, ""),
-    S!("internal-handle-focus-in", 1, 1, f_internal_handle_focus_in, ""),
+    S!(
+        "internal-handle-focus-in",
+        1,
+        1,
+        f_internal_handle_focus_in,
+        ""
+    ),
     S!("internal-face-x-get-resource", 2, 3, f_nil, ""),
-    S!("internal-set-alternative-font-family-alist", 1, 1, f_set_alt_font_family_alist, ""),
-    S!("internal-set-alternative-font-registry-alist", 1, 1, f_set_alt_font_registry_alist, ""),
+    S!(
+        "internal-set-alternative-font-family-alist",
+        1,
+        1,
+        f_set_alt_font_family_alist,
+        ""
+    ),
+    S!(
+        "internal-set-alternative-font-registry-alist",
+        1,
+        1,
+        f_set_alt_font_registry_alist,
+        ""
+    ),
     S!(
         "internal-set-font-selection-order",
         1,
@@ -1585,7 +1693,13 @@ pub(crate) static SUBRS: &[Subr] = &[
         f_set_font_selection_order,
         ""
     ),
-    S!("internal-set-lisp-face-attribute-from-resource", 3, 4, f_set_lisp_face_attr_resource, ""),
+    S!(
+        "internal-set-lisp-face-attribute-from-resource",
+        3,
+        4,
+        f_set_lisp_face_attr_resource,
+        ""
+    ),
     S!("close-font", 1, 2, f_close_font, ""),
     S!("font-has-char-p", 2, 3, f_font_has_char_p, ""),
     S!("font-shape-gstring", 2, 2, f_font_shape_gstring, ""),
@@ -1709,11 +1823,7 @@ fn f_interpreted_function_p(_i: &mut Interp, args: Vec<Value>) -> EvalResult {
 fn f_make_interpreted_closure(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     // (make-interpreted-closure ARGS BODY ENV) → Lambda value.
     Ok(make_interpreted_closure(
-        i,
-        &args[0],
-        &args[1],
-        &args[2],
-        false,
+        i, &args[0], &args[1], &args[2], false,
     ))
 }
 
@@ -1823,10 +1933,9 @@ pub(crate) fn make_interpreted_closure(
         bad_arglist: false,
         arglist: Some(arglist_v.clone()),
         plain,
+        dumped_doc: false,
     }))
 }
-
-
 
 fn f_getenv_internal(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     let name = want_string(i, &args[0])?;
@@ -1871,10 +1980,7 @@ fn f_keymap_canonicalize(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     }
 }
 
-fn keymap_of(
-    i: &mut Interp,
-    v: &Value,
-) -> Result<Option<Vec<(Value, Value)>>, Flow> {
+fn keymap_of(i: &mut Interp, v: &Value) -> Result<Option<Vec<(Value, Value)>>, Flow> {
     // GNU's C `map_keymap' traversal order: char-table contents
     // (compressed ranges) at the table's spine position, then alist
     // pairs; embedded keymaps expand in place and the parent tail's
@@ -1894,11 +2000,7 @@ fn f_accessible_keymaps(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     let prefix_elems: Vec<Value> = match arg(&args, 1) {
         Value::Nil => Vec::new(),
         Value::Vec(v) => v.borrow().clone(),
-        Value::Str(s) => s
-            .borrow()
-            .chars()
-            .map(|c| Value::Int(c as i128))
-            .collect(),
+        Value::Str(s) => s.borrow().chars().map(|c| Value::Int(c as i128)).collect(),
         // Non-sequence prefix yields nil in GNU.
         _ => return Ok(Value::Nil),
     };
@@ -1915,9 +2017,7 @@ fn f_accessible_keymaps(i: &mut Interp, args: Vec<Value>) -> EvalResult {
             .iter()
             .filter_map(|v| match v {
                 Value::Int(n) => Some(*n),
-                Value::Sym(s) => {
-                    Some(crate::editor::event_code_for(&i.symbol_name(*s)))
-                }
+                Value::Sym(s) => Some(crate::editor::event_code_for(&i.symbol_name(*s))),
                 _ => None,
             })
             .collect();
@@ -1962,10 +2062,8 @@ fn f_accessible_keymaps(i: &mut Interp, args: Vec<Value>) -> EvalResult {
                         return Some(car);
                     }
                     // (menu-item NAME DEF . PROPS): real def is DEF.
-                    if i.sym_is(&car, i.intern_soft("menu-item").unwrap_or(u32::MAX))
-                    {
-                        if let Some(dd) = d.list_to_vec().ok().and_then(|v| v.get(2).cloned())
-                        {
+                    if i.sym_is(&car, i.intern_soft("menu-item").unwrap_or(u32::MAX)) {
+                        if let Some(dd) = d.list_to_vec().ok().and_then(|v| v.get(2).cloned()) {
                             d = dd;
                             continue;
                         }
@@ -1991,11 +2089,7 @@ fn f_accessible_keymaps(i: &mut Interp, args: Vec<Value>) -> EvalResult {
 
     /// GNU cycle check: skip CMD if it already appears in MAPS under
     /// a prefix that is a prefix of THISSEQ.
-    fn seen_as_prefix(
-        maps: &[(Vec<Value>, Value)],
-        cmd: &Value,
-        thisseq: &[Value],
-    ) -> bool {
+    fn seen_as_prefix(maps: &[(Vec<Value>, Value)], cmd: &Value, thisseq: &[Value]) -> bool {
         for (pfx, m) in maps {
             if !super::eq_values(m, cmd) {
                 continue;
@@ -2039,8 +2133,7 @@ fn f_accessible_keymaps(i: &mut Interp, args: Vec<Value>) -> EvalResult {
                         if let Value::Int(kc) = k {
                             let mut s = thisseq.clone();
                             let n = s.len() - 1;
-                            s[n] =
-                                Value::Int(kc | crate::editor::META_BIT);
+                            s[n] = Value::Int(kc | crate::editor::META_BIT);
                             s
                         } else {
                             let mut s = thisseq.clone();
@@ -2073,11 +2166,7 @@ fn f_accessible_keymaps(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     Ok(Value::list(out))
 }
 
-fn map_keymap_impl(
-    i: &mut Interp,
-    args: &[Value],
-    own_only: bool,
-) -> EvalResult {
+fn map_keymap_impl(i: &mut Interp, args: &[Value], own_only: bool) -> EvalResult {
     let v = crate::editor::keymap_def(i, args[1].clone())?;
     if !crate::editor::is_keymap(i, &v) {
         return Err(i.wrong_type_mut("keymapp", &args[1]));
@@ -2358,9 +2447,9 @@ fn describe_vector_insert(i: &mut Interp, v: &Value, describer: &Value) -> Resul
             first = false;
         }
         let keyvec = |k: i128| {
-            Value::Vec(std::rc::Rc::new(std::cell::RefCell::new(vec![
-                Value::Int(k),
-            ])))
+            Value::Vec(std::rc::Rc::new(std::cell::RefCell::new(vec![Value::Int(
+                k,
+            )])))
         };
         let desc = i.apply(&key_desc, vec![keyvec(starting)])?;
         i.write_output_to(&i.princ_to_string(&desc), &Value::Nil)?;
@@ -2444,13 +2533,10 @@ fn f_internal_describe_syntax_value(i: &mut Interp, a: Vec<Value>) -> EvalResult
         };
         let match_char = match &match_lisp {
             Value::Nil => None,
-            Value::Int(m) if *m >= 0 && *m <= CT_MAX_CHAR as i128 => {
-                Some(*m as u32)
-            }
+            Value::Int(m) if *m >= 0 && *m <= CT_MAX_CHAR as i128 => Some(*m as u32),
             _ => None,
         };
-        let valid = matches!(first, Value::Int(_))
-            && (match_char.is_some() || match_lisp.is_nil());
+        let valid = matches!(first, Value::Int(_)) && (match_char.is_some() || match_lisp.is_nil());
         if !valid {
             out.push_str("invalid");
         } else {
@@ -2472,9 +2558,7 @@ fn f_internal_describe_syntax_value(i: &mut Interp, a: Vec<Value>) -> EvalResult
                 out.push(SPEC[code]);
                 match match_char {
                     None => out.push(' '),
-                    Some(m) => {
-                        out.push(char::from_u32(m).unwrap_or('\u{FFFD}'))
-                    }
+                    Some(m) => out.push(char::from_u32(m).unwrap_or('\u{FFFD}')),
                 }
                 if start1 {
                     out.push('1');
@@ -2507,24 +2591,16 @@ fn f_internal_describe_syntax_value(i: &mut Interp, a: Vec<Value>) -> EvalResult
                     out.push(char::from_u32(m).unwrap_or('\u{FFFD}'));
                 }
                 if start1 {
-                    out.push_str(
-                        ",\n\t  is the first character of a comment-start sequence",
-                    );
+                    out.push_str(",\n\t  is the first character of a comment-start sequence");
                 }
                 if start2 {
-                    out.push_str(
-                        ",\n\t  is the second character of a comment-start sequence",
-                    );
+                    out.push_str(",\n\t  is the second character of a comment-start sequence");
                 }
                 if end1 {
-                    out.push_str(
-                        ",\n\t  is the first character of a comment-end sequence",
-                    );
+                    out.push_str(",\n\t  is the first character of a comment-end sequence");
                 }
                 if end2 {
-                    out.push_str(
-                        ",\n\t  is the second character of a comment-end sequence",
-                    );
+                    out.push_str(",\n\t  is the second character of a comment-end sequence");
                 }
                 if comstyleb {
                     out.push_str(" (comment style b)");
@@ -2539,9 +2615,8 @@ fn f_internal_describe_syntax_value(i: &mut Interp, a: Vec<Value>) -> EvalResult
                     // GNU inserts `substitute-command-keys' of the
                     // annotation (quote substitution turns `...' into
                     // '...' or grave/curly quoting).
-                    let doc = Value::string(
-                        ",\n\t  is a prefix character for `backward-prefix-chars'",
-                    );
+                    let doc =
+                        Value::string(",\n\t  is a prefix character for `backward-prefix-chars'");
                     let sck = Value::Sym(i.intern("substitute-command-keys"));
                     let sub = i.apply(&sck, vec![doc])?;
                     out.push_str(&i.princ_to_string(&sub));
@@ -3186,7 +3261,11 @@ fn time_arith(i: &mut Interp, a: &[Value], sub: bool) -> EvalResult {
         let g = gcd128(ha, hb);
         let fa = ha / g;
         let fb = hb / g;
-        let mut iticks = if sub { fb * ta - fa * tb } else { fb * ta + fa * tb };
+        let mut iticks = if sub {
+            fb * ta - fa * tb
+        } else {
+            fb * ta + fa * tb
+        };
         let mut ihz = fa * hb;
         let ig = gcd128(iticks, ihz);
         if ig > 1 {
@@ -3204,16 +3283,18 @@ fn time_arith(i: &mut Interp, a: &[Value], sub: bool) -> EvalResult {
     if hz == 1 {
         return Ok(Value::Int(ticks));
     }
-    Ok(if !current_time_list(i)
-        || is_ticks_hz_form(&a[0])
-        || is_ticks_hz_form(&a[1])
-        || hz <= 0
-        || 1_000_000_000_000i128 % hz != 0
-    {
-        Value::cons(Value::Int(ticks), Value::Int(hz))
-    } else {
-        ticks_hz_list4(ticks, hz)
-    })
+    Ok(
+        if !current_time_list(i)
+            || is_ticks_hz_form(&a[0])
+            || is_ticks_hz_form(&a[1])
+            || hz <= 0
+            || 1_000_000_000_000i128 % hz != 0
+        {
+            Value::cons(Value::Int(ticks), Value::Int(hz))
+        } else {
+            ticks_hz_list4(ticks, hz)
+        },
+    )
 }
 
 fn f_time_add(i: &mut Interp, args: Vec<Value>) -> EvalResult {
@@ -3411,10 +3492,7 @@ fn secure_hash_str(i: &mut Interp, args: &[Value]) -> Result<String, Flow> {
         _ => {
             return Err(i.signal_data(
                 sym::ERROR,
-                vec![
-                    Value::string("Invalid object argument"),
-                    obj.clone(),
-                ],
+                vec![Value::string("Invalid object argument"), obj.clone()],
             ));
         }
     };
@@ -3614,10 +3692,7 @@ fn f_make_symbolic_link(i: &mut Interp, args: Vec<Value>) -> EvalResult {
             let s = i.intern("file-already-exists");
             Err(i.signal_data(
                 s,
-                vec![
-                    Value::string("File already exists"),
-                    Value::string(name),
-                ],
+                vec![Value::string("File already exists"), Value::string(name)],
             ))
         }
         Err(e) => Err(i.signal_data(
@@ -3687,18 +3762,19 @@ fn f_set_file_times(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     let nsec = ns.rem_euclid(1_000_000_000) as i64;
     #[cfg(unix)]
     {
-        let c = std::ffi::CString::new(name.clone()).map_err(|_| {
-            i.signal_data(sym::FILE_ERROR, vec![Value::string("bad filename")])
-        })?;
+        let c = std::ffi::CString::new(name.clone())
+            .map_err(|_| i.signal_data(sym::FILE_ERROR, vec![Value::string("bad filename")]))?;
         let ts = libc::timespec {
             tv_sec: secs as libc::time_t,
             tv_nsec: nsec as _,
         };
         let times = [ts, ts];
-        let flag = if nofollow { libc::AT_SYMLINK_NOFOLLOW } else { 0 };
-        let r = unsafe {
-            libc::utimensat(libc::AT_FDCWD, c.as_ptr(), times.as_ptr(), flag)
+        let flag = if nofollow {
+            libc::AT_SYMLINK_NOFOLLOW
+        } else {
+            0
         };
+        let r = unsafe { libc::utimensat(libc::AT_FDCWD, c.as_ptr(), times.as_ptr(), flag) };
         if r != 0 {
             let e = std::io::Error::last_os_error();
             let (s, msg) = if e.kind() == std::io::ErrorKind::NotFound {
@@ -3928,10 +4004,7 @@ fn f_compose_region_internal(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         })
         .unwrap_or((1, 1));
     if start < begv || end > zv || start > end {
-        return Err(i.signal_data(
-            sym::ARGS_OUT_OF_RANGE,
-            vec![a[0].clone(), a[1].clone()],
-        ));
+        return Err(i.signal_data(sym::ARGS_OUT_OF_RANGE, vec![a[0].clone(), a[1].clone()]));
     }
     Ok(Value::Nil)
 }
@@ -3964,10 +4037,7 @@ fn f_register_ccl_program(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         other => return Err(i.wrong_type_mut("vectorp", other)),
     };
     if elems.len() < 3 || !elems.iter().all(|e| matches!(e, Value::Int(_))) {
-        return Err(i.signal_data(
-            sym::ERROR,
-            vec![Value::string("Invalid CCL program")],
-        ));
+        return Err(i.signal_data(sym::ERROR, vec![Value::string("Invalid CCL program")]));
     }
     let prop = i.intern("ccl-program");
     if let Value::Int(idx) = i.get_prop(name, prop) {
@@ -4037,10 +4107,7 @@ fn f_zlib_decompress_region(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         let bb = buf.borrow();
         let (begv, zv) = (bb.begv as i128 + 1, bb.zv as i128 + 1);
         if start < begv || end > zv || start > end {
-            return Err(i.signal_data(
-                sym::ARGS_OUT_OF_RANGE,
-                vec![a[0].clone(), a[1].clone()],
-            ));
+            return Err(i.signal_data(sym::ARGS_OUT_OF_RANGE, vec![a[0].clone(), a[1].clone()]));
         }
         let t = bb.text.text();
         let chars: Vec<char> = t.chars().collect();
@@ -4222,40 +4289,91 @@ pub(crate) fn make_category_table_value(i: &mut Interp, standard: bool) -> Value
     // GNU extra slot 0: docstring vector of 95 (indexed by cat - 32);
     // extra slot 1: an `equal' hash-table of category-set data.
     let docs = Rc::new(RefCell::new(vec![Value::Nil; 95]));
-    let hash = Value::Hash(Rc::new(RefCell::new(
-        crate::lisp::value::LispHash::new(crate::lisp::value::HashTest::Equal),
-    )));
+    let hash = Value::Hash(Rc::new(RefCell::new(crate::lisp::value::LispHash::new(
+        crate::lisp::value::HashTest::Equal,
+    ))));
     let tag = Value::Sym(i.intern("category-table"));
     let t = make_ct(i, tag, Value::Nil, vec![Value::Vec(docs.clone()), hash]);
     if standard {
         // GNU's standard-category-table ASCII defaults.
         const DOCS: &[(usize, &str)] = &[
-            (32, "space for indent\nThis character counts as a space for indentation purposes."),
-            (46, "Base\nBase characters (Unicode General Category L,N,P,S,Zs)"),
+            (
+                32,
+                "space for indent\nThis character counts as a space for indentation purposes.",
+            ),
+            (
+                46,
+                "Base\nBase characters (Unicode General Category L,N,P,S,Zs)",
+            ),
             (48, "consonant"),
             (49, "base vowel\nBase (independent) vowel"),
-            (50, "upper diacritic\nUpper diacritical mark (including upper vowel)"),
-            (51, "lower diacritic\nLower diacritical mark (including lower vowel)"),
+            (
+                50,
+                "upper diacritic\nUpper diacritical mark (including upper vowel)",
+            ),
+            (
+                51,
+                "lower diacritic\nLower diacritical mark (including lower vowel)",
+            ),
             (52, "combining tone\nCombining tone mark"),
             (53, "symbol"),
             (54, "digit"),
             (55, "vowel diacritic\nVowel-modifying diacritical mark"),
             (56, "vowel-signs"),
             (57, "semivowel lower"),
-            (60, "Not at eol\nA character which can't be placed at end of line."),
-            (62, "Not at bol\nA character which can't be placed at beginning of line."),
-            (65, "2-byte alnum\nAlphanumeric characters of 2-byte character sets"),
-            (67, "2-byte han\nChinese (Han) characters of 2-byte character sets"),
-            (71, "2-byte Greek\nGreek characters of 2-byte character sets"),
-            (72, "2-byte Hiragana\nJapanese Hiragana characters of 2-byte character sets"),
+            (
+                60,
+                "Not at eol\nA character which can't be placed at end of line.",
+            ),
+            (
+                62,
+                "Not at bol\nA character which can't be placed at beginning of line.",
+            ),
+            (
+                65,
+                "2-byte alnum\nAlphanumeric characters of 2-byte character sets",
+            ),
+            (
+                67,
+                "2-byte han\nChinese (Han) characters of 2-byte character sets",
+            ),
+            (
+                71,
+                "2-byte Greek\nGreek characters of 2-byte character sets",
+            ),
+            (
+                72,
+                "2-byte Hiragana\nJapanese Hiragana characters of 2-byte character sets",
+            ),
             (73, "Indian Glyphs"),
-            (75, "2-byte Katakana\nJapanese Katakana characters of 2-byte character sets"),
-            (76, "Strong L2R\nCharacters with \"strong\" left-to-right directionality, i.e.\nwith L, LRE, or LRO Unicode bidi character type."),
-            (78, "2-byte Korean\nKorean Hangul characters of 2-byte character sets"),
-            (82, "Strong R2L\nCharacters with \"strong\" right-to-left directionality, i.e.\nwith R, AL, RLE, or RLO Unicode bidi character type."),
-            (89, "2-byte Cyrillic\nCyrillic characters of 2-byte character sets"),
-            (94, "Combining\nCombining diacritic or mark (Unicode General Category M)"),
-            (97, "ASCII\nASCII graphic characters 32-126 (ISO646 IRV:1983[4/0])"),
+            (
+                75,
+                "2-byte Katakana\nJapanese Katakana characters of 2-byte character sets",
+            ),
+            (
+                76,
+                "Strong L2R\nCharacters with \"strong\" left-to-right directionality, i.e.\nwith L, LRE, or LRO Unicode bidi character type.",
+            ),
+            (
+                78,
+                "2-byte Korean\nKorean Hangul characters of 2-byte character sets",
+            ),
+            (
+                82,
+                "Strong R2L\nCharacters with \"strong\" right-to-left directionality, i.e.\nwith R, AL, RLE, or RLO Unicode bidi character type.",
+            ),
+            (
+                89,
+                "2-byte Cyrillic\nCyrillic characters of 2-byte character sets",
+            ),
+            (
+                94,
+                "Combining\nCombining diacritic or mark (Unicode General Category M)",
+            ),
+            (
+                97,
+                "ASCII\nASCII graphic characters 32-126 (ISO646 IRV:1983[4/0])",
+            ),
             (98, "Arabic"),
             (99, "Chinese"),
             (101, "Ethiopic\nEthiopic (Ge'ez)"),
@@ -4271,7 +4389,10 @@ pub(crate) fn make_category_table_value(i: &mut Interp, standard: bool) -> Value
             (118, "Viet\nVietnamese"),
             (119, "Hebrew"),
             (121, "Cyrillic"),
-            (124, "line breakable\nWhile filling, we can break a line at this character."),
+            (
+                124,
+                "line breakable\nWhile filling, we can break a line at this character.",
+            ),
         ];
         {
             let mut d = docs.borrow_mut();
@@ -4308,19 +4429,21 @@ fn is_category_table(i: &Interp, v: &Value) -> bool {
 
 fn want_category_table(i: &mut Interp, v: &Value) -> Result<Rc<RefCell<Vec<Value>>>, Flow> {
     match v {
-        Value::Nil => Ok(match i
-            .current_buffer_ref()
-            .and_then(|b| b.borrow().category_table.clone())
-        {
-            Some(t) => match t {
-                Value::Record(r) => r,
-                _ => return Err(i.wrong_type_mut("category-table-p", &Value::Nil)),
+        Value::Nil => Ok(
+            match i
+                .current_buffer_ref()
+                .and_then(|b| b.borrow().category_table.clone())
+            {
+                Some(t) => match t {
+                    Value::Record(r) => r,
+                    _ => return Err(i.wrong_type_mut("category-table-p", &Value::Nil)),
+                },
+                None => match i.standard_category_table() {
+                    Value::Record(r) => r,
+                    _ => unreachable!(),
+                },
             },
-            None => match i.standard_category_table() {
-                Value::Record(r) => r,
-                _ => unreachable!(),
-            },
-        }),
+        ),
         Value::Record(r) if is_category_table(i, v) => Ok(r.clone()),
         other => Err(i.wrong_type_mut("category-table-p", other)),
     }
@@ -4734,10 +4857,7 @@ fn f_make_mutex(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         Some(other) => return Err(i.wrong_type_mut("stringp", other)),
     };
     Ok(Value::Mutex(std::rc::Rc::new(std::cell::RefCell::new(
-        crate::lisp::value::Mutex {
-            name,
-            owner: None,
-        },
+        crate::lisp::value::Mutex { name, owner: None },
     ))))
 }
 
@@ -4800,7 +4920,9 @@ fn f_condition_mutex(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 
 fn condition_mutex_held(i: &Interp, c: &crate::lisp::value::CondVarRef) -> bool {
     let cb = c.borrow();
-    let Value::Mutex(m) = &cb.mutex else { return false };
+    let Value::Mutex(m) = &cb.mutex else {
+        return false;
+    };
     let mb = m.borrow();
     match &mb.owner {
         Some(Value::Thread(t)) => std::rc::Rc::ptr_eq(t, &i.threads[i.current_thread]),
@@ -5065,18 +5187,15 @@ fn f_bool_vector_consec(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         return Err(i.wrong_type_mut("wholenump", &a[2]));
     }
     Ok(Value::Int(
-        x.iter()
-            .skip(at as usize)
-            .take_while(|v| **v == b)
-            .count() as i128,
+        x.iter().skip(at as usize).take_while(|v| **v == b).count() as i128,
     ))
 }
 
 // ---------- events ----------
 
 use crate::editor::{
-    CHAR_ALT, CHAR_CTL, CHAR_HYPER, CHAR_META, CHAR_SHIFT, CHAR_SUPER, WindowRef,
-    is_keymap, key_seq, parse_key_token, sel_frame, sel_window,
+    CHAR_ALT, CHAR_CTL, CHAR_HYPER, CHAR_META, CHAR_SHIFT, CHAR_SUPER, WindowRef, is_keymap,
+    key_seq, parse_key_token, sel_frame, sel_window,
 };
 
 fn f_eventp(_i: &mut Interp, a: Vec<Value>) -> EvalResult {
@@ -5152,9 +5271,11 @@ fn event_sym_elements(name: &str) -> (String, Vec<String>) {
     let (cmods, kmods, base) = parse_event_symbol(name);
     let mut mods = cmods;
     mods.extend(kmods);
-    if base.starts_with("mouse-") && !mods.iter().any(|m| {
-        matches!(m.as_str(), "down" | "drag" | "double" | "triple" | "click")
-    }) {
+    if base.starts_with("mouse-")
+        && !mods
+            .iter()
+            .any(|m| matches!(m.as_str(), "down" | "drag" | "double" | "triple" | "click"))
+    {
         mods.push("click".to_string());
     }
     mods.sort_by_key(|m| mod_list_rank(m));
@@ -5167,7 +5288,10 @@ fn event_sym_elements(name: &str) -> (String, Vec<String>) {
 fn event_predefined(cmods: &[String], kmods: &[String], base: &str) -> bool {
     let has = |m: &str, v: &[String]| v.iter().any(|x| x == m);
     let only = |allowed: &[&str], v: &[String]| v.iter().all(|x| allowed.contains(&x.as_str()));
-    if let Some(n) = base.strip_prefix("mouse-").and_then(|d| d.parse::<u32>().ok()) {
+    if let Some(n) = base
+        .strip_prefix("mouse-")
+        .and_then(|d| d.parse::<u32>().ok())
+    {
         if !(1..=7).contains(&n) {
             return false;
         }
@@ -5180,12 +5304,17 @@ fn event_predefined(cmods: &[String], kmods: &[String], base: &str) -> bool {
             return only(&["control"], cmods);
         }
         // double-click is standard only on button 1.
-        return n == 1 && cmods.is_empty() && only(&["double", "down"], kmods) && has("double", kmods);
+        return n == 1
+            && cmods.is_empty()
+            && only(&["double", "down"], kmods)
+            && has("double", kmods);
     }
     if kmods.is_empty() && eventish(base) {
         // Named keys: at most two of control/meta/shift in standard
         // combos (C-M-left, S-left); hyper/super/alt are nonstandard.
-        return cmods.iter().all(|m| matches!(m.as_str(), "control" | "meta" | "shift"))
+        return cmods
+            .iter()
+            .all(|m| matches!(m.as_str(), "control" | "meta" | "shift"))
             && !(has("shift", cmods) && cmods.len() > 1);
     }
     false
@@ -5650,12 +5779,7 @@ fn parse_date_hms(s: &str) -> Option<(i64, i64, i64, i64, i64, i64, Option<i64>)
                 hh = p[0].parse().ok()?;
                 mm = p[1].parse().ok()?;
                 if p.len() >= 3 {
-                    ss = p[2]
-                        .split('.')
-                        .next()
-                        .unwrap_or("0")
-                        .parse()
-                        .unwrap_or(0);
+                    ss = p[2].split('.').next().unwrap_or("0").parse().unwrap_or(0);
                 }
             }
             if let Some(z) = zpart {
@@ -5693,8 +5817,10 @@ fn parse_date_hms(s: &str) -> Option<(i64, i64, i64, i64, i64, i64, Option<i64>)
 fn f_date_to_time(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let s = want_string(i, &a[0])?;
     if let Some((y, m, d, hh, mm, ss, zone)) = parse_date_hms(&s) {
-        let mut secs =
-            days_from_civil(y as i128, m as i128, d as i128) * 86400 + hh as i128 * 3600 + mm as i128 * 60 + ss as i128;
+        let mut secs = days_from_civil(y as i128, m as i128, d as i128) * 86400
+            + hh as i128 * 3600
+            + mm as i128 * 60
+            + ss as i128;
         // Broken-down fields are local wall time unless a zone was given.
         secs -= match zone {
             Some(z) => z as i128,
@@ -5750,8 +5876,7 @@ fn f_help_function_arglist(i: &mut Interp, a: Vec<Value>) -> EvalResult {
             // PRESERVE-NAMES: GNU recovers the real arg names from the
             // docstring's `(fn ARGLIST)' trailer, lowercased.
             if a.get(1).map(|v| v.truthy()).unwrap_or(false) {
-                let doc = doc_text(i, &format!("F{}", s.name))
-                    .unwrap_or_else(|| s.doc.to_string());
+                let doc = doc_text(i, &format!("F{}", s.name)).unwrap_or_else(|| s.doc.to_string());
                 if let Some(list) = doc_arglist(i, &doc) {
                     return Ok(list);
                 }
@@ -5817,8 +5942,7 @@ fn doc_arglist(i: &mut Interp, doc: &str) -> Option<Value> {
 /// Shared across interpreters via thread-local cache keyed by path.
 fn doc_index(
     i: &mut Interp,
-) -> Option<std::rc::Rc<(Vec<u8>, std::collections::HashMap<String, usize>)>>
-{
+) -> Option<std::rc::Rc<(Vec<u8>, std::collections::HashMap<String, usize>)>> {
     use std::cell::RefCell;
     use std::collections::HashMap;
     use std::rc::Rc;
@@ -6199,24 +6323,57 @@ pub(crate) const CODING_ALIASES: &[(&str, &[&str])] = &[
     ("utf-16le", &["utf-16le"]),
     ("utf-16be", &["utf-16be"]),
     ("utf-16-le", &["utf-16le-with-signature", "utf-16-le"]),
-    ("utf-16le-with-signature", &["utf-16le-with-signature", "utf-16-le"]),
+    (
+        "utf-16le-with-signature",
+        &["utf-16le-with-signature", "utf-16-le"],
+    ),
     ("utf-16-be", &["utf-16be-with-signature", "utf-16-be"]),
-    ("utf-16be-with-signature", &["utf-16be-with-signature", "utf-16-be"]),
+    (
+        "utf-16be-with-signature",
+        &["utf-16be-with-signature", "utf-16-be"],
+    ),
     ("utf-16", &["utf-16"]),
     ("iso-2022-7bit", &["iso-2022-7bit"]),
     ("iso-2022-7bit-ss2", &["iso-2022-7bit-ss2"]),
     ("iso-2022-int-1", &["iso-2022-7bit-lock", "iso-2022-int-1"]),
-    ("iso-2022-7bit-lock", &["iso-2022-7bit-lock", "iso-2022-int-1"]),
+    (
+        "iso-2022-7bit-lock",
+        &["iso-2022-7bit-lock", "iso-2022-int-1"],
+    ),
     ("iso-2022-cjk", &["iso-2022-7bit-lock-ss2", "iso-2022-cjk"]),
-    ("iso-2022-7bit-lock-ss2", &["iso-2022-7bit-lock-ss2", "iso-2022-cjk"]),
+    (
+        "iso-2022-7bit-lock-ss2",
+        &["iso-2022-7bit-lock-ss2", "iso-2022-cjk"],
+    ),
     ("iso-2022-8bit-ss2", &["iso-2022-8bit-ss2"]),
     ("ctext", &["compound-text", "x-ctext", "ctext"]),
     ("x-ctext", &["compound-text", "x-ctext", "ctext"]),
     ("compound-text", &["compound-text", "x-ctext", "ctext"]),
     ("ctext-no-compositions", &["ctext-no-compositions"]),
-    ("ctext-with-extensions", &["compound-text-with-extensions", "x-ctext-with-extensions", "ctext-with-extensions"]),
-    ("x-ctext-with-extensions", &["compound-text-with-extensions", "x-ctext-with-extensions", "ctext-with-extensions"]),
-    ("compound-text-with-extensions", &["compound-text-with-extensions", "x-ctext-with-extensions", "ctext-with-extensions"]),
+    (
+        "ctext-with-extensions",
+        &[
+            "compound-text-with-extensions",
+            "x-ctext-with-extensions",
+            "ctext-with-extensions",
+        ],
+    ),
+    (
+        "x-ctext-with-extensions",
+        &[
+            "compound-text-with-extensions",
+            "x-ctext-with-extensions",
+            "ctext-with-extensions",
+        ],
+    ),
+    (
+        "compound-text-with-extensions",
+        &[
+            "compound-text-with-extensions",
+            "x-ctext-with-extensions",
+            "ctext-with-extensions",
+        ],
+    ),
     ("ascii", &["us-ascii", "iso-safe", "ascii"]),
     ("iso-safe", &["us-ascii", "iso-safe", "ascii"]),
     ("us-ascii", &["us-ascii", "iso-safe", "ascii"]),
@@ -6225,28 +6382,106 @@ pub(crate) const CODING_ALIASES: &[(&str, &[&str])] = &[
     ("chinese-iso-7bit", &["iso-2022-cn", "chinese-iso-7bit"]),
     ("iso-2022-cn", &["iso-2022-cn", "chinese-iso-7bit"]),
     ("iso-2022-cn-ext", &["iso-2022-cn-ext"]),
-    ("gb2312", &["chinese-iso-8bit", "cn-gb-2312", "euc-china", "euc-cn", "cn-gb", "gb2312"]),
-    ("cn-gb", &["chinese-iso-8bit", "cn-gb-2312", "euc-china", "euc-cn", "cn-gb", "gb2312"]),
-    ("euc-cn", &["chinese-iso-8bit", "cn-gb-2312", "euc-china", "euc-cn", "cn-gb", "gb2312"]),
-    ("euc-china", &["chinese-iso-8bit", "cn-gb-2312", "euc-china", "euc-cn", "cn-gb", "gb2312"]),
-    ("cn-gb-2312", &["chinese-iso-8bit", "cn-gb-2312", "euc-china", "euc-cn", "cn-gb", "gb2312"]),
-    ("chinese-iso-8bit", &["chinese-iso-8bit", "cn-gb-2312", "euc-china", "euc-cn", "cn-gb", "gb2312"]),
+    (
+        "gb2312",
+        &[
+            "chinese-iso-8bit",
+            "cn-gb-2312",
+            "euc-china",
+            "euc-cn",
+            "cn-gb",
+            "gb2312",
+        ],
+    ),
+    (
+        "cn-gb",
+        &[
+            "chinese-iso-8bit",
+            "cn-gb-2312",
+            "euc-china",
+            "euc-cn",
+            "cn-gb",
+            "gb2312",
+        ],
+    ),
+    (
+        "euc-cn",
+        &[
+            "chinese-iso-8bit",
+            "cn-gb-2312",
+            "euc-china",
+            "euc-cn",
+            "cn-gb",
+            "gb2312",
+        ],
+    ),
+    (
+        "euc-china",
+        &[
+            "chinese-iso-8bit",
+            "cn-gb-2312",
+            "euc-china",
+            "euc-cn",
+            "cn-gb",
+            "gb2312",
+        ],
+    ),
+    (
+        "cn-gb-2312",
+        &[
+            "chinese-iso-8bit",
+            "cn-gb-2312",
+            "euc-china",
+            "euc-cn",
+            "cn-gb",
+            "gb2312",
+        ],
+    ),
+    (
+        "chinese-iso-8bit",
+        &[
+            "chinese-iso-8bit",
+            "cn-gb-2312",
+            "euc-china",
+            "euc-cn",
+            "cn-gb",
+            "gb2312",
+        ],
+    ),
     ("hz", &["chinese-hz", "hz-gb-2312", "hz"]),
     ("hz-gb-2312", &["chinese-hz", "hz-gb-2312", "hz"]),
     ("chinese-hz", &["chinese-hz", "hz-gb-2312", "hz"]),
     ("cp950", &["chinese-big5", "big5", "cn-big5", "cp950"]),
     ("cn-big5", &["chinese-big5", "big5", "cn-big5", "cp950"]),
     ("big5", &["chinese-big5", "big5", "cn-big5", "cp950"]),
-    ("chinese-big5", &["chinese-big5", "big5", "cn-big5", "cp950"]),
-    ("cn-big5-hkscs", &["chinese-big5-hkscs", "big5-hkscs", "cn-big5-hkscs"]),
-    ("big5-hkscs", &["chinese-big5-hkscs", "big5-hkscs", "cn-big5-hkscs"]),
-    ("chinese-big5-hkscs", &["chinese-big5-hkscs", "big5-hkscs", "cn-big5-hkscs"]),
+    (
+        "chinese-big5",
+        &["chinese-big5", "big5", "cn-big5", "cp950"],
+    ),
+    (
+        "cn-big5-hkscs",
+        &["chinese-big5-hkscs", "big5-hkscs", "cn-big5-hkscs"],
+    ),
+    (
+        "big5-hkscs",
+        &["chinese-big5-hkscs", "big5-hkscs", "cn-big5-hkscs"],
+    ),
+    (
+        "chinese-big5-hkscs",
+        &["chinese-big5-hkscs", "big5-hkscs", "cn-big5-hkscs"],
+    ),
     ("euc-taiwan", &["euc-tw", "euc-taiwan"]),
     ("euc-tw", &["euc-tw", "euc-taiwan"]),
-    ("windows-936", &["chinese-gbk", "gbk", "cp936", "windows-936"]),
+    (
+        "windows-936",
+        &["chinese-gbk", "gbk", "cp936", "windows-936"],
+    ),
     ("cp936", &["chinese-gbk", "gbk", "cp936", "windows-936"]),
     ("gbk", &["chinese-gbk", "gbk", "cp936", "windows-936"]),
-    ("chinese-gbk", &["chinese-gbk", "gbk", "cp936", "windows-936"]),
+    (
+        "chinese-gbk",
+        &["chinese-gbk", "gbk", "cp936", "windows-936"],
+    ),
     ("gb18030", &["chinese-gb18030", "gb18030"]),
     ("chinese-gb18030", &["chinese-gb18030", "gb18030"]),
     ("iso-8859-5", &["cyrillic-iso-8bit", "iso-8859-5"]),
@@ -6254,10 +6489,19 @@ pub(crate) const CODING_ALIASES: &[(&str, &[&str])] = &[
     ("cp878", &["cyrillic-koi8", "koi8-r", "koi8", "cp878"]),
     ("koi8", &["cyrillic-koi8", "koi8-r", "koi8", "cp878"]),
     ("koi8-r", &["cyrillic-koi8", "koi8-r", "koi8", "cp878"]),
-    ("cyrillic-koi8", &["cyrillic-koi8", "koi8-r", "koi8", "cp878"]),
+    (
+        "cyrillic-koi8",
+        &["cyrillic-koi8", "koi8-r", "koi8", "cp878"],
+    ),
     ("koi8-u", &["koi8-u"]),
-    ("alternativnyj", &["cyrillic-alternativnyj", "alternativnyj"]),
-    ("cyrillic-alternativnyj", &["cyrillic-alternativnyj", "alternativnyj"]),
+    (
+        "alternativnyj",
+        &["cyrillic-alternativnyj", "alternativnyj"],
+    ),
+    (
+        "cyrillic-alternativnyj",
+        &["cyrillic-alternativnyj", "alternativnyj"],
+    ),
     ("cp866", &["cp866"]),
     ("koi8-t", &["koi8-t"]),
     ("cp1251", &["windows-1251", "cp1251"]),
@@ -6270,7 +6514,10 @@ pub(crate) const CODING_ALIASES: &[(&str, &[&str])] = &[
     ("mik", &["mik"]),
     ("pt154", &["pt154"]),
     ("devanagari", &["in-is13194-devanagari", "devanagari"]),
-    ("in-is13194-devanagari", &["in-is13194-devanagari", "devanagari"]),
+    (
+        "in-is13194-devanagari",
+        &["in-is13194-devanagari", "devanagari"],
+    ),
     ("ebcdic-us", &["ebcdic-us"]),
     ("ebcdic-uk", &["ebcdic-uk"]),
     ("cp1047", &["ibm1047", "cp1047"]),
@@ -6299,10 +6546,22 @@ pub(crate) const CODING_ALIASES: &[(&str, &[&str])] = &[
     ("latin-8", &["iso-latin-8", "iso-8859-14", "latin-8"]),
     ("iso-8859-14", &["iso-latin-8", "iso-8859-14", "latin-8"]),
     ("iso-latin-8", &["iso-latin-8", "iso-8859-14", "latin-8"]),
-    ("latin-0", &["iso-latin-9", "iso-8859-15", "latin-9", "latin-0"]),
-    ("latin-9", &["iso-latin-9", "iso-8859-15", "latin-9", "latin-0"]),
-    ("iso-8859-15", &["iso-latin-9", "iso-8859-15", "latin-9", "latin-0"]),
-    ("iso-latin-9", &["iso-latin-9", "iso-8859-15", "latin-9", "latin-0"]),
+    (
+        "latin-0",
+        &["iso-latin-9", "iso-8859-15", "latin-9", "latin-0"],
+    ),
+    (
+        "latin-9",
+        &["iso-latin-9", "iso-8859-15", "latin-9", "latin-0"],
+    ),
+    (
+        "iso-8859-15",
+        &["iso-latin-9", "iso-8859-15", "latin-9", "latin-0"],
+    ),
+    (
+        "iso-latin-9",
+        &["iso-latin-9", "iso-8859-15", "latin-9", "latin-0"],
+    ),
     ("cp1250", &["windows-1250", "cp1250"]),
     ("windows-1250", &["windows-1250", "cp1250"]),
     ("cp1252", &["windows-1252", "cp1252"]),
@@ -6322,14 +6581,38 @@ pub(crate) const CODING_ALIASES: &[(&str, &[&str])] = &[
     ("cp275", &["ibm275", "ebcdic-br", "cp275"]),
     ("ebcdic-br", &["ibm275", "ebcdic-br", "cp275"]),
     ("ibm275", &["ibm275", "ebcdic-br", "cp275"]),
-    ("cp277", &["ibm277", "ebcdic-cp-dk", "ebcdic-cp-no", "cp277"]),
-    ("ebcdic-cp-no", &["ibm277", "ebcdic-cp-dk", "ebcdic-cp-no", "cp277"]),
-    ("ebcdic-cp-dk", &["ibm277", "ebcdic-cp-dk", "ebcdic-cp-no", "cp277"]),
-    ("ibm277", &["ibm277", "ebcdic-cp-dk", "ebcdic-cp-no", "cp277"]),
-    ("cp278", &["ibm278", "ebcdic-cp-fi", "ebcdic-cp-se", "cp278"]),
-    ("ebcdic-cp-se", &["ibm278", "ebcdic-cp-fi", "ebcdic-cp-se", "cp278"]),
-    ("ebcdic-cp-fi", &["ibm278", "ebcdic-cp-fi", "ebcdic-cp-se", "cp278"]),
-    ("ibm278", &["ibm278", "ebcdic-cp-fi", "ebcdic-cp-se", "cp278"]),
+    (
+        "cp277",
+        &["ibm277", "ebcdic-cp-dk", "ebcdic-cp-no", "cp277"],
+    ),
+    (
+        "ebcdic-cp-no",
+        &["ibm277", "ebcdic-cp-dk", "ebcdic-cp-no", "cp277"],
+    ),
+    (
+        "ebcdic-cp-dk",
+        &["ibm277", "ebcdic-cp-dk", "ebcdic-cp-no", "cp277"],
+    ),
+    (
+        "ibm277",
+        &["ibm277", "ebcdic-cp-dk", "ebcdic-cp-no", "cp277"],
+    ),
+    (
+        "cp278",
+        &["ibm278", "ebcdic-cp-fi", "ebcdic-cp-se", "cp278"],
+    ),
+    (
+        "ebcdic-cp-se",
+        &["ibm278", "ebcdic-cp-fi", "ebcdic-cp-se", "cp278"],
+    ),
+    (
+        "ebcdic-cp-fi",
+        &["ibm278", "ebcdic-cp-fi", "ebcdic-cp-se", "cp278"],
+    ),
+    (
+        "ibm278",
+        &["ibm278", "ebcdic-cp-fi", "ebcdic-cp-se", "cp278"],
+    ),
     ("cp280", &["ibm280", "ebcdic-cp-it", "cp280"]),
     ("ebcdic-cp-it", &["ibm280", "ebcdic-cp-it", "cp280"]),
     ("ibm280", &["ibm280", "ebcdic-cp-it", "cp280"]),
@@ -6379,10 +6662,42 @@ pub(crate) const CODING_ALIASES: &[(&str, &[&str])] = &[
     ("cp851", &["cp851", "ibm851"]),
     ("ibm869", &["cp869", "ibm869"]),
     ("cp869", &["cp869", "ibm869"]),
-    ("iso-8859-8-i", &["hebrew-iso-8bit", "iso-8859-8", "iso-8859-8-e", "iso-8859-8-i"]),
-    ("iso-8859-8-e", &["hebrew-iso-8bit", "iso-8859-8", "iso-8859-8-e", "iso-8859-8-i"]),
-    ("iso-8859-8", &["hebrew-iso-8bit", "iso-8859-8", "iso-8859-8-e", "iso-8859-8-i"]),
-    ("hebrew-iso-8bit", &["hebrew-iso-8bit", "iso-8859-8", "iso-8859-8-e", "iso-8859-8-i"]),
+    (
+        "iso-8859-8-i",
+        &[
+            "hebrew-iso-8bit",
+            "iso-8859-8",
+            "iso-8859-8-e",
+            "iso-8859-8-i",
+        ],
+    ),
+    (
+        "iso-8859-8-e",
+        &[
+            "hebrew-iso-8bit",
+            "iso-8859-8",
+            "iso-8859-8-e",
+            "iso-8859-8-i",
+        ],
+    ),
+    (
+        "iso-8859-8",
+        &[
+            "hebrew-iso-8bit",
+            "iso-8859-8",
+            "iso-8859-8-e",
+            "iso-8859-8-i",
+        ],
+    ),
+    (
+        "hebrew-iso-8bit",
+        &[
+            "hebrew-iso-8bit",
+            "iso-8859-8",
+            "iso-8859-8-e",
+            "iso-8859-8-i",
+        ],
+    ),
     ("cp1255", &["windows-1255", "cp1255"]),
     ("windows-1255", &["windows-1255", "cp1255"]),
     ("ibm862", &["cp862", "ibm862"]),
@@ -6392,42 +6707,108 @@ pub(crate) const CODING_ALIASES: &[(&str, &[&str])] = &[
     ("iso-2022-jp-2", &["iso-2022-jp-2"]),
     ("sjis", &["japanese-shift-jis", "shift_jis", "sjis"]),
     ("shift_jis", &["japanese-shift-jis", "shift_jis", "sjis"]),
-    ("japanese-shift-jis", &["japanese-shift-jis", "shift_jis", "sjis"]),
+    (
+        "japanese-shift-jis",
+        &["japanese-shift-jis", "shift_jis", "sjis"],
+    ),
     ("cp932", &["japanese-cp932", "cp932"]),
     ("japanese-cp932", &["japanese-cp932", "cp932"]),
-    ("old-jis", &["japanese-iso-7bit-1978-irv", "iso-2022-jp-1978-irv", "old-jis"]),
-    ("iso-2022-jp-1978-irv", &["japanese-iso-7bit-1978-irv", "iso-2022-jp-1978-irv", "old-jis"]),
-    ("japanese-iso-7bit-1978-irv", &["japanese-iso-7bit-1978-irv", "iso-2022-jp-1978-irv", "old-jis"]),
-    ("euc-jp", &["japanese-iso-8bit", "euc-japan-1990", "euc-japan", "euc-jp"]),
-    ("euc-japan", &["japanese-iso-8bit", "euc-japan-1990", "euc-japan", "euc-jp"]),
-    ("euc-japan-1990", &["japanese-iso-8bit", "euc-japan-1990", "euc-japan", "euc-jp"]),
-    ("japanese-iso-8bit", &["japanese-iso-8bit", "euc-japan-1990", "euc-japan", "euc-jp"]),
+    (
+        "old-jis",
+        &[
+            "japanese-iso-7bit-1978-irv",
+            "iso-2022-jp-1978-irv",
+            "old-jis",
+        ],
+    ),
+    (
+        "iso-2022-jp-1978-irv",
+        &[
+            "japanese-iso-7bit-1978-irv",
+            "iso-2022-jp-1978-irv",
+            "old-jis",
+        ],
+    ),
+    (
+        "japanese-iso-7bit-1978-irv",
+        &[
+            "japanese-iso-7bit-1978-irv",
+            "iso-2022-jp-1978-irv",
+            "old-jis",
+        ],
+    ),
+    (
+        "euc-jp",
+        &["japanese-iso-8bit", "euc-japan-1990", "euc-japan", "euc-jp"],
+    ),
+    (
+        "euc-japan",
+        &["japanese-iso-8bit", "euc-japan-1990", "euc-japan", "euc-jp"],
+    ),
+    (
+        "euc-japan-1990",
+        &["japanese-iso-8bit", "euc-japan-1990", "euc-japan", "euc-jp"],
+    ),
+    (
+        "japanese-iso-8bit",
+        &["japanese-iso-8bit", "euc-japan-1990", "euc-japan", "euc-jp"],
+    ),
     ("eucjp-ms", &["eucjp-ms"]),
     ("iso-2022-jp-3", &["iso-2022-jp-2004", "iso-2022-jp-3"]),
     ("iso-2022-jp-2004", &["iso-2022-jp-2004", "iso-2022-jp-3"]),
     ("euc-jisx0213", &["euc-jis-2004", "euc-jisx0213"]),
     ("euc-jis-2004", &["euc-jis-2004", "euc-jisx0213"]),
-    ("shift_jis-2004", &["japanese-shift-jis-2004", "shift_jis-2004"]),
-    ("japanese-shift-jis-2004", &["japanese-shift-jis-2004", "shift_jis-2004"]),
+    (
+        "shift_jis-2004",
+        &["japanese-shift-jis-2004", "shift_jis-2004"],
+    ),
+    (
+        "japanese-shift-jis-2004",
+        &["japanese-shift-jis-2004", "shift_jis-2004"],
+    ),
     ("cp281", &["ibm281", "ebcdic-jp-e", "cp281"]),
     ("ebcdic-jp-e", &["ibm281", "ebcdic-jp-e", "cp281"]),
     ("ibm281", &["ibm281", "ebcdic-jp-e", "cp281"]),
     ("cp290", &["ibm290", "ebcdic-jp-kana", "cp290"]),
     ("ebcdic-jp-kana", &["ibm290", "ebcdic-jp-kana", "cp290"]),
     ("ibm290", &["ibm290", "ebcdic-jp-kana", "cp290"]),
-    ("ks_c_5601-1987", &["korean-iso-8bit", "euc-kr", "euc-korea", "ks_c_5601-1987"]),
-    ("euc-korea", &["korean-iso-8bit", "euc-kr", "euc-korea", "ks_c_5601-1987"]),
-    ("euc-kr", &["korean-iso-8bit", "euc-kr", "euc-korea", "ks_c_5601-1987"]),
-    ("korean-iso-8bit", &["korean-iso-8bit", "euc-kr", "euc-korea", "ks_c_5601-1987"]),
-    ("korean-iso-7bit-lock", &["iso-2022-kr", "korean-iso-7bit-lock"]),
+    (
+        "ks_c_5601-1987",
+        &["korean-iso-8bit", "euc-kr", "euc-korea", "ks_c_5601-1987"],
+    ),
+    (
+        "euc-korea",
+        &["korean-iso-8bit", "euc-kr", "euc-korea", "ks_c_5601-1987"],
+    ),
+    (
+        "euc-kr",
+        &["korean-iso-8bit", "euc-kr", "euc-korea", "ks_c_5601-1987"],
+    ),
+    (
+        "korean-iso-8bit",
+        &["korean-iso-8bit", "euc-kr", "euc-korea", "ks_c_5601-1987"],
+    ),
+    (
+        "korean-iso-7bit-lock",
+        &["iso-2022-kr", "korean-iso-7bit-lock"],
+    ),
     ("iso-2022-kr", &["iso-2022-kr", "korean-iso-7bit-lock"]),
     ("cp949", &["korean-cp949", "cp949"]),
     ("korean-cp949", &["korean-cp949", "cp949"]),
     ("lao", &["lao"]),
-    ("tis-620", &["thai-tis620", "th-tis620", "tis620", "tis-620"]),
+    (
+        "tis-620",
+        &["thai-tis620", "th-tis620", "tis620", "tis-620"],
+    ),
     ("tis620", &["thai-tis620", "th-tis620", "tis620", "tis-620"]),
-    ("th-tis620", &["thai-tis620", "th-tis620", "tis620", "tis-620"]),
-    ("thai-tis620", &["thai-tis620", "th-tis620", "tis620", "tis-620"]),
+    (
+        "th-tis620",
+        &["thai-tis620", "th-tis620", "tis620", "tis-620"],
+    ),
+    (
+        "thai-tis620",
+        &["thai-tis620", "th-tis620", "tis620", "tis-620"],
+    ),
     ("ibm874", &["cp874", "ibm874"]),
     ("cp874", &["cp874", "ibm874"]),
     ("iso-8859-11", &["iso-8859-11"]),
@@ -6435,11 +6816,56 @@ pub(crate) const CODING_ALIASES: &[(&str, &[&str])] = &[
     ("tibetan-iso-8bit", &["tibetan-iso-8bit", "tibetan"]),
     ("viscii", &["vietnamese-viscii", "viscii"]),
     ("vietnamese-viscii", &["vietnamese-viscii", "viscii"]),
-    ("tcvn-5712", &["vietnamese-vscii", "vscii", "vietnamese-tcvn", "tcvn", "tcvn-5712"]),
-    ("tcvn", &["vietnamese-vscii", "vscii", "vietnamese-tcvn", "tcvn", "tcvn-5712"]),
-    ("vietnamese-tcvn", &["vietnamese-vscii", "vscii", "vietnamese-tcvn", "tcvn", "tcvn-5712"]),
-    ("vscii", &["vietnamese-vscii", "vscii", "vietnamese-tcvn", "tcvn", "tcvn-5712"]),
-    ("vietnamese-vscii", &["vietnamese-vscii", "vscii", "vietnamese-tcvn", "tcvn", "tcvn-5712"]),
+    (
+        "tcvn-5712",
+        &[
+            "vietnamese-vscii",
+            "vscii",
+            "vietnamese-tcvn",
+            "tcvn",
+            "tcvn-5712",
+        ],
+    ),
+    (
+        "tcvn",
+        &[
+            "vietnamese-vscii",
+            "vscii",
+            "vietnamese-tcvn",
+            "tcvn",
+            "tcvn-5712",
+        ],
+    ),
+    (
+        "vietnamese-tcvn",
+        &[
+            "vietnamese-vscii",
+            "vscii",
+            "vietnamese-tcvn",
+            "tcvn",
+            "tcvn-5712",
+        ],
+    ),
+    (
+        "vscii",
+        &[
+            "vietnamese-vscii",
+            "vscii",
+            "vietnamese-tcvn",
+            "tcvn",
+            "tcvn-5712",
+        ],
+    ),
+    (
+        "vietnamese-vscii",
+        &[
+            "vietnamese-vscii",
+            "vscii",
+            "vietnamese-tcvn",
+            "tcvn",
+            "tcvn-5712",
+        ],
+    ),
     ("viqr", &["vietnamese-viqr", "viqr"]),
     ("vietnamese-viqr", &["vietnamese-viqr", "viqr"]),
     ("cp1258", &["windows-1258", "cp1258"]),
@@ -6673,8 +7099,7 @@ fn f_window_at_side_p(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     // the root extent is (0,0,frame-width,minibuffer-top) — i.e. the
     // frame minus the echo area.
     let w = match arg(&a, 0) {
-        Value::Nil => crate::editor::sel_window(i)
-            .ok_or_else(|| i.error("no selected window"))?,
+        Value::Nil => crate::editor::sel_window(i).ok_or_else(|| i.error("no selected window"))?,
         Value::Window(w) => w,
         other => {
             let shown = i.princ_to_string(&other);
@@ -6695,8 +7120,7 @@ fn f_window_at_side_p(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let wid = w.borrow().id;
     let frame = i.frames.iter().find(|f| {
         f.borrow().windows.iter().any(|w2| w2.borrow().id == wid)
-            || f
-                .borrow()
+            || f.borrow()
                 .minibuffer
                 .as_ref()
                 .map(|m| m.borrow().id == wid)
@@ -6956,7 +7380,10 @@ fn f_font_at(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     if let Value::Str(s) = arg(&a, 2) {
         let len = s.borrow().chars().count() as i128;
         if pos < 0 || pos >= len.max(1) {
-            return Err(aoor(i, vec![Value::Int(pos), Value::Int(0), Value::Int(len)]));
+            return Err(aoor(
+                i,
+                vec![Value::Int(pos), Value::Int(0), Value::Int(len)],
+            ));
         }
         return Ok(Value::Nil);
     }
@@ -6974,7 +7401,10 @@ fn f_font_at(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         None => (1, 1),
     };
     if pos < begv || pos >= zv {
-        return Err(aoor(i, vec![Value::Int(pos), Value::Int(begv), Value::Int(zv)]));
+        return Err(aoor(
+            i,
+            vec![Value::Int(pos), Value::Int(begv), Value::Int(zv)],
+        ));
     }
     Ok(Value::Nil)
 }
@@ -7058,9 +7488,7 @@ fn f_ns_display(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         Some(v) if crate::editor::is_terminal(i, v) => {
             Err(i.error("Terminal 0 is not a Nextstep display"))
         }
-        Some(Value::Frame(_)) => {
-            Err(i.error("Terminal 0 is not a Nextstep display"))
-        }
+        Some(Value::Frame(_)) => Err(i.error("Terminal 0 is not a Nextstep display")),
         Some(other) => Err(i.wrong_type_mut("frame-live-p", other)),
     }
 }
@@ -7074,11 +7502,7 @@ fn f_image_type(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         return Err(i.error(format!("Invalid image file name ‘{shown}’")));
     };
     let name = s.borrow().clone();
-    let ext = name
-        .rsplit('.')
-        .next()
-        .unwrap_or("")
-        .to_ascii_lowercase();
+    let ext = name.rsplit('.').next().unwrap_or("").to_ascii_lowercase();
     let has_dot = name.contains('.');
     let ty = if has_dot {
         match ext.as_str() {
@@ -7116,8 +7540,18 @@ fn f_image_type_available_p(i: &mut Interp, a: Vec<Value>) -> EvalResult {
             let n = i.symbol_name(*s);
             matches!(
                 n.as_str(),
-                "png" | "gif" | "jpeg" | "webp" | "bmp" | "xpm" | "pbm" | "xbm"
-                    | "postscript" | "tiff" | "svg" | "heic"
+                "png"
+                    | "gif"
+                    | "jpeg"
+                    | "webp"
+                    | "bmp"
+                    | "xpm"
+                    | "pbm"
+                    | "xbm"
+                    | "postscript"
+                    | "tiff"
+                    | "svg"
+                    | "heic"
             )
         }
         _ => false,
@@ -7150,8 +7584,18 @@ fn valid_image_spec(i: &Interp, v: &Value) -> bool {
                     if let Value::Sym(s) = &val {
                         ty = matches!(
                             i.symbol_name(*s).as_str(),
-                            "png" | "gif" | "jpeg" | "webp" | "bmp" | "xpm" | "pbm"
-                                | "xbm" | "postscript" | "tiff" | "svg" | "heic"
+                            "png"
+                                | "gif"
+                                | "jpeg"
+                                | "webp"
+                                | "bmp"
+                                | "xpm"
+                                | "pbm"
+                                | "xbm"
+                                | "postscript"
+                                | "tiff"
+                                | "svg"
+                                | "heic"
                         );
                     }
                 }
@@ -7235,14 +7679,35 @@ fn f_get_display_property(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 /// `gnutls-available-p' — GNU returns the GnuTLS capability list.
 fn f_gnutls_available_p(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
     const CAPS: &[&str] = &[
-        "Key Share", "Post Handshake Auth", "PSK Key Exchange Modes", "Cookie",
-        "Supported Versions", "Early Data", "Pre Shared Key", "Session Ticket",
-        "Record Size Limit", "Compress Certificate", "Extended Master Secret",
-        "Encrypt-then-MAC", "Server Certificate Type", "Client Certificate Type",
-        "ALPN", "SRTP", "Signature Algorithms", "Supported EC Point Formats",
-        "Supported Groups", "OCSP Status Request", "Maximum Record Size",
-        "Server Name Indication", "macs", "AEAD-ciphers", "ciphers", "digests",
-        "gnutls3", "ClientHello Padding", "gnutls",
+        "Key Share",
+        "Post Handshake Auth",
+        "PSK Key Exchange Modes",
+        "Cookie",
+        "Supported Versions",
+        "Early Data",
+        "Pre Shared Key",
+        "Session Ticket",
+        "Record Size Limit",
+        "Compress Certificate",
+        "Extended Master Secret",
+        "Encrypt-then-MAC",
+        "Server Certificate Type",
+        "Client Certificate Type",
+        "ALPN",
+        "SRTP",
+        "Signature Algorithms",
+        "Supported EC Point Formats",
+        "Supported Groups",
+        "OCSP Status Request",
+        "Maximum Record Size",
+        "Server Name Indication",
+        "macs",
+        "AEAD-ciphers",
+        "ciphers",
+        "digests",
+        "gnutls3",
+        "ClientHello Padding",
+        "gnutls",
     ];
     let vals: Vec<Value> = CAPS.iter().map(|c| Value::Sym(i.intern(c))).collect();
     Ok(Value::list(vals))
@@ -7381,11 +7846,27 @@ fn f_set_alt_font_registry_alist(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 /// known face attribute name.
 fn f_set_lisp_face_attr_resource(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     const ATTRS: &[&str] = &[
-        ":family", ":foundry", ":width", ":height", ":weight", ":slant",
-        ":underline", ":inverse-video", ":foreground", ":background",
-        ":stipple", ":overline", ":strike-through", ":box", ":font",
-        ":inherit", ":fontset", ":distant-foreground", ":extend",
-        ":bold", ":italic",
+        ":family",
+        ":foundry",
+        ":width",
+        ":height",
+        ":weight",
+        ":slant",
+        ":underline",
+        ":inverse-video",
+        ":foreground",
+        ":background",
+        ":stipple",
+        ":overline",
+        ":strike-through",
+        ":box",
+        ":font",
+        ":inherit",
+        ":fontset",
+        ":distant-foreground",
+        ":extend",
+        ":bold",
+        ":italic",
     ];
     match &a[1] {
         Value::Sym(s) if ATTRS.contains(&i.symbol_name(*s).as_str()) => Ok(Value::Nil),
@@ -7521,9 +8002,7 @@ fn f_window_preserve_size(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         other => return Err(i.wrong_type_mut("window-live-p", &other)),
     };
     let buf = match w {
-        Some(w) => i
-            .buffer_value(w.borrow().buffer)
-            .unwrap_or(Value::Nil),
+        Some(w) => i.buffer_value(w.borrow().buffer).unwrap_or(Value::Nil),
         None => Value::Nil,
     };
     Ok(Value::list(vec![buf, Value::Nil, Value::Nil]))
@@ -7618,9 +8097,19 @@ fn decode_bytes(canonical: &str, bytes: &[u8]) -> String {
     use super::enc_tables::*;
     let utf8ish = matches!(
         canonical,
-        "utf-8" | "mule-utf-8" | "cp65001" | "utf-8-auto" | "utf-8-emacs"
-            | "utf-8-hfs" | "utf-8-nfd" | "utf-8-with-signature" | "prefer-utf-8"
-            | "no-conversion" | "raw-text" | "binary" | "no-conversion-multibyte"
+        "utf-8"
+            | "mule-utf-8"
+            | "cp65001"
+            | "utf-8-auto"
+            | "utf-8-emacs"
+            | "utf-8-hfs"
+            | "utf-8-nfd"
+            | "utf-8-with-signature"
+            | "prefer-utf-8"
+            | "no-conversion"
+            | "raw-text"
+            | "binary"
+            | "no-conversion-multibyte"
             | "undecided"
     );
     if utf8ish {
@@ -7631,8 +8120,8 @@ fn decode_bytes(canonical: &str, bytes: &[u8]) -> String {
         return bytes.iter().map(|&b| b as char).collect();
     }
     let single: Option<&[(u32, u64)]> = match canonical {
-        "iso-latin-2" | "iso-latin-3" | "iso-latin-4" | "iso-latin-5"
-        | "iso-latin-9" | "iso-latin-10" | "us-ascii" => Some(&[]),
+        "iso-latin-2" | "iso-latin-3" | "iso-latin-4" | "iso-latin-5" | "iso-latin-9"
+        | "iso-latin-10" | "us-ascii" => Some(&[]),
         "cyrillic-koi8" => Some(ENC_KOI8_R),
         "windows-1251" => Some(ENC_WINDOWS_1251),
         "mac-roman" => Some(ENC_MAC_ROMAN),
@@ -7646,9 +8135,7 @@ fn decode_bytes(canonical: &str, bytes: &[u8]) -> String {
                     b as char
                 } else {
                     t.iter()
-                        .find(|(_, p)| {
-                            (p >> 56) == 1 && ((p >> 48) & 0xFF) == b as u64
-                        })
+                        .find(|(_, p)| (p >> 56) == 1 && ((p >> 48) & 0xFF) == b as u64)
                         .and_then(|(u, _)| char::from_u32(*u))
                         .unwrap_or('?')
                 }
@@ -7831,13 +8318,21 @@ fn encode_one_char(canonical: &str, c: u32) -> Option<Vec<u8>> {
         });
     }
     match canonical {
-        "utf-8" | "mule-utf-8" | "cp65001" | "utf-8-auto" | "utf-8-emacs"
-        | "utf-8-hfs" | "utf-8-nfd" | "utf-8-with-signature" | "prefer-utf-8"
-        | "no-conversion" | "raw-text" | "binary" | "no-conversion-multibyte" => {
-            char::from_u32(c).map(|ch| ch.to_string().into_bytes())
-        }
-        "iso-latin-1" | "iso-latin-2" | "iso-latin-3" | "iso-latin-4"
-        | "iso-latin-5" | "iso-latin-9" | "iso-latin-10" => {
+        "utf-8"
+        | "mule-utf-8"
+        | "cp65001"
+        | "utf-8-auto"
+        | "utf-8-emacs"
+        | "utf-8-hfs"
+        | "utf-8-nfd"
+        | "utf-8-with-signature"
+        | "prefer-utf-8"
+        | "no-conversion"
+        | "raw-text"
+        | "binary"
+        | "no-conversion-multibyte" => char::from_u32(c).map(|ch| ch.to_string().into_bytes()),
+        "iso-latin-1" | "iso-latin-2" | "iso-latin-3" | "iso-latin-4" | "iso-latin-5"
+        | "iso-latin-9" | "iso-latin-10" => {
             if c <= 0xFF {
                 Some(vec![c as u8])
             } else {
@@ -7847,9 +8342,7 @@ fn encode_one_char(canonical: &str, c: u32) -> Option<Vec<u8>> {
         "utf-16" | "utf-16be" | "utf-16be-with-signature" => {
             Some(vec![(c >> 8) as u8, (c & 0xFF) as u8])
         }
-        "utf-16le" | "utf-16le-with-signature" => {
-            Some(vec![(c & 0xFF) as u8, (c >> 8) as u8])
-        }
+        "utf-16le" | "utf-16le-with-signature" => Some(vec![(c & 0xFF) as u8, (c >> 8) as u8]),
         _ => None,
     }
 }
@@ -7865,8 +8358,7 @@ fn f_encode_coding_char(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let canonical = coding_canonical(i, &a[1]);
     Ok(match encode_one_char(&canonical, c) {
         Some(bs) => {
-            let sv =
-                Value::string(bs.iter().map(|&b| b as char).collect::<String>());
+            let sv = Value::string(bs.iter().map(|&b| b as char).collect::<String>());
             if let Value::Str(r) = &sv {
                 i.mark_unibyte(r);
             }
@@ -7921,7 +8413,11 @@ fn f_frame_configuration_p(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 fn f_current_frame_configuration(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
     let fr = match sel_frame(i) {
         Some(f) => Value::Frame(f),
-        None => return Ok(Value::list(vec![Value::Sym(i.intern("frame-configuration"))])),
+        None => {
+            return Ok(Value::list(vec![Value::Sym(
+                i.intern("frame-configuration"),
+            )]));
+        }
     };
     let params = crate::editor::f_frame_parameters(i, vec![fr.clone()])?;
     let wc = crate::editor::f_current_window_configuration(i, vec![fr.clone()])?;
@@ -8113,32 +8609,22 @@ fn f_window_in_direction(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         Left,
         Right,
     }
-    let dir = match i
-        .sym_id(&a[0])
-        .map(|s| i.symbol_name(s))
-        .as_deref()
-    {
+    let dir = match i.sym_id(&a[0]).map(|s| i.symbol_name(s)).as_deref() {
         Some("up") | Some("above") => Dir::Above,
         Some("down") | Some("below") => Dir::Below,
         Some("left") => Dir::Left,
         Some("right") => Dir::Right,
-        _ => {
-            return Err(i.error(format!(
-                "Wrong direction {}",
-                i.princ_to_string(&a[0])
-            )))
-        }
+        _ => return Err(i.error(format!("Wrong direction {}", i.princ_to_string(&a[0])))),
     };
     // window-normalize-window WINDOW t — nil means selected.
     let window = match arg(&a, 1) {
-        Value::Nil => crate::editor::sel_window(i)
-            .ok_or_else(|| i.error("no selected window"))?,
+        Value::Nil => crate::editor::sel_window(i).ok_or_else(|| i.error("no selected window"))?,
         Value::Window(w) if !w.borrow().dead => w,
         other => {
             return Err(i.error(format!(
                 "{} is not a live window",
                 i.princ_to_string(&other)
-            )))
+            )));
         }
     };
     let ignore = arg(&a, 2).truthy();
@@ -8152,8 +8638,7 @@ fn f_window_in_direction(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         .iter()
         .find(|f| {
             f.borrow().windows.iter().any(|w| w.borrow().id == wid)
-                || f
-                    .borrow()
+                || f.borrow()
                     .minibuffer
                     .as_ref()
                     .map(|m| m.borrow().id == wid)
@@ -8178,7 +8663,11 @@ fn f_window_in_direction(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let first = if hor { wleft } else { wtop };
     let last = first + if hor { wwid } else { whgt };
     let posn = if sign < 0 {
-        if hor { wtop + whgt - 1 } else { wleft + wwid - 1 }
+        if hor {
+            wtop + whgt - 1
+        } else {
+            wleft + wwid - 1
+        }
     } else if sign > 0 {
         if hor { wtop } else { wleft }
     } else {
@@ -8284,8 +8773,7 @@ fn f_window_in_direction(i: &mut Interp, a: Vec<Value>) -> EvalResult {
             continue;
         }
         if !ignore && !iwp {
-            let no_other =
-                crate::lisp::eval::plist_get(&w.borrow().params, no_ow);
+            let no_other = crate::lisp::eval::plist_get(&w.borrow().params, no_ow);
             if no_other.truthy() {
                 continue;
             }
@@ -8321,11 +8809,7 @@ fn f_window_in_direction(i: &mut Interp, a: Vec<Value>) -> EvalResult {
                 || (matches!(dir, Dir::Right) && last <= wl)
             {
                 // W is on the right side axis but doesn't cover posn.
-                let diff = if wt > posn {
-                    wt - posn
-                } else {
-                    posn - wt - wh
-                };
+                let diff = if wt > posn { wt - posn } else { posn - wt - wh };
                 if diff < best_diff_2
                     || (diff == best_diff_2
                         && match dir {
@@ -8371,11 +8855,7 @@ fn f_window_in_direction(i: &mut Interp, a: Vec<Value>) -> EvalResult {
             } else if (matches!(dir, Dir::Above) && wt + wh <= first)
                 || (matches!(dir, Dir::Below) && last <= wt)
             {
-                let diff = if wl > posn {
-                    wl - posn
-                } else {
-                    posn - wl - ww
-                };
+                let diff = if wl > posn { wl - posn } else { posn - wl - ww };
                 if diff < best_diff_2
                     || (diff == best_diff_2
                         && match dir {
@@ -8390,10 +8870,7 @@ fn f_window_in_direction(i: &mut Interp, a: Vec<Value>) -> EvalResult {
             }
         }
     }
-    Ok(best
-        .or(best_2)
-        .map(Value::Window)
-        .unwrap_or(Value::Nil))
+    Ok(best.or(best_2).map(Value::Window).unwrap_or(Value::Nil))
 }
 
 fn f_window_normalize(i: &mut Interp, a: Vec<Value>) -> EvalResult {
@@ -8650,11 +9127,7 @@ fn ct_raw(i: &Interp, cb: &[Value], c: u32) -> Value {
 /// `ct_raw' with the `sub-char-table' tag id (None = no sub-tables
 /// can exist, so every slot is scalar).  Usable from `Syn' snapshots
 /// and other `&Interp'-free contexts.
-pub(crate) fn ct_raw_tag(
-    tag: Option<SymId>,
-    cb: &[Value],
-    c: u32,
-) -> Value {
+pub(crate) fn ct_raw_tag(tag: Option<SymId>, cb: &[Value], c: u32) -> Value {
     let is_sub = |v: &Value| tag.is_some_and(|t| is_sub_ct_tag(t, v));
     if c > CT_MAX_CHAR {
         return Value::Nil;
@@ -8668,7 +9141,10 @@ pub(crate) fn ct_raw_tag(
             None => Value::Nil,
         };
     }
-    let mut cur = cb.get(1 + (c >> 16) as usize).cloned().unwrap_or(Value::Nil);
+    let mut cur = cb
+        .get(1 + (c >> 16) as usize)
+        .cloned()
+        .unwrap_or(Value::Nil);
     loop {
         match cur {
             v if is_sub(&v) => {
@@ -8728,7 +9204,12 @@ fn sub_ct_set(i: &mut Interp, sub: &Value, c: u32, val: Value) {
     let child = if is_sub_ct(i, &child) {
         child
     } else {
-        let n = make_sub_ct(i, depth + 1, min + (idx as u32) * (1 << CHARTAB_BITS[depth]), child);
+        let n = make_sub_ct(
+            i,
+            depth + 1,
+            min + (idx as u32) * (1 << CHARTAB_BITS[depth]),
+            child,
+        );
         r.borrow_mut()[3 + idx] = n.clone();
         n
     };
@@ -9030,11 +9511,7 @@ fn sub_ct_optimize(i: &mut Interp, sub: &Value, test: &Value) -> Value {
             optimizable = false;
         }
     }
-    if optimizable {
-        first
-    } else {
-        sub.clone()
-    }
+    if optimizable { first } else { sub.clone() }
 }
 
 /// `Foptimize_char_table' inner: optimize each top-level slot and
@@ -9220,10 +9697,7 @@ fn f_set_char_table_range(i: &mut Interp, a: Vec<Value>) -> EvalResult {
                 _ => return Err(i.wrong_type_mut("characterp", &to)),
             };
             if from > to {
-                return Err(i.signal_data(
-                    sym::ARGS_OUT_OF_RANGE,
-                    vec![a[0].clone(), a[1].clone()],
-                ));
+                return Err(i.signal_data(sym::ARGS_OUT_OF_RANGE, vec![a[0].clone(), a[1].clone()]));
             }
             ct_set_range(i, &a[0], from, to, val.clone());
         }
@@ -9288,13 +9762,7 @@ fn ct_effective_runs(i: &Interp, table: &Value, with_parent: bool) -> Vec<(u32, 
     let defalt = i.char_table_defalt(table);
     let spans = ct_spans(i, table)
         .into_iter()
-        .map(|(f, t, v)| {
-            (
-                f,
-                t,
-                if v.is_nil() { defalt.clone() } else { v },
-            )
-        })
+        .map(|(f, t, v)| (f, t, if v.is_nil() { defalt.clone() } else { v }))
         .collect();
     let runs = merge_runs(spans);
     let parent = i.char_table_parent(table);
@@ -9345,11 +9813,7 @@ fn f_map_char_table(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         } else {
             Value::cons(Value::Int(from as i128), Value::Int(to as i128))
         };
-        i.call_function(
-            &a[0],
-            &Value::list(vec![quoted(key), quoted(val)]),
-            None,
-        )?;
+        i.call_function(&a[0], &Value::list(vec![quoted(key), quoted(val)]), None)?;
     }
     Ok(Value::Nil)
 }
@@ -9677,8 +10141,6 @@ fn f_read_expression(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     }
 }
 
-
-
 fn f_one(_i: &mut Interp, _a: Vec<Value>) -> EvalResult {
     Ok(Value::Int(1))
 }
@@ -9950,10 +10412,9 @@ fn f_lossage_size(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         match v {
             Value::Int(n) if *n >= 100 => {}
             _ => {
-                return Err(i.signal_data(
-                    sym::USER_ERROR,
-                    vec![Value::string("Value must be >= 100")],
-                ));
+                return Err(
+                    i.signal_data(sym::USER_ERROR, vec![Value::string("Value must be >= 100")])
+                );
             }
         }
     }
@@ -10103,15 +10564,40 @@ fn f_make_glyph_code(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 /// must name a member of their enum, :size/:dpi a number.
 fn f_font_spec(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     const WEIGHTS: &[&str] = &[
-        "thin", "ultra-light", "extra-light", "light", "semi-light", "book", "normal",
-        "medium", "semi-bold", "demi-bold", "bold", "extra-bold", "ultra-bold",
+        "thin",
+        "ultra-light",
+        "extra-light",
+        "light",
+        "semi-light",
+        "book",
+        "normal",
+        "medium",
+        "semi-bold",
+        "demi-bold",
+        "bold",
+        "extra-bold",
+        "ultra-bold",
     ];
     const SLANTS: &[&str] = &[
-        "normal", "roman", "italic", "oblique", "reverse-italic", "reverse-oblique",
+        "normal",
+        "roman",
+        "italic",
+        "oblique",
+        "reverse-italic",
+        "reverse-oblique",
     ];
     const WIDTHS: &[&str] = &[
-        "ultra-condensed", "extra-condensed", "condensed", "semi-condensed", "narrow",
-        "normal", "regular", "medium", "semi-expanded", "expanded", "extra-expanded",
+        "ultra-condensed",
+        "extra-condensed",
+        "condensed",
+        "semi-condensed",
+        "narrow",
+        "normal",
+        "regular",
+        "medium",
+        "semi-expanded",
+        "expanded",
+        "extra-expanded",
         "ultra-expanded",
     ];
     let bad = |i: &mut Interp, p: &Value, v: &Value| -> Flow {
@@ -10127,11 +10613,17 @@ fn f_font_spec(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         if let Value::Sym(id) = prop {
             let name = i.symbol_name(*id).to_string();
             let invalid = match name.as_str() {
-                ":weight" => !matches!(val, Value::Sym(s) if WEIGHTS.contains(&i.symbol_name(*s).as_str()))
-                    && !matches!(val, Value::Int(_)),
-                ":slant" => !matches!(val, Value::Sym(s) if SLANTS.contains(&i.symbol_name(*s).as_str())),
-                ":width" => !matches!(val, Value::Sym(s) if WIDTHS.contains(&i.symbol_name(*s).as_str()))
-                    && !matches!(val, Value::Int(_)),
+                ":weight" => {
+                    !matches!(val, Value::Sym(s) if WEIGHTS.contains(&i.symbol_name(*s).as_str()))
+                        && !matches!(val, Value::Int(_))
+                }
+                ":slant" => {
+                    !matches!(val, Value::Sym(s) if SLANTS.contains(&i.symbol_name(*s).as_str()))
+                }
+                ":width" => {
+                    !matches!(val, Value::Sym(s) if WIDTHS.contains(&i.symbol_name(*s).as_str()))
+                        && !matches!(val, Value::Int(_))
+                }
                 ":size" | ":dpi" => !matches!(val, Value::Int(_) | Value::Float(_)),
                 _ => false,
             };
@@ -10166,10 +10658,7 @@ fn f_put_image(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 /// `pdumper-stats` — GNU returns an alist; we were never dumped.
 fn f_pdumper_stats(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
     Ok(Value::list(vec![
-        Value::cons(
-            Value::Sym(i.intern("dumped-with-pdumper")),
-            Value::Nil,
-        ),
+        Value::cons(Value::Sym(i.intern("dumped-with-pdumper")), Value::Nil),
         Value::cons(Value::Sym(i.intern("load-time")), Value::float(0.0)),
         Value::cons(Value::Sym(i.intern("dump-file-name")), Value::Nil),
     ]))
@@ -10336,15 +10825,16 @@ fn f_network_lookup_address_info(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let mut want6 = true;
     if let Some(fam) = a.get(1) {
         if !fam.is_nil() {
-            match i.sym_id(fam).map(|s| i.symbol_name(s).to_string()).as_deref() {
+            match i
+                .sym_id(fam)
+                .map(|s| i.symbol_name(s).to_string())
+                .as_deref()
+            {
                 Some("ipv4") => want6 = false,
                 Some("ipv6") => want4 = false,
                 _ => {
                     let e = i.intern("error");
-                    return Err(i.signal_data(
-                        e,
-                        vec![Value::string("Unsupported family")],
-                    ));
+                    return Err(i.signal_data(e, vec![Value::string("Unsupported family")]));
                 }
             }
         }
@@ -10394,7 +10884,10 @@ fn f_network_lookup_address_info(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 fn f_color_values_from_color_spec(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let s = want_string(i, &a[0])?;
     let hex = s.strip_prefix('#').unwrap_or("");
-    if !s.starts_with('#') || ![3, 4, 6, 9, 12].contains(&hex.len()) || !hex.chars().all(|c| c.is_ascii_hexdigit()) {
+    if !s.starts_with('#')
+        || ![3, 4, 6, 9, 12].contains(&hex.len())
+        || !hex.chars().all(|c| c.is_ascii_hexdigit())
+    {
         return Ok(Value::Nil);
     }
     let n = hex.len() / 3;
@@ -10457,7 +10950,11 @@ fn f_gc_heapsize(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
         mk(5, 8, 0),
         mk(6, 8, 0),
         mk(7, 56, 0),
-        Value::list(vec![Value::Sym(names[8]), Value::Int(1064), Value::Int(bufs)]),
+        Value::list(vec![
+            Value::Sym(names[8]),
+            Value::Int(1064),
+            Value::Int(bufs),
+        ]),
     ]))
 }
 
@@ -10711,10 +11208,26 @@ fn f_window_main_window(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 /// onto the 20-slot lface vector; anything else → all unspecified.
 fn f_face_attributes_as_vector(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     const ATTRS: [&str; 20] = [
-        "face", "family", "foundry", "width", "height", "weight", "slant",
-        "underline", "inverse-video", "foreground", "background", "stipple",
-        "overline", "strike-through", "box", "font", "inherit", "fontset",
-        "distant-foreground", "extend",
+        "face",
+        "family",
+        "foundry",
+        "width",
+        "height",
+        "weight",
+        "slant",
+        "underline",
+        "inverse-video",
+        "foreground",
+        "background",
+        "stipple",
+        "overline",
+        "strike-through",
+        "box",
+        "font",
+        "inherit",
+        "fontset",
+        "distant-foreground",
+        "extend",
     ];
     let unspec = i.intern("unspecified");
     let mut slots = vec![Value::Sym(unspec); 20];

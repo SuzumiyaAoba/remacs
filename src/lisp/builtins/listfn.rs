@@ -1354,6 +1354,7 @@ fn f_apply_partially(i: &mut Interp, args: Vec<Value>) -> EvalResult {
         bad_arglist: false,
         arglist: None,
         plain: false,
+        dumped_doc: false,
     };
     Ok(Value::Lambda(std::rc::Rc::new(lam)))
 }

@@ -6,8 +6,8 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use crate::editor::{
-    Window, WindowRef, f_window_list, frame_of, is_terminal, sel_frame, sel_window,
-    terminal_token, win_of,
+    Window, WindowRef, f_window_list, frame_of, is_terminal, sel_frame, sel_window, terminal_token,
+    win_of,
 };
 use crate::lisp::Interp;
 use crate::lisp::builtins::{S, arg, want_int};
@@ -199,7 +199,13 @@ pub(crate) static SUBRS: &[Subr] = &[
         f_other_window_for_scrolling,
         "Window to scroll."
     ),
-    S!("coordinates-in-window-p", 2, 2, f_coordinates_in_window_p, ""),
+    S!(
+        "coordinates-in-window-p",
+        2,
+        2,
+        f_coordinates_in_window_p,
+        ""
+    ),
     S!(
         "posn-at-point",
         0,
@@ -248,8 +254,20 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!("set-window-margins", 2, 3, f_set_window_margins, ""),
     S!("window-scroll-bars", 0, 1, f_window_scroll_bars, ""),
     S!("set-window-scroll-bars", 1, 6, f_set_window_scroll_bars, ""),
-    S!("window-current-scroll-bars", 0, 1, f_window_current_scroll_bars, ""),
-    S!("window-mode-line-height", 0, 1, f_window_mode_line_height, ""),
+    S!(
+        "window-current-scroll-bars",
+        0,
+        1,
+        f_window_current_scroll_bars,
+        ""
+    ),
+    S!(
+        "window-mode-line-height",
+        0,
+        1,
+        f_window_mode_line_height,
+        ""
+    ),
     S!("window-header-line-height", 0, 1, f_zero, ""),
     S!("window-tab-line-height", 0, 1, f_zero, ""),
     S!("window-bottom-divider-width", 0, 1, f_zero, ""),
@@ -265,7 +283,13 @@ pub(crate) static SUBRS: &[Subr] = &[
         f_window_screen_lines,
         "Lines visible."
     ),
-    S!("truncated-partial-width-window-p", 0, 1, f_truncated_partial_width, ""),
+    S!(
+        "truncated-partial-width-window-p",
+        0,
+        1,
+        f_truncated_partial_width,
+        ""
+    ),
     // --- pixel measurements (tty: 1 char = 1 col) ---
     S!(
         "window-text-height",
@@ -393,11 +417,29 @@ pub(crate) static SUBRS: &[Subr] = &[
     ),
     S!("set-frame-size", 3, 4, f_set_frame_size, "Set FRAME size."),
     S!("set-frame-position", 3, 3, f_set_frame_position, ""),
-    S!("set-frame-size-and-position-pixelwise", 5, 6, f_frame_live_arg_nil, ""),
-    S!("set-frame-window-state-change", 0, 2, f_frame_live_arg_nil, ""),
+    S!(
+        "set-frame-size-and-position-pixelwise",
+        5,
+        6,
+        f_frame_live_arg_nil,
+        ""
+    ),
+    S!(
+        "set-frame-window-state-change",
+        0,
+        2,
+        f_frame_live_arg_nil,
+        ""
+    ),
     S!("frame-window-state-change", 0, 1, f_frame_live_arg_nil, ""),
     S!("frame-after-make-frame", 2, 2, f_frame_after_make_frame, ""),
-    S!("frame--set-was-invisible", 2, 2, f_frame_set_was_invisible, ""),
+    S!(
+        "frame--set-was-invisible",
+        2,
+        2,
+        f_frame_set_was_invisible,
+        ""
+    ),
     S!("frame--z-order-lessp", 2, 3, f_true2, ""),
     S!("frame--face-hash-table", 0, 1, f_frame_face_hash_table, ""),
     S!("frame-font-cache", 0, 1, f_nil, ""),
@@ -430,13 +472,7 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!("tty-type", 0, 1, f_tty_type, "Terminal type name."),
     S!("tty-top-frame", 0, 1, f_frame_self, ""),
     S!("tty-no-underline", 0, 1, f_false, ""),
-    S!(
-        "tty-suppress-bold-inverse-default-colors",
-        1,
-        1,
-        f_arg0,
-        ""
-    ),
+    S!("tty-suppress-bold-inverse-default-colors", 1, 1, f_arg0, ""),
     S!("controlling-tty-p", 0, 1, f_controlling_tty_p, ""),
     S!("terminal-live-p", 1, 1, f_terminal_live_p, ""),
     S!("terminal-list", 0, 0, f_terminal_list, ""),
@@ -460,11 +496,35 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!("set-window-new-total", 2, 3, f_set_window_new_total, ""),
     S!("set-window-new-normal", 1, 2, f_set_window_new_normal, ""),
     S!("set-window-new-pixel", 2, 3, f_set_window_new_pixel, ""),
-    S!("set-window-combination-limit", 2, 2, f_set_window_combination_limit, ""),
-    S!("set-window-next-buffers", 2, 2, f_set_window_next_buffers, ""),
-    S!("set-window-prev-buffers", 2, 2, f_set_window_prev_buffers, ""),
+    S!(
+        "set-window-combination-limit",
+        2,
+        2,
+        f_set_window_combination_limit,
+        ""
+    ),
+    S!(
+        "set-window-next-buffers",
+        2,
+        2,
+        f_set_window_next_buffers,
+        ""
+    ),
+    S!(
+        "set-window-prev-buffers",
+        2,
+        2,
+        f_set_window_prev_buffers,
+        ""
+    ),
     S!("force-window-update", 0, 1, f_force_window_update, ""),
-    S!("resize-mini-window-internal", 1, 1, f_resize_mini_window_internal, ""),
+    S!(
+        "resize-mini-window-internal",
+        1,
+        1,
+        f_resize_mini_window_internal,
+        ""
+    ),
 ];
 
 fn f_nil(_i: &mut Interp, _a: Vec<Value>) -> EvalResult {
@@ -782,10 +842,7 @@ fn some_window_candidates(i: &mut Interp, a: &[Value]) -> Vec<WindowRef> {
                 let wb = w.borrow();
                 !wb.minibuffer
                     && (dedicated_ok || !wb.dedicated)
-                    && !(not_selected
-                        && sel.as_ref().map_or(false, |s| {
-                            s.borrow().id == wb.id
-                        }))
+                    && !(not_selected && sel.as_ref().map_or(false, |s| s.borrow().id == wb.id))
             })
             .cloned()
             .collect(),
@@ -901,19 +958,21 @@ fn f_get_mru_window(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 fn f_get_largest_window(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     // GNU Fget_largest_window: maximum pixel area (ties keep the
     // first, i.e. the least recently used among equals).
-    match some_window_candidates(i, &a)
-        .iter()
-        .rev()
-        .max_by_key(|w| {
-            let wb = w.borrow();
-            wb.width * wb.height
-        }) {
+    match some_window_candidates(i, &a).iter().rev().max_by_key(|w| {
+        let wb = w.borrow();
+        wb.width * wb.height
+    }) {
         Some(w) => Ok(Value::Window(w.clone())),
         None => Ok(Value::Nil),
     }
 }
 
 fn f_posn_at_point(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    if i.noninteractive {
+        // GNU: no window exists in batch mode, so the position isn't
+        // visible anywhere and the whole posn is nil.
+        return Ok(Value::Nil);
+    }
     let pos = a.get(0).and_then(|v| v.int()).unwrap_or_else(|| {
         i.current_buffer_ref()
             .map(|b| b.borrow().point() as i128 + 1)
@@ -997,8 +1056,16 @@ fn f_window_margins(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     };
     let m = w.borrow().margins;
     // GNU always returns (LEFT . RIGHT), nil sides for zero margins.
-    let lv = if m.0 == 0 { Value::Nil } else { Value::Int(m.0 as i128) };
-    let rv = if m.1 == 0 { Value::Nil } else { Value::Int(m.1 as i128) };
+    let lv = if m.0 == 0 {
+        Value::Nil
+    } else {
+        Value::Int(m.0 as i128)
+    };
+    let rv = if m.1 == 0 {
+        Value::Nil
+    } else {
+        Value::Int(m.1 as i128)
+    };
     Ok(Value::cons(lv, rv))
 }
 
@@ -1058,12 +1125,7 @@ fn f_frame_root_window(i: &mut Interp, a: Vec<Value>) -> EvalResult {
             // The root covers the content area: from the topmost
             // child edge (0 before the first split, 1 once GNU's
             // menu-bar row materialized) down to the echo area.
-            let top = fb
-                .windows
-                .iter()
-                .map(|w| w.borrow().top)
-                .min()
-                .unwrap_or(0);
+            let top = fb.windows.iter().map(|w| w.borrow().top).min().unwrap_or(0);
             let mut rb = r.borrow_mut();
             rb.left = 0;
             rb.top = top;
@@ -1221,11 +1283,7 @@ fn f_window_sizable_p(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         let size = match &wv {
             Value::Window(w) => {
                 let w = w.borrow();
-                if horiz {
-                    w.width
-                } else {
-                    w.height
-                }
+                if horiz { w.width } else { w.height }
             }
             _ => {
                 if horiz {

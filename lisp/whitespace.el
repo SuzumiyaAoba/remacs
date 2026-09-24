@@ -41,7 +41,57 @@
     (message "Can't %s: %s is read-only" msg (buffer-name))))
 
 (defun whitespace-cleanup ()
-  "Cleanup some blank problems in all buffer or at region."
+  "Cleanup some blank problems in all buffer or at region.
+
+It usually applies to the whole buffer, but in transient mark
+mode when the mark is active, it applies to the region.  It also
+applies to the region when it is not in transient mark mode, the
+mark is active and \\[universal-argument] was pressed just before
+calling `whitespace-cleanup' interactively.
+
+See also `whitespace-cleanup-region'.
+
+The problems cleaned up are:
+
+1. empty lines at beginning of buffer.
+2. empty lines at end of buffer.
+   If `whitespace-style' includes the value `empty', remove all
+   empty lines at beginning and/or end of buffer.
+
+3. `tab-width' or more SPACEs at beginning of line.
+   If `whitespace-style' includes the value `indentation':
+   replace `tab-width' or more SPACEs at beginning of line by
+   TABs, if `indent-tabs-mode' is non-nil; otherwise, replace TABs by
+   SPACEs.
+   If `whitespace-style' includes the value `indentation::tab',
+   replace `tab-width' or more SPACEs at beginning of line by TABs.
+   If `whitespace-style' includes the value `indentation::space',
+   replace TABs by SPACEs.
+
+4. SPACEs before TAB.
+   If `whitespace-style' includes the value `space-before-tab':
+   replace SPACEs by TABs, if `indent-tabs-mode' is non-nil;
+   otherwise, replace TABs by SPACEs.
+   If `whitespace-style' includes the value
+   `space-before-tab::tab', replace SPACEs by TABs.
+   If `whitespace-style' includes the value
+   `space-before-tab::space', replace TABs by SPACEs.
+
+5. SPACEs or TABs at end of line.
+   If `whitespace-style' includes the value `trailing', remove
+   all SPACEs or TABs at end of line.
+
+6. `tab-width' or more SPACEs after TAB.
+   If `whitespace-style' includes the value `space-after-tab':
+   replace SPACEs by TABs, if `indent-tabs-mode' is non-nil;
+   otherwise, replace TABs by SPACEs.
+   If `whitespace-style' includes the value
+   `space-after-tab::tab', replace SPACEs by TABs.
+   If `whitespace-style' includes the value
+   `space-after-tab::space', replace TABs by SPACEs.
+
+See `whitespace-style', `indent-tabs-mode' and `tab-width' for
+documentation."
   (interactive "@")
   (cond
    ;; read-only buffer

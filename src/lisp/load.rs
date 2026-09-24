@@ -72,9 +72,11 @@ pub(crate) fn locate(i: &mut Interp, name: &str) -> Option<String> {
 static EMBEDDED_LISP: &[(&str, &str)] = &[
     ("avl-tree", include_str!("../../lisp/avl-tree.el")),
     ("cl-macs", include_str!("../../lisp/cl-macs.el")),
+    ("color", include_str!("../../lisp/color.el")),
     ("dom", include_str!("../../lisp/dom.el")),
     ("easy-mmode", include_str!("../../lisp/easy-mmode.el")),
     ("eieio", include_str!("../../lisp/eieio.el")),
+    ("face-remap", include_str!("../../lisp/face-remap.el")),
     ("gv", include_str!("../../lisp/gv.el")),
     ("hi-lock", include_str!("../../lisp/hi-lock.el")),
     ("kmacro", include_str!("../../lisp/kmacro.el")),
@@ -84,6 +86,8 @@ static EMBEDDED_LISP: &[(&str, &str)] = &[
     ("minibuf-eldef", include_str!("../../lisp/minibuf-eldef.el")),
     ("pcase", include_str!("../../lisp/pcase.el")),
     ("pp", include_str!("../../lisp/pp.el")),
+    ("pulse", include_str!("../../lisp/pulse.el")),
+    ("repeat", include_str!("../../lisp/repeat.el")),
     ("ring", include_str!("../../lisp/ring.el")),
     ("subr-x", include_str!("../../lisp/subr-x.el")),
     ("thingatpt", include_str!("../../lisp/thingatpt.el")),
@@ -186,12 +190,17 @@ fn eval_src(i: &mut Interp, file: &str, src: &str, force_lex: bool) -> EvalResul
         i.face_table.push(("icon".to_string(), Value::Nil));
         i.face_table.push(("icon-button".to_string(), Value::Nil));
     }
-    let flist =
-        Value::list(i.features.iter().map(|s| i.sym(*s)).collect::<Vec<_>>());
+    let flist = Value::list(i.features.iter().map(|s| i.sym(*s)).collect::<Vec<_>>());
     let fid = i.intern("features");
     i.obarray.symbol_mut(fid).value = flist;
     i.specbind(cll, Value::Nil)?;
+    // Embedded (`builtin:') libraries play the role of GNU's dumped
+    // .elc files: functions defined while they load keep
+    // `dumped_doc' docstring semantics.
+    let was_dumped = i.loading_dumped;
+    i.loading_dumped |= file.starts_with("builtin:");
     let r = eval_str_for_load(i, &src);
+    i.loading_dumped = was_dumped;
     if r.is_ok() {
         // GNU records the file in `load-history': (FILE . ENTRIES),
         // newest file first, entries in evaluation order.
@@ -216,10 +225,7 @@ fn eval_src(i: &mut Interp, file: &str, src: &str, force_lex: bool) -> EvalResul
 fn run_after_load(i: &mut Interp, file: &str) {
     let alist_sym = i.intern("after-load-alist");
     let sm_sym = i.intern("string-match");
-    let entries = i
-        .symbol_value(alist_sym)
-        .list_to_vec()
-        .unwrap_or_default();
+    let entries = i.symbol_value(alist_sym).list_to_vec().unwrap_or_default();
     for entry in entries {
         let mut parts = entry.list_to_vec().unwrap_or_default();
         if parts.is_empty() {
@@ -294,8 +300,7 @@ fn eval_for_load(i: &mut Interp, form: Value) -> EvalResult {
         }
         return Ok(last);
     }
-    let expanded = match crate::lisp::builtins::evalfn::macroexpand_all(i, &form)
-    {
+    let expanded = match crate::lisp::builtins::evalfn::macroexpand_all(i, &form) {
         Ok(f) => f,
         // GNU's `internal-macroexpand-for-load' wraps expansion
         // failures: it re-signals (error "Eager macro-expansion
@@ -395,7 +400,9 @@ fn record_form_tree(i: &mut Interp, form: &Value) {
 /// for variables, `(defface . SYM)', `(provide . FEAT)' and
 /// `(require . FEAT)'.
 fn record_load_entry(i: &mut Interp, form: &Value) {
-    let Some(items) = form.list_to_vec().ok() else { return };
+    let Some(items) = form.list_to_vec().ok() else {
+        return;
+    };
     let Some(&Value::Sym(head)) = items.first() else {
         return;
     };
@@ -406,9 +413,7 @@ fn record_load_entry(i: &mut Interp, form: &Value) {
             v @ Value::Sym(_) => Some(v.clone()),
             Value::Cons(_) => {
                 let q = items[1].list_to_vec().ok()?;
-                if q.len() == 2
-                    && matches!(&q[0], Value::Sym(s) if *s == quote_id)
-                {
+                if q.len() == 2 && matches!(&q[0], Value::Sym(s) if *s == quote_id) {
                     Some(q[1].clone())
                 } else {
                     None
@@ -446,21 +451,15 @@ fn record_load_entry(i: &mut Interp, form: &Value) {
     let provide_id = i.intern("provide");
     let require_id = i.intern("require");
     let entry = match head_name.as_str() {
-        h if DEFUN_HEADS.contains(&h) => {
-            name(&items).map(|nm| Value::cons(i.sym(defun_id), nm))
-        }
+        h if DEFUN_HEADS.contains(&h) => name(&items).map(|nm| Value::cons(i.sym(defun_id), nm)),
         h if DEFVAR_HEADS.contains(&h) => name(&items),
         // `defface' expands to `custom-declare-face' before eval; GNU's
         // C subr attaches (defface . FACE) to `current-load-list'.
         "defface" | "custom-declare-face" => {
             name(&items).map(|nm| Value::cons(i.sym(defface_id), nm))
         }
-        "provide" => {
-            name(&items).map(|nm| Value::cons(i.sym(provide_id), nm))
-        }
-        "require" => {
-            name(&items).map(|nm| Value::cons(i.sym(require_id), nm))
-        }
+        "provide" => name(&items).map(|nm| Value::cons(i.sym(provide_id), nm)),
+        "require" => name(&items).map(|nm| Value::cons(i.sym(require_id), nm)),
         _ => None,
     };
     if let Some(e) = entry {

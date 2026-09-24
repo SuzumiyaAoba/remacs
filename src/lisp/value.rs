@@ -199,6 +199,11 @@ pub struct Lambda {
     /// `funcall'/direct call rather than evaluating a lambda form — the
     /// printer shows `nil' as the environment for these.
     pub plain: bool,
+    /// True when defined while a dumped/embedded library was loading
+    /// (prelude or a `builtin:' load).  GNU keeps such docstrings
+    /// externally (DOC file/.elc), and `documentation' appends the
+    /// `(fn ARGLIST)' usage trailer for them only.
+    pub dumped_doc: bool,
 }
 
 #[derive(Clone)]

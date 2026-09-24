@@ -109,6 +109,10 @@ pub struct Interp {
     pub match_data: Option<MatchData>,
     /// True in `--batch`: `princ` goes to stdout, `message` to stderr.
     pub noninteractive: bool,
+    /// True while the startup prelude or an embedded (`builtin:') library
+    /// is being evaluated — lambdas defined then get `dumped_doc' (their
+    /// docstrings behave like GNU's .elc/DOC-file entries).
+    pub loading_dumped: bool,
     /// GNU's `noninteractive_need_newline`: set when batch stdout was
     /// written, so the next stderr message is preceded by a newline.
     pub stderr_need_newline: bool,
@@ -289,9 +293,7 @@ fn doc_dir_of_emacs(exe: &std::path::Path, depth: u8) -> Option<String> {
             for e in rd.flatten() {
                 if let Ok(real) = std::fs::canonicalize(e.path()) {
                     if let Some(share) = real.parent() {
-                        if let Some(hit) =
-                            doc_dir_under(&share.join("emacs"))
-                        {
+                        if let Some(hit) = doc_dir_under(&share.join("emacs")) {
                             return Some(hit);
                         }
                     }
@@ -328,29 +330,126 @@ impl Interp {
         // GNU batch's feature list (NS tty build ordering);
         // `provide' appends to this.
         let feature_syms: Vec<SymId> = [
-            "japan-util", "rmc", "iso-transl", "tooltip", "cconv", "eldoc",
-            "paren", "electric", "uniquify", "ediff-hook", "vc-hooks",
-            "lisp-float-type", "elisp-mode", "mwheel", "term/ns-win", "ns-win",
-            "ucs-normalize", "mule-util", "term/common-win", "tool-bar", "dnd",
-            "fontset", "image", "regexp-opt", "fringe", "tabulated-list",
-            "replace", "newcomment", "text-mode", "lisp-mode", "prog-mode",
-            "register", "page", "tab-bar", "menu-bar", "rfn-eshadow", "isearch",
-            "easymenu", "timer", "select", "scroll-bar", "mouse", "jit-lock",
-            "font-lock", "syntax", "font-core", "term/tty-colors", "frame",
-            "minibuffer", "nadvice", "seq", "simple", "cl-generic",
-            "indonesian", "philippine", "cham", "georgian", "utf-8-lang",
-            "misc-lang", "vietnamese", "tibetan", "thai", "tai-viet", "lao",
-            "korean", "japanese", "eucjp-ms", "cp51932", "hebrew", "greek",
-            "romanian", "slovak", "czech", "european", "ethiopic", "indian",
-            "cyrillic", "chinese", "composite", "emoji-zwj", "charscript",
-            "charprop", "case-table", "epa-hook", "jka-cmpr-hook", "help",
-            "abbrev", "obarray", "oclosure", "cl-preloaded", "button",
-            "loaddefs", "theme-loaddefs", "faces", "cus-face", "macroexp",
-            "files", "window", "text-properties", "overlay", "sha1", "md5",
-            "base64", "format", "env", "code-pages", "mule", "custom",
-            "widget", "keymap", "hashtable-print-readable", "backquote",
-            "threads", "kqueue", "cocoa", "ns", "multi-tty",
-            "make-network-process", "tty-child-frames", "native-compile",
+            "japan-util",
+            "rmc",
+            "iso-transl",
+            "tooltip",
+            "cconv",
+            "eldoc",
+            "paren",
+            "electric",
+            "uniquify",
+            "ediff-hook",
+            "vc-hooks",
+            "lisp-float-type",
+            "elisp-mode",
+            "mwheel",
+            "term/ns-win",
+            "ns-win",
+            "ucs-normalize",
+            "mule-util",
+            "term/common-win",
+            "tool-bar",
+            "dnd",
+            "fontset",
+            "image",
+            "regexp-opt",
+            "fringe",
+            "tabulated-list",
+            "replace",
+            "newcomment",
+            "text-mode",
+            "lisp-mode",
+            "prog-mode",
+            "register",
+            "page",
+            "tab-bar",
+            "menu-bar",
+            "rfn-eshadow",
+            "isearch",
+            "easymenu",
+            "timer",
+            "select",
+            "scroll-bar",
+            "mouse",
+            "jit-lock",
+            "font-lock",
+            "syntax",
+            "font-core",
+            "term/tty-colors",
+            "frame",
+            "minibuffer",
+            "nadvice",
+            "seq",
+            "simple",
+            "cl-generic",
+            "indonesian",
+            "philippine",
+            "cham",
+            "georgian",
+            "utf-8-lang",
+            "misc-lang",
+            "vietnamese",
+            "tibetan",
+            "thai",
+            "tai-viet",
+            "lao",
+            "korean",
+            "japanese",
+            "eucjp-ms",
+            "cp51932",
+            "hebrew",
+            "greek",
+            "romanian",
+            "slovak",
+            "czech",
+            "european",
+            "ethiopic",
+            "indian",
+            "cyrillic",
+            "chinese",
+            "composite",
+            "emoji-zwj",
+            "charscript",
+            "charprop",
+            "case-table",
+            "epa-hook",
+            "jka-cmpr-hook",
+            "help",
+            "abbrev",
+            "obarray",
+            "oclosure",
+            "cl-preloaded",
+            "button",
+            "loaddefs",
+            "theme-loaddefs",
+            "faces",
+            "cus-face",
+            "macroexp",
+            "files",
+            "window",
+            "text-properties",
+            "overlay",
+            "sha1",
+            "md5",
+            "base64",
+            "format",
+            "env",
+            "code-pages",
+            "mule",
+            "custom",
+            "widget",
+            "keymap",
+            "hashtable-print-readable",
+            "backquote",
+            "threads",
+            "kqueue",
+            "cocoa",
+            "ns",
+            "multi-tty",
+            "make-network-process",
+            "tty-child-frames",
+            "native-compile",
         ]
         .iter()
         .map(|s| obarray.intern(s))
@@ -385,6 +484,7 @@ impl Interp {
             capture_output: false,
             match_data: None,
             noninteractive: false,
+            loading_dumped: false,
             stderr_need_newline: false,
             out_last_char: None,
             frames: Vec::new(),
@@ -488,6 +588,7 @@ impl Interp {
             .ok()
             .and_then(|v| v.parse().ok())
             .unwrap_or(usize::MAX);
+        interp.loading_dumped = true;
         if std::env::var("REMACS_NO_PRELUDE").is_ok() {
             // Debug escape: skip prelude evaluation entirely.
         } else if std::env::var("PRELUDE_TRACE").is_ok() || prelude_max != usize::MAX {
@@ -540,6 +641,7 @@ impl Interp {
         } else {
             let _ = interp.eval_str(crate::lisp::prelude::PRELUDE);
         }
+        interp.loading_dumped = false;
         if std::env::var("REMACS_NO_PRELUDE").is_err() {
             // GNU records every dumped library in `load-history'; do the
             // same for the embedded prelude so `symbol-file' and the
@@ -563,14 +665,11 @@ impl Interp {
             let mut br = b.borrow_mut();
             br.locals
                 .insert(pch, Value::list(vec![Value::Sym(eldoc), Value::t()]));
-            br.locals.insert(
-                prech,
-                Value::list(vec![Value::Sym(eldoc_pre), Value::t()]),
-            );
+            br.locals
+                .insert(prech, Value::list(vec![Value::Sym(eldoc_pre), Value::t()]));
         }
         let tooltip_hide = interp.intern("tooltip-hide");
-        interp.obarray.symbol_mut(prech).value =
-            Value::list(vec![Value::Sym(tooltip_hide)]);
+        interp.obarray.symbol_mut(prech).value = Value::list(vec![Value::Sym(tooltip_hide)]);
         // Boot-time autoloads (easy-mmode & co.) correspond to GNU's
         // dumped loadup; the user-visible `features' list must match the
         // post-dump set.
@@ -580,9 +679,7 @@ impl Interp {
         interp
             .face_table
             .retain(|(n, _)| n != "icon" && n != "icon-button");
-        let flist = Value::list(
-            interp.features.iter().map(|s| Value::Sym(*s)).collect(),
-        );
+        let flist = Value::list(interp.features.iter().map(|s| Value::Sym(*s)).collect());
         let fid = interp.intern("features");
         interp.obarray.symbol_mut(fid).value = flist;
         interp
@@ -670,10 +767,8 @@ impl Interp {
     /// Mark a string as unibyte (encoder output); `prin1' escapes
     /// its ≥0x80 byte-chars as `\NNN' octal like GNU.
     pub fn mark_unibyte(&mut self, s: &crate::lisp::value::StrRef) {
-        self.unibyte_strings.insert(
-            std::rc::Rc::as_ptr(s) as usize,
-            std::rc::Rc::downgrade(s),
-        );
+        self.unibyte_strings
+            .insert(std::rc::Rc::as_ptr(s) as usize, std::rc::Rc::downgrade(s));
     }
 
     /// Is this string a marked unibyte string?  A stale map entry
@@ -687,10 +782,8 @@ impl Interp {
 
     /// Mark a string as multibyte (decoder output).
     pub fn mark_multibyte(&mut self, s: &crate::lisp::value::StrRef) {
-        self.multibyte_strings.insert(
-            std::rc::Rc::as_ptr(s) as usize,
-            std::rc::Rc::downgrade(s),
-        );
+        self.multibyte_strings
+            .insert(std::rc::Rc::as_ptr(s) as usize, std::rc::Rc::downgrade(s));
     }
 
     /// Is this string a marked multibyte string?
@@ -735,9 +828,15 @@ impl Interp {
     /// Replace a string's prop intervals wholesale (copy ops).  An
     /// empty list still materializes the interval tree (GNU keeps a
     /// single nil-plist interval covering the string).
-    pub fn set_str_props(&mut self, s: &crate::lisp::value::StrRef, v: Vec<(usize, usize, Vec<Value>)>) {
-        self.string_props
-            .insert(std::rc::Rc::as_ptr(s) as usize, (std::rc::Rc::downgrade(s), v));
+    pub fn set_str_props(
+        &mut self,
+        s: &crate::lisp::value::StrRef,
+        v: Vec<(usize, usize, Vec<Value>)>,
+    ) {
+        self.string_props.insert(
+            std::rc::Rc::as_ptr(s) as usize,
+            (std::rc::Rc::downgrade(s), v),
+        );
     }
 
     /// Follow a symbol's function-alias chain; return the final
@@ -813,9 +912,7 @@ impl Interp {
     /// consulted by `Buffer::record_point'.
     fn sync_undo_inhibit(&mut self, id: SymId, val: &Value) {
         if self.undo_inhibit_sym != 0 && id == self.undo_inhibit_sym {
-            self.buffers
-                .undo_inhibit_cell()
-                .set(!val.is_nil());
+            self.buffers.undo_inhibit_cell().set(!val.is_nil());
         }
     }
 
@@ -1120,7 +1217,14 @@ impl Interp {
                 Some((form, end)) => {
                     pos = end;
                     if std::env::var_os("REMACS_TRACE_EVAL").is_some() {
-                        eprintln!("[eval@{}] {}", end, self.princ_to_string(&form).chars().take(80).collect::<String>());
+                        eprintln!(
+                            "[eval@{}] {}",
+                            end,
+                            self.princ_to_string(&form)
+                                .chars()
+                                .take(80)
+                                .collect::<String>()
+                        );
                     }
                     match self.eval(&form) {
                         Ok(v) => last = v,
@@ -1309,10 +1413,7 @@ impl Interp {
                         self.obarray.symbol(id).special,
                         depth,
                         found,
-                        self.specbind
-                            .iter()
-                            .filter(|s| s.sym == id)
-                            .count(),
+                        self.specbind.iter().filter(|s| s.sym == id).count(),
                         self.case_handlers.len(),
                     );
                 }
@@ -1557,9 +1658,7 @@ impl Interp {
                         }
                         other => match advised {
                             Some(s) => return self.apply_adviced(s, &other, argv),
-                            None => {
-                                return self.apply_resolved(&other, argv, Value::Sym(*id))
-                            }
+                            None => return self.apply_resolved(&other, argv, Value::Sym(*id)),
                         },
                     }
                 }
@@ -1576,7 +1675,10 @@ impl Interp {
         if std::env::var_os("REMACS_TRACE_CALL").is_some() {
             eprintln!(
                 "[call] {}",
-                self.princ_to_string(&shown).chars().take(90).collect::<String>()
+                self.princ_to_string(&shown)
+                    .chars()
+                    .take(90)
+                    .collect::<String>()
             );
         }
         match fun {
@@ -1899,8 +2001,14 @@ impl Interp {
         if std::env::var("PRELUDE_TRACE").is_ok() {
             eprintln!(
                 "mxcall {} <- {}",
-                self.prin1_to_string(mac).chars().take(90).collect::<String>(),
-                self.prin1_to_string(args).chars().take(90).collect::<String>()
+                self.prin1_to_string(mac)
+                    .chars()
+                    .take(90)
+                    .collect::<String>(),
+                self.prin1_to_string(args)
+                    .chars()
+                    .take(90)
+                    .collect::<String>()
             );
         }
         let argv = match args.list_to_vec() {
@@ -1941,7 +2049,13 @@ impl Interp {
         loop {
             iters += 1;
             if std::env::var("PRELUDE_TRACE").is_ok() && iters > 500 {
-                eprintln!("macroexpand iter {iters}: {}", self.prin1_to_string(&cur).chars().take(200).collect::<String>());
+                eprintln!(
+                    "macroexpand iter {iters}: {}",
+                    self.prin1_to_string(&cur)
+                        .chars()
+                        .take(200)
+                        .collect::<String>()
+                );
             }
             let next = match &cur {
                 Value::Cons(c) => {
@@ -2137,6 +2251,7 @@ impl Interp {
             bad_arglist,
             arglist: Some(params.clone()),
             plain: self.explicit_eval_depth > 0,
+            dumped_doc: self.loading_dumped,
         })
     }
 
@@ -2222,11 +2337,7 @@ impl Interp {
         put(self, "scan-error", &["scan-error", "error"]);
         put(self, "invalid-regexp", &["invalid-regexp", "error"]);
         put(self, "recursion-error", &["recursion-error", "error"]);
-        put(
-            self,
-            "unknown-image-type",
-            &["unknown-image-type", "error"],
-        );
+        put(self, "unknown-image-type", &["unknown-image-type", "error"]);
         put(
             self,
             "file-already-exists",
@@ -2243,11 +2354,7 @@ impl Interp {
             &["permission-denied", "file-error", "error"],
         );
         // filelock.c
-        put(
-            self,
-            "file-locked",
-            &["file-locked", "file-error", "error"],
-        );
+        put(self, "file-locked", &["file-locked", "file-error", "error"]);
         // cl-macs.el `cl-assert'
         put(
             self,
@@ -2947,12 +3054,7 @@ impl Interp {
                         ("\\.hei[cf]s?\\'", "heic"),
                     ]
                     .iter()
-                    .map(|(re, ty)| {
-                        Value::cons(
-                            Value::string(*re),
-                            Value::Sym(self.intern(ty)),
-                        )
-                    })
+                    .map(|(re, ty)| Value::cons(Value::string(*re), Value::Sym(self.intern(ty))))
                     .collect(),
                 ),
             ),
@@ -3012,12 +3114,7 @@ impl Interp {
             (
                 "features",
                 // Kept in sync with `self.features' by `provide'.
-                Value::list(
-                    self.features
-                        .iter()
-                        .map(|s| Value::Sym(*s))
-                        .collect(),
-                ),
+                Value::list(self.features.iter().map(|s| Value::Sym(*s)).collect()),
             ),
             ("current-load-list", Value::Nil),
             ("load-in-progress", Value::Nil),
@@ -4068,10 +4165,12 @@ impl Interp {
                     self.apply(&dest, vec![Value::Int(ch as i128)])?;
                 }
             }
-            Value::Cons(ref c) if {
-                let cb = c.borrow();
-                matches!(&cb.car, Value::Sym(s) if *s == self.intern("lambda") || *s == self.intern("closure"))
-            } => {
+            Value::Cons(ref c)
+                if {
+                    let cb = c.borrow();
+                    matches!(&cb.car, Value::Sym(s) if *s == self.intern("lambda") || *s == self.intern("closure"))
+                } =>
+            {
                 for ch in s.chars() {
                     self.apply(&dest, vec![Value::Int(ch as i128)])?;
                 }

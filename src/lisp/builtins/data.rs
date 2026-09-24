@@ -231,7 +231,13 @@ pub(crate) static SUBRS: &[Subr] = &[
         f_obarray_buckets,
         "Internal: obarray bucket vector."
     ),
-    S!("defconst-1", 2, 3, f_defconst_1, "Internal defconst helper."),
+    S!(
+        "defconst-1",
+        2,
+        3,
+        f_defconst_1,
+        "Internal defconst helper."
+    ),
     S!(
         "make-record",
         3,
@@ -387,11 +393,9 @@ fn f_equal(i: &mut Interp, args: Vec<Value>) -> EvalResult {
 /// numbers — no case fold), strings fold case via the buffer's case
 /// table, conses/vectors/records recurse, everything else uses `equal'.
 fn equalp_values(i: &Interp, down: &Value, a: &Value, b: &Value) -> bool {
-    let down1 = |n: i128| {
-        match crate::lisp::builtins::misc::char_table_ref(i, down, n as usize) {
-            Value::Int(m) => m,
-            _ => n,
-        }
+    let down1 = |n: i128| match crate::lisp::builtins::misc::char_table_ref(i, down, n as usize) {
+        Value::Int(m) => m,
+        _ => n,
     };
     let numberp = |v: &Value| matches!(v, Value::Int(_) | Value::Float(_));
     match (a, b) {
@@ -463,7 +467,9 @@ fn num_eq(a: &Value, b: &Value) -> bool {
 
 fn f_equalp(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     let down = i.current_case_table();
-    Ok(Value::from_bool(equalp_values(i, &down, &args[0], &args[1])))
+    Ok(Value::from_bool(equalp_values(
+        i, &down, &args[0], &args[1],
+    )))
 }
 
 fn f_consp(_i: &mut Interp, args: Vec<Value>) -> EvalResult {
@@ -883,10 +889,7 @@ fn f_make_record(i: &mut Interp, args: Vec<Value>) -> EvalResult {
         Value::Int(n) if *n >= 0 => *n as usize,
         _ => {
             let natnump = Value::Sym(i.intern("natnump"));
-            return Err(i.signal_data(
-                sym::WRONG_TYPE_ARGUMENT,
-                vec![natnump, args[1].clone()],
-            ));
+            return Err(i.signal_data(sym::WRONG_TYPE_ARGUMENT, vec![natnump, args[1].clone()]));
         }
     };
     let mut v = Vec::with_capacity(n + 1);
@@ -944,9 +947,7 @@ fn f_intern(i: &mut Interp, args: Vec<Value>) -> EvalResult {
                 if is_obarray(i, ob) {
                     if let Some(sym) = obarray_syms(i, ob)
                         .into_iter()
-                        .find(|v| {
-                            matches!(v, Value::Sym(s) if i.symbol_name(*s) == name)
-                        })
+                        .find(|v| matches!(v, Value::Sym(s) if i.symbol_name(*s) == name))
                     {
                         return Ok(sym);
                     }
@@ -1083,9 +1084,10 @@ fn obarray_remove(i: &Interp, ob: &Value, sym: &Value) -> bool {
     if let Value::Record(r) = ob {
         if let Some(Value::Vec(v)) = r.borrow().get(1) {
             let mut v = v.borrow_mut();
-            if let Some(pos) = v.iter().position(|x| {
-                matches!(x, Value::Sym(s) if i.symbol_name(*s) == name)
-            }) {
+            if let Some(pos) = v
+                .iter()
+                .position(|x| matches!(x, Value::Sym(s) if i.symbol_name(*s) == name))
+            {
                 v.remove(pos);
                 return true;
             }
@@ -1243,6 +1245,7 @@ fn normalize_fn_def(i: &mut Interp, def: Value) -> Value {
                         bad_arglist: l.bad_arglist,
                         arglist: l.arglist.clone(),
                         plain: l.plain,
+                        dumped_doc: l.dumped_doc,
                     };
                     l2.is_macro = true;
                     return Value::Lambda(std::rc::Rc::new(l2));
