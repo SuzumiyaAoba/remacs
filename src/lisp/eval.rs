@@ -780,6 +780,17 @@ impl Interp {
             // GNU-verbatim compatibility definitions (string trim/pad,
             // fringe helpers, paren/select/vc/dnd support, …).
             let _ = crate::lisp::load::load_library(&mut interp, "subr-x");
+            // tool-bar.el is in GNU's dump on window-system builds
+            // (loadup.el): same reasoning — the feature mark alone
+            // would make `require' skip the definitions.
+            let _ = crate::lisp::load::load_library(&mut interp, "tool-bar");
+            // widget.el is dumped too (loadup.el loads "widget" for
+            // `define-widget' & co. used by cus-edit and friends).
+            let _ = crate::lisp::load::load_library(&mut interp, "widget");
+            // version.el is loaded by loadup.el without a `provide':
+            // evaluating it defines `emacs-repository-*' helpers while
+            // `(require 'version)' still fails exactly like GNU.
+            let _ = crate::lisp::load::load_library(&mut interp, "version");
         }
         interp.loading_dumped = false;
         // GNU resets `gensym-counter' to 0 when the dumped image starts

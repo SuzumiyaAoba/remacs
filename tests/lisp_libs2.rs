@@ -1347,3 +1347,49 @@ fn fileloop_entry_points() {
         "(t t t t)"
     );
 }
+
+#[test]
+fn display_fill_column_indicator_entry_points() {
+    // GNU-verified on 31.1: the library provides the minor modes; the
+    // buffer-local variable itself is a C-side binding.
+    assert_eq!(
+        ev("(progn (require 'display-fill-column-indicator)
+                  (list (fboundp 'display-fill-column-indicator-mode)
+                        (fboundp 'global-display-fill-column-indicator-mode)
+                        (boundp 'display-fill-column-indicator)
+                        display-fill-column-indicator
+                        (local-variable-if-set-p 'display-fill-column-indicator)))"),
+        "(t t t nil t)"
+    );
+}
+
+#[test]
+fn widget_w32_vars_entry_points() {
+    // GNU-verified on 31.1: widget.el is dumped (define-widget); w32-vars
+    // defines its shell list on all non-cygwin systems.
+    assert_eq!(
+        ev("(progn (require 'w32-vars)
+                  (list (fboundp 'define-widget)
+                        (boundp 'w32-system-shells)
+                        (car w32-system-shells)
+                        (progn (define-widget 'my-w 'editable-field \"d\")
+                               (get 'my-w 'widget-documentation))))"),
+        "(t t \"cmd\" \"d\")"
+    );
+}
+
+#[test]
+fn tool_bar_and_version_loaded() {
+    // GNU-verified on 31.1: tool-bar/widget/version are loaded by loadup;
+    // `version' has no provide, so `require' errors like GNU.
+    assert_eq!(
+        ev("(list (boundp 'tool-bar-map)
+                  (fboundp 'tool-bar-mode)
+                  (fboundp 'tool-bar-local-item-from-menu)
+                  (fboundp 'emacs-repository-get-branch)
+                  (boundp 'emacs-repository-version)
+                  (condition-case e (progn (require 'version) 'loaded)
+                    (error (car e))))"),
+        "(t t t t t error)"
+    );
+}

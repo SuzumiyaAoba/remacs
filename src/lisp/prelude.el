@@ -7034,6 +7034,14 @@ Like `customize-set-variable', but records VALUE as `saved-value'."
         (list 'defvar var value docstring)
         (list 'make-variable-buffer-local (list 'quote var))))
 
+;; GNU's `display-fill-column-indicator' (xdisp.c buffer-local var):
+;; default nil, automatically buffer-local when set (verified).
+(defvar-local display-fill-column-indicator nil
+  "Non-nil means display the fill column indicator.
+If you set this non-nil, make sure `display-fill-column-indicator-character'
+is also non-nil.
+See Info node `Displaying Boundaries' for details.")
+
 ;; imenu.el autoloads + loaddefs defvar-locals (must sit after
 ;; `defvar-local').  `imenu--index-alist' stays unbound at -Q — only
 ;; its risky-local-variable property is registered.
@@ -38069,3 +38077,102 @@ SYNTAX should be \" \", \"w\", \".\" or \"_\"."
   (set-char-table-extra-slot table 1 nil)
   (set-char-table-extra-slot table 2 nil)
   (modify-syntax-entry c syntax (standard-syntax-table)))
+
+;; GNU `help-key' (help.el): used by the `help-map' `defvar-keymap' in
+;; subr-x.el's accumulated GNU definitions.
+(defun help-key ()
+  "Return `help-char' in a format suitable for the `keymap-set' KEY argument."
+  (key-description (vector help-char)))
+
+;; GNU `menu-bar-make-toggle-command' (menu-bar.el), verbatim: used by
+;; the menu definitions in subr-x.el's accumulated GNU bindings.
+(defmacro menu-bar-make-toggle-command (command variable item-name message
+                                                help
+                                                &optional setting-sexp
+                                                &rest keywords)
+  "Define a menu-bar toggle command.
+COMMAND (a symbol) is the toggle command to define.
+
+VARIABLE (a symbol) is the variable to set.
+
+ITEM-NAME (a string) is the menu-item name.
+
+MESSAGE is a format string for the toggle message, with %s for the new
+status.
+
+HELP (a string) is the `:help' tooltip text and the doc string first
+line (minus final period) for the command.
+
+SETTING-SEXP is a Lisp sexp that sets VARIABLE, or it is nil meaning
+set it according to its `defcustom' or using `set-default'.
+
+KEYWORDS is a plist for `menu-item' for keywords other than `:help'."
+  `(progn
+     (defun ,command (&optional interactively)
+       ,(concat "Toggle whether to " (downcase (substring help 0 1))
+                (substring help 1) ".
+In an interactive call, record this option as a candidate for saving
+by \"Save Options\" in Custom buffers.")
+       (interactive "p")
+       (if ,(if setting-sexp
+                `,setting-sexp
+              `(progn
+		 (custom-load-symbol ',variable)
+		 (let ((set (or (get ',variable 'custom-set) 'set-default))
+		       (get (or (get ',variable 'custom-get) 'default-value)))
+		   (funcall set ',variable (not (funcall get ',variable))))))
+           (message ,message "enabled globally")
+         (message ,message "disabled globally"))
+       ;; `customize-mark-as-set' must only be called when a variable is set
+       ;; interactively, because the purpose is to mark the variable as a
+       ;; candidate for `Save Options', and we do not want to save options that
+       ;; the user has already set explicitly in the init file.
+       (when interactively
+         (customize-mark-as-set ',variable))
+       ;; Toggle menu items must make sure that the menu is updated so
+       ;; that toggle marks are drawn in the right state.
+       (force-mode-line-update t))
+     '(menu-item ,item-name ,command :help ,help
+                 :button (:toggle . (and (default-boundp ',variable)
+                                         (default-value ',variable)))
+                 ,@keywords)))
+
+;; GNU `display-buffer--action-function-custom-type' and
+;; `display-buffer--action-custom-type' (window.el), verbatim: used by
+;; `display-buffer-alist'-family defcustoms in bs.el and friends.
+(defconst display-buffer--action-function-custom-type
+  '(choice :tag "Function"
+	   (const :tag "--" ignore) ; default for insertion
+	   (const display-buffer-same-window)
+	   (const display-buffer-reuse-window)
+	   (const display-buffer-in-previous-window)
+	   (const display-buffer-reuse-mode-window)
+	   (const display-buffer-use-some-window)
+	   (const display-buffer-use-least-recent-window)
+	   (const display-buffer-pop-up-window)
+	   (const display-buffer-pop-up-frame)
+	   (const display-buffer-full-frame)
+	   (const display-buffer-use-some-frame)
+	   (const display-buffer-in-child-frame)
+	   (const display-buffer-in-side-window)
+	   (const display-buffer-in-atom-window)
+	   (const display-buffer-below-selected)
+	   (const display-buffer-at-bottom)
+	   (const display-buffer-in-direction)
+	   (const display-buffer-in-tab)
+	   (const display-buffer-in-new-tab)
+	   (const display-buffer-no-window)
+	   (function :tag "Other function"))
+  "Custom type for `display-buffer' action functions.")
+
+(defconst display-buffer--action-custom-type
+  `(cons :tag "Action"
+	 (choice :tag "Action functions"
+		 ,display-buffer--action-function-custom-type
+		 (repeat
+		  :tag "List of functions"
+		  ,display-buffer--action-function-custom-type))
+	 (alist :tag "Action arguments"
+		:key-type symbol
+		:value-type (sexp :tag "Value")))
+  "Custom type for `display-buffer' actions.")
