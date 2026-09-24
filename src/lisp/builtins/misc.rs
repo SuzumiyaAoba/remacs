@@ -1170,6 +1170,7 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!("frame-outer-height", 0, 1, f_frame_height_val, ""),
     S!("glyph-char", 1, 1, f_glyph_char, ""),
     S!("glyph-face", 1, 1, f_glyph_face, ""),
+    S!("make-glyph-code", 1, 2, f_make_glyph_code, ""),
     S!("font-at", 1, 3, f_font_at, ""),
     S!("font-get-glyphs", 3, 4, f_font_object_stub, ""),
     S!("font-info", 1, 2, f_font_info, ""),
@@ -10058,6 +10059,30 @@ fn f_glyph_face(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         Value::Int(_) => Ok(Value::Nil),
         Value::Cons(c) => Ok(c.borrow().cdr.clone()),
         other => Err(i.wrong_type_mut("numberp", other)),
+    }
+}
+
+/// `make-glyph-code` — GNU returns CHAR alone for no face, else a
+/// (CHAR . FACE-ID) cons where FACE-ID is the face's index in the
+/// face table (GNU's `lookup_named_face' result).
+fn f_make_glyph_code(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    match &a[0] {
+        Value::Int(_) => {}
+        other => return Err(i.wrong_type_mut("characterp", other)),
+    }
+    match a.get(1) {
+        None | Some(Value::Nil) => Ok(a[0].clone()),
+        Some(face) => {
+            let name = match face {
+                Value::Sym(s) => i.symbol_name(*s).to_string(),
+                _ => return Err(i.wrong_type_mut("symbolp", face)),
+            };
+            match i.face_table.iter().position(|(n, _)| *n == name) {
+                Some(id) => Ok(Value::cons(a[0].clone(), Value::Int(id as i128))),
+                // Unknown face: GNU falls back to the bare char.
+                None => Ok(a[0].clone()),
+            }
+        }
     }
 }
 

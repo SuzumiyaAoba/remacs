@@ -2274,7 +2274,7 @@ after the other, wrapping around after the last one."
           (setf (plist-get cycle-spacing--context :last-action)
                 action))))))
 
-;; ---------- whitespace.el cleanup (GNU port) ----------
+;; ---------- without-restriction (GNU simple.el) ----------
 
 (defmacro without-restriction (&rest rest)
   "Execute BODY without restrictions.
@@ -2290,202 +2290,6 @@ by `with-restriction' with the same LABEL argument are lifted.
       `(save-restriction (internal--labeled-widen ,(cadr rest)) ,@(cddr rest))
     `(save-restriction (widen) ,@rest)))
 
-(defvar whitespace-style
-  '(face
-    tabs spaces trailing lines space-before-tab newline
-    indentation empty space-after-tab
-    space-mark tab-mark newline-mark
-    missing-newline-at-eof)
-  "Determine the kinds of whitespace are visualized.")
-
-(defvar whitespace-action nil
-  "Specify the whitespace cleanup action to be taken.")
-
-(defvar whitespace-trailing-regexp
-  "\\([\t \u00A0]+\\)$"
-  "Regexp to match trailing characters that should be visualized.")
-
-(defvar whitespace-space-before-tab-regexp "\\( +\\)\\(\t+\\)"
-  "Regexp to match SPACEs before TAB that should be visualized.")
-
-(defvar whitespace-indentation-regexp
-  '("^\t*\\(\\( \\{%d\\}\\)+\\)[^\n\t]"
-    . "^ *\\(\t+\\).")
-  "Regexps to match indentation whitespace that should be visualized.")
-
-(defvar whitespace-empty-at-bob-regexp "\\`\\([ \t\n]*\\(?:\n\\|$\\)\\)"
-  "Regexp to match empty lines at beginning of buffer.")
-
-(defvar whitespace-empty-at-eob-regexp "^\\([ \t\n]+\\)\\'"
-  "Regexp to match empty lines at end of buffer.")
-
-(defvar whitespace-space-after-tab-regexp
-  '("\t+\\(\\( \\{%d,\\}\\)+\\)"
-    . "\\(\t+\\) \\{%d,\\}")
-  "Regexps to match multiple SPACEs after TAB that should be visualized.")
-
-(defun whitespace-warn-read-only (msg)
-  "Warn if buffer is read-only."
-  (when (memq 'warn-if-read-only whitespace-action)
-    (message "Can't %s: %s is read-only" msg (buffer-name))))
-
-(defun whitespace-cleanup ()
-  "Cleanup some blank problems in all buffer or at region."
-  (interactive "@")
-  (cond
-   ;; read-only buffer
-   (buffer-read-only
-    (whitespace-warn-read-only "cleanup"))
-   ;; region active
-   ((and (or transient-mark-mode
-	     current-prefix-arg)
-	 mark-active)
-    ;; PROBLEMs 1 and 2 are not handled in region
-    ;; PROBLEM 3: `tab-width' or more SPACEs at bol
-    ;; PROBLEM 4: SPACEs before TAB
-    ;; PROBLEM 5: SPACEs or TABs at eol
-    ;; PROBLEM 6: `tab-width' or more SPACEs after TAB
-    (whitespace-cleanup-region (region-beginning) (region-end)))
-   ;; whole buffer
-   (t
-    (save-excursion
-      ;; PROBLEM 1: empty lines at bob
-      ;; PROBLEM 2: empty lines at eob
-      ;; ACTION: remove all empty lines at bob and/or eob
-      (when (memq 'empty whitespace-style)
-        (let (overwrite-mode)		; enforce no overwrite
-          (goto-char (point-min))
-          (when (looking-at whitespace-empty-at-bob-regexp)
-            (delete-region (match-beginning 1) (match-end 1)))
-          (when (re-search-forward
-                 whitespace-empty-at-eob-regexp nil t)
-            (delete-region (match-beginning 1) (match-end 1))))))
-    ;; PROBLEM 3: `tab-width' or more SPACEs at bol
-    ;; PROBLEM 4: SPACEs before TAB
-    ;; PROBLEM 5: SPACEs or TABs at eol
-    ;; PROBLEM 6: `tab-width' or more SPACEs after TAB
-    (whitespace-cleanup-region (point-min) (point-max)))))
-
-(defun whitespace-cleanup-region (start end)
-  "Cleanup some blank problems at region."
-  (interactive "@r")
-  (if buffer-read-only
-      ;; read-only buffer
-      (whitespace-warn-read-only "cleanup region")
-    ;; non-read-only buffer
-    (let ((rstart           (min start end))
-	  (rend             (copy-marker (max start end)))
-	  overwrite-mode		; enforce no overwrite
-	  tmp)
-      (save-excursion
-        ;; PROBLEM 1: `tab-width' or more SPACEs at bol
-        (cond
-         ;; ACTION: replace `tab-width' or more SPACEs at bol by TABs, if
-         ;; `indent-tabs-mode' is non-nil; otherwise, replace TABs
-         ;; by SPACEs.
-         ((memq 'indentation whitespace-style)
-          (let ((regexp (whitespace-indentation-regexp)))
-            (goto-char rstart)
-            (while (re-search-forward regexp rend t)
-              (setq tmp (current-indentation))
-              (goto-char (match-beginning 0))
-              (delete-horizontal-space)
-              (unless (eolp)
-                (indent-to tmp)))))
-         ;; ACTION: replace `tab-width' or more SPACEs at bol by TABs.
-         ((memq 'indentation::tab whitespace-style)
-          (whitespace-replace-action
-           'tabify rstart rend
-           (whitespace-indentation-regexp 'tab) 0))
-         ;; ACTION: replace TABs by SPACEs.
-         ((memq 'indentation::space whitespace-style)
-          (whitespace-replace-action
-           'untabify rstart rend
-           (whitespace-indentation-regexp 'space) 0)))
-        ;; PROBLEM 3: SPACEs or TABs at eol
-        ;; ACTION: remove all SPACEs or TABs at eol
-        (when (memq 'trailing whitespace-style)
-          (whitespace-replace-action
-           'delete-region rstart rend
-           whitespace-trailing-regexp 1))
-        ;; PROBLEM 4: `tab-width' or more SPACEs after TAB
-        (cond
-         ;; ACTION: replace `tab-width' or more SPACEs by TABs, if
-         ;; `indent-tabs-mode' is non-nil; otherwise, replace TABs
-         ;; by SPACEs.
-         ((memq 'space-after-tab whitespace-style)
-          (whitespace-replace-action
-           (if indent-tabs-mode 'tabify 'untabify)
-           rstart rend (whitespace-space-after-tab-regexp) 1))
-         ;; ACTION: replace `tab-width' or more SPACEs by TABs.
-         ((memq 'space-after-tab::tab whitespace-style)
-          (whitespace-replace-action
-           'tabify rstart rend
-           (whitespace-space-after-tab-regexp 'tab) 1))
-         ;; ACTION: replace TABs by SPACEs.
-         ((memq 'space-after-tab::space whitespace-style)
-          (whitespace-replace-action
-           'untabify rstart rend
-           (whitespace-space-after-tab-regexp 'space) 1)))
-        ;; PROBLEM 2: SPACEs before TAB
-        (cond
-         ;; ACTION: replace SPACEs before TAB by TABs, if
-         ;; `indent-tabs-mode' is non-nil; otherwise, replace TABs
-         ;; by SPACEs.
-         ((memq 'space-before-tab whitespace-style)
-          (whitespace-replace-action
-           (if indent-tabs-mode 'tabify 'untabify)
-           rstart rend whitespace-space-before-tab-regexp
-           (if indent-tabs-mode 0 2)))
-         ;; ACTION: replace SPACEs before TAB by TABs.
-         ((memq 'space-before-tab::tab whitespace-style)
-          (whitespace-replace-action
-           'tabify rstart rend
-           whitespace-space-before-tab-regexp 0))
-         ;; ACTION: replace TABs by SPACEs.
-         ((memq 'space-before-tab::space whitespace-style)
-          (whitespace-replace-action
-           'untabify rstart rend
-           whitespace-space-before-tab-regexp 2)))
-        ;; PROBLEM 5: missing newline at end of file
-        (and (memq 'missing-newline-at-eof whitespace-style)
-             (> (point-max) (point-min))
-             (= (point-max) (without-restriction (point-max)))
-             (/= (char-before (point-max)) ?\n)
-             (not (and (eq selective-display t)
-                       (= (char-before (point-max)) ?\r)))
-             (goto-char (point-max))
-             (ignore-errors (insert "\n"))))
-      (set-marker rend nil))))		; point marker to nowhere
-
-(defun whitespace-replace-action (action rstart rend regexp index)
-  "Do ACTION in the string matched by REGEXP between RSTART and REND.
-
-INDEX is the level group matched by REGEXP and used by ACTION."
-  (goto-char rstart)
-  (while (re-search-forward regexp rend t)
-    (goto-char (match-end index))
-    (funcall action (match-beginning index) (match-end index))))
-
-(defun whitespace-regexp (regexp &optional kind)
-  "Return REGEXP depending on `indent-tabs-mode'."
-  (format
-   (cond
-    ((or (eq kind 'tab)
-         indent-tabs-mode)
-     (car regexp))
-    ((or (eq kind 'space)
-         (not indent-tabs-mode))
-     (cdr regexp)))
-   tab-width))
-
-(defun whitespace-indentation-regexp (&optional kind)
-  "Return the indentation regexp depending on `indent-tabs-mode'."
-  (whitespace-regexp whitespace-indentation-regexp kind))
-
-(defun whitespace-space-after-tab-regexp (&optional kind)
-  "Return the space-after-tab regexp depending on `indent-tabs-mode'."
-  (whitespace-regexp whitespace-space-after-tab-regexp kind))
 
 ;; ---------- tabify.el (GNU port) ----------
 
@@ -5595,6 +5399,30 @@ places where expressions are evaluated and inserted or spliced in."
   "Move forward to the end of the Nth next THING." t)
 (autoload 'bounds-of-thing-at-point "thingatpt"
   "Determine the start and end buffer locations for the THING at point.")
+
+;; whitespace.el autoloads (GNU loaddefs registers exactly these).
+(autoload 'whitespace-mode "whitespace"
+  "Toggle whitespace visualization." t)
+(autoload 'whitespace-newline-mode "whitespace"
+  "Toggle newline visualization." t)
+(autoload 'whitespace-page-delimiters-mode "whitespace"
+  "Toggle page delimiters visualization." t)
+(autoload 'global-whitespace-mode "whitespace"
+  "Toggle whitespace visualization in all buffers." t)
+(autoload 'whitespace-toggle-options "whitespace"
+  "Toggle local whitespace options." t)
+(autoload 'global-whitespace-toggle-options "whitespace"
+  "Toggle global whitespace options." t)
+(autoload 'whitespace-report "whitespace"
+  "Report some whitespace problems in buffer." t)
+(autoload 'whitespace-report-region "whitespace"
+  "Report some whitespace problems in a region." t)
+(autoload 'whitespace-cleanup "whitespace"
+  "Cleanup some blank problems in all buffer or at region." t)
+(autoload 'whitespace-cleanup-region "whitespace"
+  "Cleanup some blank problems at region." t)
+(autoload 'global-whitespace-newline-mode "whitespace"
+  "Toggle global newline visualization." t)
 (autoload 'thing-at-point "thingatpt"
   "Return the THING at point.")
 (autoload 'bounds-of-thing-at-mouse "thingatpt"
@@ -33305,3 +33133,4 @@ Defaults to the whole buffer.  END can be out of bounds."
 (when (get-buffer "*scratch*")
   (with-current-buffer "*scratch*"
     (lisp-interaction-mode)))
+
