@@ -547,17 +547,17 @@ fn dispatch_key<T: KeyIo>(
                 if keys.len() == 1 {
                     if let Some(&k) = keys.first() {
                         if k < CHAR_CTL && k >= 32 && k != 127 {
-                            if let Some(b) = i.current_buffer_ref() {
+                            if i.current_buffer_ref().is_some() {
                                 let ch = char::from_u32(k as u32).unwrap_or('?');
-                                b.borrow_mut().insert(&ch.to_string());
+                                let _ = crate::buffer::primitives::chg_insert_pt(i, &ch.to_string(), false);
                             }
                             keys.clear();
                             post_command_undo_boundary(i);
                             return Ok(());
                         }
                         if k == b'\r' as i128 {
-                            if let Some(b) = i.current_buffer_ref() {
-                                b.borrow_mut().insert("\n");
+                            if i.current_buffer_ref().is_some() {
+                                let _ = crate::buffer::primitives::chg_insert_pt(i, "\n", false);
                             }
                             keys.clear();
                             post_command_undo_boundary(i);
@@ -565,10 +565,9 @@ fn dispatch_key<T: KeyIo>(
                         }
                         if k == 127 {
                             if let Some(b) = i.current_buffer_ref() {
-                                let mut bb = b.borrow_mut();
-                                let p = bb.point();
+                                let p = b.borrow().point();
                                 if p > 0 {
-                                    bb.delete_region(p - 1, p);
+                                    let _ = crate::buffer::primitives::chg_delete(i, p - 1, p);
                                 }
                             }
                             keys.clear();

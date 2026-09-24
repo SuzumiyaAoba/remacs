@@ -259,19 +259,21 @@ fn deliver_output(
 }
 
 fn insert_into_buffer(i: &mut Interp, bid: usize, pos: Option<usize>, text: &str) {
-    if let Some(b) = i.buffers.get(bid) {
-        let mut bb = b.borrow_mut();
-        match pos {
-            Some(p) => {
-                let at = p.min(bb.text_len());
-                bb.insert_at(at, text);
-            }
-            None => {
-                let end = bb.text_len();
-                bb.insert_at(end, text);
-            }
-        }
+    if i.buffers.get(bid).is_some() {
+        // GNU inserts process output via `insert-before-markers'-style
+        // insertion in the process buffer, running its change hooks.
+        let _ = crate::buffer::primitives::chg_with_buffer(i, bid, |i| {
+            let at = match pos {
+                Some(p) => p.min(cur_text_len(i)),
+                None => cur_text_len(i),
+            };
+            crate::buffer::primitives::chg_insert(i, at, text)
+        });
     }
+}
+
+fn cur_text_len(i: &mut Interp) -> usize {
+    crate::buffer::primitives::cur(i).borrow().text_len()
 }
 
 fn event_string(status: &str, code: i32) -> String {
@@ -1220,10 +1222,12 @@ fn f_list_processes(i: &mut Interp, a: Vec<Value>) -> EvalResult {
             pb.name, pb.status, bufname, "-", "-"
         ));
     }
-    if let Some(b) = i.buffers.get(bid) {
-        let mut bb = b.borrow_mut();
-        bb.insert_at(0, &lines);
-        bb.point = 0;
+    if i.buffers.get(bid).is_some() {
+        let _ = crate::buffer::primitives::chg_with_buffer(i, bid, |i| {
+            crate::buffer::primitives::chg_insert(i, 0, &lines)?;
+            crate::buffer::primitives::cur(i).borrow_mut().point = 0;
+            Ok(Value::Nil)
+        });
     }
     Ok(Value::Nil)
 }

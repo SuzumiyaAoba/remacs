@@ -515,10 +515,8 @@ fn f_replace_region_contents(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         other => return Err(i.wrong_type_mut("stringp", other)),
     };
     check_writable(i)?;
-    let b = cur(i);
-    let mut bb = b.borrow_mut();
-    bb.delete_region(s, e);
-    bb.insert_at(s, &text);
+    crate::buffer::primitives::chg_delete(i, s, e)?;
+    crate::buffer::primitives::chg_insert(i, s, &text)?;
     Ok(Value::t())
 }
 
@@ -1030,20 +1028,23 @@ fn sort_engine_inner(
     }
     // ---- sort-reorder-buffer ----
     let b = cur(i);
-    let mut bb = b.borrow_mut();
-    let (min, max) = (bb.begv, bb.text_len());
-    let mut out = String::new();
-    let mut pos = min;
-    for (s, o) in sorted.iter().zip(recs.iter()) {
-        out.push_str(&bb.text.substring(pos, o.start));
-        out.push_str(&bb.text.substring(s.start, s.end));
-        pos = o.end;
-    }
-    out.push_str(&bb.text.substring(pos, max));
+    let (min, max, mut out) = {
+        let bb = b.borrow();
+        let (min, max) = (bb.begv, bb.text_len());
+        let mut out = String::new();
+        let mut pos = min;
+        for (s, o) in sorted.iter().zip(recs.iter()) {
+            out.push_str(&bb.text.substring(pos, o.start));
+            out.push_str(&bb.text.substring(s.start, s.end));
+            pos = o.end;
+        }
+        out.push_str(&bb.text.substring(pos, max));
+        (min, max, out)
+    };
     // GNU leaves the last char in place so markers at max survive.
-    bb.delete_region(min, max - 1);
-    bb.insert_at(min, &out);
-    bb.delete_region(max, max + 1);
+    crate::buffer::primitives::chg_delete(i, min, max - 1)?;
+    crate::buffer::primitives::chg_insert(i, min, &out)?;
+    crate::buffer::primitives::chg_delete(i, max, max + 1)?;
     Ok(Value::Nil)
 }
 
@@ -1143,7 +1144,7 @@ fn f_sort_paragraphs(i: &mut Interp, a: Vec<Value>) -> EvalResult {
             i.apply(&fp, Vec::new())?;
             // GNU adds a newline so trailing paragraphs aren't merged.
             if pt(i) >= zv(i) && !bolp(i) {
-                cur(i).borrow_mut().insert("\n");
+                crate::buffer::primitives::chg_insert_pt(i, "\n", false)?;
             }
             Ok(Value::Nil)
         };
@@ -1687,8 +1688,9 @@ fn f_reverse_region(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         p = le + 1;
     }
     let out = lines.iter().rev().cloned().collect::<Vec<_>>().join("\n");
-    bb.delete_region(beg, end);
-    bb.insert_at(beg, &out);
+    drop(bb);
+    crate::buffer::primitives::chg_delete(i, beg, end)?;
+    crate::buffer::primitives::chg_insert(i, beg, &out)?;
     Ok(Value::Nil)
 }
 
@@ -1740,7 +1742,7 @@ fn f_delete_duplicate_lines(i: &mut Interp, a: Vec<Value>) -> EvalResult {
             if dup {
                 // GNU: delete line incl. its newline (or to eob).
                 let del_end = if le < zv { le + 1 } else { le };
-                cur(i).borrow_mut().delete_region(ls, del_end);
+                crate::buffer::primitives::chg_delete(i, ls, del_end)?;
                 // Marker semantics for beg/end.
                 let dlen = del_end - ls;
                 if beg > del_end {
@@ -1847,8 +1849,9 @@ fn delete_lines_matching(i: &mut Interp, a: &[Value], keep_match: bool) -> EvalR
         start += part.len();
     }
     let _ = start;
-    bb.delete_region(s, e);
-    bb.insert_at(s, &out);
+    drop(bb);
+    crate::buffer::primitives::chg_delete(i, s, e)?;
+    crate::buffer::primitives::chg_insert(i, s, &out)?;
     Ok(Value::Int(removed))
 }
 
@@ -1872,8 +1875,9 @@ fn f_replace_string(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let mut bb = b.borrow_mut();
     let region = bb.text.substring(s, e);
     let out = region.replace(&from, &to);
-    bb.delete_region(s, e);
-    bb.insert_at(s, &out);
+    drop(bb);
+    crate::buffer::primitives::chg_delete(i, s, e)?;
+    crate::buffer::primitives::chg_insert(i, s, &out)?;
     Ok(Value::Nil)
 }
 
@@ -1905,8 +1909,9 @@ fn f_replace_regexp(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         }
     }
     out.extend(&region[pos.min(region.len())..]);
-    bb.delete_region(s, e);
-    bb.insert_at(s, &out);
+    drop(bb);
+    crate::buffer::primitives::chg_delete(i, s, e)?;
+    crate::buffer::primitives::chg_insert(i, s, &out)?;
     Ok(Value::Nil)
 }
 
@@ -2091,10 +2096,11 @@ fn f_transpose_regions(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     }
     let t1 = bb.text.substring(s1, e1);
     let t2 = bb.text.substring(s2, e2);
-    bb.delete_region(s2, e2);
-    bb.insert_at(s2, &t1);
-    bb.delete_region(s1, e1);
-    bb.insert_at(s1, &t2);
+    drop(bb);
+    crate::buffer::primitives::chg_delete(i, s2, e2)?;
+    crate::buffer::primitives::chg_insert(i, s2, &t1)?;
+    crate::buffer::primitives::chg_delete(i, s1, e1)?;
+    crate::buffer::primitives::chg_insert(i, s1, &t2)?;
     Ok(Value::Nil)
 }
 
@@ -2105,14 +2111,41 @@ fn f_subst_char_in_region(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let to = want_int(i, &a[3])? as u32;
     let fc = char::from_u32(from).unwrap_or('\u{FFFD}');
     let tc = char::from_u32(to).unwrap_or('\u{FFFD}');
-    let b = cur(i);
-    let mut bb = b.borrow_mut();
-    // GNU substitutes in place: point and markers are undisturbed.
-    for p in s..e.min(bb.text.len()) {
-        if bb.text.char_at(p) == fc {
-            bb.text.set_char_at(p, tc);
+    // GNU calls modify_text (before-change + MODIFF bump) only when a
+    // match exists, at the FIRST match position, covering [pos, end);
+    // after-change spans first..last substitution.  No match -> no
+    // hooks, no tick, nil.
+    let (first, last) = {
+        let b = cur(i);
+        let bb = b.borrow();
+        let mut first = None;
+        let mut last = 0;
+        for p in s..e.min(bb.text.len()) {
+            if bb.text.char_at(p) == fc {
+                if first.is_none() {
+                    first = Some(p);
+                }
+                last = p + 1;
+            }
         }
+        match first {
+            Some(f) => (f, last),
+            None => return Ok(Value::Nil),
+        }
+    };
+    crate::lisp::builtins::evalfn::signal_before_change(i, first + 1, e + 1)?;
+    {
+        let b = cur(i);
+        let mut bb = b.borrow_mut();
+        // GNU substitutes in place: point and markers are undisturbed.
+        for p in first..e.min(bb.text.len()) {
+            if bb.text.char_at(p) == fc {
+                bb.text.set_char_at(p, tc);
+            }
+        }
+        bb.note_text_change(e - first);
     }
+    crate::lisp::builtins::evalfn::signal_after_change(i, first + 1, last + 1, last - first)?;
     Ok(Value::Nil)
 }
 
@@ -2148,8 +2181,9 @@ fn f_translate_region(i: &mut Interp, a: Vec<Value>) -> EvalResult {
             }
         })
         .collect();
-    bb.delete_region(s, e);
-    bb.insert_at(s, &out);
+    drop(bb);
+    crate::buffer::primitives::chg_delete(i, s, e)?;
+    crate::buffer::primitives::chg_insert(i, s, &out)?;
     Ok(Value::Nil)
 }
 
@@ -2324,9 +2358,7 @@ fn f_delete_field(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     check_writable(i)?;
     let s = field_bounds(i, &a, true)?;
     let e = field_bounds(i, &a, false)?;
-    let b = cur(i);
-    let mut bb = b.borrow_mut();
-    bb.delete_region(s, e);
+    crate::buffer::primitives::chg_delete(i, s, e)?;
     Ok(Value::Nil)
 }
 
@@ -2610,8 +2642,9 @@ fn f_b64_encode_region(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let (s, e, _) = region_text(i, &a)?;
     let b = cur(i);
     let mut bb = b.borrow_mut();
-    bb.delete_region(s, e);
-    bb.insert_at(s, &encoded);
+    drop(bb);
+    crate::buffer::primitives::chg_delete(i, s, e)?;
+    crate::buffer::primitives::chg_insert(i, s, &encoded)?;
     Ok(Value::Int(encoded.chars().count() as i128))
 }
 
@@ -2622,8 +2655,9 @@ fn f_b64url_encode_region(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     check_writable(i)?;
     let b = cur(i);
     let mut bb = b.borrow_mut();
-    bb.delete_region(s, e);
-    bb.insert_at(s, &encoded);
+    drop(bb);
+    crate::buffer::primitives::chg_delete(i, s, e)?;
+    crate::buffer::primitives::chg_insert(i, s, &encoded)?;
     Ok(Value::Int(encoded.chars().count() as i128))
 }
 
@@ -2638,8 +2672,9 @@ fn f_b64_decode_region(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     check_writable(i)?;
     let b = cur(i);
     let mut bb = b.borrow_mut();
-    bb.delete_region(s, e);
-    bb.insert_at(s, &decoded);
+    drop(bb);
+    crate::buffer::primitives::chg_delete(i, s, e)?;
+    crate::buffer::primitives::chg_insert(i, s, &decoded)?;
     Ok(Value::Int(decoded.chars().count() as i128))
 }
 

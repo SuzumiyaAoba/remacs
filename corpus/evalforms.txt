@@ -179,3 +179,8 @@
 (condition-case e (let x 1) (error (car e)))
 (condition-case e (let ((x 1) . 2) x) (error (car e)))
 (condition-case e (let ((x (car nil))) x) (error (car e)))
+(let ((n 0)) (with-temp-buffer (insert "xy") (add-hook 'after-change-functions (lambda (a b c) (setq n (1+ n))) nil t) (insert "z") (with-silent-modifications (put-text-property 1 2 'q 'r)) n))
+(let ((n 0)) (with-temp-buffer (insert "xy") (add-hook 'after-change-functions (lambda (a b c) (setq n (1+ n))) nil t) (insert "z") (eval '(with-silent-modifications (put-text-property 1 2 'q 'r)) t) n))
+(let ((n 0)) (with-temp-buffer (insert "xy") (add-hook 'after-change-functions (lambda (a b c) (setq n (1+ n))) nil t) (insert "z") (eval '(let ((inhibit-modification-hooks t)) (insert "q")) t) n))
+(let ((n 0)) (with-temp-buffer (insert "xy") (add-hook 'before-change-functions (lambda (a b) (setq n (1+ n))) nil t) (insert "z") (with-silent-modifications (insert "q")) n))
+(let ((n 0)) (with-temp-buffer (insert "xy") (add-hook 'after-change-functions (lambda (a b c) (setq n (1+ n))) nil t) (insert "z") (let ((inhibit-modification-hooks t)) (save-restriction (widen) (put-text-property 1 2 'q 'r))) n))

@@ -490,10 +490,7 @@ fn f_json_parse_buffer(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 
 fn f_json_insert(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let s = serialize(i, &a[0], &a[1..])?;
-    let buf = i.current_buffer;
-    if let Some(b) = i.buffers.get(buf) {
-        b.borrow_mut().insert(&s);
-    }
+    crate::buffer::primitives::chg_insert_pt(i, &s, false)?;
     Ok(Value::Nil)
 }
 

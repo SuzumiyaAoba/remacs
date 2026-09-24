@@ -778,10 +778,23 @@ fn casify_region(i: &mut Interp, args: &[Value], op: CaseOp) -> EvalResult {
     let (start, end) = ((*s - 1) as usize, (*e - 1) as usize);
     let old = b.borrow().text.substring(start, end);
     let new = case_str(i, &old, op, &down, &up);
-    if new != old {
+    crate::lisp::builtins::evalfn::signal_before_change(i, start + 1, end + 1)?;
+    let old_len = end - start;
+    let n_new = new.chars().count();
+    let changed = new != old;
+    {
         let mut bb = b.borrow_mut();
-        bb.delete_region(start, end);
-        bb.insert_at(start, &new);
+        if changed {
+            bb.raw_delete_region(start, end);
+            bb.raw_insert_at(start, &new);
+        } else {
+            bb.record_delete(start, old.clone());
+            bb.record_insert(start, n_new);
+        }
+        bb.note_text_change(old_len);
+    }
+    if changed {
+        crate::lisp::builtins::evalfn::signal_after_change(i, start + 1, start + 1 + n_new, old_len)?;
     }
     Ok(Value::Nil)
 }

@@ -7213,9 +7213,9 @@ fn f_yank(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         _ => String::new(),
     };
     let b = cur(i);
-    let mut bb = b.borrow_mut();
-    bb.mark = Some(bb.point());
-    bb.insert(&s);
+    let pt = b.borrow().point();
+    b.borrow_mut().mark = Some(pt);
+    crate::buffer::primitives::chg_insert_pt(i, &s, false)?;
     Ok(Value::Nil)
 }
 
@@ -7229,22 +7229,24 @@ fn f_yank_pop(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     }
     // Replace the region between mark and point.
     let b = cur(i);
-    let mut bb = b.borrow_mut();
-    if let Some(m) = bb.mark {
+    let (m, p) = {
+        let bb = b.borrow();
+        (bb.mark, bb.point())
+    };
+    if let Some(m) = m {
         let len = items.len();
         let base = yank_ptr_pos(i, &ring, len);
         let pos = (((base as i128 + n) % len as i128) + len as i128) as usize % len;
-        let p = bb.point();
         let (s, e) = (m.min(p), m.max(p));
-        bb.delete_region(s, e);
-        bb.set_point(s);
+        crate::buffer::primitives::chg_delete(i, s, e)?;
+        b.borrow_mut().set_point(s);
         let text = match &items[pos] {
             Value::Str(s) => s.borrow().clone(),
             _ => String::new(),
         };
         set_yank_ptr(i, &ring, pos);
-        bb.mark = Some(s);
-        bb.insert(&text);
+        crate::buffer::primitives::chg_insert_pt(i, &text, false)?;
+        b.borrow_mut().mark = Some(s);
         Ok(Value::Nil)
     } else {
         Err(i.error("Previous command was not a yank"))
@@ -7277,14 +7279,17 @@ fn f_copy_to_buffer(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         let e = (want_int(i, &a[2])?.max(1) as usize - 1).min(len);
         bb.text.substring(s.min(e), s.max(e))
     };
-    if let Some(b) = i.buffers.get(bid) {
-        // copy-to-buffer replaces the target's entire contents.
-        let mut bb = b.borrow_mut();
-        let len = bb.text.len();
-        bb.delete_region(0, len);
-        bb.set_point(0);
-        bb.insert(&text);
-        bb.set_point(0);
+    if i.buffers.get(bid).is_some() {
+        // copy-to-buffer replaces the target's entire contents; GNU
+        // runs the change hooks with the target buffer current.
+        crate::buffer::primitives::chg_with_buffer(i, bid, |i| {
+            let len = cur(i).borrow().text.len();
+            crate::buffer::primitives::chg_delete(i, 0, len)?;
+            cur(i).borrow_mut().set_point(0);
+            crate::buffer::primitives::chg_insert_pt(i, &text, false)?;
+            cur(i).borrow_mut().set_point(0);
+            Ok(Value::Nil)
+        })?;
     }
     Ok(Value::Nil)
 }
@@ -7303,8 +7308,10 @@ fn f_append_to_buffer(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         let e = (want_int(i, &a[2])?.max(1) as usize - 1).min(len);
         bb.text.substring(s.min(e), s.max(e))
     };
-    if let Some(b) = i.buffers.get(bid) {
-        b.borrow_mut().insert(&text);
+    if i.buffers.get(bid).is_some() {
+        crate::buffer::primitives::chg_with_buffer(i, bid, |i| {
+            crate::buffer::primitives::chg_insert_pt(i, &text, false)
+        })?;
     }
     Ok(Value::Nil)
 }
@@ -8300,14 +8307,14 @@ fn f_insert_file_contents(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         Ok(contents) => {
             let n = contents.chars().count();
             let b = cur(i);
-            let mut bb = b.borrow_mut();
-            if visit && bb.text.len() > 0 {
+            if visit && b.borrow().text.len() > 0 {
                 return Err(i.error("Cannot do file visiting in a non-empty buffer"));
             }
-            let start = bb.point();
-            bb.insert(&contents);
+            let start = b.borrow().point();
+            crate::buffer::primitives::chg_insert_pt(i, &contents, false)?;
             // GNU Finsert_file_contents leaves point BEFORE the
             // inserted text (like `insert-before-markers').
+            let mut bb = b.borrow_mut();
             bb.set_point(start);
             if visit {
                 bb.file_name = Some(path.clone());
@@ -8481,9 +8488,23 @@ fn f_find_file_noselect(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         }
         match std::fs::read_to_string(&path) {
             Ok(contents) => {
-                bb.text.set_text(&contents);
-                bb.zv = bb.text.len();
-                bb.note_modified(false);
+                let old_len = bb.text.len();
+                drop(bb);
+                // GNU's insert-file-contents runs the change hooks in
+                // the file's buffer.
+                crate::buffer::primitives::chg_with_buffer(i, bid, |i| {
+                    crate::lisp::builtins::evalfn::signal_before_change(i, 1, old_len + 1)?;
+                    {
+                        let b = i.buffers.get(bid).unwrap();
+                        let mut bb = b.borrow_mut();
+                        bb.text.set_text(&contents);
+                        bb.zv = bb.text.len();
+                        bb.note_modified(false);
+                    }
+                    let new_len = contents.chars().count();
+                    crate::lisp::builtins::evalfn::signal_after_change(i, 1, new_len + 1, old_len)
+                })?;
+                let mut bb = b.borrow_mut();
                 // GNU records the visited file's modtime+size so
                 // `verify-visited-file-modtime' can detect changes.
                 if let Ok(m) = std::fs::metadata(&path) {
@@ -8980,8 +9001,11 @@ fn f_call_process(i: &mut Interp, a: Vec<Value>) -> EvalResult {
                 } else {
                     i.current_buffer
                 };
-                if let Some(b) = i.buffers.get(bid) {
-                    b.borrow_mut().insert(&stdout);
+                if i.buffers.get(bid).is_some() {
+                    let out = stdout.clone();
+                    crate::buffer::primitives::chg_with_buffer(i, bid, |i| {
+                        crate::buffer::primitives::chg_insert_pt(i, &out, false)
+                    })?;
                 }
             }
         }
@@ -9038,12 +9062,10 @@ fn f_call_process_region(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
     // DELETE: replace the region.
     if a.get(3).map(|v| v.truthy()).unwrap_or(false) {
-        let b = cur(i);
-        let mut bb = b.borrow_mut();
-        let len = bb.text.len();
+        let len = cur(i).borrow().text.len();
         let (s, e) = region_bounds(i, &a[0], &a[1], len);
-        bb.delete_region(s.min(e), s.max(e));
-        bb.insert_at(s.min(e), &stdout);
+        crate::buffer::primitives::chg_delete(i, s.min(e), s.max(e))?;
+        crate::buffer::primitives::chg_insert(i, s.min(e), &stdout)?;
     } else {
         let dest = arg(&a, 4);
         if dest.truthy() {
@@ -9052,8 +9074,10 @@ fn f_call_process_region(i: &mut Interp, a: Vec<Value>) -> EvalResult {
             } else {
                 i.buffer_id_of(&dest).unwrap_or(i.current_buffer)
             };
-            if let Some(b) = i.buffers.get(bid) {
-                b.borrow_mut().insert(&stdout);
+            if i.buffers.get(bid).is_some() {
+                crate::buffer::primitives::chg_with_buffer(i, bid, |i| {
+                    crate::buffer::primitives::chg_insert_pt(i, &stdout, false)
+                })?;
             }
         }
     }
@@ -9076,10 +9100,19 @@ fn f_shell_command(i: &mut Interp, a: Vec<Value>) -> EvalResult {
                     .buffers
                     .by_name("*Shell Command Output*")
                     .unwrap_or_else(|| i.buffers.create("*Shell Command Output*"));
-                if let Some(b) = i.buffers.get(bid) {
-                    let mut bb = b.borrow_mut();
-                    bb.text.set_text(&stdout);
-                    bb.zv = bb.text.len();
+                if i.buffers.get(bid).is_some() {
+                    crate::buffer::primitives::chg_with_buffer(i, bid, |i| {
+                        let b = i.buffers.get(bid).unwrap();
+                        let old_len = b.borrow().text.len();
+                        crate::lisp::builtins::evalfn::signal_before_change(i, 1, old_len + 1)?;
+                        {
+                            let mut bb = b.borrow_mut();
+                            bb.text.set_text(&stdout);
+                            bb.zv = bb.text.len();
+                        }
+                        let new_len = stdout.chars().count();
+                        crate::lisp::builtins::evalfn::signal_after_change(i, 1, new_len + 1, old_len)
+                    })?;
                 }
             }
             Ok(Value::Int(o.status.code().unwrap_or(1) as i128))
@@ -9120,11 +9153,12 @@ fn f_kill_line(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         }
         // at EOL: kill the newline(s)
         let end = (p + n.max(1) as usize).min(bb.text.len());
-        killed = bb.delete_region(p, end);
+        drop(bb);
+        killed = crate::buffer::primitives::chg_delete(i, p, end)?;
     } else {
-        killed = bb.delete_region(p, le);
+        drop(bb);
+        killed = crate::buffer::primitives::chg_delete(i, p, le)?;
     }
-    drop(bb);
     crate::buffer::primitives::push_kill_ring(i, killed);
     Ok(Value::Nil)
 }
@@ -9143,9 +9177,9 @@ fn f_kill_whole_line(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         }
     }
     let tlen = bb.text.len();
-    let killed = bb.delete_region(s, e.min(tlen));
-    bb.set_point(s);
     drop(bb);
+    let killed = crate::buffer::primitives::chg_delete(i, s, e.min(tlen))?;
+    cur(i).borrow_mut().set_point(s);
     crate::buffer::primitives::push_kill_ring(i, killed);
     Ok(Value::Nil)
 }
@@ -9167,8 +9201,8 @@ fn f_kill_word(i: &mut Interp, a: Vec<Value>) -> EvalResult {
             p += 1;
         }
     }
-    let killed = bb.delete_region(start, p);
     drop(bb);
+    let killed = crate::buffer::primitives::chg_delete(i, start, p)?;
     crate::buffer::primitives::push_kill_ring(i, killed);
     Ok(Value::Nil)
 }
@@ -9189,8 +9223,8 @@ fn f_backward_kill_word(i: &mut Interp, a: Vec<Value>) -> EvalResult {
             p -= 1;
         }
     }
-    let killed = bb.delete_region(p, end);
     drop(bb);
+    let killed = crate::buffer::primitives::chg_delete(i, p, end)?;
     crate::buffer::primitives::push_kill_ring(i, killed);
     Ok(Value::Nil)
 }
@@ -9210,8 +9244,9 @@ fn f_delete_horizontal_space(i: &mut Interp, a: Vec<Value>) -> EvalResult {
             e += 1;
         }
     }
-    bb.delete_region(s, e);
-    bb.set_point(s);
+    drop(bb);
+    crate::buffer::primitives::chg_delete(i, s, e)?;
+    cur(i).borrow_mut().set_point(s);
     Ok(Value::Nil)
 }
 
@@ -9228,9 +9263,10 @@ fn f_just_one_space(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     while e < bb.text.len() && matches!(bb.text.char_at(e), ' ' | '\t') {
         e += 1;
     }
-    bb.delete_region(s, e);
-    bb.set_point(s);
-    bb.insert(&" ".repeat(n));
+    drop(bb);
+    crate::buffer::primitives::chg_delete(i, s, e)?;
+    cur(i).borrow_mut().set_point(s);
+    crate::buffer::primitives::chg_insert_pt(i, &" ".repeat(n), false)?;
     Ok(Value::Nil)
 }
 
@@ -9253,8 +9289,9 @@ fn f_delete_indentation(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
         e += 1;
     }
     let s = ls - 1; // the newline
-    bb.delete_region(s, e);
-    bb.set_point(s);
+    drop(bb);
+    crate::buffer::primitives::chg_delete(i, s, e)?;
+    cur(i).borrow_mut().set_point(s);
     Ok(Value::Nil)
 }
 
@@ -9279,7 +9316,8 @@ fn f_zap_to_char(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     if count < n.max(1) {
         return Err(i.error(&format!("Char {} not found", c)));
     }
-    bb.delete_region(p, found + 1);
+    drop(bb);
+    crate::buffer::primitives::chg_delete(i, p, found + 1)?;
     Ok(Value::Nil)
 }
 
@@ -9299,6 +9337,10 @@ fn f_transpose_chars(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let c2 = bb.text.char_at(p);
     let s2 = c2.to_string();
     let s1 = c1.to_string();
+    drop(bb);
+    crate::lisp::builtins::evalfn::signal_before_change(i, p, p + 1)?;
+    let b = cur(i);
+    let mut bb = b.borrow_mut();
     bb.record_delete(p, s2.clone());
     bb.text.delete(p, p + 1);
     bb.adjust_markers_delete(p, p + 1);
@@ -9311,10 +9353,9 @@ fn f_transpose_chars(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     bb.record_insert(p - 1, s2.chars().count());
     bb.text.insert(p - 1, &s2);
     bb.adjust_markers_insert(p - 1, s2.chars().count(), false);
-    bb.note_modified(true);
-    bb.mod_tick += 1;
-    bb.chars_mod_tick += 1;
-    bb.set_point(p + 1);
+    bb.note_text_change(2);
+    drop(bb);
+    crate::lisp::builtins::evalfn::signal_after_change(i, p, p + 1, 2)?;
     Ok(Value::Nil)
 }
 
@@ -9333,6 +9374,10 @@ fn f_transpose_lines(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let l2e = bb.text.line_end(l2s);
     let l1 = bb.text.substring(l1s, l1e);
     let l2 = bb.text.substring(l2s, l2e);
+    drop(bb);
+    crate::lisp::builtins::evalfn::signal_before_change(i, l1s + 1, l2e + 1)?;
+    let b = cur(i);
+    let mut bb = b.borrow_mut();
     bb.record_delete(l1s, format!("{}\n{}", l1, l2));
     bb.text.delete(l1s, l2e);
     bb.adjust_markers_delete(l1s, l2e);
@@ -9340,9 +9385,9 @@ fn f_transpose_lines(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     bb.record_insert(l1s, new.chars().count());
     bb.text.insert(l1s, &new);
     bb.adjust_markers_insert(l1s, new.chars().count(), false);
-    bb.note_modified(true);
-    bb.mod_tick += 1;
-    bb.chars_mod_tick += 1;
+    bb.note_text_change(l2e - l1s + new.chars().count());
+    drop(bb);
+    crate::lisp::builtins::evalfn::signal_after_change(i, l1s + 1, l2e + 1, l2e - l1s)?;
     Ok(Value::Nil)
 }
 
@@ -9359,10 +9404,49 @@ fn region_op(i: &mut Interp, a: &[Value], op: crate::lisp::builtins::strfn::Case
         (s, e, bb.text.substring(s, e))
     };
     let new = case_str(i, &old, op, &down, &up);
-    if new != old {
+    // GNU `casify_region': `modify_text' fires whenever the region is
+    // non-empty (before-change + MODIFF bump even when nothing
+    // changed); `after-change' fires only when case actually changed,
+    // spanning first..last changed char.
+    crate::lisp::builtins::evalfn::signal_before_change(i, s + 1, e + 1)?;
+    let old_len = e - s;
+    let n_new = new.chars().count();
+    let changed = new != old;
+    let (first, last_old) = if changed && n_new == old_len {
+        let o: Vec<char> = old.chars().collect();
+        let n: Vec<char> = new.chars().collect();
+        let f = o.iter().zip(&n).position(|(a, b)| a != b).unwrap_or(0);
+        let l = o
+            .iter()
+            .zip(&n)
+            .rev()
+            .position(|(a, b)| a != b)
+            .map(|x| old_len - x)
+            .unwrap_or(old_len);
+        (f, l)
+    } else {
+        (0, old_len)
+    };
+    {
+        let b = cur(i);
         let mut bb = b.borrow_mut();
-        bb.delete_region(s, e);
-        bb.insert_at(s, &new);
+        if changed {
+            bb.raw_delete_region(s, e);
+            bb.raw_insert_at(s, &new);
+        } else {
+            bb.record_delete(s, old.clone());
+            bb.record_insert(s, n_new);
+        }
+        bb.note_text_change(old_len);
+    }
+    if changed {
+        let span_new = n_new - (old_len - last_old);
+        crate::lisp::builtins::evalfn::signal_after_change(
+            i,
+            s + first + 1,
+            s + first + span_new + 1,
+            last_old - first,
+        )?;
     }
     Ok(Value::Nil)
 }
@@ -9410,15 +9494,50 @@ fn word_op(i: &mut Interp, a: &[Value], op: crate::lisp::builtins::strfn::CaseOp
     let (s, e) = (start.min(p), start.max(p));
     let old = b.borrow().text.substring(s, e);
     let new = case_str(i, &old, op, &down, &up);
-    let mut bb = b.borrow_mut();
-    if new != old {
-        bb.delete_region(s, e);
-        bb.insert_at(s, &new);
+    // GNU `casify_region' shape (see region_op).
+    crate::lisp::builtins::evalfn::signal_before_change(i, s + 1, e + 1)?;
+    let old_len = e - s;
+    let n_new = new.chars().count();
+    let changed = new != old;
+    let (first, last_old) = if changed && n_new == old_len {
+        let o: Vec<char> = old.chars().collect();
+        let n: Vec<char> = new.chars().collect();
+        let f = o.iter().zip(&n).position(|(a, b)| a != b).unwrap_or(0);
+        let l = o
+            .iter()
+            .zip(&n)
+            .rev()
+            .position(|(a, b)| a != b)
+            .map(|x| old_len - x)
+            .unwrap_or(old_len);
+        (f, l)
+    } else {
+        (0, old_len)
+    };
+    {
+        let mut bb = b.borrow_mut();
+        if changed {
+            bb.raw_delete_region(s, e);
+            bb.raw_insert_at(s, &new);
+        } else {
+            bb.record_delete(s, old.clone());
+            bb.record_insert(s, n_new);
+        }
+        bb.note_text_change(old_len);
+    }
+    if changed {
+        let span_new = n_new - (old_len - last_old);
+        crate::lisp::builtins::evalfn::signal_after_change(
+            i,
+            s + first + 1,
+            s + first + span_new + 1,
+            last_old - first,
+        )?;
     }
     // GNU moves point over the changed words for positive args and
     // leaves it alone for negative args.
     if n >= 0 {
-        bb.set_point(s + new.chars().count());
+        b.borrow_mut().set_point(s + n_new);
     }
     Ok(Value::Nil)
 }
@@ -9453,15 +9572,16 @@ fn f_indent_line_to(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     while e < bb.text.len() && matches!(bb.text.char_at(e), ' ' | '\t') {
         e += 1;
     }
-    bb.delete_region(ls, e);
+    drop(bb);
+    crate::buffer::primitives::chg_delete(i, ls, e)?;
     let ws = if tabs_on {
         format!("{}{}", "\t".repeat(col / tab), " ".repeat(col % tab))
     } else {
         " ".repeat(col)
     };
     let wlen = ws.chars().count();
-    bb.insert_at(ls, &ws);
-    bb.set_point(ls + wlen);
+    crate::buffer::primitives::chg_insert(i, ls, &ws)?;
+    cur(i).borrow_mut().set_point(ls + wlen);
     Ok(Value::Nil)
 }
 
@@ -9502,7 +9622,8 @@ fn f_indent_to(i: &mut Interp, a: Vec<Value>) -> EvalResult {
             s.push(' ');
             c += 1;
         }
-        bb.insert(&s);
+        drop(bb);
+        crate::buffer::primitives::chg_insert_pt(i, &s, false)?;
     }
     Ok(Value::Int(mincol))
 }
@@ -9511,58 +9632,70 @@ fn f_indent_rigidly(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let len = cur(i).borrow().text.len();
     let (s, e) = region_bounds(i, &a[0], &a[1], len);
     let col = want_int(i, &a[2])?;
-    let b = cur(i);
-    let mut bb = b.borrow_mut();
     // For each line in [s,e): insert col spaces (or delete -col cols).
-    let mut pos = s;
-    while pos < e && pos <= bb.text.len() {
-        if col >= 0 {
-            bb.insert_at(pos, &" ".repeat(col as usize));
-            pos += col as usize;
-        } else {
-            // delete up to -col leading whitespace
-            let mut d = 0;
-            while d < (-col) as usize
-                && pos < bb.text.len()
-                && matches!(bb.text.char_at(pos), ' ' | '\t')
-            {
-                d += 1;
-                pos += 1;
+    // Report the batch as one change covering the region (GNU's
+    // `combine-change-calls' shape).
+    crate::lisp::builtins::evalfn::signal_before_change(i, s + 1, e + 1)?;
+    {
+        let b = cur(i);
+        let mut bb = b.borrow_mut();
+        let mut pos = s;
+        while pos < e && pos <= bb.text.len() {
+            if col >= 0 {
+                bb.insert_at(pos, &" ".repeat(col as usize));
+                pos += col as usize;
+            } else {
+                // delete up to -col leading whitespace
+                let mut d = 0;
+                while d < (-col) as usize
+                    && pos < bb.text.len()
+                    && matches!(bb.text.char_at(pos), ' ' | '\t')
+                {
+                    d += 1;
+                    pos += 1;
+                }
+                if d > 0 {
+                    bb.delete_region(pos - d, pos);
+                    pos -= d;
+                }
             }
-            if d > 0 {
-                bb.delete_region(pos - d, pos);
-                pos -= d;
-            }
+            // to next line
+            let le = bb.text.line_end(pos);
+            pos = if le < bb.text.len() { le + 1 } else { break };
         }
-        // to next line
-        let le = bb.text.line_end(pos);
-        pos = if le < bb.text.len() { le + 1 } else { break };
     }
+    let e2 = cur(i).borrow().text.len().min(e.max(s));
+    crate::lisp::builtins::evalfn::signal_after_change(i, s + 1, e2 + 1, e - s)?;
     Ok(Value::Nil)
 }
 
 fn f_delete_trailing_whitespace(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let b = cur(i);
-    let mut bb = b.borrow_mut();
-    let len = bb.text.len();
+    let len = cur(i).borrow().text.len();
     let (s, e) = match (a.get(0), a.get(1)) {
         (Some(sv), Some(ev)) if sv.truthy() => region_bounds(i, sv, ev, len),
         _ => (0, len),
     };
-    let mut pos = s;
-    while pos < e && pos < bb.text.len() {
-        let le = bb.text.line_end(pos);
-        // trailing ws before le
-        let mut ts = le;
-        while ts > pos && matches!(bb.text.char_at(ts - 1), ' ' | '\t') {
-            ts -= 1;
+    crate::lisp::builtins::evalfn::signal_before_change(i, s + 1, e + 1)?;
+    {
+        let b = cur(i);
+        let mut bb = b.borrow_mut();
+        let mut pos = s;
+        while pos < e && pos < bb.text.len() {
+            let le = bb.text.line_end(pos);
+            // trailing ws before le
+            let mut ts = le;
+            while ts > pos && matches!(bb.text.char_at(ts - 1), ' ' | '\t') {
+                ts -= 1;
+            }
+            if ts < le {
+                bb.delete_region(ts, le);
+            }
+            let le2 = bb.text.line_end(ts);
+            pos = if le2 < bb.text.len() { le2 + 1 } else { break };
         }
-        if ts < le {
-            bb.delete_region(ts, le);
-        }
-        let le2 = bb.text.line_end(ts);
-        pos = if le2 < bb.text.len() { le2 + 1 } else { break };
     }
+    let e2 = cur(i).borrow().text.len().min(e);
+    crate::lisp::builtins::evalfn::signal_after_change(i, s + 1, e2 + 1, e - s)?;
     Ok(Value::Nil)
 }
 
@@ -9577,28 +9710,31 @@ fn f_untabify(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         .int()
         .unwrap_or(8)
         .max(1) as usize;
-    let b = cur(i);
-    let mut bb = b.borrow_mut();
-    let mut pos = s;
-    while pos < e && pos < bb.text.len() {
-        if bb.text.char_at(pos) == '\t' {
-            let ls = bb.text.line_start(bb.text.line_of_pos(pos));
-            let col = pos - ls;
-            let spaces = tab_width - (col % tab_width);
-            bb.record_delete(pos, "\t".to_string());
-            bb.text.delete(pos, pos + 1);
-            bb.adjust_markers_delete(pos, pos + 1);
-            bb.record_insert(pos, spaces);
-            bb.text.insert(pos, &" ".repeat(spaces));
-            bb.adjust_markers_insert(pos, spaces, false);
-            bb.note_modified(true);
-            bb.mod_tick += 1;
-            bb.chars_mod_tick += 1;
-            pos += spaces;
-        } else {
-            pos += 1;
+    crate::lisp::builtins::evalfn::signal_before_change(i, s + 1, e + 1)?;
+    {
+        let b = cur(i);
+        let mut bb = b.borrow_mut();
+        let mut pos = s;
+        while pos < e && pos < bb.text.len() {
+            if bb.text.char_at(pos) == '\t' {
+                let ls = bb.text.line_start(bb.text.line_of_pos(pos));
+                let col = pos - ls;
+                let spaces = tab_width - (col % tab_width);
+                bb.record_delete(pos, "\t".to_string());
+                bb.text.delete(pos, pos + 1);
+                bb.adjust_markers_delete(pos, pos + 1);
+                bb.record_insert(pos, spaces);
+                bb.text.insert(pos, &" ".repeat(spaces));
+                bb.adjust_markers_insert(pos, spaces, false);
+                bb.note_text_change(1 + spaces);
+                pos += spaces;
+            } else {
+                pos += 1;
+            }
         }
     }
+    let e2 = cur(i).borrow().text.len().min(e);
+    crate::lisp::builtins::evalfn::signal_after_change(i, s + 1, e2 + 1, e - s)?;
     Ok(Value::Nil)
 }
 
@@ -9671,11 +9807,13 @@ fn f_minibuffer_contents(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
 
 fn f_delete_minibuffer_contents(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
     if let Some(id) = minibuf_id(i) {
-        if let Some(b) = i.buffers.get(id) {
-            let mut bb = b.borrow_mut();
-            let tlen = bb.text.len();
-            bb.delete_region(0, tlen);
-            bb.set_point(0);
+        if i.buffers.get(id).is_some() {
+            crate::buffer::primitives::chg_with_buffer(i, id, |i| {
+                let tlen = cur(i).borrow().text.len();
+                crate::buffer::primitives::chg_delete(i, 0, tlen)?;
+                cur(i).borrow_mut().set_point(0);
+                Ok(Value::Nil)
+            })?;
         }
     }
     Ok(Value::Nil)

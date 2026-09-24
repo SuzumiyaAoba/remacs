@@ -984,6 +984,62 @@ fn f_run_hook_wrapped(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     Ok(Value::Nil)
 }
 
+/// GNU `inhibit_modification_hooks': `inhibit-modification-hooks'
+/// (bound by `with-silent-modifications' and `combine-after-change-*'
+/// internals) suppresses the before/after-change hooks entirely.
+pub(crate) fn mod_hooks_inhibited(i: &Interp) -> bool {
+    i.intern_soft("inhibit-modification-hooks")
+        .map(|sid| i.symbol_value(sid).truthy())
+        .unwrap_or(false)
+}
+
+/// GNU `signal_before_change': run `first-change-hook' (when the
+/// buffer was unmodified) then `before-change-functions' with the
+/// 1-based region about to change.  An error aborts the modification.
+pub(crate) fn signal_before_change(i: &mut Interp, beg1: usize, end1: usize) -> EvalResult {
+    if mod_hooks_inhibited(i) {
+        return Ok(Value::Nil);
+    }
+    let unmodified = !i
+        .buffers
+        .get(i.current_buffer)
+        .map(|b| b.borrow().modified)
+        .unwrap_or(false);
+    if unmodified {
+        let id = i.intern("first-change-hook");
+        let fns = hook_fns(i, &Value::Sym(id));
+        for f in fns {
+            i.apply(&f, vec![])?;
+        }
+    }
+    let args = vec![Value::Int(beg1 as i128), Value::Int(end1 as i128)];
+    let id = i.intern("before-change-functions");
+    let fns = hook_fns(i, &Value::Sym(id));
+    for f in fns {
+        i.apply(&f, args.clone())?;
+    }
+    Ok(Value::Nil)
+}
+
+/// GNU `report_after_change': `after-change-functions' with
+/// (BEG END LEN); LEN is the char length of the replaced text.
+pub(crate) fn signal_after_change(i: &mut Interp, beg1: usize, end1: usize, len: usize) -> EvalResult {
+    if mod_hooks_inhibited(i) {
+        return Ok(Value::Nil);
+    }
+    let args = vec![
+        Value::Int(beg1 as i128),
+        Value::Int(end1 as i128),
+        Value::Int(len as i128),
+    ];
+    let id = i.intern("after-change-functions");
+    let fns = hook_fns(i, &Value::Sym(id));
+    for f in fns {
+        i.apply(&f, args.clone())?;
+    }
+    Ok(Value::Nil)
+}
+
 // `add-hook'/`remove-hook' mirror GNU 31.1's Lisp definitions in
 // subr.el, including depth bookkeeping via the `hook--depth-alist'
 // symbol property (an uninterned symbol whose value is an alist).

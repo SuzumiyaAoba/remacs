@@ -2344,6 +2344,8 @@ impl Interp {
             "standard-input",
             "lexical-binding",
             "inhibit-read-only",
+            "inhibit-modification-hooks",
+            "inhibit-quit",
             "load-path",
             "features",
             "command-line-args",
@@ -4035,7 +4037,10 @@ impl Interp {
         };
         match dest {
             Value::Buffer(b) => {
-                b.borrow_mut().insert(s);
+                let bid = b.borrow().id;
+                crate::buffer::primitives::chg_with_buffer(self, bid, |i| {
+                    crate::buffer::primitives::chg_insert_pt(i, s, false)
+                })?;
             }
             Value::Marker(m) => {
                 // GNU inserts before the marker, then advances it past
@@ -4044,8 +4049,10 @@ impl Interp {
                 if let Some(buf_id) = mm.buffer {
                     let pos = mm.position;
                     drop(mm);
-                    if let Some(b) = self.buffers.get(buf_id) {
-                        b.borrow_mut().insert_at(pos, s);
+                    if self.buffers.get(buf_id).is_some() {
+                        crate::buffer::primitives::chg_with_buffer(self, buf_id, |i| {
+                            crate::buffer::primitives::chg_insert(i, pos, s)
+                        })?;
                     }
                     let newpos = pos + s.chars().count();
                     m.borrow_mut().position = newpos;
@@ -4105,14 +4112,10 @@ impl Interp {
         }
         self.echo_message = s.to_string();
         if let Some(mb) = self.buffers.by_name(" *Messages*") {
-            if let Some(b) = self.buffers.get(mb) {
-                let mut bb = b.borrow_mut();
-                let tl = bb.text.len();
-                let n = s.chars().count();
-                bb.text.insert(tl, s);
-                bb.adjust_markers_insert(tl, n, false);
-                bb.text.insert(tl + n, "\n");
-                bb.adjust_markers_insert(tl + n, 1, false);
+            if self.buffers.get(mb).is_some() {
+                let _ = crate::buffer::primitives::chg_with_buffer(self, mb, |i| {
+                    crate::buffer::primitives::chg_insert_pt(i, &format!("{}\n", s), false)
+                });
             }
         }
         if let Some(OutputSink::Buffer(buf)) = &self.output {

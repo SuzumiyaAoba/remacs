@@ -369,6 +369,17 @@ impl Buffer {
     /// Insert text at `pos`, adjusting point/mark/markers.
     /// `before_markers`: text goes before markers at pos (insert-before-markers).
     pub fn insert_at(&mut self, pos: usize, s: &str) {
+        let n = s.chars().count();
+        if n == 0 {
+            return;
+        }
+        self.raw_insert_at(pos, s);
+        self.note_text_change(n);
+    }
+
+    /// `insert_at' without the MODIFF bump — for ops that report a
+    /// composite change (`replace_range', casify) with a single tick.
+    pub fn raw_insert_at(&mut self, pos: usize, s: &str) {
         let pos = pos.min(self.text.len());
         let n = s.chars().count();
         if n == 0 {
@@ -377,15 +388,22 @@ impl Buffer {
         self.record_insert(pos, n);
         self.text.insert(pos, s);
         self.adjust_insert(pos, n, before_markers_flag(pos, self.point));
-        self.note_modified(true);
-        self.mod_tick += 1;
-        self.chars_mod_tick += 1;
     }
 
     /// Like Emacs's `insert`: inserted text goes *before* point when
     /// inserting at point — i.e. point ends up after the new text.
     /// (Emacs `insert` inserts before point, advancing it.)
     pub fn insert(&mut self, s: &str) {
+        let n = s.chars().count();
+        if n == 0 {
+            return;
+        }
+        self.raw_insert(s);
+        self.note_text_change(n);
+    }
+
+    /// `insert' without the MODIFF bump.
+    pub fn raw_insert(&mut self, s: &str) {
         let p = self.point();
         let n = s.chars().count();
         if n == 0 {
@@ -395,13 +413,20 @@ impl Buffer {
         self.text.insert(p, s);
         self.point = p + n;
         self.adjust_markers_insert(p, n, false);
-        self.note_modified(true);
-        self.mod_tick += 1;
-        self.chars_mod_tick += 1;
     }
 
     /// `insert-before-markers`.
     pub fn insert_before_markers(&mut self, s: &str) {
+        let n = s.chars().count();
+        if n == 0 {
+            return;
+        }
+        self.raw_insert_before_markers(s);
+        self.note_text_change(n);
+    }
+
+    /// `insert_before_markers' without the MODIFF bump.
+    pub fn raw_insert_before_markers(&mut self, s: &str) {
         let p = self.point();
         let n = s.chars().count();
         if n == 0 {
@@ -411,9 +436,6 @@ impl Buffer {
         self.text.insert(p, s);
         self.point = p + n;
         self.adjust_markers_insert(p, n, true);
-        self.note_modified(true);
-        self.mod_tick += 1;
-        self.chars_mod_tick += 1;
     }
 
     /// Point adjustment for `insert_at` (non-point-aware variant).
@@ -566,6 +588,16 @@ impl Buffer {
 
     /// Delete `[start, end)`, adjusting everything.
     pub fn delete_region(&mut self, start: usize, end: usize) -> String {
+        let n = end.saturating_sub(start);
+        let removed = self.raw_delete_region(start, end);
+        if n > 0 {
+            self.note_text_change(n);
+        }
+        removed
+    }
+
+    /// `delete_region' without the MODIFF bump.
+    pub fn raw_delete_region(&mut self, start: usize, end: usize) -> String {
         let start = start.min(self.text.len());
         let end = end.min(self.text.len());
         if start >= end {
@@ -599,9 +631,6 @@ impl Buffer {
         } else if self.begv > start {
             self.begv = start;
         }
-        self.note_modified(true);
-        self.mod_tick += 1;
-        self.chars_mod_tick += 1;
         removed
     }
 
@@ -639,6 +668,9 @@ impl Buffer {
     /// GNU `record_first_change': push `(t . MODTIME)' where MODTIME is
     /// `buffer_visited_file_modtime' (0 for non-file buffers).
     fn record_first_change(&mut self) {
+        if self.undo_disabled() {
+            return;
+        }
         let mt = if self.file_name.is_none() {
             Value::Int(0)
         } else if self.file_modtime_ns < 0 {
@@ -766,12 +798,34 @@ impl Buffer {
             ),
         );
         self.push_undo(entry);
-        self.mod_tick += 1;
-        self.note_modified(true);
     }
 
-    /// Text-property modifications bump MODIFF even when undo is off.
+    /// GNU `modiff_incr': MODIFF grows logarithmically with the number
+    /// of changed characters — floor(log2(len)) + 1 for len > 0, else 1.
+    fn modiff_incr(len: usize) -> u64 {
+        if len == 0 {
+            1
+        } else {
+            (usize::BITS - len.leading_zeros()) as u64
+        }
+    }
+
+    /// GNU insdel tick: `MODIFF += elogb(nchars) + 1' then
+    /// `CHARS_MODIFF = MODIFF' (the chars counter mirrors MODIFF's
+    /// absolute value, catching up any property-only bumps).
+    pub fn note_text_change(&mut self, nchars: usize) {
+        self.note_modified(true);
+        self.mod_tick += Self::modiff_incr(nchars);
+        self.chars_mod_tick = self.mod_tick;
+    }
+
+    /// GNU `modify_text_properties': first-change record (when this is
+    /// the first change since save) + `MODIFF += 1'.  CHARS_MODIFF is
+    /// not touched.
     pub fn note_prop_modified(&mut self) {
+        if self.mod_tick <= self.save_tick {
+            self.record_first_change();
+        }
         self.mod_tick += 1;
         self.note_modified(true);
     }

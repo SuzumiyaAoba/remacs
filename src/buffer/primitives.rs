@@ -1973,6 +1973,91 @@ pub(crate) fn cur(i: &Interp) -> Rc<RefCell<crate::buffer::Buffer>> {
     i.current_buffer_ref().unwrap()
 }
 
+/// GNU change-hook signaling around buffer text mutations.  The hook
+/// calls run with the buffer borrow released so hook functions can
+/// inspect (and even modify) the buffer; positions are 0-based here
+/// and converted to the 1-based values hooks receive.
+use crate::lisp::builtins::evalfn::{signal_after_change, signal_before_change};
+
+/// `insert_at' (POS 0-based) with before/after-change signals.
+pub(crate) fn chg_insert(i: &mut Interp, pos: usize, s: &str) -> EvalResult {
+    let n = s.chars().count();
+    if n == 0 {
+        return Ok(Value::Nil);
+    }
+    signal_before_change(i, pos + 1, pos + 1)?;
+    cur(i).borrow_mut().insert_at(pos, s);
+    signal_after_change(i, pos + 1, pos + 1 + n, 0)
+}
+
+/// `insert'/`insert-before-markers' at point (advances point).
+pub(crate) fn chg_insert_pt(i: &mut Interp, s: &str, before_markers: bool) -> EvalResult {
+    let n = s.chars().count();
+    if n == 0 {
+        return Ok(Value::Nil);
+    }
+    let p = cur(i).borrow().point();
+    signal_before_change(i, p + 1, p + 1)?;
+    let q = {
+        let b = cur(i);
+        let mut bb = b.borrow_mut();
+        if before_markers {
+            bb.insert_before_markers(s);
+        } else {
+            bb.insert(s);
+        }
+        bb.point()
+    };
+    signal_after_change(i, q + 1 - n, q + 1, 0)
+}
+
+/// `delete_region' over [S0,E0) (0-based) with signals; returns the
+/// removed text.
+pub(crate) fn chg_delete(i: &mut Interp, s0: usize, e0: usize) -> Result<String, Flow> {
+    if s0 >= e0 {
+        return Ok(String::new());
+    }
+    signal_before_change(i, s0 + 1, e0 + 1)?;
+    let removed = cur(i).borrow_mut().delete_region(s0, e0);
+    signal_after_change(i, s0 + 1, s0 + 1, e0 - s0)?;
+    Ok(removed)
+}
+
+/// GNU `replace_range': ONE before/after pair and one MODIFF bump of
+/// elogb(del+ins)+1 — `replace-match', not the two pairs a
+/// delete+insert would produce.  Signals (S0+1, E0+1) before and
+/// (S0+1, S0+1+N_INS, N_DEL) after.
+pub(crate) fn chg_replace(i: &mut Interp, s0: usize, e0: usize, s: &str) -> EvalResult {
+    let n_ins = s.chars().count();
+    signal_before_change(i, s0 + 1, e0 + 1)?;
+    let n_del = {
+        let b = cur(i);
+        let mut bb = b.borrow_mut();
+        let e = e0.min(bb.text.len());
+        let d = e.saturating_sub(s0);
+        bb.raw_delete_region(s0, e0);
+        bb.raw_insert_at(s0, s);
+        bb.note_text_change(d + n_ins);
+        d
+    };
+    signal_after_change(i, s0 + 1, s0 + 1 + n_ins, n_del)
+}
+
+/// Run F with BUF_IDX temporarily current — GNU change hooks fire in
+/// the modified buffer, which is not always the selected one
+/// (`copy-to-buffer', `append-to-buffer').
+pub(crate) fn chg_with_buffer(
+    i: &mut Interp,
+    buf_idx: usize,
+    f: impl FnOnce(&mut Interp) -> EvalResult,
+) -> EvalResult {
+    let old = i.current_buffer;
+    i.current_buffer = buf_idx;
+    let r = f(i);
+    i.current_buffer = old;
+    r
+}
+
 /// Signal an error named `name` with data `data` (avoids nested borrows).
 pub(crate) fn err_sym(i: &mut Interp, name: &str, data: Vec<Value>) -> Flow {
     let id = i.intern(name);
@@ -3032,8 +3117,9 @@ fn f_move_to_column(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         }
         let at = bb.text.line_end(bb.point());
         let pad = s.chars().count();
-        bb.insert_at(at, &s);
-        bb.set_point(at + pad);
+        drop(bb);
+        chg_insert(i, at, &s)?;
+        cur(i).borrow_mut().set_point(at + pad);
         Ok(Value::Int(goal))
     } else {
         bb.set_point(k);
@@ -4793,13 +4879,7 @@ fn f_last_buffer(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
 fn insert_str_at_point(i: &mut Interp, s: &str, before_markers: bool) -> Result<(), Flow> {
     check_writable(i)?;
     barf_if_file_locked(i)?;
-    let b = cur(i);
-    let mut bb = b.borrow_mut();
-    if before_markers {
-        bb.insert_before_markers(s);
-    } else {
-        bb.insert(s);
-    }
+    chg_insert_pt(i, s, before_markers)?;
     Ok(())
 }
 
@@ -5024,33 +5104,32 @@ fn f_newline(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 fn f_open_line(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let n = a.get(0).and_then(|v| v.int()).unwrap_or(1).max(1);
     check_writable(i)?;
-    let b = cur(i);
-    let mut bb = b.borrow_mut();
-    let p = bb.point();
-    bb.insert_at(p, &"\n".repeat(n as usize));
-    bb.set_point(p);
+    let p = cur(i).borrow().point();
+    chg_insert(i, p, &"\n".repeat(n as usize))?;
+    cur(i).borrow_mut().set_point(p);
     Ok(Value::Nil)
 }
 
 fn f_delete_char(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let n = a.get(0).and_then(|v| v.int()).unwrap_or(1);
     check_writable(i)?;
-    let b = cur(i);
-    let mut bb = b.borrow_mut();
-    let p = bb.point();
-    let zv = bb.text_len();
+    let (p, zv, begv) = {
+        let b = cur(i);
+        let bb = b.borrow();
+        (bb.point(), bb.text_len(), bb.begv)
+    };
     if n > 0 {
         if p >= zv {
             return Err(i.signal_data(sym::END_OF_BUFFER, vec![]));
         }
         let end = (p + n as usize).min(zv);
-        bb.delete_region(p, end);
+        chg_delete(i, p, end)?;
     } else if n < 0 {
-        if p <= bb.begv {
+        if p <= begv {
             return Err(i.signal_data(sym::BEGINNING_OF_BUFFER, vec![]));
         }
-        let start = (p as i128 + n).max(bb.begv as i128) as usize;
-        bb.delete_region(start, p);
+        let start = (p as i128 + n).max(begv as i128) as usize;
+        chg_delete(i, start, p)?;
     }
     Ok(Value::Nil)
 }
@@ -5108,13 +5187,11 @@ fn f_forward_visible_line(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 fn f_delete_and_extract_region(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     check_writable(i)?;
     barf_if_file_locked(i)?;
-    let b = cur(i);
-    let mut bb = b.borrow_mut();
-    let len = bb.text.len();
+    let len = cur(i).borrow().text.len();
     let s = pos_idx(len, want_int(i, &a[0])?);
     let e = pos_idx(len, want_int(i, &a[1])?);
     let (s, e) = (s.min(e), s.max(e));
-    Ok(Value::string(bb.delete_region(s, e)))
+    Ok(Value::string(chg_delete(i, s, e)?))
 }
 
 fn f_delete_region(i: &mut Interp, a: Vec<Value>) -> EvalResult {
@@ -5124,10 +5201,10 @@ fn f_delete_region(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 fn f_erase_buffer(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
     check_writable(i)?;
     barf_if_file_locked(i)?;
+    let tlen = cur(i).borrow().text.len();
+    chg_delete(i, 0, tlen)?;
     let b = cur(i);
     let mut bb = b.borrow_mut();
-    let tlen = bb.text.len();
-    bb.delete_region(0, tlen);
     bb.begv = 0;
     bb.zv = 0;
     bb.set_point(0);
@@ -5300,15 +5377,15 @@ fn f_filter_buffer_substring(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     }
     let text = f_buffer_substring(i, a[..2].to_vec())?;
     if delete {
-        let b = cur(i);
         let (s, e) = {
+            let b = cur(i);
             let bb = b.borrow();
             let len = bb.text.len();
             let s = pos_idx(len, want_int(i, &a[0])?);
             let e = pos_idx(len, want_int(i, &a[1])?);
             (s.min(e), s.max(e))
         };
-        b.borrow_mut().delete_region(s, e);
+        chg_delete(i, s, e)?;
     }
     Ok(text)
 }
@@ -5316,7 +5393,19 @@ fn f_filter_buffer_substring(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 fn f_buffer_string(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
     let b = cur(i);
     let bb = b.borrow();
-    Ok(Value::string(bb.text.substring(bb.begv, bb.text_len())))
+    let (s, e) = (bb.begv, bb.text_len());
+    let text = bb.text.substring(s, e);
+    // GNU `buffer-string' copies the text properties like
+    // `buffer-substring' does.
+    let ivs = buf_props_as_ivs(&bb.text_props, s, e);
+    drop(bb);
+    let v = Value::string(text);
+    if !ivs.is_empty() {
+        if let Value::Str(sr) = &v {
+            i.set_str_props(sr, ivs);
+        }
+    }
+    Ok(v)
 }
 
 fn f_buffer_substring_with_bidi_context(i: &mut Interp, a: Vec<Value>) -> EvalResult {
@@ -5895,9 +5984,7 @@ fn f_copy_to_register(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         bb.text.substring(lo, hi)
     };
     if delete {
-        let b = cur(i);
-        let mut bb = b.borrow_mut();
-        bb.delete_region(lo, hi);
+        chg_delete(i, lo, hi)?;
     }
     reg_set(i, a[0].clone(), Value::string(text))?;
     Ok(Value::Nil)
@@ -6106,9 +6193,17 @@ fn rect_apply(
             let ls = bb.text.line_start(ln);
             (ls, bb.text.line_end(ls))
         };
-        let mut bb = b.borrow_mut();
-        f(&mut bb, ls, le, c0, c1, tab)?;
-        final_point = bb.point();
+        // GNU fires the change hooks per line edit; the [ls,le) span
+        // covers the line's mutation batch (as `combine-change-calls'
+        // would report it).
+        signal_before_change(i, ls + 1, le + 1)?;
+        {
+            let mut bb = b.borrow_mut();
+            f(&mut bb, ls, le, c0, c1, tab)?;
+            final_point = bb.point();
+        }
+        let le2 = b.borrow().text.line_end(ls);
+        signal_after_change(i, ls + 1, le2 + 1, le - ls)?;
     }
     // GNU wraps apply-on-rectangle in save-excursion.
     let restore = orig.min(b.borrow().text.len());
@@ -6454,35 +6549,41 @@ fn rect_insert_segs(i: &mut Interp, segs: Vec<String>) -> EvalResult {
         return Ok(Value::Nil);
     }
     let tab = rect_tab_width(i);
-    let b = cur(i);
-    let mut bb = b.borrow_mut();
-    let c0 = {
-        let p = bb.point();
-        let ls = bb.text.line_start(bb.text.line_of_pos(p));
-        rect_col_at(&bb.text, ls, p, tab)
-    };
-    let mut ls = bb.text.line_start(bb.text.line_of_pos(bb.point()));
-    for (n, seg) in segs.iter().enumerate() {
-        let ins_at = if n == 0 {
-            bb.point()
-        } else {
-            // forward-line: next line start, creating the line at EOF.
-            let le = bb.text.line_end(ls);
-            ls = if le < bb.text.len() {
-                le + 1
-            } else {
-                bb.insert_at(le, "\n");
-                le + 1
-            };
-            let le2 = bb.text.line_end(ls);
-            rect_move_to(&mut bb, ls, le2, c0, tab, RectForce::T).0
+    let p0 = cur(i).borrow().point();
+    signal_before_change(i, p0 + 1, p0 + 1)?;
+    {
+        let b = cur(i);
+        let mut bb = b.borrow_mut();
+        let c0 = {
+            let p = bb.point();
+            let ls = bb.text.line_start(bb.text.line_of_pos(p));
+            rect_col_at(&bb.text, ls, p, tab)
         };
-        bb.insert_at(ins_at, seg);
-        bb.set_point(ins_at + seg.chars().count()); // lower-right corner
-        if n == 0 {
-            ls = bb.text.line_start(bb.text.line_of_pos(ins_at));
+        let mut ls = bb.text.line_start(bb.text.line_of_pos(bb.point()));
+        for (n, seg) in segs.iter().enumerate() {
+            let ins_at = if n == 0 {
+                bb.point()
+            } else {
+                // forward-line: next line start, creating the line at EOF.
+                let le = bb.text.line_end(ls);
+                ls = if le < bb.text.len() {
+                    le + 1
+                } else {
+                    bb.insert_at(le, "\n");
+                    le + 1
+                };
+                let le2 = bb.text.line_end(ls);
+                rect_move_to(&mut bb, ls, le2, c0, tab, RectForce::T).0
+            };
+            bb.insert_at(ins_at, seg);
+            bb.set_point(ins_at + seg.chars().count()); // lower-right corner
+            if n == 0 {
+                ls = bb.text.line_start(bb.text.line_of_pos(ins_at));
+            }
         }
     }
+    let p1 = cur(i).borrow().point();
+    signal_after_change(i, p0 + 1, p1.max(p0) + 1, 0)?;
     Ok(Value::Nil)
 }
 
@@ -7608,9 +7709,11 @@ fn f_replace_match(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         rep = match_case(&old, &rep);
     }
     let tlen = bb.text.len();
-    bb.delete_region(start, end.min(tlen));
-    bb.insert_at(start, &rep);
-    bb.set_point(start + rep.chars().count());
+    let rep_len = rep.chars().count();
+    drop(bb);
+    // GNU `replace_range': a single change pair, not delete+insert.
+    chg_replace(i, start, end.min(tlen), &rep)?;
+    cur(i).borrow_mut().set_point(start + rep_len);
     Ok(Value::Nil)
 }
 
@@ -7900,16 +8003,23 @@ pub(crate) fn f_put_text_property(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let s = pos_idx(len, want_int(i, &a[0])?);
     let e = pos_idx(len, want_int(i, &a[1])?);
     let prop = want_sym(i, &a[2])?;
-    let b = cur(i);
-    let mut bb = b.borrow_mut();
-    buf_record_prop(&mut bb, s, e, &a[2], prop, &a[3]);
-    bb.text_props.push(TextProp {
-        start: s,
-        end: e,
-        prop,
-        value: a[3].clone(),
-    });
-    bb.note_prop_modified();
+    // GNU `set_text_properties_1': `modify_text_properties' (before-
+    // change + MODIFF bump) and `signal_after_change' both fire
+    // unconditionally on the buffer path.
+    signal_before_change(i, s + 1, e + 1)?;
+    {
+        let b = cur(i);
+        let mut bb = b.borrow_mut();
+        buf_record_prop(&mut bb, s, e, &a[2], prop, &a[3]);
+        bb.text_props.push(TextProp {
+            start: s,
+            end: e,
+            prop,
+            value: a[3].clone(),
+        });
+        bb.note_prop_modified();
+    }
+    signal_after_change(i, s + 1, e + 1, e - s)?;
     Ok(Value::Nil)
 }
 
@@ -8162,9 +8272,19 @@ fn f_add_text_properties(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let s = pos_idx(len, want_int(i, &a[0])?);
     let e = pos_idx(len, want_int(i, &a[1])?);
     let plist = a[2].list_to_vec().unwrap_or_default();
-    let b = cur(i);
-    let mut bb = b.borrow_mut();
-    buf_add_props(&mut bb, i, s, e, &plist, true)
+    // GNU: unconditional before/after-change on the buffer path.
+    signal_before_change(i, s + 1, e + 1)?;
+    let changed = {
+        let b = cur(i);
+        let mut bb = b.borrow_mut();
+        let r = buf_add_props(&mut bb, i, s, e, &plist, true);
+        if r.is_ok() {
+            bb.note_prop_modified();
+        }
+        r
+    };
+    signal_after_change(i, s + 1, e + 1, e - s)?;
+    changed
 }
 
 /// Buffer side of `add-text-properties': records undo entries for
@@ -8198,7 +8318,6 @@ fn buf_add_props(
         }
         k += 2;
     }
-    bb.note_prop_modified();
     Ok(Value::from_bool(changed))
 }
 
@@ -8223,6 +8342,31 @@ fn buf_prop_uniform(
         }
     }
     true
+}
+
+/// GNU interval semantics: removing or replacing properties over
+/// [S,E) splits the covering intervals at the boundaries — the parts
+/// outside the range keep their properties.  PRED selects which prop
+/// names are cleared.
+fn clip_props(v: &mut Vec<TextProp>, s: usize, e: usize, pred: impl Fn(u32) -> bool) {
+    let mut out = Vec::with_capacity(v.len());
+    for tp in v.drain(..) {
+        if !pred(tp.prop) || tp.end <= s || tp.start >= e {
+            out.push(tp);
+            continue;
+        }
+        if tp.start < s {
+            let mut left = tp.clone();
+            left.end = s;
+            out.push(left);
+        }
+        if tp.end > e {
+            let mut right = tp;
+            right.start = e;
+            out.push(right);
+        }
+    }
+    *v = out;
 }
 
 /// Shared string-object branch of remove-text-properties and
@@ -8280,16 +8424,30 @@ pub(crate) fn f_remove_text_properties(i: &mut Interp, a: Vec<Value>) -> EvalRes
         .step_by(2)
         .filter_map(|v| i.sym_id(v))
         .collect();
-    let b = cur(i);
-    let mut bb = b.borrow_mut();
-    for (n, &p) in props.iter().enumerate() {
-        buf_record_prop(&mut bb, s, e, &plist[n * 2], p, &Value::Nil);
+    // GNU removes lazily: `modify_text_properties' and
+    // `signal_after_change' fire only when something is removed.
+    let will_change = {
+        let b = cur(i);
+        let bb = b.borrow();
+        bb.text_props
+            .iter()
+            .any(|tp| props.contains(&tp.prop) && tp.start < e && tp.end > s)
+    };
+    if !will_change {
+        return Ok(Value::Nil);
     }
-    let before = bb.text_props.len();
-    bb.text_props
-        .retain(|tp| !(props.contains(&tp.prop) && tp.start < e && tp.end > s));
-    bb.note_prop_modified();
-    Ok(Value::from_bool(bb.text_props.len() != before))
+    signal_before_change(i, s + 1, e + 1)?;
+    {
+        let b = cur(i);
+        let mut bb = b.borrow_mut();
+        for (n, &p) in props.iter().enumerate() {
+            buf_record_prop(&mut bb, s, e, &plist[n * 2], p, &Value::Nil);
+        }
+        clip_props(&mut bb.text_props, s, e, |p| props.contains(&p));
+        bb.note_prop_modified();
+    }
+    signal_after_change(i, s + 1, e + 1, e - s)?;
+    Ok(Value::t())
 }
 
 fn f_set_text_properties(i: &mut Interp, a: Vec<Value>) -> EvalResult {
@@ -8313,17 +8471,17 @@ fn f_set_text_properties(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let s = pos_idx(len, want_int(i, &a[0])?);
     let e = pos_idx(len, want_int(i, &a[1])?);
     let plist = a[2].list_to_vec().unwrap_or_default();
-    let b = cur(i);
+    // GNU `set_text_properties_1': unconditional hooks + MODIFF bump.
+    signal_before_change(i, s + 1, e + 1)?;
     {
+        let b = cur(i);
         let mut bb = b.borrow_mut();
         buf_record_set(&mut bb, i, s, e, &plist);
-        bb.text_props
-            .retain(|tp| !(tp.start < e && tp.end > s));
-    }
-    {
-        let mut bb = b.borrow_mut();
+        clip_props(&mut bb.text_props, s, e, |_| true);
         buf_add_props(&mut bb, i, s, e, &plist, false)?;
+        bb.note_prop_modified();
     }
+    signal_after_change(i, s + 1, e + 1, e - s)?;
     Ok(Value::t())
 }
 
@@ -8719,16 +8877,30 @@ pub(crate) fn f_remove_list_of_text_properties(i: &mut Interp, a: Vec<Value>) ->
     let s = pos_idx(len, want_int(i, &a[0])?);
     let e = pos_idx(len, want_int(i, &a[1])?);
     let props: Vec<u32> = names.iter().filter_map(|v| i.sym_id(v)).collect();
-    let b = cur(i);
-    let mut bb = b.borrow_mut();
-    for (n, &p) in props.iter().enumerate() {
-        buf_record_prop(&mut bb, s, e, &names[n], p, &Value::Nil);
+    // GNU's remove path is lazy: hooks + MODIFF bump only when a
+    // property is actually removed.
+    let will_change = {
+        let b = cur(i);
+        let bb = b.borrow();
+        bb.text_props
+            .iter()
+            .any(|tp| props.contains(&tp.prop) && tp.start < e && tp.end > s)
+    };
+    if !will_change {
+        return Ok(Value::Nil);
     }
-    let before = bb.text_props.len();
-    bb.text_props
-        .retain(|tp| !(props.contains(&tp.prop) && tp.start < e && tp.end > s));
-    bb.note_prop_modified();
-    Ok(Value::from_bool(bb.text_props.len() != before))
+    signal_before_change(i, s + 1, e + 1)?;
+    {
+        let b = cur(i);
+        let mut bb = b.borrow_mut();
+        for (n, &p) in props.iter().enumerate() {
+            buf_record_prop(&mut bb, s, e, &names[n], p, &Value::Nil);
+        }
+        clip_props(&mut bb.text_props, s, e, |p| props.contains(&p));
+        bb.note_prop_modified();
+    }
+    signal_after_change(i, s + 1, e + 1, e - s)?;
+    Ok(Value::t())
 }
 
 /// Shared engine for `text-property-any' and `text-property-not-all':
@@ -9094,10 +9266,9 @@ fn undo_apply_one(
                 if undo_pos_oob(b, beg, end) {
                     return Err(undo_oob_err(i));
                 }
-                let mut bb = b.borrow_mut();
                 let s = (beg - 1).max(0) as usize;
-                bb.set_point(s);
-                bb.delete_region((beg - 1).max(0) as usize, (end - 1).max(0) as usize);
+                b.borrow_mut().set_point(s);
+                chg_delete(i, s, (end - 1).max(0) as usize)?;
             } else if let Value::Str(text) = &car {
                 // (STRING . POS): STRING was deleted — reinsert it.
                 let Some(pos) = cdr.int() else {
@@ -9133,14 +9304,14 @@ fn undo_apply_one(
                     }
                 }
                 {
-                    let mut bb = b.borrow_mut();
+                    let s = text.borrow().clone();
                     if pos < 0 {
-                        bb.set_point((-pos - 1).max(0) as usize);
-                        bb.insert(&text.borrow());
+                        b.borrow_mut().set_point((-pos - 1).max(0) as usize);
+                        chg_insert_pt(i, &s, false)?;
                     } else {
-                        bb.set_point((pos - 1).max(0) as usize);
-                        bb.insert(&text.borrow());
-                        bb.set_point((pos - 1).max(0) as usize);
+                        b.borrow_mut().set_point((pos - 1).max(0) as usize);
+                        chg_insert_pt(i, &s, false)?;
+                        b.borrow_mut().set_point((pos - 1).max(0) as usize);
                     }
                 }
                 // Apply validated marker adjustments.
@@ -9290,9 +9461,10 @@ fn f_delete_blank_lines(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
             return Ok(Value::Nil);
         }
     }
-    bb.delete_region(s, e);
-    let np = s.min(bb.text.len());
-    bb.set_point(np);
+    drop(bb);
+    chg_delete(i, s, e)?;
+    let np = s.min(b.borrow().text.len());
+    b.borrow_mut().set_point(np);
     Ok(Value::Nil)
 }
 

@@ -4065,11 +4065,10 @@ fn f_zlib_decompress_region(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     match decoded {
         Some(out) => {
             let text = String::from_utf8_lossy(&out).into_owned();
-            let mut bb = buf.borrow_mut();
             let lo = (start - 1).max(0) as usize;
             let hi = (end - 1).max(lo as i128) as usize;
-            bb.delete_region(lo, hi);
-            bb.insert_at(lo, &text);
+            crate::buffer::primitives::chg_delete(i, lo, hi)?;
+            crate::buffer::primitives::chg_insert(i, lo, &text)?;
             Ok(Value::t())
         }
         None => Err(i.signal_data(
@@ -4109,9 +4108,7 @@ fn f_insert_byte(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     }
     let ch = char::from_u32(byte as u32).unwrap_or('\u{fffd}');
     let s: String = std::iter::repeat_n(ch, count.max(0) as usize).collect();
-    if let Some(b) = i.current_buffer_ref() {
-        b.borrow_mut().insert(&s);
-    }
+    crate::buffer::primitives::chg_insert_pt(i, &s, false)?;
     Ok(Value::Nil)
 }
 
