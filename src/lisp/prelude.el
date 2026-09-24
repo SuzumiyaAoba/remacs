@@ -7973,6 +7973,22 @@ The `:repeat' keyword can also be specified; it controls the
              ,@(nreverse props))
         defvar-form))))
 
+;; GNU keymap.el: read-only-buffer menu-item bindings, used by
+;; defvar-keymap bodies in ansi-osc.el and friends.
+(defun keymap--read-only-filter (cmd)
+  "Return CMD if `browse-url' and similar button bindings should be active.
+They are considered active only in read-only buffers."
+  (when buffer-read-only cmd))
+
+(defun keymap-read-only-bind (binding)
+  "Behave like BINDING, but only when the buffer is read-only.
+BINDING should be a command to put in a keymap.
+Return an element that can be added in a keymap with `keymap-set', such that
+it is active only when the current buffer is read-only."
+  `(menu-item
+    "" ,binding
+    :filter ,#'keymap--read-only-filter))
+
 ;; ---------- generalized variables ----------
 ;; `setf'/`incf'/`decf' are autoloaded from gv.el (GNU parity: they are
 ;; `;;;###autoload' entries in gv.el, so `symbol-function' yields an

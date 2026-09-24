@@ -952,3 +952,59 @@ fn tabify_untabify_obarray() {
         "(\"a        b\n\" \"a\t b\n\" \"x   y\n\" 0 t)"
     );
 }
+
+// --------------------------------------- require feature validation + misc ports
+
+#[test]
+fn require_signals_when_feature_not_provided() {
+    // GNU-verified on 31.1: userlock.el never calls (provide 'userlock),
+    // so `require' must signal after loading the file.
+    assert_eq!(
+        ev("(condition-case e (require 'userlock)
+             (error (list (car e) (featurep 'userlock))))"),
+        "(error nil)"
+    );
+    // And a successful require still returns the feature.
+    assert_eq!(ev("(progn (require 'ansi-osc) 'done)"), "done");
+}
+
+#[test]
+fn keymap_read_only_bind_menu_item() {
+    // GNU-verified on 31.1 (keymap.el).
+    assert_eq!(
+        ev("(list (keymap-read-only-bind #'ignore)
+                 (let ((buffer-read-only t)) (keymap--read-only-filter 'cmd))
+                 (let ((buffer-read-only nil)) (keymap--read-only-filter 'cmd)))"),
+        "((menu-item \"\" ignore :filter keymap--read-only-filter) cmd nil)"
+    );
+}
+
+#[test]
+fn ansi_osc_help_macro_master_ports() {
+    // GNU-verified on 31.1.
+    assert_eq!(
+        ev("(progn (require 'ansi-osc) (require 'help-macro) (require 'master)
+                  (list (fboundp 'ansi-osc-apply-on-region)
+                        (keymapp ansi-osc-hyperlink-map)
+                        (fboundp 'make-help-screen)
+                        (fboundp 'master-mode)
+                        (fboundp 'master-says)))"),
+        "(t t t t t)"
+    );
+}
+
+#[test]
+fn rfn_eshadow_scroll_all_send_to_flow_ctrl() {
+    // GNU-verified on 31.1: autoloaded entry points exist; flow-ctrl's
+    // functions stay unfbound after load on both sides (parity).
+    assert_eq!(
+        ev("(progn (require 'rfn-eshadow) (require 'scroll-all)
+                  (require 'send-to) (require 'flow-ctrl)
+                  (list (fboundp 'rfn-eshadow-setup-minibuffer)
+                        (fboundp 'scroll-all-mode)
+                        scroll-all-mode
+                        (fboundp 'flow-control)
+                        (boundp 'flow-control-c-u-s)))"),
+        "(t t nil nil nil)"
+    );
+}

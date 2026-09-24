@@ -1040,8 +1040,19 @@ fn f_require(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     let noerror = args.get(2).map(|v| v.truthy()).unwrap_or(false);
     match crate::lisp::load::load_library(i, &name) {
         Ok(true) => {
+            // GNU's `require': after loading FILE, FEATURE must be
+            // provided — a file that loads without `(provide FEATURE)'
+            // signals `error' ("Loading file FILE failed to provide
+            // feature ‘FEATURE’", e.g. userlock.el, buff-menu.el).
             if !i.features.contains(&id) {
-                i.features.push(id);
+                return Err(i.signal_data(
+                    sym::ERROR,
+                    vec![Value::string(format!(
+                        "Loading file {} failed to provide feature ‘{}’",
+                        name,
+                        i.symbol_name(id)
+                    ))],
+                ));
             }
             Ok(args[0].clone())
         }
