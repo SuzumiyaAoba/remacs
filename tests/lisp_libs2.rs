@@ -1811,3 +1811,55 @@ fn misc_libs_load_and_entry_points() {
         "6"
     );
 }
+
+// ------------------------------------ misc modes & trace (GNU loaddefs autoloads)
+
+#[test]
+fn misc_mode_libs_autoloads() {
+    // GNU 31.1 -Q: all are autoload cells via loaddefs.el.
+    assert_eq!(
+        ev("(list (car (symbol-function 'po-find-file-coding-system))
+                  (nth 1 (symbol-function 'po-find-file-coding-system))
+                  (car (symbol-function 'asm-mode)) (nth 1 (symbol-function 'asm-mode))
+                  (car (symbol-function 'm4-mode)) (nth 1 (symbol-function 'm4-mode))
+                  (car (symbol-function 'bat-mode)) (nth 1 (symbol-function 'bat-mode))
+                  (car (symbol-function 'autoconf-mode)) (nth 1 (symbol-function 'autoconf-mode))
+                  (car (symbol-function 'ld-script-mode)) (nth 1 (symbol-function 'ld-script-mode))
+                  (car (symbol-function 'bibtex-style-mode)) (nth 1 (symbol-function 'bibtex-style-mode))
+                  (car (symbol-function 'emacs-authors-mode)) (nth 1 (symbol-function 'emacs-authors-mode))
+                  (car (symbol-function 'cl-font-lock-built-in-mode)) (nth 1 (symbol-function 'cl-font-lock-built-in-mode))
+                  (car (symbol-function 'memory-report)) (nth 1 (symbol-function 'memory-report)))"),
+        "(autoload \"po\" autoload \"asm-mode\" autoload \"m4-mode\" autoload \"bat-mode\" autoload \"autoconf\" autoload \"ld-script\" autoload \"bibtex-style\" autoload \"emacs-authors-mode\" autoload \"cl-font-lock\" autoload \"memory-report\")"
+    );
+    // GNU: trace-buffer bound at startup; trace-function is a defalias.
+    assert_eq!(
+        ev("(list (boundp 'trace-buffer) trace-buffer (symbol-function 'trace-function))"),
+        "(t \"*trace-output*\" trace-function-foreground)"
+    );
+}
+
+#[test]
+fn misc_mode_libs_require() {
+    assert_eq!(
+        ev("(progn (dolist (l '(asm-mode m4-mode bat-mode autoconf
+                              ld-script bibtex-style emacs-authors-mode
+                              cl-font-lock po trace memory-report))
+                    (require l))
+                  (list (featurep 'asm-mode) (fboundp 'asm-calculate-indentation)
+                        (featurep 'm4-mode) (featurep 'bat-mode)
+                        (featurep 'autoconf) (featurep 'ld-script)
+                        (featurep 'bibtex-style) (featurep 'emacs-authors-mode)
+                        (featurep 'cl-font-lock) (fboundp 'po-find-charset)
+                        (featurep 'trace) (fboundp 'untrace-all)
+                        (featurep 'memory-report)))"),
+        "(t t t t t t t t t t t t t)"
+    );
+    // trace actually traces (GNU-verified): trace-is-traced reports t.
+    assert_eq!(
+        ev("(progn (require 'trace)
+                  (list (trace-is-traced 'car)
+                        (progn (trace-function-background 'car)
+                               (not (null (trace-is-traced 'car))))))"),
+        "(nil t)"
+    );
+}

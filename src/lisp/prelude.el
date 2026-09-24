@@ -3140,11 +3140,41 @@ If nil, the feature is disabled, i.e., all commands work normally.")
   "(fn FUNC &optional THROTTLE)" nil nil)
 (autoload 'timeout-throttled-func "timeout"
   "(fn FUNC &optional THROTTLE)" nil nil)
-
 (autoload 'editorconfig-display-current-properties "editorconfig-tools"
   "Display EditorConfig properties extracted for current buffer." t)
 (defalias 'describe-editorconfig-properties
   'editorconfig-display-current-properties)
+
+;; GNU loaddefs autoload entries for misc small libraries.
+(autoload 'po-find-file-coding-system "po"
+  "Return a `coding-system' for a PO file name." nil nil)
+(autoload 'bibtex-style-mode "bibtex-style"
+  "Major mode for BibTeX style files." t)
+(autoload 'emacs-authors-mode "emacs-authors-mode"
+  "Major mode for editing Emacs AUTHORS files." t)
+(autoload 'ld-script-mode "ld-script"
+  "A major mode to edit GNU ld script files." t)
+(autoload 'm4-mode "m4-mode"
+  "A major-mode to edit m4 macro files." t)
+(autoload 'bat-mode "bat-mode"
+  "Mode for DOS/Windows bat/nt files." t)
+(autoload 'asm-mode "asm-mode"
+  "Major mode for editing typical assembler code." t)
+(autoload 'autoconf-mode "autoconf"
+  "Major mode for editing m4 macros." t)
+(autoload 'cl-font-lock-built-in-mode "cl-font-lock"
+  "Minor mode for highlighting built-in functions." t)
+(autoload 'trace-function-foreground "trace"
+  "Trace calls to function FUNCTION." t)
+(autoload 'trace-function-background "trace"
+  "Trace calls to function FUNCTION." t)
+(autoload 'trace-values "trace"
+  "Insert VALUES and return the last one." nil nil)
+(defvar trace-buffer "*trace-output*"
+  "Trace output will by default go to the `trace-buffer'.")
+(defalias 'trace-function 'trace-function-foreground)
+(autoload 'memory-report "memory-report"
+  "Generate a report of memory used by Emacs Lisp data." t)
 
 ;; GNU jka-compr.el autoload cookies (loaddefs.el): file-name handlers
 ;; installed by `auto-compression-mode' resolve the handler lazily —
@@ -22492,6 +22522,46 @@ It's also used so that `syntax-ppss-flush-cache' can be used from within
 
 (defvar-local syntax-ppss--updated-cache nil)
 
+;; GNU syntax.el: `syntax-propertize-rules' + helper (used by asm/m4/
+;; bat/autoconf-mode syntax tables and font-lock integration).
+(defun syntax-propertize--shift-groups-and-backrefs (re n) (let ((new-re (replace-regexp-in-string "\\\\(\\?\\([0-9]+\\):" (lambda (s) (replace-match (number-to-string (+ n (string-to-number (match-string 1 s)))) t t s 1)) re t t)) (pos 0)) (while (string-match "\\\\\\([0-9]+\\)" new-re pos) (setq pos (+ 1 (match-beginning 1))) (when (save-match-data (subregexp-context-p new-re (match-beginning 0))) (let ((shifted (+ n (string-to-number (match-string 1 new-re))))) (when (> shifted 9) (error "There may be at most nine back-references")) (setq new-re (replace-match (number-to-string shifted) t t new-re 1))))) new-re))
+
+(defmacro syntax-propertize-precompile-rules (&rest rules) "Return a precompiled form of RULES to pass to `syntax-propertize-rules'.
+The arg RULES can be of the same form as in `syntax-propertize-rules'.
+The return value is an object that can be passed as a rule to
+`syntax-propertize-rules'.
+I.e. this is useful only when you want to share rules among several
+`syntax-propertize-function's." (declare (debug syntax-propertize-rules)) `',rules)
+
+(defmacro syntax-propertize-rules (&rest rules) "Make a function that applies RULES for use in `syntax-propertize-function'.
+The function will scan the buffer, applying the rules where they match.
+The buffer is scanned a single time, like \"lex\" would, rather than once
+per rule.
+
+Each RULE can be a symbol, in which case that symbol's value should be,
+at macro-expansion time, a precompiled set of rules, as returned
+by `syntax-propertize-precompile-rules'.
+
+Otherwise, RULE should have the form (REGEXP HIGHLIGHT1 ... HIGHLIGHTn), where
+REGEXP is an expression (evaluated at time of macro-expansion) that returns
+a regexp, and where HIGHLIGHTs have the form (NUMBER SYNTAX) which means to
+apply the property SYNTAX to the chars matched by the subgroup NUMBER
+of the regular expression, if NUMBER did match.
+SYNTAX is an expression that returns a value to apply as `syntax-table'
+property.  Some expressions are handled specially:
+- if SYNTAX is a string, then it is converted with `string-to-syntax';
+- if SYNTAX has the form (prog1 EXP . EXPS) then the value returned by EXP
+  will be applied to the buffer before running EXPS and if EXP is a string it
+  is also converted with `string-to-syntax'.
+The SYNTAX expression is responsible to save the `match-data' if needed
+for subsequent HIGHLIGHTs.
+Also SYNTAX is free to move point, in which case RULES may not be applied to
+some parts of the text or may be applied several times to other parts.
+
+Note: There may be at most nine back-references in the REGEXPs of
+all RULES in total." (declare (debug (&rest &or symbolp (def-form &rest (numberp [&or stringp ("prog1" [&or stringp def-form] def-body) def-form]))))) (let ((newrules nil)) (while rules (if (symbolp (car rules)) (setq rules (append (symbol-value (pop rules)) rules)) (push (pop rules) newrules))) (setq rules (nreverse newrules))) (let* ((offset 0) (branches 'nil) (re (mapconcat (lambda (rule) (let* ((orig-re (eval (car rule) t)) (re orig-re)) (when (and (assq 0 rule) (cdr rules)) (incf offset) (setq re (concat "\\(" re "\\)"))) (setq re (syntax-propertize--shift-groups-and-backrefs re offset)) (let ((code 'nil) (condition (cond ((assq 0 rule) (if (zerop offset) t `(match-beginning ,offset))) ((and (cdr rule) (null (cddr rule))) `(match-beginning ,(+ offset (car (cadr rule))))) (t `(or ,@(mapcar (lambda (case) `(match-beginning ,(+ offset (car case)))) (cdr rule)))))) (nocode t) (offset offset)) (unless (zerop offset) (dolist (case (cdr rule)) (unless (stringp (cadr case)) (setq nocode nil))) (unless nocode (push `(let ((md (match-data 'ints))) (setcdr (cdr md) (nthcdr ,(* (1+ offset) 2) md)) (set-match-data md)) code) (setq offset 0))) (dolist (case (cdr rule)) (cl-assert (null (cddr case))) (let* ((gn (+ offset (car case))) (action (nth 1 case)) (thiscode (cond ((stringp action) `((put-text-property (match-beginning ,gn) (match-end ,gn) 'syntax-table ',(string-to-syntax action)))) ((eq (car-safe action) 'ignore) (cdr action)) ((eq (car-safe action) 'prog1) (if (stringp (nth 1 action)) `((put-text-property (match-beginning ,gn) (match-end ,gn) 'syntax-table ',(string-to-syntax (nth 1 action))) ,@(nthcdr 2 action)) `((let ((mb (match-beginning ,gn)) (me (match-end ,gn))) ,(macroexp-let2 nil syntax (nth 1 action) `(progn (if ,syntax (put-text-property mb me 'syntax-table ,syntax)) ,@(nthcdr 2 action))))))) (t `((let ((mb (match-beginning ,gn)) (me (match-end ,gn)) (syntax ,action)) (if syntax (put-text-property mb me 'syntax-table syntax)))))))) (if (or (not (cddr rule)) (zerop gn)) (setq code (nconc (nreverse thiscode) code)) (push `(if (match-beginning ,gn) ,(if (null (cdr thiscode)) (car thiscode) `(progn ,@thiscode))) code)))) (push (cons condition (nreverse code)) branches)) (incf offset (regexp-opt-depth orig-re)) re)) rules "\\|"))) `(lambda (start end) (goto-char start) (while (and (< (point) end) (re-search-forward ,re end t)) (cond ,@(nreverse branches))))))
+
+
 (defun syntax-propertize (pos)
   "Ensure that syntax-table properties are set until POS (a buffer point)."
   (when (< syntax-propertize--done pos)
@@ -25211,6 +25281,15 @@ Return t if there isn't any."
     (defvaralias obsolete-name current-name docstring)
     (put obsolete-name 'saved-var-name current-name)
     obsolete-name))
+
+;; GNU faces.el: face aliases record `face-alias' + `obsolete-face'
+;; properties (used by emacs-authors-mode et al.).
+(defmacro define-obsolete-face-alias (obsolete-face current-face when)
+  "Make OBSOLETE-FACE a face alias for CURRENT-FACE and mark it obsolete.
+WHEN should be a string indicating when the face was first made
+obsolete, for example a date or a release number."
+  `(progn (put ,obsolete-face 'face-alias ,current-face)
+          (put ,obsolete-face 'obsolete-face (or ,when t))))
 
 (defvar file-name-version-regexp
   "\\(?:~\\|\\.~[-[:alnum:]:#@^._]+\\(?:~[[:digit:]]+\\)?~\\)"
@@ -28029,7 +28108,6 @@ SEQUENCE2 may be a list, vector, or string."
 (define-derived-mode tcl-mode prog-mode "Tcl")
 (define-derived-mode verilog-mode prog-mode "Verilog")
 (define-derived-mode vhdl-mode prog-mode "VHDL")
-(define-derived-mode m4-mode prog-mode "M4")
 (define-derived-mode metafont-mode prog-mode "Metafont")
 (define-derived-mode metapost-mode prog-mode "MetaPost")
 (define-derived-mode simula-mode prog-mode "Simula")
@@ -28039,7 +28117,6 @@ SEQUENCE2 may be a list, vector, or string."
 (define-derived-mode dcl-mode prog-mode "DCL")
 (define-derived-mode fortran-mode prog-mode "Fortran")
 (define-derived-mode f90-mode prog-mode "F90")
-(define-derived-mode asm-mode prog-mode "Assembler")
 (define-derived-mode antlr-mode prog-mode "Antlr")
 (define-derived-mode antlr-v4-mode prog-mode "Antlr-v4")
 (define-derived-mode python-mode prog-mode "Python")
@@ -28057,7 +28134,7 @@ SEQUENCE2 may be a list, vector, or string."
 (define-derived-mode scribe-mode text-mode "Scribe")
 (define-derived-mode mail-mode text-mode "Mail")
 (define-derived-mode bibtex-mode text-mode "BibTeX")
-(define-derived-mode bibtex-style-mode text-mode "BibTeX-Style")
+
 (define-derived-mode change-log-mode text-mode "ChangeLog")
 (define-derived-mode org-mode prog-mode "Org")
 (define-derived-mode ps-mode prog-mode "PostScript")
@@ -28066,12 +28143,11 @@ SEQUENCE2 may be a list, vector, or string."
 (define-derived-mode sieve-mode prog-mode "Sieve")
 ;; `lisp-data-mode' has a real definition earlier in this file (with
 ;; comment/imenu setup); don't clobber it with an empty stub here.
-(define-derived-mode autoconf-mode prog-mode "Autoconf")
 (define-derived-mode compilation-mode prog-mode "Compilation")
 (define-derived-mode ebrowse-tree-mode prog-mode "Ebrowse-Tree")
 (define-derived-mode erts-mode prog-mode "Erts")
 (define-derived-mode gdb-script-mode prog-mode "GDB-Script")
-(define-derived-mode ld-script-mode prog-mode "LD-Script")
+
 (define-derived-mode bovine-grammar-mode prog-mode "Bovine-Grammar")
 (define-derived-mode wisent-grammar-mode prog-mode "Wisent-Grammar")
 (define-derived-mode srecode-template-mode prog-mode "SRecode")

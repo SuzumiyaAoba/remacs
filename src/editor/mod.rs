@@ -11987,7 +11987,8 @@ fn parse_syntax_desc(i: &mut Interp, s: &str) -> Result<Option<Value>, Flow> {
         return Err(i.error("Empty syntax descriptor"));
     }
     let code: i128 = match chars[0] {
-        ' ' => 0,
+        // GNU syntax.c accepts '-' as a legacy synonym for whitespace.
+        ' ' | '-' => 0,
         '.' => 1,
         'w' => 2,
         '_' => 3,
