@@ -161,6 +161,75 @@ fn closures_lexical() {
 }
 
 #[test]
+fn dlet_dynamic_scope() {
+    // GNU's `dlet' wraps the binding `let' in a scope holding bare
+    // `defvar' declarations, so the bound names are dynamically scoped
+    // for the body's extent — visible to `eval', rebindable by `let'.
+    assert_eq!(
+        ev("(dlet ((x 1)) (list x (eval 'x t) (let ((y 2)) (eval 'x t))))"),
+        "(1 1 1)"
+    );
+    // `setq' updates the dynamic binding.
+    assert_eq!(ev("(dlet ((x 1)) (setq x 9) x)"), "9");
+    // Multiple binders all become dynamic.
+    assert_eq!(
+        ev("(dlet ((a 1) (b 2)) (list a b (eval '(list a b) t)))"),
+        "(1 2 (1 2))"
+    );
+    // An inner `let' rebinds the name dynamically (marker still in
+    // scope), so `eval' sees the inner value.
+    assert_eq!(ev("(dlet ((c 1)) (let ((c 2)) (eval 'c t)))"), "2");
+    // Lexical closures are unaffected: a captured lexical binding
+    // shadows the dlet's dynamic binding.
+    assert_eq!(
+        ev("(let ((z 4)) (let ((f (lambda () z))) (dlet ((z 9)) (funcall f))))"),
+        "4"
+    );
+    // Lambda parameters bind lexically even inside `dlet' (GNU's
+    // `funcall_lambda' pushes params onto the closure env
+    // unconditionally), so the arg shadows the dynamic binding while
+    // `eval' still sees the outer dynamic value.
+    assert_eq!(
+        ev("(dlet ((dx 1)) (funcall (lambda (dx) (list dx (eval 'dx t))) 5))"),
+        "(5 1)"
+    );
+}
+
+#[test]
+fn scoped_defvar_declarations() {
+    // A bare `(defvar x)' under lexical binding is a *scoped* special
+    // declaration: `let's in that scope bind `x' dynamically, and the
+    // declaration unwinds with the scope — the symbol does not become
+    // permanently special.
+    assert_eq!(
+        ev("(progn
+             (let () (defvar scoped-dv) (let ((scoped-dv 7)) (eval 'scoped-dv t)))
+             (special-variable-p 'scoped-dv))"),
+        "nil"
+    );
+    // `(defvar x INIT)' still marks permanently special.
+    assert_eq!(
+        ev("(progn (defvar perm-dv 3) (special-variable-p 'perm-dv))"),
+        "t"
+    );
+    // Bare `defvar' in a dynamic `(eval ... nil)' context does nothing.
+    assert_eq!(
+        ev("(eval '(progn (defvar dyn-dv) (special-variable-p 'dyn-dv)) nil)"),
+        "nil"
+    );
+    // `(eval FORM nil)' severs lexical visibility (dynamic env).
+    assert_eq!(
+        ev("(ignore-errors (eval '(let ((v 5)) (eval 'v nil)) t))"),
+        "nil"
+    );
+    // `(eval FORM t)' evaluates in a fresh empty `(t)' lexical env.
+    assert_eq!(
+        ev("(eval '(progn (defvar dz9) (let ((dz9 3)) (eval 'dz9 t))) t)"),
+        "3"
+    );
+}
+
+#[test]
 fn string_ops() {
     assert_eq!(ev("(concat \"a\" \"b\" \"c\")"), "\"abc\"");
     assert_eq!(ev("(substring \"hello\" 1 3)"), "\"el\"");

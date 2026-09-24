@@ -487,29 +487,24 @@ fn f_error_type(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 }
 
 fn f_eval(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    // (eval FORM &optional LEXICAL) — a list LEXICAL is the lexical
-    // environment itself; other non-nil values just select lexical
-    // scoping.
+    // (eval FORM &optional LEXICAL) — GNU binds
+    // `internal-interpreter-environment' to LEXICAL when nil (dynamic)
+    // or a cons (an actual env), else to `(t)' (fresh lexical env).
     let lex = arg(&args, 1);
     let lexenv = if matches!(lex, Value::Cons(_)) {
-        Some(parse_lexenv_spec(i, &lex))
-    } else {
+        parse_lexenv_spec(i, &lex)
+    } else if lex.is_nil() {
         None
+    } else {
+        crate::lisp::eval::lexenv_root()
     };
     i.explicit_eval_depth += 1;
-    let r = if lex.truthy() {
-        let id = i.intern("lexical-binding");
-        i.specbind(id, Value::t())?;
-        let saved = lexenv.map(|env| std::mem::replace(&mut i.lexenv, env));
-        let r = i.eval(&args[0]);
-        if let Some(env) = saved {
-            i.lexenv = env;
-        }
-        i.unbind(1)?;
-        r
-    } else {
-        i.eval(&args[0])
-    };
+    let id = i.intern("lexical-binding");
+    i.specbind(id, if lex.is_nil() { Value::Nil } else { Value::t() })?;
+    let saved = std::mem::replace(&mut i.lexenv, lexenv);
+    let r = i.eval(&args[0]);
+    i.lexenv = saved;
+    i.unbind(1)?;
     i.explicit_eval_depth -= 1;
     r
 }
@@ -2202,7 +2197,9 @@ fn parse_lexenv_spec(i: &mut Interp, env_v: &Value) -> crate::lisp::LexEnv {
         matches!(v, Value::Cons(c) if matches!(c.borrow().car, Value::Sym(_))
             && !matches!(c.borrow().cdr, Value::Cons(_)))
     };
-    let frame_of = |vars: Vec<(Value, Value)>| -> std::rc::Rc<LexFrame> {
+    let frame_of = |vars: Vec<(Value, Value)>,
+                    markers: Vec<SymId>|
+     -> std::rc::Rc<LexFrame> {
         let mut m = HashMap::new();
         for (k, v) in vars {
             if let Value::Sym(id) = k {
@@ -2211,16 +2208,22 @@ fn parse_lexenv_spec(i: &mut Interp, env_v: &Value) -> crate::lisp::LexEnv {
         }
         std::rc::Rc::new(LexFrame {
             vars: std::cell::RefCell::new(m),
+            declared: std::cell::RefCell::new(markers.into_iter().collect()),
             parent: None,
         })
     };
     let mut first: Vec<(Value, Value)> = Vec::new();
+    let mut first_markers: Vec<SymId> = Vec::new();
     for elt in env_v.list_to_vec().unwrap_or_default() {
         if is_pair(&elt) {
             if let Value::Cons(c) = &elt {
                 let b = c.borrow();
                 first.push((b.car.clone(), b.cdr.clone()));
             }
+        } else if let Value::Sym(id) = elt {
+            // A bare symbol is a scoped `defvar' marker (GNU's `memq'
+            // check at binding time), not a binding.
+            first_markers.push(id);
         } else if let Value::Cons(_) = elt {
             // A nested list of pairs = an enclosing let frame.
             let vars: Vec<(Value, Value)> = elt
@@ -2236,16 +2239,17 @@ fn parse_lexenv_spec(i: &mut Interp, env_v: &Value) -> crate::lisp::LexEnv {
                     }
                 })
                 .collect();
-            parents.push(frame_of(vars));
+            parents.push(frame_of(vars, Vec::new()));
         }
     }
-    if !first.is_empty() || !parents.is_empty() {
-        inner = Some(frame_of(first));
+    if !first.is_empty() || !first_markers.is_empty() || !parents.is_empty() {
+        inner = Some(frame_of(first, first_markers));
     }
     // Chain: innermost first, then the enclosing frames in order.
     for p in parents.into_iter().rev() {
         let q = std::rc::Rc::new(LexFrame {
             vars: p.vars.clone(),
+            declared: std::cell::RefCell::new(p.declared.borrow().clone()),
             parent: inner.take(),
         });
         inner = Some(q);

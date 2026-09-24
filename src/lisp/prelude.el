@@ -1,4 +1,4 @@
-;; -*- lexical-binding: nil -*-
+;; -*- lexical-binding: t -*-
 
 ;; ---------- control-flow macros ----------
 
@@ -7023,9 +7023,15 @@ VAR spec tests VAR's current value."
   "Thread X through FORMS as the last argument."
   (cl--thread-expand (car forms) (cdr forms) t))
 
-(defmacro dlet (spec &rest body)
-  "Like `let*' with dynamic binding (ours is already dynamic)."
-  `(let* ,spec ,@body))
+(defmacro dlet (binders &rest body)
+  "Like `let' but with dynamic scoping.
+The variables bound via `dlet' are made dynamically scoped, so that
+code run via `eval' during BODY can see them (as GNU's `dlet')."
+  `(let (_)
+     ,@(mapcar (lambda (binder)
+                 `(defvar ,(if (consp binder) (car binder) binder)))
+               binders)
+     (let ,binders ,@body)))
 
 (defun define-error (name message &optional parent)
   "Define NAME as an error with MESSAGE inheriting from PARENT."

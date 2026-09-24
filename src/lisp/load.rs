@@ -198,6 +198,18 @@ fn eval_src(i: &mut Interp, file: &str, src: &str, force_lex: bool) -> EvalResul
     let lex_id = i.intern("lexical-binding");
     let lex_on = force_lex || file_lexical_binding(&src);
     i.specbind(lex_id, if lex_on { Value::t() } else { Value::Nil })?;
+    // GNU's `readevalloop' specbinds `internal-interpreter-environment'
+    // to `(t)' for lexical files (nil for dynamic) for the file's whole
+    // dynamic extent: toplevel bare `defvar's become file-scoped special
+    // declarations that unwind when the load finishes.
+    let saved_lexenv = std::mem::replace(
+        &mut i.lexenv,
+        if lex_on {
+            crate::lisp::eval::lexenv_root()
+        } else {
+            None
+        },
+    );
     // GNU's load machinery autoloads these preloaded libraries on the
     // first `load' of any file — before the file's own forms run.
     for feat in ["cl-lib", "cl-loaddefs", "icons", "warnings"] {
@@ -223,6 +235,7 @@ fn eval_src(i: &mut Interp, file: &str, src: &str, force_lex: bool) -> EvalResul
     i.loading_dumped |= file.starts_with("builtin:");
     let r = eval_str_for_load(i, &src);
     i.loading_dumped = was_dumped;
+    i.lexenv = saved_lexenv;
     if r.is_ok() {
         // GNU records the file in `load-history': (FILE . ENTRIES),
         // newest file first, entries in evaluation order.

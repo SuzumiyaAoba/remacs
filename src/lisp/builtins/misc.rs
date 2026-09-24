@@ -1882,6 +1882,7 @@ pub(crate) fn make_interpreted_closure(
         {
             Some(Rc::new(crate::lisp::LexFrame {
                 vars: RefCell::new(std::collections::HashMap::new()),
+                declared: RefCell::new(std::collections::HashSet::new()),
                 parent: None,
             }))
         }
@@ -1889,6 +1890,7 @@ pub(crate) fn make_interpreted_closure(
         // alist lexical frame.
         alist => {
             let mut vars = std::collections::HashMap::new();
+            let mut declared = std::collections::HashSet::new();
             let mut cur = alist.clone();
             // Peel off a possible outer context list.
             loop {
@@ -1897,12 +1899,19 @@ pub(crate) fn make_interpreted_closure(
                         let b = c.borrow();
                         let elem = b.car.clone();
                         let rest = b.cdr.clone();
-                        // Elements may be (sym . val) conses or bare syms.
-                        if let Value::Cons(p) = &elem {
-                            let pb = p.borrow();
-                            if let Some(sid) = i.sym_id(&pb.car) {
-                                vars.insert(sid, pb.cdr.clone());
+                        // Elements may be (sym . val) conses or bare syms
+                        // (scoped `defvar' markers, as in GNU's env).
+                        match &elem {
+                            Value::Cons(p) => {
+                                let pb = p.borrow();
+                                if let Some(sid) = i.sym_id(&pb.car) {
+                                    vars.insert(sid, pb.cdr.clone());
+                                }
                             }
+                            Value::Sym(sid) => {
+                                declared.insert(*sid);
+                            }
+                            _ => {}
                         }
                         rest
                     }
@@ -1915,6 +1924,7 @@ pub(crate) fn make_interpreted_closure(
             }
             Some(Rc::new(crate::lisp::LexFrame {
                 vars: RefCell::new(vars),
+                declared: RefCell::new(declared),
                 parent: None,
             }))
         }

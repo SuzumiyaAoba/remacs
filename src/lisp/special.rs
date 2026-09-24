@@ -100,48 +100,39 @@ fn nth_arg(v: &Value, n: usize) -> Value {
 }
 
 impl Interp {
-    /// Is `lexical-binding` currently in effect?
-    /// GNU consults `internal-interpreter-environment' for nested evals:
-    /// a non-empty captured lexical env means lexical context even if the
-    /// `lexical-binding' variable is (dynamically) nil, which is what lets
-    /// closures inside lexical functions keep working when the variable's
-    /// global value is nil.
+    /// Is lexical binding currently in effect?  GNU's
+    /// `internal-interpreter-environment' alone decides this — a non-nil
+    /// env (including the `(t)' sentinel) means lexical context.  The
+    /// `lexical-binding' variable is only sampled by eval entry points
+    /// (`load', `eval-buffer', `eval'), which install the env for the
+    /// whole dynamic extent; `(setq lexical-binding ...)' mid-eval does
+    /// not flip the binding mode.
     pub fn lexical_binding_active(&self) -> bool {
-        if self.lexenv.is_some() {
-            return true;
-        }
-        let id = self.obarray.intern_soft("lexical-binding").unwrap_or(0);
-        self.symbol_value(id).truthy()
+        self.lexenv.is_some()
     }
 
     /// Lexical env captured by a newly created `lambda'/`defun'/`defmacro'.
-    /// When `lexical-binding' is off the function is dynamic (env nil).
-    /// When it is on but no env exists yet — e.g. top level of a file
-    /// loaded with a `lexical-binding: t' cookie — a fresh root frame is
-    /// captured so the function is lexical, like GNU.
+    /// GNU's `Ffunction' captures `internal-interpreter-environment'
+    /// directly: non-nil env → lexical closure; nil → dynamic function.
+    /// Eval entry points install a `(t)' root env so file-toplevel
+    /// definitions capture a real (empty) lexical scope.
     pub fn lambda_env(&self) -> crate::lisp::eval::LexEnv {
-        if !self.lexical_binding_active() {
-            return None;
-        }
-        match &self.lexenv {
-            Some(_) => self.lexenv.clone(),
-            None => Some(std::rc::Rc::new(crate::lisp::eval::LexFrame {
-                vars: std::cell::RefCell::new(std::collections::HashMap::new()),
-                parent: None,
-            })),
-        }
+        self.lexenv.clone()
     }
 
     /// `let`/`let*`/`condition-case` variable binding honoring scoping:
     /// binds lexically when lexical-binding is active and the var isn't
-    /// special, else specbinds dynamically.
+    /// special, else specbinds dynamically.  Like GNU's `Flet', a var is
+    /// special when `declared_special' OR named by a scoped `defvar'
+    /// marker in the current interpreter environment (`memq' check).
     pub fn bind_var(
         &mut self,
         lex_vars: Option<&Rc<LexFrame>>,
         sym: SymId,
         val: Value,
     ) -> Result<(), Flow> {
-        let is_special = self.obarray.symbol(sym).special;
+        let is_special = self.obarray.symbol(sym).special
+            || crate::lisp::eval::lexenv_declared(&self.lexenv, sym);
         match (lex_vars, is_special) {
             (Some(frame), false) => {
                 frame.vars.borrow_mut().insert(sym, val);
@@ -352,6 +343,7 @@ fn sf_let(i: &mut Interp, args: Value) -> EvalResult {
     if i.lexical_binding_active() {
         let frame = Rc::new(LexFrame {
             vars: RefCell::new(HashMap::new()),
+            declared: RefCell::new(std::collections::HashSet::new()),
             parent: i.lexenv.clone(),
         });
         let mark = i.specbind_depth();
@@ -398,6 +390,7 @@ fn sf_let_star(i: &mut Interp, args: Value) -> EvalResult {
     if i.lexical_binding_active() {
         let frame = Rc::new(LexFrame {
             vars: RefCell::new(HashMap::new()),
+            declared: RefCell::new(std::collections::HashSet::new()),
             parent: i.lexenv.clone(),
         });
         let mark = i.specbind_depth();
@@ -508,16 +501,30 @@ fn sf_defvar(i: &mut Interp, args: Value) -> EvalResult {
         Some(s) => s,
         None => return Err(i.wrong_type_mut("symbolp", &name_v)),
     };
-    i.obarray.symbol_mut(sid).special = true;
     let init = cadr(&args);
     let has_init = !cdr(&args).is_nil();
     if has_init {
-        // defvar sets the default only if the var is currently void.
+        // `(defvar SYM INIT ...)': GNU marks the symbol permanently
+        // special (`declared_special') and installs the default only if
+        // the var is currently void.
+        i.obarray.symbol_mut(sid).special = true;
         if !i.bound_p(sid) {
             let v = i.eval(&init)?;
             i.set_symbol_default(sid, v)?;
         }
+    } else if i.lexenv.is_some() {
+        // Bare `(defvar SYM)' in a lexical context is a scoped special
+        // declaration: GNU pushes the bare symbol onto
+        // `internal-interpreter-environment', so `let'/`let*' in this
+        // scope bind SYM dynamically and the declaration unwinds with
+        // the scope (it does NOT set `declared_special').
+        if !i.obarray.symbol(sid).special {
+            crate::lisp::eval::lexenv_declare(&i.lexenv, sid);
+        }
     }
+    // Dynamic context (nil interpreter environment): bare `(defvar SYM)'
+    // "does nothing", per GNU's docstring — all bindings are dynamic
+    // anyway, and the var does not become `special-variable-p'.
     let doc = nth_arg(&args, 2);
     if let Value::Str(s) = doc {
         let doc_str = s.borrow().clone();
@@ -779,6 +786,9 @@ fn sf_condition_case(i: &mut Interp, args: Value) -> EvalResult {
                             let lex_frame = if i.lexical_binding_active() {
                                 Some(Rc::new(LexFrame {
                                     vars: RefCell::new(HashMap::new()),
+                                    declared: RefCell::new(
+                                        std::collections::HashSet::new(),
+                                    ),
                                     parent: i.lexenv.clone(),
                                 }))
                             } else {

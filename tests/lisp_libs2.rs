@@ -132,6 +132,23 @@ fn skeleton_define_skeleton() {
 }
 
 #[test]
+fn skeleton_conditional_eval() {
+    // GNU-verified: skeleton elements eval under a fresh lexical root, so
+    // `(eval 'x t)` inside a skeleton sees dynamic bindings made by the
+    // caller -- exercised here via `let' on a dynamically-bound `x'.
+    assert_eq!(
+        ev("(progn (require 'skeleton)
+                  (define-skeleton cond-skel \"\" nil \"x\"
+                    (if (eval 'x t) \"X\" \"no\"))
+                  (list (dlet ((x t))
+                          (with-temp-buffer (cond-skel) (buffer-string)))
+                        (dlet ((x nil))
+                          (with-temp-buffer (cond-skel) (buffer-string)))))"),
+        "(\"xX\" \"xno\")"
+    );
+}
+
+#[test]
 fn skeleton_pair_wrap_region() {
     assert_eq!(
         ev("(progn (require 'skeleton)

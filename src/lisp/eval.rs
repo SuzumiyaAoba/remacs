@@ -7,7 +7,7 @@
 //! chain instead (unless the symbol is `defvar`'d special).
 
 use std::cell::RefCell;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
 use super::error::{EvalResult, Flow};
@@ -28,6 +28,11 @@ struct SpecBind {
 /// A lexical environment frame (chained).
 pub struct LexFrame {
     pub vars: RefCell<HashMap<SymId, Value>>,
+    /// Scoped `defvar' declarations — GNU's bare-symbol elements of
+    /// `internal-interpreter-environment': a name listed here is bound
+    /// dynamically by `let'/`let*' for the rest of this scope's extent,
+    /// then the declaration unwinds with the frame.
+    pub declared: RefCell<HashSet<SymId>>,
     pub parent: Option<Rc<LexFrame>>,
 }
 
@@ -41,6 +46,37 @@ pub fn lexenv_lookup(mut env: &LexEnv, sym: SymId) -> Option<Value> {
         env = &frame.parent;
     }
     None
+}
+
+/// GNU's `Fmemq(var, Vinternal_interpreter_environment)': true when SYM
+/// is declared dynamically scoped by a bare `defvar' anywhere in ENV.
+/// Scoped declarations only affect binding decisions — lookups go
+/// through `lexenv_lookup'/the dynamic cell like GNU's `assq'.
+pub fn lexenv_declared(mut env: &LexEnv, sym: SymId) -> bool {
+    while let Some(frame) = env {
+        if frame.declared.borrow().contains(&sym) {
+            return true;
+        }
+        env = &frame.parent;
+    }
+    false
+}
+
+/// Record a scoped `defvar' declaration in the innermost frame of ENV
+/// (GNU pushes the bare symbol onto `internal-interpreter-environment').
+pub fn lexenv_declare(env: &LexEnv, sym: SymId) {
+    if let Some(frame) = env {
+        frame.declared.borrow_mut().insert(sym);
+    }
+}
+
+/// A fresh empty lexical root — GNU's `(t)' sentinel environment.
+pub fn lexenv_root() -> LexEnv {
+    Some(Rc::new(LexFrame {
+        vars: RefCell::new(HashMap::new()),
+        declared: RefCell::new(HashSet::new()),
+        parent: None,
+    }))
 }
 
 /// Where output from `princ`/`print`/`message` goes. The editor installs a
@@ -655,6 +691,7 @@ impl Interp {
         if std::env::var("REMACS_NO_PRELUDE").is_ok() {
             // Debug escape: skip prelude evaluation entirely.
         } else if std::env::var("PRELUDE_TRACE").is_ok() || prelude_max != usize::MAX {
+            interp.lexenv = lexenv_root();
             let src = crate::lisp::prelude::PRELUDE;
             let chars: Rc<Vec<char>> = Rc::new(src.chars().collect());
             let mut pos = 0usize;
@@ -702,6 +739,10 @@ impl Interp {
                 }
             }
         } else {
+            // The prelude is a concatenation of GNU's lexical-binding
+            // sources (subr.el, minibuffer.el, ...); `lexical-binding'
+            // defaults to t, so `eval_str' installs a `(t)' root env
+            // and it evals lexically like GNU's dump does.
             let _ = interp.eval_str(crate::lisp::prelude::PRELUDE);
         }
         interp.loading_dumped = false;
@@ -1262,6 +1303,24 @@ impl Interp {
     /// Read and evaluate all top-level forms in `src`.
     /// Returns the last value.
     pub fn eval_str(&mut self, src: &str) -> EvalResult {
+        // Like GNU's `eval_buffer': `lexical-binding' is sampled once at
+        // entry; truthy → a fresh `(t)' lexical env, else nil (dynamic).
+        // Scoped `defvar' declarations then unwind with the eval.
+        let lex_on = self
+            .obarray
+            .intern_soft("lexical-binding")
+            .map(|id| self.symbol_value(id).truthy())
+            .unwrap_or(false);
+        let saved_lexenv = std::mem::replace(
+            &mut self.lexenv,
+            if lex_on { lexenv_root() } else { None },
+        );
+        let r = self.eval_str_inner(src);
+        self.lexenv = saved_lexenv;
+        r
+    }
+
+    fn eval_str_inner(&mut self, src: &str) -> EvalResult {
         // The reader borrows `self`, so create/drop it per form — but
         // share one collected char buffer across all reads.
         let chars: Rc<Vec<char>> = Rc::new(src.chars().collect());
@@ -1868,9 +1927,10 @@ impl Interp {
         }
 
         if l.env.is_some() {
-            // Lexical closure: extend captured env.  Parameters that are
-            // `defvar'd special are bound dynamically (GNU specbind);
-            // lookups for them bypass the lexical env.
+            // Lexical closure: extend captured env.  GNU's
+            // `funcall_lambda' binds every parameter lexically — even
+            // `defvar'd specials and scoped-declared names — since
+            // `internal-interpreter-environment' is not consulted here.
             let vars = RefCell::new(HashMap::new());
             let mark = self.specbind_depth();
             let bind_result = self.bind_lambda_args_lexical(&l.clone(), &argv, &vars);
@@ -1878,6 +1938,7 @@ impl Interp {
             // evaluate them after the frame exists.
             let frame = Rc::new(LexFrame {
                 vars,
+                declared: RefCell::new(HashSet::new()),
                 parent: l.env.clone(),
             });
             let saved = std::mem::replace(&mut self.lexenv, Some(frame.clone()));
@@ -1935,17 +1996,20 @@ impl Interp {
         Ok(())
     }
 
-    /// Lexical-closure argument binding: params go into the new frame's
-    /// `vars`, except `defvar'd specials which get dynamic specbinds.
+    /// Lexical-closure argument binding: every param goes into the new
+    /// frame's `vars' — like GNU's `funcall_lambda', which pushes
+    /// `(param . arg)' pairs unconditionally when the closure is lexical.
     fn bind_lambda_args_lexical(
         &mut self,
         l: &Rc<Lambda>,
         argv: &[Value],
         vars: &RefCell<HashMap<SymId, Value>>,
     ) -> Result<(), Flow> {
-        let bind = |this: &mut Self, sym: SymId, val: Value| -> Result<(), Flow> {
-            if this.obarray.symbol(sym).special {
-                this.specbind(sym, val)
+        let bind = |i: &mut Self, sym: SymId, val: Value| -> Result<(), Flow> {
+            // Like `let': `defvar'd specials specbind dynamically even
+            // in lexical functions (GNU `funcall_lambda').
+            if i.obarray.symbol(sym).special {
+                i.specbind(sym, val)
             } else {
                 vars.borrow_mut().insert(sym, val);
                 Ok(())
