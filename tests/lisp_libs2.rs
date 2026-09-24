@@ -1008,3 +1008,51 @@ fn rfn_eshadow_scroll_all_send_to_flow_ctrl() {
         "(t t nil nil nil)"
     );
 }
+
+// ------------------------------------------------- rtree / time-stamp / misc ports
+
+#[test]
+fn rtree_make_and_memq() {
+    // GNU-verified on 31.1: nested (range . (left right)) node shape.
+    assert_eq!(
+        ev("(progn (require 'rtree)
+                  (let ((t1 (rtree-make '(10 . 20))))
+                    (list (rtree-memq t1 15)
+                          (rtree-memq t1 5)
+                          (rtree-memq t1 20)
+                          (rtree-memq t1 21))))"),
+        "(((10 . 20) nil) nil ((10 . 20) nil) nil)"
+    );
+}
+
+#[test]
+fn time_stamp_format_and_zone_type() {
+    // GNU-verified on 31.1.
+    assert_eq!(
+        ev("(progn (require 'time-stamp)
+                  (list (time-stamp-zone-type-p 't)
+                        (time-stamp-zone-type-p 'wall)
+                        (time-stamp-zone-type-p 5)
+                        (time-stamp-zone-type-p \"x\")
+                        (time-stamp-string \"%Y-%02m-%02d\" '(26000 0 0))
+                        (time-stamp-string \"%H:%02M\" '(0 0 0))
+                        (time-stamp-string \"%05d\" '(0 0 0))))"),
+        "((t wall) (wall) t t \"2023-12-30\" \"09:00\" \"00001\")"
+    );
+}
+
+#[test]
+fn emacs_lock_bind_key_mouse_copy_t_mouse() {
+    // GNU-verified on 31.1: entry points exist; mouse-copy's
+    // `mouse-copy-secondary-pasting' is absent on both sides.
+    assert_eq!(
+        ev("(progn (require 'emacs-lock) (require 'bind-key)
+                  (require 'mouse-copy) (require 't-mouse)
+                  (list (fboundp 'emacs-lock-mode)
+                        (fboundp 'describe-personal-keybindings)
+                        (fboundp 'mouse-drag-secondary-pasting)
+                        (fboundp 'mouse-copy-secondary-pasting)
+                        (fboundp 't-mouse-mode)))"),
+        "(t t t nil nil)"
+    );
+}
