@@ -3175,6 +3175,15 @@ If nil, the feature is disabled, i.e., all commands work normally.")
 (defalias 'trace-function 'trace-function-foreground)
 (autoload 'memory-report "memory-report"
   "Generate a report of memory used by Emacs Lisp data." t)
+(autoload 'executable-interpret "executable"
+  "Run script with default interpreter, or with arg ARG." t)
+(autoload 'executable-set-magic "executable"
+  "Set or remove the magic number in a script." t)
+(autoload 'executable-command-find-posix-p "executable"
+  "Check if PROGRAM handles arguments Posix-style." nil nil)
+(autoload 'executable-make-buffer-file-executable-if-script-p
+  "executable"
+  "Make file executable according to umask if not already executable." nil nil)
 
 ;; GNU jka-compr.el autoload cookies (loaddefs.el): file-name handlers
 ;; installed by `auto-compression-mode' resolve the handler lazily —

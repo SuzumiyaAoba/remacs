@@ -819,6 +819,10 @@ impl Interp {
             // float-sup.el is dumped too (`lisp-float-type' feature):
             // `float-pi', `degrees-to-radians' & co. are bound at -Q.
             let _ = crate::lisp::load::load_library(&mut interp, "float-sup");
+            // debug-early.el is in GNU's dump too (loadup.el): it has
+            // no `provide', so the feature stays nil while
+            // `debug-early'/`debug-early-backtrace' are bound at -Q.
+            let _ = crate::lisp::load::load_library(&mut interp, "debug-early");
         }
         interp.loading_dumped = false;
         // GNU resets `gensym-counter' to 0 when the dumped image starts

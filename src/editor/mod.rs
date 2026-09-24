@@ -1297,17 +1297,17 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!("file-system-info", 1, 1, f_file_system_info, ""),
     S!("file-equal-p", 2, 2, f_file_equal_p, ""),
     // processes
+    // GNU: (call-process PROGRAM &optional INFILE DESTINATION DISPLAY
+    // &rest ARGS) — MANY arity; ARGS are passed to the program.
     S!(
         "call-process",
-        1,
-        8,
+        many 1,
         f_call_process,
         "Run PROGRAM synchronously."
     ),
     S!(
         "call-process-region",
-        3,
-        9,
+        many 3,
         f_call_process_region,
         "Run PROGRAM on region."
     ),

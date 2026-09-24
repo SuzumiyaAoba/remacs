@@ -1863,3 +1863,42 @@ fn misc_mode_libs_require() {
         "(nil t)"
     );
 }
+
+// ------------------------------------ executable/generate-lisp-file/debug-early
+
+#[test]
+fn executable_and_debug_early_parity() {
+    // GNU 31.1 -Q: debug-early is dumped (fbound, feature stays nil
+    // since the file has no `provide'); executable entry points are
+    // loaddefs autoloads.
+    assert_eq!(
+        ev("(list (fboundp 'debug-early) (fboundp 'debug-early-backtrace)
+                  (featurep 'debug-early)
+                  (car (symbol-function 'executable-interpret))
+                  (nth 1 (symbol-function 'executable-interpret))
+                  (car (symbol-function 'executable-set-magic))
+                  (car (symbol-function 'executable-command-find-posix-p))
+                  (car (symbol-function 'executable-make-buffer-file-executable-if-script-p)))"),
+        "(t t nil autoload \"executable\" autoload autoload autoload)"
+    );
+    // GNU: executable-interpret requires its COMMAND argument; the
+    // no-arg call signals exactly this arity error (needs call-process
+    // MANY arity to reach it).
+    assert_eq!(
+        ev("(progn (require 'executable)
+                  (list (featurep 'executable)
+                        (fboundp 'executable-find)
+                        (executable-command-find-posix-p \"sh\")
+                        (executable-command-find-posix-p \"find\")
+                        (condition-case e (executable-interpret)
+                          (wrong-number-of-arguments (list 'arity (car e))))))"),
+        "(t t nil t (arity wrong-number-of-arguments))"
+    );
+    // generate-lisp-file is a plain library (no autoloads in GNU).
+    assert_eq!(
+        ev("(progn (require 'generate-lisp-file)
+                  (list (featurep 'generate-lisp-file)
+                        (fboundp 'generate-lisp-file-trailer)))"),
+        "(t t)"
+    );
+}
