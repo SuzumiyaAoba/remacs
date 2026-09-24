@@ -635,6 +635,16 @@ impl Buffer {
     }
 
     pub fn register_marker(&mut self, m: &Rc<RefCell<Marker>>) {
+        // A marker must appear once per buffer: repeated `set-marker'
+        // calls on the same marker must not multiply-count its
+        // position adjustments on edits.
+        if self
+            .markers
+            .iter()
+            .any(|w| w.upgrade().is_some_and(|x| Rc::ptr_eq(&x, m)))
+        {
+            return;
+        }
         self.markers.push(Rc::downgrade(m));
     }
 

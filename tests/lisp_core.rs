@@ -427,6 +427,19 @@ fn markers() {
                 (marker-position m)))"),
         "3"
     );
+    // Re-`set-marker' must not double-register the marker: edits
+    // adjust its position exactly once (GNU 31.1 -> 4).
+    assert_eq!(
+        ev("(with-temp-buffer
+              (insert \"abc\")
+              (let ((m (make-marker)))
+                (set-marker m 2)
+                (set-marker m 3)
+                (goto-char 1)
+                (insert \"X\")
+                (marker-position m)))"),
+        "4"
+    );
 }
 
 #[test]

@@ -2023,6 +2023,17 @@ fn f_format_time_string(i: &mut Interp, args: Vec<Value>) -> EvalResult {
                 super::misc::tz_local_tm(secs, &z)
             }
         }
+        // GNU's decode_time_zone accepts `current-time-zone' output —
+        // a (OFFSET NAME) cons — and uses the car as the fixed offset.
+        Some(Value::Cons(c)) => {
+            let off = match &c.borrow().car {
+                Value::Int(n) => *n as i64,
+                _ => 0,
+            };
+            let mut tm = super::misc::gmt_tm(secs + off);
+            tm.tm_gmtoff = off;
+            tm
+        }
         Some(v) if v.truthy() => super::misc::gmt_tm(secs),
         _ => super::misc::local_tm(secs),
     };
