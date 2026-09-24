@@ -823,6 +823,16 @@ impl Interp {
             // no `provide', so the feature stays nil while
             // `debug-early'/`debug-early-backtrace' are bound at -Q.
             let _ = crate::lisp::load::load_library(&mut interp, "debug-early");
+            // electric.el is in GNU's dump (loadup.el):
+            // `electric-indent-mode'/`electric-quote-mode' are bound
+            // at -Q and elec-pair.el needs `electric-quote-chars'.
+            let _ = crate::lisp::load::load_library(&mut interp, "electric");
+            // paren.el is in GNU's dump (loadup.el): `show-paren-mode'
+            // and the `paren' feature are bound at -Q.
+            let _ = crate::lisp::load::load_library(&mut interp, "paren");
+            // rmc.el is in GNU's dump too (loadup.el loads it early so
+            // `read-multiple-choice' is available during startup).
+            let _ = crate::lisp::load::load_library(&mut interp, "rmc");
             // GNU -Q leaves `define-derived-mode'/`define-generic-mode'
             // as loaddefs autoload cells: GNU's dumped mode definitions
             // were byte-compiled, so the macros expanded at build time
@@ -841,7 +851,21 @@ impl Interp {
                    (fset 'define-generic-mode \
                          '(autoload \"generic\" \
                            \"Create a new generic mode MODE.\n\n\\(fn MODE COMMENT-LIST KEYWORD-LIST FONT-LOCK-LIST AUTO-MODE-LIST\n     FUNCTION-LIST &optional DOCSTRING)\" \
-                           nil t)))",
+                           nil t)) \
+                   ;; Same for entry points the prelude stubs for early
+                   ;; use: GNU keeps them as loaddefs autoload cells at -Q.
+                   (fset 'electric-pair-mode \
+                         '(autoload \"elec-pair\" \
+                           \"Toggle automatic pairing of delimiters (Electric Pair mode).\" \
+                           t nil)) \
+                   (fset 'dcl-mode \
+                         '(autoload \"dcl-mode\" \
+                           \"Major mode for editing DCL-files.\" \
+                           t nil)) \
+                   (fset 'find-function \
+                         '(autoload \"find-func\" \
+                           \"Find the definition of the Emacs Lisp FUNCTION near point.\" \
+                           t nil)))",
             );
         }
         interp.loading_dumped = false;

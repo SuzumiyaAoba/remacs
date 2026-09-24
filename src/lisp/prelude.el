@@ -7089,10 +7089,11 @@ LOAD should be either a library file name, or a feature name."
   (unless (member load (get symbol 'custom-loads))
     (put symbol 'custom-loads (cons load (get symbol 'custom-loads)))))
 
-(defun custom-autoload (symbol load)
-  "Mark SYMBOL as autoloaded custom option needing LOAD.
-See `custom-declare-variable' and `custom-declare-group'."
-  (put symbol 'custom-autoload load))
+(defun custom-autoload (symbol load &optional noset)
+  "Mark SYMBOL as autoloaded custom variable and add dependency LOAD.
+If NOSET is non-nil, don't bother autoloading LOAD when setting the variable."
+  (put symbol 'custom-autoload (if noset 'noset t))
+  (custom-add-load symbol load))
 
 (defun custom-load-symbol (symbol)
   "Load all dependencies for SYMBOL given by `custom-loads'."
@@ -15249,6 +15250,19 @@ for a match.  Return the absolute directory name, or nil."
   :global t :init-value t)
 (define-minor-mode show-paren-mode
   "Highlight matching parens." :global t :init-value t)
+;; Forward decl: electric.el's `electric-indent-actions' defcustom runs
+;; its :set when the stub below already enabled `electric-indent-mode'.
+;; GNU-verbatim copy of electric.el's helper.
+(defun electric-indent--activate-indent-actions (enable)
+  "Enable the actions specified in `electric-indent-actions'."
+  (advice-remove 'yank #'electric-indent--yank-advice)
+  (remove-hook 'before-save-hook #'electric-indent-save-hook)
+  (when enable
+    (when (memq 'yank electric-indent-actions)
+      (advice-add 'yank :around #'electric-indent--yank-advice))
+    (when (memq 'before-save electric-indent-actions)
+      (add-hook 'before-save-hook #'electric-indent-save-hook))))
+
 (define-minor-mode electric-indent-mode
   "Toggle on-the-fly reindentation of text lines (Electric Indent mode)."
   :global t :group 'electricity
@@ -39287,3 +39301,845 @@ by \"Save Options\" in Custom buffers.")
 		:key-type symbol
 		:value-type (sexp :tag "Value")))
   "Custom type for `display-buffer' actions.")
+
+
+;; GNU loaddefs defines this early (generated `defvar'); the faceup
+;; autoload cookie pushes to it, so it must be bound before the
+;; autoload block below runs.  eval.rs adds the `compat' entry after.
+(defvar package--builtin-versions
+  (list (list 'emacs emacs-major-version emacs-minor-version))
+  "Alist giving the version of each versioned builtin package.")
+
+;; bug-reference.el autoloads (GNU loaddefs).
+(put 'bug-reference-url-format 'safe-local-variable (lambda (s) (or (stringp s) (and (symbolp s) (get s 'bug-reference-url-format)))))
+(put 'bug-reference-bug-regexp 'safe-local-variable 'stringp)
+(autoload 'bug-reference-mode "bug-reference"
+"Toggle hyperlinking bug references in the buffer (Bug Reference mode).
+
+This is a minor mode.  If called interactively, toggle the
+`Bug-Reference mode' mode.  If the prefix argument is positive, enable
+the mode, and if it is zero or negative, disable the mode.
+
+If called from Lisp, toggle the mode if ARG is `toggle'.  Enable the
+mode if ARG is nil, omitted, or is a positive number.  Disable the mode
+if ARG is a negative number.
+
+To check whether the minor mode is enabled in the current buffer,
+evaluate the variable `bug-reference-mode'.
+
+The mode's hook is called both when the mode is enabled and when it is
+disabled.
+
+(fn &optional ARG)" t)
+(autoload 'bug-reference-prog-mode "bug-reference"
+"Like `bug-reference-mode', but only buttonize in comments and strings.
+
+This is a minor mode.  If called interactively, toggle the
+`Bug-Reference-Prog mode' mode.  If the prefix argument is positive,
+enable the mode, and if it is zero or negative, disable the mode.
+
+If called from Lisp, toggle the mode if ARG is `toggle'.  Enable the
+mode if ARG is nil, omitted, or is a positive number.  Disable the mode
+if ARG is a negative number.
+
+To check whether the minor mode is enabled in the current buffer,
+evaluate the variable `bug-reference-prog-mode'.
+
+The mode's hook is called both when the mode is enabled and when it is
+disabled.
+
+(fn &optional ARG)" t)
+(register-definition-prefixes "bug-reference" '("bug-reference-"))
+
+;; check-declare.el autoloads (GNU loaddefs).
+(autoload 'check-declare-file "check-declare"
+"Check veracity of all `declare-function' statements in FILE.
+See `check-declare-directory' for more information.
+
+(fn FILE)" t)
+(autoload 'check-declare-directory "check-declare"
+"Check veracity of all `declare-function' statements under directory ROOT.
+Returns non-nil if any false statements are found.
+
+(fn ROOT)" t)
+(register-definition-prefixes "check-declare" '("check-declare-"))
+
+;; cl-indent.el autoloads (GNU loaddefs).
+(autoload 'common-lisp-indent-function "cl-indent"
+"Function to indent the arguments of a Lisp function call.
+This is suitable for use as the value of the variable
+`lisp-indent-function'.  INDENT-POINT is the point at which the
+indentation function is called, and STATE is the
+`parse-partial-sexp' state at that position.  Browse the
+`lisp-indent' customize group for options affecting the behavior
+of this function.
+
+If the indentation point is in a call to a Lisp function, that
+function's `common-lisp-indent-function' property specifies how
+this function should indent it.  Possible values for this
+property are:
+
+* defun, meaning indent according to `lisp-indent-defun-method';
+  i.e., like (4 &lambda &body), as explained below.
+
+* any other symbol, meaning a function to call.  The function should
+  take the arguments: PATH STATE INDENT-POINT SEXP-COLUMN NORMAL-INDENT.
+  PATH is a list of integers describing the position of point in terms of
+  list-structure with respect to the containing lists.  For example, in
+  ((a b c (d foo) f) g), foo has a path of (0 3 1).  In other words,
+  to reach foo take the 0th element of the outermost list, then
+  the 3rd element of the next list, and finally the 1st element.
+  STATE and INDENT-POINT are as in the arguments to
+  `common-lisp-indent-function'.  SEXP-COLUMN is the column of
+  the open parenthesis of the innermost containing list.
+  NORMAL-INDENT is the column the indentation point was
+  originally in.  This function should behave like `lisp-indent-259'.
+
+* an integer N, meaning indent the first N arguments like
+  function arguments, and any further arguments like a body.
+  This is equivalent to (4 4 ... &body).
+
+* a list.  The list element in position M specifies how to indent the Mth
+  function argument.  If there are fewer elements than function arguments,
+  the last list element applies to all remaining arguments.  The accepted
+  list elements are:
+
+  * nil, meaning the default indentation.
+
+  * an integer, specifying an explicit indentation.
+
+  * &lambda.  Indent the argument (which may be a list) by 4.
+
+  * &rest.  When used, this must be the penultimate element.  The
+    element after this one applies to all remaining arguments.
+
+  * &body.  This is equivalent to &rest lisp-body-indent, i.e., indent
+    all remaining elements by `lisp-body-indent'.
+
+  * &whole.  This must be followed by nil, an integer, or a
+    function symbol.  This indentation is applied to the
+    associated argument, and as a base indent for all remaining
+    arguments.  For example, an integer P means indent this
+    argument by P, and all remaining arguments by P, plus the
+    value specified by their associated list element.
+
+  * a symbol.  A function to call, with the 6 arguments specified above.
+
+  * a list, with elements as described above.  This applies when the
+    associated function argument is itself a list.  Each element of the list
+    specifies how to indent the associated argument.
+
+For example, the function `case' has an indent property
+(4 &rest (&whole 2 &rest 1)), meaning:
+  * indent the first argument by 4.
+  * arguments after the first should be lists, and there may be any number
+    of them.  The first list element has an offset of 2, all the rest
+    have an offset of 2+1=3.
+
+If the current mode is actually `emacs-lisp-mode', look for a
+`common-lisp-indent-function-for-elisp' property before looking
+at `common-lisp-indent-function' and, if set, use its value
+instead.
+
+(fn INDENT-POINT STATE)")
+(register-definition-prefixes "cl-indent" '("common-lisp-" "lisp-"))
+
+;; completion.el autoloads (GNU loaddefs).
+(defvar dynamic-completion-mode nil
+"Non-nil if Dynamic-Completion mode is enabled.
+See the `dynamic-completion-mode' command
+for a description of this minor mode.
+Setting this variable directly does not take effect;
+either customize it (see the info node `Easy Customization')
+or call the function `dynamic-completion-mode'.")
+(custom-autoload 'dynamic-completion-mode "completion" nil)
+(autoload 'dynamic-completion-mode "completion"
+"Toggle dynamic word-completion on or off.
+
+When this minor mode is turned on, typing \\`M-RET' or \\`C-RET'
+invokes the command `complete', which completes the word or
+symbol at point using the record of words/symbols you used
+previously and the previously-inserted completions.  Typing
+a word or moving point across it constitutes \"using\" the
+word.
+
+By default, the database of all the dynamic completions that
+were inserted by \\[complete] is saved on the file specified
+by `save-completions-file-name' when you exit Emacs, and will
+be loaded from that file when this mode is enabled in a future
+Emacs session.
+
+The following important options control the various aspects of
+this mode: `enable-completion', `save-completions-flag', and
+`save-completions-retention-time'.  Few other less important
+options can be found in the `completion' group.
+
+This is a global minor mode.  If called interactively, toggle the
+`Dynamic-Completion mode' mode.  If the prefix argument is positive,
+enable the mode, and if it is zero or negative, disable the mode.
+
+If called from Lisp, toggle the mode if ARG is `toggle'.  Enable the
+mode if ARG is nil, omitted, or is a positive number.  Disable the mode
+if ARG is a negative number.
+
+To check whether the minor mode is enabled in the current buffer,
+evaluate `(default-value \\='dynamic-completion-mode)'.
+
+The mode's hook is called both when the mode is enabled and when it is
+disabled.
+
+(fn &optional ARG)" t)
+(register-definition-prefixes "completion" '("*c-def-regexp*" "*lisp-def-regexp*" "accept-completion" "add-" "cdabbrev-" "check-completion-length" "clear-all-completions" "cmpl-" "complet" "current-completion-source" "delete-completion" "enable-completion" "find-" "inside-locate-completion-entry" "interactive-completion-string-reader" "kill-" "list-all-completions" "load-completions-from-file" "make-c" "next-cdabbrev" "num-cmpl-sources" "reset-cdabbrev" "save" "set-c" "symbol-" "use-completion-"))
+
+;; completion-preview.el autoloads (GNU loaddefs).
+(autoload 'completion-preview-mode "completion-preview"
+"Show in-buffer completion suggestions in a preview as you type.
+
+This mode automatically shows and updates the completion preview
+according to the text around point.
+\\<completion-preview-active-mode-map>When the preview is visible, \\[completion-preview-insert] accepts the
+completion suggestion, \\[completion-preview-complete] completes up to
+the longest common prefix of all completion candidates,
+\\[completion-preview-next-candidate] cycles forward to the next
+completion suggestion, and \\[completion-preview-prev-candidate] cycles
+backward.
+
+This is a minor mode.  If called interactively, toggle the
+`Completion-Preview mode' mode.  If the prefix argument is positive,
+enable the mode, and if it is zero or negative, disable the mode.
+
+If called from Lisp, toggle the mode if ARG is `toggle'.  Enable the
+mode if ARG is nil, omitted, or is a positive number.  Disable the mode
+if ARG is a negative number.
+
+To check whether the minor mode is enabled in the current buffer,
+evaluate the variable `completion-preview-mode'.
+
+The mode's hook is called both when the mode is enabled and when it is
+disabled.
+
+(fn &optional ARG)" t)
+(put 'global-completion-preview-mode 'globalized-minor-mode t)
+(defvar global-completion-preview-mode nil
+"Non-nil if Global Completion-Preview mode is enabled.
+See the `global-completion-preview-mode' command
+for a description of this minor mode.
+Setting this variable directly does not take effect;
+either customize it (see the info node `Easy Customization')
+or call the function `global-completion-preview-mode'.")
+(custom-autoload 'global-completion-preview-mode "completion-preview" nil)
+(autoload 'global-completion-preview-mode "completion-preview"
+"Toggle Completion-Preview mode in many buffers.
+Specifically, Completion-Preview mode is enabled in all buffers where
+`completion-preview-mode' would do it.
+
+With prefix ARG, enable Global Completion-Preview mode if ARG is
+positive; otherwise, disable it.
+
+If called from Lisp, toggle the mode if ARG is `toggle'.
+Enable the mode if ARG is nil, omitted, or is a positive number.
+Disable the mode if ARG is a negative number.
+
+See `completion-preview-mode' for more information on
+Completion-Preview mode.
+
+`global-completion-preview-modes' is used to control which modes this
+minor mode is used in.
+
+(fn &optional ARG)" t)
+(defvar global-completion-preview-modes '((not archive-mode calc-mode compilation-mode diff-mode dired-mode image-mode minibuffer-mode minibuffer-inactive-mode org-agenda-mode special-mode wdired-mode) t)
+"Which major modes `completion-preview-mode' is switched on in.
+This variable can be either t (all major modes), nil (no major modes),
+or a list of modes and (not modes) to switch use this minor mode or
+not.  For instance
+
+  (c-mode (not message-mode mail-mode) text-mode)
+
+means \"use this mode in all modes derived from `c-mode', don't use in
+modes derived from `message-mode' or `mail-mode', but do use in other
+modes derived from `text-mode'\".  An element with value t means \"use\"
+and nil means \"don't use\".  There's an implicit nil at the end of the
+list.")
+(custom-autoload 'global-completion-preview-modes "completion-preview" t)
+(register-definition-prefixes "completion-preview" '("completion-preview-"))
+
+;; cpp.el autoloads (GNU loaddefs).
+(autoload 'cpp-highlight-buffer "cpp"
+"Highlight C code according to preprocessor conditionals.
+This command pops up a buffer which you should edit to specify
+what kind of highlighting to use, and the criteria for highlighting.
+A prefix arg suppresses display of that buffer.
+
+(fn ARG)" t)
+(autoload 'cpp-parse-edit "cpp"
+"Edit display information for cpp conditionals." t)
+(register-definition-prefixes "cpp" '("cpp-"))
+
+;; cpp.el autoloads (GNU loaddefs).
+(register-definition-prefixes "srecode/cpp" '("srecode-"))
+
+;; dcl-mode.el autoloads (GNU loaddefs).
+(autoload 'dcl-mode "dcl-mode"
+"Major mode for editing DCL-files.
+
+This mode indents command lines in blocks.  (A block is commands between
+THEN-ELSE-ENDIF and between lines matching dcl-block-begin-regexp and
+dcl-block-end-regexp.)
+
+Labels are indented to a fixed position unless they begin or end a block.
+Whole-line comments (matching dcl-comment-line-regexp) are not indented.
+Data lines are not indented.
+
+Key bindings:
+
+\\{dcl-mode-map}
+Commands not usually bound to keys:
+
+\\[dcl-save-nondefault-options]		Save changed options
+\\[dcl-save-all-options]		Save all options
+\\[dcl-save-option]			Save any option
+\\[dcl-save-mode]			Save buffer mode
+
+Variables controlling indentation style and extra features:
+
+ dcl-basic-offset
+    Extra indentation within blocks.
+
+ dcl-continuation-offset
+    Extra indentation for continued lines.
+
+ dcl-margin-offset
+    Indentation for the first command line in a file or SUBROUTINE.
+
+ dcl-margin-label-offset
+    Indentation for a label.
+
+ dcl-comment-line-regexp
+    Lines matching this regexp will not be indented.
+
+ dcl-block-begin-regexp
+ dcl-block-end-regexp
+    Regexps that match command lines that begin and end, respectively,
+    a block of command lines that will be given extra indentation.
+    Command lines between THEN-ELSE-ENDIF are always indented; these variables
+    make it possible to define other places to indent.
+    Set to nil to disable this feature.
+
+ dcl-calc-command-indent-function
+    Can be set to a function that customizes indentation for command lines.
+    Two such functions are included in the package:
+	dcl-calc-command-indent-multiple
+	dcl-calc-command-indent-hang
+
+ dcl-calc-cont-indent-function
+    Can be set to a function that customizes indentation for continued lines.
+    One such function is included in the package:
+	dcl-calc-cont-indent-relative    (set by default)
+
+ dcl-tab-always-indent
+    If t, pressing TAB always indents the current line.
+    If nil, pressing TAB indents the current line if point is at the left
+    margin.
+
+ dcl-electric-characters
+    Non-nil causes lines to be indented at once when a label, ELSE or ENDIF is
+    typed.
+
+ dcl-electric-reindent-regexps
+    Use this variable and function dcl-electric-character to customize
+    which words trigger electric indentation.
+
+ dcl-tempo-comma
+ dcl-tempo-left-paren
+ dcl-tempo-right-paren
+    These variables control the look of expanded templates.
+
+ dcl-imenu-generic-expression
+    Default value for `imenu-generic-expression'.  The default includes
+    SUBROUTINE labels in the main listing and sub-listings for
+    other labels, CALL, GOTO and GOSUB statements.
+
+ dcl-imenu-label-labels
+ dcl-imenu-label-goto
+ dcl-imenu-label-gosub
+ dcl-imenu-label-call
+    Change the text that is used as sub-listing labels in imenu.
+
+Turning on DCL mode calls the value of the variable `dcl-mode-hook'
+with no args, if that value is non-nil.
+
+
+The following example uses the default values for all variables:
+
+$! This is a comment line that is not indented (it matches
+$! dcl-comment-line-regexp)
+$! Next follows the first command line.  It is indented dcl-margin-offset.
+$       i = 1
+$       ! Other comments are indented like command lines.
+$       ! A margin label indented dcl-margin-label-offset:
+$ label:
+$       if i.eq.1
+$       then
+$           ! Lines between THEN-ELSE and ELSE-ENDIF are
+$           ! indented dcl-basic-offset
+$           loop1: ! This matches dcl-block-begin-regexp...
+$               ! ...so this line is indented dcl-basic-offset
+$               text = \"This \" + - ! is a continued line
+                       \"lined up with the command line\"
+$               type sys$input
+Data lines are not indented at all.
+$           endloop1: ! This matches dcl-block-end-regexp
+$       endif
+$
+
+
+There is some minimal font-lock support (see vars
+`dcl-font-lock-defaults' and `dcl-font-lock-keywords')." t)
+(register-definition-prefixes "dcl-mode" '("dcl-"))
+
+;; elec-pair.el autoloads (GNU loaddefs).
+(defvar electric-pair-mode nil
+"Non-nil if Electric-Pair mode is enabled.
+See the `electric-pair-mode' command
+for a description of this minor mode.
+Setting this variable directly does not take effect;
+either customize it (see the info node `Easy Customization')
+or call the function `electric-pair-mode'.")
+(custom-autoload 'electric-pair-mode "elec-pair" nil)
+(autoload 'electric-pair-mode "elec-pair"
+"Toggle automatic pairing of delimiters (Electric Pair mode).
+
+Electric Pair mode is a global minor mode.  When enabled, typing an
+opening delimiter (parenthesis, bracket, etc.) automatically inserts the
+corresponding closing delimiter.  If the region is active, the
+delimiters are inserted around the region instead.
+
+To toggle the mode only in the current buffer, use
+`electric-pair-local-mode'.
+
+This is a global minor mode.  If called interactively, toggle the
+`Electric-Pair mode' mode.  If the prefix argument is positive, enable
+the mode, and if it is zero or negative, disable the mode.
+
+If called from Lisp, toggle the mode if ARG is `toggle'.  Enable the
+mode if ARG is nil, omitted, or is a positive number.  Disable the mode
+if ARG is a negative number.
+
+To check whether the minor mode is enabled in the current buffer,
+evaluate `(default-value \\='electric-pair-mode)'.
+
+The mode's hook is called both when the mode is enabled and when it is
+disabled.
+
+(fn &optional ARG)" t)
+(autoload 'electric-pair-local-mode "elec-pair"
+"Toggle `electric-pair-mode' only in this buffer.
+
+This is a minor mode.  If called interactively, toggle the
+`Electric-Pair-Local mode' mode.  If the prefix argument is positive,
+enable the mode, and if it is zero or negative, disable the mode.
+
+If called from Lisp, toggle the mode if ARG is `toggle'.  Enable the
+mode if ARG is nil, omitted, or is a positive number.  Disable the mode
+if ARG is a negative number.
+
+To check whether the minor mode is enabled in the current buffer,
+evaluate the variable `electric-pair-mode'.
+
+The mode's hook is called both when the mode is enabled and when it is
+disabled.
+
+(fn &optional ARG)" t)
+(register-definition-prefixes "elec-pair" '("electric-pair-"))
+
+;; faceup.el autoloads (GNU loaddefs).
+(push '(faceup 0 0 6) package--builtin-versions)
+(autoload 'faceup-view-buffer "faceup"
+"Display the faceup representation of the current buffer." t)
+(autoload 'faceup-write-file "faceup"
+"Save the faceup representation of the current buffer to the file FILE-NAME.
+
+Unless a name is given, the file will be named xxx.faceup, where
+xxx is the file name associated with the buffer.
+
+If optional second arg CONFIRM is non-nil, this function
+asks for confirmation before overwriting an existing file.
+Interactively, confirmation is required unless you supply a prefix argument.
+
+(fn &optional FILE-NAME CONFIRM)" t)
+(autoload 'faceup-render-view-buffer "faceup"
+"Convert BUFFER containing Faceup markup to a new buffer and display it.
+
+(fn &optional BUFFER)" t)
+(autoload 'faceup-clean-buffer "faceup"
+"Remove faceup markup from buffer." t)
+(autoload 'faceup-defexplainer "faceup"
+"Define an Ert explainer function for FUNCTION.
+
+FUNCTION must return an explanation when the test fails and
+`faceup-test-explain' is set.
+
+(fn FUNCTION)" nil t)
+(register-definition-prefixes "faceup" '("faceup-"))
+
+;; find-func.el autoloads (GNU loaddefs).
+(autoload 'find-library "find-func"
+"Find the Emacs Lisp source of LIBRARY.
+
+Interactively, prompt for LIBRARY using the one at or near point.
+
+This function searches `find-library-source-path' if non-nil, and
+`load-path' otherwise.
+
+See the `find-library-include-other-files' user option for
+customizing the candidate completions.
+
+(fn LIBRARY)" t)
+(autoload 'read-library-name "find-func"
+"Read and return a library name, defaulting to the one near point.
+
+A library name is the filename of an Emacs Lisp library located
+in a directory under `load-path' (or `find-library-source-path',
+if non-nil).")
+(autoload 'find-library-other-window "find-func"
+"Find the Emacs Lisp source of LIBRARY in another window.
+
+See `find-library' for more details.
+
+(fn LIBRARY)" t)
+(autoload 'find-library-other-frame "find-func"
+"Find the Emacs Lisp source of LIBRARY in another frame.
+
+See `find-library' for more details.
+
+(fn LIBRARY)" t)
+(autoload 'find-function-search-for-symbol "find-func"
+"Search for SYMBOL's definition of type TYPE in LIBRARY.
+Visit the library in a buffer, and return a cons cell (BUFFER . POSITION),
+or just (BUFFER . nil) if the definition can't be found in the file.
+
+If TYPE is nil, look for a function definition,
+otherwise, TYPE specifies the kind of definition.
+TYPE is looked up in SYMBOL's property `find-function-type-alist'
+(which can be maintained with `find-function-update-type-alist')
+or the variable `find-function-regexp-alist'.
+
+The search is done in the source for library LIBRARY.
+
+(fn SYMBOL TYPE LIBRARY)")
+(autoload 'find-function-update-type-alist "find-func"
+"Update SYMBOL property `find-function-type-alist' with (TYPE . VARIABLE).
+Property `find-function-type-alist' is a symbol-specific version
+of variable `find-function-regexp-alist' and has the same format.
+
+(fn SYMBOL TYPE VARIABLE)")
+(autoload 'find-function-noselect "find-func"
+"Return a pair (BUFFER . POINT) pointing to the definition of FUNCTION.
+
+Finds the source file containing the definition of FUNCTION
+in a buffer and the point of the definition.  The buffer is
+not selected.  If the function definition can't be found in
+the buffer, returns (BUFFER).
+
+If FUNCTION is a built-in function, this function normally
+attempts to find it in the Emacs C sources; however, if LISP-ONLY
+is non-nil, signal an error instead.
+
+(fn FUNCTION &optional LISP-ONLY)")
+(autoload 'find-function "find-func"
+"Find the definition of the Emacs Lisp FUNCTION near point.
+
+Finds the source file containing the definition of the function
+near point (selected by `function-called-at-point') in a buffer and
+places point before the definition.
+Set mark before moving, if the buffer already existed.
+
+See also `find-function-recenter-line' and `find-function-after-hook'.
+
+Use \\[xref-find-definitions] to find definitions of functions and variables
+that are not part of Emacs.
+
+(fn FUNCTION)" t)
+(autoload 'find-function-other-window "find-func"
+"Find, in another window, the definition of FUNCTION near point.
+
+See `find-function' for more details.
+
+(fn FUNCTION)" t)
+(autoload 'find-function-other-frame "find-func"
+"Find, in another frame, the definition of FUNCTION near point.
+
+See `find-function' for more details.
+
+(fn FUNCTION)" t)
+(autoload 'find-variable-noselect "find-func"
+"Return a pair `(BUFFER . POINT)' pointing to the definition of VARIABLE.
+
+Finds the library containing the definition of VARIABLE in a buffer and
+the point of the definition.  The buffer is not selected.
+If the variable's definition can't be found in the buffer, return (BUFFER).
+
+(fn VARIABLE &optional FILE)")
+(autoload 'find-variable "find-func"
+"Find the definition of the VARIABLE at or before point.
+
+Finds the library containing the definition of the variable
+near point (selected by `variable-at-point') in a buffer and
+places point before the definition.
+
+Set mark before moving, if the buffer already existed.
+
+See also `find-function-recenter-line' and `find-function-after-hook'.
+
+(fn VARIABLE)" t)
+(autoload 'find-variable-other-window "find-func"
+"Find, in another window, the definition of VARIABLE near point.
+
+See `find-variable' for more details.
+
+(fn VARIABLE)" t)
+(autoload 'find-variable-other-frame "find-func"
+"Find, in another frame, the definition of VARIABLE near point.
+
+See `find-variable' for more details.
+
+(fn VARIABLE)" t)
+(autoload 'find-definition-noselect "find-func"
+"Return a pair `(BUFFER . POINT)' pointing to the definition of SYMBOL.
+If the definition can't be found in the buffer, return (BUFFER).
+TYPE says what type of definition: nil for a function, `defvar' for a
+variable, `defface' for a face.  This function does not switch to the
+buffer nor display it.
+
+(fn SYMBOL TYPE &optional FILE)")
+(autoload 'find-face-definition "find-func"
+"Find the definition of FACE.  FACE defaults to the name near point.
+
+Finds the Emacs Lisp library containing the definition of the face
+near point (selected by `variable-at-point') in a buffer and
+places point before the definition.
+
+Set mark before moving, if the buffer already existed.
+
+See also `find-function-recenter-line' and `find-function-after-hook'.
+
+(fn FACE)" t)
+(autoload 'find-function-on-key "find-func"
+"Find the function that KEY invokes.  KEY is a string.
+Set mark before moving, if the buffer already existed.
+
+(fn KEY)" t)
+(autoload 'find-function-on-key-other-window "find-func"
+"Find, in the other window, the function that KEY invokes.
+See `find-function-on-key'.
+
+(fn KEY)" t)
+(autoload 'find-function-on-key-other-frame "find-func"
+"Find, in the other frame, the function that KEY invokes.
+See `find-function-on-key'.
+
+(fn KEY)" t)
+(autoload 'find-function-at-point "find-func"
+"Find directly the function at point in the other window." t)
+(autoload 'find-variable-at-point "find-func"
+"Find directly the variable at point in the other window." t)
+(defvar find-function-mode nil
+"Non-nil if Find-Function mode is enabled.
+See the `find-function-mode' command
+for a description of this minor mode.
+Setting this variable directly does not take effect;
+either customize it (see the info node `Easy Customization')
+or call the function `find-function-mode'.")
+(custom-autoload 'find-function-mode "find-func" nil)
+(autoload 'find-function-mode "find-func"
+"Enable some key bindings for the `find-function' family of functions.
+
+This is a global minor mode.  If called interactively, toggle the
+`Find-Function mode' mode.  If the prefix argument is positive, enable
+the mode, and if it is zero or negative, disable the mode.
+
+If called from Lisp, toggle the mode if ARG is `toggle'.  Enable the
+mode if ARG is nil, omitted, or is a positive number.  Disable the mode
+if ARG is a negative number.
+
+To check whether the minor mode is enabled in the current buffer,
+evaluate `(default-value \\='find-function-mode)'.
+
+The mode's hook is called both when the mode is enabled and when it is
+disabled.
+
+\\{find-function-mode-map}
+
+(fn &optional ARG)" t)
+(autoload 'find-function-setup-keys "find-func"
+"Turn on `find-function-mode', which see.")
+(register-definition-prefixes "find-func" '("find-" "read-library-name--find-files"))
+
+;; follow.el autoloads (GNU loaddefs).
+(autoload 'turn-on-follow-mode "follow"
+"Turn on Follow mode.  Please see the function `follow-mode'.")
+(autoload 'turn-off-follow-mode "follow"
+"Turn off Follow mode.  Please see the function `follow-mode'.")
+(autoload 'follow-mode "follow"
+"Toggle Follow mode.
+
+Follow mode is a minor mode that combines windows into one tall
+virtual window.  This is accomplished by two main techniques:
+
+* The windows always displays adjacent sections of the buffer.
+  This means that whenever one window is moved, all the
+  others will follow.  (Hence the name Follow mode.)
+
+* Should point (cursor) end up outside a window, another
+  window displaying that point is selected, if possible.  This
+  makes it possible to walk between windows using normal cursor
+  movement commands.
+
+Follow mode comes to its prime when used on a large screen and two or
+more side-by-side windows are used.  The user can, with the help of
+Follow mode, use these full-height windows as though they were one.
+Imagine yourself editing a large function, or section of text, and
+being able to use 144 or 216 lines instead of the normal 72... (your
+mileage may vary).
+
+To split one large window into two side-by-side windows, the commands
+\\[split-window-right] or \\[follow-delete-other-windows-and-split] can be used.
+
+Only windows displayed in the same frame follow each other.
+
+This command runs the normal hook `follow-mode-hook'.
+
+Keys specific to Follow mode:
+\\{follow-mode-map}
+
+This is a minor mode.  If called interactively, toggle the `Follow mode'
+mode.  If the prefix argument is positive, enable the mode, and if it is
+zero or negative, disable the mode.
+
+If called from Lisp, toggle the mode if ARG is `toggle'.  Enable the
+mode if ARG is nil, omitted, or is a positive number.  Disable the mode
+if ARG is a negative number.
+
+To check whether the minor mode is enabled in the current buffer,
+evaluate the variable `follow-mode'.
+
+The mode's hook is called both when the mode is enabled and when it is
+disabled.
+
+(fn &optional ARG)" t)
+(autoload 'follow-scroll-up-window "follow"
+"Scroll text in a Follow mode window up by that window's size.
+The other windows in the window chain will scroll synchronously.
+
+If called with no ARG, the `next-screen-context-lines' last lines of
+the window will be visible after the scroll.
+
+If called with an argument, scroll ARG lines up.
+Negative ARG means scroll downward.
+
+Works like `scroll-up' when not in Follow mode.
+
+(fn &optional ARG)" t)
+(autoload 'follow-scroll-down-window "follow"
+"Scroll text in a Follow mode window down by that window's size.
+The other windows in the window chain will scroll synchronously.
+
+If called with no ARG, the `next-screen-context-lines' top lines of
+the window in the chain will be visible after the scroll.
+
+If called with an argument, scroll ARG lines down.
+Negative ARG means scroll upward.
+
+Works like `scroll-down' when not in Follow mode.
+
+(fn &optional ARG)" t)
+(autoload 'follow-scroll-up "follow"
+"Scroll text in a Follow mode window chain up.
+
+If called with no ARG, the `next-screen-context-lines' last lines of
+the bottom window in the chain will be visible in the top window.
+
+If called with an argument, scroll ARG lines up.
+Negative ARG means scroll downward.
+
+Works like `scroll-up' when not in Follow mode.
+
+(fn &optional ARG)" t)
+(autoload 'follow-scroll-down "follow"
+"Scroll text in a Follow mode window chain down.
+
+If called with no ARG, the `next-screen-context-lines' top lines of
+the top window in the chain will be visible in the bottom window.
+
+If called with an argument, scroll ARG lines down.
+Negative ARG means scroll upward.
+
+Works like `scroll-down' when not in Follow mode.
+
+(fn &optional ARG)" t)
+(autoload 'follow-delete-other-windows-and-split "follow"
+"Create two side by side windows and enter Follow mode.
+
+Execute this command to display as much as possible of the text
+in the selected window.  All other windows, in the current
+frame, are deleted and the selected window is split in two
+side-by-side windows.  Follow mode is activated, hence the
+two windows always will display two successive pages.
+(If one window is moved, the other one will follow.)
+
+If ARG is positive, the leftmost window is selected.  If negative,
+the rightmost is selected.  If ARG is nil, the leftmost window is
+selected if the original window is the first one in the frame.
+
+(fn &optional ARG)" t)
+(register-definition-prefixes "follow" '("follow-"))
+
+;; glasses.el autoloads (GNU loaddefs).
+(autoload 'glasses-mode "glasses"
+"Minor mode for making identifiers likeThis readable.
+
+When this mode is active, it tries to add virtual
+separators (like underscores) at places they belong to.
+
+This is a minor mode.  If called interactively, toggle the `Glasses
+mode' mode.  If the prefix argument is positive, enable the mode, and if
+it is zero or negative, disable the mode.
+
+If called from Lisp, toggle the mode if ARG is `toggle'.  Enable the
+mode if ARG is nil, omitted, or is a positive number.  Disable the mode
+if ARG is a negative number.
+
+To check whether the minor mode is enabled in the current buffer,
+evaluate the variable `glasses-mode'.
+
+The mode's hook is called both when the mode is enabled and when it is
+disabled.
+
+(fn &optional ARG)" t)
+(register-definition-prefixes "glasses" '("glasses-"))
+
+;; multisession.el autoloads (GNU loaddefs).
+(autoload 'list-multisession-values "multisession"
+"List all values in the \"multisession\" database.
+If CHOOSE-STORAGE (interactively, the prefix), query for the
+storage method to list.
+
+(fn &optional CHOOSE-STORAGE)" t)
+(register-definition-prefixes "multisession" '("define-multisession-variable" "multisession-"))
+
+;; re-builder.el autoloads (GNU loaddefs).
+(defalias 'regexp-builder 're-builder)
+(autoload 're-builder "re-builder"
+"Construct a regexp interactively.
+This command makes the current buffer the \"target\" buffer of
+the regexp builder.  It displays a buffer named \"*RE-Builder*\"
+in another window, initially containing an empty regexp.
+
+As you edit the regexp in the \"*RE-Builder*\" buffer, the
+matching parts of the target buffer will be highlighted.
+
+Case-sensitivity can be toggled with \\[reb-toggle-case].  The
+regexp builder supports three different forms of input which can
+be set with \\[reb-change-syntax].  More options and details are
+provided in the Commentary section of this library." t)
+(register-definition-prefixes "re-builder" '("re-builder-unload-function" "reb-"))

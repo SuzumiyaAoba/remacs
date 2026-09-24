@@ -2100,3 +2100,69 @@ fn msb_rect_xml_and_defsubst_parity() {
         "((a \"1\" (\"hi\" (b nil))) (t nil) (t t))"
     );
 }
+
+#[test]
+fn dumped_and_autoloaded_misc_libs_parity() {
+    // paren.el & rmc.el are in GNU's dump (loadup.el): the features are
+    // registered and the entry points are real functions at -Q.
+    // GNU-verified on 31.1.
+    assert_eq!(
+        ev("(list (featurep 'paren) (fboundp 'show-paren-mode)
+                  (autoloadp (symbol-function 'show-paren-mode))
+                  (featurep 'rmc) (fboundp 'read-multiple-choice)
+                  (autoloadp (symbol-function 'read-multiple-choice)))"),
+        "(t t nil t t nil)"
+    );
+    // The rest are loaddefs autoload cells at -Q, even where the prelude
+    // keeps early stubs (electric-pair-mode/dcl-mode/find-function).
+    assert_eq!(
+        ev("(list (autoloadp (symbol-function 'electric-pair-mode))
+                  (autoloadp (symbol-function 'electric-pair-local-mode))
+                  (autoloadp (symbol-function 'follow-mode))
+                  (autoloadp (symbol-function 'dynamic-completion-mode))
+                  (autoloadp (symbol-function 'completion-preview-mode))
+                  (autoloadp (symbol-function 'glasses-mode))
+                  (autoloadp (symbol-function 'dcl-mode))
+                  (autoloadp (symbol-function 'cpp-highlight-buffer))
+                  (autoloadp (symbol-function 'bug-reference-mode))
+                  (autoloadp (symbol-function 'faceup-view-buffer))
+                  (autoloadp (symbol-function 're-builder))
+                  (autoloadp (symbol-function 'check-declare-file))
+                  (autoloadp (symbol-function 'common-lisp-indent-function))
+                  (autoloadp (symbol-function 'find-function))
+                  (fboundp 'hierarchy-new)
+                  (fboundp 'define-multisession-variable)
+                  (fboundp 'lm-verify)
+                  (fboundp 'make-vtable))"),
+        "(t t t t t t t t t t t t t t nil nil nil nil)"
+    );
+    // require paths land on the features, and hierarchy/lisp-mnt behave
+    // byte-identically to GNU 31.1.
+    assert_eq!(
+        ev("(list (featurep (require 'elec-pair))
+                  (featurep (require 'follow))
+                  (featurep (require 'glasses))
+                  (featurep (require 'bug-reference))
+                  (featurep (require 'hierarchy))
+                  (featurep (require 'multisession))
+                  (featurep (require 're-builder))
+                  (featurep (require 'check-declare))
+                  (featurep (require 'cl-indent))
+                  (featurep (require 'find-func))
+                  (featurep (require 'lisp-mnt))
+                  (featurep (require 'vtable))
+                  (featurep (require 'completion))
+                  (featurep (require 'completion-preview))
+                  (featurep (require 'dcl-mode))
+                  (featurep (require 'cpp))
+                  (featurep (require 'faceup)))"),
+        "(t t t t t t t t t t t t t t t t t)"
+    );
+    assert_eq!(
+        ev("(progn (require 'lisp-mnt)
+                  (with-temp-buffer
+                    (insert \";; foo.el --- test\\n;; Version: 1.2\\n\")
+                    (lm-version)))"),
+        "\"1.2\""
+    );
+}
