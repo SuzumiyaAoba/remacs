@@ -1116,7 +1116,7 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!(
         "directory-files",
         1,
-        4,
+        5,
         f_directory_files,
         "Files in DIRECTORY."
     ),
@@ -8031,6 +8031,16 @@ fn f_directory_files(i: &mut Interp, a: Vec<Value>) -> EvalResult {
             ));
         }
     }
+    // GNU: COUNT must be a natural number (fixnum >= 0) when non-nil;
+    // truncation happens during collection and sorting follows it.
+    if let Some(v) = a.get(4) {
+        if v.truthy() {
+            match v {
+                Value::Int(n) if *n >= 0 => names.truncate(*n as usize),
+                _ => return Err(i.wrong_type_mut("wholenump", v)),
+            }
+        }
+    }
     if !nosort {
         names.sort();
     }
@@ -8367,20 +8377,49 @@ fn f_copy_file(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 fn f_insert_file_contents(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let path = want_filename(i, &a[0])?;
     let visit = a.get(1).map(|v| v.truthy()).unwrap_or(false);
+    let beg = a.get(2).cloned().unwrap_or(Value::Nil);
+    let end = a.get(3).cloned().unwrap_or(Value::Nil);
+    let replace = a.get(4).cloned().unwrap_or(Value::Nil);
+    let is_regular = std::fs::metadata(&path).map(|m| m.is_file()).unwrap_or(true);
     match std::fs::read_to_string(&path) {
         Ok(contents) => {
+            // GNU: BEG/END are byte offsets into the file.
+            let bytes = contents.as_bytes();
+            let lo = match &beg { Value::Int(n) if *n > 0 => (*n as usize).min(bytes.len()), _ => 0 };
+            let hi = match &end { Value::Int(n) if *n >= 0 => (*n as usize).min(bytes.len()), _ => bytes.len() };
+            let contents = if lo == 0 && hi == bytes.len() {
+                contents
+            } else {
+                String::from_utf8_lossy(&bytes[lo..hi.max(lo)]).into_owned()
+            };
             let n = contents.chars().count();
             let b = cur(i);
-            if visit && b.borrow().text.len() > 0 {
+            // GNU: REPLACE bypasses the non-empty check for VISIT.
+            let if_reg = i.intern_soft("if-regular").unwrap_or(u32::MAX);
+            let do_replace = replace.truthy()
+                && (!i.sym_is(&replace, if_reg) || is_regular);
+            if visit && !do_replace && b.borrow().text.len() > 0 {
                 return Err(i.error("Cannot do file visiting in a non-empty buffer"));
             }
-            let start = b.borrow().point();
-            crate::buffer::primitives::chg_insert_pt(i, &contents, false)?;
-            // GNU Finsert_file_contents leaves point BEFORE the
-            // inserted text (like `insert-before-markers').
-            let mut bb = b.borrow_mut();
-            bb.set_point(start);
+            if do_replace {
+                // GNU REPLACE swaps the buffer contents (approximated
+                // by erase+insert, which keeps point at BOB).
+                let len = b.borrow().text.len();
+                if len > 0 {
+                    crate::buffer::primitives::chg_delete(i, 0, len)?;
+                }
+                crate::buffer::primitives::chg_insert_pt(i, &contents, false)?;
+                b.borrow_mut().set_point(0);
+            } else {
+                let start = b.borrow().point();
+                crate::buffer::primitives::chg_insert_pt(i, &contents, false)?;
+                // GNU Finsert_file_contents leaves point BEFORE the
+                // inserted text (like `insert-before-markers').
+                let mut bb = b.borrow_mut();
+                bb.set_point(start);
+            }
             if visit {
+                let mut bb = b.borrow_mut();
                 bb.file_name = Some(path.clone());
                 bb.note_modified(false);
                 // set default-directory to file's dir

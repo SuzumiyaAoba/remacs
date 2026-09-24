@@ -98,6 +98,7 @@ static EMBEDDED_LISP: &[(&str, &str)] = &[
     ("thunk", include_str!("../../lisp/thunk.el")),
     ("time-date", include_str!("../../lisp/time-date.el")),
     ("savehist", include_str!("../../lisp/savehist.el")),
+    ("saveplace", include_str!("../../lisp/saveplace.el")),
     ("uniquify", include_str!("../../lisp/uniquify.el")),
     ("view", include_str!("../../lisp/view.el")),
     ("whitespace", include_str!("../../lisp/whitespace.el")),

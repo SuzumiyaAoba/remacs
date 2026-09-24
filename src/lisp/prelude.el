@@ -2387,12 +2387,123 @@ The variable `tab-width' controls the spacing of tab stops."
               (delete-region (match-beginning 0) (point))
               (indent-to end-col))))))))
 
-(defun revert-buffer (&rest _ignore)
-  "Replace the buffer text with the contents of the visited file."
-  (interactive)
-  (when buffer-file-name
-    (erase-buffer)
-    (insert-file-contents buffer-file-name)))
+(defvar revert-buffer-restore-functions nil
+  "Functions to restore buffer state after `revert-buffer'.
+Each function is called by `run-hook-wrapped' with no arguments and
+should return a function (or nil) that is called after the revert
+completes.")
+(defvar revert-buffer-preserve-modes nil
+  "Non-nil means `revert-buffer' should not alter the buffer's modes.")
+(defvar revert-without-query nil
+  "Specify files to revert without queries.
+The value is a list of regexps matched against `buffer-file-name'.")
+
+;; GNU files.el `revert-buffer': dispatch through
+;; `revert-buffer-function' while `revert-buffer-in-progress' is bound.
+(defun revert-buffer (&optional ignore-auto noconfirm preserve-modes)
+  "Replace current buffer text with the text of the visited file on disk.
+Binds `revert-buffer-in-progress' non-nil while it operates, then
+calls `revert-buffer-function' (default `revert-buffer--default')
+with IGNORE-AUTO and NOCONFIRM."
+  (interactive (list (not current-prefix-arg)))
+  (let ((revert-buffer-in-progress t)
+        (revert-buffer-preserve-modes preserve-modes)
+        restore-functions)
+    (run-hook-wrapped 'revert-buffer-restore-functions
+                      (lambda (f) (push (funcall f) restore-functions) nil))
+    ;; Return whatever `revert-buffer-function' returns.
+    (prog1 (funcall (or revert-buffer-function #'revert-buffer--default)
+                    ignore-auto noconfirm)
+      (mapc #'funcall (delq nil restore-functions)))))
+
+(defun revert-buffer--default (ignore-auto noconfirm)
+  "Default function for `revert-buffer'.
+Runs the hooks `before-revert-hook' and `after-revert-hook' at the
+start and end, then rereads the visited file via
+`revert-buffer-insert-file-contents-function'."
+  (with-current-buffer (or (buffer-base-buffer (current-buffer))
+                           (current-buffer))
+    (let* ((auto-save-p (and (not ignore-auto)
+                             (recent-auto-save-p)
+                             buffer-auto-save-file-name
+                             (file-readable-p buffer-auto-save-file-name)
+                             (y-or-n-p "Buffer has been auto-saved recently.  \
+Revert from auto-save file? ")))
+           (file-name (if auto-save-p
+                          buffer-auto-save-file-name
+                        buffer-file-name)))
+      (cond ((null file-name)
+             (error "Buffer does not seem to be associated with any file"))
+            ((or noconfirm
+                 (and (not (buffer-modified-p))
+                      (catch 'found
+                        (dolist (regexp revert-without-query)
+                          (when (string-match regexp file-name)
+                            (throw 'found t)))))
+                 (yes-or-no-p
+                  (format (if (buffer-modified-p)
+                              "Discard edits and reread from %s? "
+                            "Revert buffer from file %s? ")
+                          file-name)))
+             (run-hooks 'before-revert-hook)
+             ;; If file was backed up but has changed since,
+             ;; we should make another backup.
+             (and (not auto-save-p)
+                  (not (verify-visited-file-modtime (current-buffer)))
+                  (setq buffer-backed-up nil))
+             ;; Effectively copy the after-revert-hook status,
+             ;; since after-find-file will clobber it.
+             (let ((global-hook (default-value 'after-revert-hook))
+                   (local-hook (and (local-variable-p 'after-revert-hook)
+                                    after-revert-hook))
+                   (inhibit-read-only t))
+               (funcall
+                (or revert-buffer-insert-file-contents-function
+                    #'revert-buffer-insert-file-contents--default-function)
+                file-name auto-save-p)
+               ;; Recompute the truename in case changes in symlinks
+               ;; have changed the truename.
+               (setq buffer-file-truename
+                     (abbreviate-file-name (file-truename buffer-file-name)))
+               ;; `after-find-file' is not ported yet; the VISIT=t
+               ;; reread above already refreshes the file state.
+               (unless revert-buffer-preserve-modes
+                 (normal-mode))
+               ;; Run after-revert-hook as it was before we reverted.
+               (setq-default revert-buffer-internal-hook global-hook)
+               (if local-hook
+                   (setq-local revert-buffer-internal-hook local-hook)
+                 (kill-local-variable 'revert-buffer-internal-hook))
+               (run-hooks 'revert-buffer-internal-hook))
+             t)))))
+
+(defvar revert-buffer-insert-file-contents-function nil
+  "Function to use to insert contents when reverting buffer.
+Called with two arguments: the file name, and non-nil if reading an
+auto-save file.")
+
+(defun revert-buffer-insert-file-contents--default-function (file-name auto-save-p)
+  "Default function for `revert-buffer-insert-file-contents-function'.
+The function `revert-buffer--default' calls this.
+FILE-NAME is the name of the file.  AUTO-SAVE-P is non-nil if this is
+an auto-save file."
+  (cond
+   ((not (file-exists-p file-name))
+    (error (if buffer-file-number
+               "File %s no longer exists!"
+             "Cannot revert nonexistent file %s")
+           file-name))
+   ((not (file-readable-p file-name))
+    (error (if buffer-file-number
+               "File %s no longer readable!"
+             "Cannot revert unreadable file %s")
+           file-name))
+   (t
+    (widen)
+    (kill-local-variable 'buffer-file-coding-system)
+    ;; Note that this preserves point in an intelligent way.
+    (insert-file-contents file-name (not auto-save-p)
+                          nil nil 'if-regular))))
 
 (defun insert-file (filename)
   "Insert the contents of FILENAME into the buffer after point."
@@ -5760,6 +5871,16 @@ customize the variable `user-emacs-directory-warning'."
 (defvar savehist-mode nil)
 (autoload 'savehist-mode "savehist"
   "Toggle saving of minibuffer history (Savehist mode)." t)
+
+;; saveplace.el autoloads: GNU loaddefs binds the mode variable
+;; (the :variable of `save-place-local-mode') as a custom-autoload
+;; and registers both mode functions.
+(defvar save-place-mode nil)
+(put 'save-place-mode 'custom-autoload t)
+(autoload 'save-place-mode "saveplace"
+  "Non-nil means automatically save place in each file." t)
+(autoload 'save-place-local-mode "saveplace"
+  "Toggle whether to save your place in this file between sessions." t)
 
 ;; hi-lock.el autoloads (GNU loaddefs registers exactly these).
 (autoload 'hi-lock-mode "hi-lock"
@@ -27290,6 +27411,21 @@ since they have special meaning in a regexp."
 (defvar regexp-history nil)
 (defvar overlay-arrow-position nil)
 (defvar revert-buffer-function nil)
+(defvar revert-buffer-in-progress nil
+  "Non-nil if a `revert-buffer' operation is in progress, nil otherwise.")
+(defvar revert-buffer-internal-hook)
+(defvar before-revert-hook nil
+  "Normal hook for `revert-buffer' to run before reverting.
+The function `revert-buffer--default' runs this.
+A customized `revert-buffer-function' need not run this hook.")
+(defvar after-revert-hook nil
+  "Normal hook for `revert-buffer' to run after reverting.
+Note that the hook value that it runs is the value that was in effect
+before reverting; that makes a difference if you have buffer-local
+hook functions.
+
+The function `revert-buffer--default' runs this.
+A customized `revert-buffer-function' need not run this hook.")
 (defvar kill-buffer-hook nil)
 
 (defcustom list-matching-lines-default-context-lines 0

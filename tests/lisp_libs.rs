@@ -431,3 +431,59 @@ fn seq_set_ops_and_split() {
         "(((1 . b) (2 . c) (3 . a)) error)"
     );
 }
+
+// ---------------------------------------------------------- saveplace
+
+#[test]
+fn saveplace_roundtrip() {
+    // GNU-verified: recording, file write, and point restore all match
+    // saveplace.el on GNU 31.1.
+    let dir = std::env::temp_dir().join(format!("remacs-sp-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let f = dir.join("f.txt");
+    let places = dir.join("places.eld");
+    std::fs::write(&f, "line1\nline2\nline3\nline4\n").unwrap();
+    let src = format!(
+        "(progn (require 'saveplace)
+                (let ((save-place-file \"{}\"))
+                  (find-file \"{}\")
+                  (save-place-local-mode 1)
+                  (goto-char (point-min)) (forward-line 2) (move-to-column 2)
+                  (save-place-to-alist)
+                  (save-place-alist-to-file)
+                  (setq save-place-alist nil)
+                  (save-place-load-alist-from-file)
+                  (kill-buffer)
+                  (find-file \"{}\")
+                  (save-place-find-file-hook)
+                  (list (point) (line-number-at-pos) (current-column))))",
+        places.display(),
+        f.display(),
+        f.display()
+    );
+    assert_eq!(ev(&src), "(15 3 2)");
+    let written = std::fs::read_to_string(&places).unwrap();
+    assert_eq!(
+        written,
+        format!(
+            ";;; -*- coding: utf-8; mode: lisp-data -*-\n((\"{}\" . 15))",
+            f.display()
+        )
+    );
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn saveplace_mode_hooks() {
+    // GNU-verified -Q state: global mode installs exactly these hooks
+    // (kill-emacs-hook only when interactive).
+    assert_eq!(
+        ev("(progn (require 'saveplace)
+                  (save-place-mode 1)
+                  (list save-place-mode
+                        (memq #'save-place-find-file-hook find-file-hook)
+                        (memq #'save-place-dired-hook dired-initial-position-hook)
+                        (memq #'save-place-to-alist kill-buffer-hook)))"),
+        "(t (save-place-find-file-hook) (save-place-dired-hook) (save-place-to-alist uniquify-kill-buffer-function))"
+    );
+}

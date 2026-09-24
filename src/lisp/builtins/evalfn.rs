@@ -724,11 +724,18 @@ pub(crate) fn apply_format_simple(i: &Interp, fmt: &str, args: &[Value]) -> Stri
                         _ => {}
                     }
                 }
-                Some('d') | Some('x') | Some('o') | Some('c') | Some('e') | Some('f')
-                | Some('g') => {
+                Some(l @ ('d' | 'x' | 'o' | 'c' | 'e' | 'f' | 'g')) => {
                     if let Some(a) = args.get(ai) {
                         ai += 1;
-                        out.push_str(&i.princ_to_string(a));
+                        // GNU's error/message path uses the full format
+                        // semantics for numeric specs (e.g. %c renders a
+                        // character); delegate to `format'.
+                        let spec = format!("%{}", l);
+                        let spec_args = [Value::Nil, a.clone()];
+                        match super::strfn::format_impl(i, &spec, &spec_args) {
+                            Ok(Value::Str(s)) => out.push_str(&s.borrow()),
+                            _ => out.push_str(&i.princ_to_string(a)),
+                        }
                     }
                 }
                 Some(other) => {

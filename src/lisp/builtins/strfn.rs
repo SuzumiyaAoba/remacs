@@ -1905,7 +1905,7 @@ fn f_format_message(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     format_impl(i, &fmt, &args)
 }
 
-fn format_impl(i: &mut Interp, fmt: &str, args: &[Value]) -> EvalResult {
+pub(crate) fn format_impl(i: &Interp, fmt: &str, args: &[Value]) -> EvalResult {
     let mut out = String::new();
     let fchars: Vec<char> = fmt.chars().collect();
     let mut ai = 1usize; // next arg index
@@ -2191,7 +2191,7 @@ fn fmt_type_err(i: &Interp) -> super::Flow {
     i.error("Format specifier doesn\u{2019}t match argument type")
 }
 
-fn int_of(i: &mut Interp, v: &Value) -> Result<i128, super::Flow> {
+fn int_of(i: &Interp, v: &Value) -> Result<i128, super::Flow> {
     match v {
         Value::Int(n) => Ok(*n),
         Value::Float(f) => Ok(**f as i128),
@@ -2199,7 +2199,7 @@ fn int_of(i: &mut Interp, v: &Value) -> Result<i128, super::Flow> {
     }
 }
 
-fn float_of(i: &mut Interp, v: &Value) -> Result<f64, super::Flow> {
+fn float_of(i: &Interp, v: &Value) -> Result<f64, super::Flow> {
     match v {
         Value::Int(n) => Ok(*n as f64),
         Value::Float(f) => Ok(**f),
