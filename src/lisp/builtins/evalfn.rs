@@ -1788,8 +1788,12 @@ fn f_eval_and_compile(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     let body = args.into_iter().next().unwrap_or(Value::Nil);
     i.eval_progn(&body)
 }
-fn f_eval_when_compile(_i: &mut Interp, _args: Vec<Value>) -> EvalResult {
-    Ok(Value::Nil)
+fn f_eval_when_compile(i: &mut Interp, args: Vec<Value>) -> EvalResult {
+    // GNU: when the code is not being byte-compiled, `eval-when-compile'
+    // evaluates its body like `progn' (the compile-time-only behavior only
+    // applies inside the byte compiler, which remacs does not have).
+    let body = args.into_iter().next().unwrap_or(Value::Nil);
+    i.eval_progn(&body)
 }
 fn f_with_no_warnings(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     let body = args.into_iter().next().unwrap_or(Value::Nil);

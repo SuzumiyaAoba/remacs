@@ -520,3 +520,139 @@ fn tildify_region_inserts_hard_space() {
         "(\"I\u{a0}think so, ok\" \"a b  c\")"
     );
 }
+
+// ---------------------------------------------------------- rot13
+
+#[test]
+fn rot13_region_and_string() {
+    // GNU-verified on 31.1.
+    assert_eq!(
+        ev("(progn (require 'rot13)
+                  (list (with-temp-buffer
+                          (insert \"Hello, World! ABC-xyz\")
+                          (rot13-region (point-min) (point-max))
+                          (buffer-string))
+                        (rot13-string \"Abc Xyz\")
+                        (rot13-string (rot13-string \"Roundtrip\"))))"),
+        "(\"Uryyb, Jbeyq! NOP-klm\" \"Nop Klm\" \"Roundtrip\")"
+    );
+}
+
+// ---------------------------------------------------------- soundex
+
+#[test]
+fn soundex_known_codes() {
+    // GNU-verified on 31.1 (Knuth examples).
+    assert_eq!(
+        ev("(progn (require 'soundex)
+                  (list (soundex \"Robert\") (soundex \"Rupert\")
+                        (soundex \"Ashcraft\") (soundex \"Tymczak\")
+                        (soundex \"Pfister\") (soundex \"Euler\")
+                        (soundex \"A\") (soundex \"a2b3\")))"),
+        "(\"R163\" \"R163\" \"A226\" \"T522\" \"P236\" \"E460\" \"A000\" \"A100\")"
+    );
+}
+
+// ---------------------------------------------------------- hex-util
+
+#[test]
+fn hex_util_roundtrip() {
+    // GNU-verified on 31.1.
+    assert_eq!(
+        ev("(progn (require 'hex-util)
+                  (list (encode-hex-string \"abc\")
+                        (decode-hex-string \"616263\")
+                        (decode-hex-string (encode-hex-string \"roundtrip!\"))))"),
+        "(\"616263\" \"abc\" \"roundtrip!\")"
+    );
+}
+
+// ---------------------------------------------------------- password-cache
+
+#[test]
+fn password_cache_add_read_remove() {
+    // GNU-verified on 31.1. `password-cache-remove' destructively clears the
+    // stored string, so compare by content before removal.
+    assert_eq!(
+        ev("(progn (require 'password-cache)
+                  (password-cache-add \"key1\" \"secret\")
+                  (list (equal (password-read-from-cache \"key1\") \"secret\")
+                        (password-read-from-cache \"missing\")
+                        (password-in-cache-p \"key1\")
+                        (progn (password-cache-remove \"key1\")
+                               (password-in-cache-p \"key1\"))))"),
+        "(t nil t nil)"
+    );
+}
+
+// ---------------------------------------------------------- underline
+
+#[test]
+fn underline_region_roundtrip() {
+    // GNU-verified on 31.1: hardcopy-style _X sequences.
+    assert_eq!(
+        ev("(progn (require 'underline)
+                  (with-temp-buffer
+                    (insert \"abc\")
+                    (underline-region (point-min) (point-max))
+                    (list (buffer-string)
+                          (progn (ununderline-region (point-min) (point-max))
+                                 (buffer-string)))))"),
+        "(\"_a_b_c\" \"abc\")"
+    );
+}
+
+// ---------------------------------------------------------- studly
+
+#[test]
+fn studlify_region_basic() {
+    // GNU-verified on 31.1.
+    assert_eq!(
+        ev("(progn (require 'studly)
+                  (list (with-temp-buffer
+                          (insert \"hello world\")
+                          (studlify-region (point-min) (point-max))
+                          (buffer-string))
+                        (with-temp-buffer
+                          (insert \"a-b c.d\")
+                          (studlify-region (point-min) (point-max))
+                          (buffer-string))))"),
+        "(\"hello woRld\" \"a-b c.d\")"
+    );
+}
+
+// ---------------------------------------------------------- gomoku
+
+#[test]
+fn gomoku_board_and_score() {
+    // GNU-verified on 31.1: index math, qtuples, initial score table.
+    assert_eq!(
+        ev("(progn (require 'gomoku)
+                  (let ((gomoku-board-width 7) (gomoku-board-height 7)
+                        (gomoku-vector-length 73))
+                    (gomoku-init-board)
+                    (gomoku-init-score-table)
+                    (list (gomoku-xy-to-index 3 2)
+                          (gomoku-index-to-x 19) (gomoku-index-to-y 19)
+                          (aref gomoku-board 0)
+                          (aref gomoku-score-table (gomoku-xy-to-index 3 3))
+                          (gomoku-nb-qtuples 3 3)
+                          (gomoku-nb-qtuples 1 1)
+                          (gomoku-strongest-square))))"),
+        "(19 3 2 -1 70 10 3 36)"
+    );
+}
+
+// ---------------------------------------------------------- eval-when-compile
+
+#[test]
+fn eval_when_compile_evals_when_not_compiling() {
+    // GNU: outside the byte compiler, `eval-when-compile' behaves like
+    // `progn' (hex-util.el relies on this for its defmacros).
+    assert_eq!(
+        ev("(progn (require 'hex-util)
+                  (list (eval-when-compile (+ 1 2))
+                        (fboundp 'num-to-hex-char)))"),
+        "(3 t)"
+    );
+}
