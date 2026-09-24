@@ -1753,3 +1753,61 @@ fn autoloaded_misc_libraries() {
         "(t t)"
     );
 }
+
+
+// ------------------------------------ shadow/inline/compat & fill modes
+
+#[test]
+fn misc_libs_autoloads_and_crm_separator() {
+    // GNU 31.1 -Q registers these as autoloads via loaddefs.el.
+    assert_eq!(
+        ev("(list (autoloadp (symbol-function 'define-inline))
+                  (autoloadp (symbol-function 'list-load-path-shadows))
+                  (autoloadp (symbol-function 'refill-mode))
+                  (autoloadp (symbol-function 'word-wrap-whitespace-mode))
+                  (autoloadp (symbol-function 'global-word-wrap-whitespace-mode))
+                  (autoloadp (symbol-function 'glyphless-display-mode))
+                  (autoloadp (symbol-function 'timeout-debounce))
+                  (autoloadp (symbol-function 'timeout-throttle))
+                  (autoloadp (symbol-function 'timeout-debounced-func))
+                  (autoloadp (symbol-function 'timeout-throttled-func)))"),
+        "(t t t t t t t t t t)"
+    );
+    // GNU -Q: `crm-separator' is declared but unbound; requiring crm
+    // binds it to the propertized separator regexp.
+    assert_eq!(ev("(boundp 'crm-separator)"), "nil");
+    assert_eq!(
+        ev("(progn (require 'crm) crm-separator)"),
+        "#(\"[ \t]*,[ \t]*\" 0 11 (separator \",\" description \"comma-separated list\"))"
+    );
+    // compat.el's loaddefs cookie pushes its builtin version.
+    assert_eq!(
+        ev("(assoc 'compat package--builtin-versions)"),
+        "(compat 31 1 9999)"
+    );
+}
+
+#[test]
+fn misc_libs_load_and_entry_points() {
+    assert_eq!(
+        ev("(progn (dolist (l '(shadow inline compat refill word-wrap-mode
+                              glyphless-mode timeout pixel-fill))
+                    (require l))
+                  (list (fboundp 'load-path-shadows-find)
+                        (fboundp 'define-inline)
+                        (fboundp 'compat-function)
+                        (fboundp 'refill-mode)
+                        (fboundp 'word-wrap-whitespace-mode)
+                        (fboundp 'glyphless-display-mode)
+                        (fboundp 'timeout-throttle)
+                        (fboundp 'pixel-fill-region)))"),
+        "(t t t t t t t t)"
+    );
+    // define-inline works (verified against GNU).
+    assert_eq!(
+        ev("(progn (require 'inline)
+                  (define-inline remacs-test-inline (x) (+ x 1))
+                  (remacs-test-inline 5))"),
+        "6"
+    );
+}

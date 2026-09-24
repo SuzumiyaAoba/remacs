@@ -780,6 +780,17 @@ impl Interp {
             // GNU-verbatim compatibility definitions (string trim/pad,
             // fringe helpers, paren/select/vc/dnd support, …).
             let _ = crate::lisp::load::load_library(&mut interp, "subr-x");
+            // compat.el's ;;;###autoload cookie in GNU's loaddefs.el
+            // pushes `(compat MAJOR MINOR 9999)' onto
+            // `package--builtin-versions' (a subr-x defvar).
+            let _ = interp.eval_str(
+                "(unless (boundp 'package--builtin-versions) \
+                   (defvar package--builtin-versions \
+                     (list (list 'emacs emacs-major-version emacs-minor-version)) \
+                     \"Alist giving the version of each versioned builtin package.\")) \
+                 (push (list 'compat emacs-major-version emacs-minor-version 9999) \
+                       package--builtin-versions)",
+            );
             // tool-bar.el is in GNU's dump on window-system builds
             // (loadup.el): same reasoning — the feature mark alone
             // would make `require' skip the definitions.

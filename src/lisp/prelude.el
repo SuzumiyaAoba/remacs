@@ -3117,6 +3117,29 @@ If nil, the feature is disabled, i.e., all commands work normally.")
   "(fn PROMPT STRING)" nil nil)
 (autoload 'list-timers "timer-list"
   "(fn &optional IGNORE-AUTO NONCONFIRM)" t nil)
+(autoload 'define-inline "inline"
+  "(fn NAME ARGS &rest BODY)" nil t)
+(autoload 'list-load-path-shadows "shadow"
+  "(fn &optional STRINGP)" t nil)
+(autoload 'refill-mode "refill"
+  "(fn &optional ARG)" t nil)
+(autoload 'word-wrap-whitespace-mode "word-wrap-mode"
+  "(fn &optional ARG)" t nil)
+(autoload 'global-word-wrap-whitespace-mode "word-wrap-mode"
+  "(fn &optional ARG)" t nil)
+(autoload 'glyphless-display-mode "glyphless-mode"
+  "(fn &optional ARG)" t nil)
+(autoload 'completing-read-multiple "crm"
+  "(fn PROMPT TABLE &optional PREDICATE REQUIRE-MATCH INITIAL-INPUT HIST DEF INHERIT-INPUT-METHOD)"
+  nil nil)
+(autoload 'timeout-debounce "timeout"
+  "(fn FUNC &optional DELAY DEFAULT)" nil nil)
+(autoload 'timeout-throttle "timeout"
+  "(fn FUNC &optional THROTTLE)" nil nil)
+(autoload 'timeout-debounced-func "timeout"
+  "(fn FUNC &optional THROTTLE)" nil nil)
+(autoload 'timeout-throttled-func "timeout"
+  "(fn FUNC &optional THROTTLE)" nil nil)
 
 (autoload 'editorconfig-display-current-properties "editorconfig-tools"
   "Display EditorConfig properties extracted for current buffer." t)
@@ -31377,8 +31400,9 @@ the `cdr' has the maximum font size, in units of 1/10 pt."
   "History of face names read via `read-face-name'.")
 (defvar read-face-name-sample-text "SAMPLE"
   "Text used to display face samples in `read-face-name' completion.")
-(defvar crm-separator ","
-  "Separator regexp used by `completing-read-multiple'.")
+;; GNU's faces.el declares `(defvar crm-separator)' — defined in crm.el,
+;; which `read-face-name' requires on demand; unbound at -Q like GNU.
+(defvar crm-separator)
 (defvar frame-inhibit-implied-resize '(tab-bar-lines)
   "List of frame parameters that should not be resized by `set-frame-height'.")
 
