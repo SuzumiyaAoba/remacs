@@ -849,8 +849,7 @@ pub(crate) static SUBRS: &[Subr] = &[
         ""
     ),
     S!("command-line", 0, 0, f_command_line, ""),
-    S!("recursion-depth", 0, 0, f_zero, ""),
-    S!("minibuffer-depth", 0, 0, f_zero, ""),
+    S!("minibuffer-depth", 0, 0, f_minibuffer_depth, ""),
     S!("detect-coding-string", 1, 2, f_detect_coding_string, ""),
     S!("detect-coding-region", 1, 3, f_detect_coding_region, ""),
     S!("coding-system-list", 0, 0, f_coding_system_list, ""),
@@ -8410,6 +8409,10 @@ fn f_not_useful(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
 }
 fn f_zero(_i: &mut Interp, _a: Vec<Value>) -> EvalResult {
     Ok(Value::Int(0))
+}
+fn f_minibuffer_depth(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
+    // GNU: make_fixnum (minibuf_level).
+    Ok(Value::Int(i.minibuf_level.max(0) as i128))
 }
 
 fn f_frame_configuration_p(i: &mut Interp, a: Vec<Value>) -> EvalResult {

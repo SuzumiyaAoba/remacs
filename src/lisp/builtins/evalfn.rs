@@ -2033,7 +2033,8 @@ fn f_abort_recursive_edit(i: &mut Interp, _args: Vec<Value>) -> EvalResult {
     Err(Flow::Throw(Value::Sym(i.intern("exit")), Value::t()))
 }
 fn f_recursion_depth(i: &mut Interp, _args: Vec<Value>) -> EvalResult {
-    Ok(Value::Int(i.recursion_depth as i128))
+    // GNU: command_loop_level + minibuf_level.
+    Ok(Value::Int((i.recursion_depth + i.minibuf_level.max(0) as usize) as i128))
 }
 fn f_emacs_pid(_i: &mut Interp, _args: Vec<Value>) -> EvalResult {
     Ok(Value::Int(std::process::id() as i128))

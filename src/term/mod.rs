@@ -1531,6 +1531,65 @@ mod tests {
     }
 
     #[test]
+    fn minibuf_loop_mb_depth_nested() {
+        // GNU mb-depth: `minibuffer-depth-setup' (on
+        // `minibuffer-setup-hook') puts a `[N] ' `before-string'
+        // overlay on the prompt when `minibuffer-depth' > 1.
+        let (t, _out) = test_term(30, 5);
+        let term = Rc::new(RefCell::new(t));
+        for k in [b'a' as i128, 13] {
+            term.borrow_mut().unread(k);
+        }
+        term.borrow_mut().pending.reverse();
+        let mut i = crate::lisp::Interp::new();
+        i.eval_str(
+            "(require 'mb-depth)
+             (minibuffer-depth-indicate-mode 1)
+             (defvar mb-probe-depth nil)
+             (defvar mb-probe-ind nil)
+             ;; Record depth + the indicator overlay inside the
+             ;; nested read (appended so it runs after
+             ;; `minibuffer-depth-setup').
+             (add-hook 'minibuffer-setup-hook
+                       (lambda ()
+                         (setq mb-probe-depth (minibuffer-depth))
+                         (dolist (ov (overlays-in (point-min) (point-max)))
+                           (let ((s (overlay-get ov 'before-string)))
+                             (when s (setq mb-probe-ind s)))))
+                       t)
+             ;; One-shot: fire a nested read from inside the outer
+             ;; read's command loop (GNU reaches this via e.g. M-x
+             ;; in the minibuffer).
+             (defun mb-probe-cmd ()
+               (remove-hook 'post-command-hook #'mb-probe-cmd)
+               (let ((enable-recursive-minibuffers t))
+                 (read-string \"L2: \")))
+             (add-hook 'post-command-hook #'mb-probe-cmd)",
+        )
+        .unwrap();
+        let t2 = term.clone();
+        i.minibuf_reader = Some(Rc::new(move |interp, prompt, single| {
+            // Nested reads (level ≥ 2) get canned input; the outer
+            // read (level 1) uses the real command loop.
+            if interp.minibuf_level > 1 {
+                return Ok(crate::lisp::eval::MinibufInput::Text("inner".into()));
+            }
+            minibuf_loop(&t2, interp, prompt, single)
+        }));
+        let r = i.minibuf_read("L1: ", Default::default());
+        assert_eq!(r.unwrap(), "a");
+        // The nested read ran at depth 2 with the depth indicator.
+        let d = i.eval_str("mb-probe-depth").unwrap();
+        assert!(matches!(&d, crate::lisp::Value::Int(n) if *n == 2));
+        let ind = i.eval_str("mb-probe-ind").unwrap();
+        let s = match &ind {
+            crate::lisp::Value::Str(s) => s.borrow().clone(),
+            other => panic!("expected indicator string, got {other:?}"),
+        };
+        assert_eq!(s, "[2] ");
+    }
+
+    #[test]
     fn minibuf_loop_single_key_mode() {
         let (t, _out) = test_term(20, 5);
         let term = Rc::new(RefCell::new(t));
