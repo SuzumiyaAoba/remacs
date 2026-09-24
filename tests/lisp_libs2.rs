@@ -501,6 +501,43 @@ fn align_regexp_basic() {
     );
 }
 
+// ---------------------------------------------------------- tabulated-list
+
+#[test]
+fn tabulated_list_print_and_sort() {
+    // GNU-verified on 31.1: printed columns, column sort, entry id.
+    assert_eq!(
+        ev("(progn (require 'tabulated-list)
+                  (with-temp-buffer
+                    (tabulated-list-mode)
+                    (setq tabulated-list-format [(\"Name\" 12 t) (\"Size\" 8 t)])
+                    (setq tabulated-list-entries
+                          '((\"a\" [\"alpha\" \"100\"])
+                            (\"b\" [\"beta\" \"2500\"])
+                            (\"c\" [\"gamma\" \"30\"])))
+                    (tabulated-list-init-header)
+                    (tabulated-list-print)
+                    (list (buffer-substring-no-properties (point-min) (point-max))
+                          (progn (tabulated-list--sort-by-column-name \"Size\")
+                                 (tabulated-list-print)
+                                 (buffer-substring-no-properties (point-min) (point-max)))
+                          (tabulated-list-get-id))))"),
+        "(\"alpha        100\nbeta         2500\ngamma        30\n\" \
+         \"alpha        100\nbeta         2500\ngamma        30\n\" \"a\")"
+    );
+}
+
+#[test]
+fn bidi_string_mark_left_to_right_appends_lrm() {
+    // GNU-verified on 31.1: U+200E appended iff STR has a strong R/AL char.
+    assert_eq!(
+        ev("(list (bidi-string-mark-left-to-right \"abc\")
+                 (bidi-string-mark-left-to-right \"אבג\")
+                 (bidi-string-mark-left-to-right \"aאב\"))"),
+        "(\"abc\" \"אבג‎\" \"aאב‎\")"
+    );
+}
+
 // ---------------------------------------------------------- tildify
 
 #[test]

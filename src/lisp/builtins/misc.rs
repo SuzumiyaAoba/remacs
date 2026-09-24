@@ -1311,6 +1311,13 @@ pub(crate) static SUBRS: &[Subr] = &[
         ""
     ),
     S!(
+        "bidi-string-mark-left-to-right",
+        1,
+        1,
+        f_bidi_string_mark_left_to_right,
+        ""
+    ),
+    S!(
         "read-non-nil-coding-system",
         1,
         1,
@@ -10424,6 +10431,35 @@ fn f_current_input_mode(_i: &mut Interp, _a: Vec<Value>) -> EvalResult {
 
 fn f_current_bidi_paragraph_direction(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
     Ok(Value::Sym(i.intern("left-to-right")))
+}
+
+fn f_bidi_string_mark_left_to_right(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let s = want_string(i, &a[0])?;
+    // GNU's bidi.c: if STR contains a character of strong R or AL
+    // bidi type, return STR followed by U+200E LEFT-TO-RIGHT MARK so
+    // subsequent text resolves LTR; otherwise return STR unchanged.
+    let rtl = s.chars().any(|ch| {
+        let u = ch as u32;
+        super::bidi_table::BIDI_CLASS_TABLE
+            .binary_search_by(|&(lo, hi, _)| {
+                if u < lo {
+                    std::cmp::Ordering::Greater
+                } else if u > hi {
+                    std::cmp::Ordering::Less
+                } else {
+                    std::cmp::Ordering::Equal
+                }
+            })
+            .map(|idx| matches!(super::bidi_table::BIDI_CLASS_TABLE[idx].2, "R" | "AL"))
+            .unwrap_or(false)
+    });
+    Ok(if rtl {
+        let mut marked = s;
+        marked.push('\u{200e}');
+        Value::string(marked)
+    } else {
+        a[0].clone()
+    })
 }
 
 fn f_read_non_nil_coding_system(i: &mut Interp, _a: Vec<Value>) -> EvalResult {

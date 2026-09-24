@@ -749,8 +749,19 @@ impl Interp {
             // exist too — `(require 'env)' short-circuits on the
             // feature mark, so evaluate the embedded source now.
             let _ = crate::lisp::load::load_library(&mut interp, "env");
+            // tabulated-list.el is likewise in GNU's dump (loadup.el):
+            // same reasoning as env — the feature mark alone would
+            // make `require' skip the definitions.
+            let _ = crate::lisp::load::load_library(&mut interp, "tabulated-list");
         }
         interp.loading_dumped = false;
+        // GNU resets `gensym-counter' to 0 when the dumped image starts
+        // (pdumper boot), so dump-time gensyms don't leak into the
+        // session.  Our boot-time library loads play the dump's role.
+        if std::env::var("REMACS_NO_PRELUDE").is_err() {
+            let gc = interp.intern("gensym-counter");
+            interp.obarray.symbol_mut(gc).value = Value::Int(0);
+        }
         if std::env::var("REMACS_NO_PRELUDE").is_err() {
             // startup.el processes variables whose defcustom used
             // `custom-initialize-delay' via `custom-reevaluate-setting',

@@ -3038,6 +3038,20 @@ If nil, the feature is disabled, i.e., all commands work normally.")
 (autoload 'disable-command "novice"
   "Disable COMMAND to require special confirmation before it can be executed." t)
 
+;; GNU display-line-numbers.el autoload cookies (loaddefs.el): the
+;; mode functions load the file on first call; the indent vars are
+;; bound at startup like GNU's defvar autoload cookies.
+(autoload 'display-line-numbers-mode "display-line-numbers"
+  "Toggle display of line numbers in the buffer." t)
+(autoload 'global-display-line-numbers-mode "display-line-numbers"
+  "Toggle Display-Line-Numbers mode in all buffers." t)
+(autoload 'header-line-indent-mode "display-line-numbers"
+  "Toggle indentation of the header line according to line numbers." t)
+(defvar header-line-indent ""
+  "String of spaces to indent the beginning of header-line due to line numbers.")
+(defvar header-line-indent-width 0
+  "Width of line numbers causing header-line indentation.")
+
 ;; GNU faces.el: the built-in `default' face's doc string.
 (put 'default 'face-documentation "Basic default face.")
 ;; GNU: `default' is defined by C code; its defface spec is ((t nil)).
@@ -7693,6 +7707,14 @@ modify the table."
       (setq keyboard-translate-table
             (make-char-table 'keyboard-translate-table nil)))
   (aset keyboard-translate-table from to))
+
+;; ---------- GNU display tables ----------
+;; xdisp.c DEFVAR_LISP: the global glyphless-char display table; modes
+;; (e.g. tabulated-list-mode) derive buffer-local tables parented to
+;; it via `set-char-table-parent'.
+(defvar glyphless-char-display
+  (make-char-table 'glyphless-char-display nil)
+  "Char-table defining glyphs for characters that have no font.")
 
 ;; ---------- GNU key translation maps ----------
 ;; In GNU these live on the kboard; function-key-map comes preloaded

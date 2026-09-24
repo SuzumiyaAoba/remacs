@@ -105,6 +105,8 @@ static EMBEDDED_LISP: &[(&str, &str)] = &[
     ("doctor", include_str!("../../lisp/doctor.el")),
     ("mpuz", include_str!("../../lisp/mpuz.el")),
     ("rx", include_str!("../../lisp/rx.el")),
+    ("tabulated-list", include_str!("../../lisp/tabulated-list.el")),
+    ("display-line-numbers", include_str!("../../lisp/display-line-numbers.el")),
     ("ewoc", include_str!("../../lisp/ewoc.el")),
     ("ansi-color", include_str!("../../lisp/ansi-color.el")),
     ("regi", include_str!("../../lisp/regi.el")),
