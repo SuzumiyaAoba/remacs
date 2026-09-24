@@ -81,6 +81,7 @@ static EMBEDDED_LISP: &[(&str, &str)] = &[
     ("face-remap", include_str!("../../lisp/face-remap.el")),
     ("gv", include_str!("../../lisp/gv.el")),
     ("hi-lock", include_str!("../../lisp/hi-lock.el")),
+    ("icomplete", include_str!("../../lisp/icomplete.el")),
     ("imenu", include_str!("../../lisp/imenu.el")),
     ("kmacro", include_str!("../../lisp/kmacro.el")),
     ("let-alist", include_str!("../../lisp/let-alist.el")),

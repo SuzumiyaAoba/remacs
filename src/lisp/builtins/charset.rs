@@ -414,15 +414,22 @@ fn builtin_char_prop(i: &mut Interp, ch: i64, prop: &str) -> Value {
     let c = u8::try_from(u).ok();
     match prop {
         "bidi-class" => {
-            let cls = match c {
-                Some(b'0'..=b'9') => "EN",
-                Some(b'A'..=b'Z' | b'a'..=b'z') => "L",
-                Some(b' ' | b'\t') => "WS",
-                Some(b'\n') => "B",
-                Some(_) => "ON",
+            let cls = super::bidi_table::BIDI_CLASS_TABLE
+                .binary_search_by(|&(lo, hi, _)| {
+                    if u < lo {
+                        std::cmp::Ordering::Greater
+                    } else if u > hi {
+                        std::cmp::Ordering::Less
+                    } else {
+                        std::cmp::Ordering::Equal
+                    }
+                })
+                .map(|idx| super::bidi_table::BIDI_CLASS_TABLE[idx].2)
+                .ok();
+            match cls {
+                Some(cls) => symv(i, cls),
                 None => return Value::Nil,
-            };
-            symv(i, cls)
+            }
         }
         "decimal-digit-value" | "numeric-value" => match c {
             Some(d @ b'0'..=b'9') => Value::Int((d - b'0') as i128),

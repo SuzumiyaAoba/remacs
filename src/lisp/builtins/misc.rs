@@ -1968,8 +1968,15 @@ fn f_command_modes(_i: &mut Interp, args: Vec<Value>) -> EvalResult {
     Ok(Value::Nil)
 }
 
-fn f_abort_minibuffers(_i: &mut Interp, _a: Vec<Value>) -> EvalResult {
-    Ok(Value::Nil)
+fn f_abort_minibuffers(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
+    // GNU Fabort_minibuffers: not in a minibuffer → error; otherwise
+    // `minibuffer-quit-recursive-edit' throws `exit' (a function that
+    // signals `minibuffer-quit' after the read unwinds).
+    if i.minibuf_level <= 0 {
+        return Err(i.error("Not in a minibuffer"));
+    }
+    let qre = Value::Sym(i.intern("minibuffer-quit-recursive-edit"));
+    i.apply(&qre, vec![])
 }
 
 fn f_keymap_canonicalize(i: &mut Interp, a: Vec<Value>) -> EvalResult {

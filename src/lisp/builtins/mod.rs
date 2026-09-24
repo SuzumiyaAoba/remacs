@@ -4,6 +4,7 @@
 //! arity, and a `fn(&mut Interp, Vec<Value>) -> EvalResult`.
 
 pub(crate) mod arith;
+pub(crate) mod bidi_table;
 pub(crate) mod charset;
 pub(crate) mod enc_tables;
 pub(crate) mod data;

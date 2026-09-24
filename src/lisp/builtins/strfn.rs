@@ -29,7 +29,7 @@ pub(crate) static SUBRS: &[Subr] = &[
         "substring-no-properties",
         1,
         3,
-        f_substring,
+        f_substring_no_properties,
         "Substring without text props."
     ),
     // GNU: string-equal/string-lessp are primitives accepting strings or
@@ -581,6 +581,14 @@ fn f_vconcat(i: &mut Interp, args: Vec<Value>) -> EvalResult {
 }
 
 fn f_substring(i: &mut Interp, args: Vec<Value>) -> EvalResult {
+    substring_impl(i, args, true)
+}
+
+fn f_substring_no_properties(i: &mut Interp, args: Vec<Value>) -> EvalResult {
+    substring_impl(i, args, false)
+}
+
+fn substring_impl(i: &mut Interp, args: Vec<Value>, copy_props: bool) -> EvalResult {
     // Emacs: substring works on vectors too (returns a new vector).
     let is_vec = matches!(&args[0], Value::Vec(_));
     let chars: Vec<Value> = match &args[0] {
@@ -625,7 +633,8 @@ fn f_substring(i: &mut Interp, args: Vec<Value>) -> EvalResult {
         ));
         // GNU substring copies the source's text properties on the
         // sliced range (shifted to 0-based on the result).
-        if let Value::Str(src) = &args[0] {
+        if copy_props {
+            if let Value::Str(src) = &args[0] {
             if i.has_str_props(src) {
                 let (f0, t0) = (f as usize, t as usize);
                 let ivs: Vec<(usize, usize, Vec<Value>)> = i
@@ -641,6 +650,7 @@ fn f_substring(i: &mut Interp, args: Vec<Value>) -> EvalResult {
                     })
                     .collect();
                 i.set_str_props(&ns, ivs);
+            }
             }
         }
         Ok(Value::Str(ns))

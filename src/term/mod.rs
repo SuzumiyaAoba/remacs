@@ -489,13 +489,23 @@ fn dispatch_key<T: KeyIo>(
                     post_command_undo_boundary(i);
                     return Ok(());
                 }
+                // GNU command_loop_1: `pre-command-hook' runs before
+                // the command, `post-command-hook' after it — even on
+                // error (both via safe_run_hooks).
+                let _ = crate::lisp::builtins::evalfn::safe_call_hook(i, "pre-command-hook");
                 let mut boundary = false;
                 match i.command_execute(&cmd) {
                     Ok(_) => {
                         boundary = true;
                     }
                     Err(crate::lisp::error::Flow::Quit) => {
-                        i.message("Quit");
+                        if i.minibuf_catching_exit {
+                            // Inside read_minibuf's catch: a quit aborts
+                            // the read — hand the flow to minibuf_loop.
+                            i.minibuf_pending_flow = Some(crate::lisp::error::Flow::Quit);
+                        } else {
+                            i.message("Quit");
+                        }
                     }
                     Err(crate::lisp::error::Flow::Signal(sym, data, _)) => {
                         let name = match &sym {
@@ -515,8 +525,44 @@ fn dispatch_key<T: KeyIo>(
                         i.message(&msg);
                     }
                     Err(crate::lisp::error::Flow::Throw(tag, v)) => {
-                        i.message(&format!("No catch for tag: {}", i.princ_to_string(&tag)));
-                        let _ = v;
+                        let is_exit = matches!(&tag, Value::Sym(s) if i.symbol_name(*s) == "exit");
+                        if i.minibuf_catching_exit && is_exit {
+                            // `exit' reached read_minibuf's catch —
+                            // GNU recursive_edit_1's value protocol:
+                            // nil → contents, t → quit, string →
+                            // `error' signal, function → called after
+                            // unwinding (minibuffer-quit-recursive-edit).
+                            match &v {
+                                Value::Nil => i.minibuf_exited = true,
+                                Value::Str(s) => {
+                                    let msg = Value::string(s.borrow().clone());
+                                    let es = Value::Sym(i.intern("error"));
+                                    i.minibuf_pending_flow = Some(
+                                        crate::lisp::error::Flow::Signal(
+                                            es,
+                                            Value::list(vec![msg]),
+                                            false,
+                                        ),
+                                    );
+                                }
+                                Value::Sym(_) if v.truthy() => {
+                                    i.minibuf_pending_flow =
+                                        Some(crate::lisp::error::Flow::Quit);
+                                }
+                                _ => {
+                                    // Functionp values are called after
+                                    // the read unwinds.
+                                    i.minibuf_exit_fn = Some(v.clone());
+                                    i.minibuf_exited = true;
+                                }
+                            }
+                        } else if i.minibuf_catching_exit {
+                            // A throw for another tag unwinds past the
+                            // `exit' catch — abort the read with it.
+                            i.minibuf_pending_flow = Some(crate::lisp::error::Flow::Throw(tag, v));
+                        } else {
+                            i.message(&format!("No catch for tag: {}", i.princ_to_string(&tag)));
+                        }
                     }
                     Err(crate::lisp::error::Flow::Exit(_)) => {
                         // `kill-emacs' requested termination; the flag is
@@ -527,6 +573,7 @@ fn dispatch_key<T: KeyIo>(
                 if boundary {
                     post_command_undo_boundary(i);
                 }
+                let _ = crate::lisp::builtins::evalfn::safe_call_hook(i, "post-command-hook");
                 // Continue arg entry after C-u / M-digit / M--.
                 if let Value::Sym(id) = &cmd {
                     let n = i.symbol_name(*id);
@@ -543,35 +590,52 @@ fn dispatch_key<T: KeyIo>(
                 // keep reading keys
             }
             LookupResult::None => {
-                // Plain char → self-insert.
+                // Plain char → self-insert.  GNU treats these as
+                // `self-insert-command'/`newline'/`delete-backward-char'
+                // commands: this-command is set and the command hooks run.
                 if keys.len() == 1 {
                     if let Some(&k) = keys.first() {
-                        if k < CHAR_CTL && k >= 32 && k != 127 {
-                            if i.current_buffer_ref().is_some() {
-                                let ch = char::from_u32(k as u32).unwrap_or('?');
-                                let _ = crate::buffer::primitives::chg_insert_pt(i, &ch.to_string(), false);
-                            }
-                            keys.clear();
-                            post_command_undo_boundary(i);
-                            return Ok(());
-                        }
-                        if k == b'\r' as i128 {
-                            if i.current_buffer_ref().is_some() {
-                                let _ = crate::buffer::primitives::chg_insert_pt(i, "\n", false);
-                            }
-                            keys.clear();
-                            post_command_undo_boundary(i);
-                            return Ok(());
-                        }
-                        if k == 127 {
-                            if let Some(b) = i.current_buffer_ref() {
-                                let p = b.borrow().point();
-                                if p > 0 {
-                                    let _ = crate::buffer::primitives::chg_delete(i, p - 1, p);
+                        let name = if k < CHAR_CTL && k >= 32 && k != 127 {
+                            Some("self-insert-command")
+                        } else if k == b'\r' as i128 {
+                            Some("newline")
+                        } else if k == 127 {
+                            Some("delete-backward-char")
+                        } else {
+                            None
+                        };
+                        if let Some(n) = name {
+                            let _ = crate::lisp::builtins::evalfn::safe_call_hook(
+                                i,
+                                "pre-command-hook",
+                            );
+                            let this_cmd = i.intern("this-command");
+                            let prev = i.symbol_value(this_cmd);
+                            let lc = i.intern("last-command");
+                            let _ = i.set_symbol(lc, prev);
+                            let cmd_sym = Value::Sym(i.intern(n));
+                            let _ = i.set_symbol(this_cmd, cmd_sym);
+                            if k == 127 {
+                                if let Some(b) = i.current_buffer_ref() {
+                                    let p = b.borrow().point();
+                                    if p > 0 {
+                                        let _ = crate::buffer::primitives::chg_delete(i, p - 1, p);
+                                    }
                                 }
+                            } else if i.current_buffer_ref().is_some() {
+                                let s = if k == b'\r' as i128 {
+                                    "\n".to_string()
+                                } else {
+                                    char::from_u32(k as u32).unwrap_or('?').to_string()
+                                };
+                                let _ = crate::buffer::primitives::chg_insert_pt(i, &s, false);
                             }
                             keys.clear();
                             post_command_undo_boundary(i);
+                            let _ = crate::lisp::builtins::evalfn::safe_call_hook(
+                                i,
+                                "post-command-hook",
+                            );
                             return Ok(());
                         }
                     }
@@ -841,7 +905,12 @@ fn lookup_command(i: &mut Interp, seq: &Value) -> LookupResult {
     }
     // Convert key vector to string for keymap lookup if all plain chars.
     // Our define-key accepts vectors directly.
-    let binding = crate::editor::lookup_command_in_maps(i, &keys);
+    let binding = match crate::editor::lookup_command_in_maps(i, &keys) {
+        Ok(b) => b,
+        // A `:filter' (or other keyelt evaluation) error counts as no
+        // binding — GNU treats an unfound command the same.
+        Err(_) => None,
+    };
     match binding {
         Some(v) => {
             // is it a keymap (prefix)?
@@ -882,25 +951,22 @@ fn minibuf_loop<T: KeyIo>(
     single: bool,
 ) -> Result<crate::lisp::eval::MinibufInput, crate::lisp::error::Flow> {
     use crate::lisp::eval::MinibufInput;
-    // For line reads `minibuf_read' has already switched the current
-    // buffer to the active ` *Minibuf-N*' buffer and installed the
-    // prompt (a `field'-propped prefix) plus any initial input.  The
-    // loop edits that buffer at point — like GNU's recursive edit,
-    // where `self-insert-command'/`delete-backward-char' act on the
-    // minibuffer contents.  `minibuffer-contents' and friends are
-    // therefore live during the read.
-    let buf = i.buffers.get(i.current_buffer);
-    let prompt_end = prompt.chars().count();
+    // GNU's `read_minibuf' runs the ordinary command loop inside the
+    // `exit' catch: keys dispatch through the minibuffer's keymaps,
+    // `self-insert-command'/`delete-backward-char' edit the real
+    // buffer (the prompt's `read-only'/`field' props protect it),
+    // `pre-command-hook'/`post-command-hook' run per command (what
+    // icomplete & friends hang on), and `exit-minibuffer' throws
+    // `exit' to end the read.
+    let mut keys: Vec<i128> = Vec::new();
+    let mut arg_mode = false;
     loop {
         {
             let mut t = term.borrow_mut();
             let shown = if single {
                 prompt.to_string()
             } else {
-                match &buf {
-                    Some(b) => b.borrow().text.text(),
-                    None => prompt.to_string(),
-                }
+                minibuf_echo_text(i, prompt)
             };
             let _ = t.draw_echo(&shown);
         }
@@ -915,51 +981,63 @@ fn minibuf_loop<T: KeyIo>(
         if single {
             return Ok(MinibufInput::Key(code));
         }
-        let base = code & 0x3f_ffff;
-        let mods = code & !0x3f_ffff;
-        if code == 7 {
-            // C-g aborts.
-            return Err(crate::lisp::error::Flow::Quit);
+        if let Err(e) = dispatch_key(term, i, code, &mut keys, &mut arg_mode) {
+            return Err(i.error(format!("minibuffer input: {e}")));
         }
-        match base {
-            13 => {
-                // RET — `exit-minibuffer': the result is the buffer
-                // text after the prompt field.
-                let contents = match &buf {
-                    Some(b) => {
-                        let bb = b.borrow();
-                        let end = bb.text_len();
-                        bb.text.substring(prompt_end.min(end), end)
-                    }
-                    None => String::new(),
-                };
-                return Ok(MinibufInput::Text(contents));
-            }
-            127 => {
-                // DEL — `delete-backward-char'; the `field' property
-                // keeps edits from eating the prompt.
-                if let Some(b) = &buf {
-                    let mut bb = b.borrow_mut();
-                    let p = bb.point();
-                    if p > prompt_end {
-                        bb.delete_region(p - 1, p);
-                    }
-                }
-            }
-            c if mods == 0 && (32..0x110000).contains(&c) => {
-                // `self-insert-command'.
-                if let Some(ch) = char::from_u32(c as u32) {
-                    if let Some(b) = &buf {
-                        b.borrow_mut().insert(&ch.to_string());
-                    }
-                }
-            }
-            _ => {
-                // Ignore other events (arrows, modifiers).
-                let _ = i;
+        if let Some(f) = i.minibuf_exit_fn.take() {
+            return Ok(MinibufInput::Call(f));
+        }
+        if i.minibuf_exited {
+            return Ok(MinibufInput::Text(i.minibuf_contents()));
+        }
+        if let Some(f) = i.minibuf_pending_flow.take() {
+            return Err(f);
+        }
+    }
+}
+
+/// The minibuffer's display text for the echo area: buffer text plus
+/// overlay `before-string'/`after-string' contributions, like GNU's
+/// redisplay (icomplete shows its prospects through an `after-string'
+/// on `icomplete-overlay').
+fn minibuf_echo_text(i: &mut Interp, prompt: &str) -> String {
+    let Some(b) = i.buffers.get(i.current_buffer) else {
+        return prompt.to_string();
+    };
+    let bb = b.borrow();
+    let text = bb.text.text();
+    // Collect (pos, string) splices; after-string goes at the
+    // overlay's end, before-string at its start.
+    let before_sym = i.intern("before-string");
+    let after_sym = i.intern("after-string");
+    let mut splices: Vec<(usize, usize, String)> = Vec::new();
+    for ov in &bb.overlays {
+        if ov.buffer.is_none() {
+            continue;
+        }
+        let bs = crate::lisp::eval::plist_get(&ov.plist, before_sym);
+        let as_ = crate::lisp::eval::plist_get(&ov.plist, after_sym);
+        for (v, at_start) in [(bs, true), (as_, false)] {
+            if let Value::Str(s) = &v {
+                let pos = if at_start { ov.start } else { ov.end };
+                splices.push((pos, usize::from(!at_start), s.borrow().clone()));
             }
         }
     }
+    if splices.is_empty() {
+        return text;
+    }
+    // Splice right-to-left so positions stay valid; later-positioned
+    // strings at the same spot come after earlier ones.
+    splices.sort_by_key(|&(pos, is_after, ref _s)| (pos, is_after));
+    let mut chars: Vec<char> = text.chars().collect();
+    for (pos, _, s) in splices.into_iter().rev() {
+        let p = pos.min(chars.len());
+        let tail: Vec<char> = chars.split_off(p);
+        chars.extend(s.chars());
+        chars.extend(tail);
+    }
+    chars.into_iter().collect()
 }
 
 #[cfg(test)]
@@ -1274,15 +1352,29 @@ mod tests {
     // ---------- input loops ----------
 
     /// An Interp whose current buffer is a minibuffer that already
-    /// holds `prompt` (what `minibuf_read' leaves for the reader).
+    /// holds `prompt` (what `minibuf_read' leaves for the reader):
+    /// the prompt, the local map, the `exit' catch, and the prompt
+    /// stack entry `minibuf_contents' reads.
     fn interp_with_minibuffer(prompt: &str) -> crate::lisp::Interp {
         let mut i = crate::lisp::Interp::new();
         let mb = i.buffers.create(" *Minibuf-1*");
+        let map = i
+            .intern_soft("minibuffer-local-map")
+            .map(|id| i.symbol_value(id))
+            .unwrap_or(Value::Nil);
+        let km = i.intern("local-keymap");
         {
             let b = i.buffers.get(mb).unwrap();
-            b.borrow_mut().insert(prompt);
+            let mut bb = b.borrow_mut();
+            bb.insert(prompt);
+            bb.locals.insert(km, map);
         }
         i.current_buffer = mb;
+        i.minibuf_prompts.push(prompt.to_string());
+        i.minibuf_level = 1;
+        i.minibuf_catching_exit = true;
+        let exit_sym = Value::Sym(i.intern("exit"));
+        i.catch_tags.push(exit_sym);
         i
     }
 
@@ -1315,7 +1407,127 @@ mod tests {
         }
         term.borrow_mut().pending.reverse();
         let mut i = interp_with_minibuffer("");
-        assert!(minibuf_loop(&term, &mut i, "", false).is_err());
+        // GNU: `abort-minibuffers' throws `exit' with a function that
+        // signals `minibuffer-quit' after unwind.
+        match minibuf_loop(&term, &mut i, "", false) {
+            Ok(crate::lisp::eval::MinibufInput::Call(f)) => {
+                let r = i.apply(&f, vec![]);
+                assert!(
+                    matches!(r, Err(crate::lisp::Flow::Signal(..))),
+                    "expected minibuffer-quit signal, got {:?}",
+                    r.map(|_| ())
+                );
+            }
+            other => panic!("expected Call, got {:?}", other.map(|_| ())),
+        }
+    }
+
+    #[test]
+    fn minibuf_loop_icomplete_exhibits() {
+        // GNU icomplete: `icomplete-minibuffer-setup' runs via
+        // `minibuffer-setup-hook' inside `minibuf_read', installing a
+        // buffer-local `post-command-hook' that exhibits completion
+        // prospects through an overlay `after-string'.
+        let (t, out) = test_term(40, 5);
+        let term = Rc::new(RefCell::new(t));
+        for k in [b'a' as i128, 13] {
+            term.borrow_mut().unread(k);
+        }
+        term.borrow_mut().pending.reverse();
+        let mut i = crate::lisp::Interp::new();
+        i.eval_str("(require 'icomplete) (icomplete-mode 1)").unwrap();
+        // `completing-read''s dynamic context (the specbind f_completing_read
+        // installs around minibuf_read).
+        let mark = i.specbind_depth();
+        let mct = i.intern("minibuffer-completion-table");
+        let table = i
+            .eval_str("(list \"alpha\" \"alpine\" \"beta\")")
+            .unwrap();
+        let _ = i.specbind(mct, table);
+        let t2 = term.clone();
+        i.minibuf_reader = Some(Rc::new(move |interp, prompt, single| {
+            minibuf_loop(&t2, interp, prompt, single)
+        }));
+        let r = i.minibuf_read("Pick: ", Default::default());
+        let _ = i.unbind_to(mark);
+        assert_eq!(r.unwrap(), "a");
+        let drawn = String::from_utf8_lossy(&out.borrow()).into_owned();
+        // GNU renders `a[lp]{ha | ine}' for input `a' against
+        // (alpha alpine beta): [lp] is the common completion,
+        // {ha | ine} the remaining prospects.
+        assert!(
+            drawn.contains("a[lp]{ha | ine}"),
+            "expected prospects in echo, got: {drawn:?}"
+        );
+    }
+
+    #[test]
+    fn minibuf_loop_fido_ret() {
+        // fido-mode: RET runs `icomplete-fido-ret' →
+        // `icomplete-force-complete-and-exit' → completes to the
+        // first flex-sorted match and exits with it.
+        let (t, out) = test_term(40, 5);
+        let term = Rc::new(RefCell::new(t));
+        for k in [b'a' as i128, b'p' as i128, 13] {
+            term.borrow_mut().unread(k);
+        }
+        term.borrow_mut().pending.reverse();
+        let mut i = crate::lisp::Interp::new();
+        i.eval_str("(require 'icomplete) (fido-mode 1)").unwrap();
+        let mark = i.specbind_depth();
+        let mct = i.intern("minibuffer-completion-table");
+        let table = i
+            .eval_str("(list \"alpha\" \"alpine\" \"beta\")")
+            .unwrap();
+        let _ = i.specbind(mct, table);
+        let t2 = term.clone();
+        i.minibuf_reader = Some(Rc::new(move |interp, prompt, single| {
+            minibuf_loop(&t2, interp, prompt, single)
+        }));
+        let r = i.minibuf_read("Pick: ", Default::default());
+        let _ = i.unbind_to(mark);
+        let got = r.unwrap();
+        assert!(
+            got == "alpha" || got == "alpine",
+            "expected flex match, got: {got:?}"
+        );
+        let drawn = String::from_utf8_lossy(&out.borrow()).into_owned();
+        // fido shows full prospect names: `ap{alpha | alpine}'.
+        assert!(drawn.contains("ap{alpha | alpine}"), "echo: {drawn:?}");
+    }
+
+    #[test]
+    fn minibuf_loop_icomplete_vertical() {
+        // icomplete-vertical-mode renders prospects one-per-line via
+        // `icomplete--render-vertical' (exercises the loop rewrites).
+        let (t, out) = test_term(40, 8);
+        let term = Rc::new(RefCell::new(t));
+        for k in [b'a' as i128, 13] {
+            term.borrow_mut().unread(k);
+        }
+        term.borrow_mut().pending.reverse();
+        let mut i = crate::lisp::Interp::new();
+        i.eval_str("(require 'icomplete) (icomplete-mode 1) (icomplete-vertical-mode 1)")
+            .unwrap();
+        let mark = i.specbind_depth();
+        let mct = i.intern("minibuffer-completion-table");
+        let table = i
+            .eval_str("(list \"alpha\" \"alpine\" \"beta\")")
+            .unwrap();
+        let _ = i.specbind(mct, table);
+        let t2 = term.clone();
+        i.minibuf_reader = Some(Rc::new(move |interp, prompt, single| {
+            minibuf_loop(&t2, interp, prompt, single)
+        }));
+        let r = i.minibuf_read("Pick: ", Default::default());
+        let _ = i.unbind_to(mark);
+        assert_eq!(r.unwrap(), "a");
+        let drawn = String::from_utf8_lossy(&out.borrow()).into_owned();
+        // Vertical layout: each prospect on its own line.
+        assert!(
+            drawn.contains("alpha") || drawn.contains("alpine"),
+            "echo: {drawn:?}"
+        );
     }
 
     #[test]

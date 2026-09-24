@@ -356,12 +356,18 @@ With two arguments, return rounding and remainder of their quotient."
 For example, suitable for use as seed by `cl-make-random-state'."
     (car (time-convert nil t)))
 
-(cl-defstruct (cl--random-state
-               (:copier nil)
-               (:predicate cl-random-state-p)
-               (:constructor nil)
-               (:constructor cl--make-random-state (vec)))
-  (i -1) (j 30) vec)
+;; GNU defines this via cl-defstruct with a custom constructor; our
+;; cl-defstruct subset does not support those options, so the type is
+;; spelled out directly (record layout: tag, i, j, vec).
+(defun cl--make-random-state (vec)
+  (record 'cl--random-state -1 30 vec))
+
+(defun cl-random-state-p (ob)
+  (and (recordp ob) (eq (aref ob 0) 'cl--random-state)))
+
+(defun cl--random-state-i (ob) (aref ob 1))
+(defun cl--random-state-j (ob) (aref ob 2))
+(defun cl--random-state-vec (ob) (aref ob 3))
 
 (defvar cl--random-state (cl--make-random-state (cl--random-time)))
 
@@ -373,14 +379,13 @@ Optional second arg STATE is a random-state object."
   (let ((vec (cl--random-state-vec state)))
     (if (integerp vec)
 	(let ((i 0) (j (- 1357335 (abs (% vec 1357333)))) (k 1))
-	  (setf (cl--random-state-vec state)
-                (setq vec (make-vector 55 nil)))
+	  (aset state 3 (setq vec (make-vector 55 nil)))
 	  (aset vec 0 j)
 	  (while (> (setq i (% (+ i 21) 55)) 0)
 	    (aset vec i (setq j (prog1 k (setq k (- j k))))))
 	  (while (< (setq i (1+ i)) 200) (cl-random 2 state))))
-    (let* ((i (cl-callf (lambda (x) (% (1+ x) 55)) (cl--random-state-i state)))
-	   (j (cl-callf (lambda (x) (% (1+ x) 55)) (cl--random-state-j state)))
+    (let* ((i (aset state 1 (% (1+ (cl--random-state-i state)) 55)))
+	   (j (aset state 2 (% (1+ (cl--random-state-j state)) 55)))
 	   (n (aset vec i (logand 8388607 (- (aref vec i) (aref vec j))))))
       (if (integerp lim)
 	  (if (<= lim 512) (% n lim)
@@ -483,7 +488,7 @@ too large if positive or too small if negative)."
 
 (defun cl-list-length (x)
   "Return the length of list X.  Return nil if list is circular."
-  (cl-check-type x list)
+  (cl-check-type x 'list)
   (condition-case nil
       (length x)
     (circular-list)))

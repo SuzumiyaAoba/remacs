@@ -6,7 +6,7 @@ use std::rc::Rc;
 use super::listfn::err_circular;
 use super::{S, arg, eq_values, equal_values, want_int, want_list, want_string};
 use crate::lisp::Interp;
-use crate::lisp::error::EvalResult;
+use crate::lisp::error::{EvalResult, Flow};
 use crate::lisp::obarray::sym;
 use crate::lisp::value::{Subr, Value};
 
@@ -1035,13 +1035,20 @@ fn f_seq_concatenate(i: &mut Interp, args: Vec<Value>) -> EvalResult {
 fn f_seq_subseq(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     let items = seq_to_vec(i, &args[0])?;
     let len = items.len() as i128;
-    let start0 = want_int(i, &args[1])?;
-    let end0 = args
-        .get(2)
-        .map(|v| want_int(i, v))
-        .transpose()?
-        .unwrap_or(len)
-        .min(len);
+    // GNU seq.el checks indices with number-or-marker-p; nil END = length.
+    let num_index = |i: &mut Interp, v: &Value| -> Result<i128, Flow> {
+        match v {
+            Value::Int(n) => Ok(*n),
+            Value::Float(f) => Ok((**f).trunc() as i128),
+            other => Err(i.wrong_type_mut("number-or-marker-p", other)),
+        }
+    };
+    let start0 = num_index(i, &args[1])?;
+    let end0 = match args.get(2) {
+        Some(v) if !v.is_nil() => num_index(i, v)?,
+        _ => len,
+    }
+    .min(len);
     // GNU: negative indices count from the end; anything outside
     // [0,len] or a reversed range is a plain `error'.
     let start = if start0 < 0 { start0 + len } else { start0 };

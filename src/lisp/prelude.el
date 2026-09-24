@@ -11137,6 +11137,21 @@ include as `display-sort-function' in completion metadata."
       (goto-char (point-min))
       (bury-buffer))))
 
+(defvar redisplay-adhoc-scroll-in-resize-mini-windows t
+  "Non-nil means resize-mini-windows does ad-hoc scroll of mini windows.
+This takes effect when `resize-mini-windows' causes the minibuffer
+window to be resized; see `icomplete--vertical-minibuffer-setup'.")
+
+(defun max-mini-window-lines (&optional frame)
+  "Compute maximum number of lines for echo area in FRAME.
+As defined by `max-mini-window-height'.  FRAME defaults to the
+selected frame.  Result may be a floating-point number,
+i.e. include a fractional number of lines."
+  (cond ((floatp max-mini-window-height) (* (frame-height frame)
+					    max-mini-window-height))
+	((integerp max-mini-window-height) max-mini-window-height)
+	(t 1)))
+
 
 ;;; Minibuffer setup/exit hook machinery.
 ;;; Ports of GNU simple.el + minibuffer.el + rfn-eshadow.el so that -Q
@@ -12691,6 +12706,19 @@ Otherwise move to the start of the buffer."
   (define-key map "\M-<" 'minibuffer-beginning-of-buffer)
   (define-key map "\n" 'exit-minibuffer)
   (define-key map "\r" 'exit-minibuffer))
+
+(defun minibuffer-quit-recursive-edit (&optional levels)
+  "Quit the command that requested this recursive edit or minibuffer input.
+Do so without terminating keyboard macro recording or execution.
+LEVELS specifies the number of nested recursive edits to quit.
+If nil, it defaults to 1."
+  (unless levels
+    (setq levels 1))
+  (if (> levels 1)
+      ;; See Info node `(elisp)Recursive Editing' for an explanation
+      ;; of throwing a function to `exit'.
+      (throw 'exit (lambda () (minibuffer-quit-recursive-edit (1- levels))))
+    (throw 'exit (lambda () (signal 'minibuffer-quit nil)))))
 
 (defvaralias 'minibuffer-mode-map 'minibuffer-local-map)
 
@@ -20899,6 +20927,153 @@ again to this mode upon exit.  Code running from
 `minibuffer-inactive-mode-hook' has to be prepared to run
 multiple times per minibuffer invocation.  Also see
 `minibuffer-exit-hook'.")
+
+;; GNU minibuffer.el: completion-driven exit commands and the vars
+;; they consult (icomplete/fido and C-j/C-m completions flows).
+
+(defvar minibuffer--require-match nil
+  "Value of REQUIRE-MATCH passed to `completing-read'.")
+
+(defvar minibuffer-confirm-exit-commands
+  '( completion-at-point minibuffer-complete
+     minibuffer-complete-word)
+  "List of commands which cause an immediately following
+`minibuffer-complete-and-exit' to ask for extra confirmation.")
+
+(defcustom completions-format 'horizontal
+  "Define the appearance and sorting of completions.
+If the value is `vertical', display completions sorted vertically
+in columns; if the value is `horizontal', display completions sorted
+horizontally in rows; if the value is `one-column', display
+completions sorted in a single column."
+  :type '(choice (const horizontal) (const vertical) (const one-column))
+  :version "23.2")
+
+(defcustom completion-auto-wrap t
+  "Non-nil means to wrap around when moving to the next/previous completion."
+  :type 'boolean
+  :version "29.1")
+
+(defun minibuffer-force-complete-and-exit ()
+  "Complete the minibuffer with first of the matches and exit."
+  (interactive)
+  ;; If `completion-cycling' is t, then surely a
+  ;; `minibuffer-force-complete' has already executed.  This is not
+  ;; just for speed: the extra rotation caused by the second
+  ;; unnecessary call would mess up the final result value
+  ;; (bug#34116).
+  (unless completion-cycling
+    (minibuffer-force-complete nil nil 'dont-cycle))
+  (completion--complete-and-exit
+   (minibuffer--completion-prompt-end) (point-max) #'exit-minibuffer
+   ;; If the previous completion completed to an element which fails
+   ;; test-completion, then we shouldn't exit, but that should be rare.
+   (lambda ()
+     (if minibuffer--require-match
+         (completion--message "Incomplete")
+       ;; If a match is not required, exit after all.
+       (exit-minibuffer)))))
+
+(defun minibuffer-complete-and-exit (&optional no-exit)
+  "Exit if the minibuffer contains a valid completion.
+Otherwise, try to complete the minibuffer contents.  If
+completion leads to a valid completion, a repetition of this
+command will exit.
+
+If a completion candidate is selected in the *Completions* buffer, it
+will be inserted in the minibuffer first.  If NO-EXIT is non-nil, don't
+actually exit the minibuffer, just insert the selected completion if
+any.
+
+If `minibuffer-completion-confirm' is `confirm', do not try to
+ complete; instead, ask for confirmation and accept any input if
+ confirmed.
+If `minibuffer-completion-confirm' is `confirm-after-completion',
+ do not try to complete; instead, ask for confirmation if the
+ preceding minibuffer command was a member of
+ `minibuffer-confirm-exit-commands', and accept the input
+ otherwise."
+  (interactive "P")
+  (when (completion--selected-candidate)
+    (minibuffer-choose-completion t t))
+  (unless no-exit
+    (completion-complete-and-exit (minibuffer--completion-prompt-end) (point-max)
+                                  #'exit-minibuffer)))
+
+(defun completion-complete-and-exit (beg end exit-function)
+  (completion--complete-and-exit
+   beg end exit-function
+   (lambda ()
+     (pcase (condition-case nil
+                (completion--do-completion beg end
+                                           nil 'expect-exact)
+              (error 1))
+       ((or #b001 #b011) (funcall exit-function))
+       (#b111 (if (not minibuffer-completion-confirm)
+                  (funcall exit-function)
+                (minibuffer-message "Confirm")
+                nil))
+       (_ nil)))))
+
+(defun completion--complete-and-exit (beg end
+                                          exit-function completion-function)
+  "Exit from `require-match' minibuffer.
+COMPLETION-FUNCTION is called if the current buffer's content does not
+appear to be a match."
+  (cond
+   ;; Allow user to specify null string
+   ((= beg end) (funcall exit-function))
+   ;; The CONFIRM argument is a predicate.
+   ((functionp minibuffer-completion-confirm)
+    (if (funcall minibuffer-completion-confirm
+                 (buffer-substring beg end))
+        (funcall exit-function)
+      (unless completion-fail-discreetly
+	(ding)
+	(completion--message "No match"))))
+   ;; See if we have a completion from the table.
+   ((test-completion (buffer-substring beg end)
+                     minibuffer-completion-table
+                     minibuffer-completion-predicate)
+    ;; FIXME: completion-ignore-case has various slightly
+    ;; incompatible meanings.  E.g. it can reflect whether the user
+    ;; wants completion to pay attention to case, or whether the
+    ;; string will be used in a context where case is significant.
+    ;; E.g. usually try-completion should obey the first, whereas
+    ;; test-completion should obey the second.
+    (when completion-ignore-case
+      ;; Fixup case of the field, if necessary.
+      (let* ((string (buffer-substring beg end))
+             (compl (try-completion
+                     string
+                     minibuffer-completion-table
+                     minibuffer-completion-predicate)))
+        (when (and (stringp compl) (not (equal string compl))
+                   ;; If it weren't for this piece of paranoia, I'd replace
+                   ;; the whole thing with a call to do-completion.
+                   ;; This is important, e.g. when the current minibuffer's
+                   ;; content is a directory which only contains a single
+                   ;; file, so `try-completion' actually completes to
+                   ;; that file.
+                   (= (length string) (length compl)))
+          (completion--replace beg end compl))))
+    (funcall exit-function))
+   ;; The user is permitted to exit with an input that's rejected
+   ;; by test-completion, after confirming her choice.
+   ((memq minibuffer-completion-confirm '(confirm confirm-after-completion))
+    (if (or (eq last-command this-command)
+            ;; For `confirm-after-completion' we only ask for confirmation
+            ;; if trying to exit immediately after typing TAB (this
+            ;; catches most minibuffer typos).
+            (and (eq minibuffer-completion-confirm 'confirm-after-completion)
+                 (not (memq last-command minibuffer-confirm-exit-commands))))
+        (funcall exit-function)
+      (minibuffer-message "Confirm")
+      nil))
+
+   (t
+    ;; Call do-completion, but ignore errors.
+    (funcall completion-function))))
 
 ;; ---------- Auto Fill (GNU simple.el) ----------
 

@@ -5261,7 +5261,53 @@ fn f_define_key(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     Ok(def)
 }
 
-/// GNU `get_keyelt' (keymap.c): trace a slot's actual definition —
+/// GNU `get_keyelt' + `menu_item_eval_property' for command lookup:
+/// `(menu-item LABEL DEF :filter FN ...)' unwraps to DEF, then the
+/// `:filter' is applied as (funcall FN DEF) — a nil result hides the
+/// binding (fido's C-s/C-r menu items vanish under `fido-vertical-mode').
+/// `(MENUSTRING . DEFN)' strips the menu name; anything else is the value.
+pub(crate) fn keyelt_command(i: &mut Interp, object: &Value) -> Result<Value, Flow> {
+    let menu_item = i.intern("menu-item");
+    let filter_sym = i.intern(":filter");
+    let mut v = object.clone();
+    loop {
+        let Value::Cons(c) = &v else {
+            return Ok(v);
+        };
+        let (car, cdr) = {
+            let b = c.borrow();
+            (b.car.clone(), b.cdr.clone())
+        };
+        if matches!(car, Value::Str(_)) {
+            v = cdr;
+            continue;
+        }
+        if matches!(&car, Value::Sym(s) if *s == menu_item) {
+            // cdr = (LABEL DEF . PROPS)
+            let mut def = Value::Nil;
+            let mut props = Value::Nil;
+            if let Value::Cons(x) = &cdr {
+                let rest = x.borrow().cdr.clone();
+                if let Value::Cons(y) = &rest {
+                    let b = y.borrow();
+                    def = b.car.clone();
+                    props = b.cdr.clone();
+                } else {
+                    def = rest;
+                }
+            }
+            let filter = crate::lisp::eval::plist_get(&props, filter_sym);
+            v = if filter.truthy() {
+                i.apply(&filter, vec![def])?
+            } else {
+                def
+            };
+            continue;
+        }
+        return Ok(v);
+    }
+}
+
 /// `(menu-item NAME DEFN ...)' unwraps to DEFN (the `:filter' path is
 /// only used when AUTOLOAD, which `describe-vector' never passes),
 /// and `(MENUSTRING . DEFN)' strips the menu name.  Anything else is
@@ -7037,6 +7083,9 @@ fn f_read_char(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
         match i.minibuf_input("", true)? {
             crate::lisp::eval::MinibufInput::Key(k) => {
                 return Ok(Value::Int(k));
+            }
+            crate::lisp::eval::MinibufInput::Call(_) => {
+                return Err(i.error("exit function in key read"));
             }
             crate::lisp::eval::MinibufInput::Text(t) => {
                 let n = t.chars().next().map(|c| c as i128).unwrap_or(0);
@@ -10395,8 +10444,21 @@ fn f_completing_read(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         let _ = i.specbind(mct, arg(&a, 1));
         let mcp = i.intern("minibuffer-completion-predicate");
         let _ = i.specbind(mcp, arg(&a, 2));
+        // GNU completing-read-default setq-locals in the minibuffer:
+        // minibuffer-completion-confirm gets nil when require-match
+        // is t; minibuffer--require-match records the raw arg.
+        let rm = arg(&a, 3);
+        let mcc_val = match rm {
+            Value::Sym(s) if i.symbol_name(s) == "t" => Value::Nil,
+            _ => rm.clone(),
+        };
         let mcc = i.intern("minibuffer-completion-confirm");
-        let _ = i.specbind(mcc, arg(&a, 3));
+        let _ = i.specbind(mcc, mcc_val);
+        let mrm = i.intern("minibuffer--require-match");
+        let _ = i.specbind(mrm, rm);
+        let mob = i.intern("minibuffer--original-buffer");
+        let orig = i.buffer_value(i.current_buffer).unwrap_or(Value::Nil);
+        let _ = i.specbind(mob, orig);
         let cands = completion_candidates(i, &a[1]);
         let args = crate::lisp::eval::MinibufArgs {
             hist: arg(&a, 5),
@@ -12687,10 +12749,15 @@ fn f_apropos_internal(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 
 /// Look up a key sequence (as Int event codes) in the active maps:
 /// local map, then the global map. Returns the bound value, or None.
-pub(crate) fn lookup_command_in_maps(i: &mut Interp, keys: &[Value]) -> Option<Value> {
+pub(crate) fn lookup_command_in_maps(
+    i: &mut Interp,
+    keys: &[Value],
+) -> Result<Option<Value>, Flow> {
     let codes: Vec<i128> = keys.iter().filter_map(|v| v.int()).collect();
     let local = {
-        let b = i.current_buffer_ref()?;
+        let Some(b) = i.current_buffer_ref() else {
+            return Ok(None);
+        };
         let lb = b.borrow();
         lb.locals
             .get(&i.intern_soft("local-keymap").unwrap_or(u32::MAX))
@@ -12714,11 +12781,11 @@ pub(crate) fn lookup_command_in_maps(i: &mut Interp, keys: &[Value]) -> Option<V
         for &k in &codes {
             let raw = match lookup_in_keymap(i, &km, k, true) {
                 Ok(v) => v,
-                Err(_) => return None,
+                Err(_) => return Ok(None),
             };
             let def = match keymap_def(i, raw.clone()) {
                 Ok(v) => v,
-                Err(_) => return None,
+                Err(_) => return Ok(None),
             };
             if is_keymap(i, &def) {
                 km = def;
@@ -12731,13 +12798,19 @@ pub(crate) fn lookup_command_in_maps(i: &mut Interp, keys: &[Value]) -> Option<V
             }
         }
         if prefix_only {
-            return Some(km);
+            return Ok(Some(km));
         }
         if last_def.truthy() {
-            return Some(last_def);
+            // GNU get_keyelt: unwrap menu-item bindings and apply
+            // `:filter'; a nil filter result hides the binding so the
+            // next map in the list is consulted.
+            let resolved = keyelt_command(i, &last_def)?;
+            if resolved.truthy() {
+                return Ok(Some(resolved));
+            }
         }
     }
-    None
+    Ok(None)
 }
 
 // ---------- faces (minimal tty model) ----------
@@ -13856,10 +13929,16 @@ fn f_recenter_other_window(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 }
 
 fn f_exit_minibuffer(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
-    // Outside an active minibuffer GNU's throw reaches no catch → no-catch.
-    let no_catch = i.intern("no-catch");
-    let exit_sym = i.intern("exit");
-    Err(i.signal_data(no_catch, vec![Value::Sym(exit_sym), Value::Nil]))
+    // GNU Fexit_minibuffer is `(throw 'exit nil)': the catch lives in
+    // `read_minibuf'.  With no matching catch this signals `no-catch'
+    // (f_throw semantics).
+    let exit_sym = Value::Sym(i.intern("exit"));
+    if i.catch_tags.iter().any(|t| crate::lisp::eq_values(t, &exit_sym)) {
+        Err(crate::lisp::error::Flow::Throw(exit_sym, Value::Nil))
+    } else {
+        let no_catch = i.intern("no-catch");
+        Err(i.signal_data(no_catch, vec![exit_sym, Value::Nil]))
+    }
 }
 
 fn f_self_insert_and_exit(i: &mut Interp, a: Vec<Value>) -> EvalResult {

@@ -302,5 +302,242 @@ to an element already in the list stored in PLACE.
 	`(setq ,place (cl-adjoin ,x ,place ,@keys)))
     `(cl-callf2 cl-adjoin ,x ,place ,@keys)))
 
+;;;; From GNU cl-lib.el.
+
+(defvar cl--optimize-speed 1)
+(defvar cl--optimize-safety 1)
+
+(defvar cl-custom-print-functions nil
+  "This is a list of functions that format user objects for printing.
+Each function is called in turn with three arguments: the object, the
+stream, and the print level (currently ignored).  If it is able to
+print the object it returns true; otherwise it returns nil and the
+printer proceeds to the next function on the list.
+
+This variable is not used at present, but it is defined in hopes that
+a future Emacs interpreter will be able to use it.")
+
+(defun cl--set-buffer-substring (start end val)
+  "Delete region from START to END and insert VAL."
+  (save-excursion (delete-region start end)
+		  (goto-char start)
+		  (insert val)
+		  val))
+
+(defun cl--set-substring (str start end val)
+  (if end (if (< end 0) (cl-incf end (length str)))
+    (setq end (length str)))
+  (if (< start 0) (cl-incf start (length str)))
+  (concat (and (> start 0) (substring str 0 start))
+	  val
+	  (and (< end (length str)) (substring str end))))
+
+(gv-define-expander substring
+  (lambda (do place from &optional to)
+    (gv-letplace (getter setter) place
+      (macroexp-let2* nil ((start from) (end to))
+        (funcall do `(substring ,getter ,start ,end)
+                 (lambda (v)
+                   (macroexp-let2 nil v v
+                     `(progn
+                        ,(funcall setter `(cl--set-substring
+                                           ,getter ,start ,end ,v))
+                        ,v))))))))
+
+;;; Blocks and exits.
+
+(defalias 'cl--block-wrapper 'identity)
+(defalias 'cl--block-throw 'throw)
+
+;;; Multiple values.
+
+(defun cl--defalias (cl-f el-f &optional doc)
+  "Define function CL-F as definition EL-F.
+Like `defalias' but marks the alias itself as inlinable."
+  (defalias cl-f el-f doc)
+  (put cl-f 'byte-optimizer 'byte-compile-inline-expand))
+
+(defun cl-values-list (list)
+  "Return multiple values, Common Lisp style, taken from a list.
+LIST specifies the list of values that the containing function
+should return.
+
+Note that Emacs Lisp doesn't really support multiple values, so
+all this function does is return LIST."
+  (unless (listp list)
+    (signal 'wrong-type-argument (list list)))
+  list)
+
+(defsubst cl-multiple-value-list (expression)
+  "Return a list of the multiple values produced by EXPRESSION.
+This handles multiple values in Common Lisp style, but it does not
+work right when EXPRESSION calls an ordinary Emacs Lisp function
+that returns just one value."
+  expression)
+
+(defsubst cl-multiple-value-apply (function expression)
+  "Evaluate EXPRESSION to get multiple values and apply FUNCTION to them.
+This handles multiple values in Common Lisp style, but it does not work
+right when EXPRESSION calls an ordinary Emacs Lisp function that returns just
+one value."
+  (apply function expression))
+
+(defvar cl--proclaims-deferred nil)
+
+(defun cl-proclaim (spec)
+  "Record a global declaration specified by SPEC."
+  (if (fboundp 'cl--do-proclaim) (cl--do-proclaim spec t)
+    (push spec cl--proclaims-deferred))
+  nil)
+
+(defmacro cl-declaim (&rest specs)
+  "Like `cl-proclaim', but takes any number of unevaluated, unquoted arguments.
+Puts `(cl-eval-when (compile load eval) ...)' around the declarations
+so that they are registered at compile-time as well as run-time."
+  (let ((body (mapcar (lambda (x) `(cl-proclaim ',x)) specs)))
+    `(progn ,@body)))
+
+;;; Numbers.
+
+(defconst cl-digit-char-table
+  (let* ((digits (make-vector 256 nil))
+         (populate (lambda (start end base)
+                     (mapc (lambda (i)
+                             (aset digits i (+ base (- i start))))
+                           (number-sequence start end)))))
+    (funcall populate ?0 ?9 0)
+    (funcall populate ?A ?Z 10)
+    (funcall populate ?a ?z 10)
+    digits))
+
+(defun cl-digit-char-p (char &optional radix)
+  "Test if CHAR is a digit in the specified RADIX (default 10).
+If true return the decimal value of digit CHAR in RADIX."
+  (or (<= 2 (or radix 10) 36)
+      (signal 'args-out-of-range (list 'radix radix '(2 36))))
+  (let ((n (aref cl-digit-char-table char)))
+    (and n (< n (or radix 10)) n)))
+
+(defconst cl-most-positive-float nil
+  "The largest value that a Lisp float can hold.
+If your system supports infinities, this is the largest finite value.
+For Emacs, this equals 1.7976931348623157e+308.
+Call `cl-float-limits' to set this.")
+
+(defconst cl-most-negative-float nil
+  "The largest negative value that a Lisp float can hold.
+This is simply -`cl-most-positive-float'.
+Call `cl-float-limits' to set this.")
+
+(defconst cl-least-positive-float nil
+  "The smallest value greater than zero that a Lisp float can hold.
+For Emacs, this equals 5e-324 if subnormal numbers are supported,
+`cl-least-positive-normalized-float' if they are not.
+Call `cl-float-limits' to set this.")
+
+(defconst cl-least-negative-float nil
+  "The smallest value less than zero that a Lisp float can hold.
+This is simply -`cl-least-positive-float'.
+Call `cl-float-limits' to set this.")
+
+(defconst cl-least-positive-normalized-float nil
+  "The smallest normalized Lisp float greater than zero.
+For Emacs, this equals 2.2250738585072014e-308.
+Call `cl-float-limits' to set this.")
+
+(defconst cl-least-negative-normalized-float nil
+  "The largest normalized Lisp float less than zero.
+This is simply -`cl-least-positive-normalized-float'.
+Call `cl-float-limits' to set this.")
+
+(defconst cl-float-epsilon nil
+  "The smallest positive float which adds to 1.0.
+For Emacs, this equals 2.220446049250313e-16.
+Call `cl-float-limits' to set this.")
+
+(defconst cl-float-negative-epsilon nil
+  "The smallest positive value which subtracts from 1.0.
+For Emacs, this equals 1.1102230246251565e-16.
+Call `cl-float-limits' to set this.")
+
+;;; Sequence functions.
+
+(defun cl-mapcar (cl-func cl-x &rest cl-rest)
+  "Apply FUNCTION to each element of SEQ, and make a list of the results.
+If there are several SEQs, FUNCTION is called with that many arguments,
+and mapping stops as soon as the shortest list runs out.  With just one
+SEQ, this is like `mapcar'.  With several, it is like the Common Lisp
+`mapcar' function extended to ordinary sequence types.
+\n(fn FUNCTION SEQ...)"
+  (if cl-rest
+      (if (or (cdr cl-rest) (nlistp cl-x) (nlistp (car cl-rest)))
+	  (cl--mapcar-many cl-func (cons cl-x cl-rest) 'accumulate)
+	(let ((cl-res nil)
+	      (cl-x1 cl-x)
+	      (cl-y1 (car cl-rest)))
+	  (while (and cl-x1 cl-y1)
+	    (push (funcall cl-func (pop cl-x1) (pop cl-y1)) cl-res))
+	  (nreverse cl-res)))
+    (mapcar cl-func cl-x)))
+
+(defun cl-ldiff (list sublist)
+  "Return a copy of LIST with the tail SUBLIST removed."
+  (let ((res nil))
+    (while (and (consp list) (not (eq list sublist)))
+      (push (pop list) res))
+    (nreverse res)))
+
+(defun cl-copy-list (list)
+  "Return a copy of LIST, which may be a dotted list.
+The elements of LIST are not copied, just the list structure itself."
+  (declare (side-effect-free error-free))
+  (if (consp list)
+      (let ((res nil))
+	(while (consp list) (push (pop list) res))
+	(prog1 (nreverse res) (setcdr res list)))
+    (car list)))
+
+(defun cl-adjoin (cl-item cl-list &rest cl-keys)
+  "Return ITEM consed onto the front of LIST only if it's not already there.
+Otherwise, return LIST unmodified.
+\nKeywords supported:  :test :test-not :key
+\n(fn ITEM LIST [KEYWORD VALUE]...)"
+  (cond ((or (equal cl-keys '(:test eq))
+	     (and (null cl-keys) (not (numberp cl-item))))
+	 (if (memq cl-item cl-list) cl-list (cons cl-item cl-list)))
+	((or (equal cl-keys '(:test equal)) (null cl-keys))
+	 (if (member cl-item cl-list) cl-list (cons cl-item cl-list)))
+	(t (apply 'cl--adjoin cl-item cl-list cl-keys))))
+
+(defun cl-subst (cl-new cl-old cl-tree &rest cl-keys)
+  "Substitute NEW for OLD everywhere in TREE (non-destructively).
+Return a copy of TREE with all elements `eql' to OLD replaced by NEW.
+\nKeywords supported:  :test :test-not :key
+\n(fn NEW OLD TREE [KEYWORD VALUE]...)"
+  (if (or cl-keys (and (numberp cl-old) (not (integerp cl-old))))
+      (apply 'cl-sublis (list (cons cl-old cl-new)) cl-tree cl-keys)
+    (cl--do-subst cl-new cl-old cl-tree)))
+
+(defun cl--do-subst (cl-new cl-old cl-tree)
+  (cond ((eq cl-tree cl-old) cl-new)
+	((consp cl-tree)
+	 (let ((a (cl--do-subst cl-new cl-old (car cl-tree)))
+	       (d (cl--do-subst cl-new cl-old (cdr cl-tree))))
+	   (if (and (eq a (car cl-tree)) (eq d (cdr cl-tree)))
+	       cl-tree (cons a d))))
+	(t cl-tree)))
+
+(defun cl-pairlis (keys values &optional alist)
+  "Make an alist from KEYS and VALUES.
+Return a new alist composed by associating KEYS to corresponding VALUES;
+the process stops as soon as KEYS or VALUES run out.
+If ALIST is non-nil, the new pairs are prepended to it."
+  (nconc (cl-mapcar 'cons keys values) alist))
+
+(defun cl-constantly (value)
+  "Return a function that takes any number of arguments, but returns VALUE."
+  (lambda (&rest _)
+    value))
+
 (provide 'cl-macs)
 ;;; cl-macs.el ends here

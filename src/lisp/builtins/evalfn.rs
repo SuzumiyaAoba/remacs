@@ -1994,28 +1994,36 @@ fn f_kill_emacs(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     Ok(Value::Nil)
 }
 fn f_recursive_edit(i: &mut Interp, _args: Vec<Value>) -> EvalResult {
+    // GNU's recursive_edit_1 specbinds command_loop_level and installs
+    // an `exit' catch around a command loop; both unwind when it
+    // returns.  There's no callable command loop here yet, so just
+    // keep the depth/catch scoped like the specbind.
     i.recursion_depth += 1;
+    let exit_sym = Value::Sym(i.intern("exit"));
+    i.catch_tags.push(exit_sym);
+    i.catch_tags.pop();
+    i.recursion_depth -= 1;
     Ok(Value::Nil)
 }
 fn f_top_level(_i: &mut Interp, _args: Vec<Value>) -> EvalResult {
     Err(Flow::Throw(Value::Sym(sym::TOP_LEVEL), Value::Nil))
 }
 fn f_exit_recursive_edit(i: &mut Interp, _args: Vec<Value>) -> EvalResult {
-    if i.recursion_depth == 0 {
+    // GNU: `(throw 'exit nil)' when a command loop or minibuffer is
+    // active, else user-error.
+    if i.recursion_depth == 0 && i.minibuf_level <= 0 {
         let ue = i.intern("user-error");
         return Err(i.signal_data(ue, vec![Value::string("No recursive edit is in progress")]));
     }
-    Err(Flow::Throw(
-        Value::Sym(sym::EXIT_RECURSIVE_EDIT),
-        Value::Nil,
-    ))
+    Err(Flow::Throw(Value::Sym(i.intern("exit")), Value::Nil))
 }
 fn f_abort_recursive_edit(i: &mut Interp, _args: Vec<Value>) -> EvalResult {
-    if i.recursion_depth == 0 {
+    // GNU: `(throw 'exit t)' — the `exit' catch maps t to `quit'.
+    if i.recursion_depth == 0 && i.minibuf_level <= 0 {
         let ue = i.intern("user-error");
         return Err(i.signal_data(ue, vec![Value::string("No recursive edit is in progress")]));
     }
-    Err(Flow::Throw(Value::Sym(sym::QUIT), Value::Nil))
+    Err(Flow::Throw(Value::Sym(i.intern("exit")), Value::t()))
 }
 fn f_recursion_depth(i: &mut Interp, _args: Vec<Value>) -> EvalResult {
     Ok(Value::Int(i.recursion_depth as i128))

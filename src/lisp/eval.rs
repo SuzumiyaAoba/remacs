@@ -144,6 +144,22 @@ pub struct Interp {
     /// last — GNU's `minibuf_prompt' (saved per level in
     /// `minibuf_save_list').
     pub minibuf_prompts: Vec<String>,
+    /// Non-nil while `minibuf_read' has an `exit' catch installed
+    /// (GNU's `internal_catch (Qexit, ...)') — the front-end command
+    /// loop turns `exit-minibuffer''s throw into this flag instead of
+    /// reporting an uncaught throw.
+    pub minibuf_catching_exit: bool,
+    /// Set by the front-end loop when `exit-minibuffer' fired during
+    /// the active read.
+    pub minibuf_exited: bool,
+    /// A quit/throw flow raised by a command inside the minibuffer
+    /// read — handed to the front-end loop so it can abort
+    /// `minibuf_input' with it (io::Result can't carry Flow).
+    pub minibuf_pending_flow: Option<crate::lisp::error::Flow>,
+    /// A function thrown through the `exit' catch — the front-end
+    /// loop returns it as `MinibufInput::Call' so `minibuf_read' can
+    /// call it after the read unwinds (GNU `recursive_edit_1').
+    pub minibuf_exit_fn: Option<Value>,
     /// User-defined faces: name → plist of attribute keywords.
     /// Built-in faces (default, bold, italic, …) live in a static table.
     pub face_table: Vec<(String, Value)>,
@@ -276,6 +292,10 @@ pub enum MinibufInput {
     Text(String),
     /// A single raw key event code (modifier bits included).
     Key(i128),
+    /// A function thrown through the `exit' catch (GNU calls it
+    /// after `recursive_edit_1' unwinds — `minibuffer-quit-recursive-
+    /// edit' uses this to signal `minibuffer-quit' post-cleanup).
+    Call(Value),
 }
 
 /// Per-read arguments mirroring GNU `read_minibuf' (minibuf.c).
@@ -531,6 +551,10 @@ impl Interp {
             minibuf_level: 0,
             minibuf_list: Vec::new(),
             minibuf_prompts: Vec::new(),
+            minibuf_catching_exit: false,
+            minibuf_exited: false,
+            minibuf_pending_flow: None,
+            minibuf_exit_fn: None,
             face_table: Vec::new(),
             processes: Vec::new(),
             charsets: Vec::new(),
@@ -4301,6 +4325,23 @@ impl Interp {
         }
     }
 
+    /// Buffer text after the prompt field of the active minibuffer —
+    /// what a finished `read-from-minibuffer' returns.
+    pub fn minibuf_contents(&self) -> String {
+        let Some(b) = self.buffers.get(self.current_buffer) else {
+            return String::new();
+        };
+        let bb = b.borrow();
+        let end = bb.text_len();
+        let start = self
+            .minibuf_prompts
+            .last()
+            .map(|p| p.chars().count())
+            .unwrap_or(0)
+            .min(end);
+        bb.text.substring(start, end)
+    }
+
     /// GNU `get_minibuffer' (minibuf.c): the ` *Minibuf-{depth}*'
     /// buffer for DEPTH, (re)creating dead or missing entries.
     /// Depth 0 is ` *Minibuf-0*', the never-active null minibuffer.
@@ -4453,6 +4494,19 @@ impl Interp {
         }
         // Display the minibuffer in the mini window.
         self.set_minibuf_window_buffer(mb_id);
+        // GNU `Fselect_window (minibuf_window, Qnil)': the read runs
+        // with the minibuffer window selected (window-minibuffer-p,
+        // minibuffer-selected-window & friends observe it).
+        let saved_window = self
+            .selected_frame
+            .as_ref()
+            .map(|f| f.borrow().selected.clone());
+        if let Some(f) = &self.selected_frame {
+            let mbw = f.borrow().minibuffer.clone();
+            if let Some(w) = mbw {
+                f.borrow_mut().selected = w;
+            }
+        }
 
         // Erase, insert prompt + initial input — GNU binds
         // inhibit-read-only and inhibit-modification-hooks around it.
@@ -4488,7 +4542,52 @@ impl Interp {
             // `minibuffer-setup-hook' — GNU `run_hook' (not safe):
             // an error aborts the read after unwinding.
             match crate::lisp::builtins::evalfn::call_hook(self, "minibuffer-setup-hook") {
-                Ok(_) => self.minibuf_input(prompt, false),
+                Ok(_) => {
+                    // GNU wraps the command loop in
+                    // `internal_catch (Qexit, ...)': `exit-minibuffer'
+                    // throws `exit', ending the read.  The front-end
+                    // loop reports the throw via `minibuf_exited'
+                    // (a raw Flow::Throw can't cross its io boundary).
+                    let exit_sym = Value::Sym(self.intern("exit"));
+                    self.catch_tags.push(exit_sym.clone());
+                    let prev_catching = self.minibuf_catching_exit;
+                    self.minibuf_catching_exit = true;
+                    self.minibuf_exited = false;
+                    let r = self.minibuf_input(prompt, false);
+                    self.minibuf_catching_exit = prev_catching;
+                    self.catch_tags.pop();
+                    match r {
+                        // An `exit' throw that bypassed the front-end
+                        // flag (test readers, throws from Lisp): GNU
+                        // signals `error' for a thrown string, else
+                        // ends the read with the buffer contents.
+                        Err(Flow::Throw(tag, v))
+                            if crate::lisp::eq_values(&tag, &exit_sym) =>
+                        {
+                            match &v {
+                                Value::Str(_) => {
+                                    let es = Value::Sym(self.intern("error"));
+                                    Err(Flow::Signal(
+                                        es,
+                                        Value::list(vec![v.clone()]),
+                                        false,
+                                    ))
+                                }
+                                Value::Sym(_) if v.truthy() => Err(Flow::Quit),
+                                _ => Ok(MinibufInput::Text(self.minibuf_contents())),
+                            }
+                        }
+                        // GNU `recursive_edit_1' calls a function
+                        // thrown through `exit' before unbinding —
+                        // `minibuffer-quit-recursive-edit' throws a
+                        // lambda that signals `minibuffer-quit'.
+                        Ok(MinibufInput::Call(f)) => match self.apply(&f, vec![]) {
+                            Ok(_) => Ok(MinibufInput::Text(self.minibuf_contents())),
+                            Err(e) => Err(e),
+                        },
+                        other => other,
+                    }
+                }
                 Err(f) => Err(f),
             }
         });
@@ -4516,6 +4615,10 @@ impl Interp {
         // The mini window shows the next-less-nested (null) minibuffer.
         let idle = self.get_minibuffer(0);
         self.set_minibuf_window_buffer(idle);
+        // GNU's window-configuration unwind reselects the prior window.
+        if let (Some(f), Some(sw)) = (&self.selected_frame, saved_window) {
+            f.borrow_mut().selected = sw;
+        }
         if self.buffer_live(saved_buf) {
             self.set_current_buffer(saved_buf);
         }
@@ -4564,6 +4667,9 @@ impl Interp {
             MinibufInput::Key(k) => Ok(char::from_u32(k as u32)
                 .map(|c| c.to_string())
                 .unwrap_or_default()),
+            // Handled in the input phase (applied before unwinding);
+            // unreachable here.
+            MinibufInput::Call(_) => Ok(String::new()),
         }
     }
 
@@ -5048,6 +5154,9 @@ impl Interp {
                                 out.push(v.clone());
                             } else if self.minibuf_reader.is_some() {
                                 match self.minibuf_input(&prompt, true)? {
+                                    MinibufInput::Call(_) => {
+                                        return Err(self.error("exit function in key read"));
+                                    }
                                     MinibufInput::Key(k) => {
                                         if c == 'K' {
                                             out.push(Value::Vec(Rc::new(RefCell::new(
@@ -5114,6 +5223,9 @@ impl Interp {
                                     MinibufInput::Text(t) => {
                                         let n = t.chars().next().map(|c| c as i128).unwrap_or(0);
                                         out.push(Value::Int(n));
+                                    }
+                                    MinibufInput::Call(_) => {
+                                        return Err(self.error("exit function in key read"));
                                     }
                                 }
                             } else if self.noninteractive {

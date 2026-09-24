@@ -2018,6 +2018,9 @@ pub(crate) fn chg_insert_pt(i: &mut Interp, s: &str, before_markers: bool) -> Ev
         return Ok(Value::Nil);
     }
     let p = cur(i).borrow().point();
+    if text_ro_insert(i, p) {
+        return Err(text_ro_error(i));
+    }
     signal_before_change(i, p + 1, p + 1)?;
     let q = {
         let b = cur(i);
@@ -2038,6 +2041,9 @@ pub(crate) fn chg_delete(i: &mut Interp, s0: usize, e0: usize) -> Result<String,
     if s0 >= e0 {
         return Ok(String::new());
     }
+    if text_ro_range(i, s0, e0) {
+        return Err(text_ro_error(i));
+    }
     signal_before_change(i, s0 + 1, e0 + 1)?;
     let removed = cur(i).borrow_mut().delete_region(s0, e0);
     signal_after_change(i, s0 + 1, s0 + 1, e0 - s0)?;
@@ -2050,6 +2056,9 @@ pub(crate) fn chg_delete(i: &mut Interp, s0: usize, e0: usize) -> Result<String,
 /// (S0+1, S0+1+N_INS, N_DEL) after.
 pub(crate) fn chg_replace(i: &mut Interp, s0: usize, e0: usize, s: &str) -> EvalResult {
     let n_ins = s.chars().count();
+    if (s0 < e0 && text_ro_range(i, s0, e0)) || text_ro_insert(i, s0) {
+        return Err(text_ro_error(i));
+    }
     signal_before_change(i, s0 + 1, e0 + 1)?;
     let n_del = {
         let b = cur(i);
@@ -2096,6 +2105,66 @@ pub(crate) fn check_writable(i: &mut Interp) -> Result<(), Flow> {
         return Err(i.signal_data(sym::BUFFER_READ_ONLY, vec![bv]));
     }
     Ok(())
+}
+
+/// Does `rear-nonsticky' at POS cover PROP?  `t' (or any non-list
+/// non-nil value, per GNU's stickiness rules) covers every property;
+/// a list covers its members.
+fn rear_nonsticky_covers(i: &mut Interp, pos: usize, prop: u32) -> bool {
+    let ns = i.intern("rear-nonsticky");
+    let v = prop_at(i, pos, ns);
+    match &v {
+        Value::Cons(_) => {
+            let prop_sym = Value::Sym(prop);
+            let mut c = v.clone();
+            while let Value::Cons(cc) = &c {
+                let (h, tl) = {
+                    let b = cc.borrow();
+                    (b.car.clone(), b.cdr.clone())
+                };
+                if crate::lisp::builtins::eq_values(&h, &prop_sym) {
+                    return true;
+                }
+                c = tl;
+            }
+            false
+        }
+        _ => v.truthy(),
+    }
+}
+
+/// GNU `verify_interval_modification' read-only gate for insertion at
+/// 0-based POS: insertion is blocked when `read-only' applies from
+/// the rear (the char at POS-1, unless `rear-nonsticky' covers it) or
+/// when the char at POS itself has `read-only' non-nil.
+/// `inhibit-read-only' bypasses the check.
+fn text_ro_insert(i: &mut Interp, pos: usize) -> bool {
+    let inh = i.intern("inhibit-read-only");
+    if i.symbol_value(inh).truthy() {
+        return false;
+    }
+    let ro = i.intern("read-only");
+    if pos > 0 && prop_at(i, pos - 1, ro).truthy() && !rear_nonsticky_covers(i, pos - 1, ro) {
+        return true;
+    }
+    let len = cur(i).borrow().text.len();
+    pos < len && prop_at(i, pos, ro).truthy()
+}
+
+/// Any `read-only' char in [S0,E0)?  Used for deletions/replacements.
+fn text_ro_range(i: &mut Interp, s0: usize, e0: usize) -> bool {
+    let inh = i.intern("inhibit-read-only");
+    if i.symbol_value(inh).truthy() {
+        return false;
+    }
+    let ro = i.intern("read-only");
+    (s0..e0).any(|p| prop_at(i, p, ro).truthy())
+}
+
+/// Signal `text-read-only' (GNU signals the bare symbol).
+fn text_ro_error(i: &mut Interp) -> Flow {
+    let s = i.intern("text-read-only");
+    i.signal_data(s, vec![])
 }
 
 /// 0-based clamped index from an Emacs position arg.
@@ -8907,7 +8976,10 @@ fn single_prop_change(i: &mut Interp, a: &[Value], forward: bool) -> EvalResult 
     };
     if forward {
         let mut p = pos + 1;
-        while p <= lim {
+        // GNU never reports a "change" at point-max itself: positions
+        // beyond the last character are not inspected, so a property
+        // region ending exactly at the end of the buffer yields nil.
+        while p <= lim && p <= len {
             if !crate::lisp::builtins::eq_values(&at(p), &at(p - 1)) {
                 return Ok(Value::Int(p));
             }
