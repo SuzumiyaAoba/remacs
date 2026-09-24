@@ -15081,24 +15081,29 @@ This does not modify SEQUENCE."
 
 (defmacro cl-destructuring-bind (args expr &rest body)
   "Bind ARGS (a list pattern) to elements of EXPR.
-Subset: flat patterns with &optional/&rest support."
-  (let ((vals (gensym)) (binds nil) (rest-sym nil)
-        (i 0) (state 'req))
-    (dolist (a args)
-      (cond
-       ((eq a '&optional) (setq state 'opt))
-       ((eq a '&rest) (setq state 'rest))
-       ((memq a '(&key &aux &allow-other-keys)) (setq state 'skip))
-       ((eq state 'rest)
-        (setq rest-sym a state 'done))
-       ((eq state 'skip) nil)
-       (t
-        (let ((v (if (consp a) (car a) a))
-              (def (and (consp a) (cadr a))))
-          (push (list v `(or (nth ,i ,vals) ,def)) binds)
-          (setq i (1+ i))))))
-    (when rest-sym
-      (push (list rest-sym `(nthcdr ,i ,vals)) binds))
+Subset: flat patterns with &optional/&rest support; a dotted
+tail binds the remaining list, as in GNU `cl-destructuring-bind'."
+  (let ((vals (gensym)) (binds nil)
+        (i 0) (state 'req) (cur args))
+    (while (consp cur)
+      (let ((a (car cur)))
+        (cond
+         ((eq a '&optional) (setq state 'opt))
+         ((eq a '&rest) (setq state 'rest))
+         ((memq a '(&key &aux &allow-other-keys)) (setq state 'skip))
+         ((eq state 'rest)
+          (push (list a `(nthcdr ,i ,vals)) binds) (setq state 'done))
+         ((eq state 'skip) nil)
+         (t
+          (let ((v (if (consp a) (car a) a))
+                (def (and (consp a) (cadr a))))
+            (push (list v `(or (nth ,i ,vals) ,def)) binds)
+            (setq i (1+ i))))))
+      (setq cur (cdr cur)))
+    ;; Dotted tail: (a b . rest) — REST gets the remainder, like
+    ;; GNU's `cl--destructuring-bind'.
+    (when (and cur (not (eq state 'done)))
+      (push (list cur `(nthcdr ,i ,vals)) binds))
     `(let ((,vals ,expr))
        (let ,(nreverse binds) ,@body))))
 
@@ -15312,7 +15317,12 @@ are allowed.
   "Define structure NAME with SLOTS (subset of GNU `cl-defstruct').
 Supported options: :conc-name, :predicate, :copier, :type (vector
 or list), :named, and :constructor (nil | NAME | (NAME ARGLIST)).
-Slot specs may be (SLOT DEFAULT); objects are records by default."
+Slot specs may be (SLOT DEFAULT); objects are records by default.
+A documentation string may appear between NAME and the slots, as
+in GNU's `cl-defstruct'."
+  ;; GNU accepts an optional docstring right after NAME.
+  (when (stringp (car slots))
+    (pop slots))
   (let* ((opts (if (consp name) (cdr name) nil))
          (n (if (consp name) (car name) name))
          (opt (lambda (kw) (assq kw opts)))

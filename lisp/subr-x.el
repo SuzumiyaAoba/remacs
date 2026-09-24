@@ -7215,7 +7215,7 @@ are done first."
 (defcustom out-of-memory-warning-percentage nil
   "Warn if file size exceeds this percentage of available free memory.
 When nil, never issue warning.  Beware: This probably doesn't do what you
-think it does, because "free" is pretty hard to define in practice."
+think it does, because \"free\" is pretty hard to define in practice."
   :group 'files
   :group 'find-file
   :version "25.1"

@@ -185,6 +185,17 @@ static EMBEDDED_LISP: &[(&str, &str)] = &[
     ("text-property-search", include_str!("../../lisp/text-property-search.el")),
     ("yank-media", include_str!("../../lisp/yank-media.el")),
     ("bs", include_str!("../../lisp/bs.el")),
+    ("editorconfig-fnmatch", include_str!("../../lisp/editorconfig-fnmatch.el")),
+    (
+        "editorconfig-core-handle",
+        include_str!("../../lisp/editorconfig-core-handle.el"),
+    ),
+    (
+        "editorconfig-core",
+        include_str!("../../lisp/editorconfig-core.el"),
+    ),
+    ("editorconfig", include_str!("../../lisp/editorconfig.el")),
+    ("epg-config", include_str!("../../lisp/epg-config.el")),
     ("uniquify", include_str!("../../lisp/uniquify.el")),
     ("view", include_str!("../../lisp/view.el")),
     ("whitespace", include_str!("../../lisp/whitespace.el")),

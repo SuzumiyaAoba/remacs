@@ -1197,3 +1197,62 @@ fn bs_entry_points_and_config() {
         "(t t t t 4 \"by nothing\" nil)"
     );
 }
+
+#[test]
+fn cl_destructuring_bind_dotted_tail() {
+    // GNU-verified on 31.1: a dotted pattern tail binds the rest
+    // of the list, like `&rest'.
+    assert_eq!(
+        ev("(list (cl-destructuring-bind (a . b) '(1 2 3) (list a b))
+                 (cl-destructuring-bind (a b . c) '(1 2 3 4) (list a b c)))"),
+        "((1 (2 3)) (1 2 (3 4)))"
+    );
+}
+
+#[test]
+fn cl_defstruct_accepts_docstring() {
+    // GNU-verified on 31.1: `cl-defstruct' accepts a docstring
+    // between the name and the slot list.
+    assert_eq!(
+        ev("(progn (cl-defstruct ec-probe-struct \"A struct doc.\" one (two 2))
+                  (let ((s (make-ec-probe-struct :one 1)))
+                    (list (ec-probe-struct-one s)
+                          (ec-probe-struct-two s)
+                          (ec-probe-struct-p s))))"),
+        "(1 2 t)"
+    );
+}
+
+#[test]
+fn editorconfig_load_and_fnmatch() {
+    // GNU-verified on 31.1: fnmatch returns a match position (0
+    // based) or nil.
+    assert_eq!(
+        ev("(progn (require 'editorconfig)
+                  (list (fboundp 'editorconfig-fnmatch-p)
+                        (editorconfig-fnmatch-p \"foo.c\" \"*.c\")
+                        (editorconfig-fnmatch-p \"foo.h\" \"*.{c,h}\")
+                        (editorconfig-fnmatch-p \"a/b/c\" \"a/**\")
+                        (editorconfig-fnmatch-p \"deep/x/y.z\" \"**/*.z\")
+                        (fboundp 'editorconfig-mode)
+                        (boundp 'editorconfig-mode)))"),
+        "(t 0 0 0 0 t t)"
+    );
+}
+
+#[test]
+fn epg_config_entry_points() {
+    // GNU-verified on 31.1.
+    assert_eq!(
+        ev("(progn (require 'epg-config)
+                  (list (fboundp 'epg-find-configuration)
+                        (fboundp 'epg-configuration)
+                        (fboundp 'epg-check-configuration)
+                        (fboundp 'epg-required-version-p)
+                        (fboundp 'epg-expand-group)
+                        (condition-case e
+                            (epg-required-version-p 'OpenPGP \"1.0\")
+                          (error (car e)))))"),
+        "(t t t t t t)"
+    );
+}
