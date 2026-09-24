@@ -2586,9 +2586,28 @@ fn line_end(text: &crate::buffer::GapBuffer, pos: usize) -> usize {
     p
 }
 
-fn f_win_line_height(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
-    let _ = i;
-    Ok(Value::Int(1))
+fn f_win_line_height(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    // GNU returns (HEIGHT VPOS YPOS OFFY) or nil when the line isn't
+    // visible in the window; in batch there is no window, so nil.
+    if i.noninteractive {
+        return Ok(Value::Nil);
+    }
+    // tty approximation: every line is 1 row tall; VPOS is the row
+    // index inside the window (arg 0 = line offset, -1 = last line).
+    let w = crate::editor::sel_window(i).unwrap();
+    let height = w.borrow().height;
+    let line = a.get(0).and_then(|v| v.int()).unwrap_or(0);
+    let vpos = if line < 0 {
+        height - 1
+    } else {
+        (line as usize).min(height.saturating_sub(1))
+    };
+    Ok(Value::list(vec![
+        Value::Int(1),
+        Value::Int(vpos as i128),
+        Value::Int(0),
+        Value::Int(0),
+    ]))
 }
 
 fn f_backward_prefix_chars(i: &mut Interp, _a: Vec<Value>) -> EvalResult {

@@ -5588,6 +5588,39 @@ places where expressions are evaluated and inserted or spliced in."
 (autoload 'global-whitespace-newline-mode "whitespace"
   "Toggle global newline visualization." t)
 
+;; view.el autoloads (GNU loaddefs registers exactly these).
+;; GNU loaddefs also defvars the minor-mode flag, so `view-mode' is
+;; boundp before the library loads.
+(defvar view-mode nil)
+(autoload 'view-mode "view"
+  "Toggle View mode, a minor mode for viewing text but not editing it." t)
+(autoload 'view-mode-enter "view"
+  "Enter View mode and set up exit from view mode depending on optional arguments." t)
+(autoload 'view-file "view"
+  "View FILE in View mode, returning to previous buffer when done." t)
+(autoload 'view-file-other-window "view"
+  "View FILE in View mode in another window." t)
+(autoload 'view-file-other-frame "view"
+  "View FILE in View mode in another frame." t)
+(autoload 'view-buffer "view"
+  "View BUFFER in View mode, returning to previous buffer when done." t)
+(autoload 'view-buffer-other-window "view"
+  "View BUFFER in View mode in another window." t)
+(autoload 'view-buffer-other-frame "view"
+  "View BUFFER in View mode in another frame." t)
+(autoload 'View-exit-and-edit "view"
+  "Exit View mode and make the current buffer editable." t)
+(autoload 'kill-buffer-if-not-modified "view"
+  "Like `kill-buffer', but does nothing if buffer BUF is modified." t)
+
+;; GNU register.el (preloaded): obsolete alias used by `view-mode-map'.
+;; GNU -Q binds the alias without a `byte-obsolete-function' property.
+(defalias 'register-to-point #'jump-to-register)
+
+;; GNU window.el defcustom (preloaded): view-buffer-other-window binds it.
+(defvar pop-up-windows t
+  "*Non-nil means `display-buffer' may make a new window.")
+
 ;; hi-lock.el autoloads (GNU loaddefs registers exactly these).
 (autoload 'hi-lock-mode "hi-lock"
   "Toggle selective highlighting of patterns (Hi Lock mode)." t)

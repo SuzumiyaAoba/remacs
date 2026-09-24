@@ -77,6 +77,16 @@ are the mode's body, run on each toggle."
                               `(list ',variable ,lighter-val)
                             `(list ',variable ',lighter))
                          minor-mode-alist))))
+         ;; GNU's `add-minor-mode' also records the keymap on
+         ;; `minor-mode-map-alist' (front for new entries, in-place
+         ;; cdr update for existing ones).
+         ,@(when keymap
+             `((let ((cell (assq ',variable minor-mode-map-alist)))
+                 (if cell
+                     (setcdr cell ,map-sym)
+                   (setq minor-mode-map-alist
+                         (cons (cons ',variable ,map-sym)
+                               minor-mode-map-alist))))))
          ',mode))))
 
 (defmacro define-globalized-minor-mode (global-mode mode turn-on &rest keys)

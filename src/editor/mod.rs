@@ -3406,6 +3406,12 @@ fn f_recenter(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         let ww = w.borrow();
         (ww.buffer, ww.height)
     };
+    // GNU signals (error "'recenter'ing a window that does not
+    // display current-buffer") when the selected window shows a
+    // different buffer — e.g. `with-temp-buffer' in batch.
+    if buf_id != i.current_buffer {
+        return Err(i.error("‘recenter’ing a window that does not display current-buffer"));
+    }
     if let Some(b) = i.buffers.get(buf_id) {
         let bb = b.borrow();
         let line = bb.text.line_of_pos(bb.point());
@@ -3430,17 +3436,29 @@ fn f_scroll_up(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     });
     let w = sel_window(i).unwrap();
     let buf = w.borrow().buffer;
+    let mut hit_end = false;
     if let Some(b) = i.buffers.get(buf) {
         let bb = b.borrow();
         let mut p = w.borrow().start;
         for _ in 0..n.max(0) {
             let e = bb.text.line_end(p);
             if e >= bb.text.len() {
+                hit_end = true;
                 break;
             }
             p = e + 1;
         }
         w.borrow_mut().start = p;
+    }
+    // GNU signals `end-of-buffer' when the scroll can't move the full
+    // amount (with `scroll-error-top-bottom' nil).
+    if hit_end && n != 0 {
+        let setb = i.intern("scroll-error-top-bottom");
+        let v = i.symbol_value(setb);
+        if v.is_nil() || matches!(v, Value::Sym(s) if s == crate::lisp::sym::UNBOUND) {
+            let sym = i.intern("end-of-buffer");
+            return Err(i.signal_data(sym, Vec::new()));
+        }
     }
     Ok(Value::Nil)
 }
@@ -3453,13 +3471,25 @@ fn f_scroll_down(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     });
     let w = sel_window(i).unwrap();
     let buf = w.borrow().buffer;
+    let mut hit_top = false;
     if let Some(b) = i.buffers.get(buf) {
         let bb = b.borrow();
         let line = bb.text.line_of_pos(w.borrow().start);
         let target = line.saturating_sub(n.max(0) as usize);
+        // GNU signals `beginning-of-buffer' when the scroll can't move
+        // the full amount (with `scroll-error-top-bottom' nil).
+        hit_top = (line as i128) < n.max(0);
         let p = bb.text.line_start(target);
         drop(bb);
         w.borrow_mut().start = p;
+    }
+    if hit_top {
+        let setb = i.intern("scroll-error-top-bottom");
+        let v = i.symbol_value(setb);
+        if v.is_nil() || matches!(v, Value::Sym(s) if s == crate::lisp::sym::UNBOUND) {
+            let sym = i.intern("beginning-of-buffer");
+            return Err(i.signal_data(sym, Vec::new()));
+        }
     }
     Ok(Value::Nil)
 }

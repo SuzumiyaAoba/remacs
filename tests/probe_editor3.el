@@ -253,10 +253,12 @@
 ;; ---- scrolling / display ----
 (recenter)
 (recenter 0)
-(scroll-up 1)
-(scroll-down 1)
-(scroll-up-command 1)
-(scroll-down-command 1)
+;; GNU signals end-of-buffer/beginning-of-buffer when the scroll
+;; cannot complete (scroll-error-top-bottom nil), so wrap them.
+(ignore-errors (scroll-up 1))
+(ignore-errors (scroll-down 1))
+(ignore-errors (scroll-up-command 1))
+(ignore-errors (scroll-down-command 1))
 (scroll-other-window 1)
 (scroll-left 1)
 (scroll-right 1)
