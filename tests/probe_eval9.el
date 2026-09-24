@@ -100,17 +100,19 @@
 (p "jlf2" (lambda () jit-lock-functions))
 (p "acg" (lambda () (accept-change-group (activate-change-group))))
 
-;; thing bounds & substrings
-(insert "foo bar")
-(goto-char 2)
-(p "botap-word" (lambda () (bounds-of-thing-at-point 'word)))
-(p "botap-sym" (lambda () (bounds-of-thing-at-point 'symbol)))
-(p "bsbc" (lambda () (buffer-substring-with-bidi-context 1 4)))
-(p "bsbc-err" (lambda () (buffer-substring-with-bidi-context 1 99)))
-(p "bdel" (lambda () (progn (goto-char 4) (backward-delete-char-untabify 1) (buffer-string))))
-(p "bvl" (lambda () (progn (beginning-of-visual-line) (point))))
-(p "evl" (lambda () (progn (end-of-visual-line) (point))))
-(p "fvl" (lambda () (forward-visible-line 1)))
+;; thing bounds & substrings — GNU's `replace-buffer-in-windows' leaves
+;; read-only *Messages* current, so edit in a dedicated buffer.
+(with-temp-buffer
+  (insert "foo bar")
+  (goto-char 2)
+  (p "botap-word" (lambda () (bounds-of-thing-at-point 'word)))
+  (p "botap-sym" (lambda () (bounds-of-thing-at-point 'symbol)))
+  (p "bsbc" (lambda () (buffer-substring-with-bidi-context 1 4)))
+  (p "bsbc-err" (lambda () (buffer-substring-with-bidi-context 1 99)))
+  (p "bdel" (lambda () (progn (goto-char 4) (backward-delete-char-untabify 1) (buffer-string))))
+  (p "bvl" (lambda () (progn (beginning-of-visual-line) (point))))
+  (p "evl" (lambda () (progn (end-of-visual-line) (point))))
+  (p "fvl" (lambda () (forward-visible-line 1))))
 
 ;; variables bound at init
 (p "vars" (lambda () (mapcar #'boundp '(last-command this-command prefix-arg

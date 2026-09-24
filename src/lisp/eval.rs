@@ -145,6 +145,10 @@ pub struct Interp {
     pub match_data: Option<MatchData>,
     /// True in `--batch`: `princ` goes to stdout, `message` to stderr.
     pub noninteractive: bool,
+    /// The `obarray' variable's record value; its Rc identity marks the
+    /// default symbol table, so `intern'/`mapatoms'/completion over
+    /// `obarray' route to `self.obarray' instead of a (stub) record vec.
+    pub default_obarray: Option<crate::lisp::value::VecRef>,
     /// True while the startup prelude or an embedded (`builtin:') library
     /// is being evaluated — lambdas defined then get `dumped_doc' (their
     /// docstrings behave like GNU's .elc/DOC-file entries).
@@ -281,6 +285,10 @@ pub struct Interp {
     /// Pushed by `apply' so `mapbacktrace'/backtrace internals can
     /// walk the stack like GNU's specpdl entries do.
     pub lisp_stack: Vec<(Value, Vec<Value>)>,
+    /// `lisp_stack' snapshot taken when the last signal was raised —
+    /// the frames GNU's batch debugger prints after `Error:' (the live
+    /// stack itself has already unwound by the time main sees it).
+    pub last_error_stack: std::cell::RefCell<Vec<(Value, Vec<Value>)>>,
     /// `profiler-cpu-running-p' state flag (no real sampler).
     pub cpu_profiler: bool,
     /// The sole terminal object (`terminal-list', `frame-terminal'):
@@ -576,6 +584,7 @@ impl Interp {
             capture_output: false,
             match_data: None,
             noninteractive: false,
+            default_obarray: None,
             loading_dumped: false,
             stderr_need_newline: false,
             out_last_char: None,
@@ -631,6 +640,7 @@ impl Interp {
             char_table_defalts: Vec::new(),
             frame_state_seen: None,
             lisp_stack: Vec::new(),
+            last_error_stack: std::cell::RefCell::new(Vec::new()),
             cpu_profiler: false,
             terminal: None,
             terminal_params: Vec::new(),
@@ -657,8 +667,10 @@ impl Interp {
         let minibuf = interp.buffers.create_exact(" *Minibuf-0*");
         let messages = interp.buffers.create_exact("*Messages*");
         interp.buffers.create_exact(" *load*");
-        interp.buffers.create_exact("*Warnings*");
-        // GNU seeds the startup buffers' buffer-local major modes.
+        // GNU does not create `*Warnings*' at startup; `display-warning'
+        // makes it lazily (with messages-buffer-mode) on first warning.
+        // GNU seeds the startup buffers' buffer-local major modes; its
+        // `*Messages*' is read-only and carries a stale modified flag.
         let mm = interp.intern("major-mode");
         for (id, mode) in [
             (minibuf, "minibuffer-inactive-mode"),
@@ -669,6 +681,12 @@ impl Interp {
                     .locals
                     .insert(mm, Value::Sym(interp.intern(mode)));
             }
+        }
+        if let Some(b) = interp.buffers.get(messages) {
+            let mut br = b.borrow_mut();
+            let ro = interp.intern("buffer-read-only");
+            br.locals.insert(ro, Value::t());
+            br.note_modified(true);
         }
         crate::editor::install_primitives(&mut interp);
         // GNU's startup `*scratch*' gets its syntax-table chain from
@@ -758,6 +776,10 @@ impl Interp {
             // same reasoning as env — the feature mark alone would
             // make `require' skip the definitions.
             let _ = crate::lisp::load::load_library(&mut interp, "tabulated-list");
+            // subr-x.el is also in GNU's dump: it holds the accumulated
+            // GNU-verbatim compatibility definitions (string trim/pad,
+            // fringe helpers, paren/select/vc/dnd support, …).
+            let _ = crate::lisp::load::load_library(&mut interp, "subr-x");
         }
         interp.loading_dumped = false;
         // GNU resets `gensym-counter' to 0 when the dumped image starts
@@ -1241,11 +1263,13 @@ impl Interp {
 
     /// `(signal sym (data...))` where data is already a list.
     pub fn signal(&self, sym_id: SymId, data: Value) -> Flow {
+        *self.last_error_stack.borrow_mut() = self.lisp_stack.clone();
         Flow::Signal(Value::Sym(sym_id), data, false)
     }
 
     /// `(signal sym data-list-from-vec)`.
     pub fn signal_data(&self, sym_id: SymId, data: Vec<Value>) -> Flow {
+        *self.last_error_stack.borrow_mut() = self.lisp_stack.clone();
         Flow::Signal(Value::Sym(sym_id), Value::list(data), false)
     }
 
@@ -1343,10 +1367,8 @@ impl Interp {
             .intern_soft("lexical-binding")
             .map(|id| self.symbol_value(id).truthy())
             .unwrap_or(false);
-        let saved_lexenv = std::mem::replace(
-            &mut self.lexenv,
-            if lex_on { lexenv_root() } else { None },
-        );
+        let saved_lexenv =
+            std::mem::replace(&mut self.lexenv, if lex_on { lexenv_root() } else { None });
         let r = self.eval_str_inner(src);
         self.lexenv = saved_lexenv;
         r
@@ -1396,7 +1418,9 @@ impl Interp {
     }
 
     /// `--eval` semantics: GNU's `command-line-1' reads ONE object from
-    /// the argument and evaluates it; trailing forms are ignored.
+    /// the argument and evaluates it; trailing forms are ignored.  GNU
+    /// runs `(let ((lexical-binding t)) (eval FORM t))' — the eval is
+    /// always lexical, with `lexical-binding' bound to t inside.
     pub fn eval_first_form(&mut self, src: &str) -> EvalResult {
         let chars: Rc<Vec<char>> = Rc::new(src.chars().collect());
         let form = {
@@ -1404,14 +1428,23 @@ impl Interp {
             reader.read()?
         };
         match form {
-            Some(f) => match self.eval(&f) {
-                Ok(v) => Ok(v),
-                Err(Flow::Throw(tag, val)) => {
-                    let nc = self.intern("no-catch");
-                    Err(self.signal_data(nc, vec![tag, val]))
+            Some(f) => {
+                let mark = self.specbind_depth();
+                let lb = self.intern("lexical-binding");
+                let _ = self.specbind(lb, Value::t());
+                let saved_lexenv = std::mem::replace(&mut self.lexenv, lexenv_root());
+                let r = self.eval(&f);
+                self.lexenv = saved_lexenv;
+                self.unbind_to(mark)?;
+                match r {
+                    Ok(v) => Ok(v),
+                    Err(Flow::Throw(tag, val)) => {
+                        let nc = self.intern("no-catch");
+                        Err(self.signal_data(nc, vec![tag, val]))
+                    }
+                    Err(f) => Err(f),
                 }
-                Err(f) => Err(f),
-            },
+            }
             None => Ok(Value::Nil),
         }
     }
@@ -1728,7 +1761,14 @@ impl Interp {
                 _ => {
                     let argv = self.eval_args(args)?;
                     self.check_arity_subr(s, &argv, sym_name)?;
-                    (s.func)(self, argv)
+                    // Record the frame like apply_resolved does — GNU's
+                    // specpdl holds every call, so backtraces show the
+                    // innermost subr (`car(5)') too.
+                    let shown = sym_name.map(Value::Sym).unwrap_or_else(|| fun.clone());
+                    self.lisp_stack.push((shown, argv.clone()));
+                    let r = (s.func)(self, argv);
+                    self.lisp_stack.pop();
+                    r
                 }
             },
             Value::Lambda(_) => {
@@ -2985,6 +3025,217 @@ impl Interp {
             "print-continuous-numbering",
             "print-number-table",
             "filter-buffer-substring-function",
+            "activate-mark-hook",
+            "ad-default-compilation-action",
+            "adaptive-fill-first-line-regexp",
+            "add-log-full-name",
+            "add-log-mailing-address",
+            "after-load-functions",
+            "after-make-frame-functions",
+            "auto-coding-alist",
+            "auto-coding-functions",
+            "auto-coding-regexp-alist",
+            "auto-hscroll-mode",
+            "auto-save-include-big-deletions",
+            "auto-save-list-file-prefix",
+            "auto-save-visited-file-name",
+            "baud-rate",
+            "before-make-frame-hook",
+            "blink-matching-delay",
+            "blink-matching-paren",
+            "buffer-access-fontify-functions",
+            "buffer-display-time",
+            "char-code-property-alist",
+            "charset-list",
+            "charset-map-path",
+            "coding-category-list",
+            "coding-system-alist",
+            "coding-system-list",
+            "command-error-function",
+            "command-line-default-directory",
+            "command-line-functions",
+            "command-line-processed",
+            "command-switch-alist",
+            "completions-detailed",
+            "confirm-nonexistent-file-or-buffer",
+            "ctl-arrow",
+            "current-language-environment",
+            "cursor-in-echo-area",
+            "deactivate-mark-hook",
+            "debug-ignored-errors",
+            "debug-on-quit",
+            "debugger",
+            "default-file-name-coding-system",
+            "default-frame-alist",
+            "default-input-method",
+            "default-justification",
+            "default-process-coding-system",
+            "default-terminal-coding-system",
+            "delete-frame-functions",
+            "delete-trailing-lines",
+            "directory-free-space-args",
+            "directory-free-space-program",
+            "dired-directory",
+            "dired-kept-versions",
+            "dynamic-library-alist",
+            "emacs-basic-display",
+            "emacs-build-system",
+            "emacs-build-time",
+            "emacs-copyright",
+            "emacs-repository-branch",
+            "emacs-repository-version",
+            "eval-expression-debug-on-error",
+            "eval-expression-print-maximum-character",
+            "exec-suffixes",
+            "fancy-about-text",
+            "fancy-splash-image",
+            "fancy-startup-text",
+            "fast-but-imprecise-scrolling",
+            "file-coding-system-alist",
+            "file-name-coding-system",
+            "file-precious-flag",
+            "find-file-existing-other-name",
+            "find-file-visit-truename",
+            "fontification-functions",
+            "frame-inherited-parameters",
+            "frame-initial-frame",
+            "frame-initial-geometry-arguments",
+            "frame-title-format",
+            "garbage-collection-messages",
+            "gc-cons-percentage",
+            "glyph-table",
+            "hscroll-margin",
+            "hscroll-step",
+            "icon-title-format",
+            "idle-update-delay",
+            "image-scaling-factor",
+            "inhibit-changing-match-data",
+            "inhibit-default-init",
+            "inhibit-startup-buffer-menu",
+            "inhibit-startup-echo-area-message",
+            "init-file-debug",
+            "init-file-user",
+            "initial-buffer-choice",
+            "initial-frame-alist",
+            "initial-window-system",
+            "input-method-activate-hook",
+            "input-method-function",
+            "input-method-highlight-flag",
+            "input-method-use-echo-area",
+            "input-method-verbose-flag",
+            "insert-default-directory",
+            "installation-directory",
+            "internal-make-interpreted-closure-function",
+            "isearch-allow-prefix",
+            "isearch-allow-scroll",
+            "isearch-case-fold-search",
+            "isearch-hide-immediately",
+            "isearch-lazy-highlight",
+            "isearch-resume-in-command-history",
+            "kbd-macro-termination-hook",
+            "keyboard-coding-system",
+            "kill-do-not-save-duplicates",
+            "kill-transform-function",
+            "large-file-warning-threshold",
+            "lazy-highlight-cleanup",
+            "lazy-highlight-initial-delay",
+            "lazy-highlight-interval",
+            "lazy-highlight-max-at-a-time",
+            "lazy-highlight-no-delay-length",
+            "load-dangerous-libraries",
+            "load-force-doc-strings",
+            "load-prefer-newer",
+            "load-read-function",
+            "locale-coding-system",
+            "macroexp--debug-eager",
+            "macroexpand-all-environment",
+            "mail-host-address",
+            "max-image-size",
+            "menu-bar-final-items",
+            "menu-bar-select-buffer-function",
+            "menu-bar-update-hook",
+            "message-log-max",
+            "minibuffer-exit-hook",
+            "minibuffer-frame-alist",
+            "minibuffer-help-form",
+            "minibuffer-setup-hook",
+            "mode-require-final-newline",
+            "module-file-suffix",
+            "mouse-1-click-follows-link",
+            "mouse-1-click-in-non-selected-windows",
+            "mouse-autoselect-window",
+            "mouse-drag-copy-region",
+            "mouse-highlight",
+            "mouse-position-function",
+            "multiple-frames",
+            "network-coding-system-alist",
+            "no-redraw-on-reenter",
+            "normal-erase-is-backspace",
+            "pixel-scroll-mode",
+            "pixel-scroll-precision-mode",
+            "polling-period",
+            "post-gc-hook",
+            "print-charset-text-property",
+            "print-escape-control-characters",
+            "print-escape-multibyte",
+            "print-escape-nonascii",
+            "print-integers-as-characters",
+            "print-unreadable-function",
+            "process-adaptive-read-buffering",
+            "process-coding-system-alist",
+            "process-error-pause-time",
+            "query-replace-from-to-separator",
+            "query-replace-highlight",
+            "query-replace-lazy-highlight",
+            "query-replace-show-replacement",
+            "query-replace-skip-read-only",
+            "read-expression-map",
+            "recenter-positions",
+            "recenter-redisplay",
+            "regexp-search-ring-yank-pointer",
+            "remote-file-name-inhibit-cache",
+            "ring-bell-function",
+            "scroll-bar-adjust-thumb-portion",
+            "scroll-minibuffer-conservatively",
+            "search-exit-option",
+            "search-nonincremental-instead",
+            "search-ring-yank-pointer",
+            "search-slow-speed",
+            "search-slow-window-lines",
+            "selection-coding-system",
+            "send-mail-function",
+            "set-auto-coding-function",
+            "shell-command-default-error-buffer",
+            "shell-command-switch",
+            "show-help-function",
+            "site-run-file",
+            "source-directory",
+            "tab-always-indent",
+            "tab-bar-mode",
+            "term-setup-hook",
+            "translation-table-for-input",
+            "unicode-category-table",
+            "unread-input-method-events",
+            "use-file-dialog",
+            "user-emacs-directory",
+            "user-real-login-name",
+            "vc-handled-backends",
+            "view-read-only",
+            "visible-cursor",
+            "window-configuration-change-hook",
+            "window-scroll-functions",
+            "window-selection-change-functions",
+            "window-setup-hook",
+            "window-size-change-functions",
+            "write-contents-hooks",
+            "write-region-annotate-functions",
+            "write-region-annotations-so-far",
+            "write-region-inhibit-fsync",
+            "write-region-post-annotation-function",
+            "x-stretch-cursor",
+            "x-underline-at-descent-line",
+            "x-use-underline-position-properties",
+            "yank-pop-change-selection",
         ];
 
         for name in &specials {
@@ -3211,6 +3462,18 @@ impl Interp {
             self.obarray.symbol_mut(id).builtin_variable = true;
         }
 
+        // The `obarray' variable's record; its Rc identity is stored on
+        // the interpreter so primitives can tell the default symbol
+        // table from a custom `obarray-make' record.
+        let default_obarray_rec = std::rc::Rc::new(std::cell::RefCell::new(vec![
+            Value::Sym(self.intern("obarray")),
+            Value::Vec(std::rc::Rc::new(std::cell::RefCell::new(vec![
+                Value::Nil;
+                4
+            ]))),
+        ]));
+        self.default_obarray = Some(default_obarray_rec.clone());
+
         // Initial values.
         let defs: &[(&str, Value)] = &[
             ("emacs-major-version", Value::Int(31)),
@@ -3346,16 +3609,7 @@ impl Interp {
             ("buffer-read-only", Value::Nil),
             ("truncate-lines", Value::Nil),
             ("enable-multibyte-characters", Value::t()),
-            (
-                "obarray",
-                Value::Record(std::rc::Rc::new(std::cell::RefCell::new(vec![
-                    Value::Sym(self.intern("obarray")),
-                    Value::Vec(std::rc::Rc::new(std::cell::RefCell::new(vec![
-                        Value::Nil;
-                        4
-                    ]))),
-                ]))),
-            ),
+            ("obarray", Value::Record(default_obarray_rec.clone())),
             (
                 "features",
                 // Kept in sync with `self.features' by `provide'.
@@ -3435,6 +3689,7 @@ impl Interp {
             ("char-property-alias-alist", Value::Nil),
             ("default-text-properties", Value::Nil),
             ("mode-line-format", Value::Nil),
+            ("mode-name", Value::Nil),
             ("header-line-format", Value::Nil),
             ("tab-line-format", Value::Nil),
             ("truncate-partial-width-windows", Value::t()),
@@ -3722,15 +3977,8 @@ impl Interp {
             ("shell-command-prompt-show-cwd", Value::Sym(sym::T)),
             (
                 "exec-suffixes",
-                Value::list(vec![
-                    Value::string(".exec"),
-                    Value::string(".exe"),
-                    Value::string(".com"),
-                    Value::string(".bat"),
-                    Value::string(".cmd"),
-                    Value::string(".btm"),
-                    Value::string(""),
-                ]),
+                // GNU: '("") on non-DOS/Windows systems.
+                Value::list(vec![Value::string("")]),
             ),
             ("process-connection-type", Value::Sym(sym::T)),
             ("delete-exited-processes", Value::Sym(sym::T)),
@@ -3936,6 +4184,7 @@ impl Interp {
             ("after-init-hook", Value::Nil),
             ("init-file-debug", Value::Nil),
             ("init-file-user", Value::Nil),
+            ("user-init-file", Value::Nil),
             ("inhibit-startup-echo-area-message", Value::Nil),
             ("inhibit-default-init", Value::Nil),
             ("inhibit-startup-buffer-menu", Value::Nil),
@@ -3949,7 +4198,10 @@ impl Interp {
             ("menu-bar-mode", Value::Sym(sym::T)),
             ("tool-bar-mode", Value::Nil),
             ("tab-bar-mode", Value::Nil),
-            ("scroll-bar-mode", Value::Nil),
+            (
+                "scroll-bar-mode",
+                Value::Sym(self.intern("right")),
+            ),
             ("horizontal-scroll-bar-mode", Value::Nil),
             ("default-frame-alist", Value::Nil),
             ("initial-frame-alist", Value::Nil),
@@ -4460,7 +4712,7 @@ impl Interp {
             return;
         }
         self.echo_message = s.to_string();
-        if let Some(mb) = self.buffers.by_name(" *Messages*") {
+        if let Some(mb) = self.buffers.by_name("*Messages*") {
             if self.buffers.get(mb).is_some() {
                 let _ = crate::buffer::primitives::chg_with_buffer(self, mb, |i| {
                     crate::buffer::primitives::chg_insert_pt(i, &format!("{}\n", s), false)
@@ -4719,17 +4971,11 @@ impl Interp {
                         // flag (test readers, throws from Lisp): GNU
                         // signals `error' for a thrown string, else
                         // ends the read with the buffer contents.
-                        Err(Flow::Throw(tag, v))
-                            if crate::lisp::eq_values(&tag, &exit_sym) =>
-                        {
+                        Err(Flow::Throw(tag, v)) if crate::lisp::eq_values(&tag, &exit_sym) => {
                             match &v {
                                 Value::Str(_) => {
                                     let es = Value::Sym(self.intern("error"));
-                                    Err(Flow::Signal(
-                                        es,
-                                        Value::list(vec![v.clone()]),
-                                        false,
-                                    ))
+                                    Err(Flow::Signal(es, Value::list(vec![v.clone()]), false))
                                 }
                                 Value::Sym(_) if v.truthy() => Err(Flow::Quit),
                                 _ => Ok(MinibufInput::Text(self.minibuf_contents())),
@@ -4754,10 +5000,7 @@ impl Interp {
         if self.buffer_live(mb_id) {
             self.set_current_buffer(mb_id);
         }
-        let hook_r = crate::lisp::builtins::evalfn::safe_call_hook(
-            self,
-            "minibuffer-exit-hook",
-        );
+        let hook_r = crate::lisp::builtins::evalfn::safe_call_hook(self, "minibuffer-exit-hook");
         self.minibuf_level -= 1;
         self.minibuf_prompts.pop();
         let _ = self.unbind_to(mark);
@@ -4900,10 +5143,7 @@ impl Interp {
                     } else {
                         self.intern("put-text-property")
                     };
-                    let mut call = vec![
-                        Value::Int(1),
-                        Value::Int(pend as i128 + 1),
-                    ];
+                    let mut call = vec![Value::Int(1), Value::Int(pend as i128 + 1)];
                     if is_face {
                         call.push(val);
                         call.push(Value::t());
@@ -5075,7 +5315,11 @@ impl Interp {
         match self.read_from_string(&text, 0) {
             Ok((form, pos)) => {
                 // Only trailing whitespace may follow the form.
-                if text.chars().skip(pos).any(|c| !matches!(c, ' ' | '\t' | '\n')) {
+                if text
+                    .chars()
+                    .skip(pos)
+                    .any(|c| !matches!(c, ' ' | '\t' | '\n'))
+                {
                     let irs = self.intern("invalid-read-syntax");
                     return Err(self.signal_data(
                         irs,
@@ -5258,9 +5502,7 @@ impl Interp {
                                 out.push(v.clone());
                             } else {
                                 let rn = self.intern("read-number");
-                                out.push(
-                                    self.apply(&Value::Sym(rn), vec![Value::string(prompt)])?,
-                                );
+                                out.push(self.apply(&Value::Sym(rn), vec![Value::string(prompt)])?);
                             }
                         }
                         'b' | 'B' => {
@@ -5296,9 +5538,7 @@ impl Interp {
                                 out.push(v.clone());
                             } else {
                                 let rs = self.intern("read-string");
-                                out.push(
-                                    self.apply(&Value::Sym(rs), vec![Value::string(prompt)])?,
-                                );
+                                out.push(self.apply(&Value::Sym(rs), vec![Value::string(prompt)])?);
                             }
                         }
                         'F' | 'f' | 'D' | 'G' => {
@@ -5344,19 +5584,17 @@ impl Interp {
                                     }
                                     MinibufInput::Key(k) => {
                                         if c == 'K' {
-                                            out.push(Value::Vec(Rc::new(RefCell::new(
-                                                vec![Value::Int(k)],
-                                            ))));
+                                            out.push(Value::Vec(Rc::new(RefCell::new(vec![
+                                                Value::Int(k),
+                                            ]))));
                                         } else if k < 128 {
                                             out.push(Value::string(
-                                                char::from_u32(k as u32)
-                                                    .unwrap_or(' ')
-                                                    .to_string(),
+                                                char::from_u32(k as u32).unwrap_or(' ').to_string(),
                                             ));
                                         } else {
-                                            out.push(Value::Vec(Rc::new(RefCell::new(
-                                                vec![Value::Int(k)],
-                                            ))));
+                                            out.push(Value::Vec(Rc::new(RefCell::new(vec![
+                                                Value::Int(k),
+                                            ]))));
                                         }
                                     }
                                     MinibufInput::Text(t) => {
@@ -5368,9 +5606,9 @@ impl Interp {
                                 // getchar yields a one-key sequence.
                                 let k = self.batch_read_char()?;
                                 if c == 'K' {
-                                    out.push(Value::Vec(Rc::new(RefCell::new(vec![
-                                        Value::Int(k),
-                                    ]))));
+                                    out.push(Value::Vec(Rc::new(RefCell::new(vec![Value::Int(
+                                        k,
+                                    )]))));
                                 } else {
                                     out.push(Value::string(
                                         char::from_u32(k as u32).unwrap_or(' ').to_string(),
@@ -5393,9 +5631,7 @@ impl Interp {
                                     "eval-minibuffer"
                                 };
                                 let f = self.intern(fname);
-                                out.push(
-                                    self.apply(&Value::Sym(f), vec![Value::string(prompt)])?,
-                                );
+                                out.push(self.apply(&Value::Sym(f), vec![Value::string(prompt)])?);
                             }
                         }
                         'c' | 'e' => {

@@ -34,8 +34,11 @@ fn main() {
                 idx += 1;
                 if idx < args.len() {
                     batch = true;
-                    if !run_batch(&mut i, &args[idx]) {
-                        exit = 1;
+                    if !run_batch(&mut i, &args[idx], &args[idx - 1..]) {
+                        // GNU's `command-line-1': a signaled error
+                        // aborts the remaining args and exits 255
+                        // (after running `kill-emacs-hook').
+                        batch_exit(&mut i, 255);
                     }
                     if i.quit_editor {
                         std::process::exit(exit);
@@ -46,8 +49,8 @@ fn main() {
                 idx += 1;
                 if idx < args.len() {
                     batch = true;
-                    if !load_file(&mut i, &args[idx]) {
-                        exit = 1;
+                    if !load_file(&mut i, &args[idx], &args[idx - 1..]) {
+                        batch_exit(&mut i, 255);
                     }
                     if i.quit_editor {
                         std::process::exit(exit);
@@ -58,13 +61,9 @@ fn main() {
                 idx += 1;
                 if idx < args.len() {
                     if !load_file_script(&mut i, &args[idx]) {
-                        exit = 1;
+                        batch_exit(&mut i, 255);
                     }
-                    if let Err(flow) = i.eval_str("(run-hooks 'kill-emacs-hook)") {
-                        report_flow(&mut i, flow);
-                        exit = 1;
-                    }
-                    std::process::exit(exit);
+                    batch_exit(&mut i, exit);
                 }
             }
             "-nw" | "--no-window-system" => {
@@ -78,11 +77,7 @@ fn main() {
     if batch {
         // GNU's `command-line-1' ends batch processing with
         // (kill-emacs), which runs `kill-emacs-hook' before exiting.
-        if let Err(flow) = i.eval_str("(run-hooks 'kill-emacs-hook)") {
-            report_flow(&mut i, flow);
-            exit = 1;
-        }
-        std::process::exit(exit);
+        batch_exit(&mut i, exit);
     }
 
     if !no_window {
@@ -111,7 +106,46 @@ fn main() {
     }
 }
 
-fn run_batch(i: &mut Interp, src: &str) -> bool {
+/// Run `kill-emacs-hook' (reporting but ignoring its errors) and exit
+/// with CODE — GNU's `kill-emacs' on every batch exit path.
+fn batch_exit(i: &mut Interp, code: i32) -> ! {
+    if let Err(flow) = i.eval_str("(run-hooks 'kill-emacs-hook)") {
+        report_flow(i, flow);
+    }
+    std::process::exit(code);
+}
+
+/// GNU batch error backtrace tail: the middle frame (`eval(FORM t)'
+/// for --eval, `load-with-code-conversion(...)' for -l), then the
+/// `command-line-1'/`command-line'/`normal-top-level' frames.
+fn print_batch_backtrace(i: &mut Interp, mid_frame: Option<String>, cli_rest: &[String]) {
+    // Lisp frames innermost-first, like GNU's `backtrace'.
+    for (fun, argv) in i.last_error_stack.borrow().iter().rev() {
+        let name = match fun {
+            Value::Sym(id) => i.symbol_name(*id),
+            other => i.prin1_to_string(other),
+        };
+        let args = argv
+            .iter()
+            .map(|v| i.prin1_to_string(v))
+            .collect::<Vec<_>>()
+            .join(" ");
+        eprintln!("  {}({})", name, args);
+    }
+    if let Some(frame) = mid_frame {
+        eprintln!("  {}", frame);
+    }
+    let quoted = cli_rest
+        .iter()
+        .map(|a| format!("{:?}", a))
+        .collect::<Vec<_>>()
+        .join(" ");
+    eprintln!("  command-line-1(({}))", quoted);
+    eprintln!("  command-line()");
+    eprintln!("  normal-top-level()");
+}
+
+fn run_batch(i: &mut Interp, src: &str, cli_rest: &[String]) -> bool {
     i.noninteractive = true;
     if i.output.is_none() {
         i.output = Some(OutputSink::Stdout);
@@ -123,12 +157,18 @@ fn run_batch(i: &mut Interp, src: &str) -> bool {
         Err(Flow::Exit(code)) => std::process::exit(code as i32),
         Err(flow) => {
             report_flow(i, flow);
+            // GNU's eval frame shows the read form and the lexical env.
+            let mid = i
+                .read_from_string(src, 0)
+                .ok()
+                .map(|(form, _)| format!("eval({} t)", i.prin1_to_string(&form)));
+            print_batch_backtrace(i, mid, cli_rest);
             false
         }
     }
 }
 
-fn load_file(i: &mut Interp, path: &str) -> bool {
+fn load_file(i: &mut Interp, path: &str, cli_rest: &[String]) -> bool {
     i.noninteractive = true;
     if i.output.is_none() {
         i.output = Some(OutputSink::Stdout);
@@ -139,8 +179,17 @@ fn load_file(i: &mut Interp, path: &str) -> bool {
         Ok(_) => true,
         Err(Flow::Exit(code)) => std::process::exit(code as i32),
         Err(flow) => {
-            // Reuse run_batch's error formatting on the stored flow.
             report_flow(i, flow);
+            // GNU resolves the truename; display both like
+            // load-with-code-conversion does.
+            let real = std::fs::canonicalize(path)
+                .map(|p| p.display().to_string())
+                .unwrap_or_else(|_| path.to_string());
+            let mid = Some(format!(
+                "load-with-code-conversion({:?} {:?} nil t)",
+                real, real
+            ));
+            print_batch_backtrace(i, mid, cli_rest);
             false
         }
     }
@@ -168,6 +217,9 @@ fn load_file_script(i: &mut Interp, path: &str) -> bool {
 fn report_flow(i: &mut Interp, flow: Flow) {
     match flow {
         Flow::Signal(sym, data, _) => {
+            // GNU's early debugger announces itself once before the
+            // error message it is about to print.
+            eprintln!("\ndebug-early-backtrace...done");
             let err_obj = Value::cons(sym.clone(), data.clone());
             let msg = remacs::lisp::builtins::error_message(i, &err_obj);
             let name = match &sym {

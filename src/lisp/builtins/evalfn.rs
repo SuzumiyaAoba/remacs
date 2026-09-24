@@ -309,15 +309,9 @@ pub(crate) static SUBRS: &[Subr] = &[
         f_with_no_warnings,
         "Eval body without warnings."
     ),
-    S!(
-        "display-warning",
-        2,
-        4,
-        f_display_warning,
-        "Display a warning message."
-    ),
-    S!("lwarn", 4, 4, f_lwarn, "Display a warning."),
-    S!("warn", many 1, f_warn, "Display a warning."),
+    // `display-warning'/`lwarn'/`warn' are elisp in GNU's warnings.el
+    // (autoloaded via loaddefs); the prelude registers the autoload
+    // stubs, and the Rust f_* helpers remain for internal callers.
     S!("message", many 1, f_message, "Display a message in the echo area."),
     S!("ding", 0, 1, f_ding, "Beep."),
     S!("beep", 0, 1, f_ding, "Beep."),
@@ -473,7 +467,13 @@ pub(crate) static SUBRS: &[Subr] = &[
     // always interprets, so it's nil.  `rx' et al. consult it.
     S!("macroexp-compiling-p", 0, 0, f_noop, ""),
     S!("declare-functionp", 1, 1, f_declare_functionp, ""),
-    S!("error-type", 1, 1, f_error_type, "Symbol naming the type of ERROR."),
+    S!(
+        "error-type",
+        1,
+        1,
+        f_error_type,
+        "Symbol naming the type of ERROR."
+    ),
 ];
 
 /// GNU cl-preloaded.el: an error object is a list `(TYPE . DATA)';
@@ -713,8 +713,7 @@ pub(crate) fn macroexpand_all(i: &mut Interp, form: &Value) -> EvalResult {
                                             if matches!(c.borrow().car, Value::Sym(_))
                                     );
                                     if keep_head {
-                                        let parts =
-                                            want_list(i, &b).unwrap_or_default();
+                                        let parts = want_list(i, &b).unwrap_or_default();
                                         if parts.is_empty() {
                                             bs.push(b.clone());
                                         } else {
@@ -1090,14 +1089,18 @@ fn hook_fns(i: &Interp, hook: &Value) -> Vec<Value> {
     };
     // GNU `run-hooks': when the buffer-local binding contains `t' as
     // an element, the global (default) value is run at the end.
-    let local = i
-        .buffers
-        .get(i.current_buffer)
-        .and_then(|b| b.try_borrow().ok().and_then(|bb| bb.locals.get(&id).cloned()));
+    let local = i.buffers.get(i.current_buffer).and_then(|b| {
+        b.try_borrow()
+            .ok()
+            .and_then(|bb| bb.locals.get(&id).cloned())
+    });
     match local {
         Some(v) => {
             let mut fns = hook_list(&v);
-            if fns.iter().any(|f| matches!(f, Value::Sym(s) if *s == sym::T)) {
+            if fns
+                .iter()
+                .any(|f| matches!(f, Value::Sym(s) if *s == sym::T))
+            {
                 fns.retain(|f| !matches!(f, Value::Sym(s) if *s == sym::T));
                 let mut globals = hook_list(&i.obarray.symbol(id).value);
                 fns.append(&mut globals);
@@ -1218,7 +1221,12 @@ pub(crate) fn signal_before_change(i: &mut Interp, beg1: usize, end1: usize) -> 
 
 /// GNU `report_after_change': `after-change-functions' with
 /// (BEG END LEN); LEN is the char length of the replaced text.
-pub(crate) fn signal_after_change(i: &mut Interp, beg1: usize, end1: usize, len: usize) -> EvalResult {
+pub(crate) fn signal_after_change(
+    i: &mut Interp,
+    beg1: usize,
+    end1: usize,
+    len: usize,
+) -> EvalResult {
     if mod_hooks_inhibited(i) {
         return Ok(Value::Nil);
     }
@@ -1350,14 +1358,21 @@ fn hook_force_local(i: &mut Interp, id: SymId) -> bool {
     }
     let v = i.symbol_value(id);
     match v.list_to_vec() {
-        Ok(list) => !list.iter().any(|x| matches!(x, Value::Sym(s) if *s == sym::T)),
+        Ok(list) => !list
+            .iter()
+            .any(|x| matches!(x, Value::Sym(s) if *s == sym::T)),
         Err(_) => true,
     }
 }
 
 /// The `hook--depth-alist' property holds an uninterned symbol whose
 /// (possibly buffer-local) value is the fn->depth alist.
-fn hook_depth_alist(i: &mut Interp, hook_id: SymId, local: bool, create: bool) -> Option<Vec<(Value, i128)>> {
+fn hook_depth_alist(
+    i: &mut Interp,
+    hook_id: SymId,
+    local: bool,
+    create: bool,
+) -> Option<Vec<(Value, i128)>> {
     let prop_sym = i.intern("hook--depth-alist");
     let prop = i.get_prop(hook_id, prop_sym);
     let dsym = match prop {
@@ -1683,11 +1698,7 @@ fn f_autoload_do_load(i: &mut Interp, args: Vec<Value>) -> EvalResult {
 /// `autoload-do-load` FUNDEF MACRO-ONLY — load the file for an autoload
 /// cell and return the resulting function definition. Shared with the
 /// evaluator's autoload dispatch.
-pub(crate) fn autoload_do_load(
-    i: &mut Interp,
-    fundef: Value,
-    macro_only: bool,
-) -> EvalResult {
+pub(crate) fn autoload_do_load(i: &mut Interp, fundef: Value, macro_only: bool) -> EvalResult {
     let auto_id = i.intern("autoload");
     let is_auto = match &fundef {
         Value::Cons(c) => i.sym_is(&c.borrow().car, auto_id),
@@ -1770,11 +1781,7 @@ fn f_access_file(i: &mut Interp, args: Vec<Value>) -> EvalResult {
         Ok(_) => Ok(Value::Nil),
         Err(e) => {
             let estr = e.to_string();
-            let estr = estr
-                .split(" (os error")
-                .next()
-                .unwrap_or(&estr)
-                .to_string();
+            let estr = estr.split(" (os error").next().unwrap_or(&estr).to_string();
             let fmt = args.get(1).cloned().unwrap_or(Value::Nil);
             Err(i.signal_data(
                 sym::FILE_MISSING,
@@ -1861,34 +1868,6 @@ fn f_with_no_warnings(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     let body = args.into_iter().next().unwrap_or(Value::Nil);
     i.eval_progn(&body)
 }
-fn f_display_warning(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    let ty = i.princ_to_string(&args[0]);
-    let msg = i.princ_to_string(&args[1]);
-    let text = format!("Warning ({}): {}", ty, msg);
-    i.message(&text);
-    Ok(Value::string(text))
-}
-fn f_lwarn(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    let ty = i.princ_to_string(&args[0]);
-    let fmt = match &args[2] {
-        Value::Str(s) => s.borrow().clone(),
-        other => i.princ_to_string(other),
-    };
-    let msg = apply_format_simple(i, &fmt, &args[3..]);
-    let text = format!("Warning ({}): {}", ty, msg);
-    i.message(&text);
-    Ok(Value::string(text))
-}
-pub(crate) fn f_warn(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    let fmt = match &args[0] {
-        Value::Str(s) => s.borrow().clone(),
-        _ => "%s".into(),
-    };
-    let msg = apply_format_simple(i, &fmt, &args[1..]);
-    let text = format!("Warning (emacs): {}", msg);
-    i.message(&text);
-    Ok(Value::string(text))
-}
 pub(crate) fn f_message(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     let fmt = match &args[0] {
         Value::Str(s) => s.borrow().clone(),
@@ -1899,7 +1878,14 @@ pub(crate) fn f_message(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     i.message(&msg);
     Ok(Value::string(msg))
 }
-fn f_ding(_i: &mut Interp, _args: Vec<Value>) -> EvalResult {
+fn f_ding(i: &mut Interp, _args: Vec<Value>) -> EvalResult {
+    // GNU's Fding: noninteractive sessions write \a to stdout.  It
+    // stays in stdio's block buffer, so a piped reader sees it merged
+    // with the next stdout write — `print!' without flush reproduces
+    // that ordering exactly.
+    if i.noninteractive {
+        print!("\x07");
+    }
     Ok(Value::Nil)
 }
 /// keyboard.c `timer_check': run each due, untriggered timer on
@@ -1965,8 +1951,7 @@ fn sleep_firing_timers(i: &mut Interp, secs: f64) -> EvalResult {
     if secs <= 0.0 {
         return timer_check(i).map(|_| Value::Nil);
     }
-    let deadline =
-        std::time::Instant::now() + std::time::Duration::from_secs_f64(secs.min(3600.0));
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs_f64(secs.min(3600.0));
     loop {
         timer_check(i)?;
         // GNU's wait also drains subprocess output (filters/buffers/
@@ -2119,7 +2104,8 @@ fn f_format_time_string(i: &mut Interp, args: Vec<Value>) -> EvalResult {
         while j < chars.len() && matches!(chars[j], '-' | '_' | '0' | '^' | '#') {
             j += 1;
         }
-        while j < chars.len() && (chars[j].is_ascii_digit() || matches!(chars[j], '.' | ',' | ':')) {
+        while j < chars.len() && (chars[j].is_ascii_digit() || matches!(chars[j], '.' | ',' | ':'))
+        {
             j += 1;
         }
         let spec = chars.get(j).copied();
@@ -2226,7 +2212,9 @@ fn f_abort_recursive_edit(i: &mut Interp, _args: Vec<Value>) -> EvalResult {
 }
 fn f_recursion_depth(i: &mut Interp, _args: Vec<Value>) -> EvalResult {
     // GNU: command_loop_level + minibuf_level.
-    Ok(Value::Int((i.recursion_depth + i.minibuf_level.max(0) as usize) as i128))
+    Ok(Value::Int(
+        (i.recursion_depth + i.minibuf_level.max(0) as usize) as i128,
+    ))
 }
 fn f_emacs_pid(_i: &mut Interp, _args: Vec<Value>) -> EvalResult {
     Ok(Value::Int(std::process::id() as i128))
@@ -2274,9 +2262,7 @@ fn parse_lexenv_spec(i: &mut Interp, env_v: &Value) -> crate::lisp::LexEnv {
         matches!(v, Value::Cons(c) if matches!(c.borrow().car, Value::Sym(_))
             && !matches!(c.borrow().cdr, Value::Cons(_)))
     };
-    let frame_of = |vars: Vec<(Value, Value)>,
-                    markers: Vec<SymId>|
-     -> std::rc::Rc<LexFrame> {
+    let frame_of = |vars: Vec<(Value, Value)>, markers: Vec<SymId>| -> std::rc::Rc<LexFrame> {
         let mut m = HashMap::new();
         for (k, v) in vars {
             if let Value::Sym(id) = k {
@@ -2445,10 +2431,8 @@ fn f_smae_restore(i: &mut Interp, a: Vec<Value>) -> EvalResult {
             if let Value::Marker(m) = &mk {
                 bb.mark = Some(m.borrow().position.min(bb.text.len()));
             }
-            bb.locals.insert(
-                ma,
-                if act.truthy() { Value::t() } else { Value::Nil },
-            );
+            bb.locals
+                .insert(ma, if act.truthy() { Value::t() } else { Value::Nil });
         }
     }
     Ok(Value::Nil)
@@ -2630,7 +2614,7 @@ fn f_add_function(i: &mut Interp, a: Vec<Value>) -> EvalResult {
                     "Unknown add-function place ‘{}’",
                     i.print_to_string(&a[1])
                 ))],
-            ))
+            ));
         }
     };
     let name = advice_name(i, &arg(&a, 3));

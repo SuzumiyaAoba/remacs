@@ -5379,13 +5379,26 @@ fn f_kill_region(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     // Record into kill-ring then delete.
     let text = f_delete_and_extract_region(i, a.clone())?;
     if let Value::Str(s) = &text {
-        push_kill_ring(i, s.borrow().clone());
+        push_kill_ring(i, s.borrow().clone())?;
+    }
+    Ok(Value::Nil)
+}
+
+/// GNU kill-new's `(if interprogram-cut-function (funcall ... string))':
+/// every path that lands a string on `kill-ring' feeds it to the cut
+/// function (gui-select-text on GUI/clipboard-capable builds).
+pub(crate) fn interprogram_cut(i: &mut Interp, text: Value) -> EvalResult {
+    if let Some(id) = i.intern_soft("interprogram-cut-function") {
+        let f = i.symbol_value(id);
+        if f.truthy() {
+            i.apply(&f, vec![text])?;
+        }
     }
     Ok(Value::Nil)
 }
 
 /// Push a string onto the kill-ring (a plain list var).
-pub(crate) fn push_kill_ring(i: &mut Interp, s: String) {
+pub(crate) fn push_kill_ring(i: &mut Interp, s: String) -> EvalResult {
     let kr = i.intern("kill-ring");
     let cur = i.symbol_value(kr);
     let mut items = cur.list_to_vec().unwrap_or_default();
@@ -5394,11 +5407,14 @@ pub(crate) fn push_kill_ring(i: &mut Interp, s: String) {
         i.append_next_kill = false;
         if let Some(Value::Str(prev)) = items.first_mut() {
             prev.borrow_mut().push_str(&s);
+            let merged = Value::Str(prev.clone());
             i.obarray.symbol_mut(kr).value = Value::list(items);
-            return;
+            // GNU reaches here via kill-append → kill-new with the
+            // merged string, which is what the cut function sees.
+            return interprogram_cut(i, merged);
         }
     }
-    items.insert(0, Value::string(s));
+    items.insert(0, Value::string(s.clone()));
     let max = i
         .symbol_value(i.intern_soft("kill-ring-max").unwrap_or(0))
         .int()
@@ -5409,6 +5425,7 @@ pub(crate) fn push_kill_ring(i: &mut Interp, s: String) {
     let ring = i.symbol_value(kr);
     let ptr = i.intern("kill-ring-yank-pointer");
     let _ = i.set_symbol(ptr, ring);
+    interprogram_cut(i, Value::string(s))
 }
 
 fn f_append_next_kill(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
@@ -7900,13 +7917,26 @@ fn f_match_substitute_replacement(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         // buffer; a string-match's data is args-out-of-range here.
         Some(m) if m.in_buffer || a.get(3).is_some() => m.clone(),
         _ => {
-            // Emacs: (args-out-of-range BUFFER 0 SCHARS(replacement)).
+            // GNU reports the current match-0 bounds against the
+            // buffer — string-match data counts too; no match data
+            // at all gives (0 0).
+            let (s0, e0) = i
+                .match_data
+                .as_ref()
+                .and_then(|m| match (m.regs.first(), m.regs.get(1)) {
+                    (Some(Some(s)), Some(Some(e))) => Some((*s, *e)),
+                    _ => None,
+                })
+                .unwrap_or((0, 0));
             let b = cur(i);
-            let n = newtext.chars().count() as i128;
             return Err(err_sym(
                 i,
                 "args-out-of-range",
-                vec![Value::Buffer(b), Value::Int(0), Value::Int(n)],
+                vec![
+                    Value::Buffer(b),
+                    Value::Int(s0 as i128),
+                    Value::Int(e0 as i128),
+                ],
             ));
         }
     };
@@ -9491,8 +9521,11 @@ fn undo_apply_one(
                 }
             } else if let Value::Marker(m) = &car {
                 // (MARKER . OFFSET) with no matching (TEXT . POS).
-                let _ = crate::lisp::builtins::evalfn::f_warn(
-                    i,
+                // GNU routes this through `warn' (warnings.el), so it
+                // lands in *Warnings* as well as the echo area.
+                let warn_sym = i.intern("warn");
+                let _ = i.apply(
+                    &Value::Sym(warn_sym),
                     vec![
                         Value::string(
                             "Encountered %S entry in undo list with no matching (TEXT . POS) entry",
