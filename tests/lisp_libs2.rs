@@ -1437,3 +1437,127 @@ fn tty_tip_entry_points() {
         "(t t t)"
     );
 }
+
+#[test]
+fn xdg_entry_points() {
+    // GNU-verified on 31.1: `rx' is bound at -Q (loadup-loaded but
+    // unprovided), so `rx'-using libraries expand at load; xdg defines
+    // the base-dir helpers while the user-dir helpers stay unbound.
+    assert_eq!(
+        ev("(list (fboundp 'rx) (featurep 'rx))"),
+        "(t nil)"
+    );
+    assert_eq!(
+        ev("(progn (require 'xdg)
+                  (list (featurep 'xdg)
+                        (fboundp 'xdg-data-home)
+                        (fboundp 'xdg-config-home)
+                        (fboundp 'xdg-cache-home)
+                        (fboundp 'xdg-state-home)
+                        (fboundp 'xdg-runtime-dir)
+                        (fboundp 'xdg-user-dir)
+                        (fboundp 'xdg-user-dirs)))"),
+        "(t t t t t t t nil)"
+    );
+    // XDG_DATA_HOME/CONFIG_HOME unset: falls back to ~/.local/share etc.
+    assert_eq!(
+        ev("(progn (require 'xdg)
+                  (list (string-suffix-p \"/.local/share\" (xdg-data-home))
+                        (string-suffix-p \"/.cache\" (xdg-cache-home))))"),
+        "(t t)"
+    );
+}
+
+#[test]
+fn sqlite_mode_entry_points() {
+    // GNU-verified on 31.1: sqlite-mode.el is not dumped; require 'sqlite-mode
+    // defines the mode and its keymap but not the --db/--tables internals.
+    assert_eq!(
+        ev("(progn (require 'sqlite-mode)
+                  (list (featurep 'sqlite-mode)
+                        (fboundp 'sqlite-mode)
+                        (fboundp 'sqlite-mode-list-tables)
+                        (fboundp 'sqlite-mode-delete)
+                        (boundp 'sqlite-mode-tables)
+                        (boundp 'sqlite-mode--db)
+                        (boundp 'sqlite-mode-map)
+                        (keymapp sqlite-mode-map)))"),
+        "(t t t t nil nil t t)"
+    );
+}
+
+#[test]
+fn fillarray_covers_all_array_kinds() {
+    // GNU-verified on 31.1: fillarray handles vectors, char-tables
+    // (top slots + defalt + extras; ASCII slot & parent preserved),
+    // bool-vectors and strings.
+    assert_eq!(ev("(fillarray (vector 1 2) 9)"), "[9 9]");
+    // char-table: ASCII chars keep their entries, the rest take ITEM.
+    assert_eq!(
+        ev("(let ((ct (make-char-table 'test nil)))
+             (set-char-table-range ct '(65 . 100) 'a)
+             (set-char-table-parent ct (make-char-table 'test nil))
+             (fillarray ct 'X)
+             (list (aref ct 97) (aref ct 2000)
+                   (char-table-range ct nil)
+                   (char-table-p (char-table-parent ct))))"),
+        "(a X X t)"
+    );
+    assert_eq!(
+        ev("(let ((b (make-bool-vector 3 nil)))
+             (fillarray b 'x) (list (aref b 0) (aref b 2)))"),
+        "(t t)"
+    );
+    assert_eq!(ev("(fillarray \"abc\" ?z)"), "\"zzz\"");
+    assert_eq!(
+        ev("(condition-case e (fillarray 5 1) (error (car e)))"),
+        "wrong-type-argument"
+    );
+}
+
+#[test]
+fn isearch_x_ibuf_macs_entry_points() {
+    // GNU-verified on 31.1: neither file provides a feature, so
+    // `require' signals (matching GNU) while `load' binds the defs.
+    assert_eq!(
+        ev("(condition-case e (progn (require 'isearch-x) 'ok)
+             (error (car e)))"),
+        "error"
+    );
+    assert_eq!(
+        ev("(progn (load \"isearch-x\" nil t)
+                  (fboundp 'isearch-define-mode-toggle))"),
+        "t"
+    );
+    assert_eq!(
+        ev("(progn (require 'ibuf-macs)
+                  (list (featurep 'ibuf-macs)
+                        (fboundp 'ibuffer-aif)
+                        (fboundp 'define-ibuffer-column)
+                        (fboundp 'define-ibuffer-sorter)
+                        (fboundp 'define-ibuffer-op)
+                        (fboundp 'define-ibuffer-filter)))"),
+        "(t t t t t t)"
+    );
+}
+
+#[test]
+fn w32_fns_and_ebuff_menu_entry_points() {
+    // GNU-verified on 31.1: w32-fns.el loads but defines nothing on
+    // non-w32 hosts (and provides no feature); ebuff-menu provides
+    // Electric-buffer-menu.
+    assert_eq!(
+        ev("(progn (load \"w32-fns\" nil t)
+                  (list (fboundp 'w32-get-clipboard-data)
+                        (fboundp 'w32-shell-execute)))"),
+        "(nil nil)"
+    );
+    assert_eq!(
+        ev("(progn (require 'ebuff-menu)
+                  (list (featurep 'ebuff-menu)
+                        (fboundp 'electric-buffer-list)
+                        (fboundp 'electric-buffer-menu-mode)
+                        (keymapp electric-buffer-menu-mode-map)))"),
+        "(t t t t)"
+    );
+}

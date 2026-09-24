@@ -888,6 +888,65 @@ fn f_fillarray(i: &mut Interp, args: Vec<Value>) -> EvalResult {
             }
             Ok(args[0].clone())
         }
+        Value::Record(r) if super::misc::is_char_table(i, &args[0]) => {
+            // GNU `Ffillarray' on a char-table: the 64 top-level
+            // contents slots take ITEM (the ASCII slot is untouched),
+            // the defalt and every extra slot become ITEM, and the
+            // parent is preserved.
+            let item = args[1].clone();
+            if let Some(v) = super::misc::char_table_vec(&args[0]) {
+                let mut vv = v.borrow_mut();
+                for slot in vv.iter_mut().skip(1) {
+                    *slot = item.clone();
+                }
+            }
+            i.set_char_table_defalt(&args[0], item.clone());
+            for slot in r.borrow_mut().iter_mut().skip(3) {
+                *slot = item.clone();
+            }
+            Ok(args[0].clone())
+        }
+        Value::Record(r) if super::misc::is_bool_vector(i, &args[0]) => {
+            // GNU fills the bit vector with (not (null ITEM)).
+            let bit = if args[1].is_nil() { 0 } else { 1 };
+            if let Some(Value::Vec(b)) = r.borrow().get(1) {
+                for x in b.borrow_mut().iter_mut() {
+                    *x = Value::Int(bit);
+                }
+            }
+            Ok(args[0].clone())
+        }
+        Value::Str(s) => {
+            // GNU replaces each character with ITEM.  A unibyte
+            // (all-ASCII) string filled with a non-ASCII char takes
+            // ITEM's low byte; shrinking a multibyte char signals.
+            let item = match &args[1] {
+                Value::Int(n) if (0..=0x3fffff).contains(n) => *n as u32,
+                _ => return Err(i.wrong_type_mut("characterp", &args[1])),
+            };
+            let mut st = s.borrow_mut();
+            let n = st.chars().count();
+            let all_ascii = st.chars().all(|c| (c as u32) < 0x80);
+            let new: String = if item < 0x80 {
+                if !all_ascii {
+                    return Err(i.error("Attempt to change byte length of a string"));
+                }
+                std::iter::repeat_n(item as u8 as char, n).collect()
+            } else if all_ascii {
+                let low = char::from_u32(item & 0xff).unwrap_or('\u{fffd}');
+                std::iter::repeat_n(low, n).collect()
+            } else {
+                let ilen = char::from_u32(item).map_or(4, |c| c.len_utf8());
+                if !st.chars().all(|c| c.len_utf8() == ilen) {
+                    return Err(i.error("Attempt to change byte length of a string"));
+                }
+                let c = char::from_u32(item).unwrap_or('\u{fffd}');
+                std::iter::repeat_n(c, n).collect()
+            };
+            *st = new;
+            drop(st);
+            Ok(args[0].clone())
+        }
         other => Err(i.wrong_type_mut("arrayp", other)),
     }
 }

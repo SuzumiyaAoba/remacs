@@ -637,6 +637,18 @@ fn f_macroexpand_all(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     r
 }
 
+/// Whether FORM is a `(declare ...)' spec — a data position consumed
+/// by `defun'/`lambda' declaration handling, not expanded.
+fn is_declare_form(i: &Interp, form: &Value) -> bool {
+    if let Value::Cons(c) = form {
+        let b = c.borrow();
+        if let Value::Sym(id) = b.car {
+            return i.symbol_name(id) == "declare";
+        }
+    }
+    false
+}
+
 /// Recursively expand macros throughout a form.
 pub(crate) fn macroexpand_all(i: &mut Interp, form: &Value) -> EvalResult {
     let expanded = i.macroexpand(form)?;
@@ -670,35 +682,80 @@ pub(crate) fn macroexpand_all(i: &mut Interp, form: &Value) -> EvalResult {
                     // are data positions like `lambda''s arglist.
                     _ if id == closure_id && items.len() >= 3 => {
                         let mut out = items[..3].to_vec();
-                        for it in &items[3..] {
+                        let mut body = items[3..].iter();
+                        for it in &mut body {
+                            if matches!(it, Value::Str(_)) || is_declare_form(i, it) {
+                                out.push(it.clone());
+                            } else {
+                                out.push(macroexpand_all(i, it)?);
+                                break;
+                            }
+                        }
+                        for it in body {
                             out.push(macroexpand_all(i, it)?);
                         }
                         return Ok(Value::list(out));
                     }
                     sym::DEFUN | sym::DEFMACRO if items.len() >= 3 => {
                         let mut out = items[..3].to_vec();
-                        for it in &items[3..] {
+                        // GNU `macroexp--defun' consumes leading
+                        // `(declare ...)' specs itself; they are data,
+                        // not code, and must not be descended into
+                        // (an `ftype' spec holds a `(function TYPE)'
+                        // form that is not a function quote).
+                        let mut body = items[3..].iter();
+                        for it in &mut body {
+                            if matches!(it, Value::Str(_)) || is_declare_form(i, it) {
+                                out.push(it.clone());
+                            } else {
+                                out.push(macroexpand_all(i, it)?);
+                                break;
+                            }
+                        }
+                        for it in body {
                             out.push(macroexpand_all(i, it)?);
                         }
                         return Ok(Value::list(out));
                     }
                     sym::LAMBDA if items.len() >= 2 => {
                         let mut out = items[..2].to_vec();
-                        for it in &items[2..] {
+                        // Same for `macroexp--lambda': leading
+                        // `(declare ...)' forms pass through verbatim.
+                        let mut body = items[2..].iter();
+                        for it in &mut body {
+                            if matches!(it, Value::Str(_)) || is_declare_form(i, it) {
+                                out.push(it.clone());
+                            } else {
+                                out.push(macroexpand_all(i, it)?);
+                                break;
+                            }
+                        }
+                        for it in body {
                             out.push(macroexpand_all(i, it)?);
                         }
                         return Ok(Value::list(out));
                     }
                     sym::FUNCTION if items.len() >= 2 => {
-                        let mut arg = items[1].clone();
-                        if let Value::Cons(lc) = &arg {
-                            let b = lc.borrow();
-                            if i.sym_is(&b.car, sym::LAMBDA) || i.sym_is(&b.car, closure_id) {
-                                drop(b);
-                                arg = macroexpand_all(i, &arg)?;
+                        // GNU `macroexp--expand-all' only descends into
+                        // a lambda-shaped function argument; any other
+                        // `(function ...)' form is data (e.g. an `ftype'
+                        // spec inside `declare') and passes through
+                        // verbatim, extra elements included.
+                        if let Value::Cons(lc) = &items[1] {
+                            let is_lam = {
+                                let b = lc.borrow();
+                                i.sym_is(&b.car, sym::LAMBDA)
+                                    || i.sym_is(&b.car, closure_id)
+                            };
+                            if is_lam {
+                                let arg = macroexpand_all(i, &items[1])?;
+                                return Ok(Value::list(vec![
+                                    items[0].clone(),
+                                    arg,
+                                ]));
                             }
                         }
-                        return Ok(Value::list(vec![items[0].clone(), arg]));
+                        return Ok(expanded);
                     }
                     sym::LET | sym::LET_STAR | sym::AND_LET_STAR if items.len() >= 2 => {
                         let mut out = vec![items[0].clone()];

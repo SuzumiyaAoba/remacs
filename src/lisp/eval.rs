@@ -791,6 +791,11 @@ impl Interp {
             // evaluating it defines `emacs-repository-*' helpers while
             // `(require 'version)' still fails exactly like GNU.
             let _ = crate::lisp::load::load_library(&mut interp, "version");
+            // rx.el is likewise loaded by loadup.el: GNU has the `rx'
+            // macro bound at -Q but leaves `rx' unprovided
+            // (`(featurep 'rx)' is nil there too), so libraries whose
+            // top-level forms use `rx' can expand at load.
+            let _ = crate::lisp::load::load_library(&mut interp, "rx");
         }
         interp.loading_dumped = false;
         // GNU resets `gensym-counter' to 0 when the dumped image starts

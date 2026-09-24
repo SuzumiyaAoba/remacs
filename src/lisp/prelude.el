@@ -3500,6 +3500,40 @@ With a non `-' prefix argument, print output into current buffer."
 (defvar isearch-mode-map (make-sparse-keymap)
   "Keymap for `isearch-mode'.")
 
+(defmacro isearch-define-mode-toggle (mode key function &optional docstring &rest body)
+  "Define a command called `isearch-toggle-MODE' and bind it to `M-s KEY'.
+The first line of the command's docstring is auto-generated, the
+remainder may be provided in DOCSTRING.
+If FUNCTION is a symbol, this command first toggles the value of
+`isearch-regexp-function' between nil and FUNCTION.  Also set the
+`isearch-message-prefix' property of FUNCTION.
+The command then executes BODY and updates the isearch prompt."
+  (declare (indent defun))
+  (let ((command-name (intern (format "isearch-toggle-%s" mode)))
+        (key (concat "\M-s" key)))
+    `(progn
+       (defun ,command-name ()
+         ,(format "Toggle %s searching on or off.%s" mode
+                  (if docstring (concat "\n" docstring) ""))
+         (interactive)
+         (unless isearch-mode (isearch-mode t))
+         ,@(when function
+             `((setq isearch-regexp-function
+                     (unless (eq isearch-regexp-function #',function)
+                       #',function))
+               (setq isearch-regexp nil)))
+         ,@body
+         (setq isearch-success t isearch-adjusted 'toggle)
+         (isearch-update))
+       (define-key isearch-mode-map ,key #',command-name)
+       ,@(when (and function (symbolp function))
+           `((put ',function 'isearch-message-prefix ,(format "%s " mode))
+             (put ',function :advertised-binding ,key)
+             (cl-callf (lambda (types) (cons 'choice
+                                        (cons '(const :tag ,(capitalize (format "%s search" mode)) ,function)
+                                              (cdr types))))
+                 (get 'search-default-mode 'custom-type)))))))
+
 (defun query-replace (from-string to-string &optional delimited)
   "Replace occurrences of FROM-STRING with TO-STRING, asking."
   (interactive "sQuery replace: \nsQuery replace %s with: ")
@@ -24989,6 +25023,24 @@ On error, location of point is unspecified."
   (defalias obsolete-name current-name docstring)
   (put obsolete-name 'byte-obsolete-function t)
   obsolete-name)
+
+;; GNU byte-run.el: advertised calling conventions.  Needed early —
+;; `define-obsolete-function-alias' call sites with an
+;; `advertised-calling-convention' declare spec (e.g. tabulated-list)
+;; expand to `set-advertised-calling-convention' calls.
+(defvar advertised-signature-table (make-hash-table :test 'eq :weakness 'key))
+
+(defun set-advertised-calling-convention (function signature _when)
+  "Set the advertised SIGNATURE of FUNCTION.
+This will allow the byte-compiler to warn the programmer when she uses
+an obsolete calling convention.  WHEN specifies since when the calling
+convention was modified."
+  (puthash (indirect-function function) signature advertised-signature-table))
+
+(defun get-advertised-calling-convention (function)
+  "Get the advertised SIGNATURE of FUNCTION.
+Return t if there isn't any."
+  (gethash function advertised-signature-table t))
 
 ;; GNU subr.el: the variable-alias counterpart.  The byte-compiler's
 ;; `byte-obsolete-variable' triple gets (CURRENT WHEN ACCESS-TYPE); an
