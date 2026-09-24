@@ -4428,7 +4428,9 @@ fn f_skip_syntax_forward(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         Value::Str(s) => s.borrow().clone(),
         other => return Err(i.wrong_type_mut("stringp", other)),
     };
-    let syn = crate::editor::Syn::current(i);
+    let upto = a.get(1).and_then(|v| v.int()).map(|n| n.max(1) as usize)
+        .unwrap_or_else(|| cur(i).borrow().zv + 1);
+    let syn = crate::editor::Syn::current(i, upto);
     let b = cur(i);
     let mut bb = b.borrow_mut();
     let lim = match a.get(1) {
@@ -4460,7 +4462,8 @@ fn f_skip_syntax_backward(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         Value::Str(s) => s.borrow().clone(),
         other => return Err(i.wrong_type_mut("stringp", other)),
     };
-    let syn = crate::editor::Syn::current(i);
+    let upto = cur(i).borrow().point() + 1;
+    let syn = crate::editor::Syn::current(i, upto);
     let b = cur(i);
     let mut bb = b.borrow_mut();
     let lim = match a.get(1) {
@@ -4665,24 +4668,17 @@ fn f_forward_comment(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let count = a.get(0).and_then(|v| v.int()).unwrap_or(1);
     // Resolve the syntax table before the buffer borrow (the borrow
     // would make the lookup silently fall back to the standard table).
-    let syn = crate::editor::Syn::current(i);
+    let stop1 = cur(i).borrow().zv + 1;
+    let syn = crate::editor::Syn::current(i, stop1);
     let b = cur(i);
     let mut bb = b.borrow_mut();
-    let text: Vec<char> = bb.text.text().chars().collect();
     let beg = bb.begv;
     let stop = bb.zv.min(bb.text_len());
-    let (np, ok) = forward_comment_scan(&syn, &text, beg, stop, bb.point(), count);
+    let pt = bb.point();
+    let text = bb.text.as_slice();
+    let (np, ok) = forward_comment_scan(&syn, text, beg, stop, pt, count);
     bb.set_point(np);
     Ok(if ok { Value::Sym(sym::T) } else { Value::Nil })
-}
-
-/// Text of the current buffer plus point, as a char vec; also the
-/// narrowed [BEGV,ZV) bounds (0-based).
-fn nav_text(i: &Interp) -> (Vec<char>, usize, usize, usize) {
-    let b = i.buffers.get(i.current_buffer).unwrap();
-    let bb = b.borrow();
-    let text: Vec<char> = bb.text.text().chars().collect();
-    (text, bb.point(), bb.begv, bb.zv.min(bb.text_len()))
 }
 
 /// GNU `scan-lists': scan COUNT lists from FROM starting at DEPTH.
@@ -4691,10 +4687,14 @@ fn f_scan_lists(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let from = want_int(i, &a[0])?;
     let count = want_int(i, &a[1])?;
     let depth = want_int(i, &a[2])?;
-    let syn = crate::editor::Syn::current(i);
-    let (text, _, beg, stop) = nav_text(i);
+    let upto = cur(i).borrow().zv + 1;
+    let syn = crate::editor::Syn::current(i, upto);
+    let b = i.buffers.get(i.current_buffer).unwrap().clone();
+    let mut bb = b.borrow_mut();
+    let (beg, stop) = (bb.begv, bb.zv.min(bb.text_len()));
+    let text = bb.text.as_slice();
     let pos = pos_idx(stop, from).max(beg);
-    match scan_lists_gnu(&syn, &text, beg, stop, pos, count, depth as i64, false) {
+    match scan_lists_gnu(&syn, text, beg, stop, pos, count, depth as i64, false) {
         Ok(Some(p)) => Ok(Value::Int(p as i128 + 1)),
         Ok(None) => Ok(Value::Nil),
         Err(e) => Err(scan_err_flow(i, e)),
@@ -4704,10 +4704,14 @@ fn f_scan_lists(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 fn f_scan_sexps(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let from = want_int(i, &a[0])?;
     let count = want_int(i, &a[1])?;
-    let syn = crate::editor::Syn::current(i);
-    let (text, _, beg, stop) = nav_text(i);
+    let upto = cur(i).borrow().zv + 1;
+    let syn = crate::editor::Syn::current(i, upto);
+    let b = i.buffers.get(i.current_buffer).unwrap().clone();
+    let mut bb = b.borrow_mut();
+    let (beg, stop) = (bb.begv, bb.zv.min(bb.text_len()));
+    let text = bb.text.as_slice();
     let pos = pos_idx(stop, from).max(beg);
-    match scan_lists_gnu(&syn, &text, beg, stop, pos, count, 0, true) {
+    match scan_lists_gnu(&syn, text, beg, stop, pos, count, 0, true) {
         Ok(Some(p)) => Ok(Value::Int(p as i128 + 1)),
         Ok(None) => Ok(Value::Nil),
         Err(e) => Err(scan_err_flow(i, e)),
@@ -4717,7 +4721,7 @@ fn f_scan_sexps(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 /// GNU `syntax-after': (CLASS . MATCHING-CHAR) for the char at POS.
 pub(crate) fn f_syntax_after(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let pos = want_int(i, &a[0])?;
-    let syn = crate::editor::Syn::current(i);
+    let syn = crate::editor::Syn::current(i, pos.max(1) as usize);
     let b = cur(i);
     let bb = b.borrow();
     let idx = pos_idx(bb.text_len(), pos);
@@ -7126,19 +7130,17 @@ pub(crate) fn regexp_compile(
 
 fn f_looking_at(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let re = regexp_compile(i, &a[0])?;
-    let (text, pos) = {
-        let b = cur(i);
-        let bb = b.borrow();
-        (
-            bb.text
-                .substring(bb.begv, bb.text_len())
-                .chars()
-                .collect::<Vec<char>>(),
-            bb.point() - bb.begv,
-        )
-    };
     let syn = crate::editor::re_syntax(i);
-    match crate::lisp::regexp::looking_at(&re, &text, pos, &syn) {
+    let regs = {
+        let b = cur(i);
+        let mut bb = b.borrow_mut();
+        let begv = bb.begv;
+        let stop = bb.text_len();
+        let pos = bb.point() - begv;
+        let text = bb.text.as_slice();
+        crate::lisp::regexp::looking_at(&re, &text[begv..stop], pos, &syn)
+    };
+    match regs {
         Some(regs) => {
             i.match_data = Some(MatchData {
                 regs,
@@ -7209,17 +7211,10 @@ pub(crate) fn search_common(
     // GNU: a negative COUNT reverses the search direction (and BOUND
     // then limits the flipped direction).
     let backward = backward != (count < 0);
-    let (text, pos, begv) = {
+    let (pos, begv) = {
         let b = cur(i);
         let bb = b.borrow();
-        (
-            bb.text
-                .substring(bb.begv, bb.text_len())
-                .chars()
-                .collect::<Vec<char>>(),
-            bb.point() - bb.begv,
-            bb.begv,
-        )
+        (bb.point() - bb.begv, bb.begv)
     };
     // GNU: COUNT = 0 performs no search and returns point.
     if count == 0 {
@@ -7232,50 +7227,57 @@ pub(crate) fn search_common(
             return Err(i.error("Invalid search bound (wrong side of point)"));
         }
     }
-    let bound_idx = bound
-        .map(|p| (p.max(1) as usize - 1).saturating_sub(begv))
-        .unwrap_or(if backward { 0 } else { text.len() });
     let syn = crate::editor::re_syntax(i);
-    let mut found: Option<crate::lisp::regexp::Regs> = None;
-    let mut steps = count.abs().max(1);
-    let mut cur_pos = pos;
-    while steps > 0 {
-        let hit = match (re, needle) {
-            (Some(r), _) => {
-                if backward {
-                    crate::lisp::regexp::search_backward_full(r, &text, cur_pos, &syn)
-                } else {
-                    crate::lisp::regexp::search_full(r, &text, cur_pos, &syn)
-                }
-            }
-            (_, Some(n)) => literal_search(&text, n, cur_pos, backward),
-            _ => None,
-        };
-        match hit {
-            Some(regs) => {
-                let s = regs[0].unwrap_or(0);
-                let e = regs[1].unwrap_or(0);
-                // bound check
-                if !backward && e > bound_idx {
-                    found = None;
-                    break;
-                }
-                if backward && s < bound_idx {
-                    found = None;
-                    break;
-                }
-                found = Some(regs);
-                cur_pos = if backward { s } else { e.max(s + 1) };
-                steps -= 1;
-                if backward {
-                    if s == 0 {
-                        break;
+    let found = {
+        let b = cur(i);
+        let mut bb = b.borrow_mut();
+        let stop = bb.text_len();
+        let text = &bb.text.as_slice()[begv..stop];
+        let bound_idx = bound
+            .map(|p| (p.max(1) as usize - 1).saturating_sub(begv))
+            .unwrap_or(if backward { 0 } else { text.len() });
+        let mut found: Option<crate::lisp::regexp::Regs> = None;
+        let mut steps = count.abs().max(1);
+        let mut cur_pos = pos;
+        while steps > 0 {
+            let hit = match (re, needle) {
+                (Some(r), _) => {
+                    if backward {
+                        crate::lisp::regexp::search_backward_full(r, text, cur_pos, &syn)
+                    } else {
+                        crate::lisp::regexp::search_full(r, text, cur_pos, &syn)
                     }
                 }
+                (_, Some(n)) => literal_search(text, n, cur_pos, backward),
+                _ => None,
+            };
+            match hit {
+                Some(regs) => {
+                    let s = regs[0].unwrap_or(0);
+                    let e = regs[1].unwrap_or(0);
+                    // bound check
+                    if !backward && e > bound_idx {
+                        found = None;
+                        break;
+                    }
+                    if backward && s < bound_idx {
+                        found = None;
+                        break;
+                    }
+                    found = Some(regs);
+                    cur_pos = if backward { s } else { e.max(s + 1) };
+                    steps -= 1;
+                    if backward {
+                        if s == 0 {
+                            break;
+                        }
+                    }
+                }
+                None => break,
             }
-            None => break,
         }
-    }
+        found
+    };
     match found {
         Some(regs) => {
             let e = regs[1].unwrap_or(0);
@@ -7295,13 +7297,13 @@ pub(crate) fn search_common(
                 // search limit (BOUND, else eob/bob in search dir).
                 let noerror_t = matches!(&a[2], Value::Sym(s) if i.sym_is(&Value::Sym(*s), sym::T));
                 if !noerror_t {
+                    let buf = cur(i);
+                    let blen = buf.borrow().text_len();
                     let limit = match bound {
                         Some(b) => b.max(1) as usize - 1,
                         None if backward => 0,
-                        None => text.len(),
+                        None => blen - begv,
                     };
-                    let buf = cur(i);
-                    let blen = buf.borrow().text_len();
                     buf.borrow_mut().set_point(limit.min(blen));
                 }
                 Ok(Value::Nil)

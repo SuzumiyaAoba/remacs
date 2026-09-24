@@ -332,6 +332,59 @@ fn eval_for_load(i: &mut Interp, form: Value) -> EvalResult {
     }
 }
 
+/// Record a `load-history' entry for the embedded startup prelude so
+/// `symbol-file' and the find-func family can locate prelude-defined
+/// symbols.  GNU records every dumped library in `load-history' the same
+/// way; FILE names the on-disk copy of the prelude source.
+pub(crate) fn record_prelude_load_history(i: &mut Interp, file: &str, src: &str) {
+    let cll = i.intern("current-load-list");
+    let mark = i.specbind_depth();
+    if i.specbind(cll, Value::Nil).is_err() {
+        return;
+    }
+    let chars: Rc<Vec<char>> = Rc::new(src.chars().collect());
+    let mut pos = 0usize;
+    loop {
+        let next = {
+            let mut reader = crate::lisp::reader::Reader::with_chars(i, chars.clone());
+            reader.set_position(pos);
+            match reader.read() {
+                Ok(f) => f.map(|v| (v, reader.position())),
+                Err(_) => None,
+            }
+        };
+        match next {
+            Some((form, end)) => {
+                pos = end;
+                record_form_tree(i, &form);
+            }
+            None => break,
+        }
+    }
+    let mut entries = i.symbol_value(cll).list_to_vec().unwrap_or_default();
+    entries.reverse();
+    let entry = Value::cons(Value::string(file), Value::list(entries));
+    let lh = i.intern("load-history");
+    let cur = match i.symbol_value(lh) {
+        Value::Sym(s) if s == crate::lisp::sym::UNBOUND => Value::Nil,
+        v => v,
+    };
+    i.obarray.symbol_mut(lh).value = Value::cons(entry, cur);
+    let _ = i.unbind_to(mark);
+}
+
+/// Record one top-level prelude form, splicing `progn' children the way
+/// `eval_for_load' does during `load'.
+fn record_form_tree(i: &mut Interp, form: &Value) {
+    if let Some(children) = progn_children(i, form) {
+        for child in children {
+            record_form_tree(i, &child);
+        }
+    } else {
+        record_load_entry(i, form);
+    }
+}
+
 /// Record a `load-history' entry for a successfully evaluated top-level
 /// form during `load', pushing onto `current-load-list' the way GNU's
 /// lread.c does.  GNU's entry shapes: `(defun . SYM)' for function-ish

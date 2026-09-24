@@ -540,6 +540,16 @@ impl Interp {
         } else {
             let _ = interp.eval_str(crate::lisp::prelude::PRELUDE);
         }
+        if std::env::var("REMACS_NO_PRELUDE").is_err() {
+            // GNU records every dumped library in `load-history'; do the
+            // same for the embedded prelude so `symbol-file' and the
+            // find-func family can locate prelude-defined symbols.
+            crate::lisp::load::record_prelude_load_history(
+                &mut interp,
+                concat!(env!("CARGO_MANIFEST_DIR"), "/src/lisp/prelude.el"),
+                crate::lisp::prelude::PRELUDE,
+            );
+        }
         // GNU's `global-eldoc-mode' installs eldoc functions
         // buffer-locally on the command hooks; in `-Q --batch' only
         // `*scratch*' carries those local bindings (verified), which is

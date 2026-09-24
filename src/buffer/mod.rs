@@ -53,6 +53,10 @@ pub struct Buffer {
     pub undo_pt_before: Option<usize>,
     /// Time of last modification (for tick tracking).
     pub mod_tick: u64,
+    /// GNU CHARS_MODIFF: bumped only when the buffer *text* changes
+    /// (`buffer-chars-modified-tick'); text-property changes bump
+    /// `mod_tick' alone.
+    pub chars_mod_tick: u64,
     /// GNU SAVE_MODIFF: `mod_tick' at the last save or
     /// `set-buffer-modified-p' nil.  When `mod_tick <= save_tick' the
     /// next recorded change pushes a `(t . MODTIME)' first-change entry.
@@ -276,6 +280,7 @@ impl Buffer {
             // Creation counts as the first modification (Emacs's
             // fresh buffers report buffer-modified-tick = 1).
             mod_tick: 1,
+            chars_mod_tick: 1,
             save_tick: 1,
             text_props: Vec::new(),
             overlays: Vec::new(),
@@ -374,6 +379,7 @@ impl Buffer {
         self.adjust_insert(pos, n, before_markers_flag(pos, self.point));
         self.note_modified(true);
         self.mod_tick += 1;
+        self.chars_mod_tick += 1;
     }
 
     /// Like Emacs's `insert`: inserted text goes *before* point when
@@ -391,6 +397,7 @@ impl Buffer {
         self.adjust_markers_insert(p, n, false);
         self.note_modified(true);
         self.mod_tick += 1;
+        self.chars_mod_tick += 1;
     }
 
     /// `insert-before-markers`.
@@ -406,6 +413,7 @@ impl Buffer {
         self.adjust_markers_insert(p, n, true);
         self.note_modified(true);
         self.mod_tick += 1;
+        self.chars_mod_tick += 1;
     }
 
     /// Point adjustment for `insert_at` (non-point-aware variant).
@@ -593,6 +601,7 @@ impl Buffer {
         }
         self.note_modified(true);
         self.mod_tick += 1;
+        self.chars_mod_tick += 1;
         removed
     }
 

@@ -9313,6 +9313,7 @@ fn f_transpose_chars(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     bb.adjust_markers_insert(p - 1, s2.chars().count(), false);
     bb.note_modified(true);
     bb.mod_tick += 1;
+    bb.chars_mod_tick += 1;
     bb.set_point(p + 1);
     Ok(Value::Nil)
 }
@@ -9341,6 +9342,7 @@ fn f_transpose_lines(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     bb.adjust_markers_insert(l1s, new.chars().count(), false);
     bb.note_modified(true);
     bb.mod_tick += 1;
+    bb.chars_mod_tick += 1;
     Ok(Value::Nil)
 }
 
@@ -9591,6 +9593,7 @@ fn f_untabify(i: &mut Interp, a: Vec<Value>) -> EvalResult {
             bb.adjust_markers_insert(pos, spaces, false);
             bb.note_modified(true);
             bb.mod_tick += 1;
+            bb.chars_mod_tick += 1;
             pos += spaces;
         } else {
             pos += 1;
@@ -11087,7 +11090,10 @@ pub(crate) struct Syn {
 }
 
 impl Syn {
-    pub(crate) fn current(i: &mut Interp) -> Self {
+    /// UPTO is the 1-based buffer position through which the upcoming
+    /// scan needs `syntax-table' properties (the scan end, clamped to
+    /// the buffer bounds by `internal--syntax-propertize' itself).
+    pub(crate) fn current(i: &mut Interp, upto: usize) -> Self {
         let ignore = i
             .intern_soft("parse-sexp-ignore-comments")
             .map(|sid| !i.symbol_value(sid).is_nil())
@@ -11110,17 +11116,17 @@ impl Syn {
             .unwrap_or(true);
         let mut prop_ranges = Vec::new();
         if lookup {
-            // GNU propertizes lazily inside the scan; propertize the
-            // visible region up front instead.
-            let zv = cur(i).borrow().zv;
+            // GNU propertizes lazily inside the scan, chunk by chunk;
+            // propertize only through UPTO (a 1-based buffer position)
+            // so bounded scans stay cheap on large buffers.
             let done = i
                 .intern_soft("syntax-propertize--done")
                 .and_then(|sid| i.symbol_value(sid).int())
                 .unwrap_or(-1);
-            if done >= 0 && (done as usize) < zv || done < 0 {
+            if done < 0 || (done as usize) < upto {
                 if let Some(sid) = i.intern_soft("internal--syntax-propertize") {
                     if i.fbound_p(sid) {
-                        let _ = i.apply(&Value::Sym(sid), vec![Value::Int(zv as i128 + 1)]);
+                        let _ = i.apply(&Value::Sym(sid), vec![Value::Int(upto as i128)]);
                     }
                 }
             }
@@ -11544,10 +11550,10 @@ fn f_modify_syntax_entry(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 /// OLDSTATE COMMENTSTOP)' — GNU's `scan_sexps_forward' port driving the
 /// active syntax table.
 fn f_parse_partial_sexp(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let syn = Syn::current(i);
+    let syn = Syn::current(i, a.get(1).and_then(|v| v.int()).unwrap_or(1).max(1) as usize);
     let b = cur(i);
     let (stop_pos, state) = {
-        let bb = b.borrow();
+        let mut bb = b.borrow_mut();
         // GNU checks TARGETDEPTH's type first (CHECK_FIXNUM), then
         // fixes FROM/TO and validates them against [BEGV, ZV].
         let targetdepth = match a.get(2) {
@@ -11587,11 +11593,12 @@ fn f_parse_partial_sexp(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         };
         let from = (from_l - 1) as usize;
         let to = (to_l - 1) as usize;
-        let text: Vec<char> = bb.text.text().chars().collect();
+        let begv = bb.begv;
+        let text = bb.text.as_slice();
         crate::buffer::primitives::scan_sexps_fwd(
             &syn,
-            &text,
-            bb.begv,
+            text,
+            begv,
             from,
             to,
             &mut st,

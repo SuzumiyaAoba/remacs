@@ -180,8 +180,9 @@ pub(crate) static SUBRS: &[Subr] = &[
         "buffer-chars-modified-tick",
         0,
         1,
-        f_buffer_mod_tick,
-        "Modification counter."
+        f_buffer_chars_mod_tick,
+        "Modification counter that only counts text changes, not\n\
+         text-property changes."
     ),
     S!(
         "buffer-modified-tick",
@@ -2219,6 +2220,11 @@ fn f_buffer_mod_tick(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
     Ok(Value::Int(b.borrow().mod_tick as i128))
 }
 
+fn f_buffer_chars_mod_tick(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
+    let b = cur(i);
+    Ok(Value::Int(b.borrow().chars_mod_tick as i128))
+}
+
 fn f_store_match_data(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     // Same as set-match-data plus reseat markers (we use plain ints).
     let items = a[0].list_to_vec().unwrap_or_default();
@@ -2555,11 +2561,13 @@ fn f_win_line_height(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
 
 fn f_backward_prefix_chars(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
     // GNU: skip back over unquoted `''-class chars and `p'-flagged chars.
-    let syn = crate::editor::Syn::current(i);
+    let upto = cur(i).borrow().point() + 1;
+    let syn = crate::editor::Syn::current(i, upto);
     let b = cur(i);
     let mut bb = b.borrow_mut();
-    let text: Vec<char> = bb.text.text().chars().collect();
-    let p = crate::buffer::primitives::backward_prefix_chars(&syn, &text, bb.begv, bb.point());
+    let (beg, pt) = (bb.begv, bb.point());
+    let text = bb.text.as_slice();
+    let p = crate::buffer::primitives::backward_prefix_chars(&syn, text, beg, pt);
     bb.set_point(p);
     Ok(Value::Nil)
 }

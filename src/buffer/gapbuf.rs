@@ -78,6 +78,15 @@ impl GapBuffer {
         self.gap_end += grow;
     }
 
+    /// The logical text as one contiguous slice: moves the gap to the
+    /// end first (O(tail) once; free on repeat calls while unedited).
+    /// Used by scan/regexp paths that need random `&[char]` access
+    /// without allocating a `Vec<char>` copy per call.
+    pub fn as_slice(&mut self) -> &[char] {
+        self.move_gap(self.len());
+        &self.buf[..self.gap_start]
+    }
+
     /// Insert `text` at logical position `pos`.
     pub fn insert(&mut self, pos: usize, text: &str) {
         self.move_gap(pos);
