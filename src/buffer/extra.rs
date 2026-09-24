@@ -460,6 +460,13 @@ fn f_find_file_name_handler(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let file = want_string(i, &a[0])?;
     let fid = i.intern("file-name-handler-alist");
     let alist = i.symbol_value(fid);
+    // GNU fileio.c Ffind_file_name_handler: a matching handler symbol
+    // carrying an `operations' property only serves the operations
+    // listed there (e.g. `jka-compr-handler' declines
+    // `file-name-sans-versions' but serves `insert-file-contents').
+    // (`inhibit-file-name-handlers' is consulted where C code *calls*
+    // handlers, not by this subr — GNU ignores it here.)
+    let ops_id = i.intern("operations");
     let mut cur = alist;
     loop {
         match cur {
@@ -482,7 +489,28 @@ fn f_find_file_name_handler(i: &mut Interp, a: Vec<Value>) -> EvalResult {
                             .and_then(|re| crate::lisp::regexp::search_full(&re, &chars, 0, &syn))
                             .is_some();
                         if matched {
-                            return Ok(handler);
+                            let mut excluded = false;
+                            if let Value::Sym(hs) = &handler {
+                                let ops = i.get_prop(*hs, ops_id);
+                                if !ops.is_nil() {
+                                    excluded = true;
+                                    let mut oc = ops;
+                                    while let Value::Cons(cc) = oc {
+                                        let (h, n) = {
+                                            let b = cc.borrow();
+                                            (b.car.clone(), b.cdr.clone())
+                                        };
+                                        if crate::lisp::builtins::eq_values(&h, &a[1]) {
+                                            excluded = false;
+                                            break;
+                                        }
+                                        oc = n;
+                                    }
+                                }
+                            }
+                            if !excluded {
+                                return Ok(handler);
+                            }
                         }
                     }
                 }

@@ -1056,3 +1056,73 @@ fn emacs_lock_bind_key_mouse_copy_t_mouse() {
         "(t t t nil nil)"
     );
 }
+
+// ------------------------------------------------ jka-compr / file-name handlers
+
+#[test]
+fn jka_cmpr_hook_is_dumped_and_installs() {
+    // GNU-verified on 31.1: jka-cmpr-hook is a dumped feature — its
+    // definitions exist at startup and auto-compression-mode installs
+    // the file-name handler entry.
+    assert_eq!(
+        ev("(list (fboundp 'jka-compr-installed-p)
+                  auto-compression-mode
+                  (consp (jka-compr-installed-p)))"),
+        "(t t t)"
+    );
+}
+
+#[test]
+fn find_file_name_handler_filters_by_operations() {
+    // GNU-verified on 31.1 (fileio.c): a handler symbol carrying an
+    // `operations' property only serves those operations —
+    // `jka-compr-handler' answers `insert-file-contents'/`load' but
+    // not `file-name-sans-versions'.  `inhibit-file-name-handlers' is
+    // not consulted by the subr itself (GNU-verified: result unchanged).
+    assert_eq!(
+        ev("(list (find-file-name-handler \"foo.gz\" 'insert-file-contents)
+                  (find-file-name-handler \"foo.gz\" 'load)
+                  (find-file-name-handler \"foo.gz\" 'file-name-sans-versions)
+                  (let ((inhibit-file-name-handlers '(jka-compr-handler)))
+                    (find-file-name-handler \"foo.gz\" 'insert-file-contents))
+                  (file-name-sans-versions \"foo.gz\"))"),
+        "(jka-compr-handler jka-compr-handler nil jka-compr-handler \"foo.gz\")"
+    );
+}
+
+#[test]
+fn jka_compr_compression_info() {
+    // GNU-verified on 31.1: .gz gets gzip info, .txt gets nil.
+    assert_eq!(
+        ev("(progn (require 'jka-compr)
+                  (list (aref (jka-compr-get-compression-info \"foo.gz\") 2)
+                        (jka-compr-get-compression-info \"foo.txt\")))"),
+        "(\"gzip\" nil)"
+    );
+}
+
+#[test]
+fn misc_lpr_hl_line_ecomplete_loadhist_entry_points() {
+    // GNU-verified on 31.1.
+    assert_eq!(
+        ev("(progn (require 'misc) (require 'lpr) (require 'hl-line)
+                  (require 'loadhist) (require 'help-at-pt)
+                  (require 'avoid) (require 'mouse-drag) (require 'visual-wrap)
+                  (require 'ecomplete)
+                  (let ((ecomplete-database nil))
+                    (ecomplete-add-item 'mail \"a@b.com\" \"Alice\")
+                    (list (fboundp 'zap-up-to-char)
+                          (fboundp 'copy-from-above-command)
+                          (fboundp 'lpr-buffer)
+                          (fboundp 'hl-line-mode)
+                          (fboundp 'global-hl-line-mode)
+                          (fboundp 'unload-feature)
+                          (fboundp 'feature-symbols)
+                          (fboundp 'help-at-pt-string)
+                          (fboundp 'mouse-avoidance-mode)
+                          (fboundp 'mouse-drag-drag)
+                          (fboundp 'visual-wrap-prefix-mode)
+                          (nth 3 (ecomplete-get-item 'mail \"a@b.com\")))))"),
+        "(t t t t t t t t t t t \"Alice\")"
+    );
+}

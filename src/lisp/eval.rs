@@ -749,6 +749,11 @@ impl Interp {
             // exist too — `(require 'env)' short-circuits on the
             // feature mark, so evaluate the embedded source now.
             let _ = crate::lisp::load::load_library(&mut interp, "env");
+            // jka-cmpr-hook.el is in GNU's dump too (loadup.el): the
+            // feature mark would make `require' skip the definitions —
+            // evaluate it so `jka-compr-installed-p' & co. exist and
+            // `auto-compression-mode' installs its file-name handler.
+            let _ = crate::lisp::load::load_library(&mut interp, "jka-cmpr-hook");
             // tabulated-list.el is likewise in GNU's dump (loadup.el):
             // same reasoning as env — the feature mark alone would
             // make `require' skip the definitions.

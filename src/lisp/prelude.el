@@ -3052,6 +3052,23 @@ If nil, the feature is disabled, i.e., all commands work normally.")
 (defvar header-line-indent-width 0
   "Width of line numbers causing header-line indentation.")
 
+;; GNU jka-compr.el autoload cookies (loaddefs.el): file-name handlers
+;; installed by `auto-compression-mode' resolve the handler lazily —
+;; e.g. `file-name-sans-versions' on a .gz name autoloads jka-compr.el.
+(defvar jka-compr-inhibit nil
+  "Non-nil means inhibit automatic uncompression temporarily.
+Lisp programs can bind this to t to do that.
+It is not recommended to set this variable permanently to anything but nil.")
+(autoload 'jka-compr-handler "jka-compr"
+  "
+
+\(fn OPERATION &rest ARGS)")
+(autoload 'jka-compr-uninstall "jka-compr"
+  "Uninstall jka-compr.
+This removes the entries in `file-name-handler-alist' and `auto-mode-alist'
+and `inhibit-local-variables-suffixes' that were added
+by `jka-compr-install'.")
+
 ;; GNU faces.el: the built-in `default' face's doc string.
 (put 'default 'face-documentation "Basic default face.")
 ;; GNU: `default' is defined by C code; its defface spec is ((t nil)).
