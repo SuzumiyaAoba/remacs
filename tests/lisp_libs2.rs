@@ -2005,3 +2005,60 @@ fn inline_alias_and_coding_system_list_parity() {
         "(t t nil (arity wrong-number-of-arguments))"
     );
 }
+
+// ------------------------- cond-star/derived/generic/range/timer-list/copyright
+
+#[test]
+fn mode_macro_autoload_cells_and_lazy_load() {
+    // GNU -Q: `define-derived-mode'/`define-generic-mode' are loaddefs
+    // autoload cells — GNU's dumped mode definitions were byte-compiled,
+    // so nothing resolves them at startup.  Remacs expands its dumped
+    // `define-derived-mode' calls with a prelude-local bootstrap macro
+    // and restores the autoload cell after the dumped loads, so the
+    // -Q observable state matches GNU: autoloads present, features off.
+    assert_eq!(
+        ev("(list (autoloadp (symbol-function 'define-derived-mode))
+                  (autoloadp (symbol-function 'define-generic-mode))
+                  (featurep 'derived) (featurep 'generic)
+                  (fboundp 'prog-mode) (fboundp 'text-mode)
+                  (fboundp 'lisp-mode) (fboundp 'completion-list-mode))"),
+        "(t t nil nil t t t t)"
+    );
+    // First use lazy-loads the real GNU derived.el.
+    assert_eq!(
+        ev("(progn (define-derived-mode remacs--test-derived prog-mode \"TestDerived\" \"Doc.\")
+                  (list (featurep 'derived) (fboundp 'remacs--test-derived)
+                        (get 'remacs--test-derived 'derived-mode-parent)))"),
+        "(t t prog-mode)"
+    );
+    // Same for generic.el.
+    assert_eq!(
+        ev("(progn (define-generic-mode 'remacs--test-generic '(\"#\") nil nil nil nil \"Doc.\")
+                  (list (featurep 'generic) (fboundp 'remacs--test-generic)))"),
+        "(t t)"
+    );
+}
+
+#[test]
+fn cond_star_range_timer_list_copyright_parity() {
+    // GNU -Q: cond*/match*/list-timers/copyright-update are autoloads;
+    // `range' and the features stay unloaded.  GNU-verified on 31.1.
+    assert_eq!(
+        ev("(list (autoloadp (symbol-function 'cond*))
+                  (autoloadp (symbol-function 'match*))
+                  (autoloadp (symbol-function 'list-timers))
+                  (autoloadp (symbol-function 'copyright-update))
+                  (fboundp 'copyright))"),
+        "(t t t t t)"
+    );
+    // Functionality after load — byte-identical to GNU 31.1.
+    assert_eq!(
+        ev("(list (cond* ((> 1 2) 'no) ((< 1 2) 'yes) (t 'other))
+                  (progn (require 'range)
+                         (list (range-compress-list '(1 2 3 5 7 8 9))
+                               (range-difference '(1 . 10) '(4 . 6))))
+                  (progn (require 'copyright) (fboundp 'copyright-update))
+                  (progn (require 'timer-list) (fboundp 'list-timers)))"),
+        "(yes (((1 . 3) 5 (7 . 9)) ((1 . 3) (7 . 10))) t t)"
+    );
+}

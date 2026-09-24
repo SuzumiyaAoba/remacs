@@ -3298,6 +3298,92 @@ If FILE-NAME is non-nil, save the result to FILE-NAME.
 (autoload 'yenc-extract-filename "yenc"
   "Extract file name from an yenc header.")
 
+;; GNU subr.el docstring helpers — `define-derived-mode' (GNU
+;; derived.el, autoloaded) expands its docstring through these.
+(defun internal--fill-string-single-line (str)
+  "Fill string STR to `fill-column'.
+This is intended for very simple filling while bootstrapping
+Emacs itself, and does not support all the customization options
+of fill.el (for example `fill-region')."
+  (if (< (length str) fill-column)
+      str
+    (let* ((limit (min fill-column (length str)))
+           (fst (substring str 0 limit))
+           (lst (substring str limit)))
+      (cond ((string-match "\\( \\)$" fst)
+             (setq fst (replace-match "\n" nil nil fst 1)))
+            ((string-match "^ \\(.*\\)" lst)
+             (setq fst (concat fst "\n"))
+             (setq lst (match-string 1 lst)))
+            ((string-match ".*\\( \\(.+\\)\\)$" fst)
+             (setq lst (concat (match-string 2 fst) lst))
+             (setq fst (replace-match "\n" nil nil fst 1))))
+      (concat fst (internal--fill-string-single-line lst)))))
+
+(defun internal--format-docstring-line (string &rest objects)
+  "Format a single line from a documentation string out of STRING and OBJECTS.
+Signal an error if STRING contains a newline.
+This is intended for internal use only.  Avoid using this for the
+first line of a docstring; the first line should be a complete
+sentence (see Info node `(elisp) Documentation Tips')."
+  (when (string-match "\n" string)
+    (error "Unable to fill string containing newline: %S" string))
+  (internal--fill-string-single-line (apply #'format string objects)))
+
+;; GNU misc library autoloads (loaddefs.el); the cond-star and
+;; mode-definition entries are macro autoloads (TYPE t).
+(autoload 'cond* "cond-star"
+  "Extended form of traditional Lisp `cond' construct.
+
+\(fn &rest CLAUSES)" nil t)
+(autoload 'match* "cond-star"
+  "Specify matching DATUM against PATTERN in a `cond*' clause.
+
+\(fn PATTERN DATUM)" nil t)
+(autoload 'bind* "cond-star"
+  "Evaluate BINDINGS like `let*' in a `cond*' clause.
+
+\(fn &rest BINDINGS)" nil t)
+(autoload 'bind-and* "cond-star"
+  "Evaluate BINDINGS like `if-let*' in a `cond*' clause.
+
+\(fn &rest BINDINGS)" nil t)
+(autoload 'pcase* "cond-star"
+  "Evaluate PATTERN and DATUM like `pcase-let' in a `cond*' clause.
+
+\(fn PATTERN DATUM)" nil t)
+(autoload 'define-derived-mode "derived"
+  "Create a new mode CHILD which is a variant of an existing mode PARENT.
+
+\(fn CHILD PARENT NAME [DOCSTRING] [KEYWORD-ARGS...] &rest BODY)" nil t)
+(autoload 'define-generic-mode "generic"
+  "Create a new generic mode MODE.
+
+\(fn MODE COMMENT-LIST KEYWORD-LIST FONT-LOCK-LIST AUTO-MODE-LIST
+     FUNCTION-LIST &optional DOCSTRING)" nil t)
+(autoload 'generic-mode-internal "generic"
+  "Go into the generic mode MODE.
+
+\(fn MODE COMMENT-LIST KEYWORD-LIST FONT-LOCK-LIST FUNCTION-LIST)")
+(autoload 'generic-make-keywords-list "generic"
+  "Return a `font-lock-keywords' construct that highlights KEYWORD-LIST.
+
+\(fn KEYWORD-LIST FACE &optional PREFIX SUFFIX)")
+(autoload 'generic-mode "generic"
+  "Enter generic mode MODE." t)
+(autoload 'list-timers "timer-list"
+  "List all timers in a buffer.
+
+\(fn &optional IGNORE-AUTO NONCONFIRM)" t)
+(autoload 'copyright "copyright"
+  "Insert a copyright by $ORGANIZATION notice at cursor." t)
+(autoload 'copyright-fix-years "copyright"
+  "Convert 2 digit years to 4 digit years." t)
+(autoload 'copyright-update "copyright"
+  "Update copyright notice to indicate the current year." t)
+(autoload 'copyright-update-directory "copyright"
+  "Update copyright notice for all files in DIRECTORY matching MATCH." t)
+
 ;; GNU jka-compr.el autoload cookies (loaddefs.el): file-name handlers
 ;; installed by `auto-compression-mode' resolve the handler lazily —
 ;; e.g. `file-name-sans-versions' on a .gz name autoloads jka-compr.el.
@@ -18828,12 +18914,6 @@ Obsolete: use `set-face-attribute' instead."
 
 ;; `defface' is defined earlier with the custom.el core (it calls
 ;; `custom-declare-face').
-
-(defmacro define-generic-mode (&rest args)
-  "Define a generic mode (subset: aliases define-derived-mode)."
-  (declare (indent 1))
-  `(define-derived-mode ,(car args) fundamental-mode ,(cadr args)
-                        ,(caddr args)))
 
 ;; ---------- eval-after-load plumbing is in load.rs ----------
 

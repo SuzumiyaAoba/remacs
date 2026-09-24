@@ -823,6 +823,26 @@ impl Interp {
             // no `provide', so the feature stays nil while
             // `debug-early'/`debug-early-backtrace' are bound at -Q.
             let _ = crate::lisp::load::load_library(&mut interp, "debug-early");
+            // GNU -Q leaves `define-derived-mode'/`define-generic-mode'
+            // as loaddefs autoload cells: GNU's dumped mode definitions
+            // were byte-compiled, so the macros expanded at build time
+            // and the cells stay autoloads at startup.  Our prelude's
+            // local subset `define-derived-mode' served the same early
+            // mode definitions (and the dumped libraries' calls), so
+            // restore the autoload cells only now — `autoloadp',
+            // `featurep', and lazy loading of derived.el/generic.el
+            // then match GNU.
+            let _ = interp.eval_str(
+                "(progn \
+                   (fset 'define-derived-mode \
+                         '(autoload \"derived\" \
+                           \"Create a new mode CHILD which is a variant of an existing mode PARENT.\n\n\\(fn CHILD PARENT NAME [DOCSTRING] [KEYWORD-ARGS...] &rest BODY)\" \
+                           nil t)) \
+                   (fset 'define-generic-mode \
+                         '(autoload \"generic\" \
+                           \"Create a new generic mode MODE.\n\n\\(fn MODE COMMENT-LIST KEYWORD-LIST FONT-LOCK-LIST AUTO-MODE-LIST\n     FUNCTION-LIST &optional DOCSTRING)\" \
+                           nil t)))",
+            );
         }
         interp.loading_dumped = false;
         // GNU resets `gensym-counter' to 0 when the dumped image starts
@@ -1452,7 +1472,20 @@ impl Interp {
                             let nc = self.intern("no-catch");
                             return Err(self.signal_data(nc, vec![tag, val]));
                         }
-                        Err(f) => return Err(f),
+                        Err(f) => {
+                            if std::env::var_os("REMACS_TRACE_ERR").is_some() {
+                                eprintln!(
+                                    "[eval-err@{}] {} => {:?}",
+                                    end,
+                                    self.princ_to_string(&form)
+                                        .chars()
+                                        .take(120)
+                                        .collect::<String>(),
+                                    f
+                                );
+                            }
+                            return Err(f);
+                        }
                     }
                 }
                 None => return Ok(last),
@@ -1809,8 +1842,13 @@ impl Interp {
             Value::Subr(s) => match s.arity {
                 Arity::Unevalled => (s.func)(self, vec![args.clone()]),
                 _ => {
+                    // GNU checks a subr's arity before evaluating the
+                    // argument forms, so `(car BAD EXTRA)' reports
+                    // `wrong-number-of-arguments' rather than whatever
+                    // BAD would signal.
+                    let n = self.raw_list_length(args)?;
+                    self.check_arity_subr_n(s, n, sym_name)?;
                     let argv = self.eval_args(args)?;
-                    self.check_arity_subr(s, &argv, sym_name)?;
                     // Record the frame like apply_resolved does — GNU's
                     // specpdl holds every call, so backtraces show the
                     // innermost subr (`car(5)') too.
@@ -1821,11 +1859,20 @@ impl Interp {
                     r
                 }
             },
-            Value::Lambda(_) => {
+            Value::Lambda(l) => {
                 // Macro: expand then eval.
-                if fun.as_lambda().map(|l| l.is_macro).unwrap_or(false) {
+                if l.is_macro {
                     let expansion = self.macro_expand_call(fun, args)?;
                     return self.eval(&expansion);
+                }
+                // GNU byte-compiles its dumped defuns, and compiled
+                // functions check arity before argument forms are
+                // evaluated (interpreted lambdas do not).  `dumped_doc'
+                // marks our dumped-equivalent definitions.
+                if l.dumped_doc {
+                    let n = self.raw_list_length(args)?;
+                    let shown = sym_name.map(Value::Sym).unwrap_or_else(|| fun.clone());
+                    self.check_arity_lambda_n(l, n, &shown)?;
                 }
                 let argv = self.eval_args(args)?;
                 let shown = sym_name.map(Value::Sym).unwrap_or_else(|| fun.clone());
@@ -1868,16 +1915,59 @@ impl Interp {
         }
     }
 
+    /// Length of a raw (unevaluated) argument list: the number of cons
+    /// cells in its spine.  A dotted tail is not counted; a circular
+    /// list signals `circular-list' like GNU's `Flength'.
+    fn raw_list_length(&mut self, args: &Value) -> Result<i128, Flow> {
+        let mut n = 0i128;
+        let mut cur = args.clone();
+        let mut hare = Some(args.clone());
+        loop {
+            let next = match &cur {
+                Value::Cons(c) => c.borrow().cdr.clone(),
+                _ => break,
+            };
+            n += 1;
+            cur = next;
+            // Hare advances two cells per step while it can; if it
+            // meets `cur' the spine loops.
+            if let Some(h) = hare.take() {
+                let step = |v: &Value| match v {
+                    Value::Cons(c) => c.borrow().cdr.clone(),
+                    _ => Value::Nil,
+                };
+                let h1 = step(&h);
+                if matches!(h1, Value::Cons(_)) {
+                    hare = Some(step(&h1));
+                    if let (Value::Cons(a), Some(Value::Cons(b))) = (&cur, hare.as_ref()) {
+                        if Rc::ptr_eq(a, b) {
+                            return Err(crate::lisp::builtins::listfn::err_circular(self));
+                        }
+                    }
+                }
+            }
+        }
+        Ok(n)
+    }
+
     fn check_arity_subr(
         &self,
         s: &'static super::value::Subr,
         argv: &[Value],
         name: Option<SymId>,
     ) -> Result<(), Flow> {
+        self.check_arity_subr_n(s, argv.len() as i128, name)
+    }
+
+    fn check_arity_subr_n(
+        &self,
+        s: &'static super::value::Subr,
+        n: i128,
+        name: Option<SymId>,
+    ) -> Result<(), Flow> {
         // Emacs reports the calling symbol for eval'd calls, the subr
         // object itself for `funcall'/`apply'.
         let who = name.map_or(Value::Subr(s), Value::Sym);
-        let n = argv.len() as i128;
         let (min, max) = match s.arity {
             Arity::Range { min, max } => (min as i128, max as i128),
             Arity::Many { min } => {
@@ -1890,6 +1980,17 @@ impl Interp {
         };
         if n < min || n > max {
             return Err(self.wrong_number_of_args(&who, n));
+        }
+        Ok(())
+    }
+
+    /// Same arity test `call_lambda' performs, but against the raw
+    /// argument count — used so dumped (GNU-compiled-equivalent)
+    /// functions reject a bad call before arguments are evaluated.
+    fn check_arity_lambda_n(&self, l: &Lambda, n: i128, who: &Value) -> Result<(), Flow> {
+        let min = l.required.len() as i128;
+        if n < min || (l.rest.is_none() && n > min + l.optional.len() as i128) {
+            return Err(self.wrong_number_of_args(who, n));
         }
         Ok(())
     }
