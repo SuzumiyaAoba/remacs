@@ -529,12 +529,13 @@ fn tabulated_list_print_and_sort() {
 
 #[test]
 fn bidi_string_mark_left_to_right_appends_lrm() {
-    // GNU-verified on 31.1: U+200E appended iff STR has a strong R/AL char.
+    // GNU-verified on 31.1: U+200E appended iff STR has a strong R/AL
+    // char, propertized `invisible' like GNU's (prin1 shows props).
     assert_eq!(
         ev("(list (bidi-string-mark-left-to-right \"abc\")
                  (bidi-string-mark-left-to-right \"אבג\")
                  (bidi-string-mark-left-to-right \"aאב\"))"),
-        "(\"abc\" \"אבג‎\" \"aאב‎\")"
+        "(\"abc\" #(\"אבג‎\" 3 4 (invisible t)) #(\"aאב‎\" 3 4 (invisible t)))"
     );
 }
 
@@ -1237,6 +1238,28 @@ fn editorconfig_load_and_fnmatch() {
                         (fboundp 'editorconfig-mode)
                         (boundp 'editorconfig-mode)))"),
         "(t 0 0 0 0 t t)"
+    );
+}
+
+#[test]
+fn editorconfig_tools_and_conf_mode_autoloads() {
+    // GNU-verified on 31.1: editorconfig-apply is an autoload at startup
+    // (editorconfig-mode-apply is not fbound); conf-*-mode entries are
+    // autoloads from conf-mode.el; editorconfig-conf-mode derives from
+    // conf-unix-mode.
+    assert_eq!(
+        ev("(list (fboundp 'editorconfig-apply)
+                  (fboundp 'editorconfig-mode-apply)
+                  (fboundp 'editorconfig-find-current-editorconfig)
+                  (fboundp 'editorconfig-display-current-properties)
+                  (autoloadp (symbol-function 'conf-unix-mode)))"),
+        "(t nil t t t)"
+    );
+    assert_eq!(
+        ev("(progn (editorconfig-conf-mode)
+                  (list major-mode (featurep 'conf-mode)
+                        (fboundp 'conf-mode-initialize)))"),
+        "(editorconfig-conf-mode t t)"
     );
 }
 

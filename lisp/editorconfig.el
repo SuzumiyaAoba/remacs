@@ -1,4 +1,3 @@
-;;;; editorconfig.el --- Apply .editorconfig settings (GNU Emacs 31.1, ported)
 ;;; editorconfig.el --- EditorConfig Plugin  -*- lexical-binding: t -*-
 
 ;; Copyright (C) 2011-2026 Free Software Foundation, Inc.

@@ -107,6 +107,9 @@ static EMBEDDED_LISP: &[(&str, &str)] = &[
     ("rx", include_str!("../../lisp/rx.el")),
     ("tabulated-list", include_str!("../../lisp/tabulated-list.el")),
     ("display-line-numbers", include_str!("../../lisp/display-line-numbers.el")),
+    ("buff-menu", include_str!("../../lisp/buff-menu.el")),
+    ("icons", include_str!("../../lisp/icons.el")),
+    ("warnings", include_str!("../../lisp/warnings.el")),
     ("ewoc", include_str!("../../lisp/ewoc.el")),
     ("ansi-color", include_str!("../../lisp/ansi-color.el")),
     ("regi", include_str!("../../lisp/regi.el")),
@@ -161,6 +164,7 @@ static EMBEDDED_LISP: &[(&str, &str)] = &[
     ("userlock", include_str!("../../lisp/userlock.el")),
     ("delsel", include_str!("../../lisp/delsel.el")),
     ("help-at-pt", include_str!("../../lisp/help-at-pt.el")),
+    ("apropos", include_str!("../../lisp/apropos.el")),
     ("rtree", include_str!("../../lisp/rtree.el")),
     ("time-stamp", include_str!("../../lisp/time-stamp.el")),
     ("emacs-lock", include_str!("../../lisp/emacs-lock.el")),
@@ -195,6 +199,15 @@ static EMBEDDED_LISP: &[(&str, &str)] = &[
         include_str!("../../lisp/editorconfig-core.el"),
     ),
     ("editorconfig", include_str!("../../lisp/editorconfig.el")),
+    (
+        "editorconfig-tools",
+        include_str!("../../lisp/editorconfig-tools.el"),
+    ),
+    (
+        "editorconfig-conf-mode",
+        include_str!("../../lisp/editorconfig-conf-mode.el"),
+    ),
+    ("conf-mode", include_str!("../../lisp/conf-mode.el")),
     ("epg-config", include_str!("../../lisp/epg-config.el")),
     ("array", include_str!("../../lisp/array.el")),
     ("dos-vars", include_str!("../../lisp/dos-vars.el")),
@@ -304,9 +317,39 @@ fn eval_src(i: &mut Interp, file: &str, src: &str, force_lex: bool) -> EvalResul
             None
         },
     );
+    // GNU's `internal--get-default-lexical-binding': a non-empty file
+    // with no cookie gets a `files missing-lexbind-cookie' warning
+    // before its forms run.  (--script forces lexical, so no warning.)
+    if !lex_on && !src.is_empty() && !file.starts_with("builtin:") {
+        let ty = Value::list(vec![
+            Value::Sym(i.intern("files")),
+            Value::Sym(i.intern("missing-lexbind-cookie")),
+            Value::string(file),
+        ]);
+        let msg = Value::string(format!(
+            "Missing \u{2018}lexical-binding\u{2019} cookie in {file:?}.\n\
+             You can add one with \u{2018}M-x elisp-enable-lexical-binding RET\u{2019}.\n\
+             See \u{2018}(elisp)Selecting Lisp Dialect\u{2019} and \
+             \u{2018}(elisp)Converting to Lexical Binding\u{2019}\n\
+             for more information."
+        ));
+        let dw = Value::Sym(i.intern("display-warning"));
+        let lvl = Value::Sym(i.intern(":warning"));
+        if i
+            .apply(&dw, vec![ty, msg, lvl])
+            .is_err()
+        {
+            // GNU's fallback when `display-warning' can't run yet.
+            i.message(&format!(
+                "Missing \u{2018}lexical-binding\u{2019} cookie in {file:?}"
+            ));
+        }
+    }
     // GNU's load machinery autoloads these preloaded libraries on the
     // first `load' of any file — before the file's own forms run.
-    for feat in ["cl-lib", "cl-loaddefs", "icons", "warnings"] {
+    // `icons' and `warnings' are embedded now and load on demand;
+    // `cl-lib' stays marked (its defs live in the prelude).
+    for feat in ["cl-lib", "cl-loaddefs"] {
         let id = i.intern(feat);
         if !i.features.contains(&id) {
             i.features.insert(0, id);

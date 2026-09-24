@@ -3055,6 +3055,41 @@ If nil, the feature is disabled, i.e., all commands work normally.")
 (defvar header-line-indent-width 0
   "Width of line numbers causing header-line indentation.")
 
+;; GNU warnings.el / icons.el autoload cookies (loaddefs.el): the
+;; warning API is autoloaded in GNU — `warn', `lwarn', and
+;; `display-warning' load warnings.el on first call; the warning
+;; customization variables are defvar-autoloaded (bound at startup).
+(defvar warning-prefix-function nil
+  "Function to generate warning prefixes.")
+(defvar warning-series nil
+  "Non-nil means treat multiple `display-warning' calls as a series.")
+(defvar warning-fill-prefix nil
+  "Non-nil means fill each warning text using this string as `fill-prefix'.")
+(defvar warning-type-format " (%s)"
+  "Format for displaying the warning type in the warning message.")
+(defvar warning-inhibit-types nil
+  "Like `warning-suppress-log-types', but for programs to let-bind.")
+(autoload 'display-warning "warnings"
+  "Display a warning message, MESSAGE.")
+(autoload 'lwarn "warnings"
+  "Display a warning message made from (format-message MESSAGE ARGS...).")
+(autoload 'warn "warnings"
+  "Display a warning message made from (format-message MESSAGE ARGS...).")
+(autoload 'describe-icon "icons"
+  "Pop to a buffer to describe ICON." t)
+
+;; GNU editorconfig.el / editorconfig-tools.el autoload cookies (loaddefs.el).
+(autoload 'editorconfig-mode "editorconfig"
+  "Toggle EditorConfig feature." t)
+(autoload 'editorconfig-apply "editorconfig-tools"
+  "Get and apply EditorConfig properties to current buffer." t)
+(autoload 'editorconfig-find-current-editorconfig "editorconfig-tools"
+  "Find the closest .editorconfig file for current file." t)
+(autoload 'editorconfig-display-current-properties "editorconfig-tools"
+  "Display EditorConfig properties extracted for current buffer." t)
+(defalias 'describe-editorconfig-properties
+  'editorconfig-display-current-properties)
+
 ;; GNU jka-compr.el autoload cookies (loaddefs.el): file-name handlers
 ;; installed by `auto-compression-mode' resolve the handler lazily —
 ;; e.g. `file-name-sans-versions' on a .gz name autoloads jka-compr.el.
@@ -3155,18 +3190,17 @@ The line number is relative to the start of the page."
     (set-buffer b)
     b))
 
-(defun list-buffers (&optional files-only)
-  "Display a list of existing buffers."
-  (interactive "P")
-  (let ((b (get-buffer-create "*Buffer List*")))
-    (with-current-buffer b
-      (erase-buffer)
-      (dolist (buf (buffer-list))
-        (unless (and files-only (not (buffer-local-value 'buffer-file-name buf)))
-          (insert (format "%-24s %s\n"
-                          (buffer-name buf)
-                          (or (buffer-local-value 'buffer-file-name buf) ""))))))
-    (pop-to-buffer b)))
+;; GNU buff-menu.el autoload cookies (loaddefs.el): C-x C-b and the
+;; buffer-menu entry points load the real tabulated-list-based
+;; implementation on first call.
+(autoload 'list-buffers "buff-menu"
+  "Display a list of existing buffers." t)
+(autoload 'list-buffers-noselect "buff-menu"
+  "Create and return a Buffer Menu buffer." t)
+(autoload 'buffer-menu "buff-menu"
+  "Make a menu of buffers so you can save, delete or select them." t)
+(autoload 'buffer-menu-other-window "buff-menu"
+  "Display the Buffer Menu in another window." t)
 
 (defun describe-function (function)
   "Display the documentation of FUNCTION."
@@ -5469,13 +5503,17 @@ Return the window used to display BUFFER, like GNU's
 	    (throw 'prev nil)))))
     (if window
 	(window--display-buffer buffer window 'reuse)
-      ;; `display-buffer-use-some-window': GNU's last reuse attempt
-      ;; before popping a new window.
-      (setq window (display-buffer-use-some-window buffer nil))
-      (if window
-	  window
-	;; `display-buffer-below-selected': split a new window.
-	(window--display-buffer buffer (split-window) 'window)))))
+      ;; GNU's `display-buffer-fallback-action': pop-up-window comes
+      ;; BEFORE use-some-window, so a fresh split wins over reusing
+      ;; the selected window for a buffer that was never shown.
+      (let ((new-window (split-window)))
+	(if (window-live-p new-window)
+	    (window--display-buffer buffer new-window 'window)
+	  ;; `display-buffer-use-some-window': GNU's last reuse attempt.
+	  (setq window (display-buffer-use-some-window buffer nil))
+	  (if window
+	      (window--display-buffer buffer window 'reuse)
+	    (window--display-buffer buffer (split-window) 'window)))))))
 
 ;; ---------- subr.el-level utilities ----------
 (defalias 'cl-subseq #'seq-subseq)
@@ -6088,7 +6126,10 @@ Each element is either a directory name (a string); the symbol
 `custom-theme-directory' (meaning the value of that variable), or
 t (meaning the built-in themes directory).")
 
-(defvar custom-theme-directory nil
+(defvar data-directory doc-directory
+  "Directory of architecture-independent files that come with Emacs.")
+
+(defvar custom-theme-directory user-emacs-directory
   "Directory in which to look for user themes.")
 
 (defvar custom-delayed-init-variables nil
@@ -8019,8 +8060,9 @@ it is active only when the current buffer is read-only."
 ;; `setf'/`incf'/`decf' are autoloaded from gv.el (GNU parity: they are
 ;; `;;;###autoload' entries in gv.el, so `symbol-function' yields an
 ;; autoload cell until first use).  `cl-psetf', `cl-rotatef', `cl-shiftf',
-;; `cl-remf', `cl-pushnew' and friends live in cl-macs.el / cl-lib.el and
-;; are *not* defined at startup (GNU Emacs 31 parity).
+;; `cl-remf' and friends live in cl-macs.el / cl-lib.el; the `cl-callf'/
+;; `cl-callf2'/`cl-pushnew' gv macros are defined below (needed at load
+;; time by embedded libraries' `eval-when-compile' macroexpansion).
 
 ;; GNU's cl-preloaded defstruct/class machinery marks every slot name
 ;; with `slot-name' t during the dump; reproduce those plist entries so
@@ -10623,6 +10665,100 @@ This is compatible with Common Lisp, but note that `defun' and
 This is equivalent to `(cl-return-from nil RESULT)'."
   (declare (debug (&optional form)))
   `(cl-return-from nil ,result))
+
+;; ---------- cl-macs generalized-variable macros (GNU verbatim) ----------
+;; Interpreted files that `(eval-when-compile (require 'cl-lib))' (e.g.
+;; tabulated-list.el's `cl-pushnew' on a gethash place) need these at
+;; expansion time; the prelude plays the role of GNU's dumped cl parts.
+;; The full set lives in lisp/cl-macs.el.
+
+(defconst cl--simple-funcs '(car cdr nth aref elt if and or + - 1+ 1- min max
+                            car-safe cdr-safe progn prog1 prog2))
+(defconst cl--safe-funcs '(* / % length memq list vector vectorp
+                          < > <= >= = error))
+
+(defun cl--simple-expr-p (x &optional size)
+  "Check if no side effects, and executes quickly."
+  (or size (setq size 10))
+  (if (and (consp x) (not (memq (car x) '(quote function cl-function))))
+      (and (symbolp (car x))
+           (or (memq (car x) cl--simple-funcs)
+               (get (car x) 'side-effect-free))
+           (progn
+             (setq size (1- size))
+             (while (and (setq x (cdr x))
+                         (setq size (cl--simple-expr-p (car x) size))))
+             (and (null x) (>= size 0) size)))
+    (and (> size 0) (1- size))))
+
+(defun cl--safe-expr-p (x)
+  "Check if no side effects."
+  (or (not (and (consp x) (not (memq (car x) '(quote function cl-function)))))
+      (and (symbolp (car x))
+           (or (memq (car x) cl--simple-funcs)
+               (memq (car x) cl--safe-funcs)
+               (get (car x) 'side-effect-free))
+           (progn
+             (while (and (setq x (cdr x)) (cl--safe-expr-p (car x))))
+             (null x)))))
+
+(defun cl-list* (arg &rest rest)
+  "Return a new list with specified ARGs as elements, consed to last ARG.
+Thus, `(cl-list* A B C D)' is equivalent to `(nconc (list A B C) D)', or to
+`(cons A (cons B (cons C D)))'."
+  (declare (side-effect-free error-free)
+           (compiler-macro cl--compiler-macro-list*))
+  (cond ((not rest) arg)
+	((not (cdr rest)) (cons arg (car rest)))
+	(t (let* ((n (length rest))
+		  (copy (copy-sequence rest))
+		  (last (nthcdr (- n 2) copy)))
+	     (setcdr last (car (cdr last)))
+	     (cons arg copy)))))
+
+(defmacro cl-callf (func place &rest args)
+  "Set PLACE to (FUNC PLACE ARGS...).
+FUNC should be an unquoted function name or a lambda expression.
+PLACE may be a symbol, or any generalized variable allowed by
+`setf'."
+  (declare (indent 2))
+  (gv-letplace (getter setter) place
+    (let* ((rargs (cons getter args)))
+      (funcall setter
+               (if (symbolp func) (cons func rargs)
+                 `(funcall #',func ,@rargs))))))
+
+(defmacro cl-callf2 (func arg1 place &rest args)
+  "Set PLACE to (FUNC ARG1 PLACE ARGS...).
+Like `cl-callf', but PLACE is the second argument of FUNC, not the first.
+
+\(fn FUNC ARG1 PLACE ARGS...)"
+  (declare (indent 3))
+  (if (and (cl--safe-expr-p arg1) (cl--simple-expr-p place) (symbolp func))
+      `(setf ,place (,func ,arg1 ,place ,@args))
+    (macroexp-let2 nil a1 arg1
+      (gv-letplace (getter setter) place
+        (let* ((rargs (cl-list* a1 getter args)))
+          (funcall setter
+                   (if (symbolp func) (cons func rargs)
+                     `(funcall #',func ,@rargs))))))))
+
+(defmacro cl-pushnew (x place &rest keys)
+  "Add X to the list stored in PLACE unless X is already in the list.
+PLACE is a generalized variable that stores a list.
+
+Like (push X PLACE), except that PLACE is unmodified if X is `eql'
+to an element already in the list stored in PLACE.
+
+Keywords supported:  :test :test-not :key"
+  (if (symbolp place)
+      (if (null keys)
+          (macroexp-let2 nil var x
+            `(if (memql ,var ,place)
+                 (with-no-warnings ,place)
+               (setq ,place (cons ,var ,place))))
+        `(setq ,place (cl-adjoin ,x ,place ,@keys)))
+    `(cl-callf2 cl-adjoin ,x ,place ,@keys)))
 
 (defvar completion-regexp-list nil
   "List of regexps that completion candidates must match.")
@@ -14452,6 +14588,13 @@ VAR, (VAR TYPE), or (VAR (eql FORM))."
       (let ((specs (nreverse specs))
             (params (nreverse params)))
         `(progn
+           (unless (fboundp ',name)
+             ;; GNU's cl-generic installs the dispatcher implicitly
+             ;; when the first `cl-defmethod' lands — no
+             ;; `cl-defgeneric' is needed (e.g. `icons--create').
+             (defalias ',name
+               (lambda (&rest cl--args)
+                 (cl--generic-dispatch ',name cl--args))))
            (put ',name 'cl--methods
                 (cons (list ',specs ',qual
                             (lambda ,params
@@ -16929,7 +17072,8 @@ usual. Returns (ALL PAT PREFIX SUFFIX)."
         (replace-match replacements (not regexp-flag)
                        (not regexp-flag))
         (setq count (1+ count)))
-      count)))
+      (message "Replaced %d occurrence%s" count (if (= count 1) "" "s"))
+      nil)))
 
 ;; ---------- more subr.el / simple.el helpers ----------
 
@@ -17006,6 +17150,14 @@ double-quoted spans; the quotes are removed."
   (float-time time))
 
 (defvar emacs--start-time (float-time))
+
+;; GNU startup.el timestamps: `before-init-time' is sampled when
+;; startup begins and `after-init-time' once the init file has been
+;; processed.  Batch startup approximates both at preload time.
+(defvar before-init-time (current-time)
+  "Value of `current-time' when Emacs begins initialization.")
+(defvar after-init-time (current-time)
+  "Value of `current-time' after loading the init file.")
 
 (defun emacs-init-time ()
   "Return a string describing the Emacs startup time."
@@ -17358,61 +17510,61 @@ The completion table returned by `completion-table-dynamic' has empty
 metadata and trivial boundaries.
 
 See also the related function `completion-table-with-cache'."
-  (lambda (string pred action)
+  `(lambda (string pred action)
     (if (or (eq (car-safe action) 'boundaries) (eq action 'metadata))
         ;; `fun' is not supposed to return another function but a plain old
         ;; completion table, whose boundaries are always trivial.
         nil
-      (with-current-buffer (if (not switch-buffer) (current-buffer)
-                             (let ((win (minibuffer-selected-window)))
-                               (if (window-live-p win) (window-buffer win)
-                                 (current-buffer))))
-        (complete-with-action action (funcall fun string) string pred)))))
+      (with-current-buffer ,(if (not switch-buffer) '(current-buffer)
+                              '(let ((win (minibuffer-selected-window)))
+                                 (if (window-live-p win) (window-buffer win)
+                                   (current-buffer))))
+        (complete-with-action action (funcall ',fun string) string pred)))))
 
 (defun completion-table-case-fold (table &optional dont-fold)
   "Return new completion TABLE that is case insensitive.
 If DONT-FOLD is non-nil, return a completion table that is
 case sensitive instead."
-  (lambda (string pred action)
-    (let ((completion-ignore-case (not dont-fold)))
-      (complete-with-action action table string pred))))
+  `(lambda (string pred action)
+    (let ((completion-ignore-case (not ',dont-fold)))
+      (complete-with-action action ',table string pred))))
 
 (defun completion-table-with-metadata (table metadata)
   "Return new completion TABLE with METADATA.
 METADATA should be an alist of completion metadata.  See
 `completion-metadata' for a list of supported metadata."
-  (lambda (string pred action)
+  `(lambda (string pred action)
     (if (eq action 'metadata)
-        `(metadata . ,metadata)
-      (complete-with-action action table string pred))))
+        '(metadata . ,metadata)
+      (complete-with-action action ',table string pred))))
 
 (defun completion-table-subvert (table s1 s2)
   "Return a completion table from TABLE with S1 replaced by S2.
 The result is a completion table which completes strings of the
 form (concat S1 S) in the same way as TABLE completes strings of
 the form (concat S2 S)."
-  (lambda (string pred action)
-    (let* ((str (if (string-prefix-p s1 string completion-ignore-case)
-                    (concat s2 (substring string (length s1)))))
-           (res (if str (complete-with-action action table str pred))))
+  `(lambda (string pred action)
+    (let* ((str (if (string-prefix-p ',s1 string completion-ignore-case)
+                    (concat ',s2 (substring string (length ',s1)))))
+           (res (if str (complete-with-action action ',table str pred))))
       (when (or res (eq (car-safe action) 'boundaries))
         (cond
          ((eq (car-safe action) 'boundaries)
           (let ((beg (or (and (eq (car-safe res) 'boundaries) (cadr res)) 0)))
-            `(boundaries
-              ,(min (length string)
-                    (max (length s1)
-                         (+ beg (- (length s1) (length s2)))))
-              . ,(and (eq (car-safe res) 'boundaries) (cddr res)))))
+            (cons 'boundaries
+                  (cons (min (length string)
+                             (max ,(length s1)
+                                  (+ beg (- ,(length s1) ,(length s2)))))
+                        (and (eq (car-safe res) 'boundaries) (cddr res))))))
          ((stringp res)
-          (if (string-prefix-p s2 res completion-ignore-case)
-              (concat s1 (substring res (length s2)))))
+          (if (string-prefix-p ',s2 res completion-ignore-case)
+              (concat ',s1 (substring res (length ',s2)))))
          ((eq action t)
-          (let ((bounds (completion-boundaries str table pred "")))
-            (if (>= (car bounds) (length s2))
+          (let ((bounds (completion-boundaries str ',table pred "")))
+            (if (>= (car bounds) (length ',s2))
                 res
               (let ((re (concat "\\`"
-                                (regexp-quote (substring s2 (car bounds))))))
+                                (regexp-quote (substring ',s2 (car bounds))))))
                 (delq nil
                       (mapcar (lambda (c)
                                 (if (string-match re c)
@@ -17542,20 +17694,20 @@ obeys predicates."
   ;; FIXME: the boundaries may come from TABLE1 even when the completion list
   ;; is returned by TABLE2 (because TABLE1 returned an empty list).
   ;; Same potential problem if any of the tables use quoting.
-  (lambda (string pred action)
+  `(lambda (string pred action)
     (seq-some (lambda (table)
                 (complete-with-action action table string pred))
-              tables)))
+              ',tables)))
 
 (defun completion-table-merge (&rest tables)
   "Create a completion table that collects completions from all TABLES."
   ;; FIXME: same caveats as in `completion-table-in-turn'.
-  (lambda (string pred action)
+  `(lambda (string pred action)
     (cond
      ((null action)
       (let ((retvals (mapcar (lambda (table)
                                (try-completion string table pred))
-                             tables)))
+                             ',tables)))
         (if (member string retvals)
             string
           (try-completion string
@@ -17566,11 +17718,11 @@ obeys predicates."
      ((eq action t)
       (apply #'append (mapcar (lambda (table)
                                 (all-completions string table pred))
-                              tables)))
+                              ',tables)))
      (t
       (seq-some (lambda (table)
                   (complete-with-action action table string pred))
-                tables)))))
+                ',tables)))))
 
 (defalias 'read-file-name-internal
   (completion-table-in-turn #'completion--embedded-envvar-table
@@ -17603,21 +17755,21 @@ for use at QPOS."
   ;; its argument is "the end of the completion", so if the quoting used double
   ;; quotes (for example), we end up completing "fo" to "foobar and throwing
   ;; away the closing double quote.
-  (lambda (string pred action)
+  `(lambda (string pred action)
     (cond
      ((eq action 'metadata)
-      (append (completion-metadata string table pred)
+      (append (completion-metadata string ',table pred)
               '((completion--unquote-requote . t))))
 
      ((eq action 'lambda) ;;test-completion
-      (let ((ustring (funcall unquote string)))
-        (test-completion ustring table pred)))
+      (let ((ustring (funcall ',unquote string)))
+        (test-completion ustring ',table pred)))
 
      ((eq (car-safe action) 'boundaries)
-      (let* ((ustring (funcall unquote string))
+      (let* ((ustring (funcall ',unquote string))
              (qsuffix (cdr action))
              (ufull (if (zerop (length qsuffix)) ustring
-                      (funcall unquote (concat string qsuffix))))
+                      (funcall ',unquote (concat string qsuffix))))
              ;; If (not (string-prefix-p ustring ufull)) we have a problem:
              ;; unquoting the qfull gives something "unrelated" to ustring.
              ;; E.g. "~/" and "/" where "~//" gets unquoted to just "/" (see
@@ -17629,12 +17781,12 @@ for use at QPOS."
                           (substring ufull (length ustring))
                         ;; FIXME: Maybe "" is preferable/safer?
                         qsuffix))
-             (boundaries (completion-boundaries ustring table pred usuffix))
-             (qlboundary (car (funcall requote (car boundaries) string)))
+             (boundaries (completion-boundaries ustring ',table pred usuffix))
+             (qlboundary (car (funcall ',requote (car boundaries) string)))
              (qrboundary (if (zerop (cdr boundaries)) 0 ;Common case.
                            (let* ((urfullboundary
                                    (+ (cdr boundaries) (length ustring))))
-                             (- (car (funcall requote urfullboundary
+                             (- (car (funcall ',requote urfullboundary
                                               (concat string qsuffix)))
                                 (length string))))))
         `(boundaries ,qlboundary . ,qrboundary)))
@@ -17647,8 +17799,8 @@ for use at QPOS."
      ;; handle those calls as well as we can.
 
      ((eq action nil) ;;try-completion
-      (let* ((ustring (funcall unquote string))
-             (completion (try-completion ustring table pred)))
+      (let* ((ustring (funcall ',unquote string))
+             (completion (try-completion ustring ',table pred)))
         ;; Most forms of quoting allow several ways to quote the same string.
         ;; So here we could simply requote `completion' in a kind of
         ;; "canonical" quoted form without paying attention to the way
@@ -17658,7 +17810,7 @@ for use at QPOS."
         ;; a nicer behavior.
         (if (not (stringp completion)) completion
           (car (completion--twq-try
-                string ustring completion 0 unquote requote)))))
+                string ustring completion 0 ',unquote ',requote)))))
 
      ((eq action t) ;;all-completions
       ;; When all-completions is used for completion-try/all-completions
@@ -17671,12 +17823,12 @@ for use at QPOS."
       ;; unquote-requote method so that completion-try/all-completions can
       ;; pass the unquoted string to the style functions.
       (pcase-let*
-          ((ustring (funcall unquote string))
-           (completions (all-completions ustring table pred))
-           (boundary (car (completion-boundaries ustring table pred "")))
+          ((ustring (funcall ',unquote string))
+           (completions (all-completions ustring ',table pred))
+           (boundary (car (completion-boundaries ustring ',table pred "")))
            (completions
             (completion--twq-all
-             string ustring completions boundary unquote requote))
+             string ustring completions boundary ',unquote ',requote))
            (last (last completions)))
         (when (consp last) (setcdr last nil))
         completions))
@@ -17690,8 +17842,8 @@ for use at QPOS."
       ;; of using the new TABLE and should turn it into the corresponding
       ;; quoted result).
       (let* ((qpos pred)
-	     (ustring (funcall unquote string))
-	     (uprefix (funcall unquote (substring string 0 qpos)))
+	     (ustring (funcall ',unquote string))
+	     (uprefix (funcall ',unquote (substring string 0 qpos)))
 	     ;; FIXME: we really should pass `qpos' to `unquote' and have that
 	     ;; function give us the corresponding `uqpos'.  But for now we
 	     ;; presume (more or less) that `concat' and `unquote' commute.
@@ -17701,7 +17853,7 @@ for use at QPOS."
 		      ;; They don't commute this time!  :-(
 		      ;; Maybe qpos is in some text that disappears in the
 		      ;; ustring (bug#17239).  Let's try a second chance guess.
-		      (let ((usuffix (funcall unquote (substring string qpos))))
+		      (let ((usuffix (funcall ',unquote (substring string qpos))))
 			(if (string-suffix-p usuffix ustring)
 			    ;; Yay!!  They still "commute" in a sense!
 			    (- (length ustring) (length usuffix))
@@ -17710,24 +17862,24 @@ for use at QPOS."
 			  (/ (+ (min (length uprefix) (length ustring))
 				(max (- (length ustring) (length usuffix)) 0))
 			     2))))))
-        (list ustring table uqpos
+        (list ustring ',table uqpos
               (lambda (unquoted-result op)
                 (pcase op
                   (1 ;;try
                    (if (not (stringp (car-safe unquoted-result)))
                        unquoted-result
                      (completion--twq-try
-                      string ustring
+                      ',string ',ustring
                       (car unquoted-result) (cdr unquoted-result)
-                      unquote requote)))
+                      ',unquote ',requote)))
                   (2 ;;all
                    (let* ((last (last unquoted-result))
                           (base (or (cdr last) 0)))
                      (when last
                        (setcdr last nil)
-                       (completion--twq-all string ustring
+                       (completion--twq-all ',string ',ustring
                                             unquoted-result base
-                                            unquote requote))))))))))))
+                                            ',unquote ',requote))))))))))))
 
 (defun completion--twq-try (string ustring completion point
                                    unquote requote)
@@ -17847,14 +17999,18 @@ relatively slow operation, such as calling an external process.
 
 When IGNORE-CASE is non-nil, FUN is expected to be case-insensitive."
   ;; See eg bug#11906.
-  (let* (last-arg last-result
+  ;; `cell' is (LAST-ARG . LAST-RESULT); a literal cons so the
+  ;; backquoted lambda below shares the cache under dynamic scope.
+  (let* ((cell (cons nil nil))
          (new-fun
-          (lambda (arg)
-            (if (and last-arg (string-prefix-p last-arg arg ignore-case))
-                last-result
-              (prog1
-                  (setq last-result (funcall fun arg))
-                (setq last-arg arg))))))
+          `(lambda (arg)
+            (if (and (car ',cell)
+                     (string-prefix-p (car ',cell) arg ',ignore-case))
+                (cdr ',cell)
+              (let ((r (funcall ',fun arg)))
+                (setcdr ',cell r)
+                (setcar ',cell arg)
+                r)))))
     (completion-table-dynamic new-fun)))
 
 (defmacro macroexp-quote (v)
@@ -18176,18 +18332,13 @@ when it still points at `standard-syntax-table', and
                '((kill-all-local-variables)))
         (setq major-mode ',variant
                mode-name ,name)
-         ;; GNU derived.el merges the tables whenever the mode has
-         ;; them — independent of whether it has a parent mode.
+         ;; GNU derived.el merges the parent syntax table whenever
+         ;; the mode declares one — independent of a parent mode.
          ,@(when declare-syntax
              `((let ((parent (char-table-parent ,syntax-sym)))
                  (unless (and parent
                             (not (eq parent (standard-syntax-table))))
                    (set-char-table-parent ,syntax-sym (syntax-table))))))
-         ,@(when declare-abbrev
-             `((unless (or (abbrev-table-get ,abbrev :parents)
-                          (eq ,abbrev local-abbrev-table))
-                 (abbrev-table-put ,abbrev :parents
-                                   (list local-abbrev-table)))))
          (use-local-map ,map-sym)
          ,@(when declare-syntax `((set-syntax-table ,syntax-sym)))
          ,@(when abbrev `((setq local-abbrev-table ,abbrev)))
@@ -27627,17 +27778,28 @@ SEQUENCE2 may be a list, vector, or string."
 (define-derived-mode mhtml-mode prog-mode "MHTML")
 (define-derived-mode sgml-mode text-mode "SGML")
 (define-derived-mode xml-mode prog-mode "XML")
-(define-derived-mode conf-mode prog-mode "Conf")
-(define-derived-mode conf-unix-mode prog-mode "Conf[Unix]")
-(define-derived-mode conf-windows-mode prog-mode "Conf[Win]")
-(define-derived-mode conf-space-mode prog-mode "Conf[Space]")
-(define-derived-mode conf-colon-mode prog-mode "Conf[Colon]")
-(define-derived-mode conf-desktop-mode prog-mode "Conf[Desktop]")
-(define-derived-mode conf-javaprop-mode prog-mode "Conf[JavaProp]")
-(define-derived-mode conf-ppd-mode prog-mode "Conf[PPD]")
-(define-derived-mode conf-xdefaults-mode prog-mode "Conf[Xdefaults]")
-(define-derived-mode conf-toml-mode prog-mode "Conf[TOML]")
-(define-derived-mode conf-npmrc-mode prog-mode "Conf[NPMRC]")
+;; GNU conf-mode.el autoload cookies (loaddefs.el).
+(autoload 'conf-mode "conf-mode" "Conf Mode starter." t)
+(autoload 'conf-unix-mode "conf-mode"
+  "Conf Mode starter for Unix style Conf files." t)
+(autoload 'conf-windows-mode "conf-mode"
+  "Conf Mode starter for Windows style Conf files." t)
+(autoload 'conf-javaprop-mode "conf-mode"
+  "Conf Mode starter for Java properties files." t)
+(autoload 'conf-space-mode "conf-mode"
+  "Conf Mode starter for space separated conf files." t)
+(autoload 'conf-colon-mode "conf-mode"
+  "Conf Mode starter for Colon files." t)
+(autoload 'conf-ppd-mode "conf-mode"
+  "Conf Mode starter for Adobe/CUPS PPD files." t)
+(autoload 'conf-xdefaults-mode "conf-mode"
+  "Conf Mode starter for Xdefaults files." t)
+(autoload 'conf-toml-mode "conf-mode"
+  "Conf Mode starter for TOML files." t)
+(autoload 'conf-desktop-mode "conf-mode"
+  "Conf Mode starter for .desktop files." t)
+(autoload 'conf-npmrc-mode "conf-mode"
+  "Conf Mode starter for npmrc files." t)
 (define-derived-mode makefile-mode prog-mode "Makefile")
 (define-derived-mode makefile-gmake-mode prog-mode "GNUmakefile")
 (define-derived-mode makefile-bsdmake-mode prog-mode "Makefile[BSD]")
@@ -27746,31 +27908,9 @@ SEQUENCE2 may be a list, vector, or string."
     (if (fboundp 'cmake-mode) (funcall 'cmake-mode) (prog-mode))))
 (unless (fboundp 'compilation-mode)
   (define-derived-mode compilation-mode prog-mode "Compilation"))
-(unless (fboundp 'conf-colon-mode)
-  (define-derived-mode conf-colon-mode prog-mode "Conf-Colon"))
-(unless (fboundp 'conf-desktop-mode)
-  (define-derived-mode conf-desktop-mode prog-mode "Conf-Desktop"))
-(unless (fboundp 'conf-javaprop-mode)
-  (define-derived-mode conf-javaprop-mode prog-mode "Conf-Javaprop"))
-(unless (fboundp 'conf-mode)
-  (define-derived-mode conf-mode prog-mode "Conf"))
 (unless (fboundp 'conf-mode-maybe)
   (defun conf-mode-maybe () "Stub for `conf-mode-maybe'."
     (if (fboundp 'conf-mode) (funcall 'conf-mode) (prog-mode))))
-(unless (fboundp 'conf-npmrc-mode)
-  (define-derived-mode conf-npmrc-mode prog-mode "Conf-Npmrc"))
-(unless (fboundp 'conf-ppd-mode)
-  (define-derived-mode conf-ppd-mode prog-mode "Conf-Ppd"))
-(unless (fboundp 'conf-space-mode)
-  (define-derived-mode conf-space-mode prog-mode "Conf-Space"))
-(unless (fboundp 'conf-toml-mode)
-  (define-derived-mode conf-toml-mode prog-mode "Conf-Toml"))
-(unless (fboundp 'conf-unix-mode)
-  (define-derived-mode conf-unix-mode prog-mode "Conf-Unix"))
-(unless (fboundp 'conf-windows-mode)
-  (define-derived-mode conf-windows-mode prog-mode "Conf-Windows"))
-(unless (fboundp 'conf-xdefaults-mode)
-  (define-derived-mode conf-xdefaults-mode prog-mode "Conf-Xdefaults"))
 (unless (fboundp 'csharp-mode)
   (define-derived-mode csharp-mode prog-mode "C#"))
 (unless (fboundp 'css-mode)
@@ -27794,7 +27934,8 @@ SEQUENCE2 may be a list, vector, or string."
 (unless (fboundp 'ebrowse-tree-mode)
   (define-derived-mode ebrowse-tree-mode prog-mode "Ebrowse-Tree"))
 (unless (fboundp 'editorconfig-conf-mode)
-  (define-derived-mode editorconfig-conf-mode prog-mode "EditorConfig"))
+  (autoload 'editorconfig-conf-mode "editorconfig-conf-mode"
+    "Major mode for editing .editorconfig files." t))
 (unless (fboundp 'elisp-byte-code-mode)
   (define-derived-mode elisp-byte-code-mode special-mode "Elisp-Byte-Code"))
 (unless (fboundp 'elixir-ts-mode-maybe)
