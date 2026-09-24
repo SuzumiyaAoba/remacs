@@ -1126,3 +1126,58 @@ fn misc_lpr_hl_line_ecomplete_loadhist_entry_points() {
         "(t t t t t t t t t t t \"Alice\")"
     );
 }
+
+// --------------------------------------------- disp-table / window-x / xt-mouse / tmm
+
+#[test]
+fn disp_table_slots_and_makers() {
+    // GNU-verified on 31.1.
+    assert_eq!(
+        ev("(progn (require 'disp-table)
+                  (list (fboundp 'standard-display-table)
+                        (fboundp 'make-display-table)
+                        (fboundp 'display-table-slot)
+                        (let ((dt (make-display-table)))
+                          (list (display-table-slot dt 'truncation)
+                                (display-table-slot dt 'wrap)
+                                (display-table-slot dt 'escape)))))"),
+        "(nil t t (nil nil nil))"
+    );
+}
+
+#[test]
+fn window_x_xt_mouse_yank_media_tmm() {
+    // GNU-verified on 31.1 entry points.
+    assert_eq!(
+        ev("(progn (require 'window-x) (require 'xt-mouse)
+                  (require 'yank-media) (require 'tmm)
+                  (list (fboundp 'rotate-window)
+                        (fboundp 'window-tree-normal-sizes)
+                        (fboundp 'xterm-mouse-mode)
+                        (boundp 'xterm-mouse-debug-buffer)
+                        (fboundp 'yank-media)
+                        (boundp 'yank-media-types)
+                        (fboundp 'tmm-menubar)
+                        (boundp 'tmm-short-cut-style)))"),
+        "(nil t t t t nil t nil)"
+    );
+}
+
+#[test]
+fn text_property_search_prop_match() {
+    // GNU-verified on 31.1: forward search returns a prop-match
+    // object with beginning/end/value.
+    assert_eq!(
+        ev("(progn (require 'text-property-search)
+                  (with-temp-buffer
+                    (insert \"hello\")
+                    (put-text-property 1 3 'face 'bold)
+                    (goto-char (point-min))
+                    (let ((m (text-property-search-forward 'face 'bold t)))
+                      (when m
+                        (list (prop-match-beginning m)
+                              (prop-match-end m)
+                              (prop-match-value m))))))"),
+        "(1 3 bold)"
+    );
+}
