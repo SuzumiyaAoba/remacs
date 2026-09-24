@@ -2608,6 +2608,15 @@ fn f_make_local_variable(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 
 fn f_make_variable_buffer_local(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let sid = want_sym(i, &a[0])?;
+    // GNU: the variable gains a buffer-local cell in every buffer
+    // initialized to the default; an unbound default becomes nil, so
+    // `boundp' is t right away (verified on 31.1).
+    if matches!(
+        i.obarray.symbol(sid).value,
+        Value::Sym(s) if s == sym::UNBOUND
+    ) {
+        i.obarray.symbol_mut(sid).value = Value::Nil;
+    }
     i.obarray.symbol_mut(sid).make_local_if_set = true;
     Ok(a[0].clone())
 }

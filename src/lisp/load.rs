@@ -150,6 +150,15 @@ static EMBEDDED_LISP: &[(&str, &str)] = &[
     ("chistory", include_str!("../../lisp/chistory.el")),
     ("midnight", include_str!("../../lisp/midnight.el")),
     ("cl-lib", include_str!("../../lisp/cl-lib.el")),
+    ("cl-loaddefs", include_str!("../../lisp/cl-loaddefs.el")),
+    ("cl-print", include_str!("../../lisp/cl-print.el")),
+    ("filenotify", include_str!("../../lisp/filenotify.el")),
+    ("autorevert", include_str!("../../lisp/autorevert.el")),
+    ("dired", include_str!("../../lisp/dired.el")),
+    ("frameset", include_str!("../../lisp/frameset.el")),
+    ("desktop", include_str!("../../lisp/desktop.el")),
+    ("diff-mode", include_str!("../../lisp/diff-mode.el")),
+    ("track-changes", include_str!("../../lisp/track-changes.el")),
     ("format-spec", include_str!("../../lisp/format-spec.el")),
     ("tabify", include_str!("../../lisp/tabify.el")),
     ("scroll-lock", include_str!("../../lisp/scroll-lock.el")),
@@ -208,6 +217,12 @@ static EMBEDDED_LISP: &[(&str, &str)] = &[
         include_str!("../../lisp/editorconfig-conf-mode.el"),
     ),
     ("conf-mode", include_str!("../../lisp/conf-mode.el")),
+    ("project", include_str!("../../lisp/project.el")),
+    ("vc-hooks", include_str!("../../lisp/vc-hooks.el")),
+    ("vc-dispatcher", include_str!("../../lisp/vc-dispatcher.el")),
+    ("vc", include_str!("../../lisp/vc.el")),
+    ("vc-dir", include_str!("../../lisp/vc-dir.el")),
+    ("vc-git", include_str!("../../lisp/vc-git.el")),
     ("epg-config", include_str!("../../lisp/epg-config.el")),
     ("array", include_str!("../../lisp/array.el")),
     ("dos-vars", include_str!("../../lisp/dos-vars.el")),
@@ -364,16 +379,7 @@ fn eval_src(i: &mut Interp, file: &str, src: &str, force_lex: bool) -> EvalResul
             ));
         }
     }
-    // GNU's load machinery autoloads these preloaded libraries on the
-    // first `load' of any file — before the file's own forms run.
-    // `icons' and `warnings' are embedded now and load on demand;
-    // `cl-lib' stays marked (its defs live in the prelude).
-    for feat in ["cl-lib", "cl-loaddefs"] {
-        let id = i.intern(feat);
-        if !i.features.contains(&id) {
-            i.features.insert(0, id);
-        }
-    }
+
     // Loading `icons' defines the `icon'/`icon-button' faces (GNU's
     // icons.el does this via defface).
     if !i.face_table.iter().any(|(n, _)| n == "icon") {

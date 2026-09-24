@@ -5822,18 +5822,16 @@ fn f_global_unset_key(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 fn f_define_prefix_command(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     // (define-prefix-command COMMAND &optional MAPVAR NAME)
     let cmd = want_sym(i, &a[0])?;
-    let km = match a.get(1) {
-        Some(v) if v.truthy() => f_current_global_map(i, vec![])?,
-        _ => f_make_keymap(i, vec![])?,
-    };
-    let _ = km;
-    let map = f_make_keymap(i, vec![])?;
+    // GNU: a sparse keymap named NAME goes into COMMAND's function cell.
+    let map = f_make_sparse_keymap(i, vec![arg(&a, 2)])?;
     i.fset(cmd, map.clone());
-    if let Some(v) = a.get(1) {
-        if let Some(vs) = i.sym_id(v) {
-            i.set_symbol(vs, map)?;
-        }
-    }
+    // GNU: MAPVAR, when non-nil, receives the keymap as its value;
+    // otherwise COMMAND's own value cell does.
+    let target = match a.get(1).filter(|v| v.truthy()).and_then(|v| i.sym_id(v)) {
+        Some(vs) => vs,
+        None => cmd,
+    };
+    i.set_symbol(target, map)?;
     Ok(args0(&a))
 }
 

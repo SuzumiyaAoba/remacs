@@ -796,6 +796,10 @@ impl Interp {
             // (`(featurep 'rx)' is nil there too), so libraries whose
             // top-level forms use `rx' can expand at load.
             let _ = crate::lisp::load::load_library(&mut interp, "rx");
+            // vc-hooks.el is in GNU's dump (loadup.el): its defcustoms
+            // (`vc-handled-backends', `vc-ignore-dir-regexp', ...) and
+            // the vc-file-* property machinery are bound at -Q.
+            let _ = crate::lisp::load::load_library(&mut interp, "vc-hooks");
         }
         interp.loading_dumped = false;
         // GNU resets `gensym-counter' to 0 when the dumped image starts
@@ -3495,6 +3499,12 @@ impl Interp {
             ("emacs-major-version", Value::Int(31)),
             ("emacs-minor-version", Value::Int(1)),
             ("emacs-version", Value::string("31.1.0 (remacs)")),
+            // GNU's NS build binds this in nsterm.m (AppKit version);
+            // `emacs-version' reads it under (featurep 'ns).
+            (
+                "ns-version-string",
+                Value::string("appkit-2685.60 Version 26.5.2 (Build 25F84)"),
+            ),
             ("system-type", Value::Sym(self.intern("darwin"))),
             (
                 "system-configuration",
@@ -4123,7 +4133,6 @@ impl Interp {
             ("buffer-offer-save", Value::Nil),
             ("kept-new-versions", Value::Int(2)),
             ("kept-old-versions", Value::Int(2)),
-            ("vc-handled-backends", Value::Nil),
             ("dired-kept-versions", Value::Int(2)),
             ("remote-file-name-inhibit-cache", Value::Int(10)),
             ("file-precious-flag", Value::Nil),

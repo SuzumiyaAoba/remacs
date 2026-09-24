@@ -1264,6 +1264,27 @@ fn editorconfig_tools_and_conf_mode_autoloads() {
 }
 
 #[test]
+fn project_vc_git_detection() {
+    // GNU-verified on 31.1: in a Git worktree (the test crate lives in
+    // one), project-current returns (vc Git ROOT/) after vc-git loads
+    // through vc-hooks' vc-handled-backends chain.
+    assert_eq!(
+        ev("(progn (require 'project)
+                  (let ((p (project-current t)))
+                    (list (car p) (nth 1 p)
+                          (file-directory-p (nth 2 p))
+                          (featurep 'vc-git)
+                          (boundp 'vc-use-incoming-outgoing-prefixes))))"),
+        "(vc Git t t t)"
+    );
+    // vc-hooks is preloaded (GNU dumps it): backend list and prefix map.
+    assert_eq!(
+        ev("(list vc-handled-backends (keymapp 'vc-prefix-map))"),
+        "((RCS CVS SVN SCCS SRC Bzr Git Hg) t)"
+    );
+}
+
+#[test]
 fn epg_config_entry_points() {
     // GNU-verified on 31.1.
     assert_eq!(
