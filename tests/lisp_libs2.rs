@@ -2629,3 +2629,57 @@ fn r12_shell_smie_ispell_sql_batch() {
         "(t t nil nil)"
     );
 }
+
+#[test]
+fn r13_progmodes_and_eval_when_compile() {
+    // Round-13 batch: ruby/perl/cperl/icon/meta/modula2/pascal/simula/
+    // cfengine/dcl/remember — none dumped; all load via require.
+    assert_eq!(
+        ev("(mapcar #'featurep '(ruby-mode perl-mode cperl-mode icon
+                  meta-mode modula2 pascal simula cfengine dcl-mode
+                  remember))"),
+        "(nil nil nil nil nil nil nil nil nil nil nil)"
+    );
+    // GNU loaddefs autoload cells (verified against GNU -Q).
+    assert_eq!(
+        ev("(mapcar (lambda (s) (autoloadp (symbol-function s)))
+                  '(ruby-mode ruby-base-mode perl-mode cperl-mode
+                    icon-mode metafont-mode metapost-mode m2-mode
+                    pascal-mode simula-mode cfengine3-mode dcl-mode
+                    remember remember-notes))"),
+        "(t t t t t t t t t t t t t t)"
+    );
+    for name in [
+        "ruby-mode",
+        "perl-mode",
+        "cperl-mode",
+        "icon",
+        "meta-mode",
+        "modula2",
+        "pascal",
+        "simula",
+        "cfengine",
+        "dcl-mode",
+        "remember",
+    ] {
+        assert_eq!(
+            ev(&format!("(progn (require '{n}) (featurep '{n}))", n = name)),
+            "t",
+            "{name}"
+        );
+    }
+    // GNU folds eval-when-compile/eval-and-compile during macroexpansion:
+    // the body runs against the dynamic environment and the expansion is
+    // (quote VALUE).  let-when-compile (lisp-mode.el) relies on this.
+    assert_eq!(ev("(macrop 'let-when-compile)"), "t");
+    assert_eq!(
+        ev("(progn (defvar r13-x nil) (setq r13-x 42)
+                  (list (macroexpand '(eval-when-compile r13-x))
+                        (macroexpand-1 '(eval-and-compile (+ 1 2)))
+                        (macroexpand '(let-when-compile ((z 7))
+                                        (list (eval-when-compile z))))
+                        (macroexpand-all
+                          '(list (eval-when-compile (+ r13-x 1)) y))))"),
+        "('42 '3 (list '7) (list '43 y))"
+    );
+}

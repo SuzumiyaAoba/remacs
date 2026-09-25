@@ -2621,6 +2621,22 @@ impl Interp {
                                 cur = new;
                                 continue;
                             }
+                            // GNU folds `(eval-when-compile BODY)' and
+                            // `(eval-and-compile BODY)' during
+                            // macroexpansion when not byte-compiling:
+                            // BODY runs now (against the dynamic
+                            // environment — `let-when-compile' relies on
+                            // this) and the expansion is (quote VALUE).
+                            if id == self.intern("eval-when-compile")
+                                || id == self.intern("eval-and-compile")
+                            {
+                                let v = self.eval_progn(&cdr)?;
+                                cur = Value::cons(
+                                    Value::Sym(self.intern("quote")),
+                                    Value::cons(v, Value::Nil),
+                                );
+                                continue;
+                            }
                             let mut f = self.symbol_function(id);
                             // Autoload cell: resolve macro autoloads
                             // (TYPE non-nil); others stop expansion.

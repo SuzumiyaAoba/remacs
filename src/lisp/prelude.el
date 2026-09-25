@@ -37711,6 +37711,23 @@ Defaults to the whole buffer.  END can be out of bounds."
                    (lisp--el-funcall-position-p (match-beginning 0)))
 	  (throw 'found t))))))
 
+(defmacro let-when-compile (bindings &rest body)
+  "Like `let*', but allow for compile time optimization.
+Use BINDINGS as in regular `let*', but in BODY each usage should
+be wrapped in `eval-when-compile'.
+This will generate compile-time constants from BINDINGS."
+  (declare (indent 1) (debug let))
+  (letrec ((loop
+            (lambda (bindings)
+              (if (null bindings)
+                  (macroexpand-all (macroexp-progn body)
+                                   macroexpand-all-environment)
+                (let ((binding (pop bindings)))
+                  (cl-progv (list (car binding))
+                      (list (eval (nth 1 binding) t))
+                    (funcall loop bindings)))))))
+    (funcall loop bindings)))
+
 (defun elisp--font-lock-backslash ()
   (let* ((beg0 (match-beginning 0))
          (end0 (match-end 0))
@@ -42856,6 +42873,565 @@ image file.
 (defvar mouse-wheel-right-alternate-event 'wheel-right
   "Alternative wheel right event.")
 
+
+;; Round-13 autoload cells (progmodes modes + remember).
+(fset 'cfengine-auto-mode '(autoload "cfengine" "Choose `cfengine2-mode' or `cfengine3-mode' by buffer contents." t nil))
+(fset 'cfengine2-mode '(autoload "cfengine" "Major mode for editing CFEngine2 input.
+There are no special keybindings by default.
+
+Action blocks are treated as defuns, i.e. \\[beginning-of-defun] moves
+to the action header.
+
+In addition to any hooks its parent mode `prog-mode' might have run,
+this mode runs the hook `cfengine2-mode-hook', as the final or
+penultimate step during initialization." t nil))
+(fset 'cfengine3-mode '(autoload "cfengine" "Major mode for editing CFEngine3 input.
+There are no special keybindings by default.
+
+Action blocks are treated as defuns, i.e. \\[beginning-of-defun] moves
+to the action header.
+
+In addition to any hooks its parent mode `prog-mode' might have run,
+this mode runs the hook `cfengine3-mode-hook', as the final or
+penultimate step during initialization." t nil))
+(fset 'cperl-mode '(autoload "cperl-mode" "Major mode for editing Perl code.
+Expression and list commands understand all C brackets.
+Tab indents for Perl code.
+Paragraphs are separated by blank lines only.
+Delete converts tabs to spaces as it moves back.
+
+Various characters in Perl almost always come in pairs: {}, (), [],
+sometimes <>.  When the user types the first, she gets the second as
+well, with optional special formatting done on {}.  (Disabled by
+default.)  You can always quote (with \\[quoted-insert]) the left
+\"paren\" to avoid the expansion.  The processing of < is special,
+since most the time you mean \"less\".  CPerl mode tries to guess
+whether you want to type pair <>, and inserts is if it
+appropriate.  You can set `cperl-electric-parens-string' to the string that
+contains the parens from the above list you want to be electrical.
+Electricity of parens is controlled by `cperl-electric-parens'.
+You may also set `cperl-electric-parens-mark' to have electric parens
+look for active mark and \"embrace\" a region if possible.'
+
+CPerl mode provides expansion of the Perl control constructs:
+
+   if, else, elsif, unless, while, until, continue, do,
+   for, foreach, formy and foreachmy.
+
+and POD directives (Disabled by default, see `cperl-electric-keywords'.)
+
+The user types the keyword immediately followed by a space, which
+causes the construct to be expanded, and the point is positioned where
+she is most likely to want to be.  E.g., when the user types a space
+following \"if\" the following appears in the buffer: if () { or if ()
+} { } and the cursor is between the parentheses.  The user can then
+type some boolean expression within the parens.  Having done that,
+typing \\[cperl-linefeed] places you - appropriately indented - on a
+new line between the braces (if you typed \\[cperl-linefeed] in a POD
+directive line, then appropriate number of new lines is inserted).
+
+If CPerl decides that you want to insert \"English\" style construct like
+
+            bite if angry;
+
+it will not do any expansion.  See also help on variable
+`cperl-extra-newline-before-brace'.  (Note that one can switch the
+help message on expansion by setting `cperl-message-electric-keyword'
+to nil.)
+
+\\[cperl-linefeed] is a convenience replacement for typing carriage
+return.  It places you in the next line with proper indentation, or if
+you type it inside the inline block of control construct, like
+
+            foreach (@lines) {print; print}
+
+and you are on a boundary of a statement inside braces, it will
+transform the construct into a multiline and will place you into an
+appropriately indented blank line.  If you need a usual
+`newline-and-indent' behavior, it is on \\[newline-and-indent],
+see documentation on `cperl-electric-linefeed'.
+
+Use \\[cperl-invert-if-unless] to change a construction of the form
+
+	    if (A) { B }
+
+into
+
+            B if A;
+
+\\{cperl-mode-map}
+
+Setting the variable `cperl-font-lock' to t switches on `font-lock-mode',
+`cperl-electric-lbrace-space' to t switches on electric space between $
+and {, `cperl-electric-parens-string' is the string that contains
+parentheses that should be electric in CPerl (see also
+`cperl-electric-parens-mark' and `cperl-electric-parens'), setting
+`cperl-electric-keywords' enables electric expansion of control
+structures in CPerl.  `cperl-electric-linefeed' governs which one of two
+linefeed behavior is preferable.  You can enable all these options
+simultaneously by setting `cperl-hairy' to t.  In this case you can
+switch separate options off by setting them to `null'.  Note that one may
+undo the extra whitespace inserted by semis and braces in
+`auto-newline'-mode by consequent \\[cperl-electric-backspace].
+
+Short one-liner-style help is available on \\[cperl-get-help],
+and one can run perldoc or man via menu.
+
+It is possible to show this help automatically after some idle time.
+This is regulated by variable `cperl-lazy-help-time'.  Default with
+`cperl-hairy' (if the value of `cperl-lazy-help-time' is nil) is 5
+secs idle time .  It is also possible to switch this on/off from the
+menu, or via \\[cperl-toggle-autohelp].
+
+Use \\[cperl-lineup] to vertically lineup some construction - put the
+beginning of the region at the start of construction, and make region
+span the needed amount of lines.
+
+Variables `cperl-pod-here-scan', `cperl-pod-here-fontify',
+`cperl-pod-face', `cperl-pod-head-face' control processing of POD and
+here-docs sections.  Results of scan are used for indentation too.
+
+Variables controlling indentation style:
+ `cperl-tab-always-indent'
+    Non-nil means TAB in CPerl mode should always reindent the current line,
+    regardless of where in the line point is when the TAB command is used.
+ `cperl-indent-left-aligned-comments'
+    Non-nil means that the comment starting in leftmost column should indent.
+ `cperl-auto-newline'
+    Non-nil means automatically newline before and after braces,
+    and after colons and semicolons, inserted in Perl code.  The following
+    \\[cperl-electric-backspace] will remove the inserted whitespace.
+    Insertion after colons requires both this variable and
+    `cperl-auto-newline-after-colon' set.
+ `cperl-auto-newline-after-colon'
+    Non-nil means automatically newline even after colons.
+    Subject to `cperl-auto-newline' setting.
+ `cperl-indent-level'
+    Indentation of Perl statements within surrounding block.
+    The surrounding block's indentation is the indentation
+    of the line on which the open-brace appears.
+ `cperl-continued-statement-offset'
+    Extra indentation given to a substatement, such as the
+    then-clause of an if, or body of a while, or just a statement continuation.
+ `cperl-continued-brace-offset'
+    Extra indentation given to a brace that starts a substatement.
+    This is in addition to `cperl-continued-statement-offset'.
+ `cperl-brace-offset'
+    Extra indentation for line if it starts with an open brace.
+ `cperl-brace-imaginary-offset'
+    An open brace following other text is treated as if it the line started
+    this far to the right of the actual line indentation.
+ `cperl-label-offset'
+    Extra indentation for line that is a label.
+ `cperl-min-label-indent'
+    Minimal indentation for line that is a label.
+
+Settings for classic indent-styles: K&R BSD=C++ GNU PBP PerlStyle=Whitesmith
+  `cperl-indent-level'                5   4       2   4   4
+  `cperl-brace-offset'                0   0       0   0   0
+  `cperl-continued-brace-offset'     -5  -4       0   0   0
+  `cperl-label-offset'               -5  -4      -2  -2  -4
+  `cperl-continued-statement-offset'  5   4       2   4   4
+
+CPerl knows several indentation styles, and may bulk set the
+corresponding variables.  Use \\[cperl-set-style] to do this or
+set the variable `cperl-file-style' user option.  Use
+\\[cperl-set-style-back] to restore the memorized preexisting
+values (both available from menu).  See examples in
+`cperl-style-examples'.
+
+Part of the indentation style is how different parts of if/elsif/else
+statements are broken into lines; in CPerl, this is reflected on how
+templates for these constructs are created (controlled by
+`cperl-extra-newline-before-brace'), and how reflow-logic should treat
+\"continuation\" blocks of else/elsif/continue, controlled by the same
+variable, and by `cperl-extra-newline-before-brace-multiline',
+`cperl-merge-trailing-else', `cperl-indent-region-fix-constructs'.
+
+If `cperl-indent-level' is 0, the statement after opening brace in
+column 0 is indented on
+`cperl-brace-offset'+`cperl-continued-statement-offset'.
+
+Turning on CPerl mode calls the hooks in the variable `cperl-mode-hook'
+with no args.
+
+DO NOT FORGET to read micro-docs (available from `Perl' menu)
+or as help on variables `cperl-tips', `cperl-problems',
+`cperl-praise', `cperl-speed'." t nil))
+(fset 'cperl-perldoc '(autoload "cperl-mode" "Run `perldoc' on WORD.
+
+(fn WORD)" t nil))
+(fset 'cperl-perldoc-at-point '(autoload "cperl-mode" "Run a `perldoc' on the word around point." t nil))
+(fset 'dcl-mode '(autoload "dcl-mode" "Major mode for editing DCL-files.
+
+This mode indents command lines in blocks.  (A block is commands between
+THEN-ELSE-ENDIF and between lines matching dcl-block-begin-regexp and
+dcl-block-end-regexp.)
+
+Labels are indented to a fixed position unless they begin or end a block.
+Whole-line comments (matching dcl-comment-line-regexp) are not indented.
+Data lines are not indented.
+
+Key bindings:
+
+\\{dcl-mode-map}
+Commands not usually bound to keys:
+
+\\[dcl-save-nondefault-options]		Save changed options
+\\[dcl-save-all-options]		Save all options
+\\[dcl-save-option]			Save any option
+\\[dcl-save-mode]			Save buffer mode
+
+Variables controlling indentation style and extra features:
+
+ dcl-basic-offset
+    Extra indentation within blocks.
+
+ dcl-continuation-offset
+    Extra indentation for continued lines.
+
+ dcl-margin-offset
+    Indentation for the first command line in a file or SUBROUTINE.
+
+ dcl-margin-label-offset
+    Indentation for a label.
+
+ dcl-comment-line-regexp
+    Lines matching this regexp will not be indented.
+
+ dcl-block-begin-regexp
+ dcl-block-end-regexp
+    Regexps that match command lines that begin and end, respectively,
+    a block of command lines that will be given extra indentation.
+    Command lines between THEN-ELSE-ENDIF are always indented; these variables
+    make it possible to define other places to indent.
+    Set to nil to disable this feature.
+
+ dcl-calc-command-indent-function
+    Can be set to a function that customizes indentation for command lines.
+    Two such functions are included in the package:
+	dcl-calc-command-indent-multiple
+	dcl-calc-command-indent-hang
+
+ dcl-calc-cont-indent-function
+    Can be set to a function that customizes indentation for continued lines.
+    One such function is included in the package:
+	dcl-calc-cont-indent-relative    (set by default)
+
+ dcl-tab-always-indent
+    If t, pressing TAB always indents the current line.
+    If nil, pressing TAB indents the current line if point is at the left
+    margin.
+
+ dcl-electric-characters
+    Non-nil causes lines to be indented at once when a label, ELSE or ENDIF is
+    typed.
+
+ dcl-electric-reindent-regexps
+    Use this variable and function dcl-electric-character to customize
+    which words trigger electric indentation.
+
+ dcl-tempo-comma
+ dcl-tempo-left-paren
+ dcl-tempo-right-paren
+    These variables control the look of expanded templates.
+
+ dcl-imenu-generic-expression
+    Default value for `imenu-generic-expression'.  The default includes
+    SUBROUTINE labels in the main listing and sub-listings for
+    other labels, CALL, GOTO and GOSUB statements.
+
+ dcl-imenu-label-labels
+ dcl-imenu-label-goto
+ dcl-imenu-label-gosub
+ dcl-imenu-label-call
+    Change the text that is used as sub-listing labels in imenu.
+
+Turning on DCL mode calls the value of the variable `dcl-mode-hook'
+with no args, if that value is non-nil.
+
+
+The following example uses the default values for all variables:
+
+$! This is a comment line that is not indented (it matches
+$! dcl-comment-line-regexp)
+$! Next follows the first command line.  It is indented dcl-margin-offset.
+$       i = 1
+$       ! Other comments are indented like command lines.
+$       ! A margin label indented dcl-margin-label-offset:
+$ label:
+$       if i.eq.1
+$       then
+$           ! Lines between THEN-ELSE and ELSE-ENDIF are
+$           ! indented dcl-basic-offset
+$           loop1: ! This matches dcl-block-begin-regexp...
+$               ! ...so this line is indented dcl-basic-offset
+$               text = \"This \" + - ! is a continued line
+                       \"lined up with the command line\"
+$               type sys$input
+Data lines are not indented at all.
+$           endloop1: ! This matches dcl-block-end-regexp
+$       endif
+$
+
+
+There is some minimal font-lock support (see vars
+`dcl-font-lock-defaults' and `dcl-font-lock-keywords')." t nil))
+(fset 'icon-mode '(autoload "icon" "Major mode for editing Icon code.
+Expression and list commands understand all Icon brackets.
+Tab indents for Icon code.
+Paragraphs are separated by blank lines only.
+Delete converts tabs to spaces as it moves back.
+\\{icon-mode-map}
+Variables controlling indentation style:
+ icon-tab-always-indent
+    Non-nil means TAB in Icon mode should always reindent the current line,
+    regardless of where in the line point is when the TAB command is used.
+ icon-auto-newline
+    Non-nil means automatically newline before and after braces
+    inserted in Icon code.
+ icon-indent-level
+    Indentation of Icon statements within surrounding block.
+    The surrounding block's indentation is the indentation
+    of the line on which the open-brace appears.
+ icon-continued-statement-offset
+    Extra indentation given to a substatement, such as the
+    then-clause of an if or body of a while.
+ icon-continued-brace-offset
+    Extra indentation given to a brace that starts a substatement.
+    This is in addition to `icon-continued-statement-offset'.
+ icon-brace-offset
+    Extra indentation for line if it starts with an open brace.
+ icon-brace-imaginary-offset
+    An open brace following other text is treated as if it were
+    this far to the right of the start of its line.
+
+Turning on Icon mode calls the value of the variable `icon-mode-hook'
+with no args, if that value is non-nil." t nil))
+(fset 'm2-mode '(autoload "modula2" "This is a mode intended to support program development in Modula-2.
+All control constructs of Modula-2 can be reached by typing C-c
+followed by the first character of the construct.
+\\<m2-mode-map>
+  \\[m2-begin] begin         \\[m2-case] case
+  \\[m2-definition] definition    \\[m2-else] else
+  \\[m2-for] for           \\[m2-header] header
+  \\[m2-if] if            \\[m2-module] module
+  \\[m2-loop] loop          \\[m2-or] or
+  \\[m2-procedure] procedure     Control-c Control-w with
+  \\[m2-record] record        \\[m2-stdio] stdio
+  \\[m2-type] type          \\[m2-until] until
+  \\[m2-var] var           \\[m2-while] while
+  \\[m2-export] export        \\[m2-import] import
+  \\[m2-begin-comment] begin-comment \\[m2-end-comment] end-comment
+  \\[suspend-emacs] suspend Emacs     \\[m2-toggle] toggle
+  \\[m2-compile] compile           \\[m2-next-error] next-error
+  \\[m2-link] link
+
+   `m2-indent' controls the number of spaces for each indentation.
+   `m2-compile-command' holds the command to compile a Modula-2 program.
+   `m2-link-command' holds the command to link a Modula-2 program.
+
+In addition to any hooks its parent mode `prog-mode' might have run,
+this mode runs the hook `m2-mode-hook', as the final or penultimate
+step during initialization." t nil))
+(fset 'metafont-mode '(autoload "meta-mode" "Major mode for editing Metafont sources.
+
+In addition to any hooks its parent mode `meta-common-mode' might have
+run, this mode runs the hook `metafont-mode-hook', as the final or
+penultimate step during initialization.
+
+\\{metafont-mode-map}" t nil))
+(fset 'metapost-mode '(autoload "meta-mode" "Major mode for editing MetaPost sources.
+
+In addition to any hooks its parent mode `meta-common-mode' might have
+run, this mode runs the hook `metapost-mode-hook', as the final or
+penultimate step during initialization.
+
+\\{metapost-mode-map}" t nil))
+(fset 'pascal-mode '(autoload "pascal" "Major mode for editing Pascal code.
+\\<pascal-mode-map>
+TAB indents for Pascal code.  Delete converts tabs to spaces as it moves back.
+
+\\[completion-at-point] completes the word around current point with respect to position in code
+\\[completion-help-at-point] shows all possible completions at this point.
+
+Other useful functions are:
+
+\\[pascal-mark-defun]	- Mark function.
+\\[pascal-insert-block]	- insert begin ... end;
+\\[pascal-star-comment]	- insert (* ... *)
+\\[pascal-comment-area]	- Put marked area in a comment, fixing nested comments.
+\\[pascal-uncomment-area]	- Uncomment an area commented with \\[pascal-comment-area].
+\\[pascal-beg-of-defun]	- Move to beginning of current function.
+\\[pascal-end-of-defun]	- Move to end of current function.
+\\[pascal-goto-defun]	- Goto function prompted for in the minibuffer.
+\\[pascal-outline-mode]	- Enter `pascal-outline-mode'.
+
+Variables controlling indentation/edit style:
+
+ `pascal-indent-level' (default 3)
+    Indentation of Pascal statements with respect to containing block.
+ `pascal-case-indent' (default 2)
+    Indentation for case statements.
+ `pascal-auto-newline' (default nil)
+    Non-nil means automatically newline after semicolons and the punctuation
+    mark after an end.
+ `pascal-indent-nested-functions' (default t)
+    Non-nil means nested functions are indented.
+ `pascal-tab-always-indent' (default t)
+    Non-nil means TAB in Pascal mode should always reindent the current line,
+    regardless of where in the line point is when the TAB command is used.
+ `pascal-auto-endcomments' (default t)
+    Non-nil means a comment { ... } is set after the ends which ends cases and
+    functions.  The name of the function or case will be set between the braces.
+ `pascal-auto-lineup' (default t)
+    List of contexts where auto lineup of :'s or ='s should be done.
+
+See also the user variables `pascal-type-keywords', `pascal-start-keywords' and
+`pascal-separator-keywords'.
+
+In addition to any hooks its parent mode `prog-mode' might have run,
+this mode runs the hook `pascal-mode-hook', as the final or
+penultimate step during initialization." t nil))
+(fset 'perl-flymake '(autoload "perl-mode" "Perl backend for Flymake.
+Launch `perl-flymake-command' (which see) and pass to its
+standard input the contents of the current buffer.  The output of
+this command is analyzed for error and warning messages.
+
+(fn REPORT-FN &rest ARGS)" nil nil))
+(fset 'perl-mode '(autoload "perl-mode" "Major mode for editing Perl code.
+Expression and list commands understand all Perl brackets.
+Tab indents for Perl code.
+Comments are delimited with # ... \\n.
+Paragraphs are separated by blank lines only.
+Delete converts tabs to spaces as it moves back.
+\\{perl-mode-map}
+Variables controlling indentation style:
+ `perl-tab-always-indent'
+    Non-nil means TAB in Perl mode should always indent the current line,
+    regardless of where in the line point is when the TAB command is used.
+ `perl-tab-to-comment'
+    Non-nil means that for lines which don't need indenting, TAB will
+    either delete an empty comment, indent an existing comment, move
+    to end-of-line, or if at end-of-line already, create a new comment.
+ `perl-nochange'
+    Lines starting with this regular expression are not auto-indented.
+ `perl-indent-level'
+    Indentation of Perl statements within surrounding block.
+    The surrounding block's indentation is the indentation
+    of the line on which the open-brace appears.
+ `perl-continued-statement-offset'
+    Extra indentation given to a substatement, such as the
+    then-clause of an if or body of a while.
+ `perl-continued-brace-offset'
+    Extra indentation given to a brace that starts a substatement.
+    This is in addition to `perl-continued-statement-offset'.
+ `perl-brace-offset'
+    Extra indentation for line if it starts with an open brace.
+ `perl-brace-imaginary-offset'
+    An open brace following other text is treated as if it were
+    this far to the right of the start of its line.
+ `perl-label-offset'
+    Extra indentation for line that is a label.
+ `perl-indent-continued-arguments'
+    Offset of argument lines relative to usual indentation.
+
+Various indentation styles:       K&R  BSD  BLK  GNU  LW
+  perl-indent-level                5    8    0    2    4
+  perl-continued-statement-offset  5    8    4    2    4
+  perl-continued-brace-offset      0    0    0    0   -4
+  perl-brace-offset               -5   -8    0    0    0
+  perl-brace-imaginary-offset      0    0    4    0    0
+  perl-label-offset               -5   -8   -2   -2   -2
+
+Turning on Perl mode runs the normal hook `perl-mode-hook'." t nil))
+(fset 'remember '(autoload "remember" "Remember an arbitrary piece of data.
+INITIAL is the text to initially place in the `remember-buffer',
+or nil to bring up a blank `remember-buffer'.
+
+With a prefix or a visible region, use the region as INITIAL.
+
+(fn &optional INITIAL)" t nil))
+(fset 'remember-clipboard '(autoload "remember" "Remember the contents of the current clipboard.
+Most useful for remembering things from other applications." t nil))
+(fset 'remember-diary-extract-entries '(autoload "remember" "Extract diary entries from the region based on `remember-diary-regexp'." nil nil))
+(fset 'remember-notes '(autoload "remember" "Return the notes buffer, creating it if needed, and maybe switch to it.
+This buffer is for notes that you want to preserve across Emacs sessions.
+The notes are saved in `remember-data-file'.
+
+If a buffer is already visiting that file, just return it.
+
+Otherwise, create the buffer, and rename it to `remember-notes-buffer-name',
+unless a buffer of that name already exists.  Set the major mode according
+to `remember-notes-initial-major-mode', and enable `remember-notes-mode'
+minor mode.
+
+Use \\<remember-notes-mode-map>\\[remember-notes-save-and-bury-buffer] to save and bury the notes buffer.
+
+Interactively, or if SWITCH-TO is non-nil, switch to the buffer.
+Return the buffer.
+
+Set `initial-buffer-choice' to `remember-notes' to visit your notes buffer
+when Emacs starts.  Set `remember-notes-buffer-name' to \"*scratch*\"
+to turn the *scratch* buffer into your notes buffer.
+
+(fn &optional SWITCH-TO)" t nil))
+(fset 'remember-other-frame '(autoload "remember" "Call `remember' in another frame.
+
+(fn &optional INITIAL)" t nil))
+(fset 'ruby-base-mode '(autoload "ruby-mode" "Generic major mode for editing Ruby.
+
+This mode is intended to be inherited by concrete major modes.
+Currently there are `ruby-mode' and `ruby-ts-mode'.
+
+In addition to any hooks its parent mode `prog-mode' might have run,
+this mode runs the hook `ruby-base-mode-hook', as the final or
+penultimate step during initialization.
+
+\\{ruby-base-mode-map}" t nil))
+(fset 'ruby-mode '(autoload "ruby-mode" "Major mode for editing Ruby code.
+
+In addition to any hooks its parent mode `ruby-base-mode' might have
+run, this mode runs the hook `ruby-mode-hook', as the final or
+penultimate step during initialization.
+
+\\{ruby-mode-map}" t nil))
+(fset 'simula-mode '(autoload "simula" "Major mode for editing SIMULA code.
+\\{simula-mode-map}
+Variables controlling indentation style:
+ `simula-indent-level'
+    Indentation of SIMULA statements with respect to containing block.
+ `simula-substatement-offset'
+    Extra indentation after DO, THEN, ELSE, WHEN and OTHERWISE.
+ `simula-continued-statement-offset' 3
+    Extra indentation for lines not starting a statement or substatement,
+    e.g. a nested FOR-loop.  If value is a list, each line in a multiple-
+    line continued statement will have the car of the list extra indentation
+    with respect to the previous line of the statement.
+ `simula-label-offset' -4711
+    Offset of SIMULA label lines relative to usual indentation.
+ `simula-if-indent' (0 . 0)
+    Extra indentation of THEN and ELSE with respect to the starting IF.
+    Value is a cons cell, the car is extra THEN indentation and the cdr
+    extra ELSE indentation.  IF after ELSE is indented as the starting IF.
+ `simula-inspect-indent' (0 . 0)
+    Extra indentation of WHEN and OTHERWISE with respect to the
+    corresponding INSPECT.  Value is a cons cell, the car is
+    extra WHEN indentation and the cdr extra OTHERWISE indentation.
+ `simula-electric-indent' nil
+    If this variable is non-nil, `simula-indent-line'
+    will check the previous line to see if it has to be reindented.
+ `simula-abbrev-keyword' `upcase'
+    Determine how SIMULA keywords will be expanded.  Value is one of
+    the symbols `upcase', `downcase', `capitalize', (as in) `abbrev-table',
+    or nil if they should not be changed.
+ `simula-abbrev-stdproc' `abbrev-table'
+    Determine how standard SIMULA procedure and class names will be
+    expanded.  Value is one of the symbols `upcase', `downcase', `capitalize',
+    (as in) `abbrev-table', or nil if they should not be changed.
+
+Turning on SIMULA mode calls the value of the variable simula-mode-hook
+with no arguments, if that value is non-nil." t nil))
 
 ;; Round-12 autoload cells (shell/ielm/cmuscheme/locate/ispell).
 (fset 'ielm '(autoload "ielm" "Interactively evaluate Emacs Lisp expressions.

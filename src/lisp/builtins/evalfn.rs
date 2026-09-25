@@ -606,6 +606,17 @@ fn f_macroexpand_1(i: &mut Interp, args: Vec<Value>) -> EvalResult {
                 }
             }
             if let Value::Sym(id) = car {
+                // GNU folds `eval-when-compile'/`eval-and-compile' during
+                // expansion: BODY runs now and the result is quoted.
+                if i.symbol_name(id) == "eval-when-compile"
+                    || i.symbol_name(id) == "eval-and-compile"
+                {
+                    let v = i.eval_progn(&cdr)?;
+                    return Ok(Value::cons(
+                        Value::Sym(i.intern("quote")),
+                        Value::cons(v, Value::Nil),
+                    ));
+                }
                 let f = i.symbol_function(id);
                 let is_mac = match &f {
                     Value::Lambda(l) => l.is_macro,
