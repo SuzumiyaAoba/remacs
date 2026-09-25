@@ -42874,6 +42874,373 @@ image file.
   "Alternative wheel right event.")
 
 
+;; Round-14 autoload cells (wid-edit tree-widget server recentf ruler-mode cus-edit).
+(fset 'custom-buffer-create '(autoload "cus-edit" "Create a buffer containing OPTIONS.
+Optional NAME is the name of the buffer.
+OPTIONS should be an alist of the form ((SYMBOL WIDGET)...), where
+SYMBOL is a customization option, and WIDGET is a widget for editing
+that option.
+DESCRIPTION is unused.
+
+(fn OPTIONS &optional NAME DESCRIPTION)" nil nil))
+(fset 'custom-buffer-create-other-window '(autoload "cus-edit" "Create a buffer containing OPTIONS, and display it in another window.
+The result includes selecting that window.
+Optional NAME is the name of the buffer.
+OPTIONS should be an alist of the form ((SYMBOL WIDGET)...), where
+SYMBOL is a customization option, and WIDGET is a widget for editing
+that option.
+DESCRIPTION is unused.
+
+(fn OPTIONS &optional NAME DESCRIPTION)" nil nil))
+(fset 'custom-menu-create '(autoload "cus-edit" "Create menu for customization group SYMBOL.
+The menu is in a format applicable to `easy-menu-define'.
+
+(fn SYMBOL)" nil nil))
+(fset 'custom-prompt-customize-unsaved-options '(autoload "cus-edit" "Prompt user to customize any unsaved customization options.
+Return nil if user chooses to customize, for use in
+`kill-emacs-query-functions'." nil nil))
+(fset 'custom-save-all '(autoload "cus-edit" "Save all customizations in `custom-file'." nil nil))
+(fset 'custom-save-icons '(autoload "cus-edit" "Save all customized icons in `custom-file'." nil nil))
+(fset 'custom-set-icons '(autoload "cus-edit" "Install user customizations of icon specs specified in ARGS.
+These settings are registered as theme `user'.
+The arguments should each be a list of the form:
+
+  (SYMBOL EXP)
+
+This stores EXP (without evaluating it) as the saved spec for SYMBOL.
+
+(fn &rest ARGS)" nil nil))
+(fset 'customize '(autoload "cus-edit" "Select a customization buffer which you can use to set user options.
+User options are structured into \"groups\".
+Initially the top-level group `Emacs' and its immediate subgroups
+are shown; the contents of those subgroups are initially hidden." t nil))
+(fset 'customize-apropos '(autoload "cus-edit" "Customize loaded options, faces and groups matching PATTERN.
+PATTERN can be a word, a list of words (separated by spaces),
+or a regexp (using some regexp special characters).  If it is a word,
+search for matches for that word as a substring.  If it is a list of
+words, search for matches for any two (or more) of those words.
+
+If TYPE is `options', include only options.
+If TYPE is `faces', include only faces.
+If TYPE is `groups', include only groups.
+
+(fn PATTERN &optional TYPE)" t nil))
+(fset 'customize-apropos-faces '(autoload "cus-edit" "Customize all loaded faces matching REGEXP.
+
+(fn REGEXP)" t nil))
+(fset 'customize-apropos-groups '(autoload "cus-edit" "Customize all loaded groups matching REGEXP.
+
+(fn REGEXP)" t nil))
+(fset 'customize-apropos-options '(autoload "cus-edit" "Customize all loaded customizable options matching REGEXP.
+
+(fn REGEXP &optional IGNORED)" t nil))
+(fset 'customize-browse '(autoload "cus-edit" "Create a tree browser for the customize hierarchy.
+
+(fn &optional GROUP)" t nil))
+(fset 'customize-changed '(autoload "cus-edit" "Customize all settings whose meanings have changed in Emacs itself.
+This includes new user options and faces, and new customization
+groups, as well as older options and faces whose meanings or
+default values have changed since the previous major Emacs
+release.
+
+With argument SINCE-VERSION (a string), customize all settings
+that were added or redefined since that version.
+
+(fn &optional SINCE-VERSION)" t nil))
+(fset 'customize-dirlocals '(autoload "cus-edit" "Customize Directory Local Variables in the current directory.
+
+With optional argument FILENAME non-nil, customize the `.dir-locals.el' file
+that FILENAME specifies.
+
+(fn &optional FILENAME)" t nil))
+(fset 'customize-face '(autoload "cus-edit" "Customize FACE, which should be a face name or nil.
+If FACE is nil, customize all faces.  If FACE is actually a
+face-alias, customize the face it is aliased to.
+
+If OTHER-WINDOW is non-nil, display in another window.
+
+Interactively, when point is on text which has a face specified,
+suggest to customize that face, if it's customizable.
+
+(fn &optional FACE OTHER-WINDOW)" t nil))
+(fset 'customize-face-other-window '(autoload "cus-edit" "Show customization buffer for face FACE in other window.
+If FACE is actually a face-alias, customize the face it is aliased to.
+
+Interactively, when point is on text which has a face specified,
+suggest to customize that face, if it's customizable.
+
+(fn &optional FACE)" t nil))
+(fset 'customize-group '(autoload "cus-edit" "Customize GROUP, which must be a customization group.
+If OTHER-WINDOW is non-nil, display in another window.
+
+(fn &optional GROUP OTHER-WINDOW)" t nil))
+(fset 'customize-group-other-window '(autoload "cus-edit" "Customize GROUP, which must be a customization group, in another window.
+
+(fn &optional GROUP)" t nil))
+(fset 'customize-icon '(autoload "cus-edit" "Customize ICON.
+
+(fn ICON)" t nil))
+(fset 'customize-menu-create '(autoload "cus-edit" "Return a customize menu for customization group SYMBOL.
+If optional NAME is given, use that as the name of the menu.
+Otherwise the menu will be named `Customize'.
+The format is suitable for use with `easy-menu-define'.
+
+(fn SYMBOL &optional NAME)" nil nil))
+(fset 'customize-mode '(autoload "cus-edit" "Customize options related to a major or minor mode.
+By default the current major mode is used.  With a prefix
+argument or if the current major mode has no known group, prompt
+for the MODE to customize.
+
+(fn MODE)" t nil))
+(fset 'customize-option '(autoload "cus-edit" "Customize SYMBOL, which must be a user option.
+
+(fn SYMBOL)" t nil))
+(fset 'customize-option-other-window '(autoload "cus-edit" "Customize SYMBOL, which must be a user option.
+Show the buffer in another window, but don't select it.
+
+(fn SYMBOL)" t nil))
+(fset 'customize-push-and-save '(autoload "cus-edit" "Add ELTS to LIST-VAR and save for future sessions, safely.
+ELTS should be a list.  This function adds each entry to the
+value of LIST-VAR using `add-to-list'.
+
+If Emacs is initialized, call `customize-save-variable' to save
+the resulting list value now.  Otherwise, add an entry to
+`after-init-hook' to save it after initialization.
+
+(fn LIST-VAR ELTS)" nil nil))
+(fset 'customize-rogue '(autoload "cus-edit" "Customize all user variables modified outside customize." t nil))
+(fset 'customize-save-customized '(autoload "cus-edit" "Save all user options which have been set in this session." t nil))
+(fset 'customize-save-variable '(autoload "cus-edit" "Set the default for VARIABLE to VALUE, and save it for future sessions.
+Return VALUE.
+
+If VARIABLE has a `custom-set' property, that is used for setting
+VARIABLE, otherwise `set-default' is used.
+
+If VARIABLE has a `variable-interactive' property, that is used as if
+it were the arg to `interactive' (which see) to interactively read the value.
+
+If VARIABLE has a `custom-type' property, it must be a widget and the
+`:prompt-value' property of that widget will be used for reading the value.
+
+If given a prefix (or a COMMENT argument), also prompt for a comment.
+
+(fn VARIABLE VALUE &optional COMMENT)" t nil))
+(fset 'customize-saved '(autoload "cus-edit" "Customize all saved options and faces." t nil))
+(fset 'customize-set-value '(autoload "cus-edit" "Set VARIABLE to VALUE, and return VALUE.  VALUE is a Lisp object.
+
+If VARIABLE has a `variable-interactive' property, that is used as if
+it were the arg to `interactive' (which see) to interactively read the value.
+
+If VARIABLE has a `custom-type' property, it must be a widget and the
+`:prompt-value' property of that widget will be used for reading the value.
+
+If given a prefix (or a COMMENT argument), also prompt for a comment.
+
+(fn VARIABLE VALUE &optional COMMENT)" t nil))
+(fset 'customize-set-variable '(autoload "cus-edit" "Set the default for VARIABLE to VALUE, and return VALUE.
+VALUE is a Lisp object.
+
+If VARIABLE has a `custom-set' property, that is used for setting
+VARIABLE, otherwise `set-default' is used.
+
+If VARIABLE has a `variable-interactive' property, that is used as if
+it were the arg to `interactive' (which see) to interactively read the value.
+
+If VARIABLE has a `custom-type' property, it must be a widget and the
+`:prompt-value' property of that widget will be used for reading the value.
+
+If given a prefix (or a COMMENT argument), also prompt for a comment.
+
+(fn VARIABLE VALUE &optional COMMENT)" t nil))
+(fset 'customize-toggle-option '(autoload "cus-edit" "Toggle the value of boolean option SYMBOL for this session.
+
+(fn SYMBOL)" t nil))
+(fset 'customize-unsaved '(autoload "cus-edit" "Customize all options and faces set in this session but not saved." t nil))
+(fset 'recentf-mode '(autoload "recentf" "Toggle keeping track of opened files (Recentf mode).
+
+This mode maintains a list of recently opened files and makes it
+easy to visit them.  The recent files list is automatically saved
+across Emacs sessions.
+
+You can use `recentf-open' or `recentf-open-files' to visit
+files.
+
+When Recentf mode is enabled, a \"Open Recent\" submenu is
+displayed in the \"File\" menu, containing a list of files that
+were operated on recently, in the most-recently-used order.
+
+By default, only operations like opening a file, writing a buffer
+to a file, and killing a buffer is counted as \"operating\" on
+the file.  If instead you want to prioritize files that appear in
+buffers you switch to a lot, you can say something like the following:
+
+  (add-hook \\='buffer-list-update-hook #\\='recentf-track-opened-file)
+
+This is a global minor mode.  If called interactively, toggle the
+`Recentf mode' mode.  If the prefix argument is positive, enable the
+mode, and if it is zero or negative, disable the mode.
+
+If called from Lisp, toggle the mode if ARG is `toggle'.  Enable the
+mode if ARG is nil, omitted, or is a positive number.  Disable the mode
+if ARG is a negative number.
+
+To check whether the minor mode is enabled in the current buffer,
+evaluate `(default-value \\='recentf-mode)'.
+
+The mode's hook is called both when the mode is enabled and when it is
+disabled.
+
+(fn &optional ARG)" t nil))
+(fset 'recentf-open '(autoload "recentf" "Prompt for FILE in `recentf-list' and visit it.
+Enable `recentf-mode' if it isn't already.
+
+(fn FILE)" t nil))
+(fset 'ruler-mode '(autoload "ruler-mode" "Toggle display of ruler in header line (Ruler mode).
+
+This is a minor mode.  If called interactively, toggle the `Ruler mode'
+mode.  If the prefix argument is positive, enable the mode, and if it is
+zero or negative, disable the mode.
+
+If called from Lisp, toggle the mode if ARG is `toggle'.  Enable the
+mode if ARG is nil, omitted, or is a positive number.  Disable the mode
+if ARG is a negative number.
+
+To check whether the minor mode is enabled in the current buffer,
+evaluate the variable `ruler-mode'.
+
+The mode's hook is called both when the mode is enabled and when it is
+disabled.
+
+(fn &optional ARG)" t nil))
+(fset 'server-force-delete '(autoload "server" "Unconditionally delete connection file for server NAME.
+If server is running, it is first stopped.
+NAME defaults to `server-name'.  With argument, ask for NAME.
+
+(fn &optional NAME)" t nil))
+(fset 'server-mode '(autoload "server" "Toggle Server mode.
+
+Server mode runs a process that accepts commands from the
+`emacsclient' program.  See Info node `Emacs server' and
+`server-start' for details.
+
+This is a global minor mode.  If called interactively, toggle the
+`Server mode' mode.  If the prefix argument is positive, enable the
+mode, and if it is zero or negative, disable the mode.
+
+If called from Lisp, toggle the mode if ARG is `toggle'.  Enable the
+mode if ARG is nil, omitted, or is a positive number.  Disable the mode
+if ARG is a negative number.
+
+To check whether the minor mode is enabled in the current buffer,
+evaluate `(default-value \\='server-mode)'.
+
+The mode's hook is called both when the mode is enabled and when it is
+disabled.
+
+(fn &optional ARG)" t nil))
+(fset 'server-save-buffers-kill-terminal '(autoload "server" "Offer to save each buffer, then kill the current client.
+With ARG non-nil, silently save all file-visiting buffers, then kill.
+
+If emacsclient was started with a list of filenames to edit, then
+only these files will be asked to be saved.
+
+When running Emacs as a daemon and with
+`server-stop-automatically' (which see) set to `kill-terminal' or
+`delete-frame', this function may call `save-buffers-kill-emacs'
+if there are no other active clients.
+
+(fn ARG)" nil nil))
+(fset 'server-start '(autoload "server" "Allow this Emacs process to be a server for client processes.
+This starts a server communications subprocess through which client
+\"editors\" can send your editing commands to this Emacs job.
+To use the server, set up the program `emacsclient' in the Emacs
+distribution as your standard \"editor\".
+
+Optional argument LEAVE-DEAD (interactively, a prefix arg) means just
+kill any existing server communications subprocess.
+
+If a server is already running, restart it.  If clients are
+running, ask the user for confirmation first, unless optional
+argument INHIBIT-PROMPT is non-nil.
+
+To force-start a server, do \\[server-force-delete] and then
+\\[server-start].
+
+To check from a Lisp program whether a server is running, use
+the `server-process' variable.
+
+(fn &optional LEAVE-DEAD INHIBIT-PROMPT)" t nil))
+(fset 'server-stop-automatically '(autoload "server" "Automatically stop the Emacs server as specified by VALUE.
+This sets the variable `server-stop-automatically' (which see).
+
+(fn VALUE)" nil nil))
+(fset 'setopt '(autoload "cus-edit" "Set VARIABLE/VALUE pairs, and return the final VALUE.
+This is like `setq', but is meant for user options instead of
+plain variables.  This means that `setopt' will execute any
+`custom-set' form associated with VARIABLE.
+
+Note that `setopt' will emit a warning if the type of a VALUE
+does not match the type of the corresponding VARIABLE as
+declared by `defcustom'.  (VARIABLE will be assigned the value
+even if it doesn't match the type.)
+
+(fn [VARIABLE VALUE]...)" nil t))
+(fset 'setopt--set '(autoload "cus-edit" "
+
+(fn VARIABLE VALUE)" nil nil))
+(fset 'setopt--set-local '(autoload "cus-edit" "
+
+(fn VARIABLE VALUE)" nil nil))
+(fset 'setopt-local '(autoload "cus-edit" "Set buffer local VARIABLE/VALUE pairs, and return the final VALUE.
+This is like `setq-local', but is meant for user options instead of
+plain variables.  This means that `setopt-local' will execute any
+`custom-set' form associated with VARIABLE.  Unlike `setopt',
+`setopt-local' does not affect a user option's global value.
+
+Note that `setopt-local' will emit a warning if the type of a VALUE does
+not match the type of the corresponding VARIABLE as declared by
+`defcustom'.  (VARIABLE will be assigned the value even if it doesn't
+match the type.)
+
+Signal an error if a `custom-set' form does not support the
+`buffer-local' argument.
+
+(fn [VARIABLE VALUE]...)" nil t))
+(fset 'widget-apply '(autoload "wid-edit" "Apply the value of WIDGET's PROPERTY to the widget itself.
+Return the result of applying the value of PROPERTY to WIDGET.
+ARGS are passed as extra arguments to the function.
+
+(fn WIDGET PROPERTY &rest ARGS)" nil nil))
+(fset 'widget-convert '(autoload "wid-edit" "Convert TYPE to a widget without inserting it in the buffer.
+The optional ARGS are additional keyword arguments.
+
+(fn TYPE &rest ARGS)" nil nil))
+(fset 'widget-create '(autoload "wid-edit" "Create widget of TYPE.
+The optional ARGS are additional keyword arguments.
+
+(fn TYPE &rest ARGS)" nil nil))
+(fset 'widget-delete '(autoload "wid-edit" "Delete WIDGET.
+
+(fn WIDGET)" nil nil))
+(fset 'widget-get '(autoload "wid-edit" "In WIDGET, get the value of PROPERTY.
+The value could either be specified when the widget was created, or
+later with `widget-put'.
+
+(fn WIDGET PROPERTY)" nil nil))
+(fset 'widget-insert '(autoload "wid-edit" "Call `insert' with ARGS even if surrounding text is read only.
+
+(fn &rest ARGS)" nil nil))
+(fset 'widget-prompt-value '(autoload "wid-edit" "Prompt for a value matching WIDGET, using PROMPT.
+The current value is assumed to be VALUE, unless UNBOUND is non-nil.
+
+(fn WIDGET PROMPT &optional VALUE UNBOUND)" nil nil))
+(fset 'widget-put '(autoload "wid-edit" nil nil nil))
+(fset 'widget-setup '(autoload "wid-edit" "Setup current buffer so editing string widgets works." nil nil))
+(fset 'widget-value '(autoload "wid-edit" nil nil nil))
+(fset 'widgetp '(autoload "wid-edit" "Return non-nil if WIDGET is a widget.
+
+(fn WIDGET)" nil nil))
+
 ;; Round-13 autoload cells (progmodes modes + remember).
 (fset 'cfengine-auto-mode '(autoload "cfengine" "Choose `cfengine2-mode' or `cfengine3-mode' by buffer contents." t nil))
 (fset 'cfengine2-mode '(autoload "cfengine" "Major mode for editing CFEngine2 input.
@@ -44953,6 +45320,107 @@ command before it's run.
 (defvar ruler-mode nil "Non-nil if Ruler mode is enabled.
 Use the command `ruler-mode' to change this variable.")
 
+
+;; emacs.c's daemon socket name (nil when not running as a daemon).
+(defvar internal--daemon-sockname nil)
+
+
+
+;; GNU font.c's weight/slant/width tables (verbatim values).
+(defconst font-weight-table
+  [[0 thin] [40 ultra-light ultralight extra-light extralight]
+   [50 light] [55 semi-light semilight demilight]
+   [80 regular normal unspecified book] [100 medium]
+   [180 semi-bold semibold demibold demi-bold demi] [200 bold]
+   [205 extra-bold extrabold ultra-bold ultrabold] [210 black heavy]
+   [250 ultra-heavy ultraheavy]])
+
+(defconst font-slant-table
+  [[0 reverse-oblique ro] [10 reverse-italic ri]
+   [100 normal r unspecified] [200 italic i ot] [210 oblique o]])
+
+(defconst font-width-table
+  [[50 ultra-condensed ultracondensed]
+   [63 extra-condensed extracondensed]
+   [75 condensed compressed narrow]
+   [87 semi-condensed semicondensed demicondensed]
+   [100 normal medium regular unspecified]
+   [113 semi-expanded semiexpanded demiexpanded]
+   [125 expanded] [150 extra-expanded extraexpanded]
+   [200 ultra-expanded ultraexpanded wide]])
+
+(defun face-valid-attribute-values (attribute &optional frame)
+  "Return valid values for face attribute ATTRIBUTE.
+The optional argument FRAME is used to determine available fonts
+and colors.  If it is nil or not specified, the selected frame is used.
+Value is an alist of (NAME . VALUE) if ATTRIBUTE expects a value out
+of a set of discrete values.  Value is `integerp' if ATTRIBUTE expects
+an integer value."
+  (let ((valid
+         (pcase attribute
+           (:family
+            (if (window-system frame)
+                (mapcar (lambda (x) (cons x x))
+                        (font-family-list))
+	      ;; Only one font on TTYs.
+	      (list (cons "default" "default"))))
+           (:foundry
+	    (list nil))
+	   (:width
+            (mapcar (lambda (x) (cons (symbol-name (aref x 1)) (aref x 1)))
+		    font-width-table))
+           (:weight
+            (mapcar (lambda (x) (cons (symbol-name (aref x 1)) (aref x 1)))
+		    font-weight-table))
+	   (:slant
+            (mapcar (lambda (x) (cons (symbol-name (aref x 1)) (aref x 1)))
+		    font-slant-table))
+	   ((or :inverse-video :extend)
+            (mapcar (lambda (x) (cons (symbol-name x) x))
+		    (internal-lisp-face-attribute-values attribute)))
+           ((or :underline :overline :strike-through :box)
+            (if (window-system frame)
+                (nconc (mapcar (lambda (x) (cons (symbol-name x) x))
+                               (internal-lisp-face-attribute-values attribute))
+                       (mapcar (lambda (c) (cons c c))
+                               (defined-colors frame)))
+              (mapcar (lambda (x) (cons (symbol-name x) x))
+		      (internal-lisp-face-attribute-values attribute))))
+           ((or :foreground :background)
+            (mapcar (lambda (c) (cons c c))
+                    (defined-colors frame)))
+           (:height
+            'integerp)
+           (:stipple
+            (and (memq (window-system frame) '(x ns pgtk haiku)) ; No stipple on w32
+                 (mapcar (lambda (item)
+                           (cons item item))
+                         (apply #'nconc
+                                (mapcar (lambda (dir)
+                                          (and (file-readable-p dir)
+                                               (file-directory-p dir)
+                                               (directory-files dir 'full)))
+                                        x-bitmap-file-path)))))
+           (:inherit
+            (cons '("none" . nil)
+                  (mapcar (lambda (c) (cons (symbol-name c) c))
+                          (face-list))))
+           (_
+            (error "Internal error")))))
+    (if (and (listp valid) (not (memq attribute '(:inherit))))
+	(nconc (list (cons "unspecified" 'unspecified)) valid)
+      valid)))
+
+(defvar mode-line-mode-menu (make-sparse-keymap "Minor Modes") "\
+Menu of mode operations in the mode line.")
+
+(defvar recentf-mode nil "Non-nil if Recentf mode is enabled.
+See the `recentf-mode' command
+for a description of this minor mode.
+Setting this variable directly does not take effect;
+either customize it (see the info node `Easy Customization')
+or call the function `recentf-mode'.")
+
 (defvar flyspell-mode nil "Non-nil if Flyspell mode is enabled.")
 
 (defun custom-add-choice (variable choice)
@@ -44999,19 +45467,6 @@ evaluate `etags-regen-mode'.
 
 The mode's hook is called both when the mode is enabled and when
 it is disabled." t nil)
-
-(defun custom-menu-create (symbol)
-  "Create menu for customization group SYMBOL.
-The menu is in a format applicable to `easy-menu-define'.
-This is a fallback: full member expansion needs wid-edit, so for
-non-empty groups this returns the submenu header (name, group item,
-separator) without the member entries."
-  (let ((item (vector (custom-unlispify-menu-entry symbol)
-                      `(customize-group ',symbol)
-                      t)))
-    (if (get symbol 'custom-group)
-        (list (custom-unlispify-menu-entry symbol t) item "--")
-      item)))
 
 (defvar etags-program-name "etags"
   "The default name of the etags program.

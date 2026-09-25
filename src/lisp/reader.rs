@@ -846,8 +846,34 @@ impl<'a> Reader<'a> {
                 self.read_object()
             }
             Some('(') => {
-                // `#(' is not Emacs read syntax (vectors are `[...]').
-                Err(read_err_sym(self.interp, "#"))
+                // GNU: `#(' is only valid for propertized string
+                // literals — `#("str" BEG END PLIST BEG END PLIST ...)'
+                // (wid-edit's `#(" " 0 1 (invisible t))').  Plain
+                // `#(1 2 3)' is NOT read syntax (vectors are `[...]').
+                self.pos += 2;
+                let items = self.read_seq(')')?;
+                let s = match items.first() {
+                    Some(Value::Str(s)) => s.clone(),
+                    _ => return Err(read_err_sym(self.interp, "#")),
+                };
+                let rest = &items[1..];
+                if rest.is_empty() || rest.len() % 3 != 0 {
+                    return Err(read_err_sym(self.interp, "#"));
+                }
+                for t in rest.chunks_exact(3) {
+                    let (b, e) = match (&t[0], &t[1]) {
+                        (Value::Int(b), Value::Int(e)) => (*b, *e),
+                        _ => return Err(read_err_sym(self.interp, "#")),
+                    };
+                    let plist = match t[2].list_to_vec() {
+                        Ok(v) => v,
+                        Err(_) => return Err(read_err_sym(self.interp, "#")),
+                    };
+                    crate::buffer::primitives::str_set_text_props(
+                        self.interp, &s, b, e, plist,
+                    )?;
+                }
+                Ok(items[0].clone())
             }
             Some('[') => {
                 // `#[ARGLIST BODY ENV]' — a function object.  GNU reads

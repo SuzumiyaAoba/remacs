@@ -2683,3 +2683,66 @@ fn r13_progmodes_and_eval_when_compile() {
         "('42 '3 (list '7) (list '43 y))"
     );
 }
+
+#[test]
+fn r14_widgets_and_propertized_strings() {
+    // Reader: `#("str" BEG END PLIST)' propertized-string literal
+    // (wid-edit requirement).  Plain `#(1 2 3)' stays invalid.
+    assert_eq!(
+        ev("(let ((s #(\"xy\" 0 2 (face bold))))
+                  (list (substring-no-properties s)
+                        (get-text-property 0 'face s)
+                        (text-properties-at 0 s)))"),
+        "(\"xy\" bold (face bold))"
+    );
+    // wid-edit/tree-widget/ruler-mode/recentf/server/cus-edit —
+    // none are dumped features; all load via require.
+    assert_eq!(
+        ev("(mapcar #'featurep '(wid-edit tree-widget ruler-mode
+                  recentf server cus-edit))"),
+        "(nil nil nil nil nil nil)"
+    );
+    for name in [
+        "wid-edit",
+        "tree-widget",
+        "ruler-mode",
+        "recentf",
+        "server",
+        "cus-edit",
+    ] {
+        assert_eq!(
+            ev(&format!("(progn (require '{n}) (featurep '{n}))", n = name)),
+            "t",
+            "{name}"
+        );
+    }
+    // GNU loaddefs autoload cells (verified against GNU -Q).
+    assert_eq!(
+        ev("(mapcar (lambda (s) (autoloadp (symbol-function s)))
+                  '(customize customize-face customize-group
+                    custom-menu-create customize-mode recentf-mode
+                    recentf-open server-start server-mode ruler-mode
+                    widget-create widget-apply))"),
+        "(t t t t t t t t t t t t)"
+    );
+    // Widget round-trip and customize entry points become real.
+    assert_eq!(
+        ev("(progn (require 'wid-edit)
+                  (let ((w (widget-create 'item :tag \"t\" :value \"v\")))
+                    (list (widget-type w) (widget-value w))))"),
+        "(item \"v\")"
+    );
+    // internal-lisp-face-attribute-values batch values (GNU-verified).
+    assert_eq!(
+        ev("(list (internal-lisp-face-attribute-values :underline)
+                  (internal-lisp-face-attribute-values :box))"),
+        "((t nil) nil)"
+    );
+    // Startup variables bound like GNU -Q.
+    assert_eq!(
+        ev("(list (boundp 'mode-line-mode-menu) (boundp 'recentf-mode)
+                  (boundp 'internal--daemon-sockname)
+                  (boundp 'font-weight-table))"),
+        "(t t t t)"
+    );
+}

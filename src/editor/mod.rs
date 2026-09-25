@@ -2049,7 +2049,7 @@ pub(crate) static SUBRS: &[Subr] = &[
         "internal-lisp-face-attribute-values",
         1,
         1,
-        f_lisp_face_check_nil,
+        f_lisp_face_attribute_values,
         ""
     ),
     S!(
@@ -4036,6 +4036,21 @@ fn f_internal_char_font(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 /// `internal-lisp-face-empty-p' / `internal-lisp-face-attribute-
 /// values' — GNU signals a plain "Invalid face" error for unknown
 /// faces; a real face yields nil on a tty.
+/// `internal-lisp-face-attribute-values' — GNU xfaces.c returns the
+/// valid values for a face ATTRIBUTE keyword.  Batch/TTY values:
+/// boolean-style attributes give (t nil); the rest nil.
+fn f_lisp_face_attribute_values(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    if let Value::Sym(s) = &a[0] {
+        return Ok(match i.symbol_name(*s).as_str() {
+            ":underline" | ":overline" | ":strike-through" | ":inverse-video" | ":extend" => {
+                Value::list(vec![Value::t(), Value::Nil])
+            }
+            _ => Value::Nil,
+        });
+    }
+    Ok(Value::Nil)
+}
+
 fn f_lisp_face_check_nil(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let id = match &a[0] {
         Value::Sym(s) => *s,

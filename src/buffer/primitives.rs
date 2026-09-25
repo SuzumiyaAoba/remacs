@@ -8653,20 +8653,35 @@ pub(crate) fn f_remove_text_properties(i: &mut Interp, a: Vec<Value>) -> EvalRes
     Ok(Value::t())
 }
 
+/// String-object half of `set-text-properties', also used by the
+/// reader's `#("str" BEG END PLIST)' propertized-string literal.
+pub(crate) fn str_set_text_props(
+    i: &mut Interp,
+    s: &std::rc::Rc<std::cell::RefCell<String>>,
+    beg: i128,
+    end: i128,
+    plist: Vec<Value>,
+) -> Result<(), Flow> {
+    let len = str_len(s);
+    let st = (beg.max(0)) as usize;
+    let en = (end.max(0)) as usize;
+    str_pos_ok(i, &Value::Str(s.clone()), st.max(en), len)?;
+    let (s0, e0) = (st.min(en), st.max(en));
+    let fill = if plist.is_empty() { None } else { Some(plist.clone()) };
+    let mut ivs = std::mem::take(i.str_props_mut(s));
+    // GNU replaces the interval's plist wholesale.
+    iv_apply(&mut ivs, s0, e0, |pl| *pl = plist.clone(), fill);
+    i.set_str_props(s, ivs);
+    Ok(())
+}
+
 fn f_set_text_properties(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     if let Some(Value::Str(s)) = a.get(3) {
         let s = s.clone();
-        let len = str_len(&s);
-        let st = want_int(i, &a[0])?.max(0) as usize;
-        let en = want_int(i, &a[1])?.max(0) as usize;
-        str_pos_ok(i, &a[3], st.max(en), len)?;
-        let (s0, e0) = (st.min(en), st.max(en));
+        let st = want_int(i, &a[0])?;
+        let en = want_int(i, &a[1])?;
         let plist = a[2].list_to_vec().unwrap_or_default();
-        let fill = if plist.is_empty() { None } else { Some(plist.clone()) };
-        let mut ivs = std::mem::take(i.str_props_mut(&s));
-        // GNU replaces the interval's plist wholesale.
-        iv_apply(&mut ivs, s0, e0, |pl| *pl = plist.clone(), fill);
-        i.set_str_props(&s, ivs);
+        str_set_text_props(i, &s, st, en, plist)?;
         return Ok(Value::t());
     }
     // Remove all props in range, then add the plist.
