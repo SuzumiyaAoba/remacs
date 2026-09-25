@@ -72,7 +72,16 @@ def main() -> int:
     hashes = gnu_map(Path(args.gnu))
     lines = []
     for f in sorted(Path(args.lisp).glob("*.el")):
-        digest = hashlib.md5(f.read_bytes()).hexdigest()
+        raw = f.read_bytes()
+        try:
+            raw.decode("utf-8")
+        except UnicodeDecodeError:
+            # include_str! requires UTF-8; these files carry raw
+            # non-UTF-8 bytes (Emacs-internal encodings, Big5 tables).
+            # Leave them to the filesystem fallback in builtin_dirs().
+            lines.append(f"    // {f.name} skipped: not valid UTF-8")
+            continue
+        digest = hashlib.md5(raw).hexdigest()
         key = hashes.get(digest, f.stem)
         # A GNU-qualified key only makes sense when the file was renamed
         # (basename differs); identical basenames keep the flat key so

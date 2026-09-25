@@ -7909,6 +7909,17 @@ fn f_locate_file_internal(i: &mut Interp, a: Vec<Value>) -> EvalResult {
             }
         }
     }
+    // Bundled libraries live in the exe-relative lisp/ dir — the same
+    // fallback `load's `locate' uses — so `require-with-check' and
+    // `locate-file' see them even when `load-path' doesn't list it.
+    for dir in crate::lisp::load::builtin_dirs() {
+        for suf in &suffixes {
+            let cand = format!("{}/{}{}", dir.trim_end_matches('/'), name, suf);
+            if accept(i, &cand)? {
+                return Ok(Value::string(cand));
+            }
+        }
+    }
     Ok(Value::Nil)
 }
 

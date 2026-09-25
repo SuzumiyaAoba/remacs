@@ -25,12 +25,17 @@ isearch, jit-lock, keymap, menu-bar, minibuffer, mwheel, simple, startup,
 subr (stub only), window. Also skipped: `.dir-locals.el`, `ldefs-boot.el`
 (loaddefs.el is already generated for remacs).
 
-## Pending: EMBEDDED_LISP registration
+## EMBEDDED_LISP registration (done — regenerate with tools/gen_embedded.py)
 
-`src/lisp/load.rs` `EMBEDDED_LISP` needs entries for the ~600 ported files
-(rounds 25–31.9). Run `python3 tools/gen_embedded.py` to regenerate the
-entry lines — it maps each file to its GNU key by content hash (qualified
-keys like `semantic/ctxt` where the flat name came from a subdir).
+`src/lisp/load.rs` `EMBEDDED_LISP` covers all ported files except the 13
+non-UTF-8 ones (`include_str!` cannot embed them; they resolve via the
+filesystem fallback in `builtin_dirs()` and are rejected by
+`insert-file-contents` anyway — see the encoding gap below). Run
+`python3 tools/gen_embedded.py` to regenerate the entry lines — it maps
+each file to its GNU key by content hash (qualified keys like
+`semantic/ctxt` where the flat name came from a subdir) and emits
+`// name.el skipped: not valid UTF-8` comments for the embeddable-excluded
+files.
 Registration rules:
 
 - Flat files: `("name", include_str!("../../lisp/name.el"))`
@@ -38,7 +43,8 @@ Registration rules:
   `(require 'semantic/ctxt)` resolves, e.g.
   `("semantic/ctxt", include_str!("../../lisp/semantic-ctxt.el"))`
 - Renamed quail: key `"quail/emoji"` → `lisp/quail-emoji.el`
-  (`embedded()` tries exact match, then basename fallback).
+  (`embedded()` tries exact match, then `dir-base` flat fallback, then
+  basename fallback — so a flat `quail-emoji` key also resolves).
 - Generated loaddefs with qualified provide (e.g. `semantic/loaddefs`)
   need the qualified key too.
 
