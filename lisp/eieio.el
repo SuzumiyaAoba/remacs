@@ -1,4 +1,4 @@
-;;; eieio.el --- EIEIO subset: defclass/make-instance/slot accessors -*- lexical-binding: nil -*-
+;;; eieio.el --- EIEIO subset: defclass/make-instance/slot accessors -*- lexical-binding: t -*-
 
 ;; Compatibility subset of GNU EIEIO.  Instances are records printed as
 ;; `#s(CLASS SLOTS...)', matching GNU's observable representation.
