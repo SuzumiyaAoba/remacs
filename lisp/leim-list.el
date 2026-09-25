@@ -235,7 +235,7 @@
 (register-input-method
  "emoji" "UTF-8" 'quail-use-package
  "🙂" "Emoji input method for inserting emoji characters."
- "quail/emoji")
+ "quail-emoji")
 (register-input-method
  "ethiopic" "Ethiopic" 'quail-use-package
  '("ፊደል " (ethio-prefer-ascii-space "_" "፡") "።") "  Quail package for Ethiopic (Tigrigna and Amharic)"
