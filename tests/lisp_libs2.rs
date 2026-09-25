@@ -2234,3 +2234,79 @@ fn dumped_and_autoloaded_misc_libs2_parity() {
         "(t t t t t t t t t t t t)"
     );
 }
+
+#[test]
+fn r7_autoload_libs_parity() {
+    // 61 GNU 31.1 libraries added as embedded require/autoload targets:
+    // add-log, arc-mode, bruce, bubbles, cfengine, compare-w, diff,
+    // dos-w32, echistory, ehelp, elint, emerge, epg, facemenu, filesets,
+    // find-dired, find-lisp, flymake-cc, footnote, goto-addr, hashcash,
+    // help-mode, hideshow, hmac-md5, ido, iswitchb, landmark, ldap,
+    // loaddefs-gen, make-mode, man, misearch, nroff-mode, nsm, perl-mode,
+    // pixel-scroll, pong, puny, reftex-vars, reporter, rfc2104, scheme,
+    // sendmail, snake, snmp-mode, socks, strokes, supercite, svg, tetris,
+    // thumbs, touch-screen, tutorial, two-column, utf7, vc-bzr, vc-hg,
+    // vc-svn, wdired, which-key, x-dnd.  GNU-verified on 31.1 -Q: none
+    // are dumped; their entry points are loaddefs autoload cells.
+    assert_eq!(
+        ev("(list (featurep 'add-log) (featurep 'arc-mode)
+                  (featurep 'diff) (featurep 'epg) (featurep 'help-mode)
+                  (featurep 'ido) (featurep 'man) (featurep 'perl-mode)
+                  (featurep 'scheme) (featurep 'sendmail)
+                  (featurep 'tetris) (featurep 'which-key))"),
+        "(nil nil nil nil nil nil nil nil nil nil nil nil)"
+    );
+    // Loaddefs autoload cells at -Q, including the prelude stubs that
+    // are restored to GNU's autoload cells after the prelude runs
+    // (archive-mode, 2C-*, dsssl-mode, diff-latest-backup-file,
+    // help-*, pixel-scroll-*, snmp modes).  GNU-verified on 31.1.
+    assert_eq!(
+        ev("(list (autoloadp (symbol-function 'add-change-log-entry))
+                  (autoloadp (symbol-function 'archive-mode))
+                  (autoloadp (symbol-function 'bubbles))
+                  (autoloadp (symbol-function 'cfengine3-mode))
+                  (autoloadp (symbol-function 'compare-windows))
+                  (autoloadp (symbol-function 'diff-latest-backup-file))
+                  (autoloadp (symbol-function '2C-command))
+                  (autoloadp (symbol-function 'dsssl-mode))
+                  (autoloadp (symbol-function 'epg-make-context))
+                  (autoloadp (symbol-function 'facemenu-menu))
+                  (autoloadp (symbol-function 'find-dired))
+                  (autoloadp (symbol-function 'find-lisp-find-dired))
+                  (autoloadp (symbol-function 'footnote-mode))
+                  (autoloadp (symbol-function 'goto-address-mode))
+                  (autoloadp (symbol-function 'help-mode))
+                  (autoloadp (symbol-function 'help-with-tutorial))
+                  (autoloadp (symbol-function 'turn-off-hideshow))
+                  (autoloadp (symbol-function 'ido-mode))
+                  (autoloadp (symbol-function 'iswitchb-mode))
+                  (autoloadp (symbol-function 'makefile-mode))
+                  (autoloadp (symbol-function 'man))
+                  (autoloadp (symbol-function 'multi-isearch-buffers))
+                  (autoloadp (symbol-function 'nroff-mode))
+                  (autoloadp (symbol-function 'perl-mode))
+                  (autoloadp (symbol-function 'pixel-scroll-mode))
+                  (autoloadp (symbol-function 'pong))
+                  (autoloadp (symbol-function 'reftex-mode))
+                  (autoloadp (symbol-function 'reporter-submit-bug-report))
+                  (autoloadp (symbol-function 'scheme-mode))
+                  (autoloadp (symbol-function 'mail))
+                  (autoloadp (symbol-function 'snake))
+                  (autoloadp (symbol-function 'snmp-mode))
+                  (autoloadp (symbol-function 'strokes-mode))
+                  (autoloadp (symbol-function 'sc-cite-original))
+                  (autoloadp (symbol-function 'tetris))
+                  (autoloadp (symbol-function 'touch-screen-hold))
+                  (autoloadp (symbol-function 'utf7-encode))
+                  (autoloadp (symbol-function 'wdired-change-to-wdired-mode))
+                  (autoloadp (symbol-function 'which-key-mode))
+                  ;; no -Q autoload cells in GNU for these: require-only
+                  (fboundp 'svg-image) (fboundp 'ldap-search)
+                  (fboundp 'thumbs) (fboundp 'x-dnd-drag-begin)
+                  (fboundp 'socks-open-network-stream)
+                  ;; vc-bzr-registered is a real loaddefs defun in GNU
+                  (fboundp 'vc-bzr-registered)
+                  (autoloadp (symbol-function 'vc-bzr-registered)))"),
+        "(t t t t t t t t t t t t t t t t t t t t t t t t t t t t t t t t t t t t t t t nil nil nil nil nil t nil)"
+    );
+}

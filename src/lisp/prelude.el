@@ -41450,3 +41450,2468 @@ FRAC should be the inverse of the fractional value; for example, a value of
 
 (fn WPM &optional WORDLEN FRAC)" t)
 (register-definition-prefixes "type-break" '("type-break-"))
+
+
+(defun define-mail-user-agent (symbol composefunc sendfunc
+				      &optional abortfunc hookvar)
+  "Define a symbol to identify a mail-sending package for `mail-user-agent'.
+
+SYMBOL can be any Lisp symbol.  Its function definition and/or
+value as a variable do not matter for this usage; we use only certain
+properties on its property list, to encode the rest of the arguments.
+
+COMPOSEFUNC is program callable function that composes an outgoing
+mail message buffer.  This function should set up the basics of the
+buffer without requiring user interaction.  It should populate the
+standard mail headers, leaving the `to:' and `subject:' headers blank
+by default.
+
+COMPOSEFUNC should accept several optional arguments--the same
+arguments that `compose-mail' takes.  See that function's documentation.
+
+SENDFUNC is the command a user would run to send the message.
+
+Optional ABORTFUNC is the command a user would run to abort the
+message.  For mail packages that don't have a separate abort function,
+this can be `kill-buffer' (the equivalent of omitting this argument).
+
+Optional HOOKVAR is a hook variable that gets run before the message
+is actually sent.  Callers that use the `mail-user-agent' may
+install a hook function temporarily on this hook variable.
+If HOOKVAR is nil, `mail-send-hook' is used.
+
+The properties used on SYMBOL are `composefunc', `sendfunc',
+`abortfunc', and `hookvar'."
+  (declare (indent defun))
+  (put symbol 'composefunc composefunc)
+  (put symbol 'sendfunc sendfunc)
+  (put symbol 'abortfunc (or abortfunc #'kill-buffer))
+  (put symbol 'hookvar (or hookvar 'mail-send-hook)))
+
+;; add-log.el autoloads (GNU loaddefs).
+(put 'change-log-default-name 'safe-local-variable #'string-or-null-p)
+(defvar add-log-current-defun-function nil
+"If non-nil, function to guess name of surrounding function.
+It is called by `add-log-current-defun' with no argument, and
+should return the function's name as a string, or nil if point is
+outside a function.")
+(custom-autoload 'add-log-current-defun-function "add-log" t)
+(defvar add-log-full-name nil
+"Full name of user, for inclusion in ChangeLog daily headers.
+This defaults to the value returned by the function `user-full-name'.")
+(custom-autoload 'add-log-full-name "add-log" t)
+(defvar add-log-mailing-address nil
+"Email addresses of user, for inclusion in ChangeLog headers.
+This defaults to the value of `user-mail-address'.  In addition to
+being a simple string, this value can also be a list.  All elements
+will be recognized as referring to the same user; when creating a new
+ChangeLog entry, one element will be chosen at random.")
+(custom-autoload 'add-log-mailing-address "add-log" t)
+(autoload 'prompt-for-change-log-name "add-log"
+"Prompt for a change log name.")
+(autoload 'find-change-log "add-log"
+"Find a change log file for \\[add-change-log-entry] and return the name.
+
+Optional arg FILE-NAME specifies the file to use.
+If FILE-NAME is nil, use the value of `change-log-default-name'.
+If `change-log-default-name' is nil, behave as though it were \"ChangeLog\"
+(or whatever we use on this operating system).
+
+If `change-log-default-name' contains a leading directory component, then
+simply find it in the current directory.  Otherwise, search in the current
+directory and its successive parents for a file so named.  Stop at the first
+such file that exists (or has a buffer visiting it), or the first directory
+that contains any of `change-log-directory-files'.  If no match is found,
+use the current directory.  To override the choice of this function,
+simply create an empty ChangeLog file first by hand in the desired place.
+
+Once a file is found, `change-log-default-name' is set locally in the
+current buffer to the complete file name.
+Optional arg BUFFER-FILE overrides `buffer-file-name'.
+
+(fn &optional FILE-NAME BUFFER-FILE)")
+(autoload 'add-change-log-entry "add-log"
+"Find ChangeLog buffer, add an entry for today and an item for this file.
+Optional arg WHOAMI (interactive prefix) non-nil means prompt for
+user name and email (stored in `add-log-full-name'
+and `add-log-mailing-address').
+
+Second arg CHANGELOG-FILE-NAME is the file name of the change log.
+If nil, use the value of `change-log-default-name'.  If the file
+thus named exists, it is used for the new entry.  If it doesn't
+exist, it is created, unless `add-log-dont-create-changelog-file' is t,
+in which case a suitably named buffer that doesn't visit any file
+is used for keeping entries pertaining to CHANGELOG-FILE-NAME's
+directory.
+
+Third arg OTHER-WINDOW non-nil means visit in other window.
+
+Fourth arg NEW-ENTRY non-nil means always create a new entry at the front;
+never append to an existing entry.  Option `add-log-keep-changes-together'
+otherwise affects whether a new entry is created.
+
+Fifth arg PUT-NEW-ENTRY-ON-NEW-LINE non-nil means that if a new
+entry is created, put it on a new line by itself, do not put it
+after a comma on an existing line.
+
+Option `add-log-always-start-new-record' non-nil means always create a
+new record, even when the last record was made on the same date and by
+the same person.
+
+The change log file can start with a copyright notice and a copying
+permission notice.  The first blank line indicates the end of these
+notices.
+
+Today's date is calculated according to `add-log-time-zone-rule' if
+non-nil, otherwise in local time.
+
+(fn &optional WHOAMI CHANGELOG-FILE-NAME OTHER-WINDOW NEW-ENTRY PUT-NEW-ENTRY-ON-NEW-LINE)" t)
+(autoload 'add-change-log-entry-other-window "add-log"
+"Find change log file in other window and add entry and item.
+This is just like `add-change-log-entry' except that it displays
+the change log file in another window.
+If this command needs to split the current window, it by default obeys
+the user options `split-height-threshold' and `split-width-threshold',
+when it decides whether to split the window horizontally or vertically.
+
+(fn &optional WHOAMI FILE-NAME)" t)
+(autoload 'change-log-mode "add-log"
+"Major mode for editing change logs; like Indented Text mode.
+Prevents numeric backups and sets `left-margin' to 8 and `fill-column' to 74.
+New log entries are usually made with \\[add-change-log-entry] or \\[add-change-log-entry-other-window].
+Each entry behaves as a paragraph, and the entries for one day as a page.
+Runs `change-log-mode-hook'.
+
+\\{change-log-mode-map}" t)
+(autoload 'add-log-current-defun "add-log"
+"Return name of function definition point is in, or nil.
+
+Understands C, Lisp, LaTeX (\"functions\" are chapters, sections, ...),
+Texinfo (@node titles) and Perl.
+
+Other modes are handled by a heuristic that looks in the 10K before
+point for uppercase headings starting in the first column or
+identifiers followed by `:' or `='.  See variables
+`add-log-current-defun-header-regexp' and
+`add-log-current-defun-function'.
+
+Has a preference of looking backwards.")
+(autoload 'change-log-merge "add-log"
+"Merge the contents of change log file OTHER-LOG with this buffer.
+Both must be found in Change Log mode (since the merging depends on
+the appropriate motion commands).  OTHER-LOG can be either a file name
+or a buffer.
+
+Entries are inserted in chronological order.  Both the current and
+old-style time formats for entries are supported.
+
+(fn OTHER-LOG)" t)
+(register-definition-prefixes "add-log" '("add-log-" "change-log-"))
+
+;; arc-mode.el autoloads (GNU loaddefs).
+(autoload 'archive-mode "arc-mode"
+"Major mode for viewing an archive file in a dired-like way.
+You can move around using the usual cursor motion commands.
+Letters no longer insert themselves.\\<archive-mode-map>
+Type \\[archive-extract] to pull a file out of the archive and into its own buffer;
+or click mouse-2 on the file's line in the archive mode buffer.
+
+If you edit a sub-file of this archive (as with the \\[archive-extract] command) and
+save it, the contents of that buffer will be saved back into the
+archive.
+
+\\{archive-mode-map}
+
+(fn &optional FORCE)")
+(register-definition-prefixes "arc-mode" '("arc" "tar-archive-from-tar"))
+
+;; bubbles.el autoloads (GNU loaddefs).
+(autoload 'bubbles "bubbles"
+"Play Bubbles game.
+\\<bubbles-mode-map>
+The goal is to remove all bubbles with as few moves as possible.
+\\[bubbles-plop] on a bubble removes that bubble and all
+connected bubbles of the same color.  Unsupported bubbles fall
+down, and columns that do not contain any bubbles suck the
+columns on its right towards the left.
+
+\\[bubbles-set-game-easy] sets the difficulty to easy.
+\\[bubbles-set-game-medium] sets the difficulty to medium.
+\\[bubbles-set-game-difficult] sets the difficulty to difficult.
+\\[bubbles-set-game-hard] sets the difficulty to hard." t)
+(register-definition-prefixes "bubbles" '("bubbles-"))
+
+;; cfengine.el autoloads (GNU loaddefs).
+(push '(cfengine 1 4) package--builtin-versions)
+(autoload 'cfengine3-mode "cfengine"
+"Major mode for editing CFEngine3 input.
+There are no special keybindings by default.
+
+Action blocks are treated as defuns, i.e. \\[beginning-of-defun] moves
+to the action header.
+
+In addition to any hooks its parent mode `prog-mode' might have run,
+this mode runs the hook `cfengine3-mode-hook', as the final or
+penultimate step during initialization." t)
+(autoload 'cfengine2-mode "cfengine"
+"Major mode for editing CFEngine2 input.
+There are no special keybindings by default.
+
+Action blocks are treated as defuns, i.e. \\[beginning-of-defun] moves
+to the action header.
+
+In addition to any hooks its parent mode `prog-mode' might have run,
+this mode runs the hook `cfengine2-mode-hook', as the final or
+penultimate step during initialization." t)
+(autoload 'cfengine-auto-mode "cfengine"
+"Choose `cfengine2-mode' or `cfengine3-mode' by buffer contents." t)
+(register-definition-prefixes "cfengine" '("cfengine"))
+
+;; compare-w.el autoloads (GNU loaddefs).
+(autoload 'compare-windows "compare-w"
+"Compare text in current window with text in another window.
+The option `compare-windows-get-window-function' defines how
+to get another window.
+
+Compares the text starting at point in each window,
+moving over text in each one as far as they match.
+
+This command pushes the mark in each window
+at the prior location of point in that window.
+If both windows display the same buffer,
+the mark is pushed twice in that buffer:
+first in the other window, then in the selected window.
+
+A prefix arg IGNORE-WHITESPACE, means reverse the value of variable
+`compare-ignore-whitespace'.  If `compare-ignore-whitespace' is
+nil, then a prefix arg means ignore changes in whitespace.  If
+`compare-ignore-whitespace' is non-nil, then a prefix arg means
+don't ignore changes in whitespace.  The variable
+`compare-windows-whitespace' controls how whitespace is skipped.
+If `compare-ignore-case' is non-nil, changes in case are also
+ignored.
+
+If `compare-windows-sync' is non-nil, then successive calls of
+this command work in interlaced mode:
+on first call it advances points to the next difference,
+on second call it synchronizes points by skipping the difference,
+on third call it again advances points to the next difference and so on.
+
+(fn IGNORE-WHITESPACE)" t)
+(register-definition-prefixes "compare-w" '("compare-"))
+
+;; diff.el autoloads (GNU loaddefs).
+(defvar diff-switches "-u"
+"A string or list of strings specifying switches to be passed to diff.
+
+This variable is also used in the `vc-diff' command (and related
+commands) if the backend-specific diff switch variable isn't
+set (`vc-git-diff-switches' for git, for instance), and
+`vc-diff-switches' isn't set.")
+(custom-autoload 'diff-switches "diff" t)
+(defvar diff-command "diff"
+"The command to use to run diff.")
+(custom-autoload 'diff-command "diff" t)
+(autoload 'diff "diff"
+"Find and display the differences between OLD and NEW files.
+When called interactively, read NEW, then OLD, using the
+minibuffer.  The default for NEW is the current buffer's file
+name, and the default for OLD is a backup file for NEW, if one
+exists.  If NO-ASYNC is non-nil, call diff synchronously.
+
+When called interactively with a prefix argument SWITCHES, prompt
+interactively for diff switches.  Otherwise, the switches
+specified in the variable `diff-switches' are passed to the diff
+command.
+
+Non-interactively, OLD and NEW may each be a file or a buffer.
+
+(fn OLD NEW &optional SWITCHES NO-ASYNC)" t)
+(autoload 'diff-no-select "diff"
+"Compare the OLD and NEW file/buffer.
+If the optional SWITCHES is nil, the switches specified in the
+variable `diff-switches' are passed to the diff command,
+otherwise SWITCHES is used.  SWITCHES can be a string or a list
+of strings.
+
+If NO-ASYNC is non-nil, call diff synchronously.
+
+By default, this function creates the diff in the \"*Diff*\"
+buffer.  If BUF is non-nil, BUF is used instead.  This function
+returns the buffer used.
+
+(fn OLD NEW &optional SWITCHES NO-ASYNC BUF)")
+(autoload 'diff-backup "diff"
+"Diff this file with its backup file or vice versa.
+Uses the latest backup, if there are several numerical backups.
+If this file is a backup, diff it with its original.
+The backup file is the first file given to `diff'.
+With prefix arg SWITCHES, prompt for diff switches.
+
+(fn FILE &optional SWITCHES)" t)
+(autoload 'diff-latest-backup-file "diff"
+"Return the latest existing backup of file FN, or nil.
+
+(fn FN)")
+(autoload 'diff-buffer-with-file "diff"
+"View the differences between BUFFER and its associated file.
+This requires the external program `diff' to be in your `exec-path'.
+
+(fn &optional BUFFER)" t)
+(autoload 'diff-buffers "diff"
+"Find and display the differences between OLD and NEW buffers.
+
+When called interactively, read NEW, then OLD, using the
+minibuffer.  The default for NEW is the current buffer, and the
+default for OLD is the most recently selected other buffer.
+If NO-ASYNC is non-nil, call diff synchronously.
+
+When called interactively with a prefix argument, prompt
+interactively for diff switches.  Otherwise, the switches
+specified in the variable `diff-switches' are passed to the
+diff command.
+
+OLD and NEW may each be a buffer or a buffer name.
+
+Also see the `diff-entire-buffers' variable.
+
+(fn OLD NEW &optional SWITCHES NO-ASYNC)" t)
+(register-definition-prefixes "diff" '("diff-"))
+
+;; dos-w32.el autoloads (GNU loaddefs).
+(register-definition-prefixes "dos-w32" '("file-name-buffer-file-type-alist" "find-" "w32-"))
+
+;; ehelp.el autoloads (GNU loaddefs).
+(autoload 'with-electric-help "ehelp"
+"Pop up an \"electric\" help buffer.
+THUNK is a function of no arguments which is called to initialize the
+contents of BUFFER.  BUFFER defaults to `*Help*'.  BUFFER will be
+erased before THUNK is called unless NOERASE is non-nil.  THUNK will
+be called while BUFFER is current and with `standard-output' bound to
+the buffer specified by BUFFER.
+
+If THUNK returns nil, we display BUFFER starting at the top, and shrink
+the window to fit.  If THUNK returns non-nil, we don't do those things.
+
+After THUNK has been called, this function \"electrically\" pops up a
+window in which BUFFER is displayed and allows the user to scroll
+through that buffer in `electric-help-mode'.  The window's height will
+be at least MINHEIGHT if this value is non-nil.
+
+If THUNK returns nil, we display BUFFER starting at the top, and
+shrink the window to fit if `electric-help-shrink-window' is non-nil.
+If THUNK returns non-nil, we don't do those things.
+
+When the user exits (with `electric-help-exit', or otherwise), the help
+buffer's window disappears (i.e., we use `save-window-excursion'), and
+BUFFER is put back into its original major mode.
+
+(fn THUNK &optional BUFFER NOERASE MINHEIGHT)")
+(autoload 'electric-helpify "ehelp"
+"
+
+(fn FUN &optional NAME)")
+ (autoload 'ehelp-command "ehelp" "Prefix command for ehelp." t 'keymap)
+(register-definition-prefixes "ehelp" '("ehelp-map" "electric-"))
+
+;; emerge.el autoloads (GNU loaddefs).
+(autoload 'emerge-files "emerge"
+"Run Emerge on two files FILE-A and FILE-B.
+
+(fn ARG FILE-A FILE-B FILE-OUT &optional STARTUP-HOOKS QUIT-HOOKS)" t)
+(autoload 'emerge-files-with-ancestor "emerge"
+"Run Emerge on two files, giving another file as the ancestor.
+
+(fn ARG FILE-A FILE-B FILE-ANCESTOR FILE-OUT &optional STARTUP-HOOKS QUIT-HOOKS)" t)
+(autoload 'emerge-buffers "emerge"
+"Run Emerge on two buffers BUFFER-A and BUFFER-B.
+
+(fn BUFFER-A BUFFER-B &optional STARTUP-HOOKS QUIT-HOOKS)" t)
+(autoload 'emerge-buffers-with-ancestor "emerge"
+"Run Emerge on two buffers, giving another buffer as the ancestor.
+
+(fn BUFFER-A BUFFER-B BUFFER-ANCESTOR &optional STARTUP-HOOKS QUIT-HOOKS)" t)
+(autoload 'emerge-files-command "emerge")
+(autoload 'emerge-files-with-ancestor-command "emerge")
+(autoload 'emerge-files-remote "emerge"
+"
+
+(fn FILE-A FILE-B FILE-OUT)")
+(autoload 'emerge-files-with-ancestor-remote "emerge"
+"
+
+(fn FILE-A FILE-B FILE-ANC FILE-OUT)")
+(autoload 'emerge-revisions "emerge"
+"Emerge two RCS revisions of a file.
+
+(fn ARG FILE REVISION-A REVISION-B &optional STARTUP-HOOKS QUIT-HOOKS)" t)
+(autoload 'emerge-revisions-with-ancestor "emerge"
+"Emerge two RCS revisions of a file, with another revision as ancestor.
+
+(fn ARG FILE REVISION-A REVISION-B ANCESTOR &optional STARTUP-HOOKS QUIT-HOOKS)" t)
+(autoload 'emerge-merge-directories "emerge"
+"
+
+(fn A-DIR B-DIR ANCESTOR-DIR OUTPUT-DIR)" t)
+(register-definition-prefixes "emerge" '("emerge-"))
+
+;; epg.el autoloads (GNU loaddefs).
+(push '(epg 1 0 0) package--builtin-versions)
+(autoload 'epg-make-context "epg"
+"Return a context object.
+
+(fn &optional PROTOCOL ARMOR TEXTMODE INCLUDE-CERTS CIPHER-ALGORITHM DIGEST-ALGORITHM COMPRESS-ALGORITHM)")
+(register-definition-prefixes "epg" '("epg-"))
+
+;; facemenu.el autoloads (GNU loaddefs).
+(autoload 'facemenu-menu "facemenu" nil nil 'keymap)
+(define-key global-map [C-down-mouse-2] 'facemenu-menu)
+(autoload 'list-colors-display "facemenu"
+"Display names of defined colors, and show what they look like.
+If the optional argument LIST is non-nil, it should be a list of
+colors to display.  Otherwise, this command computes a list of
+colors that the current display can handle.  Customize
+`list-colors-sort' to change the order in which colors are shown.
+Type \\<help-mode-map>\\[revert-buffer] after customizing `list-colors-sort' to redisplay colors in
+the new order.
+
+If the optional argument BUFFER-NAME is nil, it defaults to \"*Colors*\".
+
+If the optional argument CALLBACK is non-nil, it should be a
+function to call each time the user types RET or clicks on a
+color.  The function should accept a single argument, the color name.
+
+(fn &optional LIST BUFFER-NAME CALLBACK)" t)
+(register-definition-prefixes "facemenu" '("facemenu-" "list-colors-"))
+
+;; filesets.el autoloads (GNU loaddefs).
+(autoload 'filesets-init "filesets"
+"Filesets initialization.
+Set up hooks, load the cache file -- if existing -- and build the menu.")
+(register-definition-prefixes "filesets" '("filesets-"))
+
+;; find-dired.el autoloads (GNU loaddefs).
+(autoload 'find-dired "find-dired"
+"Run `find' and go into Dired mode on a buffer of the output.
+The command run (after changing into DIR) is essentially
+
+    find . \\( ARGS \\) -ls
+
+except that the car of the variable `find-ls-option' specifies what to
+use in place of \"-ls\" as the final argument.
+
+If your `find' program is not a GNU Find, the columns in the produced
+Dired display might fail to align.  We recommend to install GNU Find in
+those cases (you may need to customize the value of `find-program' if
+you do so), which attempts to align the columns.
+
+Collect output in the \"*Find*\" buffer.  To kill the job before
+it finishes, type \\[kill-find].
+
+For more information on how to write valid find expressions for
+ARGS, see Info node `(find) Finding Files'.  If you are not
+using GNU findutils (on macOS and *BSD systems), see instead the
+man page for \"find\".
+
+(fn DIR ARGS)" t)
+(autoload 'find-dired-with-command "find-dired"
+"Run `find' and go into Dired mode on a buffer of the output.
+The user-supplied COMMAND is run after changing into DIR and should look like
+
+    find . GLOBALARGS \\( ARGS \\) -ls
+
+The car of the variable `find-ls-option' specifies what to
+use in place of \"-ls\" as the starting input.
+
+Collect output in the \"*Find*\" buffer.  To kill the job before
+it finishes, type \\[kill-find].
+
+(fn DIR COMMAND)" t)
+(autoload 'find-name-dired "find-dired"
+"Search DIR recursively for files matching the globbing PATTERN,
+and run Dired on those files.
+PATTERN is a shell wildcard (not an Emacs regexp) and need not be quoted.
+The default command run (after changing into DIR) is
+
+    find . -name \\='PATTERN\\=' -ls
+
+See `find-name-arg' to customize the arguments.
+
+(fn DIR PATTERN)" t)
+(autoload 'find-grep-dired "find-dired"
+"Find files in DIR that contain matches for REGEXP and start Dired on output.
+The command run (after changing into DIR) is
+
+  find . \\( -type f -exec `grep-program' `find-grep-options' \\
+    -e REGEXP {} \\; \\) -ls
+
+where the first string in the value of the variable `find-ls-option'
+specifies what to use in place of \"-ls\" as the final argument.
+
+(fn DIR REGEXP)" t)
+(register-definition-prefixes "find-dired" '("find-" "kill-find"))
+
+;; find-lisp.el autoloads (GNU loaddefs).
+(autoload 'find-lisp-find-dired "find-lisp"
+"Find the files within DIR whose names match REGEXP.
+A Dired buffer with the results will be opened.
+
+(fn DIR REGEXP)" t)
+(autoload 'find-lisp-find-dired-subdirectories "find-lisp"
+"Find all subdirectories of DIR.
+
+(fn DIR)" t)
+(autoload 'find-lisp-find-dired-subdirs-other-window "find-lisp"
+"Same as `find-lisp-find-dired-subdirectories', but use another window.
+
+(fn DIR)" t)
+(autoload 'find-lisp-find-dired-filter "find-lisp"
+"Change the filter on a `find-lisp-find-dired' buffer to REGEXP.
+
+(fn REGEXP)" t)
+(register-definition-prefixes "find-lisp" '("find-lisp-"))
+
+;; flymake-cc.el autoloads (GNU loaddefs).
+(autoload 'flymake-cc "flymake-cc"
+"Flymake backend for GNU-style C compilers.
+This backend uses `flymake-cc-command' (which see) to launch a
+process that is passed the current buffer's contents via stdin.
+REPORT-FN is Flymake's callback.
+
+(fn REPORT-FN &rest ARGS)")
+(register-definition-prefixes "flymake-cc" '("flymake-cc-"))
+
+;; footnote.el autoloads (GNU loaddefs).
+(autoload 'footnote-mode "footnote"
+"Toggle Footnote mode.
+
+Footnote mode is a buffer-local minor mode.  If enabled, it
+provides footnote support for `message-mode'.  To get started,
+play around with the following keys:
+\\{footnote-minor-mode-map}
+
+This is a minor mode.  If called interactively, toggle the `Footnote
+mode' mode.  If the prefix argument is positive, enable the mode, and if
+it is zero or negative, disable the mode.
+
+If called from Lisp, toggle the mode if ARG is `toggle'.  Enable the
+mode if ARG is nil, omitted, or is a positive number.  Disable the mode
+if ARG is a negative number.
+
+To check whether the minor mode is enabled in the current buffer,
+evaluate the variable `footnote-mode'.
+
+The mode's hook is called both when the mode is enabled and when it is
+disabled.
+
+(fn &optional ARG)" t)
+(register-definition-prefixes "footnote" '("footnote-"))
+
+;; goto-addr.el autoloads (GNU loaddefs).
+(autoload 'goto-address-at-point "goto-addr"
+"Compose a new message to the e-mail address or open URL at point.
+
+Compose message to address at point.  See documentation for
+`goto-address-find-address-at-point'.
+
+If no e-mail address is found at point, open the URL at or before
+point using `browse-url'.  With a prefix argument, open the URL
+using `browse-url-secondary-browser-function' instead.
+
+(fn &optional EVENT)" t)
+(autoload 'goto-address "goto-addr"
+"Sets up goto-address functionality in the current buffer.
+Allows user to use mouse/keyboard command to click to go to a URL
+or to send e-mail.
+By default, goto-address binds `goto-address-at-point' to mouse-2 and C-c RET
+only on URLs and e-mail addresses.
+
+Also fontifies the buffer appropriately (see `goto-address-fontify-p' and
+`goto-address-highlight-p' for more information)." t)
+(put 'goto-address 'safe-local-eval-function t)
+(autoload 'goto-address-mode "goto-addr"
+"Minor mode to buttonize URLs and e-mail addresses in the current buffer.
+
+This is a minor mode.  If called interactively, toggle the `Goto-Address
+mode' mode.  If the prefix argument is positive, enable the mode, and if
+it is zero or negative, disable the mode.
+
+If called from Lisp, toggle the mode if ARG is `toggle'.  Enable the
+mode if ARG is nil, omitted, or is a positive number.  Disable the mode
+if ARG is a negative number.
+
+To check whether the minor mode is enabled in the current buffer,
+evaluate the variable `goto-address-mode'.
+
+The mode's hook is called both when the mode is enabled and when it is
+disabled.
+
+(fn &optional ARG)" t)
+(put 'global-goto-address-mode 'globalized-minor-mode t)
+(defvar global-goto-address-mode nil
+"Non-nil if Global Goto-Address mode is enabled.
+See the `global-goto-address-mode' command
+for a description of this minor mode.
+Setting this variable directly does not take effect;
+either customize it (see the info node `Easy Customization')
+or call the function `global-goto-address-mode'.")
+(custom-autoload 'global-goto-address-mode "goto-addr" nil)
+(autoload 'global-goto-address-mode "goto-addr"
+"Toggle Goto-Address mode in many buffers.
+Specifically, Goto-Address mode is enabled in all buffers where
+`goto-addr-mode--turn-on' would do it.
+
+With prefix ARG, enable Global Goto-Address mode if ARG is positive;
+otherwise, disable it.
+
+If called from Lisp, toggle the mode if ARG is `toggle'.
+Enable the mode if ARG is nil, omitted, or is a positive number.
+Disable the mode if ARG is a negative number.
+
+See `goto-address-mode' for more information on Goto-Address mode.
+
+(fn &optional ARG)" t)
+(autoload 'goto-address-prog-mode "goto-addr"
+"Like `goto-address-mode', but only for comments and strings.
+
+This is a minor mode.  If called interactively, toggle the
+`Goto-Address-Prog mode' mode.  If the prefix argument is positive,
+enable the mode, and if it is zero or negative, disable the mode.
+
+If called from Lisp, toggle the mode if ARG is `toggle'.  Enable the
+mode if ARG is nil, omitted, or is a positive number.  Disable the mode
+if ARG is a negative number.
+
+To check whether the minor mode is enabled in the current buffer,
+evaluate the variable `goto-address-prog-mode'.
+
+The mode's hook is called both when the mode is enabled and when it is
+disabled.
+
+(fn &optional ARG)" t)
+(register-definition-prefixes "goto-addr" '("goto-addr"))
+
+;; help-mode.el autoloads (GNU loaddefs).
+(autoload 'help-mode--add-function-link "help-mode"
+"
+
+(fn STR FUN)")
+(autoload 'help-mode "help-mode"
+"Major mode for viewing help text and navigating references in it.
+Also see the `help-enable-variable-value-editing' variable.
+
+Commands:
+\\{help-mode-map}
+
+In addition to any hooks its parent mode `special-mode' might have
+run, this mode runs the hook `help-mode-hook', as the final or
+penultimate step during initialization." t)
+(autoload 'help-mode-setup "help-mode"
+"Enter Help mode in the current buffer.")
+(make-obsolete 'help-mode-setup 'nil "29.1")
+(autoload 'help-mode-finish "help-mode"
+"Finalize Help mode setup in current buffer.")
+(make-obsolete 'help-mode-finish 'nil "29.1")
+(autoload 'help-setup-xref "help-mode"
+"Invoked from commands using the \"*Help*\" buffer to install some xref info.
+
+ITEM is a (FUNCTION . ARGS) pair appropriate for recreating the help
+buffer after following a reference.  INTERACTIVE-P is non-nil if the
+calling command was invoked interactively.  In this case the stack of
+items for help buffer \"back\" buttons is cleared.
+
+This function also re-enables the major mode of the buffer, thus
+resetting local variables to the values set by the mode and running the
+mode hooks.
+
+So this should be called very early, before the output buffer is
+cleared, also because we want to record the \"previous\" position of
+point so we can restore it properly when going back.
+
+(fn ITEM INTERACTIVE-P)")
+(autoload 'help-buffer "help-mode"
+"Return the name of a buffer for inserting help.
+If `help-xref-following' is non-nil and the current buffer is
+derived from `help-mode', this is the name of the current buffer.
+
+Otherwise, return \"*Help*\", creating a buffer with that name if
+it does not already exist.")
+(autoload 'help-make-xrefs "help-mode"
+"Parse and hyperlink documentation cross-references in the given BUFFER.
+
+Find cross-reference information in a buffer and activate such cross
+references for selection with `help-follow-symbol'.  Cross-references have
+the canonical form `...'  and the type of reference may be
+disambiguated by the preceding word(s) used in
+`help-xref-symbol-regexp'.  Faces only get cross-referenced if
+preceded or followed by the word `face'.  Variables without
+variable documentation do not get cross-referenced, unless
+preceded by the word `variable' or `option'.
+
+If the variable `help-xref-mule-regexp' is non-nil, find also
+cross-reference information related to multilingual environment
+(e.g., coding-systems).  This variable is also used to disambiguate
+the type of reference as the same way as `help-xref-symbol-regexp'.
+
+A special reference `back' is made to return back through a stack of
+help buffers.  Variable `help-back-label' specifies the text for
+that.
+
+(fn &optional BUFFER)" t)
+(autoload 'help-xref-button "help-mode"
+"Make a hyperlink for cross-reference text previously matched.
+MATCH-NUMBER is the subexpression of interest in the last matched
+regexp.  TYPE is the type of button to use.  Any remaining arguments are
+passed to the button's help-function when it is invoked.
+See `help-make-xrefs'.
+
+This function removes quotes surrounding the match if the
+variable `help-clean-buttons' is non-nil.
+
+(fn MATCH-NUMBER TYPE &rest ARGS)")
+(autoload 'help-insert-xref-button "help-mode"
+"Insert STRING and make a hyperlink from cross-reference text on it.
+TYPE is the type of button to use.  Any remaining arguments are passed
+to the button's help-function when it is invoked.
+See `help-make-xrefs'.
+
+(fn STRING TYPE &rest ARGS)")
+(autoload 'help-xref-on-pp "help-mode"
+"Add xrefs for symbols in `pp's output between FROM and TO.
+
+(fn FROM TO)")
+(define-obsolete-function-alias 'help-xref-interned #'describe-symbol "25.1")
+(autoload 'help-bookmark-jump "help-mode"
+"Jump to `help-mode' bookmark BOOKMARK.
+Handler function for record returned by `help-bookmark-make-record'.
+BOOKMARK is a bookmark name or a bookmark record.
+
+(fn BOOKMARK)")
+(register-definition-prefixes "help-mode" '("describe-symbol-backends" "help-"))
+
+;; hideshow.el autoloads (GNU loaddefs).
+(defvar hs-special-modes-alist nil)
+(autoload 'turn-off-hideshow "hideshow"
+"Unconditionally turn off `hs-minor-mode'.")
+(autoload 'hs-indentation-mode "hideshow"
+"Toggle indentation-based hiding/showing.
+
+This is a minor mode.  If called interactively, toggle the
+`Hs-Indentation mode' mode.  If the prefix argument is positive, enable
+the mode, and if it is zero or negative, disable the mode.
+
+If called from Lisp, toggle the mode if ARG is `toggle'.  Enable the
+mode if ARG is nil, omitted, or is a positive number.  Disable the mode
+if ARG is a negative number.
+
+To check whether the minor mode is enabled in the current buffer,
+evaluate the variable `hs-indentation-mode'.
+
+The mode's hook is called both when the mode is enabled and when it is
+disabled.
+
+(fn &optional ARG)" t)
+(autoload 'hs-minor-mode "hideshow"
+"Minor mode to selectively hide/show code and comment blocks.
+
+When hideshow minor mode is on, the menu bar is augmented with hideshow
+commands and the hideshow commands are enabled.
+The value (hs . t) is added to `buffer-invisibility-spec'.
+
+Turning hideshow minor mode off reverts the menu bar and the
+variables to default values and disables the hideshow commands.
+
+Lastly, the normal hook `hs-minor-mode-hook' is run using `run-hooks'.
+
+Key bindings:
+\\{hs-minor-mode-map}
+
+This is a minor mode.  If called interactively, toggle the `hs minor
+mode' mode.  If the prefix argument is positive, enable the mode, and if
+it is zero or negative, disable the mode.
+
+If called from Lisp, toggle the mode if ARG is `toggle'.  Enable the
+mode if ARG is nil, omitted, or is a positive number.  Disable the mode
+if ARG is a negative number.
+
+To check whether the minor mode is enabled in the current buffer,
+evaluate the variable `hs-minor-mode'.
+
+The mode's hook is called both when the mode is enabled and when it is
+disabled.
+
+(fn &optional ARG)" t)
+(register-definition-prefixes "hideshow" '("hs-"))
+
+;; hmac-md5.el autoloads (GNU loaddefs).
+(register-definition-prefixes "hmac-md5" '("hmac-md5" "md5-binary"))
+
+;; ido.el autoloads (GNU loaddefs).
+(defvar ido-mode nil
+"Determines for which buffer/file Ido should be enabled.
+The following values are possible:
+- `buffer': Turn only on Ido buffer behavior (switching, killing,
+  displaying...)
+- `file': Turn only on Ido file behavior (finding, writing, inserting...)
+- `both': Turn on Ido buffer and file behavior.
+-  nil: Turn off any Ido switching.
+
+Setting this variable directly does not take effect;
+use either \\[customize] or the function `ido-mode'.")
+(custom-autoload 'ido-mode "ido" nil)
+(autoload 'ido-mode "ido"
+"Toggle Ido mode on or off.
+With ARG, turn Ido mode on if arg is positive, off otherwise.
+Turning on Ido mode will remap (via a minor-mode keymap) the default
+keybindings for the `find-file' and `switch-to-buffer' families of
+commands to the Ido versions of these functions.
+However, if ARG arg equals `files', remap only commands for files, or
+if it equals `buffers', remap only commands for buffer switching.
+This function also adds a hook to the minibuffer.
+
+(fn &optional ARG)" t)
+(autoload 'ido-switch-buffer "ido"
+"Switch to another buffer.
+The buffer is displayed according to `ido-default-buffer-method' -- the
+default is to show it in the same window, unless it is already visible
+in another frame.
+
+As you type in a string, all of the buffers matching the string are
+displayed if substring-matching is used (default).  Look at
+`ido-enable-prefix' and `ido-toggle-prefix'.  When you have found the
+buffer you want, it can then be selected.  As you type, most keys have
+their normal keybindings, except for the following: \\<ido-buffer-completion-map>
+
+RET	Select the buffer at the front of the list of matches.
+	If the list is empty, possibly prompt to create new buffer.
+
+\\[ido-select-text]	Use the current input string verbatim.
+
+\\[ido-next-match]	Put the first element at the end of the list.
+\\[ido-prev-match]	Put the last element at the start of the list.
+\\[ido-complete]	Complete a common suffix to the current string that matches
+	all buffers.  If there is only one match, select that buffer.
+	If there is no common suffix, show a list of all matching buffers
+	in a separate window.
+\\[ido-edit-input]	Edit input string.
+\\[ido-fallback-command]	Fallback to non-ido version of current command.
+\\[ido-toggle-regexp]	Toggle regexp searching.
+\\[ido-toggle-prefix]	Toggle between substring and prefix matching.
+\\[ido-toggle-case]	Toggle case-sensitive searching of buffer names.
+\\[ido-completion-help]	Show list of matching buffers in separate window.
+\\[ido-enter-find-file]	Drop into `ido-find-file'.
+\\[ido-kill-buffer-at-head]	Kill buffer at head of buffer list.
+\\[ido-toggle-ignore]	Toggle ignoring buffers listed in `ido-ignore-buffers'." t)
+(autoload 'ido-switch-buffer-other-window "ido"
+"Switch to another buffer and show it in another window.
+The buffer name is selected interactively by typing a substring.
+For details of keybindings, see `ido-switch-buffer'." t)
+(autoload 'ido-display-buffer "ido"
+"Display a buffer in another window but don't select it.
+
+If ACTION (the prefix argument interactively), display the buffer
+in another windown even if it's already displayed in the current
+window.
+
+The buffer name is selected interactively by typing a substring.
+For details of keybindings, see `ido-switch-buffer'.
+
+(fn &optional ACTION)" t)
+(autoload 'ido-display-buffer-other-frame "ido"
+"Display a buffer preferably in another frame.
+The buffer name is selected interactively by typing a substring.
+For details of keybindings, see `ido-switch-buffer'." t)
+(autoload 'ido-kill-buffer "ido"
+"Kill a buffer.
+The buffer name is selected interactively by typing a substring.
+For details of keybindings, see `ido-switch-buffer'." t)
+(autoload 'ido-insert-buffer "ido"
+"Insert contents of a buffer in current buffer after point.
+The buffer name is selected interactively by typing a substring.
+For details of keybindings, see `ido-switch-buffer'." t)
+(autoload 'ido-switch-buffer-other-frame "ido"
+"Switch to another buffer and show it in another frame.
+The buffer name is selected interactively by typing a substring.
+For details of keybindings, see `ido-switch-buffer'." t)
+(autoload 'ido-find-file-in-dir "ido"
+"Switch to another file starting from DIR.
+
+(fn DIR)" t)
+(autoload 'ido-find-file "ido"
+"Edit file with name obtained via minibuffer.
+The file is displayed according to `ido-default-file-method' -- the
+default is to show it in the same window, unless it is already visible
+in another frame.
+
+The file name is selected interactively by typing a substring.  As you
+type in a string, all of the filenames matching the string are displayed
+if substring-matching is used (default).  Look at `ido-enable-prefix' and
+`ido-toggle-prefix'.  When you have found the filename you want, it can
+then be selected.  As you type, most keys have their normal keybindings,
+except for the following: \\<ido-file-completion-map>
+
+RET	Select the file at the front of the list of matches.
+	If the list is empty, possibly prompt to create new file.
+
+\\[ido-select-text]	Use the current input string verbatim.
+
+\\[ido-next-match]	Put the first element at the end of the list.
+\\[ido-prev-match]	Put the last element at the start of the list.
+\\[ido-complete]	Complete a common suffix to the current string that matches
+	all files.  If there is only one match, select that file.
+	If there is no common suffix, show a list of all matching files
+	in a separate window.
+\\[ido-magic-delete-char]	Open the specified directory in Dired mode.
+\\[ido-edit-input]	Edit input string (including directory).
+\\[ido-prev-work-directory]	Go to previous directory in work directory history.
+\\[ido-next-work-directory]	Go to next directory in work directory history.
+\\[ido-merge-work-directories]	Search for file in the work directory history.
+\\[ido-forget-work-directory]	Remove current directory from the work directory history.
+\\[ido-prev-work-file]	Cycle to previous file in work file history.
+\\[ido-next-work-file]	Cycle to next file in work file history.
+\\[ido-wide-find-file-or-pop-dir]	Prompt for a file and use find to locate it.
+\\[ido-wide-find-dir-or-delete-dir]	Prompt for a directory and use find to locate it.
+\\[ido-make-directory]	Prompt for a directory to create in current directory.
+\\[ido-fallback-command]	Fallback to non-Ido version of current command.
+\\[ido-toggle-regexp]	Toggle regexp searching.
+\\[ido-toggle-prefix]	Toggle between substring and prefix matching.
+\\[ido-toggle-case]	Toggle case-sensitive searching of file names.
+\\[ido-toggle-literal]	Toggle literal reading of this file.
+\\[ido-completion-help]	Show list of matching files in separate window.
+\\[ido-toggle-ignore]	Toggle ignoring files listed in `ido-ignore-files'.
+\\[ido-reread-directory]	Reread the current directory." t)
+(autoload 'ido-find-file-other-window "ido"
+"Switch to another file and show it in another window.
+The file name is selected interactively by typing a substring.
+For details of keybindings, see `ido-find-file'." t)
+(autoload 'ido-find-alternate-file "ido"
+"Find another file, select its buffer, kill previous buffer.
+The file name is selected interactively by typing a substring.
+For details of keybindings, see `ido-find-file'." t)
+(autoload 'ido-find-alternate-file-other-window "ido"
+"Find file as a replacement for the file in the next window.
+The file name is selected interactively by typing a substring.
+For details of keybindings, see `ido-find-file'." t)
+(autoload 'ido-find-file-read-only "ido"
+"Edit file read-only with name obtained via minibuffer.
+The file name is selected interactively by typing a substring.
+For details of keybindings, see `ido-find-file'." t)
+(autoload 'ido-find-file-read-only-other-window "ido"
+"Edit file read-only in other window with name obtained via minibuffer.
+The file name is selected interactively by typing a substring.
+For details of keybindings, see `ido-find-file'." t)
+(autoload 'ido-find-file-read-only-other-frame "ido"
+"Edit file read-only in other frame with name obtained via minibuffer.
+The file name is selected interactively by typing a substring.
+For details of keybindings, see `ido-find-file'." t)
+(autoload 'ido-display-file "ido"
+"Display a file in another window but don't select it.
+The file name is selected interactively by typing a substring.
+For details of keybindings, see `ido-find-file'." t)
+(autoload 'ido-find-file-other-frame "ido"
+"Switch to another file and show it in another frame.
+The file name is selected interactively by typing a substring.
+For details of keybindings, see `ido-find-file'." t)
+(autoload 'ido-write-file "ido"
+"Write current buffer to a file.
+The file name is selected interactively by typing a substring.
+For details of keybindings, see `ido-find-file'." t)
+(autoload 'ido-insert-file "ido"
+"Insert contents of file in current buffer.
+The file name is selected interactively by typing a substring.
+For details of keybindings, see `ido-find-file'." t)
+(autoload 'ido-dired "ido"
+"Call `dired' the Ido way.
+The directory is selected interactively by typing a substring.
+For details of keybindings, see `ido-find-file'." t)
+(autoload 'ido-dired-other-window "ido"
+"\"Edit\" a directory.  Like `ido-dired' but select in another window.
+The directory is selected interactively by typing a substring.
+For details of keybindings, see `ido-find-file'." t)
+(autoload 'ido-dired-other-frame "ido"
+"\"Edit\" a directory.  Like `ido-dired' but make a new frame.
+The directory is selected interactively by typing a substring.
+For details of keybindings, see `ido-find-file'." t)
+(autoload 'ido-read-buffer "ido"
+"Ido replacement for the built-in `read-buffer'.
+Return the name of a buffer selected.
+PROMPT is the prompt to give to the user.  DEFAULT if given is the default
+buffer to be selected, which will go to the front of the list.
+If REQUIRE-MATCH is non-nil, an existing buffer must be selected.
+Optional arg PREDICATE if non-nil is a function limiting the
+buffers that can be considered.
+
+(fn PROMPT &optional DEFAULT REQUIRE-MATCH PREDICATE)")
+(autoload 'ido-read-file-name "ido"
+"Ido replacement for the built-in `read-file-name'.
+Read file name, prompting with PROMPT and completing in directory DIR.
+See `read-file-name' for additional parameters.
+
+(fn PROMPT &optional DIR DEFAULT-FILENAME MUSTMATCH INITIAL PREDICATE)")
+(autoload 'ido-read-directory-name "ido"
+"Ido replacement for the built-in `read-directory-name'.
+Read directory name, prompting with PROMPT and completing in directory DIR.
+See `read-directory-name' for additional parameters.
+
+(fn PROMPT &optional DIR DEFAULT-DIRNAME MUSTMATCH INITIAL)")
+(autoload 'ido-completing-read "ido"
+"Ido replacement for the built-in `completing-read'.
+Read a string in the minibuffer with Ido-style completion.
+PROMPT is a string to prompt with; normally it ends in a colon and a space.
+CHOICES is a list of strings which are the possible completions.
+PREDICATE and INHERIT-INPUT-METHOD are currently ignored; they are included
+ to be compatible with `completing-read'.
+If REQUIRE-MATCH is non-nil, the user is not allowed to exit unless
+ the input is (or completes to) an element of CHOICES or is null.
+ If the input is null, `ido-completing-read' returns DEF, or an empty
+ string if DEF is nil, regardless of the value of REQUIRE-MATCH.
+If INITIAL-INPUT is non-nil, insert it in the minibuffer initially,
+ with point positioned at the end.
+HIST, if non-nil, specifies a history list.
+DEF, if non-nil, is the default value.
+
+(fn PROMPT CHOICES &optional PREDICATE REQUIRE-MATCH INITIAL-INPUT HIST DEF INHERIT-INPUT-METHOD)")
+(register-definition-prefixes "ido" '("ido-"))
+
+;; ldap.el autoloads (GNU loaddefs).
+(register-definition-prefixes "ldap" '("ldap-"))
+
+;; loaddefs-gen.el autoloads (GNU loaddefs).
+(put 'autoload-compute-prefixes 'safe-local-variable #'booleanp)
+(put 'generated-autoload-file 'safe-local-variable #'stringp)
+(put 'generated-autoload-load-name 'safe-local-variable #'stringp)
+(autoload 'loaddefs-generate "loaddefs-gen"
+"Generate loaddefs files for Lisp files in directories given by DIRS.
+DIRS can be either a single directory or a list of directories.
+
+The autoloads will be written to OUTPUT-FILE.  If any Lisp file
+binds `generated-autoload-file' as a file-local variable, write
+its autoloads into the specified file instead.
+
+This function does NOT recursively descend into subdirectories of the
+directories specified by DIRS.
+
+Optional argument EXCLUDED-FILES, if non-nil, should be a list of
+files, such as preloaded files, whose autoloads should not be written
+to OUTPUT-FILE.
+
+If EXTRA-DATA is non-nil, it should be a string; include that string
+at the beginning of the generated file.  This will also force the
+generation of OUTPUT-FILE even if there are no autoloads to put into
+that file.
+
+If INCLUDE-PACKAGE-VERSION is non-nil, include package version data.
+
+If GENERATE-FULL is non-nil, regenerate all the loaddefs files anew,
+instead of just updating them with the new/changed autoloads.
+
+(fn DIRS OUTPUT-FILE &optional EXCLUDED-FILES EXTRA-DATA INCLUDE-PACKAGE-VERSION GENERATE-FULL)")
+(autoload 'loaddefs-generate-batch "loaddefs-gen"
+"Generate loaddefs.el files in batch mode.
+This scans for ;;;###autoload forms and related things.
+
+The first element on the command line should be the (main)
+loaddefs.el output file, and the rest are the directories to
+use.")
+(register-definition-prefixes "loaddefs-gen" '("autoload-" "generated-autoload-" "loaddefs-" "no-update-autoloads"))
+
+;; make-mode.el autoloads (GNU loaddefs).
+(autoload 'makefile-mode "make-mode"
+"Major mode for editing standard Makefiles.
+
+If you are editing a file for a different make, try one of the
+variants `makefile-automake-mode', `makefile-gmake-mode',
+`makefile-makepp-mode', `makefile-bsdmake-mode' or,
+`makefile-imake-mode'.  All but the last should be correctly
+chosen based on the file name, except if it is *.mk.  This
+function ends by invoking the function(s) `makefile-mode-hook'.
+
+It is strongly recommended to use `font-lock-mode', because that
+provides additional parsing information.  This is used for
+example to see that a rule action `echo foo: bar' is a not rule
+dependency, despite the colon.
+
+\\{makefile-mode-map}
+
+Makefile mode can be configured by modifying the following variables:
+
+`makefile-target-colon':
+    The string that gets appended to all target names
+    inserted by `makefile-insert-target'.
+    \":\" or \"::\" are quite common values.
+
+`makefile-macro-assign':
+   The string that gets appended to all macro names
+   inserted by `makefile-insert-macro'.
+   The normal value should be \" = \", since this is what
+   standard make expects.  However, newer makes such as dmake
+   allow a larger variety of different macro assignments, so you
+   might prefer to use \" += \" or \" := \" .
+
+`makefile-tab-after-target-colon':
+   If you want a TAB (instead of a space) to be appended after the
+   target colon, then set this to a non-nil value.
+
+`makefile-pickup-everything-picks-up-filenames-p':
+   If this variable is set to a non-nil value then
+   `makefile-pickup-everything' also picks up filenames as targets
+   (i.e. it calls `makefile-pickup-filenames-as-targets'), otherwise
+   filenames are omitted.
+
+`makefile-cleanup-continuations':
+   If this variable is set to a non-nil value then Makefile mode
+   will assure that no line in the file ends with a backslash
+   (the continuation character) followed by any whitespace.
+   This is done by silently removing the trailing whitespace, leaving
+   the backslash itself intact.
+   IMPORTANT: Please note that enabling this option causes Makefile mode
+   to MODIFY A FILE WITHOUT YOUR CONFIRMATION when \"it seems necessary\".
+
+`makefile-special-targets-list':
+   List of special targets.  You will be offered to complete
+   on one of those in the minibuffer whenever you enter a `.'.
+   at the beginning of a line in Makefile mode." t)
+(autoload 'makefile-automake-mode "make-mode"
+"An adapted `makefile-mode' that knows about automake.
+
+In addition to any hooks its parent mode might have run, this mode
+runs the hook `makefile-automake-mode-hook', as the final or
+penultimate step during initialization.
+
+\\{makefile-automake-mode-map}" t)
+(autoload 'makefile-gmake-mode "make-mode"
+"An adapted `makefile-mode' that knows about gmake.
+
+In addition to any hooks its parent mode might have run, this mode
+runs the hook `makefile-gmake-mode-hook', as the final or penultimate
+step during initialization.
+
+\\{makefile-gmake-mode-map}" t)
+(autoload 'makefile-makepp-mode "make-mode"
+"An adapted `makefile-mode' that knows about makepp.
+
+In addition to any hooks its parent mode might have run, this mode
+runs the hook `makefile-makepp-mode-hook', as the final or penultimate
+step during initialization.
+
+\\{makefile-makepp-mode-map}" t)
+(autoload 'makefile-bsdmake-mode "make-mode"
+"An adapted `makefile-mode' that knows about BSD make.
+
+In addition to any hooks its parent mode might have run, this mode
+runs the hook `makefile-bsdmake-mode-hook', as the final or
+penultimate step during initialization.
+
+\\{makefile-bsdmake-mode-map}" t)
+(autoload 'makefile-imake-mode "make-mode"
+"An adapted `makefile-mode' that knows about imake.
+
+In addition to any hooks its parent mode might have run, this mode
+runs the hook `makefile-imake-mode-hook', as the final or penultimate
+step during initialization.
+
+\\{makefile-imake-mode-map}" t)
+(register-definition-prefixes "make-mode" '("makefile-"))
+
+;; man.el autoloads (GNU loaddefs).
+(defalias 'manual-entry 'man)
+(autoload 'man "man"
+"Get a Un*x manual page and put it in a buffer.
+This command is the top-level command in the man package.
+It runs a Un*x command to retrieve and clean a manpage in the
+background and places the results in a `Man-mode' browsing
+buffer.  The variable `Man-width' defines the number of columns in
+formatted manual pages.  The buffer is displayed immediately.
+The variable `Man-notify-method' defines how the buffer is displayed.
+If a buffer already exists for this man page, it will be displayed
+without running the man command.
+
+For a manpage from a particular section, use either of the
+following.  \"cat(1)\" is how cross-references appear and is
+passed to man as \"1 cat\".
+
+    cat(1)
+    1 cat
+
+To see manpages from all sections related to a subject, use an
+\"all pages\" option (which might be \"-a\" if it's not the
+default), then step through with `Man-next-manpage' (\\<Man-mode-map>\\[Man-next-manpage]) etc.
+Add to `Man-switches' to make this option permanent.
+
+    -a chmod
+
+An explicit filename can be given too.  Use -l if it might
+otherwise look like a page name.
+
+    /my/file/name.1.gz
+    -l somefile.1
+
+An \"apropos\" query with -k gives a buffer of matching page
+names or descriptions.  The pattern argument is usually an
+\"grep -E\" style regexp.
+
+    -k pattern
+
+Note that in some cases you will need to use \\[quoted-insert] to quote the
+SPC character in the above examples, because this command attempts
+to auto-complete your input based on the installed manual pages.
+
+If `default-directory' is remote, and `Man-support-remote-systems'
+is non-nil, this command formats the man page on the remote system.
+A prefix argument reverses the value of `Man-support-remote-systems'
+for the current invocation.
+
+(fn MAN-ARGS)" t)
+(autoload 'man-follow "man"
+"Get a Un*x manual page of the item under point and put it in a buffer.
+
+(fn MAN-ARGS)" '(man-common))
+(autoload 'Man-bookmark-jump "man"
+"Default bookmark handler for Man buffers.
+
+(fn BOOKMARK)")
+(autoload 'Man-context-menu "man"
+"Populate MENU with commands that open a man page at point.
+
+(fn MENU CLICK)")
+(register-definition-prefixes "man" '("Man-" "man"))
+
+;; misearch.el autoloads (GNU loaddefs).
+(add-hook 'isearch-mode-hook 'multi-isearch-setup)
+(defvar multi-isearch-next-buffer-function nil
+"Function to call to get the next buffer to search.
+
+When this variable is set to a function that returns a buffer, then
+after typing another \\[isearch-forward] or \\[isearch-backward] at a failing search, the search goes
+to the next buffer in the series and continues searching for the
+next occurrence.
+
+This function should return the next buffer (it doesn't need to switch
+to it), or nil if it can't find the next buffer (when it reaches the
+end of the search space).
+
+The first argument of this function is the current buffer where the
+search is currently searching.  It defines the base buffer relative to
+which this function should find the next buffer.  When the isearch
+direction is backward (when option `isearch-forward' is nil), this function
+should return the previous buffer to search.
+
+If the second argument of this function WRAP is non-nil, then it
+should return the first buffer in the series; and for the backward
+search, it should return the last buffer in the series.")
+(defvar multi-isearch-next-buffer-current-function nil
+"The currently active function to get the next buffer to search.
+Initialized from `multi-isearch-next-buffer-function' when
+Isearch starts.")
+(defvar multi-isearch-current-buffer nil
+"The buffer where the search is currently searching.
+The value is nil when the search still is in the initial buffer.")
+(defvar multi-isearch-buffer-list nil
+"Sequence of buffers visited by multiple buffers Isearch.
+This is nil if Isearch is not currently searching more than one buffer.")
+(defvar multi-isearch-file-list nil
+"Sequence of files visited by multiple file buffers Isearch.")
+(autoload 'multi-isearch-setup "misearch"
+"Set up isearch to search multiple buffers.
+Intended to be added to `isearch-mode-hook'.")
+(autoload 'multi-isearch-switch-buffer "misearch"
+"Switch to the next buffer in multi-buffer search.")
+(autoload 'multi-isearch-buffers "misearch"
+"Start multi-buffer Isearch on a list of BUFFERS.
+This list can contain live buffers or their names.
+Interactively read buffer names to search, one by one, ended with RET.
+With a prefix argument, ask for a regexp, and search in buffers
+whose names match the specified regexp.
+
+(fn BUFFERS)" t)
+(autoload 'multi-isearch-buffers-regexp "misearch"
+"Start multi-buffer regexp Isearch on a list of BUFFERS.
+This list can contain live buffers or their names.
+Interactively read buffer names to search, one by one, ended with RET.
+With a prefix argument, ask for a regexp, and search in buffers
+whose names match the specified regexp.
+
+(fn BUFFERS)" t)
+(autoload 'multi-isearch-files "misearch"
+"Start multi-buffer Isearch on a list of FILES.
+Relative file names in this list are expanded to absolute
+file names using the current buffer's value of `default-directory'.
+Interactively read file names to search, one by one, ended with RET.
+With a prefix argument, ask for a wildcard, and search in file buffers
+whose file names match the specified wildcard.
+
+(fn FILES)" t)
+(autoload 'multi-isearch-files-regexp "misearch"
+"Start multi-buffer regexp Isearch on a list of FILES.
+Relative file names in this list are expanded to absolute
+file names using the current buffer's value of `default-directory'.
+Interactively read file names to search, one by one, ended with RET.
+With a prefix argument, ask for a wildcard, and search in file buffers
+whose file names match the specified wildcard.
+
+(fn FILES)" t)
+(autoload 'multi-file-replace-as-diff "misearch"
+"Show as diffs replacements of FROM-STRING with REPLACEMENTS.
+FILES is a list of file names.  Also it's possible to provide a list of
+buffers in FILES.  REGEXP-FLAG and DELIMITED-FLAG have the same meaning
+as in `perform-replace'.
+
+(fn FILES FROM-STRING REPLACEMENTS REGEXP-FLAG DELIMITED-FLAG)")
+(autoload 'multi-file-replace-regexp-as-diff "misearch"
+"Show as diffs replacements of REGEXP with TO-STRING in FILES.
+DELIMITED has the same meaning as in `replace-regexp'.
+The replacements are displayed in the buffer *replace-diff* that
+you can later apply as a patch after reviewing the changes.
+
+(fn FILES REGEXP TO-STRING &optional DELIMITED)" t)
+(autoload 'replace-regexp-as-diff "misearch"
+"Show as diffs replacements of REGEXP with TO-STRING in the current buffer.
+DELIMITED has the same meaning as in `replace-regexp'.
+The replacements are displayed in the buffer *replace-diff* that
+you can later apply as a patch after reviewing the changes.
+
+(fn REGEXP TO-STRING &optional DELIMITED)" t)
+(register-definition-prefixes "misearch" '("misearch-unload-function" "multi-"))
+
+;; nroff-mode.el autoloads (GNU loaddefs).
+(autoload 'nroff-mode "nroff-mode"
+"Major mode for editing text intended for nroff to format.
+\\{nroff-mode-map}
+Turning on Nroff mode runs `text-mode-hook', then `nroff-mode-hook'.
+Also, try `nroff-electric-mode', for automatically inserting
+closing requests for requests that are used in matched pairs." t)
+(register-definition-prefixes "nroff-mode" '("nroff-"))
+
+;; nsm.el autoloads (GNU loaddefs).
+(register-definition-prefixes "nsm" '("network-security-" "nsm-"))
+
+;; perl-mode.el autoloads (GNU loaddefs).
+(put 'perl-indent-level 'safe-local-variable 'integerp)
+(put 'perl-continued-statement-offset 'safe-local-variable 'integerp)
+(put 'perl-continued-brace-offset 'safe-local-variable 'integerp)
+(put 'perl-brace-offset 'safe-local-variable 'integerp)
+(put 'perl-brace-imaginary-offset 'safe-local-variable 'integerp)
+(put 'perl-label-offset 'safe-local-variable 'integerp)
+(autoload 'perl-flymake "perl-mode"
+"Perl backend for Flymake.
+Launch `perl-flymake-command' (which see) and pass to its
+standard input the contents of the current buffer.  The output of
+this command is analyzed for error and warning messages.
+
+(fn REPORT-FN &rest ARGS)")
+(autoload 'perl-mode "perl-mode"
+"Major mode for editing Perl code.
+Expression and list commands understand all Perl brackets.
+Tab indents for Perl code.
+Comments are delimited with # ... \\n.
+Paragraphs are separated by blank lines only.
+Delete converts tabs to spaces as it moves back.
+\\{perl-mode-map}
+Variables controlling indentation style:
+ `perl-tab-always-indent'
+    Non-nil means TAB in Perl mode should always indent the current line,
+    regardless of where in the line point is when the TAB command is used.
+ `perl-tab-to-comment'
+    Non-nil means that for lines which don't need indenting, TAB will
+    either delete an empty comment, indent an existing comment, move
+    to end-of-line, or if at end-of-line already, create a new comment.
+ `perl-nochange'
+    Lines starting with this regular expression are not auto-indented.
+ `perl-indent-level'
+    Indentation of Perl statements within surrounding block.
+    The surrounding block's indentation is the indentation
+    of the line on which the open-brace appears.
+ `perl-continued-statement-offset'
+    Extra indentation given to a substatement, such as the
+    then-clause of an if or body of a while.
+ `perl-continued-brace-offset'
+    Extra indentation given to a brace that starts a substatement.
+    This is in addition to `perl-continued-statement-offset'.
+ `perl-brace-offset'
+    Extra indentation for line if it starts with an open brace.
+ `perl-brace-imaginary-offset'
+    An open brace following other text is treated as if it were
+    this far to the right of the start of its line.
+ `perl-label-offset'
+    Extra indentation for line that is a label.
+ `perl-indent-continued-arguments'
+    Offset of argument lines relative to usual indentation.
+
+Various indentation styles:       K&R  BSD  BLK  GNU  LW
+  perl-indent-level                5    8    0    2    4
+  perl-continued-statement-offset  5    8    4    2    4
+  perl-continued-brace-offset      0    0    0    0   -4
+  perl-brace-offset               -5   -8    0    0    0
+  perl-brace-imaginary-offset      0    0    4    0    0
+  perl-label-offset               -5   -8   -2   -2   -2
+
+Turning on Perl mode runs the normal hook `perl-mode-hook'." t)
+(register-definition-prefixes "perl-mode" '("perl-"))
+
+;; pixel-scroll.el autoloads (GNU loaddefs).
+(defvar pixel-scroll-mode nil
+"Non-nil if Pixel-Scroll mode is enabled.
+See the `pixel-scroll-mode' command
+for a description of this minor mode.
+Setting this variable directly does not take effect;
+either customize it (see the info node `Easy Customization')
+or call the function `pixel-scroll-mode'.")
+(custom-autoload 'pixel-scroll-mode "pixel-scroll" nil)
+(autoload 'pixel-scroll-mode "pixel-scroll"
+"A minor mode to scroll text pixel-by-pixel.
+
+This is a global minor mode.  If called interactively, toggle the
+`Pixel-Scroll mode' mode.  If the prefix argument is positive, enable
+the mode, and if it is zero or negative, disable the mode.
+
+If called from Lisp, toggle the mode if ARG is `toggle'.  Enable the
+mode if ARG is nil, omitted, or is a positive number.  Disable the mode
+if ARG is a negative number.
+
+To check whether the minor mode is enabled in the current buffer,
+evaluate `(default-value \\='pixel-scroll-mode)'.
+
+The mode's hook is called both when the mode is enabled and when it is
+disabled.
+
+(fn &optional ARG)" t)
+(autoload 'pixel-scroll-precision-scroll-down-page "pixel-scroll"
+"Scroll the current window down by DELTA pixels.
+Note that this function doesn't work if DELTA is larger than or
+equal to the text height of the current window in pixels.
+
+(fn DELTA)")
+(autoload 'pixel-scroll-precision-scroll-up-page "pixel-scroll"
+"Scroll the current window up by DELTA pixels.
+Note that this function doesn't work if DELTA is larger than
+the height of the current window.
+
+(fn DELTA)")
+(autoload 'pixel-scroll-interpolate-down "pixel-scroll"
+"Interpolate a scroll downwards by one page." t)
+(autoload 'pixel-scroll-interpolate-up "pixel-scroll"
+"Interpolate a scroll upwards by one page." t)
+(defvar pixel-scroll-precision-mode nil
+"Non-nil if Pixel-Scroll-Precision mode is enabled.
+See the `pixel-scroll-precision-mode' command
+for a description of this minor mode.
+Setting this variable directly does not take effect;
+either customize it (see the info node `Easy Customization')
+or call the function `pixel-scroll-precision-mode'.")
+(custom-autoload 'pixel-scroll-precision-mode "pixel-scroll" nil)
+(autoload 'pixel-scroll-precision-mode "pixel-scroll"
+"Toggle pixel scrolling.
+
+When enabled, this minor mode allows you to scroll the display
+precisely, according to the turning of the mouse wheel.
+
+This is a global minor mode.  If called interactively, toggle the
+`Pixel-Scroll-Precision mode' mode.  If the prefix argument is positive,
+enable the mode, and if it is zero or negative, disable the mode.
+
+If called from Lisp, toggle the mode if ARG is `toggle'.  Enable the
+mode if ARG is nil, omitted, or is a positive number.  Disable the mode
+if ARG is a negative number.
+
+To check whether the minor mode is enabled in the current buffer,
+evaluate `(default-value \\='pixel-scroll-precision-mode)'.
+
+The mode's hook is called both when the mode is enabled and when it is
+disabled.
+
+(fn &optional ARG)" t)
+(register-definition-prefixes "pixel-scroll" '("pixel-"))
+
+;; pong.el autoloads (GNU loaddefs).
+(autoload 'pong "pong"
+"Play pong and waste time.
+This is an implementation of the classical game pong.
+Move left and right bats and try to bounce the ball to your opponent.
+
+pong-mode keybindings:\\<pong-mode-map>
+
+\\{pong-mode-map}" t)
+(register-definition-prefixes "pong" '("pong-"))
+
+;; puny.el autoloads (GNU loaddefs).
+(register-definition-prefixes "puny" '("puny-"))
+
+;; reftex-vars.el autoloads (GNU loaddefs).
+(put 'reftex-vref-is-default 'safe-local-variable (lambda (x) (or (stringp x) (symbolp x))))
+(put 'reftex-fref-is-default 'safe-local-variable (lambda (x) (or (stringp x) (symbolp x))))
+(put 'reftex-level-indent 'safe-local-variable 'integerp)
+(put 'reftex-guess-label-type 'safe-local-variable #'booleanp)
+(register-definition-prefixes "reftex-vars" '("reftex-"))
+
+;; reporter.el autoloads (GNU loaddefs).
+(autoload 'reporter-submit-bug-report "reporter"
+"Begin submitting a bug report via email.
+
+ADDRESS is the email address for the package's maintainer.  PKGNAME is
+the name of the package (if you want to include version numbers,
+you must put them into PKGNAME before calling this function).
+Optional PRE-HOOKS and POST-HOOKS are passed to `reporter-dump-state'.
+Optional SALUTATION is inserted at the top of the mail buffer,
+and point is left after the salutation.
+
+VARLIST is the list of variables to dump (see `reporter-dump-state'
+for details).  The optional argument PRE-HOOKS and POST-HOOKS are
+passed to `reporter-dump-state'.  Optional argument SALUTATION is text
+to be inserted at the top of the mail buffer; in that case, point is
+left after that text.
+
+This function prompts for a summary if `reporter-prompt-for-summary-p'
+is non-nil.
+
+This function does not send a message; it uses the given information
+to initialize a message, which the user can then edit and finally send
+(or decline to send).  The variable `mail-user-agent' controls which
+mail-sending package is used for editing and sending the message.
+
+(fn ADDRESS PKGNAME VARLIST &optional PRE-HOOKS POST-HOOKS SALUTATION)")
+(register-definition-prefixes "reporter" '("reporter-"))
+
+;; rfc2104.el autoloads (GNU loaddefs).
+(register-definition-prefixes "rfc2104" '("rfc2104-"))
+
+;; scheme.el autoloads (GNU loaddefs).
+(autoload 'scheme-mode "scheme"
+"Major mode for editing Scheme code.
+Editing commands are similar to those of `lisp-mode'.
+
+In addition, if an inferior Scheme process is running, some additional
+commands will be defined, for evaluating expressions and controlling
+the interpreter, and the state of the process will be displayed in the
+mode line of all Scheme buffers.  The names of commands that interact
+with the Scheme process start with \"xscheme-\" if you use the MIT
+Scheme-specific `xscheme' package; for more information see the
+documentation for `xscheme-interaction-mode'.  Use \\[run-scheme] to
+start an inferior Scheme using the more general `cmuscheme' package.
+
+Commands:
+Delete converts tabs to spaces as it moves back.
+Blank lines separate paragraphs.  Semicolons start comments.
+\\{scheme-mode-map}
+
+In addition to any hooks its parent mode `prog-mode' might have run,
+this mode runs the hook `scheme-mode-hook', as the final or
+penultimate step during initialization." t)
+(autoload 'dsssl-mode "scheme"
+"Major mode for editing DSSSL code.
+Editing commands are similar to those of `lisp-mode'.
+
+Commands:
+Delete converts tabs to spaces as it moves back.
+Blank lines separate paragraphs.  Semicolons start comments.
+\\{scheme-mode-map}
+Entering this mode runs the hooks `scheme-mode-hook' and then
+`dsssl-mode-hook' and inserts the value of `dsssl-sgml-declaration' if
+that variable's value is a string." t)
+(register-definition-prefixes "scheme" '("dsssl-" "scheme-"))
+
+;; sendmail.el autoloads (GNU loaddefs).
+(defvar mail-from-style 'angles
+"Specifies how \"From:\" fields look.
+
+If nil, they contain just the return address like:
+	king@grassland.com
+If `parens', they look like:
+	king@grassland.com (Elvis Parsley)
+If `angles', they look like:
+	Elvis Parsley <king@grassland.com>
+
+Otherwise, most addresses look like `angles', but they look like
+`parens' if `angles' would need quoting and `parens' would not.")
+(custom-autoload 'mail-from-style "sendmail" t)
+(defvar mail-specify-envelope-from nil
+"If non-nil, specify the envelope-from address when sending mail.
+The value used to specify it is whatever is found in
+the variable `mail-envelope-from', with `user-mail-address' as fallback.
+
+On most systems, specifying the envelope-from address is a
+privileged operation.  This variable affects sendmail and
+smtpmail -- if you use feedmail to send mail, see instead the
+variable `feedmail-deduce-envelope-from'.")
+(custom-autoload 'mail-specify-envelope-from "sendmail" t)
+(defvar mail-self-blind nil
+"Non-nil means insert Bcc to self in messages to be sent.
+This is done when the message is initialized,
+so you can remove or alter the Bcc field to override the default.
+If you are using `message-mode' to compose messages, customize the
+variable `message-default-mail-headers' instead.")
+(custom-autoload 'mail-self-blind "sendmail" t)
+(defvar mail-interactive t
+"Non-nil means when sending a message wait for and display errors.
+Otherwise, let mailer send back a message to report errors.")
+(custom-autoload 'mail-interactive "sendmail" t)
+(defvar send-mail-function (if (and (boundp 'smtpmail-smtp-server) smtpmail-smtp-server) #'smtpmail-send-it #'sendmail-query-once)
+"Function to call to send the current buffer as mail.
+The headers should be delimited by a line which is
+not a valid RFC 822 (or later) header or continuation line,
+that matches the variable `mail-header-separator'.
+This is used by the default mail-sending commands.  See also
+`message-send-mail-function' for use with the Message package.")
+(custom-autoload 'send-mail-function "sendmail" t)
+(defvar mail-header-separator "--text follows this line--"
+"Line used to separate headers from text in messages being composed.")
+(custom-autoload 'mail-header-separator "sendmail" t)
+(defvar mail-archive-file-name nil
+"Name of file to write all outgoing messages in, or nil for none.
+This is normally an mbox file, but for backwards compatibility may also
+be a Babyl file.
+If you are using `message-mode' to compose messages, customize the
+variable `message-default-mail-headers' instead.")
+(custom-autoload 'mail-archive-file-name "sendmail" t)
+(defvar mail-default-reply-to nil
+"Address to insert as default Reply-To field of outgoing messages.
+If nil, it will be initialized from the REPLYTO environment variable
+when you first send mail.
+If you are using `message-mode' to compose messages, customize the
+variable `message-default-mail-headers' instead.")
+(custom-autoload 'mail-default-reply-to "sendmail" t)
+(defvar mail-personal-alias-file "~/.mailrc"
+"If non-nil, the name of the user's personal mail alias file.
+This file typically should be in same format as the `.mailrc' file used by
+the `Mail' or `mailx' program.
+This file need not actually exist.")
+(custom-autoload 'mail-personal-alias-file "sendmail" t)
+(defvar mail-setup-hook nil
+"Normal hook, run each time a new outgoing message is initialized.")
+(custom-autoload 'mail-setup-hook "sendmail" t)
+(defvar mail-aliases t
+"Alist of mail address aliases,
+or t meaning should be initialized from your mail aliases file.
+(The file's name is normally `~/.mailrc', but `mail-personal-alias-file'
+can specify a different file name.)
+The alias definitions in the file have this form:
+    alias ALIAS MEANING")
+(defvar mail-yank-prefix "> "
+"Prefix insert on lines of yanked message being replied to.
+If this is nil, use indentation, as specified by `mail-indentation-spaces'.")
+(custom-autoload 'mail-yank-prefix "sendmail" t)
+(defvar mail-indentation-spaces 3
+"Number of spaces to insert at the beginning of each cited line.
+Used by `mail-yank-original' via `mail-indent-citation'.")
+(custom-autoload 'mail-indentation-spaces "sendmail" t)
+(defvar mail-citation-hook nil
+"Hook for modifying a citation just inserted in the mail buffer.
+Each hook function can find the citation between (point) and (mark t),
+and should leave point and mark around the citation text as modified.
+The hook functions can find the header of the cited message
+in the variable `mail-citation-header', whether or not this is included
+in the cited portion of the message.
+
+If this hook is entirely empty (nil), a default action is taken
+instead of no action.")
+(custom-autoload 'mail-citation-hook "sendmail" t)
+(defvar mail-citation-prefix-regexp "\\(?:[ \11]*\\(?:[[:word:]_.]+>\\|[>|]\\)\\)+"
+"Regular expression to match a citation prefix plus whitespace.
+It should match whatever sort of citation prefixes you want to handle,
+including leading whitespace.  The default value matches citations
+like `foo_bar>' plus any leading whitespace.")
+(custom-autoload 'mail-citation-prefix-regexp "sendmail" t)
+(defvar mail-signature t
+"Text inserted at end of mail buffer when a message is initialized.
+If nil, no signature is inserted.
+If t, it means to insert the contents of the file `mail-signature-file'.
+If a string, that string is inserted.
+ (To make a proper signature, the string should begin with \\n\\n-- \\n,
+  which is the standard way to delimit a signature in a message.)
+Otherwise, it should be an expression; it is evaluated
+and should insert whatever you want to insert.")
+(custom-autoload 'mail-signature "sendmail" t)
+(defvar mail-signature-file "~/.signature"
+"File containing the text inserted at end of mail buffer.")
+(custom-autoload 'mail-signature-file "sendmail" t)
+(defvar mail-default-directory "~/"
+"Value of `default-directory' for Mail mode buffers.
+This directory is used for auto-save files of Mail mode buffers.
+
+Note that Message mode does not use this variable; it auto-saves
+in `message-auto-save-directory'.")
+(custom-autoload 'mail-default-directory "sendmail" t)
+(defvar mail-default-headers nil
+"A string containing header lines, to be inserted in outgoing messages.
+It can contain newlines, and should end in one.  It is inserted
+before you edit the message, so you can edit or delete the lines.
+If you are using `message-mode' to compose messages, customize the
+variable `message-default-mail-headers' instead.")
+(custom-autoload 'mail-default-headers "sendmail" t)
+(autoload 'sendmail-query-once "sendmail"
+"Query for `send-mail-function' and send mail with it.
+This also saves the value of `send-mail-function' via Customize.")
+(define-mail-user-agent 'sendmail-user-agent #'sendmail-user-agent-compose #'mail-send-and-exit)
+(autoload 'sendmail-user-agent-compose "sendmail"
+"
+
+(fn &optional TO SUBJECT OTHER-HEADERS CONTINUE SWITCH-FUNCTION YANK-ACTION SEND-ACTIONS RETURN-ACTION &rest IGNORED)")
+(autoload 'mail-mode "sendmail"
+"Major mode for editing mail to be sent.
+Like Text Mode but with these additional commands:
+
+\\[mail-send]  `mail-send' (send the message)
+\\[mail-send-and-exit]  `mail-send-and-exit' (send the message and exit)
+
+Here are commands that move to a header field (and create it if there isn't):
+	 \\[mail-to]  move to To:	\\[mail-subject]  move to Subj:
+	 \\[mail-bcc]  move to Bcc:	\\[mail-cc]  move to Cc:
+	 \\[mail-fcc]  move to Fcc:	\\[mail-reply-to] move to Reply-To:
+         \\[mail-mail-reply-to]  move to Mail-Reply-To:
+         \\[mail-mail-followup-to] move to Mail-Followup-To:
+\\[mail-text]  move to message text.
+\\[mail-signature]  `mail-signature' (insert `mail-signature-file' file).
+\\[mail-yank-original]  `mail-yank-original' (insert current message, in Rmail).
+\\[mail-fill-yanked-message]  `mail-fill-yanked-message' (fill what was yanked).
+\\[mail-insert-file] insert a text file into the message.
+\\[mail-add-attachment] attach to the message a file as binary attachment.
+Turning on Mail mode runs the normal hooks `text-mode-hook' and
+`mail-mode-hook' (in that order)." t)
+(autoload 'mail-send-and-exit "sendmail"
+"Send message like `mail-send', then, if no errors, exit from mail buffer.
+Prefix arg means don't delete this window.
+
+(fn &optional ARG)" t)
+(defvar mail-mailing-lists nil
+"List of mailing list addresses the user is subscribed to.
+The variable is used to trigger insertion of the \"Mail-Followup-To\"
+header when sending a message to a mailing list.")
+(custom-autoload 'mail-mailing-lists "sendmail" t)
+(defvar sendmail-coding-system nil
+"Coding system for encoding the outgoing mail.
+This has higher priority than the default `buffer-file-coding-system'
+and `default-sendmail-coding-system',
+but lower priority than the local value of `buffer-file-coding-system'.
+See also the function `select-message-coding-system'.")
+(defvar default-sendmail-coding-system 'utf-8
+"Default coding system for encoding the outgoing mail.
+This variable is used only when `sendmail-coding-system' is nil.
+
+This variable is set/changed by the command `set-language-environment'.
+User should not set this variable manually,
+instead use `sendmail-coding-system' to get a constant encoding
+of outgoing mails regardless of the current language environment.
+See also the function `select-message-coding-system'.")
+(autoload 'mail "sendmail"
+"Edit a message to be sent.  Prefix arg means resume editing (don't erase).
+When this function returns, the buffer `*mail*' is selected.
+The value is t if the message was newly initialized; otherwise, nil.
+
+Optionally, the signature file `mail-signature-file' can be inserted at the
+end; see the variable `mail-signature'.
+
+\\<mail-mode-map>
+While editing message, type \\[mail-send-and-exit] to send the message and exit.
+
+Various special commands starting with C-c are available in sendmail mode
+to move to message header fields:
+\\{mail-mode-map}
+
+If `mail-self-blind' is non-nil, a Bcc to yourself is inserted
+when the message is initialized.
+
+If `mail-default-reply-to' is non-nil, it should be an address (a string);
+a Reply-To: field with that address is inserted.
+
+If `mail-archive-file-name' is non-nil, an Fcc field with that file name
+is inserted.
+
+The normal hook `mail-setup-hook' is run after the message is
+initialized.  It can add more default fields to the message.
+
+The first argument, NOERASE, determines what to do when there is
+an existing modified `*mail*' buffer.  If NOERASE is nil, the
+existing mail buffer is used, and the user is prompted whether to
+keep the old contents or to erase them.  If NOERASE has the value
+`new', a new mail buffer will be created instead of using the old
+one.  Any other non-nil value means to always select the old
+buffer without erasing the contents.
+
+The second through fifth arguments,
+ TO, SUBJECT, IN-REPLY-TO and CC, specify if non-nil
+ the initial contents of those header fields.
+ These arguments should not have final newlines.
+The sixth argument REPLYBUFFER is a buffer which contains an
+ original message being replied to, or else an action
+ of the form (FUNCTION . ARGS) which says how to insert the original.
+ Or it can be nil, if not replying to anything.
+The seventh argument ACTIONS is a list of actions to take
+ if/when the message is sent.  Each action looks like (FUNCTION . ARGS);
+ when the message is sent, we apply FUNCTION to ARGS.
+ This is how Rmail arranges to mark messages `answered'.
+
+(fn &optional NOERASE TO SUBJECT IN-REPLY-TO CC REPLYBUFFER ACTIONS RETURN-ACTION)" t)
+(autoload 'mail-other-window "sendmail"
+"Like `mail' command, but display mail buffer in another window.
+If this command needs to split the current window, it by default obeys
+the user options `split-height-threshold' and `split-width-threshold',
+when it decides whether to split the window horizontally or vertically.
+
+(fn &optional NOERASE TO SUBJECT IN-REPLY-TO CC REPLYBUFFER SENDACTIONS)" t)
+(autoload 'mail-other-frame "sendmail"
+"Like `mail' command, but display mail buffer in another frame.
+
+(fn &optional NOERASE TO SUBJECT IN-REPLY-TO CC REPLYBUFFER SENDACTIONS)" t)
+(register-definition-prefixes "sendmail" '("mail-" "sendmail-"))
+
+;; snake.el autoloads (GNU loaddefs).
+(autoload 'snake "snake"
+"Play the Snake game.
+Move the snake around without colliding with its tail or with the border.
+
+Eating dots causes the snake to get longer.
+
+Snake mode keybindings:
+   \\<snake-mode-map>
+\\[snake-start-game]	Starts a new game of Snake
+\\[snake-end-game]	Terminates the current game
+\\[snake-pause-game]	Pauses (or resumes) the current game
+\\[snake-move-left]	Makes the snake move left
+\\[snake-move-right]	Makes the snake move right
+\\[snake-move-up]	Makes the snake move up
+\\[snake-move-down]	Makes the snake move down" t)
+(register-definition-prefixes "snake" '("snake-"))
+
+;; snmp-mode.el autoloads (GNU loaddefs).
+(autoload 'snmp-mode "snmp-mode"
+"Major mode for editing SNMP MIBs.
+Expression and list commands understand all C brackets.
+Tab indents for C code.
+Comments start with -- and end with newline or another --.
+Delete converts tabs to spaces as it moves back.
+\\{snmp-mode-map}
+Turning on `snmp-mode' runs the hooks in `snmp-common-mode-hook', then
+`snmp-mode-hook'." t)
+(autoload 'snmpv2-mode "snmp-mode"
+"Major mode for editing SNMPv2 MIBs.
+Expression and list commands understand all C brackets.
+Tab indents for C code.
+Comments start with -- and end with newline or another --.
+Delete converts tabs to spaces as it moves back.
+\\{snmp-mode-map}
+Turning on `snmp-mode' runs the hooks in `snmp-common-mode-hook',
+then `snmpv2-mode-hook'." t)
+(register-definition-prefixes "snmp-mode" '("snmp"))
+
+;; socks.el autoloads (GNU loaddefs).
+(register-definition-prefixes "socks" '("socks-"))
+
+;; strokes.el autoloads (GNU loaddefs).
+(autoload 'strokes-global-set-stroke "strokes"
+"Interactively give STROKE the global binding as COMMAND.
+Works just like `global-set-key', except for strokes.  COMMAND is
+a symbol naming an interactively-callable function.  STROKE is a
+list of sampled positions on the stroke grid as described in the
+documentation for the `strokes-define-stroke' function.
+
+See also `strokes-global-set-stroke-string'.
+
+(fn STROKE COMMAND)" t)
+(autoload 'strokes-read-stroke "strokes"
+"Read a simple stroke (interactively) and return the stroke.
+Optional PROMPT in minibuffer displays before and during stroke reading.
+This function will display the stroke interactively as it is being
+entered in the strokes buffer if the variable
+`strokes-use-strokes-buffer' is non-nil.
+Optional EVENT is acceptable as the starting event of the stroke.
+
+(fn &optional PROMPT EVENT)")
+(autoload 'strokes-read-complex-stroke "strokes"
+"Read a complex stroke (interactively) and return the stroke.
+Optional PROMPT in minibuffer displays before and during stroke reading.
+Note that a complex stroke allows the user to pen-up and pen-down.  This
+is implemented by allowing the user to paint with button 1 or button 2 and
+then complete the stroke with button 3.
+Optional EVENT is acceptable as the starting event of the stroke.
+
+(fn &optional PROMPT EVENT)")
+(autoload 'strokes-do-stroke "strokes"
+"Read a simple stroke from the user and then execute its command.
+This must be bound to a mouse event.
+
+(fn EVENT)" t)
+(autoload 'strokes-do-complex-stroke "strokes"
+"Read a complex stroke from the user and then execute its command.
+This must be bound to a mouse event.
+
+(fn EVENT)" t)
+(autoload 'strokes-describe-stroke "strokes"
+"Displays the command which STROKE maps to, reading STROKE interactively.
+
+(fn STROKE)" t)
+(autoload 'strokes-help "strokes"
+"Get instruction on using the Strokes package." t)
+(autoload 'strokes-load-user-strokes "strokes"
+"Load user-defined strokes from file named by `strokes-file'." t)
+(autoload 'strokes-list-strokes "strokes"
+"Pop up a buffer containing an alphabetical listing of strokes in STROKES-MAP.
+With CHRONOLOGICAL prefix arg (\\[universal-argument]) list strokes chronologically
+by command name.
+If STROKES-MAP is not given, `strokes-global-map' will be used instead.
+
+(fn &optional CHRONOLOGICAL STROKES-MAP)" t)
+(defvar strokes-mode nil
+"Non-nil if Strokes mode is enabled.
+See the `strokes-mode' command
+for a description of this minor mode.
+Setting this variable directly does not take effect;
+either customize it (see the info node `Easy Customization')
+or call the function `strokes-mode'.")
+(custom-autoload 'strokes-mode "strokes" nil)
+(autoload 'strokes-mode "strokes"
+"Toggle Strokes mode, a global minor mode.
+
+\\<strokes-mode-map>
+Strokes are pictographic mouse gestures which invoke commands.
+Strokes are invoked with \\[strokes-do-stroke].  You can define
+new strokes with \\[strokes-global-set-stroke].  See also
+\\[strokes-do-complex-stroke] for `complex' strokes.
+
+To use strokes for pictographic editing, such as Chinese/Japanese, use
+\\[strokes-compose-complex-stroke], which draws strokes and inserts them.
+Encode/decode your strokes with \\[strokes-encode-buffer],
+\\[strokes-decode-buffer].
+
+\\{strokes-mode-map}
+
+This is a global minor mode.  If called interactively, toggle the
+`Strokes mode' mode.  If the prefix argument is positive, enable the
+mode, and if it is zero or negative, disable the mode.
+
+If called from Lisp, toggle the mode if ARG is `toggle'.  Enable the
+mode if ARG is nil, omitted, or is a positive number.  Disable the mode
+if ARG is a negative number.
+
+To check whether the minor mode is enabled in the current buffer,
+evaluate `(default-value \\='strokes-mode)'.
+
+The mode's hook is called both when the mode is enabled and when it is
+disabled.
+
+(fn &optional ARG)" t)
+(autoload 'strokes-decode-buffer "strokes"
+"Decode stroke strings in BUFFER and display their corresponding glyphs.
+Optional BUFFER defaults to the current buffer.
+Optional FORCE non-nil will ignore the buffer's read-only status.
+
+(fn &optional BUFFER FORCE)" t)
+(autoload 'strokes-compose-complex-stroke "strokes"
+"Read a complex stroke and insert its glyph into the current buffer." t)
+(register-definition-prefixes "strokes" '("strokes-"))
+
+;; supercite.el autoloads (GNU loaddefs).
+(autoload 'sc-cite-original "supercite"
+"Workhorse citing function which performs the initial citation.
+This is callable from the various mail and news readers' reply
+function according to the agreed upon standard.  See the associated
+info node `(SC)Top' for more details.
+`sc-cite-original' does not do any yanking of the
+original message but it does require a few things:
+
+     1) The reply buffer is the current buffer.
+
+     2) The original message has been yanked and inserted into the
+        reply buffer.
+
+     3) Verbose mail headers from the original message have been
+        inserted into the reply buffer directly before the text of the
+        original message.
+
+     4) Point is at the beginning of the verbose headers.
+
+     5) Mark is at the end of the body of text to be cited.
+
+The region need not be active (and typically isn't when this
+function is called).  Also, the hook `sc-pre-hook' is run before,
+and `sc-post-hook' is run after the guts of this function.")
+(register-definition-prefixes "supercite" '("sc-"))
+
+;; svg.el autoloads (GNU loaddefs).
+(push '(svg 1 1) package--builtin-versions)
+(register-definition-prefixes "svg" '("svg-"))
+
+;; tetris.el autoloads (GNU loaddefs).
+(autoload 'tetris "tetris"
+"Play the Tetris game.
+Shapes drop from the top of the screen, and the user has to move and
+rotate the shape to fit in with those at the bottom of the screen so
+as to form complete rows.
+
+`tetris-mode' keybindings:
+\\<tetris-mode-map>
+\\[tetris-start-game]	Start a new game of Tetris
+\\[tetris-end-game]	Terminate the current game
+\\[tetris-pause-game]	Pause (or resume) the current game
+\\[tetris-move-left]	Move the shape one square to the left
+\\[tetris-move-right]	Move the shape one square to the right
+\\[tetris-rotate-prev]	Rotate the shape clockwise
+\\[tetris-rotate-next]	Rotate the shape anticlockwise
+\\[tetris-move-bottom]	Drop the shape to the bottom of the playing area" t)
+(register-definition-prefixes "tetris" '("tetris-"))
+
+;; touch-screen.el autoloads (GNU loaddefs).
+(autoload 'touch-screen-hold "touch-screen"
+"Handle a long press EVENT.
+Ding and select the window at EVENT, then activate the mark.  If
+`touch-screen-word-select' is enabled, try to select the whole
+word around EVENT; otherwise, set point to the location of EVENT.
+
+(fn EVENT)" t)
+(autoload 'touch-screen-translate-touch "touch-screen"
+"Translate touch screen events into a sequence of mouse events.
+PROMPT is the prompt string given to `read-key-sequence', or nil
+if this function is being called from the keyboard command loop.
+Value is a new key sequence.
+
+Read the touch screen event within `current-key-remap-sequence'
+and give it to `touch-screen-handle-touch'.  Return any key
+sequence signaled.
+
+If `touch-screen-handle-touch' does not signal for an event to be
+returned after the last element of the key sequence is read,
+continue reading touch screen events until
+`touch-screen-handle-touch' signals.  Return a sequence
+consisting of the first event encountered that is not a touch
+screen event.
+
+In addition to non-touchscreen events read, key sequences
+returned may contain any one of the following events:
+
+  (touchscreen-scroll WINDOW DX DY)
+
+where WINDOW specifies a window to scroll, and DX and DY are
+integers describing how many pixels to be scrolled horizontally
+and vertically,
+
+  (touchscreen-hold POSN)
+  (touchscreen-drag POSN)
+
+where POSN is the position of the long-press or touchpoint
+motion,
+
+  (touchscreen-restart-drag POSN)
+
+where POSN is the position of the tap,
+
+  (down-mouse-1 POSN)
+  (drag-mouse-1 POSN)
+
+where POSN is the position of the mouse button press or click,
+
+  (mouse-1 POSN)
+  (mouse-2 POSN)
+
+where POSN is the position of the mouse click, either `mouse-2'
+if POSN is on a link or a button, or `mouse-1' otherwise.
+
+(fn PROMPT)")
+(autoload 'touch-screen-track-tap "touch-screen"
+"Track a single tap starting from EVENT.
+EVENT should be a `touchscreen-begin' event.
+
+Read touch screen events until a `touchscreen-end' event is
+received with the same ID as in EVENT.  If UPDATE is non-nil and
+a `touchscreen-update' event is received in the mean time and
+contains a touch point with the same ID as in EVENT, call UPDATE
+with that event and DATA.
+
+If THRESHOLD is non-nil, enforce a threshold of movement that is
+either itself or 10 pixels when it is not a number.  If the
+aforementioned touch point moves beyond that threshold on any
+axis, return nil immediately, and further resume mouse event
+translation for the touch point at hand.
+
+Return nil immediately if any other kind of event is received;
+otherwise, return t once the `touchscreen-end' event arrives.
+
+(fn EVENT &optional UPDATE DATA THRESHOLD)")
+(autoload 'touch-screen-track-drag "touch-screen"
+"Track a single drag starting from EVENT.
+EVENT should be a `touchscreen-begin' event.
+
+Read touch screen events until a `touchscreen-end' event is
+received with the same ID as in EVENT.  For each
+`touchscreen-update' event received in the mean time containing a
+touch point with the same ID as in EVENT, call UPDATE with the
+touch point in event and DATA, once the touch point has moved
+significantly by at least 5 pixels from where it was in EVENT.
+
+Return nil immediately if any other kind of event is received;
+otherwise, return either t or `no-drag' once the
+`touchscreen-end' event arrives; return `no-drag' returned if the
+touch point in EVENT did not move significantly, and t otherwise.
+
+(fn EVENT UPDATE &optional DATA)")
+(autoload 'touch-screen-inhibit-drag "touch-screen"
+"Inhibit subsequent `touchscreen-drag' events from being sent.
+Prevent `touchscreen-drag' and translated mouse events from being
+sent until the touch sequence currently being translated ends.
+Must be called from a command bound to a `touchscreen-hold' or
+`touchscreen-drag' event.")
+(autoload 'touch-screen-last-drag-position "touch-screen"
+"Return the last attested position of the current touch screen tool.
+Value is a pair of integers (X . Y) representing the pixel
+position of the said tool relative to the frame where it was
+placed (not the selected frame), or nil if this function was
+not invoked after the generation of a `mouse-movement' or
+`down-mouse-1' event by touch screen event translation.
+
+This function must be consulted in preference to
+`mouse-absolute-pixel-position' if the latter is required in any
+command that handles `mouse-movement' or `down-mouse-1' events.")
+(register-definition-prefixes "touch-screen" '("touch-screen-"))
+
+;; tutorial.el autoloads (GNU loaddefs).
+(autoload 'help-with-tutorial "tutorial"
+"Select the Emacs learn-by-doing tutorial.
+If there is a tutorial version written in the language
+of the selected language environment, that version is used.
+If there's no tutorial in that language, `TUTORIAL' is selected.
+With ARG, you are asked to choose which language.
+If DONT-ASK-FOR-REVERT is non-nil the buffer is reverted without
+any question when restarting the tutorial.
+
+If any of the standard Emacs key bindings that are used in the
+tutorial have been changed then an explanatory note about this is
+shown in the beginning of the tutorial buffer.
+
+When the tutorial buffer is killed the content and the point
+position in the buffer is saved so that the tutorial may be
+resumed later.
+
+(fn &optional ARG DONT-ASK-FOR-REVERT)" t)
+(register-definition-prefixes "tutorial" '("get-lang-string" "lang-strings" "tutorial--"))
+
+;; two-column.el autoloads (GNU loaddefs).
+(autoload '2C-command "two-column" () t 'keymap)
+ (keymap-global-set "C-x 6" #'2C-command)
+ (keymap-global-set "<f2>" #'2C-command)
+(autoload '2C-two-columns "two-column"
+"Split current window vertically for two-column editing.
+\\<global-map>When called the first time, associates a buffer with the current
+buffer in two-column minor mode (use \\[describe-mode] once in the mode,
+for details.).  It runs `2C-other-buffer-hook' in the new buffer.
+When called again, restores the screen layout with the current buffer
+first and the associated buffer to its right.
+
+(fn &optional BUFFER)" t)
+(autoload '2C-associate-buffer "two-column"
+"Associate another BUFFER with this one in two-column minor mode.
+Can also be used to associate a just previously visited file, by
+accepting the proposed default buffer.
+
+(See  \\[describe-mode] .)
+
+(fn BUFFER)" t)
+(autoload '2C-split "two-column"
+"Split a two-column text at point, into two buffers in two-column minor mode.
+Point becomes the local value of `2C-window-width'.  Only lines that
+have the ARG same preceding characters at that column get split.  The
+ARG preceding characters without any leading whitespace become the local
+value for `2C-separator'.  This way lines that continue across both
+columns remain untouched in the first buffer.
+
+This function can be used with a prototype line, to set up things.  You
+write the first line of each column and then split that line.  E.g.:
+
+First column's text    sSs  Second column's text
+		       \\___/\\
+			/    \\
+   5 character Separator      You type  M-5 \\[2C-split]  with the point here.
+
+(See  \\[describe-mode] .)
+
+(fn ARG)" t)
+(register-definition-prefixes "two-column" '("2C-"))
+
+;; utf7.el autoloads (GNU loaddefs).
+(autoload 'utf7-encode "utf7"
+"Encode UTF-7 STRING.  Use IMAP modification if FOR-IMAP is non-nil.
+
+(fn STRING &optional FOR-IMAP)")
+(register-definition-prefixes "utf7" '("utf7-"))
+
+;; vc-bzr.el autoloads (GNU loaddefs).
+(defconst vc-bzr-admin-dirname ".bzr"
+"Name of the directory containing Bzr repository status files.")
+(defconst vc-bzr-admin-checkout-format-file (concat vc-bzr-admin-dirname "/checkout/format")
+"Name of the format file in a .bzr directory.")
+ (defun vc-bzr-registered (file)
+  (if (vc-find-root file vc-bzr-admin-checkout-format-file)
+      (progn
+        (load "vc-bzr" nil t)
+        (vc-bzr-registered file))))
+(register-definition-prefixes "vc-bzr" '("vc-bzr-"))
+
+;; vc-hg.el autoloads (GNU loaddefs).
+(defun vc-hg-registered (file)
+  "Return non-nil if FILE is registered with hg."
+  (if (vc-find-root file ".hg")       ; short cut
+      (progn
+        (load "vc-hg" nil t)
+        (vc-hg-registered file))))
+(register-definition-prefixes "vc-hg" '("vc-hg-"))
+
+;; vc-svn.el autoloads (GNU loaddefs).
+(defun vc-svn-registered (f)
+  (let ((admin-dir (cond ((and (eq system-type 'windows-nt)
+                               (getenv "SVN_ASP_DOT_NET_HACK"))
+                          "_svn")
+                         (t ".svn"))))
+    (when (vc-find-root f admin-dir)
+      (load "vc-svn" nil t)
+      (vc-svn-registered f))))
+(register-definition-prefixes "vc-svn" '("vc-svn-"))
+
+;; wdired.el autoloads (GNU loaddefs).
+(autoload 'wdired-change-to-wdired-mode "wdired"
+"Put a Dired buffer in Writable Dired (WDired) mode.
+\\<wdired-mode-map>
+In WDired mode, you can edit the names of the files in the
+buffer, the target of the links, and the permission bits of the
+files.  After typing \\[wdired-finish-edit], Emacs modifies the files and
+directories to reflect your edits.
+
+See `wdired-mode'." t)
+(register-definition-prefixes "wdired" '("wdired-"))
+
+;; which-key.el autoloads (GNU loaddefs).
+(push '(which-key 3 6 1) package--builtin-versions)
+(defvar which-key-mode nil
+"Non-nil if Which-Key mode is enabled.
+See the `which-key-mode' command
+for a description of this minor mode.
+Setting this variable directly does not take effect;
+either customize it (see the info node `Easy Customization')
+or call the function `which-key-mode'.")
+(custom-autoload 'which-key-mode "which-key" nil)
+(autoload 'which-key-mode "which-key"
+"Toggle `which-key-mode'.
+
+`which-key' is a minor mode that displays the key bindings following
+your currently entered incomplete command (a prefix) in a popup.
+
+For example, after enabling the minor mode, if you enter \\`C-x' and
+wait for one second (by default), the minibuffer will expand with all
+available key bindings that follow \\`C-x' (or as many as space allows
+given your settings).
+
+This is a global minor mode.  If called interactively, toggle the
+`Which-Key mode' mode.  If the prefix argument is positive, enable the
+mode, and if it is zero or negative, disable the mode.
+
+If called from Lisp, toggle the mode if ARG is `toggle'.  Enable the
+mode if ARG is nil, omitted, or is a positive number.  Disable the mode
+if ARG is a negative number.
+
+To check whether the minor mode is enabled in the current buffer,
+evaluate `(default-value \\='which-key-mode)'.
+
+The mode's hook is called both when the mode is enabled and when it is
+disabled.
+
+(fn &optional ARG)" t)
+(autoload 'which-key-setup-side-window-right "which-key"
+"Set up side-window on right." t)
+(autoload 'which-key-setup-side-window-right-bottom "which-key"
+"Set up side-window on right if space allows.
+Otherwise, use bottom." t)
+(autoload 'which-key-setup-side-window-bottom "which-key"
+"Set up side-window that opens on bottom." t)
+(autoload 'which-key-setup-minibuffer "which-key"
+"Set up minibuffer display.
+Do not use this setup if you use the paging commands.  Instead use
+`which-key-setup-side-window-bottom', which is nearly identical
+but more functional." t)
+(autoload 'which-key-add-keymap-based-replacements "which-key"
+"Replace the description of KEY using REPLACEMENT in KEYMAP.
+KEY should take a format suitable for use in `kbd'.  REPLACEMENT
+should be a cons cell of the form (STRING . COMMAND) for each
+REPLACEMENT, where STRING is the replacement string and COMMAND
+is a symbol corresponding to the intended command to be
+replaced.  COMMAND can be nil if the binding corresponds to a key
+prefix.  An example is
+
+(which-key-add-keymap-based-replacements global-map
+  \"C-x w\" \\='(\"Save as\" . write-file)).
+
+For backwards compatibility, REPLACEMENT can also be a string,
+but the above format is preferred, and the option to use a string
+for REPLACEMENT will eventually be removed.
+
+(fn KEYMAP KEY REPLACEMENT &rest MORE)")
+(function-put 'which-key-add-keymap-based-replacements 'lisp-indent-function 'defun)
+(autoload 'which-key-add-key-based-replacements "which-key"
+"Replace the description of KEY-SEQUENCE with REPLACEMENT.
+KEY-SEQUENCE is a string suitable for use in `kbd'.
+REPLACEMENT may either be a string, as in
+
+(which-key-add-key-based-replacements \"C-x 1\" \"maximize\")
+
+a cons of two strings as in
+
+(which-key-add-key-based-replacements \"C-x 8\"
+                                        \\='(\"unicode\" . \"Unicode keys\"))
+
+or a function that takes a (KEY . BINDING) cons and returns a
+replacement.
+
+In the second case, the second string is used to provide a longer
+name for the keys under a prefix.
+
+MORE allows you to specify additional KEY REPLACEMENT pairs.  All
+replacements are added to `which-key-replacement-alist'.
+
+(fn KEY-SEQUENCE REPLACEMENT &rest MORE)")
+(autoload 'which-key-add-major-mode-key-based-replacements "which-key"
+"Functions like `which-key-add-key-based-replacements'.
+The difference is that MODE specifies the `major-mode' that must
+be active for KEY-SEQUENCE and REPLACEMENT (MORE contains
+addition KEY-SEQUENCE REPLACEMENT pairs) to apply.
+
+(fn MODE KEY-SEQUENCE REPLACEMENT &rest MORE)")
+(function-put 'which-key-add-major-mode-key-based-replacements 'lisp-indent-function 'defun)
+(autoload 'which-key-reload-key-sequence "which-key"
+"Simulate entering the key sequence KEY-SEQ.
+KEY-SEQ should be a list of events as produced by
+`listify-key-sequence'.  If nil, KEY-SEQ defaults to
+`which-key--current-key-list'.  Any prefix arguments that were
+used are reapplied to the new key sequence.
+
+(fn &optional KEY-SEQ)")
+(autoload 'which-key-show-standard-help "which-key"
+"Call the command in `which-key--prefix-help-cmd-backup'.
+Usually this is `describe-prefix-bindings'.
+
+(fn &optional _)" t)
+(autoload 'which-key-show-next-page-no-cycle "which-key"
+"Show next page of keys or `which-key-show-standard-help'." t)
+(autoload 'which-key-show-previous-page-no-cycle "which-key"
+"Show previous page of keys if one exists." t)
+(autoload 'which-key-show-next-page-cycle "which-key"
+"Show the next page of keys, cycling from end to beginning.
+
+(fn &optional _)" t)
+(autoload 'which-key-show-previous-page-cycle "which-key"
+"Show the previous page of keys, cycling from beginning to end.
+
+(fn &optional _)" t)
+(autoload 'which-key-show-top-level "which-key"
+"Show top-level bindings.
+
+(fn &optional _)" t)
+(autoload 'which-key-show-major-mode "which-key"
+"Show top-level bindings in the map of the current major mode.
+This function will also detect evil bindings made using
+`evil-define-key' in this map.  These bindings will depend on the
+current evil state.
+
+(fn &optional ALL)" t)
+(autoload 'which-key-show-full-major-mode "which-key"
+"Show all bindings in the map of the current major mode.
+This function will also detect evil bindings made using
+`evil-define-key' in this map.  These bindings will depend on the
+current evil state." t)
+(autoload 'which-key-dump-bindings "which-key"
+"Dump bindings from PREFIX into buffer named BUFFER-NAME.
+PREFIX should be a string suitable for `kbd'.
+
+(fn PREFIX BUFFER-NAME)" t)
+(autoload 'which-key-undo-key "which-key"
+"Undo last keypress and force which-key update.
+
+(fn &optional _)" t)
+(autoload 'which-key-C-h-dispatch "which-key"
+"Dispatch \\`C-h' commands by looking up key in `which-key-C-h-map'.
+This command is always accessible (from any prefix) if
+`which-key-use-C-h-commands' is non nil." t)
+(autoload 'which-key-show-keymap "which-key"
+"Show the top-level bindings in KEYMAP using which-key.
+KEYMAP is selected interactively from all available keymaps.
+
+If NO-PAGING is non-nil, which-key will not intercept subsequent
+keypresses for the paging functionality.
+
+(fn KEYMAP &optional NO-PAGING)" t)
+(autoload 'which-key-show-full-keymap "which-key"
+"Show all bindings in KEYMAP using which-key.
+KEYMAP is selected interactively from all available keymaps.
+
+(fn KEYMAP)" t)
+(autoload 'which-key-show-minor-mode-keymap "which-key"
+"Show the top-level bindings in KEYMAP using which-key.
+KEYMAP is selected interactively by mode in
+`minor-mode-map-alist'.
+
+(fn &optional ALL)" t)
+(autoload 'which-key-show-full-minor-mode-keymap "which-key"
+"Show all bindings in KEYMAP using which-key.
+KEYMAP is selected interactively by mode in
+`minor-mode-map-alist'." t)
+(register-definition-prefixes "which-key" '("evil-state" "which-key-"))
+
+;; x-dnd.el autoloads (GNU loaddefs).
+(register-definition-prefixes "x-dnd" '("x-dnd-"))
+
+;; reftex.el autoloads (GNU loaddefs; reftex.el itself not yet embedded).
+;;; Generated autoloads from textmodes/reftex.el
+
+(autoload 'reftex-citation "reftex-cite" nil t)
+(autoload 'reftex-all-document-files "reftex-parse")
+(autoload 'reftex-isearch-minor-mode "reftex-global" nil t)
+(autoload 'reftex-index-phrases-mode "reftex-index" nil t)
+(autoload 'turn-on-reftex "reftex"
+"Turn on RefTeX mode.")
+(autoload 'reftex-mode "reftex"
+"Minor mode with distinct support for \\label, \\ref and \\cite in LaTeX.
+
+\\<reftex-mode-map>A Table of Contents of the entire (multifile) document with browsing
+capabilities is available with `\\[reftex-toc]'.
+
+Labels can be created with `\\[reftex-label]' and referenced with `\\[reftex-reference]'.
+When referencing, you get a menu with all labels of a given type and
+context of the label definition.  The selected label is inserted as a
+\\ref macro.
+
+Citations can be made with `\\[reftex-citation]' which will use a regular expression
+to pull out a *formatted* list of articles from your BibTeX
+database.  The selected citation is inserted as a \\cite macro.
+
+Index entries can be made with `\\[reftex-index-selection-or-word]' which indexes the word at point
+or the current selection.  More general index entries are created with
+`\\[reftex-index]'.  `\\[reftex-display-index]' displays the compiled index.
+
+Most command have help available on the fly.  This help is accessed by
+pressing `?' to any prompt mentioning this feature.
+
+Extensive documentation about RefTeX is available in Info format.
+You can view this information with `\\[reftex-info]'.
+
+\\{reftex-mode-map}
+Under X, these and other functions will also be available as `Ref' menu
+on the menu bar.
+
+------------------------------------------------------------------------------
+
+This is a minor mode.  If called interactively, toggle the `Reftex mode'
+mode.  If the prefix argument is positive, enable the mode, and if it is
+zero or negative, disable the mode.
+
+If called from Lisp, toggle the mode if ARG is `toggle'.  Enable the
+mode if ARG is nil, omitted, or is a positive number.  Disable the mode
+if ARG is a negative number.
+
+To check whether the minor mode is enabled in the current buffer,
+evaluate the variable `reftex-mode'.
+
+The mode's hook is called both when the mode is enabled and when it is
+disabled.
+
+(fn &optional ARG)" t)
+(autoload 'reftex-reset-scanning-information "reftex"
+"Reset the symbols containing information from buffer scanning.
+This enforces rescanning the buffer on next use.")
+(register-definition-prefixes "reftex" '("reftex-"))
+
+;; iswitchb.el autoload (GNU loaddefs guards it with
+;; `locate-library "obsolete/iswitchb"'; ours lives at lisp/ top level).
+(autoload 'iswitchb-mode "iswitchb" "Toggle Iswitchb mode." t)
