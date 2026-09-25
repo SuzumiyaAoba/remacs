@@ -4963,24 +4963,34 @@ pub(crate) const META_BIT: i128 = 1 << 27;
 fn access_keymap(
     i: &mut Interp,
     km: &Value,
+    key: i128,
+    t_ok: bool,
+) -> Result<Option<Value>, Flow> {
+    access_keymap_full(i, km, key, t_ok, false)
+}
+
+fn access_keymap_full(
+    i: &mut Interp,
+    km: &Value,
     mut key: i128,
     t_ok: bool,
+    noinherit: bool,
 ) -> Result<Option<Value>, Flow> {
     // A meta-bit key is looked up through the map's meta-prefix (27)
     // binding — M-x means ESC x.
     if key & META_BIT != 0 {
-        let esc_b = access_keymap(i, km, 27, t_ok)?;
+        let esc_b = access_keymap_full(i, km, 27, t_ok, noinherit)?;
         let esc = match &esc_b {
             Some(v) => keymap_def(i, v.clone())?,
             None => Value::Nil,
         };
         if is_keymap(i, &esc) {
-            return access_keymap(i, &esc, key & !META_BIT, t_ok);
+            return access_keymap_full(i, &esc, key & !META_BIT, t_ok, noinherit);
         }
         return if t_ok {
             // No meta map: only the default (t) binding can match.
             key = event_code_for("t");
-            access_keymap_int(i, km, key, t_ok)
+            access_keymap_int(i, km, key, t_ok, noinherit)
         } else {
             // An explicit nil meta binding means nil; anything else
             // leaves the key unbound here.
@@ -4990,16 +5000,19 @@ fn access_keymap(
             }
         };
     }
-    access_keymap_int(i, km, key, t_ok)
+    access_keymap_int(i, km, key, t_ok, noinherit)
 }
 
 /// The element-walk of `access_keymap_1' once meta translation is
-/// done (KEY is a plain code or the `t' default key).
+/// done (KEY is a plain code or the `t' default key).  NOINHERIT
+/// mirrors GNU's argument: the walk stops at the map's own tail and
+/// never follows the parent keymap.
 fn access_keymap_int(
     i: &mut Interp,
     km: &Value,
     key: i128,
     mut t_ok: bool,
+    noinherit: bool,
 ) -> Result<Option<Value>, Flow> {
     let t_code = event_code_for("t");
     let t_sym = i.intern("t");
@@ -5031,13 +5044,18 @@ fn access_keymap_int(
         // An element that IS the `keymap' symbol means the spine has
         // reached the parent tail (the tail cons is itself a keymap).
         if matches!(&elem, Value::Sym(s) if *s == keymap_sym) {
+            // GNU's NOINHERIT: never consult the parent tail.
+            if noinherit {
+                break;
+            }
             match &retval {
                 // An explicit nil binding shadows the parent.
                 Some(v) if v.is_nil() => break,
                 // A keymap result absorbs the parent's binding for
                 // KEY when that is also a keymap, then stops.
                 Some(_) => {
-                    let pv = access_keymap_int(i, &cons, key, t_ok)?.unwrap_or(Value::Nil);
+                    let pv =
+                        access_keymap_int(i, &cons, key, t_ok, noinherit)?.unwrap_or(Value::Nil);
                     let pv = keymap_def(i, pv)?;
                     if is_keymap(i, &pv) {
                         append_keymap_hit(i, &mut retval, &mut retval_tail, pv);
@@ -5054,12 +5072,12 @@ fn access_keymap_int(
         // The binding this element yields for KEY: None = unbound.
         let val: Option<Value> = if is_keymap(i, &elem) {
             // Bare keymap element: searched inline.
-            access_keymap_int(i, &elem, key, t_ok)?
+            access_keymap_int(i, &elem, key, t_ok, noinherit)?
         } else if matches!(&elem, Value::Sym(_)) {
             // A bare symbol element whose function cell is a keymap
             // (composed maps can store raw symbols like `ESC-prefix').
             match keymap_def(i, elem.clone())? {
-                v if is_keymap(i, &v) => access_keymap_int(i, &v, key, t_ok)?,
+                v if is_keymap(i, &v) => access_keymap_int(i, &v, key, t_ok, noinherit)?,
                 _ => None,
             }
         } else if crate::lisp::builtins::misc::is_char_table(i, &elem) {
@@ -5230,8 +5248,11 @@ fn f_define_key(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     // maps; GNU errors when an intermediate binding is not a keymap.
     let mut km = map;
     for (n, &k) in keys[..keys.len() - 1].iter().enumerate() {
-        // GNU descends with access_keymap(c, t_ok=0, noinherit=1).
-        let next_raw = lookup_in_keymap(i, &km, k, false)?;
+        // GNU descends with access_keymap(c, t_ok=0, noinherit=1):
+        // a command binding in the PARENT map does not block creating
+        // a prefix here (sql-mode's C-c C-l under comint-mode-map).
+        let next_raw =
+            access_keymap_full(i, &km, k, false, true)?.unwrap_or(Value::Nil);
         let next = keymap_def(i, next_raw)?;
         if is_keymap(i, &next) {
             km = next;

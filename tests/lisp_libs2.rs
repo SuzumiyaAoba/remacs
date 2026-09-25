@@ -2562,3 +2562,70 @@ fn r11_comint_compile_flymake_batch() {
         "([1 2 3] \"ab\")"
     );
 }
+
+#[test]
+fn r12_shell_smie_ispell_sql_batch() {
+    // Round-12 batch: shell/ielm/cmuscheme/locate/ispell/smie plus the
+    // libs they unblock (auth-source, sql, flyspell, prolog).  None are
+    // dumped features; all load via require.
+    assert_eq!(
+        ev("(mapcar #'featurep '(shell ielm cmuscheme locate ispell smie
+                  auth-source sql flyspell prolog))"),
+        "(nil nil nil nil nil nil nil nil nil nil)"
+    );
+    // GNU loaddefs autoload cells (verified against GNU -Q).
+    assert_eq!(
+        ev("(mapcar (lambda (s) (autoloadp (symbol-function s)))
+                  '(shell shell-bookmark-jump ielm run-scheme locate
+                    locate-with-filter ispell ispell-region ispell-word
+                    ispell-minor-mode ispell-message authinfo-mode
+                    read-passwd flyspell-mode flyspell-buffer
+                    flyspell-prog-mode prolog-mode mercury-mode run-prolog
+                    sql-mode sql-connect sql-postgres sql-mysql
+                    sql-sqlite))"),
+        "(t t t t t t t t t t t t t t t t t t t t t t t t)"
+    );
+    for name in [
+        "shell",
+        "ielm",
+        "cmuscheme",
+        "locate",
+        "ispell",
+        "smie",
+        "auth-source",
+        "flyspell",
+        "prolog",
+        "sql",
+    ] {
+        assert_eq!(
+            ev(&format!("(progn (require '{n}) (featurep '{n}))", n = name)),
+            "t",
+            "{name}"
+        );
+    }
+    // GNU's define-key descends with noinherit=1: a command binding in
+    // the parent map does not block creating a prefix in the child
+    // (sql-mode's C-c C-l under comint-mode-map).
+    assert_eq!(
+        ev("(let ((p (make-sparse-keymap)) (c (make-sparse-keymap)))
+                  (define-key p (kbd \"C-c C-l\") 'ignore)
+                  (set-keymap-parent c p)
+                  (define-key c (kbd \"C-c C-l a\") 'ignore)
+                  (list (lookup-key c (kbd \"C-c C-l a\"))
+                        (lookup-key p (kbd \"C-c C-l\"))))"),
+        "(ignore ignore)"
+    );
+    assert_eq!(
+        ev("(progn (require 'sql)
+                  (keymapp (lookup-key sql-interactive-mode-map
+                            (kbd \"C-c C-l\"))))"),
+        "t"
+    );
+    // flyspell-mode minor-mode variable is bound at startup, as in GNU.
+    assert_eq!(
+        ev("(list (boundp 'flyspell-mode) (boundp 'ruler-mode)
+                  (get 'flyspell-mode 'custom-autoload)
+                  (get 'ruler-mode 'custom-autoload))"),
+        "(t t nil nil)"
+    );
+}

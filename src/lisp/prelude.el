@@ -42857,6 +42857,858 @@ image file.
   "Alternative wheel right event.")
 
 
+;; Round-12 autoload cells (shell/ielm/cmuscheme/locate/ispell).
+(fset 'ielm '(autoload "ielm" "Interactively evaluate Emacs Lisp expressions.
+Switches to the buffer named BUF-NAME if provided (`*ielm*' by default),
+or creates it if it does not exist.
+See `inferior-emacs-lisp-mode' for details.
+
+(fn &optional BUF-NAME)" t nil))
+(fset 'ispell '(autoload "ispell" "Interactively check a region or buffer for spelling errors.
+If `transient-mark-mode' is on, and a region is active, spell-check
+that region.  Otherwise spell-check the buffer.
+
+Ispell dictionaries are not distributed with Emacs.  If you are
+looking for a dictionary, please see the distribution of the GNU ispell
+program, or do an Internet search; there are various dictionaries
+available on the net." t nil))
+(fset 'ispell-buffer '(autoload "ispell" "Check the current buffer for spelling errors interactively.
+Leave the mark at the last misspelled word that the user was queried about." t nil))
+(fset 'ispell-buffer-with-debug '(autoload "ispell" "`ispell-buffer' with some output sent to `ispell-debug-buffer'.
+If APPEND is non-nil, don't erase previous debugging output.
+
+(fn &optional APPEND)" t nil))
+(fset 'ispell-change-dictionary '(autoload "ispell" "Change to dictionary DICT for Ispell.
+If ARG is non-nil (interactively, the prefix arg), set it \"globally\",
+for all buffers.  Otherwise, set it \"locally\", just for this buffer.
+
+By just answering RET you can find out the name of the current dictionary.
+
+(fn DICT &optional ARG)" t nil))
+(fset 'ispell-comment-or-string-at-point '(autoload "ispell" "Check the comment or string containing point for spelling errors." t nil))
+(fset 'ispell-comments-and-strings '(autoload "ispell" "Check comments and strings in the current buffer for spelling errors.
+If called interactively with an active region, check only comments and
+strings in the region.
+When called from Lisp, START and END buffer positions can be provided
+to limit the check.
+
+(fn &optional START END)" t nil))
+(fset 'ispell-complete-word '(autoload "ispell" "Try to complete the word before or at point.
+If optional INTERIOR-FRAG is non-nil, then the word may be a character
+sequence inside of a word.
+
+Standard ispell choices are then available.
+
+This command uses a word-list file specified
+by `ispell-alternate-dictionary' or by `ispell-complete-word-dict';
+if none of those name an existing word-list file, this command
+signals an error.
+
+(fn &optional INTERIOR-FRAG)" t nil))
+(fset 'ispell-complete-word-interior-frag '(autoload "ispell" "Completes word matching character sequence inside a word." t nil))
+(fset 'ispell-completion-at-point '(autoload "ispell" "Word completion function for use in `completion-at-point-functions'." nil nil))
+(fset 'ispell-continue '(autoload "ispell" "Continue a halted spelling session beginning with the current word." t nil))
+(fset 'ispell-help '(autoload "ispell" "Display a list of the options available when a misspelling is encountered.
+
+Selections are:
+
+\\`0'..\\`9'  Replace the word with a digit offered in the *Choices* buffer.
+\\`SPC' Accept word this time.
+\\`i'   Accept word and insert into personal dictionary.
+\\`a'   Accept word for this session.
+\\`A'   Accept word and place in `buffer-local dictionary'.
+\\`r'   Replace word with typed-in value.  Rechecked.
+\\`R'   Replace word with typed-in value.  Query-replaced in buffer.  Rechecked.
+\\`?'   Show these commands.
+\\`x'   Exit spelling buffer.  Move cursor to original point.
+\\`X'   Exit spelling buffer.  Leaves cursor at the current point, and permits
+         the aborted check to be completed later.
+\\`q'   Quit spelling session (Kills ispell process).
+\\`l'   Look up typed-in replacement in alternate dictionary.  Wildcards okay.
+\\`u'   Like \\`i', but the word is lower-cased first.
+\\`m'   Place typed-in value in personal dictionary, then recheck current word.
+\\`C-l' Redraw screen.
+\\`C-r' Recursive edit.
+\\`C-u' Toggle abbrev saving for an immediately subsequent replacement command.
+\\`C-z' Suspend Emacs or iconify frame." nil nil))
+(fset 'ispell-kill-ispell '(autoload "ispell" "Kill current Ispell process (so that you may start a fresh one).
+With NO-ERROR, just return non-nil if there was no Ispell running.
+With CLEAR, buffer session localwords are cleaned.
+
+(fn &optional NO-ERROR CLEAR)" t nil))
+(fset 'ispell-message '(autoload "ispell" "Check the spelling of a mail message or news post.
+Don't check spelling of message headers except the Subject field.
+Don't check included messages.
+
+To abort spell checking of a message region and send the message anyway,
+use the \\`x' command.  (Any subsequent regions will be checked.)
+The \\`X' command aborts sending the message so that you can edit the buffer.
+
+To spell-check whenever a message is sent, include the appropriate lines
+in your init file:
+   (add-hook \\='message-send-hook #\\='ispell-message)  ;; GNUS 5
+   (add-hook \\='news-inews-hook #\\='ispell-message)    ;; GNUS 4
+   (add-hook \\='mail-send-hook  #\\='ispell-message)
+   (add-hook \\='mh-before-send-letter-hook #\\='ispell-message)
+
+You can bind this to a key in GNUS or mail by adding to
+`news-reply-mode-hook' or `mail-mode-hook' the following lambda expression:
+   (lambda () (local-set-key \"\\C-ci\" \\='ispell-message))" t nil))
+(fset 'ispell-minor-mode '(autoload "ispell" "Toggle last-word spell checking (Ispell minor mode).
+
+Ispell minor mode is a buffer-local minor mode.  When enabled,
+typing SPC or RET warns you if the previous word is incorrectly
+spelled.
+
+All the buffer-local variables and dictionaries are ignored.  To
+read them into the running Ispell process, type \\[ispell-word]
+SPC.
+
+For spell-checking \"on the fly\", not just after typing SPC or
+RET, use `flyspell-mode'.
+
+This is a minor mode.  If called interactively, toggle the `ISpell minor
+mode' mode.  If the prefix argument is positive, enable the mode, and if
+it is zero or negative, disable the mode.
+
+If called from Lisp, toggle the mode if ARG is `toggle'.  Enable the
+mode if ARG is nil, omitted, or is a positive number.  Disable the mode
+if ARG is a negative number.
+
+To check whether the minor mode is enabled in the current buffer,
+evaluate the variable `ispell-minor-mode'.
+
+The mode's hook is called both when the mode is enabled and when it is
+disabled.
+
+(fn &optional ARG)" t nil))
+(fset 'ispell-pdict-save '(autoload "ispell" "Check to see if the personal dictionary has been modified.
+If so, ask if it needs to be saved.
+If NO-QUERY is non-nil, save the personal dictionary without asking.
+Interactively, if `ispell-silently-savep' is non-nil, don't ask.
+If FORCE-SAVE is non-nil, suggest to save the personal dictionary even
+if not modified; this always happens interactively.
+
+(fn &optional NO-QUERY FORCE-SAVE)" t nil))
+(fset 'ispell-region '(autoload "ispell" "Interactively check region between REG-START and REG-END for spelling errors.
+Leave the mark at the last misspelled word that the user was queried about.
+
+Return nil if spell session was terminated, otherwise returns shift offset
+amount for last line processed.
+
+(fn REG-START REG-END &optional RECHECKP SHIFT)" t nil))
+(fset 'ispell-word '(autoload "ispell" "Check spelling of word under or before the cursor.
+If the word is not found in dictionary, display possible corrections
+in a window allowing you to choose one.
+
+If optional argument FOLLOWING is non-nil or if `ispell-following-word'
+is non-nil when called interactively, then the following word
+(rather than preceding) is checked when the cursor is not over a word.
+When the optional argument QUIETLY is non-nil or `ispell-quietly' is non-nil
+when called interactively, non-corrective messages are suppressed.
+
+With a prefix argument (or if CONTINUE is non-nil),
+resume interrupted spell-checking of a buffer or region.
+
+Interactively, in Transient Mark mode when the mark is active, call
+`ispell-region' to check the active region for spelling errors.
+Non-interactively, this happens if REGION is non-nil.
+
+Word syntax is controlled by the definition of the chosen dictionary,
+which is in `ispell-local-dictionary-alist' or `ispell-dictionary-alist'.
+
+This will check or reload the dictionary.  Use \\[ispell-change-dictionary]
+or \\[ispell-region] to update the Ispell process.
+
+Return values:
+nil           word is correct or spelling is accepted.
+0             word is inserted into buffer-local definitions.
+\"word\"        word corrected from word list.
+(\"word\" arg)  word is hand entered.
+quit          spell session exited.
+
+(fn &optional FOLLOWING QUIETLY CONTINUE REGION)" t nil))
+(fset 'locate '(autoload "locate" "Run the program `locate', putting results in `*Locate*' buffer.
+Pass it SEARCH-STRING as argument.  Interactively, prompt for SEARCH-STRING.
+With prefix arg ARG, prompt for the exact shell command to run instead.
+
+This program searches for those file names in a database that match
+SEARCH-STRING and normally outputs all matching absolute file names,
+one per line.  The database normally consists of all files on your
+system, or of all files that you have access to.  Consult the
+documentation of the program for the details about how it determines
+which file names match SEARCH-STRING.  (Those details vary highly with
+the version.)
+
+You can specify another program for this command to run by customizing
+the variables `locate-command' or `locate-make-command-line'.
+
+The main use of FILTER is to implement `locate-with-filter'.  See
+the docstring of that function for its meaning.
+
+After preparing the results buffer, this runs `dired-mode-hook' and
+then `locate-post-command-hook'.
+
+(fn SEARCH-STRING &optional FILTER ARG)" t nil))
+(fset 'locate-with-filter '(autoload "locate" "Run the executable program `locate' with a filter.
+This function is similar to the function `locate', which see.
+The difference is that, when invoked interactively, the present function
+prompts for both SEARCH-STRING and FILTER.  It passes SEARCH-STRING
+to the locate executable program.  It produces a `*Locate*' buffer
+that lists only those lines in the output of the locate program that
+contain a match for the regular expression FILTER; this is often useful
+to constrain a big search.
+
+ARG is the interactive prefix arg, which has the same effect as in `locate'.
+
+When called from Lisp, this function is identical with `locate',
+except that FILTER is not optional.
+
+(fn SEARCH-STRING FILTER &optional ARG)" t nil))
+(fset 'run-scheme '(autoload "cmuscheme" "Run an inferior Scheme process, input and output via buffer `*scheme*'.
+If there is a process already running in `*scheme*', switch to that buffer.
+With argument, allows you to edit the command line (default is value
+of `scheme-program-name').
+If the file `~/.emacs_SCHEMENAME' or `~/.emacs.d/init_SCHEMENAME.scm' exists,
+it is given as initial input.
+Note that this may lose due to a timing error if the Scheme processor
+discards input when it starts up.
+Runs the hook `inferior-scheme-mode-hook' (after the `comint-mode-hook'
+is run).
+(Type \\[describe-mode] in the process buffer for a list of commands.)
+
+(fn CMD)" t nil))
+(fset 'shell '(autoload "shell" "Run an inferior shell, with I/O through BUFFER (which defaults to `*shell*').
+Interactively, a prefix arg means to prompt for BUFFER.
+If `default-directory' is a remote file name, it is also prompted
+to change if called with a prefix arg.
+
+If BUFFER exists but shell process is not running, make new shell.
+If BUFFER exists and shell process is running, just switch to BUFFER.
+Program used comes from variable `explicit-shell-file-name',
+ or (if that is nil) from the ESHELL environment variable,
+ or (if that is nil) from `shell-file-name'.
+Non-interactively, it can also be specified via the FILE-NAME arg.
+
+If a file `~/.emacs_SHELLNAME' exists, or `~/.emacs.d/init_SHELLNAME.sh',
+it is given as initial input (but this may be lost, due to a timing
+error, if the shell discards input when it starts up).
+The buffer is put in Shell mode, giving commands for sending input
+and controlling the subjobs of the shell.  See `shell-mode'.
+See also the variable `shell-prompt-pattern'.
+
+\\<shell-mode-map>To specify a coding system for converting non-ASCII characters
+in the input and output to the shell, use \\[universal-coding-system-argument]
+before \\[shell].  You can also specify this with \\[set-buffer-process-coding-system]
+in the shell buffer, after you start the shell.
+The default comes from `process-coding-system-alist' and
+`default-process-coding-system'.
+
+The shell file name (sans directories) is used to make a symbol name
+such as `explicit-csh-args'.  If that symbol is a variable,
+its value is used as a list of arguments when invoking the shell.
+Otherwise, one argument `-i' is passed to the shell.
+
+Make the shell buffer the current buffer, and return it.
+
+(Type \\[describe-mode] in the shell buffer for a list of commands.)
+
+(fn &optional BUFFER FILE-NAME)" t nil))
+(fset 'shell-bookmark-jump '(autoload "shell" "Default BOOKMARK handler for shell buffers.
+Create a shell buffer with its `default-directory', shell process, and
+buffer name from the bookmark.  If there is an existing shell buffer of
+the same name, default `shell-mode' behavior is to reuse that buffer.
+
+For a remote shell `default-directory' will be the remote file name.
+Remote shell buffers reuse existing connections that match the remote
+file name, or may prompt you to create a new connection.  For ad-hoc
+multi-hop remote connections, see Info node `(tramp)Ad-hoc multi-hops'.
+
+If called with a single \\[universal-argument] prefix, a new shell
+buffer will be created if there is an existing buffer with the same
+name.  The new buffer name is made unique using `rename-uniquely', which
+see.
+
+If called with a double \\[universal-argument] prefix, new remote
+connections are inhibited, though an existing connection will be reused.
+You can make a remote connection manually by reloading the buffer using
+\\[find-alternate-file] or create a new shell using \\[shell].
+
+If called with a triple \\[universal-argument] prefix, a new buffer will
+be created if necessary, and new remote connections are inhibited.
+
+(fn BOOKMARK)" nil nil))
+(fset 'split-string-shell-command '(autoload "shell" "Split STRING (a shell command) into a list of strings.
+General shell syntax, like single and double quoting, as well as
+backslash quoting, is respected.
+
+(fn STRING)" nil nil))
+
+;; Round-12b autoload cells (auth-source/sql/flyspell/prolog).
+(fset 'auth-source-netrc-parse-all '(autoload "auth-source" "Parse FILE and return all entries.
+
+(fn FILE)" nil nil))
+(fset 'authinfo-mode '(autoload "auth-source" "Mode for editing .authinfo/.netrc files.
+
+This is just like `fundamental-mode', but has basic syntax
+highlighting and hides passwords.  Passwords are revealed when
+point is moved into the passwords (see `authinfo-hide-elements').
+
+\\{authinfo-mode-map}
+
+This mode runs the hook `authinfo-mode-hook', as the final or
+penultimate step during initialization." t nil))
+(fset 'flyspell--mode-off '(autoload "flyspell" "Turn Flyspell mode off." nil nil))
+(fset 'flyspell-buffer '(autoload "flyspell" "Flyspell whole buffer." t nil))
+(fset 'flyspell-mode '(autoload "flyspell" "Toggle on-the-fly spell checking (Flyspell mode).
+
+Flyspell mode is a buffer-local minor mode.  When enabled, it
+spawns a single Ispell process and checks each word.  The default
+flyspell behavior is to highlight incorrect words.
+
+This mode is geared toward text modes.  In buffers that contain
+code, `flyspell-prog-mode' is usually a better choice.
+
+Bindings:
+\\[ispell-word]: correct words (using Ispell).
+\\[flyspell-auto-correct-word]: automatically correct word.
+\\[flyspell-auto-correct-previous-word]: automatically correct the last misspelled word.
+\\[flyspell-correct-word] (or down-mouse-2): popup correct words.
+
+Hooks:
+This runs `flyspell-mode-hook' after flyspell mode is entered or exit.
+
+Remark:
+`flyspell-mode' uses `ispell-mode'.  Thus all Ispell options are
+valid.  For instance, a different dictionary can be used by
+invoking `ispell-change-dictionary'.
+
+Consider using the `ispell-parser' to check your text.  For instance
+consider adding:
+(add-hook \\='tex-mode-hook (lambda () (setq ispell-parser \\='tex)))
+in your init file.
+
+\\[flyspell-region] checks all words inside a region.
+\\[flyspell-buffer] checks the whole buffer.
+
+This is a minor mode.  If called interactively, toggle the `Flyspell
+mode' mode.  If the prefix argument is positive, enable the mode, and if
+it is zero or negative, disable the mode.
+
+If called from Lisp, toggle the mode if ARG is `toggle'.  Enable the
+mode if ARG is nil, omitted, or is a positive number.  Disable the mode
+if ARG is a negative number.
+
+To check whether the minor mode is enabled in the current buffer,
+evaluate the variable `flyspell-mode'.
+
+The mode's hook is called both when the mode is enabled and when it is
+disabled.
+
+(fn &optional ARG)" t nil))
+(fset 'flyspell-prog-mode '(autoload "flyspell" "Turn on `flyspell-mode' for comments and strings." t nil))
+(fset 'flyspell-region '(autoload "flyspell" "Flyspell text between BEG and END.
+
+Make sure `flyspell-mode' is turned on if you want the highlight
+of a misspelled word removed when you've corrected it.
+
+(fn BEG END)" t nil))
+(fset 'mercury-mode '(autoload "prolog" "Major mode for editing Mercury programs.
+Actually this is just customized `prolog-mode'.
+
+In addition to any hooks its parent mode might have run, this mode
+runs the hook `mercury-mode-hook', as the final or penultimate step
+during initialization.
+
+\\{mercury-mode-map}" t nil))
+(fset 'prolog-mode '(autoload "prolog" "Major mode for editing Prolog code.
+
+Blank lines and `%%...' separate paragraphs.  `%'s starts a comment
+line and comments can also be enclosed in /* ... */.
+
+If an optional argument SYSTEM is non-nil, set up mode for the given system.
+
+To find out what version of Prolog mode you are running, enter
+\\[prolog-mode-version].
+
+Commands:
+\\{prolog-mode-map}
+
+In addition to any hooks its parent mode `prog-mode' might have run,
+this mode runs the hook `prolog-mode-hook', as the final or
+penultimate step during initialization." t nil))
+(fset 'read-passwd '(autoload "auth-source" "Read a password, prompting with PROMPT, and return password as a string.
+If optional CONFIRM is non-nil, read the password twice to make sure.
+Optional DEFAULT is a default password to use instead of empty input.
+
+This function echoes `*' for each character that the user types.
+You could let-bind `read-hide-char' to another hiding character, though.
+
+Once the caller uses the password, it can erase the password
+by doing (clear-string STRING).
+
+(fn PROMPT &optional CONFIRM DEFAULT)" nil nil))
+(fset 'run-prolog '(autoload "prolog" "Run an inferior Prolog process, input and output via buffer *prolog*.
+With prefix argument ARG, restart the Prolog process if running before.
+
+(fn ARG)" t nil))
+(fset 'sql-add-product-keywords '(autoload "sql" "Add highlighting KEYWORDS for SQL PRODUCT.
+
+PRODUCT should be a symbol, the name of a SQL product, such as
+`oracle'.  KEYWORDS should be a list; see the variable
+`font-lock-keywords'.  By default they are added at the beginning
+of the current highlighting list.  If optional argument APPEND is
+`set', they are used to replace the current highlighting list.
+If APPEND is any other non-nil value, they are added at the end
+of the current highlighting list.
+
+For example:
+
+ (sql-add-product-keywords \\='ms
+  \\='((\"\\\\b\\\\w+_t\\\\b\" . font-lock-type-face)))
+
+adds a fontification pattern to fontify identifiers ending in
+`_t' as data types.
+
+(fn PRODUCT KEYWORDS &optional APPEND)" nil nil))
+(fset 'sql-connect '(autoload "sql" "Connect to an interactive session using CONNECTION settings.
+
+See `sql-connection-alist' to see how to define connections and
+their settings.
+
+The user will not be prompted for any login parameters if a value
+is specified in the connection settings.
+
+(fn CONNECTION &optional BUF-NAME)" t nil))
+(fset 'sql-db2 '(autoload "sql" "Run db2 by IBM as an inferior process.
+
+If buffer `*SQL*' exists but no process is running, make a new process.
+If buffer exists and a process is running, just switch to buffer
+`*SQL*'.
+
+Interpreter used comes from variable `sql-db2-program'.  There is not
+automatic login.
+
+The buffer is put in SQL interactive mode, giving commands for sending
+input.  See `sql-interactive-mode'.
+
+If you use \\[sql-accumulate-and-indent] to send multiline commands to
+db2, newlines will be escaped if necessary.  If you don't want that, set
+`comint-input-sender' back to `comint-simple-send' by writing an after
+advice.  See the elisp manual for more information.
+
+To set the buffer name directly, use \\[universal-argument]
+before \\[sql-db2].  Once session has started,
+\\[sql-rename-buffer] can be called separately to rename the
+buffer.
+
+To specify a coding system for converting non-ASCII characters
+in the input and output to the process, use \\[universal-coding-system-argument]
+before \\[sql-db2].  You can also specify this with \\[set-buffer-process-coding-system]
+in the SQL buffer, after you start the process.
+The default comes from `process-coding-system-alist' and
+`default-process-coding-system'.
+
+(Type \\[describe-mode] in the SQL buffer for a list of commands.)
+
+(fn &optional BUFFER)" t nil))
+(fset 'sql-informix '(autoload "sql" "Run dbaccess by Informix as an inferior process.
+
+If buffer `*SQL*' exists but no process is running, make a new process.
+If buffer exists and a process is running, just switch to buffer
+`*SQL*'.
+
+Interpreter used comes from variable `sql-informix-program'.  Login uses
+the variable `sql-database' as default, if set.
+
+The buffer is put in SQL interactive mode, giving commands for sending
+input.  See `sql-interactive-mode'.
+
+To set the buffer name directly, use \\[universal-argument]
+before \\[sql-informix].  Once session has started,
+\\[sql-rename-buffer] can be called separately to rename the
+buffer.
+
+To specify a coding system for converting non-ASCII characters
+in the input and output to the process, use \\[universal-coding-system-argument]
+before \\[sql-informix].  You can also specify this with \\[set-buffer-process-coding-system]
+in the SQL buffer, after you start the process.
+The default comes from `process-coding-system-alist' and
+`default-process-coding-system'.
+
+(Type \\[describe-mode] in the SQL buffer for a list of commands.)
+
+(fn &optional BUFFER)" t nil))
+(fset 'sql-ingres '(autoload "sql" "Run sql by Ingres as an inferior process.
+
+If buffer `*SQL*' exists but no process is running, make a new process.
+If buffer exists and a process is running, just switch to buffer
+`*SQL*'.
+
+Interpreter used comes from variable `sql-ingres-program'.  Login uses
+the variable `sql-database' as default, if set.
+
+The buffer is put in SQL interactive mode, giving commands for sending
+input.  See `sql-interactive-mode'.
+
+To set the buffer name directly, use \\[universal-argument]
+before \\[sql-ingres].  Once session has started,
+\\[sql-rename-buffer] can be called separately to rename the
+buffer.
+
+To specify a coding system for converting non-ASCII characters
+in the input and output to the process, use \\[universal-coding-system-argument]
+before \\[sql-ingres].  You can also specify this with \\[set-buffer-process-coding-system]
+in the SQL buffer, after you start the process.
+The default comes from `process-coding-system-alist' and
+`default-process-coding-system'.
+
+(Type \\[describe-mode] in the SQL buffer for a list of commands.)
+
+(fn &optional BUFFER)" t nil))
+(fset 'sql-interbase '(autoload "sql" "Run isql by Interbase as an inferior process.
+
+If buffer `*SQL*' exists but no process is running, make a new process.
+If buffer exists and a process is running, just switch to buffer
+`*SQL*'.
+
+Interpreter used comes from variable `sql-interbase-program'.  Login
+uses the variables `sql-user', `sql-password', and `sql-database' as
+defaults, if set.
+
+The buffer is put in SQL interactive mode, giving commands for sending
+input.  See `sql-interactive-mode'.
+
+To set the buffer name directly, use \\[universal-argument]
+before \\[sql-interbase].  Once session has started,
+\\[sql-rename-buffer] can be called separately to rename the
+buffer.
+
+To specify a coding system for converting non-ASCII characters
+in the input and output to the process, use \\[universal-coding-system-argument]
+before \\[sql-interbase].  You can also specify this with \\[set-buffer-process-coding-system]
+in the SQL buffer, after you start the process.
+The default comes from `process-coding-system-alist' and
+`default-process-coding-system'.
+
+(Type \\[describe-mode] in the SQL buffer for a list of commands.)
+
+(fn &optional BUFFER)" t nil))
+(fset 'sql-linter '(autoload "sql" "Run inl by RELEX as an inferior process.
+
+If buffer `*SQL*' exists but no process is running, make a new process.
+If buffer exists and a process is running, just switch to buffer
+`*SQL*'.
+
+Interpreter used comes from variable `sql-linter-program' - usually `inl'.
+Login uses the variables `sql-user', `sql-password', `sql-database' and
+`sql-server' as defaults, if set.  Additional command line parameters
+can be stored in the list `sql-linter-options'.  Run inl -h to get help on
+parameters.
+
+`sql-database' is used to set the LINTER_MBX environment variable for
+local connections, `sql-server' refers to the server name from the
+`nodetab' file for the network connection (dbc_tcp or friends must run
+for this to work).  If `sql-password' is an empty string, inl will use
+an empty password.
+
+The buffer is put in SQL interactive mode, giving commands for sending
+input.  See `sql-interactive-mode'.
+
+To set the buffer name directly, use \\[universal-argument]
+before \\[sql-linter].  Once session has started,
+\\[sql-rename-buffer] can be called separately to rename the
+buffer.
+
+(Type \\[describe-mode] in the SQL buffer for a list of commands.)
+
+(fn &optional BUFFER)" t nil))
+(fset 'sql-mariadb '(autoload "sql" "Run mysql by MariaDB as an inferior process.
+
+MariaDB is free software.
+
+If buffer `*SQL*' exists but no process is running, make a new process.
+If buffer exists and a process is running, just switch to buffer
+`*SQL*'.
+
+Interpreter used comes from variable `sql-mariadb-program'.  Login uses
+the variables `sql-user', `sql-password', `sql-database', and
+`sql-server' as defaults, if set.  Additional command line parameters
+can be stored in the list `sql-mariadb-options'.
+
+The buffer is put in SQL interactive mode, giving commands for sending
+input.  See `sql-interactive-mode'.
+
+To set the buffer name directly, use \\[universal-argument]
+before \\[sql-mariadb].  Once session has started,
+\\[sql-rename-buffer] can be called separately to rename the
+buffer.
+
+To specify a coding system for converting non-ASCII characters
+in the input and output to the process, use \\[universal-coding-system-argument]
+before \\[sql-mariadb].  You can also specify this with \\[set-buffer-process-coding-system]
+in the SQL buffer, after you start the process.
+The default comes from `process-coding-system-alist' and
+`default-process-coding-system'.
+
+(Type \\[describe-mode] in the SQL buffer for a list of commands.)
+
+(fn &optional BUFFER)" t nil))
+(fset 'sql-mode '(autoload "sql" "Major mode to edit SQL.
+
+You can send SQL statements to the SQLi buffer using
+\\[sql-send-region].  Such a buffer must exist before you can do this.
+See `sql-help' on how to create SQLi buffers.
+
+\\{sql-mode-map}
+Customization: Entry to this mode runs the `sql-mode-hook'.
+
+When you put a buffer in SQL mode, the buffer stores the last SQLi
+buffer created as its destination in the variable `sql-buffer'.  This
+will be the buffer \\[sql-send-region] sends the region to.  If this
+SQLi buffer is killed, \\[sql-send-region] is no longer able to
+determine where the strings should be sent to.  You can set the
+value of `sql-buffer' using \\[sql-set-sqli-buffer].
+
+For information on how to create multiple SQLi buffers, see
+`sql-interactive-mode'.
+
+Note that SQL doesn't have an escape character unless you specify
+one.  If you specify backslash as escape character in SQL, you
+must tell Emacs.  Here's how to do that in your init file:
+
+(add-hook \\='sql-mode-hook
+          (lambda ()
+	    (modify-syntax-entry ?\\\\ \"\\\\\" sql-mode-syntax-table)))" t nil))
+(fset 'sql-ms '(autoload "sql" "Run osql by Microsoft as an inferior process.
+
+If buffer `*SQL*' exists but no process is running, make a new process.
+If buffer exists and a process is running, just switch to buffer
+`*SQL*'.
+
+Interpreter used comes from variable `sql-ms-program'.  Login uses the
+variables `sql-user', `sql-password', `sql-database', and `sql-server'
+as defaults, if set.  Additional command line parameters can be stored
+in the list `sql-ms-options'.
+
+The buffer is put in SQL interactive mode, giving commands for sending
+input.  See `sql-interactive-mode'.
+
+To set the buffer name directly, use \\[universal-argument]
+before \\[sql-ms].  Once session has started,
+\\[sql-rename-buffer] can be called separately to rename the
+buffer.
+
+To specify a coding system for converting non-ASCII characters
+in the input and output to the process, use \\[universal-coding-system-argument]
+before \\[sql-ms].  You can also specify this with \\[set-buffer-process-coding-system]
+in the SQL buffer, after you start the process.
+The default comes from `process-coding-system-alist' and
+`default-process-coding-system'.
+
+(Type \\[describe-mode] in the SQL buffer for a list of commands.)
+
+(fn &optional BUFFER)" t nil))
+(fset 'sql-mysql '(autoload "sql" "Run mysql by TcX as an inferior process.
+
+Mysql versions 3.23 and up are free software.
+
+If buffer `*SQL*' exists but no process is running, make a new process.
+If buffer exists and a process is running, just switch to buffer
+`*SQL*'.
+
+Interpreter used comes from variable `sql-mysql-program'.  Login uses
+the variables `sql-user', `sql-password', `sql-database', and
+`sql-server' as defaults, if set.  Additional command line parameters
+can be stored in the list `sql-mysql-options'.
+
+The buffer is put in SQL interactive mode, giving commands for sending
+input.  See `sql-interactive-mode'.
+
+To set the buffer name directly, use \\[universal-argument]
+before \\[sql-mysql].  Once session has started,
+\\[sql-rename-buffer] can be called separately to rename the
+buffer.
+
+To specify a coding system for converting non-ASCII characters
+in the input and output to the process, use \\[universal-coding-system-argument]
+before \\[sql-mysql].  You can also specify this with \\[set-buffer-process-coding-system]
+in the SQL buffer, after you start the process.
+The default comes from `process-coding-system-alist' and
+`default-process-coding-system'.
+
+(Type \\[describe-mode] in the SQL buffer for a list of commands.)
+
+(fn &optional BUFFER)" t nil))
+(fset 'sql-oracle '(autoload "sql" "Run sqlplus by Oracle as an inferior process.
+
+If buffer `*SQL*' exists but no process is running, make a new process.
+If buffer exists and a process is running, just switch to buffer
+`*SQL*'.
+
+Interpreter used comes from variable `sql-oracle-program'.  Login uses
+the variables `sql-user', `sql-password', and `sql-database' as
+defaults, if set.  Additional command line parameters can be stored in
+the list `sql-oracle-options'.
+
+The buffer is put in SQL interactive mode, giving commands for sending
+input.  See `sql-interactive-mode'.
+
+To set the buffer name directly, use \\[universal-argument]
+before \\[sql-oracle].  Once session has started,
+\\[sql-rename-buffer] can be called separately to rename the
+buffer.
+
+To specify a coding system for converting non-ASCII characters
+in the input and output to the process, use \\[universal-coding-system-argument]
+before \\[sql-oracle].  You can also specify this with \\[set-buffer-process-coding-system]
+in the SQL buffer, after you start the process.
+The default comes from `process-coding-system-alist' and
+`default-process-coding-system'.
+
+(Type \\[describe-mode] in the SQL buffer for a list of commands.)
+
+(fn &optional BUFFER)" t nil))
+(fset 'sql-postgres '(autoload "sql" "Run psql by Postgres as an inferior process.
+
+If buffer `*SQL*' exists but no process is running, make a new process.
+If buffer exists and a process is running, just switch to buffer
+`*SQL*'.
+
+Interpreter used comes from variable `sql-postgres-program'.  Login uses
+the variables `sql-database' and `sql-server' as default, if set.
+Additional command line parameters can be stored in the list
+`sql-postgres-options'.
+
+The buffer is put in SQL interactive mode, giving commands for sending
+input.  See `sql-interactive-mode'.
+
+To set the buffer name directly, use \\[universal-argument]
+before \\[sql-postgres].  Once session has started,
+\\[sql-rename-buffer] can be called separately to rename the
+buffer.
+
+To specify a coding system for converting non-ASCII characters
+in the input and output to the process, use \\[universal-coding-system-argument]
+before \\[sql-postgres].  You can also specify this with \\[set-buffer-process-coding-system]
+in the SQL buffer, after you start the process.
+The default comes from `process-coding-system-alist' and
+`default-process-coding-system'.  If your output lines end with ^M,
+your might try undecided-dos as a coding system.  If this doesn't help,
+Try to set `comint-output-filter-functions' like this:
+
+(add-hook \\='comint-output-filter-functions #\\='comint-strip-ctrl-m \\='append)
+
+(Type \\[describe-mode] in the SQL buffer for a list of commands.)
+
+(fn &optional BUFFER)" t nil))
+(fset 'sql-product-interactive '(autoload "sql" "Run PRODUCT interpreter as an inferior process.
+
+If buffer `*SQL*' exists but no process is running, make a new process.
+If buffer exists and a process is running, just make sure buffer `*SQL*'
+is displayed.
+
+To specify the SQL product, prefix the call with
+\\[universal-argument].  To set the buffer name as well, prefix
+the call to \\[sql-product-interactive] with
+\\[universal-argument] \\[universal-argument].
+
+(Type \\[describe-mode] in the SQL buffer for a list of commands.)
+
+(fn &optional PRODUCT NEW-NAME)" t nil))
+(fset 'sql-solid '(autoload "sql" "Run solsql by Solid as an inferior process.
+
+If buffer `*SQL*' exists but no process is running, make a new process.
+If buffer exists and a process is running, just switch to buffer
+`*SQL*'.
+
+Interpreter used comes from variable `sql-solid-program'.  Login uses
+the variables `sql-user', `sql-password', and `sql-server' as
+defaults, if set.
+
+The buffer is put in SQL interactive mode, giving commands for sending
+input.  See `sql-interactive-mode'.
+
+To set the buffer name directly, use \\[universal-argument]
+before \\[sql-solid].  Once session has started,
+\\[sql-rename-buffer] can be called separately to rename the
+buffer.
+
+To specify a coding system for converting non-ASCII characters
+in the input and output to the process, use \\[universal-coding-system-argument]
+before \\[sql-solid].  You can also specify this with \\[set-buffer-process-coding-system]
+in the SQL buffer, after you start the process.
+The default comes from `process-coding-system-alist' and
+`default-process-coding-system'.
+
+(Type \\[describe-mode] in the SQL buffer for a list of commands.)
+
+(fn &optional BUFFER)" t nil))
+(fset 'sql-sqlite '(autoload "sql" "Run sqlite as an inferior process.
+
+SQLite is free software.
+
+If buffer `*SQL*' exists but no process is running, make a new process.
+If buffer exists and a process is running, just switch to buffer
+`*SQL*'.
+
+Interpreter used comes from variable `sql-sqlite-program'.  Login uses
+the variables `sql-user', `sql-password', `sql-database', and
+`sql-server' as defaults, if set.  Additional command line parameters
+can be stored in the list `sql-sqlite-options'.
+
+The buffer is put in SQL interactive mode, giving commands for sending
+input.  See `sql-interactive-mode'.
+
+To set the buffer name directly, use \\[universal-argument]
+before \\[sql-sqlite].  Once session has started,
+\\[sql-rename-buffer] can be called separately to rename the
+buffer.
+
+To specify a coding system for converting non-ASCII characters
+in the input and output to the process, use \\[universal-coding-system-argument]
+before \\[sql-sqlite].  You can also specify this with \\[set-buffer-process-coding-system]
+in the SQL buffer, after you start the process.
+The default comes from `process-coding-system-alist' and
+`default-process-coding-system'.
+
+(Type \\[describe-mode] in the SQL buffer for a list of commands.)
+
+(fn &optional BUFFER)" t nil))
+(fset 'sql-sybase '(autoload "sql" "Run isql by Sybase as an inferior process.
+
+If buffer `*SQL*' exists but no process is running, make a new process.
+If buffer exists and a process is running, just switch to buffer
+`*SQL*'.
+
+Interpreter used comes from variable `sql-sybase-program'.  Login uses
+the variables `sql-server', `sql-user', `sql-password', and
+`sql-database' as defaults, if set.  Additional command line parameters
+can be stored in the list `sql-sybase-options'.
+
+The buffer is put in SQL interactive mode, giving commands for sending
+input.  See `sql-interactive-mode'.
+
+To set the buffer name directly, use \\[universal-argument]
+before \\[sql-sybase].  Once session has started,
+\\[sql-rename-buffer] can be called separately to rename the
+buffer.
+
+To specify a coding system for converting non-ASCII characters
+in the input and output to the process, use \\[universal-coding-system-argument]
+before \\[sql-sybase].  You can also specify this with \\[set-buffer-process-coding-system]
+in the SQL buffer, after you start the process.
+The default comes from `process-coding-system-alist' and
+`default-process-coding-system'.
+
+(Type \\[describe-mode] in the SQL buffer for a list of commands.)
+
+(fn &optional BUFFER)" t nil))
+(fset 'sql-vertica '(autoload "sql" "Run vsql as an inferior process.
+
+(fn &optional BUFFER)" t nil))
+(fset 'turn-off-flyspell '(autoload "flyspell" "Unconditionally turn off Flyspell mode." nil nil))
+
 ;; Round-11 autoload cells (comint/compile/flymake/tcl/pcomplete/grep/verilog/ruler).
 (fset 'comint-redirect-results-list '(autoload "comint" "Send COMMAND to current process.
 Return a list of expressions in the output which match REGEXP.
@@ -43523,13 +44375,9 @@ command before it's run.
 (fn REGEXP &optional FILES DIR CONFIRM TEMPLATE)" t nil))
 
 (defvar ruler-mode nil "Non-nil if Ruler mode is enabled.
-See the `ruler-mode' command
-for a description of this minor mode.
-Setting this variable directly does not take effect;
-either customize it (see the info node `Easy Customization')
-or call the function `ruler-mode'.")
+Use the command `ruler-mode' to change this variable.")
 
-(custom-autoload 'ruler-mode "ruler-mode" nil)
+(defvar flyspell-mode nil "Non-nil if Flyspell mode is enabled.")
 
 (defun custom-add-choice (variable choice)
   "Add CHOICE to the custom type of VARIABLE.
