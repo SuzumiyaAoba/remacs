@@ -2504,3 +2504,61 @@ fn r10_compat_libs_parity() {
         "(t t)"
     );
 }
+
+#[test]
+fn r11_comint_compile_flymake_batch() {
+    // Round-11 batch: comint/compile/flymake/flymake-proc/tcl/pcomplete/
+    // grep/verilog-mode — none are dumped features; all load on require.
+    assert_eq!(
+        ev("(mapcar #'featurep '(comint compile flymake flymake-proc
+                  tcl pcomplete grep verilog-mode))"),
+        "(nil nil nil nil nil nil nil nil)"
+    );
+    // GNU loaddefs autoload cells (verified against GNU -Q).
+    assert_eq!(
+        ev("(mapcar (lambda (s) (autoloadp (symbol-function s)))
+                  '(compile recompile compilation-mode compilation-minor-mode
+                    compilation-shell-minor-mode make-comint comint-run
+                    flymake-mode flymake-log pcomplete grep rgrep lgrep
+                    zrgrep tcl-mode inferior-tcl verilog-mode ruler-mode))"),
+        "(t t t t t t t t t t t t t t t t t t)"
+    );
+    for name in [
+        "comint",
+        "compile",
+        "flymake",
+        "flymake-proc",
+        "tcl",
+        "pcomplete",
+        "grep",
+        "verilog-mode",
+    ] {
+        assert_eq!(
+            ev(&format!("(progn (require '{n}) (featurep '{n}))", n = name)),
+            "t",
+            "{name}"
+        );
+    }
+    // Functional parity with GNU -Q.
+    assert_eq!(
+        ev("(progn (require 'flymake)
+                  (let ((d (flymake-make-diagnostic (current-buffer) 1 5
+                                    :warning \"w\")))
+                    (list (flymake-diagnostic-type d)
+                          (flymake-diagnostic-beg d))))"),
+        "(:warning 1)"
+    );
+    assert_eq!(
+        ev("(progn (require 'compile)
+                  (list (functionp 'compilation-start)
+                        (functionp 'compilation-mode)
+                        (consp compilation-error-regexp-alist)))"),
+        "(t t t)"
+    );
+    // cl-loop concat/vconcat accumulation clauses (flymake requirement).
+    assert_eq!(
+        ev("(list (cl-loop for x in '(1 2 3) vconcat (vector x))
+                  (cl-loop for s in '(\"a\" \"b\") concat s))"),
+        "([1 2 3] \"ab\")"
+    );
+}

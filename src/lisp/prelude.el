@@ -16715,6 +16715,7 @@ Accumulation refers to the `cl--loop-list-acc' and
               (t `(when ,e (throw 'cl--loop nil))))
              forms)))
          ((memq kw '(collect collecting append appending nconc nconcing
+                     concat concating vconcat vconcating
                      sum counting count maximize maximizing minimize
                      minimizing))
           (let* ((e (nth (1+ i) clauses))
@@ -16723,6 +16724,8 @@ Accumulation refers to the `cl--loop-list-acc' and
                              ((memq kw '(nconc nconcing)) 'nconc)
                              ((memq kw '(sum counting)) 'sum)
                              ((eq kw 'count) 'count)
+                             ((memq kw '(concat concating)) 'concat)
+                             ((memq kw '(vconcat vconcating)) 'vconcat)
                              ((memq kw '(maximize maximizing)) 'max)
                              (t 'min))))
             (setq i (+ i 2))
@@ -16740,6 +16743,12 @@ Accumulation refers to the `cl--loop-list-acc' and
                `(setq cl--loop-num-acc (+ cl--loop-num-acc ,e)))
               ((eq kind 'count)
                `(when ,e (setq cl--loop-num-acc (1+ cl--loop-num-acc))))
+              ((eq kind 'concat)
+               `(setq cl--loop-vec-acc
+                      (concat cl--loop-vec-acc ,e)))
+              ((eq kind 'vconcat)
+               `(setq cl--loop-vec-acc
+                      (vconcat cl--loop-vec-acc ,e)))
               (t `(setq cl--loop-ext-acc
                         (if cl--loop-ext-acc
                             (,(if (eq kind 'max) 'max 'min)
@@ -17016,7 +17025,8 @@ conditional."
               (push (nth i clauses) finally)
               (setq i (1+ i)))))
          ((memq kw '(do doing collect collecting append appending
-                    nconc nconcing sum counting count maximize
+                    nconc nconcing concat concating vconcat vconcating
+                    sum counting count maximize
                     maximizing minimize minimizing return
                     thereis always never))
           (let ((a (cl--loop-action clauses i)))
@@ -17029,7 +17039,7 @@ conditional."
                   i (1+ i))))))
     `(let* ,(append inits
                     '((cl--loop-list-acc nil) (cl--loop-num-acc 0)
-                      (cl--loop-ext-acc nil)))
+                      (cl--loop-ext-acc nil) (cl--loop-vec-acc nil)))
        (catch 'cl--loop
          (cl-block nil
            ,@(nreverse initially)
@@ -17046,6 +17056,8 @@ conditional."
                 'cl--loop-list-acc)
                ((or (memq 'sum kinds) (memq 'count kinds))
                 'cl--loop-num-acc)
+               ((memq 'vconcat kinds) '(or cl--loop-vec-acc []))
+               ((memq 'concat kinds) '(or cl--loop-vec-acc ""))
                ((or (memq 'always kinds) (memq 'never kinds)) t)
                ((or (memq 'max kinds) (memq 'min kinds))
                 'cl--loop-ext-acc)
@@ -42818,6 +42830,706 @@ image file.
 (fn DIRNAME)" t nil))
 
 (defalias 'image-dired 'image-dired-show-all-from-dir)
+
+
+(defvar mouse-wheel-down-event 'mouse-4
+  "Event used for scrolling down, beside `wheel-up', if any.")
+
+(defvar mouse-wheel-up-event 'mouse-5
+  "Event used for scrolling up, beside `wheel-down', if any.")
+
+(defvar mouse-wheel-left-event 'mouse-6
+  "Event used for scrolling left, beside `wheel-right', if any.")
+
+(defvar mouse-wheel-right-event 'mouse-7
+  "Event used for scrolling right, beside `wheel-left', if any.")
+
+(defvar mouse-wheel-click-event 'mouse-2
+  "Event that should be temporarily inhibited after mouse scrolling.")
+
+(defvar mouse-wheel-down-alternate-event 'wheel-down
+  "Alternative wheel down event.")
+(defvar mouse-wheel-up-alternate-event 'wheel-up
+  "Alternative wheel up event.")
+(defvar mouse-wheel-left-alternate-event 'wheel-left
+  "Alternative wheel left event.")
+(defvar mouse-wheel-right-alternate-event 'wheel-right
+  "Alternative wheel right event.")
+
+
+;; Round-11 autoload cells (comint/compile/flymake/tcl/pcomplete/grep/verilog/ruler).
+(fset 'comint-redirect-results-list '(autoload "comint" "Send COMMAND to current process.
+Return a list of expressions in the output which match REGEXP.
+REGEXP-GROUP is the regular expression group in REGEXP to use.
+
+(fn COMMAND REGEXP REGEXP-GROUP)" nil nil))
+(fset 'comint-redirect-results-list-from-process '(autoload "comint" "Send COMMAND to PROCESS.
+Return a list of expressions in the output which match REGEXP.
+REGEXP-GROUP is the regular expression group in REGEXP to use.
+
+(fn PROCESS COMMAND REGEXP REGEXP-GROUP)" nil nil))
+(fset 'comint-redirect-send-command '(autoload "comint" "Send COMMAND to process in current buffer, with output to OUTPUT-BUFFER.
+With prefix arg ECHO, echo output in process buffer.
+
+If NO-DISPLAY is non-nil, do not show the output buffer.
+
+(fn COMMAND OUTPUT-BUFFER ECHO &optional NO-DISPLAY)" (comint-mode) nil))
+(fset 'comint-redirect-send-command-to-process '(autoload "comint" "Send COMMAND to PROCESS, with output to OUTPUT-BUFFER.
+With prefix arg, echo output in process buffer.
+
+If NO-DISPLAY is non-nil, do not show the output buffer.
+
+(fn COMMAND OUTPUT-BUFFER PROCESS ECHO &optional NO-DISPLAY)" (comint-mode) nil))
+(fset 'comint-run '(autoload "comint" "Run PROGRAM in a Comint buffer and switch to that buffer.
+
+If SWITCHES are supplied, they are passed to PROGRAM.  With prefix argument
+\\[universal-argument] prompt for SWITCHES as well as PROGRAM.
+
+The buffer name is made by surrounding the file name of PROGRAM with `*'s.
+The file name is used to make a symbol name, such as `comint-sh-hook', and any
+hooks on this symbol are run in the buffer.
+
+See `make-comint' and `comint-exec'.
+
+(fn PROGRAM &optional SWITCHES)" t nil))
+(fset 'compilation--default-buffer-name '(autoload "compile" "
+
+(fn NAME-OF-MODE)" nil nil))
+(fset 'compilation-minor-mode '(autoload "compile" "Toggle Compilation minor mode.
+
+When Compilation minor mode is enabled, all the error-parsing
+commands of Compilation major mode are available.  See
+`compilation-mode'.
+
+This is a minor mode.  If called interactively, toggle the `Compilation
+minor mode' mode.  If the prefix argument is positive, enable the mode,
+and if it is zero or negative, disable the mode.
+
+If called from Lisp, toggle the mode if ARG is `toggle'.  Enable the
+mode if ARG is nil, omitted, or is a positive number.  Disable the mode
+if ARG is a negative number.
+
+To check whether the minor mode is enabled in the current buffer,
+evaluate the variable `compilation-minor-mode'.
+
+The mode's hook is called both when the mode is enabled and when it is
+disabled.
+
+\\{compilation-minor-mode-map}
+
+(fn &optional ARG)" t nil))
+(fset 'compilation-mode '(autoload "compile" "Major mode for compilation log buffers.
+\\<compilation-mode-map>To visit the source for a line-numbered error,
+move point to the error message line and type \\[compile-goto-error].
+To kill the compilation, type \\[kill-compilation].
+
+Runs `compilation-mode-hook' with `run-mode-hooks' (which see).
+
+\\{compilation-mode-map}
+
+(fn &optional NAME-OF-MODE)" t nil))
+(fset 'compilation-next-error-function '(autoload "compile" "Advance to the next error message and visit the file where the error was.
+This is the value of `next-error-function' in Compilation buffers.
+
+(fn N &optional RESET)" t nil))
+(fset 'compilation-shell-minor-mode '(autoload "compile" "Toggle Compilation Shell minor mode.
+
+When Compilation Shell minor mode is enabled, all the
+error-parsing commands of the Compilation major mode are
+available but bound to keys that don't collide with Shell mode.
+See `compilation-mode'.
+
+This is a minor mode.  If called interactively, toggle the
+`Compilation-Shell minor mode' mode.  If the prefix argument is
+positive, enable the mode, and if it is zero or negative, disable the
+mode.
+
+If called from Lisp, toggle the mode if ARG is `toggle'.  Enable the
+mode if ARG is nil, omitted, or is a positive number.  Disable the mode
+if ARG is a negative number.
+
+To check whether the minor mode is enabled in the current buffer,
+evaluate the variable `compilation-shell-minor-mode'.
+
+The mode's hook is called both when the mode is enabled and when it is
+disabled.
+
+\\{compilation-shell-minor-mode-map}
+
+(fn &optional ARG)" t nil))
+(fset 'compilation-start '(autoload "compile" "Run compilation command COMMAND (low level interface).
+If COMMAND starts with a cd command, that becomes the `default-directory'.
+The rest of the arguments are optional; for them, nil means use the default.
+
+MODE is the major mode to set in the compilation buffer.  Mode
+may also be t meaning use `compilation-shell-minor-mode' under `comint-mode'.
+
+If NAME-FUNCTION is non-nil, call it with one argument (the mode name)
+to determine the buffer name.  Otherwise, the default is to
+reuses the current buffer if it has the proper major mode,
+else use or create a buffer with name based on the major mode.
+
+If HIGHLIGHT-REGEXP is non-nil, `next-error' will temporarily highlight
+the matching section of the visited source line; the default is to use the
+global value of `compilation-highlight-regexp'.
+
+If CONTINUE is non-nil, the buffer won't be emptied before
+compilation is started.  This can be useful if you wish to
+combine the output from several compilation commands in the same
+buffer.  The new output will be at the end of the buffer, and
+point is not changed.
+
+Returns the compilation buffer created.
+
+(fn COMMAND &optional MODE NAME-FUNCTION HIGHLIGHT-REGEXP CONTINUE)" nil nil))
+(fset 'compile '(autoload "compile" "Compile the program including the current buffer.  Default: run `make'.
+Runs COMMAND, a shell command, in a separate process asynchronously
+with output going to the buffer `*compilation*'.
+
+You can then use the command \\[next-error] to find the next error message
+and move to the source code that caused it.
+
+If optional second arg COMINT is t the buffer will be in Comint mode with
+`compilation-shell-minor-mode'.
+
+Interactively, prompts for the command if the variable
+`compilation-read-command' is non-nil; otherwise uses `compile-command'.
+With prefix arg, always prompts.
+Additionally, with universal prefix arg, compilation buffer will be in
+comint mode, i.e. interactive.
+
+To run more than one compilation at once, start one then rename
+the `*compilation*' buffer to some other name with
+\\[rename-buffer].  Then _switch buffers_ and start the new compilation.
+It will create a new `*compilation*' buffer.
+
+On most systems, termination of the main compilation process
+kills its subprocesses.
+
+The name used for the buffer is actually whatever is returned by
+the function in `compilation-buffer-name-function', so you can set that
+to a function that generates a unique name.
+
+(fn COMMAND &optional COMINT)" t nil))
+(fset 'flymake-diag-region '(autoload "flymake" "Compute BUFFER's region (BEG . END) corresponding to LINE and COL.
+If COL is nil, return a region just for LINE.  Return nil if the
+region is invalid.  This function saves match data.
+
+(fn BUFFER LINE &optional COL)" nil nil))
+(fset 'flymake-diagnostics '(autoload "flymake" "Get Flymake diagnostics in region determined by BEG and END.
+
+If neither BEG or END is supplied, use whole accessible buffer,
+otherwise if BEG is non-nil and END is nil, consider only
+diagnostics at BEG.
+
+(fn &optional BEG END)" nil nil))
+(fset 'flymake-log '(autoload "flymake" "Log, at level LEVEL, the message MSG formatted with ARGS.
+LEVEL is passed to `display-warning', which is used to display
+the warning.  If this form is included in a file,
+the generated warning contains an indication of the file that
+generated it.
+
+(fn LEVEL MSG &rest ARGS)" nil t))
+(fset 'flymake-make-diagnostic '(autoload "flymake" "Make a Flymake diagnostic for LOCUS's region from BEG to END.
+LOCUS is a buffer object or a string designating a file name.
+
+TYPE is a diagnostic symbol (see Info Node `(Flymake)Flymake error
+types')
+
+INFO is a description of the problem detected.  It may be a string, or
+list (ORIGIN CODE MESSAGE) appropriately categorizing and describing the
+diagnostic.  ORIGIN may be a string or nil.  CODE maybe be a string, a
+number or nil.  MESSAGE must be a string.
+
+DATA is any object that the caller wishes to attach to the created
+diagnostic for later retrieval with `flymake-diagnostic-data'.
+
+If LOCUS is a buffer, BEG and END should be buffer positions inside it.
+If LOCUS designates a file, BEG and END should be a cons (LINE . COL)
+indicating a file position.  In this second case, END may be omitted in
+which case the region is computed using `flymake-diag-region' if the
+diagnostic is appended to an actual buffer.
+
+OVERLAY-PROPERTIES is an alist of properties attached to the created
+diagnostic, overriding the default properties and any properties listed
+in the `flymake-overlay-control' property of the diagnostic's type
+symbol.
+
+(fn LOCUS BEG END TYPE INFO &optional DATA OVERLAY-PROPERTIES)" nil nil))
+(fset 'flymake-mode '(autoload "flymake" "Toggle Flymake mode on or off.
+
+Flymake is an Emacs minor mode for on-the-fly syntax checking.
+Flymake collects diagnostic information from multiple sources,
+called backends, and visually annotates the buffer with the
+results.
+
+Flymake performs these checks while the user is editing.
+The customization variables `flymake-start-on-flymake-mode',
+`flymake-no-changes-timeout' determine the exact circumstances
+whereupon Flymake decides to initiate a check of the buffer.
+
+The commands `flymake-goto-next-error' and
+`flymake-goto-prev-error' can be used to navigate among Flymake
+diagnostics annotated in the buffer.
+
+By default, `flymake-mode' doesn't override the \\[next-error] command, but
+if you're using Flymake a lot (and don't use the regular compilation
+mechanisms that often), it can be useful to put something like
+the following in your init file:
+
+  (setq next-error-function \\='flymake-goto-next-error)
+
+The visual appearance of each type of diagnostic can be changed
+by setting properties `flymake-overlay-control', `flymake-bitmap'
+and `flymake-severity' on the symbols of diagnostic types (like
+`:error', `:warning' and `:note').
+
+Activation or deactivation of backends used by Flymake in each
+buffer happens via the special hook
+`flymake-diagnostic-functions'.
+
+Some backends may take longer than others to respond or complete,
+and some may decide to disable themselves if they are not
+suitable for the current buffer.  The commands
+`flymake-running-backends', `flymake-disabled-backends' and
+`flymake-reporting-backends' summarize the situation, as does the
+special *Flymake log* buffer.
+
+This is a minor mode.  If called interactively, toggle the `Flymake
+mode' mode.  If the prefix argument is positive, enable the mode, and if
+it is zero or negative, disable the mode.
+
+If called from Lisp, toggle the mode if ARG is `toggle'.  Enable the
+mode if ARG is nil, omitted, or is a positive number.  Disable the mode
+if ARG is a negative number.
+
+To check whether the minor mode is enabled in the current buffer,
+evaluate the variable `flymake-mode'.
+
+The mode's hook is called both when the mode is enabled and when it is
+disabled.
+
+\\{flymake-mode-map}
+
+(fn &optional ARG)" t nil))
+(fset 'flymake-mode-off '(autoload "flymake" "Turn Flymake mode off." nil nil))
+(fset 'flymake-mode-on '(autoload "flymake" "Turn Flymake mode on." nil nil))
+(fset 'grep '(autoload "grep" "Run Grep with user-specified COMMAND-ARGS.
+The output from the command goes to the \"*grep*\" buffer.
+
+While Grep runs asynchronously, you can use \\[next-error] (M-x next-error),
+or \\<grep-mode-map>\\[compile-goto-error] in the *grep* buffer, to go to the lines where Grep found
+matches.  To kill the Grep job before it finishes, type \\[kill-compilation].
+
+Noninteractively, COMMAND-ARGS should specify the Grep command-line
+arguments.
+
+For doing a recursive `grep', see the `rgrep' command.  For running
+Grep in a specific directory, see `lgrep'.
+
+This command uses a special history list for its COMMAND-ARGS, so you
+can easily repeat a grep command.
+
+A prefix argument says to default the COMMAND-ARGS based on the current
+tag the cursor is over, substituting it into the last Grep command
+in the Grep command history (or into `grep-command' if that history
+list is empty).
+
+(fn COMMAND-ARGS)" t nil))
+(fset 'grep-compute-defaults '(autoload "grep" "Compute the defaults for the `grep' command.
+The value depends on `grep-command', `grep-template',
+`grep-use-null-device', `grep-find-command', `grep-find-template',
+`grep-use-null-filename-separator', `grep-find-use-xargs',
+`grep-highlight-matches', and `grep-quoting-style'." nil nil))
+(fset 'grep-find '(autoload "grep" "Run grep via find, with user-specified args COMMAND-ARGS.
+Collect output in the \"*grep*\" buffer.
+While find runs asynchronously, you can use the \\[next-error] command
+to find the text that grep hits refer to.
+
+This command uses a special history list for its arguments, so you can
+easily repeat a find command.
+
+(fn COMMAND-ARGS)" t nil))
+(fset 'grep-mode '(autoload "grep" "Sets `grep-last-buffer' and `compilation-window-height'.
+
+In addition to any hooks its parent mode `compilation-mode' might have
+run, this mode runs the hook `grep-mode-hook', as the final or
+penultimate step during initialization.
+
+\\{grep-mode-map}" t nil))
+(fset 'grep-process-setup '(autoload "grep" "Setup compilation variables and buffer for `grep'.
+Set up `compilation-exit-message-function' and run `grep-setup-hook'." nil nil))
+(fset 'inferior-tcl '(autoload "tcl" "Run inferior Tcl process.
+Prefix arg means enter program name interactively.
+See documentation for function `inferior-tcl-mode' for more information.
+
+(fn CMD)" t nil))
+(fset 'lgrep '(autoload "grep" "Run grep, searching for REGEXP in FILES in directory DIR.
+The search is limited to file names matching shell pattern FILES.
+FILES may use abbreviations defined in `grep-files-aliases', e.g.
+entering `ch' is equivalent to `*.[ch]'.  As whitespace triggers
+completion when entering a pattern, including it requires
+quoting, e.g. `\\[quoted-insert]<space>'.
+
+With \\[universal-argument] prefix, you can edit the constructed shell command line
+before it is executed.
+With two \\[universal-argument] prefixes, directly edit and run `grep-command'.
+
+Collect output in the \"*grep*\" buffer.  While grep runs asynchronously, you
+can use \\[next-error] (M-x next-error), or \\<grep-mode-map>\\[compile-goto-error] in the grep output buffer,
+to go to the lines where grep found matches.
+
+This command shares argument histories with \\[rgrep] and \\[grep].
+
+If CONFIRM is non-nil, the user will be given an opportunity to edit the
+command before it's run.
+
+(fn REGEXP &optional FILES DIR CONFIRM)" t nil))
+(fset 'make-comint '(autoload "comint" "Make a Comint process NAME in a buffer, running PROGRAM.
+The name of the buffer is made by surrounding NAME with `*'s.
+PROGRAM should be either a string denoting an executable program to create
+via `start-file-process', or a cons pair of the form (HOST . SERVICE) denoting
+a TCP connection to be opened via `open-network-stream'.  If there is already
+a running process in that buffer, it is not restarted.  Optional third arg
+STARTFILE is the name of a file, whose contents are sent to the
+process as its initial input.
+
+If PROGRAM is a string, any more args are arguments to PROGRAM.
+
+Returns the (possibly newly created) process buffer.
+
+(fn NAME PROGRAM &optional STARTFILE &rest SWITCHES)" nil nil))
+(fset 'make-comint-in-buffer '(autoload "comint" "Make a Comint process NAME in BUFFER, running PROGRAM.
+If BUFFER is nil, it defaults to NAME surrounded by `*'s.
+If there is a running process in BUFFER, it is not restarted.
+
+PROGRAM should be one of the following:
+- a string, denoting an executable program to create via
+  `start-file-process'
+- a cons pair of the form (HOST . SERVICE), denoting a TCP
+  connection to be opened via `open-network-stream'
+- nil, denoting a newly-allocated pty.
+
+Optional fourth arg STARTFILE is the name of a file, whose
+contents are sent to the process as its initial input.
+
+If PROGRAM is a string, any more args are arguments to PROGRAM.
+
+Return the (possibly newly created) process buffer.
+
+(fn NAME BUFFER PROGRAM &optional STARTFILE &rest SWITCHES)" nil nil))
+(fset 'pcomplete '(autoload "pcomplete" "Support extensible programmable completion.
+To use this function, just bind the TAB key to it, or add it to your
+completion functions list (it should occur fairly early in the list).
+
+(fn &optional INTERACTIVELY)" t nil))
+(fset 'pcomplete-comint-setup '(autoload "pcomplete" "Setup a comint buffer to use pcomplete.
+COMPLETEF-SYM should be the symbol where the
+dynamic-complete-functions are kept.  For comint mode itself,
+this is `comint-dynamic-complete-functions'.
+
+(fn COMPLETEF-SYM)" nil nil))
+(fset 'pcomplete-continue '(autoload "pcomplete" "Complete without reference to any cycling completions." t nil))
+(fset 'pcomplete-expand '(autoload "pcomplete" "Expand the textual value of the current argument.
+This will modify the current buffer." t nil))
+(fset 'pcomplete-expand-and-complete '(autoload "pcomplete" "Expand the textual value of the current argument.
+This will modify the current buffer." t nil))
+(fset 'pcomplete-help '(autoload "pcomplete" "Display any help information relative to the current argument." t nil))
+(fset 'pcomplete-list '(autoload "pcomplete" "Show the list of possible completions for the current argument." t nil))
+(fset 'pcomplete-reverse '(autoload "pcomplete" "If cycling completion is in use, cycle backwards." t nil))
+(fset 'pcomplete-shell-setup '(autoload "pcomplete" "Setup `shell-mode' to use pcomplete." nil nil))
+(fset 'recompile '(autoload "compile" "Re-compile the program including the current buffer.
+If this is run in a Compilation mode buffer, reuse the arguments from the
+original use.  Otherwise, recompile using `compile-command'.
+If the optional argument `edit-command' is non-nil, the command can be edited.
+
+(fn &optional EDIT-COMMAND)" t nil))
+(fset 'rgrep '(autoload "grep" "Recursively grep for REGEXP in FILES in directory tree rooted at DIR.
+The search is limited to file names matching shell pattern FILES.
+FILES may use abbreviations defined in `grep-files-aliases', e.g.
+entering `ch' is equivalent to `*.[ch]'.  As whitespace triggers
+completion when entering a pattern, including it requires
+quoting, e.g. `\\[quoted-insert]<space>'.
+
+With \\[universal-argument] prefix, you can edit the constructed shell command line
+before it is executed.
+With two \\[universal-argument] prefixes, directly edit and run `grep-find-command'.
+
+Collect output in the \"*grep*\" buffer.  While the recursive grep is running,
+you can use \\[next-error] (M-x next-error), or \\<grep-mode-map>\\[compile-goto-error] in the grep output buffer,
+to visit the lines where matches were found.  To kill the job
+before it finishes, type \\[kill-compilation].
+
+This command shares argument histories with \\[lgrep] and \\[grep-find].
+
+When called programmatically and FILES is nil, REGEXP is expected
+to specify a command to run.
+
+If CONFIRM is non-nil, the user will be given an opportunity to edit the
+command before it's run.
+
+Interactively, the user can use \\<read-regexp-map>\\[read-regexp-toggle-case-fold] while entering the regexp
+to indicate whether the grep should be case sensitive or not.
+
+(fn REGEXP &optional FILES DIR CONFIRM)" t nil))
+(fset 'ruler-mode '(autoload "ruler-mode" "Toggle display of ruler in header line (Ruler mode).
+
+This is a minor mode.  If called interactively, toggle the `Ruler mode'
+mode.  If the prefix argument is positive, enable the mode, and if it is
+zero or negative, disable the mode.
+
+If called from Lisp, toggle the mode if ARG is `toggle'.  Enable the
+mode if ARG is nil, omitted, or is a positive number.  Disable the mode
+if ARG is a negative number.
+
+To check whether the minor mode is enabled in the current buffer,
+evaluate the variable `ruler-mode'.
+
+The mode's hook is called both when the mode is enabled and when it is
+disabled.
+
+(fn &optional ARG)" t nil))
+(fset 'tcl-help-on-word '(autoload "tcl" "Get help on Tcl command.  Default is word at point.
+Prefix argument means invert sense of `tcl-use-smart-word-finder'.
+
+(fn COMMAND &optional ARG)" t nil))
+(fset 'tcl-mode '(autoload "tcl" "Major mode for editing Tcl code.
+Expression and list commands understand all Tcl brackets.
+Tab indents for Tcl code.
+Paragraphs are separated by blank lines only.
+Delete converts tabs to spaces as it moves back.
+
+Variables controlling indentation style:
+  `tcl-indent-level'
+    Indentation of Tcl statements within surrounding block.
+  `tcl-continued-indent-level'
+    Indentation of continuation line relative to first line of command.
+
+Variables controlling user interaction with mode (see variable
+documentation for details):
+  `tcl-tab-always-indent'
+    Controls action of TAB key.
+  `tcl-auto-newline'
+    Non-nil means automatically newline before and after braces, brackets,
+    and semicolons inserted in Tcl code.
+  `tcl-use-smart-word-finder'
+    If not nil, use a smarter, Tcl-specific way to find the current
+    word when looking up help on a Tcl command.
+
+Turning on Tcl mode runs `tcl-mode-hook'.  Read the documentation for
+`tcl-mode-hook' to see what kinds of interesting hook functions
+already exist.
+
+\\{tcl-mode-map}" t nil))
+(fset 'verilog-mode '(autoload "verilog-mode" "Major mode for editing Verilog code.
+\\<verilog-mode-map>
+See \\[describe-function] verilog-auto (\\[verilog-auto]) for details on how
+AUTOs can improve coding efficiency.
+
+Use \\[verilog-faq] for a pointer to frequently asked questions.
+
+NEWLINE, TAB indents for Verilog code.
+Delete converts tabs to spaces as it moves back.
+
+Supports highlighting.
+
+Turning on Verilog mode calls the value of the variable `verilog-mode-hook'
+with no args, if that value is non-nil.
+
+Variables controlling indentation/edit style:
+
+ variable `verilog-indent-level'      (default 3)
+   Indentation of Verilog statements with respect to containing block.
+ `verilog-indent-level-module'        (default 3)
+   Absolute indentation of Module level Verilog statements.
+   Set to 0 to get initial and always statements lined up
+   on the left side of your screen.
+ `verilog-indent-level-declaration'   (default 3)
+   Indentation of declarations with respect to containing block.
+   Set to 0 to get them list right under containing block.
+ `verilog-indent-level-behavioral'    (default 3)
+   Indentation of first begin in a task or function block
+   Set to 0 to get such code to lined up underneath the task or
+   function keyword.
+ `verilog-indent-level-directive'     (default 1)
+   Indentation of \\=`ifdef/\\=`endif blocks.
+ `verilog-indent-ignore-multiline-defines' (default t)
+   Non-nil means ignore indentation on lines that are part of a multiline
+   define.
+ `verilog-indent-ignore-regexp'     (default nil
+   Regexp that matches lines that should be ignored for indentation.
+ `verilog-cexp-indent'              (default 1)
+   Indentation of Verilog statements broken across lines i.e.:
+      if (a)
+        begin
+ `verilog-case-indent'              (default 2)
+   Indentation for case statements.
+ `verilog-auto-newline'             (default nil)
+   Non-nil means automatically newline after semicolons and the punctuation
+   mark after an end.
+ `verilog-auto-indent-on-newline'   (default t)
+   Non-nil means automatically indent line after newline.
+ `verilog-tab-always-indent'        (default t)
+   Non-nil means TAB in Verilog mode should always reindent the current line,
+   regardless of where in the line point is when the TAB command is used.
+ `verilog-indent-begin-after-if'    (default t)
+   Non-nil means to indent begin statements following a preceding
+   if, else, while, for and repeat statements, if any.  Otherwise,
+   the begin is lined up with the preceding token.  If t, you get:
+      if (a)
+         begin // amount of indent based on `verilog-cexp-indent'
+   otherwise you get:
+      if (a)
+      begin
+ `verilog-indent-class-inside-pkg'  (default t)
+   Non-nil means indent classes inside packages.
+   Otherwise, classes have zero indentation.
+ `verilog-auto-endcomments'         (default t)
+   Non-nil means a comment /* ... */ is set after the ends which ends
+   cases, tasks, functions and modules.
+   The type and name of the object will be set between the braces.
+ `verilog-minimum-comment-distance' (default 10)
+   Minimum distance (in lines) between begin and end required before a comment
+   will be inserted.  Setting this variable to zero results in every
+   end acquiring a comment; the default avoids too many redundant
+   comments in tight quarters.
+ `verilog-align-decl-expr-comments' (default t)
+   Non-nil means align declaration and expressions comments.
+ `verilog-align-comment-distance'   (default 1)
+   Distance (in spaces) between longest declaration and comments.
+   Only works if `verilog-align-decl-expr-comments' is non-nil.
+ `verilog-align-assign-expr'        (default nil)
+   Non-nil means align expressions of continuous assignments.
+ `verilog-align-typedef-regexp'     (default nil)
+   Regexp that matches user typedefs for declaration alignment.
+ `verilog-align-typedef-words'      (default nil)
+   List of words that match user typedefs for declaration alignment.
+ `verilog-auto-lineup'              (default `declarations')
+   List of contexts where auto lineup of code should be done.
+
+Variables controlling other actions:
+
+ `verilog-linter'                   (default `none')
+   Unix program to call to run the lint checker.  This is the default
+   command for \\[compile-command] and \\[verilog-auto-save-compile].
+
+See \\[customize] for the complete list of variables.
+
+AUTO expansion functions are, in part:
+
+    \\[verilog-auto]  Expand AUTO statements.
+    \\[verilog-delete-auto]  Remove the AUTOs.
+    \\[verilog-inject-auto]  Insert AUTOs for the first time.
+
+Some other functions are:
+
+    \\[completion-at-point]    Complete word with appropriate possibilities.
+    \\[verilog-mark-defun]  Mark function.
+    \\[verilog-beg-of-defun]  Move to beginning of current function.
+    \\[verilog-end-of-defun]  Move to end of current function.
+    \\[verilog-label-be]  Label matching begin ... end, fork ... join, etc
+                          statements.
+
+    \\[verilog-comment-region]  Put marked area in a comment.
+    \\[verilog-uncomment-region]  Uncomment an area commented with
+                                  \\[verilog-comment-region].
+    \\[verilog-insert-block]  Insert begin ... end.
+    \\[verilog-star-comment]    Insert /* ... */.
+
+    \\[verilog-sk-always]  Insert an always @(AS) begin .. end block.
+    \\[verilog-sk-begin]  Insert a begin .. end block.
+    \\[verilog-sk-case]  Insert a case block, prompting for details.
+    \\[verilog-sk-for]  Insert a for (...) begin .. end block, prompting for
+                        details.
+    \\[verilog-sk-generate]  Insert a generate .. endgenerate block.
+    \\[verilog-sk-header]  Insert a header block at the top of file.
+    \\[verilog-sk-initial]  Insert an initial begin .. end block.
+    \\[verilog-sk-fork]  Insert a fork begin .. end .. join block.
+    \\[verilog-sk-module]  Insert a module .. (/*AUTOARG*/);.. endmodule block.
+    \\[verilog-sk-ovm-class]  Insert an OVM Class block.
+    \\[verilog-sk-uvm-object]  Insert an UVM Object block.
+    \\[verilog-sk-uvm-component]  Insert an UVM Component block.
+    \\[verilog-sk-primitive]  Insert a primitive .. (.. );.. endprimitive block.
+    \\[verilog-sk-repeat]  Insert a repeat (..) begin .. end block.
+    \\[verilog-sk-specify]  Insert a specify .. endspecify block.
+    \\[verilog-sk-task]  Insert a task .. begin .. end endtask block.
+    \\[verilog-sk-while]  Insert a while (...) begin .. end block,
+                       prompting for details.
+    \\[verilog-sk-casex]  Insert a casex (...) item: begin.. end endcase block,
+                       prompting for details.
+    \\[verilog-sk-casez]  Insert a casez (...) item: begin.. end endcase block,
+                       prompting for details.
+    \\[verilog-sk-if]  Insert an if (..) begin .. end block.
+    \\[verilog-sk-else-if]  Insert an else if (..) begin .. end block.
+    \\[verilog-sk-comment]  Insert a comment block.
+    \\[verilog-sk-assign]  Insert an assign .. = ..; statement.
+    \\[verilog-sk-function]  Insert a function .. begin .. end endfunction
+                             block.
+    \\[verilog-sk-input]  Insert an input declaration, prompting for details.
+    \\[verilog-sk-output]  Insert an output declaration, prompting for details.
+    \\[verilog-sk-state-machine]  Insert a state machine definition, prompting
+                                  for details.
+    \\[verilog-sk-inout]  Insert an inout declaration, prompting for details.
+    \\[verilog-sk-wire]  Insert a wire declaration, prompting for details.
+    \\[verilog-sk-reg]  Insert a register declaration, prompting for details.
+    \\[verilog-sk-define-signal]  Define signal under point as a register at
+                                  the top of the module.
+
+All key bindings can be seen in a Verilog-buffer with \\[describe-bindings].
+Key bindings specific to `verilog-mode-map' are:
+
+\\{verilog-mode-map}" t nil))
+(fset 'widget-apply '(autoload "wid-edit" "Apply the value of WIDGET's PROPERTY to the widget itself.
+Return the result of applying the value of PROPERTY to WIDGET.
+ARGS are passed as extra arguments to the function.
+
+(fn WIDGET PROPERTY &rest ARGS)" nil nil))
+(fset 'widget-convert '(autoload "wid-edit" "Convert TYPE to a widget without inserting it in the buffer.
+The optional ARGS are additional keyword arguments.
+
+(fn TYPE &rest ARGS)" nil nil))
+(fset 'widget-create '(autoload "wid-edit" "Create widget of TYPE.
+The optional ARGS are additional keyword arguments.
+
+(fn TYPE &rest ARGS)" nil nil))
+(fset 'widget-delete '(autoload "wid-edit" "Delete WIDGET.
+
+(fn WIDGET)" nil nil))
+(fset 'widget-get '(autoload "wid-edit" "In WIDGET, get the value of PROPERTY.
+The value could either be specified when the widget was created, or
+later with `widget-put'.
+
+(fn WIDGET PROPERTY)" nil nil))
+(fset 'widget-insert '(autoload "wid-edit" "Call `insert' with ARGS even if surrounding text is read only.
+
+(fn &rest ARGS)" nil nil))
+(fset 'widget-prompt-value '(autoload "wid-edit" "Prompt for a value matching WIDGET, using PROMPT.
+The current value is assumed to be VALUE, unless UNBOUND is non-nil.
+
+(fn WIDGET PROMPT &optional VALUE UNBOUND)" nil nil))
+(fset 'widget-put '(autoload "wid-edit" nil nil nil))
+(fset 'widget-setup '(autoload "wid-edit" "Setup current buffer so editing string widgets works." nil nil))
+(fset 'widget-value '(autoload "wid-edit" nil nil nil))
+(fset 'widgetp '(autoload "wid-edit" "Return non-nil if WIDGET is a widget.
+
+(fn WIDGET)" nil nil))
+(fset 'zrgrep '(autoload "grep" "Recursively grep for REGEXP in gzipped FILES in tree rooted at DIR.
+Like `rgrep' but uses `zgrep' for `grep-program', sets the default
+file name to `*.gz', and sets `grep-highlight-matches' to `always'.
+
+If CONFIRM is non-nil, the user will be given an opportunity to edit the
+command before it's run.
+
+(fn REGEXP &optional FILES DIR CONFIRM TEMPLATE)" t nil))
+
+(defvar ruler-mode nil "Non-nil if Ruler mode is enabled.
+See the `ruler-mode' command
+for a description of this minor mode.
+Setting this variable directly does not take effect;
+either customize it (see the info node `Easy Customization')
+or call the function `ruler-mode'.")
+
+(custom-autoload 'ruler-mode "ruler-mode" nil)
 
 (defun custom-add-choice (variable choice)
   "Add CHOICE to the custom type of VARIABLE.
