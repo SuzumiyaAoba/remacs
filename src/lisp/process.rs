@@ -42,6 +42,11 @@ pub enum ProcIo {
     Net(std::net::TcpStream),
     /// A listening server socket.
     Listen(std::net::TcpListener),
+    /// A connected local (Unix-domain) stream — `:family local'.
+    LocalNet(std::os::unix::net::UnixStream),
+    /// A listening local socket and its filesystem path (unlinked on
+    /// drop, like GNU removing the socket file).
+    LocalListen(std::os::unix::net::UnixListener, String),
     /// A serial port (file-backed).
     Serial(std::fs::File),
     /// No backend — GNU allows `make-process` without :command.
@@ -74,6 +79,9 @@ impl Drop for ProcIo {
                         unsafe { libc::close(fd) };
                     }
                 }
+            }
+            ProcIo::LocalListen(_, path) => {
+                let _ = std::fs::remove_file(path);
             }
             _ => {}
         }
@@ -346,6 +354,7 @@ fn poll_proc(i: &mut Interp, pref: &ProcessRef) -> Result<bool, Flow> {
         Out(Vec<u8>, bool),
         Exit(&'static str, i32),
         Accepted(std::net::TcpStream, std::net::SocketAddr),
+        AcceptedLocal(std::os::unix::net::UnixStream),
     }
     let mut events = Vec::new();
     {
@@ -422,10 +431,14 @@ fn poll_proc(i: &mut Interp, pref: &ProcessRef) -> Result<bool, Flow> {
                 loop {
                     match s.read(&mut buf) {
                         Ok(0) => {
-                            if p.status != "exit" {
-                                p.status = "exit";
+                            // Remote closed the connection — GNU marks
+                            // network processes `closed' (a routine
+                            // transition: the default sentinel stays
+                            // silent).
+                            if p.status != "closed" {
+                                p.status = "closed";
                                 p.exit_status = 0;
-                                events.push(Ev::Exit("exit", 0));
+                                events.push(Ev::Exit("closed", 0));
                             }
                             break;
                         }
@@ -438,6 +451,32 @@ fn poll_proc(i: &mut Interp, pref: &ProcessRef) -> Result<bool, Flow> {
             ProcIo::Listen(l) => loop {
                 match l.accept() {
                     Ok((stream, addr)) => events.push(Ev::Accepted(stream, addr)),
+                    Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => break,
+                    Err(_) => break,
+                }
+            },
+            ProcIo::LocalNet(s) => {
+                let mut buf = [0u8; 8192];
+                loop {
+                    match s.read(&mut buf) {
+                        Ok(0) => {
+                            // Same `closed' transition as TCP sockets.
+                            if p.status != "closed" {
+                                p.status = "closed";
+                                p.exit_status = 0;
+                                events.push(Ev::Exit("closed", 0));
+                            }
+                            break;
+                        }
+                        Ok(n) => events.push(Ev::Out(buf[..n].to_vec(), false)),
+                        Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => break,
+                        Err(_) => break,
+                    }
+                }
+            }
+            ProcIo::LocalListen(l, _) => loop {
+                match l.accept() {
+                    Ok((stream, _addr)) => events.push(Ev::AcceptedLocal(stream)),
                     Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => break,
                     Err(_) => break,
                 }
@@ -481,6 +520,13 @@ fn poll_proc(i: &mut Interp, pref: &ProcessRef) -> Result<bool, Flow> {
                     Value::Int(addr.port() as i128),
                 ]);
 
+                // GNU's accepted process inherits the listener's
+                // filter, sentinel and plist (server-process-filter
+                // runs on the connection, not the listener).
+                let (filter, sentinel, plist) = {
+                    let pb = pref.borrow();
+                    (pb.filter.clone(), pb.sentinel.clone(), pb.plist.clone())
+                };
                 let child_proc = Rc::new(RefCell::new(Proc {
                     // GNU names the accepted process "<host:port>".
                     name: format!("<{addr}>"),
@@ -492,9 +538,9 @@ fn poll_proc(i: &mut Interp, pref: &ProcessRef) -> Result<bool, Flow> {
                     exit_status: 0,
                     buffer,
                     mark: None,
-                    filter: Value::Nil,
-                    sentinel: Value::Nil,
-                    plist: Value::Nil,
+                    filter,
+                    sentinel,
+                    plist,
                     query_on_exit: true,
                     kill_without_query: false,
                     tty_name: Value::Nil,
@@ -511,6 +557,53 @@ fn poll_proc(i: &mut Interp, pref: &ProcessRef) -> Result<bool, Flow> {
                 i.processes.push(child_proc);
                 // GNU re-registers the server in process_alist on accept,
                 // so it can appear twice in `process-list`.
+                i.processes.push(pref.clone());
+                run_sentinel(i, pref, "open", 0)?;
+            }
+            Ev::AcceptedLocal(stream) => {
+                // Local-socket accept — GNU names the child after the
+                // peer's socket address when it has one.
+                let _ = stream.set_nonblocking(true);
+                let buffer = None;
+                let name = stream
+                    .peer_addr()
+                    .ok()
+                    .and_then(|a| a.as_pathname().map(|p| p.display().to_string()))
+                    .map(|p| format!("<{p}>"))
+                    .unwrap_or_else(|| "<local socket>".to_string());
+                let contact = Value::list(vec![Value::string(name.clone())]);
+                // Same GNU inheritance rule as the TCP accept path.
+                let (filter, sentinel, plist) = {
+                    let pb = pref.borrow();
+                    (pb.filter.clone(), pb.sentinel.clone(), pb.plist.clone())
+                };
+                let child_proc = Rc::new(RefCell::new(Proc {
+                    name,
+                    kind: "network",
+                    command: Value::Nil,
+                    io: ProcIo::LocalNet(stream),
+                    pid: 0,
+                    status: "open",
+                    exit_status: 0,
+                    buffer,
+                    mark: None,
+                    filter,
+                    sentinel,
+                    plist,
+                    query_on_exit: true,
+                    kill_without_query: false,
+                    tty_name: Value::Nil,
+                    coding: ("utf-8-unix".into(), "utf-8-unix".into()),
+                    stderr_dest: Value::Nil,
+                    inherit_coding: false,
+                    connection_type: Value::Nil,
+                    contact,
+                    dead: false,
+                    reported: false,
+                    start_stopped: false,
+                    pending_status: None,
+                }));
+                i.processes.push(child_proc);
                 i.processes.push(pref.clone());
                 run_sentinel(i, pref, "open", 0)?;
             }
@@ -954,6 +1047,80 @@ fn f_make_network_process(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         items.extend(extra);
         Value::list(items)
     };
+    // `:family local' — Unix-domain sockets; :service is the socket path.
+    let family_v = kw(i, &args, ":family");
+    let is_local = matches!(&family_v, Value::Sym(s) if {
+        let n = i.symbol_name(*s);
+        n == "local" || n == "unix"
+    });
+    if is_local {
+        let path = match &service {
+            Value::Str(s) => s.borrow().clone(),
+            _ => return Err(i.wrong_type_mut("stringp", &service)),
+        };
+        if server {
+            if kw(i, &args, ":nowait").truthy() {
+                return Err(i.error("‘:server’ is incompatible with ‘:nowait’"));
+            }
+            let listener = std::os::unix::net::UnixListener::bind(&path).map_err(|e| {
+                let sig = i.intern(if e.kind() == std::io::ErrorKind::PermissionDenied {
+                    "permission-denied"
+                } else {
+                    "file-error"
+                });
+                let msg = e.to_string();
+                let msg = msg.split(" (os error").next().unwrap_or(&msg).to_string();
+                i.signal_data(
+                    sig,
+                    vec![
+                        Value::string("Cannot bind server socket"),
+                        Value::string(msg),
+                    ],
+                )
+            })?;
+            let _ = listener.set_nonblocking(true);
+            let mut p = base_proc(
+                name,
+                "network",
+                ProcIo::LocalListen(listener, path.clone()),
+            );
+            p.status = "listen";
+            let local_kw = symv(i, ":local");
+            p.contact = {
+                let mut items: Vec<Value> = args.list_to_vec().unwrap_or_default();
+                items.extend(vec![local_kw, Value::string(path.clone())]);
+                Value::list(items)
+            };
+            let pref = finish_setup(i, p, &args, false)?;
+            i.processes.push(pref.clone());
+            return Ok(Value::Process(pref));
+        }
+        let stream = match std::os::unix::net::UnixStream::connect(&path) {
+            Ok(s) => s,
+            Err(e) => {
+                // GNU: (file-error "make client process failed" <errno> <plist>)
+                let fe = i.intern("file-error");
+                let mut data = vec![
+                    Value::string("make client process failed"),
+                    Value::string(e.to_string()),
+                ];
+                data.extend(args.list_to_vec().unwrap_or_default());
+                return Err(i.signal_data(fe, data));
+            }
+        };
+        let _ = stream.set_nonblocking(true);
+        let mut p = base_proc(name, "network", ProcIo::LocalNet(stream));
+        p.status = "open";
+        let local_kw = symv(i, ":local");
+        p.contact = {
+            let mut items: Vec<Value> = args.list_to_vec().unwrap_or_default();
+            items.extend(vec![local_kw, Value::string(path)]);
+            Value::list(items)
+        };
+        let pref = finish_setup(i, p, &args, false)?;
+        i.processes.push(pref.clone());
+        return Ok(Value::Process(pref));
+    }
     if server {
         if kw(i, &args, ":nowait").truthy() {
             return Err(i.error("‘:server’ is incompatible with ‘:nowait’"));
@@ -1563,13 +1730,15 @@ fn f_accept_process_output(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         Some(v) => Some(want_proc(i, v)?),
         None => None,
     };
-    // GNU requires SECONDS to be an integer (or nil).
+    // GNU accepts any number for SECONDS (fractional waits), a fixnum
+    // for MILLISEC.
     let secs = match a.get(1) {
         None | Some(Value::Nil) => 0.0,
         Some(Value::Int(n)) => *n as f64,
+        Some(Value::Float(f)) => **f,
         Some(v) => {
             let wta = i.intern("wrong-type-argument");
-            let fxp = i.intern("fixnump");
+            let fxp = i.intern("numberp");
             return Err(i.signal_data(wta, vec![Value::Sym(fxp), v.clone()]));
         }
     };
@@ -1584,9 +1753,16 @@ fn f_accept_process_output(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     };
     let deadline = std::time::Instant::now()
         + std::time::Duration::from_secs_f64((secs + millis / 1000.0).max(0.0));
-    // Always poll at least once.
+    // Always poll at least once. GNU's wait_reading_process_output
+    // services every process channel each iteration — a specific
+    // target only decides the return value, so poll_all runs too
+    // (e.g. a server listener must accept while we wait on a client).
     let mut got = match &target {
-        Some(p) => poll_proc(i, p)?,
+        Some(p) => {
+            let t = poll_proc(i, p)?;
+            let _ = poll_all(i)?;
+            t
+        }
         None => poll_all(i)?,
     };
     while !got && std::time::Instant::now() < deadline {
@@ -1594,7 +1770,11 @@ fn f_accept_process_output(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         // wait_reading_process_output runs timer_check each iteration.
         timer_check(i)?;
         got = match &target {
-            Some(p) => poll_proc(i, p)?,
+            Some(p) => {
+                let t = poll_proc(i, p)?;
+                let _ = poll_all(i)?;
+                t
+            }
             None => poll_all(i)?,
         };
         // A dead target can't produce more output — GNU returns early.
@@ -1631,8 +1811,9 @@ fn proc_write(i: &mut Interp, p: &ProcessRef, bytes: &[u8]) -> EvalResult {
             if n < 0 { Err(()) } else { Ok(()) }
         }
         ProcIo::Net(s) => s.write_all(bytes).map_err(|_| ()),
+        ProcIo::LocalNet(s) => s.write_all(bytes).map_err(|_| ()),
         ProcIo::Serial(f) => f.write_all(bytes).map_err(|_| ()),
-        ProcIo::Listen(_) | ProcIo::None => Err(()),
+        ProcIo::Listen(_) | ProcIo::LocalListen(..) | ProcIo::None => Err(()),
     };
     match r {
         Ok(()) => Ok(Value::Nil),
@@ -1827,6 +2008,10 @@ fn f_delete_process(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     {
         let mut pb = p.borrow_mut();
         pb.dead = true;
+        // GNU preserves an already-reported final status: deleting an
+        // exited process leaves `process-status' showing `exit'.
+        let final_seen =
+            pb.reported || matches!(pb.status, "exit" | "signal" | "closed");
         ev = match &mut pb.io {
             ProcIo::Child {
                 child, master_fd, ..
@@ -1839,9 +2024,14 @@ fn f_delete_process(i: &mut Interp, a: Vec<Value>) -> EvalResult {
                     unsafe { libc::close(*master_fd) };
                     *master_fd = -1;
                 }
-                pb.status = "signal";
-                pb.exit_status = libc::SIGKILL;
-                ("signal", libc::SIGKILL)
+                if final_seen {
+                    // Keep the observed status; the sentinel already ran.
+                    ("signal", libc::SIGKILL)
+                } else {
+                    pb.status = "signal";
+                    pb.exit_status = libc::SIGKILL;
+                    ("signal", libc::SIGKILL)
+                }
             }
             ProcIo::Pipe {
                 read_fd,
@@ -1860,8 +2050,20 @@ fn f_delete_process(i: &mut Interp, a: Vec<Value>) -> EvalResult {
                 pb.status = "closed";
                 ("deleted", 0)
             }
-            // GNU marks deleted network/serial processes "closed".
-            ProcIo::Net(_) | ProcIo::Serial(_) | ProcIo::Listen(_) | ProcIo::None => {
+            // GNU marks deleted network/serial processes "closed" and
+            // closes the fd immediately — the peer sees EOF even while
+            // Lisp references keep the process object alive.
+            ProcIo::Net(s) => {
+                let _ = s.shutdown(std::net::Shutdown::Both);
+                pb.status = "closed";
+                ("deleted", 0)
+            }
+            ProcIo::LocalNet(s) => {
+                let _ = s.shutdown(std::net::Shutdown::Both);
+                pb.status = "closed";
+                ("deleted", 0)
+            }
+            ProcIo::Serial(_) | ProcIo::Listen(_) | ProcIo::LocalListen(..) | ProcIo::None => {
                 pb.status = "closed";
                 ("deleted", 0)
             }
@@ -1871,7 +2073,12 @@ fn f_delete_process(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     if let Some(pos) = i.processes.iter().position(|q| Rc::ptr_eq(q, &p)) {
         i.processes.remove(pos);
     }
-    run_sentinel(i, &p, ev.0, ev.1)?;
+    // GNU delivers the final-state sentinel exactly once: a second
+    // `delete-process' on an exited process is a silent no-op.
+    if !p.borrow().reported {
+        p.borrow_mut().reported = true;
+        run_sentinel(i, &p, ev.0, ev.1)?;
+    }
     Ok(Value::Nil)
 }
 
@@ -2011,7 +2218,7 @@ fn f_process_attributes(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let pid = match &a[0] {
         Value::Process(p) => p.borrow().pid,
         Value::Int(n) => *n as i32,
-        _ => return Err(i.wrong_type_mut("integerp", &a[0])),
+        _ => return Err(i.wrong_type_mut("numberp", &a[0])),
     };
     // GNU's alist via ps(1): fixed key set in fixed order, time fields
     // as (hi lo usec psec) lists.
