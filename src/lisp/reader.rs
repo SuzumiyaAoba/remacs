@@ -866,6 +866,51 @@ impl<'a> Reader<'a> {
                     _ => Err(read_err_sym(self.interp, "#")),
                 }
             }
+            Some('^') => {
+                // `#^[DEFALT PARENT PURPOSE ASCII S1..S64 EXTRAS...]'
+                // — char-table literal (the inverse of the printer's
+                // `#^' format); `#^^[DEPTH MIN-CHAR S0..SN]' is a
+                // sub char-table.  Both land in the Record layout
+                // used by misc::char_table_vec.
+                self.pos += 2;
+                let sub = self.peek() == Some('^');
+                if sub {
+                    self.pos += 1;
+                }
+                if self.next() != Some('[') {
+                    return Err(read_err_sym(self.interp, "#^"));
+                }
+                let items = self.read_seq(']')?;
+                if sub {
+                    let mut rec = Vec::with_capacity(items.len() + 1);
+                    rec.push(Value::Sym(self.interp.intern("sub-char-table")));
+                    rec.extend(items);
+                    return Ok(Value::Record(Rc::new(std::cell::RefCell::new(rec))));
+                }
+                if items.len() < 3 {
+                    return Err(read_err_sym(self.interp, "#^"));
+                }
+                let defalt = items[0].clone();
+                let parent = items[1].clone();
+                let purpose = items[2].clone();
+                let mut slots: Vec<Value> =
+                    items.iter().skip(3).take(65).cloned().collect();
+                slots.resize(65, Value::Nil);
+                let mut rec = vec![
+                    Value::Sym(self.interp.intern("char-table")),
+                    purpose,
+                    Value::Vec(Rc::new(std::cell::RefCell::new(slots))),
+                ];
+                rec.extend(items.iter().skip(68).cloned());
+                let t = Value::Record(Rc::new(std::cell::RefCell::new(rec)));
+                if !defalt.is_nil() {
+                    self.interp.set_char_table_defalt(&t, defalt);
+                }
+                if !parent.is_nil() {
+                    self.interp.set_char_table_parent(&t, parent);
+                }
+                Ok(t)
+            }
             Some('[') => {
                 // `#[ARGLIST BODY ENV]' — a function object.  GNU reads
                 // byte-code here; ours is an interpreted Lambda.  Like
@@ -875,7 +920,13 @@ impl<'a> Reader<'a> {
                 let items = self.read_seq(']')?;
                 match items.first() {
                     None => return Err(read_err_sym(self.interp, "Invalid byte-code object")),
-                    Some(v) if !v.is_nil() && !matches!(v, Value::Cons(_)) => {
+                    // GNU also accepts an integer arglist — the
+                    // compact `args & 0x7ff...' encoding used by the
+                    // byte-compiler's own constant vectors.
+                    Some(v)
+                        if !v.is_nil()
+                            && !matches!(v, Value::Cons(_) | Value::Int(_)) =>
+                    {
                         return Err(read_err_sym(self.interp, "Invalid byte-code object"));
                     }
                     _ => {}

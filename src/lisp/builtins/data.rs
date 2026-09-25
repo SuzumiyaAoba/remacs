@@ -614,11 +614,13 @@ fn f_integer_or_marker_p(_i: &mut Interp, args: Vec<Value>) -> EvalResult {
         Value::Int(_) | Value::Marker(_)
     )))
 }
-fn f_arrayp(_i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    Ok(Value::from_bool(matches!(
-        &args[0],
-        Value::Str(_) | Value::Vec(_)
-    )))
+fn f_arrayp(i: &mut Interp, args: Vec<Value>) -> EvalResult {
+    // GNU arrays cover strings, vectors, char-tables, and
+    // bool-vectors; char-tables are Records here.
+    Ok(Value::from_bool(match &args[0] {
+        Value::Str(_) | Value::Vec(_) => true,
+        other => super::misc::is_char_table(i, other),
+    }))
 }
 fn f_special_form_p(_i: &mut Interp, args: Vec<Value>) -> EvalResult {
     match &args[0] {

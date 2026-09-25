@@ -3371,7 +3371,13 @@ explicitly overridden.
     fn advice_trampoline(&mut self, idx: usize) -> EvalResult {
         let fn_sym = self.intern("cl--advice--apply");
         let prop = self.intern("cl--advice--apply--fn");
-        let subr = self.get_prop(fn_sym, prop);
+        let mut subr = self.get_prop(fn_sym, prop);
+        if !matches!(subr, Value::Subr(_)) {
+            // Before the -Q voiding pass the dispatcher still lives in
+            // the public function cell (e.g. add-function calls while
+            // loading dumped libraries).
+            subr = self.symbol_function(fn_sym);
+        }
         if !matches!(subr, Value::Subr(_)) {
             return Err(self.error("internal: advice dispatcher missing"));
         }

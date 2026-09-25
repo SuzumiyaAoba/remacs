@@ -1275,7 +1275,7 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!(
         "define-char-code-property",
         2,
-        2,
+        3,
         f_define_char_code_property,
         "Define a char-code property."
     ),
