@@ -269,7 +269,20 @@
 
 ;;; Code:
 
+;; remacs: `byte-run--set-speed' and friends are needed when expanding
+;; `declare' specs below; load the compatibility fallbacks first.
+(require 'remacs-compat)
 (eval-when-compile (require 'cl-lib))
+
+;; remacs: `cl--find-class' and its gv setter are stubs; provide the
+;; property-based implementation GNU uses (class stored on the `cl--class'
+;; symbol property).
+(unless (symbol-function 'cl--find-class)
+  (defun cl--find-class (name)
+    "Return the class of type NAME (remacs subset)."
+    (get name 'cl--class))
+  (gv-define-setter cl--find-class (store name)
+    `(put ,name 'cl--class ,store)))
 
 (defvar peg--actions nil
   "Actions collected along the current parse.

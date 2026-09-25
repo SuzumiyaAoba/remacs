@@ -433,7 +433,7 @@ MAILCAPS if set; otherwise (on Unix) use the path from RFC 1524, plus
 	    ;; This is per RFC 1524, specifically with /usr before
 	    ;; /usr/local.
 	    '(("~/.mailcap" user)
-              ("/etc/mailcap" system)
+              ("/etc/mailcap" system) ("/nix/store/fk6z6bjn2hh825m1hgqj6zrc4dcj7dp1-mailcap-2.1.54/etc/mailcap" system)
               ("/usr/etc/mailcap" system)
 	      ("/usr/local/etc/mailcap" system)))))
     (when (stringp path)
@@ -1016,7 +1016,7 @@ If FORCE, re-parse even if already parsed."
 	      ;; on current GNUish systems.  The search order follows
 	      ;; that for mailcap.
 	      '("~/.mime.types"
-		"/etc/mime.types"
+		"/etc/mime.types" "/nix/store/fk6z6bjn2hh825m1hgqj6zrc4dcj7dp1-mailcap-2.1.54/etc/mime.types"
 		"/usr/etc/mime.types"
 		"/usr/local/etc/mime.types"
 		"/usr/local/www/conf/mime.types"

@@ -247,17 +247,17 @@ It needs to be killed when we quit the session.")
 (defsubst ediff-multiframe-setup-p ()
   (and (display-graphic-p) ediff-multiframe))
 
-(defmacro ediff-narrow-control-frame-p ()
+(defmacro ediff-narrow-control-frame-p (&rest _ediff--unused) ;; remacs: &rest absorbs eager-expansion arg
   '(and (ediff-multiframe-setup-p)
         (equal ediff-help-message ediff-brief-message-string)))
 
-(defmacro ediff-3way-comparison-job ()
+(defmacro ediff-3way-comparison-job (&rest _ediff--unused)
   '(memq
     ediff-job-name
     '(ediff-files3 ediff-buffers3)))
 (ediff-defvar-local ediff-3way-comparison-job nil)
 
-(defmacro ediff-merge-job ()
+(defmacro ediff-merge-job (&rest _ediff--unused)
   '(memq
     ediff-job-name
     '(ediff-merge-files
@@ -268,10 +268,10 @@ It needs to be killed when we quit the session.")
       ediff-merge-revisions-with-ancestor)))
 (ediff-defvar-local ediff-merge-job nil)
 
-(defmacro ediff-patch-job ()
+(defmacro ediff-patch-job (&rest _ediff--unused)
   '(eq ediff-job-name 'epatch))
 
-(defmacro ediff-merge-with-ancestor-job ()
+(defmacro ediff-merge-with-ancestor-job (&rest _ediff--unused)
   '(memq
     ediff-job-name
     '(ediff-merge-files-with-ancestor
@@ -279,26 +279,26 @@ It needs to be killed when we quit the session.")
       ediff-merge-revisions-with-ancestor)))
 (ediff-defvar-local ediff-merge-with-ancestor-job nil)
 
-(defmacro ediff-3way-job ()
+(defmacro ediff-3way-job (&rest _ediff--unused)
   '(or ediff-3way-comparison-job ediff-merge-job))
 (ediff-defvar-local ediff-3way-job nil)
 
 ;; A diff3 job is like a 3way job, but ediff-merge doesn't require the use
 ;; of diff3.
-(defmacro ediff-diff3-job ()
+(defmacro ediff-diff3-job (&rest _ediff--unused)
   '(or ediff-3way-comparison-job
        ediff-merge-with-ancestor-job))
 (ediff-defvar-local ediff-diff3-job nil)
 
-(defmacro ediff-windows-job ()
+(defmacro ediff-windows-job (&rest _ediff--unused)
   '(memq ediff-job-name '(ediff-windows-wordwise ediff-windows-linewise)))
 (ediff-defvar-local ediff-windows-job nil "")
 
-(defmacro ediff-word-mode-job ()
+(defmacro ediff-word-mode-job (&rest _ediff--unused)
   '(memq ediff-job-name '(ediff-windows-wordwise ediff-regions-wordwise)))
 (ediff-defvar-local ediff-word-mode-job nil)
 
-(defmacro ediff-narrow-job ()
+(defmacro ediff-narrow-job (&rest _ediff--unused)
   '(memq ediff-job-name '(ediff-windows-wordwise
 			  ediff-regions-wordwise
 			  ediff-windows-linewise

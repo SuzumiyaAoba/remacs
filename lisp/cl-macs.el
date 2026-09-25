@@ -72,15 +72,18 @@
 ;;; Generalized-variable helpers (GNU cl-lib.el).
 
 (defun cl-list* (arg &rest rest)
-  "Return a new list with specified ARGs as conses and last arg as tail.
-Thus, (cl-list* A B C) is equivalent to (cons A (cons B C))."
-  (declare (compiler-macro cl--compiler-macro-list*))
-  (if (not rest) arg
-    (let* ((args (reverse (cons arg rest)))
-	   (form (car args)))
-      (while (setq args (cdr args))
-	(setq form (cons 'cons (cons (car args) (cons form nil)))))
-      form)))
+  "Return a new list with specified ARGs as elements, consed to last ARG.
+Thus, `(cl-list* A B C D)' is equivalent to `(nconc (list A B C) D)', or to
+`(cons A (cons B (cons C D)))'."
+  (declare (side-effect-free error-free)
+           (compiler-macro cl--compiler-macro-list*))
+  (cond ((not rest) arg)
+	((not (cdr rest)) (cons arg (car rest)))
+	(t (let* ((n (length rest))
+		  (copy (copy-sequence rest))
+		  (last (nthcdr (- n 2) copy)))
+	     (setcdr last (car (cdr last)))
+	     (cons arg copy)))))
 
 (defun cl--compiler-macro-list* (_form arg &rest others)
   (let* ((args (reverse (cons arg others)))

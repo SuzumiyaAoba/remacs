@@ -7,6 +7,11 @@
 
 ;;; Code:
 
+;; remacs: `cl-loaddefs' calls `set-advertised-calling-convention',
+;; which is still a stub; install the fallbacks first so requiring
+;; cl-lib cannot abort half-way.
+(require 'remacs-compat)
+
 ;; GNU binds these from the dumped cl-macs/cl-seq .elc files rather
 ;; than via cl-loaddefs; give them autoload stubs so `fboundp' and the
 ;; first call both behave like GNU.  GNU's internal helpers

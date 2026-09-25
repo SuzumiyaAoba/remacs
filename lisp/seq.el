@@ -112,11 +112,12 @@ name to be bound to the rest of SEQUENCE."
 ;; Default gv setters for `seq-elt'.
 ;; It can be a good idea for new sequence implementations to provide a
 ;; "gv-setter" for `seq-elt'.
-(cl-defmethod (setf seq-elt) (store (sequence array) n)
-  (aset sequence n store))
-
-(cl-defmethod (setf seq-elt) (store (sequence cons) n)
-  (setcar (nthcdr n sequence) store))
+;; remacs: `cl-defmethod' does not accept `(setf NAME)' generic names;
+;; the two array/cons methods are merged into a single gv setter.
+(gv-define-setter seq-elt (store sequence n)
+  `(if (consp ,sequence)
+       (setcar (nthcdr ,n ,sequence) ,store)
+     (aset ,sequence ,n ,store)))
 
 (cl-defgeneric seq-length (sequence)
   "Return the number of elements in SEQUENCE."

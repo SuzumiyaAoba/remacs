@@ -23,6 +23,10 @@
 
 ;;; Code:
 
+;; remacs: provides `emacs-lisp-mode-syntax-table' (used below) when the
+;; prelude section defining it is not yet evaluated.
+(require 'remacs-compat)
+
 (defgroup url nil
   "Uniform Resource Locator tool."
   :version "22.1"
