@@ -7,6 +7,25 @@
 ;; where SLOTS is the ordered slot list (inherited first), INITFORMS an
 ;; alist (SLOT . FORM) evaluated per instance, and INITARGS an alist
 ;; (INITARG . SLOT).
+;; GNU also registers every class on `cl--class' as an `eieio--class'
+;; record (a `cl--class' subtype) so `cl-generic-generalizers' accepts
+;; class specializers and `cl-typep' honors the class hierarchy — we
+;; do the same with a prefix-compatible record layout.
+
+;; GNU eieio-core.el: the metaclass for user classes, a `cl--class'
+;; record subtype (fields after the inherited name/docstring/parents/
+;; slots/index-table prefix).
+(cl-defstruct (eieio--class
+               (:include cl--class)
+               (:constructor nil)
+               (:predicate eieio--class-p)
+               (:copier nil))
+  children
+  initarg-tuples
+  (class-slots nil)
+  class-allocation-values
+  default-object-cache
+  options)
 
 (define-error 'invalid-slot-name "Invalid slot name" 'error)
 (define-error 'unbound-slot "Unbound slot" 'error)
@@ -82,6 +101,9 @@ Each slot spec is (NAME [:initarg KEY] [:initform FORM] ...)."
     (setq own (nreverse own)
           initforms (nreverse initforms)
           initargs (nreverse initargs))
+    ;; GNU: an empty superclass list means `eieio-default-superclass'.
+    (when (and (null parents) (not (eq name 'eieio-default-superclass)))
+      (setq parents '(eieio-default-superclass)))
     ;; Evaluate at load/compile time so PARENTS can be a quoted list.
     `(let* ((parents ',parents)
             (slots (eieio--collect-slots ',name parents ',own))
@@ -91,6 +113,24 @@ Each slot spec is (NAME [:initarg KEY] [:initform FORM] ...)."
             (list ',name parents slots initforms initargs))
        (set ',name (cons 'eieio--class-def
                          (get ',name 'eieio--class)))
+       ;; GNU registers a real `eieio--class' record on `cl--class' so
+       ;; `cl--find-class', `cl--class-allparents', and the generic
+       ;; `typeof' generalizer all see the class (eieio-core.el).
+       (when (fboundp 'eieio--class-p)
+         (let ((idx (make-hash-table :test 'eq))
+               (vslots (make-vector (length slots) nil))
+               (i 1))
+           (dolist (s slots)
+             (aset vslots (1- i) (cl--make-slot-descriptor s))
+             (puthash s i idx)
+             (setq i (1+ i)))
+           (put ',name 'cl--class
+                (record 'eieio--class
+                        ',name nil
+                        (delq nil (mapcar (lambda (p) (cl--find-class p))
+                                          parents))
+                        vslots idx
+                        nil initargs nil nil nil nil))))
        ;; GNU defines the class name as a constructor function:
        ;; `(registry-db :data ...)' == `(make-instance 'registry-db ...)'.
        (defalias ',name
@@ -102,6 +142,12 @@ Each slot spec is (NAME [:initarg KEY] [:initform FORM] ...)."
   (and (symbolp name)
        (get name 'eieio--class)
        (symbol-value name)))
+
+;; GNU's implicit root class (eieio-core.el): parent of every class
+;; defined without explicit superclasses; its own parent is `record'
+;; so the cl-generic type DAG reaches `atom'/`t' like GNU's.
+(defclass eieio-default-superclass (record) nil
+  "Default parent class for classes with no specified parents.")
 
 (defun eieio--slot-index (class slot)
   "Index of SLOT in CLASS's record layout (0-based, after the tag), or nil."
@@ -131,8 +177,13 @@ Each slot spec is (NAME [:initarg KEY] [:initform FORM] ...)."
   "Printed name string of OBJ, like GNU's `#<CLASS HASH>'."
   (format "#<%s %x>" (class-of obj) (logand (sxhash-eq obj) #xfffffff)))
 
-(defun make-instance (class &rest args)
-  "Create an instance of CLASS with :initarg ARGS."
+;; GNU's `make-instance' is a cl-generic so `(subclass CLASS)' methods
+;; (eieio-base's `eieio-singleton') can specialize it; `cl-defgeneric'
+;; here keeps it upgradeable by the real machinery.
+(cl-defgeneric make-instance (class &rest args)
+  "Make a new instance of CLASS with :initarg ARGS.")
+
+(cl-defmethod make-instance ((class t) &rest args)
   (let* ((name (if (symbolp class) class (eieio--class-name class)))
          (def (eieio--class-def name)))
     (unless def
@@ -272,10 +323,21 @@ Matches GNU: `let*' binds OBJECT to a `object' temp, then
   "Non-nil if OBJ's class is exactly CLASS."
   (eq (class-of obj) class))
 
-;; cl-generic integration: a method specializer that names an EIEIO
-;; class dispatches on the object's class.
-(defun eieio--class-p (sym)
-  (and (symbolp sym) (get sym 'eieio--class) t))
+;; GNU eieio-core.el: the (subclass CLASS) specializer, for methods
+;; that dispatch on a class NAME argument (e.g. `make-instance').
+(defun eieio--generic-subclass-specializers (tag &rest _)
+  (when (and (fboundp 'cl--class-p) (cl--class-p tag))
+    (mapcar (lambda (class) `(subclass ,class))
+            (cl--class-allparents tag))))
+
+(when (fboundp 'cl-generic-define-generalizer)
+  (cl-generic-define-generalizer eieio--generic-subclass-generalizer
+     60 (lambda (name &rest _) `(and (symbolp ,name) (cl--find-class ,name)))
+     #'eieio--generic-subclass-specializers)
+  (cl-defmethod cl-generic-generalizers ((_specializer (head subclass)))
+    "Support for (subclass CLASS) specializers.
+These match if the argument is the name of a subclass of CLASS."
+    (list eieio--generic-subclass-generalizer)))
 
 ;; GNU's eieio.el defines a default `initialize-instance' primary on
 ;; `eieio-default-superclass' — the implicit root of every class.  Our

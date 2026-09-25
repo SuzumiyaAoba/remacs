@@ -15368,9 +15368,12 @@ When enabled, actual binary text editing is done via `overwrite-mode'."
               (p2 (intern (format "%s-p" spec))))
           (or (and (fboundp p1) (funcall p1 arg))
               (and (fboundp p2) (funcall p2 arg))))
-        ;; An EIEIO class name specializes on instances of it.
+        ;; An EIEIO class name specializes on instances of it: the
+        ;; spec's `cl--class' record has `eieio--class' type (GNU's
+        ;; `eieio--class-p' is the cl-defstruct record predicate).
         (and (fboundp 'eieio--class-p)
-             (funcall 'eieio--class-p spec)
+             (let ((c (and (symbolp spec) (get spec 'cl--class))))
+               (and c (funcall 'eieio--class-p c)))
              (fboundp 'object-of-class-p)
              (funcall 'object-of-class-p arg spec))
         (eq spec 't)))
@@ -15387,7 +15390,8 @@ When enabled, actual binary text editing is done via `overwrite-mode'."
    (t (or (memq b (cl--type-parents a))
           ;; EIEIO subclass specializers are more specific than parents.
           (and (fboundp 'eieio--class-p)
-               (funcall 'eieio--class-p a)
+               (let ((c (and (symbolp a) (get a 'cl--class))))
+                 (and c (funcall 'eieio--class-p c)))
                (fboundp 'child-of-class-p)
                (funcall 'child-of-class-p a b))))))
 
@@ -15975,7 +15979,15 @@ Keywords supported: :test :test-not :key :if :if-not :count :start :end
                           ((vectorp val) (memq (aref val 0) tags))
                           ((consp val) (memq (car val) tags))
                           (t nil))))
-                 (t (eq (type-of val) type))))))))))))))
+                 ;; GNU: (cl-typep X CLASS) is true when the class of X
+                 ;; descends from CLASS — walk the value's own class
+                 ;; hierarchy (covers eieio--class types which have no
+                 ;; cl-struct-*-tags variable).
+                 (t (let* ((vt (type-of val))
+                           (vc (and (symbolp vt) (get vt 'cl--class))))
+                      (and vc
+                           (memq type (cl--class-allparents vc))
+                           t)))))))))))))))
 
 (defun cl-some (pred seq &rest _keys)
   "First non-nil (PRED X) for X in SEQ."
@@ -16705,15 +16717,18 @@ NAME and the slots, as in GNU's `cl-defstruct'."
                 ((eq type 'vector)
                  (if named
                      `(and (vectorp ob)
-                           (memq (aref ob 0) ,tags))
+                           (memq (aref ob 0) ,tags)
+                           t)
                    `(vectorp ob)))
                 ((eq type 'list)
                  (if named
                      `(and (consp ob)
-                           (memq (car ob) ,tags))
+                           (memq (car ob) ,tags)
+                           t)
                    `(listp ob)))
                 (t `(and (recordp ob)
-                         (memq (aref ob 0) ,tags)))))
+                         (memq (aref ob 0) ,tags)
+                         t))))
            defs))))
     ;; Copier.
     (let ((co (funcall opt :copier)))

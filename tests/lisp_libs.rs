@@ -630,6 +630,46 @@ cl--generic-typeof-generalizer cl--generic-oclosure-generalizer)"
 }
 
 #[test]
+fn eieio_class_specializers_dispatch() {
+    // GNU registers every `defclass' on `cl--class' as an `eieio--class'
+    // record (a `cl--class' subtype), so the typeof generalizer accepts
+    // class specializers and `cl-typep' honors the hierarchy.
+    assert_eq!(
+        ev("(progn (require 'eieio-base)
+                  (defclass tst-child () nil)
+                  (list (eieio--class-p (cl--find-class 'tst-child))
+                        (type-of (cl--find-class 'tst-child))
+                        (cl--class-allparents (cl--find-class 'tst-child))))"),
+        "(t eieio--class (tst-child eieio-default-superclass record atom t))"
+    );
+    // `(subclass CLASS)' methods specialize class-NAME arguments
+    // (eieio-singleton's `make-instance'): singleton construction must
+    // return the same object, like GNU.
+    assert_eq!(
+        ev("(progn (require 'eieio-base)
+                  (defclass tst-sing (eieio-singleton) nil)
+                  (defclass tst-plain () ((s :initarg :s)))
+                  (let ((o1 (make-instance 'tst-sing))
+                        (o2 (make-instance 'tst-sing))
+                        (p (make-instance 'tst-plain :s 3)))
+                    (list (eq o1 o2)
+                          (eieio-oref p 's)
+                          (cl-typep p 'tst-plain)
+                          (cl-typep o1 'eieio-singleton))))"),
+        "(t 3 t t)"
+    );
+    // `make-instance' is a real generic whose method table holds the
+    // subclass methods plus the `(class t)' default — GNU shape.
+    assert_eq!(
+        ev("(progn (require 'eieio-base)
+                  (mapcar (lambda (m) (aref m 1))
+                          (cl--generic-method-table
+                           (cl--generic 'make-instance))))"),
+        "(((subclass eieio-named)) ((subclass eieio-singleton)) (t))"
+    );
+}
+
+#[test]
 fn quail_subdir_load_and_leim_list() {
     // `quail/NAME' references must resolve to the leim/quail copies even
     // where `language/NAME' shares the basename (burmese, czech, …); the

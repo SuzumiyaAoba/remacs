@@ -5079,11 +5079,20 @@ fn f_cl_type_of(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let name = match &a[0] {
         Value::Int(_) => "fixnum",
         Value::Float(_) => "float",
-        Value::Sym(_) | Value::Nil => "symbol",
+        Value::Sym(_) => "symbol",
+        // GNU `cl-type-of' reports `null' for nil and a record's type
+        // field (slot 0) when it is a symbol — like `type-of'.
+        Value::Nil => "null",
         Value::Cons(_) => "cons",
         Value::Str(_) => "string",
         Value::Vec(_) => "vector",
-        Value::Record(_) => "record",
+        Value::Record(r) => {
+            let rr = r.borrow();
+            if let Some(Value::Sym(tag)) = rr.first() {
+                return Ok(Value::Sym(*tag));
+            }
+            "record"
+        }
         Value::Hash(_) => "hash-table",
         Value::Subr(_) => "subr",
         Value::Lambda(l) => {

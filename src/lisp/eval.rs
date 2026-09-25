@@ -779,6 +779,29 @@ impl Interp {
             // defaults to t, so `eval_str' installs a `(t)' root env
             // and it evals lexically like GNU's dump does.
             let _ = interp.eval_str(crate::lisp::prelude::PRELUDE);
+            // First stash snapshot, right after the prelude: GNU_VOID_FNS
+            // members the prelude defines (`cl-loop', `cl-defstruct', ...)
+            // hold their real definitions now.  Libraries loaded below may
+            // pull `cl-loaddefs' via `(eval-when-compile (require 'cl-lib))'
+            // (tabulated-list, vc-hooks), which replaces those cells with
+            // (autoload ...) forms before the later snapshot can see them —
+            // and that snapshot skips autoload cells, so the stash would
+            // end up empty.
+            {
+                let pk = interp.intern("remacs--dump-fn");
+                let auto_id = interp.intern("autoload");
+                for name in GNU_VOID_FNS {
+                    let sid = interp.intern(name);
+                    let old = interp.obarray.symbol(sid).function.clone();
+                    let is_autoload = matches!(
+                        &old,
+                        Value::Cons(c) if matches!(&c.borrow().car, Value::Sym(s) if *s == auto_id)
+                    );
+                    if !matches!(old, Value::Sym(s) if s == sym::UNBOUND) && !is_autoload {
+                        interp.put_prop(sid, pk, old);
+                    }
+                }
+            }
             // env.el is preloaded into GNU's dump (loadup.el): its
             // feature is already registered, but the definitions must
             // exist too — `(require 'env)' short-circuits on the
@@ -1062,7 +1085,7 @@ impl Interp {
                    (fset 'sort-regexp-fields '(autoload \"sort\" \"Sort the text in the region lexicographically.\\nIf called interactively, prompt for two regular expressions,\\nRECORD-REGEXP and KEY-REGEXP.\\n\\nRECORD-REGEXP specifies the textual units to be sorted.\\n  For example, to sort lines, RECORD-REGEXP would be \\\"^.*$\\\".\\n\\nKEY-REGEXP specifies the part of each record (i.e. each match for\\n  RECORD-REGEXP) to be used for sorting.\\n  If it is \\\"\\\\\\\\digit\\\", use the digit'th \\\"\\\\\\\\(...\\\\\\\\)\\\"\\n  match field specified by RECORD-REGEXP.\\n  If it is \\\"\\\\\\\\&\\\", use the whole record.\\n  Otherwise, KEY-REGEXP should be a regular expression with which\\n  to search within the record.  If a match for KEY-REGEXP is not\\n  found within a record, that record is ignored.\\n\\nWith a negative prefix arg, sort in reverse order.\\n\\nThe variable `sort-fold-case' determines whether alphabetic case affects\\nthe sort order.\\n\\nFor example: to sort lines in the region by the first word on each line\\n starting with the letter \\\"f\\\",\\n RECORD-REGEXP would be \\\"^.*$\\\" and KEY would be \\\"\\\\\\\\=\\\\<f\\\\\\\\w*\\\\\\\\>\\\"\\n\\n(fn REVERSE RECORD-REGEXP KEY-REGEXP BEG END)\" t nil)) \
                    (fset 'sort-subr '(autoload \"sort\" \"General text sorting routine to divide buffer into records and sort them.\\n\\nWe divide the accessible portion of the buffer into disjoint pieces\\ncalled sort records.  A portion of each sort record (perhaps all of\\nit) is designated as the sort key.  The records are rearranged in the\\nbuffer in order by their sort keys.  The records may or may not be\\ncontiguous.\\n\\nUsually the records are rearranged in order of ascending sort key.\\nIf REVERSE is non-nil, they are rearranged in order of descending sort key.\\nThe variable `sort-fold-case' determines whether alphabetic case affects\\nthe sort order.\\n\\nThe next four arguments are functions to be called to move point\\nacross a sort record.  They will be called many times from within `sort-subr'.\\n\\nNEXTRECFUN is called with point at the end of the previous record.\\nIt moves point to the start of the next record.\\nIt should move point to the end of the buffer if there are no more records.\\nThe first record is assumed to start at the position of point when `sort-subr'\\nis called.\\n\\nENDRECFUN is called with point within the record.\\nIt should move point to the end of the record.\\n\\nSTARTKEYFUN moves from the start of the record to the start of the key.\\nIt may return either a non-nil value to be used as the key, or\\nelse the key is the substring between the values of point after\\nSTARTKEYFUN and ENDKEYFUN are called.  If STARTKEYFUN is nil, the key\\nstarts at the beginning of the record.\\n\\nENDKEYFUN moves from the start of the sort key to the end of the sort key.\\nENDKEYFUN may be nil if STARTKEYFUN returns a value or if it would be the\\nsame as ENDRECFUN.\\n\\nPREDICATE, if non-nil, is the predicate function for comparing\\nkeys; it is called with two arguments, the keys to compare, and\\nshould return non-nil if the first key should sort before the\\nsecond key.  If PREDICATE is nil, comparison is done with `<' if\\nthe keys are numbers, with `compare-buffer-substrings' if the\\nkeys are cons cells (the car and cdr of each cons cell are taken\\nas start and end positions), and with `string<' otherwise.\\n\\n(fn REVERSE NEXTRECFUN ENDRECFUN &optional STARTKEYFUN ENDKEYFUN PREDICATE)\" nil nil)) \
                    (fset 'tar-mode '(autoload \"tar-mode\" \"Major mode for viewing a tar file as a dired-like listing of its contents.\\nYou can move around using the usual cursor motion commands.\\nLetters no longer insert themselves.\\\\<tar-mode-map>\\nType \\\\[tar-extract] to pull a file out of the tar file and into its own buffer;\\nor click mouse-2 on the file's line in the Tar mode buffer.\\nType \\\\[tar-copy] to copy an entry from the tar file into another file on disk.\\n\\nIf you edit a sub-file of this archive (as with the \\\\[tar-extract] command) and\\nsave it with \\\\[save-buffer], the contents of that buffer will be\\nsaved back into the tar-file buffer; in this way you can edit a file\\ninside of a tar archive without extracting it and re-archiving it.\\n\\nSee also: variables `tar-update-datestamp' and `tar-anal-blocksize'.\\n\\\\{tar-mode-map}\\n\\nIn addition to any hooks its parent mode `special-mode' might have\\nrun, this mode runs the hook `tar-mode-hook', as the final or\\npenultimate step during initialization.\" t nil)) \
-                   (fset 'variable-at-point '(autoload \"help-fns\" \"Return the bound variable symbol found at or before point.\\nReturn 0 if there is no such symbol.\\nIf ANY-SYMBOL is non-nil, don't insist the symbol be bound.\\n\\n(fn &optional ANY-SYMBOL)\" nil nil))))",
+                   (fset 'variable-at-point '(autoload \"help-fns\" \"Return the bound variable symbol found at or before point.\\nReturn 0 if there is no such symbol.\\nIf ANY-SYMBOL is non-nil, don't insist the symbol be bound.\\n\\n(fn &optional ANY-SYMBOL)\" nil nil)))",
             );
             // Roll back the `eval-when-compile' requires fired during
             // the dumped libraries' interpreted loads: mouse.el's

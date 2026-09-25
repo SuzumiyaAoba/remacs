@@ -658,13 +658,10 @@ fn f_type_of(i: &mut Interp, args: Vec<Value>) -> EvalResult {
         Value::Record(r) => {
             let rr = r.borrow();
             if let Some(Value::Sym(tag)) = rr.first() {
-                // GNU only reports the tag when it names a struct
-                // type (i.e. has a `cl-struct-type' property).
-                let cst = i.intern("cl-struct-type");
-                let prop = i.obarray.symbol(*tag).plist.clone();
-                if !crate::lisp::eval::plist_get(&prop, cst).is_nil() {
-                    return Ok(Value::Sym(*tag));
-                }
+                // GNU's `type-of' returns the record's type field
+                // (slot 0) whenever it is a symbol — struct name for
+                // cl-defstruct instances, class name for EIEIO objects.
+                return Ok(Value::Sym(*tag));
             }
             "record"
         }
