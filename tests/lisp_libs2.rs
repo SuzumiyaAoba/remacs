@@ -2746,3 +2746,64 @@ fn r14_widgets_and_propertized_strings() {
         "(t t t t)"
     );
 }
+
+// ---------------------------------------------------------- round 15
+// cus-theme.el, wid-browse.el, cus-dep.el, calculator.el,
+// hippie-exp.el, dired-aux.el, so-long.el, outline.el, foldout.el
+// (outline also needed so-long; GNU -Q leaves all nine unloaded).
+
+#[test]
+fn r15_custom_widget_outline_libs() {
+    // None are dumped features in GNU -Q.
+    assert_eq!(
+        ev("(mapcar #'featurep '(cus-theme wid-browse cus-dep calculator
+                  hippie-exp dired-aux so-long outline foldout))"),
+        "(nil nil nil nil nil nil nil nil nil)"
+    );
+    for name in [
+        "cus-theme",
+        "wid-browse",
+        "cus-dep",
+        "calculator",
+        "hippie-exp",
+        "dired-aux",
+        "so-long",
+        "outline",
+        "foldout",
+    ] {
+        assert_eq!(
+            ev(&format!("(progn (require '{n}) (featurep '{n}))", n = name)),
+            "t",
+            "{name}"
+        );
+    }
+    // GNU loaddefs autoload cells (verified against GNU -Q).
+    assert_eq!(
+        ev("(mapcar (lambda (s) (autoloadp (symbol-function s)))
+                  '(calculator customize-themes describe-theme
+                    custom-theme-visit-theme customize-create-theme
+                    hippie-expand make-hippie-expand-function
+                    outline-mode outline-minor-mode outline-search-level
+                    so-long so-long-mode global-so-long-mode
+                    so-long-minor-mode so-long-enable
+                    widget-browse widget-browse-at
+                    widget-browse-other-window widget-minor-mode))"),
+        "(t t t t t t t t t t t t t t t t t t t)"
+    );
+    // Autoload invocation pulls in the real library (GNU-verified errors).
+    assert_eq!(
+        ev("(list (condition-case e (progn (hippie-expand) 'ok)
+                    (error (car e)))
+                  (condition-case e (progn (describe-theme 'user) 'ok)
+                    (error (car e))))"),
+        "(wrong-number-of-arguments error)"
+    );
+    // custom-theme-name-valid-p (GNU custom.el) is a startup defun.
+    assert_eq!(
+        ev("(list (fboundp 'custom-theme-name-valid-p)
+                  (custom-theme-name-valid-p 'foo)
+                  (custom-theme-name-valid-p 'user)
+                  (custom-theme-name-valid-p nil))"),
+        "(t t nil nil)"
+    );
+}
