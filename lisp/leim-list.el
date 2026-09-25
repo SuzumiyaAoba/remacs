@@ -91,23 +91,23 @@
 (register-input-method
  "burmese" "Burmese" 'quail-use-package
  "MY" "Burmese input method (in phonetic order)."
- "quail/burmese")
+ "quail-burmese")
 (register-input-method
  "burmese-visual" "Burmese" 'quail-use-package
  "MYV" "Burmese input method (in visual order)."
- "quail/burmese")
+ "quail-burmese")
 (register-input-method
  "shan" "Burmese" 'quail-use-package
  "SHN" "Shan input method."
- "quail/burmese")
+ "quail-burmese")
 (register-input-method
  "mon" "Burmese" 'quail-use-package
  "MON" "Mon input method."
- "quail/burmese")
+ "quail-burmese")
 (register-input-method
  "cham" "Cham" 'quail-use-package
  "ꨌꩌ" "A QWERTY-based Cham input method."
- "quail/cham")
+ "quail-cham")
 (register-input-method
  "compose" "UTF-8" 'quail-use-package
  "+" "Compose-like input method with the same key sequences as X Multi_key."
@@ -147,91 +147,91 @@
 (register-input-method
  "russian-typewriter" "Russian" 'quail-use-package
  "ЖЙ" "ЙЦУКЕН Russian typewriter layout (ISO 8859-5 encoding)."
- "quail/cyrillic")
+ "quail-cyrillic")
 (register-input-method
  "cyrillic-jcuken" "Russian" 'quail-use-package
  "ЖЙ" "ЙЦУКЕН Russian typewriter layout (ISO 8859-5 encoding)."
- "quail/cyrillic")
+ "quail-cyrillic")
 (register-input-method
  "russian-computer" "Russian" 'quail-use-package
  "RU" "ЙЦУКЕН Russian computer layout"
- "quail/cyrillic")
+ "quail-cyrillic")
 (register-input-method
  "cyrillic-macedonian" "Cyrillic" 'quail-use-package
  "ЖM" "ЉЊЕРТЗ-ЃЌ keyboard layout based on JUS.I.K1.004"
- "quail/cyrillic")
+ "quail-cyrillic")
 (register-input-method
  "cyrillic-serbian" "Cyrillic" 'quail-use-package
  "ЖS" "ЉЊЕРТЗ-ЂЋ keyboard layout based on JUS.I.K1.005"
- "quail/cyrillic")
+ "quail-cyrillic")
 (register-input-method
  "cyrillic-ukrainian" "Ukrainian" 'quail-use-package
  "ЖU" "ЄЇЕРТЗ-ІЎ UKRAINIAN"
- "quail/cyrillic")
+ "quail-cyrillic")
 (register-input-method
  "ukrainian-computer" "Ukrainian" 'quail-use-package
  "UK" "ЙЦУКЕН Ukrainian (Unicode-based for use with KOI8-U encoding)."
- "quail/cyrillic")
+ "quail-cyrillic")
 (register-input-method
  "uzbek-cyrillic" "Ўзбекча" 'quail-use-package
  "Ўзб" "ЙЦУКЕН Uzbek computer layout"
- "quail/cyrillic")
+ "quail-cyrillic")
 (register-input-method
  "cyrillic-yawerty" "Cyrillic" 'quail-use-package
  "ЖЯ" "ЯВЕРТЫ Roman transcription"
- "quail/cyrillic")
+ "quail-cyrillic")
 (register-input-method
  "cyrillic-translit" "Cyrillic" 'quail-use-package
  "Жt" "Intuitively transliterated keyboard layout."
- "quail/cyrillic")
+ "quail-cyrillic")
 (register-input-method
  "belarusian" "Belarusian" 'quail-use-package
  "BE" "ЙЦУКЕН keyboard layout registered as STB955-94 Belarusian standard."
- "quail/cyrillic")
+ "quail-cyrillic")
 (register-input-method
  "bulgarian-alt-phonetic" "Bulgarian" 'quail-use-package
  "БНФ" "Bulgarian alternative Phonetic keyboard layout, producing Unicode."
- "quail/cyrillic")
+ "quail-cyrillic")
 (register-input-method
  "bulgarian-phonetic" "Bulgarian" 'quail-use-package
  "ЖБФ" "Bulgarian Phonetic keyboard layout, producing Unicode."
- "quail/cyrillic")
+ "quail-cyrillic")
 (register-input-method
  "bulgarian-bds" "Bulgarian" 'quail-use-package
  "БДС" "Bulgarian standard keyboard layout (BDS)"
- "quail/cyrillic")
+ "quail-cyrillic")
 (register-input-method
  "cyrillic-tuvan" "Tuvan" 'quail-use-package
  "ҢӨҮ" "ЯВЕРТЫ Roman transcription of the Tuvan alphabet"
- "quail/cyrillic")
+ "quail-cyrillic")
 (register-input-method
  "cyrillic-chuvash" "Chuvash" 'quail-use-package
  "CV" "Input method for cyrillic Chuvash with a postfix modifier."
- "quail/cyrillic")
+ "quail-cyrillic")
 (register-input-method
  "cyrillic-mongolian" "Mongolian" 'quail-use-package
  "MN-" "Input method for cyrillic Mongolian"
- "quail/cyrillic")
+ "quail-cyrillic")
 (register-input-method
  "czech" "Czech" 'quail-use-package
  "CZ" "\"Standard\" Czech keyboard in the Windows NT 105 keys version."
- "quail/czech")
+ "quail-czech")
 (register-input-method
  "czech-qwerty" "Czech" 'quail-use-package
  "CZ" "\"Standard\" Czech keyboard in the Windows NT 105 keys version, QWERTY layout."
- "quail/czech")
+ "quail-czech")
 (register-input-method
  "czech-prog-1" "Czech" 'quail-use-package
  "CZ" "Czech (non-standard) keyboard for programmers #1."
- "quail/czech")
+ "quail-czech")
 (register-input-method
  "czech-prog-2" "Czech" 'quail-use-package
  "CZ" "Czech (non-standard) keyboard for programmers #2."
- "quail/czech")
+ "quail-czech")
 (register-input-method
  "czech-prog-3" "Czech" 'quail-use-package
  "CZ" "Czech (non-standard) keyboard for programmers compatible with the default"
- "quail/czech")
+ "quail-czech")
 (register-input-method
  "emoji" "UTF-8" 'quail-use-package
  "🙂" "Emoji input method for inserting emoji characters."
@@ -239,47 +239,47 @@
 (register-input-method
  "ethiopic" "Ethiopic" 'quail-use-package
  '("ፊደል " (ethio-prefer-ascii-space "_" "፡") "።") "  Quail package for Ethiopic (Tigrigna and Amharic)"
- "quail/ethiopic")
+ "quail-ethiopic")
 (register-input-method
  "georgian" "Georgian" 'quail-use-package
  "გ" "A common Georgian transliteration (using Unicode)"
- "quail/georgian")
+ "quail-georgian")
 (register-input-method
  "georgian-qwerty" "Georgian" 'quail-use-package
  "ქ" "Georgian input based on QWERTY keyboard."
- "quail/georgian")
+ "quail-georgian")
 (register-input-method
  "georgian-nuskhuri" "Georgian" 'quail-use-package
  "ⴌ" "Nuskhuri Georgian (QWERTY-based)."
- "quail/georgian")
+ "quail-georgian")
 (register-input-method
  "greek-jis" "Greek" 'quail-use-package
  "Ω" "Ελληνικα: Greek keyboard layout (JIS X0208.1983)"
- "quail/greek")
+ "quail-greek")
 (register-input-method
  "greek-mizuochi" "Greek" 'quail-use-package
  "CG" "The Mizuochi input method for Classical Greek using mule-unicode-0100-24ff."
- "quail/greek")
+ "quail-greek")
 (register-input-method
  "greek-babel" "Greek" 'quail-use-package
  "BG" "The TeX Babel input method for Classical Greek using mule-unicode-0100-24ff."
- "quail/greek")
+ "quail-greek")
 (register-input-method
  "greek-ibycus4" "Greek" 'quail-use-package
  "IB" "The Ibycus4 input method for Classical Greek using mule-unicode-0100-24ff."
- "quail/greek")
+ "quail-greek")
 (register-input-method
  "greek" "Greek" 'quail-use-package
  "Ω" "Ελληνικά: Greek keyboard layout (ISO 8859-7)"
- "quail/greek")
+ "quail-greek")
 (register-input-method
  "greek-postfix" "GreekPost" 'quail-use-package
  "Ψ" "Ελληνικά: Greek keyboard layout with postfix accents (ISO 8859-7)"
- "quail/greek")
+ "quail-greek")
 (register-input-method
  "greek-polytonic" "Greek" 'quail-use-package
  "ῶ" "Ἑλληνικά: Greek input method, with support for polytonic & archaic"
- "quail/greek")
+ "quail-greek")
 (register-input-method
  "korean-hanja-jis" "Korean" 'quail-use-package
  "漢2" "2벌식JIS漢字: 該當하는 漢字의 韻을 한글2벌式으로 呼出하여 選擇"
@@ -295,231 +295,231 @@
 (register-input-method
  "hebrew" "Hebrew" 'quail-use-package
  "ע" "Hebrew SI-1452 input method."
- "quail/hebrew")
+ "quail-hebrew")
 (register-input-method
  "hebrew-new" "Hebrew" 'quail-use-package
  "ע" "Hebrew SI-1452 new draft input method."
- "quail/hebrew")
+ "quail-hebrew")
 (register-input-method
  "hebrew-lyx" "Hebrew" 'quail-use-package
  "לִ" "Hebrew LyX input method."
- "quail/hebrew")
+ "quail-hebrew")
 (register-input-method
  "hebrew-full" "Hebrew" 'quail-use-package
  "עִ֫" "Hebrew Full method."
- "quail/hebrew")
+ "quail-hebrew")
 (register-input-method
  "hebrew-biblical-tiro" "Hebrew" 'quail-use-package
  "תִרֹ" "Biblical Hebrew Tiro input method."
- "quail/hebrew")
+ "quail-hebrew")
 (register-input-method
  "hebrew-biblical-sil" "Hebrew" 'quail-use-package
  "סִל" "Biblical Hebrew SIL input method."
- "quail/hebrew")
+ "quail-hebrew")
 (register-input-method
  "yiddish-royal" "Hebrew" 'quail-use-package
  "ײר" "Yiddish Royal input method."
- "quail/hebrew")
+ "quail-hebrew")
 (register-input-method
  "yiddish-keyman" "Hebrew" 'quail-use-package
  "ײק" "Yiddish Keyman input method."
- "quail/hebrew")
+ "quail-hebrew")
 (register-input-method
  "devanagari-itrans" "Devanagari" 'quail-use-package
  "DevIT" "Devanagari ITRANS"
- "quail/indian")
+ "quail-indian")
 (register-input-method
  "devanagari-kyoto-harvard" "Devanagari" 'quail-use-package
  "DevKH" "Devanagari Kyoto-Harvard"
- "quail/indian")
+ "quail-indian")
 (register-input-method
  "devanagari-aiba" "Devanagari" 'quail-use-package
  "DevAB" "Devanagari Aiba"
- "quail/indian")
+ "quail-indian")
 (register-input-method
  "punjabi-itrans" "Punjabi" 'quail-use-package
  "PnjIT" "Punjabi ITRANS"
- "quail/indian")
+ "quail-indian")
 (register-input-method
  "gujarati-itrans" "Gujarati" 'quail-use-package
  "GjrIT" "Gujarati ITRANS"
- "quail/indian")
+ "quail-indian")
 (register-input-method
  "oriya-itrans" "Oriya" 'quail-use-package
  "OriIT" "Oriya ITRANS"
- "quail/indian")
+ "quail-indian")
 (register-input-method
  "bengali-itrans" "Bengali" 'quail-use-package
  "BngIT" "Bengali ITRANS"
- "quail/indian")
+ "quail-indian")
 (register-input-method
  "assamese-itrans" "Assamese" 'quail-use-package
  "AsmIT" "Assamese ITRANS"
- "quail/indian")
+ "quail-indian")
 (register-input-method
  "telugu-itrans" "Telugu" 'quail-use-package
  "TlgIT" "Telugu ITRANS"
- "quail/indian")
+ "quail-indian")
 (register-input-method
  "kannada-itrans" "Kannada" 'quail-use-package
  "KndIT" "Kannada ITRANS"
- "quail/indian")
+ "quail-indian")
 (register-input-method
  "malayalam-itrans" "Malayalam" 'quail-use-package
  "MlmIT" "Malayalam ITRANS"
- "quail/indian")
+ "quail-indian")
 (register-input-method
  "tamil-itrans" "Tamil" 'quail-use-package
  "TmlIT" "Tamil ITRANS"
- "quail/indian")
+ "quail-indian")
 (register-input-method
  "tamil-itrans-digits" "Tamil" 'quail-use-package
  "TmlITD" "Tamil ITRANS with digits"
- "quail/indian")
+ "quail-indian")
 (register-input-method
  "tamil-phonetic" "Tamil" 'quail-use-package
  "ழ" "Customizable Tamil phonetic input method."
- "quail/indian")
+ "quail-indian")
 (register-input-method
  "devanagari-inscript" "Devanagari" 'quail-use-package
  "DevIS" "Devanagari keyboard Inscript"
- "quail/indian")
+ "quail-indian")
 (register-input-method
  "punjabi-inscript" "Punjabi" 'quail-use-package
  "PnjIS" "Punjabi keyboard Inscript"
- "quail/indian")
+ "quail-indian")
 (register-input-method
  "gujarati-inscript" "Gujarati" 'quail-use-package
  "GjrIS" "Gujarati keyboard Inscript"
- "quail/indian")
+ "quail-indian")
 (register-input-method
  "oriya-inscript" "Oriya" 'quail-use-package
  "OriIS" "Oriya keyboard Inscript"
- "quail/indian")
+ "quail-indian")
 (register-input-method
  "bengali-inscript" "Bengali" 'quail-use-package
  "BngIS" "Bengali keyboard Inscript"
- "quail/indian")
+ "quail-indian")
 (register-input-method
  "assamese-inscript" "Assamese" 'quail-use-package
  "AsmIS" "Assamese keyboard Inscript"
- "quail/indian")
+ "quail-indian")
 (register-input-method
  "telugu-inscript" "Telugu" 'quail-use-package
  "TlgIS" "Telugu keyboard Inscript"
- "quail/indian")
+ "quail-indian")
 (register-input-method
  "kannada-inscript" "Kannada" 'quail-use-package
  "KndIS" "Kannada keyboard Inscript"
- "quail/indian")
+ "quail-indian")
 (register-input-method
  "malayalam-inscript" "Malayalam" 'quail-use-package
  "MlmIS" "Malayalam keyboard Inscript"
- "quail/indian")
+ "quail-indian")
 (register-input-method
  "tamil-inscript" "Tamil" 'quail-use-package
  "TmlIS" "Tamil keyboard Inscript"
- "quail/indian")
+ "quail-indian")
 (register-input-method
  "tamil-inscript-digits" "Tamil" 'quail-use-package
  "TmlISD" "Tamil keyboard Inscript with digits."
- "quail/indian")
+ "quail-indian")
 (register-input-method
  "tamil99" "Tamil" 'quail-use-package
  "தமிழ்99" "Tamil99 input method"
- "quail/indian")
+ "quail-indian")
 (register-input-method
  "bengali-probhat" "Bengali" 'quail-use-package
  "BngPB" "Probhat keyboard for Bengali/Bangla"
- "quail/indian")
+ "quail-indian")
 (register-input-method
  "malayalam-mozhi" "Malayalam" 'quail-use-package
  "MlmMI" "Malayalam transliteration by Mozhi method."
- "quail/indian")
+ "quail-indian")
 (register-input-method
  "brahmi" "Brahmi" 'quail-use-package
  "𑀲" "Brahmi phonetic input method."
- "quail/indian")
+ "quail-indian")
 (register-input-method
  "kaithi" "Kaithi" 'quail-use-package
  "𑂍𑂶" "Kaithi phonetic input method."
- "quail/indian")
+ "quail-indian")
 (register-input-method
  "tirhuta" "Tirhuta" 'quail-use-package
  "𑒞𑒱" "Tirhuta phonetic input method."
- "quail/indian")
+ "quail-indian")
 (register-input-method
  "sharada" "Sharada" 'quail-use-package
  "𑆯𑆳" "Sharada phonetic input method."
- "quail/indian")
+ "quail-indian")
 (register-input-method
  "siddham" "Sharada" 'quail-use-package
  "𑖭𑖰" "Siddham phonetic input method."
- "quail/indian")
+ "quail-indian")
 (register-input-method
  "syloti-nagri" "Syloti Nagri" 'quail-use-package
  "ꠍꠤ" "Syloti Nagri phonetic input method."
- "quail/indian")
+ "quail-indian")
 (register-input-method
  "modi" "Modi" 'quail-use-package
  "𑘦𑘻" "Modi phonetic input method."
- "quail/indian")
+ "quail-indian")
 (register-input-method
  "odia" "Odia" 'quail-use-package
  "ଓ" "Odia phonetic input method."
- "quail/indian")
+ "quail-indian")
 (register-input-method
  "limbu" "Limbu" 'quail-use-package
  "ᤕ" "Limbu phonetic input method."
- "quail/indian")
+ "quail-indian")
 (register-input-method
  "grantha" "Grantha" 'quail-use-package
  "𑌗𑍍𑌰" "Grantha phonetic input method."
- "quail/indian")
+ "quail-indian")
 (register-input-method
  "lepcha" "Lepcha" 'quail-use-package
  "ᰛᰩᰵ" "Lepcha phonetic input method."
- "quail/indian")
+ "quail-indian")
 (register-input-method
  "meetei-mayek" "Meetei Mayek" 'quail-use-package
  "ꯃꯤ" "Meetei Mayek phonetic input method."
- "quail/indian")
+ "quail-indian")
 (register-input-method
  "wancho" "Wancho" 'quail-use-package
  "𞋒" "Wancho phonetic input method."
- "quail/indian")
+ "quail-indian")
 (register-input-method
  "toto" "Toto" 'quail-use-package
  "𞊒𞊪" "Toto script phonetic input method."
- "quail/indian")
+ "quail-indian")
 (register-input-method
  "balinese" "Balinese" 'quail-use-package
  "ᬩ" "Balinese phonetic input method."
- "quail/indonesian")
+ "quail-indonesian")
 (register-input-method
  "javanese" "Javanese" 'quail-use-package
  "ꦗ" "Javanese phonetic input method."
- "quail/indonesian")
+ "quail-indonesian")
 (register-input-method
  "sundanese" "Sundanese" 'quail-use-package
  "ᮞᮥ" "Sundanese phonetic input method."
- "quail/indonesian")
+ "quail-indonesian")
 (register-input-method
  "batak" "Batak" 'quail-use-package
  "ᯅ" "Batak phonetic input method,"
- "quail/indonesian")
+ "quail-indonesian")
 (register-input-method
  "rejang" "Rejang" 'quail-use-package
  "ꤽꥍ" "Rejang phonetic input method."
- "quail/indonesian")
+ "quail-indonesian")
 (register-input-method
  "makasar" "Makasar" 'quail-use-package
  "𑻪" "Makasar phonetic input method."
- "quail/indonesian")
+ "quail-indonesian")
 (register-input-method
  "lontara" "Lontara" 'quail-use-package
  "ᨒ" "Lontara phonetic input method."
- "quail/indonesian")
+ "quail-indonesian")
 (register-input-method
  "ipa-praat" "IPA" 'quail-use-package
  "IPAP" "International Phonetic Alphabet input method."
@@ -567,31 +567,31 @@
 (register-input-method
  "japanese" "Japanese" 'quail-use-package
  "Aあ" "Japanese input method by Roman transliteration and Kana-Kanji conversion."
- "quail/japanese")
+ "quail-japanese")
 (register-input-method
  "japanese-ascii" "Japanese" 'quail-use-package
  "Aa" "Temporary ASCII input mode used within the input method `japanese'."
- "quail/japanese")
+ "quail-japanese")
 (register-input-method
  "japanese-zenkaku" "Japanese" 'quail-use-package
  "Ａ" "Japanese zenkaku alpha numeric character input method."
- "quail/japanese")
+ "quail-japanese")
 (register-input-method
  "japanese-hankaku-kana" "Japanese" 'quail-use-package
  "ｱ" "Japanese hankaku katakana input method by Roman transliteration."
- "quail/japanese")
+ "quail-japanese")
 (register-input-method
  "japanese-hiragana" "Japanese" 'quail-use-package
  "あ" "Japanese hiragana input method by Roman transliteration."
- "quail/japanese")
+ "quail-japanese")
 (register-input-method
  "japanese-katakana" "Japanese" 'quail-use-package
  "ア" "Japanese katakana input method by Roman transliteration."
- "quail/japanese")
+ "quail-japanese")
 (register-input-method
  "lao" "Lao" 'quail-use-package
  "ລ" "Lao input method simulating Lao keyboard layout based on Thai TIS620"
- "quail/lao")
+ "quail-lao")
 (register-input-method
  "latin-1-alt-postfix" "Latin-1" 'quail-use-package
  "1<" "Latin-1 character input method with postfix modifiers"
@@ -871,27 +871,27 @@
 (register-input-method
  "hanifi-rohingya" "Hanifi Rohingya" 'quail-use-package
  "𐴌𐴟" "Hanifi Rohingya phonetic input method."
- "quail/misc-lang")
+ "quail-misc-lang")
 (register-input-method
  "kharoshthi" "Kharoshthi" 'quail-use-package
  "𐨑" "Kharoṣṭhī input method."
- "quail/misc-lang")
+ "quail-misc-lang")
 (register-input-method
  "adlam" "Adlam" 'quail-use-package
  "𞤀" "Adlam input method."
- "quail/misc-lang")
+ "quail-misc-lang")
 (register-input-method
  "mende-kikakui" "Mende Kikakui" 'quail-use-package
  "𞠗" "Mende Kikakui input method."
- "quail/misc-lang")
+ "quail-misc-lang")
 (register-input-method
  "gothic" "Gothic" 'quail-use-package
  "𐌰" "Input method for the ancient Gothic script."
- "quail/misc-lang")
+ "quail-misc-lang")
 (register-input-method
  "coptic" "Coptic" 'quail-use-package
  "Ⲁ" "Coptic input method."
- "quail/misc-lang")
+ "quail-misc-lang")
 (register-input-method
  "urdu-keyboard" "Urdu" 'quail-use-package
  "ات" "Input method for Urdu."
@@ -923,19 +923,19 @@
 (register-input-method
  "tagalog" "Tagalog" 'quail-use-package
  "ᜊ" "Tagalog phonetic input method."
- "quail/philippine")
+ "quail-philippine")
 (register-input-method
  "hanunoo" "Hanunoo" 'quail-use-package
  "ᜱ" "Hanunoo phonetic input method."
- "quail/philippine")
+ "quail-philippine")
 (register-input-method
  "buhid" "Buhid" 'quail-use-package
  "ᝊᝓ" "Buhid phonetic input method."
- "quail/philippine")
+ "quail-philippine")
 (register-input-method
  "tagbanwa" "Tagbanwa" 'quail-use-package
  "ᝦ" "Tagbanwa phonetic input method."
- "quail/philippine")
+ "quail-philippine")
 (register-input-method
  "programmer-dvorak" "English" 'quail-use-package
  "DVP@" "An English (ASCII) dvorak layout optimized for programming, with for example"
@@ -1007,23 +1007,23 @@
 (register-input-method
  "slovak" "Slovak" 'quail-use-package
  "SK" "Standard Slovak QWERTZ keyboard."
- "quail/slovak")
+ "quail-slovak")
 (register-input-method
  "slovak-qwerty" "Slovak" 'quail-use-package
  "SK" "Standard Slovak QWERTY keyboard."
- "quail/slovak")
+ "quail-slovak")
 (register-input-method
  "slovak-prog-1" "Slovak" 'quail-use-package
  "SK" "Slovak (non-standard) keyboard for programmers #1."
- "quail/slovak")
+ "quail-slovak")
 (register-input-method
  "slovak-prog-2" "Slovak" 'quail-use-package
  "SK" "Slovak (non-standard) keyboard for programmers #2."
- "quail/slovak")
+ "quail-slovak")
 (register-input-method
  "slovak-prog-3" "Slovak" 'quail-use-package
  "SK" "Slovak (non-standard) keyboard for programmers #3."
- "quail/slovak")
+ "quail-slovak")
 (register-input-method
  "korean-symbol" "Korean" 'quail-use-package
  "심벌" "한글심벌입력표:"
@@ -1043,19 +1043,19 @@
 (register-input-method
  "thai-kesmanee" "Thai" 'quail-use-package
  "กก>" "Thai Kesmanee input method with TIS620 keyboard layout"
- "quail/thai")
+ "quail-thai")
 (register-input-method
  "thai-pattachote" "Thai" 'quail-use-package
  "กป>" "Thai Pattachote input method with TIS620 keyboard layout"
- "quail/thai")
+ "quail-thai")
 (register-input-method
  "tibetan-wylie" "Tibetan" 'quail-use-package
  "TIBw" "Tibetan character input by Extended Wylie key assignment."
- "quail/tibetan")
+ "quail-tibetan")
 (register-input-method
  "tibetan-tibkey" "Tibetan" 'quail-use-package
  "TIBt" "Tibetan character input by TibKey key assignment."
- "quail/tibetan")
+ "quail-tibetan")
 (register-input-method
  "tifinagh" "Tininagh" 'quail-use-package
  "ⵣ" "Tifinagh input method."
