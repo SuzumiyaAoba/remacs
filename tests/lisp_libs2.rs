@@ -2867,3 +2867,59 @@ fn r16_cus_start_table_descr_text() {
         "t"
     );
 }
+
+// ---------------------------------------------------------- round 17
+// allout.el, allout-widgets.el, tex-mode.el, texinfo.el,
+// texinfo-loaddefs.el (stub: the file is build-generated upstream),
+// lisp-mnt.el, reftex-vars.el, reporter.el, reftex.el,
+// reftex-loaddefs.el (stub), octave.el.
+// Needed prelude state: `desktop-minor-mode-handlers' (desktop.el),
+// `input-method-alist' (mule-cmds.el) and the `set-face-*' family.
+
+#[test]
+fn r17_tex_allout_reftex_octave() {
+    // None are dumped features in GNU -Q.
+    assert_eq!(
+        ev("(mapcar #'featurep '(allout allout-widgets tex-mode texinfo
+                  lisp-mnt reftex-vars reporter reftex octave))"),
+        "(nil nil nil nil nil nil nil nil nil)"
+    );
+    for name in [
+        "allout",
+        "allout-widgets",
+        "tex-mode",
+        "texinfo",
+        "lisp-mnt",
+        "reftex-vars",
+        "reporter",
+        "reftex",
+        "octave",
+    ] {
+        assert_eq!(
+            ev(&format!("(progn (require '{n}) (featurep '{n}))", n = name)),
+            "t",
+            "{name}"
+        );
+    }
+    // GNU loaddefs autoload cells (verified against GNU -Q).
+    assert_eq!(
+        ev("(mapcar (lambda (s) (autoloadp (symbol-function s)))
+                  '(allout-mode allout-widgets-mode tex-mode texinfo-mode
+                    latex-mode plain-tex-mode octave-mode inferior-octave
+                    reftex-mode reftex-citation turn-on-reftex
+                    reporter-submit-bug-report))"),
+        "(t t t t t t t t t t t t)"
+    );
+    // Startup defvars consulted by allout / leim input methods.
+    assert_eq!(
+        ev("(list (boundp 'desktop-minor-mode-handlers)
+                  (boundp 'input-method-alist)
+                  (get 'input-method-alist 'risky-local-variable))"),
+        "(t t t)"
+    );
+    // tex-mode entry points become real after autoload-triggered load.
+    assert_eq!(
+        ev("(progn (texinfo-mode) (featurep 'texinfo))"),
+        "t"
+    );
+}
