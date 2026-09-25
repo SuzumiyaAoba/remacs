@@ -9860,6 +9860,11 @@ fn f_map_char_table(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     }
     let runs = ct_effective_runs(i, &a[1], true);
     for (from, to, val) in runs {
+        // GNU `map_char_table' only calls FUNCTION for ranges whose
+        // value is non-nil.
+        if val.is_nil() {
+            continue;
+        }
         let key = if from == to {
             Value::Int(from as i128)
         } else {

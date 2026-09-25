@@ -888,7 +888,13 @@ fn unicode_prop_table(i: &mut Interp, prop: &str) -> Value {
         return t.clone();
     }
     let tag = symv(i, "char-code-property-table");
-    let t = misc::make_ct(i, tag, Value::Nil, vec![]);
+    // GNU's uniprop tables have 3 extra slots: slot 0 holds the
+    // property's parser state, slots 1-2 lazy-fill functions
+    // (`char-fold' reads slot 1 and funcalls it for cons ranges).
+    // We have no unidata, so slot 1 gets `ignore': the parser is
+    // callable but leaves the table empty.
+    let ignore = Value::Sym(i.intern("ignore"));
+    let t = misc::make_ct(i, tag, Value::Nil, vec![Value::Nil, ignore, Value::Nil]);
     i.char_code_prop_tables.push((prop.to_string(), t.clone()));
     t
 }

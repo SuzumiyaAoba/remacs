@@ -850,6 +850,10 @@ impl Interp {
                 "abbrev", "cconv", "cus-face", "ediff-hook", "eldoc",
                 "mouse", "prog-mode", "regexp-opt", "register",
                 "replace", "scroll-bar", "text-mode", "timer",
+                // GNU's dump also has newcomment.el, image.el and
+                // tab-bar.el (loadup.el).  json.el is a plain library.
+                "newcomment", "image",
+                "tab-bar",
             ] {
                 let _ = crate::lisp::load::load_library(&mut interp, lib);
             }

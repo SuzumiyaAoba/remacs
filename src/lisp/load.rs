@@ -482,6 +482,39 @@ static EMBEDDED_LISP: &[(&str, &str)] = &[
     ("scroll-bar", include_str!("../../lisp/scroll-bar.el")),
     ("text-mode", include_str!("../../lisp/text-mode.el")),
     ("timer", include_str!("../../lisp/timer.el")),
+    ("plstore", include_str!("../../lisp/plstore.el")),
+    ("profiler", include_str!("../../lisp/profiler.el")),
+    ("vcursor", include_str!("../../lisp/vcursor.el")),
+    ("epa", include_str!("../../lisp/epa.el")),
+    ("artist", include_str!("../../lisp/artist.el")),
+    ("enriched", include_str!("../../lisp/enriched.el")),
+    ("paragraphs", include_str!("../../lisp/paragraphs.el")),
+    ("sgml-mode", include_str!("../../lisp/sgml-mode.el")),
+    ("fill", include_str!("../../lisp/fill.el")),
+    ("xscheme", include_str!("../../lisp/xscheme.el")),
+    ("ebrowse", include_str!("../../lisp/ebrowse.el")),
+    ("f90", include_str!("../../lisp/f90.el")),
+    ("fortran", include_str!("../../lisp/fortran.el")),
+    ("which-func", include_str!("../../lisp/which-func.el")),
+    ("etags-regen", include_str!("../../lisp/etags-regen.el")),
+    ("vc-filewise", include_str!("../../lisp/vc-filewise.el")),
+    ("vc-src", include_str!("../../lisp/vc-src.el")),
+    ("pcvs-util", include_str!("../../lisp/pcvs-util.el")),
+    ("vc-annotate", include_str!("../../lisp/vc-annotate.el")),
+    ("cua-base", include_str!("../../lisp/cua-base.el")),
+    ("keypad", include_str!("../../lisp/keypad.el")),
+    ("edt", include_str!("../../lisp/edt.el")),
+    ("viper-init", include_str!("../../lisp/viper-init.el")),
+    ("tab-line", include_str!("../../lisp/tab-line.el")),
+    ("time", include_str!("../../lisp/time.el")),
+    ("woman", include_str!("../../lisp/woman.el")),
+    ("bookmark", include_str!("../../lisp/bookmark.el")),
+    ("char-fold", include_str!("../../lisp/char-fold.el")),
+    ("select", include_str!("../../lisp/select.el")),
+    ("tab-bar", include_str!("../../lisp/tab-bar.el")),
+    ("image", include_str!("../../lisp/image.el")),
+    ("newcomment", include_str!("../../lisp/newcomment.el")),
+    ("json", include_str!("../../lisp/json.el")),
     ("sort", include_str!("../../lisp/sort.el")),
     ("dired-x", include_str!("../../lisp/dired-x.el")),
     ("find-file", include_str!("../../lisp/find-file.el")),
@@ -500,6 +533,13 @@ fn embedded(name: &str) -> Option<&'static str> {
     EMBEDDED_LISP
         .iter()
         .find(|(n, _)| *n == stem)
+        .or_else(|| {
+            // Autoload cells carry GNU's subdirectory paths
+            // ("progmodes/f90"); our lisp/ tree is flat, so fall
+            // back to the basename.
+            stem.rsplit_once('/')
+                .and_then(|(_, base)| EMBEDDED_LISP.iter().find(|(n, _)| *n == base))
+        })
         .map(|(_, src)| *src)
 }
 

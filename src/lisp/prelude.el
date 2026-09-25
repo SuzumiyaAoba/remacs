@@ -8120,12 +8120,26 @@ code run via `eval' during BODY can see them (as GNU's `dlet')."
      (let ,binders ,@body)))
 
 (defun define-error (name message &optional parent)
-  "Define NAME as an error with MESSAGE inheriting from PARENT."
-  (let* ((parent (or parent 'error))
-         (conds (cons name (or (get parent 'error-conditions)
-                               (list 'error)))))
-    (put name 'error-conditions conds)
-    (put name 'error-message message)))
+  "Define NAME as a new error signal.
+MESSAGE is a string that will be output to the echo area if such an error
+is signaled without being caught by a `condition-case'.
+PARENT is either a signal or a list of signals from which it inherits.
+Defaults to `error'."
+  (unless parent (setq parent 'error))
+  (let ((conditions
+         (if (consp parent)
+             (apply #'append
+                    (mapcar (lambda (parent)
+                              (cons parent
+                                    (or (get parent 'error-conditions)
+                                        (error "Unknown signal `%s'" parent))))
+                            parent))
+           (cons parent (get parent 'error-conditions)))))
+    (put name 'error-conditions
+         (delete-dups (copy-sequence (cons name conditions))))
+    ;; FIXME: Make `error-message-string' more flexible, e.g. allow
+    ;; the message to be specified by a `format' string or a function.
+    (when message (put name 'error-message message))))
 
 (defvar after-load-alist nil
   "Alist of (FILE . FORMS) to eval after FILE is loaded.")
@@ -23930,6 +23944,12 @@ determined at run time.")
   "Major mode for editing Lisp data (as opposed to code)."
   (setq-local comment-start ";")
   (setq-local comment-start-skip ";+ *")
+  ;; GNU `lisp-mode-variables' (emacs-lisp/lisp-mode.el) also sets:
+  (setq-local comment-add 1)		;default to `;;' in comment-region
+  (setq-local comment-column 40)
+  (setq-local comment-use-syntax t)
+  (setq-local multibyte-syntax-as-symbol t)
+  (setq-local comment-indent-function #'lisp-comment-indent)
   ;; GNU `lisp-mode-variables' sets these for every Lisp mode.
   (setq-local imenu-generic-expression lisp-imenu-generic-expression)
   (setq imenu-case-fold-search nil))
@@ -41459,6 +41479,1407 @@ FRAC should be the inverse of the fractional value; for example, a value of
 
 (define-obsolete-function-alias 'face-doc-string #'face-documentation "29.1")
 (define-obsolete-function-alias 'set-face-doc-string #'set-face-documentation "29.1")
+
+;; GNU-dumped startup variables/functions referenced by libraries we
+;; now embed (window.el, frame.el, bindings.el, fringe.el, select.c,
+;; cus-edit.el, etags.c, menu-bar.el, mule/chartab).
+(defvar window-persistent-parameters
+  '((context . writable) (clone-of . t))
+  "Alist of persistent window parameters.
+This alist specifies which window parameters shall persist in the
+`window-state' functions.  See `window-persistent-parameters' in
+GNU's window.el.")
+
+(defcustom frame-background-mode nil
+  "The brightness of the background.
+Set this to the symbol `dark' if your background color is dark, `light' if
+your background is light, or nil (default) if you want Emacs to
+examine the brightness for you."
+  :group 'faces
+  :type '(choice (const dark)
+		 (const light)
+		 (const :tag "default" nil)))
+
+(defvar mode-line-misc-info
+  '((global-mode-string ("" global-mode-string)))
+  "Mode line construct for miscellaneous information.
+By default, the idea is to include any active display-time or
+global-mode-string display.")
+
+(defvar system-configuration-options ""
+  "String containing the configuration options Emacs was built with.")
+
+(defvar char-script-table (make-char-table 'char-script-table)
+  "Char table of script symbols.
+It has one extra slot whose value is a list of script symbols.")
+
+(defvar menu-bar-manuals-menu (make-sparse-keymap "Manuals")
+  "Keymap for the "Manuals" menu in the menu bar.")
+
+;; fringe.el's real setter runs on frames with fringes; keep a no-op
+;; for batch parity so defcustoms like bookmark's can evaluate.
+(defun fringe-custom-set-bitmap (symbol bitmap)
+  "If SYMBOL's bitmap differs from the default, use it as a fringe bitmap."
+  (put symbol 'fringe bitmap))
+
+;; select.c's C setter records the coding system; batch sessions have
+;; no selections, so a store-only stub matches observable state.
+(defun set-selection-coding-system (coding-system)
+  "Set the coding system for selection operations."
+  (put 'selection-coding-system 'coding-system coding-system))
+
+;; cus-edit.el builds the custom menu lazily in GNU; a nil-returning
+;; stub keeps defcustom :set calls in modes like f90/fortran working.
+(defvar frameset-session-filter-alist
+  (append
+   '((left            . frameset-filter-iconified)
+     (minibuffer      . frameset-filter-minibuffer)
+     (top             . frameset-filter-iconified))
+   (mapcar (lambda (p) (cons p :never)) frame-internal-parameters))
+  "Minimum set of parameters to filter for live (on-session) framesets.
+DO NOT MODIFY.  See `frameset-filter-alist' for a full description.")
+
+(defvar frameset-persistent-filter-alist
+  (append
+   '((background-color            . frameset-filter-sanitize-color)
+     (bottom                      . frameset-filter-shelve-param)
+     (buffer-list                 . :never)
+     (buffer-predicate            . :never)
+     (buried-buffer-list          . :never)
+     ;; Don't save the 'client' parameter to avoid that a subsequent
+     ;; `save-buffers-kill-terminal' in a non-client session barks at
+     ;; the user (Bug#29067).
+     (client                      . :never)
+     (delete-before               . :never)
+     (font                        . frameset-filter-font-param)
+     ;; Don't save font-backend because we cannot guarantee the new
+     ;; session will support the saved backend anyway.  (Bug#38442)
+     (font-backend                . :never)
+     (foreground-color            . frameset-filter-sanitize-color)
+     (frameset--text-pixel-height . :save)
+     (frameset--text-pixel-width  . :save)
+     (fullscreen                  . frameset-filter-shelve-param)
+     (GUI:bottom                  . frameset-filter-unshelve-param)
+     (GUI:font                    . frameset-filter-unshelve-param)
+     (GUI:fullscreen              . frameset-filter-unshelve-param)
+     (GUI:height                  . frameset-filter-unshelve-param)
+     (GUI:left                    . frameset-filter-unshelve-param)
+     (GUI:right                   . frameset-filter-unshelve-param)
+     (GUI:top                     . frameset-filter-unshelve-param)
+     (GUI:width                   . frameset-filter-unshelve-param)
+     (height                      . frameset-filter-shelve-param)
+     (left                        . frameset-filter-shelve-param)
+     (parent-frame                . :never)
+     (mouse-wheel-frame           . :never)
+     (right                       . frameset-filter-shelve-param)
+     (top                         . frameset-filter-shelve-param)
+     (tty                         . frameset-filter-tty-to-GUI)
+     (tty-type                    . frameset-filter-tty-to-GUI)
+     (width                       . frameset-filter-shelve-param)
+     (window-system               . :never))
+   frameset-session-filter-alist)
+  "Parameters to filter for persistent framesets.
+DO NOT MODIFY.  See `frameset-filter-alist' for a full description.")
+
+(defvar frameset-filter-alist frameset-persistent-filter-alist
+  "Alist of frame parameters and filtering functions.
+
+This alist is the default value of the FILTERS argument of
+`frameset-save' and `frameset-restore' (which see).
+
+Initially, `frameset-filter-alist' is set to, and shares the value of,
+`frameset-persistent-filter-alist'.  You can override any item in
+this alist by `push'ing a new item onto it.  If, for some reason, you
+intend to modify existing values, do
+
+  (setq frameset-filter-alist (copy-tree frameset-filter-alist))
+
+before changing anything.
+
+On saving, PARAMETERS is the parameter alist of each frame processed,
+and FILTERED is the parameter alist that gets saved to the frameset.
+
+On restoring, PARAMETERS is the parameter alist extracted from the
+frameset, and FILTERED is the resulting frame parameter alist used
+to restore the frame.
+
+Elements of `frameset-filter-alist' are conses (PARAM . ACTION),
+where PARAM is a parameter name (a symbol identifying a frame
+parameter), and ACTION can be:
+
+ nil       The parameter is copied to FILTERED.
+ :never    The parameter is never copied to FILTERED.
+ :save     The parameter is copied only when saving the frame.
+ :restore  The parameter is copied only when restoring the frame.
+ FILTER    A filter function.
+
+FILTER can be a symbol FILTER-FUN, or a list (FILTER-FUN ARGS...).
+FILTER-FUN is invoked with
+
+  (apply FILTER-FUN CURRENT FILTERED PARAMETERS SAVING ARGS)
+
+where
+
+ CURRENT     A cons (PARAM . VALUE), where PARAM is the one being
+	     filtered and VALUE is its current value.
+ FILTERED    The resulting alist (so far).
+ PARAMETERS  The complete alist of parameters being filtered,
+ SAVING      Non-nil if filtering before saving state, nil if filtering
+	       before restoring it.
+ ARGS        Any additional arguments specified in the ACTION.
+
+FILTER-FUN is allowed to modify items in FILTERED, but no other arguments.
+It must return:
+ nil                      Skip CURRENT (do not add it to FILTERED).
+ t                        Add CURRENT to FILTERED as is.
+ (NEW-PARAM . NEW-VALUE)  Add this to FILTERED instead of CURRENT.
+
+Frame parameters not on this alist are passed intact, as if they were
+defined with ACTION = nil.")
+
+
+;; Round-10 autoload cells (GNU loaddefs cells for the new libs).
+(fset 'artist-mode '(autoload "artist" "Toggle Artist mode.
+
+Artist lets you draw lines, squares, rectangles and poly-lines,
+ellipses and circles with your mouse and/or keyboard.
+
+How to quit Artist mode
+
+ Type \\[artist-mode-off] to quit artist-mode.
+
+
+How to submit a bug report
+
+ Type \\[artist-submit-bug-report] to submit a bug report.
+
+
+Drawing with the mouse:
+
+ mouse-2
+ shift mouse-2	Pops up a menu where you can select what to draw with
+		mouse-1, and where you can do some settings (described
+		below).
+
+ mouse-1
+ shift mouse-1	Draws lines, rectangles or poly-lines, erases, cuts, copies
+		or pastes:
+
+		Operation	Not shifted		  Shifted
+		--------------------------------------------------------------
+                Pen             fill-char at point        line from last point
+                                                          to new point
+		--------------------------------------------------------------
+		Line		Line in any direction	  Straight line
+		--------------------------------------------------------------
+		Rectangle	Rectangle		  Square
+		--------------------------------------------------------------
+		Poly-line	Poly-line in any dir	  Straight poly-lines
+		--------------------------------------------------------------
+		Ellipses	Ellipses		  Circles
+		--------------------------------------------------------------
+		Text		Text (see thru)		  Text (overwrite)
+		--------------------------------------------------------------
+		Spray-can	Spray-can		  Set size for spray
+		--------------------------------------------------------------
+		Erase		Erase character		  Erase rectangle
+		--------------------------------------------------------------
+		Vaporize	Erase single line	  Erase connected
+							  lines
+		--------------------------------------------------------------
+		Cut		Cut rectangle		  Cut square
+		--------------------------------------------------------------
+		Copy		Copy rectangle		  Copy square
+		--------------------------------------------------------------
+		Paste		Paste			  Paste
+		--------------------------------------------------------------
+		Flood-fill	Flood-fill		  Flood-fill
+		--------------------------------------------------------------
+
+		* Straight lines can only go horizontally, vertically
+		  or diagonally.
+
+		* Poly-lines are drawn while holding mouse-1 down.  When you
+		  release the button, the point is set.  If you want a segment
+		  to be straight, hold down shift before pressing the
+		  mouse-1 button.  Click mouse-2 or mouse-3 to stop drawing
+		  poly-lines.
+
+		* See thru for text means that text already in the buffer
+		  will be visible through blanks in the text rendered, while
+		  overwrite means the opposite.
+
+		* Vaporizing connected lines only vaporizes lines whose
+		  _endpoints_ are connected.  See also the variable
+		  `artist-vaporize-fuzziness'.
+
+		* Cut copies, then clears the rectangle/square.
+
+		* When drawing lines or poly-lines, you can set arrows.
+		  See below under \"Arrows\" for more info.
+
+		* The mode line shows the currently selected drawing operation.
+		  In addition, if it has an asterisk (*) at the end, you
+		  are currently drawing something.
+
+		* Be patient when flood-filling -- large areas take quite
+		  some time to fill.
+
+
+ mouse-3	Erases character under pointer
+ shift mouse-3	Erases rectangle
+
+
+Settings
+
+ Set fill	Sets the character used when filling rectangles/squares
+
+ Set line	Sets the character used when drawing lines
+
+ Erase char	Sets the character used when erasing
+
+ Rubber-banding	Toggles rubber-banding
+
+ Trimming	Toggles trimming of line-endings (that is: when the shape
+		is drawn, extraneous white-space at end of lines is removed)
+
+ Borders        Toggles the drawing of line borders around filled shapes
+
+
+Drawing with keys
+
+ \\[artist-key-set-point]		Does one of the following:
+		For lines/rectangles/squares: sets the first/second endpoint
+                For poly-lines: sets a point (use \\[universal-argument] \\[artist-key-set-point] to set last point)
+		When erase characters: toggles erasing
+		When cutting/copying: Sets first/last endpoint of rect/square
+		When pasting: Pastes
+
+ \\[artist-select-operation]	Selects what to draw
+
+ Move around with \\[artist-next-line], \\[artist-previous-line], \\[artist-forward-char] and \\[artist-backward-char].
+
+ \\[artist-select-fill-char]	Sets the character to use when filling
+ \\[artist-select-line-char]	Sets the character to use when drawing
+ \\[artist-select-erase-char]	Sets the character to use when erasing
+ \\[artist-toggle-rubber-banding]	Toggles rubber-banding
+ \\[artist-toggle-trim-line-endings]	Toggles trimming of line-endings
+ \\[artist-toggle-borderless-shapes]	Toggles borders on drawn shapes
+
+
+Arrows
+
+ \\[artist-toggle-first-arrow]		Sets/unsets an arrow at the beginning
+		of the line/poly-line
+
+ \\[artist-toggle-second-arrow]		Sets/unsets an arrow at the end
+		of the line/poly-line
+
+
+Selecting operation
+
+ There are some keys for quickly selecting drawing operations:
+
+ \\[artist-select-op-line]	Selects drawing lines
+ \\[artist-select-op-straight-line]	Selects drawing straight lines
+ \\[artist-select-op-rectangle]	Selects drawing rectangles
+ \\[artist-select-op-square]	Selects drawing squares
+ \\[artist-select-op-poly-line]	Selects drawing poly-lines
+ \\[artist-select-op-straight-poly-line]	Selects drawing straight poly-lines
+ \\[artist-select-op-ellipse]	Selects drawing ellipses
+ \\[artist-select-op-circle]	Selects drawing circles
+ \\[artist-select-op-text-see-thru]	Selects rendering text (see thru)
+ \\[artist-select-op-text-overwrite]	Selects rendering text (overwrite)
+ \\[artist-select-op-spray-can]	Spray with spray-can
+ \\[artist-select-op-spray-set-size]	Set size for the spray-can
+ \\[artist-select-op-erase-char]	Selects erasing characters
+ \\[artist-select-op-erase-rectangle]	Selects erasing rectangles
+ \\[artist-select-op-vaporize-line]	Selects vaporizing single lines
+ \\[artist-select-op-vaporize-lines]	Selects vaporizing connected lines
+ \\[artist-select-op-cut-rectangle]	Selects cutting rectangles
+ \\[artist-select-op-copy-rectangle]	Selects copying rectangles
+ \\[artist-select-op-paste]	Selects pasting
+ \\[artist-select-op-flood-fill]	Selects flood-filling
+
+
+Variables
+
+ This is a brief overview of the different variables.  For more info,
+ see the documentation for the variables (type \\[describe-variable] <variable> RET).
+
+ `artist-rubber-banding'              Interactively do rubber-banding or not
+ `artist-first-char'                  What to set at first/second point...
+ `artist-second-char'                 ...when not rubber-banding
+ `artist-interface-with-rect'         Should cut/copy/paste interface with rect
+ `artist-arrows'                      The arrows to use when drawing arrows
+ `artist-aspect-ratio'                Character height-to-width for squares
+ `artist-trim-line-endings'           Trimming of line endings
+ `artist-flood-fill-right-border'     Right border when flood-filling
+ `artist-flood-fill-show-incrementally'  Update display while filling
+ `artist-pointer-shape'               Pointer shape to use while drawing
+ `artist-ellipse-left-char'           Character to use for narrow ellipses
+ `artist-ellipse-right-char'          Character to use for narrow ellipses
+ `artist-borderless-shapes'           If shapes should have borders
+ `artist-picture-compatibility'       Picture mode compatibility on or off
+ `artist-vaporize-fuzziness'          Tolerance when recognizing lines
+ `artist-spray-interval'              Seconds between repeated sprayings
+ `artist-spray-radius'                Size of the spray-area
+ `artist-spray-chars'                 The spray-\"color\"
+ `artist-spray-new-char'              Initial spray-\"color\"
+
+Hooks
+
+ Turning the mode on or off runs `artist-mode-hook'.
+
+
+Keymap summary
+
+\\{artist-mode-map}
+
+This is a minor mode.  If called interactively, toggle the `Artist mode'
+mode.  If the prefix argument is positive, enable the mode, and if it is
+zero or negative, disable the mode.
+
+If called from Lisp, toggle the mode if ARG is `toggle'.  Enable the
+mode if ARG is nil, omitted, or is a positive number.  Disable the mode
+if ARG is a negative number.
+
+To check whether the minor mode is enabled in the current buffer,
+evaluate the variable `artist-mode'.
+
+The mode's hook is called both when the mode is enabled and when it is
+disabled.
+
+(fn &optional ARG)" t nil))
+(fset 'bookmark-bmenu-get-buffer '(autoload "bookmark" "Return the Bookmark List, building it if it doesn't exists.
+Don't affect the buffer ring order." nil nil))
+(fset 'bookmark-bmenu-list '(autoload "bookmark" "Display a list of existing bookmarks.
+The list is displayed in a buffer named `*Bookmark List*'.
+The leftmost column displays a D if the bookmark is flagged for
+deletion, or > if it is flagged for displaying." t nil))
+(fset 'bookmark-bmenu-search '(autoload "bookmark" "Incremental search of bookmarks, hiding the non-matches as we go." (bookmark-bmenu-mode) nil))
+(fset 'bookmark-delete '(autoload "bookmark" "Delete BOOKMARK-NAME from the bookmark list.
+
+Removes only the first instance of a bookmark with that name.  If
+there are one or more other bookmarks with the same name, they will
+not be deleted.  Defaults to the \"current\" bookmark (that is, the
+one most recently used in this file, if any).
+Optional second arg BATCH means don't update the bookmark list buffer,
+probably because we were called from there.
+
+(fn BOOKMARK-NAME &optional BATCH)" t nil))
+(fset 'bookmark-delete-all '(autoload "bookmark" "Permanently delete all bookmarks.
+If optional argument NO-CONFIRM is non-nil, don't ask for
+confirmation.
+
+(fn &optional NO-CONFIRM)" t nil))
+(fset 'bookmark-insert '(autoload "bookmark" "Insert the text of the file pointed to by bookmark BOOKMARK-NAME.
+BOOKMARK-NAME is a bookmark name (a string), not a bookmark record.
+Refuse to insert bookmarks if its handler's property `bookmark-inhibit',
+which is a list, contains `insert'.
+
+You may have a problem using this function if the value of variable
+`bookmark-alist' is nil.  If that happens, you need to load in some
+bookmarks.  See help on function `bookmark-load' for more about
+this.
+
+(fn BOOKMARK-NAME)" t nil))
+(fset 'bookmark-insert-location '(autoload "bookmark" "Insert the name of the file associated with BOOKMARK-NAME.
+
+Optional second arg NO-HISTORY means don't record this in the
+minibuffer history list `bookmark-history'.
+
+(fn BOOKMARK-NAME &optional NO-HISTORY)" t nil))
+(fset 'bookmark-jump '(autoload "bookmark" "Jump to bookmark BOOKMARK (a point in some file).
+You may have a problem using this function if the value of variable
+`bookmark-alist' is nil.  If that happens, you need to load in some
+bookmarks.  See help on function `bookmark-load' for more about
+this.
+
+If the file pointed to by BOOKMARK no longer exists, you will be asked
+if you wish to give the bookmark a new location, and `bookmark-jump'
+will then jump to the new location, as well as recording it in place
+of the old one in the permanent bookmark record.
+
+BOOKMARK is usually a bookmark name (a string).  It can also be a
+bookmark record, but this is usually only done by programmatic callers.
+
+If DISPLAY-FUNC is non-nil, it is a function to invoke to display the
+bookmark.  It defaults to `pop-to-buffer-same-window'.  A typical value for
+DISPLAY-FUNC would be `switch-to-buffer-other-window'.
+
+(fn BOOKMARK &optional DISPLAY-FUNC)" t nil))
+(fset 'bookmark-jump-other-frame '(autoload "bookmark" "Jump to BOOKMARK in another frame.  See `bookmark-jump' for more.
+
+(fn BOOKMARK)" t nil))
+(fset 'bookmark-jump-other-window '(autoload "bookmark" "Jump to BOOKMARK in another window.  See `bookmark-jump' for more.
+
+(fn BOOKMARK)" t nil))
+(fset 'bookmark-load '(autoload "bookmark" "Load bookmarks from FILE (which must be in bookmark format).
+Appends loaded bookmarks to the front of the list of bookmarks.
+If argument OVERWRITE is non-nil, existing bookmarks are destroyed.
+Optional third arg NO-MSG means don't display any messages while loading.
+If DEFAULT is non-nil make FILE the new bookmark file to watch.
+Interactively, a prefix arg makes OVERWRITE and DEFAULT non-nil.
+
+If you load a file that doesn't contain a proper bookmark alist, you
+will corrupt Emacs's bookmark list.  Generally, you should only load
+in files that were created with the bookmark functions in the first
+place.  Your own personal bookmark file, specified by the variable
+`bookmark-default-file', is maintained automatically by Emacs; you
+shouldn't need to load it explicitly.
+
+If you load a file containing bookmarks with the same names as
+bookmarks already present in your Emacs, the new bookmarks will get
+unique numeric suffixes \"<2>\", \"<3>\", etc.
+
+(fn FILE &optional OVERWRITE NO-MSG DEFAULT)" t nil))
+(fset 'bookmark-relocate '(autoload "bookmark" "Relocate BOOKMARK-NAME to another file, reading file name with minibuffer.
+
+This makes an already existing bookmark point to that file, instead of
+the one it used to point at.  Useful when a file has been renamed
+after a bookmark was set in it.
+
+(fn BOOKMARK-NAME)" t nil))
+(fset 'bookmark-rename '(autoload "bookmark" "Change the name of OLD-NAME bookmark to NEW-NAME name.
+If called from keyboard, prompt for OLD-NAME and NEW-NAME.
+If called from menubar, select OLD-NAME from a menu and prompt for NEW-NAME.
+
+If called from Lisp, prompt for NEW-NAME if only OLD-NAME was passed
+as an argument.  If called with two strings, then no prompting is done.
+You must pass at least OLD-NAME when calling from Lisp.
+
+While you are entering the new name, consecutive \\<bookmark-minibuffer-read-name-map>\\[bookmark-yank-word]'s insert
+consecutive words from the text of the buffer into the new bookmark
+name.
+
+(fn OLD-NAME &optional NEW-NAME)" t nil))
+(fset 'bookmark-save '(autoload "bookmark" "Save currently defined bookmarks in FILE.
+FILE defaults to `bookmark-default-file'.
+With prefix PARG, query user for a file to save in.
+If MAKE-DEFAULT is non-nil (interactively with prefix \\[universal-argument] \\[universal-argument])
+the file we save in becomes the new default in the current Emacs
+session (without affecting the value of `bookmark-default-file'.).
+
+When you want to load in the bookmarks from a file, use
+`bookmark-load', \\[bookmark-load].  That function will prompt you
+for a file, defaulting to the file defined by variable
+`bookmark-default-file'.
+
+(fn &optional PARG FILE MAKE-DEFAULT)" t nil))
+(fset 'bookmark-set '(autoload "bookmark" "Set a bookmark named NAME at the current location.
+If NAME is nil, then prompt the user.
+
+With a prefix arg (non-nil NO-OVERWRITE), do not overwrite any
+existing bookmark that has the same name as NAME, but instead push the
+new bookmark onto the bookmark alist.  The most recently set bookmark
+with name NAME is thus the one in effect at any given time, but the
+others are still there, should the user decide to delete the most
+recent one.
+
+To yank words from the text of the buffer and use them as part of the
+bookmark name, type \\<bookmark-minibuffer-read-name-map>\\[bookmark-yank-word] while setting a bookmark.  Successive \\[bookmark-yank-word]'s
+yank successive words.
+
+Typing \\[universal-argument] inserts (at the bookmark name prompt) the name of the last
+bookmark used in the document where the new bookmark is being set;
+this helps you use a single bookmark name to track progress through a
+large document.  If there is no prior bookmark for this document, then
+\\[universal-argument] inserts an appropriate name based on the buffer or file.
+
+Use \\[bookmark-delete] to remove bookmarks (you give it a name and
+it removes only the first instance of a bookmark with that name from
+the list of bookmarks.)
+
+(fn &optional NAME NO-OVERWRITE)" t nil))
+(fset 'bookmark-set-no-overwrite '(autoload "bookmark" "Set a bookmark named NAME at the current location.
+If NAME is nil, then prompt the user.
+
+If a bookmark named NAME already exists and prefix argument
+PUSH-BOOKMARK is non-nil, then push the new bookmark onto the
+bookmark alist.  Pushing it means that among bookmarks named
+NAME, this one becomes the one in effect, but the others are
+still there, in order, and become effective again if the user
+ever deletes the most recent one.
+
+Otherwise, if a bookmark named NAME already exists but PUSH-BOOKMARK
+is nil, raise an error.
+
+To yank words from the text of the buffer and use them as part of the
+bookmark name, type \\<bookmark-minibuffer-read-name-map>\\[bookmark-yank-word] while setting a bookmark.  Successive \\[bookmark-yank-word]'s
+yank successive words.
+
+Typing \\[universal-argument] inserts (at the bookmark name prompt) the name of the last
+bookmark used in the document where the new bookmark is being set;
+this helps you use a single bookmark name to track progress through a
+large document.  If there is no prior bookmark for this document, then
+\\[universal-argument] inserts an appropriate name based on the buffer or file.
+
+Use \\[bookmark-delete] to remove bookmarks (you give it a name and
+it removes only the first instance of a bookmark with that name from
+the list of bookmarks.)
+
+(fn &optional NAME PUSH-BOOKMARK)" t nil))
+(fset 'bookmark-write '(autoload "bookmark" "Write bookmarks to a file (reading the file name with the minibuffer)." t nil))
+(fset 'char-fold-to-regexp '(autoload "char-fold" "Return a regexp matching anything that char-folds into STRING.
+Any character in STRING that has an entry in
+`char-fold-table' is replaced with that entry (which is a
+regexp) and other characters are `regexp-quote'd.
+
+When LAX is non-nil, then the final character also matches ligatures
+partially, for instance, the search string \"f\" will match \"ﬁ\",
+so when typing the search string in isearch while the cursor is on
+a ligature, the search won't try to immediately advance to the next
+complete match, but will stay on the partially matched ligature.
+
+If the resulting regexp would be too long for Emacs to handle,
+just return the result of calling `regexp-quote' on STRING.
+
+FROM is for internal use.  It specifies an index in the STRING
+from which to start.
+
+(fn STRING &optional LAX FROM)" nil nil))
+(fset 'cua-mode '(autoload "cua-base" "Toggle Common User Access style editing (CUA mode).
+
+CUA mode is a global minor mode.  When enabled, typed text
+replaces the active selection, and you can use C-z, C-x, C-c, and
+C-v to undo, cut, copy, and paste in addition to the normal Emacs
+bindings.  The C-x and C-c keys only do cut and copy when the
+region is active, so in most cases, they do not conflict with the
+normal function of these prefix keys.
+
+If you really need to perform a command which starts with one of
+the prefix keys even when the region is active, you have three
+options:
+- press the prefix key twice very quickly (within 0.2 seconds),
+- press the prefix key and the following key within 0.2 seconds, or
+- use the SHIFT key with the prefix key, i.e. C-S-x or C-S-c.
+
+You can customize `cua-enable-cua-keys' to completely disable the
+CUA bindings, or `cua-prefix-override-inhibit-delay' to change
+the prefix fallback behavior.
+
+This is a global minor mode.  If called interactively, toggle the `Cua
+mode' mode.  If the prefix argument is positive, enable the mode, and if
+it is zero or negative, disable the mode.
+
+If called from Lisp, toggle the mode if ARG is `toggle'.  Enable the
+mode if ARG is nil, omitted, or is a positive number.  Disable the mode
+if ARG is a negative number.
+
+To check whether the minor mode is enabled in the current buffer,
+evaluate `(default-value \\='cua-mode)'.
+
+The mode's hook is called both when the mode is enabled and when it is
+disabled.
+
+(fn &optional ARG)" t nil))
+(fset 'cua-selection-mode '(autoload "cua-base" "Enable CUA selection mode without the C-z/C-x/C-c/C-v bindings.
+
+(fn ARG)" t nil))
+(fset 'describe-char-fold-equivalences '(autoload "char-fold" "Display characters equivalent to CHAR under character-folding.
+Prompt for CHAR (using `read-char-by-name', which see for how to
+specify the character).  With no input, i.e. when CHAR is nil,
+describe all available character equivalences of `char-fold-to-regexp'.
+Optional argument LAX (interactively, the prefix argument), if
+non-nil, means also include partially matching ligatures and
+non-canonical equivalences.
+
+Each line of the display shows the equivalences in two different
+ways separated by a colon:
+
+    - as the literal character or sequence
+    - using an ASCII-only escape syntax
+
+For example, for the letter \\='r\\=', the first line is
+
+    r: ?\\N{LATIN SMALL LETTER R}
+
+which is for the requested character itself, and a later line has
+
+    ṟ: ?\\N{LATIN SMALL LETTER R}?\\N{COMBINING MACRON BELOW}
+
+which clearly shows what the constituent characters are.
+
+(fn CHAR &optional LAX)" t nil))
+(fset 'display-time '(autoload "time" "Enable display of time, load level, and mail flag in mode lines.
+This display updates automatically every minute.
+If `display-time-day-and-date' is non-nil, the current day and date
+are displayed as well.
+This runs the normal hook `display-time-hook' after each update." t nil))
+(fset 'display-time-mode '(autoload "time" "Toggle display of time, load level, and mail flag in mode lines.
+
+When Display Time mode is enabled, it updates every minute (you
+can control the number of seconds between updates by customizing
+`display-time-interval').  If `display-time-day-and-date' is
+non-nil, the current day and date are displayed as well.  This
+runs the normal hook `display-time-hook' after each update.
+
+This is a global minor mode.  If called interactively, toggle the
+`Display-Time mode' mode.  If the prefix argument is positive, enable
+the mode, and if it is zero or negative, disable the mode.
+
+If called from Lisp, toggle the mode if ARG is `toggle'.  Enable the
+mode if ARG is nil, omitted, or is a positive number.  Disable the mode
+if ARG is a negative number.
+
+To check whether the minor mode is enabled in the current buffer,
+evaluate `(default-value \\='display-time-mode)'.
+
+The mode's hook is called both when the mode is enabled and when it is
+disabled.
+
+(fn &optional ARG)" t nil))
+(fset 'ebrowse-back-in-position-stack '(autoload "ebrowse" "Move backward in the position stack.
+Prefix arg ARG says how much.
+
+(fn ARG)" t nil))
+(fset 'ebrowse-electric-choose-tree '(autoload "ebrowse" "Return a buffer containing a tree or nil if no tree found or canceled." t nil))
+(fset 'ebrowse-electric-position-menu '(autoload "ebrowse" "List positions in the position stack in an electric buffer." t nil))
+(fset 'ebrowse-forward-in-position-stack '(autoload "ebrowse" "Move forward in the position stack.
+Prefix arg ARG says how much.
+
+(fn ARG)" t nil))
+(fset 'ebrowse-member-mode '(autoload "ebrowse" "Major mode for Ebrowse member buffers.
+
+In addition to any hooks its parent mode `special-mode' might have
+run, this mode runs the hook `ebrowse-member-mode-hook', as the final
+or penultimate step during initialization.
+
+\\{ebrowse-member-mode-map}" t nil))
+(fset 'ebrowse-save-tree '(autoload "ebrowse" "Save current tree in same file it was loaded from." t nil))
+(fset 'ebrowse-save-tree-as '(autoload "ebrowse" "Write the current tree data structure to a file.
+Read the file name from the minibuffer if interactive.
+Otherwise, FILE-NAME specifies the file to save the tree in.
+
+(fn &optional FILE-NAME)" t nil))
+(fset 'ebrowse-statistics '(autoload "ebrowse" "Display statistics for a class tree." t nil))
+(fset 'ebrowse-tags-complete-symbol '(autoload "ebrowse" "Perform completion on the C++ symbol preceding point.
+A second call of this function without changing point inserts the next match.
+A call with prefix PREFIX reads the symbol to insert from the minibuffer with
+completion.
+
+(fn PREFIX)" t nil))
+(fset 'ebrowse-tags-find-declaration '(autoload "ebrowse" "Find declaration of member at point." t nil))
+(fset 'ebrowse-tags-find-declaration-other-frame '(autoload "ebrowse" "Find definition of member at point in other frame." t nil))
+(fset 'ebrowse-tags-find-declaration-other-window '(autoload "ebrowse" "Find declaration of member at point in other window." t nil))
+(fset 'ebrowse-tags-find-definition '(autoload "ebrowse" "Find definition of member at point." t nil))
+(fset 'ebrowse-tags-find-definition-other-frame '(autoload "ebrowse" "Find definition of member at point in other frame." t nil))
+(fset 'ebrowse-tags-find-definition-other-window '(autoload "ebrowse" "Find definition of member at point in other window." t nil))
+(fset 'ebrowse-tags-loop-continue '(autoload "ebrowse" "Repeat last operation on files in tree.
+FIRST-TIME non-nil means this is not a repetition, but the first time.
+TREE-BUFFER if indirectly specifies which files to loop over.
+
+(fn &optional FIRST-TIME TREE-BUFFER)" t nil))
+(fset 'ebrowse-tags-query-replace '(autoload "ebrowse" "Query replace FROM with TO in all files of a class tree.
+With prefix arg, process files of marked classes only.
+
+As each match is found, the user must type a character saying
+what to do with it.  Type SPC or `y' to replace the match,
+DEL or `n' to skip and go to the next match.  For more directions,
+type \\[help-command] at that time.
+
+(fn FROM TO)" t nil))
+(fset 'ebrowse-tags-search '(autoload "ebrowse" "Search for REGEXP in all files in a tree.
+If marked classes exist, process marked classes, only.
+If regular expression is nil, repeat last search.
+
+(fn REGEXP)" t nil))
+(fset 'ebrowse-tags-search-member-use '(autoload "ebrowse" "Search for call sites of a member.
+If FIX-NAME is specified, search uses of that member.
+Otherwise, read a member name from the minibuffer.
+Searches in all files mentioned in a class tree for something that
+looks like a function call to the member.
+
+(fn &optional FIX-NAME)" t nil))
+(fset 'ebrowse-tags-view-declaration '(autoload "ebrowse" "View declaration of member at point." t nil))
+(fset 'ebrowse-tags-view-definition '(autoload "ebrowse" "View definition of member at point." t nil))
+(fset 'ebrowse-tags-view-definition-other-frame '(autoload "ebrowse" "View definition of member at point in other frame." t nil))
+(fset 'ebrowse-tags-view-definition-other-window '(autoload "ebrowse" "View definition of member at point in other window." t nil))
+(fset 'ebrowse-tree-mode '(autoload "ebrowse" "Major mode for Ebrowse class tree buffers.
+Each line corresponds to a class in a class tree.
+Letters do not insert themselves, they are commands.
+File operations in the tree buffer work on class tree data structures.
+E.g. \\[save-buffer] writes the tree to the file it was loaded from.
+
+Tree mode key bindings:
+\\{ebrowse-tree-mode-map}
+
+In addition to any hooks its parent mode `special-mode' might have
+run, this mode runs the hook `ebrowse-tree-mode-hook', as the final or
+penultimate step during initialization." t nil))
+(fset 'edt-emulation-on '(autoload "edt" "Turn on EDT Emulation." t nil))
+(fset 'edt-set-scroll-margins '(autoload "edt" "Set scroll margins.
+Argument TOP is the top margin in number of lines or percent of window.
+Argument BOTTOM is the bottom margin in number of lines or percent of window.
+
+(fn TOP BOTTOM)" t nil))
+(fset 'emacs-init-time '(autoload "time" "Return a string giving the duration of the Emacs initialization.
+FORMAT is a string to format the result, using `format'.  If nil,
+the default format \"%f seconds\" is used.
+
+(fn &optional FORMAT)" t nil))
+(fset 'emacs-uptime '(autoload "time" "Return a string giving the uptime of this instance of Emacs.
+FORMAT is a string to format the result, using `format-seconds'.
+For example, the Unix uptime command format is \"%D, %z%2h:%.2m\".
+If the optional argument HERE is non-nil, insert string at
+point.
+
+(fn &optional FORMAT HERE)" t nil))
+(fset 'enriched-decode '(autoload "enriched" "
+
+(fn FROM TO)" nil nil))
+(fset 'enriched-encode '(autoload "enriched" "
+
+(fn FROM TO ORIG-BUF)" nil nil))
+(fset 'enriched-mode '(autoload "enriched" "Minor mode for editing text/enriched files.
+
+These are files with embedded formatting information in the MIME standard
+text/enriched format.
+
+Turning the mode on or off runs `enriched-mode-hook'.
+
+More information about Enriched mode is available in the file
+\"enriched.txt\" in `data-directory'.
+
+Commands:
+
+\\{enriched-mode-map}
+
+This is a minor mode.  If called interactively, toggle the `Enriched
+mode' mode.  If the prefix argument is positive, enable the mode, and if
+it is zero or negative, disable the mode.
+
+If called from Lisp, toggle the mode if ARG is `toggle'.  Enable the
+mode if ARG is nil, omitted, or is a positive number.  Disable the mode
+if ARG is a negative number.
+
+To check whether the minor mode is enabled in the current buffer,
+evaluate the variable `enriched-mode'.
+
+The mode's hook is called both when the mode is enabled and when it is
+disabled.
+
+(fn &optional ARG)" t nil))
+(fset 'epa-decrypt-armor-in-region '(autoload "epa" "Decrypt OpenPGP armors in the current region between START and END.
+
+Don't use this command in Lisp programs!
+See the reason described in the `epa-decrypt-region' documentation.
+
+(fn START END)" t nil))
+(fset 'epa-decrypt-file '(autoload "epa" "Decrypt DECRYPT-FILE into PLAIN-FILE.
+If you do not specify PLAIN-FILE, this functions prompts for the value to use.
+
+(fn DECRYPT-FILE &optional PLAIN-FILE)" t nil))
+(fset 'epa-decrypt-region '(autoload "epa" "Decrypt the current region between START and END.
+
+If MAKE-BUFFER-FUNCTION is non-nil, call it to prepare an output buffer.
+It should return that buffer.  If it copies the input, it should
+delete the text now being decrypted.  It should leave point at the
+proper place to insert the plaintext.
+
+Be careful about using this command in Lisp programs!
+Since this function operates on regions, it does some tricks such
+as coding-system detection and unibyte/multibyte conversion.  If
+you are sure how the data in the region should be treated, you
+should consider using the string based counterpart
+`epg-decrypt-string', or the file based counterpart
+`epg-decrypt-file' instead.
+
+For example:
+
+(let ((context (epg-make-context \\='OpenPGP)))
+  (decode-coding-string
+    (epg-decrypt-string context (buffer-substring start end))
+    \\='utf-8))
+
+(fn START END &optional MAKE-BUFFER-FUNCTION)" t nil))
+(fset 'epa-delete-keys '(autoload "epa" "Delete selected KEYS.
+
+(fn KEYS &optional ALLOW-SECRET)" t nil))
+(fset 'epa-encrypt-file '(autoload "epa" "Encrypt FILE for RECIPIENTS.
+
+(fn FILE RECIPIENTS)" t nil))
+(fset 'epa-encrypt-region '(autoload "epa" "Encrypt the current region between START and END for RECIPIENTS.
+
+Don't use this command in Lisp programs!
+Since this function operates on regions, it does some tricks such
+as coding-system detection and unibyte/multibyte conversion.  If
+you are sure how the data should be treated, you should consider
+using the string based counterpart `epg-encrypt-string', or the
+file based counterpart `epg-encrypt-file' instead.
+
+For example:
+
+(let ((context (epg-make-context \\='OpenPGP)))
+  (epg-encrypt-string
+    context
+    (encode-coding-string (buffer-substring start end) \\='utf-8)
+    nil))
+
+(fn START END RECIPIENTS SIGN SIGNERS)" t nil))
+(fset 'epa-export-keys '(autoload "epa" "Export selected KEYS to FILE.
+
+(fn KEYS FILE)" t nil))
+(fset 'epa-import-armor-in-region '(autoload "epa" "Import keys in the OpenPGP armor format in the current region from START to END.
+
+(fn START END)" t nil))
+(fset 'epa-import-keys '(autoload "epa" "Import keys from FILE.
+
+(fn FILE)" t nil))
+(fset 'epa-import-keys-region '(autoload "epa" "Import keys from the region.
+
+(fn START END)" t nil))
+(fset 'epa-insert-keys '(autoload "epa" "Insert selected KEYS after the point.
+
+(fn KEYS)" t nil))
+(fset 'epa-list-keys '(autoload "epa" "List all keys matched with NAME from the public keyring.
+
+(fn &optional NAME)" t nil))
+(fset 'epa-list-secret-keys '(autoload "epa" "List all keys matched with NAME from the private keyring.
+
+(fn &optional NAME)" t nil))
+(fset 'epa-select-keys '(autoload "epa" "Display a user's keyring and ask him to select keys.
+CONTEXT is an `epg-context'.
+PROMPT is a string to prompt with.
+NAMES is a list of strings to be matched with keys.  If it is nil, all
+the keys are listed.
+If SECRET is non-nil, list secret keys instead of public keys.
+
+(fn CONTEXT PROMPT &optional NAMES SECRET)" nil nil))
+(fset 'epa-sign-file '(autoload "epa" "Sign FILE by SIGNERS keys selected.
+
+(fn FILE SIGNERS MODE)" t nil))
+(fset 'epa-sign-region '(autoload "epa" "Sign the current region between START and END by SIGNERS keys selected.
+
+Don't use this command in Lisp programs!
+Since this function operates on regions, it does some tricks such
+as coding-system detection and unibyte/multibyte conversion.  If
+you are sure how the data should be treated, you should consider
+using the string based counterpart `epg-sign-string', or the file
+based counterpart `epg-sign-file' instead.
+
+For example:
+
+(let ((context (epg-make-context \\='OpenPGP)))
+  (epg-sign-string
+    context
+    (encode-coding-string (buffer-substring start end) \\='utf-8)))
+
+(fn START END SIGNERS MODE)" t nil))
+(fset 'epa-verify-cleartext-in-region '(autoload "epa" "Verify OpenPGP cleartext signed messages in current region from START to END.
+
+Don't use this command in Lisp programs!
+See the reason described in the `epa-verify-region' documentation.
+
+(fn START END)" t nil))
+(fset 'epa-verify-file '(autoload "epa" "Verify FILE.
+
+(fn FILE)" t nil))
+(fset 'epa-verify-region '(autoload "epa" "Verify the current region between START and END.
+
+Don't use this command in Lisp programs!
+Since this function operates on regions, it does some tricks such
+as coding-system detection and unibyte/multibyte conversion.  If
+you are sure how the data in the region should be treated, you
+should consider using the string based counterpart
+`epg-verify-string', or the file based counterpart
+`epg-verify-file' instead.
+
+For example:
+
+(let ((context (epg-make-context \\='OpenPGP)))
+  (decode-coding-string
+    (epg-verify-string context (buffer-substring start end))
+    \\='utf-8))
+
+(fn START END)" t nil))
+(fset 'etags-regen-mode '(autoload "etags-regen" "Minor mode to automatically generate and update tags tables.
+
+This minor mode generates the tags table automatically based on
+the current project configuration, and later updates it as you
+edit the files and save the changes.
+
+If you select a tags table manually (for example, using
+\\[visit-tags-table]), then this mode will be effectively
+disabled for the entire session.  Use \\[tags-reset-tags-tables]
+to countermand the effect of a previous \\[visit-tags-table].
+
+This is a global minor mode.  If called interactively, toggle the
+`Etags-Regen mode' mode.  If the prefix argument is positive, enable the
+mode, and if it is zero or negative, disable the mode.
+
+If called from Lisp, toggle the mode if ARG is `toggle'.  Enable the
+mode if ARG is nil, omitted, or is a positive number.  Disable the mode
+if ARG is a negative number.
+
+To check whether the minor mode is enabled in the current buffer,
+evaluate `(default-value \\='etags-regen-mode)'.
+
+The mode's hook is called both when the mode is enabled and when it is
+disabled.
+
+(fn &optional ARG)" t nil))
+(fset 'f90-mode '(autoload "f90" "Major mode for editing Fortran 90,95 code in free format.
+For fixed format code, use `fortran-mode'.
+
+\\[f90-indent-line] indents the current line.
+\\[f90-indent-new-line] indents current line and creates a new indented line.
+\\[f90-indent-subprogram] indents the current subprogram.
+
+Type \\=`? or \\=`\\[help-command] to display a list of built-in abbrevs for F90 keywords.
+
+Key definitions:
+\\{f90-mode-map}
+
+Variables controlling indentation style and extra features:
+
+`f90-do-indent'
+  Extra indentation within do blocks (default 3).
+`f90-if-indent'
+  Extra indentation within if/select/where/forall blocks (default 3).
+`f90-type-indent'
+  Extra indentation within type/enum/interface/block-data blocks (default 3).
+`f90-program-indent'
+  Extra indentation within program/module/subroutine/function blocks
+  (default 2).
+`f90-associate-indent'
+  Extra indentation within associate blocks (default 2).
+`f90-critical-indent'
+  Extra indentation within critical/block blocks (default 2).
+`f90-continuation-indent'
+  Extra indentation applied to continuation lines (default 5).
+`f90-comment-region'
+  String inserted by function \\[f90-comment-region] at start of each
+  line in region (default \"!!!$\").
+`f90-indented-comment-re'
+  Regexp determining the type of comment to be intended like code
+  (default \"!\").
+`f90-directive-comment-re'
+  Regexp of comment-like directive like \"!HPF\\\\$\", not to be indented
+  (default \"!hpf\\\\$\").
+`f90-break-delimiters'
+  Regexp holding list of delimiters at which lines may be broken
+  (default \"[-+*/><=,% \\t]\").
+`f90-break-before-delimiters'
+  Non-nil causes `f90-do-auto-fill' to break lines before delimiters
+  (default t).
+`f90-beginning-ampersand'
+  Automatic insertion of `&' at beginning of continuation lines (default t).
+`f90-smart-end'
+  From an END statement, check and fill the end using matching block start.
+  Allowed values are `blink', `no-blink', and nil, which determine
+  whether to blink the matching beginning (default `blink').
+`f90-auto-keyword-case'
+  Automatic change of case of keywords (default nil).
+  The possibilities are `downcase-word', `upcase-word', `capitalize-word'.
+`f90-leave-line-no'
+  Do not left-justify line numbers (default nil).
+
+Turning on F90 mode calls the value of the variable `f90-mode-hook'
+with no args, if that value is non-nil." t nil))
+(fset 'fortran-mode '(autoload "fortran" "Major mode for editing Fortran code in fixed format.
+For free format code, use `f90-mode'.
+
+\\[fortran-indent-line] indents the current Fortran line correctly.
+Note that DO statements must not share a common CONTINUE.
+
+Type ;? or ;\\[help-command] to display a list of built-in abbrevs for Fortran keywords.
+
+Key definitions:
+\\{fortran-mode-map}
+
+Variables controlling indentation style and extra features:
+
+`fortran-comment-line-start'
+  To use comments starting with `!', set this to the string \"!\".
+`fortran-do-indent'
+  Extra indentation within DO blocks (default 3).
+`fortran-if-indent'
+  Extra indentation within IF blocks (default 3).
+`fortran-structure-indent'
+  Extra indentation within STRUCTURE, UNION, MAP and INTERFACE blocks.
+  (default 3)
+`fortran-continuation-indent'
+  Extra indentation applied to continuation statements (default 5).
+`fortran-comment-line-extra-indent'
+  Amount of extra indentation for text in full-line comments (default 0).
+`fortran-comment-indent-style'
+  How to indent the text in full-line comments.  Allowed values are:
+  nil         don't change the indentation
+  `fixed'     indent to `fortran-comment-line-extra-indent' beyond the
+              value of either
+                `fortran-minimum-statement-indent-fixed' (fixed format) or
+                `fortran-minimum-statement-indent-tab' (TAB format),
+              depending on the continuation format in use.
+  `relative'  indent to `fortran-comment-line-extra-indent' beyond the
+              indentation for a line of code.
+  (default `fixed')
+`fortran-comment-indent-char'
+  Single-character string to be inserted instead of space for
+  full-line comment indentation (default \" \").
+`fortran-minimum-statement-indent-fixed'
+  Minimum indentation for statements in fixed format mode (default 6).
+`fortran-minimum-statement-indent-tab'
+  Minimum indentation for statements in TAB format mode (default 9).
+`fortran-line-number-indent'
+  Maximum indentation for line numbers (default 1).  A line number will
+  get less than this much indentation if necessary to avoid reaching
+  column 5.
+`fortran-check-all-num-for-matching-do'
+  Non-nil causes all numbered lines to be treated as possible \"continue\"
+  statements (default nil).
+`fortran-blink-matching-if'
+  Non-nil causes \\[fortran-indent-line] on an ENDIF (or ENDDO) statement
+  to blink on the matching IF (or DO [WHILE]).  (default nil)
+`fortran-continuation-string'
+  Single-character string to be inserted in column 5 of a continuation
+  line (default \"$\").
+`fortran-comment-region'
+  String inserted by \\[fortran-comment-region] at start of each line in
+  the region (default \"c$$$\").
+`fortran-electric-line-number'
+  Non-nil causes line number digits to be moved to the correct column
+  as typed (default t).
+`fortran-break-before-delimiters'
+  Non-nil causes lines to be broken before delimiters (default t).
+
+Turning on Fortran mode calls the value of the variable `fortran-mode-hook'
+with no args, if that value is non-nil." t nil))
+(fset 'global-tab-line-mode '(autoload "tab-line" "Toggle Tab-Line mode in many buffers.
+Specifically, Tab-Line mode is enabled in all buffers where
+`tab-line-mode--turn-on' would do it.
+
+With prefix ARG, enable Global Tab-Line mode if ARG is positive;
+otherwise, disable it.
+
+If called from Lisp, toggle the mode if ARG is `toggle'.
+Enable the mode if ARG is nil, omitted, or is a positive number.
+Disable the mode if ARG is a negative number.
+
+See `tab-line-mode' for more information on Tab-Line mode.
+
+(fn &optional ARG)" t nil))
+(fset 'html-mode '(autoload "sgml-mode" "Major mode based on SGML mode for editing HTML documents.
+This allows inserting skeleton constructs used in hypertext documents with
+completion.  See below for an introduction to HTML.  Use
+\\[browse-url-of-buffer] to see how this comes out.  See also `sgml-mode' on
+which this is based.
+
+Do \\[describe-variable] html- SPC and \\[describe-variable] sgml- SPC to see available variables.
+
+To write fairly well formatted pages you only need to know few things.  Most
+browsers have a function to read the source code of the page being seen, so
+you can imitate various tricks.  Here's a very short HTML primer which you
+can also view with a browser to see what happens:
+
+<title>A Title Describing Contents</title> should be on every page.  Pages can
+have <h1>Very Major Headlines</h1> through <h6>Very Minor Headlines</h6>
+<hr> Parts can be separated with horizontal rules.
+
+<p>Paragraphs only need an opening tag.  Line breaks and multiple
+spaces are ignored unless the text is <pre>preformatted.</pre>
+Text can be marked as <strong>bold</strong>, <em>italic</em> or
+<u>underlined</u> using the facemenu M-o or Edit/Text
+Properties/Face commands.
+
+Pages can have <a name=\"SOMENAME\">named points</a> and can link other points
+to them with <a href=\"#SOMENAME\">see also somename</a>.  In the same way <a
+href=\"URL\">see also URL</a> where URL is a filename relative to current
+directory, or absolute as in `https://www.cs.indiana.edu/elisp/w3/docs.html'.
+
+Images in many formats can be inlined with <img src=\"URL\">.
+
+If you mainly create your own documents, `sgml-specials' might be
+interesting.  But note that some HTML 2 browsers can't handle `&apos;'.
+To work around that, do:
+   (eval-after-load \"sgml-mode\" \\='(aset sgml-char-names ?\\=' nil))
+
+\\{html-mode-map}
+
+In addition to any hooks its parent mode might have run, this mode
+runs the hook `html-mode-hook', as the final or penultimate step
+during initialization." t nil))
+(fset 'keypad-setup '(autoload "keypad" "Set keypad bindings in `function-key-map' according to SETUP.
+If optional second argument NUMLOCK is non-nil, the NumLock On bindings
+are changed.  Otherwise, the NumLock Off bindings are changed.
+If optional third argument SHIFT is non-nil, the shifted keypad
+keys are bound.
+
+ Setup      Binding
+ -------------------------------------------------------------
+ `prefix'   Command prefix argument, i.e.  M-0 .. M-9 and M--
+ `S-cursor' Bind shifted keypad keys to the shifted cursor movement keys.
+ `cursor'   Bind keypad keys to the cursor movement keys.
+ `numeric'  Plain numeric keypad, i.e. 0 .. 9 and .  (or DECIMAL arg)
+ `none'     Removes all bindings for keypad keys in `function-key-map';
+            this enables any user-defined bindings for the keypad keys
+            in the global and local keymaps.
+
+If SETUP is `numeric' and the optional fourth argument DECIMAL is non-nil,
+the decimal key on the keypad is mapped to DECIMAL instead of `.'
+
+(fn SETUP &optional NUMLOCK SHIFT DECIMAL)" nil nil))
+(fset 'plstore-mode '(autoload "plstore" "Major mode for editing plstore files.
+
+In addition to any hooks its parent mode `emacs-lisp-mode' might have
+run, this mode runs the hook `plstore-mode-hook', as the final or
+penultimate step during initialization.
+
+\\{plstore-mode-map}" t nil))
+(fset 'plstore-open '(autoload "plstore" "Create a plstore instance associated with FILE.
+
+(fn FILE)" nil nil))
+(fset 'profiler-find-profile '(autoload "profiler" "Open profile FILENAME.
+
+(fn FILENAME)" t nil))
+(fset 'profiler-find-profile-other-frame '(autoload "profiler" "Open profile FILENAME.
+
+(fn FILENAME)" t nil))
+(fset 'profiler-find-profile-other-window '(autoload "profiler" "Open profile FILENAME.
+
+(fn FILENAME)" t nil))
+(fset 'profiler-start '(autoload "profiler" "Start/restart profilers.
+MODE can be one of `cpu', `mem', or `cpu+mem'.
+If MODE is `cpu' or `cpu+mem', start the time-based profiler,
+   whereby CPU is sampled periodically using the SIGPROF signal.
+If MODE is `mem' or `cpu+mem', start profiler that samples CPU
+   whenever memory-allocation functions are called -- this is useful
+   if SIGPROF is not supported, or is unreliable, or is not sampling
+   at a high enough frequency.
+
+(fn MODE)" t nil))
+(fset 'sgml-mode '(autoload "sgml-mode" "Major mode for editing SGML documents.
+Makes > match <.
+Keys <, &, SPC within <>, \", / and \\=' can be electric depending on
+`sgml-quick-keys'.
+
+An argument of N to a tag-inserting command means to wrap it around
+the next N words.  In Transient Mark mode, when the mark is active,
+N defaults to -1, which means to wrap it around the current region.
+
+If you like upcased tags, put (setq sgml-transformation-function \\='upcase)
+in your init file.
+
+Use \\[sgml-validate] to validate your document with an SGML parser.
+
+Do \\[describe-variable] sgml- SPC to see available variables.
+Do \\[describe-key] on the following bindings to discover what they do.
+\\{sgml-mode-map}
+
+In addition to any hooks its parent mode `text-mode' might have run,
+this mode runs the hook `sgml-mode-hook', as the final or penultimate
+step during initialization." t nil))
+(fset 'tab-line-mode '(autoload "tab-line" "Toggle display of tab line in the windows displaying the current buffer.
+
+When this mode is enabled, each window displays a tab line on its
+top screen line.  The tab line is a row of tabs -- buttons which
+you can click to have the window display the buffer whose name is
+shown on the button.  Clicking on the \"x\" icon of the button
+removes the button (but does not kill the corresponding buffer).
+In addition, the tab line shows a \"+\" button which adds a new
+button, so you could have one more buffer shown on the tab line.
+
+This is a minor mode.  If called interactively, toggle the `Tab-Line
+mode' mode.  If the prefix argument is positive, enable the mode, and if
+it is zero or negative, disable the mode.
+
+If called from Lisp, toggle the mode if ARG is `toggle'.  Enable the
+mode if ARG is nil, omitted, or is a positive number.  Disable the mode
+if ARG is a negative number.
+
+To check whether the minor mode is enabled in the current buffer,
+evaluate the variable `tab-line-mode'.
+
+The mode's hook is called both when the mode is enabled and when it is
+disabled.
+
+(fn &optional ARG)" t nil))
+(fset 'vc-annotate '(autoload "vc-annotate" "Display the edit history of the current FILE using colors.
+
+This command creates a buffer that shows, for each line of the current
+file, when it was last edited and by whom.  Additionally, colors are
+used to show the age of each line--blue means oldest, red means
+youngest, and intermediate colors indicate intermediate ages.  By
+default, the time scale stretches back one year into the past;
+everything that is older than that is shown in blue.
+
+With a prefix argument, this command asks two questions in the
+minibuffer.  First, you may enter a revision number REV; then the buffer
+displays and annotates that revision instead of the working revision
+(type RET in the minibuffer to leave that default unchanged).  Then,
+you are prompted for the time span in days which the color range
+should cover.  For example, a time span of 20 days means that changes
+over the past 20 days are shown in red to blue, according to their
+age, and everything that is older than that is shown in blue.
+
+If MOVE-POINT-TO is given, move the point to that line.
+
+If BACKEND is given, use that VC backend.
+
+Customization variables:
+
+`vc-annotate-menu-elements' customizes the menu elements of the
+mode-specific menu.  `vc-annotate-color-map' and
+`vc-annotate-very-old-color' define the mapping of time to colors.
+`vc-annotate-background' specifies the background color.
+`vc-annotate-background-mode' specifies whether the color map
+should be applied to the background or to the foreground.
+
+(fn FILE REV &optional DISPLAY-MODE BUF MOVE-POINT-TO BACKEND)" t nil))
+(fset 'which-function-mode '(autoload "which-func" "Toggle mode line display of current function (Which Function mode).
+
+Which Function mode is a global minor mode.  When enabled, the
+current function name is continuously displayed in the mode line,
+in certain major modes.
+
+This is a global minor mode.  If called interactively, toggle the
+`Which-Function mode' mode.  If the prefix argument is positive, enable
+the mode, and if it is zero or negative, disable the mode.
+
+If called from Lisp, toggle the mode if ARG is `toggle'.  Enable the
+mode if ARG is nil, omitted, or is a positive number.  Disable the mode
+if ARG is a negative number.
+
+To check whether the minor mode is enabled in the current buffer,
+evaluate `(default-value \\='which-function-mode)'.
+
+The mode's hook is called both when the mode is enabled and when it is
+disabled.
+
+(fn &optional ARG)" t nil))
+(fset 'woman '(autoload "woman" "Browse UN*X man page for TOPIC (Without using external Man program).
+The major browsing mode used is essentially the standard Man mode.
+Choose the filename for the man page using completion, based on the
+topic selected from the directories specified in `woman-manpath' and
+`woman-path'.  The directory expansions and topics are cached for
+speed.  With a prefix argument, force the caches to be
+updated (e.g. to re-interpret the current directory).
+
+Used non-interactively, arguments are optional: if given then TOPIC
+should be a topic string and non-nil RE-CACHE forces re-caching.
+
+Note that `M-x woman' doesn’t yet support the latest features of
+modern man pages, so we recommend using `M-x man' if that is
+available on your system.
+
+(fn &optional TOPIC RE-CACHE)" t nil))
+(fset 'woman-bookmark-jump '(autoload "woman" "Default bookmark handler for Woman buffers.
+
+(fn BOOKMARK)" nil nil))
+(fset 'woman-dired-find-file '(autoload "woman" "In Dired, run the WoMan man-page browser on this file." t nil))
+(fset 'woman-find-file '(autoload "woman" "Find, decode and browse a specific UN*X man-page source file FILE-NAME.
+Use existing buffer if possible; reformat only if prefix arg given.
+When called interactively, optional argument REFORMAT forces reformatting
+of an existing WoMan buffer formatted earlier.
+No external programs are used, except that `gunzip' will be used to
+decompress the file if appropriate.  See the documentation for the
+`woman' command for further details.
+
+(fn FILE-NAME &optional REFORMAT)" t nil))
+(fset 'world-clock '(autoload "time" "Display a world clock buffer with times in various time zones.
+The variable `world-clock-list' specifies which time zones to use.
+To turn off the world time display, go to the window and type \\[quit-window]." t nil))
+
+
+(defvar cua-mode nil "Non-nil if Cua mode is enabled.
+See the `cua-mode' command
+for a description of this minor mode.
+Setting this variable directly does not take effect;
+either customize it (see the info node `Easy Customization')
+or call the function `cua-mode'.")
+
+(custom-autoload 'cua-mode "cua-base" nil)
+
+(defvar global-tab-line-mode nil "Non-nil if Global Tab-Line mode is enabled.
+See the `global-tab-line-mode' command
+for a description of this minor mode.
+Setting this variable directly does not take effect;
+either customize it (see the info node `Easy Customization')
+or call the function `global-tab-line-mode'.")
+
+(custom-autoload 'global-tab-line-mode "tab-line" nil)
+
+
+(fset 'image-dired-show-all-from-dir '(autoload "image-dired" "Make a thumbnail buffer for all images in DIRNAME and display it.
+
+The DIRNAME argument is passed along to `dired', and can therefore be
+either a string with wildcards or a cons, as described in the
+documentation for that function.  Refer to it for more details.
+
+If the number of image files in DIR exceeds
+`image-dired-show-all-from-dir-max-files', ask for confirmation
+before creating the thumbnail buffer.  If that variable is nil,
+never ask for confirmation.
+
+Any file matching `image-dired--file-name-regexp' is considered an
+image file.
+
+(fn DIRNAME)" t nil))
+
+(defalias 'image-dired 'image-dired-show-all-from-dir)
+
+(defun custom-add-choice (variable choice)
+  "Add CHOICE to the custom type of VARIABLE.
+If a choice with the same tag already exists, no action is taken."
+  (let ((choices (get variable 'custom-type)))
+    (unless (eq (car choices) 'choice)
+      (error "Not a choice type: %s" choices))
+    (unless (seq-find (lambda (elem)
+                        (equal (caddr (member :tag elem))
+                               (caddr (member :tag choice))))
+                      (cdr choices))
+      ;; Put the new choice at the end.
+      (put variable 'custom-type
+           (append choices (list choice))))))
+
+(defvar etags-regen-mode nil "Non-nil if Etags-Regen mode is enabled.
+See the `etags-regen-mode' command
+for a description of this minor mode.
+Setting this variable directly does not take effect;
+either customize it (see the info node `Easy Customization')
+or call the function `etags-regen-mode'.")
+
+(custom-autoload 'etags-regen-mode "progmodes/etags-regen" nil)
+
+(autoload 'etags-regen-mode "progmodes/etags-regen" "Toggle Etags-Regen mode on or off.
+
+With a prefix argument, enable Etags-Regen mode if the argument
+is positive, and disable it otherwise.
+
+When Etags-Regen mode is enabled, the TAGS file is regenerated
+when the file set of the current project changes.
+
+This is a global minor mode.  If called interactively, toggle the
+`Etags-Regen mode' mode.  If the prefix argument is positive,
+enable the mode, and if it is zero or negative, disable the mode.
+
+If called from Lisp, toggle the mode if ARG is `toggle'.  Enable
+the mode if ARG is nil, omitted, or is a positive number.
+Disable the mode if ARG is a negative number.
+
+To check whether the minor mode is enabled in the current buffer,
+evaluate `etags-regen-mode'.
+
+The mode's hook is called both when the mode is enabled and when
+it is disabled." t nil)
+
+(defun custom-menu-create (symbol)
+  "Create menu for customization group SYMBOL.
+The menu is in a format applicable to `easy-menu-define'.
+This is a fallback: full member expansion needs wid-edit, so for
+non-empty groups this returns the submenu header (name, group item,
+separator) without the member entries."
+  (let ((item (vector (custom-unlispify-menu-entry symbol)
+                      `(customize-group ',symbol)
+                      t)))
+    (if (get symbol 'custom-group)
+        (list (custom-unlispify-menu-entry symbol t) item "--")
+      item)))
+
+(defvar etags-program-name "etags"
+  "The default name of the etags program.
+It is used when the etags.el library regenerates a TAGS file.")
 
 (defun define-mail-user-agent (symbol composefunc sendfunc
 				      &optional abortfunc hookvar)

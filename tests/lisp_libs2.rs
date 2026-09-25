@@ -2404,3 +2404,103 @@ fn r9_sort_help_fns_libs_parity() {
         "\"a\nb\nc\n\""
     );
 }
+
+#[test]
+fn r10_compat_libs_parity() {
+    // Round-10 batch: 29 more GNU 31.1 libraries plus the missing
+    // startup state they need.  GNU-verified on 31.1:
+    //   dumped:    newcomment, image, tab-bar (features at -Q)
+    //   require:   the rest (no features at -Q)
+    // select was already provided by subrs + the feature list.
+    assert_eq!(
+        ev("(mapcar #'featurep '(newcomment image tab-bar select json
+                              bookmark char-fold tab-line time woman
+                              f90 fortran which-func etags-regen
+                              vc-annotate cua-base keypad edt viper-init
+                              plstore profiler vcursor epa artist
+                              enriched sgml-mode xscheme ebrowse
+                              vc-filewise vc-src pcvs-util))"),
+        "(t t t t nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil)"
+    );
+    // GNU loaddefs autoload cells for the new libraries' entry points.
+    assert_eq!(
+        ev("(list (autoloadp (symbol-function 'bookmark-set))
+                  (autoloadp (symbol-function 'artist-mode))
+                  (autoloadp (symbol-function 'cua-mode))
+                  (autoloadp (symbol-function 'display-time-mode))
+                  (autoloadp (symbol-function 'fortran-mode))
+                  (autoloadp (symbol-function 'sgml-mode))
+                  (autoloadp (symbol-function 'etags-regen-mode))
+                  (autoloadp (symbol-function 'image-dired-show-all-from-dir))
+                  ;; `image-dired' is a GNU loaddefs defalias.
+                  (symbol-function 'image-dired)
+                  ;; `which-func-mode' has no cell in GNU -Q.
+                  (symbol-function 'which-func-mode))"),
+        "(t t t t t t t t image-dired-show-all-from-dir nil)"
+    );
+    // Minor-mode defvars + custom-autoloads from GNU loaddefs.
+    assert_eq!(
+        ev("(list (boundp 'cua-mode) (get 'cua-mode 'custom-autoload)
+                  (boundp 'global-tab-line-mode)
+                  (get 'global-tab-line-mode 'custom-autoload)
+                  (boundp 'etags-regen-mode)
+                  (get 'etags-regen-mode 'custom-autoload))"),
+        "(t t t t t t)"
+    );
+    // Startup vars used by the new libs (GNU-verified values).
+    assert_eq!(
+        ev("(list (consp (get 'json-end-of-file 'error-conditions))
+                  (boundp 'char-script-table)
+                  (boundp 'window-persistent-parameters)
+                  (boundp 'menu-bar-manuals-menu)
+                  (boundp 'frame-background-mode)
+                  (boundp 'mode-line-misc-info)
+                  (boundp 'system-configuration-options)
+                  (fboundp 'set-selection-coding-system)
+                  (fboundp 'find-image)
+                  (fboundp 'custom-add-choice))"),
+        "(t t t t t t t t t t)"
+    );
+    // GNU `define-error' accepts a list of parents.
+    assert_eq!(
+        ev("(progn (define-error 'my-e1 \"m1\" 'my-e2)
+                  (define-error 'my-e2 \"m2\")
+                  (list (get 'my-e1 'error-conditions)
+                        (get 'my-e2 'error-conditions)))"),
+        "((my-e1 my-e2) (my-e2 error))"
+    );
+    // GNU `map-char-table' skips nil-valued ranges.
+    assert_eq!(
+        ev("(let ((tbl (make-char-table nil)) (n 0) (keys nil))
+             (set-char-table-range tbl 65 'x)
+             (map-char-table (lambda (k v) (setq n (1+ n))
+                              (push (list k v) keys)) tbl)
+             (list n keys))"),
+        "(1 ((65 x)))"
+    );
+    // unicode property tables carry GNU's 3 extra slots.
+    assert_eq!(
+        ev("(let ((tbl (unicode-property-table-internal 'decomposition)))
+             (list (char-table-extra-slot tbl 0)
+                   (fboundp (char-table-extra-slot tbl 1))
+                   (char-table-extra-slot tbl 2)))"),
+        "(nil t nil)"
+    );
+    // Functional spot checks — GNU-verified.
+    assert_eq!(
+        ev("(with-temp-buffer (emacs-lisp-mode) (insert \"x\\ny\\n\")
+                             (comment-region (point-min) (point-max))
+                             (buffer-string))"),
+        "\";; x\n;; y\n\""
+    );
+    assert_eq!(
+        ev("(progn (require 'sgml-mode) (list (fboundp 'sgml-mode)
+                  (featurep 'sgml-mode)))"),
+        "(t t)"
+    );
+    assert_eq!(
+        ev("(progn (require 'bookmark) (list (fboundp 'bookmark-set)
+                  (featurep 'bookmark)))"),
+        "(t t)"
+    );
+}
