@@ -295,6 +295,9 @@ fn start_logic(
     let (grid_tx, grid_rx) = smol::channel::bounded::<Grid>(1);
     std::thread::Builder::new()
         .name("remacs-logic".into())
+        // Eval/macroexpand recursion needs far more than the default
+        // thread stack (see main.rs's headless worker).
+        .stack_size(512 * 1024 * 1024)
         .spawn(move || {
             let mut i = Interp::new();
             for f in &files {

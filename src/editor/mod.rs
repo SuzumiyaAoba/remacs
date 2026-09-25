@@ -11508,29 +11508,38 @@ fn f_call_interactively(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 }
 
 fn f_execute_extended_command(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let _ = &a;
-    // Interactive: prompt "M-x " through the front-end.
-    if i.minibuf_reader.is_some() {
-        let args = crate::lisp::eval::MinibufArgs {
-            hist: Value::Sym(i.intern("extended-command-history")),
-            ..Default::default()
-        };
-        let name = i.minibuf_read("M-x ", args)?;
-        if name.is_empty() {
-            return Ok(Value::Nil);
+    // GNU: COMMAND-NAME (interactively from `read-extended-command')
+    // skips the "M-x " prompt.
+    let supplied = a.get(1).and_then(|v| match v {
+        Value::Str(s) => Some(s.borrow().clone()),
+        _ => None,
+    });
+    let name = match supplied {
+        Some(n) => n,
+        None if i.minibuf_reader.is_some() => {
+            let args = crate::lisp::eval::MinibufArgs {
+                hist: Value::Sym(i.intern("extended-command-history")),
+                ..Default::default()
+            };
+            i.minibuf_read("M-x ", args)?
         }
-        let sym = i.intern(&name);
-        if !i.fbound_p(sym) {
-            return Err(i.error(&format!("M-x {} is undefined", name)));
+        None => {
+            // `this-command' set by the harness.
+            let tc = i.symbol_value(i.intern_soft("this-command").unwrap_or(0));
+            return match tc {
+                Value::Sym(_) => i.command_execute(&tc),
+                _ => Ok(Value::Nil),
+            };
         }
-        return i.command_execute(&Value::Sym(sym));
+    };
+    if name.is_empty() {
+        return Ok(Value::Nil);
     }
-    // Try `this-command` set by the harness.
-    let tc = i.symbol_value(i.intern_soft("this-command").unwrap_or(0));
-    if let Value::Sym(_) = tc {
-        return i.command_execute(&tc);
+    let sym = i.intern(&name);
+    if !i.fbound_p(sym) {
+        return Err(i.error(&format!("M-x {} is undefined", name)));
     }
-    Ok(Value::Nil)
+    i.command_execute(&Value::Sym(sym))
 }
 
 // ---------- keyboard macros ----------

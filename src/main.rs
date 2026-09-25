@@ -12,13 +12,40 @@ use remacs::lisp::{Flow, Interp, OutputSink, Value};
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
+    // Deep Lisp recursion (eager macroexpansion of nested backquotes
+    // in e.g. transient.el) overflows the default thread stack; GNU's
+    // C eval frames are far smaller.  Batch and terminal sessions run
+    // the interpreter on a worker with a generous stack.  The AppKit
+    // GUI must stay on the main thread, so only the headless path is
+    // moved; gui.rs enlarges its logic thread separately.
+    let headless = args.iter().any(|a| {
+        matches!(
+            a.as_str(),
+            "-Q" | "--quick" | "-q" | "--no-init" | "--batch" | "-batch"
+                | "--eval" | "--execute" | "--load" | "-l" | "--script"
+                | "--ieval" | "-nw" | "--no-window-system" | "--version"
+        )
+    });
+    if headless {
+        let child = std::thread::Builder::new()
+            .name("remacs-main".into())
+            .stack_size(512 * 1024 * 1024)
+            .spawn(move || real_main(args))
+            .expect("failed to spawn interpreter thread");
+        let _ = child.join();
+        return;
+    }
+    real_main(args);
+}
+
+fn real_main(args: Vec<String>) {
     let mut i = Interp::new();
 
     let mut batch = false;
     let mut no_window = false;
     let mut files: Vec<String> = Vec::new();
     let mut idx = 0;
-    let mut exit = 0i32;
+    let exit = 0i32;
 
     while idx < args.len() {
         let arg = &args[idx];
@@ -64,8 +91,7 @@ fn main() {
                                 };
                                 let form_src = &src[pos..next];
                                 let form = {
-                                    let mut r =
-                                        remacs::lisp::reader::Reader::new(&mut i, form_src);
+                                    let mut r = remacs::lisp::reader::Reader::new(&mut i, form_src);
                                     match r.read() {
                                         Ok(Some(v)) => v,
                                         _ => break,

@@ -2382,11 +2382,14 @@ explicitly overridden.
         if self.macroexp_call_depth > 0 {
             return self.dumped_function(id).unwrap_or(f);
         }
-        // Generic dispatch is the runtime support GNU's .elc dump keeps
-        // behind the public function cells: the helper names themselves
-        // are void at -Q, but calls generated inside dumped generic
-        // functions still have to reach them.
-        if (self.dumped_call_depth > 0 || self.loading_dumped) && self.dumped_runtime_helper(id) {
+        // Dump-internal calls: GNU's dump keeps every definition it
+        // loaded reachable from other dumped code even when the public
+        // cell is void at -Q.  Our stash on `remacs--dump-fn' plays that
+        // role — anything defined during the prelude/dump load stays
+        // callable from other dumped functions (e.g. `rx-to-string'
+        // reaching `rx--translate').  `dumped_runtime_helper' remains as
+        // documentation of the cases that motivated the mechanism.
+        if self.dumped_call_depth > 0 || self.loading_dumped {
             return self.dumped_function(id).unwrap_or(f);
         }
         f
@@ -2395,6 +2398,7 @@ explicitly overridden.
     fn dumped_runtime_helper(&self, id: SymId) -> bool {
         let name = self.obarray.name(id);
         name.starts_with("(setf ")
+            || name.starts_with("rx--")
             || matches!(
                 name,
                 "cl--generic-dispatch"
@@ -2836,6 +2840,16 @@ explicitly overridden.
 
     pub fn eval(&mut self, form: &Value) -> EvalResult {
         self.eval_depth += 1;
+        if std::env::var_os("REMACS_TRACE_DEPTH").is_some()
+            && self.eval_depth > 0
+            && self.eval_depth % 200 == 0
+        {
+            eprintln!(
+                "[depth={}] {}",
+                self.eval_depth,
+                self.princ_to_string(form).chars().take(80).collect::<String>()
+            );
+        }
         if self.eval_depth > self.max_lisp_eval_depth {
             self.eval_depth -= 1;
             return Err(self.error("Lisp nesting exceeds `max-lisp-eval-depth'"));
@@ -3927,6 +3941,9 @@ explicitly overridden.
         let mut rest = None;
         let mut bad_arglist = false;
         let mut mode = 0u8; // 0 = required, 1 = optional, 2 = rest done
+        // `&body' is GNU's `&rest' synonym, legal in macro arglists
+        // (defmacro/cl-defmacro) — treat it identically here.
+        let body_kw = self.intern("&body");
         let plist = params;
         let mut cur = plist.clone();
         loop {
@@ -3939,7 +3956,7 @@ explicitly overridden.
                     };
                     match self.sym_id(&car) {
                         Some(s) if s == sym::OPTIONAL => mode = 1,
-                        Some(s) if s == sym::REST => {
+                        Some(s) if s == sym::REST || s == body_kw => {
                             mode = 2;
                         }
                         _ => match mode {
@@ -4059,6 +4076,7 @@ explicitly overridden.
             plain: self.explicit_eval_depth > 0,
             dumped_doc: self.loading_dumped,
             advice_link: None,
+            bc_items: None,
         })
     }
 
@@ -7272,13 +7290,16 @@ explicitly overridden.
 /// read and evaluate rather than callint letter codes.
 pub(crate) fn subr_interactive_form(i: &mut Interp, name: &str) -> Option<Value> {
     let spec = subr_interactive(name)?;
-    let spec = if spec.trim_start().starts_with('(') {
-        i.read_from_string(spec, 0)
+    // "\u{1}nil" is a sentinel for GNU's `(interactive)' (no argument),
+    // which `interactive-form' renders as `(interactive nil)'.
+    let spec = match spec {
+        "\u{1}nil" => Value::Nil,
+        s if s.trim_start().starts_with('(') => i
+            .read_from_string(s, 0)
             .ok()
             .map(|(form, _)| form)
-            .unwrap_or_else(|| Value::string(spec))
-    } else {
-        Value::string(spec)
+            .unwrap_or_else(|| Value::string(s)),
+        s => Value::string(s),
     };
     Some(Value::list(vec![Value::Sym(i.intern("interactive")), spec]))
 }
@@ -7421,10 +7442,15 @@ pub(crate) fn subr_interactive(name: &str) -> Option<&'static str> {
         ("erase-buffer", "*"),
         ("eval-buffer", ""),
         ("eval-defun", "P"),
+        (
+            "eval-expression",
+            "(cons (read--expression \"Eval: \") (eval-expression-get-print-arguments current-prefix-arg))",
+        ),
         ("eval-last-sexp", "P"),
         ("eval-print-last-sexp", "P"),
         ("eval-region", "r"),
         ("exchange-point-and-mark", "P"),
+        ("execute-extended-command", "(list current-prefix-arg)"),
         ("exit-recursive-edit", ""),
         ("expand-region-abbrevs", "r\nP"),
         ("first-error", "p"),
@@ -7535,6 +7561,10 @@ pub(crate) fn subr_interactive(name: &str) -> Option<&'static str> {
             "sKill buffers matching this regular expression: \nP",
         ),
         ("kill-paragraph", "p"),
+        (
+            "kill-region",
+            "(progn (let ((beg (mark)) (end (point))) (if (not (and beg end)) (user-error \"The mark is not set now, so there is no region\") (list beg end))))",
+        ),
         ("kill-sentence", "p"),
         ("kill-sexp", "p\nd"),
         ("kill-visual-line", "P"),
@@ -7860,6 +7890,7 @@ pub(crate) fn subr_interactive(name: &str) -> Option<&'static str> {
         ("undo-only", "*p"),
         ("undo-redo", "*p"),
         ("unfill-paragraph", "P\nR"),
+        ("universal-argument", "\u{1}nil"),
         ("universal-argument-more", "P"),
         ("unix-filename-rubout", "^p"),
         ("unix-sync", ""),

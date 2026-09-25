@@ -146,7 +146,7 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!(
         "eval-expression",
         1,
-        2,
+        4,
         f_eval_expression,
         "Eval EXPR like M-:."
     ),
@@ -1781,8 +1781,20 @@ fn f_values(_i: &mut Interp, args: Vec<Value>) -> EvalResult {
     Ok(Value::list(args))
 }
 fn f_eval_expression(i: &mut Interp, args: Vec<Value>) -> EvalResult {
+    // GNU (simple.el): the value is consed onto `values'; INSERT-VALUE
+    // non-nil inserts the printed value into the buffer instead of
+    // echoing it.
     let v = i.eval(&args[0])?;
-    i.message(&format!("{}", i.print_to_string(&v)));
+    let printed = i.print_to_string(&v);
+    if arg(&args, 1).truthy() {
+        let ins = Value::Sym(i.intern("insert"));
+        i.apply(&ins, vec![Value::string(printed)])?;
+    } else {
+        i.message(&printed);
+    }
+    let vals = i.intern("values");
+    let cur = i.symbol_value(vals);
+    let _ = i.set_symbol(vals, Value::cons(v.clone(), cur));
     Ok(v)
 }
 fn f_load(i: &mut Interp, args: Vec<Value>) -> EvalResult {
@@ -1912,12 +1924,33 @@ pub(crate) fn autoload_do_load(i: &mut Interp, fundef: Value, macro_only: bool) 
         .obarray
         .all_ids()
         .into_iter()
-        .find(|id| super::eq_values(&i.symbol_function(*id), &fundef));
+        .find(|id| super::eq_values(&i.symbol_function(*id), &fundef))
+        // Interpreted code can hold a structurally identical but
+        // distinct `(autoload ...)' cons — e.g. one read afresh from a
+        // loaddefs form while a different cons sits in the function
+        // cell.  Fall back to an `equal' match so we still attribute
+        // the autoload to its symbol (and to its dumped stash).
+        .or_else(|| {
+            i.obarray
+                .all_ids()
+                .into_iter()
+                .find(|id| super::equal_values(i, &i.symbol_function(*id), &fundef))
+        });
     if std::env::var_os("REMACS_TRACE_AUTOLOAD").is_some() {
         eprintln!(
-            "[autoload {} -> {}]",
+            "[autoload {} -> {}]{}",
             owner.map(|id| i.symbol_name(id)).unwrap_or("?".into()),
-            name
+            name,
+            if owner.is_none() {
+                let cl = i.intern("cl-loop");
+                format!(
+                    " cell={} | cl-loop-cell={}",
+                    i.print_to_string(&fundef),
+                    i.print_to_string(&i.symbol_function(cl))
+                )
+            } else {
+                String::new()
+            }
         );
     }
     // Interpreted built-ins can meet a self-autoload: cl-loaddefs marks
@@ -1954,6 +1987,15 @@ pub(crate) fn autoload_do_load(i: &mut Interp, fundef: Value, macro_only: bool) 
                 i.symbol_name(id)
             )));
         }
+    } else if loading_same && macro_only {
+        // Orphan autoload cell (a structurally distinct cons that no
+        // symbol's function cell points at) targeting the file being
+        // loaded.  GNU errors here; but our interpreted .el expansion
+        // reaches these through embedded `(autoload ...)' literals in
+        // expansions, so leave the cell in place: callers treat the
+        // still-autoload result as "not expandable" and the real
+        // dispatch resolves the owning symbol's cell instead.
+        return Ok(fundef);
     } else if loading_same {
         return Err(i.error(format!("Autoloading file {name} recursively")));
     }
@@ -2095,6 +2137,9 @@ fn f_declare_function(i: &mut Interp, _args: Vec<Value>) -> EvalResult {
     Ok(Value::Nil)
 }
 fn f_declare(i: &mut Interp, _args: Vec<Value>) -> EvalResult {
+    if std::env::var_os("REMACS_TRACE_DECLARE").is_some() {
+        eprintln!("[declare-call] args={:?}", _args.first());
+    }
     let _ = i;
     Ok(Value::Nil)
 }
