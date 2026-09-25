@@ -7913,18 +7913,32 @@ See Info node `Displaying Boundaries' for details.")
   (if cond1 (unless cond2 cond1) cond2))
 
 (defmacro if-let* (varlist then &rest else)
-  "Bind each VAR in VARLIST to VAL; eval THEN when all non-nil, else ELSE.
-Each binding spec is (VAR VAL), (VAR) (binds nil), or a bare VAR
-\(tests VAR's current value)."
+  "Bind variables per VARLIST; eval THEN when all non-nil, else ELSE.
+Each spec is (VAR VAL), (_ FORM), (FORM) (tests FORM's value without
+binding), or a bare VAR (tests VAR's current value), as in GNU's
+`internal--build-bindings': later value forms evaluate only when all
+previous tests were non-nil."
   (if (null varlist)
       `(progn ,then)
-    (let ((spec (car varlist)))
-      (cond
-       ((symbolp spec) (setq spec (list spec spec)))
-       ((null (cdr spec)) (setq spec (list (car spec) nil))))
-      `(let* (,spec)
-         (if ,(car spec)
-             (if-let* ,(cdr varlist) ,then ,@else)
+    (let ((bs nil) (prev t) (spec nil))
+      (dolist (b varlist)
+        (setq spec
+              (cond
+               ((symbolp b) (list b b))
+               ((null (cdr b)) (list (make-symbol "s") (car b)))
+               ((eq '_ (car b)) (list (make-symbol "s") (cadr b)))
+               (t
+                (when (cddr b)
+                  (signal 'error
+                          (cons "`let' bindings can have only one value-form"
+                                b)))
+                b)))
+        (push (list (car spec) (list 'and prev (cadr spec))) bs)
+        (setq prev (car spec)))
+      (setq bs (nreverse bs))
+      `(let* ,bs
+         (if ,(car (car (last bs)))
+             ,then
            ,@(if else `((progn ,@else)) '(nil)))))))
 
 (defmacro when-let* (varlist &rest body)
@@ -15947,7 +15961,12 @@ To define new types, see `cl-deftype'."
                                       (list (list 'cl--keys restsym)))
                                     (nreverse keys) (nreverse aux))
                        ,@(when keys
-                           `((cl--check-keys cl--keys ',(nreverse kws))))
+                           ;; `cl--check-keys' is voided at -Q for GNU
+                           ;; parity; reach its stashed dump definition
+                           ;; when the public cell is empty.
+                           `((funcall (or (get 'cl--check-keys 'remacs--dump-fn)
+                                          (symbol-function 'cl--check-keys))
+                                      cl--keys ',(nreverse kws))))
                        (cl-block ,name ,@body))))
         (dolist (pr lets)
           (setq inner `(cl-destructuring-bind ,(car pr) ,(cadr pr)
@@ -16408,16 +16427,24 @@ Subset of GNU `cl-macrolet': expander bodies are used verbatim
 (defmacro cl-defstruct (name &rest slots)
   "Define structure NAME with SLOTS (subset of GNU `cl-defstruct').
 Supported options: :conc-name, :predicate, :copier, :type (vector
-or list), :named, and :constructor (nil | NAME | (NAME ARGLIST)).
-Slot specs may be (SLOT DEFAULT); objects are records by default.
-A documentation string may appear between NAME and the slots, as
-in GNU's `cl-defstruct'."
+or list), :named, :include, and :constructor (nil | NAME | (NAME
+ARGLIST)) where ARGLIST is a CL arglist (&key/&aux destructuring
+specs allowed).  Slot specs may be (SLOT DEFAULT); objects are
+records by default.  A documentation string may appear between
+NAME and the slots, as in GNU's `cl-defstruct'."
   ;; GNU accepts an optional docstring right after NAME.
   (when (stringp (car slots))
     (pop slots))
   (let* ((opts (if (consp name) (cdr name) nil))
          (n (if (consp name) (car name) name))
          (opt (lambda (kw) (assq kw opts)))
+         ;; (:include PARENT): inherit the parent's slot specs, which
+         ;; its own cl-defstruct expansion records on its plist.
+         (include (funcall opt :include))
+         (slots (if include
+                    (append (get (cadr include) 'cl--defstruct-slots)
+                            slots)
+                  slots))
          (conc (let ((o (funcall opt :conc-name)))
                  (if o (cadr o) (intern (concat (symbol-name n) "-")))))
          (type (let ((o (funcall opt :type))) (and o (cadr o))))
@@ -16435,11 +16462,7 @@ in GNU's `cl-defstruct'."
          (defs nil)
          (mk (cond ((eq type 'list) 'list)
                    ((eq type 'vector) 'vector)
-                   (t 'record)))
-         (arglist-syms (lambda (al)
-                         (cl-remove-if
-                          (lambda (x) (memq x '(&optional &rest &key &aux)))
-                          (copy-sequence al)))))
+                   (t 'record))))
     ;; Constructors: each spec is (CTOR-NAME [ARGLIST]); nil name
     ;; suppresses the default constructor.
     (dolist (spec ctspecs)
@@ -16447,16 +16470,26 @@ in GNU's `cl-defstruct'."
             (cal (cadr spec)))
         (when ctor
           (if cal
-              ;; BOA-style positional constructor: arg names bind the
-              ;; eponymous slots; other slots take their defaults.
-              (let ((asyms (funcall arglist-syms cal))
-                    (vals nil) (tl1 snames) (tl2 sdefs))
+              ;; Constructor with explicit CL arglist (BOA positional
+              ;; or &key/&aux): each slot takes the eponymous bound
+              ;; var, else its default.  `cl-defun' supplies the
+              ;; destructuring/keyword expansion.
+              (let ((bound nil) (vals nil) (tl1 snames) (tl2 sdefs))
+                (dolist (a cal)
+                  (cond
+                   ((memq a '(&optional &rest &body &key &aux
+                              &allow-other-keys &whole &environment))
+                    nil)
+                   ((consp a)
+                    (let ((v (car a)))
+                      (push (if (consp v) (cadr v) v) bound)))
+                   (t (push a bound))))
                 (while tl1
-                  (push (if (memq (car tl1) asyms) (car tl1) (car tl2))
+                  (push (if (memq (car tl1) bound) (car tl1) (car tl2))
                         vals)
                   (setq tl1 (cdr tl1) tl2 (cdr tl2)))
                 (push
-                 `(defun ,ctor ,cal
+                 `(cl-defun ,ctor ,cal
                     (,mk ,@(when named `(',n)) ,@(nreverse vals)))
                  defs))
             ;; Keyword constructor.
@@ -16514,6 +16547,9 @@ in GNU's `cl-defstruct'."
                      `(lambda (v ob) (aset ob ,i v))))
            defs))
         (setq i (1+ i))))
+    ;; Publish the effective (inherited + own) slot specs so a child
+    ;; `cl-defstruct' with (:include N) can inherit them.
+    (push `(put ',n 'cl--defstruct-slots ',slots) defs)
     `(progn ,@(nreverse defs) ',n)))
 
 ;; ---------- registers / misc ----------
