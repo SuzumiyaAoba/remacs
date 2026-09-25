@@ -28,7 +28,10 @@ subr (stub only), window. Also skipped: `.dir-locals.el`, `ldefs-boot.el`
 ## Pending: EMBEDDED_LISP registration
 
 `src/lisp/load.rs` `EMBEDDED_LISP` needs entries for the ~600 ported files
-(rounds 25–31.9). Registration rules:
+(rounds 25–31.9). Run `python3 tools/gen_embedded.py` to regenerate the
+entry lines — it maps each file to its GNU key by content hash (qualified
+keys like `semantic/ctxt` where the flat name came from a subdir).
+Registration rules:
 
 - Flat files: `("name", include_str!("../../lisp/name.el"))`
 - CEDET-qualified: key must be the GNU qualified path so
