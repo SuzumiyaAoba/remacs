@@ -219,6 +219,7 @@ Each slot spec is (NAME [:initarg KEY] [:initform FORM] ...)."
 Matches GNU: `let*' binds OBJECT to a `object' temp, then
 `cl-symbol-macrolet' maps each slot name to a `slot-value' form so
 `setq' writes through."
+  (require 'cl-lib)
   `(let* ((object ,object))
      (cl-symbol-macrolet
          ,(mapcar (lambda (entry)
@@ -282,5 +283,22 @@ Matches GNU: `let*' binds OBJECT to a `object' temp, then
 ;; registry-db's `data' hash setup) always have a primary.
 (when (fboundp 'cl-defmethod)
   (cl-defmethod initialize-instance ((_this t) &optional _args)))
+
+;; GNU eieio.el: `eieio' pcase pattern for destructuring objects.
+;; Used by transient.el's `(pcase ... ((eieio ...) ...))' clauses.
+(pcase-defmacro eieio (&rest fields)
+  "Pcase patterns that match EIEIO object EXPVAL.
+Elements of FIELDS can be of the form (NAME PAT) in which case the
+contents of field NAME is matched against PAT, or they can be of
+ the form NAME which is a shorthand for (NAME NAME)."
+  (declare (debug (&rest [&or (sexp pcase-PAT) sexp])))
+  `(and (pred eieio-object-p)
+        ,@(mapcar (lambda (field)
+                    (pcase-exhaustive field
+                      (`(,name ,pat)
+                       `(app (eieio-oref _ ',name) ,pat))
+                      ((pred symbolp)
+                       `(app (eieio-oref _ ',field) ,field))))
+                  fields)))
 
 (provide 'eieio)

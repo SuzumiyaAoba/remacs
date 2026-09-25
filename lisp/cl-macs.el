@@ -7,6 +7,31 @@
 
 ;;; Code:
 
+;; GNU's cl-macs.elc carries the real definitions for everything
+;; cl-loaddefs autoloads from "cl-macs"; our dumped copies were hidden
+;; for -Q parity.  Restore the public cells up front so the macros and
+;; expanders below — and callers after `(require 'cl-macs)' — see them.
+(dolist (sym '(cl--compiler-macro-adjoin cl--compiler-macro-list*
+               cl--optimize cl-assert cl-block cl-callf cl-callf2
+               cl-case cl-check-type cl-compiler-macroexpand cl-declare
+               cl-define-compiler-macro cl-defmacro cl-defstruct
+               cl-defsubst cl-deftype cl-defun cl-destructuring-bind
+               cl-do cl-do* cl-do-all-symbols cl-do-symbols cl-dolist
+               cl-dotimes cl-ecase cl-etypecase cl-eval-when cl-flet
+               cl-flet* cl-function cl-gensym cl-gentemp cl-iter-defun
+               cl-labels cl-letf cl-letf* cl-load-time-value cl-loop
+               cl-macrolet cl-multiple-value-bind cl-multiple-value-setq
+               cl-once-only cl-prog cl-prog* cl-progv cl-psetf cl-psetq
+               cl-remf cl-return cl-return-from cl-rotatef cl-shiftf
+               cl-struct--pcase-macroexpander cl-struct-sequence-type
+               cl-struct-slot-info cl-struct-slot-offset
+               cl-symbol-macrolet cl-tagbody cl-the
+               cl-type--pcase-macroexpander cl-typecase cl-typep
+               cl-with-accessors cl-with-gensyms))
+  (unless (fboundp sym)
+    (let ((def (get sym 'remacs--dump-fn)))
+      (when def (fset sym def)))))
+
 ;;; Predicates for analyzing Lisp forms (GNU cl-macs.el).
 
 (defconst cl--simple-funcs '(car cdr nth aref elt if and or + - 1+ 1- min max
@@ -1033,6 +1058,15 @@ instead of accessor functions.
              `(cl-symbol-macrolet
                   ,symbol-macros
                 ,@body))))))
+
+;;;; Type-defined pcase patterns.
+
+;; GNU cl-macs.el defines this for `(cl-type TYPE)' pcase patterns —
+;; needed by transient.el's `pcase' dispatchers.
+(pcase-defmacro cl-type (type)
+  "Pcase pattern that matches objects of TYPE.
+TYPE is a type descriptor as accepted by `cl-typep', which see."
+  `(pred (cl-typep _ ',type)))
 
 (provide 'cl-macs)
 ;;; cl-macs.el ends here

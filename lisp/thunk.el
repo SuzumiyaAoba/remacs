@@ -7,6 +7,8 @@
 
 ;;; Code:
 
+(require 'cl-lib)
+
 (defmacro thunk-delay (&rest body)
   "Delay the evaluation of BODY."
   (declare (debug (def-body)))

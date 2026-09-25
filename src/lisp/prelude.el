@@ -6381,14 +6381,25 @@ uncaught (at debugger-entry time, in the raising dynamic context)."
   "Like `list' but the last argument is the tail of the new list."
   (if list (cons first (apply #'backquote-list*-function list)) first))
 
-;; GNU defines this via `backquote-list*-macro': one expansion step
-;; folds the whole spine into a cons chain (list* semantics).
+;; GNU's `backquote-list*-macro' (backquote.el): one expansion step
+;; folds the whole spine into a cons chain (list* semantics).  The
+;; body must not use `dolist' — `cl.el' advises `dolist' with
+;; `cl--wrap-in-nil-block', whose `cl-block' expansion emits another
+;; `backquote-list*' call, recursing forever during eager expansion.
 (defmacro backquote-list* (first &rest list)
   "Like `list' but the last argument is the tail of the new list."
-  (let ((r (car (last (cons first list)))))
-    (dolist (x (cdr (nreverse (cons first list))))
-      (setq r (list 'cons x r)))
-    r))
+  (setq list (nreverse (cons first list))
+	first (car list)
+	list (cdr list))
+  (if list
+      (let* ((second (car list))
+	     (rest (cdr list))
+	     (newlist (list 'cons second first)))
+	(while rest
+	  (setq newlist (list 'cons (car rest) newlist)
+		rest (cdr rest)))
+	newlist)
+    first))
 
 (defun backquote-delay-process (s level)
   "Process a (un|back|splice)quote inside a backquote.
@@ -15457,11 +15468,19 @@ Any remaining forms form the default method (specializers all `t')."
 
 (defmacro cl-defmethod (name &rest args)
   "Define a method for generic function NAME.
-ARGS is [QUALIFIER] ARGLIST BODY where ARGLIST elements may be
+ARGS is [QUALIFIER...] ARGLIST BODY where ARGLIST elements may be
 VAR, (VAR TYPE), or (VAR (eql FORM))."
-  (let ((qual nil))
-    (when (and (car args) (not (listp (car args))))
-      (setq qual (car args) args (cdr args)))
+  (let ((quallist nil))
+    ;; GNU collects every leading non-list item as a qualifier
+    ;; (e.g. `:extra TAG'); the CLOS-style combination qualifier is
+    ;; the last of :before/:after/:around/:primary among them.
+    (while (and (car args) (not (listp (car args))))
+      (push (pop args) quallist))
+    (let ((qual nil) (rest quallist))
+      (while rest
+        (when (memq (car rest) '(:before :after :around :primary))
+          (setq qual (car rest)))
+        (setq rest (cdr rest)))
     (let* ((arglist (car args))
            (mbody (cdr args))
            (doc (and (stringp (car mbody)) (pop mbody)))
@@ -15509,7 +15528,7 @@ VAR, (VAR TYPE), or (VAR (eql FORM))."
                                        (eq (cadr m) ',qual))
                             (push m out)))
                         (nreverse out))))
-           ',name)))))
+           ',name))))))
 
 ;; ---------- cl-lib / cl-seq subset ----------
 
@@ -15818,30 +15837,53 @@ Keywords supported: :test :test-not :key :if :if-not :count :start :end
    ((consp type)
     (let ((op (car type)))
       (cond
-       ((eq op 'or) (cl-some (lambda (tp) (cl-typep val tp)) (cdr type)))
-       ((eq op 'and) (cl-every (lambda (tp) (cl-typep val tp)) (cdr type)))
+       ;; `cl-some'/`cl-every' are dump-voided and carry no autoload at
+       ;; -Q (as in GNU), so compound specifiers can't reach them here.
+       ((eq op 'or)
+        (let ((res nil) (ts (cdr type)))
+          (while (and ts (not res))
+            (setq res (cl-typep val (car ts)) ts (cdr ts)))
+          res))
+       ((eq op 'and)
+        (let ((res t) (ts (cdr type)))
+          (while (and ts res)
+            (setq res (cl-typep val (car ts)) ts (cdr ts)))
+          res))
        ((eq op 'not) (not (cl-typep val (cadr type))))
        ((eq op 'member) (memql val (cdr type)))
-       (t (funcall op val)))))
+       ((eq op 'satisfies) (funcall (cadr type) val))
+       (t (let ((h (and (symbolp op) (get op 'cl-deftype-handler))))
+            (if h
+                (cl-typep val (apply h (cdr type)))
+              (funcall op val)))))))
    (t
     (cond
      ((eq type t) t)
      ((eq type 'null) (null val))
      (t
-      (funcall
-       (or (cdr (assq type '((integer . integerp) (number . numberp)
-                             (float . floatp) (string . stringp)
-                             (symbol . symbolp) (cons . consp)
-                             (list . listp) (vector . vectorp)
-                             (hash-table . hash-table-p) (function . functionp)
-                             (character . characterp) (boolean . booleanp)
-                             (sequence . sequencep) (array . arrayp)
-                             (atom . atom) (keyword . keywordp)
-                             (fixnum . fixnump) (buffer . bufferp)
-                             (window . windowp) (process . processp)
-                             (frame . framep) (marker . markerp))))
-           (error "cl-typep: unknown type %s" type))
-       val))))))
+      (let ((pred (and (symbolp type)
+                       (get type 'cl-deftype-satisfies))))
+        (cond
+         (pred (funcall pred val))
+         ((and (symbolp type) (get type 'cl-deftype-handler))
+          (cl-typep val (funcall (get type 'cl-deftype-handler))))
+         (t
+          (funcall
+           (or (cdr (assq type '((integer . integerp) (number . numberp)
+                                 (float . floatp) (string . stringp)
+                                 (symbol . symbolp) (cons . consp)
+                                 (list . listp) (vector . vectorp)
+                                 (hash-table . hash-table-p)
+                                 (function . functionp)
+                                 (character . characterp)
+                                 (boolean . booleanp)
+                                 (sequence . sequencep) (array . arrayp)
+                                 (atom . atom) (keyword . keywordp)
+                                 (fixnum . fixnump) (buffer . bufferp)
+                                 (window . windowp) (process . processp)
+                                 (frame . framep) (marker . markerp))))
+               (error "cl-typep: unknown type %s" type))
+           val)))))))))
 
 (defun cl-some (pred seq &rest _keys)
   "First non-nil (PRED X) for X in SEQ."
@@ -16187,31 +16229,74 @@ This does not modify SEQUENCE."
 
 (defmacro cl-destructuring-bind (args expr &rest body)
   "Bind ARGS (a list pattern) to elements of EXPR.
-Subset: flat patterns with &optional/&rest support; a dotted
-tail binds the remaining list, as in GNU `cl-destructuring-bind'."
-  (let ((vals (gensym)) (binds nil)
-        (i 0) (state 'req) (cur args))
+Subset: &optional/&rest/&key/&aux specifiers; a dotted tail
+binds the remaining list; nested list patterns destructure
+recursively, as in GNU `cl-destructuring-bind'."
+  (let ((vals (gensym)) (binds nil) (nested nil)
+        (i 0) (state 'req) (cur args) (restv nil))
     (while (consp cur)
       (let ((a (car cur)))
         (cond
          ((eq a '&optional) (setq state 'opt))
-         ((eq a '&rest) (setq state 'rest))
-         ((memq a '(&key &aux &allow-other-keys)) (setq state 'skip))
+         ((memq a '(&rest &body)) (setq state 'rest))
+         ((eq a '&key)
+          (unless restv
+            (setq restv (gensym "rest"))
+            (push (list restv `(nthcdr ,i ,vals)) binds))
+          (setq state 'key))
+         ((eq a '&allow-other-keys) nil)
+         ((eq a '&aux) (setq state 'aux))
          ((eq state 'rest)
-          (push (list a `(nthcdr ,i ,vals)) binds) (setq state 'done))
-         ((eq state 'skip) nil)
+          (if (symbolp a)
+              (push (list a `(nthcdr ,i ,vals)) binds)
+            (let ((g (gensym "rest")))
+              (push (list g `(nthcdr ,i ,vals)) binds)
+              (push (list a g) nested)
+              (setq restv g)))
+          (when (symbolp a) (setq restv a))
+          (setq state 'done))
+         ((eq state 'key)
+          ;; Spec: SYM | (SYM DEF [PRE]) | ((:KW SYM-OR-PAT) DEF [PRE])
+          (let* ((spec (if (consp a) a (list a)))
+                 (v (car spec))
+                 (def (cadr spec))
+                 (pre (caddr spec))
+                 (kw (if (consp v) (car v)
+                       (intern (concat ":" (symbol-name v)))))
+                 (var (if (consp v) (cadr v) v))
+                 (g (gensym "key")))
+            (push (list g `(car (cdr (or (plist-member ,restv ,kw)
+                                         (list nil ,def)))))
+                  binds)
+            (when pre
+              (push (list pre `(and (plist-member ,restv ,kw) t))
+                    binds))
+            (if (symbolp var)
+                (push (list var g) binds)
+              (push (list var g) nested))))
+         ((eq state 'aux)
+          (push (if (consp a) a (list a nil)) binds))
+         ((eq state 'done) nil)
          (t
           (let ((v (if (consp a) (car a) a))
                 (def (and (consp a) (cadr a))))
-            (push (list v `(or (nth ,i ,vals) ,def)) binds)
+            (if (symbolp v)
+                (push (list v `(or (nth ,i ,vals) ,def)) binds)
+              ;; Nested list pattern (e.g. ((x y) DEFAULT)): bind a
+              ;; temp and destructure it around the body.
+              (let ((g (gensym "pat")))
+                (push (list g `(or (nth ,i ,vals) ,def)) binds)
+                (push (list v g) nested)))
             (setq i (1+ i))))))
       (setq cur (cdr cur)))
     ;; Dotted tail: (a b . rest) — REST gets the remainder, like
     ;; GNU's `cl--destructuring-bind'.
     (when (and cur (not (eq state 'done)))
       (push (list cur `(nthcdr ,i ,vals)) binds))
-    `(let ((,vals ,expr))
-       (let ,(nreverse binds) ,@body))))
+    (let ((exp `(let* ((,vals ,expr) ,@(nreverse binds)) ,@body)))
+      (dolist (pr nested)
+        (setq exp `(cl-destructuring-bind ,(car pr) ,(cadr pr) ,exp)))
+      exp)))
 
 (defmacro cl-letf (bindings &rest body)
   "Temporarily bind to PLACEs.
@@ -16448,7 +16533,7 @@ NAME and the slots, as in GNU's `cl-defstruct'."
          (conc (let ((o (funcall opt :conc-name)))
                  (if o (cadr o) (intern (concat (symbol-name n) "-")))))
          (type (let ((o (funcall opt :type))) (and o (cadr o))))
-         (named (or (assq :named opts) (null type)))
+         (named (or (memq :named opts) (null type)))
          (base (if named 1 0))
          (snames (mapcar (lambda (x) (if (consp x) (car x) x)) slots))
          (sdefs (mapcar (lambda (x) (and (consp x) (cadr x))) slots))
@@ -16507,23 +16592,30 @@ NAME and the slots, as in GNU's `cl-defstruct'."
                `(defun ,ctor (&rest cl--keys)
                   (,mk ,@(when named `(',n)) ,@(nreverse vals)))
                defs))))))
-    ;; Predicate.
+    ;; Predicate.  Named structs test tag membership in the
+    ;; `cl-struct-NAME-tags' list so subclasses count, like GNU's
+    ;; `cl-struct-p' hierarchy; anonymous types test the container.
     (let ((po (funcall opt :predicate)))
       (when (or (not po) (cadr po))
         (let ((pred (if po (cadr po)
-                      (intern (concat (symbol-name n) "-p")))))
+                      (intern (concat (symbol-name n) "-p"))))
+              (tags (intern (concat "cl-struct-" (symbol-name n)
+                                    "-tags"))))
           (push
            `(defun ,pred (ob)
               ,(cond
                 ((eq type 'vector)
                  (if named
-                     `(and (vectorp ob) (eq (aref ob 0) ',n))
+                     `(and (vectorp ob)
+                           (memq (aref ob 0) ,tags))
                    `(vectorp ob)))
                 ((eq type 'list)
                  (if named
-                     `(and (consp ob) (eq (car ob) ',n))
+                     `(and (consp ob)
+                           (memq (car ob) ,tags))
                    `(listp ob)))
-                (t `(and (recordp ob) (eq (aref ob 0) ',n)))))
+                (t `(and (recordp ob)
+                         (memq (aref ob 0) ,tags)))))
            defs))))
     ;; Copier.
     (let ((co (funcall opt :copier)))
@@ -16550,7 +16642,538 @@ NAME and the slots, as in GNU's `cl-defstruct'."
     ;; Publish the effective (inherited + own) slot specs so a child
     ;; `cl-defstruct' with (:include N) can inherit them.
     (push `(put ',n 'cl--defstruct-slots ',slots) defs)
+    (push `(put ',n 'cl--defstruct-named ',named) defs)
+    ;; `cl-struct--pcase-info' for the `cl-struct' pcase pattern
+    ;; (subr-x.el's `cl-struct--pcase-macroexpander'): layout is
+    ;; (PREDICATE SEQTYPE (SLOT . OFFSET)...), `list' => nth access.
+    ;; GNU registers struct types at macro-expansion time too — eager
+    ;; macroexpansion of a later `cl-struct' pattern must already see
+    ;; the info, so `put' here runs as an expansion side effect in
+    ;; addition to the emitted runtime form.
+    (let ((off base) (finfo nil)
+          (pred (let ((po (funcall opt :predicate)))
+                  (cond ((and po (null (cadr po)))
+                         `(lambda (ob)
+                            ,(cond ((eq type 'vector) `(vectorp ob))
+                                   ((eq type 'list) `(listp ob))
+                                   (t `(recordp ob)))))
+                        (po (cadr po))
+                        (t (intern (concat (symbol-name n) "-p"))))))
+          (seqtype (if (eq type 'list) 'list 'record)))
+      (dolist (s snames)
+        (push (cons s off) finfo)
+        (setq off (1+ off)))
+      (setq finfo (nreverse finfo))
+      ;; Info is (PRED SEQTYPE . FINFO): the slot alist is spliced
+      ;; into the list tail, matching subr-x's `cl-struct--pcase-
+      ;; macroexpander' which scans (cddr info) with `assq'.
+      (put n 'cl-struct--pcase-info (cons pred (cons seqtype finfo)))
+      (put n 'cl--defstruct-slots slots)
+      (put n 'cl--defstruct-named named)
+      (push `(put ',n 'cl-struct--pcase-info
+                  '(,pred ,seqtype ,@finfo))
+            defs))
+    ;; GNU cl-preloaded registration: tags lists, parent link,
+    ;; `cl-struct-type' (consulted by `type-of'), and a
+    ;; `cl-structure-class' object stored under `cl--class'.
+    (let* ((ptags (cond (include (cadr include))
+                        ((eq n 'cl-structure-object) nil)
+                        ((null type) 'cl-structure-object)
+                        (t nil)))
+           (tagsym (intern (concat "cl-struct-" (symbol-name n)
+                                   "-tags")))
+           (tagsymname (intern (concat "cl-struct-" (symbol-name n)))))
+      (push `(put ',n 'cl--defstruct-parent ',ptags) defs)
+      (push `(defvar ,tagsym nil) defs)
+      (push `(put ',n 'cl-struct-type '(,type ,named)) defs)
+      (push `(cl--struct-register-tag ',n ',ptags) defs)
+      (push `(cl--struct-register-class ',n nil ',(cadr include)
+                                        ',type ',named ',slots
+                                        ',tagsym ',tagsymname nil)
+            defs)
+      (push `(defconst ,tagsymname (cl--find-class ',n)) defs)
+      (push `(fset ',tagsymname :quick-object-witness-check) defs))
     `(progn ,@(nreverse defs) ',n)))
+
+;; ---------- cl-struct introspection (GNU cl-macs API) ----------
+;; GNU keeps struct metadata in cl-structure-class objects
+;; (cl-preloaded.el); we keep it in the `cl--defstruct-slots',
+;; `cl--defstruct-named' and `cl-struct--pcase-info' symbol
+;; properties.  These entry points mirror GNU's
+;; `cl-struct-sequence-type', `cl-struct-slot-info',
+;; `cl-struct-slot-offset' and `cl-struct-slot-value'.
+
+(defun cl-struct-sequence-type (struct-type)
+  "Return the sequence used to build STRUCT-TYPE.
+Return values are either `vector', `list' or nil (and the latter
+indicates a `record' struct type."
+  (declare (side-effect-free t) (pure t))
+  (let ((info (get struct-type 'cl-struct--pcase-info)))
+    (unless info
+      (error "%s is not a known cl-struct type" struct-type))
+    (let ((st (cadr info)))
+      (if (eq st 'record) nil st))))
+
+(defun cl-struct-slot-info (struct-type)
+  "Return a list of slot names of struct STRUCT-TYPE.
+Each entry is a list (SLOT-NAME . OPTS) as in GNU's cl-macs.
+Dummy slots that represent the struct name may appear first."
+  (declare (side-effect-free t) (pure t))
+  (let* ((info (get struct-type 'cl-struct--pcase-info))
+         (slots (get struct-type 'cl--defstruct-slots))
+         (named (get struct-type 'cl--defstruct-named))
+         descs)
+    (unless info
+      (error "%s is not a known cl-struct type" struct-type))
+    (if named (push '(cl-tag-slot) descs))
+    (dolist (slot slots)
+      (push (if (consp slot)
+                (list (car slot) (cadr slot))
+              (list slot))
+            descs))
+    (nreverse descs)))
+
+(defun cl-struct-slot-offset (struct-type slot-name)
+  "Return the offset of slot SLOT-NAME in STRUCT-TYPE.
+Signal `cl-struct-unknown-slot' if there is no such slot."
+  (declare (side-effect-free t) (pure t))
+  (let ((info (get struct-type 'cl-struct--pcase-info)))
+    (unless info
+      (error "%s is not a known cl-struct type" struct-type))
+    (let ((cell (assq slot-name (cddr info))))
+      (if cell
+          (cdr cell)
+        (signal 'cl-struct-unknown-slot (list struct-type slot-name))))))
+
+(defun cl-struct-slot-value (struct-type slot-name inst)
+  "Return the value of slot SLOT-NAME in INST of STRUCT-TYPE."
+  (declare (side-effect-free t))
+  (let ((off (cl-struct-slot-offset struct-type slot-name)))
+    (if (eq (cl-struct-sequence-type struct-type) 'list)
+        (nth off inst)
+      (aref inst off))))
+
+(defun cl-struct-set-slot-value (struct-type slot-name inst value)
+  "Set the value of slot SLOT-NAME in INST of STRUCT-TYPE to VALUE."
+  (let ((off (cl-struct-slot-offset struct-type slot-name)))
+    (if (eq (cl-struct-sequence-type struct-type) 'list)
+        (setcar (nthcdr off inst) value)
+      (aset inst off value))))
+
+;; ---------- cl-preloaded type descriptors ----------
+;; GNU's cl-preloaded.el keeps a class object (a `cl--class' record)
+;; for every type in the `cl--class' symbol property; `cl--find-class'
+;; is a macro expanding to the `get'.  EIEIO and `cl-generic' dispatch
+;; both rely on this, so we mirror the layout: cl--class /
+;; cl-structure-class / cl--slot-descriptor / built-in-class records
+;; plus the `cl-struct-NAME-tags' variables that implement the
+;; "predicate also matches descendants" semantics.
+
+(defmacro cl--find-class (type)
+  "Return the class descriptor of TYPE, or nil."
+  `(get ,type 'cl--class))
+
+(defvar cl--struct-default-parent nil
+  "Indirect default parent for record structs (bootstrapping).")
+
+(defun cl--struct-tag-var (name)
+  "Return the tags-list variable symbol for struct NAME."
+  (intern (format "cl-struct-%s-tags" name)))
+
+(defun cl--struct-register-tag (name parent)
+  "Register struct NAME's tag in its own tags var and all ancestors'.
+PARENT is the name of NAME's parent struct, or nil.  This is the
+runtime half of `cl-defstruct'; every ancestor's
+`cl-struct-PARENT-tags' list gains NAME's tag, mirroring GNU's
+`cl--struct-register-child'."
+  (let ((v (cl--struct-tag-var name)))
+    (unless (and (boundp v) (memq name (symbol-value v)))
+      (set v (cons name (and (boundp v) (symbol-value v))))))
+  (while parent
+    (let ((v (cl--struct-tag-var parent)))
+      (unless (and (boundp v) (memq name (symbol-value v)))
+        (set v (cons name (and (boundp v) (symbol-value v))))))
+    (setq parent (get parent 'cl--defstruct-parent))))
+
+(defun cl--plist-to-alist (plist)
+  (let ((res '()))
+    (while plist
+      (push (cons (pop plist) (pop plist)) res))
+    (nreverse res)))
+
+(defun cl--alist-to-plist (alist)
+  (let ((res '()))
+    (dolist (x alist)
+      (push (car x) res)
+      (push (cdr x) res))
+    (nreverse res)))
+
+;; `cl--make-slot-descriptor' is hand-defined before the defstructs so
+;; the class-registration helper can use it, like GNU's bootstrap
+;; `cl--make-slot-desc'.
+(fset 'cl--make-slot-descriptor
+      (lambda (name &optional initform type props)
+        (record 'cl-slot-descriptor name initform type props)))
+(defalias 'cl--make-slot-desc 'cl--make-slot-descriptor)
+
+(fset 'cl--copy-slot-descriptor-1
+      (lambda (sd) (copy-record sd)))
+(defun cl--copy-slot-descriptor (slot)
+  (let ((new (cl--copy-slot-descriptor-1 slot)))
+    (aset new 4 (copy-alist (aref new 4)))
+    new))
+
+(defun cl--struct-get-class (name)
+  "Return the cl-structure-class object named NAME.
+NAME may also already be a class object."
+  (or (if (not (symbolp name)) name)
+      (cl--find-class name)
+      (error "%S is not a struct name" name)))
+
+(defun cl--struct-register-class (name docstring parent type named slots
+                                       children-sym tag print)
+  "Register a `cl-structure-class' object for struct NAME.
+Simplified `cl-struct-define': builds the class record, populates the
+slot-descriptor vector and index table, links into the parent chain,
+and stores it under `cl--class'."
+  (when (eq type 'record) (setq type nil))
+  (let* ((parent-class
+          (cond (parent (cl--struct-get-class parent))
+                ((eq type 'list) (cl--find-class 'cons))
+                ((eq type 'vector) (cl--find-class 'vector))
+                (t (cl--find-class 'record))))
+         (n (length slots))
+         (index-table (make-hash-table :test 'eq :size (max n 1)))
+         (vslots (make-vector n nil))
+         (i 0)
+         (offset (if type 0 1)))
+    (dolist (slot slots)
+      (let* ((slot (if (consp slot) slot (list slot)))
+             (sname (car slot))
+             (props (cl--plist-to-alist (cddr slot)))
+             (typep (assq :type props))
+             (stype (if typep (cdr typep) t)))
+        (when typep (setq props (delq typep props)))
+        (aset vslots i (cl--make-slot-descriptor
+                        sname (nth 1 slot) stype props))
+        (puthash sname (+ i offset) index-table))
+      (setq i (1+ i)))
+    (if (boundp children-sym)
+        (add-to-list children-sym tag)
+      (set children-sym (list tag)))
+    (let ((class (record 'cl-structure-class
+                         name docstring
+                         (if (and parent-class
+                                  (memq (aref parent-class 0)
+                                        (symbol-value
+                                         (cl--struct-tag-var 'cl--class))))
+                             (list parent-class))
+                         vslots index-table
+                         tag type named print children-sym)))
+      ;; Register TAG in the ancestors' tags lists (only meaningful
+      ;; when the ancestors are struct classes).
+      (let ((p parent))
+        (while p
+          (let ((v (cl--struct-tag-var p)))
+            (unless (and (boundp v) (memq tag (symbol-value v)))
+              (set v (cons tag (and (boundp v) (symbol-value v))))))
+          (setq p (get p 'cl--defstruct-parent))))
+      (put name 'cl--class class)
+      class)))
+
+(defalias 'cl-struct-define 'cl--struct-register-class)
+
+;; The metaclass records.  Layout mirrors GNU cl-preloaded.el:
+;;   cl--class:          [name docstring parents slots index-table]
+;;   cl-structure-class: + [tag type named print children-sym]
+;;   cl--slot-descriptor: [name initform type props]
+(cl-defstruct (cl--class
+               (:constructor nil)
+               (:predicate cl--class-p)
+               (:copier nil))
+  "Abstract supertype of all type descriptors."
+  name docstring parents slots index-table)
+
+(cl-defstruct (cl-slot-descriptor
+               (:conc-name cl--slot-descriptor-)
+               (:constructor nil)
+               (:copier nil))
+  "Descriptor of structure slot."
+  name initform type props)
+
+(cl-defstruct (cl-structure-class
+               (:include cl--class)
+               (:conc-name cl--struct-class-)
+               (:predicate cl--struct-class-p)
+               (:constructor nil)
+               (:copier nil))
+  "The type of CL structs descriptors."
+  tag type named print children-sym)
+
+(cl-defstruct (cl-structure-object
+               (:predicate cl-struct-p)
+               (:constructor nil)
+               (:copier nil))
+  "The root parent of all \"normal\" CL structs.")
+
+(cl-defstruct (built-in-class
+               (:include cl--class)
+               (:conc-name built-in-class--)
+               (:constructor nil)
+               (:copier nil))
+  "Type descriptors for built-in types."
+  non-abstract-supertype)
+
+(setq cl--struct-default-parent 'cl-structure-object)
+
+;; `cl-structure-class' is itself a struct class: hand-register the
+;; meta types since no parents existed when they were defined.
+(put 'cl--class 'cl--class
+     (record 'cl-structure-class
+             'cl--class nil nil
+             (vector (cl--make-slot-descriptor 'name)
+                     (cl--make-slot-descriptor 'docstring)
+                     (cl--make-slot-descriptor 'parents)
+                     (cl--make-slot-descriptor 'slots)
+                     (cl--make-slot-descriptor 'index-table))
+             (let ((h (make-hash-table :test 'eq)))
+               (puthash 'name 1 h) (puthash 'docstring 2 h)
+               (puthash 'parents 3 h) (puthash 'slots 4 h)
+               (puthash 'index-table 5 h) h)
+             'cl-struct-cl--class nil t nil 'cl-struct-cl--class-tags))
+(put 'cl-structure-class 'cl--class
+     (record 'cl-structure-class
+             'cl-structure-class nil (list (cl--find-class 'cl--class))
+             (vconcat
+              (cl--class-slots (cl--find-class 'cl--class))
+              (vector (cl--make-slot-descriptor 'tag)
+                      (cl--make-slot-descriptor 'type)
+                      (cl--make-slot-descriptor 'named)
+                      (cl--make-slot-descriptor 'print)
+                      (cl--make-slot-descriptor 'children-sym)))
+             (let ((h (make-hash-table :test 'eq)))
+               (puthash 'name 1 h) (puthash 'docstring 2 h)
+               (puthash 'parents 3 h) (puthash 'slots 4 h)
+               (puthash 'index-table 5 h) (puthash 'tag 6 h)
+               (puthash 'type 7 h) (puthash 'named 8 h)
+               (puthash 'print 9 h) (puthash 'children-sym 10 h) h)
+             'cl-struct-cl-structure-class nil t nil
+             'cl-struct-cl-structure-class-tags))
+(put 'cl--slot-descriptor 'cl--class
+     (record 'cl-structure-class
+             'cl--slot-descriptor nil nil
+             (vector (cl--make-slot-descriptor 'name)
+                     (cl--make-slot-descriptor 'initform)
+                     (cl--make-slot-descriptor 'type)
+                     (cl--make-slot-descriptor 'props))
+             (let ((h (make-hash-table :test 'eq)))
+               (puthash 'name 1 h) (puthash 'initform 2 h)
+               (puthash 'type 3 h) (puthash 'props 4 h) h)
+             'cl-struct-cl--slot-descriptor nil t nil
+             'cl-struct-cl--slot-descriptor-tags))
+(put 'cl-structure-object 'cl--class
+     (record 'cl-structure-class
+             'cl-structure-object nil nil (vector)
+             (make-hash-table :test 'eq)
+             'cl-struct-cl-structure-object nil t nil
+             'cl-struct-cl-structure-object-tags))
+(put 'built-in-class 'cl--class
+     (record 'cl-structure-class
+             'built-in-class nil (list (cl--find-class 'cl--class))
+             (vconcat
+              (cl--class-slots (cl--find-class 'cl--class))
+              (vector (cl--make-slot-descriptor 'non-abstract-supertype)))
+             (let ((h (make-hash-table :test 'eq)))
+               (puthash 'name 1 h) (puthash 'docstring 2 h)
+               (puthash 'parents 3 h) (puthash 'slots 4 h)
+               (puthash 'index-table 5 h)
+               (puthash 'non-abstract-supertype 6 h) h)
+             'cl-struct-built-in-class nil t nil
+             'cl-struct-built-in-class-tags))
+
+(defun cl--builtin-type-p (name)
+  (let ((class (and (symbolp name) (get name 'cl--class))))
+    (and class (built-in-class-p class))))
+
+(defun cl--struct-name-p (name)
+  "Return t if NAME is a valid structure name for `cl-defstruct'."
+  (and name (symbolp name) (not (keywordp name))
+       (not (cl--builtin-type-p name))))
+
+(defun cl--class-allparents (class)
+  "Return the list of all the ancestors of CLASS, linearized."
+  (cons (cl--class-name class)
+        (let* ((parents (cl--class-parents class))
+               (aps (mapcar #'cl--class-allparents parents)))
+          (if (null (cdr aps))
+              (car aps)
+            (merge-ordered-lists
+             (nconc aps (list (mapcar #'cl--class-name parents))))))))
+
+(defmacro cl--define-built-in-type (name parents &optional docstring &rest slots)
+  "Register NAME as a built-in type with parent types PARENTS."
+  (declare (indent 2) (doc-string 3))
+  (unless (listp parents) (setq parents (list parents)))
+  (unless (or parents (eq name t))
+    (error "Missing parents for %S: %S" name parents))
+  (let ((predicate (intern-soft (format
+                                 (if (string-match "-" (symbol-name name))
+                                     "%s-p" "%sp")
+                                 name)))
+        (nas nil))
+    (unless (fboundp predicate) (setq predicate nil))
+    (while (keywordp (car slots))
+      (let ((kw (pop slots)) (val (pop slots)))
+        (cond ((eq kw :predicate) (setq predicate val))
+              ((eq kw :non-abstract-supertype) (setq nas val))
+              (t (error "Unknown keyword arg: %S" kw)))))
+    `(progn
+       ,(if predicate `(put ',name 'cl-deftype-satisfies #',predicate))
+       (put ',name 'cl--class
+            (record 'built-in-class
+                    ',name ,docstring
+                    (delq nil (mapcar (lambda (p) (get p 'cl--class))
+                                      ',parents))
+                    (vector) (make-hash-table :test 'eq)
+                    'cl-struct-built-in-class nil t nil
+                    'cl-struct-built-in-class-tags
+                    ,nas)))))
+
+(cl--define-built-in-type t nil "Abstract supertype of everything.")
+(cl--define-built-in-type atom t "Abstract supertype of anything but cons cells."
+                          :predicate atom)
+(cl--define-built-in-type hash-table atom)
+(cl--define-built-in-type frame atom)
+(cl--define-built-in-type buffer atom)
+(cl--define-built-in-type window atom)
+(cl--define-built-in-type process atom)
+(cl--define-built-in-type finalizer atom)
+(cl--define-built-in-type window-configuration atom)
+(cl--define-built-in-type overlay atom)
+(cl--define-built-in-type condvar atom)
+(cl--define-built-in-type mutex atom)
+(cl--define-built-in-type thread atom)
+(cl--define-built-in-type terminal atom)
+(cl--define-built-in-type font-object atom)
+(cl--define-built-in-type font-entity atom)
+(cl--define-built-in-type font-spec atom)
+(cl--define-built-in-type number-or-marker atom
+  "Abstract supertype of both `number's and `marker's.")
+(cl--define-built-in-type symbol atom "Type of symbols."
+                          :non-abstract-supertype t)
+(cl--define-built-in-type obarray atom)
+(cl--define-built-in-type sequence t "Abstract supertype of sequences.")
+(cl--define-built-in-type list sequence)
+(cl--define-built-in-type array (sequence atom)
+  "Abstract supertype of arrays.")
+(cl--define-built-in-type number (number-or-marker)
+  "Abstract supertype of numbers.")
+(cl--define-built-in-type float (number))
+(cl--define-built-in-type integer-or-marker (number-or-marker)
+  "Abstract supertype of both `integer's and `marker's.")
+(cl--define-built-in-type integer (number integer-or-marker))
+(cl--define-built-in-type marker (integer-or-marker))
+(cl--define-built-in-type bignum (integer)
+  "Type of those integers too large to fit in a `fixnum'.")
+(cl--define-built-in-type fixnum (integer)
+  "Type of small (fixed-size) integers.")
+(cl--define-built-in-type boolean (symbol)
+  "Type of the canonical boolean values."
+  :non-abstract-supertype t)
+(cl--define-built-in-type symbol-with-pos (symbol)
+  "Type of symbols augmented with source-position information.")
+(cl--define-built-in-type vector (array))
+(cl--define-built-in-type record (atom)
+  "Abstract type of objects with slots.")
+(cl--define-built-in-type bool-vector (array) "Type of bitvectors.")
+(cl--define-built-in-type char-table (array)
+  "Type of special arrays that are indexed by characters.")
+(cl--define-built-in-type string (array))
+(cl--define-built-in-type null (boolean list) "Type of the nil value."
+                          :predicate null)
+(cl--define-built-in-type cons (list) "Type of cons cells.")
+(cl--define-built-in-type function (atom)
+  "Abstract supertype of function values.")
+(cl--define-built-in-type compiled-function (function)
+  "Abstract type of functions that have been compiled.")
+(cl--define-built-in-type closure (function)
+  "Abstract type of functions represented by a vector-like object.")
+(cl--define-built-in-type byte-code-function (compiled-function closure)
+  "Type of functions that have been byte-compiled.")
+(cl--define-built-in-type subr (atom)
+  "Abstract type of functions and special forms compiled to machine code.")
+(cl--define-built-in-type module-function (compiled-function)
+  "Type of functions provided via the module API.")
+(cl--define-built-in-type interpreted-function (closure)
+  "Type of functions that have not been compiled.")
+(cl--define-built-in-type special-form (subr)
+  "Type of the core syntactic elements of the Emacs Lisp language.")
+(cl--define-built-in-type native-comp-function (subr compiled-function)
+  "Type of functions that have been compiled by the native compiler.")
+(cl--define-built-in-type primitive-function (subr compiled-function)
+  "Type of functions hand written in C.")
+
+;; Close the recursion: `cl-structure-object' predates the built-in
+;; types, so its `record' parent is attached now.
+(setf (cl--class-parents (cl--find-class 'cl-structure-object))
+      (list (cl--find-class 'record)))
+
+(defun cl-functionp (object)
+  "Return non-nil if OBJECT is a member of type `function'."
+  (memq (cl-type-of object)
+        '(primitive-function native-comp-function module-function
+          interpreted-function byte-code-function)))
+
+;; `cl-deftype' support: derived types get a class descriptor too, so
+;; `cl--find-class'/`cl--class-allparents' see the whole type DAG.
+(cl-defstruct (cl-derived-type-class
+               (:include cl--class)
+               (:predicate cl-derived-type-class-p)
+               (:constructor nil)
+               (:copier nil))
+  "Type descriptors for derived types, i.e. defined by `cl-deftype'.")
+
+(defun cl--define-derived-type (name expander predicate &optional parents)
+  "Register derived type with NAME for method dispatching."
+  (setf (cl--find-class name)
+        (record 'cl-derived-type-class
+                name nil
+                (delq nil (mapcar (lambda (p) (cl--find-class p))
+                                  parents))
+                (vector) (make-hash-table :test 'eq)))
+  (put name 'cl-deftype-handler expander)
+  (when predicate
+    (put name 'cl-deftype-satisfies predicate)))
+
+(defmacro cl-deftype (name arglist &rest body)
+  "Define NAME as a new data type (subset of GNU `cl-deftype').
+Registers a `cl-deftype-handler' expander and, when the expansion is
+a literal `(satisfies PRED)', a `cl-deftype-satisfies' predicate.
+A `declare' spec of the form (parents T...) registers the parents."
+  (declare (indent 2) (doc-string 3))
+  (when (stringp (car body)) (pop body))
+  (let ((parents nil))
+    (while (eq 'declare (car-safe (car body)))
+      (dolist (d (cdr (pop body)))
+        (when (eq (car-safe d) 'parents)
+          (setq parents (cdr d)))))
+    ;; GNU's `&cl-defs' makes every argument optional with default `*'
+    ;; so the expander can also be called with no arguments.
+    (let ((dargs (mapcar (lambda (a)
+                           (if (symbolp a) (list a ''*) a))
+                         arglist)))
+      `(cl--define-derived-type
+        ',name
+        (lambda (&rest cl--args)
+          (cl-destructuring-bind ,dargs cl--args ,@body))
+        (let ((spec (condition-case nil
+                        (funcall (lambda (&rest cl--args)
+                                   (cl-destructuring-bind
+                                       ,dargs cl--args ,@body)))
+                      (error nil))))
+          (and (consp spec) (eq (car spec) 'satisfies)
+               (cadr spec)))
+        ',parents))))
 
 ;; ---------- registers / misc ----------
 
@@ -16603,7 +17226,8 @@ nconc, sum, count, maximize, minimize, return, initially, finally."
 (defconst cl--loop-keywords
   '(for as with if when unless else end do doing collect collecting
     append appending nconc nconcing sum counting count maximize
-    maximizing minimize minimizing return while until repeat
+    maximizing minimize minimizing concat concatenating vconcat
+    return while until repeat
     initially finally from to upto below downto above upfrom
     downfrom in on across by = then and it being the elements
     hash-key hash-keys hash-value hash-values of each using
@@ -16642,6 +17266,14 @@ Accumulation refers to the `cl--loop-list-acc' and
     (while more
       (let ((kw (nth i clauses)))
         (cond
+         ;; GNU: an `and'-chained clause may itself be a conditional
+         ;; (`when P collect A and when Q collect B' nests the second
+         ;; `when' inside the first condition's action list).
+         ((memq kw '(if when unless))
+          (let ((a (cl--loop-cond clauses i)))
+            (push (car a) forms)
+            (setq kinds (append kinds (cadr a))
+                  i (nth 2 a))))
          ((memq kw '(do doing))
           (setq i (1+ i))
           (let ((df nil))
@@ -16666,7 +17298,7 @@ Accumulation refers to the `cl--loop-list-acc' and
              forms)))
          ((memq kw '(collect collecting append appending nconc nconcing
                      sum counting count maximize maximizing minimize
-                     minimizing))
+                     minimizing concat concatenating vconcat))
           (let* ((e (nth (1+ i) clauses))
                  (kind (cond ((memq kw '(collect collecting)) 'collect)
                              ((memq kw '(append appending)) 'append)
@@ -16674,6 +17306,8 @@ Accumulation refers to the `cl--loop-list-acc' and
                              ((memq kw '(sum counting)) 'sum)
                              ((eq kw 'count) 'count)
                              ((memq kw '(maximize maximizing)) 'max)
+                             ((memq kw '(concat concatenating)) 'concat)
+                             ((eq kw 'vconcat) 'vconcat)
                              (t 'min)))
                  (into nil))
             (setq i (+ i 2))
@@ -16702,6 +17336,10 @@ Accumulation refers to the `cl--loop-list-acc' and
                  `(setq ,nacc (+ ,nacc ,e)))
                 ((eq kind 'count)
                  `(when ,e (setq ,nacc (1+ ,nacc))))
+                ((eq kind 'concat)
+                 `(setq ,xacc (concat ,xacc ,e)))
+                ((eq kind 'vconcat)
+                 `(setq ,xacc (vconcat ,xacc ,e)))
                 (t `(setq ,xacc
                           (if ,xacc
                               (,(if (eq kind 'max) 'max 'min)
@@ -16784,7 +17422,11 @@ dynamically during expansion.")
                        (op (nth i clauses)))
                   (setq i (1+ i))
                   (cond
-                   ((memq op '(in on))
+                   ((memq op '(in on in-ref))
+                    ;; `in-ref' binds VAR as a place into the list in
+                    ;; GNU (symbol-macrolet to (car CELL)); our subset
+                    ;; iterates like `in' — read and element-mutation
+                    ;; uses (`setf (nth N VAR)') behave the same.
                     (let ((tl (gensym)) (src (nth i clauses)) (by nil))
                       (setq i (1+ i))
                       (when (eq (nth i clauses) 'by)
@@ -16982,9 +17624,15 @@ dynamically during expansion.")
                         (not (memq (nth i clauses) cl--loop-keywords)))
               (push (nth i clauses) finally)
               (setq i (1+ i)))))
+         ((memq kw '(if when unless))
+          (let ((a (cl--loop-cond clauses i)))
+            (setq body (append body (list (car a)))
+                  kinds (append kinds (cadr a))
+                  i (nth 2 a))))
          ((memq kw '(do doing collect collecting append appending
                     nconc nconcing sum counting count maximize
                     maximizing minimize minimizing return
+                    concat concatenating vconcat
                     thereis always never))
           (let ((a (cl--loop-action clauses i)))
             (setq body (append body (car a))
@@ -17016,7 +17664,8 @@ dynamically during expansion.")
                ((or (memq 'sum kinds) (memq 'count kinds))
                 'cl--loop-num-acc)
                ((or (memq 'always kinds) (memq 'never kinds)) t)
-               ((or (memq 'max kinds) (memq 'min kinds))
+               ((or (memq 'max kinds) (memq 'min kinds)
+                    (memq 'concat kinds) (memq 'vconcat kinds))
                 'cl--loop-ext-acc)
                (t nil))))))))
 
@@ -19070,12 +19719,7 @@ When IGNORE-CASE is non-nil, FUN is expected to be case-insensitive."
                 r)))))
     (completion-table-dynamic new-fun)))
 
-(defmacro macroexp-quote (v)
-  "Return the argument V converted to a form that will \"quote\" it."
-  (if (or (consp v)
-          (and (symbolp v) (not (keywordp v))))
-      (list 'quote v)
-    v))
+
 
 (defun substitute-key-definition (olddef newdef keymap
                                   &optional oldmap prefix)
