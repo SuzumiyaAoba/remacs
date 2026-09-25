@@ -905,8 +905,8 @@ pub(crate) static SUBRS: &[Subr] = &[
     ),
     S!("recent-keys", 0, 1, f_this_command_keys_vector, ""),
     S!("clear-this-command-keys", 0, 1, f_nil, ""),
-    S!("input-pending-p", 0, 1, f_nil, ""),
-    S!("discard-input", 0, 0, f_nil, ""),
+    S!("input-pending-p", 0, 1, f_input_pending_p, ""),
+    S!("discard-input", 0, 0, f_discard_input, ""),
     S!("last-nonminibuffer-frame", 0, 0, f_selected_frame, ""),
     // kill ring
     S!("kill-new", 1, 2, f_kill_new, "Push STRING onto kill-ring."),
@@ -7121,8 +7121,52 @@ fn f_text_char_description(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     }
 }
 
+/// Pop the next event from `unread-command-events' (GNU reads these
+/// before consulting the real input stream).  The value may be a list
+/// or, after `(setq unread-command-events N)', a bare event.
+fn pop_unread_command_event(i: &mut Interp) -> Option<Value> {
+    let sid = i.intern_soft("unread-command-events")?;
+    let v = i.symbol_value(sid);
+    if v.is_nil() {
+        return None;
+    }
+    let (head, tail) = match &v {
+        Value::Cons(c) => {
+            let cc = c.borrow();
+            (cc.car.clone(), cc.cdr.clone())
+        }
+        other => (other.clone(), Value::Nil),
+    };
+    let _ = i.set_symbol(sid, tail);
+    Some(head)
+}
+
+/// `discard-input': clears pending input — without a front-end that
+/// means clearing `unread-command-events' (GNU also drops the read
+/// socket backlog, which we don't have).
+fn f_discard_input(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
+    if let Some(sid) = i.intern_soft("unread-command-events") {
+        let _ = i.set_symbol(sid, Value::Nil);
+    }
+    Ok(Value::Nil)
+}
+
+/// `input-pending-p': non-nil `unread-command-events' counts as
+/// pending input (GNU's get_input_pending checks unread events).
+/// Without a front-end there is no other pending-input source.
+fn f_input_pending_p(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
+    let pending = i
+        .intern_soft("unread-command-events")
+        .map(|sid| !i.symbol_value(sid).is_nil())
+        .unwrap_or(false);
+    Ok(Value::from_bool(pending))
+}
+
 /// Read one raw key event through the front-end hook.
-fn f_read_char(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
+fn f_read_char(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    if let Some(ev) = pop_unread_command_event(i) {
+        return Ok(ev);
+    }
     if i.minibuf_reader.is_none() && i.noninteractive {
         // GNU batch `read-char' consumes one character from stdin.
         return Ok(Value::Int(i.batch_read_char()?));
@@ -7141,10 +7185,27 @@ fn f_read_char(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
             }
         }
     }
-    Ok(Value::Nil)
+    // No front-end and not batch: a real event read can never
+    // complete.  `read-event'/`read-char' with a SECONDS argument are
+    // timeout reads — GNU would return nil after the delay, so a nil
+    // return is correct there.  An unbounded read must not return nil
+    // (callers spin forever waiting for input); signal EOF like
+    // batch mode so `condition-case'/`ci' callers move on.
+    if let Some(Value::Int(_) | Value::Float(_)) = a.get(2) {
+        return Ok(Value::Nil);
+    }
+    Err(batch_eof(i))
 }
 
 fn f_read_key_sequence(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    if let Some(ev) = pop_unread_command_event(i) {
+        if let Value::Int(k) = ev {
+            return Ok(Value::string(
+                char::from_u32(k as u32).unwrap_or(' ').to_string(),
+            ));
+        }
+        return Ok(Value::Vec(Rc::new(RefCell::new(vec![ev]))));
+    }
     // Read one key through the front-end; batch mode consumes a char.
     if i.minibuf_reader.is_some() {
         let prompt = match &a[0] {
@@ -7167,14 +7228,26 @@ fn f_read_key_sequence(i: &mut Interp, a: Vec<Value>) -> EvalResult {
             char::from_u32(k as u32).unwrap_or(' ').to_string(),
         ));
     }
+    if i.minibuf_reader.is_none() {
+        // No input source: returning "" loops prompters forever.
+        return Err(batch_eof(i));
+    }
     Ok(Value::string(""))
 }
 fn f_read_key_sequence_vector(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    if let Some(ev) = pop_unread_command_event(i) {
+        return Ok(Value::Vec(Rc::new(RefCell::new(vec![ev]))));
+    }
     if i.minibuf_reader.is_none() && i.noninteractive {
         let k = i.batch_read_char()?;
         return Ok(Value::Vec(Rc::new(RefCell::new(vec![Value::Int(k)]))));
     }
     let _ = a;
+    if i.minibuf_reader.is_none() {
+        // No input source: callers like `map-y-or-n-p' retry forever
+        // on an empty sequence; EOF unwinds to the enclosing handler.
+        return Err(batch_eof(i));
+    }
     Ok(Value::Vec(Rc::new(RefCell::new(Vec::new()))))
 }
 fn f_this_command_keys(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
