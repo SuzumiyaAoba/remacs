@@ -49,10 +49,16 @@ Registration rules:
 - `insert-file-contents` rejects Emacs-internal-encoding files
   (surrogate-encoded unibyte bytes): ARRAY30, ECDICT, ETZY, QJ, QJ-b5,
   ZOZY, pinyin, sisheng, tsang-b5, ethio-util, ethiopic, ind-util,
-  leim-list, uni-confusable, uni-name — all byte-identical to GNU.
+  leim-list, uni-confusable, uni-name, titdic-cnv, tibetan, tibet-util,
+  Punct-b5, japanese — all byte-identical to GNU.
 - `transient.el`, `eieio.el` eager macroexpansion `(invalid-function nil)`;
   `byte-opt` "lambda used as function name" warnings.
 - `xwidget-internal` and other GUI primitives unimplemented.
+- Bulk-load test (all lisp/*.el under --batch): only failures besides the
+  above are `Lisp nesting exceeds max-lisp-eval-depth` during eager
+  macro-expansion (~50 files), `treesit-query-p: not implemented`
+  (ts-mode family), platform-gated *-win/android files, and
+  unregistered qualified requires (srecode/semantic/*).
 - `PRELUDE_MAX` env var truncates prelude evaluation for bisection;
   `--ieval` bisects a form interactively; `WHILE_WATCH` traces eval loops.
 
