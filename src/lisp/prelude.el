@@ -48645,3 +48645,479 @@ included; callers should bind `case-fold-search' to t."
 (fset 'widget-browse-at '(autoload "wid-browse" "Browse the widget under point.\n\n(fn POS)" t nil))
 (fset 'widget-browse-other-window '(autoload "wid-browse" "Show widget browser for WIDGET in other window.\n\n(fn &optional WIDGET)" t nil))
 (fset 'widget-minor-mode '(autoload "wid-browse" "Minor mode for traversing widgets.\n\nThis is a minor mode.  If called interactively, toggle the `Widget minor\nmode' mode.  If the prefix argument is positive, enable the mode, and if\nit is zero or negative, disable the mode.\n\nIf called from Lisp, toggle the mode if ARG is `toggle'.  Enable the\nmode if ARG is nil, omitted, or is a positive number.  Disable the mode\nif ARG is a negative number.\n\nTo check whether the minor mode is enabled in the current buffer,\nevaluate the variable `widget-minor-mode'.\n\nThe mode's hook is called both when the mode is enabled and when it is\ndisabled.\n\n(fn &optional ARG)" t nil))
+
+;; --- Round-16 compatibility ---
+(defconst frame--special-parameters
+  '("alpha" "alpha-background" "auto-hide-function" "auto-lower"
+    "auto-raise" "background-color" "background-mode" "border-color"
+    "border-width" "bottom-divider-width" "bottom-visible" "buffer-list"
+    "buffer-predicate" "child-frame-border-width" "cursor-color"
+    "cursor-type" "delete-before" "display" "display-type"
+    "drag-internal-border" "drag-with-header-line" "drag-with-mode-line"
+    "drag-with-tab-line" "explicit-name" "fit-frame-to-buffer-margins"
+    "fit-frame-to-buffer-sizes" "font" "font-backend" "foreground-color"
+    "fullscreen" "fullscreen-restore" "height" "horizontal-scroll-bars"
+    "icon-left" "icon-name" "icon-top" "icon-type"
+    "inhibit-double-buffering" "internal-border-width" "keep-ratio"
+    "left" "left-fringe" "line-spacing" "menu-bar-lines" "min-height"
+    "min-width" "minibuffer" "minibuffer-exit" "mouse-color"
+    "mouse-wheel-frame" "name" "no-accept-focus" "no-focus-on-map"
+    "no-other-frame" "no-special-glyphs" "ns-appearance"
+    "ns-transparent-titlebar" "outer-window-id" "override-redirect"
+    "parent-frame" "right-fringe" "right-divider-width" "screen-gamma"
+    "scroll-bar-background" "scroll-bar-foreground" "scroll-bar-height"
+    "scroll-bar-width" "shaded" "skip-taskbar" "snap-width" "sticky"
+    "tab-bar-lines" "title" "tool-bar-lines" "tool-bar-position" "top"
+    "top-visible" "tty-color-mode" "undecorated" "unspittable"
+    "use-frame-synchronization" "user-position" "user-size"
+    "vertical-scroll-bars" "visibility" "wait-for-wm" "width" "z-group")
+  "List of special frame parameters that makes sense to customize.")
+
+(defun make-face-bold (face &optional frame _noerror)
+  "Make the font of FACE be bold, if possible.
+FRAME nil or not specified means change face on all frames.
+Use `set-face-attribute' for finer control of the font weight."
+  (declare (advertised-calling-convention (face &optional frame) "29.1"))
+  (interactive (list (read-face-name "Make which face bold"
+                                     (face-at-point t))))
+  (set-face-attribute face frame :weight 'bold))
+
+
+(defun make-face-unbold (face &optional frame _noerror)
+  "Make the font of FACE be non-bold, if possible.
+FRAME nil or not specified means change face on all frames."
+  (declare (advertised-calling-convention (face &optional frame) "29.1"))
+  (interactive (list (read-face-name "Make which face non-bold"
+                                     (face-at-point t))))
+  (set-face-attribute face frame :weight 'normal))
+
+
+(defun make-face-italic (face &optional frame _noerror)
+  "Make the font of FACE be italic, if possible.
+FRAME nil or not specified means change face on all frames.
+Use `set-face-attribute' for finer control of the font slant."
+  (declare (advertised-calling-convention (face &optional frame) "29.1"))
+  (interactive (list (read-face-name "Make which face italic"
+                                     (face-at-point t))))
+  (set-face-attribute face frame :slant 'italic))
+
+
+(defun make-face-unitalic (face &optional frame _noerror)
+  "Make the font of FACE be non-italic, if possible.
+FRAME nil or not specified means change face on all frames."
+  (declare (advertised-calling-convention (face &optional frame) "29.1"))
+  (interactive (list (read-face-name "Make which face non-italic"
+                                     (face-at-point t))))
+  (set-face-attribute face frame :slant 'normal))
+
+
+(defun make-face-bold-italic (face &optional frame _noerror)
+  "Make the font of FACE be bold and italic, if possible.
+FRAME nil or not specified means change face on all frames.
+Use `set-face-attribute' for finer control of font weight and slant."
+  (declare (advertised-calling-convention (face &optional frame) "29.1"))
+  (interactive (list (read-face-name "Make which face bold-italic"
+                                     (face-at-point t))))
+  (set-face-attribute face frame :weight 'bold :slant 'italic))
+
+
+(defun set-face-font (face font &optional frame)
+  "Change font-related attributes of FACE to those of FONT.
+FONT can be a string, a font spec, a font entity, a font object,
+or a fontset.  However, interactively, only strings are accepted.
+The format of the font string specification varies based on the font
+system in use, but it can commonly be an X Logical Font
+Description (XLFD) string, or a simpler string like \"Courier-10\"
+or \"courier:size=10\".
+
+FRAME nil or not specified means change face on all frames.
+This sets the attributes `:family', `:foundry', `:width',
+`:height', `:weight', and `:slant'.  When called interactively,
+prompt for the face and font."
+  (interactive (read-face-and-attribute :font))
+  (set-face-attribute face frame :font font))
+
+
+;; Implementation note: Emulating gray background colors with a
+;; stipple pattern is now part of the face realization process, and is
+;; done in C depending on the frame on which the face is realized.
+
+(defun set-face-foreground (face color &optional frame)
+  "Change the foreground color of face FACE to COLOR (a string).
+FRAME nil or not specified means change face on all frames.
+COLOR can be a system-defined color name (see `list-colors-display')
+or a hex spec of the form #RRGGBB.
+When called interactively, prompts for the face and color."
+  (interactive (read-face-and-attribute :foreground))
+  (set-face-attribute face frame :foreground (or color 'unspecified)))
+
+
+(defun set-face-stipple (face stipple &optional frame)
+  "Change the stipple pixmap of face FACE to STIPPLE.
+FRAME nil or not specified means change face on all frames.
+STIPPLE should be a string, the name of a file of pixmap data.
+The directories listed in the `x-bitmap-file-path' variable are searched.
+
+Alternatively, STIPPLE may be a list of the form (WIDTH HEIGHT DATA)
+where WIDTH and HEIGHT are the size in pixels,
+and DATA is a string, containing the raw bits of the bitmap."
+  (interactive (read-face-and-attribute :stipple))
+  (set-face-attribute face frame :stipple (or stipple 'unspecified)))
+
+
+(defun set-face-underline (face underline &optional frame)
+  "Specify whether face FACE is underlined.
+UNDERLINE nil means FACE explicitly doesn't underline.
+UNDERLINE t means FACE underlines with its foreground color.
+If UNDERLINE is a string, underline with that color.
+
+UNDERLINE may also be a list of the form (:color COLOR :style STYLE),
+where COLOR is a string or `foreground-color', and STYLE is either
+`line' or `wave'.  :color may be omitted, which means to use the
+foreground color.  :style may be omitted, which means to use a line.
+
+FRAME nil or not specified means change face on all frames.
+Use `set-face-attribute' to \"unspecify\" underlining."
+  (interactive (read-face-and-attribute :underline))
+  (set-face-attribute face frame :underline underline))
+
+
+(defun set-face-inverse-video (face inverse-video-p &optional frame)
+  "Specify whether face FACE is in inverse video.
+INVERSE-VIDEO-P non-nil means FACE displays explicitly in inverse video.
+INVERSE-VIDEO-P nil means FACE explicitly is not in inverse video.
+FRAME nil or not specified means change face on all frames.
+Use `set-face-attribute' to \"unspecify\" the inverse video attribute."
+  (interactive
+   (let ((list (read-face-and-attribute :inverse-video)))
+     (list (car list) (if (cadr list) t))))
+  (set-face-attribute face frame :inverse-video inverse-video-p))
+
+(define-obsolete-function-alias 'set-face-inverse-video-p
+                                'set-face-inverse-video "24.4")
+
+(defun set-face-bold (face bold-p &optional frame)
+  "Specify whether face FACE is bold.
+BOLD-P non-nil means FACE should explicitly display bold.
+BOLD-P nil means FACE should explicitly display non-bold.
+FRAME nil or not specified means change face on all frames.
+Use `set-face-attribute' or `modify-face' for finer control."
+  (if (null bold-p)
+      (make-face-unbold face frame)
+    (make-face-bold face frame)))
+
+(define-obsolete-function-alias 'set-face-bold-p 'set-face-bold "24.4")
+
+
+(defun set-face-italic (face italic-p &optional frame)
+  "Specify whether face FACE is italic.
+ITALIC-P non-nil means FACE should explicitly display italic.
+ITALIC-P nil means FACE should explicitly display non-italic.
+FRAME nil or not specified means change face on all frames.
+Use `set-face-attribute' or `modify-face' for finer control."
+  (if (null italic-p)
+      (make-face-unitalic face frame)
+    (make-face-italic face frame)))
+
+(define-obsolete-function-alias 'set-face-italic-p 'set-face-italic "24.4")
+
+(defun set-face-extend (face extend-p &optional frame)
+  "Specify whether face FACE should be extended.
+EXTEND-P nil means FACE explicitly doesn't extend after EOL.
+EXTEND-P t means FACE extends after EOL.
+
+FRAME nil or not specified means change face on all frames.
+Use `set-face-attribute' to \"unspecify\" underlining."
+  (interactive
+   (let ((list (read-face-and-attribute :extend)))
+     (list (car list) (if (cadr list) t))))
+  (set-face-attribute face frame :extend extend-p))
+
+;; Round-16: GNU cus-start built-in variables missing from the C core,
+;; each with its GNU 31.1 default value and documentation.
+(defvar selective-display-ellipses t
+  "Non-nil means display ... on previous line when a line is invisible.")
+
+(defvar alter-fullscreen-frames 'inhibit
+  "How to handle requests to resize fullscreen frames.\nEmacs consults this option when asked to resize a fullscreen frame via\nfunctions like ‘set-frame-size’ or when setting the \\+‘width’ or \\+‘height’\nparameter of a frame.  The following values are provided:\n\n- nil means to forward the resize request to the window manager and\n  leave it to the latter how to proceed.\n\n- t means to first reset the fullscreen status and then forward the\n  request to the window manager.\n\n- \\+‘inhibit’ means to reject the resize request and leave the fullscreen\n  status unchanged.\n\nThe default is \\+‘inhibit’ in NS builds and nil everywhere else.")
+
+(defvar auto-save-no-message nil
+  "Non-nil means do not print any message when auto-saving.")
+
+(defvar bidi-paragraph-direction nil
+  "If non-nil, forces directionality of text paragraphs in the buffer.\n\nIf this is nil (the default), the direction of each paragraph is\ndetermined by the first strong directional character of its text.\nThe values of ‘right-to-left’ and ‘left-to-right’ override that.\nAny other value is treated as nil.\n\nThis variable has no effect unless the buffer’s value of\n‘bidi-display-reordering’ is non-nil.")
+
+(defvar blink-cursor-alist nil
+  "Alist specifying how to blink the cursor off.\nEach element has the form (ON-STATE . OFF-STATE).  Whenever the\n‘cursor-type’ frame-parameter or variable equals ON-STATE,\ncomparing using ‘equal’, Emacs uses OFF-STATE to specify\nhow to blink it off.  ON-STATE and OFF-STATE are values for\nthe ‘cursor-type’ frame parameter.\n\nIf a frame’s ON-STATE has no entry in this list,\nthe frame’s other specifications determine how to blink the cursor off.")
+
+(defvar composition-break-at-point nil
+  "If non-nil, prevent auto-composition of characters around point.\nThis makes it easier to edit character sequences that are\ncomposed on display.")
+
+(defvar debug-on-event 'sigusr2
+  "Enter debugger on this event.\nWhen Emacs receives the special event specified by this variable,\nit will try to break into the debugger as soon as possible instead\nof processing the event normally through ‘special-event-map’.\n\nCurrently, the only supported values for this\nvariable are ‘sigusr1’ and ‘sigusr2’.")
+
+(defvar debug-on-signal nil
+  "Non-nil means call the debugger regardless of condition handlers.\nNote that ‘debug-on-error’, ‘debug-on-quit’ and friends\nstill determine whether to handle the particular condition.")
+
+(defvar debugger-stack-frame-as-list nil
+  "Non-nil means display call stack frames as lists.")
+
+(defvar delete-by-moving-to-trash nil
+  "Specifies whether to use the system’s trash can.\nWhen non-nil, certain file deletion commands use the function\n‘move-file-to-trash’ instead of deleting files outright.\nThis includes interactive calls to ‘delete-file’ and\n‘delete-directory’ and the Dired deletion commands.")
+
+(defvar delete-frame-choose-selected 'mru
+  "What frame to select after frame deletion.\nThe value ‘mru’ means ‘delete-frame’ selects most recently used frame.\nIf this is nil, ‘delete-frame’ will select the oldest visible frame on\nthe same terminal.")
+
+(defvar display-fill-column-indicator-character nil
+  "Character to draw the indicator when ‘display-fill-column-indicator’ is non-nil.\nA good candidate is U+2502, and an alternative is (ascii 124) if the\nfont of ‘fill-column-indicator’ face does not support Unicode characters.\nSee Info node ‘Displaying Boundaries’ for details.")
+
+(defvar display-fill-column-indicator-column t
+  "Column for indicator when ‘display-fill-column-indicator’ is non-nil.\nThe default value is t which means that the indicator\nwill use the ‘fill-column’ variable.  If it is set to an integer the\nindicator will be drawn in that column.\nSee Info node ‘Displaying Boundaries’ for details.")
+
+(defvar display-hourglass t
+  "Non-nil means show an hourglass pointer, when Emacs is busy.\nThis feature only works when on a window system that can change\ncursor shapes.")
+
+(defvar display-line-numbers nil
+  "Non-nil means display line numbers.\n\nIf the value is t, display the absolute number of each line of a buffer\nshown in a window.  Absolute line numbers count from the beginning of\nthe current narrowing, or from buffer beginning.  The variable\n‘display-line-numbers-offset’, if non-zero, is a signed offset added\nto each absolute line number; it also forces line numbers to be counted\nfrom the beginning of the buffer, as if ‘display-line-numbers-widen’\nwere non-nil.  It has no effect when line numbers are not absolute.\n\nIf the value is ‘relative’, display for each line not containing the\nwindow’s point its relative number instead, i.e. the number of the line\nrelative to the line showing the window’s point.\n\nIn either case, line numbers are displayed at the beginning of each\nnon-continuation line that displays buffer text, i.e. after each newline\ncharacter that comes from the buffer.  The value ‘visual’ is like\n‘relative’ but counts screen lines instead of buffer lines.  In practice\nthis means that continuation lines count as well when calculating the\nrelative number of a line.\n\nLisp programs can disable display of a line number of a particular\nbuffer line by putting the ‘display-line-numbers-disable’ text property\nor overlay property on the first visible character of that line.")
+
+(defvar display-line-numbers-current-absolute t
+  "Non-nil means display absolute number of current line.\nThis variable has effect only when ‘display-line-numbers’ is\neither ‘relative’ or ‘visual’.")
+
+(defvar display-line-numbers-major-tick 0
+  "If an integer N > 0, highlight line number of every Nth line.\nThe line number is shown with the ‘line-number-major-tick’ face.\nOtherwise, no special highlighting is done every Nth line.\nNote that major ticks take precedence over minor ticks.")
+
+(defvar display-line-numbers-minor-tick 0
+  "If an integer N > 0, highlight line number of every Nth line.\nThe line number is shown with the ‘line-number-minor-tick’ face.\nOtherwise, no special highlighting is done every Nth line.\nNote that major ticks take precedence over minor ticks.")
+
+(defvar display-line-numbers-widen nil
+  "Non-nil means display line numbers disregarding any narrowing.")
+
+(defvar display-line-numbers-width nil
+  "Minimum width of space reserved for line number display.\nA positive number means reserve that many columns for line numbers,\neven if the actual number needs less space.\nThe default value of nil means compute the space dynamically.\nAny other value is treated as nil.")
+
+(defvar display-raw-bytes-as-hex nil
+  "Non-nil means display raw bytes in hexadecimal format.\nThe default is to use octal format (\\200) whereas hexadecimal (\\x80)\nmay be more familiar to users.")
+
+(defvar echo-keystrokes-help t
+  "Whether to append help text to echoed commands.\nWhen non-nil, a reference to ‘C-h’ is printed after echoed\nkeystrokes.")
+
+(defvar enable-character-translation t
+  "Non-nil enables character translation while encoding and decoding.")
+
+(defvar focus-follows-mouse nil
+  "Non-nil if window system changes focus when you move the mouse.\nYou should set this variable to tell Emacs how your window manager\nhandles focus, since there is no way in general for Emacs to find out\nautomatically.\n\nThere are three meaningful values:\n\n- The default nil should be used when your window manager follows a\n  \"click-to-focus\" policy where you have to click the mouse inside of a\n  frame in order for that frame to get focus.\n\n- The value t should be used when your window manager has the focus\n  automatically follow the position of the mouse pointer but a window\n  that gains focus is not raised automatically.\n\n- The value ‘auto-raise’ should be used when your window manager has the\n  focus automatically follow the position of the mouse pointer and a\n  window that gains focus is raised automatically.\n\nIf this option is non-nil, Emacs moves the mouse pointer to the frame\nselected by ‘select-frame-set-input-focus’.  This function is used by a\nnumber of commands like, for example, ‘other-frame’ and ‘pop-to-buffer’.\nIf this option is nil and your focus follows mouse window manager does\nnot autonomously move the mouse pointer to the newly selected frame, the\npreviously selected window manager window might get reselected instead\nimmediately.\n\nThe distinction between the values t and ‘auto-raise’ is not needed for\n\"normal\" frames because the window manager takes care of raising them.\nSetting this to ‘auto-raise’ will, however, override the standard\nbehavior of a window manager that does not automatically raise the frame\nthat gets focus.  Setting this to ‘auto-raise’ is also necessary to\nautomatically raise child frames which are usually left alone by the\nwindow manager.\n\nNote that this option does not distinguish \"sloppy\" focus (where the\nframe that previously had focus retains focus as long as the mouse\npointer does not move into another window manager window) from \"strict\"\nfocus (where a frame immediately loses focus when it’s left by the mouse\npointer).\n\nIn order to extend a \"focus follows mouse\" policy to individual Emacs\nwindows, customize the variable ‘mouse-autoselect-window’.")
+
+(defvar frame-resize-pixelwise nil
+  "Non-nil means resize frames pixelwise.\nIf this option is nil, resizing a frame rounds its sizes to the frame’s\ncurrent values of ‘frame-char-height’ and ‘frame-char-width’.  If this\nis non-nil, no rounding occurs, hence frame sizes can increase/decrease\nby one pixel.\n\nWith some window managers you may have to set this to non-nil in order\nto set the size of a frame in pixels, to maximize frames or to make them\nfullscreen.  To resize your initial frame pixelwise, set this option to\na non-nil value in your init file.")
+
+(defvar highlight-nonselected-windows nil
+  "Non-nil means highlight active region even in nonselected windows.\nWhen nil (the default), the active region is only highlighted when\nthe window is selected.")
+
+(defvar hourglass-delay 1
+  "Seconds to wait before displaying an hourglass pointer when Emacs is busy.")
+
+(defvar iconify-child-frame 'iconify-top-level
+  "How to handle iconification of child frames.\nThis variable tells Emacs how to proceed when it is asked to iconify a\nchild frame.  If it is nil, ‘iconify-frame’ will do nothing when invoked\non a child frame.  If it is ‘iconify-top-level’ and the child frame is\non a graphical terminal, Emacs will try to iconify the root frame of\nthis child frame.  If it is ‘make-invisible’, Emacs will try to make\nthis child frame invisible instead.\n\nAny other value means to try iconifying the child frame on a graphical\nterminal.  Since such an attempt is not honored by all window managers\nand may even lead to making the child frame unresponsive to user\nactions, the default is to iconify the root frame instead.")
+
+(defvar indicate-buffer-boundaries nil
+  "Visually indicate buffer boundaries and scrolling.\nIf non-nil, the first and last line of the buffer are marked in the fringe\nof a window on graphical displays with angle bitmaps, or if the window can be\nscrolled, the top and bottom line of the window are marked with up and down\narrow bitmaps.\n\nIf value is a symbol ‘left’ or ‘right’, both angle and arrow bitmaps\nare displayed in the left or right fringe, resp.  Any other value\nthat doesn’t look like an alist means display the angle bitmaps in\nthe left fringe but no arrows.\n\nYou can exercise more precise control by using an alist as the\nvalue.  Each alist element (INDICATOR . POSITION) specifies\nwhere to show one of the indicators.  INDICATOR is one of ‘top’,\n‘bottom’, ‘up’, ‘down’, or t, which specifies the default position,\nand POSITION is one of ‘left’, ‘right’, or nil, meaning do not show\nthis indicator.\n\nFor example, ((top . left) (t . right)) places the top angle bitmap in\nleft fringe, the bottom angle bitmap in right fringe, and both arrow\nbitmaps in right fringe.  To show just the angle bitmaps in the left\nfringe, but no arrow bitmaps, use ((top .  left) (bottom . left)).")
+
+(defvar indicate-empty-lines nil
+  "Visually indicate unused (\"empty\") screen lines after the buffer end.\nIf non-nil, a bitmap is displayed in the left fringe of a window\non graphical displays for each screen line that doesn’t correspond\nto any buffer text.")
+
+(defvar inhibit-eol-conversion nil
+  "Non-nil means always inhibit code conversion of end-of-line format.\nSee info node ‘Coding Systems’ and info node ‘Text and Binary’ concerning\nsuch conversion.")
+
+(defvar inverse-video nil
+  "Non-nil means invert the entire frame display.\nThis means everything is in inverse video which otherwise would not be.")
+
+(defvar kill-buffer-delete-auto-save-files nil
+  "If non-nil, offer to delete any autosave file when killing a buffer.\n\nIf ‘delete-auto-save-files’ is nil, any autosave deletion is inhibited.")
+
+(defvar make-cursor-line-fully-visible t
+  "Whether to scroll the window if the cursor line is not fully visible.\nIf the value is non-nil, Emacs scrolls or recenters the window to make\nthe cursor line fully visible.  The value could also be a function, which\nis called with a single argument, the window to be scrolled, and should\nreturn non-nil if the partially-visible cursor requires scrolling the\nwindow, nil if it’s okay to leave the cursor partially-visible.")
+
+(defvar make-pointer-invisible t
+  "If non-nil, make mouse pointer invisible while typing.\nThe pointer becomes visible again when the mouse is moved.\n\nWhen using this, you might also want to disable highlighting of\nclickable text.  See ‘mouse-highlight’.")
+
+(defvar maximum-scroll-margin 0.25
+  "Maximum effective value of ‘scroll-margin’.\nGiven as a fraction of the current window’s lines.  The value should\nbe a floating point number between 0.0 and 0.5.  The effective maximum\nis limited to (/ (1- window-lines) 2).  Non-float values for this\nvariable are ignored and the default 0.25 is used instead.")
+
+(defvar meta-prefix-char 27
+  "Meta-prefix character code.\nMeta-foo as command input turns into this character followed by foo.")
+
+(defvar minibuffer-follows-selected-frame t
+  "t means the active minibuffer always displays on the selected frame.\nNil means that a minibuffer will appear only in the frame which created it.\nAny other value means the minibuffer will move onto another frame, but\nonly when the user starts using a minibuffer there.\n\nAny buffer local or dynamic binding of this variable is ignored.  Only the\ndefault top level value is used.")
+
+(defvar mode-line-compact nil
+  "Non-nil means that mode lines should be compact.\nThis means that repeating spaces will be replaced with a single space.\nIf this variable is ‘long’, only mode lines that are wider than the\ncurrently selected window are compressed.")
+
+(defvar mode-line-in-non-selected-windows t
+  "Non-nil means to use ‘mode-line-inactive’ face in non-selected windows.\nIf the minibuffer is active, the ‘minibuffer-scroll-window’ mode line\nis displayed in the ‘mode-line’ face.")
+
+(defvar mouse-prefer-closest-glyph nil
+  "Non-nil means mouse click position is taken from glyph closest to click.\n\nWhen non-nil, mouse position lists will report buffer position set to\nthe position of the glyph that is the closest to the mouse pointer\nat the time of the click, instead of the glyph immediately under it.")
+
+(defvar multiple-terminals-merge-keyboards nil
+  "If non-nil, treat different terminals’ keyboards as less isolated.\nIf this option is non-nil, Emacs will not enter single-keyboard mode\nwhen entering a recursive edit.  It will still enter single-keyboard\nmode in certain other cases where doing so is necessary for the\noperation to work at all.")
+
+(defvar ns-alternate-modifier 'meta
+  "This variable describes the behavior of the alternate or option key.\nEither SYMBOL, describing the behavior for any event,\nor (:ordinary SYMBOL :function SYMBOL :mouse SYMBOL), describing behavior\nseparately for ordinary keys, function keys, and mouse events.\n\nEach SYMBOL is ‘control’, ‘meta’, ‘alt’, ‘super’, ‘hyper’ or ‘none’.\nIf ‘none’, the key is ignored by Emacs and retains its standard meaning.")
+
+(defvar ns-antialias-text t
+  "Non-nil (the default) means to render text antialiased.")
+
+(defvar ns-auto-hide-menu-bar nil
+  "Non-nil means that the menu bar is hidden, but appears when the mouse is near.\nOnly works on Mac OS X.")
+
+(defvar ns-click-through t
+  "Whether to pass activation clicks through to Emacs.\nWhen nil, if Emacs is not focused, the click that focuses Emacs will not\nbe interpreted as a common.  If t, it will be.  For example, when nil,\nif Emacs is inactive, two clicks are needed to move point: the first to\nactivate Emacs and the second to activate the mouse-1 binding.  When t,\nonly a single click is needed.")
+
+(defvar ns-command-modifier 'super
+  "This variable describes the behavior of the command key.\nEither SYMBOL, describing the behavior for any event,\nor (:ordinary SYMBOL :function SYMBOL :mouse SYMBOL), describing behavior\nseparately for ordinary keys, function keys, and mouse events.\n\nEach SYMBOL is ‘control’, ‘meta’, ‘alt’, ‘super’, ‘hyper’ or ‘none’.\nIf ‘none’, the key is ignored by Emacs and retains its standard meaning.")
+
+(defvar ns-confirm-quit nil
+  "Whether to confirm application quit using dialog.")
+
+(defvar ns-control-modifier 'control
+  "This variable describes the behavior of the control key.\nEither SYMBOL, describing the behavior for any event,\nor (:ordinary SYMBOL :function SYMBOL :mouse SYMBOL), describing behavior\nseparately for ordinary keys, function keys, and mouse events.\n\nEach SYMBOL is ‘control’, ‘meta’, ‘alt’, ‘super’, ‘hyper’ or ‘none’.\nIf ‘none’, the key is ignored by Emacs and retains its standard meaning.")
+
+(defvar ns-function-modifier 'none
+  "This variable describes the behavior of the function (fn) key.\nEither SYMBOL, describing the behavior for any event,\nor (:ordinary SYMBOL :function SYMBOL :mouse SYMBOL), describing behavior\nseparately for ordinary keys, function keys, and mouse events.\n\nEach SYMBOL is ‘control’, ‘meta’, ‘alt’, ‘super’, ‘hyper’ or ‘none’.\nIf ‘none’, the key is ignored by Emacs and retains its standard meaning.")
+
+(defvar ns-right-alternate-modifier 'left
+  "This variable describes the behavior of the right alternate or option key.\nEither SYMBOL, describing the behavior for any event,\nor (:ordinary SYMBOL :function SYMBOL :mouse SYMBOL), describing behavior\nseparately for ordinary keys, function keys, and mouse events.\nIt can also be ‘left’ to use the value of ‘ns-alternate-modifier’ instead.\n\nEach SYMBOL is ‘control’, ‘meta’, ‘alt’, ‘super’, ‘hyper’ or ‘none’.\nIf ‘none’, the key is ignored by Emacs and retains its standard meaning.")
+
+(defvar ns-right-command-modifier 'left
+  "This variable describes the behavior of the right command key.\nEither SYMBOL, describing the behavior for any event,\nor (:ordinary SYMBOL :function SYMBOL :mouse SYMBOL), describing behavior\nseparately for ordinary keys, function keys, and mouse events.\nIt can also be ‘left’ to use the value of ‘ns-command-modifier’ instead.\n\nEach SYMBOL is ‘control’, ‘meta’, ‘alt’, ‘super’, ‘hyper’ or ‘none’.\nIf ‘none’, the key is ignored by Emacs and retains its standard meaning.")
+
+(defvar ns-right-control-modifier 'left
+  "This variable describes the behavior of the right control key.\nEither SYMBOL, describing the behavior for any event,\nor (:ordinary SYMBOL :function SYMBOL :mouse SYMBOL), describing behavior\nseparately for ordinary keys, function keys, and mouse events.\nIt can also be ‘left’ to use the value of ‘ns-control-modifier’ instead.\n\nEach SYMBOL is ‘control’, ‘meta’, ‘alt’, ‘super’, ‘hyper’ or ‘none’.\nIf ‘none’, the key is ignored by Emacs and retains its standard meaning.")
+
+(defvar ns-scroll-event-delta-factor 1.0
+  "A factor to apply to pixel deltas reported in scroll events.\n This is only effective for pixel deltas generated from touch pads or\n mice with smooth scrolling capability.")
+
+(defvar ns-use-fullscreen-animation nil
+  "Non-nil means use animation on non-native fullscreen.\nFor native fullscreen, this does nothing.\nDefault is nil.")
+
+(defvar ns-use-native-fullscreen t
+  "Non-nil means to use native fullscreen on Mac OS X 10.7 and later.\nNil means use fullscreen the old (< 10.7) way.  The old way works better with\nmultiple monitors, but lacks tool bar.  This variable is ignored on\nMac OS X < 10.7.  Default is t.")
+
+(defvar ns-use-srgb-colorspace t
+  "Non-nil means to use sRGB colorspace on Mac OS X 10.7 and later.\nNote that this does not apply to images.\nThis variable is ignored on Mac OS X < 10.7 and GNUstep.")
+
+(defvar overline-margin 2
+  "Space between overline and text, in pixels.\nThe default value is 2: the height of the overline (1 pixel) plus 1 pixel\nmargin to the character height.")
+
+(defvar record-all-keys nil
+  "Non-nil means record all keys you type.\nWhen nil, the default, characters typed as part of passwords are\nnot recorded.  The non-nil value countermands ‘inhibit--record-char’,\nwhich see.")
+
+(defvar report-emacs-bug-address 
+  "bug-gnu-emacs@gnu.org" "Address of mailing list for GNU Emacs bugs.")
+
+(defvar resize-mini-frames nil
+  "Non-nil means resize minibuffer-only frames automatically.\nIf this is nil, do not resize minibuffer-only frames automatically.\n\nIf this is a function, call that function with the minibuffer-only\nframe that shall be resized as sole argument.  The buffer of the root\nwindow of that frame is the buffer whose text will be eventually shown\nin the minibuffer window.\n\nAny other non-nil value means to resize minibuffer-only frames by\ncalling ‘fit-mini-frame-to-buffer’.")
+
+(defvar scalable-fonts-allowed t
+  "Allowed scalable fonts.\nA value of nil means don’t allow any scalable fonts.\nA value of t means allow any scalable font.\nOtherwise, value must be a list of regular expressions.  A font may be\nscaled if its name matches a regular expression in the list.\nNote that if value is nil, a scalable font might still be used, if no\nother font of the appropriate family and registry is available.")
+
+(defvar select-active-regions t
+  "If non-nil, any active region automatically sets the primary selection.\nThis variable only has an effect when Transient Mark mode is enabled.\n\nIf the value is ‘only’, only temporarily active regions (usually made\nby mouse-dragging or shift-selection) set the window system’s primary\nselection.\n\nIf this variable causes the region to be set as the primary selection,\n‘post-select-region-hook’ is then run afterwards.")
+
+(defvar show-trailing-whitespace nil
+  "Non-nil means highlight trailing whitespace.\nThe face used for trailing whitespace is ‘trailing-whitespace’.")
+
+(defvar tab-bar-position nil
+  "Specify on which side from the tool bar the tab bar shall be.\nPossible values are t (below the tool bar), nil (above the tool bar).\nThis option affects only builds where the tool bar is not external.")
+
+(defvar tool-bar-max-label-size 14
+  "Maximum number of characters a label can have to be shown.\nThe tool bar style must also show labels for this to have any effect, see\n‘tool-bar-style’.")
+
+(defvar tool-bar-style nil
+  "Tool bar style to use.\nIt can be one of\n image            - show images only\n text             - show text only\n both             - show both, text below image\n both-horiz       - show text to the right of the image\n text-image-horiz - show text to the left of the image\n any other        - use system default or image if no system default.\n\nThis variable only affects the GTK+ toolkit version of Emacs.")
+
+(defvar tooltip-reuse-hidden-frame nil
+  "Non-nil means reuse hidden tooltip frames.\nWhen this is nil, delete a tooltip frame when hiding the associated\ntooltip.  When this is non-nil, make the tooltip frame invisible only,\nso it can be reused when the next tooltip is shown.\n\nSetting this to non-nil may drastically reduce the consing overhead\nincurred by creating new tooltip frames.  However, a value of non-nil\nmeans also that intermittent changes of faces or ‘default-frame-alist’\nare not applied when showing a tooltip in a reused frame.\n\nThis variable is effective only with the X toolkit (and there only when\nGtk+ tooltips are not used) and on Windows.")
+
+(defvar translate-upper-case-key-bindings t
+  "If non-nil, interpret upper case keys as lower case (when applicable).\nEmacs allows binding both upper and lower case key sequences to\ncommands.  However, if there is a lower case key sequence bound to a\ncommand, and the user enters an upper case key sequence that is not\nbound to a command, Emacs will use the lower case binding.  Setting\nthis variable to nil inhibits this behavior.")
+
+(defvar treesit-extra-load-path nil
+  "Additional directories to look for tree-sitter language definitions.\nThe value should be a list of directories.\nWhen trying to load a tree-sitter language definition,\nEmacs first looks in the directories mentioned in this variable,\nthen in the ‘tree-sitter’ subdirectory of ‘user-emacs-directory’, and\nthen in the system default locations for dynamic libraries, in that order.\nThe first writeable directory in the list is special: it’s used as the\ndefault directory when automatically installing the language grammar\nusing ‘treesit-ensure-installed’.")
+
+(defvar underline-minimum-offset 1
+  "Minimum distance between baseline and underline.\nThis can improve legibility of underlined text at small font sizes,\nparticularly when using variable ‘x-use-underline-position-properties’\nwith fonts that specify an UNDERLINE_POSITION relatively close to the\nbaseline.  The default value is 1.")
+
+(defvar unibyte-display-via-language-environment nil
+  "Non-nil means display unibyte text according to language environment.\nSpecifically, this means that raw bytes in the range 160-255 decimal\nare displayed by converting them to the equivalent multibyte characters\naccording to the current language environment.  As a result, they are\ndisplayed according to the current fontset.\n\nNote that this variable affects only how these bytes are displayed,\nbut does not change the fact they are interpreted as raw bytes.")
+
+(defvar use-system-tooltips t
+  "Whether to use the toolkit to display tooltips.\nThis option is only meaningful when Emacs is built with GTK+, NS or Haiku\nwindowing support, and, if it’s non-nil (the default), it results in\ntooltips that look like those displayed by other GTK+/NS/Haiku programs,\nbut will not be able to display text properties inside tooltip text.")
+
+(defvar vertical-centering-font-regexp 
+  "gb2312\\|gbk\\|gb18030\\|jisx0208\\|jisx0212\\|ksc5601\\|cns11643\\|big5" "Regexp matching font names that require vertical centering on display.\nWhen a character is displayed with such fonts, the character is displayed\nat the vertical center of lines.")
+
+(defvar void-text-area-pointer 'arrow
+  "The pointer shape to show in void text areas.\nA value of nil means to show the text pointer.  Other options are\n‘arrow’, ‘text’, ‘hand’, ‘vdrag’, ‘hdrag’, ‘nhdrag’, ‘modeline’, and\n‘hourglass’.")
+
+(defvar window-combination-resize nil
+  "If t, resize window combinations proportionally.\nIf this variable is nil, splitting a window gets the entire screen space\nfor displaying the new window from the window to split.  Deleting and\nresizing a window preferably resizes one adjacent window only.\n\nIf this variable is t, splitting a window tries to get the space\nproportionally from all windows in the same combination.  This means\nthat one can also split a window that is otherwise too small or of fixed\nsize.  Resizing and deleting a window then proportionally resizes all\nwindows in the same combination.\n\nOther values are reserved for future use.\n\nA specific split operation may ignore the value of this variable if it\nis affected by a non-nil value of ‘window-combination-limit’.  If you\nwant to use a sequence of ‘split-window’ calls to produce a specific,\npredefined layout of windows on a frame, bind this variable temporarily\nto nil.")
+
+(defvar window-resize-pixelwise nil
+  "Non-nil means resize windows pixelwise.\nThis currently affects the functions: ‘split-window’, ‘maximize-window’,\n‘minimize-window’, ‘fit-window-to-buffer’ and ‘fit-frame-to-buffer’, and\nall functions that symmetrically resize a parent window.\n\nNote that when a frame’s pixel size is not a multiple of the\nframe’s character size, at least one window may get resized\npixelwise even if this option is nil.")
+
+(defvar words-include-escapes nil
+  "Non-nil means ‘forward-word’, etc., should treat escape chars part of words.")
+
+(defvar x-bitmap-file-path '("/usr/include/X11/bitmaps")
+  "List of directories to search for window system bitmap files.")
+
+;; GNU loaddefs autoload cells for Round-16 libraries.
+(fset 'describe-char '(autoload "descr-text" "Describe position POS (interactively, point) and the char after POS.\nPOS is taken to be in BUFFER, or the current buffer if BUFFER is nil.\nThe information is displayed in buffer `*Help*'.\n\nThe position information includes POS; the total size of BUFFER; the\nregion limits, if narrowed; the column number; and the horizontal\nscroll amount, if the buffer is horizontally scrolled.\n\nThe character information includes:\n its codepoint;\n its charset (see `char-charset'), overridden by the `charset' text\n   property at POS, if any;\n the codepoint of the character in the above charset;\n the character's script (as defined by `char-script-table')\n the character's syntax, as produced by `syntax-after'\n   and `internal-describe-syntax-value';\n its category (see `char-category-set' and `describe-char-categories');\n how to input the character using the keyboard and input methods;\n how the character is encoded in BUFFER and in BUFFER's file;\n the font and font glyphs used to display the character;\n the composition information for displaying the character (if relevant);\n the character's canonical name and other properties defined by the\n   Unicode Data Base;\n and widgets, buttons, overlays, and text properties relevant to POS.\n\n(fn POS &optional BUFFER)" t nil))
+(fset 'describe-char-eldoc '(autoload "descr-text" "Return a description of character at point for use by ElDoc mode.\n\nReturn nil if character at point is a printable ASCII\ncharacter (i.e. codepoint between 32 and 127 inclusively).\nOtherwise return a description formatted by\n`describe-char-eldoc--format' function taking into account value\nof `eldoc-echo-area-use-multiline-p' variable and width of\nminibuffer window for width limit.\n\nThis function can be used as a value of\n`eldoc-documentation-functions' variable.\n\n(fn CALLBACK &rest _)" nil nil))
+(fset 'describe-text-properties '(autoload "descr-text" "Describe widgets, buttons, overlays, and text properties at POS.\nPOS is taken to be in BUFFER or in current buffer if nil.\nInteractively, describe them for the character after point.\nIf optional second argument OUTPUT-BUFFER is non-nil,\ninsert the output into that buffer, and don't initialize or clear it\notherwise.\n\n(fn POS &optional OUTPUT-BUFFER BUFFER)" t nil))
+(fset 'quail-define-package '(autoload "quail" "Define NAME as a new Quail package for input LANGUAGE.\nTITLE is a string to be displayed at mode-line to indicate this package.\nOptional arguments are GUIDANCE, DOCSTRING, TRANSLATION-KEYS,\n FORGET-LAST-SELECTION, DETERMINISTIC, KBD-TRANSLATE, SHOW-LAYOUT,\n CREATE-DECODE-MAP, MAXIMUM-SHORTEST, OVERLAY-PLIST,\n UPDATE-TRANSLATION-FUNCTION, CONVERSION-KEYS and SIMPLE.\n\nGUIDANCE specifies how a guidance string is shown in echo area.\nIf it is t, list of all possible translations for the current key is shown\n with the currently selected translation being highlighted.\nIf it is an alist, the element has the form (CHAR . STRING).  Each character\n in the current key is searched in the list and the corresponding string is\n shown.\nIf it is nil, the current key is shown.\n\nDOCSTRING is the documentation string of this package.  The command\n`describe-input-method' shows this string while replacing the form\n\\=\\=\\=\\<VAR> in the string by the value of VAR.  That value should be a\nstring.  For instance, the form \\=\\=\\=\\<quail-translation-docstring> is\nreplaced by a description about how to select a translation from a\nlist of candidates.\n\nTRANSLATION-KEYS specifies additional key bindings used while translation\nregion is active.  It is an alist of single key character vs. corresponding\ncommand to be called.\n\nFORGET-LAST-SELECTION non-nil means a selected translation is not kept\nfor the future to translate the same key.  If this flag is nil, a\ntranslation selected for a key is remembered so that it can be the\nfirst candidate when the same key is entered later.\n\nDETERMINISTIC non-nil means the first candidate of translation is\nselected automatically without allowing users to select another\ntranslation for a key.  In this case, unselected translations are of\nno use for an interactive use of Quail but can be used by some other\nprograms.  If this flag is non-nil, FORGET-LAST-SELECTION is also set\nto t.\n\nKBD-TRANSLATE non-nil means input characters are translated from a\nuser's keyboard layout to the standard keyboard layout.  See the\ndocumentation of `quail-keyboard-layout' and\n`quail-keyboard-layout-standard' for more detail.\n\nSHOW-LAYOUT non-nil means the function `quail-help' (as used by\nthe command `describe-input-method') should show the user's keyboard\nlayout visually with translated characters.  If KBD-TRANSLATE is\nset, it is desirable to also set this flag, unless this package\ndefines no translations for single character keys.\n\nCREATE-DECODE-MAP non-nil means decode map is also created.  A decode\nmap is an alist of translations and corresponding original keys.\nAlthough this map is not used by Quail itself, it can be used by some\nother programs.  For instance, Vietnamese supporting needs this map to\nconvert Vietnamese text to VIQR format which uses only ASCII\ncharacters to represent Vietnamese characters.\n\nMAXIMUM-SHORTEST non-nil means break key sequence to get maximum\nlength of the shortest sequence.  When we don't have a translation of\nkey \"..ABCD\" but have translations of \"..AB\" and \"CD..\", break\nthe key at \"..AB\" and start translation of \"CD..\".  Hangul\npackages, for instance, use this facility.  If this flag is nil, we\nbreak the key just at \"..ABC\" and start translation of \"D..\".\n\nOVERLAY-PLIST if non-nil is a property list put on an overlay which\ncovers Quail translation region.\n\nUPDATE-TRANSLATION-FUNCTION if non-nil is a function to call to update\nthe current translation region according to a new translation data.  By\ndefault, a translated text or a user's key sequence (if no translation\nfor it) is inserted.\n\nCONVERSION-KEYS specifies additional key bindings used while\nconversion region is active.  It is an alist of single key character\nvs. corresponding command to be called.\n\nIf SIMPLE is non-nil, then we do not alter the meanings of\ncommands such as \\[forward-char], \\[backward-char], \\[next-line], \\[previous-line] and \\[indent-for-tab-command]; they are treated as\nnon-Quail commands.\n\n(fn NAME LANGUAGE TITLE &optional GUIDANCE DOCSTRING TRANSLATION-KEYS FORGET-LAST-SELECTION DETERMINISTIC KBD-TRANSLATE SHOW-LAYOUT CREATE-DECODE-MAP MAXIMUM-SHORTEST OVERLAY-PLIST UPDATE-TRANSLATION-FUNCTION CONVERSION-KEYS SIMPLE)" nil nil))
+(fset 'quail-define-rules '(autoload "quail" "Define translation rules of the current Quail package.\nEach argument is a list of KEY and TRANSLATION.\nKEY is a string meaning a sequence of keystrokes to be translated.\nTRANSLATION is a character, a string, a vector, a Quail map, or a function.\nIf it is a character, it is the sole translation of KEY.\nIf it is a string, each character is a candidate for the translation.\nIf it is a vector, each element (string or character) is a candidate\n  for the translation.\nIn these cases, a key specific Quail map is generated and assigned to KEY.\n\nIf TRANSLATION is a Quail map or a function symbol which returns a Quail map,\n it is used to handle KEY.\n\nThe first argument may be an alist of annotations for the following\nrules.  Each element has the form (ANNOTATION . VALUE), where\nANNOTATION is a symbol indicating the annotation type.  Currently\nthe following annotation types are supported.\n\n  append -- the value non-nil means that the following rules should\n	be appended to the rules of the current Quail package.\n\n  face -- the value is a face to use for displaying TRANSLATIONs in\n	candidate list.\n\n  advice -- the value is a function to call after one of RULES is\n	selected.  The function is called with one argument, the\n	selected TRANSLATION string, after the TRANSLATION is\n	inserted.\n\n  no-decode-map --- the value non-nil means that decoding map is not\n	generated for the following translations.\n\n(fn &rest RULES)" nil t))
+(fset 'quail-defrule '(autoload "quail" "Add one translation rule, KEY to TRANSLATION, in the current Quail package.\nKEY is a string meaning a sequence of keystrokes to be translated.\nTRANSLATION is a character, a string, a vector, a Quail map,\n a function, or a cons.\nIf it is a character, it is the sole translation of KEY.\nIf it is a string, each character is a candidate for the translation.\nIf it is a vector, each element (string or character) is a candidate\n for the translation.\nIf it is a cons, the car is one of the above and the cdr is a function\n to call when translating KEY (the return value is assigned to the\n variable `quail-current-data').  If the cdr part is not a function,\n the value itself is assigned to `quail-current-data'.\nIn these cases, a key specific Quail map is generated and assigned to KEY.\n\nIf TRANSLATION is a Quail map or a function symbol which returns a Quail map,\n it is used to handle KEY.\n\nOptional 3rd argument NAME, if specified, says which Quail package\nto define this translation rule in.  The default is to define it in the\ncurrent Quail package.\n\nOptional 4th argument APPEND, if non-nil, appends TRANSLATION\nto the current translations for KEY instead of replacing them.\n\n(fn KEY TRANSLATION &optional NAME APPEND)" nil nil))
+(fset 'quail-defrule-internal '(autoload "quail" "Define KEY as TRANS in a Quail map MAP.\n\nIf Optional 4th arg APPEND is non-nil, TRANS is appended to the\ncurrent translations for KEY instead of replacing them.\n\nOptional 5th arg DECODE-MAP is a Quail decode map.\n\nOptional 6th arg PROPS is a property list annotating TRANS.  See the\nfunction `quail-define-rules' for the detail.\n\n(fn KEY TRANS MAP &optional APPEND DECODE-MAP PROPS)" nil nil))
+(fset 'quail-install-decode-map '(autoload "quail" "Install the Quail decode map DECODE-MAP in the current Quail package.\n\nOptional 2nd arg NAME, if non-nil, is a name of Quail package for\nwhich to install MAP.\n\nThe installed decode map can be referred by the function `quail-decode-map'.\n\n(fn DECODE-MAP &optional NAME)" nil nil))
+(fset 'quail-install-map '(autoload "quail" "Install the Quail map MAP in the current Quail package.\n\nOptional 2nd arg NAME, if non-nil, is a name of Quail package for\nwhich to install MAP.\n\nThe installed map can be referred by the function `quail-map'.\n\n(fn MAP &optional NAME)" nil nil))
+(fset 'quail-set-keyboard-layout '(autoload "quail" "Set the current keyboard layout to the same as keyboard KBD-TYPE.\n\nSince some Quail packages depends on a physical layout of keys (not\ncharacters generated by them), those are created by assuming the\nstandard layout defined in `quail-keyboard-layout-standard'.  This\nfunction tells Quail system the layout of your keyboard so that what\nyou type is correctly handled.\n\n(fn KBD-TYPE)" t nil))
+(fset 'quail-show-keyboard-layout '(autoload "quail" "Show the physical layout of the keyboard type KEYBOARD-TYPE.\n\nThe variable `quail-keyboard-layout-type' holds the currently selected\nkeyboard type.\n\n(fn &optional KEYBOARD-TYPE)" t nil))
+(fset 'quail-title '(autoload "quail" "Return the title of the current Quail package." nil nil))
+(fset 'quail-update-leim-list-file '(autoload "quail" "Update entries for Quail packages in `LEIM' list file in directory DIRNAME.\nDIRNAME is a directory containing Emacs input methods;\nnormally, it should specify the `leim' subdirectory\nof the Emacs source tree.\n\nIt searches for Quail packages under `quail' subdirectory of DIRNAME,\nand update the file \"leim-list.el\" in DIRNAME.\n\nWhen called from a program, the remaining arguments are additional\ndirectory names to search for Quail packages under `quail' subdirectory\nof each directory.\n\n(fn DIRNAME &rest DIRNAMES)" t nil))
+(fset 'quail-use-package '(autoload "quail" "Start using Quail package PACKAGE-NAME.\nThe remaining arguments are LIBRARIES to be loaded before using the package.\n\nThis activates input method defined by PACKAGE-NAME by running\n`quail-activate', which see.\n\n(fn PACKAGE-NAME &rest LIBRARIES)" nil nil))
+(fset 'table-backward-cell '(autoload "table" "Move backward to the beginning of the previous cell.\nWith argument ARG, do it ARG times;\na negative argument ARG = -N means move forward N cells.\n\n(fn &optional ARG)" t nil))
+(fset 'table-capture '(autoload "table" "Convert plain text into a table by capturing the text in the region.\nCreate a table with the text in region as cell contents.  BEG and END\nspecify the region.  The text in the region is replaced with a table.\nThe removed text is inserted in the table.  When optional\nCOL-DELIM-REGEXP and ROW-DELIM-REGEXP are provided the region contents\nis parsed and separated into individual cell contents by using the\ndelimiter regular expressions.  This parsing determines the number of\ncolumns and rows of the table automatically.  If COL-DELIM-REGEXP and\nROW-DELIM-REGEXP are omitted the result table has only one cell and\nthe entire region contents is placed in that cell.  Optional JUSTIFY\nis one of `left', `center' or `right', which specifies the cell\njustification.  Optional MIN-CELL-WIDTH specifies the minimum cell\nwidth.  Optional COLUMNS specify the number of columns when\nROW-DELIM-REGEXP is not specified.\n\n\nExample 1:\n\n1, 2, 3, 4\n5, 6, 7, 8\n, 9, 10\n\nRunning `table-capture' on above 3 line region with COL-DELIM-REGEXP\n\",\" and ROW-DELIM-REGEXP \"\\n\" creates the following table.  In\nthis example the cells are centered and minimum cell width is\nspecified as 5.\n\n+-----+-----+-----+-----+\n|  1  |  2  |  3  |  4  |\n+-----+-----+-----+-----+\n|  5  |  6  |  7  |  8  |\n+-----+-----+-----+-----+\n|     |  9  | 10  |     |\n+-----+-----+-----+-----+\n\nNote:\n\nIn case the function is called interactively user must use \\[quoted-insert] `quoted-insert'\nin order to enter \"\\n\" successfully.  COL-DELIM-REGEXP at the end\nof each row is optional.\n\n\nExample 2:\n\nThis example shows how a table can be used for text layout editing.\nLet `table-capture' capture the following region starting from\n-!- and ending at -*-, that contains three paragraphs and two item\nname headers.  This time specify empty string for both\nCOL-DELIM-REGEXP and ROW-DELIM-REGEXP.\n\n-!-`table-capture' is a powerful command however mastering its power\nrequires some practice.  Here is a list of items what it can do.\n\nParse Cell Items      By using column delimiter regular\n		      expression and raw delimiter regular\n		      expression, it parses the specified text\n		      area and extracts cell items from\n		      non-table text and then forms a table out\n		      of them.\n\nCapture Text Area     When no delimiters are specified it\n		      creates a single cell table.  The text in\n		      the specified region is placed in that\n		      cell.-*-\n\nNow the entire content is captured in a cell which is itself a table\nlike this.\n\n+-----------------------------------------------------------------+\n|`table-capture' is a powerful command however mastering its power|\n|requires some practice.  Here is a list of items what it can do. |\n|                                                                 |\n|Parse Cell Items      By using column delimiter regular          |\n|                      expression and raw delimiter regular       |\n|                      expression, it parses the specified text   |\n|                      area and extracts cell items from          |\n|                      non-table text and then forms a table out  |\n|                      of them.                                   |\n|                                                                 |\n|Capture Text Area     When no delimiters are specified it        |\n|                      creates a single cell table.  The text in  |\n|                      the specified region is placed in that     |\n|                      cell.                                      |\n+-----------------------------------------------------------------+\n\nBy splitting the cell appropriately we now have a table consisting of\nparagraphs occupying its own cell.  Each cell can now be edited\nindependently.\n\n+-----------------------------------------------------------------+\n|`table-capture' is a powerful command however mastering its power|\n|requires some practice.  Here is a list of items what it can do. |\n+---------------------+-------------------------------------------+\n|Parse Cell Items     |By using column delimiter regular          |\n|                     |expression and raw delimiter regular       |\n|                     |expression, it parses the specified text   |\n|                     |area and extracts cell items from          |\n|                     |non-table text and then forms a table out  |\n|                     |of them.                                   |\n+---------------------+-------------------------------------------+\n|Capture Text Area    |When no delimiters are specified it        |\n|                     |creates a single cell table.  The text in  |\n|                     |the specified region is placed in that     |\n|                     |cell.                                      |\n+---------------------+-------------------------------------------+\n\nBy applying `table-release', which does the opposite process, the\ncontents become once again plain text.  `table-release' works as\ncompanion command to `table-capture' this way.\n\n(fn BEG END &optional COL-DELIM-REGEXP ROW-DELIM-REGEXP JUSTIFY MIN-CELL-WIDTH COLUMNS)" t nil))
+(fset 'table-delete-column '(autoload "table" "Delete N column(s) of cells.\nDelete N columns of cells from current column.  The current column is\nthe column contains the current cell where point is located.  Each\ncolumn must consists from cells of same width.\n\n(fn N)" t nil))
+(fset 'table-delete-row '(autoload "table" "Delete N row(s) of cells.\nDelete N rows of cells from current row.  The current row is the row\ncontains the current cell where point is located.  Each row must\nconsists from cells of same height.\n\n(fn N)" t nil))
+(fset 'table-fixed-width-mode '(autoload "table" "Cell width is fixed when this is non-nil.\n\nNormally it should be nil for allowing automatic cell width expansion\nthat widens a cell when it is necessary.  When non-nil, typing in a\ncell does not automatically expand the cell width.  A word that is too\nlong to fit in a cell is chopped into multiple lines.  The chopped\nlocation is indicated by `table-word-continuation-char'.  This\nvariable's value can be toggled by \\[table-fixed-width-mode] at\nrun-time.\n\nThis is a minor mode.  If called interactively, toggle the\n`Table-Fixed-Width mode' mode.  If the prefix argument is positive,\nenable the mode, and if it is zero or negative, disable the mode.\n\nIf called from Lisp, toggle the mode if ARG is `toggle'.  Enable the\nmode if ARG is nil, omitted, or is a positive number.  Disable the mode\nif ARG is a negative number.\n\nTo check whether the minor mode is enabled in the current buffer,\nevaluate the variable `table-fixed-width-mode'.\n\nThe mode's hook is called both when the mode is enabled and when it is\ndisabled.\n\n(fn &optional ARG)" t nil))
+(fset 'table-forward-cell '(autoload "table" "Move point forward to the beginning of the next cell.\nWith argument ARG, do it ARG times;\na negative argument ARG = -N means move backward N cells.\n\nDo not specify NO-RECOGNIZE and UNRECOGNIZE.  They are for\ninternal use only.\n\nSample Cell Traveling Order (In Irregular Table Cases)\n\nYou can actually try how it works in this buffer.  Press\n\\[table-recognize] and go to cells in the following tables and press\n\\[table-forward-cell] or TAB key.\n\n+-----+--+  +--+-----+  +--+--+--+  +--+--+--+  +---------+  +--+---+--+\n|0    |1 |  |0 |1    |  |0 |1 |2 |  |0 |1 |2 |  |0        |  |0 |1  |2 |\n+--+--+  |  |  +--+--+  +--+  |  |  |  |  +--+  +----+----+  +--+-+-+--+\n|2 |3 |  |  |  |2 |3 |  |3 +--+  |  |  +--+3 |  |1   |2   |  |3   |4   |\n|  +--+--+  +--+--+  |  +--+4 |  |  |  |4 +--+  +--+-+-+--+  +----+----+\n|  |4    |  |4    |  |  |5 |  |  |  |  |  |5 |  |3 |4  |5 |  |5        |\n+--+-----+  +-----+--+  +--+--+--+  +--+--+--+  +--+---+--+  +---------+\n\n+--+--+--+  +--+--+--+  +--+--+--+  +--+--+--+\n|0 |1 |2 |  |0 |1 |2 |  |0 |1 |2 |  |0 |1 |2 |\n|  |  |  |  |  +--+  |  |  |  |  |  +--+  +--+\n+--+  +--+  +--+3 +--+  |  +--+  |  |3 +--+4 |\n|3 |  |4 |  |4 +--+5 |  |  |3 |  |  +--+5 +--+\n|  |  |  |  |  |6 |  |  |  |  |  |  |6 |  |7 |\n+--+--+--+  +--+--+--+  +--+--+--+  +--+--+--+\n\n+--+--+--+  +--+--+--+  +--+--+--+--+  +--+-----+--+  +--+--+--+--+\n|0 |1 |2 |  |0 |1 |2 |	|0 |1 |2 |3 |  |0 |1    |2 |  |0 |1 |2 |3 |\n|  +--+  |  |  +--+  |	|  +--+--+  |  |  |     |  |  |  +--+--+  |\n|  |3 +--+  +--+3 |  |	+--+4    +--+  +--+     +--+  +--+4    +--+\n+--+  |4 |  |4 |  +--+	|5 +--+--+6 |  |3 +--+--+4 |  |5 |     |6 |\n|5 +--+  |  |  +--+5 |	|  |7 |8 |  |  |  |5 |6 |  |  |  |     |  |\n|  |6 |  |  |  |6 |  |	+--+--+--+--+  +--+--+--+--+  +--+-----+--+\n+--+--+--+  +--+--+--+\n\n(fn &optional ARG NO-RECOGNIZE UNRECOGNIZE)" t nil))
+(fset 'table-generate-source '(autoload "table" "Generate source of the current table in the specified language.\nLANGUAGE is a symbol that specifies the language to describe the\nstructure of the table.  It must be either `html', `latex', `cals',\n`wiki', or `mediawiki'.\nThe function inserts the resulting source text into DEST-BUFFER, and\nreturns the buffer object.  When DEST-BUFFER is omitted or nil, the\nfunction uses the default buffer specified in `table-dest-buffer-name'.\nIn this case, the function erases the default buffer prior to the\nsource generation.\nWhen DEST-BUFFER is non-nil, it should be either a destination\nbuffer or a name of the destination buffer.  In that case, the\nfunction inserts the generated result at point in the destination\nbuffer, and leaves the previous contents of the buffer untouched.\n\nReferences used for this implementation:\n\nHTML:\n        URL `https://www.w3.org'\n\nLaTeX:\n        URL `https://www.maths.tcd.ie/~dwilkins/LaTeXPrimer/Tables.html'\n\nCALS (DocBook DTD):\n        URL `https://www.oasis-open.org/html/a502.htm'\n        URL `https://www.oreilly.com/catalog/docbook/chapter/book/table.html#AEN114751'\n\n(fn LANGUAGE &optional DEST-BUFFER CAPTION)" t nil))
+(fset 'table-heighten-cell '(autoload "table" "Heighten the current cell by N lines by expanding the cell vertically.\nHeightening is done by adding blank lines at the bottom of the current\ncell.  Other cells aligned horizontally with the current one are also\nheightened in order to keep the rectangular table structure.  The\noptional argument NO-COPY is internal use only and must not be\nspecified.\n\n(fn N &optional NO-COPY NO-UPDATE)" t nil))
+(fset 'table-insert '(autoload "table" "Insert an editable text table.\nInsert a table of specified number of COLUMNS and ROWS.  Optional\nparameter CELL-WIDTH and CELL-HEIGHT can specify the size of each\ncell.  The cell size is uniform across the table if the specified size\nis a number.  They can be a list of numbers to specify different size\nfor each cell.  When called interactively, the list of number is\nentered by simply listing all the numbers with space characters\ndelimiting them.\n\nExamples:\n\n\\[table-insert] inserts a table at the current point location.\n\nSuppose we have the following situation where `-!-' indicates the\nlocation of point.\n\n    -!-\n\nType \\[table-insert] and hit ENTER key.  As it asks table\nspecification, provide 3 for number of columns, 1 for number of rows,\n5 for cell width and 1 for cell height.  Now you shall see the next\ntable and the point is automatically moved to the beginning of the\nfirst cell.\n\n    +-----+-----+-----+\n    |-!-  |     |     |\n    +-----+-----+-----+\n\nInside a table cell, there are special key bindings.\n\\<table-cell-map>\nM-9 \\[table-widen-cell] (or \\[universal-argument] 9 \\[table-widen-cell]) widens the first cell by 9 character\nwidth, which results as\n\n    +--------------+-----+-----+\n    |-!-           |     |     |\n    +--------------+-----+-----+\n\nType TAB \\[table-widen-cell] then type TAB M-2 M-7 \\[table-widen-cell] (or \\[universal-argument] 2 7 \\[table-widen-cell]).  Typing\nTAB moves the point forward by a cell.  The result now looks like this:\n\n    +--------------+------+--------------------------------+\n    |              |      |-!-                             |\n    +--------------+------+--------------------------------+\n\nIf you knew each width of the columns prior to the table creation,\nwhat you could have done better was to have had given the complete\nwidth information to `table-insert'.\n\nCell width(s): 14 6 32\n\ninstead of\n\nCell width(s): 5\n\nThis would have eliminated the previously mentioned width adjustment\nwork all together.\n\nIf the point is in the last cell type S-TAB S-TAB to move it to the\nfirst cell.  Now type \\[table-heighten-cell] which heighten the row by a line.\n\n    +--------------+------+--------------------------------+\n    |-!-           |      |                                |\n    |              |      |                                |\n    +--------------+------+--------------------------------+\n\nType \\[table-insert-row-column] and tell it to insert a row.\n\n    +--------------+------+--------------------------------+\n    |-!-           |      |                                |\n    |              |      |                                |\n    +--------------+------+--------------------------------+\n    |              |      |                                |\n    |              |      |                                |\n    +--------------+------+--------------------------------+\n\nMove the point under the table as shown below.\n\n    +--------------+------+--------------------------------+\n    |              |      |                                |\n    |              |      |                                |\n    +--------------+------+--------------------------------+\n    |              |      |                                |\n    |              |      |                                |\n    +--------------+------+--------------------------------+\n    -!-\n\nType \\[table-insert-row] instead of \\[table-insert-row-column].  \\[table-insert-row-column] does not work\nwhen the point is outside of the table.  This insertion at\noutside of the table effectively appends a row at the end.\n\n    +--------------+------+--------------------------------+\n    |              |      |                                |\n    |              |      |                                |\n    +--------------+------+--------------------------------+\n    |              |      |                                |\n    |              |      |                                |\n    +--------------+------+--------------------------------+\n    |-!-           |      |                                |\n    |              |      |                                |\n    +--------------+------+--------------------------------+\n\nText editing inside the table cell produces reasonably expected\nresults.\n\n    +--------------+------+--------------------------------+\n    |              |      |                                |\n    |              |      |                                |\n    +--------------+------+--------------------------------+\n    |              |      |Text editing inside the table   |\n    |              |      |cell produces reasonably        |\n    |              |      |expected results.-!-            |\n    +--------------+------+--------------------------------+\n    |              |      |                                |\n    |              |      |                                |\n    +--------------+------+--------------------------------+\n\nInside a table cell has a special keymap.\n\n\\{table-cell-map}\n\n(fn COLUMNS ROWS &optional CELL-WIDTH CELL-HEIGHT)" t nil))
+(fset 'table-insert-column '(autoload "table" "Insert N table column(s).\nWhen point is in a table the newly inserted column(s) are placed left\nof the current column.  When point is outside of the table it must be\nright side of the table within the table height range, then the newly\ncreated column(s) are appended at the right of the table.\n\n(fn N)" t nil))
+(fset 'table-insert-row '(autoload "table" "Insert N table row(s).\nWhen point is in a table the newly inserted row(s) are placed above\nthe current row.  When point is outside of the table it must be below\nthe table within the table width range, then the newly created row(s)\nare appended at the bottom of the table.\n\n(fn N)" t nil))
+(fset 'table-insert-row-column '(autoload "table" "Insert row(s) or column(s).\nSee `table-insert-row' and `table-insert-column'.\n\n(fn ROW-COLUMN N)" t nil))
+(fset 'table-insert-sequence '(autoload "table" "Travel cells forward while inserting a specified sequence string in each cell.\nSTR is the base string from which the sequence starts.  When STR is an\nempty string then each cell content is erased.  When STR ends with\nnumerical characters (they may optionally be surrounded by a pair of\nparentheses) they are incremented as a decimal number.  Otherwise the\nlast character in STR is incremented in ASCII code order.  N is the\nnumber of sequence elements to insert.  When N is negative the cell\ntraveling direction is backward.  When N is zero it travels forward\nentire table.  INCREMENT is the increment between adjacent sequence\nelements and can be a negative number for effectively decrementing.\nINTERVAL is the number of cells to travel between sequence element\ninsertion which is normally 1.  When zero or less is given for\nINTERVAL it is interpreted as number of cells per row so that sequence\nis placed straight down vertically as long as the table's cell\nstructure is uniform.  JUSTIFY is a symbol `left', `center' or\n`right' that specifies justification of the inserted string.\n\nExample:\n\n  (progn\n    (table-insert 16 3 5 1)\n    (table-forward-cell 15)\n    (table-insert-sequence \"D0\" -16 1 1 \\='center)\n    (table-forward-cell 16)\n    (table-insert-sequence \"A[0]\" -16 1 1 \\='center)\n    (table-forward-cell 1)\n    (table-insert-sequence \"-\" 16 0 1 \\='center))\n\n  (progn\n    (table-insert 16 8 5 1)\n    (table-insert-sequence \"@\" 0 1 2 \\='right)\n    (table-forward-cell 1)\n    (table-insert-sequence \"64\" 0 1 2 \\='left))\n\n(fn STR N INCREMENT INTERVAL JUSTIFY)" t nil))
+(fset 'table-justify '(autoload "table" "Justify contents of a cell, a row of cells or a column of cells.\nWHAT is a symbol `cell', `row' or `column'.  JUSTIFY is a symbol\n`left', `center', `right', `top', `middle', `bottom' or `none'.\n\n(fn WHAT JUSTIFY)" t nil))
+(fset 'table-justify-cell '(autoload "table" "Justify cell contents.\nJUSTIFY is a symbol `left', `center' or `right' for horizontal, or `top',\n`middle', `bottom' or `none' for vertical.  When optional PARAGRAPH is\nnon-nil the justify operation is limited to the current paragraph,\notherwise the entire cell contents is justified.\n\n(fn JUSTIFY &optional PARAGRAPH)" t nil))
+(fset 'table-justify-column '(autoload "table" "Justify cells of a column.\nJUSTIFY is a symbol `left', `center' or `right' for horizontal,\nor `top', `middle', `bottom' or `none' for vertical.\n\n(fn JUSTIFY)" t nil))
+(fset 'table-justify-row '(autoload "table" "Justify cells of a row.\nJUSTIFY is a symbol `left', `center' or `right' for horizontal,\nor `top', `middle', `bottom' or `none' for vertical.\n\n(fn JUSTIFY)" t nil))
+(fset 'table-narrow-cell '(autoload "table" "Narrow the current cell by N columns and shrink the cell horizontally.\nSome other cells in the same table are narrowed as well to keep the\ntable's rectangle structure.\n\n(fn N)" t nil))
+(fset 'table-query-dimension '(autoload "table" "Return the dimension of the current cell and the current table.\nThe result is a list (cw ch tw th c r cells) where cw is the cell\nwidth, ch is the cell height, tw is the table width, th is the table\nheight, c is the number of columns, r is the number of rows and cells\nis the total number of cells.  The cell dimension excludes the cell\nframe while the table dimension includes the table frame.  The columns\nand the rows are counted by the number of cell boundaries.  Therefore\nthe number tends to be larger than it appears for the tables with\nnon-uniform cell structure (heavily spanned and split).  When optional\nWHERE is provided the cell and table at that location is reported.\n\n(fn &optional WHERE)" t nil))
+(fset 'table-recognize '(autoload "table" "Recognize all tables within the current buffer and activate them.\nScans the entire buffer and recognizes valid table cells.  If the\noptional numeric prefix argument ARG is negative the tables in the\nbuffer become inactive, meaning the tables become plain text and loses\nall the table specific features.\n\n(fn &optional ARG)" t nil))
+(fset 'table-recognize-cell '(autoload "table" "Recognize a table cell that contains current point.\nProbe the cell dimension and prepare the cell information.  The\noptional two arguments FORCE and NO-COPY are for internal use only and\nmust not be specified.  When the optional numeric prefix argument ARG\nis negative the cell becomes inactive, meaning that the cell becomes\nplain text and loses all the table specific features.\n\n(fn &optional FORCE NO-COPY ARG)" t nil))
+(fset 'table-recognize-region '(autoload "table" "Recognize all tables within region.\nBEG and END specify the region to work on.  If the optional numeric\nprefix argument ARG is negative the tables in the region become\ninactive, meaning the tables become plain text and lose all the table\nspecific features.\n\n(fn BEG END &optional ARG)" t nil))
+(fset 'table-recognize-table '(autoload "table" "Recognize a table at point.\nIf the optional numeric prefix argument ARG is negative the table\nbecomes inactive, meaning the table becomes plain text and loses all\nthe table specific features.\n\n(fn &optional ARG)" t nil))
+(fset 'table-release '(autoload "table" "Convert a table into plain text by removing the frame from a table.\nRemove the frame from a table and deactivate the table.  This command\nconverts a table into plain text without frames.  It is a companion to\n`table-capture' which does the opposite process." t nil))
+(fset 'table-shorten-cell '(autoload "table" "Shorten the current cell by N lines by shrinking the cell vertically.\nShortening is done by removing blank lines from the bottom of the cell\nand possibly from the top of the cell as well.  Therefore, the cell\nmust have some bottom/top blank lines to be shorten effectively.  This\nis applicable to all the cells aligned horizontally with the current\none because they are also shortened in order to keep the rectangular\ntable structure.\n\n(fn N)" t nil))
+(fset 'table-span-cell '(autoload "table" "Span current cell into adjacent cell in DIRECTION.\nDIRECTION is one of symbols; right, left, above or below.\n\n(fn DIRECTION)" t nil))
+(fset 'table-split-cell '(autoload "table" "Split current cell in ORIENTATION.\nORIENTATION is a symbol either horizontally or vertically.\n\n(fn ORIENTATION)" t nil))
+(fset 'table-split-cell-horizontally '(autoload "table" "Split current cell horizontally.\nCreates a cell on the left and a cell on the right of the current\npoint location." t nil))
+(fset 'table-split-cell-vertically '(autoload "table" "Split current cell vertically.\nCreates a cell above and a cell below the current point location." t nil))
+(fset 'table-unrecognize '(autoload "table" nil t nil))
+(fset 'table-unrecognize-cell '(autoload "table" nil t nil))
+(fset 'table-unrecognize-region '(autoload "table" "\n\n(fn BEG END)" t nil))
+(fset 'table-unrecognize-table '(autoload "table" nil t nil))
+(fset 'table-widen-cell '(autoload "table" "Widen the current cell by N columns and expand the cell horizontally.\nSome other cells in the same table are widen as well to keep the\ntable's rectangle structure.\n\n(fn N &optional NO-COPY NO-UPDATE)" t nil))

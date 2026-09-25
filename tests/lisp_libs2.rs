@@ -2807,3 +2807,63 @@ fn r15_custom_widget_outline_libs() {
         "(t t nil nil)"
     );
 }
+
+// ---------------------------------------------------------- round 16
+// cus-start.el, textmodes/table.el, descr-text.el, international/quail.el.
+// Frame/face gaps unblocked them: `frame--special-parameters' (GNU
+// frame.el), the `set-face-*'/`make-face-*' convenience family (GNU
+// faces.el), and ~79 cus-start built-in variable bindings with GNU
+// defaults.
+
+#[test]
+fn r16_cus_start_table_descr_text() {
+    // None are dumped features in GNU -Q.
+    assert_eq!(
+        ev("(mapcar #'featurep '(cus-start table descr-text quail))"),
+        "(nil nil nil nil)"
+    );
+    for name in ["cus-start", "table", "descr-text", "quail"] {
+        assert_eq!(
+            ev(&format!("(progn (require '{n}) (featurep '{n}))", n = name)),
+            "t",
+            "{name}"
+        );
+    }
+    // GNU loaddefs autoload cells (verified against GNU -Q).
+    assert_eq!(
+        ev("(mapcar (lambda (s) (autoloadp (symbol-function s)))
+                  '(describe-char describe-text-properties describe-char-eldoc
+                    quail-define-package quail-use-package
+                    table-insert table-recognize table-capture
+                    table-fixed-width-mode table-justify))"),
+        "(t t t t t t t t t t)"
+    );
+    // Frame/faces parity primitives used by cus-start & table.
+    assert_eq!(
+        ev("(list (boundp 'frame--special-parameters)
+                  (length frame--special-parameters)
+                  (fboundp 'set-face-inverse-video)
+                  (fboundp 'set-face-bold)
+                  (fboundp 'make-face-bold-italic)
+                  (fboundp 'set-face-extend))"),
+        "(t 88 t t t t)"
+    );
+    // Built-in variables cus-start requires to be bound (GNU defaults).
+    assert_eq!(
+        ev("(list (boundp 'indicate-empty-lines)
+                  (boundp 'indicate-buffer-boundaries)
+                  (boundp 'inverse-video)
+                  (boundp 'meta-prefix-char)
+                  meta-prefix-char
+                  (boundp 'ns-command-modifier)
+                  (boundp 'x-bitmap-file-path)
+                  (boundp 'scalable-fonts-allowed)
+                  scalable-fonts-allowed)"),
+        "(t t t t 27 t t t t)"
+    );
+    // cus-start walks every built-in var without erroring (GNU-ok).
+    assert_eq!(
+        ev("(progn (require 'cus-start) (boundp 'selective-display-ellipses))"),
+        "t"
+    );
+}
