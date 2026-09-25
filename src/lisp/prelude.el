@@ -40143,3 +40143,1310 @@ regexp builder supports three different forms of input which can
 be set with \\[reb-change-syntax].  More options and details are
 provided in the Commentary section of this library." t)
 (register-definition-prefixes "re-builder" '("re-builder-unload-function" "reb-"))
+
+
+;; GNU composite.c DEFVAR: `composition-function-table' is a char-table
+;; created in C before composite.el loads.
+(defvar composition-function-table
+  (make-char-table 'composition-function-table nil)
+  "Char-table of functions for automatic character composition.")
+
+;; GNU loaddefs defvar (ldefs-boot.el / cus-edit.el).
+(defvar customize-package-emacs-version-alist nil
+"Alist mapping versions of a package to Emacs versions.
+We use this for packages that have their own names, but are released
+as part of Emacs itself.
+
+Each elements looks like this:
+
+     (PACKAGE (PVERSION . EVERSION)...)
+
+Here PACKAGE is the name of a package, as a symbol.  After
+PACKAGE come one or more elements, each associating a
+package version PVERSION with the first Emacs version
+EVERSION in which it (or a subsequent version of PACKAGE)
+was first released.  Both PVERSION and EVERSION are strings.
+PVERSION should be a string that this package used in
+the :package-version keyword for `defcustom', `defgroup',
+and `defface'.
+
+For example, the MH-E package updates this alist as follows:
+
+     (add-to-list \\='customize-package-emacs-version-alist
+                  \\='(MH-E (\"6.0\" . \"22.1\") (\"6.1\" . \"22.1\")
+                         (\"7.0\" . \"22.1\") (\"7.1\" . \"22.1\")
+                         (\"7.2\" . \"22.1\") (\"7.3\" . \"22.1\")
+                         (\"7.4\" . \"22.1\") (\"8.0\" . \"22.1\")))
+
+The value of PACKAGE needs to be unique and it needs to match the
+PACKAGE value appearing in the :package-version keyword.  Since
+the user might see the value in an error message, a good choice is
+the official name of the package, such as MH-E or Gnus.")
+
+
+;; blackbox.el autoloads (GNU loaddefs).
+(autoload 'blackbox "blackbox"
+"Play blackbox.
+Optional prefix argument is the number of balls; the default is 4.
+
+What is blackbox?
+
+Blackbox is a game of hide and seek played on an 8 by 8 grid (the
+Blackbox).  Your opponent (Emacs, in this case) has hidden several
+balls (usually 4) within this box.  By shooting rays into the box and
+observing where they emerge it is possible to deduce the positions of
+the hidden balls.  The fewer rays you use to find the balls, the lower
+your score.
+
+Overview of play:
+
+\\<blackbox-mode-map>To play blackbox, type \\[blackbox].  An optional prefix argument
+specifies the number of balls to be hidden in the box; the default is
+four.
+
+The cursor can be moved around the box with the standard cursor
+movement keys.
+
+To shoot a ray, move the cursor to the edge of the box and press SPC.
+The result will be determined and the playfield updated.
+
+You may place or remove balls in the box by moving the cursor into the
+box and pressing \\[bb-romp].
+
+When you think the configuration of balls you have placed is correct,
+press \\[bb-done].  You will be informed whether you are correct or
+not, and be given your score.  Your score is the number of letters and
+numbers around the outside of the box plus five for each incorrectly
+placed ball.  If you placed any balls incorrectly, they will be
+indicated with `x', and their actual positions indicated with `o'.
+
+Details:
+
+There are three possible outcomes for each ray you send into the box:
+
+	Detour: the ray is deflected and emerges somewhere other than
+		where you sent it in.  On the playfield, detours are
+		denoted by matching pairs of numbers -- one where the
+		ray went in, and the other where it came out.
+
+	Reflection: the ray is reflected and emerges in the same place
+		it was sent in.  On the playfield, reflections are
+		denoted by the letter `R'.
+
+	Hit:	the ray strikes a ball directly and is absorbed.  It does
+		not emerge from the box.  On the playfield, hits are
+		denoted by the letter `H'.
+
+The rules for how balls deflect rays are simple and are best shown by
+example.
+
+As a ray approaches a ball it is deflected ninety degrees.  Rays can
+be deflected multiple times.  In the diagrams below, the dashes
+represent empty box locations and the letter `O' represents a ball.
+The entrance and exit points of each ray are marked with numbers as
+described under \"Detour\" above.  Note that the entrance and exit
+points are always interchangeable.  `*' denotes the path taken by the
+ray.
+
+Note carefully the relative positions of the ball and the ninety
+degree deflection it causes.
+
+    1
+  - * - - - - - -         - - - - - - - -         - - - - - - - -
+  - * - - - - - -         - - - - - - - -         - - - - - - - -
+1 * * - - - - - -         - - - - - - - -         - O - - - - O -
+  - - O - - - - -         - - O - - - - -         - - * * * * - -
+  - - - - - - - -         - - - * * * * * 2     3 * * * - - * - -
+  - - - - - - - -         - - - * - - - -         - - - O - * - -
+  - - - - - - - -         - - - * - - - -         - - - - * * - -
+  - - - - - - - -         - - - * - - - -         - - - - * - O -
+                                2                         3
+
+As mentioned above, a reflection occurs when a ray emerges from the same point
+it was sent in.  This can happen in several ways:
+
+
+  - - - - - - - -         - - - - - - - -          - - - - - - - -
+  - - - - O - - -         - - O - O - - -          - - - - - - - -
+R * * * * - - - -         - - - * - - - -          O - - - - - - -
+  - - - - O - - -         - - - * - - - -        R - - - - - - - -
+  - - - - - - - -         - - - * - - - -          - - - - - - - -
+  - - - - - - - -         - - - * - - - -          - - - - - - - -
+  - - - - - - - -       R * * * * - - - -          - - - - - - - -
+  - - - - - - - -         - - - - O - - -          - - - - - - - -
+
+In the first example, the ray is deflected downwards by the upper
+ball, then left by the lower ball, and finally retraces its path to
+its point of origin.  The second example is similar.  The third
+example is a bit anomalous but can be rationalized by realizing the
+ray never gets a chance to get into the box.  Alternatively, the ray
+can be thought of as being deflected downwards and immediately
+emerging from the box.
+
+A hit occurs when a ray runs straight into a ball:
+
+  - - - - - - - -         - - - - - - - -          - - - - - - - -
+  - - - - - - - -         - - - - - - - -          - - - - O - - -
+  - - - - - - - -         - - - - O - - -        H * * * * - - - -
+  - - - - - - - -       H * * * * O - - -          - - - * - - - -
+  - - - - - - - -         - - - - O - - -          - - - O - - - -
+H * * * O - - - -         - - - - - - - -          - - - - - - - -
+  - - - - - - - -         - - - - - - - -          - - - - - - - -
+  - - - - - - - -         - - - - - - - -          - - - - - - - -
+
+Be sure to compare the second example of a hit with the first example of
+a reflection.
+
+(fn NUM)" t)
+(register-definition-prefixes "blackbox" '("bb-" "blackbox-"))
+
+;; decipher.el autoloads (GNU loaddefs).
+(autoload 'decipher "decipher"
+"Format a buffer of ciphertext for cryptanalysis and enter Decipher mode." t)
+(autoload 'decipher-mode "decipher"
+"Major mode for decrypting monoalphabetic substitution ciphers.
+Lower-case letters enter plaintext.
+Upper-case letters are commands.
+
+The buffer is made read-only so that normal Emacs commands cannot
+modify it.
+
+The most useful commands are:
+\\<decipher-mode-map>
+\\[decipher-digram-list]  Display a list of all digrams & their frequency
+\\[decipher-frequency-count]  Display the frequency of each ciphertext letter
+\\[decipher-adjacency-list]  Show adjacency list for current letter (lists letters appearing next to it)
+\\[decipher-make-checkpoint]  Save the current cipher alphabet (checkpoint)
+\\[decipher-restore-checkpoint]  Restore a saved cipher alphabet (checkpoint)
+
+This mode runs the hook `decipher-mode-hook', as the final or
+penultimate step during initialization." t)
+(register-definition-prefixes "decipher" '("decipher-"))
+
+;; dig.el autoloads (GNU loaddefs).
+(autoload 'dig "dig"
+"Query addresses of a DOMAIN using dig.
+See `dig-invoke' for an explanation for the parameters.
+When called interactively, DOMAIN is prompted for.
+
+If given a \\[universal-argument] prefix, also prompt for the QUERY-TYPE parameter.
+
+If given a \\[universal-argument] \\[universal-argument] prefix, also prompt for the SERVER parameter.
+
+(fn DOMAIN &optional QUERY-TYPE QUERY-CLASS QUERY-OPTION DIG-OPTION SERVER)" t)
+(register-definition-prefixes "dig" '("dig-"))
+
+;; dns.el autoloads (GNU loaddefs).
+(autoload 'dns-query "dns"
+"Query a DNS server for NAME of TYPE.
+If FULL, return the entire record returned.
+If REVERSE, look up an IP address.
+
+(fn NAME &optional TYPE FULL REVERSE)")
+(register-definition-prefixes "dns" '("dns-"))
+
+;; dns-mode.el autoloads (GNU loaddefs).
+(autoload 'dns-mode "dns-mode"
+"Major mode for viewing and editing DNS master files.
+This mode is derived from text mode.  It adds syntax
+highlighting, and some commands for handling DNS master files.
+Its keymap inherits from `text-mode' and it has the same
+variables for customizing indentation.  It has its own abbrev
+table and its own syntax table.
+
+Turning on DNS mode runs `dns-mode-hook'.
+
+\\{dns-mode-map}" t)
+ (defalias 'zone-mode 'dns-mode)
+(autoload 'dns-mode-soa-increment-serial "dns-mode"
+"Locate SOA record and increment the serial field." t)
+(register-definition-prefixes "dns-mode" '("dns-mode-"))
+
+;; dunnet.el autoloads (GNU loaddefs).
+(autoload 'dunnet "dunnet"
+"Switch to *dungeon* buffer and start game." t)
+(register-definition-prefixes "dunnet" '("dun" "obj-special"))
+
+;; editorconfig-core-handle.el autoloads (GNU loaddefs).
+(register-definition-prefixes "editorconfig-core-handle" '("editorconfig-core-handle"))
+
+;; eudc-vars.el autoloads (GNU loaddefs).
+(register-definition-prefixes "eudc-vars" '("eudc-"))
+
+;; format.el autoloads (GNU loaddefs).
+(register-definition-prefixes "semantic/format" '("semantic-"))
+
+;; forms.el autoloads (GNU loaddefs).
+(autoload 'forms-mode "forms"
+"Major mode to visit files in a field-structured manner using a form.
+
+Commands:                        Equivalent keys in read-only mode:
+ TAB            forms-next-field          TAB
+ C-c TAB        forms-next-field
+ C-c <          forms-first-record         <
+ C-c >          forms-last-record          >
+ C-c ?          describe-mode              ?
+ C-c C-k        forms-delete-record
+ C-c C-q        forms-toggle-read-only     q
+ C-c C-o        forms-insert-record
+ C-c C-l        forms-jump-record          l
+ C-c C-n        forms-next-record          n
+ C-c C-p        forms-prev-record          p
+ C-c C-r        forms-search-reverse       r
+ C-c C-s        forms-search-forward       s
+ C-c C-x        forms-exit                 x
+
+(fn &optional PRIMARY)" t)
+(autoload 'forms-find-file "forms"
+"Visit a file in Forms mode.
+
+(fn FN)" t)
+(autoload 'forms-find-file-other-window "forms"
+"Visit a file in Forms mode in other window.
+
+(fn FN)" t)
+(register-definition-prefixes "forms" '("forms-"))
+
+;; hfy-cmap.el autoloads (GNU loaddefs).
+(autoload 'htmlfontify-load-rgb-file "hfy-cmap"
+"Load an X11 style rgb.txt FILE.
+Search `hfy-rgb-load-path' if FILE is not specified.
+Loads the variable `hfy-rgb-txt-color-map', which is used by
+`hfy-fallback-color-values'.
+
+(fn &optional FILE)" t)
+(autoload 'hfy-fallback-color-values "hfy-cmap"
+"Use a fallback method for obtaining the rgb values for a color.
+
+(fn COLOR-STRING)")
+(register-definition-prefixes "hfy-cmap" '("hfy-" "htmlfontify-unload-rgb-file"))
+
+;; hmac-def.el autoloads (GNU loaddefs).
+(register-definition-prefixes "hmac-def" '("define-hmac-function"))
+
+;; icon.el autoloads (GNU loaddefs).
+(autoload 'icon-mode "icon"
+"Major mode for editing Icon code.
+Expression and list commands understand all Icon brackets.
+Tab indents for Icon code.
+Paragraphs are separated by blank lines only.
+Delete converts tabs to spaces as it moves back.
+\\{icon-mode-map}
+Variables controlling indentation style:
+ icon-tab-always-indent
+    Non-nil means TAB in Icon mode should always reindent the current line,
+    regardless of where in the line point is when the TAB command is used.
+ icon-auto-newline
+    Non-nil means automatically newline before and after braces
+    inserted in Icon code.
+ icon-indent-level
+    Indentation of Icon statements within surrounding block.
+    The surrounding block's indentation is the indentation
+    of the line on which the open-brace appears.
+ icon-continued-statement-offset
+    Extra indentation given to a substatement, such as the
+    then-clause of an if or body of a while.
+ icon-continued-brace-offset
+    Extra indentation given to a brace that starts a substatement.
+    This is in addition to `icon-continued-statement-offset'.
+ icon-brace-offset
+    Extra indentation for line if it starts with an open brace.
+ icon-brace-imaginary-offset
+    An open brace following other text is treated as if it were
+    this far to the right of the start of its line.
+
+Turning on Icon mode calls the value of the variable `icon-mode-hook'
+with no args, if that value is non-nil." t)
+(register-definition-prefixes "icon" '("beginning-of-icon-defun" "calculate-icon-indent" "electric-icon-brace" "end-of-icon-defun" "icon-" "indent-icon-exp" "mark-icon-function"))
+
+;; iso-cvt.el autoloads (GNU loaddefs).
+(autoload 'iso-spanish "iso-cvt"
+"Translate net conventions for Spanish to ISO 8859-1.
+Translate the region between FROM and TO using the table
+`iso-spanish-trans-tab'.
+Optional arg BUFFER is ignored (for use in `format-alist').
+
+(fn FROM TO &optional BUFFER)" t)
+(autoload 'iso-german "iso-cvt"
+"Translate net conventions for German to ISO 8859-1.
+Translate the region FROM and TO using the table
+`iso-german-trans-tab'.
+Optional arg BUFFER is ignored (for use in `format-alist').
+
+(fn FROM TO &optional BUFFER)" t)
+(autoload 'iso-iso2tex "iso-cvt"
+"Translate ISO 8859-1 characters to TeX sequences.
+Translate the region between FROM and TO using the table
+`iso-iso2tex-trans-tab'.
+Optional arg BUFFER is ignored (for use in `format-alist').
+
+(fn FROM TO &optional BUFFER)" t)
+(autoload 'iso-tex2iso "iso-cvt"
+"Translate TeX sequences to ISO 8859-1 characters.
+Translate the region between FROM and TO using the table
+`iso-tex2iso-trans-tab'.
+Optional arg BUFFER is ignored (for use in `format-alist').
+
+(fn FROM TO &optional BUFFER)" t)
+(autoload 'iso-gtex2iso "iso-cvt"
+"Translate German TeX sequences to ISO 8859-1 characters.
+Translate the region between FROM and TO using the table
+`iso-gtex2iso-trans-tab'.
+Optional arg BUFFER is ignored (for use in `format-alist').
+
+(fn FROM TO &optional BUFFER)" t)
+(autoload 'iso-iso2gtex "iso-cvt"
+"Translate ISO 8859-1 characters to German TeX sequences.
+Translate the region between FROM and TO using the table
+`iso-iso2gtex-trans-tab'.
+Optional arg BUFFER is ignored (for use in `format-alist').
+
+(fn FROM TO &optional BUFFER)" t)
+(autoload 'iso-iso2duden "iso-cvt"
+"Translate ISO 8859-1 characters to Duden sequences.
+Translate the region between FROM and TO using the table
+`iso-iso2duden-trans-tab'.
+Optional arg BUFFER is ignored (for use in `format-alist').
+
+(fn FROM TO &optional BUFFER)" t)
+(autoload 'iso-iso2sgml "iso-cvt"
+"Translate ISO 8859-1 characters in the region to SGML entities.
+Use entities from \"ISO 8879:1986//ENTITIES Added Latin 1//EN\".
+Optional arg BUFFER is ignored (for use in `format-alist').
+
+(fn FROM TO &optional BUFFER)" t)
+(autoload 'iso-sgml2iso "iso-cvt"
+"Translate SGML entities in the region to ISO 8859-1 characters.
+Use entities from \"ISO 8879:1986//ENTITIES Added Latin 1//EN\".
+Optional arg BUFFER is ignored (for use in `format-alist').
+
+(fn FROM TO &optional BUFFER)" t)
+(autoload 'iso-cvt-read-only "iso-cvt"
+"Warn that format is read-only.
+
+(fn &rest IGNORE)" t)
+(autoload 'iso-cvt-write-only "iso-cvt"
+"Warn that format is write-only.
+
+(fn &rest IGNORE)" t)
+(autoload 'iso-cvt-define-menu "iso-cvt"
+"Add submenus to the File menu, to convert to and from various formats." t)
+(register-definition-prefixes "iso-cvt" '("iso-"))
+
+;; mail-extr.el autoloads (GNU loaddefs).
+(autoload 'mail-extract-address-components "mail-extr"
+"Extract full name and canonical address from ADDRESS.
+ADDRESS should be in RFC 822 (or later) format.
+Returns a list of the form (FULL-NAME CANONICAL-ADDRESS).  If no
+name can be extracted, FULL-NAME will be nil.  Also see
+`mail-extr-ignore-single-names' and
+`mail-extr-ignore-realname-equals-mailbox-name'.
+
+If the optional argument ALL is non-nil, then ADDRESS can contain zero
+or more recipients, separated by commas, and we return a list of
+the form ((FULL-NAME CANONICAL-ADDRESS) ...) with one element for
+each recipient.  If ALL is nil, then if ADDRESS contains more than
+one recipients, all but the first is ignored.
+
+ADDRESS may be a string or a buffer.  If it is a buffer, the visible
+(narrowed) portion of the buffer will be interpreted as the address.
+(This feature exists so that the clever caller might be able to avoid
+consing a string.)
+
+This function is primarily meant for when you're displaying the
+result to the user: Many prettifications are applied to the
+result returned.  If you want to decode an address for further
+non-display use, you should probably use
+`mail-header-parse-address' instead.  Also see
+`mail-header-parse-address-lax' for a function that's less strict
+than `mail-header-parse-address', but does less post-processing
+to the results.
+
+(fn ADDRESS &optional ALL)")
+(autoload 'what-domain "mail-extr"
+"Convert mail domain DOMAIN to the country it corresponds to.
+
+(fn DOMAIN)" t)
+(register-definition-prefixes "mail-extr" '("mail-extr-"))
+
+;; mailcap.el autoloads (GNU loaddefs).
+(autoload 'mailcap-mime-type-to-extension "mailcap"
+"Return a file name extension based on a MIME-TYPE.
+For instance, `image/png' will result in `png'.
+
+(fn MIME-TYPE)")
+(register-definition-prefixes "mailcap" '("mailcap-"))
+
+;; meta-mode.el autoloads (GNU loaddefs).
+(push '(meta-mode 1 0) package--builtin-versions)
+(autoload 'metafont-mode "meta-mode"
+"Major mode for editing Metafont sources.
+
+In addition to any hooks its parent mode `meta-common-mode' might have
+run, this mode runs the hook `metafont-mode-hook', as the final or
+penultimate step during initialization.
+
+\\{metafont-mode-map}" t)
+(autoload 'metapost-mode "meta-mode"
+"Major mode for editing MetaPost sources.
+
+In addition to any hooks its parent mode `meta-common-mode' might have
+run, this mode runs the hook `metapost-mode-hook', as the final or
+penultimate step during initialization.
+
+\\{metapost-mode-map}" t)
+(register-definition-prefixes "meta-mode" '("meta"))
+
+;; mixal-mode.el autoloads (GNU loaddefs).
+(push '(mixal-mode 0 4) package--builtin-versions)
+(autoload 'mixal-mode "mixal-mode"
+"Major mode for the mixal asm language.
+
+In addition to any hooks its parent mode `prog-mode' might have run,
+this mode runs the hook `mixal-mode-hook', as the final or penultimate
+step during initialization.
+
+\\{mixal-mode-map}" t)
+(register-definition-prefixes "mixal-mode" '("mixal-"))
+
+;; mule-util.el autoloads (GNU loaddefs).
+(autoload 'store-substring "mule-util"
+"Embed OBJ (string or character) at index IDX of STRING.
+
+(fn STRING IDX OBJ)")
+(autoload 'truncate-string-to-width "mule-util"
+"Truncate string STR to end at column END-COLUMN.
+The optional 3rd arg START-COLUMN, if non-nil, specifies the starting
+column (default: zero); that means to return the characters occupying
+columns START-COLUMN ... END-COLUMN of STR.  Both END-COLUMN and
+START-COLUMN are specified in terms of character display width in the
+current buffer; see `char-width'.
+
+Since character composition on display can produce glyphs whose
+width is smaller than the sum of `char-width' values of the
+composed characters, this function can produce inaccurate results
+when used in such cases.
+
+The optional 4th arg PADDING, if non-nil, specifies a padding
+character (which should have a display width of 1) to add at the end
+of the result if STR doesn't reach column END-COLUMN, or if END-COLUMN
+comes in the middle of a character in STR.  PADDING is also added at
+the beginning of the result if column START-COLUMN appears in the
+middle of a character in STR.
+
+If PADDING is nil, no padding is added in these cases, so
+the resulting string may be narrower than END-COLUMN.
+
+If ELLIPSIS is non-nil, it should be a string which will replace the
+end of STR (including any padding) if it extends beyond END-COLUMN,
+unless the display width of STR is equal to or less than the display
+width of ELLIPSIS.  If it is non-nil and not a string, then ELLIPSIS
+defaults to `truncate-string-ellipsis', or to three dots when it's nil.
+
+If ELLIPSIS-TEXT-PROPERTY is non-nil, a too-long string will not
+be truncated, but instead the elided parts will be covered by a
+`display' text property showing the ellipsis.
+
+(fn STR END-COLUMN &optional START-COLUMN PADDING ELLIPSIS ELLIPSIS-TEXT-PROPERTY)")
+(defsubst nested-alist-p (obj)
+"Return t if OBJ is a nested alist.
+
+Nested alist is a list of the form (ENTRY . BRANCHES), where ENTRY is
+any Lisp object, and BRANCHES is a list of cons cells of the form
+(KEY-ELEMENT . NESTED-ALIST).
+
+You can use a nested alist to store any Lisp object (ENTRY) for a key
+sequence KEYSEQ, where KEYSEQ is a sequence of KEY-ELEMENT.  KEYSEQ
+can be a string, a vector, or a list." (and obj (listp obj) (listp (cdr obj))))
+(autoload 'set-nested-alist "mule-util"
+"Set ENTRY for KEYSEQ in a nested alist ALIST.
+Optional 4th arg LEN non-nil means the first LEN elements in KEYSEQ
+ are considered.
+Optional 5th argument BRANCHES if non-nil is branches for a keyseq
+longer than KEYSEQ.
+See the documentation of `nested-alist-p' for more detail.
+
+(fn KEYSEQ ENTRY ALIST &optional LEN BRANCHES)")
+(autoload 'lookup-nested-alist "mule-util"
+"Look up key sequence KEYSEQ in nested alist ALIST.  Return the definition.
+Optional 3rd argument LEN specifies the length of KEYSEQ.
+Optional 4th argument START specifies index of the starting key.
+The returned value is normally a nested alist of which
+car part is the entry for KEYSEQ.
+If ALIST is not deep enough for KEYSEQ, return number which is
+ how many key elements at the front of KEYSEQ it takes
+ to reach a leaf in ALIST.
+Optional 5th argument NIL-FOR-TOO-LONG non-nil means return nil
+ even if ALIST is not deep enough.
+
+(fn KEYSEQ ALIST &optional LEN START NIL-FOR-TOO-LONG)")
+(autoload 'coding-system-post-read-conversion "mule-util"
+"Return the value of CODING-SYSTEM's `post-read-conversion' property.
+
+(fn CODING-SYSTEM)")
+(autoload 'coding-system-pre-write-conversion "mule-util"
+"Return the value of CODING-SYSTEM's `pre-write-conversion' property.
+
+(fn CODING-SYSTEM)")
+(autoload 'coding-system-translation-table-for-decode "mule-util"
+"Return the value of CODING-SYSTEM's `decode-translation-table' property.
+
+(fn CODING-SYSTEM)")
+(autoload 'coding-system-translation-table-for-encode "mule-util"
+"Return the value of CODING-SYSTEM's `encode-translation-table' property.
+
+(fn CODING-SYSTEM)")
+(autoload 'with-coding-priority "mule-util"
+"Execute BODY like `progn' with CODING-SYSTEMS at the front of priority list.
+CODING-SYSTEMS is a list of coding systems.  See `set-coding-system-priority'.
+This affects the implicit sorting of lists of coding systems returned by
+operations such as `find-coding-systems-region'.
+
+(fn CODING-SYSTEMS &rest BODY)" nil t)
+(autoload 'detect-coding-with-language-environment "mule-util"
+"Detect a coding system for the text between FROM and TO with LANG-ENV.
+The detection takes into account the coding system priorities for the
+language environment LANG-ENV.
+
+(fn FROM TO LANG-ENV)")
+(autoload 'filepos-to-bufferpos "mule-util"
+"Try to return the buffer position corresponding to a particular file position.
+The file position is given as a (0-based) BYTE count.
+The function presumes the file is encoded with CODING-SYSTEM, which defaults
+to `buffer-file-coding-system'.
+QUALITY can be:
+  `approximate', in which case we may cut some corners to avoid
+    excessive work.
+  `exact', in which case we may end up re-(en/de)coding a large
+    part of the file/buffer, this can be expensive and slow.  (It
+    is an error to request the `exact' method when the buffer's
+    EOL format is not yet decided.)
+  nil, in which case we may return nil rather than an approximation.
+
+(fn BYTE &optional QUALITY CODING-SYSTEM)")
+(autoload 'bufferpos-to-filepos "mule-util"
+"Try to return the file byte corresponding to a particular buffer POSITION.
+Value is the file position given as a (0-based) byte count.
+The function presumes the file is encoded with CODING-SYSTEM, which defaults
+to `buffer-file-coding-system'.
+QUALITY can be:
+  `approximate', in which case we may cut some corners to avoid
+    excessive work.
+  `exact', in which case we may end up re-(en/de)coding a large
+    part of the file/buffer, this can be expensive and slow.  (It
+    is an error to request the `exact' method when the buffer's
+    EOL format is not yet decided.)
+  nil, in which case we may return nil rather than an approximation.
+
+(fn POSITION &optional QUALITY CODING-SYSTEM)")
+(register-definition-prefixes "mule-util" '("filepos-to-bufferpos--dos" "truncate-string-ellipsis"))
+
+;; net-utils.el autoloads (GNU loaddefs).
+(autoload 'ifconfig "net-utils"
+"Run `ifconfig-program' and display diagnostic output." t)
+(autoload 'iwconfig "net-utils"
+"Run `iwconfig-program' and display diagnostic output." t)
+(autoload 'netstat "net-utils"
+"Run `netstat-program' and display diagnostic output." t)
+(autoload 'arp "net-utils"
+"Run `arp-program' and display diagnostic output." t)
+(autoload 'route "net-utils"
+"Run `route-program' and display diagnostic output." t)
+(autoload 'traceroute "net-utils"
+"Run `traceroute-program' for TARGET.
+
+(fn TARGET)" t)
+(autoload 'ping "net-utils"
+"Ping HOST using `ping-program'.
+
+The user option `ping-program-options' is passed as flags to
+`ping-program'.  With a \\[universal-argument] prefix arg, prompt the
+user for the flags to pass.
+
+When called from Lisp, the optional argument FLAGS, if non-nil, is a
+list of strings that will be passed as flags for the `ping-program'.  If
+FLAGS is nil, `ping-program-options' will be used.
+
+If your system's ping continues until interrupted, you can try using a
+prefix argument or setting `ping-program-options'.
+
+(fn HOST &optional FLAGS)" t)
+(autoload 'nslookup-host "net-utils"
+"Look up the DNS information for HOST (name or IP address).
+Optional argument NAME-SERVER says which server to use for
+DNS resolution.
+Interactively, prompt for NAME-SERVER if invoked with prefix argument.
+
+This command uses `nslookup-program' for looking up the DNS information.
+
+See also: `nslookup-host-ipv4', `nslookup-host-ipv6' for
+non-interactive versions of this function more suitable for use
+in Lisp code.
+
+(fn HOST &optional NAME-SERVER)" t)
+(autoload 'nslookup-host-ipv4 "net-utils"
+"Return the IPv4 address for HOST (name or IP address).
+Optional argument NAME-SERVER says which server to use for DNS
+resolution.
+
+If FORMAT is `string', returns the IP address as a
+string (default).  If FORMAT is `vector', returns a 4-integer
+vector of octets.
+
+This command uses `nslookup-program' to look up DNS records.
+
+(fn HOST &optional NAME-SERVER FORMAT)")
+(autoload 'nslookup-host-ipv6 "net-utils"
+"Return the IPv6 address for HOST (name or IP address).
+Optional argument NAME-SERVER says which server to use for DNS
+resolution.
+
+If FORMAT is `string', returns the IP address as a
+string (default).  If FORMAT is `vector', returns a 8-integer
+vector of hextets.
+
+This command uses `nslookup-program' to look up DNS records.
+
+(fn HOST &optional NAME-SERVER FORMAT)")
+(autoload 'nslookup "net-utils"
+"Run `nslookup-program'." t)
+(autoload 'dns-lookup-host "net-utils"
+"Look up the DNS information for HOST (name or IP address).
+Optional argument NAME-SERVER says which server to use for
+DNS resolution.
+Interactively, prompt for NAME-SERVER if invoked with prefix argument.
+
+This command uses `dns-lookup-program' for looking up the DNS information.
+
+(fn HOST &optional NAME-SERVER)" t)
+(autoload 'run-dig "net-utils"
+"Look up DNS information for HOST (name or IP address).
+Optional argument NAME-SERVER says which server to use for
+DNS resolution.
+Interactively, prompt for NAME-SERVER if invoked with prefix argument.
+
+This command uses `dig-program' for looking up the DNS information.
+
+(fn HOST &optional NAME-SERVER)" t)
+(make-obsolete 'run-dig 'dig "29.1")
+(autoload 'ftp "net-utils"
+"Run `ftp-program' to connect to HOST.
+
+(fn HOST)" t)
+(autoload 'finger "net-utils"
+"Finger USER on HOST.
+This command uses `finger-X.500-host-regexps'
+and `network-connection-service-alist', which see.
+
+(fn USER HOST)" t)
+(autoload 'whois "net-utils"
+"Send SEARCH-STRING to server defined by the `whois-server-name' variable.
+If `whois-guess-server' is non-nil, then try to deduce the correct server
+from SEARCH-STRING.  With argument, prompt for whois server.
+The port is deduced from `network-connection-service-alist'.
+
+(fn ARG SEARCH-STRING)" t)
+(autoload 'whois-reverse-lookup "net-utils" nil t)
+(autoload 'network-connection-to-service "net-utils"
+"Open a network connection to SERVICE on HOST.
+This command uses `network-connection-service-alist', which see.
+
+(fn HOST SERVICE)" t)
+(autoload 'network-connection "net-utils"
+"Open a network connection to HOST on PORT.
+
+(fn HOST PORT)" t)
+(register-definition-prefixes "net-utils" '("arp-program" "dns-lookup-program" "finger-X.500-host-regexps" "ftp-" "ifconfig-program" "ipconfig" "iwconfig-program" "net" "nslookup-" "ping-program" "route-program" "run-network-program" "smbclient" "traceroute-program" "whois-"))
+
+;; opascal.el autoloads (GNU loaddefs).
+(define-obsolete-function-alias 'delphi-mode #'opascal-mode "24.4")
+(autoload 'opascal-mode "opascal"
+"Major mode for editing OPascal code.
+\\<opascal-mode-map>
+\\[opascal-find-unit]	- Search for a OPascal source file.
+\\[opascal-fill-comment]	- Fill the current comment.
+\\[opascal-new-comment-line]	- If in a // comment, do a new comment line.
+
+\\[indent-region] also works for indenting a whole region.
+
+Customization:
+
+ `opascal-indent-level'                (default 3)
+    Indentation of OPascal statements with respect to containing block.
+ `opascal-compound-block-indent'       (default 0)
+    Extra indentation for blocks in compound statements.
+ `opascal-case-label-indent'           (default 0)
+    Extra indentation for case statement labels.
+ `opascal-search-path'                 (default .)
+    Directories to search when finding external units.
+ `opascal-verbose'                     (default nil)
+    If true then OPascal token processing progress is reported to the user.
+
+Coloring:
+
+ `opascal-keyword-face'                (default `font-lock-keyword-face')
+    Face used to color OPascal keywords.
+
+In addition to any hooks its parent mode `prog-mode' might have run,
+this mode runs the hook `opascal-mode-hook', as the final or
+penultimate step during initialization." t)
+(register-definition-prefixes "opascal" '("opascal-"))
+
+;; page-ext.el autoloads (GNU loaddefs).
+(register-definition-prefixes "page-ext" '("pages-"))
+
+;; pascal.el autoloads (GNU loaddefs).
+(autoload 'pascal-mode "pascal"
+"Major mode for editing Pascal code.
+\\<pascal-mode-map>
+TAB indents for Pascal code.  Delete converts tabs to spaces as it moves back.
+
+\\[completion-at-point] completes the word around current point with respect to position in code
+\\[completion-help-at-point] shows all possible completions at this point.
+
+Other useful functions are:
+
+\\[pascal-mark-defun]	- Mark function.
+\\[pascal-insert-block]	- insert begin ... end;
+\\[pascal-star-comment]	- insert (* ... *)
+\\[pascal-comment-area]	- Put marked area in a comment, fixing nested comments.
+\\[pascal-uncomment-area]	- Uncomment an area commented with \\[pascal-comment-area].
+\\[pascal-beg-of-defun]	- Move to beginning of current function.
+\\[pascal-end-of-defun]	- Move to end of current function.
+\\[pascal-goto-defun]	- Goto function prompted for in the minibuffer.
+\\[pascal-outline-mode]	- Enter `pascal-outline-mode'.
+
+Variables controlling indentation/edit style:
+
+ `pascal-indent-level' (default 3)
+    Indentation of Pascal statements with respect to containing block.
+ `pascal-case-indent' (default 2)
+    Indentation for case statements.
+ `pascal-auto-newline' (default nil)
+    Non-nil means automatically newline after semicolons and the punctuation
+    mark after an end.
+ `pascal-indent-nested-functions' (default t)
+    Non-nil means nested functions are indented.
+ `pascal-tab-always-indent' (default t)
+    Non-nil means TAB in Pascal mode should always reindent the current line,
+    regardless of where in the line point is when the TAB command is used.
+ `pascal-auto-endcomments' (default t)
+    Non-nil means a comment { ... } is set after the ends which ends cases and
+    functions.  The name of the function or case will be set between the braces.
+ `pascal-auto-lineup' (default t)
+    List of contexts where auto lineup of :'s or ='s should be done.
+
+See also the user variables `pascal-type-keywords', `pascal-start-keywords' and
+`pascal-separator-keywords'.
+
+In addition to any hooks its parent mode `prog-mode' might have run,
+this mode runs the hook `pascal-mode-hook', as the final or
+penultimate step during initialization." t)
+(register-definition-prefixes "pascal" '("electric-pascal-" "pascal-"))
+
+;; picture.el autoloads (GNU loaddefs).
+(autoload 'picture-mode "picture"
+"Switch to Picture mode, in which a quarter-plane screen model is used.
+\\<picture-mode-map>
+Printing characters replace instead of inserting themselves with motion
+afterwards settable by these commands:
+
+ Move left after insertion:            \\[picture-movement-left]
+ Move right after insertion:           \\[picture-movement-right]
+ Move up after insertion:              \\[picture-movement-up]
+ Move down after insertion:            \\[picture-movement-down]
+
+ Move northwest (nw) after insertion:  \\[picture-movement-nw]
+ Move northeast (ne) after insertion:  \\[picture-movement-ne]
+ Move southwest (sw) after insertion:  \\[picture-movement-sw]
+ Move southeast (se) after insertion:  \\[picture-movement-se]
+
+ Move westnorthwest (wnw) after insertion:  \\[universal-argument] \\[picture-movement-nw]
+ Move eastnortheast (ene) after insertion:  \\[universal-argument] \\[picture-movement-ne]
+ Move westsouthwest (wsw) after insertion:  \\[universal-argument] \\[picture-movement-sw]
+ Move eastsoutheast (ese) after insertion:  \\[universal-argument] \\[picture-movement-se]
+
+The current direction is displayed in the mode line.  The initial
+direction is right.  Whitespace is inserted and tabs are changed to
+spaces when required by movement.  You can move around in the buffer
+with these commands:
+
+ Move vertically to SAME column in previous line: \\[picture-move-down]
+ Move vertically to SAME column in next line:     \\[picture-move-up]
+ Move to column following last
+  non-whitespace character:                       \\[picture-end-of-line]
+ Move right, inserting spaces if required:        \\[picture-forward-column]
+ Move left changing tabs to spaces if required:   \\[picture-backward-column]
+ Move in direction of current picture motion:     \\[picture-motion]
+ Move opposite to current picture motion:         \\[picture-motion-reverse]
+ Move to beginning of next line:                  \\[next-line]
+
+You can edit tabular text with these commands:
+
+ Move to column beneath (or at) next interesting
+  character (see variable `picture-tab-chars'):   \\[picture-tab-search]
+ Move to next stop in tab stop list:              \\[picture-tab]
+ Set tab stops according to context of this line: \\[picture-set-tab-stops]
+   (With ARG, resets tab stops to default value.)
+ Change the tab stop list:                        \\[edit-tab-stops]
+
+You can manipulate text with these commands:
+ Clear ARG columns after point without moving:    \\[picture-clear-column]
+ Delete char at point:                            \\[picture-delete-char]
+ Clear ARG columns backward:                      \\[picture-backward-clear-column]
+ Clear ARG lines, advancing over them:            \\[picture-clear-line]
+  (the cleared text is saved in the kill ring)
+ Open blank line(s) beneath current line:         \\[picture-open-line]
+
+You can manipulate rectangles with these commands:
+  Clear a rectangle and save it:                  \\[picture-clear-rectangle]
+  Clear a rectangle, saving in a named register:  \\[picture-clear-rectangle-to-register]
+  Insert currently saved rectangle at point:      \\[picture-yank-rectangle]
+  Insert rectangle from named register:           \\[picture-yank-rectangle-from-register]
+  Draw a rectangular box around mark and point:   \\[picture-draw-rectangle]
+  Copies a rectangle to a register:               \\[copy-rectangle-to-register]
+  Undo effects of rectangle overlay commands:     \\[undo]
+
+You can return to the previous mode with \\[picture-mode-exit], which
+also strips trailing whitespace from every line.  Stripping is suppressed
+by supplying an argument.
+
+Entry to this mode calls the value of `picture-mode-hook' if non-nil.
+
+Note that Picture mode commands will work outside of Picture mode, but
+they are not by default assigned to keys." t)
+(defalias 'edit-picture 'picture-mode)
+(register-definition-prefixes "picture" '("picture-"))
+
+;; proced.el autoloads (GNU loaddefs).
+(autoload 'proced "proced"
+"Generate a listing of system processes and their attributes.
+\\<proced-mode-map>
+If invoked with optional non-negative ARG, do not select the
+window displaying the process information.
+
+If `proced-show-remote-processes' is non-nil or the command is
+invoked with a negative ARG `\\[universal-argument] \\[negative-argument]', and `default-directory'
+points to a remote host, the system processes of that host are shown.
+
+This function runs the normal hook `proced-post-display-hook'.
+
+See `proced-mode' for a description of features available in
+Proced buffers.
+
+(fn &optional ARG)" t)
+(register-definition-prefixes "proced" '("proced-"))
+
+;; refbib.el autoloads (GNU loaddefs).
+(register-definition-prefixes "refbib" '("r2b-"))
+
+;; rfc822.el autoloads (GNU loaddefs).
+(register-definition-prefixes "rfc822" '("rfc822-"))
+
+;; robin.el autoloads (GNU loaddefs).
+(autoload 'robin-define-package "robin"
+"Define a robin package.
+
+NAME is the string of this robin package.
+DOCSTRING is the documentation string of this robin package.
+Each RULE is of the form (INPUT OUTPUT) where INPUT is a string and
+OUTPUT is either a character or a string.  RULES are not evaluated.
+
+If there already exists a robin package whose name is NAME, the new
+one replaces the old one.
+
+(fn NAME DOCSTRING &rest RULES)" nil t)
+(autoload 'robin-modify-package "robin"
+"Change a rule in an already defined robin package.
+
+NAME is the string specifying a robin package.
+INPUT is a string that specifies the input pattern.
+OUTPUT is either a character or a string to be generated.
+
+(fn NAME INPUT OUTPUT)")
+(autoload 'robin-use-package "robin"
+"Start using robin package NAME, which is a string.
+
+(fn NAME)")
+(register-definition-prefixes "robin" '("robin-"))
+
+;; sasl.el autoloads (GNU loaddefs).
+(register-definition-prefixes "sasl" '("sasl-"))
+
+;; shortdoc.el autoloads (GNU loaddefs).
+(defvar shortdoc--groups nil)
+(autoload 'define-short-documentation-group "shortdoc"
+"Add GROUP to the list of defined documentation groups.
+FUNCTIONS is a list of elements on the form:
+
+  (FUNC
+   :no-manual BOOL
+   :args ARGS
+   :eval EVAL
+   :no-eval EXAMPLE-FORM
+   :no-value EXAMPLE-FORM
+   :no-eval* EXAMPLE-FORM
+   :result RESULT-FORM
+   :result-string RESULT-STRING
+   :eg-result RESULT-FORM
+   :eg-result-string RESULT-STRING)
+
+FUNC is the function being documented.
+
+NO-MANUAL should be non-nil if FUNC isn't documented in the
+manual.
+
+ARGS is optional list of function FUNC's arguments.  FUNC's
+signature is displayed automatically if ARGS is not present.
+Specifying ARGS might be useful where you don't want to document
+some of the uncommon arguments a function might have.
+
+While the `:no-manual' and `:args' property can be used for
+any (FUNC ..) form, all of the other properties shown above
+cannot be used simultaneously in such a form.
+
+Here are some common forms with examples of properties that go
+together:
+
+1. Document a form or string, and its evaluated return value.
+   (FUNC
+    :eval EVAL)
+
+If EVAL is a string, it will be inserted as is, and then that
+string will be `read' and evaluated.
+
+2. Document a form or string, but manually document its evaluation
+   result.  The provided form will not be evaluated.
+
+  (FUNC
+   :no-eval EXAMPLE-FORM
+   :result RESULT-FORM)   ;Use `:result-string' if value is in string form
+
+Using `:no-value' is the same as using `:no-eval'.
+
+Use `:no-eval*' instead of `:no-eval' where the successful
+execution of the documented form depends on some conditions.
+
+3. Document a form or string EXAMPLE-FORM.  Also manually
+   document an example result.  This result could be unrelated to
+   the documented form.
+
+  (FUNC
+   :no-eval EXAMPLE-FORM
+   :eg-result RESULT-FORM) ;Use `:eg-result-string' if value is in string form
+
+A FUNC form can have any number of `:no-eval' (or `:no-value'),
+`:no-eval*', `:result', `:result-string', `:eg-result' and
+`:eg-result-string' properties.
+
+(fn GROUP &rest FUNCTIONS)" nil t)
+(autoload 'shortdoc-display-group "shortdoc"
+"Pop to a buffer with short documentation summary for functions in GROUP.
+Interactively, prompt for GROUP.
+If FUNCTION is non-nil, place point on the entry for FUNCTION (if any).
+If SAME-WINDOW, don't pop to a new window.
+
+(fn GROUP &optional FUNCTION SAME-WINDOW)" t)
+(defalias 'shortdoc #'shortdoc-display-group)
+(register-definition-prefixes "shortdoc" '("shortdoc-"))
+
+;; sieve-mode.el autoloads (GNU loaddefs).
+(autoload 'sieve-mode "sieve-mode"
+"Major mode for editing Sieve code.
+Turning on Sieve mode runs `sieve-mode-hook'.
+
+\\{sieve-mode-map}" t)
+(register-definition-prefixes "sieve-mode" '("sieve-"))
+
+;; simula.el autoloads (GNU loaddefs).
+(autoload 'simula-mode "simula"
+"Major mode for editing SIMULA code.
+\\{simula-mode-map}
+Variables controlling indentation style:
+ `simula-indent-level'
+    Indentation of SIMULA statements with respect to containing block.
+ `simula-substatement-offset'
+    Extra indentation after DO, THEN, ELSE, WHEN and OTHERWISE.
+ `simula-continued-statement-offset' 3
+    Extra indentation for lines not starting a statement or substatement,
+    e.g. a nested FOR-loop.  If value is a list, each line in a multiple-
+    line continued statement will have the car of the list extra indentation
+    with respect to the previous line of the statement.
+ `simula-label-offset' -4711
+    Offset of SIMULA label lines relative to usual indentation.
+ `simula-if-indent' (0 . 0)
+    Extra indentation of THEN and ELSE with respect to the starting IF.
+    Value is a cons cell, the car is extra THEN indentation and the cdr
+    extra ELSE indentation.  IF after ELSE is indented as the starting IF.
+ `simula-inspect-indent' (0 . 0)
+    Extra indentation of WHEN and OTHERWISE with respect to the
+    corresponding INSPECT.  Value is a cons cell, the car is
+    extra WHEN indentation and the cdr extra OTHERWISE indentation.
+ `simula-electric-indent' nil
+    If this variable is non-nil, `simula-indent-line'
+    will check the previous line to see if it has to be reindented.
+ `simula-abbrev-keyword' `upcase'
+    Determine how SIMULA keywords will be expanded.  Value is one of
+    the symbols `upcase', `downcase', `capitalize', (as in) `abbrev-table',
+    or nil if they should not be changed.
+ `simula-abbrev-stdproc' `abbrev-table'
+    Determine how standard SIMULA procedure and class names will be
+    expanded.  Value is one of the symbols `upcase', `downcase', `capitalize',
+    (as in) `abbrev-table', or nil if they should not be changed.
+
+Turning on SIMULA mode calls the value of the variable simula-mode-hook
+with no arguments, if that value is non-nil." t)
+(register-definition-prefixes "simula" '("simula-"))
+
+;; subword.el autoloads (GNU loaddefs).
+(define-obsolete-function-alias 'capitalized-words-mode 'subword-mode "25.1")
+(autoload 'subword-mode "subword"
+"Toggle subword movement and editing (Subword mode).
+
+Subword mode is a buffer-local minor mode.  Enabling it changes
+the definition of a word so that word-based commands stop inside
+symbols with mixed uppercase and lowercase letters,
+e.g. \"GtkWidget\", \"EmacsFrameClass\", \"NSGraphicsContext\".
+
+Here we call these mixed case symbols `nomenclatures'.  Each
+capitalized (or completely uppercase) part of a nomenclature is
+called a `subword'.  Here are some examples:
+
+  Nomenclature           Subwords
+  ===========================================================
+  GtkWindow          =>  \"Gtk\" and \"Window\"
+  EmacsFrameClass    =>  \"Emacs\", \"Frame\" and \"Class\"
+  NSGraphicsContext  =>  \"NS\", \"Graphics\" and \"Context\"
+
+This mode changes the definition of a word so that word commands
+treat nomenclature boundaries as word boundaries.
+
+This is a minor mode.  If called interactively, toggle the `Subword
+mode' mode.  If the prefix argument is positive, enable the mode, and if
+it is zero or negative, disable the mode.
+
+If called from Lisp, toggle the mode if ARG is `toggle'.  Enable the
+mode if ARG is nil, omitted, or is a positive number.  Disable the mode
+if ARG is a negative number.
+
+To check whether the minor mode is enabled in the current buffer,
+evaluate the variable `subword-mode'.
+
+The mode's hook is called both when the mode is enabled and when it is
+disabled.
+
+(fn &optional ARG)" t)
+(put 'global-subword-mode 'globalized-minor-mode t)
+(defvar global-subword-mode nil
+"Non-nil if Global Subword mode is enabled.
+See the `global-subword-mode' command
+for a description of this minor mode.
+Setting this variable directly does not take effect;
+either customize it (see the info node `Easy Customization')
+or call the function `global-subword-mode'.")
+(custom-autoload 'global-subword-mode "subword" nil)
+(autoload 'global-subword-mode "subword"
+"Toggle Subword mode in many buffers.
+Specifically, Subword mode is enabled in all buffers where `(lambda
+nil (subword-mode 1))' would do it.
+
+With prefix ARG, enable Global Subword mode if ARG is positive;
+otherwise, disable it.
+
+If called from Lisp, toggle the mode if ARG is `toggle'.
+Enable the mode if ARG is nil, omitted, or is a positive number.
+Disable the mode if ARG is a negative number.
+
+See `subword-mode' for more information on Subword mode.
+
+(fn &optional ARG)" t)
+(autoload 'superword-mode "subword"
+"Toggle superword movement and editing (Superword mode).
+
+Superword mode is a buffer-local minor mode.  Enabling it changes
+the definition of words such that characters which have symbol
+syntax are treated as parts of words: e.g., in `superword-mode',
+\"this_is_a_symbol\" counts as one word.
+
+\\{superword-mode-map}
+
+This is a minor mode.  If called interactively, toggle the `Superword
+mode' mode.  If the prefix argument is positive, enable the mode, and if
+it is zero or negative, disable the mode.
+
+If called from Lisp, toggle the mode if ARG is `toggle'.  Enable the
+mode if ARG is nil, omitted, or is a positive number.  Disable the mode
+if ARG is a negative number.
+
+To check whether the minor mode is enabled in the current buffer,
+evaluate the variable `superword-mode'.
+
+The mode's hook is called both when the mode is enabled and when it is
+disabled.
+
+(fn &optional ARG)" t)
+(put 'global-superword-mode 'globalized-minor-mode t)
+(defvar global-superword-mode nil
+"Non-nil if Global Superword mode is enabled.
+See the `global-superword-mode' command
+for a description of this minor mode.
+Setting this variable directly does not take effect;
+either customize it (see the info node `Easy Customization')
+or call the function `global-superword-mode'.")
+(custom-autoload 'global-superword-mode "subword" nil)
+(autoload 'global-superword-mode "subword"
+"Toggle Superword mode in many buffers.
+Specifically, Superword mode is enabled in all buffers where `(lambda
+nil (superword-mode 1))' would do it.
+
+With prefix ARG, enable Global Superword mode if ARG is positive;
+otherwise, disable it.
+
+If called from Lisp, toggle the mode if ARG is `toggle'.
+Enable the mode if ARG is nil, omitted, or is a positive number.
+Disable the mode if ARG is a negative number.
+
+See `superword-mode' for more information on Superword mode.
+
+(fn &optional ARG)" t)
+(register-definition-prefixes "subword" '("subword-" "superword-mode-map"))
+
+;; tramp-uu.el autoloads (GNU loaddefs).
+(register-definition-prefixes "tramp-uu" '("tramp-uu"))
+
+;; trampver.el autoloads (GNU loaddefs).
+(push '(tramp 2 8 2 31 1) package--builtin-versions)
+(register-definition-prefixes "trampver" '("tramp-"))
+
+;; type-break.el autoloads (GNU loaddefs).
+(defvar type-break-mode nil
+"Non-nil if Type-Break mode is enabled.
+See the `type-break-mode' command
+for a description of this minor mode.
+Setting this variable directly does not take effect;
+either customize it (see the info node `Easy Customization')
+or call the function `type-break-mode'.")
+(custom-autoload 'type-break-mode "type-break" nil)
+(autoload 'type-break-mode "type-break"
+"Enable or disable typing-break mode.
+
+This is a minor mode, but it is global to all buffers by default.
+
+When this mode is enabled, the user is encouraged to take typing breaks at
+appropriate intervals; either after a specified amount of time or when the
+user has exceeded a keystroke threshold.  When the time arrives, the user
+is asked to take a break.  If the user refuses at that time, Emacs will ask
+again in a short period of time.  The idea is to give the user enough time
+to find a good breaking point in his or her work, but be sufficiently
+annoying to discourage putting typing breaks off indefinitely.
+
+The user may enable or disable this mode by setting the variable of the
+same name, though setting it in that way doesn't reschedule a break or
+reset the keystroke counter.
+
+If the mode was previously disabled and is enabled as a consequence of
+calling this function, it schedules a break with `type-break-schedule' to
+make sure one occurs (the user can call that command to reschedule the
+break at any time).  It also initializes the keystroke counter.
+
+The variable `type-break-interval' specifies the number of seconds to
+schedule between regular typing breaks.  This variable doesn't directly
+affect the time schedule; it simply provides a default for the
+`type-break-schedule' command.
+
+If set, the variable `type-break-good-rest-interval' specifies the minimum
+amount of time which is considered a reasonable typing break.  Whenever
+that time has elapsed, typing breaks are automatically rescheduled for
+later even if Emacs didn't prompt you to take one first.  Also, if a break
+is ended before this much time has elapsed, the user will be asked whether
+or not to continue.  A nil value for this variable prevents automatic
+break rescheduling, making `type-break-interval' an upper bound on the time
+between breaks.  In this case breaks will be prompted for as usual before
+the upper bound if the keystroke threshold is reached.
+
+If `type-break-good-rest-interval' is nil and
+`type-break-good-break-interval' is set, then confirmation is required to
+interrupt a break before `type-break-good-break-interval' seconds
+have passed.  This provides for an upper bound on the time between breaks
+together with confirmation of interruptions to these breaks.
+
+The variable `type-break-keystroke-threshold' is used to determine the
+thresholds at which typing breaks should be considered.  You can use
+the command `type-break-guesstimate-keystroke-threshold' to try to
+approximate good values for this.
+
+There are several variables that affect how or when warning messages about
+imminent typing breaks are displayed.  They include:
+
+        `type-break-mode-line-message-mode'
+        `type-break-time-warning-intervals'
+        `type-break-keystroke-warning-intervals'
+        `type-break-warning-repeat'
+        `type-break-warning-countdown-string'
+        `type-break-warning-countdown-string-type'
+
+There are several variables that affect if, how, and when queries to begin
+a typing break occur.  They include:
+
+        `type-break-query-mode'
+        `type-break-query-function'
+        `type-break-query-interval'
+
+The command `type-break-statistics' prints interesting things.
+
+Finally, a file (named `type-break-file-name') is used to store information
+across Emacs sessions.  This provides recovery of the break status between
+sessions and after a crash.  Manual changes to the file may result in
+problems.
+
+This is a global minor mode.  If called interactively, toggle the
+`Type-Break mode' mode.  If the prefix argument is positive, enable the
+mode, and if it is zero or negative, disable the mode.
+
+If called from Lisp, toggle the mode if ARG is `toggle'.  Enable the
+mode if ARG is nil, omitted, or is a positive number.  Disable the mode
+if ARG is a negative number.
+
+To check whether the minor mode is enabled in the current buffer,
+evaluate `(default-value \\='type-break-mode)'.
+
+The mode's hook is called both when the mode is enabled and when it is
+disabled.
+
+(fn &optional ARG)" t)
+(autoload 'type-break "type-break"
+"Take a typing break.
+
+During the break, a demo selected from the functions listed in
+`type-break-demo-functions' is run.
+
+After the typing break is finished, the next break is scheduled
+as per the function `type-break-schedule'." t)
+(autoload 'type-break-statistics "type-break"
+"Print statistics about typing breaks in a temporary buffer.
+This includes the last time a typing break was taken, when the next one is
+scheduled, the keystroke thresholds and the current keystroke count, etc." t)
+(autoload 'type-break-guesstimate-keystroke-threshold "type-break"
+"Guess values for the minimum/maximum keystroke threshold for typing breaks.
+
+If called interactively, the user is prompted for their guess as to how
+many words per minute they usually type.  This value should not be your
+maximum WPM, but your average.  Of course, this is harder to gauge since it
+can vary considerably depending on what you are doing.  For example, one
+tends to type less when debugging a program as opposed to writing
+documentation.  (Perhaps a separate program should be written to estimate
+average typing speed.)
+
+From that, this command sets the values in `type-break-keystroke-threshold'
+based on a fairly simple algorithm involving assumptions about the average
+length of words (5).  For the minimum threshold, it uses about a fifth of
+the computed maximum threshold.
+
+When called from Lisp programs, the optional args WORDLEN and FRAC can be
+used to override the default assumption about average word length and the
+fraction of the maximum threshold to which to set the minimum threshold.
+FRAC should be the inverse of the fractional value; for example, a value of
+2 would mean to use one half, a value of 4 would mean to use one quarter, etc.
+
+(fn WPM &optional WORDLEN FRAC)" t)
+(register-definition-prefixes "type-break" '("type-break-"))

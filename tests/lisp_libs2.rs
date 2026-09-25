@@ -2166,3 +2166,71 @@ fn dumped_and_autoloaded_misc_libs_parity() {
         "\"1.2\""
     );
 }
+
+#[test]
+fn dumped_and_autoloaded_misc_libs2_parity() {
+    // format.el, composite.el, iso-transl.el, mule-util.el and
+    // epa-hook.el are in GNU's dump (loadup.el): features registered,
+    // entry points real functions at -Q.  GNU-verified on 31.1.
+    assert_eq!(
+        ev("(list (featurep 'format) (fboundp 'format-decode)
+                  (autoloadp (symbol-function 'format-decode))
+                  (featurep 'composite) (fboundp 'compose-region)
+                  (char-table-p composition-function-table)
+                  (featurep 'iso-transl) (fboundp 'iso-transl-set-language)
+                  (featurep 'mule-util) (featurep 'epa-hook)
+                  (boundp 'format-alist)
+                  (boundp 'customize-package-emacs-version-alist))"),
+        "(t t nil t t t t t t t t t)"
+    );
+    // Loaddefs autoload cells at -Q (GNU-verified on 31.1).
+    assert_eq!(
+        ev("(list (autoloadp (symbol-function 'blackbox))
+                  (autoloadp (symbol-function 'decipher-mode))
+                  (autoloadp (symbol-function 'dig))
+                  (autoloadp (symbol-function 'dns-mode))
+                  (autoloadp (symbol-function 'dunnet))
+                  (autoloadp (symbol-function 'forms-mode))
+                  (autoloadp (symbol-function 'icon-mode))
+                  (autoloadp (symbol-function 'mixal-mode))
+                  (autoloadp (symbol-function 'opascal-mode))
+                  (autoloadp (symbol-function 'pascal-mode))
+                  (autoloadp (symbol-function 'picture-mode))
+                  (autoloadp (symbol-function 'proced))
+                  (autoloadp (symbol-function 'robin-use-package))
+                  (autoloadp (symbol-function 'sieve-mode))
+                  (autoloadp (symbol-function 'simula-mode))
+                  (autoloadp (symbol-function 'subword-mode))
+                  (autoloadp (symbol-function 'type-break-mode))
+                  (autoloadp (symbol-function 'shortdoc-display-group))
+                  ;; prelude auto-mode stubs restored to autoload cells
+                  (autoloadp (symbol-function 'dns-mode))
+                  (autoloadp (symbol-function 'icon-mode))
+                  (autoloadp (symbol-function 'mixal-mode))
+                  (autoloadp (symbol-function 'opascal-mode))
+                  (autoloadp (symbol-function 'pascal-mode))
+                  (autoloadp (symbol-function 'sieve-mode))
+                  (autoloadp (symbol-function 'simula-mode))
+                  (autoloadp (symbol-function 'metafont-mode))
+                  (autoloadp (symbol-function 'metapost-mode)))"),
+        "(t t t t t t t t t t t t t t t t t t t t t t t t t t t)"
+    );
+    // require paths land on the features (longlines needs format-alist,
+    // trampver needs customize-package-emacs-version-alist,
+    // shortdoc-doc needs the shortdoc macro autoload).
+    assert_eq!(
+        ev("(list (featurep (require 'longlines))
+                  (featurep (require 'trampver))
+                  (featurep (require 'shortdoc-doc))
+                  (featurep (require 'shortdoc))
+                  (featurep (require 'dns))
+                  (featurep (require 'mail-extr))
+                  (featurep (require 'netrc))
+                  (featurep (require 'picture))
+                  (featurep (require 'proced))
+                  (featurep (require 'subword))
+                  (featurep (require 'dunnet))
+                  (featurep (require 'editorconfig-core-handle)))"),
+        "(t t t t t t t t t t t t)"
+    );
+}

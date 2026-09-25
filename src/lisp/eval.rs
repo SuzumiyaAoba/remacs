@@ -827,6 +827,17 @@ impl Interp {
             // `electric-indent-mode'/`electric-quote-mode' are bound
             // at -Q and elec-pair.el needs `electric-quote-chars'.
             let _ = crate::lisp::load::load_library(&mut interp, "electric");
+            // format.el and composite.el are in GNU's dump (loadup.el):
+            // `format-alist', `format-decode' & co. and the
+            // composition machinery are bound at -Q.
+            let _ = crate::lisp::load::load_library(&mut interp, "format");
+            let _ = crate::lisp::load::load_library(&mut interp, "composite");
+            // iso-transl.el, mule-util.el and epa-hook.el are also in
+            // GNU's dump (loadup.el): `iso-transl-set-language' & co.
+            // are bound at -Q.
+            let _ = crate::lisp::load::load_library(&mut interp, "iso-transl");
+            let _ = crate::lisp::load::load_library(&mut interp, "mule-util");
+            let _ = crate::lisp::load::load_library(&mut interp, "epa-hook");
             // paren.el is in GNU's dump (loadup.el): `show-paren-mode'
             // and the `paren' feature are bound at -Q.
             let _ = crate::lisp::load::load_library(&mut interp, "paren");
@@ -865,7 +876,19 @@ impl Interp {
                    (fset 'find-function \
                          '(autoload \"find-func\" \
                            \"Find the definition of the Emacs Lisp FUNCTION near point.\" \
-                           t nil)))",
+                           t nil)) \
+                   ;; Mode stubs the prelude generated for
+                   ;; `auto-mode-alist' entries: GNU keeps these as
+                   ;; loaddefs autoload cells at -Q.
+                   (fset 'dns-mode '(autoload \"dns-mode\" \"Major mode for DNS master files.\" t nil)) \
+                   (fset 'icon-mode '(autoload \"icon\" \"Major mode for editing Icon code.\" t nil)) \
+                   (fset 'mixal-mode '(autoload \"mixal-mode\" \"Major mode for the mixasm code.\" t nil)) \
+                   (fset 'opascal-mode '(autoload \"opascal\" \"Major mode for editing OPascal code.\" t nil)) \
+                   (fset 'pascal-mode '(autoload \"pascal\" \"Major mode for editing Pascal code.\" t nil)) \
+                   (fset 'sieve-mode '(autoload \"sieve-mode\" \"Major mode for Sieve scripts.\" t nil)) \
+                   (fset 'simula-mode '(autoload \"simula\" \"Major mode for Simula.\" t nil)) \
+                   (fset 'metafont-mode '(autoload \"meta-mode\" \"Major mode for editing Metafont sources.\" t nil)) \
+                   (fset 'metapost-mode '(autoload \"meta-mode\" \"Major mode for editing MetaPost sources.\" t nil)))",
             );
         }
         interp.loading_dumped = false;
