@@ -482,6 +482,13 @@ static EMBEDDED_LISP: &[(&str, &str)] = &[
     ("scroll-bar", include_str!("../../lisp/scroll-bar.el")),
     ("text-mode", include_str!("../../lisp/text-mode.el")),
     ("timer", include_str!("../../lisp/timer.el")),
+    ("sort", include_str!("../../lisp/sort.el")),
+    ("dired-x", include_str!("../../lisp/dired-x.el")),
+    ("find-file", include_str!("../../lisp/find-file.el")),
+    ("help-fns", include_str!("../../lisp/help-fns.el")),
+    ("chart", include_str!("../../lisp/chart.el")),
+    ("tar-mode", include_str!("../../lisp/tar-mode.el")),
+    ("elisp-scope", include_str!("../../lisp/elisp-scope.el")),
 ];
 
 /// Embedded source for library NAME (with or without .el/.elc suffix).

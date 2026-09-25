@@ -43992,3 +43992,613 @@ This means the number of non-shy regexp grouping constructs
 
 ;; scroll-bar.el autoloads (GNU loaddefs).
 (register-definition-prefixes "scroll-bar" '("get-scroll-bar-mode" "horizontal-scroll-bar" "previous-scroll-bar-mode" "scroll-bar-" "set-scroll-bar-mode" "toggle-"))
+
+
+;; chart.el autoloads (GNU loaddefs).
+(register-definition-prefixes "chart" '("chart"))
+
+;; dired-x.el autoloads (GNU loaddefs).
+(register-definition-prefixes "dired-x" '("dired-" "virtual-dired"))
+
+;; elisp-scope.el autoloads (GNU loaddefs).
+(autoload 'elisp-scope-get-symbol-role-property "elisp-scope"
+"Return value of property PROP for symbol role ROLE.
+
+(fn ROLE PROP)")
+(autoload 'elisp-scope-set-symbol-role-property "elisp-scope"
+"Set value of property PROP for symbol role ROLE to VALUE.
+
+(fn ROLE PROP VALUE)")
+(autoload 'elisp-scope-symbol-role-p "elisp-scope"
+"Check whether a symbol SYM is the name of a \"symbol role\".
+
+(fn SYM)")
+(autoload 'elisp-scope-add-symbol-roles-to-describe-symbol "elisp-scope")
+(autoload 'elisp-scope-describe-symbol-role "elisp-scope"
+"Describe ROLE of a symbol.
+Interactively, prompt for ROLE.
+
+(fn ROLE &rest _)" t)
+(autoload 'elisp-scope-analyze-form "elisp-scope"
+"Read and analyze code from STREAM, reporting findings via CALLBACK.
+
+Call CALLBACK for each analyzed symbol SYM with arguments ROLE, POS,
+SYM, ID and DEF, where ROLE is a symbol that specifies the semantics of
+SYM; POS is the position of SYM in STREAM; ID is an object that uniquely
+identifies the local reference of SYM in the current defun, so different
+occurrences of SYM get the same ID (up to `equal') if and only if they
+refer to the same object; and lastly, DEF is the position in which SYM
+is locally defined, or nil.  For the occurrence of SYM at the position
+where it is locally defined (a.k.a. \"bound\"), the values of POS and
+DEF are equal.  If SYM is not lexically bound, then DEF is nil and so
+is ID.
+
+CALLBACK should use ID by checking if it is nil or `equal' to other ID
+values produced in the same call to this function.  The specific value
+of a given ID is otherwise meaningless.
+
+As an example, when this function analyzes the following form
+
+  (lambda (mode) (let ((mode (or mode major-mode))) (symbol-name mode)))
+
+the CALLBACK function is invoked four times with SYM `mode':
+
+- Once for the `mode' in the `lambda' arguments list, with ROLE
+  `binding-variable', some non-nil ID value MODE-ID1, and with POS and
+  DEF both being the same position POS1 where this `mode' occurs.
+
+- Another time for the binder in the let form, with ROLE
+  `binding-variable' some non-nil ID value MODE-ID2 that is not `equal'
+  to MODE-ID1, and with POS and DEF both being the same position POS2.
+
+- Another for the first argument of `or', with ROLE `bound-variable' and
+  ID of MODE-ID1, since this occurrence of `mode' is bound by the
+  `lambda' argument `mode'.  Similarly, DEF is POS1, and POS is now a
+  different position, POS3.
+
+- Finally, CALLBACK is also invoked for the `mode' that appears in the
+  body of `let' as the argument of `symbol-name', with ROLE set to
+  `bound-variable', ID set to MODE-ID2, and DEF set to POS3.
+
+In the above example, CALLBACK is also invoked for `lambda', `let',
+`or', `major-mode' and `symbol-name'.  Since those symbols do not have
+local references (they refer to global functions/macros/variables),
+CALLBACK gets nil ID and nil DEF.
+
+Note that if SYM is locally-bound, but has no specific binding position,
+then DEF is nil while ID is non-nil.  This is the case when SYM is bound
+by a binder that is only introduced during macro expansion and does not
+appear literally in the analyzed code.
+
+If STREAM is nil, it defaults to the current buffer.  When reading from
+the current buffer, this function leaves point at the end of the form.
+
+This function recursively analyzes Lisp forms (HEAD . TAIL), usually
+starting with a top-level form, by inspecting HEAD at each level:
+
+- If HEAD is a symbol with a non-nil `elisp-scope-analyzer' symbol
+  property, then the value of that property specifies a bespoke analyzer
+  function, AF, that is called as (AF HEAD . TAIL) to analyze the form.
+  See more details about writing analyzer functions below.
+
+- If HEAD satisfies `functionp', which means it is a function in the
+  running Emacs session, analyze the form as a function call.
+
+- If HEAD is a safe macro (see `elisp-scope-safe-macro-p'), expand it
+  and analyze the resulting form.
+
+- If HEAD is unknown, then the arguments in TAIL are ignored, unless
+  `elisp-scope-assume-func' is non-nil, in which case they are analyzed
+  as evaluated forms (i.e. HEAD is assumed to be a function).
+
+An analyzer (function specified via the `elisp-scope-analyzer' property)
+can use the functions `elisp-scope-report-s', `elisp-scope-1' and
+`elisp-scope-n' to analyze its arguments, and it can consult the
+variable `elisp-scope-output-spec' to obtain the expected output spec of
+the analyzed form.  For example, the following is a suitable analyzer
+for the `identity' function:
+
+  (lambda (fsym arg)
+    (elisp-scope-report-s fsym \\='function)
+    (elisp-scope-1 arg elisp-scope-output-spec))
+
+(fn CALLBACK &optional STREAM)")
+(register-definition-prefixes "elisp-scope" '("elisp-scope-"))
+
+;; find-file.el autoloads (GNU loaddefs).
+(defvar ff-special-constructs `(("^#\\s *\\(include\\|import\\)\\s +[<\"]\\(.*\\)[>\"]" \, (lambda nil (match-string 2))))
+"List of special constructs recognized by `ff-treat-as-special'.
+Each element, tried in order, has the form (REGEXP . EXTRACT).
+If REGEXP matches the current line (from the beginning of the line),
+`ff-treat-as-special' calls function EXTRACT with no args.
+If EXTRACT returns nil, keep trying.  Otherwise, return the
+filename that EXTRACT returned.")
+(custom-autoload 'ff-special-constructs "find-file" t)
+(autoload 'ff-get-other-file "find-file"
+"Find the header or source file corresponding to this file.
+See also the documentation for `ff-find-other-file'.
+
+If optional IN-OTHER-WINDOW is non-nil, find the file in another window.
+
+(fn &optional IN-OTHER-WINDOW)" t)
+(defalias 'ff-find-related-file #'ff-find-other-file)
+(autoload 'ff-find-other-file "find-file"
+"Find the header or source file corresponding to this file.
+Being on a `#include' line pulls in that file.
+
+If optional IN-OTHER-WINDOW is non-nil, find the file in the other window.
+If optional IGNORE-INCLUDE is non-nil, ignore being on `#include' lines.
+
+If optional EVENT is non-nil (default `last-nonmenu-event', move
+point to the end position of that event before calling the
+various ff-* hooks.
+
+Variables of interest include:
+
+ - `ff-case-fold-search'
+   Non-nil means ignore cases in matches (see `case-fold-search').
+   If you have extensions in different cases, you will want this to be nil.
+
+ - `ff-always-in-other-window'
+   If non-nil, always open the other file in another window, unless an
+   argument is given to `ff-find-other-file'.
+
+ - `ff-ignore-include'
+   If non-nil, ignores #include lines.
+
+ - `ff-always-try-to-create'
+   If non-nil, always attempt to create the other file if it was not found.
+
+ - `ff-quiet-mode'
+   If non-nil, does not trace which directories are being searched.
+
+ - `ff-special-constructs'
+   A list of regular expressions specifying how to recognize special
+   constructs such as include files etc, and an associated method for
+   extracting the filename from that construct.
+
+ - `ff-other-file-alist'
+   Alist of extensions to find given the current file's extension.
+
+ - `ff-search-directories'
+   List of directories searched through with each extension specified in
+   `ff-other-file-alist' that matches this file's extension.
+
+ - `ff-pre-find-hook'
+   List of functions to be called before the search for the file starts.
+
+ - `ff-pre-load-hook'
+   List of functions to be called before the other file is loaded.
+
+ - `ff-post-load-hook'
+   List of functions to be called after the other file is loaded.
+
+ - `ff-not-found-hook'
+   List of functions to be called if the other file could not be found.
+
+ - `ff-file-created-hook'
+   List of functions to be called if the other file has been created.
+
+(fn &optional IN-OTHER-WINDOW IGNORE-INCLUDE EVENT)" t)
+(define-obsolete-function-alias 'ff-mouse-find-other-file #'ff-find-other-file "28.1")
+(define-obsolete-function-alias 'ff-mouse-find-other-file-other-window #'ff-find-other-file-other-window "28.1")
+(autoload 'ff-find-other-file-other-window "find-file"
+"Visit the file you point at in another window.
+
+(fn EVENT)" t)
+(register-definition-prefixes "find-file" '("cc-" "ff-" "modula2-other-file-alist"))
+
+;; help-fns.el autoloads (GNU loaddefs).
+(autoload 'describe-function "help-fns"
+"Display the full documentation of FUNCTION (a symbol).
+When called from Lisp, FUNCTION may also be a function object.
+
+See the `help-enable-symbol-autoload' variable for special
+handling of autoloaded functions.
+
+(fn FUNCTION)" t)
+(autoload 'help-find-source "help-fns"
+"Switch to a buffer visiting the source of what is being described in *Help*." t)
+(autoload 'describe-command "help-fns"
+"Display the full documentation of COMMAND (a symbol).
+When called from Lisp, COMMAND may also be a function object.
+
+(fn COMMAND)" t)
+(autoload 'help-C-file-name "help-fns"
+"Return the name of the C file where SUBR-OR-VAR is defined.
+KIND should be `var' for a variable or `subr' for a subroutine.
+If we can't find the file name, nil is returned.
+
+(fn SUBR-OR-VAR KIND)")
+(autoload 'find-lisp-object-file-name "help-fns"
+"Guess the file that defined the Lisp object OBJECT, of type TYPE.
+OBJECT should be a symbol associated with a function, variable, or face;
+  alternatively, it can be a function definition.
+If TYPE is `defvar', search for a variable definition.
+If TYPE is `defface', search for a face definition.
+If TYPE is not a symbol, search for a function definition.
+
+The return value is the absolute name of a readable file where OBJECT is
+defined.  If several such files exist, preference is given to a file
+found via `load-path'.  The return value can also be `C-source', which
+means that OBJECT is a function or variable defined in C, but
+it's currently unknown where.  If no suitable file is found,
+return nil.
+
+If ALSO-C-SOURCE is non-nil, instead of returning `C-source',
+this function will attempt to locate the definition of OBJECT in
+the C sources, too.
+
+(fn OBJECT TYPE &optional ALSO-C-SOURCE)")
+(autoload 'describe-function-1 "help-fns"
+"
+
+(fn FUNCTION)")
+(autoload 'variable-at-point "help-fns"
+"Return the bound variable symbol found at or before point.
+Return 0 if there is no such symbol.
+If ANY-SYMBOL is non-nil, don't insist the symbol be bound.
+
+(fn &optional ANY-SYMBOL)")
+(autoload 'describe-variable "help-fns"
+"Display the full documentation of VARIABLE (a symbol).
+Returns the documentation as a string, also.
+If VARIABLE has a buffer-local value in BUFFER or FRAME
+(default to the current buffer and current frame),
+it is displayed along with the global value.
+
+(fn VARIABLE &optional BUFFER FRAME)" t)
+(autoload 'describe-face "help-fns"
+"Display the properties of face FACE on FRAME.
+Interactively, FACE defaults to the faces of the character after point
+and FRAME defaults to the selected frame.
+
+If the optional argument FRAME is given, report on face FACE in that frame.
+If FRAME is t, report on the defaults for face FACE (for new frames).
+If FRAME is omitted or nil, use the selected frame.
+
+(fn FACE &optional FRAME)" t)
+(autoload 'describe-symbol "help-fns"
+"Display the full documentation of SYMBOL.
+Will show the info of SYMBOL as a function, variable, and/or face.
+Optional arguments BUFFER and FRAME specify for which buffer and
+frame to show the information about SYMBOL; they default to the
+current buffer and the selected frame, respectively.
+
+(fn SYMBOL &optional BUFFER FRAME)" t)
+(autoload 'describe-syntax "help-fns"
+"Describe the syntax specifications in the syntax table of BUFFER.
+The descriptions are inserted in a help buffer, which is then displayed.
+BUFFER defaults to the current buffer.
+
+(fn &optional BUFFER)" t)
+(autoload 'describe-categories "help-fns"
+"Describe the category specifications in the current category table.
+The descriptions are inserted in a buffer, which is then displayed.
+If BUFFER is non-nil, then describe BUFFER's category table instead.
+BUFFER should be a buffer or a buffer name.
+
+(fn &optional BUFFER)" t)
+(autoload 'describe-keymap "help-fns"
+"Describe key bindings in KEYMAP.
+When called interactively, prompt for a variable that has a
+keymap value.
+
+(fn KEYMAP)" t)
+(autoload 'describe-mode "help-fns"
+"Display documentation of current major mode and minor modes.
+A brief summary of the minor modes comes first, followed by the
+major mode description.  This is followed by detailed
+descriptions of the minor modes, each on a separate page.
+
+For this to work correctly for a minor mode, the mode's indicator
+variable (listed in `minor-mode-alist') must also be a function
+whose documentation describes the minor mode.
+
+If called from Lisp with a non-nil BUFFER argument, display
+documentation for the major and minor modes of that buffer.
+
+When `describe-mode-outline' is non-nil, Outline minor mode
+is enabled in the Help buffer.
+
+(fn &optional BUFFER)" t)
+(autoload 'describe-widget "help-fns"
+"Display a buffer with information about a widget.
+You can use this command to describe buttons (e.g., the links in a *Help*
+buffer), editable fields of the customization buffers, etc.
+
+Interactively, click on a widget to describe it, or hit RET to describe the
+widget at point.
+
+When called from Lisp, POS may be a buffer position or a mouse position list.
+
+Calls each function of the list `describe-widget-functions' in turn, until
+one of them returns non-nil.
+
+(fn &optional POS)" t)
+(autoload 'doc-file-to-man "help-fns"
+"Produce an nroff buffer containing the doc-strings from the DOC file.
+
+(fn FILE)" t)
+(autoload 'doc-file-to-info "help-fns"
+"Produce a texinfo buffer with sorted doc-strings from the DOC file.
+
+(fn FILE)" t)
+(autoload 'help-fns-function-name "help-fns"
+"Return a short buttonized string representing FUNCTION.
+The string is propertized with a button; clicking on that
+provides further details about FUNCTION.
+FUNCTION can be a function, a built-in, a keyboard macro,
+or a compile function.
+This function is intended to be used to display various
+callable symbols in buffers in a way that allows the user
+to find out more details about the symbols.
+
+(fn FUNCTION)")
+(register-definition-prefixes "help-fns" '("describe-" "help-" "keymap-name-history"))
+
+;; sort.el autoloads (GNU loaddefs).
+(put 'sort-fold-case 'safe-local-variable 'booleanp)
+(autoload 'sort-subr "sort"
+"General text sorting routine to divide buffer into records and sort them.
+
+We divide the accessible portion of the buffer into disjoint pieces
+called sort records.  A portion of each sort record (perhaps all of
+it) is designated as the sort key.  The records are rearranged in the
+buffer in order by their sort keys.  The records may or may not be
+contiguous.
+
+Usually the records are rearranged in order of ascending sort key.
+If REVERSE is non-nil, they are rearranged in order of descending sort key.
+The variable `sort-fold-case' determines whether alphabetic case affects
+the sort order.
+
+The next four arguments are functions to be called to move point
+across a sort record.  They will be called many times from within `sort-subr'.
+
+NEXTRECFUN is called with point at the end of the previous record.
+It moves point to the start of the next record.
+It should move point to the end of the buffer if there are no more records.
+The first record is assumed to start at the position of point when `sort-subr'
+is called.
+
+ENDRECFUN is called with point within the record.
+It should move point to the end of the record.
+
+STARTKEYFUN moves from the start of the record to the start of the key.
+It may return either a non-nil value to be used as the key, or
+else the key is the substring between the values of point after
+STARTKEYFUN and ENDKEYFUN are called.  If STARTKEYFUN is nil, the key
+starts at the beginning of the record.
+
+ENDKEYFUN moves from the start of the sort key to the end of the sort key.
+ENDKEYFUN may be nil if STARTKEYFUN returns a value or if it would be the
+same as ENDRECFUN.
+
+PREDICATE, if non-nil, is the predicate function for comparing
+keys; it is called with two arguments, the keys to compare, and
+should return non-nil if the first key should sort before the
+second key.  If PREDICATE is nil, comparison is done with `<' if
+the keys are numbers, with `compare-buffer-substrings' if the
+keys are cons cells (the car and cdr of each cons cell are taken
+as start and end positions), and with `string<' otherwise.
+
+(fn REVERSE NEXTRECFUN ENDRECFUN &optional STARTKEYFUN ENDKEYFUN PREDICATE)")
+(autoload 'sort-lines "sort"
+"Sort lines in region alphabetically; REVERSE non-nil means descending order.
+Interactively, REVERSE is the prefix argument, and BEG and END are the region.
+Called from a program, there are three arguments:
+REVERSE (non-nil means reverse order), BEG and END (region to sort).
+The variable `sort-fold-case' determines whether alphabetic case affects
+the sort order.
+
+(fn REVERSE BEG END)" t)
+(autoload 'sort-paragraphs "sort"
+"Sort paragraphs in region alphabetically; argument means descending order.
+Called from a program, there are three arguments:
+REVERSE (non-nil means reverse order), BEG and END (region to sort).
+The variable `sort-fold-case' determines whether alphabetic case affects
+the sort order.
+
+(fn REVERSE BEG END)" t)
+(autoload 'sort-pages "sort"
+"Sort pages in region alphabetically; argument means descending order.
+Called from a program, there are three arguments:
+REVERSE (non-nil means reverse order), BEG and END (region to sort).
+The variable `sort-fold-case' determines whether alphabetic case affects
+the sort order.
+
+(fn REVERSE BEG END)" t)
+(put 'sort-numeric-base 'safe-local-variable 'integerp)
+(autoload 'sort-numeric-fields "sort"
+"Sort lines in region numerically by the ARGth field of each line.
+Fields are separated by whitespace and numbered from 1 up.
+Specified field must contain a number in each line of the region,
+which may begin with \"0x\" or \"0\" for hexadecimal and octal values.
+Otherwise, the number is interpreted according to sort-numeric-base.
+With a negative arg, sorts by the ARGth field counted from the right.
+Called from a program, there are three arguments:
+FIELD, BEG and END.  BEG and END specify region to sort.
+
+(fn FIELD BEG END)" t)
+(autoload 'sort-fields "sort"
+"Sort lines in region lexicographically by the ARGth field of each line.
+Fields are separated by whitespace and numbered from 1 up.
+With a negative arg, sorts by the ARGth field counted from the right.
+Called from a program, there are three arguments:
+FIELD, BEG and END.  BEG and END specify region to sort.
+The variable `sort-fold-case' determines whether alphabetic case affects
+the sort order.
+
+(fn FIELD BEG END)" t)
+(autoload 'sort-regexp-fields "sort"
+"Sort the text in the region lexicographically.
+If called interactively, prompt for two regular expressions,
+RECORD-REGEXP and KEY-REGEXP.
+
+RECORD-REGEXP specifies the textual units to be sorted.
+  For example, to sort lines, RECORD-REGEXP would be \"^.*$\".
+
+KEY-REGEXP specifies the part of each record (i.e. each match for
+  RECORD-REGEXP) to be used for sorting.
+  If it is \"\\\\digit\", use the digit'th \"\\\\(...\\\\)\"
+  match field specified by RECORD-REGEXP.
+  If it is \"\\\\&\", use the whole record.
+  Otherwise, KEY-REGEXP should be a regular expression with which
+  to search within the record.  If a match for KEY-REGEXP is not
+  found within a record, that record is ignored.
+
+With a negative prefix arg, sort in reverse order.
+
+The variable `sort-fold-case' determines whether alphabetic case affects
+the sort order.
+
+For example: to sort lines in the region by the first word on each line
+ starting with the letter \"f\",
+ RECORD-REGEXP would be \"^.*$\" and KEY would be \"\\\\=\\<f\\\\w*\\\\>\"
+
+(fn REVERSE RECORD-REGEXP KEY-REGEXP BEG END)" t)
+(autoload 'sort-columns "sort"
+"Sort lines in region alphabetically by a certain range of columns.
+For the purpose of this command, the region BEG...END includes
+the entire line that point is in and the entire line the mark is in.
+The column positions of point and mark bound the range of columns to sort on.
+A prefix argument means sort into REVERSE order.
+The variable `sort-fold-case' determines whether alphabetic case affects
+the sort order.
+
+Note that `sort-columns' rejects text that contains tabs,
+because tabs could be split across the specified columns
+and it doesn't know how to handle that.  Also, when possible,
+it uses the `sort' utility program, which doesn't understand tabs.
+Use \\[untabify] to convert tabs to spaces before sorting.
+
+(fn REVERSE &optional BEG END)" t)
+(autoload 'reverse-region "sort"
+"Reverse the order of lines in a region.
+When called from Lisp, takes two point or marker arguments, BEG and END.
+If BEG is not at the beginning of a line, the first line of those
+to be reversed is the line starting after BEG.
+If END is not at the end of a line, the last line to be reversed
+is the one that ends before END.
+
+(fn BEG END)" t)
+(autoload 'delete-duplicate-lines "sort"
+"Delete all but one copy of any identical lines in the region.
+Non-interactively, arguments BEG and END delimit the region.
+Normally it searches forwards, keeping the first instance of
+each identical line.  If REVERSE is non-nil (interactively, with
+a \\[universal-argument] prefix), it searches backwards and keeps the last instance of
+each repeated line.
+
+Identical lines need not be adjacent, unless the argument
+ADJACENT is non-nil (interactively, with a \\[universal-argument] \\[universal-argument] prefix).
+This is a more efficient mode of operation, and may be useful
+on large regions that have already been sorted.
+
+If the argument KEEP-BLANKS is non-nil (interactively, with a
+\\[universal-argument] \\[universal-argument] \\[universal-argument] prefix), it retains repeated blank lines.
+
+Returns the number of deleted lines.  Interactively, or if INTERACTIVE
+is non-nil, it also prints a message describing the number of deletions.
+
+(fn BEG END &optional REVERSE ADJACENT KEEP-BLANKS INTERACTIVE)" t)
+(register-definition-prefixes "sort" '("sort-"))
+
+;; tar-mode.el autoloads (GNU loaddefs).
+(autoload 'tar-mode "tar-mode"
+"Major mode for viewing a tar file as a dired-like listing of its contents.
+You can move around using the usual cursor motion commands.
+Letters no longer insert themselves.\\<tar-mode-map>
+Type \\[tar-extract] to pull a file out of the tar file and into its own buffer;
+or click mouse-2 on the file's line in the Tar mode buffer.
+Type \\[tar-copy] to copy an entry from the tar file into another file on disk.
+
+If you edit a sub-file of this archive (as with the \\[tar-extract] command) and
+save it with \\[save-buffer], the contents of that buffer will be
+saved back into the tar-file buffer; in this way you can edit a file
+inside of a tar archive without extracting it and re-archiving it.
+
+See also: variables `tar-update-datestamp' and `tar-anal-blocksize'.
+\\{tar-mode-map}
+
+In addition to any hooks its parent mode `special-mode' might have
+run, this mode runs the hook `tar-mode-hook', as the final or
+penultimate step during initialization." t)
+(register-definition-prefixes "tar-mode" '("pax-" "tar-"))
+
+;; mule-conf.el defcustoms (GNU-dumped): comint.el's password-prompt
+;; defcustoms reference these at eval time.
+(defcustom password-word-equivalents
+  '("password" "passcode" "passphrase" "pass phrase" "pin"
+    "decryption key" "encryption key" ; From ccrypt.
+    ; These are sorted according to the GNU en_US locale.
+    "암호"		; ko
+    "パスワード"	; ja
+    "ପ୍ରବେଶ ସଙ୍କେତ"	; or
+    "ពាក្យសម្ងាត់"		; km
+    "adgangskode"	; da
+    "contraseña"	; es
+    "contrasenya"	; ca
+    "geslo"		; sl
+    "hasło"		; pl
+    "heslo"		; cs, sk
+    "iphasiwedi"	; zu
+    "jelszó"		; hu
+    "lösenord"		; sv
+    "lozinka"		; hr, sr
+    "mật khẩu"		; vi
+    "mot de passe"	; fr
+    "parola"		; tr
+    "pasahitza"		; eu
+    "passord"		; nb
+    "passwort"		; de
+    "pasvorto"		; eo
+    "salasana"		; fi
+    "senha"		; pt
+    "slaptažodis"	; lt
+    "wachtwoord"	; nl
+    "كلمة السر"		; ar
+    "ססמה"		; he
+    "лозинка"		; sr
+    "пароль"		; kk, ru, uk
+    "गुप्तशब्द"		; mr
+    "शब्दकूट"		; hi
+    "પાસવર્ડ"		; gu
+    "సంకేతపదము"		; te
+    "ਪਾਸਵਰਡ"		; pa
+    "ಗುಪ್ತಪದ"		; kn
+    "கடவுச்சொல்"		; ta
+    "അടയാളവാക്ക്"		; ml
+    "গুপ্তশব্দ"		; as
+    "পাসওয়ার্ড"		; bn_IN
+    "රහස්පදය"		; si
+    "密码"		; zh_CN
+    "密碼"		; zh_TW
+    )
+  "List of words equivalent to \"password\".
+This is used by Shell mode and other parts of Emacs to recognize
+password prompts, including prompts in languages other than
+English.  Different case choices should not be assumed to be
+included; callers should bind `case-fold-search' to t."
+  :type '(repeat string)
+  :version "27.1"
+  :group 'processes)
+
+;; (describe-char-fold-equivalences ?:)
+;; The last entry is taken from history.
+(defcustom password-colon-equivalents
+  '(?\u003a ; ?\N{COLON}
+    ?\uff1a ; ?\N{FULLWIDTH COLON}
+    ?\ufe55 ; ?\N{SMALL COLON}
+    ?\ufe13 ; ?\N{PRESENTATION FORM FOR VERTICAL COLON}
+    ?\u17d6 ; ?\N{KHMER SIGN CAMNUC PII KUUH}
+    )
+  "List of characters equivalent to trailing colon in \"password\" prompts."
+  :type '(repeat character)
+  :version "30.1"
+  :group 'processes)
+
+;; The old code-pages library is obsoleted by coding systems based on
+;; the charsets defined in this file but might be required by user
+;; code.

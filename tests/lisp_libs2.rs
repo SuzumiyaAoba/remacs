@@ -2360,3 +2360,47 @@ fn r8_dumped_libs_parity() {
     assert_eq!(ev("(regexp-opt '(\"foo\" \"bar\" \"baz\"))"),
                "\"\\\\(?:ba[rz]\\\\|foo\\\\)\"");
 }
+
+
+#[test]
+fn r9_sort_help_fns_libs_parity() {
+    // sort, dired-x, find-file, help-fns, chart, tar-mode and
+    // elisp-scope are GNU 31.1 require/autoload libraries: no features
+    // at -Q, loaddefs autoload cells for entry points.  GNU-verified.
+    assert_eq!(
+        ev("(mapcar #'featurep '(sort dired-x find-file help-fns
+                              chart tar-mode elisp-scope))"),
+        "(nil nil nil nil nil nil nil)"
+    );
+    // Autoload cells for their entry points — including the prelude
+    // stubs restored to GNU's cells (sort-*, describe-*, tar-mode).
+    assert_eq!(
+        ev("(list (autoloadp (symbol-function 'sort-lines))
+                  (autoloadp (symbol-function 'sort-subr))
+                  (autoloadp (symbol-function 'delete-duplicate-lines))
+                  (autoloadp (symbol-function 'reverse-region))
+                  (autoloadp (symbol-function 'describe-function))
+                  (autoloadp (symbol-function 'describe-mode))
+                  (autoloadp (symbol-function 'describe-variable))
+                  (autoloadp (symbol-function 'variable-at-point))
+                  ;; find-file is a C subr in both (autoloadp=nil)
+                  (subrp (symbol-function 'find-file))
+                  (autoloadp (symbol-function 'tar-mode))
+                  (autoloadp (symbol-function 'elisp-scope-analyze-form)))"),
+        "(t t t t t t t t t t t)"
+    );
+    // `password-word-equivalents'/`password-colon-equivalents' are
+    // GNU-dumped mule-conf.el defcustoms (comint needs them at eval).
+    assert_eq!(
+        ev("(list (boundp 'password-word-equivalents)
+                  (length password-word-equivalents)
+                  (boundp 'password-colon-equivalents))"),
+        "(t 49 t)"
+    );
+    // Functional spot check — GNU-verified on 31.1.
+    assert_eq!(
+        ev("(with-temp-buffer (insert \"c\\nb\\na\\n\")
+                             (sort-lines nil 1 7) (buffer-string))"),
+        "\"a\nb\nc\n\""
+    );
+}
