@@ -699,6 +699,7 @@ fn sf_lambda(i: &mut Interp, args: Value) -> EvalResult {
 fn sf_while(i: &mut Interp, args: Value) -> EvalResult {
     let test = car(&args);
     let body = cdr(&args);
+    let mut iters: u64 = 0;
     loop {
         if i.quit_flag {
             i.quit_flag = false;
@@ -709,6 +710,20 @@ fn sf_while(i: &mut Interp, args: Value) -> EvalResult {
             return Ok(Value::Nil);
         }
         i.eval_progn(&body)?;
+        iters += 1;
+        if std::env::var("WHILE_WATCH").is_ok() && iters == 2_000_000 {
+            let names: Vec<String> = i
+                .lisp_stack
+                .iter()
+                .rev()
+                .take(24)
+                .map(|(f, _)| i.prin1_to_string(f))
+                .collect();
+            eprintln!("WHILE-LOOP-STACK: {names:?}");
+            let cond = i.prin1_to_string(&test);
+            let b = i.prin1_to_string(&body);
+            eprintln!("WHILE-LOOP-FORM: cond={cond} body={b}");
+        }
     }
 }
 

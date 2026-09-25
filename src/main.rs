@@ -39,6 +39,52 @@ fn main() {
             "--batch" | "-batch" | "--no-init" | "-q" => {
                 batch = true;
             }
+            "--ieval" => {
+                idx += 1;
+                if idx < args.len() {
+                    let src = args[idx].clone();
+                    match i.eval_str(&src) {
+                        Ok(_) => {}
+                        Err(f) => {
+                            eprintln!("eval_str err: {:?}; bisecting", f);
+                            let chars: std::rc::Rc<Vec<char>> =
+                                std::rc::Rc::new(src.chars().collect());
+                            let mut pos = 0usize;
+                            loop {
+                                let next = {
+                                    let mut r = remacs::lisp::reader::Reader::with_chars(
+                                        &mut i,
+                                        chars.clone(),
+                                    );
+                                    r.set_position(pos);
+                                    match r.read() {
+                                        Ok(Some(_)) => r.position(),
+                                        _ => break,
+                                    }
+                                };
+                                let form_src = &src[pos..next];
+                                let form = {
+                                    let mut r =
+                                        remacs::lisp::reader::Reader::new(&mut i, form_src);
+                                    match r.read() {
+                                        Ok(Some(v)) => v,
+                                        _ => break,
+                                    }
+                                };
+                                match i.eval(&form) {
+                                    Err(e) => {
+                                        eprintln!("FAIL at byte {pos}: {form_src} => {e:?}");
+                                        break;
+                                    }
+                                    Ok(_) => pos = next,
+                                }
+                            }
+                            std::process::exit(255);
+                        }
+                    }
+                    std::process::exit(exit);
+                }
+            }
             "--eval" | "--execute" => {
                 idx += 1;
                 if idx < args.len() {
