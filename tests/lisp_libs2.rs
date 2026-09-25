@@ -2310,3 +2310,53 @@ fn r7_autoload_libs_parity() {
         "(t t t t t t t t t t t t t t t t t t t t t t t t t t t t t t t t t t t t t t t nil nil nil nil nil t nil)"
     );
 }
+
+#[test]
+fn r8_dumped_libs_parity() {
+    // abbrev, cconv, cus-face, ediff-hook, eldoc, mouse, prog-mode,
+    // regexp-opt, register, replace, scroll-bar, text-mode and timer
+    // are in GNU's dump (loadup.el): features and real definitions
+    // present at -Q.  GNU-verified on 31.1.
+    assert_eq!(
+        ev("(mapcar (lambda (f) (featurep f))
+                    '(abbrev cconv cus-face ediff-hook eldoc mouse
+                      prog-mode regexp-opt register replace
+                      scroll-bar text-mode timer))"),
+        "(t t t t t t t t t t t t t)"
+    );
+    // Entry points are real functions, not autoload cells.
+    assert_eq!(
+        ev("(list (autoloadp (symbol-function 'regexp-opt))
+                  (fboundp 'regexp-opt)
+                  (fboundp 'define-abbrev)
+                  (fboundp 'prog-mode)
+                  (autoloadp (symbol-function 'prog-mode))
+                  (fboundp 'text-mode)
+                  (fboundp 'scroll-bar-mode)
+                  (fboundp 'eldoc-mode)
+                  (fboundp 'run-at-time)
+                  (fboundp 'increment-register)
+                  (fboundp 'replace-regexp)
+                  (fboundp 'mouse-drag-region)
+                  (fboundp 'cconv-convert)
+                  (boundp 'glyphless-char-display))"),
+        "(nil t t t nil t t t t t t t t t)"
+    );
+    // Functional spot checks — GNU-verified on 31.1.
+    assert_eq!(
+        ev("(list (with-temp-buffer (text-mode) major-mode)
+                  (progn (define-abbrev-table 'mytab
+                           '((\"abc\" \"alphabet\")))
+                         (abbrev-table-p mytab))
+                  (timerp (run-at-time \"1 hour\" nil 'ignore))
+                  (regexp-opt-depth \"\\\\(foo\\\\)\")
+                  (replace-regexp-in-string \"a\" \"X\" \"banana\")
+                  (with-temp-buffer
+                    (insert \"ab\")
+                    (set-register ?x (buffer-substring 1 3))
+                    (get-register ?x)))"),
+        "(text-mode t t 1 \"bXnXnX\" \"ab\")"
+    );
+    assert_eq!(ev("(regexp-opt '(\"foo\" \"bar\" \"baz\"))"),
+               "\"\\\\(?:ba[rz]\\\\|foo\\\\)\"");
+}

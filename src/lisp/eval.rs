@@ -844,6 +844,36 @@ impl Interp {
             // rmc.el is in GNU's dump too (loadup.el loads it early so
             // `read-multiple-choice' is available during startup).
             let _ = crate::lisp::load::load_library(&mut interp, "rmc");
+            // Thirteen more GNU-dumped libraries (loadup.el): their
+            // features and real definitions exist at -Q.
+            for lib in [
+                "abbrev", "cconv", "cus-face", "ediff-hook", "eldoc",
+                "mouse", "prog-mode", "regexp-opt", "register",
+                "replace", "scroll-bar", "text-mode", "timer",
+            ] {
+                let _ = crate::lisp::load::load_library(&mut interp, lib);
+            }
+            // Loading cconv.el interpretively expands its
+            // `define-inline' call, which pulls in inline.el — GNU's
+            // dump had it compiled away, so -Q keeps `define-inline'
+            // as a loaddefs autoload cell and leaves the rest of
+            // inline.el unbound.  Restore that state.
+            let _ = interp.eval_str(
+                "(progn \
+                   (dolist (s '(inline-quote inline-const-p inline-const-val \
+                                inline-error inline--leteval inline--letlisteval \
+                                inline-letevals inline--do-quote inline--dont-quote \
+                                inline--do-leteval inline--dont-leteval \
+                                inline--do-letlisteval inline--dont-letlisteval \
+                                inline--testconst-p inline--alwaysconst-p \
+                                inline--getconst-val inline--alwaysconst-val \
+                                inline--error inline--warning)) \
+                     (fmakunbound s)) \
+                   (fset 'define-inline \
+                         '(autoload \"inline\" \
+                           \"Define an inline function NAME with arguments ARGS and body in BODY.\\nThis is halfway between `defmacro' and `defun'.  BODY is used as a blueprint\\nboth for the body of the function and for the body of the compiler-macro\\nused to generate the code inlined at each call site.\\nSee Info node `(elisp)Inline Functions' for more details.\\n\\nA (noinline t) in the `declare' form prevents the definition of the\\ncompiler macro.  This is for the rare case in which you want to use this\\nmacro to define a function that should not be inlined.\\n\\n(fn NAME ARGS &rest BODY)\" \
+                           nil t)))",
+            );
             // GNU -Q leaves `define-derived-mode'/`define-generic-mode'
             // as loaddefs autoload cells: GNU's dumped mode definitions
             // were byte-compiled, so the macros expanded at build time

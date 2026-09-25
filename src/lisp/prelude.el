@@ -41452,6 +41452,14 @@ FRAC should be the inverse of the fractional value; for example, a value of
 (register-definition-prefixes "type-break" '("type-break-"))
 
 
+(defun set-face-documentation (face string)
+  "Set the documentation string for FACE to STRING."
+  ;; Perhaps the text should go in DOC.
+  (put face 'face-documentation string))
+
+(define-obsolete-function-alias 'face-doc-string #'face-documentation "29.1")
+(define-obsolete-function-alias 'set-face-doc-string #'set-face-documentation "29.1")
+
 (defun define-mail-user-agent (symbol composefunc sendfunc
 				      &optional abortfunc hookvar)
   "Define a symbol to identify a mail-sending package for `mail-user-agent'.
@@ -43915,3 +43923,72 @@ This enforces rescanning the buffer on next use.")
 ;; iswitchb.el autoload (GNU loaddefs guards it with
 ;; `locate-library "obsolete/iswitchb"'; ours lives at lisp/ top level).
 (autoload 'iswitchb-mode "iswitchb" "Toggle Iswitchb mode." t)
+
+
+;; eldoc.el autoloads (GNU loaddefs).
+(push '(eldoc 1 16 0) package--builtin-versions)
+
+;; regexp-opt.el autoloads (GNU loaddefs).
+(autoload 'regexp-opt "regexp-opt"
+"Return a regexp to match a string in the list STRINGS.
+Each member of STRINGS is treated as a fixed string, not as a regexp.
+Optional PAREN specifies how the returned regexp is surrounded by
+grouping constructs.
+
+If STRINGS is the empty list, the return value is a regexp that
+never matches anything.
+
+The optional argument PAREN can be any of the following:
+
+a string
+    the resulting regexp is preceded by PAREN and followed by
+    \\), e.g.  use \"\\\\(?1:\" to produce an explicitly numbered
+    group.
+
+`words'
+    the resulting regexp is surrounded by \\=\\<\\( and \\)\\>.
+
+`symbols'
+    the resulting regexp is surrounded by \\_<\\( and \\)\\_>.
+
+non-nil
+    the resulting regexp is surrounded by \\( and \\).
+
+nil
+    the resulting regexp is surrounded by \\(?: and \\), if it is
+    necessary to ensure that a postfix operator appended to it will
+    apply to the whole expression.
+
+The returned regexp is ordered in such a way that it will always
+match the longest string possible.
+
+Up to reordering, the resulting regexp is equivalent to but
+usually more efficient than that of a simplified version:
+
+ (defun simplified-regexp-opt (strings &optional paren)
+   (let ((parens
+          (cond ((stringp paren)       (cons paren \"\\\\)\"))
+                ((eq paren \\='words)    \\='(\"\\\\\\=<\\\\(\" . \"\\\\)\\\\>\"))
+                ((eq paren \\='symbols) \\='(\"\\\\_<\\\\(\" . \"\\\\)\\\\_>\"))
+                ((null paren)          \\='(\"\\\\(?:\" . \"\\\\)\"))
+                (t                       \\='(\"\\\\(\" . \"\\\\)\")))))
+     (concat (car parens)
+             (mapconcat \\='regexp-quote strings \"\\\\|\")
+             (cdr parens))))
+
+(fn STRINGS &optional PAREN)")
+(function-put 'regexp-opt 'function-type '(function (list &optional t) string))
+(function-put 'regexp-opt 'pure 't)
+(function-put 'regexp-opt 'side-effect-free 't)
+(autoload 'regexp-opt-depth "regexp-opt"
+"Return the depth of REGEXP.
+This means the number of non-shy regexp grouping constructs
+(parenthesized expressions) in REGEXP.
+
+(fn REGEXP)")
+(function-put 'regexp-opt-depth 'pure 't)
+(function-put 'regexp-opt-depth 'side-effect-free 't)
+(register-definition-prefixes "regexp-opt" '("regexp-opt-"))
+
+;; scroll-bar.el autoloads (GNU loaddefs).
+(register-definition-prefixes "scroll-bar" '("get-scroll-bar-mode" "horizontal-scroll-bar" "previous-scroll-bar-mode" "scroll-bar-" "set-scroll-bar-mode" "toggle-"))

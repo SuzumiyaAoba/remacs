@@ -469,6 +469,19 @@ static EMBEDDED_LISP: &[(&str, &str)] = &[
     ("wdired", include_str!("../../lisp/wdired.el")),
     ("which-key", include_str!("../../lisp/which-key.el")),
     ("x-dnd", include_str!("../../lisp/x-dnd.el")),
+    ("abbrev", include_str!("../../lisp/abbrev.el")),
+    ("cconv", include_str!("../../lisp/cconv.el")),
+    ("cus-face", include_str!("../../lisp/cus-face.el")),
+    ("ediff-hook", include_str!("../../lisp/ediff-hook.el")),
+    ("eldoc", include_str!("../../lisp/eldoc.el")),
+    ("mouse", include_str!("../../lisp/mouse.el")),
+    ("prog-mode", include_str!("../../lisp/prog-mode.el")),
+    ("regexp-opt", include_str!("../../lisp/regexp-opt.el")),
+    ("register", include_str!("../../lisp/register.el")),
+    ("replace", include_str!("../../lisp/replace.el")),
+    ("scroll-bar", include_str!("../../lisp/scroll-bar.el")),
+    ("text-mode", include_str!("../../lisp/text-mode.el")),
+    ("timer", include_str!("../../lisp/timer.el")),
 ];
 
 /// Embedded source for library NAME (with or without .el/.elc suffix).
