@@ -615,10 +615,15 @@ fn f_integer_or_marker_p(_i: &mut Interp, args: Vec<Value>) -> EvalResult {
     )))
 }
 fn f_arrayp(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    // GNU arrays cover strings, vectors, char-tables, and
-    // bool-vectors; char-tables are Records here.
+    // GNU arrays cover strings, vectors, char-tables, byte-code
+    // objects, and bool-vectors; char-tables are Records here and
+    // `#[...]' byte-code objects are Lambdas tagged by `bc_items'.
     Ok(Value::from_bool(match &args[0] {
         Value::Str(_) | Value::Vec(_) => true,
+        // `#[...]' objects and library-defined functions stand in for
+        // GNU's byte-code objects (`plain' marks the interpreted
+        // lambdas GNU also reports as non-arrays).
+        Value::Lambda(l) => l.bc_items.is_some() || !l.plain,
         other => super::misc::is_char_table(i, other),
     }))
 }
@@ -644,7 +649,13 @@ fn f_type_of(i: &mut Interp, args: Vec<Value>) -> EvalResult {
         Value::Record(r) => {
             let rr = r.borrow();
             if let Some(Value::Sym(tag)) = rr.first() {
-                return Ok(Value::Sym(*tag));
+                // GNU only reports the tag when it names a struct
+                // type (i.e. has a `cl-struct-type' property).
+                let cst = i.intern("cl-struct-type");
+                let prop = i.obarray.symbol(*tag).plist.clone();
+                if !crate::lisp::eval::plist_get(&prop, cst).is_nil() {
+                    return Ok(Value::Sym(*tag));
+                }
             }
             "record"
         }
@@ -1361,6 +1372,7 @@ fn normalize_fn_def(i: &mut Interp, def: Value) -> Value {
                         plain: l.plain,
                         dumped_doc: l.dumped_doc,
                         advice_link: l.advice_link,
+                        bc_items: l.bc_items.clone(),
                     };
                     l2.is_macro = true;
                     return Value::Lambda(std::rc::Rc::new(l2));

@@ -268,6 +268,11 @@ pub struct Lambda {
     /// runs `Interp::advice_links[idx]'s (WHERE FUN . NEXT) layer, like
     /// GNU's `advice' oclosure layers.
     pub advice_link: Option<usize>,
+    /// `Some(items)' for objects read via `#[...]' — GNU treats those
+    /// as byte-code objects, which are `arrayp' and `aref'-able.  We
+    /// keep the original element list so `aref'/`length' see GNU's
+    /// [args body env] slots; `nil' for ordinary lambdas.
+    pub bc_items: Option<Rc<std::cell::RefCell<Vec<Value>>>>,
 }
 
 #[derive(Clone)]

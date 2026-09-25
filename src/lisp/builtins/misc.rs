@@ -1860,7 +1860,7 @@ fn f_interpreted_function_p(_i: &mut Interp, args: Vec<Value>) -> EvalResult {
 fn f_make_interpreted_closure(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     // (make-interpreted-closure ARGS BODY ENV) → Lambda value.
     Ok(make_interpreted_closure(
-        i, &args[0], &args[1], &args[2], false,
+        i, &args[0], &args[1], &args[2], false, None,
     ))
 }
 
@@ -1869,12 +1869,15 @@ fn f_make_interpreted_closure(i: &mut Interp, args: Vec<Value>) -> EvalResult {
 /// otherwise an alist lexical frame).  `plain' mirrors `Lambda.plain':
 /// the printer shows `nil' for the env of plain lambdas, `(t)' for
 /// defun-produced ones — matching Emacs 31's `#[args body env]' repr.
+/// `bc_items' carries the raw `#[...]' elements for `arrayp'/`aref'
+/// when the object was read as a byte-code literal.
 pub(crate) fn make_interpreted_closure(
     i: &mut Interp,
     arglist_v: &Value,
     body_v: &Value,
     env_v: &Value,
     plain: bool,
+    bc_items: Option<Vec<Value>>,
 ) -> Value {
     // Parse ARGS (a list arglist) into required/optional/rest.
     let arglist = arglist_v.list_to_vec().unwrap_or_default();
@@ -1982,6 +1985,7 @@ pub(crate) fn make_interpreted_closure(
         plain,
         dumped_doc: false,
         advice_link: None,
+        bc_items: bc_items.map(|v| Rc::new(RefCell::new(v))),
     }))
 }
 

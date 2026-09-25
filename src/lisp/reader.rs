@@ -893,8 +893,7 @@ impl<'a> Reader<'a> {
                 let defalt = items[0].clone();
                 let parent = items[1].clone();
                 let purpose = items[2].clone();
-                let mut slots: Vec<Value> =
-                    items.iter().skip(3).take(65).cloned().collect();
+                let mut slots: Vec<Value> = items.iter().skip(3).take(65).cloned().collect();
                 slots.resize(65, Value::Nil);
                 let mut rec = vec![
                     Value::Sym(self.interp.intern("char-table")),
@@ -923,10 +922,7 @@ impl<'a> Reader<'a> {
                     // GNU also accepts an integer arglist — the
                     // compact `args & 0x7ff...' encoding used by the
                     // byte-compiler's own constant vectors.
-                    Some(v)
-                        if !v.is_nil()
-                            && !matches!(v, Value::Cons(_) | Value::Int(_)) =>
-                    {
+                    Some(v) if !v.is_nil() && !matches!(v, Value::Cons(_) | Value::Int(_)) => {
                         return Err(read_err_sym(self.interp, "Invalid byte-code object"));
                     }
                     _ => {}
@@ -943,6 +939,7 @@ impl<'a> Reader<'a> {
                     &body,
                     &env,
                     plain,
+                    Some(items),
                 ))
             }
             Some('s') => {

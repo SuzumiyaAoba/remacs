@@ -440,6 +440,29 @@ fn f_aref(i: &mut Interp, args: Vec<Value>) -> EvalResult {
                 return Ok(items[n as usize].clone());
             }
         }
+        Value::Lambda(l) => {
+            // `#[...]' byte-code objects (and library-defined
+            // functions standing in for them): GNU exposes the
+            // element vector through `aref'.  Non-literal lambdas
+            // synthesize GNU's [args body env] prefix.
+            let items: Vec<Value> = match &l.bc_items {
+                Some(items) => items.borrow().clone(),
+                None if !l.plain => vec![
+                    l.arglist.clone().unwrap_or(Value::Nil),
+                    Value::list(l.body.clone()),
+                    Value::Nil,
+                ],
+                None => return Err(i.wrong_type_mut("arrayp", &args[0])),
+            };
+            let n = want_int(i, &args[1])?;
+            if n < 0 || n as usize >= items.len() {
+                return Err(i.signal_data(
+                    sym::ARGS_OUT_OF_RANGE,
+                    vec![args[0].clone(), args[1].clone()],
+                ));
+            }
+            return Ok(items[n as usize].clone());
+        }
         other => return Err(i.wrong_type_mut("arrayp", other)),
     }
     f_elt(i, args)
@@ -508,6 +531,22 @@ fn f_aset(i: &mut Interp, args: Vec<Value>) -> EvalResult {
             // Ordinary records: GNU allows writing any slot (even the
             // tag at index 0).
             let mut items = r.borrow_mut();
+            if n < 0 || n as usize >= items.len() {
+                return Err(i.signal_data(
+                    sym::ARGS_OUT_OF_RANGE,
+                    vec![args[0].clone(), args[1].clone()],
+                ));
+            }
+            items[n as usize] = args[2].clone();
+            Ok(args[2].clone())
+        }
+        Value::Lambda(l) => {
+            // `#[...]' byte-code objects: GNU permits `aset' into the
+            // element vector (e.g. replacing the constants slot).
+            let Some(items) = &l.bc_items else {
+                return Err(i.wrong_type_mut("arrayp", &args[0]));
+            };
+            let mut items = items.borrow_mut();
             if n < 0 || n as usize >= items.len() {
                 return Err(i.signal_data(
                     sym::ARGS_OUT_OF_RANGE,
