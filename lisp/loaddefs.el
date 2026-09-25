@@ -27690,6 +27690,4969 @@ is an upper-case character.
 
 (fn ARG CHAR &optional INTERACTIVE)" t nil)
 
+
+;; Round 19: GNU autoload/defvar/custom stubs for ported libraries.
+(register-definition-prefixes "5x5" '("5x5-"))
+(put 'change-log-default-name 'safe-local-variable #'string-or-null-p)
+(register-definition-prefixes "add-log" '("add-log-" "change-log-"))
+(register-definition-prefixes "advice" '("ad-"))
+(register-definition-prefixes "align" '("align-"))
+(put 'allout-use-hanging-indents 'safe-local-variable #'booleanp)
+(put 'allout-reindent-bodies 'safe-local-variable (lambda (x) (memq x '(nil t text force))))
+(put 'allout-show-bodies 'safe-local-variable #'booleanp)
+(put 'allout-header-prefix 'safe-local-variable #'stringp)
+(put 'allout-primary-bullet 'safe-local-variable #'stringp)
+(put 'allout-plain-bullets-string 'safe-local-variable #'stringp)
+(put 'allout-distinctive-bullets-string 'safe-local-variable #'stringp)
+(put 'allout-use-mode-specific-leader 'safe-local-variable (lambda (x) (or (memq x '(t nil allout-mode-leaders comment-start)) (stringp x))))
+(put 'allout-old-style-prefixes 'safe-local-variable #'booleanp)
+(put 'allout-stylish-prefixes 'safe-local-variable #'booleanp)
+(put 'allout-numbered-bullet 'safe-local-variable #'string-or-null-p)
+(put 'allout-file-xref-bullet 'safe-local-variable #'string-or-null-p)
+(put 'allout-presentation-padding 'safe-local-variable #'integerp)
+(put 'allout-layout 'safe-local-variable (lambda (x) (or (numberp x) (listp x) (memq x '(: * + -)))))
+(register-definition-prefixes "allout" '("allout-"))
+(put 'allout-widgets-mode-inhibit 'safe-local-variable #'booleanp)
+(register-definition-prefixes "allout-widgets" '("allout-"))
+(register-definition-prefixes "ange-ftp" '("ange-ftp-" "ftp-error" "internal-ange-ftp-mode"))
+(autoload 'animate-string "animate"
+"Display STRING animations starting at position VPOS, HPOS.
+The characters start at randomly chosen places,
+and all slide in parallel to their final positions,
+passing through `animate-n-steps' positions before the final ones.
+If HPOS is nil (or omitted), center the string horizontally
+in the current window.
+
+(fn STRING VPOS &optional HPOS)")
+(autoload 'animate-sequence "animate"
+"Display animation strings from LIST-OF-STRING with buffer *Animation*.
+Strings will be separated from each other by SPACE lines.
+ When the variable `animation-buffer-name' is non-nil display
+animation in the buffer named by variable's value, creating the
+buffer if one does not exist.
+
+(fn LIST-OF-STRINGS SPACE)")
+(autoload 'animate-birthday-present "animate"
+"Return a birthday present in the buffer *Birthday-Present*.
+When optional arg NAME is non-nil or called-interactively, prompt for
+NAME of birthday present receiver and return a birthday present in
+the buffer *Birthday-Present-for-Name*.
+
+(fn &optional NAME)" t)
+(register-definition-prefixes "animate" '("animat"))
+(register-definition-prefixes "ansi-color" '("ansi-color-"))
+(register-definition-prefixes "ansi-osc" '("ansi-osc-"))
+(register-definition-prefixes "antlr-mode" '("antlr-"))
+(register-definition-prefixes "appt" '("appt-"))
+(autoload 'apropos-read-pattern "apropos"
+"Read an apropos pattern, either a word list or a regexp.
+Returns the user pattern, either a list of words which are matched
+literally, or a string which is used as a regexp to search for.
+
+SUBJECT is a string that is included in the prompt to identify what
+kind of objects to search.
+
+(fn SUBJECT)")
+(autoload 'apropos-user-option "apropos"
+"Show user options that match PATTERN.
+PATTERN can be a word, a list of words (separated by spaces),
+or a regexp (using some regexp special characters).  If it is a word,
+search for matches for that word as a substring.  If it is a list of words,
+search for matches for any two (or more) of those words.
+
+With \\[universal-argument] prefix, or if `apropos-do-all' is non-nil, also show
+variables, not just user options.
+
+(fn PATTERN &optional DO-ALL)" t)
+(autoload 'apropos-variable "apropos"
+"Show variables that match PATTERN.
+With the optional argument DO-NOT-ALL non-nil (or when called
+interactively with the prefix \\[universal-argument]), show user
+options only, i.e. behave like `apropos-user-option'.
+
+(fn PATTERN &optional DO-NOT-ALL)" t)
+(autoload 'apropos-local-variable "apropos"
+"Show buffer-local variables that match PATTERN.
+Optional arg BUFFER (default: current buffer) is the buffer to check.
+
+The output includes variables that are not yet set in BUFFER, but that
+will be buffer-local when set.
+
+(fn PATTERN &optional BUFFER)" t)
+(autoload 'apropos-function "apropos"
+"Show functions that match PATTERN.
+
+PATTERN can be a word, a list of words (separated by spaces),
+or a regexp (using some regexp special characters).  If it is a word,
+search for matches for that word as a substring.  If it is a list of words,
+search for matches for any two (or more) of those words.
+
+This is the same as running `apropos-command' with a \\[universal-argument] prefix,
+or a non-nil `apropos-do-all' argument.
+
+(fn PATTERN)" t)
+(autoload 'apropos "apropos"
+"Show all meaningful Lisp symbols whose names match PATTERN.
+Symbols are shown if they are defined as functions, variables, or
+faces, or if they have nonempty property lists, or if they are
+known keywords.
+
+PATTERN can be a word, a list of words (separated by spaces),
+or a regexp (using some regexp special characters).  If it is a word,
+search for matches for that word as a substring.  If it is a list of words,
+search for matches for any two (or more) of those words.
+
+With \\[universal-argument] prefix, or if `apropos-do-all' is non-nil,
+consider all symbols (if they match PATTERN).
+
+Return list of symbols and documentation found.
+
+The *Apropos* window will be selected if `help-window-select' is
+non-nil.
+
+(fn PATTERN &optional DO-ALL)" t)
+(autoload 'apropos-library "apropos"
+"List the variables and functions defined by library FILE.
+FILE should be one of the libraries currently loaded and should
+thus be found in `load-history'.  If `apropos-do-all' is non-nil,
+the output includes key-bindings of commands.
+
+(fn FILE)" t)
+(autoload 'apropos-value "apropos"
+"Show all symbols whose value's printed representation matches PATTERN.
+PATTERN can be a word, a list of words (separated by spaces),
+or a regexp (using some regexp special characters).  If it is a word,
+search for matches for that word as a substring.  If it is a list of words,
+search for matches for any two (or more) of those words.
+
+With \\[universal-argument] prefix, or if `apropos-do-all' is non-nil, also looks
+at function definitions (arguments, documentation and body) and at the
+names and values of properties.
+
+Returns list of symbols and values found.
+
+(fn PATTERN &optional DO-ALL)" t)
+(autoload 'apropos-local-value "apropos"
+"Show buffer-local variables whose values match PATTERN.
+This is like `apropos-value', but only for buffer-local variables.
+Optional arg BUFFER (default: current buffer) is the buffer to check.
+
+(fn PATTERN &optional BUFFER)" t)
+(autoload 'apropos-documentation "apropos"
+"Show symbols whose documentation contains matches for PATTERN.
+PATTERN can be a word, a list of words (separated by spaces),
+or a regexp (using some regexp special characters).  If it is a word,
+search for matches for that word as a substring.  If it is a list of words,
+search for matches for any two (or more) of those words.
+
+Note that by default this command only searches in the functions predefined
+at Emacs startup, i.e., the primitives implemented in C or preloaded in the
+Emacs dump image.
+With \\[universal-argument] prefix, or if `apropos-do-all' is non-nil, it searches
+all currently defined documentation strings.
+
+Returns list of symbols and documentation found.
+
+(fn PATTERN &optional DO-ALL)" t)
+(register-definition-prefixes "apropos" '("apropos-"))
+(register-definition-prefixes "arc-mode" '("arc" "tar-archive-from-tar"))
+(register-definition-prefixes "array" '("array-"))
+(register-definition-prefixes "artist" '("artist-"))
+(autoload 'asm-mode "asm-mode"
+"Major mode for editing typical assembler code.
+Features a private abbrev table and the following bindings:
+
+\\[asm-colon]	outdent a preceding label, tab to next tab stop.
+\\[tab-to-tab-stop]	tab to next tab stop.
+\\[newline-and-indent]	newline, then tab to next tab stop.
+\\[asm-comment]	smart placement of assembler comments.
+
+The character used for making comments is set by the variable
+`asm-comment-char' (which defaults to `?\\;').
+Alternatively, you may set this variable in `asm-mode-hook'.
+
+Turning on Asm mode runs the hook `asm-mode-hook' at the end of initialization.
+
+Special commands:
+\\{asm-mode-map}" t)
+(register-definition-prefixes "asm-mode" '("asm-"))
+(register-definition-prefixes "auth-source" '("auth" "read-passwd-"))
+(register-definition-prefixes "auth-source-pass" '("auth-source-pass-"))
+(autoload 'autoconf-mode "autoconf"
+"Major mode for editing Autoconf configure.ac files.
+
+In addition to any hooks its parent mode `prog-mode' might have run,
+this mode runs the hook `autoconf-mode-hook', as the final or
+penultimate step during initialization.
+
+\\{autoconf-mode-map}" t)
+(register-definition-prefixes "autoconf" '("autoconf-"))
+(put 'auto-insert 'safe-local-variable #'null)
+(register-definition-prefixes "autoinsert" '("auto-insert"))
+(defvar auto-revert-buffer-in-progress nil
+"Non-nil if a `auto-revert-buffer' operation is in progress, nil otherwise.")
+(autoload 'auto-revert-mode "autorevert"
+"Toggle reverting buffer when the file changes (Auto-Revert Mode).
+
+Auto-Revert Mode is a minor mode that affects only the current
+buffer.  When enabled, it reverts the buffer when the file on
+disk changes.
+
+When a buffer is reverted, a message is generated.  This can be
+suppressed by setting `auto-revert-verbose' to nil.
+
+Reverting can sometimes fail to preserve all the markers in the buffer.
+To avoid that, set `revert-buffer-insert-file-contents-function' to
+the slower function `revert-buffer-insert-file-contents-delicately'.
+
+Use `global-auto-revert-mode' to automatically revert all buffers.
+Use `auto-revert-tail-mode' if you know that the file will only grow
+without being changed in the part that is already in the buffer.
+
+This is a minor mode.  If called interactively, toggle the `Auto-Revert
+mode' mode.  If the prefix argument is positive, enable the mode, and if
+it is zero or negative, disable the mode.
+
+If called from Lisp, toggle the mode if ARG is `toggle'.  Enable the
+mode if ARG is nil, omitted, or is a positive number.  Disable the mode
+if ARG is a negative number.
+
+To check whether the minor mode is enabled in the current buffer,
+evaluate the variable `auto-revert-mode'.
+
+The mode's hook is called both when the mode is enabled and when it is
+disabled.
+
+(fn &optional ARG)" t)
+(autoload 'auto-revert-tail-mode "autorevert"
+"Toggle reverting tail of buffer when the file grows.
+
+When Auto-Revert Tail Mode is enabled, the tail of the file is
+constantly followed, as with the shell command `tail -f'.  This
+means that whenever the file grows on disk (presumably because
+some background process is appending to it from time to time),
+this is reflected in the current buffer.
+
+You can edit the buffer and turn this mode off and on again as
+you please.  But make sure the background process has stopped
+writing before you save the file!
+
+When a buffer is reverted, a message is generated.  This can be
+suppressed by setting `auto-revert-verbose' to nil.
+
+Use `auto-revert-mode' for changes other than appends!
+
+This is a minor mode.  If called interactively, toggle the
+`Auto-Revert-Tail mode' mode.  If the prefix argument is positive,
+enable the mode, and if it is zero or negative, disable the mode.
+
+If called from Lisp, toggle the mode if ARG is `toggle'.  Enable the
+mode if ARG is nil, omitted, or is a positive number.  Disable the mode
+if ARG is a negative number.
+
+To check whether the minor mode is enabled in the current buffer,
+evaluate the variable `auto-revert-tail-mode'.
+
+The mode's hook is called both when the mode is enabled and when it is
+disabled.
+
+(fn &optional ARG)" t)
+(defvar inhibit-auto-revert-buffers nil
+"A list of buffers with suppressed auto-revert.")
+(register-definition-prefixes "autorevert" '("auto-revert-" "global-auto-revert-"))
+(register-definition-prefixes "avl-tree" '("avl-tree-"))
+(register-definition-prefixes "avoid" '("mouse-avoidance-"))
+(register-definition-prefixes "backtrace" '("backtrace-"))
+(autoload 'bat-mode "bat-mode"
+"Major mode for editing DOS/Windows batch files.
+Start a new script from `bat-template'.  Read help pages for DOS commands
+with `bat-cmd-help'.  Navigate between sections using `imenu'.
+Run script using `bat-run' and `bat-run-args'.
+
+\\{bat-mode-map}
+
+In addition to any hooks its parent mode `prog-mode' might have run,
+this mode runs the hook `bat-mode-hook', as the final or penultimate
+step during initialization." t)
+(register-definition-prefixes "bat-mode" '("bat-"))
+(register-definition-prefixes "battery" '("battery-"))
+(autoload 'benchmark-run "benchmark"
+"Time execution of FORMS.
+If REPETITIONS is supplied as a number, run FORMS that many times,
+accounting for the overhead of the resulting loop.  Otherwise run
+FORMS once.
+Return a list of the total elapsed time for execution, the number of
+garbage collections that ran, and the time taken by garbage collection.
+See also `benchmark-run-compiled'.
+
+(fn &optional REPETITIONS &rest FORMS)" nil t)
+(autoload 'benchmark-run-compiled "benchmark"
+"Time execution of compiled version of FORMS.
+This is like `benchmark-run', but what is timed is a funcall of the
+byte code obtained by wrapping FORMS in a `lambda' and compiling the
+result.  The overhead of the `lambda's is accounted for.
+
+(fn &optional REPETITIONS &rest FORMS)" nil t)
+(autoload 'benchmark "benchmark"
+"Print the time taken for REPETITIONS executions of FORM.
+Interactively, REPETITIONS is taken from the prefix arg, and
+the command prompts for the form to benchmark.
+For non-interactive use see also `benchmark-run' and
+`benchmark-run-compiled'.
+FORM can also be a function in which case we measure the time it takes
+to call it without any argument.
+
+(fn REPETITIONS FORM)" t)
+(autoload 'benchmark-progn "benchmark"
+"Evaluate BODY and message the time taken.
+The return value is the value of the final form in BODY.
+
+(fn &rest BODY)" nil t)
+(register-definition-prefixes "benchmark" '("benchmark-"))
+(register-definition-prefixes "bib-mode" '("bib-"))
+(register-definition-prefixes "bibtex" '("bibtex-"))
+(autoload 'bibtex-style-mode "bibtex-style"
+"Major mode for editing BibTeX style files.
+
+This mode runs the hook `bibtex-style-mode-hook', as the final or
+penultimate step during initialization.
+
+\\{bibtex-style-mode-map}" t)
+(register-definition-prefixes "bibtex-style" '("bibtex-style-"))
+(defvar personal-keybindings nil
+"List of bindings performed by `bind-key'.
+
+Elements have the form ((KEY . [MAP]) CMD ORIGINAL-CMD)")
+(register-definition-prefixes "bind-key" '("bind-key" "override-global-m"))
+(register-definition-prefixes "bindat" '("bindat-"))
+(register-definition-prefixes "binhex" '("binhex-"))
+(register-definition-prefixes "blackbox" '("bb-" "blackbox-"))
+(defvar menu-bar-bookmark-map (let ((map (make-sparse-keymap "Bookmark functions"))) (define-key map [load] '(menu-item "Load a Bookmark File..." bookmark-load :help "Load bookmarks from a bookmark file)")) (define-key map [write] '(menu-item "Save Bookmarks As..." bookmark-write :help "Write bookmarks to a file (reading the file name with the minibuffer)")) (define-key map [save] '(menu-item "Save Bookmarks" bookmark-save :help "Save currently defined bookmarks")) (define-key map [edit] '(menu-item "Edit Bookmark List" bookmark-bmenu-list :help "Display a list of existing bookmarks")) (define-key map [delete] '(menu-item "Delete Bookmark..." bookmark-delete :help "Delete a bookmark from the bookmark list")) (define-key map [delete-all] '(menu-item "Delete all Bookmarks..." bookmark-delete-all :help "Delete all bookmarks from the bookmark list")) (define-key map [rename] '(menu-item "Rename Bookmark..." bookmark-rename :help "Change the name of a bookmark")) (define-key map [locate] '(menu-item "Insert Location..." bookmark-locate :help "Insert the name of the file associated with a bookmark")) (define-key map [insert] '(menu-item "Insert Contents..." bookmark-insert :help "Insert the text of the file pointed to by a bookmark")) (define-key map [set] '(menu-item "Set Bookmark..." bookmark-set :help "Set a bookmark named inside a file.")) (define-key map [jump] '(menu-item "Jump to Bookmark..." bookmark-jump :help "Jump to a bookmark (a point in some file)")) map))
+(register-definition-prefixes "bookmark" '("bookmark-" "with-buffer-modified-unmodified"))
+(defvar browse-url-default-handlers '(("\\`mailto:" . browse-url--mailto) ("\\`man:" . browse-url--man) ("\\`irc6?s?://" . browse-url--irc) (browse-url--non-html-file-url-p . browse-url-emacs))
+"Like `browse-url-handlers' but populated by Emacs and packages.
+
+Emacs and external packages capable of browsing certain URLs
+should place their entries in this alist rather than
+`browse-url-handlers' which is reserved for the user.")
+(register-definition-prefixes "browse-url" '("browse-url-"))
+(register-definition-prefixes "bs" '("bs-"))
+(register-definition-prefixes "bubbles" '("bubbles-"))
+(put 'bug-reference-url-format 'safe-local-variable (lambda (s) (or (stringp s) (and (symbolp s) (get s 'bug-reference-url-format)))))
+(put 'bug-reference-bug-regexp 'safe-local-variable 'stringp)
+(register-definition-prefixes "bug-reference" '("bug-reference-"))
+(register-definition-prefixes "byte-opt" '("byte" "disassemble-offset"))
+(put 'byte-compile-dynamic 'safe-local-variable 'booleanp)
+(put 'byte-compile-dynamic-docstrings 'safe-local-variable 'booleanp)
+(put 'byte-compile-error-on-warn 'safe-local-variable 'booleanp)
+(put 'byte-compile-warnings 'safe-local-variable (lambda (v) (or (symbolp v) (all #'symbolp v))))
+(put 'no-byte-compile 'safe-local-variable 'booleanp)
+(register-definition-prefixes "bytecomp" '("batch-byte-compile-file" "byte" "compilation-safety" "displaying-byte-compile-warnings" "emacs-lisp-" "no-byte-compile"))
+(register-definition-prefixes "c-ts-common" '("c-ts-"))
+(register-definition-prefixes "c-ts-mode" '("c-ts-"))
+(register-definition-prefixes "cal-bahai" '("calendar-bahai-" "diary-bahai-" "holiday-bahai"))
+(register-definition-prefixes "cal-china" '("calendar-chinese-" "diary-chinese-" "holiday-chinese"))
+(register-definition-prefixes "cal-coptic" '("calendar-" "diary-"))
+(register-definition-prefixes "cal-dst" '("calendar-" "dst-"))
+(register-definition-prefixes "cal-french" '("calendar-french-" "diary-french-date"))
+(register-definition-prefixes "cal-hebrew" '("calendar-hebrew-" "diary-hebrew-" "holiday-hebrew"))
+(register-definition-prefixes "cal-html" '("cal-html-"))
+(register-definition-prefixes "cal-islam" '("calendar-islamic-" "diary-islamic-" "holiday-islamic"))
+(register-definition-prefixes "cal-iso" '("calendar-iso-" "diary-iso-date"))
+(register-definition-prefixes "cal-julian" '("calendar-" "diary-" "holiday-julian"))
+(register-definition-prefixes "cal-mayan" '("calendar-mayan-" "diary-mayan-date"))
+(register-definition-prefixes "cal-menu" '("cal"))
+(register-definition-prefixes "cal-move" '("calendar-"))
+(register-definition-prefixes "cal-persia" '("calendar-persian-" "diary-persian-date"))
+(register-definition-prefixes "cal-tex" '("cal-tex-"))
+(register-definition-prefixes "cal-x" '("calendar-" "diary-frame"))
+(register-definition-prefixes "calc" '("calc" "defcalcmodevar" "inexact-result" "math-" "var-"))
+(register-definition-prefixes "calc-aent" '("calc" "math-"))
+(register-definition-prefixes "calc-alg" '("calc" "math-"))
+(register-definition-prefixes "calc-arith" '("calc" "math-"))
+(register-definition-prefixes "calc-bin" '("calc" "math-"))
+(register-definition-prefixes "calc-comb" '("calc" "math-"))
+(register-definition-prefixes "calc-cplx" '("calc" "math-"))
+(register-definition-prefixes "calc-embed" '("calc-"))
+(register-definition-prefixes "calc-ext" '("calc" "math-" "var-"))
+(register-definition-prefixes "calc-fin" '("calc" "math-c"))
+(register-definition-prefixes "calc-forms" '("calc" "math-" "var-TimeZone"))
+(register-definition-prefixes "calc-frac" '("calc" "math-"))
+(register-definition-prefixes "calc-funcs" '("calc" "math-"))
+(register-definition-prefixes "calc-graph" '("calc-"))
+(register-definition-prefixes "calc-help" '("calc-"))
+(register-definition-prefixes "calc-incom" '("calc-"))
+(register-definition-prefixes "calc-keypd" '("calc-"))
+(register-definition-prefixes "calc-lang" '("calc-" "math-"))
+(register-definition-prefixes "calc-macs" '("Math-" "calc-" "math-"))
+(register-definition-prefixes "calc-map" '("calc" "math-"))
+(register-definition-prefixes "calc-math" '("calc" "math-"))
+(register-definition-prefixes "calc-menu" '("calc-"))
+(register-definition-prefixes "calc-misc" '("math-iipow"))
+(register-definition-prefixes "calc-mode" '("calc-" "math-get-modes-vec"))
+(register-definition-prefixes "calc-mtx" '("calc" "math-"))
+(register-definition-prefixes "calc-nlfit" '("calc-fit-" "math-nlfit-"))
+(register-definition-prefixes "calc-poly" '("calcFunc-" "math-"))
+(register-definition-prefixes "calc-prog" '("calc" "math-" "var-q"))
+(register-definition-prefixes "calc-rewr" '("calc" "math-"))
+(register-definition-prefixes "calc-rules" '("calc-"))
+(register-definition-prefixes "calc-sel" '("calc-"))
+(register-definition-prefixes "calc-stat" '("calc" "math-"))
+(register-definition-prefixes "calc-store" '("calc"))
+(register-definition-prefixes "calc-stuff" '("calc" "math-"))
+(register-definition-prefixes "calc-trail" '("calc-trail-"))
+(register-definition-prefixes "calc-undo" '("calc-"))
+(register-definition-prefixes "calc-units" '("calc" "math-"))
+(register-definition-prefixes "calc-vec" '("calc" "math-"))
+(register-definition-prefixes "calc-yank" '("calc-" "math-number-regexp"))
+(register-definition-prefixes "calcalg2" '("calc" "math-" "var-IntegLimit"))
+(register-definition-prefixes "calcalg3" '("calc" "math-"))
+(register-definition-prefixes "calccomp" '("calcFunc-c" "math-"))
+(register-definition-prefixes "calcsel2" '("calc-"))
+(register-definition-prefixes "calculator" '("calculator-"))
+(register-definition-prefixes "calendar" '("calendar-" "diary-" "holiday-buffer" "lunar-phases-buffer" "solar-sunrises-buffer"))
+(register-definition-prefixes "canlock" '("canlock-"))
+(register-definition-prefixes "cc-align" '("c-"))
+(register-definition-prefixes "cc-awk" '("awk-" "c-awk-"))
+(register-definition-prefixes "cc-bytecomp" '("cc-"))
+(register-definition-prefixes "cc-cmds" '("c-"))
+(register-definition-prefixes "cc-defs" '("c-" "cc-bytecomp-compiling-or-loading"))
+(register-definition-prefixes "cc-engine" '("c-"))
+(register-definition-prefixes "cc-fonts" '("autodoc-" "c++-font-lock-keywords" "c-" "doxygen-font-lock-" "gtkdoc-font-lock-" "idl-font-lock-keywords" "java" "objc-font-lock-keywords" "pike-font-lock-keywords"))
+(defvar c-guess-guessed-offsets-alist nil
+"Currently guessed offsets-alist.")
+(defvar c-guess-guessed-basic-offset nil
+"Currently guessed basic-offset.")
+(register-definition-prefixes "cc-guess" '("c-guess-"))
+(register-definition-prefixes "cc-langs" '("c-"))
+(register-definition-prefixes "cc-menus" '("cc-imenu-"))
+(register-definition-prefixes "cc-mode" '("awk-mode-map" "c++-mode-" "c-" "idl-mode-" "java-mode-" "objc-mode-" "pike-mode-"))
+(register-definition-prefixes "cc-styles" '("c-" "cc-choose-style-for-mode"))
+(put 'c-basic-offset 'safe-local-variable 'integerp)
+(put 'c-backslash-column 'safe-local-variable 'integerp)
+(put 'c-font-lock-extra-types 'safe-local-variable #'c-string-list-p)
+(put 'c++-font-lock-extra-types 'safe-local-variable #'c-string-list-p)
+(put 'objc-font-lock-extra-types 'safe-local-variable #'c-string-list-p)
+(put 'java-font-lock-extra-types 'safe-local-variable #'c-string-list-p)
+(put 'idl-font-lock-extra-types 'safe-local-variable #'c-string-list-p)
+(put 'pike-font-lock-extra-types 'safe-local-variable #'c-string-list-p)
+(put 'c-file-style 'safe-local-variable 'string-or-null-p)
+(register-definition-prefixes "cc-vars" '("awk-mode-hook" "c++-" "c-" "defcustom-c-stylevar" "idl-" "java-" "objc-" "pike-"))
+(register-definition-prefixes "ccl" '("ccl-"))
+(register-definition-prefixes "cedet" '("cedet-"))
+(register-definition-prefixes "cedet-cscope" '("cedet-cscope-"))
+(register-definition-prefixes "cedet-files" '("cedet-"))
+(register-definition-prefixes "cedet-global" '("cedet-g"))
+(register-definition-prefixes "cedet-idutils" '("cedet-idutils-"))
+(register-definition-prefixes "cfengine" '("cfengine"))
+(register-definition-prefixes "char-fold" '("char-fold-"))
+(register-definition-prefixes "chart" '("chart"))
+(register-definition-prefixes "check-declare" '("check-declare-"))
+(put 'checkdoc-force-docstrings-flag 'safe-local-variable #'booleanp)
+(put 'checkdoc-force-history-flag 'safe-local-variable #'booleanp)
+(put 'checkdoc-permit-comma-termination-flag 'safe-local-variable #'booleanp)
+(put 'checkdoc-spellcheck-documentation-flag 'safe-local-variable #'booleanp)
+(put 'checkdoc-ispell-list-words 'safe-local-variable #'list-of-strings-p)
+(put 'checkdoc-arguments-in-order-flag 'safe-local-variable #'booleanp)
+(put 'checkdoc-package-keywords-flag 'safe-local-variable #'booleanp)
+(put 'checkdoc-verb-check-experimental-flag 'safe-local-variable #'booleanp)
+(put 'checkdoc-allow-quoting-nil-and-t 'safe-local-variable #'booleanp)
+(put 'checkdoc-symbol-words 'safe-local-variable #'list-of-strings-p)
+(put 'checkdoc-arguments-missing-flag 'safe-local-variable 'booleanp)
+(put 'checkdoc-proper-noun-regexp 'safe-local-variable 'stringp)
+(put 'checkdoc-common-verbs-regexp 'safe-local-variable 'stringp)
+(register-definition-prefixes "checkdoc" '("checkdoc-"))
+(register-definition-prefixes "china-util" '("decode-hz-line-continuation" "hz-" "hz/zw-start-gb" "iso2022-" "zw-start-gb"))
+(register-definition-prefixes "chistory" '("command-history-" "default-command-history-filter" "list-command-history-"))
+(register-definition-prefixes "cl-extra" '("cl-"))
+(register-definition-prefixes "cl-font-lock" '("cl-font-lock-"))
+(register-definition-prefixes "cl-indent" '("common-lisp-" "lisp-"))
+(defvar cl-custom-print-functions nil
+"This is a list of functions that format user objects for printing.
+Each function is called in turn with three arguments: the object, the
+stream, and the print level (currently ignored).  If it is able to
+print the object it returns true; otherwise it returns nil and the
+printer proceeds to the next function on the list.
+
+This variable is not used at present, but it is defined in hopes that
+a future Emacs interpreter will be able to use it.")
+(register-definition-prefixes "cl-lib" '("cl-"))
+(register-definition-prefixes "cl-macs" '("cl-"))
+(autoload 'cl-print-object "cl-print"
+"Dispatcher to print OBJECT on STREAM according to its type.
+You can add methods to it to customize the output.
+But if you just want to print something, don't call this directly:
+call other entry points instead, such as `cl-prin1'.
+
+(fn OBJECT STREAM)")
+(register-definition-prefixes "cl-print" '("cl-print-" "help-byte-code"))
+(register-definition-prefixes "cl-seq" '("cl--"))
+(register-definition-prefixes "cmacexp" '("c-macro-"))
+(register-definition-prefixes "cmake-ts-mode" '("cmake-ts-"))
+(register-definition-prefixes "cmuscheme" '("cmuscheme-load-hook" "inferior-scheme-" "scheme-" "switch-to-scheme"))
+(autoload 'color-name-to-rgb "color"
+"Convert COLOR string to a list of normalized RGB components.
+COLOR should be a color name (e.g. \"white\") or an RGB triplet
+string (e.g. \"#ffff1122eecc\").
+
+COLOR can also be the symbol `unspecified' or one of the strings
+\"unspecified-fg\" or \"unspecified-bg\", in which case the
+return value is nil.
+
+Normally the return value is a list of three floating-point
+numbers, (RED GREEN BLUE), each between 0.0 and 1.0 inclusive.
+
+Optional argument FRAME specifies the frame where the color is to be
+displayed.  If FRAME is omitted or nil, use the selected frame.
+If FRAME cannot display COLOR, return nil.
+
+(fn COLOR &optional FRAME)")
+(autoload 'color-rgb-to-hex "color"
+"Return hexadecimal #RGB notation for the color specified by RED GREEN BLUE.
+RED, GREEN, and BLUE should be numbers between 0.0 and 1.0, inclusive.
+Optional argument DIGITS-PER-COMPONENT can be either 4 (the default)
+or 2; use the latter if you need a 24-bit specification of a color.
+
+(fn RED GREEN BLUE &optional DIGITS-PER-COMPONENT)")
+(autoload 'color-blend "color"
+"Blend the two colors A and B in linear space with ALPHA.
+A and B should be lists (RED GREEN BLUE), where each element is
+between 0.0 and 1.0, inclusive.  ALPHA controls the influence A
+has on the result and should be between 0.0 and 1.0, inclusive.
+
+For instance:
+
+   (color-blend \\='(1 0.5 1) \\='(0 0 0) 0.75)
+      => (0.75 0.375 0.75)
+
+(fn A B &optional ALPHA)")
+(register-definition-prefixes "color" '("color-"))
+(defvar comint-output-filter-functions '(ansi-color-process-output comint-postoutput-scroll-to-bottom comint-watch-for-password-prompt)
+"Functions to call after output is inserted into the buffer.
+One possible function is `comint-postoutput-scroll-to-bottom'.
+These functions get one argument, a string containing the text as originally
+inserted.  Note that this might not be the same as the buffer contents between
+`comint-last-output-start' and the buffer's `process-mark', if other filter
+functions have already modified the buffer.
+
+See also `comint-preoutput-filter-functions'.
+
+You can use `add-hook' to add functions to this list
+either globally or locally.")
+(defvar comint-file-name-prefix ""
+"Prefix prepended to absolute file names taken from process input.
+This is used by Comint's and shell's completion functions, and by shell's
+directory tracking functions.")
+(register-definition-prefixes "comint" '("comint-"))
+(put 'no-native-compile 'safe-local-variable 'booleanp)
+(register-definition-prefixes "comp" '("comp-" "native-comp" "no-native-compile"))
+(register-definition-prefixes "comp-common" '("comp-" "native-comp-"))
+(register-definition-prefixes "comp-cstr" '("comp-" "with-comp-cstr-accessors"))
+(register-definition-prefixes "comp-run" '("comp-" "native-"))
+(register-definition-prefixes "compare-w" '("compare-"))
+(register-definition-prefixes "compat" '("compat-"))
+(register-definition-prefixes "compface" '("uncompface"))
+(defvar compilation-process-setup-function #'ignore
+"Function to call to customize the compilation process.
+This function is called immediately before the compilation process is
+started.  It can be used to set any variables or functions that are used
+while processing the output of the compilation process.")
+(defvar compilation-buffer-name-function #'compilation--default-buffer-name
+"Function to compute the name of a compilation buffer.
+The function receives one argument, the name of the major mode of the
+compilation buffer.  It should return a string.
+By default, it returns `(concat \"*\" (downcase name-of-mode) \"*\")'.")
+(defvar compilation-finish-functions nil
+"Functions to call when a compilation process finishes.
+Each function is called with two arguments: the compilation buffer,
+and a string describing how the process finished.")
+(put 'compilation-directory 'safe-local-variable 'stringp)
+(put 'compile-command 'safe-local-variable (lambda (a) (and (stringp a) (if (boundp 'compilation-read-command) compilation-read-command t))))
+(autoload 'compilation-shell-minor-mode "compile"
+"Toggle Compilation Shell minor mode.
+
+When Compilation Shell minor mode is enabled, all the
+error-parsing commands of the Compilation major mode are
+available but bound to keys that don't collide with Shell mode.
+See `compilation-mode'.
+
+This is a minor mode.  If called interactively, toggle the
+`Compilation-Shell minor mode' mode.  If the prefix argument is
+positive, enable the mode, and if it is zero or negative, disable the
+mode.
+
+If called from Lisp, toggle the mode if ARG is `toggle'.  Enable the
+mode if ARG is nil, omitted, or is a positive number.  Disable the mode
+if ARG is a negative number.
+
+To check whether the minor mode is enabled in the current buffer,
+evaluate the variable `compilation-shell-minor-mode'.
+
+The mode's hook is called both when the mode is enabled and when it is
+disabled.
+
+\\{compilation-shell-minor-mode-map}
+
+(fn &optional ARG)" t)
+(autoload 'compilation-minor-mode "compile"
+"Toggle Compilation minor mode.
+
+When Compilation minor mode is enabled, all the error-parsing
+commands of Compilation major mode are available.  See
+`compilation-mode'.
+
+This is a minor mode.  If called interactively, toggle the `Compilation
+minor mode' mode.  If the prefix argument is positive, enable the mode,
+and if it is zero or negative, disable the mode.
+
+If called from Lisp, toggle the mode if ARG is `toggle'.  Enable the
+mode if ARG is nil, omitted, or is a positive number.  Disable the mode
+if ARG is a negative number.
+
+To check whether the minor mode is enabled in the current buffer,
+evaluate the variable `compilation-minor-mode'.
+
+The mode's hook is called both when the mode is enabled and when it is
+disabled.
+
+\\{compilation-minor-mode-map}
+
+(fn &optional ARG)" t)
+(register-definition-prefixes "compile" '("compil" "define-compilation-mode" "kill-compilation"))
+(register-definition-prefixes "completion" '("*c-def-regexp*" "*lisp-def-regexp*" "accept-completion" "add-" "cdabbrev-" "check-completion-length" "clear-all-completions" "cmpl-" "complet" "current-completion-source" "delete-completion" "enable-completion" "find-" "inside-locate-completion-entry" "interactive-completion-string-reader" "kill-" "list-all-completions" "load-completions-from-file" "make-c" "next-cdabbrev" "num-cmpl-sources" "reset-cdabbrev" "save" "set-c" "symbol-" "use-completion-"))
+(register-definition-prefixes "completion-preview" '("completion-preview-"))
+(register-definition-prefixes "cond-star" '("cond*-"))
+(autoload 'conf-mode "conf-mode"
+"Mode for Unix and Windows Conf files and Java properties.
+Most conf files know only three kinds of constructs: parameter
+assignments optionally grouped into sections and comments.  Yet
+there is a great range of variation in the exact syntax of conf
+files.  See below for various wrapper commands that set up the
+details for some of the most widespread variants.
+
+This mode sets up font locking, outline, imenu and it provides
+alignment support through `conf-align-assignments'.  If strings
+come out wrong, try `conf-quote-normal'.
+
+Some files allow continuation lines, either with a backslash at
+the end of line, or by indenting the next line (further).  These
+constructs cannot currently be recognized.
+
+Because of this great variety of nuances, which are often not
+even clearly specified, please don't expect it to get every file
+quite right.  Patches that clearly identify some special case,
+without breaking the general ones, are welcome.
+
+If instead you start this mode with the generic `conf-mode'
+command, it will parse the buffer.  It will generally well
+identify the first four cases listed below.  If the buffer
+doesn't have enough contents to decide, this is identical to
+`conf-windows-mode' on Windows, elsewhere to `conf-unix-mode'.
+See also `conf-space-mode', `conf-colon-mode', `conf-javaprop-mode',
+`conf-ppd-mode' and `conf-xdefaults-mode'.
+
+\\{conf-mode-map}
+
+This mode runs the hook `conf-mode-hook', as the final or penultimate
+step during initialization." t)
+(autoload 'conf-unix-mode "conf-mode"
+"Conf Mode starter for Unix style Conf files.
+Comments start with `#'.  For details see `conf-mode'.
+
+In addition to any hooks its parent mode might have run, this mode
+runs the hook `conf-unix-mode-hook', as the final or penultimate step
+during initialization.
+
+\\{conf-unix-mode-map}" t)
+(autoload 'conf-windows-mode "conf-mode"
+"Conf Mode starter for Windows style Conf files.
+Comments start with `;'.
+For details see `conf-mode'.  Example:
+
+; Conf mode font-locks this right on Windows and with \\[conf-windows-mode]
+
+[ExtShellFolderViews]
+Default={5984FFE0-28D4-11CF-AE66-08002B2E1262}
+{5984FFE0-28D4-11CF-AE66-08002B2E1262}={5984FFE0-28D4-11CF-AE66-08002B2E1262}
+
+[{5984FFE0-28D4-11CF-AE66-08002B2E1262}]
+PersistMoniker=file://Folder.htt
+
+In addition to any hooks its parent mode might have run, this mode
+runs the hook `conf-windows-mode-hook', as the final or penultimate
+step during initialization." t)
+(autoload 'conf-javaprop-mode "conf-mode"
+"Conf Mode starter for Java properties files.
+Comments start with `#'.  Example:
+
+# Conf mode font-locks this right with \\[conf-javaprop-mode] (Java properties)
+
+name:value
+name=value
+name value
+x.1 =
+x.2.y.1.z.1 =
+x.2.y.1.z.2.zz =
+
+In addition to any hooks its parent mode `conf-mode' might have run,
+this mode runs the hook `conf-javaprop-mode-hook', as the final or
+penultimate step during initialization." t)
+(autoload 'conf-space-mode "conf-mode"
+"Conf Mode starter for space separated conf files.
+\"Assignments\" are with ` '.  Keywords before the parameters are
+recognized according to the variable `conf-space-keywords-alist'.
+Alternatively, you can specify a value for the file local variable
+`conf-space-keywords'.
+Use the function `conf-space-keywords' if you want to specify keywords
+in an interactive fashion instead.
+
+For details see `conf-mode'.  Example:
+
+# Conf mode font-locks this right with \\[conf-space-mode] (space separated)
+
+image/jpeg			jpeg jpg jpe
+image/png			png
+image/tiff			tiff tif
+
+# Or with keywords (from a recognized file name):
+class desktop
+# Standard multimedia devices
+add /dev/audio		desktop
+add /dev/mixer		desktop
+
+In addition to any hooks its parent mode `conf-unix-mode' might have
+run, this mode runs the hook `conf-space-mode-hook', as the final or
+penultimate step during initialization." t)
+(autoload 'conf-colon-mode "conf-mode"
+"Conf Mode starter for Colon files.
+\"Assignments\" are with `:'.
+For details see `conf-mode'.  Example:
+
+# Conf mode font-locks this right with \\[conf-colon-mode] (colon)
+
+<Multi_key> <exclam> <exclam>		: \"\\241\"	exclamdown
+<Multi_key> <c> <slash>			: \"\\242\"	cent
+
+In addition to any hooks its parent mode `conf-unix-mode' might have
+run, this mode runs the hook `conf-colon-mode-hook', as the final or
+penultimate step during initialization." t)
+(autoload 'conf-ppd-mode "conf-mode"
+"Conf Mode starter for Adobe/CUPS PPD files.
+Comments start with `*%' and \"assignments\" are with `:'.
+For details see `conf-mode'.  Example:
+
+*% Conf mode font-locks this right with \\[conf-ppd-mode] (PPD)
+
+*DefaultTransfer: Null
+*Transfer Null.Inverse: \"{ 1 exch sub }\"
+
+In addition to any hooks its parent mode `conf-colon-mode' might have
+run, this mode runs the hook `conf-ppd-mode-hook', as the final or
+penultimate step during initialization." t)
+(autoload 'conf-xdefaults-mode "conf-mode"
+"Conf Mode starter for Xdefaults files.
+Comments start with `!' and \"assignments\" are with `:'.
+For details see `conf-mode'.  Example:
+
+! Conf mode font-locks this right with \\[conf-xdefaults-mode] (.Xdefaults)
+
+*background:			gray99
+*foreground:			black
+
+In addition to any hooks its parent mode `conf-colon-mode' might have
+run, this mode runs the hook `conf-xdefaults-mode-hook', as the final
+or penultimate step during initialization." t)
+(autoload 'conf-toml-mode "conf-mode"
+"Conf Mode starter for TOML files.
+Comments start with `#' and \"assignments\" are with `='.
+For details see `conf-mode'.  Example:
+
+# Conf mode font-locks this right with \\[conf-toml-mode]
+
+[entry]
+value = \"some string\"
+
+In addition to any hooks its parent mode might have run, this mode
+runs the hook `conf-toml-mode-hook', as the final or penultimate step
+during initialization." t)
+(autoload 'conf-desktop-mode "conf-mode"
+"Conf Mode started for freedesktop.org Desktop files.
+Comments start with `#' and \"assignments\" are with `='.
+For details see `conf-mode'.
+
+# Conf mode font-locks this correctly with \\[conf-desktop-mode]
+	[Desktop Entry]
+	Name=GNU Image Manipulation Program
+	Name[oc]=Editor d'imatge GIMP
+	Exec=gimp-2.8 %U
+	Terminal=false
+
+In addition to any hooks its parent mode `conf-unix-mode' might have
+run, this mode runs the hook `conf-desktop-mode-hook', as the final or
+penultimate step during initialization." t)
+(autoload 'conf-npmrc-mode "conf-mode"
+"Major mode derived from `conf-mode' by `define-derived-mode'.
+It inherits all of the parent's attributes, but has its own keymap,
+abbrev table and syntax table:
+
+  `conf-npmrc-mode-map', `conf-npmrc-mode-abbrev-table' and
+`conf-npmrc-mode-syntax-table'
+
+which more-or-less shadow conf-mode's corresponding tables.
+
+In addition to any hooks its parent mode might have run, this mode
+runs the hook `conf-npmrc-mode-hook', as the final or penultimate step
+during initialization.
+
+\\{conf-npmrc-mode-map}" t)
+(register-definition-prefixes "conf-mode" '("conf-"))
+(register-definition-prefixes "cookie1" '("cookie"))
+(put 'copyright-at-end-flag 'safe-local-variable 'booleanp)
+(put 'copyright-names-regexp 'safe-local-variable 'stringp)
+(put 'copyright-year-ranges 'safe-local-variable 'booleanp)
+(register-definition-prefixes "copyright" '("copyright-"))
+(put 'cperl-file-style 'safe-local-variable 'stringp)
+(put 'cperl-indent-level 'safe-local-variable 'integerp)
+(put 'cperl-brace-offset 'safe-local-variable 'integerp)
+(put 'cperl-continued-brace-offset 'safe-local-variable 'integerp)
+(put 'cperl-label-offset 'safe-local-variable 'integerp)
+(put 'cperl-continued-statement-offset 'safe-local-variable 'integerp)
+(put 'cperl-extra-newline-before-brace 'safe-local-variable 'booleanp)
+(put 'cperl-merge-trailing-else 'safe-local-variable 'booleanp)
+(register-definition-prefixes "cperl-mode" '("cperl-"))
+(register-definition-prefixes "cpp" '("cpp-"))
+(register-definition-prefixes "crm" '("crm-"))
+(register-definition-prefixes "csharp-mode" '("codedoc-font-lock-" "csharp-"))
+(register-definition-prefixes "css-mode" '("css-" "scss-"))
+(register-definition-prefixes "cua-base" '("cua-"))
+(register-definition-prefixes "cua-gmrk" '("cua-"))
+(register-definition-prefixes "cua-rect" '("cua-"))
+(defvar cursor-sensor-inhibit nil
+"When non-nil, suspend `cursor-sensor-mode' and `cursor-intangible-mode'.
+By convention, this is a list of symbols where each symbol stands for the
+\"cause\" of the suspension.")
+(autoload 'cursor-intangible-mode "cursor-sensor"
+"Keep cursor outside of any `cursor-intangible' text property.
+
+This is a minor mode.  If called interactively, toggle the
+`Cursor-Intangible mode' mode.  If the prefix argument is positive,
+enable the mode, and if it is zero or negative, disable the mode.
+
+If called from Lisp, toggle the mode if ARG is `toggle'.  Enable the
+mode if ARG is nil, omitted, or is a positive number.  Disable the mode
+if ARG is a negative number.
+
+To check whether the minor mode is enabled in the current buffer,
+evaluate the variable `cursor-intangible-mode'.
+
+The mode's hook is called both when the mode is enabled and when it is
+disabled.
+
+(fn &optional ARG)" t)
+(autoload 'cursor-sensor-mode "cursor-sensor"
+"Handle the `cursor-sensor-functions' text property.
+
+This property should hold a list of functions which react to the motion
+of the cursor.  They're called with three arguments (WINDOW OLDPOS DIR)
+where WINDOW is the affected window, OLDPOS is the last known position of
+the cursor and DIR can be `entered', `left', or `moved' depending on whether
+the cursor is entering the area covered by the text-property property,
+leaving it, or just moving inside of it.
+
+This is a minor mode.  If called interactively, toggle the
+`Cursor-Sensor mode' mode.  If the prefix argument is positive, enable
+the mode, and if it is zero or negative, disable the mode.
+
+If called from Lisp, toggle the mode if ARG is `toggle'.  Enable the
+mode if ARG is nil, omitted, or is a positive number.  Disable the mode
+if ARG is a negative number.
+
+To check whether the minor mode is enabled in the current buffer,
+evaluate the variable `cursor-sensor-mode'.
+
+The mode's hook is called both when the mode is enabled and when it is
+disabled.
+
+(fn &optional ARG)" t)
+(register-definition-prefixes "cursor-sensor" '("cursor-sensor-"))
+(register-definition-prefixes "cus-dep" '("custom-" "generated-custom-dependencies-file"))
+(defvar customize-package-emacs-version-alist nil
+"Alist mapping versions of a package to Emacs versions.
+We use this for packages that have their own names, but are released
+as part of Emacs itself.
+
+Each elements looks like this:
+
+     (PACKAGE (PVERSION . EVERSION)...)
+
+Here PACKAGE is the name of a package, as a symbol.  After
+PACKAGE come one or more elements, each associating a
+package version PVERSION with the first Emacs version
+EVERSION in which it (or a subsequent version of PACKAGE)
+was first released.  Both PVERSION and EVERSION are strings.
+PVERSION should be a string that this package used in
+the :package-version keyword for `defcustom', `defgroup',
+and `defface'.
+
+For example, the MH-E package updates this alist as follows:
+
+     (add-to-list \\='customize-package-emacs-version-alist
+                  \\='(MH-E (\"6.0\" . \"22.1\") (\"6.1\" . \"22.1\")
+                         (\"7.0\" . \"22.1\") (\"7.1\" . \"22.1\")
+                         (\"7.2\" . \"22.1\") (\"7.3\" . \"22.1\")
+                         (\"7.4\" . \"22.1\") (\"8.0\" . \"22.1\")))
+
+The value of PACKAGE needs to be unique and it needs to match the
+PACKAGE value appearing in the :package-version keyword.  Since
+the user might see the value in an error message, a good choice is
+the official name of the package, such as MH-E or Gnus.")
+(register-definition-prefixes "cus-edit" '("Custom-" "cus" "widget-"))
+(register-definition-prefixes "cus-start" '("minibuffer-prompt-properties--setter"))
+(register-definition-prefixes "cus-theme" '("custom-" "describe-theme-"))
+(register-definition-prefixes "custom" '("ede-"))
+(register-definition-prefixes "cvs-status" '("cvs-"))
+(register-definition-prefixes "cwarn" '("cwarn-" "turn-on-cwarn-mode-if-enabled"))
+(register-definition-prefixes "cyril-util" '("cyrillic-language-alist"))
+(register-definition-prefixes "dabbrev" '("dabbrev-"))
+(register-definition-prefixes "data-debug" '("data-debug-"))
+(register-definition-prefixes "dbus" '("dbus-"))
+(register-definition-prefixes "dcl-mode" '("dcl-"))
+(register-definition-prefixes "debug" '("debug" "inhibit-debug-on-entry"))
+(register-definition-prefixes "decipher" '("decipher-"))
+(register-definition-prefixes "delim-col" '("delimit-columns-"))
+(autoload 'delete-selection-local-mode "delsel"
+"Toggle `delete-selection-mode' only in this buffer.
+
+For compatibility with features and packages that are aware of
+`delete-selection-mode', this local mode sets the variable
+`delete-selection-mode' in the current buffer as needed.
+
+This is a minor mode.  If called interactively, toggle the
+`Delete-Selection-Local mode' mode.  If the prefix argument is positive,
+enable the mode, and if it is zero or negative, disable the mode.
+
+If called from Lisp, toggle the mode if ARG is `toggle'.  Enable the
+mode if ARG is nil, omitted, or is a positive number.  Disable the mode
+if ARG is a negative number.
+
+To check whether the minor mode is enabled in the current buffer,
+evaluate `(buffer-local-value \\='delete-selection-mode
+(current-buffer))'.
+
+The mode's hook is called both when the mode is enabled and when it is
+disabled.
+
+(fn &optional ARG)" t)
+(autoload 'delete-active-region "delsel"
+"Delete the active region.
+If KILLP is non-nil, or if called interactively with a prefix argument,
+the active region is killed instead of deleted.
+
+(fn &optional KILLP)" t)
+(register-definition-prefixes "delsel" '("del" "minibuffer-keyboard-quit"))
+(register-definition-prefixes "derived" '("derived-mode-"))
+(register-definition-prefixes "descr-text" '("describe-"))
+(defvar desktop-buffer-mode-handlers nil
+"Alist of major mode specific functions to restore a desktop buffer.
+Functions listed are called by `desktop-create-buffer' when `desktop-read'
+evaluates the desktop file.  List elements must have the form
+
+   (MAJOR-MODE . RESTORE-BUFFER-FUNCTION).
+
+Buffers with a major mode not specified here, are restored by the default
+handler `desktop-restore-file-buffer'.
+
+Handlers are called with argument list
+
+   (DESKTOP-BUFFER-FILE-NAME DESKTOP-BUFFER-NAME DESKTOP-BUFFER-MISC)
+
+Furthermore, they may use the following variables:
+
+   `desktop-file-version'
+   `desktop-buffer-major-mode'
+   `desktop-buffer-minor-modes'
+   `desktop-buffer-point'
+   `desktop-buffer-mark'
+   `desktop-buffer-read-only'
+   `desktop-buffer-locals'
+
+If a handler returns a buffer, then the saved mode settings
+and variable values for that buffer are copied into it.
+
+Modules that define a major mode that needs a special handler should contain
+code like
+
+   (defun foo-restore-desktop-buffer
+   ...
+   (add-to-list \\='desktop-buffer-mode-handlers
+                \\='(foo-mode . foo-restore-desktop-buffer))
+
+The major mode function must either be autoloaded, or of the form
+\"foobar-mode\" and defined in library \"foobar\", so that desktop
+can guess how to load the mode's definition.")
+(defvar desktop-minor-mode-handlers nil
+"Alist of functions to restore non-standard minor modes.
+Functions are called by `desktop-create-buffer' to restore minor modes.
+List elements must have the form
+
+   (MINOR-MODE . RESTORE-FUNCTION).
+
+Minor modes not specified here, are restored by the standard minor mode
+function.
+
+Handlers are called with argument list
+
+   (DESKTOP-BUFFER-LOCALS)
+
+Furthermore, they may use the following variables:
+
+   `desktop-file-version'
+   `desktop-buffer-file-name'
+   `desktop-buffer-name'
+   `desktop-buffer-major-mode'
+   `desktop-buffer-minor-modes'
+   `desktop-buffer-point'
+   `desktop-buffer-mark'
+   `desktop-buffer-read-only'
+   `desktop-buffer-misc'
+
+When a handler is called, the buffer has been created and the major mode has
+been set, but local variables listed in desktop-buffer-locals has not yet been
+created and set.
+
+Modules that define a minor mode that needs a special handler should contain
+code like
+
+   (defun foo-desktop-restore
+   ...
+   (add-to-list \\='desktop-minor-mode-handlers
+                \\='(foo-mode . foo-desktop-restore))
+
+The minor mode function must either be autoloaded, or of the form
+\"foobar-mode\" and defined in library \"foobar\", so that desktop
+can guess how to load the mode's definition.
+
+See also `desktop-minor-mode-table'.")
+(register-definition-prefixes "desktop" '("desktop-"))
+(register-definition-prefixes "deuglify" '("gnus-outlook-"))
+(register-definition-prefixes "dframe" '("dframe-"))
+(register-definition-prefixes "diary-icalendar" '("diary-icalendar-" "icalendar-diary-"))
+(register-definition-prefixes "diary-lib" '("calendar-mark-" "diary-"))
+(register-definition-prefixes "dictionary" '("dictionary-" "global-dictionary-tooltip-mode" "help-word"))
+(register-definition-prefixes "dictionary-connection" '("dictionary-connection-"))
+(register-definition-prefixes "diff" '("diff-"))
+(autoload 'diff-minor-mode "diff-mode"
+"Toggle Diff minor mode.
+
+\\{diff-minor-mode-map}
+
+This is a minor mode.  If called interactively, toggle the `Diff minor
+mode' mode.  If the prefix argument is positive, enable the mode, and if
+it is zero or negative, disable the mode.
+
+If called from Lisp, toggle the mode if ARG is `toggle'.  Enable the
+mode if ARG is nil, omitted, or is a positive number.  Disable the mode
+if ARG is a negative number.
+
+To check whether the minor mode is enabled in the current buffer,
+evaluate the variable `diff-minor-mode'.
+
+The mode's hook is called both when the mode is enabled and when it is
+disabled.
+
+(fn &optional ARG)" t)
+(put 'diff-add-log-use-relative-names 'safe-local-variable #'booleanp)
+(register-definition-prefixes "diff-mode" '("diff-"))
+(register-definition-prefixes "dig" '("dig-"))
+(register-definition-prefixes "dired" '("ede-dired-"))
+(register-definition-prefixes "dired-aux" '("dired-" "shell-command-guess"))
+(register-definition-prefixes "dired-x" '("dired-" "virtual-dired"))
+(register-definition-prefixes "dirtrack" '("dirtrack-"))
+(register-definition-prefixes "disass" '("disassemble-" "re-disassemble"))
+(register-definition-prefixes "disp-table" '("display-table-print-array"))
+(register-definition-prefixes "display-fill-column-indicator" '("display-fill-column-indicator-" "fill-indicator--set-warning"))
+(autoload 'display-line-numbers-mode "display-line-numbers"
+"Toggle display of line numbers in the buffer.
+
+This uses `display-line-numbers' internally.
+
+To change the type of line numbers displayed by default,
+customize `display-line-numbers-type'.  To change the type while
+the mode is on, set `display-line-numbers' directly.
+
+This is a minor mode.  If called interactively, toggle the
+`Display-Line-Numbers mode' mode.  If the prefix argument is positive,
+enable the mode, and if it is zero or negative, disable the mode.
+
+If called from Lisp, toggle the mode if ARG is `toggle'.  Enable the
+mode if ARG is nil, omitted, or is a positive number.  Disable the mode
+if ARG is a negative number.
+
+To check whether the minor mode is enabled in the current buffer,
+evaluate the variable `display-line-numbers-mode'.
+
+The mode's hook is called both when the mode is enabled and when it is
+disabled.
+
+(fn &optional ARG)" t)
+(defvar header-line-indent ""
+"String of spaces to indent the beginning of header-line due to line numbers.
+This is intended to be used in `header-line-format', and requires
+the `header-line-indent-mode' to be turned on, in order for the width
+of this string to be kept updated when the line-number width changes
+on display.  An example of a `header-line-format' that uses this
+variable might look like this:
+
+  (\"\" header-line-indent THE-REST...)
+
+where THE-REST is the format string which produces the actual text
+of the header-line.
+Also see `header-line-indent-width'.")
+(defvar header-line-indent-width 0
+"The width of the current line number display in the window.
+This is measured in units of the frame's canonical columns.
+This is updated when `header-line-indent-mode' is switched on,
+and is intended for use in `:align-to' display specifications
+that are part of `header-line-format', when portions of header-line
+text should be aligned to respective parts of buffer text.
+Also see `header-line-indent'.")
+(autoload 'header-line-indent-mode "display-line-numbers"
+"Minor mode to help with alignment of header line when line numbers are shown.
+
+This minor mode should be turned on in buffers which display header-line
+that needs to be aligned with buffer text when `display-line-numbers-mode'
+is turned on in the buffer.
+
+Buffers that have this switched on should have a `header-line-format'
+that uses the `header-line-indent' or the `header-line-indent-width'
+variables, which this mode will keep up-to-date with the current
+display of line numbers.  For example, a `header-line-format' that
+looks like this:
+
+  (\"\" header-line-indent THE-REST...)
+
+will make sure the text produced by THE-REST (which should be
+a header-line format string) is always indented to be aligned on
+display with the first column of buffer text.
+
+The `header-line-indent-width' variable is also kept updated,
+and can be used, for instance, in `:align-to' specs as part
+of `header-line-format', like this:
+
+  (space :align-to (+ header-line-indent-width 10))
+
+See also `line-number-display-width'.
+
+This is a minor mode.  If called interactively, toggle the
+`Header-Line-Indent mode' mode.  If the prefix argument is positive,
+enable the mode, and if it is zero or negative, disable the mode.
+
+If called from Lisp, toggle the mode if ARG is `toggle'.  Enable the
+mode if ARG is nil, omitted, or is a positive number.  Disable the mode
+if ARG is a negative number.
+
+To check whether the minor mode is enabled in the current buffer,
+evaluate the variable `header-line-indent-mode'.
+
+The mode's hook is called both when the mode is enabled and when it is
+disabled.
+
+(fn &optional ARG)" t)
+(register-definition-prefixes "display-line-numbers" '("display-line-numbers-" "header-line-indent--"))
+(register-definition-prefixes "dnd" '("dnd-"))
+(register-definition-prefixes "dns" '("dns-"))
+(register-definition-prefixes "dns-mode" '("dns-mode-"))
+(register-definition-prefixes "doc-view" '("doc-view-"))
+(register-definition-prefixes "dockerfile-ts-mode" '("dockerfile-ts-mode--"))
+(register-definition-prefixes "doctor" '("doc"))
+(register-definition-prefixes "dom" '("dom-"))
+(register-definition-prefixes "dos-fns" '("dos"))
+(register-definition-prefixes "dos-vars" '("dos-codepage-setup-hook" "msdos-shells"))
+(register-definition-prefixes "dos-w32" '("file-name-buffer-file-type-alist" "find-" "w32-"))
+(register-definition-prefixes "double" '("double-"))
+(register-definition-prefixes "dunnet" '("dun" "obj-special"))
+(register-definition-prefixes "dynamic-setting" '("dynamic-setting-handle-config-changed-event" "font-setting-change-default-font"))
+(register-definition-prefixes "easy-mmode" '("easy-mmode-"))
+(register-definition-prefixes "ebnf-abn" '("ebnf-abn-"))
+(register-definition-prefixes "ebnf-bnf" '("ebnf-"))
+(register-definition-prefixes "ebnf-dtd" '("ebnf-dtd-"))
+(register-definition-prefixes "ebnf-ebx" '("ebnf-ebx-"))
+(register-definition-prefixes "ebnf-iso" '("ebnf-"))
+(register-definition-prefixes "ebnf-otz" '("ebnf-"))
+(register-definition-prefixes "ebnf-yac" '("ebnf-yac-"))
+(register-definition-prefixes "ebnf2ps" '("ebnf-"))
+(register-definition-prefixes "ebrowse" '("ebrowse-" "electric-buffer-menu-mode-hook"))
+(register-definition-prefixes "ebuff-menu" '("Electric-buffer-menu-" "electric-buffer-"))
+(register-definition-prefixes "ecomplete" '("ecomplete-"))
+(register-definition-prefixes "ede" '("ede" "global-ede-mode-map" "project-try-ede"))
+(register-definition-prefixes "edebug" '("edebug"))
+(register-definition-prefixes "ediff" '("ediff-"))
+(register-definition-prefixes "ediff-diff" '("ediff-"))
+(register-definition-prefixes "ediff-help" '("ediff-"))
+(register-definition-prefixes "ediff-init" '("ediff-" "stipple-pixmap"))
+(register-definition-prefixes "ediff-merg" '("ediff-"))
+(register-definition-prefixes "ediff-mult" '("ediff-"))
+(register-definition-prefixes "ediff-ptch" '("ediff-"))
+(register-definition-prefixes "ediff-util" '("ediff-"))
+(register-definition-prefixes "ediff-vers" '("ediff-" "rcs-ediff-view-revision"))
+(register-definition-prefixes "ediff-wind" '("ediff-"))
+(register-definition-prefixes "editorconfig" '("editorconfig-"))
+(autoload 'editorconfig-conf-mode "editorconfig-conf-mode"
+"Major mode for editing .editorconfig files.
+
+In addition to any hooks its parent mode `conf-unix-mode' might have
+run, this mode runs the hook `editorconfig-conf-mode-hook', as the
+final or penultimate step during initialization.
+
+\\{editorconfig-conf-mode-map}" t)
+(register-definition-prefixes "editorconfig-conf-mode" '("editorconfig-conf-mode-"))
+(register-definition-prefixes "editorconfig-core" '("editorconfig-core-"))
+(register-definition-prefixes "editorconfig-core-handle" '("editorconfig-core-handle"))
+(register-definition-prefixes "editorconfig-fnmatch" '("editorconfig-fnmatch-"))
+(autoload 'editorconfig-apply "editorconfig-tools"
+"Get and apply EditorConfig properties to current buffer." t)
+(autoload 'editorconfig-find-current-editorconfig "editorconfig-tools"
+"Find the closest .editorconfig file for current file." t)
+(autoload 'editorconfig-display-current-properties "editorconfig-tools"
+"Display EditorConfig properties extracted for current buffer." t)
+(register-definition-prefixes "editorconfig-tools" '("editorconfig-mode-apply"))
+(register-definition-prefixes "edmacro" '("edmacro-"))
+(register-definition-prefixes "edt" '("edt-"))
+(register-definition-prefixes "edt-lk201" '("*EDT-keys*"))
+(register-definition-prefixes "edt-mapper" '("edt-"))
+(register-definition-prefixes "edt-pc" '("*EDT-keys*"))
+(register-definition-prefixes "edt-vt100" '("edt-set-term-width-"))
+(put 'eglot-workspace-configuration 'safe-local-variable (lambda (v) (and (listp v) (not (functionp v)))))
+(register-definition-prefixes "eglot" '("eglot-"))
+(register-definition-prefixes "ehelp" '("ehelp-map" "electric-"))
+(autoload 'defclass "eieio"
+"Define NAME as a new class derived from SUPERCLASS with SLOTS.
+OPTIONS-AND-DOC is used as the class' options and base documentation.
+SUPERCLASSES is a list of superclasses to inherit from, with SLOTS
+being the slots residing in that class definition.  Supported tags are:
+
+  :initform   - Initializing form.
+  :initarg    - Tag used during initialization.
+  :accessor   - Tag used to create a function to access this slot.
+  :allocation - Specify where the value is stored.
+                Defaults to `:instance', but could also be `:class'.
+  :writer     - A function symbol which will `write' an object's slot.
+  :reader     - A function symbol which will `read' an object.
+  :type       - The type of data allowed in this slot (see `typep').
+  :documentation
+              - A string documenting use of this slot.
+
+The following are extensions on CLOS:
+  :custom     - When customizing an object, the custom :type.  Public only.
+  :label      - A text string label used for a slot when customizing.
+  :group      - Name of a customization group this slot belongs in.
+  :printer    - A function to call to print the value of a slot.
+                See `eieio-override-prin1' as an example.
+
+A class can also have optional options.  These options happen in place
+of documentation (including a :documentation tag), in addition to
+documentation, or not at all.  Supported options are:
+
+  :documentation - The doc-string used for this class.
+
+Options added to EIEIO:
+
+  :allow-nil-initform - Non-nil to skip typechecking of null initforms.
+  :custom-groups      - List of custom group names.  Organizes slots into
+                        reasonable groups for customizations.
+  :abstract           - Non-nil to prevent instances of this class.
+                        If a string, use as an error string if someone does
+                        try to make an instance.
+  :method-invocation-order
+                      - Control the method invocation order if there is
+                        multiple inheritance.  Valid values are:
+                         :breadth-first - The default.
+                         :depth-first
+
+Options in CLOS not supported in EIEIO:
+
+  :metaclass - Class to use in place of `standard-class'
+  :default-initargs - Initargs to use when initializing new objects of
+                      this class.
+
+Due to the way class options are set up, you can add any tags you wish,
+and reference them using the function `class-option'.
+
+(fn NAME SUPERCLASSES SLOTS &rest OPTIONS-AND-DOC)" nil t)
+(autoload 'make-instance "eieio"
+"Make a new instance of CLASS based on INITARGS.
+For example:
+
+  (make-instance \\='foo)
+
+INITARGS is a property list with keywords based on the `:initarg'
+for each slot.  For example:
+
+  (make-instance \\='foo :slot1 value1 :slotN valueN)
+
+(fn CLASS &rest INITARGS)")
+(register-definition-prefixes "eieio" '("child-of-class-p" "eieio-" "find-class" "obj" "oref" "oset" "same-class-p" "set-slot-value" "slot-" "with-slots"))
+(register-definition-prefixes "eieio-base" '("eieio-"))
+(register-definition-prefixes "eieio-core" '("cl--generic-struct-tag" "class-" "eieio-" "inconsistent-class-hierarchy" "invalid-slot-" "unbound-slot"))
+(register-definition-prefixes "eieio-custom" '("eieio-"))
+(register-definition-prefixes "eieio-datadebug" '("data-debug-insert-object-"))
+(register-definition-prefixes "eieio-opt" '("eieio-"))
+(register-definition-prefixes "eieio-speedbar" '("eieio-speedbar"))
+(register-definition-prefixes "elec-pair" '("electric-pair-"))
+(register-definition-prefixes "elide-head" '("elide-head-"))
+(register-definition-prefixes "elisp-scope" '("elisp-scope-"))
+(register-definition-prefixes "elixir-ts-mode" '("elixir-ts-"))
+(register-definition-prefixes "elp" '("elp-"))
+(register-definition-prefixes "em-alias" '("eshell" "pcomplete/eshell-mode/alias"))
+(register-definition-prefixes "em-banner" '("eshell-banner-"))
+(register-definition-prefixes "em-basic" '("eshell" "pcomplete/eshell-mode/eshell-debug"))
+(register-definition-prefixes "em-cmpl" '("eshell-"))
+(register-definition-prefixes "em-dirs" '("eshell"))
+(register-definition-prefixes "em-elecslash" '("eshell-elec"))
+(register-definition-prefixes "em-extpipe" '("eshell-"))
+(register-definition-prefixes "em-glob" '("eshell-"))
+(register-definition-prefixes "em-hist" '("em-hist-unload-function" "eshell"))
+(register-definition-prefixes "em-ls" '("em-ls-unload-function" "eshell"))
+(register-definition-prefixes "em-pred" '("eshell-"))
+(register-definition-prefixes "em-prompt" '("eshell-"))
+(register-definition-prefixes "em-rebind" '("eshell-"))
+(register-definition-prefixes "em-script" '("eshell"))
+(register-definition-prefixes "em-smart" '("em-smart-unload-hook" "eshell-"))
+(register-definition-prefixes "em-term" '("eshell-"))
+(register-definition-prefixes "em-tramp" '("eshell"))
+(register-definition-prefixes "em-unix" '("eshell"))
+(register-definition-prefixes "em-xtra" '("eshell/"))
+(autoload 'emacs-authors-mode "emacs-authors-mode"
+"Major mode for viewing \"etc/AUTHORS\" from the Emacs distribution.
+Provides some basic font locking and not much else.
+
+In addition to any hooks its parent mode `special-mode' might have
+run, this mode runs the hook `emacs-authors-mode-hook', as the final
+or penultimate step during initialization.
+
+\\{emacs-authors-mode-map}" t)
+(register-definition-prefixes "emacs-authors-mode" '("emacs-authors-" "etc-authors-"))
+(register-definition-prefixes "emacs-lock" '("emacs-lock-"))
+(register-definition-prefixes "emacs-news-mode" '("emacs-news-"))
+(register-definition-prefixes "emacsbug" '("report-emacs-bug-" "submit-emacs-patch-excluded-maintainers"))
+(register-definition-prefixes "emerge" '("emerge-"))
+(register-definition-prefixes "emoji" '("emoji-"))
+(register-definition-prefixes "enriched" '("enriched-"))
+(register-definition-prefixes "epa" '("epa-"))
+(register-definition-prefixes "epa-file" '("epa-"))
+(register-definition-prefixes "epa-ks" '("epa-k"))
+(register-definition-prefixes "epa-mail" '("epa-mail-"))
+(register-definition-prefixes "epg" '("epg-"))
+(register-definition-prefixes "epg-config" '("epg-"))
+(register-definition-prefixes "erc" '("erc-"))
+(register-definition-prefixes "erc-autoaway" '("erc-auto"))
+(register-definition-prefixes "erc-backend" '("erc-"))
+(register-definition-prefixes "erc-button" '("erc-"))
+(register-definition-prefixes "erc-capab" '("erc-capab-identify-"))
+(register-definition-prefixes "erc-common" '("define-erc-module" "erc-"))
+(register-definition-prefixes "erc-compat" '("erc-"))
+(register-definition-prefixes "erc-dcc" '("erc-" "pcomplete/erc-mode/"))
+(register-definition-prefixes "erc-desktop-notifications" '("erc-notifications-"))
+(register-definition-prefixes "erc-ezbounce" '("erc-ezb-"))
+(register-definition-prefixes "erc-fill" '("erc-"))
+(register-definition-prefixes "erc-goodies" '("erc-"))
+(register-definition-prefixes "erc-ibuffer" '("erc-"))
+(register-definition-prefixes "erc-identd" '("erc-identd-"))
+(register-definition-prefixes "erc-imenu" '("erc-"))
+(register-definition-prefixes "erc-join" '("erc-"))
+(register-definition-prefixes "erc-lang" '("erc-cmd-LANG" "iso-639-1-languages" "language"))
+(register-definition-prefixes "erc-list" '("erc-"))
+(register-definition-prefixes "erc-log" '("erc-"))
+(register-definition-prefixes "erc-match" '("erc-"))
+(register-definition-prefixes "erc-menu" '("erc-menu-"))
+(register-definition-prefixes "erc-netsplit" '("erc-"))
+(register-definition-prefixes "erc-networks" '("erc-"))
+(register-definition-prefixes "erc-nicks" '("erc-nicks-"))
+(register-definition-prefixes "erc-notify" '("erc-"))
+(register-definition-prefixes "erc-page" '("erc-"))
+(register-definition-prefixes "erc-pcomplete" '("erc-" "pcomplete"))
+(register-definition-prefixes "erc-replace" '("erc-replace-"))
+(register-definition-prefixes "erc-ring" '("erc-"))
+(register-definition-prefixes "erc-sasl" '("erc-sasl-"))
+(register-definition-prefixes "erc-services" '("erc-"))
+(register-definition-prefixes "erc-sound" '("erc-"))
+(register-definition-prefixes "erc-speedbar" '("erc-"))
+(register-definition-prefixes "erc-spelling" '("erc-spelling-"))
+(register-definition-prefixes "erc-stamp" '("erc-"))
+(register-definition-prefixes "erc-status-sidebar" '("erc-status-sidebar-"))
+(register-definition-prefixes "erc-track" '("erc-"))
+(register-definition-prefixes "erc-truncate" '("erc-"))
+(register-definition-prefixes "erc-xdcc" '("erc-"))
+(register-definition-prefixes "ert" '("ert-"))
+(register-definition-prefixes "ert-font-lock" '("ert-font-lock--"))
+(register-definition-prefixes "ert-x" '("ert-"))
+(register-definition-prefixes "erts-mode" '("erts-"))
+(register-definition-prefixes "esh-arg" '("eshell-"))
+(register-definition-prefixes "esh-cmd" '("eshell"))
+(register-definition-prefixes "esh-ext" '("eshell"))
+(register-definition-prefixes "esh-io" '("eshell-"))
+(register-definition-prefixes "esh-mode" '("eshell"))
+(register-definition-prefixes "esh-module" '("eshell-"))
+(register-definition-prefixes "esh-opt" '("eshell-"))
+(register-definition-prefixes "esh-proc" '("eshell"))
+(register-definition-prefixes "esh-util" '("eshell-"))
+(register-definition-prefixes "esh-var" '("eshell" "pcomplete/eshell-mode/"))
+(register-definition-prefixes "eshell" '("eshell-"))
+(defvar tags-file-name nil
+"File name of tags table.
+To switch to a new tags table, do not set this variable; instead,
+invoke `visit-tags-table', which is the only reliable way of
+setting the value of this variable, whether buffer-local or global.
+Use the `etags' program to make a tags table file.")
+(put 'tags-file-name 'safe-local-variable 'stringp)
+(put 'tags-case-fold-search 'safe-local-variable 'symbolp)
+(register-definition-prefixes "etags" '("default-tags-table-function" "etags-" "file-of-tag" "find-tag-" "goto-tag-location-function" "initialize-new-tags-table" "last-tag" "list-tags-function" "select-tags-table-" "snarf-tag-function" "tag" "verify-tags-table-function"))
+(put 'etags-regen-regexp-alist 'safe-local-variable (lambda (value) (and (listp value) (seq-every-p (lambda (group) (and (consp group) (listp (car group)) (listp (cdr group)) (seq-every-p #'stringp (car group)) (seq-every-p #'stringp (cdr group)))) value))))
+(put 'etags-regen-file-extensions 'safe-local-variable (lambda (value) (and (listp value) (seq-every-p #'stringp value))))
+(put 'etags-regen-ignores 'safe-local-variable (lambda (value) (and (listp value) (seq-every-p #'stringp value))))
+(register-definition-prefixes "etags-regen" '("etags-regen-"))
+(register-definition-prefixes "ethio-util" '("ethio-" "exit-ethiopic-environment"))
+(register-definition-prefixes "ethiopic" '("ethio-select-a-translation"))
+(defvar eudc-tools-menu (let ((map (make-sparse-keymap "Directory Servers"))) (define-key map [phone] '(menu-item "Get Phone" eudc-get-phone :help "Get the phone field of name from the directory server")) (define-key map [email] '(menu-item "Get Email" eudc-get-email :help "Get the email field of NAME from the directory server")) (define-key map [separator-eudc-email] menu-bar-separator) (define-key map [expand-inline] '(menu-item "Expand Inline Query" eudc-expand-inline :help "Query the directory server, and expand the query string before point")) (define-key map [query] '(menu-item "Query with Form" eudc-query-form :help "Display a form to query the directory server")) (define-key map [separator-eudc-query] menu-bar-separator) (define-key map [new] '(menu-item "New Server" eudc-set-server :help "Set the directory server to SERVER using PROTOCOL")) (define-key map [load] '(menu-item "Load Hotlist of Servers" eudc-load-eudc :help "Load the Emacs Unified Directory Client")) map))
+(register-definition-prefixes "eudc" '("eudc-"))
+(register-definition-prefixes "eudc-bob" '("eudc-bob-"))
+(register-definition-prefixes "eudc-capf" '("eudc-capf-modes"))
+(register-definition-prefixes "eudc-export" '("eudc-"))
+(register-definition-prefixes "eudc-hotlist" '("eudc-hotlist-"))
+(register-definition-prefixes "eudc-vars" '("eudc-"))
+(register-definition-prefixes "eudcb-bbdb" '("eudc-bbdb-"))
+(register-definition-prefixes "eudcb-ecomplete" '("eudc-ecomplete-attributes-translation-alist"))
+(register-definition-prefixes "eudcb-ldap" '("eudc-"))
+(register-definition-prefixes "eudcb-mab" '("eudc-"))
+(register-definition-prefixes "eudcb-macos-contacts" '("eudc-macos-contacts-"))
+(register-definition-prefixes "ewoc" '("ewoc-"))
+(register-definition-prefixes "eww" '("eww-"))
+(autoload 'executable-command-find-posix-p "executable"
+"Check if PROGRAM handles arguments Posix-style.
+If PROGRAM is non-nil, use that instead of \"find\".
+
+(fn &optional PROGRAM)")
+(autoload 'executable-interpret "executable"
+"Run script with user-specified args, and collect output in a buffer.
+While script runs asynchronously, you can use the \\[next-error]
+command to find the next error.  The buffer is also in `comint-mode' and
+`compilation-shell-minor-mode', so that you can answer any prompts.
+
+(fn COMMAND)" t)
+(autoload 'executable-set-magic "executable"
+"Set this buffer's interpreter to INTERPRETER with optional ARGUMENT.
+The variables `executable-magicless-file-regexp', `executable-prefix-env',
+`executable-insert', `executable-query' and `executable-chmod' control
+when and how magic numbers are inserted or replaced and scripts made
+executable.
+
+(fn INTERPRETER &optional ARGUMENT NO-QUERY-FLAG INSERT-FLAG)" t)
+(autoload 'executable-make-buffer-file-executable-if-script-p "executable"
+"Make file executable according to umask if not already executable.
+If file already has any execute bits set at all, do not change existing
+file modes.")
+(register-definition-prefixes "executable" '("executable-"))
+(register-definition-prefixes "exif" '("exif-"))
+(register-definition-prefixes "expand" '("expand-"))
+(register-definition-prefixes "external-completion" '("external-completion-"))
+(register-definition-prefixes "ezimage" '("defezimage" "ezimage-"))
+(register-definition-prefixes "f90" '("f90-"))
+(register-definition-prefixes "face-remap" '("buffer-face-mode-" "face-" "global-text-scale-adjust-" "internal-lisp-face-attributes" "text-scale-"))
+(autoload 'facemenu-menu "facemenu" nil nil 'keymap)
+(register-definition-prefixes "facemenu" '("facemenu-" "list-colors-"))
+(register-definition-prefixes "faceup" '("faceup-"))
+(register-definition-prefixes "feedmail" '("feedmail-"))
+(register-definition-prefixes "ffap" '("dired-at-point-" "ffap-" "find-file-literally-at-point"))
+(register-definition-prefixes "filecache" '("file-cache-"))
+(register-definition-prefixes "fileloop" '("fileloop-"))
+(register-definition-prefixes "filenotify" '("file-notify-"))
+(register-definition-prefixes "files" '("ede-"))
+(defvar enable-connection-local-variables t
+"Non-nil means enable use of connection-local variables.")
+(register-definition-prefixes "files-x" '("connection-local-" "dir-locals-to-string" "modify-" "read-"))
+(register-definition-prefixes "filesets" '("filesets-"))
+(register-definition-prefixes "find-cmd" '("find-"))
+(register-definition-prefixes "find-dired" '("find-" "kill-find"))
+(register-definition-prefixes "find-file" '("cc-" "ff-" "modula2-other-file-alist"))
+(register-definition-prefixes "find-func" '("find-" "read-library-name--find-files"))
+(register-definition-prefixes "find-lisp" '("find-lisp-"))
+(register-definition-prefixes "finder" '("finder-" "generated-finder-keywords-file"))
+(register-definition-prefixes "flow-ctrl" '("flow-control-c-"))
+(register-definition-prefixes "flow-fill" '("fill-flowed-"))
+(register-definition-prefixes "flymake" '("flymake-"))
+(register-definition-prefixes "flymake-cc" '("flymake-cc-"))
+(register-definition-prefixes "flymake-proc" '("flymake-proc-"))
+(autoload 'flyspell-prog-mode "flyspell"
+"Turn on `flyspell-mode' for comments and strings." t)
+(defvar flyspell-mode nil "Non-nil if Flyspell mode is enabled.")
+(register-definition-prefixes "flyspell" '("flyspell-" "mail-mode-flyspell-verify" "make-flyspell-overlay" "sgml-mode-flyspell-verify" "tex"))
+(register-definition-prefixes "foldout" '("foldout-"))
+(register-definition-prefixes "follow" '("follow-"))
+(register-definition-prefixes "fontset" '("build-default-fontset-data" "charset-script-alist" "create-" "fontset-" "generate-fontset-menu" "set" "standard-fontset-spec" "x-" "xlfd-"))
+(register-definition-prefixes "footnote" '("footnote-"))
+(register-definition-prefixes "format" '("semantic-"))
+(register-definition-prefixes "format-spec" '("format-spec-"))
+(register-definition-prefixes "forms" '("forms-"))
+(register-definition-prefixes "fortran" '("fortran-"))
+(register-definition-prefixes "fortune" '("fortune-"))
+(defvar frameset-session-filter-alist (append '((left . frameset-filter-iconified) (minibuffer . frameset-filter-minibuffer) (top . frameset-filter-iconified)) (mapcar (lambda (p) (cons p :never)) frame-internal-parameters))
+"Minimum set of parameters to filter for live (on-session) framesets.
+DO NOT MODIFY.  See `frameset-filter-alist' for a full description.")
+(defvar frameset-persistent-filter-alist (append '((background-color . frameset-filter-sanitize-color) (bottom . frameset-filter-shelve-param) (buffer-list . :never) (buffer-predicate . :never) (buried-buffer-list . :never) (client . :never) (delete-before . :never) (font . frameset-filter-font-param) (font-backend . :never) (foreground-color . frameset-filter-sanitize-color) (frameset--text-pixel-height . :save) (frameset--text-pixel-width . :save) (fullscreen . frameset-filter-shelve-param) (GUI:bottom . frameset-filter-unshelve-param) (GUI:font . frameset-filter-unshelve-param) (GUI:fullscreen . frameset-filter-unshelve-param) (GUI:height . frameset-filter-unshelve-param) (GUI:left . frameset-filter-unshelve-param) (GUI:right . frameset-filter-unshelve-param) (GUI:top . frameset-filter-unshelve-param) (GUI:width . frameset-filter-unshelve-param) (height . frameset-filter-shelve-param) (left . frameset-filter-shelve-param) (parent-frame . :never) (mouse-wheel-frame . :never) (right . frameset-filter-shelve-param) (top . frameset-filter-shelve-param) (tty . frameset-filter-tty-to-GUI) (tty-type . frameset-filter-tty-to-GUI) (width . frameset-filter-shelve-param) (window-system . :never)) frameset-session-filter-alist)
+"Parameters to filter for persistent framesets.
+DO NOT MODIFY.  See `frameset-filter-alist' for a full description.")
+(defvar frameset-filter-alist frameset-persistent-filter-alist
+"Alist of frame parameters and filtering functions.
+
+This alist is the default value of the FILTERS argument of
+`frameset-save' and `frameset-restore' (which see).
+
+Initially, `frameset-filter-alist' is set to, and shares the value of,
+`frameset-persistent-filter-alist'.  You can override any item in
+this alist by `push'ing a new item onto it.  If, for some reason, you
+intend to modify existing values, do
+
+  (setq frameset-filter-alist (copy-tree frameset-filter-alist))
+
+before changing anything.
+
+On saving, PARAMETERS is the parameter alist of each frame processed,
+and FILTERED is the parameter alist that gets saved to the frameset.
+
+On restoring, PARAMETERS is the parameter alist extracted from the
+frameset, and FILTERED is the resulting frame parameter alist used
+to restore the frame.
+
+Elements of `frameset-filter-alist' are conses (PARAM . ACTION),
+where PARAM is a parameter name (a symbol identifying a frame
+parameter), and ACTION can be:
+
+ nil       The parameter is copied to FILTERED.
+ :never    The parameter is never copied to FILTERED.
+ :save     The parameter is copied only when saving the frame.
+ :restore  The parameter is copied only when restoring the frame.
+ FILTER    A filter function.
+
+FILTER can be a symbol FILTER-FUN, or a list (FILTER-FUN ARGS...).
+FILTER-FUN is invoked with
+
+  (apply FILTER-FUN CURRENT FILTERED PARAMETERS SAVING ARGS)
+
+where
+
+ CURRENT     A cons (PARAM . VALUE), where PARAM is the one being
+	     filtered and VALUE is its current value.
+ FILTERED    The resulting alist (so far).
+ PARAMETERS  The complete alist of parameters being filtered,
+ SAVING      Non-nil if filtering before saving state, nil if filtering
+	       before restoring it.
+ ARGS        Any additional arguments specified in the ACTION.
+
+FILTER-FUN is allowed to modify items in FILTERED, but no other arguments.
+It must return:
+ nil                      Skip CURRENT (do not add it to FILTERED).
+ t                        Add CURRENT to FILTERED as is.
+ (NEW-PARAM . NEW-VALUE)  Add this to FILTERED instead of CURRENT.
+
+Frame parameters not on this alist are passed intact, as if they were
+defined with ACTION = nil.")
+(register-definition-prefixes "frameset" '("frameset-"))
+(register-definition-prefixes "fringe" '("fringe-" "set-fringe-"))
+(register-definition-prefixes "gamegrid" '("gamegrid-"))
+(register-definition-prefixes "gametree" '("gametree-"))
+(register-definition-prefixes "gdb-mi" '("breakpoint" "def-gdb-" "gdb" "gud-" "hollow-right-triangle"))
+(register-definition-prefixes "generator" '("cps-" "iter-"))
+(defvar generic-mode-list nil
+"A list of mode names for `generic-mode'.
+Do not add entries to this list directly; use `define-generic-mode'
+instead (which see).")
+(register-definition-prefixes "generic" '("generic-"))
+(register-definition-prefixes "glasses" '("glasses-"))
+(autoload 'glyphless-display-mode "glyphless-mode"
+"Minor mode for displaying glyphless characters in the current buffer.
+
+If enabled, all glyphless characters will be displayed as boxes
+that display their acronyms.
+
+This is a minor mode.  If called interactively, toggle the
+`Glyphless-Display mode' mode.  If the prefix argument is positive,
+enable the mode, and if it is zero or negative, disable the mode.
+
+If called from Lisp, toggle the mode if ARG is `toggle'.  Enable the
+mode if ARG is nil, omitted, or is a positive number.  Disable the mode
+if ARG is a negative number.
+
+To check whether the minor mode is enabled in the current buffer,
+evaluate the variable `glyphless-display-mode'.
+
+The mode's hook is called both when the mode is enabled and when it is
+disabled.
+
+(fn &optional ARG)" t)
+(register-definition-prefixes "glyphless-mode" '("glyphless-mode-"))
+(register-definition-prefixes "gmm-utils" '("defun-gmm" "gmm-"))
+(register-definition-prefixes "gnus" '("gnus-"))
+(register-definition-prefixes "gnus-agent" '("gnus-"))
+(register-definition-prefixes "gnus-art" '("article-" "gnus-"))
+(register-definition-prefixes "gnus-async" '("gnus-"))
+(register-definition-prefixes "gnus-bcklg" '("gnus-backlog-"))
+(register-definition-prefixes "gnus-bookmark" '("gnus-bookmark-"))
+(register-definition-prefixes "gnus-cache" '("gnus-"))
+(register-definition-prefixes "gnus-cite" '("gnus-" "turn-o"))
+(register-definition-prefixes "gnus-cloud" '("gnus-cloud-"))
+(register-definition-prefixes "gnus-cus" '("category-fields" "gnus-"))
+(register-definition-prefixes "gnus-delay" '("gnus-delay-"))
+(register-definition-prefixes "gnus-demon" '("gnus-"))
+(register-definition-prefixes "gnus-diary" '("gnus-"))
+(register-definition-prefixes "gnus-dired" '("gnus-dired-"))
+(register-definition-prefixes "gnus-draft" '("gnus-"))
+(register-definition-prefixes "gnus-dup" '("gnus-"))
+(register-definition-prefixes "gnus-eform" '("gnus-edit-form"))
+(register-definition-prefixes "gnus-fun" '("gnus-"))
+(register-definition-prefixes "gnus-gravatar" '("gnus-gravatar-"))
+(register-definition-prefixes "gnus-group" '("gnus-"))
+(register-definition-prefixes "gnus-html" '("gnus-"))
+(register-definition-prefixes "gnus-icalendar" '("gnus-icalendar"))
+(register-definition-prefixes "gnus-int" '("gnus-"))
+(register-definition-prefixes "gnus-kill" '("gnus-"))
+(register-definition-prefixes "gnus-logic" '("gnus-"))
+(register-definition-prefixes "gnus-mh" '("gnus-"))
+(register-definition-prefixes "gnus-ml" '("gnus-mailing-list-"))
+(register-definition-prefixes "gnus-mlspl" '("gnus-group-split-"))
+(register-definition-prefixes "gnus-msg" '("gnus-"))
+(register-definition-prefixes "gnus-notifications" '("gnus-notifications-"))
+(register-definition-prefixes "gnus-picon" '("gnus-picon-"))
+(register-definition-prefixes "gnus-range" '("gnus-"))
+(register-definition-prefixes "gnus-registry" '("gnus-"))
+(register-definition-prefixes "gnus-rfc1843" '("rfc1843-"))
+(register-definition-prefixes "gnus-rmail" '("gnus-"))
+(register-definition-prefixes "gnus-salt" '("gnus-"))
+(register-definition-prefixes "gnus-score" '("gnus-"))
+(register-definition-prefixes "gnus-search" '("gnus-search-"))
+(register-definition-prefixes "gnus-sieve" '("gnus-sieve-"))
+(register-definition-prefixes "gnus-spec" '("gnus-"))
+(register-definition-prefixes "gnus-srvr" '("gnus-"))
+(register-definition-prefixes "gnus-start" '("gnus-"))
+(register-definition-prefixes "gnus-sum" '("gnus-"))
+(register-definition-prefixes "gnus-topic" '("gnus-"))
+(register-definition-prefixes "gnus-undo" '("gnus-"))
+(register-definition-prefixes "gnus-util" '("gnus-"))
+(register-definition-prefixes "gnus-uu" '("gnus-"))
+(register-definition-prefixes "gnus-vm" '("gnus-"))
+(register-definition-prefixes "gnus-win" '("gnus-"))
+(register-definition-prefixes "gnutls" '("gnutls-" "open-gnutls-stream"))
+(register-definition-prefixes "go-ts-mode" '("go-"))
+(register-definition-prefixes "gomoku" '("gomoku-"))
+(register-definition-prefixes "goto-addr" '("goto-addr"))
+(register-definition-prefixes "gravatar" '("gravatar-"))
+(defvar grep-match-face 'match
+"Face name to use for grep matches.")
+(defvar grep-program "grep"
+"The default grep program for `grep-command' and `grep-find-command'.
+This variable's value takes effect when `grep-compute-defaults' is called.")
+(defvar find-program "find"
+"The default find program.
+This is used by commands like `grep-find-command', `find-dired'
+and others.")
+(defvar xargs-program "xargs"
+"The default xargs program for `grep-find-command'.
+See `grep-find-use-xargs'.
+This variable's value takes effect when `grep-compute-defaults' is called.")
+(defvar grep-history nil
+"History list for grep.")
+(defvar grep-find-history nil
+"History list for `grep-find'.")
+(register-definition-prefixes "grep" '("grep-" "kill-grep" "rgrep-"))
+(register-definition-prefixes "gssapi" '("gssapi-program" "open-gssapi-stream"))
+(register-definition-prefixes "gud" '("gdb-" "gud-"))
+(register-definition-prefixes "gv" '("gv-" "make-obsolete-generalized-variable"))
+(register-definition-prefixes "handwrite" '("handwrite-" "menu-bar-handwrite-map"))
+(register-definition-prefixes "hangul" '("hangul" "notzerop"))
+(register-definition-prefixes "hanja-util" '("han"))
+(register-definition-prefixes "hanoi" '("hanoi-"))
+(register-definition-prefixes "heex-ts-mode" '("heex-ts-"))
+(autoload 'help-at-pt-string "help-at-pt"
+"Return the help-echo string at point.
+Normally, the string produced by the `help-echo' text or overlay
+property, or nil, is returned.
+If KBD is non-nil, `kbd-help' is used instead, and any
+`help-echo' property is ignored.  In this case, the return value
+can also be t, if that is the value of the `kbd-help' property.
+
+(fn &optional KBD)")
+(autoload 'help-at-pt-kbd-string "help-at-pt"
+"Return the keyboard help string at point.
+If the `kbd-help' text or overlay property at point produces a
+string, return it.  Otherwise, use the `help-echo' property.
+If this produces no string either, return nil.")
+(autoload 'display-local-help "help-at-pt"
+"Display in the echo area `kbd-help' or `help-echo' text at point.
+This command displays the help message which is the string produced
+by the `kbd-help' property at point.  If `kbd-help' at point does not
+produce a string, but the `help-echo' property does, then that string
+is displayed instead.
+
+The string is passed through `substitute-command-keys' before it
+is displayed.
+
+If INHIBIT-WARNING is non-nil, do not display a warning message when
+there is no help property at point.
+
+If DESCRIBE-BUTTON in non-nil (interactively, the prefix arg), and
+there's a button/widget at point, pop up a buffer describing that
+button/widget instead.
+
+(fn &optional INHIBIT-WARNING DESCRIBE-BUTTON)" t)
+(autoload 'help-at-pt-cancel-timer "help-at-pt"
+"Cancel any timer set by `help-at-pt-set-timer'.
+This disables `help-at-pt-display-when-idle'." t)
+(autoload 'help-at-pt-set-timer "help-at-pt"
+"Enable `help-at-pt-display-when-idle'.
+This is done by setting a timer, if none is currently active." t)
+(autoload 'scan-buf-move-to-region "help-at-pt"
+"Go to the start of the next region with non-nil PROP property.
+Then run HOOK, which should be a quoted symbol that is a normal
+hook variable, or an expression evaluating to such a symbol.
+Adjacent areas with different non-nil PROP properties are
+considered different regions.
+
+With numeric argument ARG, move to the start of the ARGth next
+such region, then run HOOK.  If ARG is negative, move backward.
+If point is already in a region, then that region does not count
+toward ARG.  If ARG is 0 and point is inside a region, move to
+the start of that region.  If ARG is 0 and point is not in a
+region, print a message to that effect, but do not move point and
+do not run HOOK.  If there are not enough regions to move over,
+an error results and the number of available regions is mentioned
+in the error message.  Point is not moved and HOOK is not run.
+
+(fn PROP &optional ARG HOOK)")
+(autoload 'scan-buf-next-region "help-at-pt"
+"Go to the start of the next region with non-nil help-echo.
+Print the help found there using `display-local-help'.  Adjacent
+areas with different non-nil help-echo properties are considered
+different regions.
+
+With numeric argument ARG, move to the start of the ARGth next
+help-echo region.  If ARG is negative, move backward.  If point
+is already in a help-echo region, then that region does not count
+toward ARG.  If ARG is 0 and point is inside a help-echo region,
+move to the start of that region.  If ARG is 0 and point is not
+in such a region, just print a message to that effect.  If there
+are not enough regions to move over, an error results and the
+number of available regions is mentioned in the error message.
+
+A potentially confusing subtlety is that point can be in a
+help-echo region without any local help being available.  This is
+because `help-echo' can be a function evaluating to nil.  This
+rarely happens in practice.
+
+(fn &optional ARG)" t)
+(autoload 'scan-buf-previous-region "help-at-pt"
+"Go to the start of the previous region with non-nil help-echo.
+Print the help found there using `display-local-help'.  Adjacent
+areas with different non-nil help-echo properties are considered
+different regions.  With numeric argument ARG, behaves like
+`scan-buf-next-region' with argument -ARG.
+
+(fn &optional ARG)" t)
+(register-definition-prefixes "help-at-pt" '("help-at-pt-" "scan-buf-move-hook"))
+(register-definition-prefixes "help-fns" '("describe-" "help-" "keymap-name-history"))
+(register-definition-prefixes "help-macro" '("help-for-help-use-variable-pitch" "make-help-screen"))
+(register-definition-prefixes "help-mode" '("describe-symbol-backends" "help-"))
+(autoload 'Helper-describe-bindings "helper"
+"Describe local key bindings of current mode." t)
+(autoload 'Helper-help "helper"
+"Provide help for current mode." t)
+(register-definition-prefixes "helper" '("Helper-"))
+(register-definition-prefixes "hex-util" '("decode-hex-string" "encode-hex-string"))
+(register-definition-prefixes "hexl" '("dehexlify-buffer" "hexl-"))
+(register-definition-prefixes "hfy-cmap" '("hfy-" "htmlfontify-unload-rgb-file"))
+(autoload 'hi-lock-mode "hi-lock"
+"Toggle selective highlighting of patterns (Hi Lock mode).
+
+Hi Lock mode is automatically enabled when you invoke any of the
+highlighting commands listed below, such as \\[highlight-regexp].
+To enable Hi Lock mode in all buffers, use `global-hi-lock-mode'
+or add (global-hi-lock-mode 1) to your init file.
+
+In buffers where Font Lock mode is enabled, patterns are
+highlighted using font lock.  In buffers where Font Lock mode is
+disabled, patterns are applied using overlays; in this case, the
+highlighting will not be updated as you type.  The Font Lock mode
+is considered \"enabled\" in a buffer if its `major-mode'
+causes `font-lock-specified-p' to return non-nil, which means
+the major mode specifies support for Font Lock.
+
+When Hi Lock mode is enabled, a \"Regexp Highlighting\" submenu
+is added to the \"Edit\" menu.  The commands in the submenu,
+which can be called interactively, are:
+
+\\[highlight-regexp] REGEXP FACE
+  Highlight matches of pattern REGEXP in current buffer with FACE.
+
+\\[highlight-phrase] PHRASE FACE
+  Highlight matches of phrase PHRASE in current buffer with FACE.
+  (PHRASE can be any REGEXP, but spaces will be replaced by matches
+  to whitespace and initial lower-case letters will become case insensitive.)
+
+\\[highlight-lines-matching-regexp] REGEXP FACE
+  Highlight lines containing matches of REGEXP in current buffer with FACE.
+
+\\[highlight-symbol-at-point]
+  Highlight the symbol found near point without prompting, using the next
+  available face automatically.
+
+\\[unhighlight-regexp] REGEXP
+  Remove highlighting on matches of REGEXP in current buffer.
+
+\\[hi-lock-write-interactive-patterns]
+  Write active REGEXPs into buffer as comments (if possible).  They may
+  be read the next time file is loaded or when the \\[hi-lock-find-patterns] command
+  is issued.  The inserted regexps are in the form of font lock keywords.
+  (See `font-lock-keywords'.)  They may be edited and re-loaded with \\[hi-lock-find-patterns],
+  any valid `font-lock-keywords' form is acceptable.  When a file is
+  loaded the patterns are read if `hi-lock-file-patterns-policy' is
+  `always', or if it's `ask' and the user responds y to the prompt,
+  or if `hi-lock-file-patterns-policy' is bound to a function and that
+  function returns t.
+
+\\[hi-lock-find-patterns]
+  Re-read patterns stored in buffer (in the format produced by \\[hi-lock-write-interactive-patterns]).
+
+When hi-lock is started and if the mode is not excluded or patterns
+rejected, the beginning of the buffer is searched for lines of the
+form:
+  Hi-lock: (FOO ...)
+
+where (FOO ...) is a list of patterns.  The patterns must start before
+position (number of characters into buffer)
+`hi-lock-file-patterns-range'.  Patterns will be read until
+Hi-lock: end is found.  A mode is excluded if it's in the list
+`hi-lock-exclude-modes'.
+
+This is a minor mode.  If called interactively, toggle the `Hi-Lock
+mode' mode.  If the prefix argument is positive, enable the mode, and if
+it is zero or negative, disable the mode.
+
+If called from Lisp, toggle the mode if ARG is `toggle'.  Enable the
+mode if ARG is nil, omitted, or is a positive number.  Disable the mode
+if ARG is a negative number.
+
+To check whether the minor mode is enabled in the current buffer,
+evaluate the variable `hi-lock-mode'.
+
+The mode's hook is called both when the mode is enabled and when it is
+disabled.
+
+(fn &optional ARG)" t)
+(autoload 'hi-lock-line-face-buffer "hi-lock"
+"Highlight all lines that match REGEXP using FACE.
+The lines that match REGEXP will be displayed by merging
+the attributes of FACE with any other face attributes
+of text in those lines.
+
+Interactively, prompt for REGEXP using `hi-lock-read-regexp', then FACE.
+Use the global history list for FACE.
+
+If REGEXP contains upper case characters (excluding those preceded by `\\')
+and `search-upper-case' is non-nil, the matching is case-sensitive.
+
+Use Font lock mode, if enabled, to highlight REGEXP.  Otherwise,
+use overlays for highlighting.  If overlays are used, the
+highlighting will not update as you type.
+
+(fn REGEXP &optional FACE)" t)
+(autoload 'hi-lock-face-buffer "hi-lock"
+"Set face of each match of REGEXP to FACE.
+Interactively, prompt for REGEXP using `hi-lock-read-regexp', then FACE.
+Use the global history list for FACE.  Limit face setting to the
+corresponding SUBEXP (interactively, the prefix argument) of REGEXP.
+If SUBEXP is omitted or nil, the entire REGEXP is highlighted.
+
+LIGHTER is a human-readable string that can be used to select
+a regexp to unhighlight by its name instead of selecting a possibly
+complex regexp or closure.
+
+If REGEXP contains upper case characters (excluding those preceded by `\\')
+and `search-upper-case' is non-nil, the matching is case-sensitive.
+
+Use Font lock mode, if enabled, to highlight REGEXP.  Otherwise,
+use overlays for highlighting.  If overlays are used, the
+highlighting will not update as you type.  The Font Lock mode
+is considered \"enabled\" in a buffer if its `major-mode'
+causes `font-lock-specified-p' to return non-nil, which means
+the major mode specifies support for Font Lock.
+
+(fn REGEXP &optional FACE SUBEXP LIGHTER)" t)
+(autoload 'hi-lock-face-phrase-buffer "hi-lock"
+"Set face of each match of phrase REGEXP to FACE.
+Interactively, prompt for REGEXP using `hi-lock-read-regexp', then FACE.
+Use the global history list for FACE.
+
+If REGEXP contains upper case characters (excluding those preceded by `\\')
+and `search-upper-case' is non-nil, the matching is case-sensitive.
+Also set `search-spaces-regexp' to the value of `search-whitespace-regexp'.
+
+Use Font lock mode, if enabled, to highlight REGEXP.  Otherwise,
+use overlays for highlighting.  If overlays are used, the
+highlighting will not update as you type.  The Font Lock mode
+is considered \"enabled\" in a buffer if its `major-mode'
+causes `font-lock-specified-p' to return non-nil, which means
+the major mode specifies support for Font Lock.
+
+(fn REGEXP &optional FACE)" t)
+(autoload 'hi-lock-face-symbol-at-point "hi-lock"
+"Highlight each instance of the symbol at point.
+Uses the next face from `hi-lock-face-defaults' without prompting,
+unless you use a prefix argument.
+Uses `find-tag-default-as-symbol-regexp' to retrieve the symbol at point.
+
+If REGEXP contains upper case characters (excluding those preceded by `\\')
+and `search-upper-case' is non-nil, the matching is case-sensitive.
+
+This uses Font lock mode if it is enabled; otherwise it uses overlays,
+in which case the highlighting will not update as you type.  The Font
+Lock mode is considered \"enabled\" in a buffer if its `major-mode'
+causes `font-lock-specified-p' to return non-nil, which means
+the major mode specifies support for Font Lock." t)
+(autoload 'hi-lock-unface-buffer "hi-lock"
+"Remove highlighting of each match to REGEXP set by hi-lock.
+Interactively, prompt for REGEXP, accepting only regexps
+previously inserted by hi-lock interactive functions.
+If REGEXP is t (or if \\[universal-argument] was specified interactively),
+then remove all hi-lock highlighting.
+
+(fn REGEXP)" t)
+(autoload 'hi-lock-write-interactive-patterns "hi-lock"
+"Write interactively added patterns, if any, into buffer at point.
+
+Interactively added patterns are those normally specified using
+`highlight-regexp' and `highlight-lines-matching-regexp'; they can
+be found in variable `hi-lock-interactive-patterns'." t)
+(autoload 'hi-lock-find-patterns "hi-lock"
+"Add patterns from the current buffer to the list of hi-lock patterns." t)
+(register-definition-prefixes "hi-lock" '("hi-lock-" "highlight-symbol-at-mouse" "turn-on-hi-lock-if-enabled"))
+(register-definition-prefixes "hideif" '("backward-ifdef" "down-ifdef" "forward-ifdef" "hide-ifdef" "hif-" "next-ifdef" "previous-ifdef" "show-ifdef" "up-ifdef"))
+(defvar hs-special-modes-alist nil)
+(autoload 'hs-minor-mode "hideshow"
+"Minor mode to selectively hide/show code and comment blocks.
+
+When hideshow minor mode is on, the menu bar is augmented with hideshow
+commands and the hideshow commands are enabled.
+The value (hs . t) is added to `buffer-invisibility-spec'.
+
+Turning hideshow minor mode off reverts the menu bar and the
+variables to default values and disables the hideshow commands.
+
+Lastly, the normal hook `hs-minor-mode-hook' is run using `run-hooks'.
+
+Key bindings:
+\\{hs-minor-mode-map}
+
+This is a minor mode.  If called interactively, toggle the `hs minor
+mode' mode.  If the prefix argument is positive, enable the mode, and if
+it is zero or negative, disable the mode.
+
+If called from Lisp, toggle the mode if ARG is `toggle'.  Enable the
+mode if ARG is nil, omitted, or is a positive number.  Disable the mode
+if ARG is a negative number.
+
+To check whether the minor mode is enabled in the current buffer,
+evaluate the variable `hs-minor-mode'.
+
+The mode's hook is called both when the mode is enabled and when it is
+disabled.
+
+(fn &optional ARG)" t)
+(register-definition-prefixes "hideshow" '("hs-"))
+(register-definition-prefixes "hierarchy" '("hierarchy-"))
+(register-definition-prefixes "hilit-chg" '("highlight-" "hilit-chg-"))
+(register-definition-prefixes "hippie-exp" '("he-" "hippie-expand-" "try-"))
+(register-definition-prefixes "hl-line" '("global-hl-line-" "hl-line-"))
+(register-definition-prefixes "hmac-def" '("define-hmac-function"))
+(register-definition-prefixes "hmac-md5" '("hmac-md5" "md5-binary"))
+(register-definition-prefixes "holidays" '("calendar-" "holiday"))
+(register-definition-prefixes "html-ts-mode" '("html-ts-"))
+(register-definition-prefixes "htmlfontify" '("hfy-" "htmlfontify-"))
+(register-definition-prefixes "ibuf-ext" '("ibuffer-"))
+(register-definition-prefixes "ibuf-macs" '("ibuffer-"))
+(register-definition-prefixes "ibuffer" '("ibuffer-"))
+(register-definition-prefixes "icalendar" '("icalendar-"))
+(register-definition-prefixes "icalendar-ast" '("icalendar-"))
+(register-definition-prefixes "icalendar-macs" '("icalendar-"))
+(register-definition-prefixes "icalendar-mode" '("icalendar-"))
+(register-definition-prefixes "icalendar-parser" '("icalendar-"))
+(register-definition-prefixes "icalendar-recur" '("icalendar-"))
+(register-definition-prefixes "icalendar-utils" '("icalendar-"))
+(register-definition-prefixes "icomplete" '("icomplete-"))
+(register-definition-prefixes "icon" '("beginning-of-icon-defun" "calculate-icon-indent" "electric-icon-brace" "end-of-icon-defun" "icon-" "indent-icon-exp" "mark-icon-function"))
+(autoload 'describe-icon "icons"
+"Pop to a buffer to describe ICON.
+
+(fn ICON)" t)
+(register-definition-prefixes "icons" '("button" "define-icon" "icon"))
+(register-definition-prefixes "ido" '("ido-"))
+(register-definition-prefixes "ielm" '("ielm-" "inferior-emacs-lisp-mode"))
+(register-definition-prefixes "ietf-drums" '("ietf-drums-"))
+(register-definition-prefixes "ietf-drums-date" '("date-parse-error" "ietf-drums-"))
+(register-definition-prefixes "iimage" '("iimage-" "turn-off-iimage-mode"))
+(autoload 'image-type-from-data "image"
+"Determine the image type from image data DATA.
+Value is a symbol specifying the image type or nil if type cannot
+be determined.
+
+(fn DATA)")
+(autoload 'image-type-from-buffer "image"
+"Determine the image type from data in the current buffer.
+Value is a symbol specifying the image type or nil if type cannot
+be determined.")
+(autoload 'image-type-from-file-header "image"
+"Determine the type of image file FILE from its first few bytes.
+Value is a symbol specifying the image type, or nil if type cannot
+be determined.
+
+(fn FILE)")
+(autoload 'image-type-from-file-name "image"
+"Determine the type of image file FILE from its name.
+Value is a symbol specifying the image type, or nil if type cannot
+be determined.
+
+(fn FILE)")
+(autoload 'image-supported-file-p "image"
+"Return non-nil if Emacs can display the specified image FILE.
+The returned value is a symbol specifying the image type of FILE,
+or nil if Emacs cannot display that image type or if the type
+cannot be determined.
+
+(fn FILE)")
+(autoload 'image-type "image"
+"Determine and return image type.
+SOURCE is an image file name or image data.
+Optional TYPE is a symbol describing the image type.  If TYPE is omitted
+or nil, try to determine the image type from its first few bytes
+of image data.  If that doesn't work, and SOURCE is a file name,
+use its file extension as image type.
+
+Optional DATA-P non-nil means SOURCE is a string containing image
+data.  If DATA-P is a symbol with a name on the format
+`image/jpeg', that may be used as a hint to determine the image
+type if we can't otherwise guess it.
+
+(fn SOURCE &optional TYPE DATA-P)")
+(autoload 'image-type-available-p "image"
+"Return t if image type TYPE is available.
+Image types are symbols like `xbm' or `jpeg'.
+
+(fn TYPE)")
+(autoload 'image-type-auto-detected-p "image"
+"Return t if the current buffer contains an auto-detectable image.
+This function is intended to be used from `magic-fallback-mode-alist'.
+
+The buffer is considered to contain an auto-detectable image if
+its beginning matches an image type in `image-type-header-regexps',
+and that image type is present in `image-type-auto-detectable' with a
+non-nil value.  If that value is non-nil, but not t, then the image type
+must be available.")
+(autoload 'create-image "image"
+"Create an image from FILE-OR-DATA.
+FILE-OR-DATA is an image file name or image data.  If it is a relative
+file name, the function will look for it along `image-load-path'.
+
+Optional TYPE is a symbol describing the image type.  If TYPE is omitted
+or nil, try to determine the image type from its first few bytes
+of image data.  If that doesn't work, and FILE-OR-DATA is a file name,
+use its file extension as image type.
+
+Optional DATA-P non-nil means FILE-OR-DATA is a string containing image data.
+
+Optional PROPS are additional image attributes to assign to the image,
+like, e.g. `:mask MASK'.  See Info node `(elisp)Image Descriptors' for
+the list of supported properties; see the nodes following that node
+for properties specific to certain image types.
+
+If the property `:scale' is not given and the display has a high
+resolution (more exactly, when the average width of a character
+in the default font is more than 10 pixels), the image is
+automatically scaled up in proportion to the default font.
+
+Value is the image created, or nil if images of type TYPE are not supported.
+
+Images should not be larger than specified by `max-image-size'.
+
+(fn FILE-OR-DATA &optional TYPE DATA-P &rest PROPS)")
+(autoload 'put-image "image"
+"Put image IMAGE in front of POS in the current buffer.
+IMAGE must be an image created with `create-image' or `defimage'.
+IMAGE is displayed by putting an overlay into the current buffer with a
+`before-string' STRING that has a `display' property whose value is the
+image.  STRING defaults to \"x\" if it's nil or omitted.
+Upon success, this function returns the created overlay with its
+`put-image' property set to t.
+
+POS may be an integer or marker.
+AREA is where to display the image.  AREA nil or omitted means
+display it in the text area, a value of `left-margin' means
+display it in the left marginal area, a value of `right-margin'
+means display it in the right marginal area.
+
+(fn IMAGE POS &optional STRING AREA)")
+(autoload 'insert-image "image"
+"Insert IMAGE into current buffer at point.
+IMAGE is displayed by inserting STRING into the current buffer
+with a `display' property whose value is the image.
+
+STRING defaults to a single space if you omit it, which means
+that the inserted image will behave as whitespace syntactically.
+
+AREA is where to display the image.  AREA nil or omitted means
+display it in the text area, a value of `left-margin' means
+display it in the left marginal area, a value of `right-margin'
+means display it in the right marginal area.
+
+SLICE specifies slice of IMAGE to insert.  SLICE nil or omitted
+means insert whole image.  SLICE is a list (X Y WIDTH HEIGHT)
+specifying the X and Y positions and WIDTH and HEIGHT of image area
+to insert.  A float value 0.0 - 1.0 means relative to the width or
+height of the image; integer values are taken as pixel values.
+
+Normally `isearch' is able to search for STRING in the buffer
+even if it's hidden behind a displayed image.  If INHIBIT-ISEARCH
+is non-nil, this is inhibited.
+
+(fn IMAGE &optional STRING AREA SLICE INHIBIT-ISEARCH)")
+(autoload 'insert-sliced-image "image"
+"Insert IMAGE into current buffer at point.
+IMAGE is displayed by inserting STRING into the current buffer
+with a `display' property whose value is the image.  The default
+STRING is a single space.
+AREA is where to display the image.  AREA nil or omitted means
+display it in the text area, a value of `left-margin' means
+display it in the left marginal area, a value of `right-margin'
+means display it in the right marginal area.
+The image is automatically split into ROWS x COLS slices.
+
+(fn IMAGE &optional STRING AREA ROWS COLS)")
+(autoload 'remove-images "image"
+"Remove images between START and END in BUFFER.
+Remove only images that were put in BUFFER with calls to `put-image'.
+BUFFER nil or omitted means use the current buffer.
+
+(fn START END &optional BUFFER)")
+(autoload 'find-image "image"
+"Find an image that satisfies one of a list of image specifications.
+
+SPECS is a list of image specifications.
+
+Each image specification in SPECS is a property list.  The
+contents of a specification are image type dependent; see the
+info node `(elisp)Image Descriptors' for details.  All specifications
+must at least contain either the property `:file FILE' or `:data DATA',
+where FILE is the file from which to load the image, and DATA is a
+string containing the actual image data.  If the property `:type TYPE'
+is omitted or nil, try to determine the image type from its first few
+bytes of image data.  If that doesn't work, and the property `:file
+FILE' provide a file name, use its file extension as indication of the
+image type.  If `:type TYPE' is provided, it must match the actual type
+determined for FILE or DATA by `create-image'.
+
+The function returns the image specification for the first specification
+in the list whose TYPE is supported and FILE, if specified, exists.  It
+returns nil if no specification in the list can be satisfied.
+
+If CACHE is non-nil, results are cached and returned on subsequent calls.
+
+The image is looked for in `image-load-path'.
+
+Image files should not be larger than specified by `max-image-size'.
+
+(fn SPECS &optional CACHE)")
+(autoload 'defimage "image"
+"Define SYMBOL as an image, and return SYMBOL.
+
+SPECS is a list of image specifications.  DOC is an optional
+documentation string.
+
+Each image specification in SPECS is a property list.  The contents of
+a specification are image type dependent.  All specifications must at
+least contain the properties `:type TYPE' and either `:file FILE' or
+`:data DATA', where TYPE is a symbol specifying the image type,
+e.g. `xbm', FILE is the file to load the image from, and DATA is a
+string containing the actual image data.  The first image
+specification whose TYPE is supported, and FILE exists, is used to
+define SYMBOL.
+
+Example:
+
+   (defimage test-image ((:type xpm :file \"~/test1.xpm\")
+                         (:type xbm :file \"~/test1.xbm\")))
+
+(fn SYMBOL SPECS &optional DOC)" nil t)
+(autoload 'imagemagick-register-types "image"
+"Register file types that can be handled by ImageMagick.
+This function is called at startup, after loading the init file.
+It registers the ImageMagick types returned by `imagemagick-filter-types'.
+
+Registered image types are added to `auto-mode-alist', so that
+Emacs visits them in Image mode.  They are also added to
+`image-type-file-name-regexps', so that the `image-type' function
+recognizes these files as having image type `imagemagick'.
+
+If Emacs is compiled without ImageMagick support, this does nothing.")
+(autoload 'image-at-point-p "image"
+"Return non-nil if there is an image at point.")
+(register-definition-prefixes "image" '("find-image--cache" "image" "unknown-image-type"))
+(register-definition-prefixes "image-converter" '("image-convert"))
+(register-definition-prefixes "image-crop" '("image-c"))
+(put 'image-dired-thumbnail-storage 'safe-local-variable (lambda (x) (eq x 'per-directory)))
+(register-definition-prefixes "image-dired" '("image-dired-"))
+(register-definition-prefixes "image-dired-dired" '("image-dired-"))
+(register-definition-prefixes "image-dired-external" '("image-dired-"))
+(register-definition-prefixes "image-dired-tags" '("image-dired-"))
+(register-definition-prefixes "image-dired-util" '("image-dired-"))
+(register-definition-prefixes "image-file" '("image-file-"))
+(register-definition-prefixes "image-mode" '("image-"))
+(register-definition-prefixes "imap" '("imap-"))
+(register-definition-prefixes "imenu" '("semantic-"))
+(autoload 'imenu-add-to-menubar "imenu"
+"Add an `imenu' entry to the menu bar for the current buffer.
+NAME is a string used to name the menu bar item.
+See the command `imenu' for more information.
+
+(fn NAME)" t)
+(autoload 'imenu-add-menubar-index "imenu"
+"Add an Imenu \"Index\" entry on the menu bar for the current buffer.
+
+A trivial interface to `imenu-add-to-menubar' suitable for use in a hook." t)
+(autoload 'imenu "imenu"
+"Jump to a place in the buffer chosen using a buffer menu or mouse menu.
+INDEX-ITEM specifies the position.  See `imenu-choose-buffer-index'
+for more information.
+
+(fn INDEX-ITEM)" t)
+(register-definition-prefixes "ind-util" '("combinatorial" "indian-" "is13194-"))
+(register-definition-prefixes "indent-aux" '("kill-ring-deindent-buffer-substring-function"))
+(register-definition-prefixes "indian" '("indian-mlm-mozhi-u" "inscript-" "quail-" "tamil"))
+(register-definition-prefixes "inf-lisp" '("inferior-lisp-" "lisp-" "switch-to-lisp"))
+(put 'Info-documentlanguage 'safe-local-variable #'symbolp)
+(register-definition-prefixes "info" '("Info-" "info-"))
+(register-definition-prefixes "info-look" '("info-"))
+(register-definition-prefixes "info-xref" '("info-xref-"))
+(register-definition-prefixes "informat" '("Info-validate-"))
+(autoload 'define-inline "inline"
+"Define an inline function NAME with arguments ARGS and body in BODY.
+This is halfway between `defmacro' and `defun'.  BODY is used as a blueprint
+both for the body of the function and for the body of the compiler-macro
+used to generate the code inlined at each call site.
+See Info node `(elisp)Inline Functions' for more details.
+
+A (noinline t) in the `declare' form prevents the definition of the
+compiler macro.  This is for the rare case in which you want to use this
+macro to define a function that should not be inlined.
+
+(fn NAME ARGS &rest BODY)" nil t)
+(register-definition-prefixes "inline" '("inline-"))
+(register-definition-prefixes "ipa" '("ipa-x-sampa-"))
+(register-definition-prefixes "iroquoian" '("iroquoian-"))
+(register-definition-prefixes "isearch-x" '("isearch-"))
+(register-definition-prefixes "isearchb" '("isearchb"))
+(register-definition-prefixes "iso-ascii" '("iso-ascii-"))
+(register-definition-prefixes "iso-cvt" '("iso-"))
+(register-definition-prefixes "iso8601" '("iso8601-"))
+(put 'ispell-check-comments 'safe-local-variable (lambda (a) (memq a '(nil t exclusive))))
+(put 'ispell-local-dictionary 'safe-local-variable 'string-or-null-p)
+(defvar ispell-skip-region-alist '((ispell-words-keyword forward-line) (ispell-dictionary-keyword forward-line) (ispell-pdict-keyword forward-line) (ispell-parsing-keyword forward-line) ("^---*BEGIN PGP [A-Z ]*--*" . "^---*END PGP [A-Z ]*--*") ("^begin [0-9][0-9][0-9] [^ \11]+$" . "\nend\n") ("^%!PS-Adobe-[123].0" . "\n%%EOF\n") ("^---* \\(Start of \\)?[Ff]orwarded [Mm]essage" . "^---* End of [Ff]orwarded [Mm]essage"))
+"Alist expressing beginning and end of regions not to spell check.
+The alist key must be a regular expression.
+Valid forms include:
+  (KEY) - just skip the key.
+  (KEY . REGEXP) - skip to the end of REGEXP.  REGEXP may be string or symbol.
+  (KEY REGEXP) - skip to end of REGEXP.  REGEXP must be a string.
+  (KEY FUNCTION ARGS) - FUNCTION called with ARGS returns end of region.")
+(defvar ispell-tex-skip-alists '((("\\\\addcontentsline" ispell-tex-arg-end 2) ("\\\\add\\(tocontents\\|vspace\\)" ispell-tex-arg-end) ("\\\\\\([aA]lph\\|arabic\\)" ispell-tex-arg-end) ("\\\\cref" ispell-tex-arg-end) ("\\\\bibliographystyle" ispell-tex-arg-end) ("\\\\makebox" ispell-tex-arg-end 0) ("\\\\e?psfig" ispell-tex-arg-end) ("\\\\document\\(class\\|style\\)" . "\\\\begin[ \11\n]*{document}")) (("\\(figure\\|table\\)\\*?" ispell-tex-arg-end 0) ("list" ispell-tex-arg-end 2) ("program" . "\\\\end[ \11]*{program}") ("verbatim\\*?" . "\\\\end[ \11]*{verbatim\\*?}")))
+"Lists of regions to be skipped in TeX mode.
+First list is used raw.
+Second list has key placed inside \\begin{}.
+
+Delete or add any regions you want to be automatically selected
+for skipping in latex mode.")
+(put 'ispell-local-pdict 'safe-local-variable 'stringp)
+(autoload 'ispell-complete-word "ispell"
+"Try to complete the word before or at point.
+If optional INTERIOR-FRAG is non-nil, then the word may be a character
+sequence inside of a word.
+
+Standard ispell choices are then available.
+
+This command uses a word-list file specified
+by `ispell-alternate-dictionary' or by `ispell-complete-word-dict';
+if none of those name an existing word-list file, this command
+signals an error.
+
+(fn &optional INTERIOR-FRAG)" t)
+(register-definition-prefixes "ispell" '("check-ispell-version" "ispell-"))
+(register-definition-prefixes "ja-dic-cnv" '("batch-skkdic-convert" "ja-dic-filename" "skkdic-"))
+(register-definition-prefixes "ja-dic-utl" '("skkdic-"))
+(autoload 'setup-japanese-environment-internal "japan-util")
+(autoload 'japanese-katakana "japan-util"
+"Convert argument to Katakana and return that.
+The argument may be a character or string.  The result has the same type.
+The argument object is not altered--the value is a copy.
+Optional argument HANKAKU t means to convert to `hankaku' Katakana
+(`japanese-jisx0201-kana'), in which case return value
+may be a string even if OBJ is a character if two Katakanas are
+necessary to represent OBJ.
+
+(fn OBJ &optional HANKAKU)")
+(autoload 'japanese-hiragana "japan-util"
+"Convert argument to Hiragana and return that.
+The argument may be a character or string.  The result has the same type.
+The argument object is not altered--the value is a copy.
+
+(fn OBJ)")
+(autoload 'japanese-hankaku "japan-util"
+"Convert argument to `hankaku' and return that.
+The argument may be a character or string.  The result has the same type.
+The argument object is not altered--the value is a copy.
+Optional argument ASCII-ONLY non-nil means to return only ASCII character.
+
+(fn OBJ &optional ASCII-ONLY)")
+(autoload 'japanese-zenkaku "japan-util"
+"Convert argument to `zenkaku' and return that.
+The argument may be a character or string.  The result has the same type.
+The argument object is not altered--the value is a copy.
+
+(fn OBJ)")
+(autoload 'japanese-katakana-region "japan-util"
+"Convert Japanese `hiragana' chars in the region to `katakana' chars.
+Optional argument HANKAKU t means to convert to `hankaku katakana' character
+of which charset is `japanese-jisx0201-kana'.
+
+(fn FROM TO &optional HANKAKU)" t)
+(autoload 'japanese-hiragana-region "japan-util"
+"Convert Japanese `katakana' chars in the region to `hiragana' chars.
+
+(fn FROM TO)" t)
+(autoload 'japanese-hankaku-region "japan-util"
+"Convert Japanese `zenkaku' chars in the region to `hankaku' chars.
+`Zenkaku' chars belong to `japanese-jisx0208'
+`Hankaku' chars belong to `ascii' or `japanese-jisx0201-kana'.
+Optional argument ASCII-ONLY non-nil means to convert only to ASCII char.
+
+(fn FROM TO &optional ASCII-ONLY)" t)
+(autoload 'japanese-zenkaku-region "japan-util"
+"Convert hankaku' chars in the region to Japanese `zenkaku' chars.
+`Zenkaku' chars belong to `japanese-jisx0208'
+`Hankaku' chars belong to `ascii' or `japanese-jisx0201-kana'.
+Optional argument KATAKANA-ONLY non-nil means to convert only KATAKANA char.
+
+(fn FROM TO &optional KATAKANA-ONLY)" t)
+(autoload 'read-hiragana-string "japan-util"
+"Read a Hiragana string from the minibuffer, prompting with string PROMPT.
+If non-nil, second arg INITIAL-INPUT is a string to insert before reading.
+Return the string read from the minibuffer.
+
+(fn PROMPT &optional INITIAL-INPUT)")
+(register-definition-prefixes "japan-util" '("japanese-"))
+(register-definition-prefixes "japanese" '("quail-japanese-"))
+(register-definition-prefixes "java-ts-mode" '("java-ts-"))
+(defvar jka-compr-inhibit nil
+"Non-nil means inhibit automatic uncompression temporarily.
+Lisp programs can bind this to t to do that.
+It is not recommended to set this variable permanently to anything but nil.")
+(autoload 'jka-compr-handler "jka-compr"
+"
+
+(fn OPERATION &rest ARGS)")
+(autoload 'jka-compr-uninstall "jka-compr"
+"Uninstall jka-compr.
+This removes the entries in `file-name-handler-alist' and `auto-mode-alist'
+and `inhibit-local-variables-suffixes' that were added
+by `jka-compr-install'.")
+(register-definition-prefixes "jka-compr" '("compression-error" "jka-compr-"))
+(register-definition-prefixes "js" '("js-"))
+(register-definition-prefixes "json" '("json-"))
+(register-definition-prefixes "json-ts-mode" '("json-ts-"))
+(register-definition-prefixes "jsonrpc" '("jsonrpc-"))
+(register-definition-prefixes "kinsoku" '("kinsoku-"))
+(defvar kkc-after-update-conversion-functions nil
+"Functions to run after a conversion is selected in `japanese' input method.
+With this input method, a user can select a proper conversion from
+candidate list.  Each time he changes the selection, functions in this
+list are called with two arguments; starting and ending buffer
+positions that contains the current selection.")
+(register-definition-prefixes "kkc" '("kkc-"))
+(autoload 'kmacro-keymap "kmacro" "Keymap for keyboard macro commands." t 'keymap)
+(autoload 'kmacro-start-macro "kmacro"
+"Record subsequent keyboard input, defining a keyboard macro.
+The commands are recorded even as they are executed.
+Use \\[kmacro-end-macro] to finish recording and make the macro available.
+Use \\[kmacro-end-and-call-macro] to execute the macro.
+
+Non-nil arg (prefix arg) means append to last macro defined.
+
+With \\[universal-argument] prefix, append to last keyboard macro
+defined.  Depending on `kmacro-execute-before-append', this may begin
+by re-executing the last macro as if you typed it again.
+
+Otherwise, it sets `kmacro-counter' to ARG or 0 if missing before
+defining the macro.
+
+Use \\[kmacro-insert-counter] to insert (and increment) the macro counter.
+The counter value can be set or modified via \\[kmacro-set-counter] and \\[kmacro-add-counter].
+The format of the counter can be modified via \\[kmacro-set-format].
+
+Use \\[kmacro-name-last-macro] to give it a name that will remain valid even
+after another macro is defined.
+Use \\[kmacro-bind-to-key] to bind it to a key sequence.
+
+(fn ARG)" t)
+(autoload 'kmacro-end-macro "kmacro"
+"Finish defining a keyboard macro.
+The definition was started by \\[kmacro-start-macro].
+The macro is now available for use via \\[kmacro-call-macro],
+or it can be given a name with \\[kmacro-name-last-macro] and then invoked
+under that name.
+
+With numeric ARG, repeat the macro that many times,
+counting the definition just completed as the first repetition.
+An argument of zero means repeat until error.
+
+(fn ARG)" t)
+(autoload 'kmacro-start-macro-or-insert-counter "kmacro"
+"Record subsequent keyboard input, defining a keyboard macro.
+The commands are recorded even as they are executed.
+
+Initializes the macro's `kmacro-counter' to ARG (or 0 if no prefix arg)
+before defining the macro.
+
+With \\[universal-argument], appends to current keyboard macro (keeping
+the current value of `kmacro-counter').
+
+When used during defining/executing a macro, inserts the current value
+of `kmacro-counter' and increments the counter value by ARG (or by 1 if no
+prefix argument).  With just \\[universal-argument], inserts the previous
+value of `kmacro-counter', and does not modify the counter; this is
+different from incrementing the counter by zero.  (The previous value
+of the counter is the one it had before the last increment.)
+
+The macro counter can be set directly via \\[kmacro-set-counter] and \\[kmacro-add-counter].
+The format of the inserted value of the counter can be controlled
+via \\[kmacro-set-format].
+
+(fn ARG)" t)
+(autoload 'kmacro-end-or-call-macro "kmacro"
+"End kbd macro if currently being defined; else call last kbd macro.
+With numeric prefix ARG, repeat macro that many times.
+With \\[universal-argument], call second macro in macro ring.
+
+(fn ARG &optional NO-REPEAT)" t)
+(autoload 'kmacro-name-last-macro "kmacro"
+"Assign a name to the last keyboard macro defined.
+Argument SYMBOL is the name to define.
+The symbol's function definition becomes the keyboard macro string.
+Such a \"function\" cannot be called from Lisp, but it is a valid editor command.
+
+(fn SYMBOL)" t)
+(register-definition-prefixes "kmacro" '("kmacro-"))
+(register-definition-prefixes "korea-util" '("exit-korean-environment" "isearch-" "korean-key-bindings" "quail-hangul-switch-" "toggle-korean-input-method"))
+(register-definition-prefixes "lao" '("lao-" "quail-lao-update-translation"))
+(register-definition-prefixes "lao-util" '("lao-"))
+(register-definition-prefixes "latexenc" '("latexenc-dont-use-"))
+(register-definition-prefixes "latin1-disp" '("latin1-display-"))
+(autoload 'ld-script-mode "ld-script"
+"A major mode to edit GNU ld script files.
+
+In addition to any hooks its parent mode `prog-mode' might have run,
+this mode runs the hook `ld-script-mode-hook', as the final or
+penultimate step during initialization.
+
+\\{ld-script-mode-map}" t)
+(register-definition-prefixes "ld-script" '("ld-script-"))
+(register-definition-prefixes "ldap" '("ldap-"))
+(put 'less-css-compile-at-save 'safe-local-variable #'booleanp)
+(put 'less-css-lessc-options 'safe-local-variable t)
+(put 'less-css-output-directory 'safe-local-variable #'stringp)
+(put 'less-css-input-file-name 'safe-local-variable #'stringp)
+(register-definition-prefixes "less-css-mode" '("less-css-"))
+(register-definition-prefixes "let-alist" '("let-alist--"))
+(register-definition-prefixes "life" '("life-"))
+(register-definition-prefixes "linux" '("ede-linux-" "project-linux-"))
+(register-definition-prefixes "lisp-mnt" '("lm-"))
+(put 'autoload-compute-prefixes 'safe-local-variable #'booleanp)
+(put 'generated-autoload-file 'safe-local-variable #'stringp)
+(put 'generated-autoload-load-name 'safe-local-variable #'stringp)
+(register-definition-prefixes "loaddefs-gen" '("autoload-" "generated-autoload-" "loaddefs-" "no-update-autoloads"))
+(register-definition-prefixes "loadhist" '("feature-" "file-" "loadhist-unload-filename" "read-feature" "unload-"))
+(register-definition-prefixes "locate" '("ede-locate-"))
+(register-definition-prefixes "log-edit" '("log-edit-"))
+(register-definition-prefixes "log-view" '("log-view-"))
+(defvar lpr-windows-system (memq system-type '(ms-dos windows-nt))
+"Non-nil if running on MS-DOS or MS Windows.")
+(defvar lpr-lp-system (memq system-type '(usg-unix-v hpux))
+"Non-nil if running on a system type that uses the \"lp\" command.")
+(register-definition-prefixes "lpr" '("lpr-" "print"))
+(register-definition-prefixes "lrt" '("quail-lrt-update-translation"))
+(register-definition-prefixes "ls-lisp" '("ls-lisp-"))
+(register-definition-prefixes "lua-mode" '("lua-"))
+(register-definition-prefixes "lua-ts-mode" '("lua-ts-"))
+(register-definition-prefixes "lunar" '("calendar-lunar-phases" "diary-lunar-phases" "lunar-"))
+(autoload 'm4-mode "m4-mode"
+"A major mode to edit m4 macro files.
+
+In addition to any hooks its parent mode `prog-mode' might have run,
+this mode runs the hook `m4-mode-hook', as the final or penultimate
+step during initialization.
+
+\\{m4-mode-map}" t)
+(register-definition-prefixes "m4-mode" '("m4-"))
+(autoload 'insert-kbd-macro "macros"
+"Insert in buffer the definition of kbd macro MACRONAME, as Lisp code.
+MACRONAME should be a symbol; if none is given, the function inserts
+the definition of `last-kdb-macro'.
+Optional second arg KEYS means also record the keys it is on
+(this is the prefix argument, when calling interactively).
+
+This Lisp code will, when executed, define the kbd macro with the same
+definition it has now.  If you say to record the keys, the Lisp code
+will also rebind those keys to the macro.  Only global key bindings
+are recorded since executing this Lisp code always makes global
+bindings.
+
+To save a kbd macro, visit a file of Lisp code such as your `~/.emacs',
+use this command, and then save the file.
+
+(fn MACRONAME &optional KEYS)" t)
+(autoload 'kbd-macro-query "macros"
+"Query user during kbd macro execution.
+
+With prefix argument FLAG, enter recursive edit, reading
+keyboard commands even within a kbd macro.  You can give
+different commands each time the macro executes.
+
+Without prefix argument, ask whether to continue running the
+macro.
+
+Your options are: \\<query-replace-map>
+
+\\[act]	Finish this iteration normally and continue with the next.
+\\[skip]	Skip the rest of this iteration, and start the next.
+\\[exit]	Stop the macro entirely right now.
+\\[recenter]	Redisplay the screen, then ask again.
+\\[edit]	Enter recursive edit; ask again when you exit from that.
+
+(fn FLAG)" t)
+(register-definition-prefixes "macros" '("macros--insert-vector-macro"))
+(register-definition-prefixes "mail-extr" '("mail-extr-"))
+(register-definition-prefixes "mail-hist" '("mail-hist-"))
+(register-definition-prefixes "mail-parse" '("mail-"))
+(register-definition-prefixes "mail-prsvr" '("mail-parse-"))
+(register-definition-prefixes "mail-source" '("mail-source"))
+(register-definition-prefixes "mail-utils" '("mail-"))
+(register-definition-prefixes "mailabbrev" '("mail-" "merge-mail-abbrevs" "rebuild-mail-abbrevs"))
+(register-definition-prefixes "mailalias" '("build-mail-aliases" "mail-"))
+(register-definition-prefixes "mailcap" '("mailcap-"))
+(register-definition-prefixes "mailclient" '("mailclient-"))
+(register-definition-prefixes "mailheader" '("mail-header"))
+(register-definition-prefixes "mairix" '("mairix-"))
+(register-definition-prefixes "make-mode" '("makefile-"))
+(register-definition-prefixes "makefile-edit" '("makefile-"))
+(register-definition-prefixes "makeinfo" '("makeinfo-"))
+(register-definition-prefixes "man" '("Man-" "man"))
+(register-definition-prefixes "map" '("map-"))
+(register-definition-prefixes "markdown-ts-mode" '("markdown-ts-"))
+(register-definition-prefixes "markdown-ts-mode-x" '("markdown-ts-"))
+(register-definition-prefixes "master" '("master-"))
+(register-definition-prefixes "mb-depth" '("minibuffer-depth-"))
+(register-definition-prefixes "md4" '("md4"))
+(autoload 'memory-report "memory-report"
+"Generate a report of how Emacs is using memory.
+
+This report is approximate, and will commonly over-count memory
+usage by variables, because shared data structures will usually
+by counted more than once." t)
+(register-definition-prefixes "memory-report" '("memory-report-"))
+(register-definition-prefixes "message" '("message-"))
+(register-definition-prefixes "meta-mode" '("meta"))
+(register-definition-prefixes "mh-acros" '("mh-" "with-mh-folder-updating"))
+(register-definition-prefixes "mh-alias" '("mh-"))
+(register-definition-prefixes "mh-buffers" '("mh-"))
+(register-definition-prefixes "mh-comp" '("mh-"))
+(register-definition-prefixes "mh-e" '("defcustom-mh" "defface-mh" "defgroup-mh" "mh-"))
+(register-definition-prefixes "mh-folder" '("mh-"))
+(register-definition-prefixes "mh-funcs" '("mh-"))
+(register-definition-prefixes "mh-identity" '("mh-"))
+(register-definition-prefixes "mh-inc" '("mh-inc-spool-"))
+(register-definition-prefixes "mh-junk" '("mh-"))
+(register-definition-prefixes "mh-letter" '("mh-"))
+(register-definition-prefixes "mh-limit" '("mh-"))
+(register-definition-prefixes "mh-mime" '("mh-"))
+(register-definition-prefixes "mh-print" '("mh-p"))
+(register-definition-prefixes "mh-scan" '("mh-"))
+(register-definition-prefixes "mh-search" '("mh-"))
+(register-definition-prefixes "mh-seq" '("mh-"))
+(register-definition-prefixes "mh-show" '("mh-"))
+(register-definition-prefixes "mh-speed" '("mh-"))
+(register-definition-prefixes "mh-thread" '("mh-"))
+(register-definition-prefixes "mh-tool-bar" '("mh-tool-bar-"))
+(register-definition-prefixes "mh-utils" '("mh-"))
+(register-definition-prefixes "mh-xface" '("mh-"))
+(register-definition-prefixes "mhtml-mode" '("mhtml-"))
+(register-definition-prefixes "mhtml-ts-mode" '("mhtml-ts-"))
+(register-definition-prefixes "midnight" '("clean-buffer-list-" "midnight-"))
+(register-definition-prefixes "minibuf-eldef" '("minibuf"))
+(register-definition-prefixes "misc" '("duplicate-" "list-dynamic-libraries--"))
+(defvar multi-isearch-next-buffer-function nil
+"Function to call to get the next buffer to search.
+
+When this variable is set to a function that returns a buffer, then
+after typing another \\[isearch-forward] or \\[isearch-backward] at a failing search, the search goes
+to the next buffer in the series and continues searching for the
+next occurrence.
+
+This function should return the next buffer (it doesn't need to switch
+to it), or nil if it can't find the next buffer (when it reaches the
+end of the search space).
+
+The first argument of this function is the current buffer where the
+search is currently searching.  It defines the base buffer relative to
+which this function should find the next buffer.  When the isearch
+direction is backward (when option `isearch-forward' is nil), this function
+should return the previous buffer to search.
+
+If the second argument of this function WRAP is non-nil, then it
+should return the first buffer in the series; and for the backward
+search, it should return the last buffer in the series.")
+(defvar multi-isearch-next-buffer-current-function nil
+"The currently active function to get the next buffer to search.
+Initialized from `multi-isearch-next-buffer-function' when
+Isearch starts.")
+(defvar multi-isearch-current-buffer nil
+"The buffer where the search is currently searching.
+The value is nil when the search still is in the initial buffer.")
+(defvar multi-isearch-buffer-list nil
+"Sequence of buffers visited by multiple buffers Isearch.
+This is nil if Isearch is not currently searching more than one buffer.")
+(defvar multi-isearch-file-list nil
+"Sequence of files visited by multiple file buffers Isearch.")
+(autoload 'multi-isearch-setup "misearch"
+"Set up isearch to search multiple buffers.
+Intended to be added to `isearch-mode-hook'.")
+(register-definition-prefixes "misearch" '("misearch-unload-function" "multi-"))
+(register-definition-prefixes "mixal-mode" '("mixal-"))
+(register-definition-prefixes "mm-archive" '("mm-"))
+(register-definition-prefixes "mm-bodies" '("mm-"))
+(register-definition-prefixes "mm-decode" '("mm-"))
+(register-definition-prefixes "mm-encode" '("mm-"))
+(register-definition-prefixes "mm-extern" '("mm-extern-"))
+(register-definition-prefixes "mm-partial" '("mm-partial-find-parts"))
+(register-definition-prefixes "mm-url" '("mm-url-"))
+(register-definition-prefixes "mm-util" '("mm-"))
+(register-definition-prefixes "mm-uu" '("mm-"))
+(register-definition-prefixes "mm-view" '("mm-"))
+(register-definition-prefixes "mml" '("mime-to-mml" "mml-"))
+(register-definition-prefixes "mml-sec" '("mml-"))
+(register-definition-prefixes "mml-smime" '("mml-smime-"))
+(register-definition-prefixes "mml1991" '("mml1991-"))
+(register-definition-prefixes "mml2015" '("mml2015-"))
+(register-definition-prefixes "mode-local" '("def" "describe-mode-local-bindings" "fetch-overload" "get-mode-local-parent" "make-obsolete-overload" "mode-local-" "setq-mode-local" "with-mode-local" "xref-mode-local-"))
+(register-definition-prefixes "modula2" '("m2-" "m3-font-lock-keywords"))
+(register-definition-prefixes "morse" '("morse-code" "nato-alphabet"))
+(register-definition-prefixes "mouse-copy" '("mouse-"))
+(register-definition-prefixes "mouse-drag" '("mouse-"))
+(register-definition-prefixes "mpc" '("mpc-"))
+(register-definition-prefixes "mpuz" '("mpuz-"))
+(register-definition-prefixes "msb" '("mouse-select-buffer" "msb"))
+(register-definition-prefixes "mspools" '("mspools-"))
+(register-definition-prefixes "mule-diag" '("charset-history" "describe-font-internal" "insert-section" "list-" "mule--kbd-at" "print-" "sort-listed-character-sets"))
+(autoload 'store-substring "mule-util"
+"Embed OBJ (string or character) at index IDX of STRING.
+
+(fn STRING IDX OBJ)")
+(autoload 'truncate-string-to-width "mule-util"
+"Truncate string STR to end at column END-COLUMN.
+The optional 3rd arg START-COLUMN, if non-nil, specifies the starting
+column (default: zero); that means to return the characters occupying
+columns START-COLUMN ... END-COLUMN of STR.  Both END-COLUMN and
+START-COLUMN are specified in terms of character display width in the
+current buffer; see `char-width'.
+
+Since character composition on display can produce glyphs whose
+width is smaller than the sum of `char-width' values of the
+composed characters, this function can produce inaccurate results
+when used in such cases.
+
+The optional 4th arg PADDING, if non-nil, specifies a padding
+character (which should have a display width of 1) to add at the end
+of the result if STR doesn't reach column END-COLUMN, or if END-COLUMN
+comes in the middle of a character in STR.  PADDING is also added at
+the beginning of the result if column START-COLUMN appears in the
+middle of a character in STR.
+
+If PADDING is nil, no padding is added in these cases, so
+the resulting string may be narrower than END-COLUMN.
+
+If ELLIPSIS is non-nil, it should be a string which will replace the
+end of STR (including any padding) if it extends beyond END-COLUMN,
+unless the display width of STR is equal to or less than the display
+width of ELLIPSIS.  If it is non-nil and not a string, then ELLIPSIS
+defaults to `truncate-string-ellipsis', or to three dots when it's nil.
+
+If ELLIPSIS-TEXT-PROPERTY is non-nil, a too-long string will not
+be truncated, but instead the elided parts will be covered by a
+`display' text property showing the ellipsis.
+
+(fn STR END-COLUMN &optional START-COLUMN PADDING ELLIPSIS ELLIPSIS-TEXT-PROPERTY)")
+(autoload 'set-nested-alist "mule-util"
+"Set ENTRY for KEYSEQ in a nested alist ALIST.
+Optional 4th arg LEN non-nil means the first LEN elements in KEYSEQ
+ are considered.
+Optional 5th argument BRANCHES if non-nil is branches for a keyseq
+longer than KEYSEQ.
+See the documentation of `nested-alist-p' for more detail.
+
+(fn KEYSEQ ENTRY ALIST &optional LEN BRANCHES)")
+(autoload 'lookup-nested-alist "mule-util"
+"Look up key sequence KEYSEQ in nested alist ALIST.  Return the definition.
+Optional 3rd argument LEN specifies the length of KEYSEQ.
+Optional 4th argument START specifies index of the starting key.
+The returned value is normally a nested alist of which
+car part is the entry for KEYSEQ.
+If ALIST is not deep enough for KEYSEQ, return number which is
+ how many key elements at the front of KEYSEQ it takes
+ to reach a leaf in ALIST.
+Optional 5th argument NIL-FOR-TOO-LONG non-nil means return nil
+ even if ALIST is not deep enough.
+
+(fn KEYSEQ ALIST &optional LEN START NIL-FOR-TOO-LONG)")
+(autoload 'coding-system-post-read-conversion "mule-util"
+"Return the value of CODING-SYSTEM's `post-read-conversion' property.
+
+(fn CODING-SYSTEM)")
+(autoload 'coding-system-pre-write-conversion "mule-util"
+"Return the value of CODING-SYSTEM's `pre-write-conversion' property.
+
+(fn CODING-SYSTEM)")
+(autoload 'coding-system-translation-table-for-decode "mule-util"
+"Return the value of CODING-SYSTEM's `decode-translation-table' property.
+
+(fn CODING-SYSTEM)")
+(autoload 'coding-system-translation-table-for-encode "mule-util"
+"Return the value of CODING-SYSTEM's `encode-translation-table' property.
+
+(fn CODING-SYSTEM)")
+(autoload 'with-coding-priority "mule-util"
+"Execute BODY like `progn' with CODING-SYSTEMS at the front of priority list.
+CODING-SYSTEMS is a list of coding systems.  See `set-coding-system-priority'.
+This affects the implicit sorting of lists of coding systems returned by
+operations such as `find-coding-systems-region'.
+
+(fn CODING-SYSTEMS &rest BODY)" nil t)
+(autoload 'detect-coding-with-language-environment "mule-util"
+"Detect a coding system for the text between FROM and TO with LANG-ENV.
+The detection takes into account the coding system priorities for the
+language environment LANG-ENV.
+
+(fn FROM TO LANG-ENV)")
+(autoload 'filepos-to-bufferpos "mule-util"
+"Try to return the buffer position corresponding to a particular file position.
+The file position is given as a (0-based) BYTE count.
+The function presumes the file is encoded with CODING-SYSTEM, which defaults
+to `buffer-file-coding-system'.
+QUALITY can be:
+  `approximate', in which case we may cut some corners to avoid
+    excessive work.
+  `exact', in which case we may end up re-(en/de)coding a large
+    part of the file/buffer, this can be expensive and slow.  (It
+    is an error to request the `exact' method when the buffer's
+    EOL format is not yet decided.)
+  nil, in which case we may return nil rather than an approximation.
+
+(fn BYTE &optional QUALITY CODING-SYSTEM)")
+(autoload 'bufferpos-to-filepos "mule-util"
+"Try to return the file byte corresponding to a particular buffer POSITION.
+Value is the file position given as a (0-based) byte count.
+The function presumes the file is encoded with CODING-SYSTEM, which defaults
+to `buffer-file-coding-system'.
+QUALITY can be:
+  `approximate', in which case we may cut some corners to avoid
+    excessive work.
+  `exact', in which case we may end up re-(en/de)coding a large
+    part of the file/buffer, this can be expensive and slow.  (It
+    is an error to request the `exact' method when the buffer's
+    EOL format is not yet decided.)
+  nil, in which case we may return nil rather than an approximation.
+
+(fn POSITION &optional QUALITY CODING-SYSTEM)")
+(register-definition-prefixes "mule-util" '("filepos-to-bufferpos--dos" "truncate-string-ellipsis"))
+(register-definition-prefixes "multisession" '("define-multisession-variable" "multisession-"))
+(register-definition-prefixes "mwheel" '("mouse-wheel-" "mwheel-"))
+(register-definition-prefixes "net-utils" '("arp-program" "dns-lookup-program" "finger-X.500-host-regexps" "ftp-" "ifconfig-program" "ipconfig" "iwconfig-program" "net" "nslookup-" "ping-program" "route-program" "run-network-program" "smbclient" "traceroute-program" "whois-"))
+(register-definition-prefixes "network-stream" '("network-stream-"))
+(register-definition-prefixes "newst-backend" '("newsticker-"))
+(register-definition-prefixes "newst-plainview" '("newsticker-"))
+(register-definition-prefixes "newst-reader" '("newsticker-"))
+(register-definition-prefixes "newst-ticker" '("newsticker-"))
+(register-definition-prefixes "newst-treeview" '("newsticker-"))
+(register-definition-prefixes "newsticker" '("newsticker-version"))
+(register-definition-prefixes "nnagent" '("nnagent-"))
+(register-definition-prefixes "nnatom" '("nnatom-"))
+(register-definition-prefixes "nnbabyl" '("nnbabyl-"))
+(register-definition-prefixes "nndiary" '("nndiary-"))
+(register-definition-prefixes "nndir" '("nndir-"))
+(register-definition-prefixes "nndoc" '("nndoc-"))
+(register-definition-prefixes "nndraft" '("nndraft-"))
+(register-definition-prefixes "nneething" '("nneething-"))
+(register-definition-prefixes "nnfeed" '("nnfeed-"))
+(register-definition-prefixes "nnfolder" '("nnfolder-"))
+(register-definition-prefixes "nngateway" '("nngateway-"))
+(register-definition-prefixes "nnheader" '("gnus-" "mail-header-" "make-mail-header" "nnheader-" "nntp-"))
+(register-definition-prefixes "nnimap" '("nnimap-"))
+(register-definition-prefixes "nnmail" '("nnmail-"))
+(register-definition-prefixes "nnmaildir" '("nnmaildir-"))
+(register-definition-prefixes "nnmairix" '("nnmairix-"))
+(register-definition-prefixes "nnmbox" '("nnmbox-"))
+(register-definition-prefixes "nnmh" '("nnmh-"))
+(register-definition-prefixes "nnml" '("nnml-"))
+(register-definition-prefixes "nnnil" '("nnnil-"))
+(register-definition-prefixes "nnoo" '("deffoo" "defvoo" "nnoo-" "noo--defalias"))
+(register-definition-prefixes "nnregistry" '("nnregistry-"))
+(register-definition-prefixes "nnrss" '("nnrss-"))
+(register-definition-prefixes "nnselect" '("gnus-" "ids-by-group" "nnselect-" "numbers-by-group"))
+(register-definition-prefixes "nnspool" '("news-inews-program" "nnspool-"))
+(register-definition-prefixes "nntp" '("nntp-"))
+(register-definition-prefixes "nnvirtual" '("nnvirtual-"))
+(register-definition-prefixes "nnweb" '("nnweb-"))
+(register-definition-prefixes "notifications" '("notifications-"))
+(defvar disabled-command-function 'disabled-command-function
+"Function to call to handle disabled commands.
+If nil, the feature is disabled, i.e., all commands work normally.")
+(autoload 'enable-command "novice"
+"Allow COMMAND to be executed without special confirmation from now on.
+COMMAND must be a symbol.
+This command alters the user's .emacs file so that this will apply
+to future sessions.
+
+(fn COMMAND)" t)
+(autoload 'disable-command "novice"
+"Require special confirmation to execute COMMAND from now on.
+COMMAND must be a symbol.
+This command alters your init file so that this choice applies to
+future sessions.
+
+(fn COMMAND)" t)
+(register-definition-prefixes "novice" '("en/disable-command"))
+(register-definition-prefixes "nroff-mode" '("nroff-"))
+(register-definition-prefixes "nsm" '("network-security-" "nsm-"))
+(register-definition-prefixes "ntlm" '("ntlm-"))
+(register-definition-prefixes "nxml-enc" '("nxml-"))
+(register-definition-prefixes "nxml-maint" '("nxml-insert-target-repertoire-glyph-set"))
+(register-definition-prefixes "nxml-mode" '("nxml-"))
+(register-definition-prefixes "nxml-ns" '("nxml-ns-"))
+(register-definition-prefixes "nxml-outln" '("nxml-"))
+(register-definition-prefixes "nxml-parse" '("nxml-"))
+(register-definition-prefixes "nxml-rap" '("nxml-"))
+(register-definition-prefixes "nxml-util" '("nxml-"))
+(register-definition-prefixes "ob-C" '("org-babel-"))
+(register-definition-prefixes "ob-R" '("ob-" "org-babel-"))
+(register-definition-prefixes "ob-awk" '("org-babel-"))
+(register-definition-prefixes "ob-calc" '("org-babel-"))
+(register-definition-prefixes "ob-clojure" '("ob-clojure-" "org-babel-"))
+(register-definition-prefixes "ob-comint" '("org-babel-comint-"))
+(register-definition-prefixes "ob-core" '("org-"))
+(register-definition-prefixes "ob-csharp" '("org-babel-"))
+(register-definition-prefixes "ob-css" '("org-babel-"))
+(register-definition-prefixes "ob-ditaa" '("ob-ditaa--ensure-jar-file" "org-"))
+(register-definition-prefixes "ob-dot" '("org-babel-"))
+(register-definition-prefixes "ob-emacs-lisp" '("org-babel-"))
+(register-definition-prefixes "ob-eshell" '("ob-eshell-session-live-p" "org-babel-"))
+(register-definition-prefixes "ob-eval" '("org-babel-"))
+(register-definition-prefixes "ob-exp" '("org-"))
+(register-definition-prefixes "ob-forth" '("org-babel-"))
+(register-definition-prefixes "ob-fortran" '("org-babel-"))
+(register-definition-prefixes "ob-gnuplot" '("*org-babel-gnuplot-" "org-babel-"))
+(register-definition-prefixes "ob-groovy" '("org-babel-"))
+(register-definition-prefixes "ob-haskell" '("org-babel-"))
+(register-definition-prefixes "ob-java" '("org-babel-"))
+(register-definition-prefixes "ob-js" '("org-babel-"))
+(register-definition-prefixes "ob-julia" '("org-babel-"))
+(register-definition-prefixes "ob-latex" '("org-babel-"))
+(register-definition-prefixes "ob-lilypond" '("ob-lilypond-header-args" "org-babel-"))
+(register-definition-prefixes "ob-lisp" '("org-babel-"))
+(register-definition-prefixes "ob-lob" '("org-babel-"))
+(register-definition-prefixes "ob-lua" '("org-babel-"))
+(register-definition-prefixes "ob-makefile" '("org-babel-"))
+(register-definition-prefixes "ob-maxima" '("org-babel-"))
+(register-definition-prefixes "ob-ocaml" '("org-babel-"))
+(register-definition-prefixes "ob-octave" '("org-babel-"))
+(register-definition-prefixes "ob-org" '("org-babel-"))
+(register-definition-prefixes "ob-perl" '("org-babel-"))
+(register-definition-prefixes "ob-plantuml" '("org-"))
+(register-definition-prefixes "ob-processing" '("org-babel-"))
+(register-definition-prefixes "ob-python" '("org-babel-"))
+(register-definition-prefixes "ob-ref" '("org-babel-"))
+(register-definition-prefixes "ob-ruby" '("org-babel-"))
+(register-definition-prefixes "ob-sass" '("org-babel-"))
+(register-definition-prefixes "ob-scheme" '("org-babel-"))
+(register-definition-prefixes "ob-screen" '("org-babel-"))
+(register-definition-prefixes "ob-sed" '("org-babel-"))
+(register-definition-prefixes "ob-shell" '("ob-shell-async-" "org-babel-"))
+(register-definition-prefixes "ob-sql" '("org-babel-"))
+(register-definition-prefixes "ob-sqlite" '("org-babel-"))
+(register-definition-prefixes "ob-table" '("org-"))
+(register-definition-prefixes "ob-tangle" '("org-babel-"))
+(register-definition-prefixes "oc" '("org-cite-"))
+(register-definition-prefixes "oc-basic" '("org-cite-basic-"))
+(register-definition-prefixes "oc-biblatex" '("org-cite-biblatex-"))
+(register-definition-prefixes "oc-bibtex" '("org-cite-bibtex-"))
+(register-definition-prefixes "oc-csl" '("org-cite-csl-"))
+(register-definition-prefixes "oc-natbib" '("org-cite-natbib-"))
+(register-definition-prefixes "octave" '("inferior-octave-" "octave-"))
+(register-definition-prefixes "ogonek" '("ogonek-"))
+(register-definition-prefixes "ol" '("org-"))
+(register-definition-prefixes "ol-bbdb" '("org-bbdb-"))
+(register-definition-prefixes "ol-bibtex" '("org-"))
+(register-definition-prefixes "ol-docview" '("org-docview-"))
+(register-definition-prefixes "ol-doi" '("org-link-doi-"))
+(register-definition-prefixes "ol-eshell" '("org-eshell-"))
+(register-definition-prefixes "ol-eww" '("org-eww-"))
+(register-definition-prefixes "ol-gnus" '("org-gnus-"))
+(register-definition-prefixes "ol-info" '("org-info-"))
+(register-definition-prefixes "ol-irc" '("org-irc-"))
+(register-definition-prefixes "ol-man" '("org-man-"))
+(register-definition-prefixes "ol-mhe" '("org-mhe-"))
+(register-definition-prefixes "ol-rmail" '("org-rmail-"))
+(register-definition-prefixes "ol-w3m" '("org-w3m-"))
+(register-definition-prefixes "opascal" '("opascal-"))
+(register-definition-prefixes "org" '("org-" "turn-on-org-cdlatex"))
+(register-definition-prefixes "org-agenda" '("org-"))
+(register-definition-prefixes "org-archive" '("org-a"))
+(register-definition-prefixes "org-attach" '("org-attach-"))
+(register-definition-prefixes "org-attach-git" '("org-attach-git-"))
+(register-definition-prefixes "org-capture" '("org-capture-"))
+(register-definition-prefixes "org-clock" '("org-"))
+(register-definition-prefixes "org-colview" '("org-"))
+(register-definition-prefixes "org-compat" '("org-" "outline-"))
+(register-definition-prefixes "org-crypt" '("org-"))
+(register-definition-prefixes "org-ctags" '("org-"))
+(register-definition-prefixes "org-cycle" '("org-"))
+(register-definition-prefixes "org-datetree" '("org-datetree-"))
+(register-definition-prefixes "org-duration" '("org-duration-"))
+(register-definition-prefixes "org-element" '("org-element-"))
+(register-definition-prefixes "org-element-ast" '("org-element-"))
+(register-definition-prefixes "org-entities" '("org-entit"))
+(register-definition-prefixes "org-faces" '("org-"))
+(register-definition-prefixes "org-feed" '("org-feed-"))
+(register-definition-prefixes "org-fold" '("org-fold-"))
+(register-definition-prefixes "org-fold-core" '("org-fold-core-"))
+(register-definition-prefixes "org-footnote" '("org-footnote-"))
+(register-definition-prefixes "org-goto" '("org-goto-"))
+(register-definition-prefixes "org-habit" '("org-"))
+(register-definition-prefixes "org-id" '("org-id-"))
+(register-definition-prefixes "org-indent" '("org-indent-"))
+(register-definition-prefixes "org-inlinetask" '("org-inlinetask-"))
+(register-definition-prefixes "org-keys" '("org-"))
+(register-definition-prefixes "org-lint" '("org-lint-"))
+(register-definition-prefixes "org-list" '("org-"))
+(register-definition-prefixes "org-macro" '("org-macro-"))
+(register-definition-prefixes "org-macs" '("org-"))
+(register-definition-prefixes "org-mobile" '("org-mobile-"))
+(register-definition-prefixes "org-mouse" '("org-"))
+(register-definition-prefixes "org-num" '("org-num-"))
+(register-definition-prefixes "org-pcomplete" '("org-" "pcomplete/org-mode/"))
+(register-definition-prefixes "org-persist" '("org-persist-"))
+(register-definition-prefixes "org-plot" '("org-"))
+(register-definition-prefixes "org-protocol" '("org-"))
+(register-definition-prefixes "org-refile" '("org-"))
+(register-definition-prefixes "org-src" '("org-"))
+(register-definition-prefixes "org-table" '("org"))
+(register-definition-prefixes "org-tempo" '("org-tempo-"))
+(register-definition-prefixes "org-timer" '("org-timer-"))
+(put 'outline-regexp 'safe-local-variable 'stringp)
+(put 'outline-heading-end-regexp 'safe-local-variable 'stringp)
+(autoload 'outline-mode "outline"
+"Set major mode for editing outlines with selective display.
+Headings are lines which start with asterisks: one for major headings,
+two for subheadings, etc.  Lines not starting with asterisks are body lines.
+
+Body text or subheadings under a heading can be made temporarily
+invisible, or visible again.  Invisible lines are attached to the end
+of the heading, so they move with it, if the line is killed and yanked
+back.  A heading with text hidden under it is marked with an ellipsis (...).
+
+\\{outline-mode-map}
+The commands `outline-hide-subtree', `outline-show-subtree',
+`outline-show-children', `outline-hide-entry',
+`outline-show-entry', `outline-hide-leaves', and `outline-show-branches'
+are used when point is on a heading line.
+
+The variable `outline-regexp' can be changed to control what is a heading.
+A line is a heading if `outline-regexp' matches something at the
+beginning of the line.  The longer the match, the deeper the level.
+
+Turning on outline mode calls the value of `text-mode-hook' and then of
+`outline-mode-hook', if they are non-nil." t)
+(autoload 'outline-minor-mode "outline"
+"Toggle Outline minor mode.
+
+See the command `outline-mode' for more information on this mode.
+
+This is a minor mode.  If called interactively, toggle the `Outline
+minor mode' mode.  If the prefix argument is positive, enable the mode,
+and if it is zero or negative, disable the mode.
+
+If called from Lisp, toggle the mode if ARG is `toggle'.  Enable the
+mode if ARG is nil, omitted, or is a positive number.  Disable the mode
+if ARG is a negative number.
+
+To check whether the minor mode is enabled in the current buffer,
+evaluate the variable `outline-minor-mode'.
+
+The mode's hook is called both when the mode is enabled and when it is
+disabled.
+
+(fn &optional ARG)" t)
+(register-definition-prefixes "outline" '("outline-"))
+(register-definition-prefixes "ox" '("org-"))
+(register-definition-prefixes "ox-ascii" '("org-"))
+(register-definition-prefixes "ox-beamer" '("org-beamer-"))
+(register-definition-prefixes "ox-html" '("org-"))
+(register-definition-prefixes "ox-icalendar" '("org-icalendar-"))
+(register-definition-prefixes "ox-koma-letter" '("org-koma-letter-"))
+(register-definition-prefixes "ox-latex" '("org-"))
+(register-definition-prefixes "ox-man" '("org-man-"))
+(register-definition-prefixes "ox-md" '("org-"))
+(register-definition-prefixes "ox-odt" '("org-odt-"))
+(register-definition-prefixes "ox-org" '("org-org-"))
+(register-definition-prefixes "ox-publish" '("org-publish-"))
+(register-definition-prefixes "ox-texinfo" '("org-"))
+(register-definition-prefixes "package" '("bad-signature" "define-package" "describe-package-1" "package-"))
+(defvar package-activated-list nil
+"List of the names of currently activated packages.")
+(defvar package--activated nil
+"Non-nil if `package-activate-all' has been run.")
+(register-definition-prefixes "package-activate" '("package-"))
+(register-definition-prefixes "package-vc" '("package-vc-"))
+(register-definition-prefixes "page-ext" '("pages-"))
+(register-definition-prefixes "pakistan" '("pakistan-"))
+(register-definition-prefixes "parse-time" '("parse-"))
+(register-definition-prefixes "pascal" '("electric-pascal-" "pascal-"))
+(register-definition-prefixes "password-cache" '("password-"))
+(register-definition-prefixes "pcase" '("pcase-"))
+(register-definition-prefixes "pcmpl-cvs" '("pcmpl-cvs-"))
+(register-definition-prefixes "pcmpl-git" '("pcmpl-git--"))
+(register-definition-prefixes "pcmpl-gnu" '("pcmpl-gnu-" "pcomplete/find"))
+(register-definition-prefixes "pcmpl-linux" '("pcmpl-linux-" "pcomplete-pare-list"))
+(register-definition-prefixes "pcmpl-rpm" '("pcmpl-rpm-"))
+(register-definition-prefixes "pcmpl-unix" '("pcmpl-" "pcomplete/"))
+(register-definition-prefixes "pcmpl-x" '("pcmpl-x-"))
+(register-definition-prefixes "pcomplete" '("pcomplete-"))
+(register-definition-prefixes "pcvs" '("cvs-" "defun-cvs-mode"))
+(defvar cvs-global-menu (let ((m (make-sparse-keymap "PCL-CVS"))) (define-key m [status] '(menu-item "Directory Status" cvs-status :help "A more verbose status of a workarea")) (define-key m [checkout] '(menu-item "Checkout Module" cvs-checkout :help "Check out a module from the repository")) (define-key m [update] '(menu-item "Update Directory" cvs-update :help "Fetch updates from the repository")) (define-key m [examine] '(menu-item "Examine Directory" cvs-examine :help "Examine the current state of a workarea")) (fset 'cvs-global-menu m))
+"Global menu used by PCL-CVS.")
+(register-definition-prefixes "pcvs-defs" '("cvs-"))
+(register-definition-prefixes "pcvs-info" '("cvs-"))
+(register-definition-prefixes "pcvs-parse" '("cvs-"))
+(register-definition-prefixes "pcvs-util" '("cvs-"))
+(register-definition-prefixes "peg" '("bob" "bol" "bos" "bow" "define-peg-rule" "eob" "eol" "eos" "eow" "fail" "null" "peg" "with-peg-rules"))
+(put 'perl-indent-level 'safe-local-variable 'integerp)
+(put 'perl-continued-statement-offset 'safe-local-variable 'integerp)
+(put 'perl-continued-brace-offset 'safe-local-variable 'integerp)
+(put 'perl-brace-offset 'safe-local-variable 'integerp)
+(put 'perl-brace-imaginary-offset 'safe-local-variable 'integerp)
+(put 'perl-label-offset 'safe-local-variable 'integerp)
+(register-definition-prefixes "perl-mode" '("perl-"))
+(register-definition-prefixes "pgtk-dnd" '("pgtk-dnd-"))
+(register-definition-prefixes "php-ts-mode" '("inferior-php-ts-mode" "php-ts-"))
+(register-definition-prefixes "picture" '("picture-"))
+(register-definition-prefixes "pixel-fill" '("pixel-fill-"))
+(register-definition-prefixes "pixel-scroll" '("pixel-"))
+(put 'plstore-encrypt-to 'safe-local-variable (lambda (val) (or (stringp val) (and (listp val) (catch 'safe (mapc (lambda (elt) (unless (stringp elt) (throw 'safe nil))) val) t)))))
+(register-definition-prefixes "plstore" '("plstore-"))
+(autoload 'po-find-file-coding-system "po"
+"Return a (DECODING . ENCODING) pair, according to PO file's charset.
+Called through `file-coding-system-alist', before the file is visited for real.
+
+(fn ARG-LIST)")
+(register-definition-prefixes "po" '("po-"))
+(register-definition-prefixes "pong" '("pong-"))
+(register-definition-prefixes "pop3" '("pop3-"))
+(autoload 'pp-to-string "pp"
+"Return a string containing the pretty-printed representation of OBJECT.
+OBJECT can be any Lisp object.  Quoting characters are used as needed
+to make output that `read' can handle, whenever this is possible.
+Optional argument PP-FUNCTION overrides `pp-default-function'.
+
+(fn OBJECT &optional PP-FUNCTION)")
+(autoload 'pp-buffer "pp"
+"Prettify the current buffer with printed representation of a Lisp object." t)
+(autoload 'pp "pp"
+"Output the pretty-printed representation of OBJECT, any Lisp object.
+Quoting characters are printed as needed to make output that `read'
+can handle, whenever this is possible.
+
+Uses the pretty-printing code specified in `pp-default-function'.
+
+Output stream is STREAM, or value of `standard-output' (which see).
+
+(fn OBJECT &optional STREAM)")
+(autoload 'pp-display-expression "pp"
+"Prettify and display EXPRESSION in an appropriate way, depending on length.
+If LISP, format with `pp-emacs-lisp-code'; use `pp' otherwise.
+
+If a temporary buffer is needed for representation, it will be named
+after OUT-BUFFER-NAME.
+
+(fn EXPRESSION OUT-BUFFER-NAME &optional LISP)")
+(autoload 'pp-eval-expression "pp"
+"Evaluate EXPRESSION and pretty-print its value.
+Also add the value to the front of the list in the variable `values'.
+When called interactively, read an Emacs Lisp expression.
+With a prefix argument (when called from Lisp, with optional argument
+INSERT-VALUE non-nil), insert the value into the current buffer instead
+of displaying it in the echo area or a temporary buffer.
+
+(fn EXPRESSION &optional INSERT-VALUE)" t)
+(autoload 'pp-macroexpand-expression "pp"
+"Macroexpand EXPRESSION and pretty-print its value.
+
+(fn EXPRESSION)" t)
+(autoload 'pp-eval-last-sexp "pp"
+"Run `pp-eval-expression' on sexp before point.
+With ARG, pretty-print output into current buffer.
+Ignores leading comment characters.
+
+(fn ARG)" t)
+(autoload 'pp-macroexpand-last-sexp "pp"
+"Run `pp-macroexpand-expression' on sexp before point.
+With ARG, pretty-print output into current buffer.
+Ignores leading comment characters.
+
+(fn ARG)" t)
+(register-definition-prefixes "pp" '("pp-"))
+(register-definition-prefixes "printing" '("lpr-setup" "pr-"))
+(register-definition-prefixes "proced" '("proced-"))
+(register-definition-prefixes "profiler" '("profiler-"))
+(put 'project-vc-ignores 'safe-local-variable (lambda (val) (and (listp val) (not (memq nil (mapcar #'stringp val))))))
+(put 'project-vc-merge-submodules 'safe-local-variable #'booleanp)
+(put 'project-vc-include-untracked 'safe-local-variable #'booleanp)
+(put 'project-vc-name 'safe-local-variable #'stringp)
+(put 'project-vc-extra-root-markers 'safe-local-variable (lambda (val) (and (listp val) (not (memq nil (mapcar #'stringp val))))))
+(defvar project-prefix-map (let ((map (make-sparse-keymap))) (define-key map "!" 'project-shell-command) (define-key map "&" 'project-async-shell-command) (define-key map "f" 'project-find-file) (define-key map "F" 'project-or-external-find-file) (define-key map "b" 'project-switch-to-buffer) (define-key map "s" 'project-shell) (define-key map "d" 'project-find-dir) (define-key map "D" 'project-dired) (define-key map "v" 'project-vc-dir) (define-key map "c" 'project-compile) (define-key map "e" 'project-eshell) (define-key map "k" 'project-kill-buffers) (define-key map "p" 'project-switch-project) (define-key map "g" 'project-find-regexp) (define-key map "G" 'project-or-external-find-regexp) (define-key map "r" 'project-query-replace-regexp) (define-key map "x" 'project-execute-extended-command) (define-key map "o" 'project-any-command) (define-key map "\2" 'project-list-buffers) (define-key map "\30s" 'project-save-some-buffers) map)
+"Keymap for project commands.")
+(put 'project-kill-buffers-display-buffer-list 'safe-local-variable #'booleanp)
+(register-definition-prefixes "project" '("project-" "vc-"))
+(register-definition-prefixes "prolog" '("mercury-mode-map" "prolog-"))
+(register-definition-prefixes "ps-bdf" '("bdf-"))
+(register-definition-prefixes "ps-mode" '("ps-"))
+(register-definition-prefixes "ps-mule" '("ps-mule-"))
+(register-definition-prefixes "ps-print" '("ps-"))
+(register-definition-prefixes "ps-samp" '("ps-"))
+(autoload 'pulse-momentary-highlight-one-line "pulse"
+"Highlight the line around POINT, unhighlighting before next command.
+If POINT is nil or missing, the current point is used instead.
+
+Optional argument FACE specifies the face to do the highlighting.
+
+(fn &optional POINT FACE)")
+(autoload 'pulse-momentary-highlight-region "pulse"
+"Highlight between START and END, unhighlighting before next command.
+Optional argument FACE specifies the face to do the highlighting.
+
+(fn START END &optional FACE)")
+(register-definition-prefixes "pulse" '("pulse-"))
+(register-definition-prefixes "puny" '("puny-"))
+(register-definition-prefixes "python" '("inferior-python-mode" "python-" "run-python-internal" "subword-mode"))
+(register-definition-prefixes "qp" '("quoted-printable-"))
+(register-definition-prefixes "quail" '("quail-"))
+(register-definition-prefixes "radix-tree" '("radix-tree-"))
+(register-definition-prefixes "range" '("range-"))
+(register-definition-prefixes "rcirc" '("rcirc-" "with-rcirc-"))
+(register-definition-prefixes "re-builder" '("re-builder-unload-function" "reb-"))
+(autoload 'recentf-open "recentf"
+"Prompt for FILE in `recentf-list' and visit it.
+Enable `recentf-mode' if it isn't already.
+
+(fn FILE)" t)
+(register-definition-prefixes "recentf" '("recentf-"))
+(register-definition-prefixes "rect" '("apply-on-rectangle" "clear-rectangle-line" "delete-" "extract-rectangle-" "killed-rectangle" "ope" "rectangle-" "spaces-string" "string-rectangle-"))
+(register-definition-prefixes "refbib" '("r2b-"))
+(register-definition-prefixes "refer" '("refer-"))
+(autoload 'refill-mode "refill"
+"Toggle automatic refilling (Refill mode).
+
+Refill mode is a buffer-local minor mode.  When enabled, the
+current paragraph is refilled as you edit.  Self-inserting
+characters only cause refilling if they would cause
+auto-filling.
+
+For true \"word wrap\" behavior, use `visual-line-mode' instead.
+
+This is a minor mode.  If called interactively, toggle the `Refill mode'
+mode.  If the prefix argument is positive, enable the mode, and if it is
+zero or negative, disable the mode.
+
+If called from Lisp, toggle the mode if ARG is `toggle'.  Enable the
+mode if ARG is nil, omitted, or is a positive number.  Disable the mode
+if ARG is a negative number.
+
+To check whether the minor mode is enabled in the current buffer,
+evaluate the variable `refill-mode'.
+
+The mode's hook is called both when the mode is enabled and when it is
+disabled.
+
+(fn &optional ARG)" t)
+(register-definition-prefixes "refill" '("refill-"))
+(register-definition-prefixes "reftex" '("reftex-"))
+(register-definition-prefixes "reftex-auc" '("reftex-"))
+(register-definition-prefixes "reftex-cite" '("reftex-"))
+(register-definition-prefixes "reftex-dcr" '("reftex-"))
+(register-definition-prefixes "reftex-global" '("reftex-"))
+(register-definition-prefixes "reftex-index" '("reftex-"))
+(register-definition-prefixes "reftex-parse" '("reftex-"))
+(register-definition-prefixes "reftex-ref" '("reftex-"))
+(register-definition-prefixes "reftex-sel" '("reftex-"))
+(register-definition-prefixes "reftex-toc" '("reftex-"))
+(put 'reftex-vref-is-default 'safe-local-variable (lambda (x) (or (stringp x) (symbolp x))))
+(put 'reftex-fref-is-default 'safe-local-variable (lambda (x) (or (stringp x) (symbolp x))))
+(put 'reftex-level-indent 'safe-local-variable 'integerp)
+(put 'reftex-guess-label-type 'safe-local-variable #'booleanp)
+(register-definition-prefixes "reftex-vars" '("reftex-"))
+(autoload 'regexp-opt "regexp-opt"
+"Return a regexp to match a string in the list STRINGS.
+Each member of STRINGS is treated as a fixed string, not as a regexp.
+Optional PAREN specifies how the returned regexp is surrounded by
+grouping constructs.
+
+If STRINGS is the empty list, the return value is a regexp that
+never matches anything.
+
+The optional argument PAREN can be any of the following:
+
+a string
+    the resulting regexp is preceded by PAREN and followed by
+    \\), e.g.  use \"\\\\(?1:\" to produce an explicitly numbered
+    group.
+
+`words'
+    the resulting regexp is surrounded by \\=\\<\\( and \\)\\>.
+
+`symbols'
+    the resulting regexp is surrounded by \\_<\\( and \\)\\_>.
+
+non-nil
+    the resulting regexp is surrounded by \\( and \\).
+
+nil
+    the resulting regexp is surrounded by \\(?: and \\), if it is
+    necessary to ensure that a postfix operator appended to it will
+    apply to the whole expression.
+
+The returned regexp is ordered in such a way that it will always
+match the longest string possible.
+
+Up to reordering, the resulting regexp is equivalent to but
+usually more efficient than that of a simplified version:
+
+ (defun simplified-regexp-opt (strings &optional paren)
+   (let ((parens
+          (cond ((stringp paren)       (cons paren \"\\\\)\"))
+                ((eq paren \\='words)    \\='(\"\\\\\\=<\\\\(\" . \"\\\\)\\\\>\"))
+                ((eq paren \\='symbols) \\='(\"\\\\_<\\\\(\" . \"\\\\)\\\\_>\"))
+                ((null paren)          \\='(\"\\\\(?:\" . \"\\\\)\"))
+                (t                       \\='(\"\\\\(\" . \"\\\\)\")))))
+     (concat (car parens)
+             (mapconcat \\='regexp-quote strings \"\\\\|\")
+             (cdr parens))))
+
+(fn STRINGS &optional PAREN)")
+(autoload 'regexp-opt-depth "regexp-opt"
+"Return the depth of REGEXP.
+This means the number of non-shy regexp grouping constructs
+(parenthesized expressions) in REGEXP.
+
+(fn REGEXP)")
+(register-definition-prefixes "regexp-opt" '("regexp-opt-"))
+(register-definition-prefixes "regi" '("regi-"))
+(register-definition-prefixes "registry" '("registry-"))
+(register-definition-prefixes "remember" '("remember-"))
+(autoload 'repeat "repeat"
+"Repeat most recently executed command.
+If REPEAT-ARG is non-nil (interactively, with a prefix argument),
+supply a prefix argument to that command.  Otherwise, give the
+command the same prefix argument it was given before, if any.
+
+If this command is invoked by a multi-character key sequence, it
+can then be repeated by repeating the final character of that
+sequence.  This behavior can be modified by the global variable
+`repeat-on-final-keystroke'.
+
+`repeat' ignores commands bound to input events.  Hence the term
+\"most recently executed command\" shall be read as \"most
+recently executed command not bound to an input event\".
+
+(fn REPEAT-ARG)" t)
+(defvar repeat-map nil
+"The value of the repeating transient map for the next command.
+A command called from the map can set it again to the same map when
+the map can't be set on the command symbol property `repeat-map'.")
+(autoload 'repeat-exit "repeat"
+"Exit the repeating sequence.
+This function can be used to force exit of repetition while it's active." t)
+(register-definition-prefixes "repeat" '("describe-repeat-maps" "repeat-"))
+(register-definition-prefixes "reporter" '("reporter-"))
+(register-definition-prefixes "reposition" '("repos-count-screen-lines"))
+(autoload 'reveal-mode "reveal"
+"Toggle uncloaking of invisible text near point (Reveal mode).
+
+Reveal mode is a buffer-local minor mode.  When enabled, it
+reveals invisible text around point.
+
+Also see the `reveal-auto-hide' variable.
+
+This is a minor mode.  If called interactively, toggle the `Reveal mode'
+mode.  If the prefix argument is positive, enable the mode, and if it is
+zero or negative, disable the mode.
+
+If called from Lisp, toggle the mode if ARG is `toggle'.  Enable the
+mode if ARG is nil, omitted, or is a positive number.  Disable the mode
+if ARG is a negative number.
+
+To check whether the minor mode is enabled in the current buffer,
+evaluate the variable `reveal-mode'.
+
+The mode's hook is called both when the mode is enabled and when it is
+disabled.
+
+(fn &optional ARG)" t)
+(register-definition-prefixes "reveal" '("reveal-"))
+(register-definition-prefixes "rfc1843" '("rfc1843-"))
+(register-definition-prefixes "rfc2045" '("rfc2045-encode-string"))
+(register-definition-prefixes "rfc2047" '("rfc2047-"))
+(register-definition-prefixes "rfc2104" '("rfc2104-"))
+(register-definition-prefixes "rfc2231" '("rfc2231-"))
+(register-definition-prefixes "rfc6068" '("rfc6068-"))
+(register-definition-prefixes "rfc822" '("rfc822-"))
+(register-definition-prefixes "ring" '("ring-"))
+(register-definition-prefixes "ring-bell-fns" '("flash-face-"))
+(defvar rmail-mode-hook nil
+"List of functions to call when Rmail is invoked.")
+(defvar rmail-file-coding-system nil
+"Coding system used in RMAIL file.
+
+This is set to nil by default.")
+(defvar rmail-insert-mime-forwarded-message-function nil
+"Function to insert a message in MIME format so it can be forwarded.
+This function is called if `rmail-enable-mime' and
+`rmail-enable-mime-composing' are non-nil.
+It is called with one argument FORWARD-BUFFER, which is a
+buffer containing the message to forward.  The current buffer
+is the outgoing mail buffer.")
+(register-definition-prefixes "rmail" '("mail-" "rmail-"))
+(register-definition-prefixes "rmail-spam-filter" '("rmail-" "rsf-"))
+(register-definition-prefixes "rmailedit" '("rmail-"))
+(register-definition-prefixes "rmailkwd" '("rmail-"))
+(register-definition-prefixes "rmailmm" '("rmail-"))
+(register-definition-prefixes "rmailout" '("rmail-"))
+(register-definition-prefixes "rmailsort" '("rmail-"))
+(register-definition-prefixes "rmailsum" '("rmail-"))
+(register-definition-prefixes "rng-cmpct" '("rng-"))
+(register-definition-prefixes "rng-dt" '("rng-dt-"))
+(register-definition-prefixes "rng-loc" '("rng-"))
+(register-definition-prefixes "rng-maint" '("rng-"))
+(register-definition-prefixes "rng-match" '("rng-"))
+(register-definition-prefixes "rng-nxml" '("rng-"))
+(register-definition-prefixes "rng-parse" '("rng-parse-"))
+(register-definition-prefixes "rng-pttrn" '("rng-"))
+(register-definition-prefixes "rng-uri" '("rng-"))
+(register-definition-prefixes "rng-util" '("rng-"))
+(register-definition-prefixes "rng-valid" '("rng-"))
+(register-definition-prefixes "rng-xsd" '("rng-xsd-" "xsd-duration-reference-dates"))
+(register-definition-prefixes "robin" '("robin-"))
+(register-definition-prefixes "rot13" '("rot13-"))
+(register-definition-prefixes "rst" '("rst-"))
+(register-definition-prefixes "rtree" '("rtree-"))
+(register-definition-prefixes "ruby-mode" '("ruby-"))
+(register-definition-prefixes "ruby-ts-mode" '("ruby-ts-"))
+(register-definition-prefixes "ruler-mode" '("ruler-"))
+(register-definition-prefixes "rust-ts-mode" '("rust-ts-"))
+(register-definition-prefixes "rx" '("rx-"))
+(register-definition-prefixes "sasl" '("sasl-"))
+(register-definition-prefixes "sasl-cram" '("sasl-cram-md5-"))
+(register-definition-prefixes "sasl-digest" '("sasl-digest-md5-"))
+(register-definition-prefixes "sasl-ntlm" '("sasl-ntlm-"))
+(register-definition-prefixes "sasl-scram-rfc" '("sasl-scram-"))
+(register-definition-prefixes "sasl-scram-sha256" '("sasl-scram-sha"))
+(register-definition-prefixes "savehist" '("savehist-"))
+(autoload 'save-place-local-mode "saveplace"
+"Toggle whether to save your place in this file between sessions.
+
+If this mode is enabled, point is recorded when you kill the buffer
+or exit Emacs.  Visiting this file again will go to that position,
+even in a later Emacs session.
+
+To save places automatically in all files, put this in your init
+file:
+
+(save-place-mode 1)
+
+This is a minor mode.  If called interactively, toggle the
+`Save-Place-Local mode' mode.  If the prefix argument is positive,
+enable the mode, and if it is zero or negative, disable the mode.
+
+If called from Lisp, toggle the mode if ARG is `toggle'.  Enable the
+mode if ARG is nil, omitted, or is a positive number.  Disable the mode
+if ARG is a negative number.
+
+To check whether the minor mode is enabled in the current buffer,
+evaluate the variable `save-place-mode'.
+
+The mode's hook is called both when the mode is enabled and when it is
+disabled.
+
+(fn &optional ARG)" t)
+(register-definition-prefixes "saveplace" '("save-place"))
+(register-definition-prefixes "scheme" '("dsssl-" "scheme-"))
+(register-definition-prefixes "score-mode" '("gnus-score-" "score-mode-"))
+(register-definition-prefixes "scroll-all" '("scroll-all-"))
+(register-definition-prefixes "scroll-bar" '("get-scroll-bar-mode" "horizontal-scroll-bar" "previous-scroll-bar-mode" "scroll-bar-" "set-scroll-bar-mode" "toggle-"))
+(register-definition-prefixes "scroll-lock" '("scroll-lock-"))
+(register-definition-prefixes "secrets" '("secrets-"))
+(register-definition-prefixes "semantic" '("srecode-semantic-"))
+(register-definition-prefixes "send-to" '("send-to-"))
+(defvar mail-aliases t
+"Alist of mail address aliases,
+or t meaning should be initialized from your mail aliases file.
+(The file's name is normally `~/.mailrc', but `mail-personal-alias-file'
+can specify a different file name.)
+The alias definitions in the file have this form:
+    alias ALIAS MEANING")
+(defvar sendmail-coding-system nil
+"Coding system for encoding the outgoing mail.
+This has higher priority than the default `buffer-file-coding-system'
+and `default-sendmail-coding-system',
+but lower priority than the local value of `buffer-file-coding-system'.
+See also the function `select-message-coding-system'.")
+(defvar default-sendmail-coding-system 'utf-8
+"Default coding system for encoding the outgoing mail.
+This variable is used only when `sendmail-coding-system' is nil.
+
+This variable is set/changed by the command `set-language-environment'.
+User should not set this variable manually,
+instead use `sendmail-coding-system' to get a constant encoding
+of outgoing mails regardless of the current language environment.
+See also the function `select-message-coding-system'.")
+(register-definition-prefixes "sendmail" '("mail-" "sendmail-"))
+(register-definition-prefixes "server" '("server-"))
+(register-definition-prefixes "ses" '("ses"))
+(register-definition-prefixes "sgml-mode" '("html-" "sgml-"))
+(put 'sh-shell 'safe-local-variable 'symbolp)
+(register-definition-prefixes "sh-script" '("sh-"))
+(autoload 'list-load-path-shadows "shadow"
+"Display a list of Emacs Lisp files that shadow other files.
+
+If STRINGP is non-nil, returns any shadows as a string.
+Otherwise, if interactive shows any shadows in a `*Shadows*' buffer;
+else prints messages listing any shadows.
+
+This function lists potential load path problems.  Directories in
+the `load-path' variable are searched, in order, for Emacs Lisp
+files.  When a previously encountered file name is found again, a
+message is displayed indicating that the later file is \"hidden\" by
+the earlier.
+
+For example, suppose `load-path' is set to
+
+(\"/usr/share/emacs/site-lisp\" \"/usr/share/emacs/24.3/lisp\")
+
+and that each of these directories contains a file called XXX.el.  Then
+XXX.el in the site-lisp directory is referred to by all of:
+(require \\='XXX), (autoload .... \"XXX\"), (load-library \"XXX\") etc.
+
+The first XXX.el file prevents Emacs from seeing the second (unless
+the second is loaded explicitly via `load-file').
+
+When not intended, such shadowings can be the source of subtle
+problems.  For example, the above situation may have arisen because the
+XXX package was not distributed with versions of Emacs prior to
+24.3.  A system administrator downloaded XXX from elsewhere and installed
+it.  Later, XXX was updated and included in the Emacs distribution.
+Unless the system administrator checks for this, the new version of XXX
+will be hidden behind the old (which may no longer work with the new
+Emacs version).
+
+This function performs these checks and flags all possible
+shadowings.  Because a .el file may exist without a corresponding .elc
+(or vice-versa), these suffixes are essentially ignored.  A file
+XXX.elc in an early directory (that does not contain XXX.el) is
+considered to shadow a later file XXX.el, and vice-versa.
+
+Shadowings are located by calling the (non-interactive) companion
+function, `load-path-shadows-find'.
+
+(fn &optional STRINGP)" t)
+(register-definition-prefixes "shadow" '("load-path-shadows-"))
+(register-definition-prefixes "shadowfile" '("shadow"))
+(register-definition-prefixes "shell" '("ede-shell-run-command"))
+(defvar shortdoc--groups nil)
+(register-definition-prefixes "shortdoc" '("shortdoc-"))
+(register-definition-prefixes "shr" '("shr-"))
+(register-definition-prefixes "shr-color" '("shr-color-"))
+(register-definition-prefixes "sieve" '("sieve-"))
+(register-definition-prefixes "sieve-manage" '("sieve-"))
+(register-definition-prefixes "sieve-mode" '("sieve-"))
+(register-definition-prefixes "simple" '("ede-simple-"))
+(register-definition-prefixes "simula" '("simula-"))
+(register-definition-prefixes "sisheng" '("quail-make-sisheng-rules" "sisheng-"))
+(defvar skeleton-filter-function 'identity
+"Function for transforming a skeleton proxy's aliases' variable value.")
+(register-definition-prefixes "skeleton" '("skeleton-"))
+(register-definition-prefixes "smerge-mode" '("smerge-"))
+(register-definition-prefixes "smie" '("smie-"))
+(register-definition-prefixes "smiley" '("gnus-smiley-file-types" "smiley-"))
+(register-definition-prefixes "smime" '("smime"))
+(register-definition-prefixes "smtpmail" '("smtpmail-"))
+(register-definition-prefixes "snake" '("snake-"))
+(register-definition-prefixes "snmp-mode" '("snmp"))
+(register-definition-prefixes "so-long" '("so-long-" "turn-o"))
+(register-definition-prefixes "soap-client" '("soap-"))
+(register-definition-prefixes "soap-inspect" '("soap-"))
+(register-definition-prefixes "socks" '("socks-"))
+(register-definition-prefixes "solar" '("calendar-" "diary-sunrise-sunset" "solar-"))
+(register-definition-prefixes "solitaire" '("solitaire-"))
+(register-definition-prefixes "sort" '("semantic-"))
+(put 'sort-fold-case 'safe-local-variable 'booleanp)
+(put 'sort-numeric-base 'safe-local-variable 'integerp)
+(register-definition-prefixes "soundex" '("soundex"))
+(register-definition-prefixes "spam" '("spam-"))
+(register-definition-prefixes "spam-report" '("spam-report-"))
+(register-definition-prefixes "spam-stat" '("spam-stat" "with-spam-stat-max-buffer-size"))
+(register-definition-prefixes "spam-wash" '("spam-"))
+(register-definition-prefixes "speedbar" '("ede-"))
+(register-definition-prefixes "spook" '("spook-phrase"))
+(register-definition-prefixes "sql" '("sql-"))
+(register-definition-prefixes "sqlite" '("with-sqlite-transaction"))
+(register-definition-prefixes "sqlite-mode" '("sqlite-"))
+(register-definition-prefixes "srecode" '("ede-srecode-"))
+(autoload 'string-edit "string-edit"
+"Switch to a new buffer to edit STRING.
+
+Call MAJOR-MODE-SYM (defaulting to `string-edit-mode') to set up the new
+buffer, and insert PROMPT (defaulting to nothing) at the start of the
+buffer.
+
+When the user finishes editing (with \\<string-edit-minor-mode-map>\\[string-edit-done]), call
+READ (defaulting to `identity') on the resulting string, omitting PROMPT if any.
+
+If READ returns without an error, quit the buffer and call
+SUCCESS-CALLBACK on the result.
+
+If the user aborts (with \\<string-edit-minor-mode-map>\\[string-edit-abort]),
+call ABORT-CALLBACK (if any) with no parameters.
+
+Also see `read-string-from-buffer'.
+
+(fn PROMPT STRING SUCCESS-CALLBACK &key ABORT-CALLBACK MAJOR-MODE-SYM READ)")
+(autoload 'read-string-from-buffer "string-edit"
+"Switch to a new buffer to edit STRING in a recursive edit.
+The user finishes editing with \\<string-edit-mode-map>\\[string-edit-done], or aborts with \\<string-edit-mode-map>\\[string-edit-abort].
+
+Insert PROMPT at the start of the buffer.  If nil, no prompt is
+inserted.
+
+When the user exits recursive edit, return the contents of the
+buffer (without including PROMPT).
+
+Also see `string-edit'.
+
+(fn PROMPT STRING)")
+(register-definition-prefixes "string-edit" '("string-edit-"))
+(register-definition-prefixes "strokes" '("strokes-"))
+(register-definition-prefixes "subr-x" '("add-remove--display-text-property" "emacs-etc--hide-local-variables" "hash-table-" "internal--thread-argument" "string-remove-" "thread-" "with-buffer-unmodified-if-unchanged" "work-buffer-"))
+(autoload 'subword-mode "subword"
+"Toggle subword movement and editing (Subword mode).
+
+Subword mode is a buffer-local minor mode.  Enabling it changes
+the definition of a word so that word-based commands stop inside
+symbols with mixed uppercase and lowercase letters,
+e.g. \"GtkWidget\", \"EmacsFrameClass\", \"NSGraphicsContext\".
+
+Here we call these mixed case symbols `nomenclatures'.  Each
+capitalized (or completely uppercase) part of a nomenclature is
+called a `subword'.  Here are some examples:
+
+  Nomenclature           Subwords
+  ===========================================================
+  GtkWindow          =>  \"Gtk\" and \"Window\"
+  EmacsFrameClass    =>  \"Emacs\", \"Frame\" and \"Class\"
+  NSGraphicsContext  =>  \"NS\", \"Graphics\" and \"Context\"
+
+This mode changes the definition of a word so that word commands
+treat nomenclature boundaries as word boundaries.
+
+This is a minor mode.  If called interactively, toggle the `Subword
+mode' mode.  If the prefix argument is positive, enable the mode, and if
+it is zero or negative, disable the mode.
+
+If called from Lisp, toggle the mode if ARG is `toggle'.  Enable the
+mode if ARG is nil, omitted, or is a positive number.  Disable the mode
+if ARG is a negative number.
+
+To check whether the minor mode is enabled in the current buffer,
+evaluate the variable `subword-mode'.
+
+The mode's hook is called both when the mode is enabled and when it is
+disabled.
+
+(fn &optional ARG)" t)
+(autoload 'superword-mode "subword"
+"Toggle superword movement and editing (Superword mode).
+
+Superword mode is a buffer-local minor mode.  Enabling it changes
+the definition of words such that characters which have symbol
+syntax are treated as parts of words: e.g., in `superword-mode',
+\"this_is_a_symbol\" counts as one word.
+
+\\{superword-mode-map}
+
+This is a minor mode.  If called interactively, toggle the `Superword
+mode' mode.  If the prefix argument is positive, enable the mode, and if
+it is zero or negative, disable the mode.
+
+If called from Lisp, toggle the mode if ARG is `toggle'.  Enable the
+mode if ARG is nil, omitted, or is a positive number.  Disable the mode
+if ARG is a negative number.
+
+To check whether the minor mode is enabled in the current buffer,
+evaluate the variable `superword-mode'.
+
+The mode's hook is called both when the mode is enabled and when it is
+disabled.
+
+(fn &optional ARG)" t)
+(register-definition-prefixes "subword" '("subword-" "superword-mode-map"))
+(register-definition-prefixes "supercite" '("sc-"))
+(register-definition-prefixes "svg" '("svg-"))
+(register-definition-prefixes "system-sleep" '("system-sleep-"))
+(register-definition-prefixes "system-taskbar" '("system-taskbar-"))
+(register-definition-prefixes "t-mouse" '("gpm-mouse-"))
+(register-definition-prefixes "tab-line" '("tab-line-"))
+(register-definition-prefixes "tabify" '("tabify-regexp"))
+(register-definition-prefixes "table" '("*table--" "table-"))
+(register-definition-prefixes "talk" '("talk-"))
+(register-definition-prefixes "tar-mode" '("pax-" "tar-"))
+(register-definition-prefixes "tcl" '("inferior-tcl-" "run-tcl" "switch-to-tcl" "tcl-"))
+(register-definition-prefixes "tcover-ses" '("ses-exercise"))
+(register-definition-prefixes "telnet" '("send-process-next-char" "telnet-"))
+(register-definition-prefixes "tempo" '("tempo-"))
+(register-definition-prefixes "term" '("ansi-term-color-vector" "serial-" "term-"))
+(register-definition-prefixes "testcover" '("testcover-"))
+(register-definition-prefixes "tetris" '("tetris-"))
+(put 'tex-main-file 'safe-local-variable (lambda (x) (or (stringp x) (null x))))
+(register-definition-prefixes "tex-mode" '("doctex-font-lock-" "latex-" "plain-tex-mode-map" "tex-"))
+(register-definition-prefixes "texinfmt" '("batch-texinfo-format" "texinf"))
+(register-definition-prefixes "texinfo" '("fill-paragraph-separate" "texinfo-"))
+(register-definition-prefixes "texnfo-upd" '("texinfo-"))
+(register-definition-prefixes "text-property-search" '("text-property-"))
+(register-definition-prefixes "textsec" '("textsec-"))
+(register-definition-prefixes "textsec-check" '("textsec-check"))
+(register-definition-prefixes "thai" '("thai-generate-quail-map"))
+(register-definition-prefixes "thai-util" '("exit-thai-language-environment-internal" "setup-thai-language-environment-internal" "thai-"))
+(register-definition-prefixes "thai-word" '("thai-"))
+(autoload 'bounds-of-thing-at-point "thingatpt"
+"Determine the start and end buffer locations for the THING at point.
+THING should be a symbol specifying a type of syntactic entity.
+Possibilities include `symbol', `list', `sexp', `defun', `number',
+`filename', `url', `email', `uuid', `word', `sentence', `whitespace',
+`line', and `page'.
+
+See the file `thingatpt.el' for documentation on how to define a
+valid THING.
+
+Return a cons cell (START . END) giving the start and end
+positions of the thing found.
+
+(fn THING)")
+(autoload 'thing-at-point "thingatpt"
+"Return the THING at point.
+THING should be a symbol specifying a type of syntactic entity.
+Possibilities include `symbol', `list', `sexp', `defun',
+`filename', `existing-filename', `url', `email', `uuid', `word',
+`sentence', `whitespace', `line', `number', `face' and `page'.
+
+When the optional argument NO-PROPERTIES is non-nil,
+strip text properties from the return value.
+
+See the file `thingatpt.el' for documentation on how to define
+a symbol as a valid THING.
+
+(fn THING &optional NO-PROPERTIES)")
+(autoload 'bounds-of-thing-at-mouse "thingatpt"
+"Determine start and end locations for THING at mouse click given by EVENT.
+Like `bounds-of-thing-at-point', but tries to use the position in EVENT
+where the mouse button is clicked to find the thing nearby.
+
+(fn EVENT THING)")
+(autoload 'thing-at-mouse "thingatpt"
+"Return the THING at mouse click specified by EVENT.
+Like `thing-at-point', but tries to use the position in EVENT
+where the mouse button is clicked to find the thing nearby.
+
+(fn EVENT THING &optional NO-PROPERTIES)")
+(autoload 'sexp-at-point "thingatpt"
+"Return the sexp at point, or nil if none is found.
+This is for returning the Lisp object represented by text at point;
+use (thing-at-point \\='sexp) instead if you rather want the balanced
+expression at point regardless of Lisp syntax.")
+(autoload 'symbol-at-point "thingatpt"
+"Return the symbol at point, or nil if none is found.")
+(autoload 'number-at-point "thingatpt"
+"Return the number at point, or nil if none is found.
+Decimal numbers like \"14\" or \"-14.5\", as well as hex numbers
+like \"0xBEEF09\" or \"#xBEEF09\", are recognized.")
+(autoload 'list-at-point "thingatpt"
+"Return the Lisp list at point, or nil if none is found.
+If IGNORE-COMMENT-OR-STRING is non-nil comments and strings are
+treated as white space.
+
+(fn &optional IGNORE-COMMENT-OR-STRING)")
+(register-definition-prefixes "thingatpt" '("beginning-of-thing" "bounds-of-thing-at-point-" "define-thing-chars" "end-of-thing" "filename" "for" "in-string-p" "sentence-at-point" "thing-at-point-" "word-at-point"))
+(register-definition-prefixes "thread" '("thread-list-"))
+(register-definition-prefixes "thunk" '("thunk-"))
+(register-definition-prefixes "tibet-util" '("tibetan-"))
+(register-definition-prefixes "tibetan" '("quail-tib" "tibetan-"))
+(register-definition-prefixes "tildify" '("tildify-"))
+(autoload 'display-time "time"
+"Enable display of time, load level, and mail flag in mode lines.
+This display updates automatically every minute.
+If `display-time-day-and-date' is non-nil, the current day and date
+are displayed as well.
+This runs the normal hook `display-time-hook' after each update." t)
+(register-definition-prefixes "time" '("display-time-" "legacy-style-world-list" "time--display-world-list" "world-clock-" "zoneinfo-style-world-list"))
+(register-definition-prefixes "time-date" '("date-" "decoded-time-" "encode-time-value" "seconds-to-string" "time-" "with-decoded-time-value"))
+(put 'time-stamp-format 'safe-local-variable #'stringp)
+(put 'time-stamp-time-zone 'safe-local-variable #'time-stamp-zone-type-p)
+(put 'time-stamp-line-limit 'safe-local-variable #'integerp)
+(put 'time-stamp-start 'safe-local-variable #'stringp)
+(put 'time-stamp-end 'safe-local-variable #'stringp)
+(put 'time-stamp-inserts-lines 'safe-local-variable #'booleanp)
+(put 'time-stamp-count 'safe-local-variable (lambda (c) (and (integerp c) (< c 100))))
+(put 'time-stamp-pattern 'safe-local-variable #'stringp)
+(register-definition-prefixes "time-stamp" '("time-stamp-"))
+(register-definition-prefixes "timeclock" '("timeclock-"))
+(autoload 'timeout-debounce "timeout"
+"Debounce FUNC by making it run DELAY seconds after it is called.
+
+This advises FUNC, when called (interactively or from code), to
+run after DELAY seconds.   If FUNC is called again within this time,
+the timer is reset.
+
+DELAY defaults to 0.5 seconds.  DELAY can be a number, a symbol (whose
+value is a number), or a function (that evaluates to a number).  When
+passed a symbol or function, it is evaluated at runtime for dynamic
+duration.  Using a delay of 0 removes any debounce advice.
+
+The function returns immediately with value DEFAULT when called the
+first time.  On future invocations, the result from the previous call is
+returned.
+
+(fn FUNC &optional DELAY DEFAULT)")
+(autoload 'timeout-throttle "timeout"
+"Make FUNC run no more frequently than once every THROTTLE seconds.
+
+THROTTLE defaults to 1 second.  THROTTLE can be a number, a symbol (whose
+value is a number), or a function (that evaluates to a number).  When
+passed a symbol or function, it is evaluated at runtime for dynamic
+duration.  Using a throttle of 0 removes any throttle advice.
+
+When FUNC does not run because of the throttle, the result from the
+previous successful call is returned.
+
+(fn FUNC &optional THROTTLE)")
+(autoload 'timeout-throttled-func "timeout"
+"Return a throttled version of function FUNC.
+
+The throttled function runs no more frequently than once every THROTTLE
+seconds.  THROTTLE defaults to 1 second.  THROTTLE can be a number, a
+symbol (whose value is a number), or a function (that evaluates to a
+number).  When passed a symbol or function, it is evaluated at runtime
+for dynamic duration.
+
+When FUNC does not run because of the throttle, the result from the
+previous successful call is returned.
+
+(fn FUNC &optional THROTTLE)")
+(autoload 'timeout-debounced-func "timeout"
+"Return a debounced version of function FUNC.
+
+The debounced function runs DELAY seconds after it is called.  DELAY
+defaults to 0.5 seconds.  DELAY can be a number, a symbol (whose value
+is a number), or a function (that evaluates to a number).  When passed
+a symbol or function, it is evaluated at runtime for dynamic duration.
+
+The function returns immediately with value DEFAULT when called the
+first time.  On future invocations, the result from the previous call is
+returned.
+
+(fn FUNC &optional DELAY DEFAULT)")
+(register-definition-prefixes "timeout" '("timeout--"))
+(autoload 'list-timers "timer-list"
+"List all timers in a buffer.
+
+(fn &optional IGNORE-AUTO NONCONFIRM)" t)
+(register-definition-prefixes "timer-list" '("timer-list-"))
+(register-definition-prefixes "timezone" '("timezone-"))
+(register-definition-prefixes "titdic-cnv" '("batch-tit-" "tit-"))
+(register-definition-prefixes "tmm" '("tmm-"))
+(register-definition-prefixes "todo-mode" '("todo-"))
+(register-definition-prefixes "toml-ts-mode" '("toml-ts-"))
+(autoload 'toggle-tool-bar-mode-from-frame "tool-bar"
+"Toggle tool bar on or off, based on the status of the current frame.
+See `tool-bar-mode' for more information.
+
+(fn &optional ARG)" t)
+(autoload 'tool-bar-add-item "tool-bar"
+"Add an item to the tool bar.
+ICON names the image, DEF is the key definition and KEY is a symbol
+for the fake function key in the menu keymap.  Remaining arguments
+PROPS are additional items to add to the menu item specification.  See
+Info node `(elisp)Tool Bar'.  Items are added from left to right.
+
+ICON is the base name of a file containing the image to use.  The
+function will first try to use low-color/ICON.xpm if `display-color-cells'
+is less or equal to 256, then ICON.xpm, then ICON.pbm, and finally
+ICON.xbm, using `find-image'.
+
+Use this function only to make bindings in the global value of `tool-bar-map'.
+To define items in any other map, use `tool-bar-local-item'.
+
+(fn ICON DEF KEY &rest PROPS)")
+(autoload 'tool-bar-local-item "tool-bar"
+"Add an item to the tool bar in map MAP.
+ICON names the image, DEF is the key definition and KEY is a symbol
+for the fake function key in the menu keymap.  Remaining arguments
+PROPS are additional items to add to the menu item specification.  See
+Info node `(elisp)Tool Bar'.  Items are added from left to right.
+
+ICON is the base name of a file containing the image to use.  The
+function will first try to use low-color/ICON.xpm if `display-color-cells'
+is less or equal to 256, then ICON.xpm, then ICON.pbm, and finally
+ICON.xbm, using `find-image'.
+
+(fn ICON DEF KEY MAP &rest PROPS)")
+(autoload 'tool-bar-add-item-from-menu "tool-bar"
+"Define tool bar binding for COMMAND in keymap MAP using the given ICON.
+This makes a binding for COMMAND in `tool-bar-map', copying its
+binding from the menu bar in MAP (which defaults to `global-map'), but
+modifies the binding by adding an image specification for ICON.  It
+finds ICON just like `tool-bar-add-item'.  PROPS are additional
+properties to add to the binding.
+
+MAP must contain appropriate binding for `[menu-bar]' which holds a keymap.
+
+Use this function only to make bindings in the global value of `tool-bar-map'.
+To define items in any other map, use `tool-bar-local-item-from-menu'.
+
+(fn COMMAND ICON &optional MAP &rest PROPS)")
+(autoload 'tool-bar-local-item-from-menu "tool-bar"
+"Define local tool bar binding for COMMAND using the given ICON.
+This makes a binding for COMMAND in IN-MAP, copying its binding from
+the menu bar in FROM-MAP (which defaults to `global-map'), but
+modifies the binding by adding an image specification for ICON.  It
+finds ICON just like `tool-bar-add-item'.  PROPS are additional
+properties to add to the binding.
+
+FROM-MAP must contain appropriate binding for `[menu-bar]' which
+holds a keymap.
+
+(fn COMMAND ICON IN-MAP &optional FROM-MAP &rest PROPS)")
+(register-definition-prefixes "tool-bar" '("modifier-bar-" "secondary-tool-bar-map" "toggle-tool-bar-mode-from-frame" "tool-bar-"))
+(register-definition-prefixes "touch-screen" '("touch-screen-"))
+(register-definition-prefixes "tq" '("tq-"))
+(autoload 'trace-values "trace"
+"Helper function to get internal values.
+You can call this function to add internal values in the trace buffer.
+
+(fn &rest VALUES)")
+(autoload 'trace-function-foreground "trace"
+"Trace calls to function FUNCTION.
+With a prefix argument, also prompt for the trace buffer (default
+`trace-buffer'), and a Lisp expression CONTEXT.  When called from
+Lisp, CONTEXT should be a function of no arguments which returns
+a value to insert into BUFFER during the trace.
+
+Tracing a function causes every call to that function to insert
+into BUFFER Lisp-style trace messages that display the function's
+arguments and return values.  It also evaluates CONTEXT, if that is
+non-nil, and inserts its value too.  For example, you can use this
+to track the current buffer, or position of point.
+
+This function creates BUFFER if it does not exist.  This buffer will
+popup whenever FUNCTION is called.  Do not use this function to trace
+functions that switch buffers, or do any other display-oriented
+stuff - use `trace-function-background' instead.
+
+To stop tracing a function, use `untrace-function' or `untrace-all'.
+
+(fn FUNCTION &optional BUFFER CONTEXT)" t)
+(autoload 'trace-function-background "trace"
+"Trace calls to function FUNCTION, quietly.
+This is like `trace-function-foreground', but without popping up
+the output buffer or changing the window configuration.
+
+(fn FUNCTION &optional BUFFER CONTEXT)" t)
+(register-definition-prefixes "trace" '("inhibit-trace" "trace-" "untrace-"))
+(register-definition-prefixes "track-changes" '("track-changes-" "with--track-changes"))
+(defvar tramp-mode (fboundp 'make-process)
+"Whether Tramp is enabled.
+If it is set to nil, all remote file names are used literally.  Don't
+set it manually, use `inhibit-remote-files' or `without-remote-files'
+instead.")
+(defvar tramp-file-name-regexp tramp-initial-file-name-regexp
+"Regular expression matching file names handled by Tramp.
+This regexp should match Tramp file names but no other file
+names.  When calling `tramp-register-file-name-handlers', the
+initial value is overwritten by the car of `tramp-file-name-structure'.")
+(defvar tramp-foreign-file-name-handler-alist nil
+"Alist of elements (FUNCTION . HANDLER) for foreign methods handled specially.
+If (FUNCTION FILENAME) returns non-nil, then all I/O on that file is done by
+calling HANDLER.")
+(register-definition-prefixes "tramp" '("tramp-" "with-"))
+(register-definition-prefixes "tramp-adb" '("tramp-"))
+(register-definition-prefixes "tramp-androidsu" '("tramp-"))
+(defvar tramp-archive-enabled (featurep 'dbusbind)
+"Non-nil when file archive support is available.")
+(register-definition-prefixes "tramp-archive" '("tramp-" "with-parsed-tramp-archive-file-name"))
+(register-definition-prefixes "tramp-cache" '("tramp-" "with-tramp-"))
+(register-definition-prefixes "tramp-cmds" '("tramp-" "with-tramp-file-name-with-method"))
+(register-definition-prefixes "tramp-compat" '("tramp-"))
+(register-definition-prefixes "tramp-container" '("tramp-"))
+(register-definition-prefixes "tramp-crypt" '("tramp-crypt-"))
+(register-definition-prefixes "tramp-ftp" '("tramp-"))
+(register-definition-prefixes "tramp-fuse" '("tramp-fuse-"))
+(register-definition-prefixes "tramp-gvfs" '("tramp-" "with-tramp-dbus-"))
+(register-definition-prefixes "tramp-integration" '("tramp-"))
+(register-definition-prefixes "tramp-message" '("tramp-" "with-tramp-debug-message"))
+(register-definition-prefixes "tramp-rclone" '("tramp-rclone-"))
+(register-definition-prefixes "tramp-sh" '("tramp-"))
+(register-definition-prefixes "tramp-smb" '("tramp-smb-"))
+(register-definition-prefixes "tramp-sshfs" '("tramp-sshfs-"))
+(register-definition-prefixes "tramp-sudoedit" '("tramp-sudoedit-"))
+(register-definition-prefixes "tramp-uu" '("tramp-uu"))
+(register-definition-prefixes "trampver" '("tramp-"))
+(register-definition-prefixes "transient" '("find-function-advised-original" "transient"))
+(register-definition-prefixes "tree-widget" '("tree-widget-"))
+(register-definition-prefixes "treesit" '("treesit-"))
+(register-definition-prefixes "treesit-x" '("alpinejs-generic-ts-" "gitattributes-generic-ts-mode" "liquid-generic-ts-mode" "treesit-generic-mode-font-lock-"))
+(register-definition-prefixes "tty-tip" '("tty-tip-"))
+(register-definition-prefixes "tutorial" '("get-lang-string" "lang-strings" "tutorial--"))
+(register-definition-prefixes "tv-util" '("tai-viet-"))
+(register-definition-prefixes "two-column" '("2C-"))
+(register-definition-prefixes "type-break" '("type-break-"))
+(register-definition-prefixes "typescript-ts-mode" '("tsx-ts-" "typescript-ts-"))
+(autoload 'string-glyph-compose "ucs-normalize"
+"Compose STRING according to the Unicode NFC.
+This returns a new string obtained by canonical decomposition
+of STRING (see `ucs-normalize-NFC-string') followed by canonical
+composition, a.k.a. the \"Unicode Normalization Form C\" of STRING.
+For instance:
+
+  (string-glyph-compose \"Å\") => \"Å\"
+
+(fn STRING)")
+(autoload 'string-glyph-decompose "ucs-normalize"
+"Decompose STRING according to the Unicode NFD.
+This returns a new string that is the canonical decomposition of STRING,
+a.k.a. the \"Unicode Normalization Form D\" of STRING.  For instance:
+
+  (ucs-normalize-NFD-string \"Å\") => \"Å\"
+
+(fn STRING)")
+(register-definition-prefixes "ucs-normalize" '("ucs-normalize-" "utf-8-hfs"))
+(register-definition-prefixes "undigest" '("rmail-"))
+(register-definition-prefixes "uni-input" '("ucs-input-"))
+(register-definition-prefixes "unrmail" '("unrmail-mbox-format"))
+(register-definition-prefixes "unsafep" '("safe-functions" "unsafep-"))
+(register-definition-prefixes "url" '("url-"))
+(register-definition-prefixes "url-auth" '("url-"))
+(register-definition-prefixes "url-cache" '("url-"))
+(register-definition-prefixes "url-cid" '("url-cid-gnus"))
+(register-definition-prefixes "url-cookie" '("url-cookie"))
+(register-definition-prefixes "url-dav" '("url-dav-"))
+(register-definition-prefixes "url-domsuf" '("url-domsuf-"))
+(register-definition-prefixes "url-expand" '("url-"))
+(register-definition-prefixes "url-file" '("url-"))
+(register-definition-prefixes "url-ftp" '("url-ftp"))
+(register-definition-prefixes "url-future" '("url-future-"))
+(register-definition-prefixes "url-gw" '("url-"))
+(register-definition-prefixes "url-handlers" '("url-"))
+(register-definition-prefixes "url-history" '("url-"))
+(register-definition-prefixes "url-http" '("url-h"))
+(register-definition-prefixes "url-imap" '("url-imap"))
+(register-definition-prefixes "url-irc" '("url-irc-"))
+(register-definition-prefixes "url-ldap" '("url-ldap-"))
+(register-definition-prefixes "url-mailto" '("url-mail-goto-field"))
+(register-definition-prefixes "url-methods" '("url-scheme-"))
+(register-definition-prefixes "url-misc" '("url-"))
+(register-definition-prefixes "url-news" '("url-news-"))
+(register-definition-prefixes "url-nfs" '("url-nfs"))
+(register-definition-prefixes "url-parse" '("url-"))
+(register-definition-prefixes "url-privacy" '("url-device-type"))
+(register-definition-prefixes "url-proxy" '("url-"))
+(register-definition-prefixes "url-queue" '("url-queue"))
+(register-definition-prefixes "url-tramp" '("url-tramp-convert-"))
+(register-definition-prefixes "url-util" '("url-"))
+(register-definition-prefixes "url-vars" '("url-"))
+(register-definition-prefixes "use-package-bind-key" '("use-package-handler/:bind*"))
+(register-definition-prefixes "use-package-core" '("use-package-"))
+(register-definition-prefixes "use-package-delight" '("use-package-normalize-delight"))
+(register-definition-prefixes "use-package-diminish" '("use-package-normalize-diminish"))
+(register-definition-prefixes "use-package-ensure" '("use-package-"))
+(register-definition-prefixes "use-package-ensure-system-package" '("use-package-ensure-system-package-"))
+(register-definition-prefixes "use-package-jump" '("use-package-find-require"))
+(register-definition-prefixes "use-package-lint" '("use-package-lint-declaration"))
+(put 'create-lockfiles 'safe-local-variable 'booleanp)
+(register-definition-prefixes "userlock" '("ask-user-about-" "file-" "userlock--check-content-unchanged"))
+(register-definition-prefixes "utf-7" '("utf-7-"))
+(register-definition-prefixes "utf7" '("utf7-"))
+(register-definition-prefixes "uudecode" '("uudecode-"))
+(put 'vc-trunk-branch-regexps 'safe-local-variable
+     #'vc--safe-branch-regexps-p)
+(put 'vc-topic-branch-regexps 'safe-local-variable
+     #'vc--safe-branch-regexps-p)
+(put 'vc-prepare-patches-separately 'safe-local-variable 'booleanp)
+(put 'vc-default-patch-addressee 'safe-local-variable 'stringp)
+(register-definition-prefixes "vc" '("log-view-vc-prev-" "vc-" "with-vc-properties"))
+(register-definition-prefixes "vc-annotate" '("vc-"))
+(register-definition-prefixes "vc-bzr" '("vc-bzr-"))
+(register-definition-prefixes "vc-cvs" '("vc-cvs-"))
+(register-definition-prefixes "vc-dir" '("vc-"))
+(register-definition-prefixes "vc-dispatcher" '("vc-"))
+(register-definition-prefixes "vc-filewise" '("vc-"))
+(put 'vc-git-annotate-switches 'safe-local-variable (lambda (switches) (equal switches "-w")))
+(register-definition-prefixes "vc-git" '("vc-"))
+(register-definition-prefixes "vc-hg" '("vc-hg-"))
+(register-definition-prefixes "vc-rcs" '("vc-r"))
+(register-definition-prefixes "vc-sccs" '("vc-sccs-"))
+(register-definition-prefixes "vc-src" '("vc-src-"))
+(register-definition-prefixes "vc-svn" '("vc-svn-"))
+(register-definition-prefixes "vcursor" '("vcursor-"))
+(register-definition-prefixes "vera-mode" '("vera-"))
+(register-definition-prefixes "verilog-mode" '("electric-verilog-" "verilog-" "vl-"))
+(register-definition-prefixes "vhdl-mode" '("vhdl-"))
+(register-definition-prefixes "viet-util" '("viet-viqr-alist" "viqr-"))
+(autoload 'kill-buffer-if-not-modified "view"
+"Like `kill-buffer', but does nothing if buffer BUF is modified.
+
+(fn BUF)")
+(autoload 'view-file "view"
+"View FILE in View mode, returning to previous buffer when done.
+Emacs commands editing the buffer contents are not available; instead, a
+special set of commands (mostly letters and punctuation) are defined for
+moving around in the buffer.
+Space scrolls forward, Delete scrolls backward.
+For a list of all View commands, type H or h while viewing.
+
+This command runs the normal hook `view-mode-hook'.
+
+(fn FILE)" t)
+(autoload 'view-file-other-window "view"
+"View FILE in View mode in another window.
+When done, return that window to its previous buffer, and kill the
+buffer visiting FILE if unmodified and if it wasn't visited before.
+
+Emacs commands editing the buffer contents are not available; instead,
+a special set of commands (mostly letters and punctuation)
+are defined for moving around in the buffer.
+Space scrolls forward, Delete scrolls backward.
+For a list of all View commands, type H or h while viewing.
+
+This command runs the normal hook `view-mode-hook'.
+
+If this command needs to split the current window, it by default obeys
+the user options `split-height-threshold' and `split-width-threshold',
+when it decides whether to split the window horizontally or vertically.
+
+(fn FILE)" t)
+(autoload 'view-file-other-frame "view"
+"View FILE in View mode in another frame.
+When done, kill the buffer visiting FILE if unmodified and if it wasn't
+visited before; also, maybe delete other frame and/or return to previous
+buffer.
+
+Emacs commands editing the buffer contents are not available; instead,
+a special set of commands (mostly letters and punctuation)
+are defined for moving around in the buffer.
+Space scrolls forward, Delete scrolls backward.
+For a list of all View commands, type H or h while viewing.
+
+This command runs the normal hook `view-mode-hook'.
+
+(fn FILE)" t)
+(autoload 'view-buffer "view"
+"View BUFFER in View mode, returning to previous buffer when done.
+Emacs commands editing the buffer contents are not available; instead, a
+special set of commands (mostly letters and punctuation) are defined for
+moving around in the buffer.
+Space scrolls forward, Delete scrolls backward.
+For a list of all View commands, type H or h while viewing.
+
+This command runs the normal hook `view-mode-hook'.
+
+Optional argument EXIT-ACTION is either nil or a function with buffer as
+argument.  This function is called when finished viewing buffer.  Use
+this argument instead of explicitly setting `view-exit-action'.
+
+Do not set EXIT-ACTION to `kill-buffer' when BUFFER visits a
+file: Users may suspend viewing in order to modify the buffer.
+Exiting View mode will then discard the user's edits.  Setting
+EXIT-ACTION to `kill-buffer-if-not-modified' avoids this.
+
+This function does not enable View mode if the buffer's major mode
+has a `special' mode-class, because such modes usually have their
+own View-like bindings.
+
+(fn BUFFER &optional EXIT-ACTION)" t)
+(autoload 'view-buffer-other-window "view"
+"View BUFFER in View mode in another window.
+Emacs commands editing the buffer contents are not available;
+instead, a special set of commands (mostly letters and
+punctuation) are defined for moving around in the buffer.
+Space scrolls forward, Delete scrolls backward.
+For a list of all View commands, type H or h while viewing.
+
+This command runs the normal hook `view-mode-hook'.
+
+Optional argument NOT-RETURN is ignored.
+
+Optional argument EXIT-ACTION is either nil or a function with buffer as
+argument.  This function is called when finished viewing buffer.  Use
+this argument instead of explicitly setting `view-exit-action'.
+
+This function does not enable View mode if the buffer's major mode
+has a `special' mode-class, because such modes usually have their
+own View-like bindings.
+
+If this command needs to split the current window, it by default obeys
+the user options `split-height-threshold' and `split-width-threshold',
+when it decides whether to split the window horizontally or vertically.
+
+(fn BUFFER &optional NOT-RETURN EXIT-ACTION)" t)
+(autoload 'view-buffer-other-frame "view"
+"View BUFFER in View mode in another frame.
+Emacs commands editing the buffer contents are not available;
+instead, a special set of commands (mostly letters and
+punctuation) are defined for moving around in the buffer.
+Space scrolls forward, Delete scrolls backward.
+For a list of all View commands, type H or h while viewing.
+
+This command runs the normal hook `view-mode-hook'.
+
+Optional argument NOT-RETURN is ignored.
+
+Optional argument EXIT-ACTION is either nil or a function with buffer as
+argument.  This function is called when finished viewing buffer.  Use
+this argument instead of explicitly setting `view-exit-action'.
+
+This function does not enable View mode if the buffer's major mode
+has a `special' mode-class, because such modes usually have their
+own View-like bindings.
+
+(fn BUFFER &optional NOT-RETURN EXIT-ACTION)" t)
+(autoload 'view-mode "view"
+"Toggle View mode, a minor mode for viewing text but not editing it.
+
+When View mode is enabled, commands that do not change the buffer
+contents are available as usual.  Kill commands save text but
+do not delete it from the buffer.  Most other commands beep and
+tell the user that the buffer is read-only.
+
+\\<view-mode-map>
+
+The following additional commands are provided.  Most commands
+take prefix arguments.  Page commands default to \"page size\"
+lines which is almost a whole window, or number of lines set by
+\\[View-scroll-page-forward-set-page-size] or \\[View-scroll-page-backward-set-page-size].
+Half page commands default to and set \"half page size\" lines
+which initially is half a window full.  Search commands default
+to a repeat count of one.
+
+H, h, ?	 This message.
+Digits	provide prefix arguments.
+\\[negative-argument]	negative prefix argument.
+\\[beginning-of-buffer]	move to the beginning of buffer.
+>	move to the end of buffer.
+\\[View-scroll-to-buffer-end]	scroll so that buffer end is at last line of window.
+SPC	scroll forward \"page size\" lines.
+	  With prefix scroll forward prefix lines.
+DEL, S-SPC  scroll backward \"page size\" lines.
+	      With prefix scroll backward prefix lines.
+\\[View-scroll-page-forward-set-page-size]	like  \\[View-scroll-page-forward]  but with prefix sets \"page size\" to prefix.
+\\[View-scroll-page-backward-set-page-size]	like  \\[View-scroll-page-backward]  but with prefix sets \"page size\" to prefix.
+\\[View-scroll-half-page-forward]	scroll forward \"half page size\" lines.  With prefix, sets
+	  \"half page size\" to prefix lines and scrolls forward that much.
+\\[View-scroll-half-page-backward]	scroll backward \"half page size\" lines.  With prefix, sets
+	  \"half page size\" to prefix lines and scrolls backward that much.
+RET, LFD  scroll forward one line.  With prefix scroll forward prefix line(s).
+y	scroll backward one line.  With prefix scroll backward prefix line(s).
+\\[View-revert-buffer-scroll-page-forward]	revert-buffer if necessary and scroll forward.
+	  Use this to view a changing file.
+\\[what-line]	prints the current line number.
+\\[View-goto-percent]	goes prefix argument (default 100) percent into buffer.
+\\[View-goto-line]	goes to line given by prefix argument (default first line).
+.	set the mark.
+x	exchanges point and mark.
+\\[View-back-to-mark]	return to mark and pops mark ring.
+	  Mark ring is pushed at start of every successful search and when
+	  jump to line occurs.  The mark is set on jump to buffer start or end.
+\\[point-to-register]	save current position in character register.
+\\='	go to position saved in character register.
+s	do forward incremental search.
+r	do reverse incremental search.
+\\[View-search-regexp-forward]	searches forward for regular expression, starting after current page.
+	  ! and @ have a special meaning at the beginning of the regexp.
+	  ! means search for a line with no match for regexp.  @ means start
+	  search at beginning (end for backward search) of buffer.
+\\	searches backward for regular expression, starting before current page.
+\\[View-search-last-regexp-forward]	searches forward for last regular expression.
+p	searches backward for last regular expression.
+\\[View-quit]	quit View mode, restoring this window and buffer to previous state.
+	  \\[View-quit] is the normal way to leave view mode.
+\\[View-exit]	exit View mode but stay in current buffer.  Use this if you started
+	  viewing a buffer (file) and find out you want to edit it.
+	  This command restores the previous read-only status of the buffer.
+\\[View-exit-and-edit]	exit View mode, and make the current buffer editable
+	  even if it was not editable before entry to View mode.
+\\[View-quit-all]	quit View mode, restoring all windows to previous state.
+\\[View-leave]	quit View mode and maybe switch buffers, but don't kill this buffer.
+\\[View-kill-and-leave]	quit View mode, kill current buffer and go back to other buffer.
+
+The effect of \\[View-leave], \\[View-quit] and \\[View-kill-and-leave] depends on how view-mode was entered.  If it was
+entered by view-file, view-file-other-window, view-file-other-frame, or
+\\[dired-view-file] (\\[view-file], \\[view-file-other-window],
+\\[view-file-other-frame], or the Dired mode v command),
+then \\[View-quit] will try to kill the current buffer.
+If view-mode was entered from another buffer, by \\[view-buffer],
+\\[view-buffer-other-window], \\[view-buffer-other frame], \\[view-file],
+\\[view-file-other-window], or \\[view-file-other-frame],
+then \\[View-leave], \\[View-quit] and \\[View-kill-and-leave] will return to that buffer.
+
+Entry to view-mode runs the normal hook `view-mode-hook'.
+
+This is a minor mode.  If called interactively, toggle the `View mode'
+mode.  If the prefix argument is positive, enable the mode, and if it is
+zero or negative, disable the mode.
+
+If called from Lisp, toggle the mode if ARG is `toggle'.  Enable the
+mode if ARG is nil, omitted, or is a positive number.  Disable the mode
+if ARG is a negative number.
+
+To check whether the minor mode is enabled in the current buffer,
+evaluate the variable `view-mode'.
+
+The mode's hook is called both when the mode is enabled and when it is
+disabled.
+
+(fn &optional ARG)" t)
+(autoload 'view-mode-enter "view"
+"Enter View mode and set up exit from view mode depending on optional arguments.
+Optional argument QUIT-RESTORE if non-nil must specify a valid
+entry for quitting and restoring any window showing the current
+buffer.  This entry replaces any parameter installed by
+`display-buffer' and is used by `view-mode-exit'.
+
+Optional argument EXIT-ACTION, if non-nil, must specify a
+function that takes a buffer as argument.  This function will be
+called by `view-mode-exit'.
+
+For a list of all View commands, type H or h while viewing.
+
+This function runs the normal hook `view-mode-hook'.
+
+(fn &optional QUIT-RESTORE EXIT-ACTION)")
+(autoload 'View-exit-and-edit "view"
+"Exit View mode and make the current buffer editable." t)
+(register-definition-prefixes "view" '("View-" "view-"))
+(register-definition-prefixes "viper" '("viper-"))
+(register-definition-prefixes "viper-cmd" '("viper-"))
+(register-definition-prefixes "viper-ex" '("ex-" "viper-"))
+(register-definition-prefixes "viper-init" '("viper-"))
+(register-definition-prefixes "viper-keym" '("viper-"))
+(register-definition-prefixes "viper-macs" '("ex-" "viper-"))
+(register-definition-prefixes "viper-mous" '("viper-"))
+(register-definition-prefixes "viper-util" '("viper"))
+(register-definition-prefixes "viqr" '("viet-quail-define-rules"))
+(register-definition-prefixes "visual-wrap" '("visual-wrap-"))
+(register-definition-prefixes "vtable" '("vtable"))
+(register-definition-prefixes "w32-fns" '("w32-"))
+(register-definition-prefixes "w32-vars" '("w32-"))
+(register-definition-prefixes "wallpaper" '("wallpaper-"))
+(defvar warning-prefix-function nil
+"Function to generate warning prefixes.
+This function, if non-nil, is called with two arguments,
+the severity level and its entry in `warning-levels',
+and should return the entry that should actually be used.
+The warnings buffer is current when this function is called
+and the function can insert text in it.  This text becomes
+the beginning of the warning.")
+(defvar warning-series nil
+"Non-nil means treat multiple `display-warning' calls as a series.
+A marker indicates a position in the warnings buffer
+which is the start of the current series; it means that
+additional warnings in the same buffer should not move point.
+If t, the next warning begins a series (and stores a marker here).
+A symbol with a function definition is like t, except
+also call that function before the next warning.")
+(defvar warning-fill-prefix nil
+"Non-nil means fill each warning text using this string as `fill-prefix'.")
+(defvar warning-type-format " (%s)"
+"Format for displaying the warning type in the warning message.
+The result of formatting the type this way gets included in the
+message under the control of the string in `warning-levels'.")
+(defvar warning-inhibit-types nil
+"Like `warning-suppress-log-types', but intended for programs to let-bind.")
+(autoload 'display-warning "warnings"
+"Display a warning message, MESSAGE.
+TYPE is the warning type: either a custom group name (a symbol),
+or a list of symbols whose first element is a custom group name.
+(The rest of the symbols represent subcategories, for warning purposes
+only, and you can use whatever symbols you like.)
+
+LEVEL should be either :debug, :warning, :error, or :emergency
+(but see `warning-minimum-level' and `warning-minimum-log-level').
+Default is :warning.
+
+:emergency -- a problem that will seriously impair Emacs operation soon
+	      if you do not attend to it promptly.
+:error     -- data or circumstances that are inherently wrong.
+:warning   -- data or circumstances that are not inherently wrong,
+	      but raise suspicion of a possible problem.
+:debug     -- info for debugging only.
+
+BUFFER-NAME, if specified, is the name of the buffer for logging
+the warning.  By default, it is `*Warnings*'.  If this function
+has to create the buffer, it disables undo in the buffer.
+
+See the `warnings' custom group for user customization features.
+
+See also `warning-series', `warning-prefix-function',
+`warning-fill-prefix', and `warning-fill-column' for additional
+programming features.
+
+This will also display buttons allowing the user to permanently
+disable automatic display of the warning or disable the warning
+entirely by setting `warning-suppress-types' or
+`warning-suppress-log-types' on their behalf.
+
+(fn TYPE MESSAGE &optional LEVEL BUFFER-NAME)")
+(autoload 'lwarn "warnings"
+"Display a warning message made from (format-message MESSAGE ARGS...).
+\\<special-mode-map>
+Aside from generating the message with `format-message',
+this is equivalent to `display-warning'.
+
+TYPE is the warning type: either a custom group name (a symbol),
+or a list of symbols whose first element is a custom group name.
+(The rest of the symbols represent subcategories and
+can be whatever you like.)
+
+LEVEL should be either :debug, :warning, :error, or :emergency
+(but see `warning-minimum-level' and `warning-minimum-log-level').
+
+:emergency -- a problem that will seriously impair Emacs operation soon
+	      if you do not attend to it promptly.
+:error     -- invalid data or circumstances.
+:warning   -- suspicious data or circumstances.
+:debug     -- info for debugging only.
+
+(fn TYPE LEVEL MESSAGE &rest ARGS)")
+(autoload 'warn "warnings"
+"Display a warning message made from (format-message MESSAGE ARGS...).
+Aside from generating the message with `format-message',
+this is equivalent to `display-warning', using
+`emacs' as the type and `:warning' as the level.
+
+(fn MESSAGE &rest ARGS)")
+(register-definition-prefixes "warnings" '("warning"))
+(register-definition-prefixes "wdired" '("wdired-"))
+(register-definition-prefixes "webjump" '("webjump-"))
+(register-definition-prefixes "which-func" '("which-func"))
+(register-definition-prefixes "which-key" '("evil-state" "which-key-"))
+(autoload 'whitespace-mode "whitespace"
+"Toggle whitespace visualization (Whitespace mode).
+
+See also `whitespace-style', `whitespace-newline' and
+`whitespace-display-mappings'.
+
+This mode uses a number of faces to visualize the whitespace; see
+the customization group `whitespace' for details.
+
+This is a minor mode.  If called interactively, toggle the `Whitespace
+mode' mode.  If the prefix argument is positive, enable the mode, and if
+it is zero or negative, disable the mode.
+
+If called from Lisp, toggle the mode if ARG is `toggle'.  Enable the
+mode if ARG is nil, omitted, or is a positive number.  Disable the mode
+if ARG is a negative number.
+
+To check whether the minor mode is enabled in the current buffer,
+evaluate the variable `whitespace-mode'.
+
+The mode's hook is called both when the mode is enabled and when it is
+disabled.
+
+(fn &optional ARG)" t)
+(autoload 'whitespace-newline-mode "whitespace"
+"Toggle newline visualization (Whitespace Newline mode).
+
+Use `whitespace-newline-mode' only for NEWLINE visualization
+exclusively.  For other visualizations, including NEWLINE
+visualization together with (HARD) SPACEs and/or TABs, please,
+use `whitespace-mode'.
+
+See also `whitespace-newline' and `whitespace-display-mappings'.
+
+This is a minor mode.  If called interactively, toggle the
+`Whitespace-Newline mode' mode.  If the prefix argument is positive,
+enable the mode, and if it is zero or negative, disable the mode.
+
+If called from Lisp, toggle the mode if ARG is `toggle'.  Enable the
+mode if ARG is nil, omitted, or is a positive number.  Disable the mode
+if ARG is a negative number.
+
+To check whether the minor mode is enabled in the current buffer,
+evaluate the variable `whitespace-newline-mode'.
+
+The mode's hook is called both when the mode is enabled and when it is
+disabled.
+
+(fn &optional ARG)" t)
+(autoload 'whitespace-page-delimiters-mode "whitespace"
+"Display page-break delimiter characters as horizontal lines.
+
+This is a minor mode.  If called interactively, toggle the
+`Whitespace-Page-Delimiters mode' mode.  If the prefix argument is
+positive, enable the mode, and if it is zero or negative, disable the
+mode.
+
+If called from Lisp, toggle the mode if ARG is `toggle'.  Enable the
+mode if ARG is nil, omitted, or is a positive number.  Disable the mode
+if ARG is a negative number.
+
+To check whether the minor mode is enabled in the current buffer,
+evaluate the variable `whitespace-page-delimiters-mode'.
+
+The mode's hook is called both when the mode is enabled and when it is
+disabled.
+
+(fn &optional ARG)" t)
+(autoload 'whitespace-toggle-options "whitespace"
+"Toggle local `whitespace-mode' options.
+
+If local whitespace-mode is off, toggle the option given by ARG
+and turn on local whitespace-mode.
+
+If local whitespace-mode is on, toggle the option given by ARG
+and restart local whitespace-mode.
+
+Interactively, it reads one of the following chars:
+
+  CHAR	MEANING
+  (VIA FACES)
+   f	toggle face visualization
+   t	toggle TAB visualization
+   s	toggle SPACE and HARD SPACE visualization
+   r	toggle trailing blanks visualization
+   p	toggle page delimiters visualization
+   l	toggle \"long lines\" visualization
+   L	toggle \"long lines\" tail visualization
+   n	toggle NEWLINE visualization
+   e	toggle empty line at bob and/or eob visualization
+   C-i	toggle indentation SPACEs visualization (via `indent-tabs-mode')
+   I	toggle indentation SPACEs visualization
+   i	toggle indentation TABs visualization
+   C-t	toggle big indentation visualization
+   C-a	toggle SPACEs after TAB visualization (via `indent-tabs-mode')
+   A	toggle SPACEs after TAB: SPACEs visualization
+   a	toggle SPACEs after TAB: TABs visualization
+   C-b	toggle SPACEs before TAB visualization (via `indent-tabs-mode')
+   B	toggle SPACEs before TAB: SPACEs visualization
+   b	toggle SPACEs before TAB: TABs visualization
+
+  (VIA DISPLAY TABLE)
+   T	toggle TAB visualization
+   S	toggle SPACEs before TAB visualization
+   N	toggle NEWLINE visualization
+
+   x	restore `whitespace-style' value
+   ?	display brief help
+
+Non-interactively, ARG should be a symbol or a list of symbols.
+The valid symbols are:
+
+   face			toggle face visualization
+   tabs			toggle TAB visualization
+   spaces		toggle SPACE and HARD SPACE visualization
+   trailing		toggle trailing blanks visualization
+   page-delimiters	toggle page delimiters visualization
+   lines		toggle \"long lines\" visualization
+   lines-tail		toggle \"long lines\" tail visualization
+   newline		toggle NEWLINE visualization
+   empty		toggle empty line at bob and/or eob visualization
+   indentation		toggle indentation SPACEs visualization
+   indentation::tab	toggle indentation SPACEs visualization
+   indentation::space	toggle indentation TABs visualization
+   big-indent		toggle big indentation visualization
+   space-after-tab		toggle SPACEs after TAB visualization
+   space-after-tab::tab		toggle SPACEs after TAB: SPACEs visualization
+   space-after-tab::space	toggle SPACEs after TAB: TABs visualization
+   space-before-tab		toggle SPACEs before TAB visualization
+   space-before-tab::tab	toggle SPACEs before TAB: SPACEs visualization
+   space-before-tab::space	toggle SPACEs before TAB: TABs visualization
+
+   tab-mark		toggle TAB visualization
+   space-mark		toggle SPACEs before TAB visualization
+   newline-mark		toggle NEWLINE visualization
+
+   whitespace-style	restore `whitespace-style' value
+
+See `whitespace-style' and `indent-tabs-mode' for documentation.
+
+(fn ARG)" t)
+(autoload 'global-whitespace-toggle-options "whitespace"
+"Toggle global `whitespace-mode' options.
+
+If global whitespace-mode is off, toggle the option given by ARG
+and turn on global whitespace-mode.
+
+If global whitespace-mode is on, toggle the option given by ARG
+and restart global whitespace-mode.
+
+Interactively, it accepts one of the following chars:
+
+  CHAR	MEANING
+  (VIA FACES)
+   f	toggle face visualization
+   t	toggle TAB visualization
+   s	toggle SPACE and HARD SPACE visualization
+   r	toggle trailing blanks visualization
+   p	toggle page delimiters visualization
+   l	toggle \"long lines\" visualization
+   L	toggle \"long lines\" tail visualization
+   C-l	toggle \"long lines\" one character visualization
+   n	toggle NEWLINE visualization
+   e	toggle empty line at bob and/or eob visualization
+   C-i	toggle indentation SPACEs visualization (via `indent-tabs-mode')
+   I	toggle indentation SPACEs visualization
+   i	toggle indentation TABs visualization
+   C-t	toggle big indentation visualization
+   C-a	toggle SPACEs after TAB visualization (via `indent-tabs-mode')
+   A	toggle SPACEs after TAB: SPACEs visualization
+   a	toggle SPACEs after TAB: TABs visualization
+   C-b	toggle SPACEs before TAB visualization (via `indent-tabs-mode')
+   B	toggle SPACEs before TAB: SPACEs visualization
+   b	toggle SPACEs before TAB: TABs visualization
+
+  (VIA DISPLAY TABLE)
+   T	toggle TAB visualization
+   S	toggle SPACEs before TAB visualization
+   N	toggle NEWLINE visualization
+
+   x	restore `whitespace-style' value
+   ?	display brief help
+
+Non-interactively, ARG should be a symbol or a list of symbols.
+The valid symbols are:
+
+   face			toggle face visualization
+   tabs			toggle TAB visualization
+   spaces		toggle SPACE and HARD SPACE visualization
+   trailing		toggle trailing blanks visualization
+   page-delimiters	toggle page delimiters visualization
+   lines		toggle \"long lines\" visualization
+   lines-tail		toggle \"long lines\" tail visualization
+   lines-char		toggle \"long lines\" one character visualization
+   newline		toggle NEWLINE visualization
+   empty		toggle empty line at bob and/or eob visualization
+   indentation		toggle indentation SPACEs visualization
+   indentation::tab	toggle indentation SPACEs visualization
+   indentation::space	toggle indentation TABs visualization
+   big-indent		toggle big indentation visualization
+   space-after-tab		toggle SPACEs after TAB visualization
+   space-after-tab::tab		toggle SPACEs after TAB: SPACEs visualization
+   space-after-tab::space	toggle SPACEs after TAB: TABs visualization
+   space-before-tab		toggle SPACEs before TAB visualization
+   space-before-tab::tab	toggle SPACEs before TAB: SPACEs visualization
+   space-before-tab::space	toggle SPACEs before TAB: TABs visualization
+
+   tab-mark		toggle TAB visualization
+   space-mark		toggle SPACEs before TAB visualization
+   newline-mark		toggle NEWLINE visualization
+
+   whitespace-style	restore `whitespace-style' value
+
+See `whitespace-style' and `indent-tabs-mode' for documentation.
+
+(fn ARG)" t)
+(autoload 'whitespace-cleanup "whitespace"
+"Cleanup some blank problems in all buffer or at region.
+
+It usually applies to the whole buffer, but in transient mark
+mode when the mark is active, it applies to the region.  It also
+applies to the region when it is not in transient mark mode, the
+mark is active and \\[universal-argument] was pressed just before
+calling `whitespace-cleanup' interactively.
+
+See also `whitespace-cleanup-region'.
+
+The problems cleaned up are:
+
+1. empty lines at beginning of buffer.
+2. empty lines at end of buffer.
+   If `whitespace-style' includes the value `empty', remove all
+   empty lines at beginning and/or end of buffer.
+
+3. `tab-width' or more SPACEs at beginning of line.
+   If `whitespace-style' includes the value `indentation':
+   replace `tab-width' or more SPACEs at beginning of line by
+   TABs, if `indent-tabs-mode' is non-nil; otherwise, replace TABs by
+   SPACEs.
+   If `whitespace-style' includes the value `indentation::tab',
+   replace `tab-width' or more SPACEs at beginning of line by TABs.
+   If `whitespace-style' includes the value `indentation::space',
+   replace TABs by SPACEs.
+
+4. SPACEs before TAB.
+   If `whitespace-style' includes the value `space-before-tab':
+   replace SPACEs by TABs, if `indent-tabs-mode' is non-nil;
+   otherwise, replace TABs by SPACEs.
+   If `whitespace-style' includes the value
+   `space-before-tab::tab', replace SPACEs by TABs.
+   If `whitespace-style' includes the value
+   `space-before-tab::space', replace TABs by SPACEs.
+
+5. SPACEs or TABs at end of line.
+   If `whitespace-style' includes the value `trailing', remove
+   all SPACEs or TABs at end of line.
+
+6. `tab-width' or more SPACEs after TAB.
+   If `whitespace-style' includes the value `space-after-tab':
+   replace SPACEs by TABs, if `indent-tabs-mode' is non-nil;
+   otherwise, replace TABs by SPACEs.
+   If `whitespace-style' includes the value
+   `space-after-tab::tab', replace SPACEs by TABs.
+   If `whitespace-style' includes the value
+   `space-after-tab::space', replace TABs by SPACEs.
+
+See `whitespace-style', `indent-tabs-mode' and `tab-width' for
+documentation." t)
+(autoload 'whitespace-cleanup-region "whitespace"
+"Cleanup some blank problems at region.
+
+The problems cleaned up are:
+
+1. `tab-width' or more SPACEs at beginning of line.
+   If `whitespace-style' includes the value `indentation':
+   replace `tab-width' or more SPACEs at beginning of line by TABs,
+   if `indent-tabs-mode' is non-nil; otherwise, replace TABs by
+   SPACEs.
+   If `whitespace-style' includes the value `indentation::tab',
+   replace `tab-width' or more SPACEs at beginning of line by TABs.
+   If `whitespace-style' includes the value `indentation::space',
+   replace TABs by SPACEs.
+
+2. SPACEs before TAB.
+   If `whitespace-style' includes the value `space-before-tab':
+   replace SPACEs by TABs, if `indent-tabs-mode' is non-nil;
+   otherwise, replace TABs by SPACEs.
+   If `whitespace-style' includes the value
+   `space-before-tab::tab', replace SPACEs by TABs.
+   If `whitespace-style' includes the value
+   `space-before-tab::space', replace TABs by SPACEs.
+
+3. SPACEs or TABs at end of line.
+   If `whitespace-style' includes the value `trailing', remove
+   all SPACEs or TABs at end of line.
+
+4. `tab-width' or more SPACEs after TAB.
+   If `whitespace-style' includes the value `space-after-tab':
+   replace SPACEs by TABs, if `indent-tabs-mode' is non-nil;
+   otherwise, replace TABs by SPACEs.
+   If `whitespace-style' includes the value
+   `space-after-tab::tab', replace SPACEs by TABs.
+   If `whitespace-style' includes the value
+   `space-after-tab::space', replace TABs by SPACEs.
+
+5. missing newline at end of file.
+   If `whitespace-style' includes the value `missing-newline-at-eof',
+   and the cleanup region includes the end of file, add a final newline
+   if it is not there already.
+
+See `whitespace-style', `indent-tabs-mode' and `tab-width' for
+documentation.
+
+(fn START END)" t)
+(autoload 'whitespace-report "whitespace"
+"Report some whitespace problems in buffer.
+
+Perform `whitespace-report-region' on the current buffer.
+
+(fn &optional FORCE REPORT-IF-BOGUS)" t)
+(autoload 'whitespace-report-region "whitespace"
+"Report some whitespace problems in a region.
+
+Return nil if there is no whitespace problem; otherwise, return
+non-nil.
+
+If FORCE is non-nil or \\[universal-argument] was pressed just
+before calling `whitespace-report-region' interactively, it
+forces all classes of whitespace problem to be considered
+significant.
+
+If REPORT-IF-BOGUS is t, it reports only when there are any
+whitespace problems in buffer; if it is `never', it does not
+report problems.
+
+Report if some of the following whitespace problems exist:
+
+* If `indent-tabs-mode' is non-nil:
+   empty		1. empty lines at beginning of buffer.
+   empty		2. empty lines at end of buffer.
+   trailing		3. SPACEs or TABs at end of line.
+   indentation		4. line starts with `tab-width' or more SPACEs.
+   space-before-tab	5. SPACEs before TAB.
+   space-after-tab	6. `tab-width' or more SPACEs after TAB.
+
+* If `indent-tabs-mode' is nil:
+   empty		1. empty lines at beginning of buffer.
+   empty		2. empty lines at end of buffer.
+   trailing		3. SPACEs or TABs at end of line.
+   indentation		4. TABS at beginning of line.
+   space-before-tab	5. SPACEs before TAB.
+   space-after-tab	6. `tab-width' or more SPACEs after TAB.
+
+See `whitespace-style' for documentation.
+See also `whitespace-cleanup' and `whitespace-cleanup-region' for
+cleaning up these problems.
+
+(fn START END &optional FORCE REPORT-IF-BOGUS)" t)
+(register-definition-prefixes "whitespace" '("whitespace-"))
+(register-definition-prefixes "wid-browse" '("widget-"))
+(defvar widget-keymap (let ((map (make-sparse-keymap))) (define-key map "\11" 'widget-forward) (define-key map "\33\11" 'widget-backward) (define-key map [(shift tab)] 'widget-backward) (put 'widget-backward :advertised-binding [(shift tab)]) (define-key map [backtab] 'widget-backward) (define-key map [down-mouse-2] 'widget-button-click) (define-key map [down-mouse-1] 'widget-button-click) (define-key map [touchscreen-begin] 'widget-button-click) (define-key map [(control 109)] 'widget-button-press) map)
+"Keymap containing useful binding for buffers containing widgets.
+Recommended as a parent keymap for modes using widgets.
+Note that such modes will need to require wid-edit.")
+(register-definition-prefixes "wid-edit" '("widget-"))
+(autoload 'windmove-left "windmove"
+"Select the window to the left of the current one.
+With no prefix argument, or with prefix argument equal to zero,
+\"left\" is relative to the position of point in the window; otherwise
+it is relative to the top edge (for positive ARG) or the bottom edge
+(for negative ARG) of the current window.
+If no window is at the desired location, an error is signaled
+unless `windmove-create-window' is non-nil and a new window is created.
+
+If `windmove-allow-repeated-command-override' is true and this command
+stopped because it wouldn't move into a window marked with
+`no-other-window', repeating the command will move into that window.
+
+(fn &optional ARG IS-INTERACTIVE)" t)
+(autoload 'windmove-up "windmove"
+"Select the window above the current one.
+With no prefix argument, or with prefix argument equal to zero, \"up\"
+is relative to the position of point in the window; otherwise it is
+relative to the left edge (for positive ARG) or the right edge (for
+negative ARG) of the current window.
+If no window is at the desired location, an error is signaled
+unless `windmove-create-window' is non-nil and a new window is created.
+
+If `windmove-allow-repeated-command-override' is true and this command
+stopped because it wouldn't move into a window marked with
+`no-other-window', repeating the command will move into that window.
+
+(fn &optional ARG IS-INTERACTIVE)" t)
+(autoload 'windmove-right "windmove"
+"Select the window to the right of the current one.
+With no prefix argument, or with prefix argument equal to zero,
+\"right\" is relative to the position of point in the window;
+otherwise it is relative to the top edge (for positive ARG) or the
+bottom edge (for negative ARG) of the current window.
+If no window is at the desired location, an error is signaled
+unless `windmove-create-window' is non-nil and a new window is created.
+
+If `windmove-allow-repeated-command-override' is true and this command
+stopped because it wouldn't move into a window marked with
+`no-other-window', repeating the command will move into that window.
+
+(fn &optional ARG IS-INTERACTIVE)" t)
+(autoload 'windmove-down "windmove"
+"Select the window below the current one.
+With no prefix argument, or with prefix argument equal to zero,
+\"down\" is relative to the position of point in the window; otherwise
+it is relative to the left edge (for positive ARG) or the right edge
+(for negative ARG) of the current window.
+If no window is at the desired location, an error is signaled
+unless `windmove-create-window' is non-nil and a new window is created.
+
+If `windmove-allow-repeated-command-override' is true and this command
+stopped because it wouldn't move into a window marked with
+`no-other-window', repeating the command will move into that window.
+
+(fn &optional ARG IS-INTERACTIVE)" t)
+(autoload 'windmove-default-keybindings "windmove"
+"Set up keybindings for `windmove'.
+Keybindings are of the form MODIFIERS-{left,right,up,down},
+where MODIFIERS is either a list of modifiers or a single modifier.
+If MODIFIERS is `none', the keybindings will be directly bound to
+the arrow keys.
+Default value of MODIFIERS is `shift'.
+
+(fn &optional MODIFIERS)" t)
+(autoload 'windmove-display-left "windmove"
+"Display the next buffer in window to the left of the current one.
+See the logic of the prefix ARG and `windmove-display-no-select'
+in `windmove-display-in-direction'.
+
+(fn &optional ARG)" t)
+(autoload 'windmove-display-up "windmove"
+"Display the next buffer in window above the current one.
+See the logic of the prefix ARG and `windmove-display-no-select'
+in `windmove-display-in-direction'.
+
+(fn &optional ARG)" t)
+(autoload 'windmove-display-right "windmove"
+"Display the next buffer in window to the right of the current one.
+See the logic of the prefix ARG and `windmove-display-no-select'
+in `windmove-display-in-direction'.
+
+(fn &optional ARG)" t)
+(autoload 'windmove-display-down "windmove"
+"Display the next buffer in window below the current one.
+See the logic of the prefix ARG and `windmove-display-no-select'
+in `windmove-display-in-direction'.
+
+(fn &optional ARG)" t)
+(autoload 'windmove-display-same-window "windmove"
+"Display the next buffer in the same window.
+
+(fn &optional ARG)" t)
+(autoload 'windmove-display-new-frame "windmove"
+"Display the next buffer in a new frame.
+
+(fn &optional ARG)" t)
+(autoload 'windmove-display-new-tab "windmove"
+"Display the next buffer in a new tab.
+
+(fn &optional ARG)" t)
+(autoload 'windmove-display-default-keybindings "windmove"
+"Set up keybindings for directional buffer display.
+Keys are bound to commands that display the next buffer in the specified
+direction.  Keybindings are of the form MODIFIERS-{left,right,up,down},
+where MODIFIERS is either a list of modifiers or a single modifier.
+If MODIFIERS is `none', the keybindings will be directly bound to
+the arrow keys.
+Default value of MODIFIERS is `shift-meta'.
+
+(fn &optional MODIFIERS)" t)
+(autoload 'windmove-delete-left "windmove"
+"Delete the window to the left of the current one.
+If prefix ARG is \\[universal-argument], delete the selected window and
+select the window that was to the left of the current one.
+
+(fn &optional ARG)" t)
+(autoload 'windmove-delete-up "windmove"
+"Delete the window above the current one.
+If prefix ARG is \\[universal-argument], delete the selected window and
+select the window that was above the current one.
+
+(fn &optional ARG)" t)
+(autoload 'windmove-delete-right "windmove"
+"Delete the window to the right of the current one.
+If prefix ARG is \\[universal-argument], delete the selected window and
+select the window that was to the right of the current one.
+
+(fn &optional ARG)" t)
+(autoload 'windmove-delete-down "windmove"
+"Delete the window below the current one.
+If prefix ARG is \\[universal-argument], delete the selected window and
+select the window that was below the current one.
+
+(fn &optional ARG)" t)
+(autoload 'windmove-delete-default-keybindings "windmove"
+"Set up keybindings for directional window deletion.
+Keys are bound to commands that delete windows in the specified
+direction.  Keybindings are of the form PREFIX MODIFIERS-{left,right,up,down},
+where PREFIX is a prefix key and MODIFIERS is either a list of modifiers or
+a single modifier.
+If PREFIX is `none', no prefix is used.  If MODIFIERS is `none',
+the keybindings are directly bound to the arrow keys.
+Default value of PREFIX is \\`C-x' and MODIFIERS is `shift'.
+
+(fn &optional PREFIX MODIFIERS)" t)
+(autoload 'windmove-swap-states-left "windmove"
+"Swap the states with the window on the left from the current one." t)
+(autoload 'windmove-swap-states-up "windmove"
+"Swap the states with the window above from the current one." t)
+(autoload 'windmove-swap-states-down "windmove"
+"Swap the states with the window below from the current one." t)
+(autoload 'windmove-swap-states-right "windmove"
+"Swap the states with the window on the right from the current one." t)
+(autoload 'windmove-swap-states-default-keybindings "windmove"
+"Set up keybindings for directional window swap states.
+Keys are bound to commands that swap the states of the selected window
+with the window in the specified direction.  Keybindings are of the form
+MODIFIERS-{left,right,up,down}, where MODIFIERS is either a list of modifiers
+or a single modifier.
+If MODIFIERS is `none', the keybindings will be directly bound to the
+arrow keys.
+Default value of MODIFIERS is `shift-super'.
+
+(fn &optional MODIFIERS)" t)
+(register-definition-prefixes "windmove" '("windmove-"))
+(register-definition-prefixes "window-tool-bar" '("window-tool-bar-"))
+(register-definition-prefixes "window-x" '("rotate-windows-change-selected" "transpose-dedicated-windows" "window-"))
+(register-definition-prefixes "winner" '("winner-"))
+(register-definition-prefixes "woman" '("WoMan-" "woman"))
+(autoload 'word-wrap-whitespace-mode "word-wrap-mode"
+"Allow `word-wrap' to fold on all breaking whitespace characters.
+
+The characters to break on are defined by `word-wrap-whitespace-characters'.
+
+This is a minor mode.  If called interactively, toggle the
+`Word-Wrap-Whitespace mode' mode.  If the prefix argument is positive,
+enable the mode, and if it is zero or negative, disable the mode.
+
+If called from Lisp, toggle the mode if ARG is `toggle'.  Enable the
+mode if ARG is nil, omitted, or is a positive number.  Disable the mode
+if ARG is a negative number.
+
+To check whether the minor mode is enabled in the current buffer,
+evaluate the variable `word-wrap-whitespace-mode'.
+
+The mode's hook is called both when the mode is enabled and when it is
+disabled.
+
+(fn &optional ARG)" t)
+(register-definition-prefixes "word-wrap-mode" '("word-wrap-whitespace-characters"))
+(register-definition-prefixes "x-dnd" '("x-dnd-"))
+(register-definition-prefixes "xdg" '("xdg-"))
+(register-definition-prefixes "xml" '("xml-"))
+(register-definition-prefixes "xmltok" '("xmltok-"))
+(register-definition-prefixes "xref" '("xref-"))
+(register-definition-prefixes "xscheme" '("exit-scheme-interaction-mode" "global-set-scheme-interaction-buffer" "local-" "reset-scheme" "run-scheme" "scheme-" "start-scheme" "xscheme-"))
+(register-definition-prefixes "xsd-regexp" '("xsdre-"))
+(defvar xterm-mouse-mode-called nil
+"If `xterm-mouse-mode' has been called already.
+This can be used to detect if xterm-mouse-mode was explicitly set.")
+(register-definition-prefixes "xt-mouse" '("turn-o" "xt-mouse-epoch" "xterm-mouse-"))
+(register-definition-prefixes "xwidget" '("xwidget-"))
+(register-definition-prefixes "yaml-ts-mode" '("yaml-ts-mode-"))
+(register-definition-prefixes "yank-media" '("yank-media-"))
+(register-definition-prefixes "yenc" '("yenc-"))
+(register-definition-prefixes "zeroconf" '("zeroconf-"))
+(register-definition-prefixes "zone" '("zone-"))
+
 (provide 'loaddefs)
 
 ;;; loaddefs.el ends here
