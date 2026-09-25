@@ -197,9 +197,10 @@ fn bind_val(i: &mut Interp, v: &Value) -> Result<rusqlite::types::Value, Flow> {
     use rusqlite::types::Value as R;
     Ok(match v {
         Value::Nil => R::Null,
-        Value::Int(n) => R::Integer(i64::try_from(*n).map_err(|_| {
-            sqlite_err(i, vec![Value::string("integer out of range")])
-        })?),
+        Value::Int(n) => R::Integer(
+            i64::try_from(*n)
+                .map_err(|_| sqlite_err(i, vec![Value::string("integer out of range")]))?,
+        ),
         Value::Float(f) => R::Real(**f),
         Value::Str(s) => R::Text(s.borrow().clone()),
         // GNU binds `t' as 1.
@@ -225,9 +226,7 @@ fn row_val(v: rusqlite::types::ValueRef<'_>) -> SVal {
         rusqlite::types::ValueRef::Null => SVal::N,
         rusqlite::types::ValueRef::Integer(n) => SVal::I(n),
         rusqlite::types::ValueRef::Real(f) => SVal::F(f),
-        rusqlite::types::ValueRef::Text(t) => {
-            SVal::T(String::from_utf8_lossy(t).into_owned())
-        }
+        rusqlite::types::ValueRef::Text(t) => SVal::T(String::from_utf8_lossy(t).into_owned()),
         rusqlite::types::ValueRef::Blob(b) => SVal::B(b.to_vec()),
     }
 }
@@ -258,9 +257,7 @@ fn f_sqlite_open(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     }
     let conn = match &file {
         Value::Nil => Connection::open_in_memory_with_flags(flags),
-        Value::Str(s) => {
-            Connection::open_with_flags(s.borrow().as_str(), flags)
-        }
+        Value::Str(s) => Connection::open_with_flags(s.borrow().as_str(), flags),
         _ => return Err(i.wrong_type_mut("stringp", &file)),
     };
     match conn {
@@ -307,10 +304,7 @@ fn f_sqlite_execute(i: &mut Interp, a: Vec<Value>) -> EvalResult {
             }
             Ok((Some(rows), 0))
         } else {
-            Ok((
-                None,
-                stmt.execute(rusqlite::params_from_iter(vals.iter()))?,
-            ))
+            Ok((None, stmt.execute(rusqlite::params_from_iter(vals.iter()))?))
         }
     })?;
     match cols_rows {
@@ -347,8 +341,7 @@ fn select_rows(
     vals: &[rusqlite::types::Value],
 ) -> Result<(Vec<String>, Vec<Vec<SVal>>), rusqlite::Error> {
     let mut stmt = c.prepare(sql)?;
-    let cols: Vec<String> =
-        stmt.column_names().iter().map(|s| s.to_string()).collect();
+    let cols: Vec<String> = stmt.column_names().iter().map(|s| s.to_string()).collect();
     let width = cols.len();
     let mut rows = Vec::new();
     let mut q = stmt.query(rusqlite::params_from_iter(vals.iter()))?;
@@ -375,7 +368,13 @@ fn f_sqlite_select(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         SETS.with(|s| {
             s.borrow_mut().insert(
                 sid,
-                Set { cols, rows, pos: 0, more: true, live: true },
+                Set {
+                    cols,
+                    rows,
+                    pos: 0,
+                    more: true,
+                    live: true,
+                },
             )
         });
         return Ok(make_set_record(i, sid));
@@ -457,19 +456,38 @@ fn f_sqlite_load_extension(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     // (sans any "libsqlite3_mod_" prefix) must be one of these names
     // plus a .so/.dylib/.dll extension.
     const ALLOWLIST: &[&str] = &[
-        "base64", "cksumvfs", "compress", "csv", "csvtable", "fts3", "icu",
-        "pcre", "percentile", "regexp", "rot13", "rtree", "sha1", "uuid",
-        "vec0", "vector0", "vfslog", "vss0", "zipfile",
+        "base64",
+        "cksumvfs",
+        "compress",
+        "csv",
+        "csvtable",
+        "fts3",
+        "icu",
+        "pcre",
+        "percentile",
+        "regexp",
+        "rot13",
+        "rtree",
+        "sha1",
+        "uuid",
+        "vec0",
+        "vector0",
+        "vfslog",
+        "vss0",
+        "zipfile",
     ];
     let base = module.rsplit('/').next().unwrap_or(&module);
     let base = base.strip_prefix("libsqlite3_mod_").unwrap_or(base);
     let allowed = ALLOWLIST.iter().any(|name| {
-        base.strip_prefix(name)
-            .is_some_and(|ext| matches!(ext.to_ascii_lowercase().as_str(),
-                                        ".so" | ".dylib" | ".dll"))
+        base.strip_prefix(name).is_some_and(|ext| {
+            matches!(ext.to_ascii_lowercase().as_str(), ".so" | ".dylib" | ".dll")
+        })
     });
     if !allowed {
-        return Err(sqlite_err(i, vec![Value::string("Module name not on allowlist")]));
+        return Err(sqlite_err(
+            i,
+            vec![Value::string("Module name not on allowlist")],
+        ));
     }
     with_conn(i, id, |c| unsafe {
         c.load_extension_enable()?;
@@ -495,10 +513,7 @@ pub(crate) fn install(i: &mut Interp) {
     let ec = i.intern("error-conditions");
     let em = i.intern("error-message");
     let se = i.intern("sqlite-error");
-    let conds = Value::list(vec![
-        Value::Sym(se),
-        Value::Sym(i.intern("error")),
-    ]);
+    let conds = Value::list(vec![Value::Sym(se), Value::Sym(i.intern("error"))]);
     i.put_prop(se, ec, conds);
     i.put_prop(se, em, Value::string("SQLite error"));
     // `sqlite-locked-error' is a subcase of `sqlite-error' in GNU.
@@ -513,19 +528,109 @@ pub(crate) fn install(i: &mut Interp) {
 }
 
 pub(crate) static SUBRS: &[Subr] = &[
-    S!("sqlite-open", 0, 3, f_sqlite_open, "Open FILE as an sqlite database.\nIf FILE is nil or omitted, an in-memory database is opened.\nIf READONLY is non-nil, open read-only; URIs are recognized\nunless DISABLE-URI is non-nil."),
-    S!("sqlite-close", 1, 1, f_sqlite_close, "Close the sqlite database DB."),
-    S!("sqlite-execute", 2, 3, f_sqlite_execute, "Execute a non-select SQL statement.\nVALUES is a list or vector bound to `?' parameters.\nValue is the number of affected rows."),
-    S!("sqlite-execute-batch", 2, 2, f_sqlite_execute_batch, "Execute multiple SQL STATEMENTS in DB."),
-    S!("sqlite-select", 2, 4, f_sqlite_select, "Select data from DB matching QUERY.\nVALUES is a list or vector bound to `?' parameters.\nRETURN-TYPE nil: list of rows; `full': column names then rows;\n`set': a set object for `sqlite-next' etc."),
-    S!("sqlite-transaction", 1, 1, f_sqlite_transaction, "Start a transaction in DB."),
-    S!("sqlite-commit", 1, 1, f_sqlite_commit, "Commit a transaction in DB."),
-    S!("sqlite-rollback", 1, 1, f_sqlite_rollback, "Roll back a transaction in DB."),
-    S!("sqlite-next", 1, 1, f_sqlite_next, "Return the next result set from SET.\nnil when the statement has finished."),
-    S!("sqlite-more-p", 1, 1, f_sqlite_more_p, "t if there are further results in SET."),
-    S!("sqlite-columns", 1, 1, f_sqlite_columns, "Return the column names of SET."),
-    S!("sqlite-finalize", 1, 1, f_sqlite_finalize, "Mark SET finished; frees its resources."),
-    S!("sqlite-pragma", 2, 2, f_sqlite_pragma, "Execute PRAGMA in DB."),
-    S!("sqlite-load-extension", 2, 2, f_sqlite_load_extension, "Load SQlite MODULE into DB.\nOnly modules on `sqlite-allowed-modules' can be loaded."),
-    S!("sqlite-version", 0, 0, f_sqlite_version, "Return the version string of the SQLite library."),
+    S!(
+        "sqlite-open",
+        0,
+        3,
+        f_sqlite_open,
+        "Open FILE as an sqlite database.\nIf FILE is nil or omitted, an in-memory database is opened.\nIf READONLY is non-nil, open read-only; URIs are recognized\nunless DISABLE-URI is non-nil."
+    ),
+    S!(
+        "sqlite-close",
+        1,
+        1,
+        f_sqlite_close,
+        "Close the sqlite database DB."
+    ),
+    S!(
+        "sqlite-execute",
+        2,
+        3,
+        f_sqlite_execute,
+        "Execute a non-select SQL statement.\nVALUES is a list or vector bound to `?' parameters.\nValue is the number of affected rows."
+    ),
+    S!(
+        "sqlite-execute-batch",
+        2,
+        2,
+        f_sqlite_execute_batch,
+        "Execute multiple SQL STATEMENTS in DB."
+    ),
+    S!(
+        "sqlite-select",
+        2,
+        4,
+        f_sqlite_select,
+        "Select data from DB matching QUERY.\nVALUES is a list or vector bound to `?' parameters.\nRETURN-TYPE nil: list of rows; `full': column names then rows;\n`set': a set object for `sqlite-next' etc."
+    ),
+    S!(
+        "sqlite-transaction",
+        1,
+        1,
+        f_sqlite_transaction,
+        "Start a transaction in DB."
+    ),
+    S!(
+        "sqlite-commit",
+        1,
+        1,
+        f_sqlite_commit,
+        "Commit a transaction in DB."
+    ),
+    S!(
+        "sqlite-rollback",
+        1,
+        1,
+        f_sqlite_rollback,
+        "Roll back a transaction in DB."
+    ),
+    S!(
+        "sqlite-next",
+        1,
+        1,
+        f_sqlite_next,
+        "Return the next result set from SET.\nnil when the statement has finished."
+    ),
+    S!(
+        "sqlite-more-p",
+        1,
+        1,
+        f_sqlite_more_p,
+        "t if there are further results in SET."
+    ),
+    S!(
+        "sqlite-columns",
+        1,
+        1,
+        f_sqlite_columns,
+        "Return the column names of SET."
+    ),
+    S!(
+        "sqlite-finalize",
+        1,
+        1,
+        f_sqlite_finalize,
+        "Mark SET finished; frees its resources."
+    ),
+    S!(
+        "sqlite-pragma",
+        2,
+        2,
+        f_sqlite_pragma,
+        "Execute PRAGMA in DB."
+    ),
+    S!(
+        "sqlite-load-extension",
+        2,
+        2,
+        f_sqlite_load_extension,
+        "Load SQlite MODULE into DB.\nOnly modules on `sqlite-allowed-modules' can be loaded."
+    ),
+    S!(
+        "sqlite-version",
+        0,
+        0,
+        f_sqlite_version,
+        "Return the version string of the SQLite library."
+    ),
 ];

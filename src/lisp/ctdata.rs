@@ -175,9 +175,7 @@ pub(crate) static SPECIAL_TITLE: &[(u32, &'static str)] = &[
     (64278, "\u{054e}\u{0576}"),
     (64279, "\u{0544}\u{056d}"),
 ];
-pub(crate) static SPECIAL_LOWER: &[(u32, &'static str)] = &[
-    (304, "i\u{0307}"),
-];
+pub(crate) static SPECIAL_LOWER: &[(u32, &'static str)] = &[(304, "i\u{0307}")];
 pub(crate) static TITLE_OVERRIDES: &[(u32, u32)] = &[
     (305, 73),
     (383, 83),

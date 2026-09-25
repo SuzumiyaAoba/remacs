@@ -55,22 +55,18 @@ impl KeyIo for ChanIo {
         if let Some(k) = self.pending.pop() {
             return Ok(Some(k));
         }
-        loop {
-            match self.events.recv_timeout(dur) {
-                Ok(GuiEvent::Key(k)) => return Ok(Some(k)),
-                Ok(GuiEvent::Resize(c, r)) => {
-                    self.cols = c.max(10);
-                    self.rows = r.max(3);
-                    return Ok(None);
-                }
-                Err(mpsc::RecvTimeoutError::Timeout) => return Ok(None),
-                Err(mpsc::RecvTimeoutError::Disconnected) => {
-                    return Err(io::Error::new(
-                        io::ErrorKind::BrokenPipe,
-                        "gui window closed",
-                    ));
-                }
+        match self.events.recv_timeout(dur) {
+            Ok(GuiEvent::Key(k)) => Ok(Some(k)),
+            Ok(GuiEvent::Resize(c, r)) => {
+                self.cols = c.max(10);
+                self.rows = r.max(3);
+                Ok(None)
             }
+            Err(mpsc::RecvTimeoutError::Timeout) => Ok(None),
+            Err(mpsc::RecvTimeoutError::Disconnected) => Err(io::Error::new(
+                io::ErrorKind::BrokenPipe,
+                "gui window closed",
+            )),
         }
     }
 

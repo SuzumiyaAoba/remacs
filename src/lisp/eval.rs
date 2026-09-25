@@ -153,6 +153,16 @@ pub struct Interp {
     /// is being evaluated — lambdas defined then get `dumped_doc' (their
     /// docstrings behave like GNU's .elc/DOC-file entries).
     pub loading_dumped: bool,
+    /// Number of currently-active dumped definitions.  GNU byte-compiles
+    /// its dump, so macros called there need not remain visible at -Q;
+    /// remacs stashes those cells and resolves hidden macros only while
+    /// a dumped lambda is running.
+    pub dumped_call_depth: usize,
+    /// Number of currently-active macro expanders.  Hidden dump-time
+    /// helpers remain callable only in this expansion-time context; a
+    /// dumped function's ordinary runtime calls still see GNU's void
+    /// function cells.
+    pub macroexp_call_depth: usize,
     /// GNU's `noninteractive_need_newline`: set when batch stdout was
     /// written, so the next stderr message is preceded by a newline.
     pub stderr_need_newline: bool,
@@ -265,11 +275,15 @@ pub struct Interp {
     /// bookkeeping-only stub, but start/stop toggle it like GNU.
     pub memory_profiler: bool,
     /// `advice-add' registry: SYM → ordered (WHERE . (FUN . NAME))
-    /// entries. Consulted by `apply' when calling SYM.
+    /// entries; the oldest is innermost, like GNU's oclosure chain.
     pub advices: Vec<(SymId, Vec<(SymId, Value, Value)>)>,
+    /// The unadvised function-cell value captured when SYM first gains
+    /// advice — `fset' clears it, `defalias' substitutes a new one.
+    pub advice_bases: Vec<(SymId, Value)>,
     /// Generated trampolines for advice composition: index →
-    /// (WHERE . (ADVICE-FUN . NEXT-CALLABLE)) as a flat triple.
-    pub advice_links: Vec<(Value, Value, Value)>,
+    /// (WHERE, ADVICE-FUN, NEXT-CALLABLE, NAME) — NAME feeds the
+    /// `advice--props' alist `(name . N)'.
+    pub advice_links: Vec<(Value, Value, Value, Value)>,
     /// `set-char-table-parent' registry: record identity → parent table.
     /// Char-table parents live outside the record so existing record
     /// layouts are untouched.
@@ -586,6 +600,8 @@ impl Interp {
             noninteractive: false,
             default_obarray: None,
             loading_dumped: false,
+            dumped_call_depth: 0,
+            macroexp_call_depth: 0,
             stderr_need_newline: false,
             out_last_char: None,
             frames: Vec::new(),
@@ -635,6 +651,7 @@ impl Interp {
             code_conv_map_count: 0,
             memory_profiler: false,
             advices: Vec::new(),
+            advice_bases: Vec::new(),
             advice_links: Vec::new(),
             char_table_parents: Vec::new(),
             char_table_defalts: Vec::new(),
@@ -780,9 +797,9 @@ impl Interp {
             // GNU-verbatim compatibility definitions (string trim/pad,
             // fringe helpers, paren/select/vc/dnd support, …).
             let _ = crate::lisp::load::load_library(&mut interp, "subr-x");
-            // compat.el's ;;;###autoload cookie in GNU's loaddefs.el
-            // pushes `(compat MAJOR MINOR 9999)' onto
-            // `package--builtin-versions' (a subr-x defvar).
+            // GNU's subr.el defvar (mostly populated by loaddefs.el
+            // autoload cookies); compat.el's cookie pushes
+            // `(compat MAJOR MINOR 9999)'.
             let _ = interp.eval_str(
                 "(unless (boundp 'package--builtin-versions) \
                    (defvar package--builtin-versions \
@@ -811,6 +828,10 @@ impl Interp {
             // (`vc-handled-backends', `vc-ignore-dir-regexp', ...) and
             // the vc-file-* property machinery are bound at -Q.
             let _ = crate::lisp::load::load_library(&mut interp, "vc-hooks");
+            // uniquify.el is dumped too; GNU's loadup order runs it
+            // after vc-hooks, so `uniquify-kill-buffer-function'
+            // prepends ahead of `vc-kill-buffer-hook'.
+            let _ = crate::lisp::load::load_library(&mut interp, "uniquify");
             // tooltip.el is dumped on window-system builds too: GNU has
             // `tooltip-delay', `tooltip-mode' & co. bound at -Q, and the
             // `tooltip' feature mark alone would make `require' skip
@@ -819,10 +840,29 @@ impl Interp {
             // float-sup.el is dumped too (`lisp-float-type' feature):
             // `float-pi', `degrees-to-radians' & co. are bound at -Q.
             let _ = crate::lisp::load::load_library(&mut interp, "float-sup");
+            // map-ynp.el is in GNU's dump (loadup.el): `map-y-or-n-p'
+            // is bound at -Q, used by files.el's `save-some-buffers'.
+            let _ = crate::lisp::load::load_library(&mut interp, "map-ynp");
             // debug-early.el is in GNU's dump too (loadup.el): it has
             // no `provide', so the feature stays nil while
             // `debug-early'/`debug-early-backtrace' are bound at -Q.
             let _ = crate::lisp::load::load_library(&mut interp, "debug-early");
+            // loaddefs.el is loaded by loadup.el right after subr.el:
+            // it installs the (autoload ...) cells for every preloaded
+            // library's entry points and provides the `loaddefs'
+            // feature, both visible at -Q.
+            let _ = crate::lisp::load::load_library(&mut interp, "loaddefs");
+            // tab-bar.el is in GNU's dump (loadup.el): tab-bar-mode,
+            // tab-new, tab-switcher & co. are bound at -Q.  It needs
+            // loaddefs's `frameset-filter-alist' defvar, hence the order.
+            let _ = crate::lisp::load::load_library(&mut interp, "tab-bar");
+            // image.el is in GNU's dump too (loadup.el): image-mode,
+            // `image-load-path', `insert-image' & co. are bound at -Q.
+            let _ = crate::lisp::load::load_library(&mut interp, "image");
+            // buff-menu.el is in GNU's dump as well: `Buffer-menu-mode'
+            // and friends are bound at -Q while the `buff-menu' feature
+            // stays nil (the file has no `provide').
+            let _ = crate::lisp::load::load_library(&mut interp, "buff-menu");
             // electric.el is in GNU's dump (loadup.el):
             // `electric-indent-mode'/`electric-quote-mode' are bound
             // at -Q and elec-pair.el needs `electric-quote-chars'.
@@ -847,12 +887,23 @@ impl Interp {
             // Thirteen more GNU-dumped libraries (loadup.el): their
             // features and real definitions exist at -Q.
             for lib in [
-                "abbrev", "cconv", "cus-face", "ediff-hook", "eldoc",
-                "mouse", "prog-mode", "regexp-opt", "register",
-                "replace", "scroll-bar", "text-mode", "timer",
+                "abbrev",
+                "cconv",
+                "cus-face",
+                "ediff-hook",
+                "eldoc",
+                "mouse",
+                "prog-mode",
+                "regexp-opt",
+                "register",
+                "replace",
+                "scroll-bar",
+                "text-mode",
+                "timer",
                 // GNU's dump also has newcomment.el, image.el and
                 // tab-bar.el (loadup.el).  json.el is a plain library.
-                "newcomment", "image",
+                "newcomment",
+                "image",
                 "tab-bar",
             ] {
                 let _ = crate::lisp::load::load_library(&mut interp, lib);
@@ -864,6 +915,8 @@ impl Interp {
             // inline.el unbound.  Restore that state.
             let _ = interp.eval_str(
                 "(progn \
+                   (put 'define-inline 'remacs--dump-fn \
+                        (symbol-function 'define-inline)) \
                    (dolist (s '(inline-quote inline-const-p inline-const-val \
                                 inline-error inline--leteval inline--letlisteval \
                                 inline-letevals inline--do-quote inline--dont-quote \
@@ -872,6 +925,7 @@ impl Interp {
                                 inline--testconst-p inline--alwaysconst-p \
                                 inline--getconst-val inline--alwaysconst-val \
                                 inline--error inline--warning)) \
+                     (put s 'remacs--dump-fn (symbol-function s)) \
                      (fmakunbound s)) \
                    (fset 'define-inline \
                          '(autoload \"inline\" \
@@ -889,6 +943,8 @@ impl Interp {
             // then match GNU.
             let _ = interp.eval_str(
                 "(progn \
+                   (put 'define-derived-mode 'remacs--dump-fn \
+                        (symbol-function 'define-derived-mode)) \
                    (fset 'define-derived-mode \
                          '(autoload \"derived\" \
                            \"Create a new mode CHILD which is a variant of an existing mode PARENT.\n\n\\(fn CHILD PARENT NAME [DOCSTRING] [KEYWORD-ARGS...] &rest BODY)\" \
@@ -976,15 +1032,1019 @@ impl Interp {
                    (fset 'tar-mode '(autoload \"tar-mode\" \"Major mode for viewing a tar file as a dired-like listing of its contents.\\nYou can move around using the usual cursor motion commands.\\nLetters no longer insert themselves.\\\\<tar-mode-map>\\nType \\\\[tar-extract] to pull a file out of the tar file and into its own buffer;\\nor click mouse-2 on the file's line in the Tar mode buffer.\\nType \\\\[tar-copy] to copy an entry from the tar file into another file on disk.\\n\\nIf you edit a sub-file of this archive (as with the \\\\[tar-extract] command) and\\nsave it with \\\\[save-buffer], the contents of that buffer will be\\nsaved back into the tar-file buffer; in this way you can edit a file\\ninside of a tar archive without extracting it and re-archiving it.\\n\\nSee also: variables `tar-update-datestamp' and `tar-anal-blocksize'.\\n\\\\{tar-mode-map}\\n\\nIn addition to any hooks its parent mode `special-mode' might have\\nrun, this mode runs the hook `tar-mode-hook', as the final or\\npenultimate step during initialization.\" t nil)) \
                    (fset 'variable-at-point '(autoload \"help-fns\" \"Return the bound variable symbol found at or before point.\\nReturn 0 if there is no such symbol.\\nIf ANY-SYMBOL is non-nil, don't insist the symbol be bound.\\n\\n(fn &optional ANY-SYMBOL)\" nil nil))))",
             );
+            // Roll back the `eval-when-compile' requires fired during
+            // the dumped libraries' interpreted loads: mouse.el's
+            // `(require 'rect)'/`(require 'send-to)' (which pulls in
+            // map.el) don't fire in GNU's dumped .elc, so -Q keeps
+            // those purely autoloaded.  Unbind every definition the
+            // interpreted loads made, then reinstall the entry
+            // points' loaddefs autoload cells.
+            let rolled_back = interp.eval_str(
+                "(let (fns vars) \
+                   (dolist (lib '(\"rect\" \"send-to\" \"map\")) \
+                     (let ((entry (assoc (concat \"lisp/\" lib \".el\") load-history))) \
+                       (when entry \
+                         (dolist (item (cdr entry)) \
+                           (cond \
+                            ((and (consp item) (memq (car item) '(defun defmacro))) \
+                             (push (cdr item) fns)) \
+                            ((and (consp item) (memq (car item) '(defface require provide autoload))) \
+                             nil) \
+                            ((symbolp item) (push item vars)) \
+                            ((and (consp item) (symbolp (cdr item))) \
+                             (push (cdr item) vars)))) \
+                         (setq load-history (delq entry load-history))))) \
+                   (list fns vars))",
+            );
+            if let Ok(rolled) = rolled_back {
+                if let Ok(groups) = rolled.list_to_vec() {
+                    // Unbind in Rust rather than via `makunbound':
+                    // that builtin voids an always-buffer-local var by
+                    // planting a voided local binding, which would
+                    // shadow the default if the library later loads
+                    // for real — a plain "never loaded" state needs
+                    // the locals entry and the auto-local flag gone.
+                    let fns = groups.first().and_then(|v| v.list_to_vec().ok());
+                    let vars = groups.get(1).and_then(|v| v.list_to_vec().ok());
+                    for v in fns.into_iter().flatten() {
+                        if let Value::Sym(sid) = v {
+                            interp.obarray.symbol_mut(sid).function = Value::Sym(sym::UNBOUND);
+                        }
+                    }
+                    for v in vars.into_iter().flatten() {
+                        if let Value::Sym(sid) = v {
+                            {
+                                let s = interp.obarray.symbol_mut(sid);
+                                s.value = Value::Sym(sym::UNBOUND);
+                                s.special = false;
+                                s.constant = false;
+                                s.make_local_if_set = false;
+                                s.variable_documentation = None;
+                            }
+                            for bid in interp.buffers.list() {
+                                if let Some(b) = interp.buffers.get(bid) {
+                                    b.borrow_mut().locals.remove(&sid);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            let _ = interp.eval_str(
+                "(progn
+  (fset 'clear-rectangle '(autoload \"rect\" \"Blank out the region-rectangle.
+The text previously in the region is overwritten with blanks.
+
+When called from a program the rectangle's corners are START and END.
+With a prefix (or a FILL) argument, also fill with blanks the parts of the
+rectangle which were empty.
+
+(fn START END &optional FILL)\" t nil))
+  (fset 'copy-rectangle-as-kill '(autoload \"rect\" \"Copy the region-rectangle and save it as the last killed one.
+
+(fn START END)\" t nil))
+  (fset 'delete-extract-rectangle '(autoload \"rect\" \"Delete the contents of the rectangle with corners at START and END.
+Return it as a list of strings, one for each line of the rectangle.
+
+When called from a program the rectangle's corners are START and END.
+With an optional FILL argument, also fill lines where nothing has to be
+deleted.
+
+(fn START END &optional FILL)\" nil nil))
+  (fset 'delete-rectangle '(autoload \"rect\" \"Delete (don't save) text in the region-rectangle.
+The same range of columns is deleted in each line starting with the
+line where the region begins and ending with the line where the region
+ends.
+
+When called from a program the rectangle's corners are START and END.
+With a prefix (or a FILL) argument, also fill lines where nothing has
+to be deleted.
+
+(fn START END &optional FILL)\" t nil))
+  (fset 'delete-whitespace-rectangle '(autoload \"rect\" \"Delete all whitespace following a specified column in each line.
+The left edge of the rectangle specifies the position in each line
+at which whitespace deletion should begin.  On each line in the
+rectangle, all contiguous whitespace starting at that column is deleted.
+
+When called from a program the rectangle's corners are START and END.
+With a prefix (or a FILL) argument, also fill too short lines.
+
+(fn START END &optional FILL)\" t nil))
+  (fset 'extract-rectangle '(autoload \"rect\" \"Return the contents of the rectangle with corners at START and END.
+Return it as a list of strings, one for each line of the rectangle.
+
+(fn START END)\" nil nil))
+  (fset 'insert-rectangle '(autoload \"rect\" \"Insert text of RECTANGLE with upper left corner at point.
+RECTANGLE's first line is inserted at point, its second
+line is inserted at a point vertically under point, etc.
+RECTANGLE should be a list of strings.
+After this command, the mark is at the upper left corner
+and point is at the lower right corner.
+
+(fn RECTANGLE)\" nil nil))
+  (fset 'kill-rectangle '(autoload \"rect\" \"Delete the region-rectangle and save it as the last killed one.
+
+When called from a program the rectangle's corners are START and END.
+You might prefer to use `delete-extract-rectangle' from a program.
+
+With a prefix (or a FILL) argument, also fill lines where nothing has to be
+deleted.
+
+If the buffer is read-only, Emacs will beep and refrain from deleting
+the rectangle, but put it in `killed-rectangle' anyway.  This means that
+you can use this command to copy text from a read-only buffer.
+(If the variable `kill-read-only-ok' is non-nil, then this won't
+even beep.)
+
+(fn START END &optional FILL)\" t nil))
+  (fset 'open-rectangle '(autoload \"rect\" \"Blank out the region-rectangle, shifting text right.
+
+The text previously in the region is not overwritten by the blanks,
+but instead winds up to the right of the rectangle.
+
+When called from a program the rectangle's corners are START and END.
+With a prefix (or a FILL) argument, fill with blanks even if there is
+no text on the right side of the rectangle.
+
+(fn START END &optional FILL)\" t nil))
+  (fset 'rectangle-mark-mode '(autoload \"rect\" \"Toggle the region as rectangular.
+
+Activates the region if it's inactive and Transient Mark mode is
+on.  Only lasts until the region is next deactivated.
+
+This is a minor mode.  If called interactively, toggle the
+`Rectangle-Mark mode' mode.  If the prefix argument is positive, enable
+the mode, and if it is zero or negative, disable the mode.
+
+If called from Lisp, toggle the mode if ARG is `toggle'.  Enable the
+mode if ARG is nil, omitted, or is a positive number.  Disable the mode
+if ARG is a negative number.
+
+To check whether the minor mode is enabled in the current buffer,
+evaluate the variable `rectangle-mark-mode'.
+
+The mode's hook is called both when the mode is enabled and when it is
+disabled.
+
+\\\\{rectangle-mark-mode-map}
+
+(fn &optional ARG)\" t nil))
+  (fset 'rectangle-number-lines '(autoload \"rect\" \"Insert numbers in front of the region-rectangle.
+
+START-AT, if non-nil, should be a number from which to begin
+counting.  FORMAT, if non-nil, should be a format string to pass
+to `format' along with the line count.  When called interactively
+with a prefix argument, prompt for START-AT and FORMAT.
+
+(fn START END START-AT &optional FORMAT)\" t nil))
+  (fset 'string-insert-rectangle '(autoload \"rect\" \"Insert STRING on each line of region-rectangle, shifting text right.
+
+When called from a program, the rectangle's corners are START and END.
+The left edge of the rectangle specifies the column for insertion.
+This command does not delete or overwrite any existing text.
+
+(fn START END STRING)\" t nil))
+  (fset 'string-rectangle '(autoload \"rect\" \"Replace rectangle contents with STRING on each line.
+The length of STRING need not be the same as the rectangle width.
+
+When called interactively and option `rectangle-preview' is
+non-nil, display the result as the user enters the string into
+the minibuffer.
+
+Called from a program, takes three args; START, END and STRING.
+
+(fn START END STRING)\" t nil))
+  (fset 'yank-rectangle '(autoload \"rect\" \"Yank the last killed rectangle with upper left corner at point.\" t nil))
+  (fset 'send-to--resolve-handler '(autoload \"send-to\" nil nil nil))
+  (fset 'send-to-supported-p '(autoload \"send-to\" \"Return non-nil for platforms where `send-to' is supported.\" nil nil))
+  (fset 'send-to '(autoload \"send-to\" \"Send file(s) or region text to (non-Emacs) applications or services.
+
+Sending is handled by the first supported handler from `send-to-handlers'.
+
+ITEMS list is also populated by the resolved handler, but can be
+explicitly overridden.
+
+(fn &optional ITEMS)\" t nil)) \
+  (fset 'close-rectangle 'delete-whitespace-rectangle) \
+  (fset 'replace-rectangle 'string-rectangle))",
+            );
+            // rect.el's `rectangle-preview' defface must stay
+            // unloaded too.
+            interp.face_table.retain(|(n, _)| n != "rectangle-preview");
+
+            // The prelude amalgamates helpers that GNU 31.1 keeps void
+            // at -Q: they live in libraries that aren't dumped
+            // (subr-x.el, help.el, pcase/rx internals, ...) or simply
+            // don't exist upstream (`second', `copy-seq', ...).  A
+            // static call-graph over the dumped defs shows no kept
+            // (GNU-bound) definition calls these, so void their
+            // function cells to match GNU's boot state.  The real
+            // lisp/*.el files still rebind them on `require'.
+            const GNU_VOID_FNS: &[&str] = &[
+                "advice--make-how-alist",
+                "append-to-list",
+                "bool-vector-length",
+                "buffer-name-as-string",
+                "buffer-substring-with-properties",
+                "buffer-word-at-point",
+                "byte-compile-warn-x",
+                "car-or-marker-p",
+                "char-table",
+                "cl--advice--apply",
+                "cl--find-class",
+                "cl--old-struct-type-of",
+                "cl-struct--pcase-macroexpander",
+                // GNU installs no cl-seq/cl-extra autoload cells at -Q;
+                // the real libraries rebind these on require.
+                "cl--adjoin",
+                "cl--compiler-macro-adjoin",
+                "cl--derived-type-generalizers",
+                "cl--do-remf",
+                "cl--map-intervals",
+                "cl--map-overlays",
+                "cl--mapcar-many",
+                "cl--optimize",
+                "cl--set-frame-visible-p",
+                "cl--set-getf",
+                "cl-assoc",
+                "cl-assoc-if",
+                "cl-assoc-if-not",
+                "cl-ceiling",
+                "cl-coerce",
+                "cl-compiler-macroexpand",
+                "cl-concatenate",
+                "cl-count",
+                "cl-count-if",
+                "cl-count-if-not",
+                "cl-define-compiler-macro",
+                "cl-defsubst",
+                "cl-deftype",
+                "cl-delete",
+                "cl-delete-duplicates",
+                "cl-delete-if",
+                "cl-delete-if-not",
+                "cl-describe-type",
+                "cl-endp",
+                "cl-equalp",
+                "cl-every",
+                "cl-fill",
+                "cl-find",
+                "cl-find-class",
+                "cl-find-if",
+                "cl-find-if-not",
+                "cl-float-limits",
+                "cl-floor",
+                "cl-fresh-line",
+                "cl-gcd",
+                "cl-get",
+                "cl-getf",
+                "cl-intersection",
+                "cl-isqrt",
+                "cl-iter-defun",
+                "cl-lcm",
+                "cl-list-length",
+                "cl-make-random-state",
+                "cl-mapc",
+                "cl-mapcan",
+                "cl-mapcon",
+                "cl-mapl",
+                "cl-maplist",
+                "cl-member",
+                "cl-member-if",
+                "cl-member-if-not",
+                "cl-merge",
+                "cl-mismatch",
+                "cl-mod",
+                "cl-nintersection",
+                "cl-nset-difference",
+                "cl-nset-exclusive-or",
+                "cl-nsublis",
+                "cl-nsubst",
+                "cl-nsubst-if",
+                "cl-nsubst-if-not",
+                "cl-nsubstitute",
+                "cl-nsubstitute-if",
+                "cl-nsubstitute-if-not",
+                "cl-nunion",
+                "cl-parse-integer",
+                "cl-position",
+                "cl-position-if",
+                "cl-position-if-not",
+                "cl-prettyexpand",
+                "cl-random",
+                "cl-random-state-p",
+                "cl-rassoc",
+                "cl-rassoc-if",
+                "cl-rassoc-if-not",
+                "cl-reduce",
+                "cl-rem",
+                "cl-remove",
+                "cl-remove-duplicates",
+                "cl-remove-if",
+                "cl-remove-if-not",
+                "cl-remprop",
+                "cl-replace",
+                "cl-round",
+                "cl-search",
+                "cl-set-difference",
+                "cl-set-exclusive-or",
+                "cl-signum",
+                "cl-some",
+                "cl-sort",
+                "cl-stable-sort",
+                "cl-struct-sequence-type",
+                "cl-struct-slot-info",
+                "cl-struct-slot-offset",
+                "cl-sublis",
+                "cl-subseq",
+                "cl-subsetp",
+                "cl-subst-if",
+                "cl-subst-if-not",
+                "cl-substitute",
+                "cl-substitute-if",
+                "cl-substitute-if-not",
+                "cl-tailp",
+                "cl-tree-equal",
+                "cl-truncate",
+                "cl-type--pcase-macroexpander",
+                "cl-union",
+                "clear-vector",
+                "connection-local-criteria-for-default-directory",
+                "connection-local-get-profile-variables",
+                "connection-local-get-profiles",
+                "connection-local-normalize-criteria",
+                "connection-local-profile-name-for-criteria",
+                "copy-seq",
+                "custom-face-state",
+                "custom-face-tag",
+                "custom-group-list",
+                "custom-group-tag",
+                "custom-theme-load-themes",
+                "custom-variable-state",
+                "custom-variable-tag",
+                "declare-functionp",
+                "dir-locals-to-string",
+                "emacs-build-time",
+                "emacs-etc--hide-local-variables",
+                "face-attrs--make-indirect-safe",
+                "face-remap--clear-remappings",
+                "face-remap--remap-face",
+                "face-remap-remove-relative",
+                "feature-file",
+                "feature-symbols",
+                "file-dependents",
+                "file-loadhist-lookup",
+                "file-provides",
+                "file-requires",
+                "file-set-intersect",
+                "find-function--defface",
+                "forward-line-command",
+                "frame--list-z-order",
+                "handle-change-group",
+                "hash-table-empty-p",
+                "hash-table-keys",
+                "hash-table-values",
+                "help-button-action",
+                "help-customize",
+                "help-do-xref",
+                "help-follow",
+                "help-follow-mouse",
+                "help-follow-symbol",
+                "help-function-def--button-function",
+                "help-go-back",
+                "help-go-forward",
+                "help-goto-info",
+                "help-goto-lispref-info",
+                "help-goto-next-page",
+                "help-goto-previous-page",
+                "help-insert-string",
+                "help-mode-context-menu",
+                "help-mode-menu",
+                "help-mode-revert-buffer",
+                "help-view-source",
+                "help-xref-go-back",
+                "help-xref-go-forward",
+                "internal--thread-argument",
+                "internal-doc-string-p",
+                "kmacro-end-or-call-macro-repeat",
+                "list-length",
+                "make-obsolete-generalized-variable",
+                "map--plist-p",
+                "member-if-not",
+                "modify-dir-local-variable",
+                "modify-file-local-variable",
+                "modify-file-local-variable-message",
+                "modify-file-local-variable-prop-line",
+                "output-switches",
+                "overlays-at-point",
+                "prop-match-p",
+                "read-dir-locals-file",
+                "read-feature",
+                "read-file-local-variable",
+                "read-file-local-variable-mode",
+                "read-file-local-variable-value",
+                "same-names-p",
+                "scribe-mode",
+                "seq-last",
+                "set-translation-table",
+                "shell-command-mode",
+                "string-aref",
+                "string-compare",
+                "string-remove-prefix",
+                "string-remove-suffix",
+                "string-to-sequence",
+                "text-property--find-end-backward",
+                "text-property-search-backward",
+                "text-scale--refresh",
+                "thread-first",
+                "thread-last",
+                "timer-p",
+                "toggle-read-only",
+                "unload--set-major-mode",
+                "window-has-parameters",
+                "window-inside-absolute-body-pixel-edges",
+                "window-left-char",
+                "window-line",
+                // Remaining dump-time helpers GNU 31.1 leaves void at -Q.
+                "(setf accessor--slot)",
+                "(setf accessor--type)",
+                "(setf built-in-class--non-abstract-supertype)",
+                "(setf cl--class-docstring)",
+                "(setf cl--class-index-table)",
+                "(setf cl--class-name)",
+                "(setf cl--class-parents)",
+                "(setf cl--class-slots)",
+                "(setf cl--generic)",
+                "(setf cl--generic-dispatches)",
+                "(setf cl--generic-generalizer-name)",
+                "(setf cl--generic-generalizer-priority)",
+                "(setf cl--generic-generalizer-specializers-function)",
+                "(setf cl--generic-generalizer-tagcode-function)",
+                "(setf cl--generic-lazy-function)",
+                "(setf cl--generic-method-call-con)",
+                "(setf cl--generic-method-function)",
+                "(setf cl--generic-method-qualifiers)",
+                "(setf cl--generic-method-specializers)",
+                "(setf cl--generic-method-table)",
+                "(setf cl--generic-name)",
+                "(setf cl--generic-options)",
+                "(setf cl--slot-descriptor-initform)",
+                "(setf cl--slot-descriptor-name)",
+                "(setf cl--slot-descriptor-props)",
+                "(setf cl--slot-descriptor-type)",
+                "(setf cl--struct-class-children-sym)",
+                "(setf cl--struct-class-docstring)",
+                "(setf cl--struct-class-index-table)",
+                "(setf cl--struct-class-name)",
+                "(setf cl--struct-class-named)",
+                "(setf cl--struct-class-parents)",
+                "(setf cl--struct-class-print)",
+                "(setf cl--struct-class-slots)",
+                "(setf cl--struct-class-tag)",
+                "(setf cl--struct-class-type)",
+                "(setf decoded-time-day)",
+                "(setf decoded-time-dst)",
+                "(setf decoded-time-hour)",
+                "(setf decoded-time-minute)",
+                "(setf decoded-time-month)",
+                "(setf decoded-time-second)",
+                "(setf decoded-time-weekday)",
+                "(setf decoded-time-year)",
+                "(setf decoded-time-zone)",
+                "(setf lisp-indent-state-ppss)",
+                "(setf lisp-indent-state-ppss-point)",
+                "(setf lisp-indent-state-stack)",
+                "(setf oclosure--class-allparents)",
+                "(setf oclosure--class-docstring)",
+                "(setf oclosure--class-index-table)",
+                "(setf oclosure--class-name)",
+                "(setf oclosure--class-parents)",
+                "(setf oclosure--class-slots)",
+                "(setf oclosure-accessor--index)",
+                "(setf oclosure-accessor--slot)",
+                "(setf oclosure-accessor--type)",
+                "(setf registerv-data)",
+                "(setf registerv-insert-func)",
+                "(setf registerv-jump-func)",
+                "(setf registerv-print-func)",
+                "(setf timer--args)",
+                "(setf timer--function)",
+                "(setf timer--high-seconds)",
+                "(setf timer--idle-delay)",
+                "(setf timer--integral-multiple)",
+                "(setf timer--low-seconds)",
+                "(setf timer--psecs)",
+                "(setf timer--repeat-delay)",
+                "(setf timer--time)",
+                "(setf timer--triggered)",
+                "(setf timer--usecs)",
+                "(setf uniquify-item-dirname)",
+                "(setf uniquify-item-proposed)",
+                "(setf xref-elisp-location-file)",
+                "(setf xref-elisp-location-symbol)",
+                "(setf xref-elisp-location-type)",
+                "`--pcase-macroexpander",
+                "abbrev--expand-body",
+                "abbrev--expand-wrapped",
+                "add-remove--display-text-property",
+                "apply-on-rectangle",
+                "bidi--char-in-category-p",
+                "buffer-face-mode-invoke",
+                "cl--add-function",
+                "cl--advice--link",
+                "cl--advice-place-code",
+                "cl--block-throw",
+                "cl--block-wrapper",
+                "cl--check-keys",
+                "cl--compile-time-too",
+                "cl--compiler-macro-cXXr",
+                "cl--compiler-macro-list*",
+                "cl--compiling-file",
+                "cl--defalias",
+                "cl--defun-1",
+                "cl--do-proclaim",
+                "cl--do-subst",
+                "cl--expand-do-loop",
+                "cl--expr-contains",
+                "cl--expr-contains-any",
+                "cl--expr-depends-p",
+                "cl--generic-dispatch",
+                "cl--keyfn",
+                "cl--labels-convert",
+                "cl--loop-action",
+                "cl--loop-cond",
+                "cl--loop-destruct",
+                "cl--loop-destruct-accessors",
+                "cl--loop-expand",
+                "cl--loop-hash-pairs",
+                "cl--method-fn",
+                "cl--method-more-specific-p",
+                "cl--methods-with-qual",
+                "cl--prog",
+                "cl--remove-function",
+                "cl--safe-expr-p",
+                "cl--set-buffer-substring",
+                "cl--set-substring",
+                "cl--simple-expr-p",
+                "cl--simple-exprs-p",
+                "cl--sm-subst",
+                "cl--spec-applicable-p",
+                "cl--spec-more-specific-p",
+                "cl--take",
+                "cl--thread-expand",
+                "cl--type-parents",
+                "cl-acons",
+                "cl-adjoin",
+                "cl-assert",
+                "cl-block",
+                "cl-caaaar",
+                "cl-caaadr",
+                "cl-caaar",
+                "cl-caadar",
+                "cl-caaddr",
+                "cl-caadr",
+                "cl-cadaar",
+                "cl-cadadr",
+                "cl-cadar",
+                "cl-caddar",
+                "cl-cadddr",
+                "cl-caddr",
+                "cl-callf",
+                "cl-callf2",
+                "cl-case",
+                "cl-cdaaar",
+                "cl-cdaadr",
+                "cl-cdaar",
+                "cl-cdadar",
+                "cl-cdaddr",
+                "cl-cdadr",
+                "cl-cddaar",
+                "cl-cddadr",
+                "cl-cddar",
+                "cl-cdddar",
+                "cl-cddddr",
+                "cl-cdddr",
+                "cl-check-type",
+                "cl-constantly",
+                "cl-copy-list",
+                "cl-copy-seq",
+                "cl-decf",
+                "cl-declaim",
+                "cl-declare",
+                "cl-defmacro",
+                "cl-defstruct",
+                "cl-defun",
+                "cl-destructuring-bind",
+                "cl-digit-char-p",
+                "cl-do",
+                "cl-do*",
+                "cl-do-all-symbols",
+                "cl-do-symbols",
+                "cl-dolist",
+                "cl-dotimes",
+                "cl-ecase",
+                "cl-eighth",
+                "cl-etypecase",
+                "cl-eval-when",
+                "cl-evenp",
+                "cl-fifth",
+                "cl-first",
+                "cl-flet",
+                "cl-flet*",
+                "cl-floatp-safe",
+                "cl-fourth",
+                "cl-function",
+                "cl-gensym",
+                "cl-gentemp",
+                "cl-labels",
+                "cl-ldiff",
+                "cl-letf",
+                "cl-letf*",
+                "cl-list*",
+                "cl-load-time-value",
+                "cl-locally",
+                "cl-loop",
+                "cl-macrolet",
+                "cl-map",
+                "cl-mapcar",
+                "cl-minus",
+                "cl-minusp",
+                "cl-multiple-value-apply",
+                "cl-multiple-value-bind",
+                "cl-multiple-value-call",
+                "cl-multiple-value-list",
+                "cl-multiple-value-setq",
+                "cl-ninth",
+                "cl-notany",
+                "cl-notevery",
+                "cl-nreconc",
+                "cl-nth-value",
+                "cl-oddp",
+                "cl-once-only",
+                "cl-pairlis",
+                "cl-plus",
+                "cl-plusp",
+                "cl-proclaim",
+                "cl-prog",
+                "cl-prog*",
+                "cl-progv",
+                "cl-psetf",
+                "cl-psetq",
+                "cl-pushnew",
+                "cl-remf",
+                "cl-rest",
+                "cl-return",
+                "cl-return-from",
+                "cl-revappend",
+                "cl-rotatef",
+                "cl-second",
+                "cl-seventh",
+                "cl-shiftf",
+                "cl-sixth",
+                "cl-subst",
+                "cl-svref",
+                "cl-symbol-macrolet",
+                "cl-tagbody",
+                "cl-tenth",
+                "cl-the",
+                "cl-third",
+                "cl-times",
+                "cl-typecase",
+                "cl-typep",
+                "cl-values",
+                "cl-values-list",
+                "cl-with-accessors",
+                "cl-with-gensyms",
+                "clear-rectangle-line",
+                "custom--settings-delete",
+                "custom--theme-entry-delete",
+                "custom-unlispify-menu-entry",
+                "decoded-time--defslot",
+                "define-icon",
+                "delete-extract-rectangle-line",
+                "delete-rectangle-line",
+                "delete-whitespace-rectangle-line",
+                "display-buffer-mark-dedicated",
+                "easy-mmode--next",
+                "easy-mmode--prev",
+                "easy-mmode-define-navigation",
+                "epa-file",
+                "event-apply--modifier",
+                "extract-rectangle-bounds",
+                "extract-rectangle-line",
+                "face-attrs-more-relative-p",
+                "face-remap-order",
+                "find-function--any-subform-p",
+                "find-function--search-by-expanding-macros",
+                "find-function--try-macroexpand",
+                "find-function-C-source",
+                "find-function-advised-original",
+                "find-function-do-it",
+                "find-function-library",
+                "find-function-on-key-do-it",
+                "find-function-read",
+                "find-library--from-load-history",
+                "find-library--load-name",
+                "find-library-name",
+                "find-library-suffixes",
+                "gv--defsetter",
+                "gv-delay-error",
+                "gv-deref",
+                "gv-setter",
+                "gv-synthetic-place",
+                "gv-synthetic-place--anon-cmacro",
+                "help-xref--navigation-buttons",
+                "icon-complete-spec",
+                "icon-documentation",
+                "icon-elements",
+                "icon-spec-keywords",
+                "icon-spec-values",
+                "icon-string",
+                "iconp",
+                "icons--copy-spec",
+                "icons--create",
+                "icons--describe-spec",
+                "icons--merge-spec",
+                "icons--register",
+                "icons--spec",
+                "insert-directory-adj-pos",
+                "internal--set-subr-doc",
+                "internal-make-interpreted-closure-function",
+                "jka-compr",
+                "let--pcase-macroexpander",
+                "list-tail",
+                "make-help-screen",
+                "make-prop-match",
+                "open-rectangle-line",
+                "operate-on-rectangle",
+                "pcase--and",
+                "pcase--app-subst-match",
+                "pcase--app-subst-rest",
+                "pcase--edebug-match-pat-args",
+                "pcase--eval",
+                "pcase--expand",
+                "pcase--expand-`",
+                "pcase--flip",
+                "pcase--funcall",
+                "pcase--get-macroexpander",
+                "pcase--if",
+                "pcase--let*",
+                "pcase--macroexpand",
+                "pcase--mark-used",
+                "pcase--match",
+                "pcase--mutually-exclusive-p",
+                "pcase--self-quoting-p",
+                "pcase--small-branch-p",
+                "pcase--split-equal",
+                "pcase--split-match",
+                "pcase--split-member",
+                "pcase--split-pred",
+                "pcase--split-rest",
+                "pcase--subtype-bitsets",
+                "pcase--trivial-upat-p",
+                "pcase--u",
+                "pcase--u1",
+                "pcase-compile-patterns",
+                "prop-match-value",
+                "pushnew",
+                "read-library-name--find-files",
+                "rectangle--*-char",
+                "rectangle--col-pos",
+                "rectangle--crutches",
+                "rectangle--default-line-number-format",
+                "rectangle--extract-region",
+                "rectangle--insert-for-yank",
+                "rectangle--insert-region",
+                "rectangle--point-col",
+                "rectangle--pos-cols",
+                "rectangle--region-beginning",
+                "rectangle--region-end",
+                "rectangle--reset-crutches",
+                "rectangle--reset-point-crutches",
+                "rectangle--space-to",
+                "rectangle--string-erase-preview",
+                "rectangle--string-flush-preview",
+                "rectangle--string-preview",
+                "rectangle-backward-char",
+                "rectangle-dimensions",
+                "rectangle-exchange-point-and-mark",
+                "rectangle-forward-char",
+                "rectangle-intersect-p",
+                "rectangle-left-char",
+                "rectangle-next-line",
+                "rectangle-number-line-callback",
+                "rectangle-position-as-coordinates",
+                "rectangle-previous-line",
+                "rectangle-right-char",
+                "remacs--char-width-table",
+                "remacs--dir-locals-merge",
+                "remacs--dir-locals-merge-vars",
+                "repos-count-screen-lines",
+                "repos-count-screen-lines-signed",
+                "rx--all-string-branches-p",
+                "rx--atomic-regexp",
+                "rx--bracket",
+                "rx--char-alt-union",
+                "rx--check-repeat-arg",
+                "rx--collect-or-strings",
+                "rx--condense-intervals",
+                "rx--control-greedy",
+                "rx--empty",
+                "rx--enclose",
+                "rx--expand-def-form",
+                "rx--expand-def-symbol",
+                "rx--expand-eval",
+                "rx--expand-template",
+                "rx--extend-local-defs",
+                "rx--foldl",
+                "rx--generate-alt",
+                "rx--human-readable",
+                "rx--intersection-intervals",
+                "rx--interval-set-complement",
+                "rx--interval-set-intersection",
+                "rx--interval-set-union",
+                "rx--lookup-def",
+                "rx--make-binding",
+                "rx--make-named-binding",
+                "rx--normalize-char-pattern",
+                "rx--optimize-or-args",
+                "rx--parse-any",
+                "rx--pcase-transform",
+                "rx--reduce-right",
+                "rx--reduce-to-char-alt",
+                "rx--sequence",
+                "rx--string-to-intervals",
+                "rx--substitute",
+                "rx--to-expr",
+                "rx--translate",
+                "rx--translate-**",
+                "rx--translate-=",
+                "rx--translate->=",
+                "rx--translate-any",
+                "rx--translate-backref",
+                "rx--translate-bounded-repetition",
+                "rx--translate-category",
+                "rx--translate-char-alt",
+                "rx--translate-compat-form",
+                "rx--translate-compat-form-entry",
+                "rx--translate-compat-symbol-entry",
+                "rx--translate-counted-repetition",
+                "rx--translate-eval",
+                "rx--translate-form",
+                "rx--translate-group",
+                "rx--translate-group-n",
+                "rx--translate-intersection",
+                "rx--translate-literal",
+                "rx--translate-not",
+                "rx--translate-or",
+                "rx--translate-regexp",
+                "rx--translate-rep",
+                "rx--translate-repeat",
+                "rx--translate-seq",
+                "rx--translate-symbol",
+                "rx--translate-syntax",
+                "rx-submatch-n",
+                "seq",
+                "sequence",
+                "spaces-string",
+                "string-rectangle-line",
+                "text-property--find-end-forward",
+                "text-property--match-p",
+                "text-scale-max-amount",
+                "text-scale-min-amount",
+                "text-scale-mode",
+                "timer--defslot",
+                "unsafep--check",
+                "values",
+                "with-buffer-unmodified-if-unchanged",
+                "work-buffer--get",
+                "work-buffer--prepare-pixelwise",
+            ];
+            for name in GNU_VOID_FNS {
+                let sid = interp.intern(name);
+                let old = interp.obarray.symbol(sid).function.clone();
+                if *name == "cl--advice--apply" {
+                    // `advice-add' trampolines call this dispatcher; GNU
+                    // voids the name at -Q, so stash the subr on the
+                    // symbol's plist where Lisp code can't reach it via
+                    // `symbol-function'.
+                    let pk = interp.intern("cl--advice--apply--fn");
+                    interp.put_prop(sid, pk, old.clone());
+                }
+                if !matches!(old, Value::Sym(s) if s == sym::UNBOUND) {
+                    let pk = interp.intern("remacs--dump-fn");
+                    interp.put_prop(sid, pk, old);
+                }
+                interp.obarray.symbol_mut(sid).function = Value::Sym(sym::UNBOUND);
+            }
+            // GNU's dump-time `autoload' is a plain defalias: every
+            // `(autoload ...)' form in loaddefs.elc installs its cell
+            // unconditionally, even over definitions the dump itself
+            // made (e.g. the `pcase' macro).  Reinstall each loaddefs
+            // autoload cell over whatever the amalgamated prelude
+            // bound so that first use loads the real library — and
+            // its expansion-time internals — exactly like GNU.
+            if let Some(src) = crate::lisp::load::embedded("loaddefs") {
+                let chars: Rc<Vec<char>> = Rc::new(src.chars().collect());
+                let auto_id = interp.intern("autoload");
+                let macro_id = interp.intern("macro");
+                let void_names: HashSet<SymId> = GNU_VOID_FNS
+                    .iter()
+                    .map(|name| interp.intern(name))
+                    .collect();
+                let mut pos = 0usize;
+                loop {
+                    let form = {
+                        let mut reader = Reader::with_chars(&mut interp, chars.clone());
+                        reader.set_position(pos);
+                        match reader.read() {
+                            Ok(Some(f)) => {
+                                pos = reader.position();
+                                f
+                            }
+                            _ => break,
+                        }
+                    };
+                    // `(autoload 'name FILE DOC INTERACTIVE TYPE)'
+                    let items = match &form {
+                        Value::Cons(_) => form.list_to_vec().ok(),
+                        _ => None,
+                    };
+                    let Some(items) = items else { continue };
+                    if items.len() < 2 {
+                        continue;
+                    }
+                    if !matches!(&items[0], Value::Sym(h) if *h == auto_id) {
+                        continue;
+                    }
+                    // items[1] is (quote name).
+                    let name = match &items[1] {
+                        Value::Cons(q) => {
+                            let qb = q.borrow();
+                            let rest = match &qb.cdr {
+                                Value::Cons(r) => r.borrow().car.clone(),
+                                _ => continue,
+                            };
+                            match rest {
+                                Value::Sym(id) => id,
+                                _ => continue,
+                            }
+                        }
+                        _ => continue,
+                    };
+                    if void_names.contains(&name) {
+                        continue;
+                    }
+                    // Leave cells alone when the autoload's own file
+                    // hosts expansion machinery: interpreting that
+                    // file needs the expander/helper bound, so the
+                    // autoload would recurse into the same load.  GNU
+                    // avoids this because .elc files are preexpanded.
+                    let target_selfhosts = match &items[2] {
+                        Value::Str(s) => {
+                            let f = s.borrow();
+                            matches!(
+                                f.as_str(),
+                                "cl-macs"
+                                    | "cl-preloaded"
+                                    | "cl-generic"
+                                    | "cl-lib"
+                                    | "pcase"
+                                    | "rx"
+                                    | "gv"
+                                    | "easy-mmode"
+                                    | "map"
+                                    | "subr-x"
+                                    | "inline"
+                                    | "macroexp"
+                                    | "byte-run"
+                                    | "oclosure"
+                                    | "nadvice"
+                                    | "rect"
+                                    | "send-to"
+                                    | "icons"
+                                    | "warnings"
+                            )
+                        }
+                        _ => false,
+                    };
+                    if target_selfhosts {
+                        continue;
+                    }
+                    // Macros in any other file are just as un-satisfiable.
+                    if matches!(
+                        &interp.obarray.symbol(name).function,
+                        Value::Cons(c) if matches!(&c.borrow().car, Value::Sym(m) if *m == macro_id)
+                    ) {
+                        continue;
+                    }
+                    let mut cell = vec![Value::Sym(auto_id)];
+                    cell.extend_from_slice(&items[2..]);
+                    interp.fset(name, Value::list(cell));
+                }
+            }
         }
         interp.loading_dumped = false;
-        // GNU resets `gensym-counter' to 0 when the dumped image starts
-        // (pdumper boot), so dump-time gensyms don't leak into the
-        // session.  Our boot-time library loads play the dump's role.
-        if std::env::var("REMACS_NO_PRELUDE").is_err() {
-            let gc = interp.intern("gensym-counter");
-            interp.obarray.symbol_mut(gc).value = Value::Int(0);
-        }
         if std::env::var("REMACS_NO_PRELUDE").is_err() {
             // startup.el processes variables whose defcustom used
             // `custom-initialize-delay' via `custom-reevaluate-setting',
@@ -1036,6 +2096,14 @@ impl Interp {
         let flist = Value::list(interp.features.iter().map(|s| Value::Sym(*s)).collect());
         let fid = interp.intern("features");
         interp.obarray.symbol_mut(fid).value = flist;
+        // GNU resets `gensym-counter' to 0 when the dumped image starts
+        // (pdumper boot), so dump-time gensyms don't leak into the
+        // session.  Our boot-time library loads play the dump's role;
+        // reset last so boot's own macroexpansion gensyms don't count.
+        if std::env::var("REMACS_NO_PRELUDE").is_err() {
+            let gc = interp.intern("gensym-counter");
+            interp.obarray.symbol_mut(gc).value = Value::Int(0);
+        }
         interp
     }
 
@@ -1301,6 +2369,89 @@ impl Interp {
 
     pub fn symbol_function(&self, id: SymId) -> Value {
         self.obarray.symbol(id).function.clone()
+    }
+
+    /// Function cell used by ordinary calls.  Hidden dump-time helpers
+    /// are reachable only while a macro expander is running; runtime calls
+    /// from dumped definitions still observe GNU's void -Q cells.
+    fn callable_function(&mut self, id: SymId) -> Value {
+        let f = self.symbol_function(id);
+        if !matches!(f, Value::Sym(s) if s == sym::UNBOUND) {
+            return f;
+        }
+        if self.macroexp_call_depth > 0 {
+            return self.dumped_function(id).unwrap_or(f);
+        }
+        // Generic dispatch is the runtime support GNU's .elc dump keeps
+        // behind the public function cells: the helper names themselves
+        // are void at -Q, but calls generated inside dumped generic
+        // functions still have to reach them.
+        if (self.dumped_call_depth > 0 || self.loading_dumped) && self.dumped_runtime_helper(id) {
+            return self.dumped_function(id).unwrap_or(f);
+        }
+        f
+    }
+
+    fn dumped_runtime_helper(&self, id: SymId) -> bool {
+        let name = self.obarray.name(id);
+        name.starts_with("(setf ")
+            || matches!(
+                name,
+                "cl--generic-dispatch"
+                    | "cl--advice--apply"
+                    | "cl--advice--link"
+                    | "cl--add-function"
+                    | "cl--check-keys"
+                    | "cl--method-fn"
+                    | "cl--method-more-specific-p"
+                    | "cl--methods-with-qual"
+                    | "cl--spec-applicable-p"
+                    | "cl--spec-more-specific-p"
+                    | "cl--type-parents"
+                    | "cl-typep"
+                    | "gv-deref"
+            )
+    }
+
+    /// Hidden dump-time definition for SYM, if one was stashed while its
+    /// public function cell was voided for GNU -Q compatibility.
+    fn dumped_function(&mut self, id: SymId) -> Option<Value> {
+        let prop = self.intern("remacs--dump-fn");
+        let hidden = self.get_prop(id, prop);
+        if hidden.is_nil() || matches!(hidden, Value::Sym(s) if s == sym::UNBOUND) {
+            None
+        } else {
+            Some(hidden)
+        }
+    }
+
+    /// Function cell for the head of a form.  In addition to normal
+    /// expansion-time access, a dumped definition may still call the
+    /// macros GNU expanded away at dump time.  Ordinary hidden functions
+    /// are not exposed here.
+    fn form_function(&mut self, id: SymId) -> Value {
+        let f = self.symbol_function(id);
+        if !matches!(f, Value::Sym(s) if s == sym::UNBOUND) {
+            return f;
+        }
+        if self.macroexp_call_depth > 0 {
+            return self.dumped_function(id).unwrap_or(f);
+        }
+        if self.dumped_call_depth == 0 && !self.loading_dumped {
+            return f;
+        }
+        match self.dumped_function(id) {
+            Some(v) if self.is_macro_function(&v) || self.dumped_runtime_helper(id) => v,
+            _ => f,
+        }
+    }
+
+    fn is_macro_function(&self, v: &Value) -> bool {
+        match v {
+            Value::Lambda(l) => l.is_macro,
+            Value::Cons(c) => self.sym_is(&c.borrow().car, sym::MACRO),
+            _ => false,
+        }
     }
 
     pub fn fbound_p(&self, id: SymId) -> bool {
@@ -1863,15 +3014,11 @@ impl Interp {
                     return sf(self, args);
                 }
                 // Function cell.
-                let fun = self.symbol_function(id);
+                let fun = self.form_function(id);
                 if let Value::Sym(s) = &fun {
                     if *s == sym::UNBOUND {
                         return Err(self.signal_data(sym::VOID_FUNCTION, vec![Value::Sym(id)]));
                     }
-                }
-                if self.advices.iter().any(|(s, a)| *s == id && !a.is_empty()) {
-                    let argv = self.eval_args(&args)?;
-                    return self.apply_adviced(id, &fun, argv);
                 }
                 self.call_function(&fun, &args, Some(id))
             }
@@ -1931,7 +3078,6 @@ impl Interp {
             Value::Sym(id) => {
                 // Function alias chain: chase.
                 let mut cur = *id;
-                let mut advised = None;
                 let mut hops = 0;
                 loop {
                     hops += 1;
@@ -1945,12 +3091,7 @@ impl Interp {
                     if let Some(sf) = super::special::special_form(cur) {
                         return sf(self, args.clone());
                     }
-                    if advised.is_none()
-                        && self.advices.iter().any(|(s, a)| *s == cur && !a.is_empty())
-                    {
-                        advised = Some(cur);
-                    }
-                    let f = self.symbol_function(cur);
+                    let f = self.callable_function(cur);
                     match f {
                         Value::Sym(next) => {
                             if next == sym::UNBOUND {
@@ -1961,10 +3102,6 @@ impl Interp {
                             cur = next;
                         }
                         other => {
-                            if let Some(s) = advised {
-                                let argv = self.eval_args(args)?;
-                                return self.apply_adviced(s, &other, argv);
-                            }
                             // Emacs reports the originally called symbol
                             // in arity errors, not the resolved one.
                             return self.call_function(&other, args, sym_name);
@@ -2133,19 +3270,13 @@ impl Interp {
         match fun {
             Value::Sym(id) => {
                 let mut cur = *id;
-                let mut advised = None;
                 let mut hops = 0;
                 loop {
                     hops += 1;
                     if hops > 64 {
                         return Err(self.error("Function alias loop"));
                     }
-                    if advised.is_none()
-                        && self.advices.iter().any(|(s, a)| *s == cur && !a.is_empty())
-                    {
-                        advised = Some(cur);
-                    }
-                    let f = self.symbol_function(cur);
+                    let f = self.callable_function(cur);
                     match f {
                         Value::Sym(next) => {
                             if next == sym::UNBOUND {
@@ -2155,10 +3286,7 @@ impl Interp {
                             }
                             cur = next;
                         }
-                        other => match advised {
-                            Some(s) => return self.apply_adviced(s, &other, argv),
-                            None => return self.apply_resolved(&other, argv, Value::Sym(*id)),
-                        },
+                        other => return self.apply_resolved(&other, argv, Value::Sym(*id)),
                     }
                 }
             }
@@ -2237,38 +3365,142 @@ impl Interp {
             .unwrap_or_default()
     }
 
-    /// Synthesize `(lambda (&rest a) (apply 'SUBR IDX a))'.
+    /// Synthesize `(lambda (&rest a) (apply SUBR IDX a))'.
+    /// The dispatcher subr is embedded directly rather than looked up
+    /// through `cl--advice--apply' — GNU keeps that name void at -Q.
     fn advice_trampoline(&mut self, idx: usize) -> EvalResult {
-        let src = format!(
-            "(lambda (&rest cl--args) (apply (function cl--advice--apply) {} cl--args))",
-            idx
-        );
-        let (form, _) = self.read_from_string(&src, 0)?;
-        let lam = self.lambda_from_form(&form, None)?;
+        let fn_sym = self.intern("cl--advice--apply");
+        let prop = self.intern("cl--advice--apply--fn");
+        let subr = self.get_prop(fn_sym, prop);
+        if !matches!(subr, Value::Subr(_)) {
+            return Err(self.error("internal: advice dispatcher missing"));
+        }
+        let cl_args = self.intern("cl--args");
+        let form = Value::list(vec![
+            Value::Sym(self.intern("lambda")),
+            Value::list(vec![Value::Sym(self.intern("&rest")), Value::Sym(cl_args)]),
+            Value::list(vec![
+                Value::Sym(self.intern("apply")),
+                subr,
+                Value::Int(idx as i128),
+                Value::Sym(cl_args),
+            ]),
+        ]);
+        let mut lam = self.lambda_from_form(&form, None)?;
+        lam.advice_link = Some(idx);
         Ok(Value::Lambda(Rc::new(lam)))
     }
 
-    /// Call SYM's adviced function.  GNU's nadvice composes advices in
-    /// reverse add order — the most recently added piece is outermost —
-    /// each wrapping the inner thunk per its WHERE class.
-    fn apply_adviced(&mut self, sym: SymId, base: &Value, argv: Vec<Value>) -> EvalResult {
-        let advs = self.advice_list(sym);
-        if advs.is_empty() {
-            return self.apply(base, argv);
+    /// Compose KEY's advice entries into the function-cell value: each
+    /// entry wraps the previous layer, most recently added outermost —
+    /// like GNU's nested `advice' oclosures.  The innermost `next' is
+    /// KEY's `advice_bases' entry.  A `(macro . X)' base composes inside
+    /// the macro wrapper so the advice runs at expansion, as in GNU.
+    pub(crate) fn compose_advice(&mut self, key: SymId) -> EvalResult {
+        let base = self
+            .advice_bases
+            .iter()
+            .find(|(s, _)| *s == key)
+            .map(|(_, b)| b.clone())
+            .unwrap_or_else(|| self.symbol_function(key));
+        let mut next = base;
+        let mut macrop = false;
+        match &next {
+            Value::Cons(c) => {
+                let (car, cdr) = {
+                    let b = c.borrow();
+                    (b.car.clone(), b.cdr.clone())
+                };
+                if self.sym_is(&car, sym::MACRO) {
+                    macrop = true;
+                    next = cdr;
+                }
+            }
+            Value::Lambda(l) if l.is_macro => macrop = true,
+            _ => {}
         }
-        let mut next = base.clone();
-        for (w, f, _) in &advs {
+        for (w, f, n) in self.advice_list(key) {
             let idx = self.advice_links.len();
-            self.advice_links.push((Value::Sym(*w), f.clone(), next));
+            self.advice_links.push((Value::Sym(w), f, next, n));
             next = self.advice_trampoline(idx)?;
         }
-        self.apply(&next, argv)
+        if macrop {
+            next = Value::cons(Value::Sym(sym::MACRO), next);
+        }
+        Ok(next)
+    }
+
+    /// Recompute KEY's function cell after its advice entries changed:
+    /// empty → restore the captured base; otherwise → recomposed chain.
+    pub(crate) fn recompose_advice(&mut self, key: SymId) -> Result<(), Flow> {
+        if self
+            .advices
+            .iter()
+            .find(|(s, _)| *s == key)
+            .map(|(_, a)| a.is_empty())
+            .unwrap_or(true)
+        {
+            if let Some(pos) = self.advice_bases.iter().position(|(s, _)| *s == key) {
+                let base = self.advice_bases.remove(pos).1;
+                self.fset(key, base);
+            }
+            return Ok(());
+        }
+        let composed = self.compose_advice(key)?;
+        self.fset(key, composed);
+        Ok(())
+    }
+
+    /// If V is an advice trampoline, its `(WHERE FUN NEXT NAME)'.
+    pub fn advice_link_entry(&self, v: &Value) -> Option<(Value, Value, Value, Value)> {
+        if let Value::Lambda(l) = v {
+            if let Some(idx) = l.advice_link {
+                return self.advice_links.get(idx).cloned();
+            }
+        }
+        None
+    }
+
+    /// Peel advice layers: innermost `next' of a trampoline chain —
+    /// the base definition GNU reaches via `advice--cd*r'.
+    pub fn advice_base_value(&self, v: &Value) -> Value {
+        let mut cur = v.clone();
+        while let Some((_, _, next, _)) = self.advice_link_entry(&cur) {
+            cur = next;
+        }
+        cur
+    }
+
+    /// `defalias'-level write to SYM's function cell: when SYM carries
+    /// advice, the new definition substitutes the chain's base (GNU's
+    /// `advice--defalias-fset'); otherwise a plain `fset'.
+    pub fn fset_defalias(&mut self, id: SymId, def: Value) -> Result<(), Flow> {
+        if self.advice_bases.iter().any(|(s, _)| *s == id) {
+            if let Some(pos) = self.advice_bases.iter().position(|(s, _)| *s == id) {
+                self.advice_bases[pos].1 = def;
+            }
+            self.recompose_advice(id)
+        } else {
+            self.fset(id, def);
+            Ok(())
+        }
     }
 
     /// Call an interpreted lambda with evaluated args.  `shown' is what
     /// `wrong-number-of-arguments' reports as the function — GNU prints
     /// the called symbol when invoked by name.
     fn call_lambda(&mut self, l: &Rc<Lambda>, argv: Vec<Value>, shown: &Value) -> EvalResult {
+        if l.dumped_doc {
+            self.dumped_call_depth += 1;
+        }
+        let r = self.call_lambda_inner(l, argv, shown);
+        if l.dumped_doc {
+            self.dumped_call_depth -= 1;
+        }
+        r
+    }
+
+    fn call_lambda_inner(&mut self, l: &Rc<Lambda>, argv: Vec<Value>, shown: &Value) -> EvalResult {
         // Arity.
         let (min, max_ok) = (l.required.len(), l.rest.is_some());
         if argv.len() < min || (!max_ok && argv.len() > min + l.optional.len()) {
@@ -2519,10 +3751,11 @@ impl Interp {
             Ok(v) => v,
             Err(_) => return Err(self.error("bad macro args")),
         };
+        self.macroexp_call_depth += 1;
         // The macro's function receives raw forms.
         let result = match mac {
-            Value::Lambda(l) if l.is_macro => self.call_lambda(l, argv, mac)?,
-            Value::Lambda(l) => self.call_lambda(l, argv, mac)?,
+            Value::Lambda(l) if l.is_macro => self.call_lambda(l, argv, mac),
+            Value::Lambda(l) => self.call_lambda(l, argv, mac),
             Value::Cons(_) => {
                 let (car, _) = {
                     let c = match mac {
@@ -2537,13 +3770,15 @@ impl Interp {
                         Value::Cons(c) => c.borrow().cdr.clone(),
                         _ => unreachable!(),
                     };
+                    self.macroexp_call_depth -= 1;
                     return self.macro_expand_call(&cdr, args);
                 }
-                self.apply(mac, argv)?
+                self.apply(mac, argv)
             }
-            _ => self.apply(mac, argv)?,
+            _ => self.apply(mac, argv),
         };
-        Ok(result)
+        self.macroexp_call_depth -= 1;
+        result
     }
 
     /// `macroexpand`: repeatedly expand while the form is a macro call.
@@ -2609,8 +3844,7 @@ impl Interp {
                                 if env_def.is_nil() {
                                     return Ok(cur);
                                 }
-                                let argl =
-                                    crate::lisp::builtins::want_list(self, &cdr)?;
+                                let argl = crate::lisp::builtins::want_list(self, &cdr)?;
                                 let new = self.apply(&env_def, argl)?;
                                 // GNU macroexpand-1 stops when the expander
                                 // returns the identical object (the
@@ -2621,23 +3855,7 @@ impl Interp {
                                 cur = new;
                                 continue;
                             }
-                            // GNU folds `(eval-when-compile BODY)' and
-                            // `(eval-and-compile BODY)' during
-                            // macroexpansion when not byte-compiling:
-                            // BODY runs now (against the dynamic
-                            // environment — `let-when-compile' relies on
-                            // this) and the expansion is (quote VALUE).
-                            if id == self.intern("eval-when-compile")
-                                || id == self.intern("eval-and-compile")
-                            {
-                                let v = self.eval_progn(&cdr)?;
-                                cur = Value::cons(
-                                    Value::Sym(self.intern("quote")),
-                                    Value::cons(v, Value::Nil),
-                                );
-                                continue;
-                            }
-                            let mut f = self.symbol_function(id);
+                            let mut f = self.form_function(id);
                             // Autoload cell: resolve macro autoloads
                             // (TYPE non-nil); others stop expansion.
                             let auto_id = self.intern("autoload");
@@ -2834,6 +4052,7 @@ impl Interp {
             arglist: Some(params.clone()),
             plain: self.explicit_eval_depth > 0,
             dumped_doc: self.loading_dumped,
+            advice_link: None,
         })
     }
 
@@ -4321,6 +5540,7 @@ impl Interp {
             ("window-system", Value::Nil),
             ("initial-window-system", Value::Nil),
             ("daemon-socket", Value::Nil),
+            ("internal--daemon-sockname", Value::Nil),
             ("glyph-table", Value::Nil),
             (
                 "charset-list",
@@ -4346,7 +5566,10 @@ impl Interp {
                 ),
             ),
             ("charset-map-path", Value::Nil),
-            ("char-code-property-alist", Value::Nil),
+            (
+                "char-code-property-alist",
+                self.seed_char_code_property_alist(),
+            ),
             ("unicode-category-table", Value::Nil),
             ("current-language-environment", Value::string("English")),
             ("default-input-method", Value::Nil),
@@ -4466,7 +5689,6 @@ impl Interp {
             ("internal--forge-builtin-symbols", Value::Nil),
             ("macroexp--debug-eager", Value::Nil),
             ("macroexpand-all-environment", Value::Nil),
-            ("internal-macroexpand-for-load", Value::Nil),
             ("internal-cons-cell-stats", Value::Nil),
             ("functions-exhausted", Value::Nil),
             ("fontification-functions", Value::Nil),
@@ -4508,10 +5730,7 @@ impl Interp {
             ("menu-bar-mode", Value::Sym(sym::T)),
             ("tool-bar-mode", Value::Nil),
             ("tab-bar-mode", Value::Nil),
-            (
-                "scroll-bar-mode",
-                Value::Sym(self.intern("right")),
-            ),
+            ("scroll-bar-mode", Value::Sym(self.intern("right"))),
             ("horizontal-scroll-bar-mode", Value::Nil),
             ("default-frame-alist", Value::Nil),
             ("initial-frame-alist", Value::Nil),
@@ -4549,7 +5768,7 @@ impl Interp {
             ("mouse-wheel-progressive-speed", Value::Sym(sym::T)),
             ("mouse-wheel-follow-mouse", Value::Sym(sym::T)),
             ("mouse-wheel-mode", Value::Sym(sym::T)),
-            ("scroll-bar-adjust-thumb-portion", Value::Nil),
+            ("scroll-bar-adjust-thumb-portion", Value::Sym(sym::T)),
             ("x-stretch-cursor", Value::Nil),
             ("x-use-underline-position-properties", Value::Nil),
             ("x-underline-at-descent-line", Value::Nil),
@@ -4763,6 +5982,60 @@ impl Interp {
                 self.char_table_defalts.push((id, defalt));
             }
         }
+    }
+
+    /// `char-code-property-alist': GNU dumps 20 entries at build time —
+    /// each property symbol consed onto its char-table, except `name'
+    /// which lazily loads from "uni-name.el".  Tables carry GNU's three
+    /// extra slots: (PROP MAPPER INDEX), where MAPPER is a unidata-gen
+    /// function for computed properties (we substitute `identity',
+    /// which satisfies functionp/fboundp like GNU's opaque bytecode)
+    /// and INDEX a small unidata table index or nil.
+    pub fn seed_char_code_property_alist(&mut self) -> Value {
+        use crate::lisp::builtins::misc::make_ct;
+        // (prop slot1 slot2) in GNU's dumped order; "fn" = mapper fn.
+        let specs: &[(&str, &str, &str)] = &[
+            ("bracket-type", "0", "1"),
+            ("paired-bracket", "nil", "0"),
+            ("special-titlecase", "nil", "nil"),
+            ("special-lowercase", "nil", "nil"),
+            ("special-uppercase", "nil", "nil"),
+            ("titlecase", "nil", "0"),
+            ("lowercase", "nil", "0"),
+            ("uppercase", "nil", "0"),
+            ("iso-10646-comment", "fn", "fn"),
+            ("old-name", "fn", "fn"),
+            ("mirroring", "nil", "0"),
+            ("mirrored", "0", "1"),
+            ("numeric-value", "0", "2"),
+            ("digit-value", "0", "1"),
+            ("decimal-digit-value", "0", "1"),
+            ("decomposition", "fn", "fn"),
+            ("bidi-class", "0", "1"),
+            ("canonical-combining-class", "0", "1"),
+            ("general-category", "0", "1"),
+            ("name", "fn", "fn"),
+        ];
+        let tag = Value::Sym(self.intern("char-code-property-table"));
+        let slot = |i: &mut Self, tok: &str| match tok {
+            "fn" => Value::Sym(i.intern("identity")),
+            "nil" => Value::Nil,
+            n => Value::Int(n.parse::<i128>().unwrap()),
+        };
+        let mut alist = Vec::with_capacity(specs.len());
+        for &(prop, s1, s2) in specs {
+            let psym = Value::Sym(self.intern(prop));
+            if prop == "name" {
+                alist.push(Value::cons(psym, Value::string("uni-name.el")));
+                continue;
+            }
+            let extras = vec![psym.clone(), slot(self, s1), slot(self, s2)];
+            let t = make_ct(self, tag.clone(), Value::Nil, extras);
+            self.char_code_prop_tables
+                .push((prop.to_string(), t.clone()));
+            alist.push(Value::cons(psym, t));
+        }
+        Value::list(alist)
     }
 
     /// `standard-category-table': the shared category table, with
@@ -5719,9 +6992,7 @@ impl Interp {
         }
         // Subrs: honor the declared interactive spec, if any.
         if let Value::Subr(s) = &fun {
-            if let Some(spec) = subr_interactive(s.name) {
-                let isym = self.intern("interactive");
-                let spec_form = Value::list(vec![Value::Sym(isym), Value::string(spec)]);
+            if let Some(spec_form) = subr_interactive_form(self, s.name) {
                 let argv = self.eval_interactive_spec(&spec_form)?;
                 return self.apply(&fun, argv);
             }
@@ -5990,80 +7261,619 @@ impl Interp {
     }
 }
 
+/// Return `(interactive SPEC)' for a primitive.  GNU primitive specs are
+/// stored as strings; a leading `(' means the string is an expression to
+/// read and evaluate rather than callint letter codes.
+pub(crate) fn subr_interactive_form(i: &mut Interp, name: &str) -> Option<Value> {
+    let spec = subr_interactive(name)?;
+    let spec = if spec.trim_start().starts_with('(') {
+        i.read_from_string(spec, 0)
+            .ok()
+            .map(|(form, _)| form)
+            .unwrap_or_else(|| Value::string(spec))
+    } else {
+        Value::string(spec)
+    };
+    Some(Value::list(vec![Value::Sym(i.intern("interactive")), spec]))
+}
+
 /// Interactive specs for subrs that Emacs declares `interactive'.
 /// `commandp`/`command-execute` consult this for primitives.
 pub(crate) fn subr_interactive(name: &str) -> Option<&'static str> {
     const T: &[(&str, &str)] = &[
-        ("self-insert-command", "p"),
-        ("forward-char", "p"),
-        ("backward-char", "p"),
-        ("delete-char", "p\nP"),
+        ("Buffer-menu-delete", "p"),
+        ("Buffer-menu-delete-backwards", "p"),
+        ("Buffer-menu-mouse-select", "e"),
+        ("Buffer-menu-not-modified", "P"),
+        ("Buffer-menu-toggle-files-only", "P"),
+        ("Buffer-menu-toggle-internal", "P"),
+        ("Buffer-menu-unmark", "P"),
+        (
+            "Buffer-menu-unmark-all-buffers",
+            "cRemove marks (RET means all):",
+        ),
+        ("abbrev-prefix-mark", "P"),
+        ("abort-minibuffers", ""),
+        ("abort-recursive-edit", ""),
+        ("activate-transient-input-method", "P\np"),
+        ("add-global-abbrev", "P"),
+        ("add-mode-abbrev", "P"),
+        (
+            "add-name-to-file",
+            "fAdd name to file: \nGName to add to %s: \np",
+        ),
+        ("append-next-kill", "p"),
+        ("append-to-file", "r\nFAppend to file: "),
+        ("back-to-indentation", "^"),
+        ("backward-button", "p\nd\nd"),
+        ("backward-char", "^p"),
+        ("backward-delete-char-untabify", "*p\nP"),
+        ("backward-kill-paragraph", "p"),
+        ("backward-kill-sentence", "p"),
+        ("backward-kill-sexp", "p\nd"),
+        ("backward-kill-word", "p"),
+        ("backward-list", "^p\nd"),
+        ("backward-page", "p"),
+        ("backward-paragraph", "^p"),
+        ("backward-sentence", "^p"),
+        ("backward-sexp", "^p\nd"),
+        ("backward-to-indentation", "^p"),
+        ("backward-up-list", "^p\nd\nd"),
+        ("backward-word", "^p"),
+        ("base64-decode-region", "r"),
+        ("base64-encode-region", "r"),
+        ("base64url-encode-region", "r"),
+        ("beginning-of-buffer", "^P"),
+        ("beginning-of-buffer-other-window", "P"),
+        ("beginning-of-defun", "^p"),
+        ("beginning-of-defun-comments", "^p"),
+        ("beginning-of-defun-raw", "^p"),
+        ("beginning-of-line", "^p"),
+        ("beginning-of-line-text", "^p"),
+        ("beginning-of-visual-line", "^p"),
+        ("buffer-enable-undo", ""),
+        ("buffer-menu", "P"),
+        ("buffer-menu-other-window", "P"),
+        ("button-describe", "d"),
+        ("call-last-kbd-macro", "p"),
+        ("cancel-function-timers", "aCancel timers of function: "),
+        ("canonically-space-region", "*r"),
+        ("capitalize-dwim", "*p"),
+        ("capitalize-word", "p"),
+        ("center-line", "P"),
+        ("center-region", "r"),
+        ("clipboard-kill-region", "r\np"),
+        ("clipboard-kill-ring-save", "r\np"),
+        ("clipboard-yank", "*"),
+        ("comment-box", "*r\np"),
+        ("comment-dwim", "*P"),
+        ("comment-indent", "*"),
+        ("comment-kill", "P"),
+        ("comment-line", "p"),
+        ("comment-or-uncomment-region", "*r\nP"),
+        ("comment-region", "*r\nP"),
+        ("comment-set-column", "P"),
+        ("complete-symbol", "P"),
+        ("compose-last-chars", "e"),
+        ("compose-region", "r"),
+        ("copy-file", "fCopy file: \nGCopy %s to file: \np\nP"),
+        ("copy-to-buffer", "BCopy to buffer: \nr"),
+        ("cycle-spacing", "*P"),
+        ("debugger-trap", ""),
+        ("decode-coding-region", "r\nzCoding system: "),
+        ("decompose-region", "r"),
+        ("decrease-left-margin", "*r\nP"),
+        ("decrease-right-margin", "*r\nP"),
+        ("define-abbrevs", "P"),
+        (
+            "define-global-abbrev",
+            "sDefine global abbrev: \nsExpansion for %s: ",
+        ),
+        (
+            "define-mode-abbrev",
+            "sDefine mode abbrev: \nsExpansion for %s: ",
+        ),
+        ("defining-kbd-macro", "P"),
+        ("delete-all-space", "*P"),
         ("delete-backward-char", "p\nP"),
-        ("move-beginning-of-line", "p"),
-        ("move-end-of-line", "p"),
-        ("forward-word", "p"),
-        ("backward-word", "p"),
-        ("forward-sexp", "p"),
-        ("backward-sexp", "p"),
-        ("forward-line", "p"),
-        ("newline", "p\nP"),
-        ("open-line", "p\nP"),
-        ("indent-line-to", "p"),
-        ("indent-rigidly", "r\nP"),
-        ("transpose-chars", "p"),
-        ("kill-line", "P\np"),
-        ("kill-region", "r"),
+        ("delete-blank-lines", "*"),
+        ("delete-char", "p\nP"),
+        ("delete-forward-char", "p\nP"),
+        ("delete-frame", ""),
+        ("delete-horizontal-space", "*P"),
+        ("delete-other-frames", "i\nP"),
+        ("delete-other-windows", "i\np"),
+        ("delete-other-windows-internal", ""),
+        ("delete-pair", "P"),
+        ("delete-region", "r"),
+        ("digit-argument", "P"),
+        (
+            "display-buffer-other-frame",
+            "bDisplay buffer in other frame: ",
+        ),
+        ("do-auto-save", ""),
+        ("down-list", "^p\nd"),
+        ("downcase-dwim", "*p"),
+        ("downcase-word", "p"),
+        ("electric-indent-just-newline", "*P"),
+        ("electric-newline-and-maybe-indent", "*"),
+        ("elisp-byte-compile-buffer", "P"),
+        ("elisp-byte-compile-file", "P"),
+        ("elisp-enable-lexical-binding", "@p"),
+        ("elisp-last-sexp-toggle-display", "P"),
+        ("emacs-version", "P"),
+        ("encode-coding-region", "r\nzCoding system: "),
+        ("end-kbd-macro", "p"),
+        ("end-of-buffer", "^P"),
+        ("end-of-buffer-other-window", "P"),
+        ("end-of-defun", "^p\nd"),
+        ("end-of-line", "^p"),
+        ("end-of-visual-line", "^p"),
+        ("enlarge-window", "p"),
+        ("enlarge-window-horizontally", "p"),
+        ("ensure-empty-lines", "p"),
+        ("erase-buffer", "*"),
+        ("eval-buffer", ""),
+        ("eval-defun", "P"),
+        ("eval-last-sexp", "P"),
+        ("eval-print-last-sexp", "P"),
+        ("eval-region", "r"),
+        ("exchange-point-and-mark", "P"),
+        ("exit-recursive-edit", ""),
+        ("expand-region-abbrevs", "r\nP"),
+        ("first-error", "p"),
+        ("fixup-whitespace", "*"),
+        ("font-lock-fontify-block", "P"),
+        ("font-lock-fontify-buffer", "p"),
+        ("font-lock-update", "P"),
+        ("forward-button", "p\nd\nd"),
+        ("forward-char", "^p"),
+        ("forward-line", "^p"),
+        ("forward-list", "^p\nd"),
+        ("forward-page", "p"),
+        ("forward-paragraph", "^p"),
+        ("forward-same-syntax", "^p"),
+        ("forward-sentence", "^p"),
+        ("forward-sexp", "^p\nd"),
+        ("forward-symbol", "^p"),
+        ("forward-to-indentation", "^p"),
+        ("forward-whitespace", "^p"),
+        ("forward-word", "^p"),
+        ("fullwidth-region", "r"),
+        ("fullwidth-word", "p"),
+        ("garbage-collect", ""),
+        ("global-unset-key", "kUnset key globally: "),
+        ("goto-history-element", "p"),
+        ("halfwidth-region", "r"),
+        ("halfwidth-word", "p"),
+        ("handle-delete-frame", "e"),
+        ("handle-focus-in", "e"),
+        ("handle-focus-out", "e"),
+        ("handle-move-frame", "e"),
+        ("handle-select-window", "^e"),
+        ("handle-switch-frame", "^e"),
+        ("iconify-frame", ""),
+        ("image-decrease-size", "P"),
+        ("image-increase-size", "P"),
+        ("image-mouse-decrease-size", "e"),
+        ("image-mouse-increase-size", "e"),
+        ("increase-left-margin", "*r\nP"),
+        ("increase-right-margin", "r\nP"),
+        ("indent-code-rigidly", "r\np"),
+        ("indent-for-tab-command", "P"),
+        ("indent-pp-sexp", "P"),
+        ("indent-region", "r\nP"),
+        ("indent-relative", "P"),
+        ("indent-rigidly", "r\nP\np"),
+        ("indent-rigidly-left", "r"),
+        ("indent-rigidly-left-to-tab-stop", "r"),
+        ("indent-rigidly-right", "r"),
+        ("indent-rigidly-right-to-tab-stop", "r"),
+        ("indent-to", "NIndent to column: "),
+        ("insert-file", "*fInsert file: "),
+        ("insert-file-literally", "*fInsert file literally: "),
+        ("insert-pair", "P"),
+        ("insert-parentheses", "P"),
+        ("inverse-add-global-abbrev", "p"),
+        ("inverse-add-mode-abbrev", "p"),
+        ("isearch-backward", "P\np"),
+        ("isearch-backward-regexp", "P\np"),
+        ("isearch-beginning-of-buffer", "p"),
+        ("isearch-char-by-name", "p"),
+        ("isearch-del-char", "p"),
+        ("isearch-emoji-by-name", "p"),
+        ("isearch-end-of-buffer", "p"),
+        ("isearch-forward", "P\np"),
+        ("isearch-forward-regexp", "P\np"),
+        ("isearch-forward-symbol", "P\np"),
+        ("isearch-forward-symbol-at-point", "P"),
+        ("isearch-forward-word", "P\np"),
+        ("isearch-mouse-2", "e"),
+        ("isearch-quote-char", "p"),
+        ("isearch-repeat-backward", "P"),
+        ("isearch-repeat-forward", "P"),
+        ("isearch-xterm-paste", "e"),
+        ("isearch-yank-char", "p"),
+        ("isearch-yank-char-in-minibuffer", "p"),
+        ("isearch-yank-line", "p"),
+        ("isearch-yank-pop-only", "P"),
+        ("isearch-yank-symbol-or-char", "p"),
+        ("isearch-yank-until-char", "cYank until character: \np"),
+        ("isearch-yank-word", "p"),
+        ("isearch-yank-word-or-char", "p"),
+        ("japanese-hankaku-region", "r\nP"),
+        ("japanese-hiragana-region", "r"),
+        ("japanese-katakana-region", "r\nP"),
+        ("japanese-zenkaku-region", "r\nP"),
+        ("just-one-space", "*p"),
+        ("justify-current-line", "*"),
+        (
+            "keymap-global-set",
+            "KSet key globally: \nCSet key %s globally to command: \np",
+        ),
+        (
+            "keymap-local-set",
+            "KSet key locally: \nCSet key %s locally to command: \np",
+        ),
+        ("kill-backward-up-list", "*p"),
+        ("kill-buffer", "bKill buffer: "),
+        ("kill-emacs", "P"),
+        ("kill-line", "P"),
+        ("kill-local-variable", "vKill Local Variable: "),
+        (
+            "kill-matching-buffers",
+            "sKill buffers matching this regular expression: \nP",
+        ),
+        (
+            "kill-matching-buffers-no-ask",
+            "sKill buffers matching this regular expression: \nP",
+        ),
+        ("kill-paragraph", "p"),
+        ("kill-sentence", "p"),
+        ("kill-sexp", "p\nd"),
+        ("kill-visual-line", "P"),
         ("kill-whole-line", "p"),
         ("kill-word", "p"),
-        ("backward-kill-word", "p"),
-        ("yank", "P"),
-        ("yank-pop", "p"),
-        ("undo", "p"),
-        ("scroll-up-command", "P"),
-        ("scroll-down-command", "P"),
-        ("scroll-other-window", "p"),
-        ("upcase-word", "p"),
-        ("downcase-word", "p"),
-        ("capitalize-word", "p"),
-        ("upcase-region", "r"),
-        ("downcase-region", "r"),
-        ("zap-to-char", "p\ncZap to char: "),
-        ("just-one-space", "p"),
-        ("delete-horizontal-space", "p"),
-        ("delete-indentation", "p"),
-        ("digit-argument", "p"),
-        ("negative-argument", "p"),
-        ("universal-argument", ""),
-        ("abort-recursive-edit", ""),
-        ("suspend-emacs", ""),
-        ("kill-emacs", "P"),
-        ("save-buffer", "p"),
-        ("write-file", "FWrite file: "),
-        ("find-file", "FFind file: "),
-        ("other-window", "p\np"),
-        ("delete-window", "p"),
-        ("delete-other-windows", "p"),
-        ("split-window-below", "P"),
-        ("split-window-right", "p"),
-        ("narrow-to-region", "r"),
-        ("narrow-to-page", "r"),
-        ("widen", ""),
-        ("beginning-of-defun", "p"),
-        ("end-of-defun", "p"),
-        ("mark-defun", ""),
-        ("narrow-to-defun", ""),
-        ("what-cursor-position", "P"),
-        ("insert-char", "p\nP"),
-        ("erase-buffer", ""),
-        ("bury-buffer", "bBury buffer: "),
-        ("kill-buffer", "bKill buffer: "),
+        ("left-char", "^p"),
+        ("left-word", "^p"),
+        ("lisp-fill-paragraph", "P"),
+        ("list-abbrevs", "P"),
+        ("list-buffers", "P"),
+        (
+            "local-set-key",
+            "KSet key locally: \nCSet key %s locally to command: ",
+        ),
+        ("local-unset-key", "kUnset key locally: "),
+        ("lower-frame", ""),
+        ("make-frame-invisible", ""),
+        ("make-frame-visible", ""),
+        (
+            "make-indirect-buffer",
+            "bMake indirect buffer (to buffer): \nBName of indirect buffer: ",
+        ),
+        ("make-local-variable", "vMake Local Variable: "),
+        (
+            "make-symbolic-link",
+            "FMake symbolic link to file: \nGMake symbolic link to file %s: \np",
+        ),
+        (
+            "make-variable-buffer-local",
+            "vMake Variable Buffer Local: ",
+        ),
+        ("mark-defun", "p\nd"),
+        ("mark-end-of-sentence", "p"),
+        ("mark-page", "P"),
+        ("mark-paragraph", "p\np"),
+        ("mark-sexp", "P\np"),
+        ("mark-word", "P\np"),
+        ("menu-bar-open-mouse", "e"),
+        ("menu-bar-select-yank", "*"),
+        ("minibuffer-beginning-of-buffer", "^P"),
+        ("minibuffer-choose-completion", "P"),
+        ("minibuffer-choose-completion-or-exit", "P"),
+        ("minibuffer-complete-and-exit", "P"),
+        ("minibuffer-completion-exit", "P"),
+        ("minibuffer-next-column-completion", "p"),
+        ("minibuffer-next-completion", "p"),
+        ("minibuffer-next-line-completion", "p"),
+        ("minibuffer-previous-column-completion", "p"),
+        ("minibuffer-previous-completion", "p"),
+        ("minibuffer-previous-line-completion", "p"),
+        ("minibuffer-recenter-top-bottom", "P"),
+        ("minibuffer-scroll-down-command", "^P"),
+        ("minibuffer-scroll-other-window", "P"),
+        ("minibuffer-scroll-other-window-down", "^P"),
+        ("minibuffer-scroll-up-command", "^P"),
+        ("mode-line-bury-buffer", "e"),
+        ("mode-line-change-eol", "e"),
+        ("mode-line-minor-mode-help", "@e"),
+        ("mode-line-next-buffer", "e"),
+        ("mode-line-previous-buffer", "e"),
+        ("mode-line-toggle-modified", "e"),
+        ("mode-line-toggle-read-only", "e"),
+        ("mode-line-unbury-buffer", "e"),
+        ("mode-line-widen", "e"),
+        (
+            "modify-syntax-entry",
+            "cSet syntax for character: \nsSet syntax for %s to: ",
+        ),
+        ("mouse-appearance-menu", "@e"),
+        ("mouse-buffer-menu", "e"),
+        ("mouse-delete-other-windows", "e"),
+        ("mouse-delete-window", "e"),
+        ("mouse-drag-and-drop-region", "e"),
+        ("mouse-drag-bottom-edge", "e"),
+        ("mouse-drag-bottom-left-corner", "e"),
+        ("mouse-drag-bottom-right-corner", "e"),
+        ("mouse-drag-header-line", "e"),
+        ("mouse-drag-left-edge", "e"),
+        ("mouse-drag-mode-line", "e"),
+        ("mouse-drag-region", "e"),
+        ("mouse-drag-region-rectangle", "e"),
+        ("mouse-drag-region-shift-adjust", "e"),
+        ("mouse-drag-right-edge", "e"),
+        ("mouse-drag-secondary", "e"),
+        ("mouse-drag-tab-line", "e"),
+        ("mouse-drag-top-edge", "e"),
+        ("mouse-drag-top-left-corner", "e"),
+        ("mouse-drag-top-right-corner", "e"),
+        ("mouse-drag-vertical-line", "e"),
+        ("mouse-kill", "e"),
+        ("mouse-kill-ring-save", "e"),
+        ("mouse-minor-mode-menu", "@e"),
+        ("mouse-save-then-kill", "e"),
+        ("mouse-secondary-save-then-kill", "e"),
+        ("mouse-select-window", "e"),
+        ("mouse-set-mark", "e"),
+        ("mouse-set-point", "e\np"),
+        ("mouse-set-region", "e"),
+        ("mouse-set-secondary", "e"),
+        ("mouse-split-window-horizontally", "@e"),
+        ("mouse-split-window-vertically", "@e"),
+        ("mouse-start-secondary", "e"),
+        ("mouse-yank-at-click", "e\nP"),
+        ("mouse-yank-secondary", "e"),
+        ("move-beginning-of-line", "^p"),
+        ("move-end-of-line", "^p"),
+        ("move-file-to-trash", "fMove file to trash: "),
+        ("move-to-column", "NMove to column: "),
         ("move-to-window-line", "P"),
-        ("recenter", "P"),
-        ("count-words-region", ""),
-        ("eval-expression", "xEval: "),
-        ("execute-extended-command", "P"),
-        ("mark-page", "p"),
-        ("count-lines-page", "p"),
+        ("move-to-window-line-top-bottom", "P"),
+        ("narrow-to-page", "P"),
+        ("narrow-to-region", "r"),
+        ("negative-argument", "P"),
+        ("newline", "*P\np"),
+        ("newline-and-indent", "*p"),
+        ("next-buffer", "p\np"),
+        ("next-column-completion", "p"),
+        ("next-complete-history-element", "p"),
+        ("next-completion", "p"),
+        ("next-error", "P"),
+        ("next-error-no-select", "p"),
+        ("next-error-this-buffer-no-select", "p"),
+        ("next-history-element", "p"),
+        ("next-line", "^p\np"),
+        ("next-line-completion", "p"),
+        ("next-line-or-history-element", "^p"),
+        ("next-logical-line", "^p\np"),
+        ("nonincremental-re-search-backward", "sSearch for regexp: "),
+        ("nonincremental-re-search-forward", "sSearch for regexp: "),
+        (
+            "nonincremental-search-backward",
+            "sSearch backwards for string: ",
+        ),
+        ("nonincremental-search-forward", "sSearch for string: "),
+        ("not-modified", "P"),
+        ("ns-drag-n-drop", "e"),
+        ("ns-popup-color-panel", ""),
+        ("occur-next", "p"),
+        ("occur-next-error", "p"),
+        ("occur-prev", "p"),
+        ("occur-rename-buffer", "P\np"),
+        ("occur-symbol-at-mouse", "e"),
+        ("occur-word-at-mouse", "e"),
+        ("open-dribble-file", "FOpen dribble file: "),
+        ("open-line", "*p"),
+        ("open-termscript", "FOpen termscript file: "),
+        ("other-frame", "p"),
+        ("other-window", "p\ni\np"),
+        ("other-window-backward", "p\ni\np"),
+        ("play-sound-file", "fPlay sound file: "),
+        ("posix-search-backward", "sPosix search backward: "),
+        ("posix-search-forward", "sPosix search: "),
+        ("prefer-coding-system", "zPrefer coding system: "),
+        ("prepend-to-buffer", "BPrepend to buffer: \nr"),
+        ("previous-buffer", "p\np"),
+        ("previous-column-completion", "p"),
+        ("previous-complete-history-element", "p"),
+        ("previous-completion", "p"),
+        ("previous-error", "p"),
+        ("previous-error-no-select", "p"),
+        ("previous-error-this-buffer-no-select", "p"),
+        ("previous-history-element", "p"),
+        ("previous-line", "^p\np"),
+        ("previous-line-completion", "p"),
+        ("previous-line-or-history-element", "^p"),
+        ("previous-logical-line", "^p\np"),
+        ("prog-fill-reindent-defun", "P"),
+        ("prog-fill-reindent-defun-default", "P"),
+        ("prog-indent-sexp", "P"),
+        ("push-mark-command", "P"),
+        ("pwd", "P"),
+        ("quit-window", "P"),
+        ("quit-windows-on", "bQuit windows on (buffer):\nP"),
+        ("quoted-insert", "*p"),
+        ("raise-frame", ""),
+        ("raise-sexp", "p"),
+        ("re-search-backward", "sRE search backward: "),
+        ("re-search-forward", "sRE search: "),
+        ("read-color", "i\np\ni\np"),
+        ("recenter", "P\np"),
+        ("recenter-current-error", "P"),
+        ("recenter-other-window", "P"),
+        ("recenter-top-bottom", "P"),
+        ("recover-file", "FRecover file: "),
+        ("recursive-edit", ""),
+        ("redirect-debugging-output", "FDebug output file: \nP"),
+        ("redraw-display", ""),
+        ("reindent-then-newline-and-indent", "*"),
+        ("rename-file", "fRename file: \nGRename %s to file: \np"),
+        ("repeat-complex-command", "p"),
+        ("replace-buffer-contents", "bSource buffer: "),
+        ("replace-buffer-in-windows", "bBuffer to replace: "),
+        ("repunctuate-sentences", "i\nR"),
+        ("revert-buffer-quick", "P"),
+        (
+            "revert-buffer-with-coding-system",
+            "zCoding system for visited file (default nil): \nP",
+        ),
+        ("right-char", "^p"),
+        ("right-word", "^p"),
+        ("rotate-yank-pointer", "p"),
+        (
+            "run-at-time",
+            "sRun at time: \nNRepeat interval: \naFunction: ",
+        ),
+        (
+            "run-with-timer",
+            "sRun after delay (seconds): \nNRepeat interval: \naFunction: ",
+        ),
+        ("save-buffer", "p"),
+        ("save-buffers-kill-emacs", "P"),
+        ("save-buffers-kill-terminal", "P"),
+        ("save-some-buffers", "P"),
+        ("scroll-bar-drag", "e"),
+        ("scroll-bar-horizontal-drag", "e"),
+        ("scroll-bar-maybe-set-window-start", "e"),
+        ("scroll-bar-scroll-down", "e"),
+        ("scroll-bar-scroll-up", "e"),
+        ("scroll-bar-set-window-start", "e"),
+        ("scroll-bar-toolkit-horizontal-scroll", "e"),
+        ("scroll-bar-toolkit-scroll", "e"),
+        ("scroll-down", "^P"),
+        ("scroll-down-command", "^P"),
+        ("scroll-down-line", "p"),
+        ("scroll-left", "^P\np"),
+        ("scroll-other-window", "P"),
+        ("scroll-other-window-down", "P"),
+        ("scroll-right", "^P\np"),
+        ("scroll-up", "^P"),
+        ("scroll-up-command", "^P"),
+        ("scroll-up-line", "p"),
+        ("search-backward", "MSearch backward: "),
+        ("search-backward-regexp", "sRE search backward: "),
+        ("search-forward", "MSearch: "),
+        ("search-forward-regexp", "sRE search: "),
+        ("select-frame", "e"),
+        (
+            "self-insert-command",
+            "(list (prefix-numeric-value current-prefix-arg) last-command-event)",
+        ),
+        (
+            "set-buffer-process-coding-system",
+            "zCoding-system for output from the process: \nzCoding-system for input to the process: ",
+        ),
+        (
+            "set-file-name-coding-system",
+            "zCoding system for file names (default nil): ",
+        ),
+        ("set-fill-prefix", "P"),
+        ("set-goal-column", "P"),
+        ("set-left-margin", "r\nNSet left margin to column: "),
+        ("set-mark-command", "P"),
+        ("set-right-margin", "r\nNSet right margin to width: "),
+        (
+            "set-selection-coding-system",
+            "zCoding system for X selection: ",
+        ),
+        ("set-selective-display", "P"),
+        ("set-visited-file-name", "FSet visited file name: "),
+        ("shrink-window", "p"),
+        ("shrink-window-horizontally", "p"),
+        ("split-line", "*P"),
+        ("start-kbd-macro", "P"),
+        ("suspend-emacs", ""),
+        ("tab-bar-close-tab", "P"),
+        ("tab-bar-duplicate-tab", "P"),
+        ("tab-bar-menu-bar", "e"),
+        ("tab-bar-merge-tabs", "i\ni\nP"),
+        ("tab-bar-mouse-1", "e"),
+        ("tab-bar-mouse-close-tab", "e"),
+        ("tab-bar-mouse-context-menu", "e"),
+        ("tab-bar-mouse-down-1", "e"),
+        ("tab-bar-mouse-move-tab", "e"),
+        ("tab-bar-move-tab", "p"),
+        ("tab-bar-move-tab-backward", "p"),
+        ("tab-bar-move-tab-to", "P"),
+        ("tab-bar-move-tab-to-frame", "P"),
+        ("tab-bar-new-tab", "P"),
+        ("tab-bar-new-tab-to", "P"),
+        ("tab-bar-select-tab", "P"),
+        ("tab-bar-split-tab", "i\nP"),
+        ("tab-bar-switch-to-last-tab", "p"),
+        ("tab-bar-switch-to-next-tab", "p"),
+        ("tab-bar-switch-to-prev-tab", "p"),
+        ("tab-bar-switch-to-recent-tab", "p"),
+        ("tab-bar-touchscreen-begin", "e"),
+        ("tab-switcher-delete", "p"),
+        ("tab-switcher-delete-backwards", "p"),
+        ("tab-switcher-mouse-select", "e"),
+        ("tab-switcher-next-line", "p"),
+        ("tab-switcher-prev-line", "p"),
+        ("tab-switcher-unmark", "P"),
+        ("tabulated-list-col-sort", "e"),
+        ("tabulated-list-narrow-current-column", "p"),
+        ("tabulated-list-next-column", "p"),
+        ("tabulated-list-previous-column", "p"),
+        ("tabulated-list-sort", "P"),
+        ("tabulated-list-widen-current-column", "p"),
+        ("toggle-enable-multibyte-characters", "P"),
+        ("toggle-horizontal-scroll-bar", "P"),
+        ("toggle-input-method", "P\np"),
+        ("toggle-scroll-bar", "P"),
+        ("toggle-truncate-lines", "P"),
+        ("toggle-window-dedicated", "i\nP\np"),
+        ("toggle-word-wrap", "P"),
+        ("top-level", ""),
+        ("transpose-chars", "*p"),
+        ("transpose-lines", "*p"),
+        ("transpose-paragraphs", "*p"),
+        ("transpose-sentences", "*p"),
+        ("transpose-sexps", "*p\nd"),
+        ("transpose-words", "*p"),
+        ("ucs-normalize-HFS-NFC-region", "r"),
+        ("ucs-normalize-HFS-NFD-region", "r"),
+        ("ucs-normalize-NFC-region", "r"),
+        ("ucs-normalize-NFD-region", "r"),
+        ("ucs-normalize-NFKC-region", "r"),
+        ("ucs-normalize-NFKD-region", "r"),
+        ("uncomment-region", "*r\nP"),
+        ("undelete-frame", "P"),
+        ("undo", "*P"),
+        ("undo-ignore-read-only", "P"),
+        ("undo-only", "*p"),
+        ("undo-redo", "*p"),
+        ("unfill-paragraph", "P\nR"),
+        ("universal-argument-more", "P"),
+        ("unix-filename-rubout", "^p"),
+        ("unix-sync", ""),
+        ("unix-word-rubout", "^p"),
+        ("up-list", "^p\nd\nd"),
+        ("upcase-dwim", "*p"),
+        ("upcase-word", "p"),
+        ("view-emacs-news", "P"),
+        ("view-emacs-todo", "P"),
+        ("view-lossage", "P"),
+        ("what-cursor-position", "P"),
+        ("widen", ""),
+        ("word-search-backward", "sWord search backward: "),
+        ("word-search-backward-lax", "sWord search backward: "),
+        ("word-search-forward", "sWord search: "),
+        ("word-search-forward-lax", "sWord search: "),
+        ("write-region", "r\nFWrite region to file: \ni\ni\ni\np"),
+        ("yank", "*P"),
+        ("yank-in-context", "*P"),
+        ("yank-pop", "p"),
     ];
     T.iter().find(|(n, _)| *n == name).map(|(_, s)| *s)
 }

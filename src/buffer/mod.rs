@@ -709,9 +709,7 @@ impl Buffer {
         }
         // Right after a boundary, record where point was before the
         // command started so undo can restore it.
-        if at_boundary
-            && self.undo_pt_before.map_or(false, |p| p != beg)
-        {
+        if at_boundary && self.undo_pt_before.map_or(false, |p| p != beg) {
             let p = self.undo_pt_before.unwrap();
             self.push_undo(Value::Int(p as i128));
         }
@@ -733,8 +731,7 @@ impl Buffer {
                 };
                 if let (Value::Int(_), Value::Int(end)) = (&ebeg, &eend) {
                     if *end == beg as i128 + 1 {
-                        elt.borrow_mut().cdr =
-                            Value::Int(beg as i128 + 1 + length as i128);
+                        elt.borrow_mut().cdr = Value::Int(beg as i128 + 1 + length as i128);
                         return;
                     }
                 }
@@ -847,10 +844,7 @@ impl Buffer {
         for w in &self.markers {
             if let Some(m) = w.upgrade() {
                 let mm = m.borrow();
-                if mm.buffer == Some(self.id)
-                    && from <= mm.position
-                    && mm.position <= to
-                {
+                if mm.buffer == Some(self.id) && from <= mm.position && mm.position <= to {
                     let base = if mm.insertion_type { to } else { from };
                     let adj = base as i128 - mm.position as i128;
                     if adj != 0 {

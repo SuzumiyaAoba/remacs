@@ -94,7 +94,9 @@ fn print_stack_key(v: &Value) -> Option<usize> {
 fn count_print_refs(v: &Value, ctx: &mut CircleCtx) {
     let mut stack = vec![v.clone()];
     while let Some(x) = stack.pop() {
-        let Some(k) = print_stack_key(&x) else { continue };
+        let Some(k) = print_stack_key(&x) else {
+            continue;
+        };
         if !ctx.seen.insert(k) {
             // Second encounter: GNU assigns `print_number_index'
             // here, not at print time.
@@ -337,12 +339,27 @@ impl Interp {
                     }
                     let hide_all = pct.is_nil();
                     const MAP_CHARSETS: &[&str] = &[
-                        "iso-8859-1", "iso-8859-2", "iso-8859-3", "iso-8859-4",
-                        "iso-8859-5", "iso-8859-6", "iso-8859-7", "iso-8859-8",
-                        "iso-8859-9", "iso-8859-10", "iso-8859-11", "iso-8859-13",
-                        "iso-8859-14", "iso-8859-15", "iso-8859-16",
-                        "koi8", "koi8-r", "windows-1251", "mac-roman",
-                        "big5", "chinese-gb2312",
+                        "iso-8859-1",
+                        "iso-8859-2",
+                        "iso-8859-3",
+                        "iso-8859-4",
+                        "iso-8859-5",
+                        "iso-8859-6",
+                        "iso-8859-7",
+                        "iso-8859-8",
+                        "iso-8859-9",
+                        "iso-8859-10",
+                        "iso-8859-11",
+                        "iso-8859-13",
+                        "iso-8859-14",
+                        "iso-8859-15",
+                        "iso-8859-16",
+                        "koi8",
+                        "koi8-r",
+                        "windows-1251",
+                        "mac-roman",
+                        "big5",
+                        "chinese-gb2312",
                     ];
                     let cid = charset_id.unwrap();
                     let mut out: Vec<Value> = Vec::new();
@@ -470,15 +487,8 @@ impl Interp {
                     }
                     // Terminals print `#<terminal N on NAME>'.
                     if self.symbol_name(*t) == "terminal" {
-                        if let [_, Value::Int(n), Value::Str(name)] =
-                            rr.as_slice()
-                        {
-                            let _ = write!(
-                                out,
-                                "#<terminal {} on {}>",
-                                n,
-                                name.borrow()
-                            );
+                        if let [_, Value::Int(n), Value::Str(name)] = rr.as_slice() {
+                            let _ = write!(out, "#<terminal {} on {}>", n, name.borrow());
                             return;
                         }
                     }
@@ -663,7 +673,12 @@ impl Interp {
                 );
             }
             Value::Frame(f) => {
-                let _ = write!(out, "#<frame {} {:#x}>", f.borrow().name, Rc::as_ptr(f) as usize);
+                let _ = write!(
+                    out,
+                    "#<frame {} {:#x}>",
+                    f.borrow().name,
+                    Rc::as_ptr(f) as usize
+                );
             }
             Value::Process(p) => {
                 let _ = write!(out, "#<process {}>", p.borrow().name);
@@ -980,8 +995,7 @@ impl Interp {
                     // `print-circle': a shared/cyclic tail prints as
                     // `. #N=(...)' (first occurrence) or `. #N#';
                     // GNU checks this before `print-length'.
-                    if circle_active()
-                        && print_stack_key(&cur).map(circle_counted).unwrap_or(false)
+                    if circle_active() && print_stack_key(&cur).map(circle_counted).unwrap_or(false)
                     {
                         out.push_str(" . ");
                         self.prin1_inner(&cur, out, depth + 1, bq);
@@ -1056,8 +1070,7 @@ impl Interp {
         loop {
             match cur {
                 Value::Cons(_) => {
-                    if circle_active()
-                        && print_stack_key(&cur).map(circle_counted).unwrap_or(false)
+                    if circle_active() && print_stack_key(&cur).map(circle_counted).unwrap_or(false)
                     {
                         out.push_str(" . ");
                         self.princ_inner(&cur, out, depth + 1, bq);
@@ -1200,7 +1213,12 @@ fn format_g(x: f64, prec: usize) -> String {
 /// `1.5`, `1.0`, `1e+20`, `1.0e+INF`, `-1.0e+INF`, `0.0e+NaN`.
 pub fn format_float(f: f64) -> String {
     if f.is_nan() {
-        return if f.is_sign_negative() { "-0.0e+NaN" } else { "0.0e+NaN" }.into();
+        return if f.is_sign_negative() {
+            "-0.0e+NaN"
+        } else {
+            "0.0e+NaN"
+        }
+        .into();
     }
     if f.is_infinite() {
         return if f > 0.0 { "1.0e+INF" } else { "-1.0e+INF" }.into();

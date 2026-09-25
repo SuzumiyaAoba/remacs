@@ -1,13 +1,72 @@
-;;; let-alist.el --- Easily let-bind values of an assoc-list by their names -*- lexical-binding: t -*-
+;;; let-alist.el --- Easily let-bind values of an assoc-list by their names -*- lexical-binding: t; -*-
 
-;; Ported from GNU Emacs let-alist.el (Artur Malabarba).
-;; The `let-alist' macro takes an alist expression and a body, and
-;; let-binds every dotted symbol in BODY to its cdr in the alist.
-;; `.foo.0' indexes the value's list; `..foo' refers to a `.foo'
-;; variable bound outside the `let-alist'.
+;; Ported from GNU Emacs emacs-lisp/let-alist.el for remacs.
+
+;; Copyright (C) 2014-2026 Free Software Foundation, Inc.
+
+;; Author: Artur Malabarba <emacs@endlessparentheses.com>
+;; Package-Requires: ((emacs "24.1"))
+;; Version: 1.0.6
+;; Keywords: extensions lisp
+;; Prefix: let-alist
+;; Separator: -
+
+;; This is a GNU ELPA :core package.  Avoid functionality that is not
+;; compatible with the version of Emacs recorded above.
+
+;; This file is part of GNU Emacs.
+
+;; GNU Emacs is free software: you can redistribute it and/or modify
+;; it under the terms of the GNU General Public License as published by
+;; the Free Software Foundation, either version 3 of the License, or
+;; (at your option) any later version.
+
+;; GNU Emacs is distributed in the hope that it will be useful,
+;; but WITHOUT ANY WARRANTY; without even the implied warranty of
+;; MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+;; GNU General Public License for more details.
+
+;; You should have received a copy of the GNU General Public License
+;; along with GNU Emacs.  If not, see <https://www.gnu.org/licenses/>.
+
+;;; Commentary:
+
+;; This package offers a single macro, `let-alist'.  This macro takes a
+;; first argument (whose value must be an alist) and a body.
+;;
+;; The macro expands to a let form containing body, where each dotted
+;; symbol inside body is let-bound to their cdrs in the alist.  Dotted
+;; symbol is any symbol starting with a `.'.  Only those present in
+;; the body are let-bound and this search is done at compile time.
+;; A number will result in a list index.
+;;
+;; For instance, the following code
+;;
+;;   (let-alist alist
+;;     (if (and .title.0 .body)
+;;         .body
+;;       .site
+;;       .site.contents))
+;;
+;; essentially expands to
+;;
+;;   (let ((.title.0 (nth 0 (cdr (assq 'title alist))))
+;;         (.body  (cdr (assq 'body alist)))
+;;         (.site  (cdr (assq 'site alist)))
+;;         (.site.contents (cdr (assq 'contents (cdr (assq 'site alist))))))
+;;     (if (and .title.0 .body)
+;;         .body
+;;       .site
+;;       .site.contents))
+;;
+;; If you nest `let-alist' invocations, the inner one can't access
+;; the variables of the outer one.  You can, however, access alists
+;; inside the original alist by using dots inside the symbol, as
+;; displayed in the example above by the `.site.contents'.
 
 ;;; Code:
 
+
 (defun let-alist--deep-dot-search (data)
   "Return alist of symbols inside DATA that start with a `.'.
 Perform a deep search and return an alist where each car is the

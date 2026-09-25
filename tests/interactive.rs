@@ -810,10 +810,13 @@ fn minibuf_read_runs_hooks_and_restores_state() {
 #[test]
 fn minibuf_read_history_and_defaults() {
     let (mut i, _) = interp();
-    canned(&mut i, vec![
-        MinibufInput::Text("first".into()),
-        MinibufInput::Text("".into()), // empty → default lands in history
-    ]);
+    canned(
+        &mut i,
+        vec![
+            MinibufInput::Text("first".into()),
+            MinibufInput::Text("".into()), // empty → default lands in history
+        ],
+    );
     let v = ev_in(
         &mut i,
         "(progn

@@ -314,8 +314,7 @@ fn f_seq_let_raw(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     }
     let seqv = i.eval(&forms[1])?;
     let mut nbind = 0usize;
-    let r = seq_let_bind(i, &forms[0], &seqv, &mut nbind)
-        .and_then(|()| i.eval_body(&forms[2..]));
+    let r = seq_let_bind(i, &forms[0], &seqv, &mut nbind).and_then(|()| i.eval_body(&forms[2..]));
     let _ = i.unbind(nbind);
     r
 }
@@ -325,7 +324,11 @@ pub(crate) fn seq_to_vec(i: &mut Interp, v: &Value) -> Result<Vec<Value>, super:
     match v {
         Value::Nil => Ok(Vec::new()),
         Value::Cons(_) => want_list(i, v),
-        Value::Str(s) => Ok(s.borrow().chars().map(|c| Value::Int(crate::lisp::value::lisp_char_code(c))).collect()),
+        Value::Str(s) => Ok(s
+            .borrow()
+            .chars()
+            .map(|c| Value::Int(crate::lisp::value::lisp_char_code(c)))
+            .collect()),
         Value::Vec(vec) => Ok(vec.borrow().clone()),
         other => Err(i.wrong_type_mut("sequencep", other)),
     }
@@ -379,7 +382,9 @@ fn f_elt(i: &mut Interp, args: Vec<Value>) -> EvalResult {
                     vec![args[0].clone(), args[1].clone()],
                 ));
             }
-            Ok(Value::Int(crate::lisp::value::lisp_char_code(chars[n as usize])))
+            Ok(Value::Int(crate::lisp::value::lisp_char_code(
+                chars[n as usize],
+            )))
         }
         Value::Vec(v) => {
             let items = v.borrow();
@@ -665,7 +670,11 @@ fn f_mapconcat(i: &mut Interp, args: Vec<Value>) -> EvalResult {
             if i.has_str_props(s) {
                 saw_props = true;
                 for (s0, e0, pl) in i.str_props(s) {
-                    ivs.push((s0 + off, e0 + off, crate::buffer::primitives::plist_pairs_rev(pl)));
+                    ivs.push((
+                        s0 + off,
+                        e0 + off,
+                        crate::buffer::primitives::plist_pairs_rev(pl),
+                    ));
                 }
             }
             out.push_str(&s.borrow());
@@ -818,11 +827,7 @@ impl SortSpec {
 }
 
 /// Stable merge sort (same order guarantees as Emacs `sort`).
-fn merge_sort(
-    i: &mut Interp,
-    items: &mut Vec<Value>,
-    spec: &SortSpec,
-) -> Result<(), super::Flow> {
+fn merge_sort(i: &mut Interp, items: &mut Vec<Value>, spec: &SortSpec) -> Result<(), super::Flow> {
     if items.len() < 2 {
         return Ok(());
     }
@@ -1113,10 +1118,7 @@ fn f_seq_subseq(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     let start = if start0 < 0 { start0 + len } else { start0 };
     let end = if end0 < 0 { end0 + len } else { end0 };
     if start < 0 || end < 0 || start > len || end > len || start > end {
-        return Err(i.error(&format!(
-            "Bad bounding indices: {}, {}",
-            start0, end0
-        )));
+        return Err(i.error(&format!("Bad bounding indices: {}, {}", start0, end0)));
     }
     Ok(seq_from_like(
         i,
@@ -1408,10 +1410,7 @@ fn f_make_char_table(i: &mut Interp, args: Vec<Value>) -> EvalResult {
         65
     ])));
     let prop = i.intern("char-table-extra-slots");
-    let n = match crate::lisp::builtins::data::f_get(
-        i,
-        vec![subtype.clone(), Value::Sym(prop)],
-    )? {
+    let n = match crate::lisp::builtins::data::f_get(i, vec![subtype.clone(), Value::Sym(prop)])? {
         Value::Int(n) if n > 0 => n as usize,
         _ => 0,
     };

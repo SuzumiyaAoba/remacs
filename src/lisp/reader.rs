@@ -42,24 +42,24 @@ pub struct Reader<'a> {
 
 fn read_err(interp: &mut Interp, msg: &str) -> Flow {
     let sym_id = interp.intern("invalid-read-syntax");
-    Flow::Signal(Value::Sym(sym_id), Value::list(vec![Value::string(msg)]), false)
+    Flow::Signal(
+        Value::Sym(sym_id),
+        Value::list(vec![Value::string(msg)]),
+        false,
+    )
 }
 
 /// `invalid-read-syntax' with a symbol argument, like Emacs's `#|', `#z'.
 fn read_err_sym(interp: &mut Interp, name: &str) -> Flow {
     let sym_id = interp.intern("invalid-read-syntax");
-    let data = Value::list(vec![Value::Sym(interp.intern(name))]);
+    let data = Value::list(vec![Value::string(name)]);
     Flow::Signal(Value::Sym(sym_id), data, false)
 }
 
 /// `invalid-read-syntax' for radix integers: `(integer, radix N)'.
 fn read_err_radix(interp: &mut Interp, radix: u32) -> Flow {
     let sym_id = interp.intern("invalid-read-syntax");
-    let data = Value::list(vec![
-        Value::Sym(interp.intern("integer,")),
-        Value::Sym(interp.intern("radix")),
-        Value::Int(radix as i128),
-    ]);
+    let data = Value::list(vec![Value::string(format!("integer, radix {radix}"))]);
     Flow::Signal(Value::Sym(sym_id), data, false)
 }
 
@@ -85,7 +85,9 @@ fn non_unicode_err(interp: &mut Interp, n: i128) -> Flow {
     let sym_id = interp.intern("error");
     Flow::Signal(
         Value::Sym(sym_id),
-        Value::list(vec![Value::string(format!("Non-Unicode character: 0x{n:x}"))]),
+        Value::list(vec![Value::string(format!(
+            "Non-Unicode character: 0x{n:x}"
+        ))]),
         false,
     )
 }
@@ -296,13 +298,8 @@ impl<'a> Reader<'a> {
                 }
                 let tail = self.read_object()?;
                 if self.skip_layout()? || self.peek() != Some(close) {
-                    // Emacs: (invalid-read-syntax expected \))
-                    let sym_id = self.interp.intern("invalid-read-syntax");
-                    let data = Value::list(vec![
-                        Value::Sym(self.interp.intern("expected")),
-                        Value::Sym(self.interp.intern(")")),
-                    ]);
-                    return Err(Flow::Signal(Value::Sym(sym_id), data, false));
+                    // Emacs: (invalid-read-syntax "expected )")
+                    return Err(read_err(self.interp, "expected )"));
                 }
                 // A `. nil' tail is just a proper list end.
                 let tail = if tail.is_nil() { Value::Nil } else { tail };
@@ -448,12 +445,7 @@ impl<'a> Reader<'a> {
                         Some(f) => f,
                         // Non-foldable \C-x keeps CHAR_CTL — a modifier
                         // GNU rejects inside strings.
-                        None => {
-                            return Err(read_err(
-                                self.interp,
-                                "Invalid modifier in string",
-                            ))
-                        }
+                        None => return Err(read_err(self.interp, "Invalid modifier in string")),
                     }
                 };
                 if v & CHAR_META != 0 && ch < 0x80 {
@@ -846,34 +838,33 @@ impl<'a> Reader<'a> {
                 self.read_object()
             }
             Some('(') => {
-                // GNU: `#(' is only valid for propertized string
-                // literals — `#("str" BEG END PLIST BEG END PLIST ...)'
-                // (wid-edit's `#(" " 0 1 (invisible t))').  Plain
-                // `#(1 2 3)' is NOT read syntax (vectors are `[...]').
+                // `#("str" BEG END (plist) ...)' — propertized string
+                // literal; after the string each (beg end plist)
+                // triple attaches properties to that char range.
                 self.pos += 2;
                 let items = self.read_seq(')')?;
-                let s = match items.first() {
-                    Some(Value::Str(s)) => s.clone(),
-                    _ => return Err(read_err_sym(self.interp, "#")),
-                };
-                let rest = &items[1..];
-                if rest.is_empty() || rest.len() % 3 != 0 {
-                    return Err(read_err_sym(self.interp, "#"));
+                match items.first() {
+                    Some(Value::Str(s)) => {
+                        let s = s.clone();
+                        let mut ivs: Vec<(usize, usize, Vec<Value>)> = Vec::new();
+                        let rest = &items[1..];
+                        if rest.len() % 3 != 0 {
+                            return Err(read_err_sym(self.interp, "#"));
+                        }
+                        for t in rest.chunks(3) {
+                            let (Value::Int(b0), Value::Int(e0)) = (&t[0], &t[1]) else {
+                                return Err(read_err_sym(self.interp, "#"));
+                            };
+                            let pl = t[2].list_to_vec().unwrap_or_default();
+                            ivs.push((*b0 as usize, *e0 as usize, pl));
+                        }
+                        if !ivs.is_empty() {
+                            self.interp.set_str_props(&s, ivs);
+                        }
+                        Ok(Value::Str(s))
+                    }
+                    _ => Err(read_err_sym(self.interp, "#")),
                 }
-                for t in rest.chunks_exact(3) {
-                    let (b, e) = match (&t[0], &t[1]) {
-                        (Value::Int(b), Value::Int(e)) => (*b, *e),
-                        _ => return Err(read_err_sym(self.interp, "#")),
-                    };
-                    let plist = match t[2].list_to_vec() {
-                        Ok(v) => v,
-                        Err(_) => return Err(read_err_sym(self.interp, "#")),
-                    };
-                    crate::buffer::primitives::str_set_text_props(
-                        self.interp, &s, b, e, plist,
-                    )?;
-                }
-                Ok(items[0].clone())
             }
             Some('[') => {
                 // `#[ARGLIST BODY ENV]' — a function object.  GNU reads
@@ -883,9 +874,9 @@ impl<'a> Reader<'a> {
                 self.pos += 2;
                 let items = self.read_seq(']')?;
                 match items.first() {
-                    None => return Err(read_err_sym(self.interp, "#[")),
+                    None => return Err(read_err_sym(self.interp, "Invalid byte-code object")),
                     Some(v) if !v.is_nil() && !matches!(v, Value::Cons(_)) => {
-                        return Err(read_err_sym(self.interp, "#["));
+                        return Err(read_err_sym(self.interp, "Invalid byte-code object"));
                     }
                     _ => {}
                 }
@@ -896,7 +887,11 @@ impl<'a> Reader<'a> {
                 // `#[... (t)]' is a top-level dynamic function.
                 let plain = env.is_nil();
                 Ok(crate::lisp::builtins::misc::make_interpreted_closure(
-                    self.interp, &arglist, &body, &env, plain,
+                    self.interp,
+                    &arglist,
+                    &body,
+                    &env,
+                    plain,
                 ))
             }
             Some('s') => {
@@ -984,10 +979,7 @@ impl<'a> Reader<'a> {
                         // the placeholder itself; GNU rejects it.
                         if let Value::Sym(s) = &obj {
                             if self.label_markers.get(&n) == Some(s) {
-                                return Err(read_err(
-                                    self.interp,
-                                    "nonsensical self-reference",
-                                ));
+                                return Err(read_err(self.interp, "nonsensical self-reference"));
                             }
                         }
                         self.patch_label(n, &obj);

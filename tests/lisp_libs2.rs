@@ -3,7 +3,7 @@
 //! Expected values were verified against GNU Emacs 31.1.
 
 mod common;
-use common::ev;
+use common::{ev, ev_out};
 
 // ---------------------------------------------------------- radix-tree
 
@@ -455,10 +455,7 @@ fn disabled_command_routes_to_handler() {
         "args-out-of-range"
     );
     // A non-disabled command dispatches normally.
-    assert_eq!(
-        ev("(command-execute 'self-insert-command)"),
-        "nil"
-    );
+    assert_eq!(ev("(command-execute 'self-insert-command)"), "nil");
     // GNU's dumped `disabled' marks.
     assert_eq!(
         ev("(list (get 'narrow-to-region 'disabled)
@@ -740,14 +737,16 @@ fn cl_labels_recursion() {
     // GNU-verified on 31.1: direct recursion, mutual recursion, and an
     // escaping closure over a recursive local function.
     assert_eq!(
-        ev("(eval '(list (cl-labels ((f (n) (if (<= n 1) 1 (* n (f (1- n))))))
+        ev(
+            "(eval '(list (cl-labels ((f (n) (if (<= n 1) 1 (* n (f (1- n))))))
                           (f 5))
                         (cl-labels ((ev (n) (if (= n 0) t (od (1- n))))
                                     (od (n) (if (= n 0) nil (ev (1- n)))))
                           (ev 10))
                         (let ((f (cl-labels ((g (n) (if (<= n 0) 0 (+ n (g (1- n))))))
                                    (lambda (k) (g k)))))
-                          (funcall f 4))) t)"),
+                          (funcall f 4))) t)"
+        ),
         "(120 t 10)"
     );
 }
@@ -761,9 +760,11 @@ fn macroexpand_environment_argument() {
     // shadows (stops expansion), an expander is applied to the
     // argument list, and an identical result stops the loop.
     assert_eq!(
-        ev("(list (macroexpand-1 '(f a b) '((f . (lambda (a b) `(g ,a ,b)))))
+        ev(
+            "(list (macroexpand-1 '(f a b) '((f . (lambda (a b) `(g ,a ,b)))))
                  (macroexpand-1 '(f a b) '((f . nil)))
-                 (macroexpand-1 '(f a b)))"),
+                 (macroexpand-1 '(f a b)))"
+        ),
         "((g a b) (f a b) (f a b))"
     );
 }
@@ -830,12 +831,14 @@ fn case_table_chistory_midnight_load() {
     // `describe-buffer-case-table' prints the case table; a fresh
     // temp buffer's is empty.
     assert_eq!(
-        ev("(progn (require 'case-table) (require 'chistory) (require 'midnight)
+        ev(
+            "(progn (require 'case-table) (require 'chistory) (require 'midnight)
                   (list (with-temp-buffer
                           (describe-buffer-case-table)
                           (buffer-string))
                         (fboundp 'list-command-history)
-                        (fboundp 'clean-buffer-list)))"),
+                        (fboundp 'clean-buffer-list)))"
+        ),
         "(\"\" t t)"
     );
 }
@@ -935,7 +938,8 @@ fn format_spec_flags_and_errors() {
 fn tabify_untabify_obarray() {
     // GNU-verified on 31.1.
     assert_eq!(
-        ev("(progn (require 'tabify) (require 'obarray) (require 'scroll-lock)
+        ev(
+            "(progn (require 'tabify) (require 'obarray) (require 'scroll-lock)
                   (list (with-temp-buffer
                           (insert \"a        b\\n\")
                           (untabify (point-min) (point-max))
@@ -949,7 +953,8 @@ fn tabify_untabify_obarray() {
                           (tabify (point-min) (point-max))
                           (buffer-string))
                         (length (mapatoms (lambda (s) s) (obarray-make 10)))
-                        (fboundp 'scroll-lock-mode)))"),
+                        (fboundp 'scroll-lock-mode)))"
+        ),
         "(\"a        b\n\" \"a\t b\n\" \"x   y\n\" 0 t)"
     );
 }
@@ -984,12 +989,14 @@ fn keymap_read_only_bind_menu_item() {
 fn ansi_osc_help_macro_master_ports() {
     // GNU-verified on 31.1.
     assert_eq!(
-        ev("(progn (require 'ansi-osc) (require 'help-macro) (require 'master)
+        ev(
+            "(progn (require 'ansi-osc) (require 'help-macro) (require 'master)
                   (list (fboundp 'ansi-osc-apply-on-region)
                         (keymapp ansi-osc-hyperlink-map)
                         (fboundp 'make-help-screen)
                         (fboundp 'master-mode)
-                        (fboundp 'master-says)))"),
+                        (fboundp 'master-says)))"
+        ),
         "(t t t t t)"
     );
 }
@@ -1081,12 +1088,14 @@ fn find_file_name_handler_filters_by_operations() {
     // not `file-name-sans-versions'.  `inhibit-file-name-handlers' is
     // not consulted by the subr itself (GNU-verified: result unchanged).
     assert_eq!(
-        ev("(list (find-file-name-handler \"foo.gz\" 'insert-file-contents)
+        ev(
+            "(list (find-file-name-handler \"foo.gz\" 'insert-file-contents)
                   (find-file-name-handler \"foo.gz\" 'load)
                   (find-file-name-handler \"foo.gz\" 'file-name-sans-versions)
                   (let ((inhibit-file-name-handlers '(jka-compr-handler)))
                     (find-file-name-handler \"foo.gz\" 'insert-file-contents))
-                  (file-name-sans-versions \"foo.gz\"))"),
+                  (file-name-sans-versions \"foo.gz\"))"
+        ),
         "(jka-compr-handler jka-compr-handler nil jka-compr-handler \"foo.gz\")"
     );
 }
@@ -1215,11 +1224,13 @@ fn cl_defstruct_accepts_docstring() {
     // GNU-verified on 31.1: `cl-defstruct' accepts a docstring
     // between the name and the slot list.
     assert_eq!(
-        ev("(progn (cl-defstruct ec-probe-struct \"A struct doc.\" one (two 2))
+        ev(
+            "(progn (cl-defstruct ec-probe-struct \"A struct doc.\" one (two 2))
                   (let ((s (make-ec-probe-struct :one 1)))
                     (list (ec-probe-struct-one s)
                           (ec-probe-struct-two s)
-                          (ec-probe-struct-p s))))"),
+                          (ec-probe-struct-p s))))"
+        ),
         "(1 2 t)"
     );
 }
@@ -1305,7 +1316,8 @@ fn epg_config_entry_points() {
 fn array_dos_vars_fringe_font_core_dynamic_setting() {
     // GNU-verified on 31.1.
     assert_eq!(
-        ev("(progn (require 'array) (require 'dos-vars) (require 'fringe)
+        ev(
+            "(progn (require 'array) (require 'dos-vars) (require 'fringe)
                   (require 'font-core) (require 'dynamic-setting)
                   (list (fboundp 'array-mode)
                         (boundp 'array-mode-map)
@@ -1317,7 +1329,8 @@ fn array_dos_vars_fringe_font_core_dynamic_setting() {
                         (boundp 'fringes-outside-margins)
                         (boundp 'font-lock-mode)
                         (fboundp 'dynamic-setting-handle-config-changed-event)
-                        (boundp 'special-event-map)))"),
+                        (boundp 'special-event-map)))"
+        ),
         "(t t 3 1 5 special t t t t t)"
     );
 }
@@ -1464,10 +1477,7 @@ fn xdg_entry_points() {
     // GNU-verified on 31.1: `rx' is bound at -Q (loadup-loaded but
     // unprovided), so `rx'-using libraries expand at load; xdg defines
     // the base-dir helpers while the user-dir helpers stay unbound.
-    assert_eq!(
-        ev("(list (fboundp 'rx) (featurep 'rx))"),
-        "(t nil)"
-    );
+    assert_eq!(ev("(list (fboundp 'rx) (featurep 'rx))"), "(t nil)");
     assert_eq!(
         ev("(progn (require 'xdg)
                   (list (featurep 'xdg)
@@ -1665,6 +1675,30 @@ fn games_and_misc_tooling_entry_points() {
     );
 }
 
+#[test]
+fn proced_loads_and_reports_attributes() {
+    // GNU-verified on 31.1: proced.el loads with zero requires;
+    // proced-process-attributes returns (pid . attr-alist) pairs whose
+    // key order matches GNU's process-attributes contract.
+    assert_eq!(
+        ev("(progn (require 'proced)
+                  (list (keymapp proced-mode-map)
+                        (length proced-grammar-alist)
+                        (fboundp 'proced-update)
+                        (fboundp 'proced-mode)
+                        proced-available))"),
+        "(t 33 t t t)"
+    );
+    assert_eq!(
+        ev("(progn (require 'proced)
+                  (let* ((p (emacs-pid))
+                         (out (proced-process-attributes (list p))))
+                    (list (length out)
+                          (eq (caar out) p)
+                          (mapcar #'car (cdar out)))))"),
+        "(1 t (pid args thcount rss vsize etime start nice majflt time stime utime tpgid pgrp ppid state comm group egid user euid))"
+    );
+}
 
 // ------------------------------------------------------- eieio + registry
 
@@ -1707,6 +1741,146 @@ fn cl_loop_hash_iteration() {
     );
 }
 
+#[test]
+fn server_local_socket_round_trip() {
+    // GNU-verified on 31.1: server-start binds a Unix socket under
+    // server-socket-dir, server-running-p probes it, and server-eval-at
+    // evals a form through the real -eval/-print protocol.
+    assert_eq!(
+        ev("(progn (require 'server)
+                  (list (fboundp 'server-start)
+                        (fboundp 'server-running-p)
+                        (fboundp 'server-eval-at)
+                        (stringp server-socket-dir)))"),
+        "(t t t t)"
+    );
+    assert_eq!(
+        ev("(progn (require 'server)
+                  (setq server-name \"remacs-test-sock\")
+                  (server-start)
+                  (list (server-running-p \"remacs-test-sock\")
+                        (processp server-process)
+                        (server-eval-at \"remacs-test-sock\" '(+ 20 22))))"),
+        "(t t 42)"
+    );
+}
+
+// -------------------------------------- recentf/widget chain & load args
+
+#[test]
+fn recentf_widget_chain_loads() {
+    // GNU 31.1 -Q: recentf pulls tree-widget -> wid-edit -> widget; all
+    // load verbatim (propertized-string literals #("..." ...) included).
+    assert_eq!(
+        ev("(progn (require 'recentf)
+                  (list (fboundp 'recentf-mode)
+                        (fboundp 'recentf-open-files)
+                        (boundp 'recentf-mode)
+                        (fboundp 'widget-create)
+                        (fboundp 'define-widget)))"),
+        "(t t t t t)"
+    );
+    // `recentf-mode' toggles the global minor mode; activation loads
+    // the save file and runs a cleanup pass (GNU-verified).
+    assert_eq!(
+        ev("(progn (require 'recentf)
+                  (let ((recentf-save-file (make-temp-file \"remacs-recentf\")))
+                    (unwind-protect
+                        (progn (recentf-mode 1)
+                               (list recentf-mode (listp recentf-list)))
+                      (delete-file recentf-save-file))))"),
+        "(t t)"
+    );
+}
+
+#[test]
+fn propertized_string_reader_syntax() {
+    // GNU reader: #("ab" 0 1 (face bold)) -> string "ab" with
+    // (face bold) on chars [0,1).  GNU-verified on 31.1.
+    assert_eq!(
+        ev(
+            "(let ((s (car (read-from-string \"#(\\\"ab\\\" 0 1 (face bold))\"))))
+             (list s (get-text-property 0 'face s)))"
+        ),
+        "(#(\"ab\" 0 1 (face bold)) bold)"
+    );
+}
+
+#[test]
+fn load_optional_arguments() {
+    // GNU-verified on 31.1: NOERROR suppresses file-missing.
+    assert_eq!(
+        ev("(list (load \"/nonexistent/remacs-no-such-lib\" t)
+                  (condition-case e (load \"/nonexistent/remacs-no-such-lib\")
+                    (file-missing (car e))))"),
+        "(nil file-missing)"
+    );
+    // NOSUFFIX opens the literal name only (no .el/.elc appending).
+    assert_eq!(
+        ev(
+            "(condition-case e (load \"nonexistent/remacs-no-such-lib\" nil nil t)
+             (file-missing (car e)))"
+        ),
+        "file-missing"
+    );
+    // A successful load returns t (GNU `load' -> t).
+    assert_eq!(
+        ev("(progn (require 'cl-lib)
+                  (let ((f (make-temp-file \"remacs-load\" nil \".el\")))
+                    (unwind-protect
+                        (progn (with-temp-file f (insert \"(setq remacs--load-arg-test 41)\"))
+                               (list (load f) remacs--load-arg-test))
+                      (delete-file f))))"),
+        "(t 41)"
+    );
+    // NOMESSAGE controls GNU's `Loading FILE (source)...' echo (the
+    // suffix marks source files; .elc and extensionless files omit it).
+    let out = ev_out(
+        "(let ((f (make-temp-file \"remacs-load\" nil \".el\")))
+            (unwind-protect
+                (progn (load f) (load f nil t))
+              (delete-file f)))",
+    );
+    assert!(
+        out.contains("Loading ") && out.contains("(source)..."),
+        "expected `Loading FILE (source)...' in output, got: {out}"
+    );
+    assert_eq!(out.matches("Loading ").count(), 1);
+}
+
+// -------------------------------------- compile/comint + process lifecycle
+
+#[test]
+fn compile_runs_subprocess_to_exit() {
+    // GNU 31.1 -Q: compile.el/comint.el load verbatim; `compile' runs a
+    // subprocess under compilation-mode and its sentinel announces
+    // "Compilation finished" on exit.
+    assert_eq!(
+        ev("(progn (require 'compile)
+                  (list (fboundp 'compile) (fboundp 'compilation-start)
+                        (fboundp 'compilation-mode) (fboundp 'comint-mode)
+                        (fboundp 'map-y-or-n-p) (fboundp 'save-some-buffers)
+                        (boundp 'other-window-scroll-buffer)))"),
+        "(t t t t t t t)"
+    );
+    // A real compile run: the process exits, the buffer carries GNU's
+    // header/output/finish lines, and `process-status' stays `exit'
+    // even after `delete-process' (GNU keeps the reported status).
+    assert_eq!(
+        ev("(progn (require 'compile)
+                  (compile \"echo hello-out\")
+                  (let ((p (get-buffer-process \"*compilation*\")))
+                    (accept-process-output p 2)
+                    (delete-process p)
+                    (delete-process p)
+                    (list (process-status p)
+                          (with-current-buffer \"*compilation*\"
+                            (and (string-match-p \"Compilation finished\" (buffer-string))
+                                 (string-match-p \"hello-out\" (buffer-string))
+                                 t)))))"),
+        "(exit t)"
+    );
+}
 
 // -------------------------------------- float-sup + autoloaded misc libs
 
@@ -1754,7 +1928,6 @@ fn autoloaded_misc_libraries() {
     );
 }
 
-
 // ------------------------------------ shadow/inline/compat & fill modes
 
 #[test]
@@ -1790,7 +1963,8 @@ fn misc_libs_autoloads_and_crm_separator() {
 #[test]
 fn misc_libs_load_and_entry_points() {
     assert_eq!(
-        ev("(progn (dolist (l '(shadow inline compat refill word-wrap-mode
+        ev(
+            "(progn (dolist (l '(shadow inline compat refill word-wrap-mode
                               glyphless-mode timeout pixel-fill))
                     (require l))
                   (list (fboundp 'load-path-shadows-find)
@@ -1800,7 +1974,8 @@ fn misc_libs_load_and_entry_points() {
                         (fboundp 'word-wrap-whitespace-mode)
                         (fboundp 'glyphless-display-mode)
                         (fboundp 'timeout-throttle)
-                        (fboundp 'pixel-fill-region)))"),
+                        (fboundp 'pixel-fill-region)))"
+        ),
         "(t t t t t t t t)"
     );
     // define-inline works (verified against GNU).
@@ -1872,13 +2047,15 @@ fn executable_and_debug_early_parity() {
     // since the file has no `provide'); executable entry points are
     // loaddefs autoloads.
     assert_eq!(
-        ev("(list (fboundp 'debug-early) (fboundp 'debug-early-backtrace)
+        ev(
+            "(list (fboundp 'debug-early) (fboundp 'debug-early-backtrace)
                   (featurep 'debug-early)
                   (car (symbol-function 'executable-interpret))
                   (nth 1 (symbol-function 'executable-interpret))
                   (car (symbol-function 'executable-set-magic))
                   (car (symbol-function 'executable-command-find-posix-p))
-                  (car (symbol-function 'executable-make-buffer-file-executable-if-script-p)))"),
+                  (car (symbol-function 'executable-make-buffer-file-executable-if-script-p)))"
+        ),
         "(t t nil autoload \"executable\" autoload autoload autoload)"
     );
     // GNU: executable-interpret requires its COMMAND argument; the
@@ -1973,12 +2150,14 @@ f\" t t t t t t t t)"
     );
     // rfc1843, ja-dic-utl and mailheader also `provide' their features.
     assert_eq!(
-        ev("(progn (dolist (l '(rfc1843 ja-dic-utl mailheader)) (require l))
+        ev(
+            "(progn (dolist (l '(rfc1843 ja-dic-utl mailheader)) (require l))
                   (list (fboundp 'rfc1843-decode-region)
                         (fboundp 'skkdic-lookup-key)
                         (fboundp 'mail-header-extract)
                         (featurep 'rfc1843) (featurep 'ja-dic-utl)
-                        (featurep 'mailheader)))"),
+                        (featurep 'mailheader)))"
+        ),
         "(t t t t t t)"
     );
 }
@@ -2026,15 +2205,19 @@ fn mode_macro_autoload_cells_and_lazy_load() {
     );
     // First use lazy-loads the real GNU derived.el.
     assert_eq!(
-        ev("(progn (define-derived-mode remacs--test-derived prog-mode \"TestDerived\" \"Doc.\")
+        ev(
+            "(progn (define-derived-mode remacs--test-derived prog-mode \"TestDerived\" \"Doc.\")
                   (list (featurep 'derived) (fboundp 'remacs--test-derived)
-                        (get 'remacs--test-derived 'derived-mode-parent)))"),
+                        (get 'remacs--test-derived 'derived-mode-parent)))"
+        ),
         "(t t prog-mode)"
     );
     // Same for generic.el.
     assert_eq!(
-        ev("(progn (define-generic-mode 'remacs--test-generic '(\"#\") nil nil nil nil \"Doc.\")
-                  (list (featurep 'generic) (fboundp 'remacs--test-generic)))"),
+        ev(
+            "(progn (define-generic-mode 'remacs--test-generic '(\"#\") nil nil nil nil \"Doc.\")
+                  (list (featurep 'generic) (fboundp 'remacs--test-generic)))"
+        ),
         "(t t)"
     );
 }
@@ -2062,6 +2245,7 @@ fn cond_star_range_timer_list_copyright_parity() {
         "(yes (((1 . 3) 5 (7 . 9)) ((1 . 3) (7 . 10))) t t)"
     );
 }
+
 #[test]
 fn msb_rect_xml_and_defsubst_parity() {
     // GNU -Q: msb-mode/xml-parse-region are autoload cells.
@@ -2357,10 +2541,11 @@ fn r8_dumped_libs_parity() {
                     (get-register ?x)))"),
         "(text-mode t t 1 \"bXnXnX\" \"ab\")"
     );
-    assert_eq!(ev("(regexp-opt '(\"foo\" \"bar\" \"baz\"))"),
-               "\"\\\\(?:ba[rz]\\\\|foo\\\\)\"");
+    assert_eq!(
+        ev("(regexp-opt '(\"foo\" \"bar\" \"baz\"))"),
+        "\"\\\\(?:ba[rz]\\\\|foo\\\\)\""
+    );
 }
-
 
 #[test]
 fn r9_sort_help_fns_libs_parity() {
@@ -2478,13 +2663,25 @@ fn r10_compat_libs_parity() {
              (list n keys))"),
         "(1 ((65 x)))"
     );
-    // unicode property tables carry GNU's 3 extra slots.
+    // unicode property tables carry GNU's 3 extra slots: slot 0 is the
+    // property symbol; slots 1/2 hold the unidata-gen mapper functions
+    // for computed properties (functionp t in GNU) or nil/int markers
+    // for direct ones.
     assert_eq!(
-        ev("(let ((tbl (unicode-property-table-internal 'decomposition)))
+        ev("(let ((tbl (unicode-property-table-internal 'lowercase)))
              (list (char-table-extra-slot tbl 0)
-                   (fboundp (char-table-extra-slot tbl 1))
+                   (char-table-extra-slot tbl 1)
                    (char-table-extra-slot tbl 2)))"),
-        "(nil t nil)"
+        "(lowercase nil 0)"
+    );
+    assert_eq!(
+        ev(
+            "(let ((tbl (unicode-property-table-internal 'decomposition)))
+             (list (char-table-extra-slot tbl 0)
+                   (functionp (char-table-extra-slot tbl 1))
+                   (functionp (char-table-extra-slot tbl 2))))"
+        ),
+        "(decomposition t t)"
     );
     // Functional spot checks — GNU-verified.
     assert_eq!(
@@ -2502,424 +2699,5 @@ fn r10_compat_libs_parity() {
         ev("(progn (require 'bookmark) (list (fboundp 'bookmark-set)
                   (featurep 'bookmark)))"),
         "(t t)"
-    );
-}
-
-#[test]
-fn r11_comint_compile_flymake_batch() {
-    // Round-11 batch: comint/compile/flymake/flymake-proc/tcl/pcomplete/
-    // grep/verilog-mode — none are dumped features; all load on require.
-    assert_eq!(
-        ev("(mapcar #'featurep '(comint compile flymake flymake-proc
-                  tcl pcomplete grep verilog-mode))"),
-        "(nil nil nil nil nil nil nil nil)"
-    );
-    // GNU loaddefs autoload cells (verified against GNU -Q).
-    assert_eq!(
-        ev("(mapcar (lambda (s) (autoloadp (symbol-function s)))
-                  '(compile recompile compilation-mode compilation-minor-mode
-                    compilation-shell-minor-mode make-comint comint-run
-                    flymake-mode flymake-log pcomplete grep rgrep lgrep
-                    zrgrep tcl-mode inferior-tcl verilog-mode ruler-mode))"),
-        "(t t t t t t t t t t t t t t t t t t)"
-    );
-    for name in [
-        "comint",
-        "compile",
-        "flymake",
-        "flymake-proc",
-        "tcl",
-        "pcomplete",
-        "grep",
-        "verilog-mode",
-    ] {
-        assert_eq!(
-            ev(&format!("(progn (require '{n}) (featurep '{n}))", n = name)),
-            "t",
-            "{name}"
-        );
-    }
-    // Functional parity with GNU -Q.
-    assert_eq!(
-        ev("(progn (require 'flymake)
-                  (let ((d (flymake-make-diagnostic (current-buffer) 1 5
-                                    :warning \"w\")))
-                    (list (flymake-diagnostic-type d)
-                          (flymake-diagnostic-beg d))))"),
-        "(:warning 1)"
-    );
-    assert_eq!(
-        ev("(progn (require 'compile)
-                  (list (functionp 'compilation-start)
-                        (functionp 'compilation-mode)
-                        (consp compilation-error-regexp-alist)))"),
-        "(t t t)"
-    );
-    // cl-loop concat/vconcat accumulation clauses (flymake requirement).
-    assert_eq!(
-        ev("(list (cl-loop for x in '(1 2 3) vconcat (vector x))
-                  (cl-loop for s in '(\"a\" \"b\") concat s))"),
-        "([1 2 3] \"ab\")"
-    );
-}
-
-#[test]
-fn r12_shell_smie_ispell_sql_batch() {
-    // Round-12 batch: shell/ielm/cmuscheme/locate/ispell/smie plus the
-    // libs they unblock (auth-source, sql, flyspell, prolog).  None are
-    // dumped features; all load via require.
-    assert_eq!(
-        ev("(mapcar #'featurep '(shell ielm cmuscheme locate ispell smie
-                  auth-source sql flyspell prolog))"),
-        "(nil nil nil nil nil nil nil nil nil nil)"
-    );
-    // GNU loaddefs autoload cells (verified against GNU -Q).
-    assert_eq!(
-        ev("(mapcar (lambda (s) (autoloadp (symbol-function s)))
-                  '(shell shell-bookmark-jump ielm run-scheme locate
-                    locate-with-filter ispell ispell-region ispell-word
-                    ispell-minor-mode ispell-message authinfo-mode
-                    read-passwd flyspell-mode flyspell-buffer
-                    flyspell-prog-mode prolog-mode mercury-mode run-prolog
-                    sql-mode sql-connect sql-postgres sql-mysql
-                    sql-sqlite))"),
-        "(t t t t t t t t t t t t t t t t t t t t t t t t)"
-    );
-    for name in [
-        "shell",
-        "ielm",
-        "cmuscheme",
-        "locate",
-        "ispell",
-        "smie",
-        "auth-source",
-        "flyspell",
-        "prolog",
-        "sql",
-    ] {
-        assert_eq!(
-            ev(&format!("(progn (require '{n}) (featurep '{n}))", n = name)),
-            "t",
-            "{name}"
-        );
-    }
-    // GNU's define-key descends with noinherit=1: a command binding in
-    // the parent map does not block creating a prefix in the child
-    // (sql-mode's C-c C-l under comint-mode-map).
-    assert_eq!(
-        ev("(let ((p (make-sparse-keymap)) (c (make-sparse-keymap)))
-                  (define-key p (kbd \"C-c C-l\") 'ignore)
-                  (set-keymap-parent c p)
-                  (define-key c (kbd \"C-c C-l a\") 'ignore)
-                  (list (lookup-key c (kbd \"C-c C-l a\"))
-                        (lookup-key p (kbd \"C-c C-l\"))))"),
-        "(ignore ignore)"
-    );
-    assert_eq!(
-        ev("(progn (require 'sql)
-                  (keymapp (lookup-key sql-interactive-mode-map
-                            (kbd \"C-c C-l\"))))"),
-        "t"
-    );
-    // flyspell-mode minor-mode variable is bound at startup, as in GNU.
-    assert_eq!(
-        ev("(list (boundp 'flyspell-mode) (boundp 'ruler-mode)
-                  (get 'flyspell-mode 'custom-autoload)
-                  (get 'ruler-mode 'custom-autoload))"),
-        "(t t nil nil)"
-    );
-}
-
-#[test]
-fn r13_progmodes_and_eval_when_compile() {
-    // Round-13 batch: ruby/perl/cperl/icon/meta/modula2/pascal/simula/
-    // cfengine/dcl/remember — none dumped; all load via require.
-    assert_eq!(
-        ev("(mapcar #'featurep '(ruby-mode perl-mode cperl-mode icon
-                  meta-mode modula2 pascal simula cfengine dcl-mode
-                  remember))"),
-        "(nil nil nil nil nil nil nil nil nil nil nil)"
-    );
-    // GNU loaddefs autoload cells (verified against GNU -Q).
-    assert_eq!(
-        ev("(mapcar (lambda (s) (autoloadp (symbol-function s)))
-                  '(ruby-mode ruby-base-mode perl-mode cperl-mode
-                    icon-mode metafont-mode metapost-mode m2-mode
-                    pascal-mode simula-mode cfengine3-mode dcl-mode
-                    remember remember-notes))"),
-        "(t t t t t t t t t t t t t t)"
-    );
-    for name in [
-        "ruby-mode",
-        "perl-mode",
-        "cperl-mode",
-        "icon",
-        "meta-mode",
-        "modula2",
-        "pascal",
-        "simula",
-        "cfengine",
-        "dcl-mode",
-        "remember",
-    ] {
-        assert_eq!(
-            ev(&format!("(progn (require '{n}) (featurep '{n}))", n = name)),
-            "t",
-            "{name}"
-        );
-    }
-    // GNU folds eval-when-compile/eval-and-compile during macroexpansion:
-    // the body runs against the dynamic environment and the expansion is
-    // (quote VALUE).  let-when-compile (lisp-mode.el) relies on this.
-    assert_eq!(ev("(macrop 'let-when-compile)"), "t");
-    assert_eq!(
-        ev("(progn (defvar r13-x nil) (setq r13-x 42)
-                  (list (macroexpand '(eval-when-compile r13-x))
-                        (macroexpand-1 '(eval-and-compile (+ 1 2)))
-                        (macroexpand '(let-when-compile ((z 7))
-                                        (list (eval-when-compile z))))
-                        (macroexpand-all
-                          '(list (eval-when-compile (+ r13-x 1)) y))))"),
-        "('42 '3 (list '7) (list '43 y))"
-    );
-}
-
-#[test]
-fn r14_widgets_and_propertized_strings() {
-    // Reader: `#("str" BEG END PLIST)' propertized-string literal
-    // (wid-edit requirement).  Plain `#(1 2 3)' stays invalid.
-    assert_eq!(
-        ev("(let ((s #(\"xy\" 0 2 (face bold))))
-                  (list (substring-no-properties s)
-                        (get-text-property 0 'face s)
-                        (text-properties-at 0 s)))"),
-        "(\"xy\" bold (face bold))"
-    );
-    // wid-edit/tree-widget/ruler-mode/recentf/server/cus-edit —
-    // none are dumped features; all load via require.
-    assert_eq!(
-        ev("(mapcar #'featurep '(wid-edit tree-widget ruler-mode
-                  recentf server cus-edit))"),
-        "(nil nil nil nil nil nil)"
-    );
-    for name in [
-        "wid-edit",
-        "tree-widget",
-        "ruler-mode",
-        "recentf",
-        "server",
-        "cus-edit",
-    ] {
-        assert_eq!(
-            ev(&format!("(progn (require '{n}) (featurep '{n}))", n = name)),
-            "t",
-            "{name}"
-        );
-    }
-    // GNU loaddefs autoload cells (verified against GNU -Q).
-    assert_eq!(
-        ev("(mapcar (lambda (s) (autoloadp (symbol-function s)))
-                  '(customize customize-face customize-group
-                    custom-menu-create customize-mode recentf-mode
-                    recentf-open server-start server-mode ruler-mode
-                    widget-create widget-apply))"),
-        "(t t t t t t t t t t t t)"
-    );
-    // Widget round-trip and customize entry points become real.
-    assert_eq!(
-        ev("(progn (require 'wid-edit)
-                  (let ((w (widget-create 'item :tag \"t\" :value \"v\")))
-                    (list (widget-type w) (widget-value w))))"),
-        "(item \"v\")"
-    );
-    // internal-lisp-face-attribute-values batch values (GNU-verified).
-    assert_eq!(
-        ev("(list (internal-lisp-face-attribute-values :underline)
-                  (internal-lisp-face-attribute-values :box))"),
-        "((t nil) nil)"
-    );
-    // Startup variables bound like GNU -Q.
-    assert_eq!(
-        ev("(list (boundp 'mode-line-mode-menu) (boundp 'recentf-mode)
-                  (boundp 'internal--daemon-sockname)
-                  (boundp 'font-weight-table))"),
-        "(t t t t)"
-    );
-}
-
-// ---------------------------------------------------------- round 15
-// cus-theme.el, wid-browse.el, cus-dep.el, calculator.el,
-// hippie-exp.el, dired-aux.el, so-long.el, outline.el, foldout.el
-// (outline also needed so-long; GNU -Q leaves all nine unloaded).
-
-#[test]
-fn r15_custom_widget_outline_libs() {
-    // None are dumped features in GNU -Q.
-    assert_eq!(
-        ev("(mapcar #'featurep '(cus-theme wid-browse cus-dep calculator
-                  hippie-exp dired-aux so-long outline foldout))"),
-        "(nil nil nil nil nil nil nil nil nil)"
-    );
-    for name in [
-        "cus-theme",
-        "wid-browse",
-        "cus-dep",
-        "calculator",
-        "hippie-exp",
-        "dired-aux",
-        "so-long",
-        "outline",
-        "foldout",
-    ] {
-        assert_eq!(
-            ev(&format!("(progn (require '{n}) (featurep '{n}))", n = name)),
-            "t",
-            "{name}"
-        );
-    }
-    // GNU loaddefs autoload cells (verified against GNU -Q).
-    assert_eq!(
-        ev("(mapcar (lambda (s) (autoloadp (symbol-function s)))
-                  '(calculator customize-themes describe-theme
-                    custom-theme-visit-theme customize-create-theme
-                    hippie-expand make-hippie-expand-function
-                    outline-mode outline-minor-mode outline-search-level
-                    so-long so-long-mode global-so-long-mode
-                    so-long-minor-mode so-long-enable
-                    widget-browse widget-browse-at
-                    widget-browse-other-window widget-minor-mode))"),
-        "(t t t t t t t t t t t t t t t t t t t)"
-    );
-    // Autoload invocation pulls in the real library (GNU-verified errors).
-    assert_eq!(
-        ev("(list (condition-case e (progn (hippie-expand) 'ok)
-                    (error (car e)))
-                  (condition-case e (progn (describe-theme 'user) 'ok)
-                    (error (car e))))"),
-        "(wrong-number-of-arguments error)"
-    );
-    // custom-theme-name-valid-p (GNU custom.el) is a startup defun.
-    assert_eq!(
-        ev("(list (fboundp 'custom-theme-name-valid-p)
-                  (custom-theme-name-valid-p 'foo)
-                  (custom-theme-name-valid-p 'user)
-                  (custom-theme-name-valid-p nil))"),
-        "(t t nil nil)"
-    );
-}
-
-// ---------------------------------------------------------- round 16
-// cus-start.el, textmodes/table.el, descr-text.el, international/quail.el.
-// Frame/face gaps unblocked them: `frame--special-parameters' (GNU
-// frame.el), the `set-face-*'/`make-face-*' convenience family (GNU
-// faces.el), and ~79 cus-start built-in variable bindings with GNU
-// defaults.
-
-#[test]
-fn r16_cus_start_table_descr_text() {
-    // None are dumped features in GNU -Q.
-    assert_eq!(
-        ev("(mapcar #'featurep '(cus-start table descr-text quail))"),
-        "(nil nil nil nil)"
-    );
-    for name in ["cus-start", "table", "descr-text", "quail"] {
-        assert_eq!(
-            ev(&format!("(progn (require '{n}) (featurep '{n}))", n = name)),
-            "t",
-            "{name}"
-        );
-    }
-    // GNU loaddefs autoload cells (verified against GNU -Q).
-    assert_eq!(
-        ev("(mapcar (lambda (s) (autoloadp (symbol-function s)))
-                  '(describe-char describe-text-properties describe-char-eldoc
-                    quail-define-package quail-use-package
-                    table-insert table-recognize table-capture
-                    table-fixed-width-mode table-justify))"),
-        "(t t t t t t t t t t)"
-    );
-    // Frame/faces parity primitives used by cus-start & table.
-    assert_eq!(
-        ev("(list (boundp 'frame--special-parameters)
-                  (length frame--special-parameters)
-                  (fboundp 'set-face-inverse-video)
-                  (fboundp 'set-face-bold)
-                  (fboundp 'make-face-bold-italic)
-                  (fboundp 'set-face-extend))"),
-        "(t 88 t t t t)"
-    );
-    // Built-in variables cus-start requires to be bound (GNU defaults).
-    assert_eq!(
-        ev("(list (boundp 'indicate-empty-lines)
-                  (boundp 'indicate-buffer-boundaries)
-                  (boundp 'inverse-video)
-                  (boundp 'meta-prefix-char)
-                  meta-prefix-char
-                  (boundp 'ns-command-modifier)
-                  (boundp 'x-bitmap-file-path)
-                  (boundp 'scalable-fonts-allowed)
-                  scalable-fonts-allowed)"),
-        "(t t t t 27 t t t t)"
-    );
-    // cus-start walks every built-in var without erroring (GNU-ok).
-    assert_eq!(
-        ev("(progn (require 'cus-start) (boundp 'selective-display-ellipses))"),
-        "t"
-    );
-}
-
-// ---------------------------------------------------------- round 17
-// allout.el, allout-widgets.el, tex-mode.el, texinfo.el,
-// texinfo-loaddefs.el (stub: the file is build-generated upstream),
-// lisp-mnt.el, reftex-vars.el, reporter.el, reftex.el,
-// reftex-loaddefs.el (stub), octave.el.
-// Needed prelude state: `desktop-minor-mode-handlers' (desktop.el),
-// `input-method-alist' (mule-cmds.el) and the `set-face-*' family.
-
-#[test]
-fn r17_tex_allout_reftex_octave() {
-    // None are dumped features in GNU -Q.
-    assert_eq!(
-        ev("(mapcar #'featurep '(allout allout-widgets tex-mode texinfo
-                  lisp-mnt reftex-vars reporter reftex octave))"),
-        "(nil nil nil nil nil nil nil nil nil)"
-    );
-    for name in [
-        "allout",
-        "allout-widgets",
-        "tex-mode",
-        "texinfo",
-        "lisp-mnt",
-        "reftex-vars",
-        "reporter",
-        "reftex",
-        "octave",
-    ] {
-        assert_eq!(
-            ev(&format!("(progn (require '{n}) (featurep '{n}))", n = name)),
-            "t",
-            "{name}"
-        );
-    }
-    // GNU loaddefs autoload cells (verified against GNU -Q).
-    assert_eq!(
-        ev("(mapcar (lambda (s) (autoloadp (symbol-function s)))
-                  '(allout-mode allout-widgets-mode tex-mode texinfo-mode
-                    latex-mode plain-tex-mode octave-mode inferior-octave
-                    reftex-mode reftex-citation turn-on-reftex
-                    reporter-submit-bug-report))"),
-        "(t t t t t t t t t t t t)"
-    );
-    // Startup defvars consulted by allout / leim input methods.
-    assert_eq!(
-        ev("(list (boundp 'desktop-minor-mode-handlers)
-                  (boundp 'input-method-alist)
-                  (get 'input-method-alist 'risky-local-variable))"),
-        "(t t t)"
-    );
-    // tex-mode entry points become real after autoload-triggered load.
-    assert_eq!(
-        ev("(progn (texinfo-mode) (featurep 'texinfo))"),
-        "t"
     );
 }

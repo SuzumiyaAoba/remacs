@@ -71,9 +71,9 @@ During evaluation of body, bind `it' to the value returned by TEST."
 	   (ibuffer-redisplay t))))))
 
 ;;;###autoload
-(cl-defmacro define-ibuffer-column (symbol (&key name inline props summarizer
-					         header-mouse-map)
-					   &rest body)
+;; remacs: `cl-defmacro' does not destructure `(&key ...)' groups;
+;; take KEYS as a plist instead.
+(cl-defmacro define-ibuffer-column (symbol keys &rest body)
   "Define a column SYMBOL for use with `ibuffer-formats'.
 
 BODY will be called with `buffer' bound to the buffer object, and
@@ -98,7 +98,12 @@ change its definition, you should explicitly call
 
 \(fn SYMBOL (&key NAME INLINE PROPS SUMMARIZER) &rest BODY)"
   (declare (indent defun))
-  (let* ((sym (intern (concat "ibuffer-make-column-"
+  (let* ((name (plist-get keys :name))
+         (inline (plist-get keys :inline))
+         (props (plist-get keys :props))
+         (summarizer (plist-get keys :summarizer))
+         (header-mouse-map (plist-get keys :header-mouse-map))
+         (sym (intern (concat "ibuffer-make-column-"
 			      (symbol-name symbol))))
 	 (bod-1 `(with-current-buffer buffer
 		   ,@body))
@@ -128,10 +133,9 @@ change its definition, you should explicitly call
        :autoload-end)))
 
 ;;;###autoload
-(cl-defmacro define-ibuffer-sorter (name documentation
-				       (&key
-					description)
-				       &rest body)
+;; remacs: `cl-defmacro' does not destructure `(&key ...)' groups;
+;; take KEYS as a plist instead.
+(cl-defmacro define-ibuffer-sorter (name documentation keys &rest body)
   "Define a method of sorting named NAME.
 DOCUMENTATION is the documentation of the function, which will be called
 `ibuffer-do-sort-by-NAME'.
@@ -143,7 +147,8 @@ value if and only if `a' is \"less than\" `b'.
 
 \(fn NAME DOCUMENTATION (&key DESCRIPTION) &rest BODY)"
   (declare (indent 1) (doc-string 2))
-  `(progn
+  (let ((description (plist-get keys :description)))
+    `(progn
      (defun ,(intern (concat "ibuffer-do-sort-by-" (symbol-name name))) ()
        ,(or documentation "No :documentation specified for this sorting method.")
        (interactive "@")
@@ -156,22 +161,12 @@ value if and only if `a' is \"less than\" `b'.
                  (lambda (a b)
                    ,@body))
 	   ibuffer-sorting-functions-alist)
-     :autoload-end))
+     :autoload-end)))
 
 ;;;###autoload
-(cl-defmacro define-ibuffer-op (op args
-				 documentation
-				 (&key
-				  interactive
-				  mark
-				  modifier-p
-				  dangerous
-				  (opstring "operated on")
-				  (active-opstring "Operate on")
-                                  before
-                                  after
-				  complex)
-				 &rest body)
+;; remacs: `cl-defmacro' does not destructure `(&key ...)' groups;
+;; take KEYS as a plist instead.
+(cl-defmacro define-ibuffer-op (op args documentation keys &rest body)
   "Generate a function which operates on a buffer.
 OP becomes the name of the function; if it doesn't begin with
 `ibuffer-do-', then that is prepended to it.
@@ -215,7 +210,16 @@ buffer object.
 
 \(fn OP ARGS DOCUMENTATION (&key INTERACTIVE MARK MODIFIER-P DANGEROUS OPSTRING ACTIVE-OPSTRING BEFORE AFTER COMPLEX) &rest BODY)"
   (declare (indent 2) (doc-string 3))
-  (let ((opstring-sym (make-symbol "opstring"))
+  (let ((interactive (plist-get keys :interactive))
+        (mark (plist-get keys :mark))
+        (modifier-p (plist-get keys :modifier-p))
+        (dangerous (plist-get keys :dangerous))
+        (opstring (or (plist-get keys :opstring) "operated on"))
+        (active-opstring (or (plist-get keys :active-opstring) "Operate on"))
+        (before (plist-get keys :before))
+        (after (plist-get keys :after))
+        (complex (plist-get keys :complex))
+        (opstring-sym (make-symbol "opstring"))
         (active-opstring-sym (make-symbol "active-opstring")))
     `(progn
        (defalias ',(intern (concat (if (string-match "^ibuffer-do" (symbol-name op))
@@ -307,12 +311,9 @@ buffer object.
        :autoload-end)))
 
 ;;;###autoload
-(cl-defmacro define-ibuffer-filter (name documentation
-                                         (&key
-                                          reader
-                                          description
-                                          accept-list)
-                                         &rest body)
+;; remacs: `cl-defmacro' does not destructure `(&key ...)' groups;
+;; take KEYS as a plist instead.
+(cl-defmacro define-ibuffer-filter (name documentation keys &rest body)
   "Define a filter named NAME.
 DOCUMENTATION is the documentation of the function.
 READER is a form which should read a qualifier from the user.
@@ -328,7 +329,10 @@ bound to the current value of the filter.
 
 \(fn NAME DOCUMENTATION (&key READER DESCRIPTION) &rest BODY)"
   (declare (indent 2) (doc-string 2))
-  (let ((fn-name (intern (concat "ibuffer-filter-by-" (symbol-name name))))
+  (let ((reader (plist-get keys :reader))
+        (description (plist-get keys :description))
+        (accept-list (plist-get keys :accept-list))
+        (fn-name (intern (concat "ibuffer-filter-by-" (symbol-name name))))
         (filter (make-symbol "ibuffer-filter"))
         (qualifier-str (make-symbol "ibuffer-qualifier-str")))
     `(progn

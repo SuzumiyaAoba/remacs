@@ -922,24 +922,14 @@ fn run(
 
 /// Try to match at exactly `pos`. Returns regs on success.
 pub fn match_at(re: &Regex, text: &[char], pos: usize, syn: SynFn) -> Option<Regs> {
-    run(
-        re,
-        text,
-        0,
-        pos,
-        vec![None; 2 * (re.n_groups + 1) + re.extra_regs],
-        0,
-        syn,
-    )
+    let n = 2 * (re.n_groups + 1);
+    let mut regs = run(re, text, 0, pos, vec![None; n + re.extra_regs], 0, syn)?;
+    regs.truncate(n);
+    Some(regs)
 }
 
 /// Search forward from `pos`; returns (match_start, match_end) of group 0.
-pub fn search(
-    re: &Regex,
-    text: &[char],
-    pos: usize,
-    syn: SynFn,
-) -> Option<(usize, usize)> {
+pub fn search(re: &Regex, text: &[char], pos: usize, syn: SynFn) -> Option<(usize, usize)> {
     let mut p = pos;
     while p <= text.len() {
         if let Some(regs) = match_at(re, text, p, syn) {
@@ -995,12 +985,7 @@ pub fn search_full(re: &Regex, text: &[char], pos: usize, syn: SynFn) -> Option<
 
 /// Backward search returning full regs: the match with the greatest
 /// start whose end is at or before `pos` (GNU semantics).
-pub fn search_backward_full(
-    re: &Regex,
-    text: &[char],
-    pos: usize,
-    syn: SynFn,
-) -> Option<Regs> {
+pub fn search_backward_full(re: &Regex, text: &[char], pos: usize, syn: SynFn) -> Option<Regs> {
     let mut best: Option<Regs> = None;
     let mut p = 0;
     while p <= pos.min(text.len()) {

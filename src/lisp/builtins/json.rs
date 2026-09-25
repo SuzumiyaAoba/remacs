@@ -137,9 +137,7 @@ fn parse_opts(i: &mut Interp, rest: &[Value], for_serialize: bool) -> Result<Opt
             return Err(i.signal_data(
                 e,
                 vec![
-                    Value::string(
-                        "One of :null-object or :false-object should be specified",
-                    ),
+                    Value::string("One of :null-object or :false-object should be specified"),
                     v,
                 ],
             ));
@@ -149,10 +147,7 @@ fn parse_opts(i: &mut Interp, rest: &[Value], for_serialize: bool) -> Result<Opt
         let e = i.intern("error");
         return Err(i.signal_data(
             e,
-            vec![
-                Value::string("One of array or list should be specified"),
-                v,
-            ],
+            vec![Value::string("One of array or list should be specified"), v],
         ));
     }
     Ok(o)
@@ -319,37 +314,30 @@ impl<'a> Parser<'a> {
                                                 self.pos += 1;
                                                 let lo = self.hex4()?;
                                                 if (0xdc00..0xe000).contains(&lo) {
-                                                    0x10000
-                                                        + ((hi - 0xd800) << 10)
-                                                        + (lo - 0xdc00)
+                                                    0x10000 + ((hi - 0xd800) << 10) + (lo - 0xdc00)
                                                 } else {
-                                                    return Err(self.err_sym(
-                                                        "json-invalid-surrogate-error",
-                                                    ));
+                                                    return Err(self
+                                                        .err_sym("json-invalid-surrogate-error"));
                                                 }
                                             } else {
-                                                return Err(self.err_sym(
-                                                    "json-invalid-surrogate-error",
-                                                ));
+                                                return Err(
+                                                    self.err_sym("json-invalid-surrogate-error")
+                                                );
                                             }
                                         } else {
-                                            return Err(self.err_sym(
-                                                "json-invalid-surrogate-error",
-                                            ));
+                                            return Err(
+                                                self.err_sym("json-invalid-surrogate-error")
+                                            );
                                         }
                                     } else if (0xdc00..0xe000).contains(&hi) {
                                         // A lone low surrogate.
-                                        return Err(
-                                            self.err_sym("json-invalid-surrogate-error")
-                                        );
+                                        return Err(self.err_sym("json-invalid-surrogate-error"));
                                     } else {
                                         hi
                                     };
                                     out.push(char::from_u32(cp).unwrap_or('\u{fffd}'));
                                 }
-                                _ => {
-                                    return Err(self.err_sym("json-escape-sequence-error"))
-                                }
+                                _ => return Err(self.err_sym("json-escape-sequence-error")),
                             }
                         }
                     }
@@ -671,7 +659,8 @@ fn ser_value(i: &mut Interp, v: &Value, o: &Opts, out: &mut String) -> Result<()
         Value::Cons(_) => {
             let items = v.list_to_vec().map_err(|_| json_value_err(i, v))?;
             // plist iff first element is a keyword symbol.
-            let is_plist = matches!(items.first(), Some(Value::Sym(s)) if i.symbol_name(*s).starts_with(':'));
+            let is_plist =
+                matches!(items.first(), Some(Value::Sym(s)) if i.symbol_name(*s).starts_with(':'));
             if is_plist {
                 out.push('{');
                 let mut it = items.iter();

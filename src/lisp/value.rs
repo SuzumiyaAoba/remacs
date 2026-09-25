@@ -264,6 +264,10 @@ pub struct Lambda {
     /// externally (DOC file/.elc), and `documentation' appends the
     /// `(fn ARGLIST)' usage trailer for them only.
     pub dumped_doc: bool,
+    /// `Some(idx)' when this lambda is an advice trampoline: applying it
+    /// runs `Interp::advice_links[idx]'s (WHERE FUN . NEXT) layer, like
+    /// GNU's `advice' oclosure layers.
+    pub advice_link: Option<usize>,
 }
 
 #[derive(Clone)]

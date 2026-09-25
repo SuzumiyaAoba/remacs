@@ -1,10 +1,43 @@
-;;; time-date.el --- Date and time handling (subset)  -*- lexical-binding:t -*-
+;;; time-date.el --- Date and time handling functions  -*- lexical-binding: t -*-
 
-;; Gap-fill port of GNU Emacs lisp/calendar/time-date.el for remacs:
-;; only the entry points not already provided as builtins are defined
-;; here.  The function bodies are verbatim from GNU Emacs 31.1.
+;; Copyright (C) 1998-2026 Free Software Foundation, Inc.
+
+;; Author: Lars Magne Ingebrigtsen <larsi@gnus.org>
+;;	Masanobu Umeda <umerin@mse.kyutech.ac.jp>
+;; Keywords: mail news util
+
+;; This file is part of GNU Emacs.
+
+;; GNU Emacs is free software: you can redistribute it and/or modify
+;; it under the terms of the GNU General Public License as published by
+;; the Free Software Foundation, either version 3 of the License, or
+;; (at your option) any later version.
+
+;; GNU Emacs is distributed in the hope that it will be useful,
+;; but WITHOUT ANY WARRANTY; without even the implied warranty of
+;; MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+;; GNU General Public License for more details.
+
+;; You should have received a copy of the GNU General Public License
+;; along with GNU Emacs.  If not, see <https://www.gnu.org/licenses/>.
+
+;;; Commentary:
+
+;; Time values come in several formats.  The oldest format is a cons
+;; cell of the form (HIGH . LOW).  This format is obsolete, but still
+;; supported.  The other formats are the lists (HIGH LOW), (HIGH LOW
+;; USEC), and (HIGH LOW USEC PSEC).  These formats specify the time
+;; value equal to HIGH * 2^16 + LOW + USEC * 10^-6 + PSEC * 10^-12
+;; seconds, where missing components are treated as zero.  HIGH can be
+;; negative, either because the value is a time difference, or because
+;; it represents a time stamp before the epoch.  Typically, there are
+;; more time values than the underlying system time type supports,
+;; but the reverse can also be true.
 
 ;;; Code:
+
+(require 'cl-lib)
+(require 'subr-x)
 
 (defmacro with-decoded-time-value (varlist &rest body)
   "Decode a time value and bind it according to VARLIST, then eval BODY.
@@ -105,14 +138,118 @@ it is assumed that PICO was omitted and should be treated as zero."
    ((eq type 2) (list high low micro))
    ((eq type 3) (list high low micro pico))))
 
+(make-obsolete 'encode-time-value nil "25.1")
+(make-obsolete 'with-decoded-time-value nil "25.1")
 
+(autoload 'parse-time-string "parse-time")
+(autoload 'timezone-make-date-arpa-standard "timezone")
 
+;;;###autoload
+(defun date-to-time (date)
+  "Parse a string DATE that represents a date-time and return a time value.
+DATE should be in one of the forms recognized by `parse-time-string'.
+If DATE lacks time zone information, local time is assumed."
+  (condition-case err
+      ;; Parse DATE. If it contains a year, use defaults for other components.
+      ;; Then encode the result; this signals an error if the year is missing,
+      ;; because encode-time signals if crucial time components are nil.
+      ;; This heuristic uses local time if the string lacks time zone info,
+      ;; because encode-time treats a nil time zone as local time.
+      (let ((parsed (parse-time-string date)))
+	(when (decoded-time-year parsed)
+	  (decoded-time-set-defaults parsed))
+	(encode-time parsed))
+    (error
+     (if (equal err '(error "Specified time is not representable"))
+	 (signal err)
+       (error "Invalid date: %s" date)))))
+
+;;;###autoload
+(defalias 'time-to-seconds #'float-time)
+
+;;;###autoload
+(defun seconds-to-time (seconds)
+  "Convert SECONDS to a proper time, like `current-time' would."
+  ;; FIXME: Should we (declare (obsolete time-convert "27.1")) ?
+  (time-convert seconds 'list))
+
+;;;###autoload
+(defun days-to-time (days)
+  "Convert Emacs-epoch DAYS into a time value.
+Note that this does not use the same epoch as `time-to-days'; you
+must subtract (time-to-days 0) first to convert, and may get nil
+if the result is before the start."
+  ;; FIXME: We should likely just pass `t' to `time-convert'.
+  ;; All uses I could find in Emacs, GNU ELPA, and NonGNU ELPA can handle
+  ;; any valid time representation as return value.
+  (let ((time (time-convert (* 86400 days) 'list)))
+    ;; Traditionally, this returned a two-element list if DAYS was an integer.
+    ;; Keep that tradition if time-convert outputs timestamps in list form.
+    (if (and (integerp days) (consp (cdr time)))
+	(setcdr (cdr time) nil))
+    time))
+
+;;;###autoload
+(defun time-since (time)
+  "Return the time elapsed since TIME.
+TIME should be either a time value or a date-time string."
+  (when (stringp time)
+    ;; Convert date strings to internal time.
+    (setq time (date-to-time time)))
+  (time-subtract nil time))
+
+;;;###autoload
+(define-obsolete-function-alias 'subtract-time #'time-subtract "26.1")
+
+;;;###autoload
 (defun date-to-day (date)
   "Return the absolute date of DATE, a date-time string.
 The absolute date is the number of days elapsed since the imaginary
 Gregorian date Sunday, December 31, 1 BC."
   (time-to-days (date-to-time date)))
 
+;;;###autoload
+(defun days-between (date1 date2)
+  "Return the number of days between DATE1 and DATE2.
+DATE1 and DATE2 should be date-time strings."
+  (- (date-to-day date1) (date-to-day date2)))
+
+;;;###autoload
+(defun date-leap-year-p (year)
+  "Return t if YEAR is a leap year."
+  (or (and (zerop (% year 4))
+	   (not (zerop (% year 100))))
+      (zerop (% year 400))))
+
+(defun time-date--day-in-year (tim)
+  "Return the day number within the year corresponding to the decoded time TIM."
+  (let* ((month (decoded-time-month tim))
+         (day (decoded-time-day tim))
+         (year (decoded-time-year tim))
+	 (day-of-year (+ day (* 31 (1- month)))))
+    (when (> month 2)
+      (setq day-of-year (- day-of-year (/ (+ 23 (* 4 month)) 10)))
+      (when (date-leap-year-p year)
+	(setq day-of-year (1+ day-of-year))))
+    day-of-year))
+
+;;;###autoload
+(defun time-to-day-in-year (time)
+  "Return the day number within the year corresponding to TIME."
+  (time-date--day-in-year (decode-time time)))
+
+;;;###autoload
+(defun time-to-days (time)
+  "The absolute pseudo-Gregorian date for TIME, a time value.
+The absolute date is the number of days elapsed since the imaginary
+Gregorian date Sunday, December 31, 1 BC."
+  (let* ((tim (decode-time time))
+	 (year (decoded-time-year tim)))
+    (+ (time-date--day-in-year tim)	;	Days this year
+       (* 365 (1- year))		;	+ Days in prior years
+       (/ (1- year) 4)			;	+ Julian leap years
+       (- (/ (1- year) 100))		;	- century years
+       (/ (1- year) 400))))		;	+ Gregorian leap years
 
 (defun time-to-number-of-days (time)
   "Return the number of days represented by TIME.
@@ -128,7 +265,7 @@ If DATE is malformed, return a time value of zero."
     (error 0)))
 
 
-
+;;;###autoload
 (defun format-seconds (string seconds)
   "Use format control STRING to format the number SECONDS.
 The valid format specifiers are:
@@ -353,7 +490,6 @@ float less than 1.0, round to that value."
              (while (and (car (setq here (pop sts)))
                          (<= (car here) delay)))
              (concat (format "%.2f" (/ delay (car (cddr here)))) (cadr here))))))
-
 
 (defun date-days-in-month (year month)
   "The number of days in MONTH in YEAR."

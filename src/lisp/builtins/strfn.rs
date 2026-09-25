@@ -177,17 +177,11 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!(
         "string-lines",
         1,
-        2,
+        3,
         f_string_lines,
         "Split STRING on newlines."
     ),
-    S!(
-        "upcase-initials-region",
-        2,
-        2,
-        f_upcase_initials_region,
-        ""
-    ),
+    S!("upcase-initials-region", 2, 2, f_upcase_initials_region, ""),
     S!(
         "string-to-multibyte",
         1,
@@ -538,7 +532,11 @@ fn f_concat(i: &mut Interp, args: Vec<Value>) -> EvalResult {
                 for (s0, e0, pl) in i.str_props(s) {
                     // GNU's concat copies props through
                     // copy_text_properties, reversing plist order.
-                    ivs.push((s0 + off, e0 + off, crate::buffer::primitives::plist_pairs_rev(pl)));
+                    ivs.push((
+                        s0 + off,
+                        e0 + off,
+                        crate::buffer::primitives::plist_pairs_rev(pl),
+                    ));
                 }
             }
         }
@@ -592,7 +590,11 @@ fn substring_impl(i: &mut Interp, args: Vec<Value>, copy_props: bool) -> EvalRes
     // Emacs: substring works on vectors too (returns a new vector).
     let is_vec = matches!(&args[0], Value::Vec(_));
     let chars: Vec<Value> = match &args[0] {
-        Value::Str(s) => s.borrow().chars().map(|c| Value::Int(lisp_char_code(c))).collect(),
+        Value::Str(s) => s
+            .borrow()
+            .chars()
+            .map(|c| Value::Int(lisp_char_code(c)))
+            .collect(),
         Value::Vec(v) => v.borrow().clone(),
         other => return Err(i.wrong_type_mut("arrayp", other)),
     };
@@ -635,22 +637,27 @@ fn substring_impl(i: &mut Interp, args: Vec<Value>, copy_props: bool) -> EvalRes
         // sliced range (shifted to 0-based on the result).
         if copy_props {
             if let Value::Str(src) = &args[0] {
-            if i.has_str_props(src) {
-                let (f0, t0) = (f as usize, t as usize);
-                let ivs: Vec<(usize, usize, Vec<Value>)> = i
-                    .str_props(src)
-                    .iter()
-                    .filter_map(|(a, b, pl)| {
-                        let lo = (*a).max(f0);
-                        let hi = (*b).min(t0);
-                        // GNU's substring copies properties via
-                        // copy_text_properties, reversing plist order.
-                        (lo < hi)
-                            .then(|| (lo - f0, hi - f0, crate::buffer::primitives::plist_pairs_rev(pl)))
-                    })
-                    .collect();
-                i.set_str_props(&ns, ivs);
-            }
+                if i.has_str_props(src) {
+                    let (f0, t0) = (f as usize, t as usize);
+                    let ivs: Vec<(usize, usize, Vec<Value>)> = i
+                        .str_props(src)
+                        .iter()
+                        .filter_map(|(a, b, pl)| {
+                            let lo = (*a).max(f0);
+                            let hi = (*b).min(t0);
+                            // GNU's substring copies properties via
+                            // copy_text_properties, reversing plist order.
+                            (lo < hi).then(|| {
+                                (
+                                    lo - f0,
+                                    hi - f0,
+                                    crate::buffer::primitives::plist_pairs_rev(pl),
+                                )
+                            })
+                        })
+                        .collect();
+                    i.set_str_props(&ns, ivs);
+                }
             }
         }
         Ok(Value::Str(ns))
@@ -791,13 +798,7 @@ fn casify(i: &mut Interp, arg: &Value, op: CaseOp) -> EvalResult {
 
 /// Casify a source string per GNU casefiddle (shared by the string
 /// functions, the *-region commands, and the *-word commands).
-pub(crate) fn case_str(
-    i: &mut Interp,
-    src: &str,
-    op: CaseOp,
-    down: &Value,
-    up: &Value,
-) -> String {
+pub(crate) fn case_str(i: &mut Interp, src: &str, op: CaseOp, down: &Value, up: &Value) -> String {
     let chars: Vec<char> = src.chars().collect();
     let syn = crate::editor::syntax_table_entries(i);
     let wordp = |c: char| crate::editor::syntax_entry_code(syn.as_ref(), c) == b'w';
@@ -821,9 +822,7 @@ pub(crate) fn case_str(
             _ => {
                 if wordp(c) {
                     if !in_word {
-                        if let Some(sp) =
-                            special_lookup(crate::lisp::ctdata::SPECIAL_TITLE, c)
-                        {
+                        if let Some(sp) = special_lookup(crate::lisp::ctdata::SPECIAL_TITLE, c) {
                             out.push_str(sp);
                         } else {
                             out.push(char::from_u32(title_char(i, up, cp)).unwrap_or(c));
@@ -877,7 +876,12 @@ fn casify_region(i: &mut Interp, args: &[Value], op: CaseOp) -> EvalResult {
         bb.note_text_change(old_len);
     }
     if changed {
-        crate::lisp::builtins::evalfn::signal_after_change(i, start + 1, start + 1 + n_new, old_len)?;
+        crate::lisp::builtins::evalfn::signal_after_change(
+            i,
+            start + 1,
+            start + 1 + n_new,
+            old_len,
+        )?;
     }
     Ok(Value::Nil)
 }
@@ -995,7 +999,9 @@ fn f_number_to_string(i: &mut Interp, args: Vec<Value>) -> EvalResult {
 }
 fn f_string_to_char(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     let s = want_string(i, &args[0])?;
-    Ok(Value::Int(s.chars().next().map(lisp_char_code).unwrap_or(0)))
+    Ok(Value::Int(
+        s.chars().next().map(lisp_char_code).unwrap_or(0),
+    ))
 }
 fn f_char_to_string(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     let n = want_int(i, &args[0])?;
@@ -1239,7 +1245,9 @@ fn f_string_replace(i: &mut Interp, args: Vec<Value>) -> EvalResult {
 fn f_string_chop_newline(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     let s = want_string(i, &args[0])?;
     // GNU removes only the final newline, not a run of them.
-    Ok(Value::string(s.strip_suffix('\n').unwrap_or(&s).to_string()))
+    Ok(Value::string(
+        s.strip_suffix('\n').unwrap_or(&s).to_string(),
+    ))
 }
 /// Display column width of one character under GNU's `strwidth'
 /// rules: each character contributes its `char-width-table' width —
@@ -1293,9 +1301,7 @@ fn f_truncate_string_to_width(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     let width = want_int(i, &args[1])?.max(0) as usize;
     let start_col = match args.get(2) {
         Some(Value::Int(n)) => (*n).max(0) as usize,
-        Some(other) if !other.is_nil() => {
-            return Err(i.wrong_type_mut("integerp", other))
-        }
+        Some(other) if !other.is_nil() => return Err(i.wrong_type_mut("integerp", other)),
         _ => 0,
     };
     let padding = args.get(3).cloned().unwrap_or(Value::Nil);
@@ -1471,17 +1477,41 @@ fn f_string_lines(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     }
     let s = want_string(i, &args[0])?;
     let omit = arg(&args, 1).truthy();
-    let mut lines: Vec<&str> = s.split('\n').collect();
-    // GNU drops the empty element produced by a trailing newline.
-    if lines.len() > 1 && lines.last() == Some(&"") {
-        lines.pop();
+    let keep = arg(&args, 2).truthy();
+    // (string-lines STRING &optional OMIT-EMPTY KEEP-NEWLINES) —
+    // GNU's subr.el loop walks `string-search' hits, so a trailing
+    // newline never yields a final empty element, and a `""' input
+    // splits to `(""' (nil when OMIT-EMPTY).
+    if s.is_empty() {
+        return Ok(if omit {
+            Value::Nil
+        } else {
+            Value::list(vec![Value::string("")])
+        });
     }
-    if omit {
-        lines.retain(|l| !l.is_empty());
+    let bytes = s.as_bytes();
+    let mut lines: Vec<&str> = Vec::new();
+    let mut start = 0usize;
+    while start < bytes.len() {
+        match bytes[start..].iter().position(|b| *b == b'\n') {
+            Some(off) => {
+                let nl = start + off;
+                if !omit || start != nl {
+                    let end = if keep { nl + 1 } else { nl };
+                    let line = &s[start..end];
+                    if !(keep && omit && line == "\n") {
+                        lines.push(line);
+                    }
+                }
+                start = nl + 1;
+            }
+            None => {
+                lines.push(&s[start..]);
+                break;
+            }
+        }
     }
-    Ok(Value::list(
-        lines.into_iter().map(Value::string).collect(),
-    ))
+    Ok(Value::list(lines.into_iter().map(Value::string).collect()))
 }
 fn f_string_equal_ignore_case(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     let a = want_string(i, &args[0])?;
@@ -1549,8 +1579,10 @@ fn f_string_version_lessp(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     let a = name_of!(&args[0]);
     let b = name_of!(&args[1]);
     Ok(Value::from_bool(
-        filevercmp(&a.chars().collect::<Vec<_>>(), &b.chars().collect::<Vec<_>>())
-            == std::cmp::Ordering::Less,
+        filevercmp(
+            &a.chars().collect::<Vec<_>>(),
+            &b.chars().collect::<Vec<_>>(),
+        ) == std::cmp::Ordering::Less,
     ))
 }
 
@@ -1636,9 +1668,7 @@ const SXHASH_MAX_DEPTH: usize = 3;
 const SXHASH_MAX_LEN: usize = 7;
 
 fn sxhash_combine(x: u64, y: u64) -> u64 {
-    x.wrapping_shl(4)
-        .wrapping_add(x >> 60)
-        .wrapping_add(y)
+    x.wrapping_shl(4).wrapping_add(x >> 60).wrapping_add(y)
 }
 
 fn sxhash_reduce(x: u64) -> i128 {
@@ -1896,16 +1926,40 @@ fn f_string_aref(i: &mut Interp, args: Vec<Value>) -> EvalResult {
 /// `%c` char, `%%` literal. Supports `%Nd`, `%-Ns`, `%0Nd`, `%.Nf`.
 fn f_format(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     let fmt = want_string(i, &args[0])?;
-    format_impl(i, &fmt, &args)
+    let mut spans = Vec::new();
+    let v = format_impl_spans(i, &fmt, &args, &mut spans)?;
+    if let Value::Str(s) = &v {
+        if !spans.is_empty() {
+            i.set_str_props(s, spans);
+        }
+    }
+    Ok(v)
 }
 
 fn f_format_message(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     let fmt = want_string(i, &args[0])?;
     let fmt = super::evalfn::translate_message_quotes(&fmt);
-    format_impl(i, &fmt, &args)
+    let mut spans = Vec::new();
+    let v = format_impl_spans(i, &fmt, &args, &mut spans)?;
+    if let Value::Str(s) = &v {
+        if !spans.is_empty() {
+            i.set_str_props(s, spans);
+        }
+    }
+    Ok(v)
 }
 
 pub(crate) fn format_impl(i: &Interp, fmt: &str, args: &[Value]) -> EvalResult {
+    let mut spans = Vec::new();
+    format_impl_spans(i, fmt, args, &mut spans)
+}
+
+fn format_impl_spans(
+    i: &Interp,
+    fmt: &str,
+    args: &[Value],
+    spans: &mut Vec<(usize, usize, Vec<Value>)>,
+) -> EvalResult {
     let mut out = String::new();
     let fchars: Vec<char> = fmt.chars().collect();
     let mut ai = 1usize; // next arg index
@@ -2139,7 +2193,9 @@ pub(crate) fn format_impl(i: &Interp, fmt: &str, args: &[Value]) -> EvalResult {
                 let pad = w - plen;
                 if left {
                     format!("{}{}", piece, " ".repeat(pad))
-                } else if pad0 && matches!(letter, 'd' | 'i' | 'o' | 'x' | 'X' | 'b' | 'e' | 'f' | 'g') {
+                } else if pad0
+                    && matches!(letter, 'd' | 'i' | 'o' | 'x' | 'X' | 'b' | 'e' | 'f' | 'g')
+                {
                     // zero-pad after any sign
                     if piece.starts_with('-') || piece.starts_with('+') || piece.starts_with(' ') {
                         let (sign, rest) = piece.split_at(1);
@@ -2153,6 +2209,34 @@ pub(crate) fn format_impl(i: &Interp, fmt: &str, args: &[Value]) -> EvalResult {
             }
             _ => piece,
         };
+        // GNU copies the argument string's text properties onto the
+        // inserted text; right-justified padding stays unpropertized
+        // while left-justified padding extends the trailing interval.
+        if matches!(letter, 's') {
+            if let Value::Str(src) = &a {
+                if i.has_str_props(src) {
+                    let pad = padded.chars().count() - plen;
+                    let base = out.chars().count() + if left { 0 } else { pad };
+                    let mut last_end = None;
+                    for (s0, e0, pl) in i.str_props(src) {
+                        let (a0, b0) = (*s0, (*e0).min(plen));
+                        if a0 < b0 {
+                            spans.push((
+                                base + a0,
+                                base + b0,
+                                crate::buffer::primitives::plist_pairs_rev(pl),
+                            ));
+                            last_end = Some(base + b0);
+                        }
+                    }
+                    if left && pad > 0 && last_end == Some(base + plen) {
+                        if let Some(iv) = spans.last_mut() {
+                            iv.1 += pad;
+                        }
+                    }
+                }
+            }
+        }
         out.push_str(&padded);
     }
     Ok(Value::string(out))
@@ -2472,7 +2556,8 @@ fn f_string_to_multibyte(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     let s = want_string(i, &args[0])?;
     let unibyte_in = match &args[0] {
         Value::Str(r) => {
-            i.is_unibyte_str(r) || (!i.is_multibyte_str(r) && !r.borrow().chars().any(|c| (c as u32) > 0xFF))
+            i.is_unibyte_str(r)
+                || (!i.is_multibyte_str(r) && !r.borrow().chars().any(|c| (c as u32) > 0xFF))
         }
         _ => false,
     };
@@ -2508,9 +2593,7 @@ fn f_string_to_unibyte(i: &mut Interp, args: Vec<Value>) -> EvalResult {
         } else if let Some(b) = eight_bit_byte(c) {
             out.push(b as char);
         } else {
-            return Err(i.error(format!(
-                "Cannot convert character at index {ix} to unibyte"
-            )));
+            return Err(i.error(format!("Cannot convert character at index {ix} to unibyte")));
         }
     }
     let v = Value::string(out);
@@ -2526,7 +2609,8 @@ fn f_string_as_unibyte(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     let s = want_string(i, &args[0])?;
     let multibyte = match &args[0] {
         Value::Str(r) => {
-            i.is_multibyte_str(r) || (!i.is_unibyte_str(r) && r.borrow().chars().any(|c| (c as u32) > 0xFF))
+            i.is_multibyte_str(r)
+                || (!i.is_unibyte_str(r) && r.borrow().chars().any(|c| (c as u32) > 0xFF))
         }
         _ => false,
     };
@@ -2559,8 +2643,7 @@ fn f_string_as_multibyte(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     let multibyte_in = match &args[0] {
         Value::Str(r) => {
             i.is_multibyte_str(r)
-                || (!i.is_unibyte_str(r)
-                    && r.borrow().chars().any(|c| (c as u32) > 0xFF))
+                || (!i.is_unibyte_str(r) && r.borrow().chars().any(|c| (c as u32) > 0xFF))
         }
         _ => false,
     };
@@ -2677,8 +2760,7 @@ fn f_decode_char(i: &mut Interp, args: Vec<Value>) -> EvalResult {
 }
 
 /// Charsets we model, in GNU's `charset-priority-list` order.
-pub(crate) const CHARSET_PRIORITY: &[&str] =
-    crate::lisp::builtins::charset::GNU_CHARSET_PRIORITY;
+pub(crate) const CHARSET_PRIORITY: &[&str] = crate::lisp::builtins::charset::GNU_CHARSET_PRIORITY;
 
 /// Whether charset NAME contains Unicode scalar CH — driven by the
 /// generated `encode-coding-char' tables where a coding system's
@@ -2699,17 +2781,17 @@ pub(crate) fn charset_contains(name: &str, ch: i128) -> bool {
             !(0xFF61..=0xFF9F).contains(&u) && in_tab(ENC_SHIFT_JIS)
         }
         // euc-jp encodes jisx0212 as 0x8F + two bytes.
-        "japanese-jisx0212" => in_tab(ENC_EUC_JP)
-            && ENC_EUC_JP
-                .binary_search_by_key(&u, |&(x, _)| x)
-                .map(|ix| (ENC_EUC_JP[ix].1 >> 56) >= 3)
-                .unwrap_or(false),
+        "japanese-jisx0212" => {
+            in_tab(ENC_EUC_JP)
+                && ENC_EUC_JP
+                    .binary_search_by_key(&u, |&(x, _)| x)
+                    .map(|ix| (ENC_EUC_JP[ix].1 >> 56) >= 3)
+                    .unwrap_or(false)
+        }
         "chinese-gb2312" => in_tab(ENC_GB2312),
         "big5" | "chinese-big5-1" | "chinese-big5-2" => in_tab(ENC_BIG5),
         "koi8" | "koi8-r" => in_tab(ENC_KOI8_R),
-        "cyrillic-iso8859-5" => {
-            u == 0x401 || (0x410..=0x44F).contains(&u) || u == 0x451
-        }
+        "cyrillic-iso8859-5" => u == 0x401 || (0x410..=0x44F).contains(&u) || u == 0x451,
         "windows-1251" | "cp1251" => in_tab(ENC_WINDOWS_1251),
         "mac-roman" => in_tab(ENC_MAC_ROMAN),
         "latin-iso8859-1" | "iso-8859-1" => (0xA0..=0xFF).contains(&u),
@@ -2809,8 +2891,7 @@ fn charset_restriction(i: &mut Interp, v: &Value) -> Result<Vec<String>, Flow> {
                     _ => return Err(i.wrong_type_mut("charsetp", &item)),
                 };
                 if CHARSET_PRIORITY.contains(&name.as_str())
-                    || crate::lisp::builtins::charset::GNU_CHARSET_PRIORITY
-                        .contains(&name.as_str())
+                    || crate::lisp::builtins::charset::GNU_CHARSET_PRIORITY.contains(&name.as_str())
                     || name == "emacs"
                     || name == "eight-bit"
                 {

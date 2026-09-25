@@ -138,14 +138,14 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!("window-size-fixed-p", 0, 2, f_window_size_fixed_p, ""),
     S!(
         "window-resize",
-        3,
+        2,
         5,
         f_window_resize,
         "Resize WINDOW by DELTA lines."
     ),
     S!("window-resize-apply", 2, 3, f_true2, ""),
     S!("window-resize-apply-total", 2, 3, f_true2, ""),
-    S!("window-resize-no-error", 3, 5, f_window_resize, ""),
+    S!("window-resize-no-error", 2, 5, f_window_resize_no_error, ""),
     S!(
         "window-list-1",
         0,
@@ -806,9 +806,42 @@ fn f_window_safe_min_size(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 }
 
 fn f_window_resize(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    window_resize_impl(i, a, false)
+}
+
+fn f_window_resize_no_error(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    window_resize_impl(i, a, true)
+}
+
+fn window_resize_impl(i: &mut Interp, a: Vec<Value>, no_error: bool) -> EvalResult {
     let w = win_of(i, &arg(&a, 0))?;
     let delta = want_int(i, &a[1])?;
     let horizontal = arg(&a, 2).truthy();
+    // GNU: resizing a frame's root window is invalid.
+    let f = frame_of(i, &arg(&a, 0))?;
+    let is_root = {
+        let fb = f.borrow();
+        let live: Vec<&WindowRef> = fb.windows.iter().filter(|x| !x.borrow().dead).collect();
+        if live.len() == 1 {
+            std::rc::Rc::ptr_eq(live[0], &w)
+        } else {
+            fb.root
+                .as_ref()
+                .map_or(false, |r| std::rc::Rc::ptr_eq(r, &w))
+        }
+    };
+    if is_root {
+        if no_error {
+            return Ok(Value::Nil);
+        }
+        let err = i.intern("error");
+        return Err(i.signal_data(
+            err,
+            vec![Value::string(
+                "Cannot resize the root window of a frame".to_string(),
+            )],
+        ));
+    }
     let mut wb = w.borrow_mut();
     if horizontal {
         wb.width = (wb.width as i128 + delta).max(1) as usize;
@@ -1226,6 +1259,9 @@ fn f_tty_type(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 fn want_terminal_live(i: &mut Interp, v: &Value) -> EvalResult {
     match v {
         Value::Nil => Ok(Value::Nil),
+        // GNU accepts a live frame where a terminal is expected (the
+        // frame's terminal is used).
+        Value::Frame(_) => Ok(Value::Nil),
         w if is_terminal(i, w) => Ok(Value::Nil),
         other => Err(i.wrong_type_mut("terminal-live-p", other)),
     }
@@ -1725,7 +1761,10 @@ fn f_x_focus_frame(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     // on a lone tty frame any arg raises `error'.
     let _ = a;
     let sym = i.intern("error");
-    Err(i.signal_data(sym, Vec::new()))
+    Err(i.signal_data(
+        sym,
+        vec![Value::string("Window system frame should be used")],
+    ))
 }
 
 fn f_make_frame_visible(i: &mut Interp, a: Vec<Value>) -> EvalResult {

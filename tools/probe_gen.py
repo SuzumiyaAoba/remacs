@@ -183,7 +183,7 @@ def main():
 
     gl, gerr = run([EMACS, "--batch", "-Q", "-l", "/tmp/probe.el"],
                    exprs, "/tmp/probe-recs-gnu.txt")
-    rl, rerr = run([remacs, "-l", "/tmp/probe.el"],
+    rl, rerr = run([remacs, "-Q", "-l", "/tmp/probe.el"],
                    exprs, "/tmp/probe-recs-remacs.txt")
     match, mism = 0, []
     for i, e in enumerate(exprs):

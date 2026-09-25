@@ -291,9 +291,7 @@ fn parse_let_specs(i: &mut Interp, specs: &Value) -> Result<Vec<(Value, Value)>,
                         return Err(i.signal_data(
                             sym::ERROR,
                             vec![
-                                Value::string(
-                                    "`let' bindings can have only one value-form",
-                                ),
+                                Value::string("`let' bindings can have only one value-form"),
                                 spec.clone(),
                             ],
                         ));
@@ -561,7 +559,7 @@ fn sf_defun(i: &mut Interp, args: Value) -> EvalResult {
     // defun never captures a lexical env from the definition site in the
     // dynamic model; under lexical-binding it captures the file env.
     lambda.env = i.lambda_env();
-    i.fset(sid, Value::Lambda(Rc::new(lambda)));
+    i.fset_defalias(sid, Value::Lambda(Rc::new(lambda)))?;
     eval_defun_declarations(i, &name_v, &params, &body, false)?;
     Ok(name_v)
 }
@@ -578,7 +576,7 @@ fn sf_defmacro(i: &mut Interp, args: Value) -> EvalResult {
     let mut lambda = i.parse_lambda(&params, &body, Some(sid))?;
     lambda.is_macro = true;
     lambda.env = i.lambda_env();
-    i.fset(sid, Value::Lambda(Rc::new(lambda)));
+    i.fset_defalias(sid, Value::Lambda(Rc::new(lambda)))?;
     eval_defun_declarations(i, &name_v, &params, &body, true)?;
     Ok(name_v)
 }
@@ -659,9 +657,7 @@ fn eval_defun_declarations(
                                 Value::Cons(e) => {
                                     let b = e.borrow();
                                     match &b.cdr {
-                                        Value::Cons(c2) => {
-                                            Some(c2.borrow().car.clone())
-                                        }
+                                        Value::Cons(c2) => Some(c2.borrow().car.clone()),
                                         other => Some(other.clone()),
                                     }
                                 }
@@ -786,9 +782,7 @@ fn sf_condition_case(i: &mut Interp, args: Value) -> EvalResult {
                             let lex_frame = if i.lexical_binding_active() {
                                 Some(Rc::new(LexFrame {
                                     vars: RefCell::new(HashMap::new()),
-                                    declared: RefCell::new(
-                                        std::collections::HashSet::new(),
-                                    ),
+                                    declared: RefCell::new(std::collections::HashSet::new()),
                                     parent: i.lexenv.clone(),
                                 }))
                             } else {
@@ -799,12 +793,8 @@ fn sf_condition_case(i: &mut Interp, args: Value) -> EvalResult {
                                 None => None,
                             };
                             // GNU binds VAR only when it is non-nil.
-                            if let Some(vid) =
-                                i.sym_id(&var_v).filter(|_| !var_v.is_nil())
-                            {
-                                if let Err(e) =
-                                    i.bind_var(lex_frame.as_ref(), vid, err_val)
-                                {
+                            if let Some(vid) = i.sym_id(&var_v).filter(|_| !var_v.is_nil()) {
+                                if let Err(e) = i.bind_var(lex_frame.as_ref(), vid, err_val) {
                                     if lex_frame.is_some() {
                                         i.lexenv = saved_lex;
                                     }

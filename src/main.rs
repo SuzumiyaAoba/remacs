@@ -27,7 +27,16 @@ fn main() {
                 println!("remacs 0.1 (Emacs-compatible editor in Rust)");
                 return;
             }
-            "--batch" | "-batch" | "-Q" | "--no-init" | "--quick" | "-q" => {
+            "-Q" | "--quick" => {
+                batch = true;
+                let sid = i.intern("inhibit-x-resources");
+                let _ = i.set_symbol_default(sid, Value::t());
+            }
+            "-no-x-resources" | "--no-x-resources" => {
+                let sid = i.intern("inhibit-x-resources");
+                let _ = i.set_symbol_default(sid, Value::t());
+            }
+            "--batch" | "-batch" | "--no-init" | "-q" => {
                 batch = true;
             }
             "--eval" | "--execute" => {

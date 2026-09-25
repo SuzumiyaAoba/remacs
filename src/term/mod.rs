@@ -537,17 +537,15 @@ fn dispatch_key<T: KeyIo>(
                                 Value::Str(s) => {
                                     let msg = Value::string(s.borrow().clone());
                                     let es = Value::Sym(i.intern("error"));
-                                    i.minibuf_pending_flow = Some(
-                                        crate::lisp::error::Flow::Signal(
+                                    i.minibuf_pending_flow =
+                                        Some(crate::lisp::error::Flow::Signal(
                                             es,
                                             Value::list(vec![msg]),
                                             false,
-                                        ),
-                                    );
+                                        ));
                                 }
                                 Value::Sym(_) if v.truthy() => {
-                                    i.minibuf_pending_flow =
-                                        Some(crate::lisp::error::Flow::Quit);
+                                    i.minibuf_pending_flow = Some(crate::lisp::error::Flow::Quit);
                                 }
                                 _ => {
                                     // Functionp values are called after
@@ -1435,14 +1433,13 @@ mod tests {
         }
         term.borrow_mut().pending.reverse();
         let mut i = crate::lisp::Interp::new();
-        i.eval_str("(require 'icomplete) (icomplete-mode 1)").unwrap();
+        i.eval_str("(require 'icomplete) (icomplete-mode 1)")
+            .unwrap();
         // `completing-read''s dynamic context (the specbind f_completing_read
         // installs around minibuf_read).
         let mark = i.specbind_depth();
         let mct = i.intern("minibuffer-completion-table");
-        let table = i
-            .eval_str("(list \"alpha\" \"alpine\" \"beta\")")
-            .unwrap();
+        let table = i.eval_str("(list \"alpha\" \"alpine\" \"beta\")").unwrap();
         let _ = i.specbind(mct, table);
         let t2 = term.clone();
         i.minibuf_reader = Some(Rc::new(move |interp, prompt, single| {
@@ -1476,9 +1473,7 @@ mod tests {
         i.eval_str("(require 'icomplete) (fido-mode 1)").unwrap();
         let mark = i.specbind_depth();
         let mct = i.intern("minibuffer-completion-table");
-        let table = i
-            .eval_str("(list \"alpha\" \"alpine\" \"beta\")")
-            .unwrap();
+        let table = i.eval_str("(list \"alpha\" \"alpine\" \"beta\")").unwrap();
         let _ = i.specbind(mct, table);
         let t2 = term.clone();
         i.minibuf_reader = Some(Rc::new(move |interp, prompt, single| {
@@ -1511,9 +1506,7 @@ mod tests {
             .unwrap();
         let mark = i.specbind_depth();
         let mct = i.intern("minibuffer-completion-table");
-        let table = i
-            .eval_str("(list \"alpha\" \"alpine\" \"beta\")")
-            .unwrap();
+        let table = i.eval_str("(list \"alpha\" \"alpine\" \"beta\")").unwrap();
         let _ = i.specbind(mct, table);
         let t2 = term.clone();
         i.minibuf_reader = Some(Rc::new(move |interp, prompt, single| {
@@ -1657,10 +1650,8 @@ mod tests {
         let (t, _out) = test_term(20, 5);
         let term = Rc::new(RefCell::new(t));
         let mut i = interp_with_frame("");
-        i.eval_str(
-            "(define-abbrev global-abbrev-table \"tq\" \"quick\") (abbrev-mode 1)",
-        )
-        .unwrap();
+        i.eval_str("(define-abbrev global-abbrev-table \"tq\" \"quick\") (abbrev-mode 1)")
+            .unwrap();
         let mut keys = Vec::new();
         let mut arg_mode = false;
         dispatch_key(&term, &mut i, b't' as i128, &mut keys, &mut arg_mode).unwrap();

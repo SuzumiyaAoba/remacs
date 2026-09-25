@@ -865,7 +865,7 @@ pub(crate) static SUBRS: &[Subr] = &[
         "coding-system-priority-list",
         0,
         1,
-        f_coding_system_list,
+        f_coding_system_priority_list,
         ""
     ),
     S!("terminal-coding-system", 0, 1, f_terminal_coding_system, ""),
@@ -1263,7 +1263,28 @@ pub(crate) static SUBRS: &[Subr] = &[
     // ---------- X stubs (no X) ----------
     S!("gui-get-selection", 0, 2, f_gui_get_selection, ""),
     S!("gui-set-selection", 2, 2, f_arg1, ""),
-    S!("x-begin-drag", 1, 4, f_x_begin_drag, ""),
+    S!(
+        "x-create-frame",
+        1,
+        1,
+        f_x_stub_err,
+        "Create an X frame (no X toolkit)."
+    ),
+    S!("x-family-fonts", 0, 2, f_nil, "List X font families."),
+    S!(
+        "x-load-color-file",
+        1,
+        1,
+        f_nil,
+        "Load an X color name file."
+    ),
+    S!(
+        "x-select-font",
+        0,
+        2,
+        f_x_stub_err,
+        "Select an X font (no X toolkit)."
+    ),
     S!("x-display-backing-store", 0, 1, f_ns_display, ""),
     S!("x-display-color-cells", 0, 1, f_ns_display, ""),
     S!("x-display-grayscale-p", 0, 1, f_ns_display, ""),
@@ -1726,7 +1747,17 @@ fn f_gensym(i: &mut Interp, args: Vec<Value>) -> EvalResult {
         Some(Value::Int(n)) => n.to_string(),
         _ => "g".to_string(),
     };
-    Ok(Value::Sym(i.obarray.gensym(&prefix)))
+    // GNU: the numeric suffix comes from the `gensym-counter' variable,
+    // which is incremented by each call (and may be set by the user).
+    let counter_sym = i.intern("gensym-counter");
+    let n = match i.symbol_value(counter_sym) {
+        Value::Int(n) => n,
+        _ => 0,
+    };
+    i.obarray.symbol_mut(counter_sym).value = Value::Int(n + 1);
+    Ok(Value::Sym(
+        i.obarray.make_symbol(&format!("{}{}", prefix, n)),
+    ))
 }
 
 fn f_func_arity(i: &mut Interp, args: Vec<Value>) -> EvalResult {
@@ -1950,6 +1981,7 @@ pub(crate) fn make_interpreted_closure(
         arglist: Some(arglist_v.clone()),
         plain,
         dumped_doc: false,
+        advice_link: None,
     }))
 }
 
@@ -1973,10 +2005,9 @@ fn f_getenv_internal(i: &mut Interp, args: Vec<Value>) -> EvalResult {
             return Ok(Value::string(v));
         }
     }
-    match std::env::var(&name) {
-        Ok(v) => Ok(Value::string(v)),
-        Err(_) => Ok(Value::Nil),
-    }
+    // GNU consults `process-environment' only; it is initialized from
+    // the OS environment at startup.
+    Ok(Value::Nil)
 }
 
 fn f_command_modes(_i: &mut Interp, args: Vec<Value>) -> EvalResult {
@@ -3106,7 +3137,7 @@ fn days_from_civil(y: i128, m: i128, d: i128) -> i128 {
     era * 146097 + doe - 719468
 }
 
-fn f_encode_time(_i: &mut Interp, args: Vec<Value>) -> EvalResult {
+fn f_encode_time(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     // (encode-time SECOND MINUTE HOUR DAY MONTH YEAR &rest) or a list.
     let items: Vec<Value> = if args.len() == 1 {
         match args[0].list_to_vec() {
@@ -3116,8 +3147,23 @@ fn f_encode_time(_i: &mut Interp, args: Vec<Value>) -> EvalResult {
     } else {
         args.clone()
     };
-    let get = |k: usize| -> i128 { items.get(k).and_then(|v| v.int()).unwrap_or(0) };
-    let (sec, min, hour, day, mon, year) = (get(0), get(1), get(2), get(3), get(4), get(5));
+    // GNU's Fencode_time CHECK_FIXNUMs each of the six time fields —
+    // nil (missing) elements signal `wrong-type-argument (fixnump nil)',
+    // which is what makes `safe-date-to-time' return 0 on garbage.
+    let get = |i: &mut Interp, k: usize| -> Result<i128, Flow> {
+        match items.get(k) {
+            Some(Value::Int(n)) => Ok(*n),
+            other => Err(i.wrong_type_mut("fixnump", &other.cloned().unwrap_or(Value::Nil))),
+        }
+    };
+    let (sec, min, hour, day, mon, year) = (
+        get(i, 0)?,
+        get(i, 1)?,
+        get(i, 2)?,
+        get(i, 3)?,
+        get(i, 4)?,
+        get(i, 5)?,
+    );
     let days = days_from_civil(year, mon.max(1).min(12), day.max(1));
     let mut secs = days * 86400 + hour * 3600 + min * 60 + sec;
     // ZONE (index 8) may give an explicit offset in seconds.
@@ -3851,11 +3897,8 @@ fn f_setenv(i: &mut Interp, args: Vec<Value>) -> EvalResult {
         Some(Value::Nil) | None => None,
         Some(v) => Some(want_string(i, v)?),
     };
-    match &val {
-        Some(v) => unsafe { std::env::set_var(&name, v) },
-        None => unsafe { std::env::remove_var(&name) },
-    }
-    // Mirror into `process-environment'.
+    // GNU `setenv' only modifies `process-environment', not the OS
+    // environment.
     let pe = i.intern("process-environment");
     let cur = i.symbol_value(pe);
     let mut items = cur.list_to_vec().unwrap_or_default();
@@ -6905,6 +6948,10 @@ pub(crate) const CODING_ALIASES: &[(&str, &[&str])] = &[
     ("georgian-academy", &["georgian-academy"]),
     ("utf-8-nfd", &["utf-8-hfs", "utf-8-nfd"]),
     ("utf-8-hfs", &["utf-8-hfs", "utf-8-nfd"]),
+    // GNU: `define-coding-system-alias 'emacs-internal 'utf-8-emacs-unix'
+    // — a pure alias, so absent from `coding-system-list' but known to
+    // `coding-system-p'.
+    ("emacs-internal", &["utf-8-emacs-unix", "emacs-internal"]),
 ];
 
 pub(crate) fn coding_known(i: &Interp, v: &Value) -> Option<String> {
@@ -6919,6 +6966,7 @@ pub(crate) fn coding_known(i: &Interp, v: &Value) -> Option<String> {
         .unwrap_or(&name);
     if CODING_SYSTEMS.contains(&name.as_str())
         || CODING_SYSTEMS.contains(&base)
+        || CODING_ALIASES.iter().any(|&(n, _)| n == name)
         || i.extra_coding_systems.iter().any(|n| *n == name)
     {
         Some(name)
@@ -6950,6 +6998,20 @@ fn f_coding_system_list(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 
 fn f_coding_system_p(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     Ok(Value::from_bool(coding_known(i, &a[0]).is_some()))
+}
+
+fn f_coding_system_priority_list(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    // GNU builds this from the per-category priority table; we keep
+    // the same list in `remacs-coding-system-priorities', seeded to
+    // GNU's -Q order and updated by `set-coding-system-priority'.
+    let var = i.intern("remacs-coding-system-priorities");
+    let list = i.symbol_value(var);
+    if arg(&a, 0).truthy() {
+        if let Value::Cons(c) = &list {
+            return Ok(c.borrow().car.clone());
+        }
+    }
+    Ok(list)
 }
 
 fn f_check_coding_system(i: &mut Interp, a: Vec<Value>) -> EvalResult {
@@ -7105,6 +7167,29 @@ fn f_coding_system_get(i: &mut Interp, a: Vec<Value>) -> EvalResult {
             "charset"
         }))),
         (Some(_), ":eol-type") => f_coding_system_eol_type(i, a),
+        (Some(_), _) => {
+            let plist = f_coding_system_plist(i, vec![a[0].clone()])?;
+            let mut cur = plist;
+            while let Value::Cons(c) = cur {
+                let (k, rest) = {
+                    let b = c.borrow();
+                    (b.car.clone(), b.cdr.clone())
+                };
+                if let (Value::Sym(k), Value::Sym(q)) = (&k, &a[1]) {
+                    if k == q {
+                        if let Value::Cons(v) = rest {
+                            return Ok(v.borrow().car.clone());
+                        }
+                        return Ok(Value::Nil);
+                    }
+                }
+                cur = match rest {
+                    Value::Cons(c2) => c2.borrow().cdr.clone(),
+                    _ => Value::Nil,
+                };
+            }
+            Ok(Value::Nil)
+        }
         _ => Ok(Value::Nil),
     }
 }
@@ -7304,6 +7389,12 @@ fn set_coding_system(i: &mut Interp, a: Vec<Value>, ret_name: bool) -> EvalResul
 fn f_gui_get_selection(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
     let f = Value::Sym(i.intern("gui-selection-exists-p"));
     i.call_function(&f, &Value::Nil, None)
+}
+
+/// X-toolkit primitives that cannot run without X: signal `error'
+/// like GNU's window-system checks do.
+fn f_x_stub_err(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
+    Err(i.error("X windows are not in use or not initialized"))
 }
 
 fn f_set_terminal_coding_system(i: &mut Interp, a: Vec<Value>) -> EvalResult {
@@ -7815,11 +7906,6 @@ fn f_x_get_resource(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
     Err(i.error("Window system is not in use or not initialized"))
 }
 
-/// `x-begin-drag' — GNU fails on the missing drag-selection atom.
-fn f_x_begin_drag(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
-    Err(i.error("No local value for XdndSelection"))
-}
-
 /// `set-mouse-position' / `set-mouse-pixel-position' — frame-live-p
 /// check on FRAME; nil on a tty.
 fn f_frame_live_nil(i: &mut Interp, a: Vec<Value>) -> EvalResult {
@@ -8085,7 +8171,13 @@ pub(crate) fn check_region_positions(i: &mut Interp, a: &[Value]) -> Result<(), 
     };
     if start < lo as i128 + 1 || end > hi as i128 + 1 || start > end {
         let s = i.intern("args-out-of-range");
-        return Err(i.signal_data(s, vec![a[0].clone(), a[1].clone()]));
+        // GNU's region check reports (args-out-of-range BUFFER S E).
+        let buf = i
+            .buffers
+            .get(i.current_buffer)
+            .map(|b| Value::Buffer(b.clone()))
+            .unwrap_or(Value::Nil);
+        return Err(i.signal_data(s, vec![buf, a[0].clone(), a[1].clone()]));
     }
     Ok(())
 }
@@ -9859,12 +9951,10 @@ fn f_map_char_table(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         return Err(i.wrong_type_mut("char-table-p", &a[1]));
     }
     let runs = ct_effective_runs(i, &a[1], true);
-    for (from, to, val) in runs {
-        // GNU `map_char_table' only calls FUNCTION for ranges whose
-        // value is non-nil.
-        if val.is_nil() {
-            continue;
-        }
+    // GNU's `map_char_table' only calls the function for ranges whose
+    // effective value is non-nil — unset regions (and nil stores,
+    // which revert to the default) are skipped entirely.
+    for (from, to, val) in runs.into_iter().filter(|(_, _, v)| !v.is_nil()) {
         let key = if from == to {
             Value::Int(from as i128)
         } else {

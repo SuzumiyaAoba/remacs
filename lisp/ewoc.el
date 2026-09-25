@@ -1,5 +1,4 @@
 ;;; ewoc.el --- utility to maintain a view of a list of objects in a buffer  -*- lexical-binding: t -*-
-;; Ported from GNU Emacs emacs-lisp/ewoc.el for remacs.
 
 ;; Copyright (C) 1991-2026 Free Software Foundation, Inc.
 

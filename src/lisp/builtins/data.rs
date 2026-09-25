@@ -742,13 +742,17 @@ fn f_remove_variable_watcher(i: &mut Interp, args: Vec<Value>) -> EvalResult {
 fn f_fset(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     let id = want_sym(i, &args[0])?;
     let def = normalize_fn_def(i, args[1].clone());
+    // GNU's fset writes the cell raw — an advice chain on SYM is
+    // discarded entirely (only `defalias' substitutes the base).
+    i.advices.retain(|(s, _)| *s != id);
+    i.advice_bases.retain(|(s, _)| *s != id);
     i.fset(id, def.clone());
     Ok(def)
 }
 fn f_defalias(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     let id = want_sym(i, &args[0])?;
     let def = normalize_fn_def(i, args[1].clone());
-    i.fset(id, def);
+    i.fset_defalias(id, def)?;
     // Emacs returns the aliased symbol, not the definition.
     Ok(args[0].clone())
 }
@@ -942,15 +946,15 @@ fn f_setplist(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     Ok(args[1].clone())
 }
 fn f_intern(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    want_obarray(i, args.get(1))?;
+    let ob = resolve_obarray(i, args.get(1))?;
     match &args[0] {
         Value::Str(s) => {
             let name = s.borrow().clone();
             // A custom obarray keeps its own symbol vector; symbols in
             // it are NOT interned in the global obarray (GNU parity:
             // intern-soft on the default obarray won't find them).
-            if let Some(ob) = args.get(1) {
-                if is_obarray(i, ob) {
+            if let Some(ob) = &ob {
+                if !is_default_obarray(i, ob) {
                     if let Some(sym) = obarray_syms(i, ob)
                         .into_iter()
                         .find(|v| matches!(v, Value::Sym(s) if i.symbol_name(*s) == name))
@@ -971,12 +975,12 @@ fn f_intern(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     }
 }
 fn f_intern_soft(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    want_obarray(i, args.get(1))?;
+    let ob = resolve_obarray(i, args.get(1))?;
     match &args[0] {
         Value::Str(s) => {
             let name = s.borrow().clone();
-            if let Some(ob) = args.get(1) {
-                if is_obarray(i, ob) {
+            if let Some(ob) = &ob {
+                if !is_default_obarray(i, ob) {
                     return Ok(obarray_syms(i, ob)
                         .into_iter()
                         .find(|v| matches!(v, Value::Sym(s) if i.symbol_name(*s) == name))
@@ -993,9 +997,9 @@ fn f_intern_soft(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     }
 }
 fn f_unintern(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    want_obarray(i, args.get(1))?;
-    if let Some(ob) = args.get(1) {
-        if is_obarray(i, ob) {
+    let ob = resolve_obarray(i, args.get(1))?;
+    if let Some(ob) = &ob {
+        if !is_default_obarray(i, ob) {
             return Ok(Value::from_bool(obarray_remove(i, ob, &args[0])));
         }
     }
@@ -1038,7 +1042,7 @@ fn obarray_tag(i: &Interp) -> Value {
     Value::Sym(i.intern_soft("obarray").unwrap_or(0))
 }
 
-fn is_obarray(i: &Interp, v: &Value) -> bool {
+pub(crate) fn is_obarray(i: &Interp, v: &Value) -> bool {
     match v {
         Value::Record(r) => {
             let rr = r.borrow();
@@ -1050,10 +1054,18 @@ fn is_obarray(i: &Interp, v: &Value) -> bool {
     }
 }
 
-/// Check an optional OBARRAY argument: nil means the default obarray,
-/// a tagged record is an obarray, anything else is a type error.
+/// The value of the `obarray' variable denotes the default symbol
+/// table, not a custom obarray: its record's Rc identity was stored on
+/// the interpreter at startup.
+pub(crate) fn is_default_obarray(i: &Interp, v: &Value) -> bool {
+    match (v, &i.default_obarray) {
+        (Value::Record(r), Some(d)) => std::rc::Rc::ptr_eq(r, d),
+        _ => false,
+    }
+}
+
 /// The symbols interned in a custom (Record-based) obarray.
-fn obarray_syms(i: &Interp, ob: &Value) -> Vec<Value> {
+pub(crate) fn obarray_syms(i: &Interp, ob: &Value) -> Vec<Value> {
     let _ = i;
     if let Value::Record(r) = ob {
         if let Some(Value::Vec(v)) = r.borrow().get(1) {
@@ -1102,19 +1114,43 @@ fn obarray_remove(i: &Interp, ob: &Value, sym: &Value) -> bool {
     false
 }
 
-fn want_obarray(i: &mut Interp, v: Option<&Value>) -> Result<(), Flow> {
+/// Check an optional OBARRAY argument and resolve it to the effective
+/// obarray: nil/absent means the default obarray (None); a tagged
+/// record is used directly; a non-empty VECTOR holds a lazily created
+/// obarray object in slot 0 (GNU's legacy vector-as-obarray — the
+/// record appears in `aref V 0' once symbols are interned).  An empty
+/// vector or anything else is a type error.
+fn resolve_obarray(i: &mut Interp, v: Option<&Value>) -> Result<Option<Value>, Flow> {
     match v {
-        None | Some(Value::Nil) => Ok(()),
-        Some(v) if is_obarray(i, v) => Ok(()),
+        None | Some(Value::Nil) => Ok(None),
+        Some(v) if is_obarray(i, v) => Ok(Some(v.clone())),
+        Some(w @ Value::Vec(vec)) => {
+            let mut vv = vec.borrow_mut();
+            if vv.is_empty() {
+                return Err(i.wrong_type_mut("obarrayp", w));
+            }
+            if is_obarray(i, &vv[0]) {
+                return Ok(Some(vv[0].clone()));
+            }
+            let rec = Value::Record(std::rc::Rc::new(std::cell::RefCell::new(vec![
+                obarray_tag(i),
+                Value::Vec(std::rc::Rc::new(std::cell::RefCell::new(vec![
+                    Value::Nil;
+                    4
+                ]))),
+            ])));
+            vv[0] = rec.clone();
+            Ok(Some(rec))
+        }
         Some(v) => Err(i.wrong_type_mut("obarrayp", v)),
     }
 }
 
 fn f_mapatoms(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     let fun = args[0].clone();
-    want_obarray(i, args.get(1))?;
-    if let Some(ob) = args.get(1) {
-        if is_obarray(i, ob) {
+    let ob = resolve_obarray(i, args.get(1))?;
+    if let Some(ob) = &ob {
+        if !is_default_obarray(i, ob) {
             for sym in obarray_syms(i, ob) {
                 i.apply(&fun, vec![sym])?;
             }
@@ -1153,14 +1189,83 @@ fn f_indirect_function(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     }
 }
 fn f_interactive_form(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    let f = match &args[0] {
+    let mut f = match &args[0] {
         Value::Sym(id) => i.symbol_function(*id),
         other => other.clone(),
     };
-    match f.as_lambda() {
-        Some(l) => Ok(l.interactive.clone().unwrap_or(Value::Nil)),
-        None => Ok(Value::Nil),
+    // Advised functions: GNU's interactive-form delegates through the
+    // advice layers to the underlying definition (modulo
+    // :interactive-only merging — we expose the base spec).
+    f = i.advice_base_value(&f);
+    if let Value::Sym(id) = f {
+        f = i.symbol_function(id);
     }
+    match &f {
+        Value::Subr(s) => {
+            // GNU returns `(interactive SPEC)' for primitives whose
+            // intspec is non-nil.  Specs beginning with `(' are forms
+            // read from the string rather than callint letter codes.
+            match crate::lisp::eval::subr_interactive_form(i, s.name) {
+                Some(spec) => Ok(spec),
+                None => Ok(Value::Nil),
+            }
+        }
+        _ => match f.as_lambda() {
+            Some(l) => Ok(l.interactive.clone().unwrap_or(Value::Nil)),
+            // GNU scans the body of a `(lambda ...)'/`(closure ...)'
+            // /`(macro . (lambda ...))' form: docstring and `declare'
+            // /`interactive-declare' elements are skipped and the first
+            // remaining form is returned when it is `(interactive ...)'.
+            None => Ok(interactive_form_list(i, &f)),
+        },
+    }
+}
+
+/// `interactive-form' over a cons-shaped function (unevaluated
+/// lambda/closure/macro data), as in GNU's Finteractive_form.
+fn interactive_form_list(i: &mut Interp, f: &Value) -> Value {
+    let Value::Cons(_) = f else { return Value::Nil };
+    let mut items: Vec<Value> = f.list_to_vec().unwrap_or_default();
+    // `(macro . FUN)' — step inside the macro wrapper.
+    if items
+        .first()
+        .and_then(|h| i.sym_id(h))
+        .map(|s| i.symbol_name(s) == "macro")
+        .unwrap_or(false)
+    {
+        if let Some(d) = items.get(1) {
+            items = d.list_to_vec().unwrap_or_default();
+        }
+    }
+    let head = items
+        .first()
+        .and_then(|h| i.sym_id(h))
+        .map(|s| i.symbol_name(s));
+    let body_at = match head.as_deref() {
+        Some("lambda") => 2,
+        Some("closure") => 3,
+        _ => return Value::Nil,
+    };
+    let interactive = i.intern("interactive");
+    let declare = i.intern("declare");
+    let ideclare = i.intern("interactive-declare");
+    for el in &items[body_at.min(items.len())..] {
+        if matches!(el, Value::Str(_)) {
+            continue;
+        }
+        let head_id = match el {
+            Value::Cons(c) => i.sym_id(&c.borrow().car),
+            _ => None,
+        };
+        if head_id == Some(interactive) {
+            return el.clone();
+        }
+        if head_id == Some(declare) || head_id == Some(ideclare) {
+            continue;
+        }
+        break;
+    }
+    Value::Nil
 }
 fn f_variable_binding_locus(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     let id = want_sym(i, &args[0])?;
@@ -1211,12 +1316,13 @@ fn f_obarrayp(i: &mut Interp, args: Vec<Value>) -> EvalResult {
 /// would corrupt this runtime's positional symbol ids; treat that as a
 /// no-op returning the argument.
 fn f_obarray_clear(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    let ob = arg(&args, 0);
-    if ob.is_nil() {
-        return Ok(ob);
-    }
-    if !is_obarray(i, &ob) {
-        return Err(i.wrong_type_mut("obarrayp", &ob));
+    let Some(ob) = resolve_obarray(i, args.get(0))? else {
+        // The default obarray denotes the global symbol table; clearing
+        // it would corrupt positional symbol ids — treat as a no-op.
+        return Ok(arg(&args, 0));
+    };
+    if is_default_obarray(i, &ob) {
+        return Ok(Value::Nil);
     }
     if let Value::Record(r) = &ob {
         if let Some(Value::Vec(v)) = r.borrow().get(1) {
@@ -1252,6 +1358,7 @@ fn normalize_fn_def(i: &mut Interp, def: Value) -> Value {
                         arglist: l.arglist.clone(),
                         plain: l.plain,
                         dumped_doc: l.dumped_doc,
+                        advice_link: l.advice_link,
                     };
                     l2.is_macro = true;
                     return Value::Lambda(std::rc::Rc::new(l2));

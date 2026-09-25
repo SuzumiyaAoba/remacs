@@ -283,11 +283,8 @@ fn html_node(
 }
 
 fn parse_html(i: &mut Interp, text: &str) -> Value {
-    let dom = html5ever::parse_document(
-        markup5ever_rcdom::RcDom::default(),
-        Default::default(),
-    )
-    .one(text.to_string());
+    let dom = html5ever::parse_document(markup5ever_rcdom::RcDom::default(), Default::default())
+        .one(text.to_string());
     let lower = text.to_lowercase();
     let src_has_tbody = lower.contains("<tbody");
     let mut out = Vec::new();

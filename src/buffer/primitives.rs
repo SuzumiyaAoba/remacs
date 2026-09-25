@@ -5,11 +5,11 @@
 //! Position convention: Emacs positions are 1-based; internally the
 //! `Buffer` uses 0-based char indices. `pt` = `bb.point + 1`.
 
-use crate::buffer::{file_truename, lock_file_name, lock_owner_string, Buffer, TextProp};
+use crate::buffer::{Buffer, TextProp, file_truename, lock_file_name, lock_owner_string};
 use crate::lisp::Interp;
+use crate::lisp::builtins::want_string;
 use crate::lisp::error::{EvalResult, Flow};
 use crate::lisp::eval::MatchData;
-use crate::lisp::builtins::want_string;
 use crate::lisp::obarray::sym;
 use crate::lisp::value::{Marker, Subr, Value};
 use std::cell::RefCell;
@@ -243,7 +243,7 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!(
         "kill-all-local-variables",
         0,
-        0,
+        1,
         f_kill_all_local_variables,
         "Remove all local bindings."
     ),
@@ -1237,20 +1237,8 @@ pub(crate) static SUBRS: &[Subr] = &[
         ""
     ),
     S!("text-property-any", 4, 5, f_text_property_any, ""),
-    S!(
-        "text-property-not-all",
-        4,
-        5,
-        f_text_property_not_all,
-        ""
-    ),
-    S!(
-        "add-face-text-property",
-        3,
-        5,
-        f_add_face_text_property,
-        ""
-    ),
+    S!("text-property-not-all", 4, 5, f_text_property_not_all, ""),
+    S!("add-face-text-property", 3, 5, f_add_face_text_property, ""),
     S!(
         "next-property-change",
         1,
@@ -1391,13 +1379,7 @@ pub(crate) static SUBRS: &[Subr] = &[
         f_lock_file,
         "Lock FILE, if current buffer is modified."
     ),
-    S!(
-        "unlock-file",
-        1,
-        1,
-        f_unlock_file,
-        "Unlock FILE."
-    ),
+    S!("unlock-file", 1, 1, f_unlock_file, "Unlock FILE."),
     S!("file-acl", 1, 1, f_file_acl, "Return ACL entries of FILE."),
     S!(
         "ask-user-about-lock",
@@ -1475,7 +1457,9 @@ fn f_visited_file_modtime(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
     if bb.file_modtime_ns < 0 {
         return Ok(Value::Int(-2 - bb.file_modtime_ns));
     }
-    Ok(crate::lisp::builtins::misc::ns_to_lisp_time(bb.file_modtime_ns))
+    Ok(crate::lisp::builtins::misc::ns_to_lisp_time(
+        bb.file_modtime_ns,
+    ))
 }
 
 fn f_set_visited_file_modtime(i: &mut Interp, a: Vec<Value>) -> EvalResult {
@@ -1901,7 +1885,11 @@ fn f_object_intervals(i: &mut Interp, a: Vec<Value>) -> EvalResult {
                     out.push(Value::list(vec![
                         Value::Int(a as i128),
                         Value::Int(b as i128),
-                        if pl.is_empty() { Value::Nil } else { Value::list(pl) },
+                        if pl.is_empty() {
+                            Value::Nil
+                        } else {
+                            Value::list(pl)
+                        },
                     ]));
                 }
             };
@@ -2369,10 +2357,7 @@ fn f_rename_buffer(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     // may rename the buffer again, adding directory components).  The
     // variable is preset non-nil here, so guard on fboundp too.
     let ustyle = i.intern_soft("uniquify-buffer-name-style");
-    if ustyle
-        .map(|s| i.symbol_value(s).truthy())
-        .unwrap_or(false)
-    {
+    if ustyle.map(|s| i.symbol_value(s).truthy()).unwrap_or(false) {
         let adv = i.intern("uniquify--rename-buffer-advice");
         if i.fbound_p(adv) {
             i.apply(
@@ -2589,8 +2574,7 @@ fn f_buffer_local_boundp(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     // GNU: an explicit local binding, or an always-local variable
     // (defvar-buffer-local / make-variable-buffer-local) which has a
     // slot in every buffer.
-    let bound = b.borrow().locals.contains_key(&sid)
-        || i.obarray.symbol(sid).make_local_if_set;
+    let bound = b.borrow().locals.contains_key(&sid) || i.obarray.symbol(sid).make_local_if_set;
     Ok(Value::from_bool(bound))
 }
 
@@ -2627,7 +2611,12 @@ fn f_kill_local_variable(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     Ok(a[0].clone())
 }
 
-pub(crate) fn f_kill_all_local_variables(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
+pub(crate) fn f_kill_all_local_variables(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    // GNU: KILL-PERMANENT non-nil clears even `permanent-local' bindings.
+    if a.first().map(Value::truthy).unwrap_or(false) {
+        cur(i).borrow_mut().locals.clear();
+        return Ok(Value::Nil);
+    }
     let keep: Vec<u32> = {
         let b = cur(i);
         let bb = b.borrow();
@@ -2669,7 +2658,14 @@ fn f_local_variable_if_set_p(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 
 fn f_default_value(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let sid = want_sym(i, &a[0])?;
-    Ok(i.obarray.symbol(sid).value.clone())
+    // GNU's `default-value' signals void-variable for a var without a
+    // default binding — the internal UNBOUND marker must not escape.
+    match i.obarray.symbol(sid).value {
+        Value::Sym(s) if s == sym::UNBOUND => {
+            Err(i.signal_data(sym::VOID_VARIABLE, vec![a[0].clone()]))
+        }
+        ref v => Ok(v.clone()),
+    }
 }
 
 fn f_set_default(i: &mut Interp, a: Vec<Value>) -> EvalResult {
@@ -3062,7 +3058,9 @@ fn f_char_after(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     if p < bb.begv || p >= bb.text_len() || p >= bb.text.len() {
         return Ok(Value::Nil);
     }
-    Ok(Value::Int(crate::lisp::value::lisp_char_code(bb.text.char_at(p))))
+    Ok(Value::Int(crate::lisp::value::lisp_char_code(
+        bb.text.char_at(p),
+    )))
 }
 
 fn f_char_before(i: &mut Interp, a: Vec<Value>) -> EvalResult {
@@ -3076,7 +3074,9 @@ fn f_char_before(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     if p <= bb.begv || p > bb.text_len() || p > bb.text.len() {
         return Ok(Value::Nil);
     }
-    Ok(Value::Int(crate::lisp::value::lisp_char_code(bb.text.char_at(p - 1))))
+    Ok(Value::Int(crate::lisp::value::lisp_char_code(
+        bb.text.char_at(p - 1),
+    )))
 }
 
 fn f_following_char(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
@@ -3087,7 +3087,9 @@ fn f_following_char(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
     if p >= bb.text_len() {
         return Ok(Value::Int(0));
     }
-    Ok(Value::Int(crate::lisp::value::lisp_char_code(bb.text.char_at(p))))
+    Ok(Value::Int(crate::lisp::value::lisp_char_code(
+        bb.text.char_at(p),
+    )))
 }
 
 fn f_preceding_char(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
@@ -3097,7 +3099,9 @@ fn f_preceding_char(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
     if p <= bb.begv {
         return Ok(Value::Int(0));
     }
-    Ok(Value::Int(crate::lisp::value::lisp_char_code(bb.text.char_at(p - 1))))
+    Ok(Value::Int(crate::lisp::value::lisp_char_code(
+        bb.text.char_at(p - 1),
+    )))
 }
 
 fn f_pos_bol(i: &mut Interp, a: Vec<Value>) -> EvalResult {
@@ -3459,12 +3463,7 @@ fn forw_comment(
 /// start of the innermost enclosing comment/string per a fresh
 /// `parse-partial-sexp' scan; else the last col-0 open paren when
 /// `open-paren-in-column-0-is-defun-start'; else BEGV (STOP).
-fn find_defun_start(
-    syn: &crate::editor::Syn,
-    text: &[char],
-    stop: usize,
-    pos: usize,
-) -> usize {
+fn find_defun_start(syn: &crate::editor::Syn, text: &[char], stop: usize, pos: usize) -> usize {
     if syn.comment_use_ppss {
         let mut st = ParseState::fresh();
         scan_sexps_fwd(syn, text, stop, stop, pos, &mut st, i128::MIN, false, 0);
@@ -3647,7 +3646,17 @@ fn back_comment(
     };
     loop {
         let mut st = ParseState::fresh();
-        scan_sexps_fwd(syn, text, stop, ds, comment_end, &mut st, i128::MIN, false, 0);
+        scan_sexps_fwd(
+            syn,
+            text,
+            stop,
+            ds,
+            comment_end,
+            &mut st,
+            i128::MIN,
+            false,
+            0,
+        );
         ds = comment_end;
         if st.incomment == if comnested { 1 } else { -1 } && st.comstyle == comstyle {
             from = st.comstr_start.max(0) as usize;
@@ -4647,7 +4656,10 @@ fn f_skip_syntax_forward(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         Value::Str(s) => s.borrow().clone(),
         other => return Err(i.wrong_type_mut("stringp", other)),
     };
-    let upto = a.get(1).and_then(|v| v.int()).map(|n| n.max(1) as usize)
+    let upto = a
+        .get(1)
+        .and_then(|v| v.int())
+        .map(|n| n.max(1) as usize)
         .unwrap_or_else(|| cur(i).borrow().zv + 1);
     let syn = crate::editor::Syn::current(i, upto);
     let b = cur(i);
@@ -5471,11 +5483,7 @@ pub(crate) fn plist_pairs_rev(pl: &[Value]) -> Vec<Value> {
     out
 }
 
-fn buf_props_as_ivs(
-    props: &[TextProp],
-    s: usize,
-    e: usize,
-) -> Vec<(usize, usize, Vec<Value>)> {
+fn buf_props_as_ivs(props: &[TextProp], s: usize, e: usize) -> Vec<(usize, usize, Vec<Value>)> {
     if !props.iter().any(|tp| tp.start < e && tp.end > s) {
         return Vec::new();
     }
@@ -5655,7 +5663,10 @@ fn f_current_word(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
     // symbol constituents — via the buffer's syntax table.
     let syn = crate::editor::syntax_table_entries(i);
     match thing_bounds(i, |c| {
-        matches!(crate::editor::syntax_entry_code(syn.as_ref(), c), b'w' | b'_')
+        matches!(
+            crate::editor::syntax_entry_code(syn.as_ref(), c),
+            b'w' | b'_'
+        )
     }) {
         Some((s, e)) => {
             let b = cur(i);
@@ -7048,7 +7059,9 @@ fn no_region_err(i: &mut Interp) -> Flow {
     let e = i.intern("error");
     i.signal_data(
         e,
-        vec![Value::string("The mark is not set now, so there is no region")],
+        vec![Value::string(
+            "The mark is not set now, so there is no region",
+        )],
     )
 }
 
@@ -7099,10 +7112,7 @@ fn f_exchange_point_and_mark(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     // then deactivate or activate per ARG and the region state.
     let Some(omark) = bb.mark else {
         let ue = i.intern("user-error");
-        return Err(i.signal_data(
-            ue,
-            vec![Value::string("No mark set in this buffer")],
-        ));
+        return Err(i.signal_data(ue, vec![Value::string("No mark set in this buffer")]));
     };
     let was_active = region_active(i, &bb);
     let tmmv = buf_var(i, &bb, tmm_id(i));
@@ -7165,8 +7175,8 @@ fn f_use_region_p(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
         Value::Cons(c) => c.borrow().car.clone(),
         _ => Value::Nil,
     };
-    let ok = !matches!(&car, Value::Sym(s) if *s == dm1)
-        && !matches!(&car, Value::Sym(s) if *s == mm);
+    let ok =
+        !matches!(&car, Value::Sym(s) if *s == dm1) && !matches!(&car, Value::Sym(s) if *s == mm);
     Ok(Value::from_bool(ok))
 }
 
@@ -8229,14 +8239,7 @@ pub(crate) fn f_put_text_property(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 /// GNU `record_property_change' over [S,E) (0-based): push one
 /// `(nil PROP OLD BEG . END)' undo entry per contiguous run of OLD
 /// values that are not `eq' NEW.
-fn buf_record_prop(
-    bb: &mut Buffer,
-    s: usize,
-    e: usize,
-    prop: &Value,
-    pid: u32,
-    new: &Value,
-) {
+fn buf_record_prop(bb: &mut Buffer, s: usize, e: usize, prop: &Value, pid: u32, new: &Value) {
     let mut p = s;
     while p < e {
         let old = bb.prop_value_at(p, pid);
@@ -8317,7 +8320,7 @@ fn str_plist_remove(pl: &mut Vec<Value>, id: u32, i: &Interp) {
 }
 
 /// The plist at char position P (0-based) — the interval containing P.
-fn str_plist_at(ivs: &[(usize, usize, Vec<Value>)], p: usize) -> Vec<Value> {
+pub(crate) fn str_plist_at(ivs: &[(usize, usize, Vec<Value>)], p: usize) -> Vec<Value> {
     for (s, e, pl) in ivs {
         if p >= *s && p < *e {
             return pl.clone();
@@ -8525,13 +8528,7 @@ fn buf_add_props(
 }
 
 /// True when every position in [S,E) already carries PROP == VAL.
-fn buf_prop_uniform(
-    bb: &Buffer,
-    s: usize,
-    e: usize,
-    prop: u32,
-    val: &Value,
-) -> bool {
+fn buf_prop_uniform(bb: &Buffer, s: usize, e: usize, prop: u32, val: &Value) -> bool {
     for p in s..e.max(s) {
         let cur = bb
             .text_props
@@ -8653,35 +8650,24 @@ pub(crate) fn f_remove_text_properties(i: &mut Interp, a: Vec<Value>) -> EvalRes
     Ok(Value::t())
 }
 
-/// String-object half of `set-text-properties', also used by the
-/// reader's `#("str" BEG END PLIST)' propertized-string literal.
-pub(crate) fn str_set_text_props(
-    i: &mut Interp,
-    s: &std::rc::Rc<std::cell::RefCell<String>>,
-    beg: i128,
-    end: i128,
-    plist: Vec<Value>,
-) -> Result<(), Flow> {
-    let len = str_len(s);
-    let st = (beg.max(0)) as usize;
-    let en = (end.max(0)) as usize;
-    str_pos_ok(i, &Value::Str(s.clone()), st.max(en), len)?;
-    let (s0, e0) = (st.min(en), st.max(en));
-    let fill = if plist.is_empty() { None } else { Some(plist.clone()) };
-    let mut ivs = std::mem::take(i.str_props_mut(s));
-    // GNU replaces the interval's plist wholesale.
-    iv_apply(&mut ivs, s0, e0, |pl| *pl = plist.clone(), fill);
-    i.set_str_props(s, ivs);
-    Ok(())
-}
-
 fn f_set_text_properties(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     if let Some(Value::Str(s)) = a.get(3) {
         let s = s.clone();
-        let st = want_int(i, &a[0])?;
-        let en = want_int(i, &a[1])?;
+        let len = str_len(&s);
+        let st = want_int(i, &a[0])?.max(0) as usize;
+        let en = want_int(i, &a[1])?.max(0) as usize;
+        str_pos_ok(i, &a[3], st.max(en), len)?;
+        let (s0, e0) = (st.min(en), st.max(en));
         let plist = a[2].list_to_vec().unwrap_or_default();
-        str_set_text_props(i, &s, st, en, plist)?;
+        let fill = if plist.is_empty() {
+            None
+        } else {
+            Some(plist.clone())
+        };
+        let mut ivs = std::mem::take(i.str_props_mut(&s));
+        // GNU replaces the interval's plist wholesale.
+        iv_apply(&mut ivs, s0, e0, |pl| *pl = plist.clone(), fill);
+        i.set_str_props(&s, ivs);
         return Ok(Value::t());
     }
     // Remove all props in range, then add the plist.
@@ -8716,9 +8702,10 @@ fn buf_record_set(bb: &mut Buffer, i: &Interp, s: usize, e: usize, plist: &[Valu
         while q < e {
             let pl = bb.plist_at(q);
             if pl.len() != old.len()
-                || !pl
-                    .iter()
-                    .all(|(k, v)| old.get(k).is_some_and(|o| crate::lisp::builtins::eq_values(o, v)))
+                || !pl.iter().all(|(k, v)| {
+                    old.get(k)
+                        .is_some_and(|o| crate::lisp::builtins::eq_values(o, v))
+                })
             {
                 break;
             }
@@ -8792,7 +8779,11 @@ fn f_text_properties_at(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     if let Some(Value::Str(s)) = a.get(1) {
         let pos = want_int(i, &a[0])?.max(0) as usize;
         let pl = str_plist_at(i.str_props(s), pos);
-        return Ok(if pl.is_empty() { Value::Nil } else { Value::list(pl) });
+        return Ok(if pl.is_empty() {
+            Value::Nil
+        } else {
+            Value::list(pl)
+        });
     }
     let len = cur(i).borrow().text.len();
     let pos = pos_idx(len, want_int(i, &a[0])?);
@@ -9223,7 +9214,11 @@ pub(crate) fn f_add_face_text_property(i: &mut Interp, a: Vec<Value>) -> EvalRes
                     str_plist_put(pl, &face_sym, &nv);
                 }
             },
-            if fill.is_nil() { None } else { Some(vec![face_sym.clone(), fill]) },
+            if fill.is_nil() {
+                None
+            } else {
+                Some(vec![face_sym.clone(), fill])
+            },
         );
         i.set_str_props(&s, ivs);
         return Ok(Value::Nil);
@@ -9299,8 +9294,7 @@ fn f_propertize(i: &mut Interp, a: Vec<Value>) -> EvalResult {
                     .iter()
                     .flat_map(|(k, v)| [k.clone(), v.clone()])
                     .collect();
-                let rpairs: Vec<(Value, Value)> =
-                    pairs.iter().rev().cloned().collect();
+                let rpairs: Vec<(Value, Value)> = pairs.iter().rev().cloned().collect();
                 let ii: &Interp = i;
                 iv_apply(
                     &mut ivs,
@@ -9415,18 +9409,14 @@ fn undo_apply_one(
                     let (v, r2) = cons_parts(&r1).ok_or_else(|| undo_unrecognized(i, next))?;
                     (p, v, r2)
                 };
-                let (beg, end) =
-                    cons_parts(&tail).ok_or_else(|| undo_unrecognized(i, next))?;
+                let (beg, end) = cons_parts(&tail).ok_or_else(|| undo_unrecognized(i, next))?;
                 let (Some(beg), Some(end)) = (beg.int(), end.int()) else {
                     return Err(undo_unrecognized(i, next));
                 };
                 if undo_pos_oob(b, beg, end) {
                     return Err(undo_oob_err(i));
                 }
-                f_put_text_property(
-                    i,
-                    vec![Value::Int(beg), Value::Int(end), prop, val],
-                )?;
+                f_put_text_property(i, vec![Value::Int(beg), Value::Int(end), prop, val])?;
             } else if matches!(car, Value::Sym(s) if s == i.intern("apply")) {
                 // (apply . FUN-ARGS): function undo record.
                 let currbuff = i.current_buffer;
@@ -9449,10 +9439,9 @@ fn undo_apply_one(
                         let em = f_copy_marker(i, vec![Value::Int(end), Value::t()])?;
                         i.apply(&fun, args)?;
                         let (sp, ep) = match (&sm, &em) {
-                            (Value::Marker(s), Value::Marker(e)) => (
-                                s.borrow().position as i128,
-                                e.borrow().position as i128,
-                            ),
+                            (Value::Marker(s), Value::Marker(e)) => {
+                                (s.borrow().position as i128, e.borrow().position as i128)
+                            }
                             _ => unreachable!(),
                         };
                         if sp + 1 != start || ep + 1 != end + delta {
@@ -9505,11 +9494,7 @@ fn undo_apply_one(
                 loop {
                     let madj = match cons_parts(list) {
                         Some((e, rest)) => match cons_parts(&e) {
-                            Some((Value::Marker(_), cdr))
-                                if cdr.int().is_some() =>
-                            {
-                                (e, rest)
-                            }
+                            Some((Value::Marker(_), cdr)) if cdr.int().is_some() => (e, rest),
                             _ => break,
                         },
                         _ => break,

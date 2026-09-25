@@ -6,12 +6,18 @@ use crate::lisp::value::Value;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
-/// Candidate paths for library NAME under DIR (with .elc/.el suffixes).
-fn candidates(dir: &Path, name: &str) -> Vec<PathBuf> {
+/// Candidate paths GNU's `openp' would try for NAME in DIR.
+/// NOSUFFIX opens NAME literally; MUST-SUFFIX requires NAME to carry
+/// a recognized `.el'/`.elc' suffix already.
+fn candidates(dir: &Path, name: &str, nosuffix: bool, mustsuffix: bool) -> Vec<PathBuf> {
     let mut v = Vec::new();
     let base = dir.join(name);
-    if name.ends_with(".el") || name.ends_with(".elc") {
+    if nosuffix {
         v.push(base);
+    } else if name.ends_with(".el") || name.ends_with(".elc") {
+        v.push(base);
+    } else if mustsuffix {
+        // `openp' with a suffix predicate never opens the bare name.
     } else {
         v.push(base.with_extension("elc"));
         v.push(base.with_extension("el"));
@@ -22,14 +28,24 @@ fn candidates(dir: &Path, name: &str) -> Vec<PathBuf> {
 
 /// Find library file NAME on load-path (or as an absolute/relative path).
 pub(crate) fn locate(i: &mut Interp, name: &str) -> Option<String> {
+    locate_opts(i, name, false, false)
+}
+
+/// `locate' honoring `load''s NOSUFFIX/MUST-SUFFIX arguments.
+pub(crate) fn locate_opts(
+    i: &mut Interp,
+    name: &str,
+    nosuffix: bool,
+    mustsuffix: bool,
+) -> Option<String> {
     let p = Path::new(name);
     if p.is_absolute() || name.contains('/') || name.contains(std::path::MAIN_SEPARATOR) {
-        for c in candidates(Path::new(""), name) {
+        for c in candidates(Path::new(""), name, nosuffix, mustsuffix) {
             if c.is_file() {
                 return Some(c.to_string_lossy().into_owned());
             }
         }
-        if p.is_file() {
+        if !nosuffix && !mustsuffix && p.is_file() {
             return Some(name.to_string());
         }
         return None;
@@ -41,7 +57,7 @@ pub(crate) fn locate(i: &mut Interp, name: &str) -> Option<String> {
     for d in dirs {
         if let Value::Str(s) = &d {
             let dir = PathBuf::from(s.borrow().as_str());
-            for c in candidates(&dir, name) {
+            for c in candidates(&dir, name, nosuffix, mustsuffix) {
                 if c.is_file() {
                     return Some(c.to_string_lossy().into_owned());
                 }
@@ -56,7 +72,7 @@ pub(crate) fn locate(i: &mut Interp, name: &str) -> Option<String> {
                 exedir.join("../share/remacs/lisp"),
                 PathBuf::from("lisp"),
             ] {
-                for c in candidates(&prefix, name) {
+                for c in candidates(&prefix, name, nosuffix, mustsuffix) {
                     if c.is_file() {
                         return Some(c.to_string_lossy().into_owned());
                     }
@@ -105,10 +121,19 @@ static EMBEDDED_LISP: &[(&str, &str)] = &[
     ("doctor", include_str!("../../lisp/doctor.el")),
     ("mpuz", include_str!("../../lisp/mpuz.el")),
     ("rx", include_str!("../../lisp/rx.el")),
-    ("tabulated-list", include_str!("../../lisp/tabulated-list.el")),
-    ("display-line-numbers", include_str!("../../lisp/display-line-numbers.el")),
+    (
+        "tabulated-list",
+        include_str!("../../lisp/tabulated-list.el"),
+    ),
+    ("tab-bar", include_str!("../../lisp/tab-bar.el")),
+    (
+        "display-line-numbers",
+        include_str!("../../lisp/display-line-numbers.el"),
+    ),
     ("buff-menu", include_str!("../../lisp/buff-menu.el")),
     ("icons", include_str!("../../lisp/icons.el")),
+    ("image", include_str!("../../lisp/image.el")),
+    ("flymake", include_str!("../../lisp/flymake.el")),
     ("warnings", include_str!("../../lisp/warnings.el")),
     ("ewoc", include_str!("../../lisp/ewoc.el")),
     ("ansi-color", include_str!("../../lisp/ansi-color.el")),
@@ -118,7 +143,6 @@ static EMBEDDED_LISP: &[(&str, &str)] = &[
     ("dabbrev", include_str!("../../lisp/dabbrev.el")),
     ("expand", include_str!("../../lisp/expand.el")),
     ("tq", include_str!("../../lisp/tq.el")),
-    ("let-alist", include_str!("../../lisp/let-alist.el")),
     ("tildify", include_str!("../../lisp/tildify.el")),
     ("timezone", include_str!("../../lisp/timezone.el")),
     ("cookie1", include_str!("../../lisp/cookie1.el")),
@@ -130,7 +154,10 @@ static EMBEDDED_LISP: &[(&str, &str)] = &[
     ("rot13", include_str!("../../lisp/rot13.el")),
     ("soundex", include_str!("../../lisp/soundex.el")),
     ("hex-util", include_str!("../../lisp/hex-util.el")),
-    ("password-cache", include_str!("../../lisp/password-cache.el")),
+    (
+        "password-cache",
+        include_str!("../../lisp/password-cache.el"),
+    ),
     ("indent-aux", include_str!("../../lisp/indent-aux.el")),
     ("underline", include_str!("../../lisp/underline.el")),
     ("studly", include_str!("../../lisp/studly.el")),
@@ -145,12 +172,16 @@ static EMBEDDED_LISP: &[(&str, &str)] = &[
     ("solitaire", include_str!("../../lisp/solitaire.el")),
     ("md4", include_str!("../../lisp/md4.el")),
     ("elide-head", include_str!("../../lisp/elide-head.el")),
-    ("external-completion", include_str!("../../lisp/external-completion.el")),
+    (
+        "external-completion",
+        include_str!("../../lisp/external-completion.el"),
+    ),
     ("case-table", include_str!("../../lisp/case-table.el")),
     ("chistory", include_str!("../../lisp/chistory.el")),
     ("midnight", include_str!("../../lisp/midnight.el")),
     ("cl-lib", include_str!("../../lisp/cl-lib.el")),
     ("cl-loaddefs", include_str!("../../lisp/cl-loaddefs.el")),
+    ("loaddefs", include_str!("../../lisp/loaddefs.el")),
     ("cl-print", include_str!("../../lisp/cl-print.el")),
     ("filenotify", include_str!("../../lisp/filenotify.el")),
     ("autorevert", include_str!("../../lisp/autorevert.el")),
@@ -184,7 +215,6 @@ static EMBEDDED_LISP: &[(&str, &str)] = &[
     ("mouse-drag", include_str!("../../lisp/mouse-drag.el")),
     ("lpr", include_str!("../../lisp/lpr.el")),
     ("loadhist", include_str!("../../lisp/loadhist.el")),
-    ("help-at-pt", include_str!("../../lisp/help-at-pt.el")),
     ("jka-cmpr-hook", include_str!("../../lisp/jka-cmpr-hook.el")),
     ("jka-compr", include_str!("../../lisp/jka-compr.el")),
     ("hl-line", include_str!("../../lisp/hl-line.el")),
@@ -195,10 +225,16 @@ static EMBEDDED_LISP: &[(&str, &str)] = &[
     ("window-x", include_str!("../../lisp/window-x.el")),
     ("xt-mouse", include_str!("../../lisp/xt-mouse.el")),
     ("tmm", include_str!("../../lisp/tmm.el")),
-    ("text-property-search", include_str!("../../lisp/text-property-search.el")),
+    (
+        "text-property-search",
+        include_str!("../../lisp/text-property-search.el"),
+    ),
     ("yank-media", include_str!("../../lisp/yank-media.el")),
     ("bs", include_str!("../../lisp/bs.el")),
-    ("editorconfig-fnmatch", include_str!("../../lisp/editorconfig-fnmatch.el")),
+    (
+        "editorconfig-fnmatch",
+        include_str!("../../lisp/editorconfig-fnmatch.el"),
+    ),
     (
         "editorconfig-core-handle",
         include_str!("../../lisp/editorconfig-core-handle.el"),
@@ -223,6 +259,13 @@ static EMBEDDED_LISP: &[(&str, &str)] = &[
     ("vc", include_str!("../../lisp/vc.el")),
     ("vc-dir", include_str!("../../lisp/vc-dir.el")),
     ("vc-git", include_str!("../../lisp/vc-git.el")),
+    ("proced", include_str!("../../lisp/proced.el")),
+    ("server", include_str!("../../lisp/server.el")),
+    ("wid-edit", include_str!("../../lisp/wid-edit.el")),
+    ("tree-widget", include_str!("../../lisp/tree-widget.el")),
+    ("recentf", include_str!("../../lisp/recentf.el")),
+    ("comint", include_str!("../../lisp/comint.el")),
+    ("compile", include_str!("../../lisp/compile.el")),
     ("epg-config", include_str!("../../lisp/epg-config.el")),
     ("array", include_str!("../../lisp/array.el")),
     ("dos-vars", include_str!("../../lisp/dos-vars.el")),
@@ -235,7 +278,6 @@ static EMBEDDED_LISP: &[(&str, &str)] = &[
     ("double", include_str!("../../lisp/double.el")),
     ("generator", include_str!("../../lisp/generator.el")),
     ("fileloop", include_str!("../../lisp/fileloop.el")),
-    ("files-x", include_str!("../../lisp/files-x.el")),
     (
         "display-fill-column-indicator",
         include_str!("../../lisp/display-fill-column-indicator.el"),
@@ -267,6 +309,7 @@ static EMBEDDED_LISP: &[(&str, &str)] = &[
     ("eieio-base", include_str!("../../lisp/eieio-base.el")),
     ("registry", include_str!("../../lisp/registry.el")),
     ("float-sup", include_str!("../../lisp/float-sup.el")),
+    ("map-ynp", include_str!("../../lisp/map-ynp.el")),
     ("benchmark", include_str!("../../lisp/benchmark.el")),
     ("helper", include_str!("../../lisp/helper.el")),
     ("page", include_str!("../../lisp/page.el")),
@@ -279,14 +322,23 @@ static EMBEDDED_LISP: &[(&str, &str)] = &[
     ("inline", include_str!("../../lisp/inline.el")),
     ("compat", include_str!("../../lisp/compat.el")),
     ("refill", include_str!("../../lisp/refill.el")),
-    ("word-wrap-mode", include_str!("../../lisp/word-wrap-mode.el")),
-    ("glyphless-mode", include_str!("../../lisp/glyphless-mode.el")),
+    (
+        "word-wrap-mode",
+        include_str!("../../lisp/word-wrap-mode.el"),
+    ),
+    (
+        "glyphless-mode",
+        include_str!("../../lisp/glyphless-mode.el"),
+    ),
     ("crm", include_str!("../../lisp/crm.el")),
     ("timeout", include_str!("../../lisp/timeout.el")),
     ("pixel-fill", include_str!("../../lisp/pixel-fill.el")),
     ("po", include_str!("../../lisp/po.el")),
     ("bibtex-style", include_str!("../../lisp/bibtex-style.el")),
-    ("emacs-authors-mode", include_str!("../../lisp/emacs-authors-mode.el")),
+    (
+        "emacs-authors-mode",
+        include_str!("../../lisp/emacs-authors-mode.el"),
+    ),
     ("ld-script", include_str!("../../lisp/ld-script.el")),
     ("m4-mode", include_str!("../../lisp/m4-mode.el")),
     ("bat-mode", include_str!("../../lisp/bat-mode.el")),
@@ -296,7 +348,10 @@ static EMBEDDED_LISP: &[(&str, &str)] = &[
     ("trace", include_str!("../../lisp/trace.el")),
     ("memory-report", include_str!("../../lisp/memory-report.el")),
     ("executable", include_str!("../../lisp/executable.el")),
-    ("generate-lisp-file", include_str!("../../lisp/generate-lisp-file.el")),
+    (
+        "generate-lisp-file",
+        include_str!("../../lisp/generate-lisp-file.el"),
+    ),
     ("debug-early", include_str!("../../lisp/debug-early.el")),
     ("rfc1843", include_str!("../../lisp/rfc1843.el")),
     ("ja-dic-utl", include_str!("../../lisp/ja-dic-utl.el")),
@@ -334,7 +389,10 @@ static EMBEDDED_LISP: &[(&str, &str)] = &[
     ("electric", include_str!("../../lisp/electric.el")),
     ("follow", include_str!("../../lisp/follow.el")),
     ("completion", include_str!("../../lisp/completion.el")),
-    ("completion-preview", include_str!("../../lisp/completion-preview.el")),
+    (
+        "completion-preview",
+        include_str!("../../lisp/completion-preview.el"),
+    ),
     ("glasses", include_str!("../../lisp/glasses.el")),
     ("dcl-mode", include_str!("../../lisp/dcl-mode.el")),
     ("cpp", include_str!("../../lisp/cpp.el")),
@@ -357,7 +415,6 @@ static EMBEDDED_LISP: &[(&str, &str)] = &[
     ("dns-mode", include_str!("../../lisp/dns-mode.el")),
     ("dns", include_str!("../../lisp/dns.el")),
     ("dunnet", include_str!("../../lisp/dunnet.el")),
-    ("editorconfig-core-handle", include_str!("../../lisp/editorconfig-core-handle.el")),
     ("epa-hook", include_str!("../../lisp/epa-hook.el")),
     ("eudc-vars", include_str!("../../lisp/eudc-vars.el")),
     ("format", include_str!("../../lisp/format.el")),
@@ -388,7 +445,6 @@ static EMBEDDED_LISP: &[(&str, &str)] = &[
     ("pgg-def", include_str!("../../lisp/pgg-def.el")),
     ("pgg-parse", include_str!("../../lisp/pgg-parse.el")),
     ("picture", include_str!("../../lisp/picture.el")),
-    ("proced", include_str!("../../lisp/proced.el")),
     ("ps-def", include_str!("../../lisp/ps-def.el")),
     ("refbib", include_str!("../../lisp/refbib.el")),
     ("rfc2368", include_str!("../../lisp/rfc2368.el")),
@@ -472,6 +528,7 @@ static EMBEDDED_LISP: &[(&str, &str)] = &[
     ("abbrev", include_str!("../../lisp/abbrev.el")),
     ("cconv", include_str!("../../lisp/cconv.el")),
     ("cus-face", include_str!("../../lisp/cus-face.el")),
+    ("cus-edit", include_str!("../../lisp/cus-edit.el")),
     ("ediff-hook", include_str!("../../lisp/ediff-hook.el")),
     ("eldoc", include_str!("../../lisp/eldoc.el")),
     ("mouse", include_str!("../../lisp/mouse.el")),
@@ -482,66 +539,6 @@ static EMBEDDED_LISP: &[(&str, &str)] = &[
     ("scroll-bar", include_str!("../../lisp/scroll-bar.el")),
     ("text-mode", include_str!("../../lisp/text-mode.el")),
     ("timer", include_str!("../../lisp/timer.el")),
-    ("comint", include_str!("../../lisp/comint.el")),
-    ("shell", include_str!("../../lisp/shell.el")),
-    ("ielm", include_str!("../../lisp/ielm.el")),
-    ("cmuscheme", include_str!("../../lisp/cmuscheme.el")),
-    ("locate", include_str!("../../lisp/locate.el")),
-    ("ispell", include_str!("../../lisp/ispell.el")),
-    ("smie", include_str!("../../lisp/smie.el")),
-    ("auth-source", include_str!("../../lisp/auth-source.el")),
-    ("sql", include_str!("../../lisp/sql.el")),
-    ("flyspell", include_str!("../../lisp/flyspell.el")),
-    ("prolog", include_str!("../../lisp/prolog.el")),
-    ("ruby-mode", include_str!("../../lisp/ruby-mode.el")),
-    ("perl-mode", include_str!("../../lisp/perl-mode.el")),
-    ("cperl-mode", include_str!("../../lisp/cperl-mode.el")),
-    ("icon", include_str!("../../lisp/icon.el")),
-    ("meta-mode", include_str!("../../lisp/meta-mode.el")),
-    ("modula2", include_str!("../../lisp/modula2.el")),
-    ("pascal", include_str!("../../lisp/pascal.el")),
-    ("simula", include_str!("../../lisp/simula.el")),
-    ("cfengine", include_str!("../../lisp/cfengine.el")),
-    ("dcl-mode", include_str!("../../lisp/dcl-mode.el")),
-    ("remember", include_str!("../../lisp/remember.el")),
-    ("wid-edit", include_str!("../../lisp/wid-edit.el")),
-    ("tree-widget", include_str!("../../lisp/tree-widget.el")),
-    ("server", include_str!("../../lisp/server.el")),
-    ("recentf", include_str!("../../lisp/recentf.el")),
-    ("map-ynp", include_str!("../../lisp/map-ynp.el")),
-    ("ruler-mode", include_str!("../../lisp/ruler-mode.el")),
-    ("cus-edit", include_str!("../../lisp/cus-edit.el")),
-    ("reporter", include_str!("../../lisp/reporter.el")),
-    ("reftex", include_str!("../../lisp/reftex.el")),
-    ("reftex-loaddefs", include_str!("../../lisp/reftex-loaddefs.el")),
-    ("octave", include_str!("../../lisp/octave.el")),
-    ("tex-mode", include_str!("../../lisp/tex-mode.el")),
-    ("texinfo", include_str!("../../lisp/texinfo.el")),
-    ("texinfo-loaddefs", include_str!("../../lisp/texinfo-loaddefs.el")),
-    ("allout", include_str!("../../lisp/allout.el")),
-    ("allout-widgets", include_str!("../../lisp/allout-widgets.el")),
-    ("lisp-mnt", include_str!("../../lisp/lisp-mnt.el")),
-    ("reftex-vars", include_str!("../../lisp/reftex-vars.el")),
-    ("cus-start", include_str!("../../lisp/cus-start.el")),
-    ("table", include_str!("../../lisp/table.el")),
-    ("quail", include_str!("../../lisp/quail.el")),
-    ("descr-text", include_str!("../../lisp/descr-text.el")),
-    ("cus-theme", include_str!("../../lisp/cus-theme.el")),
-    ("wid-browse", include_str!("../../lisp/wid-browse.el")),
-    ("cus-dep", include_str!("../../lisp/cus-dep.el")),
-    ("calculator", include_str!("../../lisp/calculator.el")),
-    ("hippie-exp", include_str!("../../lisp/hippie-exp.el")),
-    ("dired-aux", include_str!("../../lisp/dired-aux.el")),
-    ("so-long", include_str!("../../lisp/so-long.el")),
-    ("outline", include_str!("../../lisp/outline.el")),
-    ("foldout", include_str!("../../lisp/foldout.el")),
-    ("verilog-mode", include_str!("../../lisp/verilog-mode.el")),
-    ("grep", include_str!("../../lisp/grep.el")),
-    ("pcomplete", include_str!("../../lisp/pcomplete.el")),
-    ("tcl", include_str!("../../lisp/tcl.el")),
-    ("flymake-proc", include_str!("../../lisp/flymake-proc.el")),
-    ("flymake", include_str!("../../lisp/flymake.el")),
-    ("compile", include_str!("../../lisp/compile.el")),
     ("plstore", include_str!("../../lisp/plstore.el")),
     ("profiler", include_str!("../../lisp/profiler.el")),
     ("vcursor", include_str!("../../lisp/vcursor.el")),
@@ -571,8 +568,6 @@ static EMBEDDED_LISP: &[(&str, &str)] = &[
     ("bookmark", include_str!("../../lisp/bookmark.el")),
     ("char-fold", include_str!("../../lisp/char-fold.el")),
     ("select", include_str!("../../lisp/select.el")),
-    ("tab-bar", include_str!("../../lisp/tab-bar.el")),
-    ("image", include_str!("../../lisp/image.el")),
     ("newcomment", include_str!("../../lisp/newcomment.el")),
     ("json", include_str!("../../lisp/json.el")),
     ("sort", include_str!("../../lisp/sort.el")),
@@ -582,10 +577,156 @@ static EMBEDDED_LISP: &[(&str, &str)] = &[
     ("chart", include_str!("../../lisp/chart.el")),
     ("tar-mode", include_str!("../../lisp/tar-mode.el")),
     ("elisp-scope", include_str!("../../lisp/elisp-scope.el")),
+    (
+        "allout-widgets",
+        include_str!("../../lisp/allout-widgets.el"),
+    ),
+    ("allout", include_str!("../../lisp/allout.el")),
+    ("auth-source", include_str!("../../lisp/auth-source.el")),
+    ("calculator", include_str!("../../lisp/calculator.el")),
+    ("cmuscheme", include_str!("../../lisp/cmuscheme.el")),
+    ("cperl-mode", include_str!("../../lisp/cperl-mode.el")),
+    ("cus-dep", include_str!("../../lisp/cus-dep.el")),
+    ("cus-start", include_str!("../../lisp/cus-start.el")),
+    ("cus-theme", include_str!("../../lisp/cus-theme.el")),
+    ("descr-text", include_str!("../../lisp/descr-text.el")),
+    ("dired-aux", include_str!("../../lisp/dired-aux.el")),
+    ("dirtrack", include_str!("../../lisp/dirtrack.el")),
+    ("ezimage", include_str!("../../lisp/ezimage.el")),
+    ("files-x", include_str!("../../lisp/files-x.el")),
+    ("find-cmd", include_str!("../../lisp/find-cmd.el")),
+    ("flymake-proc", include_str!("../../lisp/flymake-proc.el")),
+    ("flyspell", include_str!("../../lisp/flyspell.el")),
+    ("foldout", include_str!("../../lisp/foldout.el")),
+    ("grep", include_str!("../../lisp/grep.el")),
+    ("hippie-exp", include_str!("../../lisp/hippie-exp.el")),
+    ("ielm", include_str!("../../lisp/ielm.el")),
+    (
+        "ietf-drums-date",
+        include_str!("../../lisp/ietf-drums-date.el"),
+    ),
+    ("iimage", include_str!("../../lisp/iimage.el")),
+    ("image-file", include_str!("../../lisp/image-file.el")),
+    ("isearchb", include_str!("../../lisp/isearchb.el")),
+    ("iso8601", include_str!("../../lisp/iso8601.el")),
+    ("ispell", include_str!("../../lisp/ispell.el")),
+    ("locate", include_str!("../../lisp/locate.el")),
+    ("modula2", include_str!("../../lisp/modula2.el")),
+    ("octave", include_str!("../../lisp/octave.el")),
+    ("outline", include_str!("../../lisp/outline.el")),
+    ("parse-time", include_str!("../../lisp/parse-time.el")),
+    ("pcomplete", include_str!("../../lisp/pcomplete.el")),
+    ("prolog", include_str!("../../lisp/prolog.el")),
+    ("ps-samp", include_str!("../../lisp/ps-samp.el")),
+    ("quail", include_str!("../../lisp/quail.el")),
+    (
+        "reftex-loaddefs",
+        include_str!("../../lisp/reftex-loaddefs.el"),
+    ),
+    ("reftex", include_str!("../../lisp/reftex.el")),
+    ("remember", include_str!("../../lisp/remember.el")),
+    ("ruby-mode", include_str!("../../lisp/ruby-mode.el")),
+    ("ruler-mode", include_str!("../../lisp/ruler-mode.el")),
+    ("shell", include_str!("../../lisp/shell.el")),
+    ("smie", include_str!("../../lisp/smie.el")),
+    ("so-long", include_str!("../../lisp/so-long.el")),
+    ("sql", include_str!("../../lisp/sql.el")),
+    ("table", include_str!("../../lisp/table.el")),
+    ("tcl", include_str!("../../lisp/tcl.el")),
+    ("tex-mode", include_str!("../../lisp/tex-mode.el")),
+    (
+        "texinfo-loaddefs",
+        include_str!("../../lisp/texinfo-loaddefs.el"),
+    ),
+    ("texinfo", include_str!("../../lisp/texinfo.el")),
+    ("thread", include_str!("../../lisp/thread.el")),
+    ("verilog-mode", include_str!("../../lisp/verilog-mode.el")),
+    ("wid-browse", include_str!("../../lisp/wid-browse.el")),
+    ("blessmail", include_str!("../../lisp/blessmail.el")),
+    ("shorthands", include_str!("../../lisp/shorthands.el")),
+    (
+        "image-converter",
+        include_str!("../../lisp/image-converter.el"),
+    ),
+    ("ps-print", include_str!("../../lisp/ps-print.el")),
+    (
+        "ps-print-loaddefs",
+        include_str!("../../lisp/ps-print-loaddefs.el"),
+    ),
+    ("printing", include_str!("../../lisp/printing.el")),
+    ("zeroconf", include_str!("../../lisp/zeroconf.el")),
+    ("dbus", include_str!("../../lisp/dbus.el")),
+    ("backtrace", include_str!("../../lisp/backtrace.el")),
+    ("appt", include_str!("../../lisp/appt.el")),
+    ("cal-bahai", include_str!("../../lisp/cal-bahai.el")),
+    ("cal-china", include_str!("../../lisp/cal-china.el")),
+    ("cal-coptic", include_str!("../../lisp/cal-coptic.el")),
+    ("cal-dst", include_str!("../../lisp/cal-dst.el")),
+    ("cal-french", include_str!("../../lisp/cal-french.el")),
+    ("cal-hebrew", include_str!("../../lisp/cal-hebrew.el")),
+    ("cal-html", include_str!("../../lisp/cal-html.el")),
+    ("cal-islam", include_str!("../../lisp/cal-islam.el")),
+    ("cal-iso", include_str!("../../lisp/cal-iso.el")),
+    ("cal-julian", include_str!("../../lisp/cal-julian.el")),
+    ("cal-loaddefs", include_str!("../../lisp/cal-loaddefs.el")),
+    ("cal-mayan", include_str!("../../lisp/cal-mayan.el")),
+    ("cal-menu", include_str!("../../lisp/cal-menu.el")),
+    ("cal-move", include_str!("../../lisp/cal-move.el")),
+    ("cal-persia", include_str!("../../lisp/cal-persia.el")),
+    ("cal-tex", include_str!("../../lisp/cal-tex.el")),
+    ("cal-x", include_str!("../../lisp/cal-x.el")),
+    ("calendar", include_str!("../../lisp/calendar.el")),
+    ("diary-lib", include_str!("../../lisp/diary-lib.el")),
+    (
+        "diary-loaddefs",
+        include_str!("../../lisp/diary-loaddefs.el"),
+    ),
+    (
+        "holiday-loaddefs",
+        include_str!("../../lisp/holiday-loaddefs.el"),
+    ),
+    ("holidays", include_str!("../../lisp/holidays.el")),
+    ("lunar", include_str!("../../lisp/lunar.el")),
+    ("solar", include_str!("../../lisp/solar.el")),
+    ("timeclock", include_str!("../../lisp/timeclock.el")),
+    ("todo-mode", include_str!("../../lisp/todo-mode.el")),
+    (
+        "use-package-bind-key",
+        include_str!("../../lisp/use-package-bind-key.el"),
+    ),
+    (
+        "use-package-core",
+        include_str!("../../lisp/use-package-core.el"),
+    ),
+    (
+        "use-package-delight",
+        include_str!("../../lisp/use-package-delight.el"),
+    ),
+    (
+        "use-package-diminish",
+        include_str!("../../lisp/use-package-diminish.el"),
+    ),
+    (
+        "use-package-ensure-system-package",
+        include_str!("../../lisp/use-package-ensure-system-package.el"),
+    ),
+    (
+        "use-package-ensure",
+        include_str!("../../lisp/use-package-ensure.el"),
+    ),
+    (
+        "use-package-jump",
+        include_str!("../../lisp/use-package-jump.el"),
+    ),
+    (
+        "use-package-lint",
+        include_str!("../../lisp/use-package-lint.el"),
+    ),
+    ("use-package", include_str!("../../lisp/use-package.el")),
 ];
 
 /// Embedded source for library NAME (with or without .el/.elc suffix).
-fn embedded(name: &str) -> Option<&'static str> {
+pub(crate) fn embedded(name: &str) -> Option<&'static str> {
     let stem = name
         .strip_suffix(".el")
         .or_else(|| name.strip_suffix(".elc"))
@@ -617,6 +758,15 @@ pub fn eval_file_script(i: &mut Interp, path: &str) -> EvalResult {
 }
 
 fn eval_file_lex(i: &mut Interp, path: &str, force_lex: bool) -> EvalResult {
+    eval_file_lex_dumped(i, path, force_lex, false)
+}
+
+fn eval_file_lex_dumped(
+    i: &mut Interp,
+    path: &str,
+    force_lex: bool,
+    dumped_like: bool,
+) -> EvalResult {
     let src = match std::fs::read_to_string(path) {
         Ok(s) => s,
         Err(e) => {
@@ -637,27 +787,25 @@ fn eval_file_lex(i: &mut Interp, path: &str, force_lex: bool) -> EvalResult {
             ));
         }
     };
-    // Track load-file-name / load-in-progress like Emacs does.
-    // GNU resolves the file's truename for `load-file-name' (e.g.
-    // /tmp -> /private/tmp on macOS); fall back to the absolutized
-    // path when canonicalization fails.
-    let canon = std::fs::canonicalize(path)
-        .map(|p| p.to_string_lossy().into_owned())
-        .unwrap_or_else(|_| {
-            if std::path::Path::new(path).is_absolute() {
-                path.to_string()
-            } else {
-                std::env::current_dir()
-                    .map(|d| d.join(path).to_string_lossy().into_owned())
-                    .unwrap_or_else(|_| path.to_string())
-            }
-        });
-    eval_src(i, &canon, &src, force_lex)
+    // Track load-file-name / load-in-progress like Emacs does.  GNU
+    // binds `load-file-name' to the filename `openp' located — the
+    // tried path itself, not its truename.
+    eval_src_opts(i, path, &src, force_lex, dumped_like)
 }
 
 /// Evaluate SRC as if loaded from file FILE (binds load-file-name,
 /// load-in-progress, lexical-binding cookie; runs after-load hooks).
 fn eval_src(i: &mut Interp, file: &str, src: &str, force_lex: bool) -> EvalResult {
+    eval_src_opts(i, file, src, force_lex, false)
+}
+
+fn eval_src_opts(
+    i: &mut Interp,
+    file: &str,
+    src: &str,
+    force_lex: bool,
+    dumped_like: bool,
+) -> EvalResult {
     let lfn = i.intern("load-file-name");
     let lip = i.intern("load-in-progress");
     let cll = i.intern("current-load-list");
@@ -699,10 +847,7 @@ fn eval_src(i: &mut Interp, file: &str, src: &str, force_lex: bool) -> EvalResul
         ));
         let dw = Value::Sym(i.intern("display-warning"));
         let lvl = Value::Sym(i.intern(":warning"));
-        if i
-            .apply(&dw, vec![ty, msg, lvl])
-            .is_err()
-        {
+        if i.apply(&dw, vec![ty, msg, lvl]).is_err() {
             // GNU's fallback when `display-warning' can't run yet.
             i.message(&format!(
                 "Missing \u{2018}lexical-binding\u{2019} cookie in {file:?}"
@@ -724,7 +869,7 @@ fn eval_src(i: &mut Interp, file: &str, src: &str, force_lex: bool) -> EvalResul
     // .elc files: functions defined while they load keep
     // `dumped_doc' docstring semantics.
     let was_dumped = i.loading_dumped;
-    i.loading_dumped |= file.starts_with("builtin:");
+    i.loading_dumped |= dumped_like || file.starts_with("builtin:");
     let r = eval_str_for_load(i, &src);
     i.loading_dumped = was_dumped;
     i.lexenv = saved_lexenv;
@@ -803,7 +948,31 @@ fn eval_str_for_load(i: &mut Interp, src: &str) -> EvalResult {
         match next {
             Some((form, end)) => {
                 pos = end;
-                last = eval_for_load(i, form)?;
+                match eval_for_load(i, form.clone()) {
+                    Ok(v) => last = v,
+                    Err(f) => {
+                        if std::env::var_os("REMACS_TRACE_ERR").is_some() {
+                            let fdesc = match &f {
+                                crate::lisp::Flow::Signal(s, d, _) => format!(
+                                    "signal {} {}",
+                                    i.prin1_to_string(s),
+                                    i.prin1_to_string(d).chars().take(120).collect::<String>()
+                                ),
+                                other => format!("{:?}", other),
+                            };
+                            eprintln!(
+                                "[load-err@{}] {} => {}",
+                                end,
+                                i.princ_to_string(&form)
+                                    .chars()
+                                    .take(120)
+                                    .collect::<String>(),
+                                fdesc
+                            );
+                        }
+                        return Err(f);
+                    }
+                }
             }
             None => return Ok(last),
         }
@@ -827,7 +996,10 @@ fn eval_for_load(i: &mut Interp, form: Value) -> EvalResult {
         }
         return Ok(last);
     }
-    let expanded = match crate::lisp::builtins::evalfn::macroexpand_all(i, &form) {
+    i.macroexp_call_depth += 1;
+    let expanded_result = crate::lisp::builtins::evalfn::macroexpand_all(i, &form);
+    i.macroexp_call_depth -= 1;
+    let expanded = match expanded_result {
         Ok(f) => f,
         // GNU's `internal-macroexpand-for-load' wraps expansion
         // failures: it re-signals (error "Eager macro-expansion
@@ -1028,20 +1200,64 @@ fn file_lexical_binding(src: &str) -> bool {
 
 /// Load library NAME; returns true if a file was found and loaded.
 pub(crate) fn load_library(i: &mut Interp, name: &str) -> Result<bool, crate::lisp::Flow> {
-    match locate(i, name) {
+    load_library_opts(i, name, false, false, true)
+}
+
+/// `load_library' honoring `load''s NOSUFFIX, MUST-SUFFIX, and
+/// NOMESSAGE arguments.  Like GNU, `Loading %s...' is echoed (through
+/// `message') before the file's forms run; ` (source)' marks files
+/// read from Lisp source rather than byte-compiled output.
+pub(crate) fn load_library_opts(
+    i: &mut Interp,
+    name: &str,
+    nosuffix: bool,
+    mustsuffix: bool,
+    nomessage: bool,
+) -> Result<bool, crate::lisp::Flow> {
+    let announce = |i: &mut Interp, file: &str| {
+        if nomessage {
+            return;
+        }
+        let fmt = if file.ends_with(".el") {
+            "Loading %s (source)..."
+        } else {
+            "Loading %s..."
+        };
+        let msg = i.intern("message");
+        let _ = i.apply(
+            &Value::Sym(msg),
+            vec![Value::string(fmt), Value::string(file)],
+        );
+    };
+    // A bundled library stands in for GNU's shipped .elc: its
+    // macroexpansion ran at byte-compile time, so the `gensym-counter'
+    // bumps our interpreted load performs must not leak into the
+    // session.  Save/restore it around the load.
+    let stem = name
+        .strip_suffix(".el")
+        .or_else(|| name.strip_suffix(".elc"))
+        .unwrap_or(name);
+    let bundled = embedded(stem).is_some();
+    let gc = i.intern("gensym-counter");
+    let saved_gc = bundled.then(|| i.symbol_value(gc));
+    let result = match locate_opts(i, name, nosuffix, mustsuffix) {
         Some(path) => {
-            eval_file(i, &path)?;
-            Ok(true)
+            announce(i, &path);
+            eval_file_lex_dumped(i, &path, false, bundled).map(|_| true)
         }
         // Fall back to the embedded copy of a built-in library, so that
         // autoloads work even when the lisp/ dir isn't reachable by path.
         None => match embedded(name) {
             Some(src) => {
+                announce(i, name);
                 let virtual_path = format!("builtin:{}", name);
-                eval_src(i, &virtual_path, src, false)?;
-                Ok(true)
+                eval_src(i, &virtual_path, src, false).map(|_| true)
             }
             None => Ok(false),
         },
+    };
+    if let Some(v) = saved_gc {
+        i.obarray.symbol_mut(gc).value = v;
     }
+    result
 }

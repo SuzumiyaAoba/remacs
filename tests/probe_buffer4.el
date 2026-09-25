@@ -21,7 +21,7 @@
   (remove-text-properties 1 3 '(face))
   (set-text-properties 4 6 '(custom val))
   (propertize "x" 'face 'bold)
-  (buffer-substring-with-properties 1 5)
+  (condition-case e (buffer-substring-with-properties 1 5) (error e))
   (substring-no-properties "abc")
   (remove-list-of-text-properties 1 10 '(help-echo custom)))
 

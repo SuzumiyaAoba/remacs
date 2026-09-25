@@ -229,6 +229,15 @@ if it's an autoloaded macro."
 ;; `(require 'macroexp)' in `push'/gv.el is a no-op.  Mirror that.
 (provide 'macroexp)
 
+(defvar remacs-coding-system-priorities
+  '(utf-8 iso-2022-jp japanese-iso-8bit japanese-shift-jis
+    iso-2022-jp-2 iso-2022-7bit iso-latin-1 iso-2022-8bit-ss2
+    emacs-mule raw-text in-is13194-devanagari utf-8-auto
+    utf-8-with-signature utf-16 utf-16be-with-signature
+    utf-16le-with-signature utf-16be utf-16le chinese-big5 undecided)
+  "Coding systems ordered by priority, one representative per category.
+Updated by `set-coding-system-priority'; seeded to GNU's -Q state.")
+
 (defvar remacs-coding-system-plists
   '(
     (adobe-standard-encoding . (:ascii-compatible-p nil :category coding-category-charset :name adobe-standard-encoding :docstring "Adobe `standard' encoding for PostScript" :coding-type charset :mnemonic 42 :charset-list (adobe-standard-encoding) :mime-charset adobe-standard-encoding))
@@ -525,6 +534,9 @@ if it's an autoloaded macro."
     (utf-8 . (:ascii-compatible-p t :category coding-category-utf-8 :name utf-8 :docstring "UTF-8 (no signature (BOM))" :coding-type utf-8 :mnemonic 85 :charset-list (unicode) :mime-charset utf-8))
     (utf-8-auto . (:ascii-compatible-p nil :category coding-category-utf-8-auto :name utf-8-auto :docstring "UTF-8 (auto-detect signature (BOM))" :coding-type utf-8 :mnemonic 85 :charset-list (unicode) :bom (utf-8-with-signature . utf-8)))
     (utf-8-emacs . (:ascii-compatible-p t :category coding-category-utf-8 :name utf-8-emacs :docstring "Support for all Emacs characters (including non-Unicode characters)." :coding-type utf-8 :mnemonic 85 :charset-list (emacs)))
+    ;; GNU defines emacs-internal as an alias of utf-8-emacs-unix; it
+    ;; shares the utf-8-emacs plist verbatim.
+    (emacs-internal . (:ascii-compatible-p t :category coding-category-utf-8 :name utf-8-emacs :docstring "Support for all Emacs characters (including non-Unicode characters)." :coding-type utf-8 :mnemonic 85 :charset-list (emacs)))
     (utf-8-hfs . (:ascii-compatible-p t :category coding-category-utf-8 :name utf-8-hfs :docstring "UTF-8 based coding system for macOS HFS file names.
     The singleton characters in HFS normalization exclusion will not
     be decomposed." :coding-type utf-8 :mnemonic 85 :charset-list (unicode) :post-read-conversion ucs-normalize-hfs-nfd-post-read-conversion :pre-write-conversion ucs-normalize-hfs-nfd-pre-write-conversion decomposed-characters t))
@@ -3375,6 +3387,11 @@ sentence (see Info node `(elisp) Documentation Tips')."
   "List all timers in a buffer.
 
 \(fn &optional IGNORE-AUTO NONCONFIRM)" t)
+(autoload 'define-skeleton "skeleton" "Define a user-configurable COMMAND that enters a statement skeleton.
+DOCUMENTATION is that of the command.
+SKELETON is as defined under `skeleton-insert'.
+
+\(fn COMMAND DOCUMENTATION &rest SKELETON)" nil t)
 (autoload 'copyright "copyright"
   "Insert a copyright by $ORGANIZATION notice at cursor." t)
 (autoload 'copyright-fix-years "copyright"
@@ -3580,356 +3597,10 @@ Called from a program, takes three args; START, END and STRING.
 (fn START END STRING)" t nil)
 (autoload 'yank-rectangle "rect" "Yank the last killed rectangle with upper left corner at point." t nil)
 ;; `(custom-autoload 'msb-mode "msb" nil)' inlined: the function is
-;; defined directly by this prelude, so only the variable cell would
-;; differ — GNU marks it for `custom' handling at dump time.
-
-;; GNU files.el defvar (verbatim): the default value of
-;; `vc-ignore-dir-regexp' (vc-hooks.el, dumped) references it.
-(defvar locate-dominating-stop-dir-regexp
-  "\\`\\(?:[\\/][\\/][^\\/]+[\\/]\\|/\\(?:net\\|afs\\|\\.\\.\\.\\)/\\)\\'"
-  "Regexp of directory names that stop the search in `locate-dominating-file'.
-Any directory whose name matches this regexp will be treated like
-a kind of root directory by `locate-dominating-file', which will stop its
-search when it bumps into it.
-The default regexp prevents fruitless and time-consuming attempts to find
-special files in directories in which file names are interpreted as host names,
-or mount points potentially requiring authentication as a different user.")
-
-;; GNU subr.el definition-prefix registry (verbatim): loaddefs-style
-;; `(register-definition-prefixes ...)' calls evaluate at load time.
-(defvar definition-prefixes (make-hash-table :test 'equal)
-  "Hash table mapping prefixes to the files in which they're used.
-This can be used to automatically fetch not-yet-loaded definitions.
-More specifically, if there is a value of the form (FILES...) for
-a string PREFIX it means that the FILES define variables or functions
-with names starting with PREFIX.")
-
-(defun register-definition-prefixes (file prefixes)
-  "Register that FILE uses PREFIXES."
-  (dolist (prefix prefixes)
-    (puthash prefix (cons file (gethash prefix definition-prefixes))
-             definition-prefixes)))
-
-;; GNU files-x.el autoloads (loaddefs.el, verbatim).
-;;; Generated autoloads from files-x.el
-
-(autoload 'add-file-local-variable "files-x"
-"Add file-local VARIABLE with its VALUE to the Local Variables list.
-
-This command deletes all existing settings of VARIABLE (except `mode'
-and `eval') and adds a new file-local VARIABLE with VALUE to the
-Local Variables list.
-
-If there is no Local Variables list in the current file buffer,
-then this function adds it at the end of the file, with the first
-line containing the string `Local Variables:' and the last line
-containing the string `End:'.
-
-For adding local variables on the first line of a file, for example
-for settings like `lexical-binding, which must be specified there,
-use the `add-file-local-variable-prop-line' command instead.
-
-If optional variable INTERACTIVE is non-nil, display a message telling
-the user how to make the new value take effect.
-
-(fn VARIABLE VALUE &optional INTERACTIVE)" t)
-(autoload 'delete-file-local-variable "files-x"
-"Delete all settings of file-local VARIABLE from the Local Variables list.
-
-If optional variable INTERACTIVE is non-nil, display a message telling
-the user how to make the new value take effect.
-
-(fn VARIABLE &optional INTERACTIVE)" t)
-(autoload 'add-file-local-variable-prop-line "files-x"
-"Add file-local VARIABLE with its VALUE to the -*- line.
-
-This command deletes all existing settings of VARIABLE (except `mode'
-and `eval') and adds a new file-local VARIABLE with VALUE to
-the -*- line at the beginning of the file.
-
-If there is no -*- line at the beginning of the current file buffer
-then this function adds it.
-
-To add variables to the Local Variables list at the end of the file,
-use the `add-file-local-variable' command instead.
-
-If optional variable INTERACTIVE is non-nil, display a message telling
-the user how to make the new value take effect.
-
-(fn VARIABLE VALUE &optional INTERACTIVE)" t)
-(autoload 'delete-file-local-variable-prop-line "files-x"
-"Delete all settings of file-local VARIABLE from the -*- line.
-
-If optional variable INTERACTIVE is non-nil, display a message telling
-the user how to make the new value take effect.
-
-(fn VARIABLE &optional INTERACTIVE)" t)
-(autoload 'add-dir-local-variable "files-x"
-"Add directory-local VARIABLE with its VALUE and MODE to .dir-locals.el.
-
-With a prefix argument, prompt for the file to modify.
-
-When called from Lisp, FILE may be the expanded name of the dir-locals file
-where to add VARIABLE.
-
-(fn MODE VARIABLE VALUE &optional FILE)" t)
-(autoload 'delete-dir-local-variable "files-x"
-"Delete all MODE settings of dir-local VARIABLE from .dir-locals.el.
-
-With a prefix argument, prompt for the file to modify.
-
-When called from Lisp, FILE may be the expanded name of the dir-locals file
-from where to delete VARIABLE.
-
-(fn MODE VARIABLE &optional FILE)" t)
-(autoload 'copy-file-locals-to-dir-locals "files-x"
-"Copy file-local variables to .dir-locals.el.
-
-With a prefix argument, prompt for the file to modify.
-
-When called from Lisp, FILE may be the expanded name of the dir-locals file
-where to copy the file-local variables.
-
-(fn &optional FILE)" t)
-(autoload 'copy-dir-locals-to-file-locals "files-x"
-"Copy directory-local variables to the Local Variables list." t)
-(autoload 'copy-dir-locals-to-file-locals-prop-line "files-x"
-"Copy directory-local variables to the -*- line." t)
-(defvar enable-connection-local-variables t
-"Non-nil means enable use of connection-local variables.")
-(autoload 'connection-local-set-profiles "files-x"
-"Add PROFILES for CRITERIA.
-CRITERIA is a plist identifying a connection and the application
-using this connection, see `connection-local-criteria-alist'.
-PROFILES are the names of connection profiles (a symbol).
-
-When a connection to a remote server is opened and CRITERIA
-matches to that server, the connection-local variables from
-PROFILES are applied to the corresponding process buffer.  The
-variables for a connection profile are defined using
-`connection-local-set-profile-variables'.
-
-(fn CRITERIA &rest PROFILES)")
-(autoload 'connection-local-set-profile-variables "files-x"
-"Map the symbol PROFILE to a list of variable settings.
-VARIABLES is a list that declares connection-local variables for
-the connection profile.  An element in VARIABLES is an alist
-whose elements are of the form (VAR . VALUE).
-
-When a connection to a remote server is opened, the server's
-connection profiles are found.  A server may be assigned a
-connection profile using `connection-local-set-profiles'.  Then
-variables are set in the server's process buffer according to the
-VARIABLES list of the connection profile.  The list is processed
-in order.
-
-(fn PROFILE VARIABLES)")
-(autoload 'connection-local-update-profile-variables "files-x"
-"Update the variable settings for PROFILE in-place.
-VARIABLES is a list that declares connection-local variables for
-the connection profile.  An element in VARIABLES is an alist
-whose elements are of the form (VAR . VALUE).
-
-Unlike `connection-local-set-profile-variables' (which see), this
-function preserves the values of any existing variable
-definitions that aren't listed in VARIABLES.
-
-(fn PROFILE VARIABLES)")
-(autoload 'hack-connection-local-variables "files-x"
-"Read connection-local variables according to CRITERIA.
-Store the connection-local variables in buffer local
-variable `connection-local-variables-alist'.
-
-This does nothing if `enable-connection-local-variables' is nil.
-
-(fn CRITERIA)")
-(autoload 'hack-connection-local-variables-apply "files-x"
-"Apply connection-local variables identified by CRITERIA.
-Other local variables, like file-local and dir-local variables,
-will not be changed.
-
-(fn CRITERIA)")
-(autoload 'with-connection-local-variables "files-x"
-"Apply connection-local variables according to `default-directory'.
-Execute BODY, and unwind connection-local variables.
-
-(fn &rest BODY)" nil t)
-(autoload 'with-connection-local-application-variables "files-x"
-"Apply connection-local variables for APPLICATION in `default-directory'.
-Execute BODY, and unwind connection-local variables.
-
-(fn APPLICATION &rest BODY)" nil t)
-(autoload 'with-connection-local-variables-1 "files-x"
-"Apply connection-local variables according to `default-directory'.
-Call BODY-FUN with no args, and then unwind connection-local variables.
-
-(fn BODY-FUN)")
-(autoload 'setq-connection-local "files-x"
-"Set each VARIABLE connection-locally to VALUE.
-
-When `connection-local-profile-name-for-setq' is set, assign each
-variable's value on that connection profile, and set that profile
-for `connection-local-criteria'.  You can use this in combination
-with `with-connection-local-variables', as in
-
-  (with-connection-local-variables
-    (setq-connection-local VARIABLE VALUE))
-
-If there's no connection-local profile to use, just set the
-variables normally, as with `setq'.
-
-The variables are literal symbols and should not be quoted.  The
-second VALUE is not computed until after the first VARIABLE is
-set, and so on; each VALUE can use the new value of variables set
-earlier in the `setq-connection-local'.  The return value of the
-`setq-connection-local' form is the value of the last VALUE.
-
-(fn [VARIABLE VALUE]...)" nil t)
-(autoload 'connection-local-p "files-x"
-"Non-nil if VARIABLE has a connection-local binding in `default-directory'.
-`default-directory' must be a remote file name.
-If APPLICATION is nil, the value of
-`connection-local-default-application' is used.
-
-(fn VARIABLE &optional APPLICATION)" nil t)
-(autoload 'connection-local-value "files-x"
-"Return connection-local VARIABLE for APPLICATION in `default-directory'.
-`default-directory' must be a remote file name.
-If APPLICATION is nil, the value of
-`connection-local-default-application' is used.
-If VARIABLE does not have a connection-local binding, the return
-value is the default binding of the variable.
-
-(fn VARIABLE &optional APPLICATION)" nil t)
-(autoload 'path-separator "files-x"
-"The connection-local value of `path-separator'.")
-(autoload 'null-device "files-x"
-"The connection-local value of `null-device'.")
-(autoload 'exec-suffixes "files-x"
-"The connection-local value of `exec-suffixes'.")
-(register-definition-prefixes "files-x" '("connection-local-" "dir-locals-to-string" "modify-" "read-"))
-
-;; GNU loaddefs.el vc-git stub (verbatim): a defun that lazily loads
-;; vc-git when a `.git' root exists — `vc-responsible-backend' (called by
-;; `project-try-vc') invokes it while probing `vc-handled-backends'.
-(defun vc-git-registered (file)
-  "Return non-nil if FILE is registered with git."
-  (if (vc-find-root file ".git")       ; Short cut.
-      (progn
-        (load "vc-git" nil t)
-        (vc-git-registered file))))
-
-;; GNU skeleton.el autoloads (loaddefs.el, verbatim) — `define-skeleton'
-;; is a macro autoload used by copyright.el and other libraries.
-(autoload 'define-skeleton "skeleton"
-"Define a user-configurable COMMAND that enters a statement skeleton.
-DOCUMENTATION is that of the command.
-SKELETON is as defined under `skeleton-insert'.
-
-(fn COMMAND DOCUMENTATION &rest SKELETON)" nil t)
-(function-put 'define-skeleton 'doc-string-elt 2)
-(function-put 'define-skeleton 'autoload-macro 'expand)
-(autoload 'skeleton-proxy-new "skeleton"
-"Insert SKELETON.
-Prefix ARG allows wrapping around words or regions (see `skeleton-insert').
-If no ARG was given, but the region is visible, ARG defaults to -1 depending
-on `skeleton-autowrap'.  An ARG of  M-0  will prevent this just for once.
-This command can also be an abbrev expansion (3rd and 4th columns in
-\\[edit-abbrevs]  buffer: \"\"  command-name).
-
-Optional second argument STR may also be a string which will be the value
-of `str' whereas the skeleton's interactor is then ignored.
-
-(fn SKELETON &optional STR ARG)")
-(autoload 'skeleton-insert "skeleton"
-"Insert the complex statement skeleton SKELETON describes very concisely.
-
-With optional second argument REGIONS, wrap first interesting point
-(`_') in skeleton around next REGIONS words, if REGIONS is positive.
-If REGIONS is negative, wrap REGIONS preceding interregions into first
-REGIONS interesting positions (successive `_'s) in skeleton.
-
-An interregion is the stretch of text between two contiguous marked
-points.  If you marked A B C [] (where [] is the cursor) in
-alphabetical order, the 3 interregions are simply the last 3 regions.
-But if you marked B A [] C, the interregions are B-A, A-[], []-C.
-
-The optional third argument STR, if specified, is the value for the
-variable `str' within the skeleton.  When this is non-nil, the
-interactor gets ignored, and this should be a valid skeleton element.
-
-When done with skeleton, but before going back to `_'-point, add
-a newline (unless `skeleton-end-newline' is nil or `_'-point is at end
-of line), and run the hook `skeleton-end-hook'.
-
-SKELETON is made up as (INTERACTOR ELEMENT ...).  INTERACTOR may be nil if
-not needed, a prompt-string or an expression for complex read functions.
-
-If ELEMENT is a string or a character it gets inserted (see also
-`skeleton-transformation-function').  Other possibilities are:
-
-	\\n	go to next line and indent according to mode, unless
-                this is the first/last element of a skeleton and point
-                is at bol/eol
-	_	interesting point, interregion here
-	-	interesting point, no interregion interaction, overrides
-		interesting point set by _
-	>	indent line (or interregion if > _) according to major mode
-	@	add position to `skeleton-positions'
-	&	do next ELEMENT if previous moved point
-	|	do next ELEMENT if previous didn't move point
-	-NUM	delete NUM preceding characters (see `skeleton-untabify')
-	resume:	skipped, continue here if quit is signaled
-	nil	skipped
-
-After termination, point will be positioned at the last occurrence of -
-or at the first occurrence of _ or at the end of the inserted text.
-
-Note that \\n as the last element of the skeleton only inserts a
-newline if not at eol.  If you want to unconditionally insert a newline
-at the end of the skeleton, use \"\\n\" instead.  Likewise with \\n
-as the first element when at bol.
-
-Further elements can be defined via `skeleton-further-elements'.
-ELEMENT may itself be a SKELETON with an INTERACTOR.  The user is prompted
-repeatedly for different inputs.  The SKELETON is processed as often as
-the user enters a non-empty string.  \\[keyboard-quit] terminates skeleton insertion, but
-continues after `resume:' and positions at `_' if any.  If INTERACTOR in
-such a subskeleton is a prompt-string which contains a \".. %s ..\" it is
-formatted with `skeleton-subprompt'.  Such an INTERACTOR may also be a list
-of strings with the subskeleton being repeated once for each string.
-
-Quoted Lisp expressions are evaluated for their side-effects.
-Other Lisp expressions are evaluated and the value treated as above.
-Note that expressions may not return t since this implies an
-endless loop.  Modes can define other symbols by locally setting them
-to any valid skeleton element.  The following local variables are
-available:
-
-	str	first time: read a string according to INTERACTOR
-		then: insert previously read string once more
-	help	help-form during interaction with the user or nil
-	input	initial input (string or cons with index) while reading str
-	v1, v2	local variables for memorizing anything you want
-
-(fn SKELETON &optional REGIONS STR)")
-(autoload 'skeleton-pair-insert-maybe "skeleton"
-"Insert the character you type ARG times.
-
-With no ARG, if `skeleton-pair' is non-nil, pairing can occur.  If the region
-is visible the pair is wrapped around it depending on `skeleton-autowrap'.
-Else, if `skeleton-pair-on-word' is non-nil or we are not before or inside a
-word, and if `skeleton-pair-filter-function' returns nil, pairing is performed.
-Pairing is also prohibited if we are right after a quoting character
-such as backslash.
-
-If a match is found in `skeleton-pair-alist', that is inserted, else
-the defaults are used.  These are (), [], {}, <> and (grave
-accent, apostrophe) for the paired ones, and the same character
-twice for the others.
-
-(fn ARG)" t)
-
+;; defined only later in this file.
+(defvar msb-mode nil)
+(put 'msb-mode 'custom-autoload t)
+(put 'msb-mode 'custom-loads (cons "msb" (get 'msb-mode 'custom-loads)))
 
 
 ;; GNU jka-compr.el autoload cookies (loaddefs.el): file-name handlers
@@ -4291,15 +3962,231 @@ With a non `-' prefix argument, print output into current buffer."
                              #'eval-expression--debug #'ignore)))
      (elisp--eval-last-sexp eval-last-sexp-arg-internal))))
 
-(defun save-some-buffers (&optional arg)
-  "Save some modified file-visiting buffers."
+;; GNU window.c DEFVAR_LISP: consulted by `other-window-for-scrolling'
+;; and rebound by `map-y-or-n-p' when action-alist entries display a
+;; buffer for scrolling.
+(defvar other-window-scroll-buffer nil
+  "If this is a live buffer, \\`C-M-v' should scroll its window.")
+
+;; GNU files.el defvar: `vc-hooks' defcustoms reference it at
+;; startup, before any library file is loaded.
+(defvar locate-dominating-stop-dir-regexp
+  "\\`\\(?:[\\/][\\/][^\\/]+[\\/]\\|/\\(?:net\\|afs\\|\\.\\.\\.\\)/\\)\\'"
+  "Regexp of directory names that stop the search in `locate-dominating-file'.
+Any directory whose name matches this regexp will be treated like
+a kind of root directory by `locate-dominating-file', which will stop its
+search when it bumps into it.
+The default regexp prevents fruitless and time-consuming attempts to find
+special files in directories in which file names are interpreted as host names,
+or mount points potentially requiring authentication as a different user.")
+
+;; GNU files.el (the `save-some-buffers' supporting machinery).
+(defvar save-some-buffers-action-alist
+  (list
+   (list ?\M-~
+         (lambda (buf)
+           (with-current-buffer buf
+             (set-buffer-modified-p nil))
+           ;; Return t so we don't ask about BUF again.
+           t)
+         "skip this buffer and mark it unmodified")
+   (list ?\C-r
+         (lambda (buf)
+           (if (not enable-recursive-minibuffers)
+               (progn (display-buffer buf)
+                      (setq other-window-scroll-buffer buf))
+             ;; Like 'view-buffer' but ignore 'special' mode-class
+             ;; because 'q' should call 'exit-action' in any case:
+             (switch-to-buffer buf)
+             (view-mode-enter nil (lambda (_) (exit-recursive-edit)))
+             (recursive-edit))
+           ;; Return nil to ask about BUF again.
+           nil)
+         "view this buffer")
+   (list ?\C-f
+         (lambda (buf)
+           (funcall save-some-buffers--switch-window-callback buf)
+           (setq quit-flag t))
+         "view this buffer and quit")
+   (list ?d
+         (lambda (buf)
+           (if (null (buffer-file-name buf))
+               (message "Not applicable: no file")
+             (let ((diffbuf (diff-no-select (buffer-file-name buf) buf
+                                            nil 'noasync)))
+               (if (not enable-recursive-minibuffers)
+                   (progn (display-buffer diffbuf)
+                          (setq other-window-scroll-buffer diffbuf))
+                 ;; Like 'view-buffer' but ignore 'special' mode-class
+                 ;; because 'q' should call 'exit-action' in any case:
+                 (switch-to-buffer diffbuf)
+                 (view-mode-enter nil (lambda (_) (exit-recursive-edit)))
+                 (recursive-edit))))
+           ;; Return nil to ask about BUF again.
+           nil)
+         "view changes in this buffer"))
+  "ACTION-ALIST argument used in call to `map-y-or-n-p'.")
+(put 'save-some-buffers-action-alist 'risky-local-variable t)
+
+(defun save-some-buffers-root ()
+  "A predicate to check whether the buffer is under the project root directory.
+Can be used as a value of `save-some-buffers-default-predicate'
+to save buffers only under the project root or in subdirectories
+of the directory that was default during command invocation."
+  (let ((root (or (and (featurep 'project) (project-current)
+                       (fboundp 'project-root)
+                       (project-root (project-current)))
+                  default-directory)))
+    (lambda () (file-in-directory-p default-directory root))))
+(put 'save-some-buffers-root 'save-some-buffers-function t)
+
+(defun files--buffers-needing-to-be-saved (pred)
+  "Return a list of buffers to save according to PRED.
+See `save-some-buffers' for PRED values."
+  (let ((buffers
+         (mapcar (lambda (buffer)
+                   (if
+                       ;; Note that killing some buffers may kill others via
+                       ;; hooks (e.g. Rmail and its viewing buffer).
+                       (and (buffer-live-p buffer)
+	                    (buffer-modified-p buffer)
+                            (not (buffer-base-buffer buffer))
+                            (or
+                             (buffer-file-name buffer)
+                             (with-current-buffer buffer
+                               (or (eq buffer-offer-save 'always)
+                                   (and pred buffer-offer-save
+                                        (> (buffer-size) 0)))))
+                            (or (not (functionp pred))
+                                (with-current-buffer buffer
+                                  (funcall pred))))
+                       buffer))
+                 (buffer-list))))
+    (delq nil buffers)))
+
+(defvar save-some-buffers-functions nil
+  "Functions to be run by `save-some-buffers' after saving the buffers.
+These functions should accept one mandatory and one optional
+argument, and they can be called in two \"modes\", depending on
+the first argument.  If the first argument is `query', then the
+function should return non-nil if there is something to be
+saved (but it should not actually save anything).
+
+If the first argument is something else, then the function should
+save according to the value of the second argument, which is the
+ARG argument with which `save-some-buffers' was called.
+
+The main purpose of these functions is to save stuff that is kept
+in variables (rather than in buffers).")
+
+(defun save-some-buffers (&optional arg pred)
+  "Save some modified file-visiting buffers.  Asks user about each one.
+You can answer \\`y' or \\`SPC' to save, \\`n' or \\`DEL' not to save,
+\\`M-~' not to save and also mark the buffer as unmodified, \\`C-r'
+to look at the buffer in question with `view-buffer' before
+deciding, \\`d' to view the differences using
+`diff-buffer-with-file', \\`!' to save the buffer and all remaining
+buffers without any further querying, \\`.' to save only the
+current buffer and skip the remaining ones and \\`q' or \\`RET' to exit
+the function without saving any more buffers.  \\`C-h' displays a
+help message describing these options.
+
+This command first saves any buffers where `buffer-save-without-query' is
+non-nil, without asking.
+
+Optional argument ARG (interactively, prefix argument) non-nil means save
+all with no questions.
+Optional second argument PRED determines which buffers are considered:
+If PRED is nil, all the file-visiting buffers are considered.
+If PRED is t, then certain non-file buffers will also be considered.
+If PRED is a function, it is called with no argument in each buffer and
+should return non-nil if that buffer should be considered.
+PRED defaults to the value of `save-some-buffers-default-predicate'.
+
+See `save-some-buffers-action-alist' if you want to
+change the additional actions you can take on files.
+
+The functions in `save-some-buffers-functions' will be called
+after saving the buffers."
   (interactive "P")
-  (mapc (lambda (b)
-          (with-current-buffer b
-            (when (and buffer-file-name (buffer-modified-p))
-              (save-buffer))))
-        (buffer-list))
-  t)
+  (unless pred
+    (setq pred
+          ;; Allow `pred' to be a function that returns a predicate
+          ;; with lexical bindings in its original environment (bug#46374).
+          (if (and (symbolp save-some-buffers-default-predicate)
+                   (get save-some-buffers-default-predicate
+                        'save-some-buffers-function))
+              (funcall save-some-buffers-default-predicate)
+            save-some-buffers-default-predicate)))
+  (let* ((switched-buffer nil)
+         (save-some-buffers--switch-window-callback
+          (lambda (buffer)
+            (setq switched-buffer buffer)))
+         queried autosaved-buffers
+	 files-done inhibit-message)
+    (unwind-protect
+        (save-window-excursion
+          (dolist (buffer (buffer-list))
+	    ;; First save any buffers that we're supposed to save
+	    ;; unconditionally.  That way the following code won't ask
+	    ;; about them.
+	    (with-current-buffer buffer
+	      (when (and buffer-save-without-query (buffer-modified-p))
+	        (push (buffer-name) autosaved-buffers)
+	        (save-buffer))))
+          ;; Ask about those buffers that merit it,
+          ;; and record the number thus saved.
+          (setq files-done
+	        (map-y-or-n-p
+                 (lambda (buffer)
+                   (if arg
+                       t
+                     (setq queried t)
+                     (if (buffer-file-name buffer)
+                         (if (or
+                              (equal (buffer-name buffer)
+                                     (file-name-nondirectory
+                                      (buffer-file-name buffer)))
+                              (string-match
+                               (concat "\\<"
+                                       (regexp-quote
+                                        (file-name-nondirectory
+                                         (buffer-file-name buffer)))
+                                       "<[^>]*>\\'")
+                               (buffer-name buffer)))
+                             ;; The buffer name is similar to the file
+                             ;; name.
+                             (format "Save file %s? "
+                                     (buffer-file-name buffer))
+                           ;; The buffer and file names are dissimilar;
+                           ;; display both.
+                           (format "Save file %s (buffer %s)? "
+                                   (buffer-file-name buffer)
+                                   (buffer-name buffer)))
+                       ;; No file name.
+                       (format "Save buffer %s? " (buffer-name buffer)))))
+                 (lambda (buffer)
+                   (with-current-buffer buffer
+                     (save-buffer)))
+                 (files--buffers-needing-to-be-saved pred)
+	         '("buffer" "buffers" "save")
+	         save-some-buffers-action-alist))
+          ;; Allow other things to be saved at this time, like abbrevs.
+          (dolist (func save-some-buffers-functions)
+            (setq inhibit-message (or (funcall func nil arg) inhibit-message)))
+          (or queried (> files-done 0) inhibit-message
+	      (cond
+	       ((null autosaved-buffers)
+                (when (called-interactively-p 'any)
+                  (files--message "(No files need saving)")))
+	       ((= (length autosaved-buffers) 1)
+	        (files--message "(Saved %s)" (car autosaved-buffers)))
+	       (t
+	        (files--message
+                 "(Saved %d files: %s)" (length autosaved-buffers)
+                 (mapconcat 'identity autosaved-buffers ", "))))))
+      (when switched-buffer
+        (pop-to-buffer-same-window switched-buffer)))))
 
 (defun save-buffers-kill-emacs (&optional arg)
   "Offer to save each buffer, then kill Emacs."
@@ -5649,6 +5536,24 @@ Leave one space or none, according to the context."
   (define-key s [67108913] 'digit-argument)
   (define-key s [67108912] 'digit-argument)
   s))
+
+;; GNU subr.el defvars: the prefix keymaps are also bound as variables
+;; (tab-bar.el keymap-sets into `tab-prefix-map'; loaddefs-derived
+;; `define-key' forms target `ctl-x-map' and `esc-map').
+(defvar tab-prefix-map (make-sparse-keymap)
+  "Keymap for tab-bar related commands.")
+
+(defvar ctl-x-map (symbol-function 'Control-X-prefix)
+  "Default keymap for \\`C-x' commands.
+The normal global definition of the character \\`C-x' indirects to this
+keymap.")
+;; GNU subr.el: C-x t is the tab-bar prefix.
+(define-key ctl-x-map [116] tab-prefix-map)
+
+(defvar esc-map (symbol-function 'ESC-prefix)
+  "Default keymap for \\`ESC' (meta) commands.
+The normal global definition of the character ESC indirects to this keymap.")
+
 (fset 'facemenu-menu
   '(autoload "facemenu" nil nil keymap))
 ;; Menu-item defs whose symbols carry keymaps (yank-menu et al).
@@ -6869,6 +6774,19 @@ customize the variable `user-emacs-directory-warning'."
 (autoload 'savehist-mode "savehist"
   "Toggle saving of minibuffer history (Savehist mode)." t)
 
+;; recentf.el autoloads (GNU loaddefs binds the mode defvar and
+;; registers recentf-open plus the `recentf' alias).
+(defvar recentf-mode nil)
+;; `(custom-autoload ...)' is defined only later in this file; inline
+;; its effect here: mark the option and register the custom-load.
+(put 'recentf-mode 'custom-autoload t)
+(put 'recentf-mode 'custom-loads (cons "recentf" (get 'recentf-mode 'custom-loads)))
+(autoload 'recentf-open "recentf"
+  "Prompt for FILE in `recentf-list' and visit it." t)
+(defalias 'recentf #'recentf-open)
+(autoload 'recentf-mode "recentf"
+  "Toggle keeping track of opened files (Recentf mode)." t)
+
 ;; saveplace.el autoloads: GNU loaddefs binds the mode variable
 ;; (the :variable of `save-place-local-mode') as a custom-autoload
 ;; and registers both mode functions.
@@ -6924,35 +6842,26 @@ customize the variable `user-emacs-directory-warning'."
 
 ;; ---------- nadvice place forms ----------
 
-;; `add-function'/`remove-function' are GNU macros over generalized
-;; places; PLACE is normalized to code evaluating to (KIND . ARGS)
-;; and `cl--add-function'/`cl--remove-function' do the wrap/dispatch.
-(defun cl--advice-place-code (place)
-  (cond
-   ((symbolp place) (list 'list ''var (list 'quote place)))
-   ((eq (car-safe place) 'local) (list 'list ''var (nth 1 place)))
-   ((eq (car-safe place) 'var) (list 'list ''var (nth 1 place)))
-   ((eq (car-safe place) 'function) (list 'list ''function (nth 1 place)))
-   ((eq (car-safe place) 'symbol-function)
-    (list 'list ''function (nth 1 place)))
-   ((eq (car-safe place) 'default-value)
-    (list 'list ''var (nth 1 place)))
-   ((eq (car-safe place) 'get)
-    (list 'list ''get (nth 1 place) (nth 2 place)))
-   ;; GNU: a quoted place reaches a `(setf quote)' setter and fails.
-   ((eq (car-safe place) 'quote) '(quote (setf-quote)))
-   (t (list 'list ''bad (list 'quote place)))))
+;; `advice--normalize-place' is defined again with the rest of nadvice
+;; below; the early `define-minor-mode' bodies that contain
+;; `add-function' expand before reaching that copy while the prelude is
+;; interpreted.
+(defun advice--normalize-place (place)
+  (cond ((eq 'local (car-safe place)) `(advice--buffer-local ,@(cdr place)))
+        ((eq 'var (car-safe place))   (nth 1 place))
+        ((symbolp place)              `(default-value ',place))
+        (t place)))
 
 (defmacro add-function (how place function &optional props)
-  "Add FUNCTION to the function stored in the generalized PLACE.
-HOW is one of the `advice-add' locations; PROPS is an alist that may
-contain `name' and `depth'."
-  (list 'cl--add-function how (cl--advice-place-code place)
-        function props))
+  "Add a piece of advice on the function stored at PLACE."
+  `(advice--add-function ,how (gv-ref ,(advice--normalize-place place))
+                         ,function ,props))
 
 (defmacro remove-function (place function)
   "Remove FUNCTION (or the named advice) from the function in PLACE."
-  (list 'cl--remove-function (cl--advice-place-code place) function))
+  (gv-letplace (getter setter) (advice--normalize-place place)
+    (macroexp-let2 nil new `(advice--remove-function ,getter ,function)
+      `(unless (eq ,new ,getter) ,(funcall setter new)))))
 
 (defmacro define-advice (symbol args &rest body)
   "Define an advice and add it to the function named SYMBOL."
@@ -6979,7 +6888,9 @@ contain `name' and `depth'."
 (defun advice-mapc (fun symbol)
   "Apply FUN to each advice added to SYMBOL.
 FUN is called with the advice function and its property alist."
-  (advice-function-mapc fun symbol))
+  (advice-function-mapc
+   fun (let ((f (symbol-function symbol)))
+         (if (eq 'macro (car-safe f)) (cdr f) f))))
 
 ;; ---------- mode keymaps ----------
 
@@ -7488,11 +7399,15 @@ argument 1 (enable) or -1 (disable), like minor-mode functions do."
 
 ;;; declare face
 
-(defun face-spec-set (face spec &optional _frame)
-  "Override the face attributes of FACE according to SPEC.
+(defun face-spec-set (face spec &optional spec-type)
+  "Set the FACE's spec SPEC, define FACE, and recalculate its attributes.
 SPEC is a list of (DISPLAY ATTRS) entries; this implementation
-applies the attributes of the `t' entries, falling back to `default'."
-  (put face 'face-override-spec spec)
+applies the attributes of the `t' entries, falling back to `default'.
+SPEC-TYPE is the spec slot to set (default `face-override-spec')."
+  (or spec-type (setq spec-type 'face-override-spec))
+  (unless (internal-lisp-face-p face)
+    (internal-make-lisp-face face))
+  (put face spec-type spec)
   (let ((default-attrs nil) (applied nil))
     (dolist (entry spec)
       ;; GNU face-spec-choose: ATTRS is (cdr entry); a one-element cdr
@@ -7570,13 +7485,6 @@ Optional argument DOC is a doc string describing the theme."
 (defun custom-theme-p (theme)
   "Return non-nil if THEME is a valid custom theme name."
   (memq theme custom-known-themes))
-
-(defun custom-theme-name-valid-p (name)
-  "Return t if NAME is a valid name for a Custom theme, nil otherwise.
-NAME should be a symbol."
-  (and (not (memq name '(nil user changed)))
-       (symbolp name)
-       (not (string= "" (symbol-name name)))))
 
 (defun custom-check-theme (theme)
   "Check THEME for validity.
@@ -7918,6 +7826,30 @@ Like `customize-set-variable', but records VALUE as `saved-value'."
         (list 'defvar var value docstring)
         (list 'make-variable-buffer-local (list 'quote var))))
 
+;; GNU files.el buffer-local flag for `save-some-buffers'.
+(defvar-local buffer-save-without-query nil
+  "Non-nil means `save-some-buffers' should save this buffer without asking.")
+
+;; GNU files.el defcustom used by `save-some-buffers'.
+(defcustom save-some-buffers-default-predicate nil
+  "Default predicate for `save-some-buffers'.
+
+This allows you to stop `save-some-buffers' from asking
+about certain files that you'd usually rather not save.
+
+This function is called (with no parameters) from the buffer to
+be saved.  When the function's symbol has the property
+`save-some-buffers-function', the higher-order function is supposed
+to return a predicate used to check buffers."
+  :group 'auto-save
+  ;; FIXME nil should not be a valid option, let alone the default,
+  ;; eg so that add-function can be used.
+  :type '(choice (const :tag "Default" nil)
+                 (function :tag "Only in subdirs of current project"
+                           save-some-buffers-root)
+                 (function :tag "Custom function"))
+  :version "26.1")
+
 ;; GNU's `display-fill-column-indicator' (xdisp.c buffer-local var):
 ;; default nil, automatically buffer-local when set (verified).
 (defvar-local display-fill-column-indicator nil
@@ -7973,71 +7905,6 @@ See Info node `Displaying Boundaries' for details.")
   `(prog1
        (defun ,name ,arglist ,@body)
      (put ',name 'byte-optimizer 'byte-compile-inline-expand)))
-
-;; GNU files.el defcustom (verbatim): `auto-revert-notify-exclude-dir-regexp'
-;; (autorevert.el, pulled in by vc-git) evaluates it as its default.
-(defcustom mounted-file-systems
-  (if (memq system-type '(windows-nt cygwin))
-      "^//[^/]+/"
-    ;; regexp-opt.el is not dumped into emacs binary.
-    ;;(concat
-    ;; "^" (regexp-opt '("/afs/" "/media/" "/mnt" "/net/" "/tmp_mnt/"))))
-    "^\\(?:/\\(?:afs/\\|m\\(?:edia/\\|nt\\)\\|\\(?:ne\\|tmp_mn\\)t/\\)\\)")
-  "File systems that ought to be mounted."
-  :group 'files
-  :version "26.1"
-  :require 'regexp-opt
-  :type 'regexp)
-
-;; GNU frame.c `frame-internal-parameters' (DEFVAR_LISP): the non-X11
-;; value — `frameset.el' (loaded via vc-git) iterates it at load time.
-(defvar frame-internal-parameters
-  '(undeleted cloned-from frame-id name parent-id window-id)
-  "Frame parameters specific to every frame.")
-
-;; GNU subr.el/bindings.el keymap variables: the prefix maps already
-;; exist in the function cells of the prefix commands built above —
-;; bind the variable cells GNU exposes (`vc-hooks' builds `vc-prefix-map'
-;; under `ctl-x-map', bindings.el wires `esc-map', etc.).
-(defvar esc-map (symbol-function 'ESC-prefix)
-  "Default keymap for ESC (meta) commands.")
-(defvar ctl-x-4-map (symbol-function 'ctl-x-4-prefix)
-  "Keymap for subcommands of \`C-x 4'.")
-(defvar ctl-x-5-map (symbol-function 'ctl-x-5-prefix)
-  "Keymap for frame commands.")
-(defvar tab-prefix-map (make-sparse-keymap)
-  "Keymap for tab-bar related commands.")
-(defvar ctl-x-map (symbol-function 'Control-X-prefix)
-  "Default keymap for \`C-x' commands.")
-(defvar help-map (symbol-function 'help-command)
-  "Keymap for characters following \`C-h'.")
-(defvar mode-specific-map (symbol-function 'mode-specific-command-prefix)
-  "Keymap for characters following \`C-c'.")
-;; Terminal translation maps (DEFVAR_KBOARD/DEFVAR_LISP in GNU
-;; keyboard.c): plain variables here — bound so libraries can install
-;; translations lazily.
-(defvar function-key-map (make-sparse-keymap)
-  "Keymap for ASCII sequences sent by some terminals.")
-(defvar key-translation-map (make-sparse-keymap)
-  "Keymap for interpreting keyboard input as key sequences.")
-(defvar input-decode-map (make-sparse-keymap)
-  "Keymap for decoding terminal input.")
-(defvar local-function-key-map (make-sparse-keymap)
-  "Terminal-dependent `function-key-map' copy.")
-;; Prefix maps GNU bindings.el defines (`defvar-keymap') — bound to
-;; their prefix positions in the parent maps.
-(defvar ctl-x-r-map (make-sparse-keymap)
-  "Keymap for subcommands of \`C-x r'.")
-(define-key ctl-x-map "r" ctl-x-r-map)
-(defvar narrow-map (make-sparse-keymap)
-  "Keymap for narrowing commands.")
-(define-key ctl-x-map "n" narrow-map)
-(defvar goto-map (make-sparse-keymap)
-  "Keymap for navigation commands.")
-(define-key esc-map "g" goto-map)
-(defvar search-map (make-sparse-keymap)
-  "Keymap for search commands.")
-(define-key esc-map "s" search-map)
 
 ;; ---------- subr.el / subr-x.el cluster (GNU-dumped) ----------
 
@@ -8759,7 +8626,10 @@ modify the table."
 ;; ---------- GNU display tables ----------
 ;; xdisp.c DEFVAR_LISP: the global glyphless-char display table; modes
 ;; (e.g. tabulated-list-mode) derive buffer-local tables parented to
-;; it via `set-char-table-parent'.
+;; it via `set-char-table-parent'.  GNU's C table carries one extra
+;; slot (the `no-font' method); declare it before `make-char-table'
+;; so the slot exists.
+(put 'glyphless-char-display 'char-table-extra-slots 1)
 (defvar glyphless-char-display
   (make-char-table 'glyphless-char-display nil)
   "Char-table defining glyphs for characters that have no font.")
@@ -11469,16 +11339,23 @@ Also see `completion-category-overrides' and `completion-category-get'.")
   (put obsolete-name 'byte-obsolete-variable
        (purecopy (list current-name when access-type))))
 
-(defun make-obsolete (obsolete-name current-name when &optional access-type)
+(defun byte-run--constant-obsolete-warning (obsolete-name)
+  (if (memq obsolete-name '(nil t))
+      (error "Can't make `%s' obsolete; did you forget a quote mark?"
+             obsolete-name)))
+
+(defun make-obsolete (obsolete-name current-name when)
   "Make the byte-compiler warn that OBSOLETE-NAME is obsolete.
 The warning will say that CURRENT-NAME should be used instead.
 If CURRENT-NAME is a string, that is the `replacement' text.
 WHEN should be a string indicating when the function
-was first made obsolete, for example a date or a release number.
-ACCESS-TYPE if nonnil should specify the kind of access that will trigger
-  obsolescence warnings; it can be either `get' or `set'."
+was first made obsolete, for example a date or a release number."
+  (byte-run--constant-obsolete-warning obsolete-name)
   (put obsolete-name 'byte-obsolete-info
-       (purecopy (list current-name when access-type))))
+       ;; The second entry used to hold the `byte-compile' handler, but
+       ;; is not used any more nowadays.
+       (list current-name nil when))
+  obsolete-name)
 
 ;; GNU defaults: (basic partial-completion emacs22).
 (setq completion-styles '(basic partial-completion emacs22))
@@ -11602,12 +11479,6 @@ fails PRED."
 (defun all (pred list)
   "Non-nil if PRED is true for all elements in LIST."
   (not (drop-while pred list)))
-
-(defun second (list) "Return the second element of LIST." (car (cdr list)))
-(defun third (list) "Return the third element of LIST." (car (cdr (cdr list))))
-(defun fourth (list)
-  "Return the fourth element of LIST."
-  (car (cdr (cdr (cdr list)))))
 
 (defmacro pushnew (newelt place &rest keys)
   "Add NEWELT to the list stored in the generalized variable PLACE.
@@ -12332,6 +12203,29 @@ include as `display-sort-function' in completion metadata."
   "History list symbol to add minibuffer values to.
 Each call of `read-from-minibuffer' or `read-string' adds to
 the value of the variable specified by this variable.")
+
+;; DEFVAR_LISP in GNU's readpass.c (bound at dump time).
+(defvar password-word-equivalents
+  '("password" "passcode" "passphrase" "pass phrase" "pin"
+    "decryption key" "encryption key"
+    "암호" "パスワード" "ପ୍ରବେଶ ସଙ୍କେତ" "ពាក្យសម្ងាត់"
+    "adgangskode" "contraseña" "contrasenya" "geslo" "hasło" "heslo"
+    "iphasiwedi" "jelszó" "lösenord" "lozinka" "mật khẩu"
+    "mot de passe" "parola" "pasahitza" "passord" "passwort"
+    "pasvorto" "salasana" "senha" "slaptažodis" "wachtwoord"
+    "كلمة السر" "ססמה" "лозинка" "пароль" "गुप्तशब्द" "शब्दकूट"
+    "પાસવર્ડ" "సంకేతపదము" "ਪਾਸਵਰਡ" "ಗುಪ್ತಪದ" "கடவுச்சொல்"
+    "അടയാളവാക്ക്" "গুপ্তশব্দ" "পাসওয়ার্ড" "රහස්පදය" "密码" "密碼")
+  "List of words equivalent to \"password\".
+This is used by Shell mode and other parts of Emacs to recognize
+password prompts, including prompts in languages other than
+English.  Different case choices should not be assumed to be
+included; callers should bind `case-fold-search' to t.")
+
+;; DEFVAR_LISP in GNU's readpass.c — ?:, FULLWIDTH COLON, SMALL COLON,
+;; VERTICAL COLON, KHMER CAMNUC PII KUUH.
+(defvar password-colon-equivalents '(?: ?： ?﹕ ?︓ ?៖)
+  "List of characters equivalent to trailing colon in \"password\" prompts.")
 
 (defvar minibuffer-completion-base nil
   "The base for the current completion.
@@ -15366,8 +15260,6 @@ When enabled, actual binary text editing is done via `overwrite-mode'."
 (autoload 'global-eldoc-mode "eldoc" "Global eldoc." t)
 (define-globalized-minor-mode global-visual-line-mode visual-line-mode
   (lambda () (visual-line-mode 1)))
-(define-globalized-minor-mode global-auto-revert-mode auto-revert-mode
-  (lambda () (auto-revert-mode 1)))
 
 ;; Plain commands that GNU defines at startup.
 (defun toggle-frame-maximized (&optional frame)
@@ -15964,10 +15856,25 @@ Keywords supported: :test :test-not :key :if :if-not :count :start :end
 
 (defalias 'any 'member-if)
 
-(defun cl-check-type (val type &optional string)
-  "Signal `wrong-type-argument' unless VAL is of TYPE."
-  (unless (cl-typep val type)
-    (signal 'wrong-type-argument (list type val string))))
+;; GNU cl-macs.el: `cl-check-type' is a macro — FORM and TYPE are
+;; source expressions, not evaluated values.
+(defmacro cl-check-type (form type &optional string)
+  "Verify that FORM is of type TYPE; signal an error if not.
+STRING is an optional description of the desired type.
+
+Hint: To check the type of an object, use `cl-type-of'.
+To define new types, see `cl-deftype'."
+  (declare (debug (place cl-type-spec &optional stringp)))
+  (and (or (not (macroexp-compiling-p))
+	   (< cl--optimize-speed 3) (= cl--optimize-safety 3))
+       (macroexp-let2 macroexp-copyable-p temp form
+         `(progn (or (cl-typep ,temp ',type)
+                     (signal 'wrong-type-argument
+                             (list ,(or string `',(if (eq 'satisfies
+                                                          (car-safe type))
+                                                      (cadr type) type))
+                                   ,temp ',form)))
+                 nil))))
 
 (defmacro cl-assert (form &optional show-args string &rest args)
   "Signal an error unless FORM is non-nil."
@@ -16722,7 +16629,6 @@ Accumulation refers to the `cl--loop-list-acc' and
               (t `(when ,e (throw 'cl--loop nil))))
              forms)))
          ((memq kw '(collect collecting append appending nconc nconcing
-                     concat concating vconcat vconcating
                      sum counting count maximize maximizing minimize
                      minimizing))
           (let* ((e (nth (1+ i) clauses))
@@ -16731,37 +16637,41 @@ Accumulation refers to the `cl--loop-list-acc' and
                              ((memq kw '(nconc nconcing)) 'nconc)
                              ((memq kw '(sum counting)) 'sum)
                              ((eq kw 'count) 'count)
-                             ((memq kw '(concat concating)) 'concat)
-                             ((memq kw '(vconcat vconcating)) 'vconcat)
                              ((memq kw '(maximize maximizing)) 'max)
-                             (t 'min))))
+                             (t 'min)))
+                 (into nil))
             (setq i (+ i 2))
-            (when (eq (nth i clauses) 'into) (setq i (+ i 2)))
-            (push kind kinds)
-            (push
-             (cond
-              ((eq kind 'collect) `(push ,e cl--loop-list-acc))
-              ((eq kind 'append)
-               `(setq cl--loop-list-acc
-                      (nconc cl--loop-list-acc (append ,e nil))))
-              ((eq kind 'nconc)
-               `(setq cl--loop-list-acc (nconc cl--loop-list-acc ,e)))
-              ((eq kind 'sum)
-               `(setq cl--loop-num-acc (+ cl--loop-num-acc ,e)))
-              ((eq kind 'count)
-               `(when ,e (setq cl--loop-num-acc (1+ cl--loop-num-acc))))
-              ((eq kind 'concat)
-               `(setq cl--loop-vec-acc
-                      (concat cl--loop-vec-acc ,e)))
-              ((eq kind 'vconcat)
-               `(setq cl--loop-vec-acc
-                      (vconcat cl--loop-vec-acc ,e)))
-              (t `(setq cl--loop-ext-acc
-                        (if cl--loop-ext-acc
-                            (,(if (eq kind 'max) 'max 'min)
-                             cl--loop-ext-acc ,e)
-                          ,e))))
-             forms)))
+            (when (eq (nth i clauses) 'into)
+              (setq into (nth (1+ i) clauses) i (+ i 2))
+              (unless (assq into cl--loop--into-vars)
+                (push (cons into (memq kind '(sum count)))
+                      cl--loop--into-vars)))
+            ;; A named `into' accumulator doesn't determine the loop's
+            ;; implicit return value.
+            (unless into (push kind kinds))
+            (let ((lacc (or into 'cl--loop-list-acc))
+                  (nacc (or into 'cl--loop-num-acc))
+                  (xacc (or into 'cl--loop-ext-acc)))
+              (push
+               (cond
+                ((eq kind 'collect)
+                 (if into
+                     `(setq ,lacc (nconc ,lacc (list ,e)))
+                   `(push ,e ,lacc)))
+                ((eq kind 'append)
+                 `(setq ,lacc (nconc ,lacc (append ,e nil))))
+                ((eq kind 'nconc)
+                 `(setq ,lacc (nconc ,lacc ,e)))
+                ((eq kind 'sum)
+                 `(setq ,nacc (+ ,nacc ,e)))
+                ((eq kind 'count)
+                 `(when ,e (setq ,nacc (1+ ,nacc))))
+                (t `(setq ,xacc
+                          (if ,xacc
+                              (,(if (eq kind 'max) 'max 'min)
+                               ,xacc ,e)
+                            ,e))))
+               forms))))
          ((eq kw 'return)
           (push `(throw 'cl--loop ,(nth (1+ i) clauses)) forms)
           (setq i (+ i 2)))
@@ -16812,10 +16722,15 @@ conditional."
     (maphash (lambda (k v) (push (cons k v) acc)) table)
     (nreverse acc)))
 
+(defvar cl--loop--into-vars nil
+  "Alist of (VAR . NUMERICP) for named `cl-loop' accumulators, bound
+dynamically during expansion.")
+
 (defun cl--loop-expand (clauses)
   (let ((inits nil) (initially nil) (pretests nil) (pre nil)
         (steps nil) (body nil) (finally nil) (finret nil)
         (kinds nil) (i 0) (n (length clauses)))
+    (setq cl--loop--into-vars nil)
     (while (< i n)
       (let ((kw (nth i clauses)))
         (cond
@@ -17032,8 +16947,7 @@ conditional."
               (push (nth i clauses) finally)
               (setq i (1+ i)))))
          ((memq kw '(do doing collect collecting append appending
-                    nconc nconcing concat concating vconcat vconcating
-                    sum counting count maximize
+                    nconc nconcing sum counting count maximize
                     maximizing minimize minimizing return
                     thereis always never))
           (let ((a (cl--loop-action clauses i)))
@@ -17046,7 +16960,9 @@ conditional."
                   i (1+ i))))))
     `(let* ,(append inits
                     '((cl--loop-list-acc nil) (cl--loop-num-acc 0)
-                      (cl--loop-ext-acc nil) (cl--loop-vec-acc nil)))
+                      (cl--loop-ext-acc nil))
+                    (mapcar (lambda (v) (list (car v) (if (cdr v) 0 nil)))
+                            cl--loop--into-vars))
        (catch 'cl--loop
          (cl-block nil
            ,@(nreverse initially)
@@ -17063,8 +16979,6 @@ conditional."
                 'cl--loop-list-acc)
                ((or (memq 'sum kinds) (memq 'count kinds))
                 'cl--loop-num-acc)
-               ((memq 'vconcat kinds) '(or cl--loop-vec-acc []))
-               ((memq 'concat kinds) '(or cl--loop-vec-acc ""))
                ((or (memq 'always kinds) (memq 'never kinds)) t)
                ((or (memq 'max kinds) (memq 'min kinds))
                 'cl--loop-ext-acc)
@@ -19356,6 +19270,9 @@ See `event-start' for a description of the value returned."
       (goto-char (posn-point position))))
 
 ;; ---------- mode machinery ----------
+;; `define-derived-mode' is the loaddefs autoload (GNU derived.el) —
+;; the first mode definition below resolves it.
+
 
 (defmacro define-derived-mode (variant parent name &optional docstring
                                        &rest body)
@@ -23920,9 +23837,10 @@ never matches anything."
 This is useful as a placeholder when the correct regexp is to be
 determined at run time.")
 
-;; GNU lisp-mode.el (preloaded): symbol regexp + Imenu generic
-;; expression for Lisp modes.  `(rx lisp-mode-symbol)' expands to the
-;; literal regexp below on GNU (rx.el is not ported yet).
+;; GNU lisp-mode.el (preloaded): rx definition + symbol regexp +
+;; Imenu generic expression for Lisp modes.
+(put 'lisp-mode-symbol 'rx-definition
+     '((+ (| (syntax word) (syntax symbol) (: "\\" nonl)))))
 (eval-and-compile
   (defconst lisp-mode-symbol-regexp "\\(?:\\w\\|\\s_\\|\\\\.\\)+"
     "Regexp matching a Lisp symbol."))
@@ -30591,250 +30509,13 @@ if non-nil, restricts the buffers that are checked."
   #'redisplay--highlight-overlay-function
   "Function to move the region-highlight overlay.")
 
-;; hl-line.el (GNU port).
-(defvar-local hl-line-overlay nil
-  "Overlay used by Hl-Line mode to highlight the current line.")
-(defvar-local global-hl-line-overlay nil
-  "Overlay used by Global-Hl-Line mode to highlight the current line.")
-(defvar global-hl-line-overlays nil
-  "Active overlays used by Global-Hl-Line mode in all buffers.")
-
-(defface hl-line
-  '((t :inherit highlight :extend t))
-  "Default face for highlighting the current line in Hl-Line mode."
-  :version "22.1"
-  :group 'hl-line)
-
-(defface hl-line-nonselected
-  '((t :inherit hl-line :extend t))
-  "Face for highlighting the line with non-selected window's point."
-  :version "31.1"
-  :group 'hl-line)
-
-(defcustom hl-line-face 'hl-line
-  "Face with which to highlight the current line in Hl-Line mode."
-  :type 'face
-  :group 'hl-line
-  :set (lambda (symbol value)
-         (set symbol value)
-         (dolist (buffer (buffer-list))
-           (with-current-buffer buffer
-             (when (overlayp hl-line-overlay)
-               (overlay-put hl-line-overlay 'face hl-line-face))
-             (when (overlayp global-hl-line-overlay)
-               (overlay-put global-hl-line-overlay 'face hl-line-face))))))
-
-(defcustom hl-line-sticky-flag t
-  "Non-nil means the HL-Line mode highlight appears in all windows."
-  :type 'boolean
-  :version "22.1"
-  :group 'hl-line)
-
-(defcustom global-hl-line-sticky-flag nil
-  "Non-nil means the Global HL-Line mode highlight appears in all windows."
-  :type '(choice (const :tag "Disable" nil)
-                 (const :tag "Enable for buffer in multiple windows" t)
-                 (const :tag "Enable and update in all windows" all)
-                 (const :tag "Highlight window-point lines" window))
-  :version "24.1"
-  :group 'hl-line)
-
+;; Vars that GNU binds at dump time (cursor-face-highlight-mode comes
+;; from simple.el, pre-redisplay-functions is a C var); the rest of
+;; hl-line.el stays autoload-only like GNU.
 (defvar cursor-face-highlight-mode nil)
 (make-variable-buffer-local 'cursor-face-highlight-mode)
 (defvar pre-redisplay-functions nil)
 
-(defcustom global-hl-line-buffers
-  '(not (or (lambda (b) (buffer-local-value 'cursor-face-highlight-mode b))
-            (lambda (b) (string-match-p "\\` " (buffer-name b)))
-            minibufferp))
-  "Whether the Global HL-Line mode should be enabled in a buffer."
-  :type '(buffer-predicate :tag "Predicate for `buffer-match-p'")
-  :version "31.1")
-
-(defvar hl-line-range-function nil
-  "If non-nil, function to call to return highlight range.")
-
-(defvar hl-line-overlay-buffer nil
-  "Most recently visited buffer in which Hl-Line mode is enabled.")
-
-(defcustom hl-line-overlay-priority -50
-  "Priority used on the overlay used by hl-line."
-  :type 'integer
-  :version "28.1"
-  :group 'hl-line)
-
-(define-minor-mode hl-line-mode
-  "Toggle highlighting of the current line (Hl-Line mode)."
-  :group 'hl-line
-  (when (and global-hl-line-mode
-             (eq arg 'toggle))
-    (setq hl-line-mode nil)
-    (setq-local global-hl-line-mode nil)
-    (global-hl-line-unhighlight))
-  (if hl-line-mode
-      (progn
-        (add-hook 'change-major-mode-hook #'hl-line-unhighlight nil t)
-        (hl-line-highlight)
-        (setq hl-line-overlay-buffer (current-buffer))
-        (add-hook 'post-command-hook #'hl-line-highlight nil t))
-    (remove-hook 'post-command-hook #'hl-line-highlight t)
-    (hl-line-unhighlight)
-    (remove-hook 'change-major-mode-hook #'hl-line-unhighlight t)))
-
-(defun hl-line-make-overlay ()
-  (let ((ol (make-overlay (point) (point))))
-    (overlay-put ol 'priority hl-line-overlay-priority)
-    (overlay-put ol 'face hl-line-face)
-    ol))
-
-(defun hl-line-highlight ()
-  "Activate the Hl-Line overlay on the current line."
-  (if hl-line-mode
-      (progn
-        (unless (overlayp hl-line-overlay)
-          (setq hl-line-overlay (hl-line-make-overlay)))
-        (overlay-put hl-line-overlay
-                     'window (unless hl-line-sticky-flag (selected-window)))
-        (hl-line-move hl-line-overlay)
-        (hl-line-maybe-unhighlight))
-    (hl-line-unhighlight)))
-
-(defun hl-line-unhighlight ()
-  "Deactivate the Hl-Line overlay on the current line."
-  (when (overlayp hl-line-overlay)
-    (delete-overlay hl-line-overlay)
-    (setq hl-line-overlay nil)))
-
-(defun hl-line-maybe-unhighlight ()
-  "Maybe deactivate the Hl-Line overlay on the current line."
-  (let ((hlob hl-line-overlay-buffer)
-        (curbuf (current-buffer)))
-    (when (and (buffer-live-p hlob)
-               (not hl-line-sticky-flag)
-               (not (eq curbuf hlob))
-               (not (minibufferp)))
-      (with-current-buffer hlob
-        (hl-line-unhighlight)))
-    (when (and (overlayp hl-line-overlay)
-               (eq (overlay-buffer hl-line-overlay) curbuf))
-      (setq hl-line-overlay-buffer curbuf))))
-
-(define-minor-mode global-hl-line-mode
-  "Toggle line highlighting in all buffers (Global Hl-Line mode)."
-  :global t
-  :group 'hl-line
-  (if global-hl-line-mode
-      (cond
-       ((eq global-hl-line-sticky-flag 'window)
-        (add-hook 'pre-redisplay-functions
-                  #'global-hl-line-window-redisplay))
-       (t
-        (add-hook 'change-major-mode-hook #'global-hl-line-unhighlight)
-        (global-hl-line-highlight-all)
-        (add-hook 'post-command-hook (if (eq global-hl-line-sticky-flag 'all)
-                                         #'global-hl-line-highlight-all
-                                       #'global-hl-line-highlight))))
-    (cond
-     ((eq global-hl-line-sticky-flag 'window)
-      (remove-hook 'pre-redisplay-functions
-                   #'global-hl-line-window-redisplay)
-      (walk-windows (lambda (window)
-                      (redisplay--unhighlight-overlay-function
-                       (window-parameter window 'hl-line-overlay))
-                      (set-window-parameter window 'hl-line-overlay nil))
-                    t t))
-     (t
-      (global-hl-line-unhighlight-all)
-      (remove-hook 'post-command-hook #'global-hl-line-highlight)
-      (remove-hook 'post-command-hook #'global-hl-line-highlight-all)
-      (remove-hook 'change-major-mode-hook #'global-hl-line-unhighlight)))))
-
-(defun global-hl-line-highlight ()
-  "Highlight the current line in the current window."
-  (when (and global-hl-line-mode
-             (buffer-match-p global-hl-line-buffers (current-buffer)))
-    (unless (window-minibuffer-p)
-      (unless (overlayp global-hl-line-overlay)
-        (setq global-hl-line-overlay (hl-line-make-overlay)))
-      (unless (member global-hl-line-overlay global-hl-line-overlays)
-        (push global-hl-line-overlay global-hl-line-overlays))
-      (overlay-put global-hl-line-overlay 'window
-                   (unless global-hl-line-sticky-flag
-                     (selected-window)))
-      (hl-line-move global-hl-line-overlay)
-      (global-hl-line-maybe-unhighlight))))
-
-(defun global-hl-line-highlight-all ()
-  "Highlight the current line in all live windows."
-  (walk-windows (lambda (w)
-                  (with-current-buffer (window-buffer w)
-                    (global-hl-line-highlight)))
-                nil t))
-
-(defun global-hl-line-unhighlight ()
-  "Deactivate the Global-Hl-Line overlay on the current line."
-  (when (overlayp global-hl-line-overlay)
-    (delete-overlay global-hl-line-overlay)
-    (setq global-hl-line-overlay nil)))
-
-(defun global-hl-line-maybe-unhighlight ()
-  "Maybe deactivate the Global-Hl-Line overlay on the current line."
-  (setq global-hl-line-overlays
-        (seq-remove (lambda (ov) (not (overlay-buffer ov)))
-                    global-hl-line-overlays))
-  (mapc (lambda (ov)
-          (let ((ovb (overlay-buffer ov)))
-            (when (and (not global-hl-line-sticky-flag)
-                       (not (eq ovb (current-buffer)))
-                       (not (minibufferp)))
-              (with-current-buffer ovb
-                (global-hl-line-unhighlight)))))
-        global-hl-line-overlays))
-
-(defun global-hl-line-unhighlight-all ()
-  "Deactivate all Global-Hl-Line overlays."
-  (mapc (lambda (ov)
-          (let ((ovb (overlay-buffer ov)))
-            (when (bufferp ovb)
-              (with-current-buffer ovb
-                (global-hl-line-unhighlight)))))
-        global-hl-line-overlays)
-  (setq global-hl-line-overlays nil))
-
-(defun global-hl-line-window-redisplay (window)
-  "Highlight the overlay that indicates the line with window's point."
-  (let ((rol (window-parameter window 'hl-line-overlay)))
-    (with-current-buffer (window-buffer window)
-      (if (buffer-match-p global-hl-line-buffers (current-buffer))
-          (let* ((bounds (save-excursion
-                           (goto-char (window-point window))
-                           (if hl-line-range-function
-                               (funcall hl-line-range-function)
-                             (cons (line-beginning-position)
-                                   (line-beginning-position 2)))))
-                 (new (redisplay--highlight-overlay-function
-                       (car bounds) (cdr bounds)
-                       window rol 'hl-line-nonselected)))
-            (unless (eq new rol)
-              (set-window-parameter window 'hl-line-overlay new)))
-        (redisplay--unhighlight-overlay-function rol)))))
-
-(defun hl-line-move (overlay)
-  "Move the Hl-Line overlay.
-If `hl-line-range-function' is non-nil, move the OVERLAY to the position
-where the function returns.  If `hl-line-range-function' is nil, fill
-the line including the point by OVERLAY."
-  (let (tmp b e)
-    (if hl-line-range-function
-        (setq tmp (funcall hl-line-range-function)
-              b   (car tmp)
-              e   (cdr tmp))
-      (setq tmp t
-            b (line-beginning-position)
-            e (line-beginning-position 2)))
-    (if tmp
-        (move-overlay overlay b e)
-      (move-overlay overlay 1 1))))
 
 ;; ---------- find-func / load-history cluster ----------
 
@@ -30884,9 +30565,16 @@ See `trusted-content-p'.")
 remacs primitives are written in Rust, so this always returns nil."
   nil)
 
-;; Our advice machinery is registry-based, not cell-wrapped, so
-;; `symbol-function' never holds a GNU-style `advice' object.
-(defun advice--p (object) nil)
+;; Our advice machinery composes layers into the function cell as
+;; trampoline lambdas carrying a `cl--advice--link' descriptor —
+;; `symbol-function' on an advised symbol returns one, like GNU's
+;; oclosure chain.
+(defun advice--p (object)
+  "Non-nil when OBJECT is an advice layer (GNU's `advice' oclosure).
+Remacs represents advice as a trampoline lambda carrying a
+`cl--advice--link' descriptor; the link list doubles as the truthy
+result, like GNU's `(advice oclosure)' type tag."
+  (cl--advice--link object))
 (defun advice--cd*r (f)
   (while (advice--p f)
     (setq f (advice--cdr f)))
@@ -32174,7 +31862,6 @@ See `add-variable-watcher'."
     (with-current-buffer where
       (let ((text-scale-remap-header-line newval))
         (text-scale-mode 1)))))
-(add-variable-watcher 'text-scale-remap-header-line #'text-scale--refresh)
 
 (defun text-scale-min-amount ()
   "Return the minimum amount of text-scaling we allow."
@@ -35461,7 +35148,10 @@ To record all your input, use `open-dribble-file'."
 (put 'uniquify-managed 'permanent-local t)
 (defvar uniquify-possibly-resolvable nil)
 (defvar uniquify--stateless-curname nil)
-(load "uniquify")
+;; uniquify.el itself is loaded from eval.rs after vc-hooks — GNU's
+;; loadup order puts the `vc-kill-buffer-hook' add-hook first, so
+;; `uniquify-kill-buffer-function' ends up at the front of
+;; `kill-buffer-hook' (add-hook prepends by default).
 
 ;; ---------- GNU window.el window-selection helpers ----------
 ;; `ignore-window-parameters' + `window-no-other-p' +
@@ -37718,23 +37408,6 @@ Defaults to the whole buffer.  END can be out of bounds."
                    (lisp--el-funcall-position-p (match-beginning 0)))
 	  (throw 'found t))))))
 
-(defmacro let-when-compile (bindings &rest body)
-  "Like `let*', but allow for compile time optimization.
-Use BINDINGS as in regular `let*', but in BODY each usage should
-be wrapped in `eval-when-compile'.
-This will generate compile-time constants from BINDINGS."
-  (declare (indent 1) (debug let))
-  (letrec ((loop
-            (lambda (bindings)
-              (if (null bindings)
-                  (macroexpand-all (macroexp-progn body)
-                                   macroexpand-all-environment)
-                (let ((binding (pop bindings)))
-                  (cl-progv (list (car binding))
-                      (list (eval (nth 1 binding) t))
-                    (funcall loop bindings)))))))
-    (funcall loop bindings)))
-
 (defun elisp--font-lock-backslash ()
   (let* ((beg0 (match-beginning 0))
          (end0 (match-end 0))
@@ -39358,13 +39031,27 @@ by \"Save Options\" in Custom buffers.")
 		:value-type (sexp :tag "Value")))
   "Custom type for `display-buffer' actions.")
 
+;; GNU subr.el: the autoload-prefix registry — needed here because the
+;; loaddefs-derived `register-definition-prefixes' calls below run
+;; during prelude evaluation, before subr-x.el is loaded.
+(defvar definition-prefixes (make-hash-table :test 'equal)
+  "Hash table mapping prefixes to the files defining them.")
 
-;; GNU loaddefs defines this early (generated `defvar'); the faceup
-;; autoload cookie pushes to it, so it must be bound before the
-;; autoload block below runs.  eval.rs adds the `compat' entry after.
+(defun register-definition-prefixes (file prefixes)
+  "Register that FILE uses PREFIXES."
+  (dolist (prefix prefixes)
+    (puthash prefix (cons file (gethash prefix definition-prefixes))
+             definition-prefixes)))
+
+;; GNU subr.el defvar: loaddefs-derived `push' forms below add each
+;; versioned builtin package to it.
 (defvar package--builtin-versions
-  (list (list 'emacs emacs-major-version emacs-minor-version))
-  "Alist giving the version of each versioned builtin package.")
+  ;; Mostly populated by loaddefs.el.
+  `((emacs . ,(version-to-list emacs-version)))
+  "Alist giving the version of each versioned builtin package.
+I.e. each element of the list is of the form (NAME . VERSION) where
+NAME is the package name as a symbol, and VERSION is its version
+as a list.")
 
 ;; bug-reference.el autoloads (GNU loaddefs).
 (put 'bug-reference-url-format 'safe-local-variable (lambda (s) (or (stringp s) (and (symbolp s) (get s 'bug-reference-url-format)))))
@@ -41564,8 +41251,14 @@ It has one extra slot whose value is a list of script symbols.")
   "Set the coding system for selection operations."
   (put 'selection-coding-system 'coding-system coding-system))
 
+;; GNU frame.c DEFVAR: parameters that are not persisted in framesets.
+(defvar frame-internal-parameters
+  '(undeleted cloned-from frame-id name parent-id window-id)
+  "Frame parameters present on every frame that are not user-settable.")
+
 ;; cus-edit.el builds the custom menu lazily in GNU; a nil-returning
 ;; stub keeps defcustom :set calls in modes like f90/fortran working.
+
 (defvar frameset-session-filter-alist
   (append
    '((left            . frameset-filter-iconified)
@@ -42880,2556 +42573,6 @@ image file.
 (defvar mouse-wheel-right-alternate-event 'wheel-right
   "Alternative wheel right event.")
 
-
-;; Round-14 autoload cells (wid-edit tree-widget server recentf ruler-mode cus-edit).
-(fset 'custom-buffer-create '(autoload "cus-edit" "Create a buffer containing OPTIONS.
-Optional NAME is the name of the buffer.
-OPTIONS should be an alist of the form ((SYMBOL WIDGET)...), where
-SYMBOL is a customization option, and WIDGET is a widget for editing
-that option.
-DESCRIPTION is unused.
-
-(fn OPTIONS &optional NAME DESCRIPTION)" nil nil))
-(fset 'custom-buffer-create-other-window '(autoload "cus-edit" "Create a buffer containing OPTIONS, and display it in another window.
-The result includes selecting that window.
-Optional NAME is the name of the buffer.
-OPTIONS should be an alist of the form ((SYMBOL WIDGET)...), where
-SYMBOL is a customization option, and WIDGET is a widget for editing
-that option.
-DESCRIPTION is unused.
-
-(fn OPTIONS &optional NAME DESCRIPTION)" nil nil))
-(fset 'custom-menu-create '(autoload "cus-edit" "Create menu for customization group SYMBOL.
-The menu is in a format applicable to `easy-menu-define'.
-
-(fn SYMBOL)" nil nil))
-(fset 'custom-prompt-customize-unsaved-options '(autoload "cus-edit" "Prompt user to customize any unsaved customization options.
-Return nil if user chooses to customize, for use in
-`kill-emacs-query-functions'." nil nil))
-(fset 'custom-save-all '(autoload "cus-edit" "Save all customizations in `custom-file'." nil nil))
-(fset 'custom-save-icons '(autoload "cus-edit" "Save all customized icons in `custom-file'." nil nil))
-(fset 'custom-set-icons '(autoload "cus-edit" "Install user customizations of icon specs specified in ARGS.
-These settings are registered as theme `user'.
-The arguments should each be a list of the form:
-
-  (SYMBOL EXP)
-
-This stores EXP (without evaluating it) as the saved spec for SYMBOL.
-
-(fn &rest ARGS)" nil nil))
-(fset 'customize '(autoload "cus-edit" "Select a customization buffer which you can use to set user options.
-User options are structured into \"groups\".
-Initially the top-level group `Emacs' and its immediate subgroups
-are shown; the contents of those subgroups are initially hidden." t nil))
-(fset 'customize-apropos '(autoload "cus-edit" "Customize loaded options, faces and groups matching PATTERN.
-PATTERN can be a word, a list of words (separated by spaces),
-or a regexp (using some regexp special characters).  If it is a word,
-search for matches for that word as a substring.  If it is a list of
-words, search for matches for any two (or more) of those words.
-
-If TYPE is `options', include only options.
-If TYPE is `faces', include only faces.
-If TYPE is `groups', include only groups.
-
-(fn PATTERN &optional TYPE)" t nil))
-(fset 'customize-apropos-faces '(autoload "cus-edit" "Customize all loaded faces matching REGEXP.
-
-(fn REGEXP)" t nil))
-(fset 'customize-apropos-groups '(autoload "cus-edit" "Customize all loaded groups matching REGEXP.
-
-(fn REGEXP)" t nil))
-(fset 'customize-apropos-options '(autoload "cus-edit" "Customize all loaded customizable options matching REGEXP.
-
-(fn REGEXP &optional IGNORED)" t nil))
-(fset 'customize-browse '(autoload "cus-edit" "Create a tree browser for the customize hierarchy.
-
-(fn &optional GROUP)" t nil))
-(fset 'customize-changed '(autoload "cus-edit" "Customize all settings whose meanings have changed in Emacs itself.
-This includes new user options and faces, and new customization
-groups, as well as older options and faces whose meanings or
-default values have changed since the previous major Emacs
-release.
-
-With argument SINCE-VERSION (a string), customize all settings
-that were added or redefined since that version.
-
-(fn &optional SINCE-VERSION)" t nil))
-(fset 'customize-dirlocals '(autoload "cus-edit" "Customize Directory Local Variables in the current directory.
-
-With optional argument FILENAME non-nil, customize the `.dir-locals.el' file
-that FILENAME specifies.
-
-(fn &optional FILENAME)" t nil))
-(fset 'customize-face '(autoload "cus-edit" "Customize FACE, which should be a face name or nil.
-If FACE is nil, customize all faces.  If FACE is actually a
-face-alias, customize the face it is aliased to.
-
-If OTHER-WINDOW is non-nil, display in another window.
-
-Interactively, when point is on text which has a face specified,
-suggest to customize that face, if it's customizable.
-
-(fn &optional FACE OTHER-WINDOW)" t nil))
-(fset 'customize-face-other-window '(autoload "cus-edit" "Show customization buffer for face FACE in other window.
-If FACE is actually a face-alias, customize the face it is aliased to.
-
-Interactively, when point is on text which has a face specified,
-suggest to customize that face, if it's customizable.
-
-(fn &optional FACE)" t nil))
-(fset 'customize-group '(autoload "cus-edit" "Customize GROUP, which must be a customization group.
-If OTHER-WINDOW is non-nil, display in another window.
-
-(fn &optional GROUP OTHER-WINDOW)" t nil))
-(fset 'customize-group-other-window '(autoload "cus-edit" "Customize GROUP, which must be a customization group, in another window.
-
-(fn &optional GROUP)" t nil))
-(fset 'customize-icon '(autoload "cus-edit" "Customize ICON.
-
-(fn ICON)" t nil))
-(fset 'customize-menu-create '(autoload "cus-edit" "Return a customize menu for customization group SYMBOL.
-If optional NAME is given, use that as the name of the menu.
-Otherwise the menu will be named `Customize'.
-The format is suitable for use with `easy-menu-define'.
-
-(fn SYMBOL &optional NAME)" nil nil))
-(fset 'customize-mode '(autoload "cus-edit" "Customize options related to a major or minor mode.
-By default the current major mode is used.  With a prefix
-argument or if the current major mode has no known group, prompt
-for the MODE to customize.
-
-(fn MODE)" t nil))
-(fset 'customize-option '(autoload "cus-edit" "Customize SYMBOL, which must be a user option.
-
-(fn SYMBOL)" t nil))
-(fset 'customize-option-other-window '(autoload "cus-edit" "Customize SYMBOL, which must be a user option.
-Show the buffer in another window, but don't select it.
-
-(fn SYMBOL)" t nil))
-(fset 'customize-push-and-save '(autoload "cus-edit" "Add ELTS to LIST-VAR and save for future sessions, safely.
-ELTS should be a list.  This function adds each entry to the
-value of LIST-VAR using `add-to-list'.
-
-If Emacs is initialized, call `customize-save-variable' to save
-the resulting list value now.  Otherwise, add an entry to
-`after-init-hook' to save it after initialization.
-
-(fn LIST-VAR ELTS)" nil nil))
-(fset 'customize-rogue '(autoload "cus-edit" "Customize all user variables modified outside customize." t nil))
-(fset 'customize-save-customized '(autoload "cus-edit" "Save all user options which have been set in this session." t nil))
-(fset 'customize-save-variable '(autoload "cus-edit" "Set the default for VARIABLE to VALUE, and save it for future sessions.
-Return VALUE.
-
-If VARIABLE has a `custom-set' property, that is used for setting
-VARIABLE, otherwise `set-default' is used.
-
-If VARIABLE has a `variable-interactive' property, that is used as if
-it were the arg to `interactive' (which see) to interactively read the value.
-
-If VARIABLE has a `custom-type' property, it must be a widget and the
-`:prompt-value' property of that widget will be used for reading the value.
-
-If given a prefix (or a COMMENT argument), also prompt for a comment.
-
-(fn VARIABLE VALUE &optional COMMENT)" t nil))
-(fset 'customize-saved '(autoload "cus-edit" "Customize all saved options and faces." t nil))
-(fset 'customize-set-value '(autoload "cus-edit" "Set VARIABLE to VALUE, and return VALUE.  VALUE is a Lisp object.
-
-If VARIABLE has a `variable-interactive' property, that is used as if
-it were the arg to `interactive' (which see) to interactively read the value.
-
-If VARIABLE has a `custom-type' property, it must be a widget and the
-`:prompt-value' property of that widget will be used for reading the value.
-
-If given a prefix (or a COMMENT argument), also prompt for a comment.
-
-(fn VARIABLE VALUE &optional COMMENT)" t nil))
-(fset 'customize-set-variable '(autoload "cus-edit" "Set the default for VARIABLE to VALUE, and return VALUE.
-VALUE is a Lisp object.
-
-If VARIABLE has a `custom-set' property, that is used for setting
-VARIABLE, otherwise `set-default' is used.
-
-If VARIABLE has a `variable-interactive' property, that is used as if
-it were the arg to `interactive' (which see) to interactively read the value.
-
-If VARIABLE has a `custom-type' property, it must be a widget and the
-`:prompt-value' property of that widget will be used for reading the value.
-
-If given a prefix (or a COMMENT argument), also prompt for a comment.
-
-(fn VARIABLE VALUE &optional COMMENT)" t nil))
-(fset 'customize-toggle-option '(autoload "cus-edit" "Toggle the value of boolean option SYMBOL for this session.
-
-(fn SYMBOL)" t nil))
-(fset 'customize-unsaved '(autoload "cus-edit" "Customize all options and faces set in this session but not saved." t nil))
-(fset 'recentf-mode '(autoload "recentf" "Toggle keeping track of opened files (Recentf mode).
-
-This mode maintains a list of recently opened files and makes it
-easy to visit them.  The recent files list is automatically saved
-across Emacs sessions.
-
-You can use `recentf-open' or `recentf-open-files' to visit
-files.
-
-When Recentf mode is enabled, a \"Open Recent\" submenu is
-displayed in the \"File\" menu, containing a list of files that
-were operated on recently, in the most-recently-used order.
-
-By default, only operations like opening a file, writing a buffer
-to a file, and killing a buffer is counted as \"operating\" on
-the file.  If instead you want to prioritize files that appear in
-buffers you switch to a lot, you can say something like the following:
-
-  (add-hook \\='buffer-list-update-hook #\\='recentf-track-opened-file)
-
-This is a global minor mode.  If called interactively, toggle the
-`Recentf mode' mode.  If the prefix argument is positive, enable the
-mode, and if it is zero or negative, disable the mode.
-
-If called from Lisp, toggle the mode if ARG is `toggle'.  Enable the
-mode if ARG is nil, omitted, or is a positive number.  Disable the mode
-if ARG is a negative number.
-
-To check whether the minor mode is enabled in the current buffer,
-evaluate `(default-value \\='recentf-mode)'.
-
-The mode's hook is called both when the mode is enabled and when it is
-disabled.
-
-(fn &optional ARG)" t nil))
-(fset 'recentf-open '(autoload "recentf" "Prompt for FILE in `recentf-list' and visit it.
-Enable `recentf-mode' if it isn't already.
-
-(fn FILE)" t nil))
-(fset 'ruler-mode '(autoload "ruler-mode" "Toggle display of ruler in header line (Ruler mode).
-
-This is a minor mode.  If called interactively, toggle the `Ruler mode'
-mode.  If the prefix argument is positive, enable the mode, and if it is
-zero or negative, disable the mode.
-
-If called from Lisp, toggle the mode if ARG is `toggle'.  Enable the
-mode if ARG is nil, omitted, or is a positive number.  Disable the mode
-if ARG is a negative number.
-
-To check whether the minor mode is enabled in the current buffer,
-evaluate the variable `ruler-mode'.
-
-The mode's hook is called both when the mode is enabled and when it is
-disabled.
-
-(fn &optional ARG)" t nil))
-(fset 'server-force-delete '(autoload "server" "Unconditionally delete connection file for server NAME.
-If server is running, it is first stopped.
-NAME defaults to `server-name'.  With argument, ask for NAME.
-
-(fn &optional NAME)" t nil))
-(fset 'server-mode '(autoload "server" "Toggle Server mode.
-
-Server mode runs a process that accepts commands from the
-`emacsclient' program.  See Info node `Emacs server' and
-`server-start' for details.
-
-This is a global minor mode.  If called interactively, toggle the
-`Server mode' mode.  If the prefix argument is positive, enable the
-mode, and if it is zero or negative, disable the mode.
-
-If called from Lisp, toggle the mode if ARG is `toggle'.  Enable the
-mode if ARG is nil, omitted, or is a positive number.  Disable the mode
-if ARG is a negative number.
-
-To check whether the minor mode is enabled in the current buffer,
-evaluate `(default-value \\='server-mode)'.
-
-The mode's hook is called both when the mode is enabled and when it is
-disabled.
-
-(fn &optional ARG)" t nil))
-(fset 'server-save-buffers-kill-terminal '(autoload "server" "Offer to save each buffer, then kill the current client.
-With ARG non-nil, silently save all file-visiting buffers, then kill.
-
-If emacsclient was started with a list of filenames to edit, then
-only these files will be asked to be saved.
-
-When running Emacs as a daemon and with
-`server-stop-automatically' (which see) set to `kill-terminal' or
-`delete-frame', this function may call `save-buffers-kill-emacs'
-if there are no other active clients.
-
-(fn ARG)" nil nil))
-(fset 'server-start '(autoload "server" "Allow this Emacs process to be a server for client processes.
-This starts a server communications subprocess through which client
-\"editors\" can send your editing commands to this Emacs job.
-To use the server, set up the program `emacsclient' in the Emacs
-distribution as your standard \"editor\".
-
-Optional argument LEAVE-DEAD (interactively, a prefix arg) means just
-kill any existing server communications subprocess.
-
-If a server is already running, restart it.  If clients are
-running, ask the user for confirmation first, unless optional
-argument INHIBIT-PROMPT is non-nil.
-
-To force-start a server, do \\[server-force-delete] and then
-\\[server-start].
-
-To check from a Lisp program whether a server is running, use
-the `server-process' variable.
-
-(fn &optional LEAVE-DEAD INHIBIT-PROMPT)" t nil))
-(fset 'server-stop-automatically '(autoload "server" "Automatically stop the Emacs server as specified by VALUE.
-This sets the variable `server-stop-automatically' (which see).
-
-(fn VALUE)" nil nil))
-(fset 'setopt '(autoload "cus-edit" "Set VARIABLE/VALUE pairs, and return the final VALUE.
-This is like `setq', but is meant for user options instead of
-plain variables.  This means that `setopt' will execute any
-`custom-set' form associated with VARIABLE.
-
-Note that `setopt' will emit a warning if the type of a VALUE
-does not match the type of the corresponding VARIABLE as
-declared by `defcustom'.  (VARIABLE will be assigned the value
-even if it doesn't match the type.)
-
-(fn [VARIABLE VALUE]...)" nil t))
-(fset 'setopt--set '(autoload "cus-edit" "
-
-(fn VARIABLE VALUE)" nil nil))
-(fset 'setopt--set-local '(autoload "cus-edit" "
-
-(fn VARIABLE VALUE)" nil nil))
-(fset 'setopt-local '(autoload "cus-edit" "Set buffer local VARIABLE/VALUE pairs, and return the final VALUE.
-This is like `setq-local', but is meant for user options instead of
-plain variables.  This means that `setopt-local' will execute any
-`custom-set' form associated with VARIABLE.  Unlike `setopt',
-`setopt-local' does not affect a user option's global value.
-
-Note that `setopt-local' will emit a warning if the type of a VALUE does
-not match the type of the corresponding VARIABLE as declared by
-`defcustom'.  (VARIABLE will be assigned the value even if it doesn't
-match the type.)
-
-Signal an error if a `custom-set' form does not support the
-`buffer-local' argument.
-
-(fn [VARIABLE VALUE]...)" nil t))
-(fset 'widget-apply '(autoload "wid-edit" "Apply the value of WIDGET's PROPERTY to the widget itself.
-Return the result of applying the value of PROPERTY to WIDGET.
-ARGS are passed as extra arguments to the function.
-
-(fn WIDGET PROPERTY &rest ARGS)" nil nil))
-(fset 'widget-convert '(autoload "wid-edit" "Convert TYPE to a widget without inserting it in the buffer.
-The optional ARGS are additional keyword arguments.
-
-(fn TYPE &rest ARGS)" nil nil))
-(fset 'widget-create '(autoload "wid-edit" "Create widget of TYPE.
-The optional ARGS are additional keyword arguments.
-
-(fn TYPE &rest ARGS)" nil nil))
-(fset 'widget-delete '(autoload "wid-edit" "Delete WIDGET.
-
-(fn WIDGET)" nil nil))
-(fset 'widget-get '(autoload "wid-edit" "In WIDGET, get the value of PROPERTY.
-The value could either be specified when the widget was created, or
-later with `widget-put'.
-
-(fn WIDGET PROPERTY)" nil nil))
-(fset 'widget-insert '(autoload "wid-edit" "Call `insert' with ARGS even if surrounding text is read only.
-
-(fn &rest ARGS)" nil nil))
-(fset 'widget-prompt-value '(autoload "wid-edit" "Prompt for a value matching WIDGET, using PROMPT.
-The current value is assumed to be VALUE, unless UNBOUND is non-nil.
-
-(fn WIDGET PROMPT &optional VALUE UNBOUND)" nil nil))
-(fset 'widget-put '(autoload "wid-edit" nil nil nil))
-(fset 'widget-setup '(autoload "wid-edit" "Setup current buffer so editing string widgets works." nil nil))
-(fset 'widget-value '(autoload "wid-edit" nil nil nil))
-(fset 'widgetp '(autoload "wid-edit" "Return non-nil if WIDGET is a widget.
-
-(fn WIDGET)" nil nil))
-
-;; Round-13 autoload cells (progmodes modes + remember).
-(fset 'cfengine-auto-mode '(autoload "cfengine" "Choose `cfengine2-mode' or `cfengine3-mode' by buffer contents." t nil))
-(fset 'cfengine2-mode '(autoload "cfengine" "Major mode for editing CFEngine2 input.
-There are no special keybindings by default.
-
-Action blocks are treated as defuns, i.e. \\[beginning-of-defun] moves
-to the action header.
-
-In addition to any hooks its parent mode `prog-mode' might have run,
-this mode runs the hook `cfengine2-mode-hook', as the final or
-penultimate step during initialization." t nil))
-(fset 'cfengine3-mode '(autoload "cfengine" "Major mode for editing CFEngine3 input.
-There are no special keybindings by default.
-
-Action blocks are treated as defuns, i.e. \\[beginning-of-defun] moves
-to the action header.
-
-In addition to any hooks its parent mode `prog-mode' might have run,
-this mode runs the hook `cfengine3-mode-hook', as the final or
-penultimate step during initialization." t nil))
-(fset 'cperl-mode '(autoload "cperl-mode" "Major mode for editing Perl code.
-Expression and list commands understand all C brackets.
-Tab indents for Perl code.
-Paragraphs are separated by blank lines only.
-Delete converts tabs to spaces as it moves back.
-
-Various characters in Perl almost always come in pairs: {}, (), [],
-sometimes <>.  When the user types the first, she gets the second as
-well, with optional special formatting done on {}.  (Disabled by
-default.)  You can always quote (with \\[quoted-insert]) the left
-\"paren\" to avoid the expansion.  The processing of < is special,
-since most the time you mean \"less\".  CPerl mode tries to guess
-whether you want to type pair <>, and inserts is if it
-appropriate.  You can set `cperl-electric-parens-string' to the string that
-contains the parens from the above list you want to be electrical.
-Electricity of parens is controlled by `cperl-electric-parens'.
-You may also set `cperl-electric-parens-mark' to have electric parens
-look for active mark and \"embrace\" a region if possible.'
-
-CPerl mode provides expansion of the Perl control constructs:
-
-   if, else, elsif, unless, while, until, continue, do,
-   for, foreach, formy and foreachmy.
-
-and POD directives (Disabled by default, see `cperl-electric-keywords'.)
-
-The user types the keyword immediately followed by a space, which
-causes the construct to be expanded, and the point is positioned where
-she is most likely to want to be.  E.g., when the user types a space
-following \"if\" the following appears in the buffer: if () { or if ()
-} { } and the cursor is between the parentheses.  The user can then
-type some boolean expression within the parens.  Having done that,
-typing \\[cperl-linefeed] places you - appropriately indented - on a
-new line between the braces (if you typed \\[cperl-linefeed] in a POD
-directive line, then appropriate number of new lines is inserted).
-
-If CPerl decides that you want to insert \"English\" style construct like
-
-            bite if angry;
-
-it will not do any expansion.  See also help on variable
-`cperl-extra-newline-before-brace'.  (Note that one can switch the
-help message on expansion by setting `cperl-message-electric-keyword'
-to nil.)
-
-\\[cperl-linefeed] is a convenience replacement for typing carriage
-return.  It places you in the next line with proper indentation, or if
-you type it inside the inline block of control construct, like
-
-            foreach (@lines) {print; print}
-
-and you are on a boundary of a statement inside braces, it will
-transform the construct into a multiline and will place you into an
-appropriately indented blank line.  If you need a usual
-`newline-and-indent' behavior, it is on \\[newline-and-indent],
-see documentation on `cperl-electric-linefeed'.
-
-Use \\[cperl-invert-if-unless] to change a construction of the form
-
-	    if (A) { B }
-
-into
-
-            B if A;
-
-\\{cperl-mode-map}
-
-Setting the variable `cperl-font-lock' to t switches on `font-lock-mode',
-`cperl-electric-lbrace-space' to t switches on electric space between $
-and {, `cperl-electric-parens-string' is the string that contains
-parentheses that should be electric in CPerl (see also
-`cperl-electric-parens-mark' and `cperl-electric-parens'), setting
-`cperl-electric-keywords' enables electric expansion of control
-structures in CPerl.  `cperl-electric-linefeed' governs which one of two
-linefeed behavior is preferable.  You can enable all these options
-simultaneously by setting `cperl-hairy' to t.  In this case you can
-switch separate options off by setting them to `null'.  Note that one may
-undo the extra whitespace inserted by semis and braces in
-`auto-newline'-mode by consequent \\[cperl-electric-backspace].
-
-Short one-liner-style help is available on \\[cperl-get-help],
-and one can run perldoc or man via menu.
-
-It is possible to show this help automatically after some idle time.
-This is regulated by variable `cperl-lazy-help-time'.  Default with
-`cperl-hairy' (if the value of `cperl-lazy-help-time' is nil) is 5
-secs idle time .  It is also possible to switch this on/off from the
-menu, or via \\[cperl-toggle-autohelp].
-
-Use \\[cperl-lineup] to vertically lineup some construction - put the
-beginning of the region at the start of construction, and make region
-span the needed amount of lines.
-
-Variables `cperl-pod-here-scan', `cperl-pod-here-fontify',
-`cperl-pod-face', `cperl-pod-head-face' control processing of POD and
-here-docs sections.  Results of scan are used for indentation too.
-
-Variables controlling indentation style:
- `cperl-tab-always-indent'
-    Non-nil means TAB in CPerl mode should always reindent the current line,
-    regardless of where in the line point is when the TAB command is used.
- `cperl-indent-left-aligned-comments'
-    Non-nil means that the comment starting in leftmost column should indent.
- `cperl-auto-newline'
-    Non-nil means automatically newline before and after braces,
-    and after colons and semicolons, inserted in Perl code.  The following
-    \\[cperl-electric-backspace] will remove the inserted whitespace.
-    Insertion after colons requires both this variable and
-    `cperl-auto-newline-after-colon' set.
- `cperl-auto-newline-after-colon'
-    Non-nil means automatically newline even after colons.
-    Subject to `cperl-auto-newline' setting.
- `cperl-indent-level'
-    Indentation of Perl statements within surrounding block.
-    The surrounding block's indentation is the indentation
-    of the line on which the open-brace appears.
- `cperl-continued-statement-offset'
-    Extra indentation given to a substatement, such as the
-    then-clause of an if, or body of a while, or just a statement continuation.
- `cperl-continued-brace-offset'
-    Extra indentation given to a brace that starts a substatement.
-    This is in addition to `cperl-continued-statement-offset'.
- `cperl-brace-offset'
-    Extra indentation for line if it starts with an open brace.
- `cperl-brace-imaginary-offset'
-    An open brace following other text is treated as if it the line started
-    this far to the right of the actual line indentation.
- `cperl-label-offset'
-    Extra indentation for line that is a label.
- `cperl-min-label-indent'
-    Minimal indentation for line that is a label.
-
-Settings for classic indent-styles: K&R BSD=C++ GNU PBP PerlStyle=Whitesmith
-  `cperl-indent-level'                5   4       2   4   4
-  `cperl-brace-offset'                0   0       0   0   0
-  `cperl-continued-brace-offset'     -5  -4       0   0   0
-  `cperl-label-offset'               -5  -4      -2  -2  -4
-  `cperl-continued-statement-offset'  5   4       2   4   4
-
-CPerl knows several indentation styles, and may bulk set the
-corresponding variables.  Use \\[cperl-set-style] to do this or
-set the variable `cperl-file-style' user option.  Use
-\\[cperl-set-style-back] to restore the memorized preexisting
-values (both available from menu).  See examples in
-`cperl-style-examples'.
-
-Part of the indentation style is how different parts of if/elsif/else
-statements are broken into lines; in CPerl, this is reflected on how
-templates for these constructs are created (controlled by
-`cperl-extra-newline-before-brace'), and how reflow-logic should treat
-\"continuation\" blocks of else/elsif/continue, controlled by the same
-variable, and by `cperl-extra-newline-before-brace-multiline',
-`cperl-merge-trailing-else', `cperl-indent-region-fix-constructs'.
-
-If `cperl-indent-level' is 0, the statement after opening brace in
-column 0 is indented on
-`cperl-brace-offset'+`cperl-continued-statement-offset'.
-
-Turning on CPerl mode calls the hooks in the variable `cperl-mode-hook'
-with no args.
-
-DO NOT FORGET to read micro-docs (available from `Perl' menu)
-or as help on variables `cperl-tips', `cperl-problems',
-`cperl-praise', `cperl-speed'." t nil))
-(fset 'cperl-perldoc '(autoload "cperl-mode" "Run `perldoc' on WORD.
-
-(fn WORD)" t nil))
-(fset 'cperl-perldoc-at-point '(autoload "cperl-mode" "Run a `perldoc' on the word around point." t nil))
-(fset 'dcl-mode '(autoload "dcl-mode" "Major mode for editing DCL-files.
-
-This mode indents command lines in blocks.  (A block is commands between
-THEN-ELSE-ENDIF and between lines matching dcl-block-begin-regexp and
-dcl-block-end-regexp.)
-
-Labels are indented to a fixed position unless they begin or end a block.
-Whole-line comments (matching dcl-comment-line-regexp) are not indented.
-Data lines are not indented.
-
-Key bindings:
-
-\\{dcl-mode-map}
-Commands not usually bound to keys:
-
-\\[dcl-save-nondefault-options]		Save changed options
-\\[dcl-save-all-options]		Save all options
-\\[dcl-save-option]			Save any option
-\\[dcl-save-mode]			Save buffer mode
-
-Variables controlling indentation style and extra features:
-
- dcl-basic-offset
-    Extra indentation within blocks.
-
- dcl-continuation-offset
-    Extra indentation for continued lines.
-
- dcl-margin-offset
-    Indentation for the first command line in a file or SUBROUTINE.
-
- dcl-margin-label-offset
-    Indentation for a label.
-
- dcl-comment-line-regexp
-    Lines matching this regexp will not be indented.
-
- dcl-block-begin-regexp
- dcl-block-end-regexp
-    Regexps that match command lines that begin and end, respectively,
-    a block of command lines that will be given extra indentation.
-    Command lines between THEN-ELSE-ENDIF are always indented; these variables
-    make it possible to define other places to indent.
-    Set to nil to disable this feature.
-
- dcl-calc-command-indent-function
-    Can be set to a function that customizes indentation for command lines.
-    Two such functions are included in the package:
-	dcl-calc-command-indent-multiple
-	dcl-calc-command-indent-hang
-
- dcl-calc-cont-indent-function
-    Can be set to a function that customizes indentation for continued lines.
-    One such function is included in the package:
-	dcl-calc-cont-indent-relative    (set by default)
-
- dcl-tab-always-indent
-    If t, pressing TAB always indents the current line.
-    If nil, pressing TAB indents the current line if point is at the left
-    margin.
-
- dcl-electric-characters
-    Non-nil causes lines to be indented at once when a label, ELSE or ENDIF is
-    typed.
-
- dcl-electric-reindent-regexps
-    Use this variable and function dcl-electric-character to customize
-    which words trigger electric indentation.
-
- dcl-tempo-comma
- dcl-tempo-left-paren
- dcl-tempo-right-paren
-    These variables control the look of expanded templates.
-
- dcl-imenu-generic-expression
-    Default value for `imenu-generic-expression'.  The default includes
-    SUBROUTINE labels in the main listing and sub-listings for
-    other labels, CALL, GOTO and GOSUB statements.
-
- dcl-imenu-label-labels
- dcl-imenu-label-goto
- dcl-imenu-label-gosub
- dcl-imenu-label-call
-    Change the text that is used as sub-listing labels in imenu.
-
-Turning on DCL mode calls the value of the variable `dcl-mode-hook'
-with no args, if that value is non-nil.
-
-
-The following example uses the default values for all variables:
-
-$! This is a comment line that is not indented (it matches
-$! dcl-comment-line-regexp)
-$! Next follows the first command line.  It is indented dcl-margin-offset.
-$       i = 1
-$       ! Other comments are indented like command lines.
-$       ! A margin label indented dcl-margin-label-offset:
-$ label:
-$       if i.eq.1
-$       then
-$           ! Lines between THEN-ELSE and ELSE-ENDIF are
-$           ! indented dcl-basic-offset
-$           loop1: ! This matches dcl-block-begin-regexp...
-$               ! ...so this line is indented dcl-basic-offset
-$               text = \"This \" + - ! is a continued line
-                       \"lined up with the command line\"
-$               type sys$input
-Data lines are not indented at all.
-$           endloop1: ! This matches dcl-block-end-regexp
-$       endif
-$
-
-
-There is some minimal font-lock support (see vars
-`dcl-font-lock-defaults' and `dcl-font-lock-keywords')." t nil))
-(fset 'icon-mode '(autoload "icon" "Major mode for editing Icon code.
-Expression and list commands understand all Icon brackets.
-Tab indents for Icon code.
-Paragraphs are separated by blank lines only.
-Delete converts tabs to spaces as it moves back.
-\\{icon-mode-map}
-Variables controlling indentation style:
- icon-tab-always-indent
-    Non-nil means TAB in Icon mode should always reindent the current line,
-    regardless of where in the line point is when the TAB command is used.
- icon-auto-newline
-    Non-nil means automatically newline before and after braces
-    inserted in Icon code.
- icon-indent-level
-    Indentation of Icon statements within surrounding block.
-    The surrounding block's indentation is the indentation
-    of the line on which the open-brace appears.
- icon-continued-statement-offset
-    Extra indentation given to a substatement, such as the
-    then-clause of an if or body of a while.
- icon-continued-brace-offset
-    Extra indentation given to a brace that starts a substatement.
-    This is in addition to `icon-continued-statement-offset'.
- icon-brace-offset
-    Extra indentation for line if it starts with an open brace.
- icon-brace-imaginary-offset
-    An open brace following other text is treated as if it were
-    this far to the right of the start of its line.
-
-Turning on Icon mode calls the value of the variable `icon-mode-hook'
-with no args, if that value is non-nil." t nil))
-(fset 'm2-mode '(autoload "modula2" "This is a mode intended to support program development in Modula-2.
-All control constructs of Modula-2 can be reached by typing C-c
-followed by the first character of the construct.
-\\<m2-mode-map>
-  \\[m2-begin] begin         \\[m2-case] case
-  \\[m2-definition] definition    \\[m2-else] else
-  \\[m2-for] for           \\[m2-header] header
-  \\[m2-if] if            \\[m2-module] module
-  \\[m2-loop] loop          \\[m2-or] or
-  \\[m2-procedure] procedure     Control-c Control-w with
-  \\[m2-record] record        \\[m2-stdio] stdio
-  \\[m2-type] type          \\[m2-until] until
-  \\[m2-var] var           \\[m2-while] while
-  \\[m2-export] export        \\[m2-import] import
-  \\[m2-begin-comment] begin-comment \\[m2-end-comment] end-comment
-  \\[suspend-emacs] suspend Emacs     \\[m2-toggle] toggle
-  \\[m2-compile] compile           \\[m2-next-error] next-error
-  \\[m2-link] link
-
-   `m2-indent' controls the number of spaces for each indentation.
-   `m2-compile-command' holds the command to compile a Modula-2 program.
-   `m2-link-command' holds the command to link a Modula-2 program.
-
-In addition to any hooks its parent mode `prog-mode' might have run,
-this mode runs the hook `m2-mode-hook', as the final or penultimate
-step during initialization." t nil))
-(fset 'metafont-mode '(autoload "meta-mode" "Major mode for editing Metafont sources.
-
-In addition to any hooks its parent mode `meta-common-mode' might have
-run, this mode runs the hook `metafont-mode-hook', as the final or
-penultimate step during initialization.
-
-\\{metafont-mode-map}" t nil))
-(fset 'metapost-mode '(autoload "meta-mode" "Major mode for editing MetaPost sources.
-
-In addition to any hooks its parent mode `meta-common-mode' might have
-run, this mode runs the hook `metapost-mode-hook', as the final or
-penultimate step during initialization.
-
-\\{metapost-mode-map}" t nil))
-(fset 'pascal-mode '(autoload "pascal" "Major mode for editing Pascal code.
-\\<pascal-mode-map>
-TAB indents for Pascal code.  Delete converts tabs to spaces as it moves back.
-
-\\[completion-at-point] completes the word around current point with respect to position in code
-\\[completion-help-at-point] shows all possible completions at this point.
-
-Other useful functions are:
-
-\\[pascal-mark-defun]	- Mark function.
-\\[pascal-insert-block]	- insert begin ... end;
-\\[pascal-star-comment]	- insert (* ... *)
-\\[pascal-comment-area]	- Put marked area in a comment, fixing nested comments.
-\\[pascal-uncomment-area]	- Uncomment an area commented with \\[pascal-comment-area].
-\\[pascal-beg-of-defun]	- Move to beginning of current function.
-\\[pascal-end-of-defun]	- Move to end of current function.
-\\[pascal-goto-defun]	- Goto function prompted for in the minibuffer.
-\\[pascal-outline-mode]	- Enter `pascal-outline-mode'.
-
-Variables controlling indentation/edit style:
-
- `pascal-indent-level' (default 3)
-    Indentation of Pascal statements with respect to containing block.
- `pascal-case-indent' (default 2)
-    Indentation for case statements.
- `pascal-auto-newline' (default nil)
-    Non-nil means automatically newline after semicolons and the punctuation
-    mark after an end.
- `pascal-indent-nested-functions' (default t)
-    Non-nil means nested functions are indented.
- `pascal-tab-always-indent' (default t)
-    Non-nil means TAB in Pascal mode should always reindent the current line,
-    regardless of where in the line point is when the TAB command is used.
- `pascal-auto-endcomments' (default t)
-    Non-nil means a comment { ... } is set after the ends which ends cases and
-    functions.  The name of the function or case will be set between the braces.
- `pascal-auto-lineup' (default t)
-    List of contexts where auto lineup of :'s or ='s should be done.
-
-See also the user variables `pascal-type-keywords', `pascal-start-keywords' and
-`pascal-separator-keywords'.
-
-In addition to any hooks its parent mode `prog-mode' might have run,
-this mode runs the hook `pascal-mode-hook', as the final or
-penultimate step during initialization." t nil))
-(fset 'perl-flymake '(autoload "perl-mode" "Perl backend for Flymake.
-Launch `perl-flymake-command' (which see) and pass to its
-standard input the contents of the current buffer.  The output of
-this command is analyzed for error and warning messages.
-
-(fn REPORT-FN &rest ARGS)" nil nil))
-(fset 'perl-mode '(autoload "perl-mode" "Major mode for editing Perl code.
-Expression and list commands understand all Perl brackets.
-Tab indents for Perl code.
-Comments are delimited with # ... \\n.
-Paragraphs are separated by blank lines only.
-Delete converts tabs to spaces as it moves back.
-\\{perl-mode-map}
-Variables controlling indentation style:
- `perl-tab-always-indent'
-    Non-nil means TAB in Perl mode should always indent the current line,
-    regardless of where in the line point is when the TAB command is used.
- `perl-tab-to-comment'
-    Non-nil means that for lines which don't need indenting, TAB will
-    either delete an empty comment, indent an existing comment, move
-    to end-of-line, or if at end-of-line already, create a new comment.
- `perl-nochange'
-    Lines starting with this regular expression are not auto-indented.
- `perl-indent-level'
-    Indentation of Perl statements within surrounding block.
-    The surrounding block's indentation is the indentation
-    of the line on which the open-brace appears.
- `perl-continued-statement-offset'
-    Extra indentation given to a substatement, such as the
-    then-clause of an if or body of a while.
- `perl-continued-brace-offset'
-    Extra indentation given to a brace that starts a substatement.
-    This is in addition to `perl-continued-statement-offset'.
- `perl-brace-offset'
-    Extra indentation for line if it starts with an open brace.
- `perl-brace-imaginary-offset'
-    An open brace following other text is treated as if it were
-    this far to the right of the start of its line.
- `perl-label-offset'
-    Extra indentation for line that is a label.
- `perl-indent-continued-arguments'
-    Offset of argument lines relative to usual indentation.
-
-Various indentation styles:       K&R  BSD  BLK  GNU  LW
-  perl-indent-level                5    8    0    2    4
-  perl-continued-statement-offset  5    8    4    2    4
-  perl-continued-brace-offset      0    0    0    0   -4
-  perl-brace-offset               -5   -8    0    0    0
-  perl-brace-imaginary-offset      0    0    4    0    0
-  perl-label-offset               -5   -8   -2   -2   -2
-
-Turning on Perl mode runs the normal hook `perl-mode-hook'." t nil))
-(fset 'remember '(autoload "remember" "Remember an arbitrary piece of data.
-INITIAL is the text to initially place in the `remember-buffer',
-or nil to bring up a blank `remember-buffer'.
-
-With a prefix or a visible region, use the region as INITIAL.
-
-(fn &optional INITIAL)" t nil))
-(fset 'remember-clipboard '(autoload "remember" "Remember the contents of the current clipboard.
-Most useful for remembering things from other applications." t nil))
-(fset 'remember-diary-extract-entries '(autoload "remember" "Extract diary entries from the region based on `remember-diary-regexp'." nil nil))
-(fset 'remember-notes '(autoload "remember" "Return the notes buffer, creating it if needed, and maybe switch to it.
-This buffer is for notes that you want to preserve across Emacs sessions.
-The notes are saved in `remember-data-file'.
-
-If a buffer is already visiting that file, just return it.
-
-Otherwise, create the buffer, and rename it to `remember-notes-buffer-name',
-unless a buffer of that name already exists.  Set the major mode according
-to `remember-notes-initial-major-mode', and enable `remember-notes-mode'
-minor mode.
-
-Use \\<remember-notes-mode-map>\\[remember-notes-save-and-bury-buffer] to save and bury the notes buffer.
-
-Interactively, or if SWITCH-TO is non-nil, switch to the buffer.
-Return the buffer.
-
-Set `initial-buffer-choice' to `remember-notes' to visit your notes buffer
-when Emacs starts.  Set `remember-notes-buffer-name' to \"*scratch*\"
-to turn the *scratch* buffer into your notes buffer.
-
-(fn &optional SWITCH-TO)" t nil))
-(fset 'remember-other-frame '(autoload "remember" "Call `remember' in another frame.
-
-(fn &optional INITIAL)" t nil))
-(fset 'ruby-base-mode '(autoload "ruby-mode" "Generic major mode for editing Ruby.
-
-This mode is intended to be inherited by concrete major modes.
-Currently there are `ruby-mode' and `ruby-ts-mode'.
-
-In addition to any hooks its parent mode `prog-mode' might have run,
-this mode runs the hook `ruby-base-mode-hook', as the final or
-penultimate step during initialization.
-
-\\{ruby-base-mode-map}" t nil))
-(fset 'ruby-mode '(autoload "ruby-mode" "Major mode for editing Ruby code.
-
-In addition to any hooks its parent mode `ruby-base-mode' might have
-run, this mode runs the hook `ruby-mode-hook', as the final or
-penultimate step during initialization.
-
-\\{ruby-mode-map}" t nil))
-(fset 'simula-mode '(autoload "simula" "Major mode for editing SIMULA code.
-\\{simula-mode-map}
-Variables controlling indentation style:
- `simula-indent-level'
-    Indentation of SIMULA statements with respect to containing block.
- `simula-substatement-offset'
-    Extra indentation after DO, THEN, ELSE, WHEN and OTHERWISE.
- `simula-continued-statement-offset' 3
-    Extra indentation for lines not starting a statement or substatement,
-    e.g. a nested FOR-loop.  If value is a list, each line in a multiple-
-    line continued statement will have the car of the list extra indentation
-    with respect to the previous line of the statement.
- `simula-label-offset' -4711
-    Offset of SIMULA label lines relative to usual indentation.
- `simula-if-indent' (0 . 0)
-    Extra indentation of THEN and ELSE with respect to the starting IF.
-    Value is a cons cell, the car is extra THEN indentation and the cdr
-    extra ELSE indentation.  IF after ELSE is indented as the starting IF.
- `simula-inspect-indent' (0 . 0)
-    Extra indentation of WHEN and OTHERWISE with respect to the
-    corresponding INSPECT.  Value is a cons cell, the car is
-    extra WHEN indentation and the cdr extra OTHERWISE indentation.
- `simula-electric-indent' nil
-    If this variable is non-nil, `simula-indent-line'
-    will check the previous line to see if it has to be reindented.
- `simula-abbrev-keyword' `upcase'
-    Determine how SIMULA keywords will be expanded.  Value is one of
-    the symbols `upcase', `downcase', `capitalize', (as in) `abbrev-table',
-    or nil if they should not be changed.
- `simula-abbrev-stdproc' `abbrev-table'
-    Determine how standard SIMULA procedure and class names will be
-    expanded.  Value is one of the symbols `upcase', `downcase', `capitalize',
-    (as in) `abbrev-table', or nil if they should not be changed.
-
-Turning on SIMULA mode calls the value of the variable simula-mode-hook
-with no arguments, if that value is non-nil." t nil))
-
-;; Round-12 autoload cells (shell/ielm/cmuscheme/locate/ispell).
-(fset 'ielm '(autoload "ielm" "Interactively evaluate Emacs Lisp expressions.
-Switches to the buffer named BUF-NAME if provided (`*ielm*' by default),
-or creates it if it does not exist.
-See `inferior-emacs-lisp-mode' for details.
-
-(fn &optional BUF-NAME)" t nil))
-(fset 'ispell '(autoload "ispell" "Interactively check a region or buffer for spelling errors.
-If `transient-mark-mode' is on, and a region is active, spell-check
-that region.  Otherwise spell-check the buffer.
-
-Ispell dictionaries are not distributed with Emacs.  If you are
-looking for a dictionary, please see the distribution of the GNU ispell
-program, or do an Internet search; there are various dictionaries
-available on the net." t nil))
-(fset 'ispell-buffer '(autoload "ispell" "Check the current buffer for spelling errors interactively.
-Leave the mark at the last misspelled word that the user was queried about." t nil))
-(fset 'ispell-buffer-with-debug '(autoload "ispell" "`ispell-buffer' with some output sent to `ispell-debug-buffer'.
-If APPEND is non-nil, don't erase previous debugging output.
-
-(fn &optional APPEND)" t nil))
-(fset 'ispell-change-dictionary '(autoload "ispell" "Change to dictionary DICT for Ispell.
-If ARG is non-nil (interactively, the prefix arg), set it \"globally\",
-for all buffers.  Otherwise, set it \"locally\", just for this buffer.
-
-By just answering RET you can find out the name of the current dictionary.
-
-(fn DICT &optional ARG)" t nil))
-(fset 'ispell-comment-or-string-at-point '(autoload "ispell" "Check the comment or string containing point for spelling errors." t nil))
-(fset 'ispell-comments-and-strings '(autoload "ispell" "Check comments and strings in the current buffer for spelling errors.
-If called interactively with an active region, check only comments and
-strings in the region.
-When called from Lisp, START and END buffer positions can be provided
-to limit the check.
-
-(fn &optional START END)" t nil))
-(fset 'ispell-complete-word '(autoload "ispell" "Try to complete the word before or at point.
-If optional INTERIOR-FRAG is non-nil, then the word may be a character
-sequence inside of a word.
-
-Standard ispell choices are then available.
-
-This command uses a word-list file specified
-by `ispell-alternate-dictionary' or by `ispell-complete-word-dict';
-if none of those name an existing word-list file, this command
-signals an error.
-
-(fn &optional INTERIOR-FRAG)" t nil))
-(fset 'ispell-complete-word-interior-frag '(autoload "ispell" "Completes word matching character sequence inside a word." t nil))
-(fset 'ispell-completion-at-point '(autoload "ispell" "Word completion function for use in `completion-at-point-functions'." nil nil))
-(fset 'ispell-continue '(autoload "ispell" "Continue a halted spelling session beginning with the current word." t nil))
-(fset 'ispell-help '(autoload "ispell" "Display a list of the options available when a misspelling is encountered.
-
-Selections are:
-
-\\`0'..\\`9'  Replace the word with a digit offered in the *Choices* buffer.
-\\`SPC' Accept word this time.
-\\`i'   Accept word and insert into personal dictionary.
-\\`a'   Accept word for this session.
-\\`A'   Accept word and place in `buffer-local dictionary'.
-\\`r'   Replace word with typed-in value.  Rechecked.
-\\`R'   Replace word with typed-in value.  Query-replaced in buffer.  Rechecked.
-\\`?'   Show these commands.
-\\`x'   Exit spelling buffer.  Move cursor to original point.
-\\`X'   Exit spelling buffer.  Leaves cursor at the current point, and permits
-         the aborted check to be completed later.
-\\`q'   Quit spelling session (Kills ispell process).
-\\`l'   Look up typed-in replacement in alternate dictionary.  Wildcards okay.
-\\`u'   Like \\`i', but the word is lower-cased first.
-\\`m'   Place typed-in value in personal dictionary, then recheck current word.
-\\`C-l' Redraw screen.
-\\`C-r' Recursive edit.
-\\`C-u' Toggle abbrev saving for an immediately subsequent replacement command.
-\\`C-z' Suspend Emacs or iconify frame." nil nil))
-(fset 'ispell-kill-ispell '(autoload "ispell" "Kill current Ispell process (so that you may start a fresh one).
-With NO-ERROR, just return non-nil if there was no Ispell running.
-With CLEAR, buffer session localwords are cleaned.
-
-(fn &optional NO-ERROR CLEAR)" t nil))
-(fset 'ispell-message '(autoload "ispell" "Check the spelling of a mail message or news post.
-Don't check spelling of message headers except the Subject field.
-Don't check included messages.
-
-To abort spell checking of a message region and send the message anyway,
-use the \\`x' command.  (Any subsequent regions will be checked.)
-The \\`X' command aborts sending the message so that you can edit the buffer.
-
-To spell-check whenever a message is sent, include the appropriate lines
-in your init file:
-   (add-hook \\='message-send-hook #\\='ispell-message)  ;; GNUS 5
-   (add-hook \\='news-inews-hook #\\='ispell-message)    ;; GNUS 4
-   (add-hook \\='mail-send-hook  #\\='ispell-message)
-   (add-hook \\='mh-before-send-letter-hook #\\='ispell-message)
-
-You can bind this to a key in GNUS or mail by adding to
-`news-reply-mode-hook' or `mail-mode-hook' the following lambda expression:
-   (lambda () (local-set-key \"\\C-ci\" \\='ispell-message))" t nil))
-(fset 'ispell-minor-mode '(autoload "ispell" "Toggle last-word spell checking (Ispell minor mode).
-
-Ispell minor mode is a buffer-local minor mode.  When enabled,
-typing SPC or RET warns you if the previous word is incorrectly
-spelled.
-
-All the buffer-local variables and dictionaries are ignored.  To
-read them into the running Ispell process, type \\[ispell-word]
-SPC.
-
-For spell-checking \"on the fly\", not just after typing SPC or
-RET, use `flyspell-mode'.
-
-This is a minor mode.  If called interactively, toggle the `ISpell minor
-mode' mode.  If the prefix argument is positive, enable the mode, and if
-it is zero or negative, disable the mode.
-
-If called from Lisp, toggle the mode if ARG is `toggle'.  Enable the
-mode if ARG is nil, omitted, or is a positive number.  Disable the mode
-if ARG is a negative number.
-
-To check whether the minor mode is enabled in the current buffer,
-evaluate the variable `ispell-minor-mode'.
-
-The mode's hook is called both when the mode is enabled and when it is
-disabled.
-
-(fn &optional ARG)" t nil))
-(fset 'ispell-pdict-save '(autoload "ispell" "Check to see if the personal dictionary has been modified.
-If so, ask if it needs to be saved.
-If NO-QUERY is non-nil, save the personal dictionary without asking.
-Interactively, if `ispell-silently-savep' is non-nil, don't ask.
-If FORCE-SAVE is non-nil, suggest to save the personal dictionary even
-if not modified; this always happens interactively.
-
-(fn &optional NO-QUERY FORCE-SAVE)" t nil))
-(fset 'ispell-region '(autoload "ispell" "Interactively check region between REG-START and REG-END for spelling errors.
-Leave the mark at the last misspelled word that the user was queried about.
-
-Return nil if spell session was terminated, otherwise returns shift offset
-amount for last line processed.
-
-(fn REG-START REG-END &optional RECHECKP SHIFT)" t nil))
-(fset 'ispell-word '(autoload "ispell" "Check spelling of word under or before the cursor.
-If the word is not found in dictionary, display possible corrections
-in a window allowing you to choose one.
-
-If optional argument FOLLOWING is non-nil or if `ispell-following-word'
-is non-nil when called interactively, then the following word
-(rather than preceding) is checked when the cursor is not over a word.
-When the optional argument QUIETLY is non-nil or `ispell-quietly' is non-nil
-when called interactively, non-corrective messages are suppressed.
-
-With a prefix argument (or if CONTINUE is non-nil),
-resume interrupted spell-checking of a buffer or region.
-
-Interactively, in Transient Mark mode when the mark is active, call
-`ispell-region' to check the active region for spelling errors.
-Non-interactively, this happens if REGION is non-nil.
-
-Word syntax is controlled by the definition of the chosen dictionary,
-which is in `ispell-local-dictionary-alist' or `ispell-dictionary-alist'.
-
-This will check or reload the dictionary.  Use \\[ispell-change-dictionary]
-or \\[ispell-region] to update the Ispell process.
-
-Return values:
-nil           word is correct or spelling is accepted.
-0             word is inserted into buffer-local definitions.
-\"word\"        word corrected from word list.
-(\"word\" arg)  word is hand entered.
-quit          spell session exited.
-
-(fn &optional FOLLOWING QUIETLY CONTINUE REGION)" t nil))
-(fset 'locate '(autoload "locate" "Run the program `locate', putting results in `*Locate*' buffer.
-Pass it SEARCH-STRING as argument.  Interactively, prompt for SEARCH-STRING.
-With prefix arg ARG, prompt for the exact shell command to run instead.
-
-This program searches for those file names in a database that match
-SEARCH-STRING and normally outputs all matching absolute file names,
-one per line.  The database normally consists of all files on your
-system, or of all files that you have access to.  Consult the
-documentation of the program for the details about how it determines
-which file names match SEARCH-STRING.  (Those details vary highly with
-the version.)
-
-You can specify another program for this command to run by customizing
-the variables `locate-command' or `locate-make-command-line'.
-
-The main use of FILTER is to implement `locate-with-filter'.  See
-the docstring of that function for its meaning.
-
-After preparing the results buffer, this runs `dired-mode-hook' and
-then `locate-post-command-hook'.
-
-(fn SEARCH-STRING &optional FILTER ARG)" t nil))
-(fset 'locate-with-filter '(autoload "locate" "Run the executable program `locate' with a filter.
-This function is similar to the function `locate', which see.
-The difference is that, when invoked interactively, the present function
-prompts for both SEARCH-STRING and FILTER.  It passes SEARCH-STRING
-to the locate executable program.  It produces a `*Locate*' buffer
-that lists only those lines in the output of the locate program that
-contain a match for the regular expression FILTER; this is often useful
-to constrain a big search.
-
-ARG is the interactive prefix arg, which has the same effect as in `locate'.
-
-When called from Lisp, this function is identical with `locate',
-except that FILTER is not optional.
-
-(fn SEARCH-STRING FILTER &optional ARG)" t nil))
-(fset 'run-scheme '(autoload "cmuscheme" "Run an inferior Scheme process, input and output via buffer `*scheme*'.
-If there is a process already running in `*scheme*', switch to that buffer.
-With argument, allows you to edit the command line (default is value
-of `scheme-program-name').
-If the file `~/.emacs_SCHEMENAME' or `~/.emacs.d/init_SCHEMENAME.scm' exists,
-it is given as initial input.
-Note that this may lose due to a timing error if the Scheme processor
-discards input when it starts up.
-Runs the hook `inferior-scheme-mode-hook' (after the `comint-mode-hook'
-is run).
-(Type \\[describe-mode] in the process buffer for a list of commands.)
-
-(fn CMD)" t nil))
-(fset 'shell '(autoload "shell" "Run an inferior shell, with I/O through BUFFER (which defaults to `*shell*').
-Interactively, a prefix arg means to prompt for BUFFER.
-If `default-directory' is a remote file name, it is also prompted
-to change if called with a prefix arg.
-
-If BUFFER exists but shell process is not running, make new shell.
-If BUFFER exists and shell process is running, just switch to BUFFER.
-Program used comes from variable `explicit-shell-file-name',
- or (if that is nil) from the ESHELL environment variable,
- or (if that is nil) from `shell-file-name'.
-Non-interactively, it can also be specified via the FILE-NAME arg.
-
-If a file `~/.emacs_SHELLNAME' exists, or `~/.emacs.d/init_SHELLNAME.sh',
-it is given as initial input (but this may be lost, due to a timing
-error, if the shell discards input when it starts up).
-The buffer is put in Shell mode, giving commands for sending input
-and controlling the subjobs of the shell.  See `shell-mode'.
-See also the variable `shell-prompt-pattern'.
-
-\\<shell-mode-map>To specify a coding system for converting non-ASCII characters
-in the input and output to the shell, use \\[universal-coding-system-argument]
-before \\[shell].  You can also specify this with \\[set-buffer-process-coding-system]
-in the shell buffer, after you start the shell.
-The default comes from `process-coding-system-alist' and
-`default-process-coding-system'.
-
-The shell file name (sans directories) is used to make a symbol name
-such as `explicit-csh-args'.  If that symbol is a variable,
-its value is used as a list of arguments when invoking the shell.
-Otherwise, one argument `-i' is passed to the shell.
-
-Make the shell buffer the current buffer, and return it.
-
-(Type \\[describe-mode] in the shell buffer for a list of commands.)
-
-(fn &optional BUFFER FILE-NAME)" t nil))
-(fset 'shell-bookmark-jump '(autoload "shell" "Default BOOKMARK handler for shell buffers.
-Create a shell buffer with its `default-directory', shell process, and
-buffer name from the bookmark.  If there is an existing shell buffer of
-the same name, default `shell-mode' behavior is to reuse that buffer.
-
-For a remote shell `default-directory' will be the remote file name.
-Remote shell buffers reuse existing connections that match the remote
-file name, or may prompt you to create a new connection.  For ad-hoc
-multi-hop remote connections, see Info node `(tramp)Ad-hoc multi-hops'.
-
-If called with a single \\[universal-argument] prefix, a new shell
-buffer will be created if there is an existing buffer with the same
-name.  The new buffer name is made unique using `rename-uniquely', which
-see.
-
-If called with a double \\[universal-argument] prefix, new remote
-connections are inhibited, though an existing connection will be reused.
-You can make a remote connection manually by reloading the buffer using
-\\[find-alternate-file] or create a new shell using \\[shell].
-
-If called with a triple \\[universal-argument] prefix, a new buffer will
-be created if necessary, and new remote connections are inhibited.
-
-(fn BOOKMARK)" nil nil))
-(fset 'split-string-shell-command '(autoload "shell" "Split STRING (a shell command) into a list of strings.
-General shell syntax, like single and double quoting, as well as
-backslash quoting, is respected.
-
-(fn STRING)" nil nil))
-
-;; Round-12b autoload cells (auth-source/sql/flyspell/prolog).
-(fset 'auth-source-netrc-parse-all '(autoload "auth-source" "Parse FILE and return all entries.
-
-(fn FILE)" nil nil))
-(fset 'authinfo-mode '(autoload "auth-source" "Mode for editing .authinfo/.netrc files.
-
-This is just like `fundamental-mode', but has basic syntax
-highlighting and hides passwords.  Passwords are revealed when
-point is moved into the passwords (see `authinfo-hide-elements').
-
-\\{authinfo-mode-map}
-
-This mode runs the hook `authinfo-mode-hook', as the final or
-penultimate step during initialization." t nil))
-(fset 'flyspell--mode-off '(autoload "flyspell" "Turn Flyspell mode off." nil nil))
-(fset 'flyspell-buffer '(autoload "flyspell" "Flyspell whole buffer." t nil))
-(fset 'flyspell-mode '(autoload "flyspell" "Toggle on-the-fly spell checking (Flyspell mode).
-
-Flyspell mode is a buffer-local minor mode.  When enabled, it
-spawns a single Ispell process and checks each word.  The default
-flyspell behavior is to highlight incorrect words.
-
-This mode is geared toward text modes.  In buffers that contain
-code, `flyspell-prog-mode' is usually a better choice.
-
-Bindings:
-\\[ispell-word]: correct words (using Ispell).
-\\[flyspell-auto-correct-word]: automatically correct word.
-\\[flyspell-auto-correct-previous-word]: automatically correct the last misspelled word.
-\\[flyspell-correct-word] (or down-mouse-2): popup correct words.
-
-Hooks:
-This runs `flyspell-mode-hook' after flyspell mode is entered or exit.
-
-Remark:
-`flyspell-mode' uses `ispell-mode'.  Thus all Ispell options are
-valid.  For instance, a different dictionary can be used by
-invoking `ispell-change-dictionary'.
-
-Consider using the `ispell-parser' to check your text.  For instance
-consider adding:
-(add-hook \\='tex-mode-hook (lambda () (setq ispell-parser \\='tex)))
-in your init file.
-
-\\[flyspell-region] checks all words inside a region.
-\\[flyspell-buffer] checks the whole buffer.
-
-This is a minor mode.  If called interactively, toggle the `Flyspell
-mode' mode.  If the prefix argument is positive, enable the mode, and if
-it is zero or negative, disable the mode.
-
-If called from Lisp, toggle the mode if ARG is `toggle'.  Enable the
-mode if ARG is nil, omitted, or is a positive number.  Disable the mode
-if ARG is a negative number.
-
-To check whether the minor mode is enabled in the current buffer,
-evaluate the variable `flyspell-mode'.
-
-The mode's hook is called both when the mode is enabled and when it is
-disabled.
-
-(fn &optional ARG)" t nil))
-(fset 'flyspell-prog-mode '(autoload "flyspell" "Turn on `flyspell-mode' for comments and strings." t nil))
-(fset 'flyspell-region '(autoload "flyspell" "Flyspell text between BEG and END.
-
-Make sure `flyspell-mode' is turned on if you want the highlight
-of a misspelled word removed when you've corrected it.
-
-(fn BEG END)" t nil))
-(fset 'mercury-mode '(autoload "prolog" "Major mode for editing Mercury programs.
-Actually this is just customized `prolog-mode'.
-
-In addition to any hooks its parent mode might have run, this mode
-runs the hook `mercury-mode-hook', as the final or penultimate step
-during initialization.
-
-\\{mercury-mode-map}" t nil))
-(fset 'prolog-mode '(autoload "prolog" "Major mode for editing Prolog code.
-
-Blank lines and `%%...' separate paragraphs.  `%'s starts a comment
-line and comments can also be enclosed in /* ... */.
-
-If an optional argument SYSTEM is non-nil, set up mode for the given system.
-
-To find out what version of Prolog mode you are running, enter
-\\[prolog-mode-version].
-
-Commands:
-\\{prolog-mode-map}
-
-In addition to any hooks its parent mode `prog-mode' might have run,
-this mode runs the hook `prolog-mode-hook', as the final or
-penultimate step during initialization." t nil))
-(fset 'read-passwd '(autoload "auth-source" "Read a password, prompting with PROMPT, and return password as a string.
-If optional CONFIRM is non-nil, read the password twice to make sure.
-Optional DEFAULT is a default password to use instead of empty input.
-
-This function echoes `*' for each character that the user types.
-You could let-bind `read-hide-char' to another hiding character, though.
-
-Once the caller uses the password, it can erase the password
-by doing (clear-string STRING).
-
-(fn PROMPT &optional CONFIRM DEFAULT)" nil nil))
-(fset 'run-prolog '(autoload "prolog" "Run an inferior Prolog process, input and output via buffer *prolog*.
-With prefix argument ARG, restart the Prolog process if running before.
-
-(fn ARG)" t nil))
-(fset 'sql-add-product-keywords '(autoload "sql" "Add highlighting KEYWORDS for SQL PRODUCT.
-
-PRODUCT should be a symbol, the name of a SQL product, such as
-`oracle'.  KEYWORDS should be a list; see the variable
-`font-lock-keywords'.  By default they are added at the beginning
-of the current highlighting list.  If optional argument APPEND is
-`set', they are used to replace the current highlighting list.
-If APPEND is any other non-nil value, they are added at the end
-of the current highlighting list.
-
-For example:
-
- (sql-add-product-keywords \\='ms
-  \\='((\"\\\\b\\\\w+_t\\\\b\" . font-lock-type-face)))
-
-adds a fontification pattern to fontify identifiers ending in
-`_t' as data types.
-
-(fn PRODUCT KEYWORDS &optional APPEND)" nil nil))
-(fset 'sql-connect '(autoload "sql" "Connect to an interactive session using CONNECTION settings.
-
-See `sql-connection-alist' to see how to define connections and
-their settings.
-
-The user will not be prompted for any login parameters if a value
-is specified in the connection settings.
-
-(fn CONNECTION &optional BUF-NAME)" t nil))
-(fset 'sql-db2 '(autoload "sql" "Run db2 by IBM as an inferior process.
-
-If buffer `*SQL*' exists but no process is running, make a new process.
-If buffer exists and a process is running, just switch to buffer
-`*SQL*'.
-
-Interpreter used comes from variable `sql-db2-program'.  There is not
-automatic login.
-
-The buffer is put in SQL interactive mode, giving commands for sending
-input.  See `sql-interactive-mode'.
-
-If you use \\[sql-accumulate-and-indent] to send multiline commands to
-db2, newlines will be escaped if necessary.  If you don't want that, set
-`comint-input-sender' back to `comint-simple-send' by writing an after
-advice.  See the elisp manual for more information.
-
-To set the buffer name directly, use \\[universal-argument]
-before \\[sql-db2].  Once session has started,
-\\[sql-rename-buffer] can be called separately to rename the
-buffer.
-
-To specify a coding system for converting non-ASCII characters
-in the input and output to the process, use \\[universal-coding-system-argument]
-before \\[sql-db2].  You can also specify this with \\[set-buffer-process-coding-system]
-in the SQL buffer, after you start the process.
-The default comes from `process-coding-system-alist' and
-`default-process-coding-system'.
-
-(Type \\[describe-mode] in the SQL buffer for a list of commands.)
-
-(fn &optional BUFFER)" t nil))
-(fset 'sql-informix '(autoload "sql" "Run dbaccess by Informix as an inferior process.
-
-If buffer `*SQL*' exists but no process is running, make a new process.
-If buffer exists and a process is running, just switch to buffer
-`*SQL*'.
-
-Interpreter used comes from variable `sql-informix-program'.  Login uses
-the variable `sql-database' as default, if set.
-
-The buffer is put in SQL interactive mode, giving commands for sending
-input.  See `sql-interactive-mode'.
-
-To set the buffer name directly, use \\[universal-argument]
-before \\[sql-informix].  Once session has started,
-\\[sql-rename-buffer] can be called separately to rename the
-buffer.
-
-To specify a coding system for converting non-ASCII characters
-in the input and output to the process, use \\[universal-coding-system-argument]
-before \\[sql-informix].  You can also specify this with \\[set-buffer-process-coding-system]
-in the SQL buffer, after you start the process.
-The default comes from `process-coding-system-alist' and
-`default-process-coding-system'.
-
-(Type \\[describe-mode] in the SQL buffer for a list of commands.)
-
-(fn &optional BUFFER)" t nil))
-(fset 'sql-ingres '(autoload "sql" "Run sql by Ingres as an inferior process.
-
-If buffer `*SQL*' exists but no process is running, make a new process.
-If buffer exists and a process is running, just switch to buffer
-`*SQL*'.
-
-Interpreter used comes from variable `sql-ingres-program'.  Login uses
-the variable `sql-database' as default, if set.
-
-The buffer is put in SQL interactive mode, giving commands for sending
-input.  See `sql-interactive-mode'.
-
-To set the buffer name directly, use \\[universal-argument]
-before \\[sql-ingres].  Once session has started,
-\\[sql-rename-buffer] can be called separately to rename the
-buffer.
-
-To specify a coding system for converting non-ASCII characters
-in the input and output to the process, use \\[universal-coding-system-argument]
-before \\[sql-ingres].  You can also specify this with \\[set-buffer-process-coding-system]
-in the SQL buffer, after you start the process.
-The default comes from `process-coding-system-alist' and
-`default-process-coding-system'.
-
-(Type \\[describe-mode] in the SQL buffer for a list of commands.)
-
-(fn &optional BUFFER)" t nil))
-(fset 'sql-interbase '(autoload "sql" "Run isql by Interbase as an inferior process.
-
-If buffer `*SQL*' exists but no process is running, make a new process.
-If buffer exists and a process is running, just switch to buffer
-`*SQL*'.
-
-Interpreter used comes from variable `sql-interbase-program'.  Login
-uses the variables `sql-user', `sql-password', and `sql-database' as
-defaults, if set.
-
-The buffer is put in SQL interactive mode, giving commands for sending
-input.  See `sql-interactive-mode'.
-
-To set the buffer name directly, use \\[universal-argument]
-before \\[sql-interbase].  Once session has started,
-\\[sql-rename-buffer] can be called separately to rename the
-buffer.
-
-To specify a coding system for converting non-ASCII characters
-in the input and output to the process, use \\[universal-coding-system-argument]
-before \\[sql-interbase].  You can also specify this with \\[set-buffer-process-coding-system]
-in the SQL buffer, after you start the process.
-The default comes from `process-coding-system-alist' and
-`default-process-coding-system'.
-
-(Type \\[describe-mode] in the SQL buffer for a list of commands.)
-
-(fn &optional BUFFER)" t nil))
-(fset 'sql-linter '(autoload "sql" "Run inl by RELEX as an inferior process.
-
-If buffer `*SQL*' exists but no process is running, make a new process.
-If buffer exists and a process is running, just switch to buffer
-`*SQL*'.
-
-Interpreter used comes from variable `sql-linter-program' - usually `inl'.
-Login uses the variables `sql-user', `sql-password', `sql-database' and
-`sql-server' as defaults, if set.  Additional command line parameters
-can be stored in the list `sql-linter-options'.  Run inl -h to get help on
-parameters.
-
-`sql-database' is used to set the LINTER_MBX environment variable for
-local connections, `sql-server' refers to the server name from the
-`nodetab' file for the network connection (dbc_tcp or friends must run
-for this to work).  If `sql-password' is an empty string, inl will use
-an empty password.
-
-The buffer is put in SQL interactive mode, giving commands for sending
-input.  See `sql-interactive-mode'.
-
-To set the buffer name directly, use \\[universal-argument]
-before \\[sql-linter].  Once session has started,
-\\[sql-rename-buffer] can be called separately to rename the
-buffer.
-
-(Type \\[describe-mode] in the SQL buffer for a list of commands.)
-
-(fn &optional BUFFER)" t nil))
-(fset 'sql-mariadb '(autoload "sql" "Run mysql by MariaDB as an inferior process.
-
-MariaDB is free software.
-
-If buffer `*SQL*' exists but no process is running, make a new process.
-If buffer exists and a process is running, just switch to buffer
-`*SQL*'.
-
-Interpreter used comes from variable `sql-mariadb-program'.  Login uses
-the variables `sql-user', `sql-password', `sql-database', and
-`sql-server' as defaults, if set.  Additional command line parameters
-can be stored in the list `sql-mariadb-options'.
-
-The buffer is put in SQL interactive mode, giving commands for sending
-input.  See `sql-interactive-mode'.
-
-To set the buffer name directly, use \\[universal-argument]
-before \\[sql-mariadb].  Once session has started,
-\\[sql-rename-buffer] can be called separately to rename the
-buffer.
-
-To specify a coding system for converting non-ASCII characters
-in the input and output to the process, use \\[universal-coding-system-argument]
-before \\[sql-mariadb].  You can also specify this with \\[set-buffer-process-coding-system]
-in the SQL buffer, after you start the process.
-The default comes from `process-coding-system-alist' and
-`default-process-coding-system'.
-
-(Type \\[describe-mode] in the SQL buffer for a list of commands.)
-
-(fn &optional BUFFER)" t nil))
-(fset 'sql-mode '(autoload "sql" "Major mode to edit SQL.
-
-You can send SQL statements to the SQLi buffer using
-\\[sql-send-region].  Such a buffer must exist before you can do this.
-See `sql-help' on how to create SQLi buffers.
-
-\\{sql-mode-map}
-Customization: Entry to this mode runs the `sql-mode-hook'.
-
-When you put a buffer in SQL mode, the buffer stores the last SQLi
-buffer created as its destination in the variable `sql-buffer'.  This
-will be the buffer \\[sql-send-region] sends the region to.  If this
-SQLi buffer is killed, \\[sql-send-region] is no longer able to
-determine where the strings should be sent to.  You can set the
-value of `sql-buffer' using \\[sql-set-sqli-buffer].
-
-For information on how to create multiple SQLi buffers, see
-`sql-interactive-mode'.
-
-Note that SQL doesn't have an escape character unless you specify
-one.  If you specify backslash as escape character in SQL, you
-must tell Emacs.  Here's how to do that in your init file:
-
-(add-hook \\='sql-mode-hook
-          (lambda ()
-	    (modify-syntax-entry ?\\\\ \"\\\\\" sql-mode-syntax-table)))" t nil))
-(fset 'sql-ms '(autoload "sql" "Run osql by Microsoft as an inferior process.
-
-If buffer `*SQL*' exists but no process is running, make a new process.
-If buffer exists and a process is running, just switch to buffer
-`*SQL*'.
-
-Interpreter used comes from variable `sql-ms-program'.  Login uses the
-variables `sql-user', `sql-password', `sql-database', and `sql-server'
-as defaults, if set.  Additional command line parameters can be stored
-in the list `sql-ms-options'.
-
-The buffer is put in SQL interactive mode, giving commands for sending
-input.  See `sql-interactive-mode'.
-
-To set the buffer name directly, use \\[universal-argument]
-before \\[sql-ms].  Once session has started,
-\\[sql-rename-buffer] can be called separately to rename the
-buffer.
-
-To specify a coding system for converting non-ASCII characters
-in the input and output to the process, use \\[universal-coding-system-argument]
-before \\[sql-ms].  You can also specify this with \\[set-buffer-process-coding-system]
-in the SQL buffer, after you start the process.
-The default comes from `process-coding-system-alist' and
-`default-process-coding-system'.
-
-(Type \\[describe-mode] in the SQL buffer for a list of commands.)
-
-(fn &optional BUFFER)" t nil))
-(fset 'sql-mysql '(autoload "sql" "Run mysql by TcX as an inferior process.
-
-Mysql versions 3.23 and up are free software.
-
-If buffer `*SQL*' exists but no process is running, make a new process.
-If buffer exists and a process is running, just switch to buffer
-`*SQL*'.
-
-Interpreter used comes from variable `sql-mysql-program'.  Login uses
-the variables `sql-user', `sql-password', `sql-database', and
-`sql-server' as defaults, if set.  Additional command line parameters
-can be stored in the list `sql-mysql-options'.
-
-The buffer is put in SQL interactive mode, giving commands for sending
-input.  See `sql-interactive-mode'.
-
-To set the buffer name directly, use \\[universal-argument]
-before \\[sql-mysql].  Once session has started,
-\\[sql-rename-buffer] can be called separately to rename the
-buffer.
-
-To specify a coding system for converting non-ASCII characters
-in the input and output to the process, use \\[universal-coding-system-argument]
-before \\[sql-mysql].  You can also specify this with \\[set-buffer-process-coding-system]
-in the SQL buffer, after you start the process.
-The default comes from `process-coding-system-alist' and
-`default-process-coding-system'.
-
-(Type \\[describe-mode] in the SQL buffer for a list of commands.)
-
-(fn &optional BUFFER)" t nil))
-(fset 'sql-oracle '(autoload "sql" "Run sqlplus by Oracle as an inferior process.
-
-If buffer `*SQL*' exists but no process is running, make a new process.
-If buffer exists and a process is running, just switch to buffer
-`*SQL*'.
-
-Interpreter used comes from variable `sql-oracle-program'.  Login uses
-the variables `sql-user', `sql-password', and `sql-database' as
-defaults, if set.  Additional command line parameters can be stored in
-the list `sql-oracle-options'.
-
-The buffer is put in SQL interactive mode, giving commands for sending
-input.  See `sql-interactive-mode'.
-
-To set the buffer name directly, use \\[universal-argument]
-before \\[sql-oracle].  Once session has started,
-\\[sql-rename-buffer] can be called separately to rename the
-buffer.
-
-To specify a coding system for converting non-ASCII characters
-in the input and output to the process, use \\[universal-coding-system-argument]
-before \\[sql-oracle].  You can also specify this with \\[set-buffer-process-coding-system]
-in the SQL buffer, after you start the process.
-The default comes from `process-coding-system-alist' and
-`default-process-coding-system'.
-
-(Type \\[describe-mode] in the SQL buffer for a list of commands.)
-
-(fn &optional BUFFER)" t nil))
-(fset 'sql-postgres '(autoload "sql" "Run psql by Postgres as an inferior process.
-
-If buffer `*SQL*' exists but no process is running, make a new process.
-If buffer exists and a process is running, just switch to buffer
-`*SQL*'.
-
-Interpreter used comes from variable `sql-postgres-program'.  Login uses
-the variables `sql-database' and `sql-server' as default, if set.
-Additional command line parameters can be stored in the list
-`sql-postgres-options'.
-
-The buffer is put in SQL interactive mode, giving commands for sending
-input.  See `sql-interactive-mode'.
-
-To set the buffer name directly, use \\[universal-argument]
-before \\[sql-postgres].  Once session has started,
-\\[sql-rename-buffer] can be called separately to rename the
-buffer.
-
-To specify a coding system for converting non-ASCII characters
-in the input and output to the process, use \\[universal-coding-system-argument]
-before \\[sql-postgres].  You can also specify this with \\[set-buffer-process-coding-system]
-in the SQL buffer, after you start the process.
-The default comes from `process-coding-system-alist' and
-`default-process-coding-system'.  If your output lines end with ^M,
-your might try undecided-dos as a coding system.  If this doesn't help,
-Try to set `comint-output-filter-functions' like this:
-
-(add-hook \\='comint-output-filter-functions #\\='comint-strip-ctrl-m \\='append)
-
-(Type \\[describe-mode] in the SQL buffer for a list of commands.)
-
-(fn &optional BUFFER)" t nil))
-(fset 'sql-product-interactive '(autoload "sql" "Run PRODUCT interpreter as an inferior process.
-
-If buffer `*SQL*' exists but no process is running, make a new process.
-If buffer exists and a process is running, just make sure buffer `*SQL*'
-is displayed.
-
-To specify the SQL product, prefix the call with
-\\[universal-argument].  To set the buffer name as well, prefix
-the call to \\[sql-product-interactive] with
-\\[universal-argument] \\[universal-argument].
-
-(Type \\[describe-mode] in the SQL buffer for a list of commands.)
-
-(fn &optional PRODUCT NEW-NAME)" t nil))
-(fset 'sql-solid '(autoload "sql" "Run solsql by Solid as an inferior process.
-
-If buffer `*SQL*' exists but no process is running, make a new process.
-If buffer exists and a process is running, just switch to buffer
-`*SQL*'.
-
-Interpreter used comes from variable `sql-solid-program'.  Login uses
-the variables `sql-user', `sql-password', and `sql-server' as
-defaults, if set.
-
-The buffer is put in SQL interactive mode, giving commands for sending
-input.  See `sql-interactive-mode'.
-
-To set the buffer name directly, use \\[universal-argument]
-before \\[sql-solid].  Once session has started,
-\\[sql-rename-buffer] can be called separately to rename the
-buffer.
-
-To specify a coding system for converting non-ASCII characters
-in the input and output to the process, use \\[universal-coding-system-argument]
-before \\[sql-solid].  You can also specify this with \\[set-buffer-process-coding-system]
-in the SQL buffer, after you start the process.
-The default comes from `process-coding-system-alist' and
-`default-process-coding-system'.
-
-(Type \\[describe-mode] in the SQL buffer for a list of commands.)
-
-(fn &optional BUFFER)" t nil))
-(fset 'sql-sqlite '(autoload "sql" "Run sqlite as an inferior process.
-
-SQLite is free software.
-
-If buffer `*SQL*' exists but no process is running, make a new process.
-If buffer exists and a process is running, just switch to buffer
-`*SQL*'.
-
-Interpreter used comes from variable `sql-sqlite-program'.  Login uses
-the variables `sql-user', `sql-password', `sql-database', and
-`sql-server' as defaults, if set.  Additional command line parameters
-can be stored in the list `sql-sqlite-options'.
-
-The buffer is put in SQL interactive mode, giving commands for sending
-input.  See `sql-interactive-mode'.
-
-To set the buffer name directly, use \\[universal-argument]
-before \\[sql-sqlite].  Once session has started,
-\\[sql-rename-buffer] can be called separately to rename the
-buffer.
-
-To specify a coding system for converting non-ASCII characters
-in the input and output to the process, use \\[universal-coding-system-argument]
-before \\[sql-sqlite].  You can also specify this with \\[set-buffer-process-coding-system]
-in the SQL buffer, after you start the process.
-The default comes from `process-coding-system-alist' and
-`default-process-coding-system'.
-
-(Type \\[describe-mode] in the SQL buffer for a list of commands.)
-
-(fn &optional BUFFER)" t nil))
-(fset 'sql-sybase '(autoload "sql" "Run isql by Sybase as an inferior process.
-
-If buffer `*SQL*' exists but no process is running, make a new process.
-If buffer exists and a process is running, just switch to buffer
-`*SQL*'.
-
-Interpreter used comes from variable `sql-sybase-program'.  Login uses
-the variables `sql-server', `sql-user', `sql-password', and
-`sql-database' as defaults, if set.  Additional command line parameters
-can be stored in the list `sql-sybase-options'.
-
-The buffer is put in SQL interactive mode, giving commands for sending
-input.  See `sql-interactive-mode'.
-
-To set the buffer name directly, use \\[universal-argument]
-before \\[sql-sybase].  Once session has started,
-\\[sql-rename-buffer] can be called separately to rename the
-buffer.
-
-To specify a coding system for converting non-ASCII characters
-in the input and output to the process, use \\[universal-coding-system-argument]
-before \\[sql-sybase].  You can also specify this with \\[set-buffer-process-coding-system]
-in the SQL buffer, after you start the process.
-The default comes from `process-coding-system-alist' and
-`default-process-coding-system'.
-
-(Type \\[describe-mode] in the SQL buffer for a list of commands.)
-
-(fn &optional BUFFER)" t nil))
-(fset 'sql-vertica '(autoload "sql" "Run vsql as an inferior process.
-
-(fn &optional BUFFER)" t nil))
-(fset 'turn-off-flyspell '(autoload "flyspell" "Unconditionally turn off Flyspell mode." nil nil))
-
-;; Round-11 autoload cells (comint/compile/flymake/tcl/pcomplete/grep/verilog/ruler).
-(fset 'comint-redirect-results-list '(autoload "comint" "Send COMMAND to current process.
-Return a list of expressions in the output which match REGEXP.
-REGEXP-GROUP is the regular expression group in REGEXP to use.
-
-(fn COMMAND REGEXP REGEXP-GROUP)" nil nil))
-(fset 'comint-redirect-results-list-from-process '(autoload "comint" "Send COMMAND to PROCESS.
-Return a list of expressions in the output which match REGEXP.
-REGEXP-GROUP is the regular expression group in REGEXP to use.
-
-(fn PROCESS COMMAND REGEXP REGEXP-GROUP)" nil nil))
-(fset 'comint-redirect-send-command '(autoload "comint" "Send COMMAND to process in current buffer, with output to OUTPUT-BUFFER.
-With prefix arg ECHO, echo output in process buffer.
-
-If NO-DISPLAY is non-nil, do not show the output buffer.
-
-(fn COMMAND OUTPUT-BUFFER ECHO &optional NO-DISPLAY)" (comint-mode) nil))
-(fset 'comint-redirect-send-command-to-process '(autoload "comint" "Send COMMAND to PROCESS, with output to OUTPUT-BUFFER.
-With prefix arg, echo output in process buffer.
-
-If NO-DISPLAY is non-nil, do not show the output buffer.
-
-(fn COMMAND OUTPUT-BUFFER PROCESS ECHO &optional NO-DISPLAY)" (comint-mode) nil))
-(fset 'comint-run '(autoload "comint" "Run PROGRAM in a Comint buffer and switch to that buffer.
-
-If SWITCHES are supplied, they are passed to PROGRAM.  With prefix argument
-\\[universal-argument] prompt for SWITCHES as well as PROGRAM.
-
-The buffer name is made by surrounding the file name of PROGRAM with `*'s.
-The file name is used to make a symbol name, such as `comint-sh-hook', and any
-hooks on this symbol are run in the buffer.
-
-See `make-comint' and `comint-exec'.
-
-(fn PROGRAM &optional SWITCHES)" t nil))
-(fset 'compilation--default-buffer-name '(autoload "compile" "
-
-(fn NAME-OF-MODE)" nil nil))
-(fset 'compilation-minor-mode '(autoload "compile" "Toggle Compilation minor mode.
-
-When Compilation minor mode is enabled, all the error-parsing
-commands of Compilation major mode are available.  See
-`compilation-mode'.
-
-This is a minor mode.  If called interactively, toggle the `Compilation
-minor mode' mode.  If the prefix argument is positive, enable the mode,
-and if it is zero or negative, disable the mode.
-
-If called from Lisp, toggle the mode if ARG is `toggle'.  Enable the
-mode if ARG is nil, omitted, or is a positive number.  Disable the mode
-if ARG is a negative number.
-
-To check whether the minor mode is enabled in the current buffer,
-evaluate the variable `compilation-minor-mode'.
-
-The mode's hook is called both when the mode is enabled and when it is
-disabled.
-
-\\{compilation-minor-mode-map}
-
-(fn &optional ARG)" t nil))
-(fset 'compilation-mode '(autoload "compile" "Major mode for compilation log buffers.
-\\<compilation-mode-map>To visit the source for a line-numbered error,
-move point to the error message line and type \\[compile-goto-error].
-To kill the compilation, type \\[kill-compilation].
-
-Runs `compilation-mode-hook' with `run-mode-hooks' (which see).
-
-\\{compilation-mode-map}
-
-(fn &optional NAME-OF-MODE)" t nil))
-(fset 'compilation-next-error-function '(autoload "compile" "Advance to the next error message and visit the file where the error was.
-This is the value of `next-error-function' in Compilation buffers.
-
-(fn N &optional RESET)" t nil))
-(fset 'compilation-shell-minor-mode '(autoload "compile" "Toggle Compilation Shell minor mode.
-
-When Compilation Shell minor mode is enabled, all the
-error-parsing commands of the Compilation major mode are
-available but bound to keys that don't collide with Shell mode.
-See `compilation-mode'.
-
-This is a minor mode.  If called interactively, toggle the
-`Compilation-Shell minor mode' mode.  If the prefix argument is
-positive, enable the mode, and if it is zero or negative, disable the
-mode.
-
-If called from Lisp, toggle the mode if ARG is `toggle'.  Enable the
-mode if ARG is nil, omitted, or is a positive number.  Disable the mode
-if ARG is a negative number.
-
-To check whether the minor mode is enabled in the current buffer,
-evaluate the variable `compilation-shell-minor-mode'.
-
-The mode's hook is called both when the mode is enabled and when it is
-disabled.
-
-\\{compilation-shell-minor-mode-map}
-
-(fn &optional ARG)" t nil))
-(fset 'compilation-start '(autoload "compile" "Run compilation command COMMAND (low level interface).
-If COMMAND starts with a cd command, that becomes the `default-directory'.
-The rest of the arguments are optional; for them, nil means use the default.
-
-MODE is the major mode to set in the compilation buffer.  Mode
-may also be t meaning use `compilation-shell-minor-mode' under `comint-mode'.
-
-If NAME-FUNCTION is non-nil, call it with one argument (the mode name)
-to determine the buffer name.  Otherwise, the default is to
-reuses the current buffer if it has the proper major mode,
-else use or create a buffer with name based on the major mode.
-
-If HIGHLIGHT-REGEXP is non-nil, `next-error' will temporarily highlight
-the matching section of the visited source line; the default is to use the
-global value of `compilation-highlight-regexp'.
-
-If CONTINUE is non-nil, the buffer won't be emptied before
-compilation is started.  This can be useful if you wish to
-combine the output from several compilation commands in the same
-buffer.  The new output will be at the end of the buffer, and
-point is not changed.
-
-Returns the compilation buffer created.
-
-(fn COMMAND &optional MODE NAME-FUNCTION HIGHLIGHT-REGEXP CONTINUE)" nil nil))
-(fset 'compile '(autoload "compile" "Compile the program including the current buffer.  Default: run `make'.
-Runs COMMAND, a shell command, in a separate process asynchronously
-with output going to the buffer `*compilation*'.
-
-You can then use the command \\[next-error] to find the next error message
-and move to the source code that caused it.
-
-If optional second arg COMINT is t the buffer will be in Comint mode with
-`compilation-shell-minor-mode'.
-
-Interactively, prompts for the command if the variable
-`compilation-read-command' is non-nil; otherwise uses `compile-command'.
-With prefix arg, always prompts.
-Additionally, with universal prefix arg, compilation buffer will be in
-comint mode, i.e. interactive.
-
-To run more than one compilation at once, start one then rename
-the `*compilation*' buffer to some other name with
-\\[rename-buffer].  Then _switch buffers_ and start the new compilation.
-It will create a new `*compilation*' buffer.
-
-On most systems, termination of the main compilation process
-kills its subprocesses.
-
-The name used for the buffer is actually whatever is returned by
-the function in `compilation-buffer-name-function', so you can set that
-to a function that generates a unique name.
-
-(fn COMMAND &optional COMINT)" t nil))
-(fset 'flymake-diag-region '(autoload "flymake" "Compute BUFFER's region (BEG . END) corresponding to LINE and COL.
-If COL is nil, return a region just for LINE.  Return nil if the
-region is invalid.  This function saves match data.
-
-(fn BUFFER LINE &optional COL)" nil nil))
-(fset 'flymake-diagnostics '(autoload "flymake" "Get Flymake diagnostics in region determined by BEG and END.
-
-If neither BEG or END is supplied, use whole accessible buffer,
-otherwise if BEG is non-nil and END is nil, consider only
-diagnostics at BEG.
-
-(fn &optional BEG END)" nil nil))
-(fset 'flymake-log '(autoload "flymake" "Log, at level LEVEL, the message MSG formatted with ARGS.
-LEVEL is passed to `display-warning', which is used to display
-the warning.  If this form is included in a file,
-the generated warning contains an indication of the file that
-generated it.
-
-(fn LEVEL MSG &rest ARGS)" nil t))
-(fset 'flymake-make-diagnostic '(autoload "flymake" "Make a Flymake diagnostic for LOCUS's region from BEG to END.
-LOCUS is a buffer object or a string designating a file name.
-
-TYPE is a diagnostic symbol (see Info Node `(Flymake)Flymake error
-types')
-
-INFO is a description of the problem detected.  It may be a string, or
-list (ORIGIN CODE MESSAGE) appropriately categorizing and describing the
-diagnostic.  ORIGIN may be a string or nil.  CODE maybe be a string, a
-number or nil.  MESSAGE must be a string.
-
-DATA is any object that the caller wishes to attach to the created
-diagnostic for later retrieval with `flymake-diagnostic-data'.
-
-If LOCUS is a buffer, BEG and END should be buffer positions inside it.
-If LOCUS designates a file, BEG and END should be a cons (LINE . COL)
-indicating a file position.  In this second case, END may be omitted in
-which case the region is computed using `flymake-diag-region' if the
-diagnostic is appended to an actual buffer.
-
-OVERLAY-PROPERTIES is an alist of properties attached to the created
-diagnostic, overriding the default properties and any properties listed
-in the `flymake-overlay-control' property of the diagnostic's type
-symbol.
-
-(fn LOCUS BEG END TYPE INFO &optional DATA OVERLAY-PROPERTIES)" nil nil))
-(fset 'flymake-mode '(autoload "flymake" "Toggle Flymake mode on or off.
-
-Flymake is an Emacs minor mode for on-the-fly syntax checking.
-Flymake collects diagnostic information from multiple sources,
-called backends, and visually annotates the buffer with the
-results.
-
-Flymake performs these checks while the user is editing.
-The customization variables `flymake-start-on-flymake-mode',
-`flymake-no-changes-timeout' determine the exact circumstances
-whereupon Flymake decides to initiate a check of the buffer.
-
-The commands `flymake-goto-next-error' and
-`flymake-goto-prev-error' can be used to navigate among Flymake
-diagnostics annotated in the buffer.
-
-By default, `flymake-mode' doesn't override the \\[next-error] command, but
-if you're using Flymake a lot (and don't use the regular compilation
-mechanisms that often), it can be useful to put something like
-the following in your init file:
-
-  (setq next-error-function \\='flymake-goto-next-error)
-
-The visual appearance of each type of diagnostic can be changed
-by setting properties `flymake-overlay-control', `flymake-bitmap'
-and `flymake-severity' on the symbols of diagnostic types (like
-`:error', `:warning' and `:note').
-
-Activation or deactivation of backends used by Flymake in each
-buffer happens via the special hook
-`flymake-diagnostic-functions'.
-
-Some backends may take longer than others to respond or complete,
-and some may decide to disable themselves if they are not
-suitable for the current buffer.  The commands
-`flymake-running-backends', `flymake-disabled-backends' and
-`flymake-reporting-backends' summarize the situation, as does the
-special *Flymake log* buffer.
-
-This is a minor mode.  If called interactively, toggle the `Flymake
-mode' mode.  If the prefix argument is positive, enable the mode, and if
-it is zero or negative, disable the mode.
-
-If called from Lisp, toggle the mode if ARG is `toggle'.  Enable the
-mode if ARG is nil, omitted, or is a positive number.  Disable the mode
-if ARG is a negative number.
-
-To check whether the minor mode is enabled in the current buffer,
-evaluate the variable `flymake-mode'.
-
-The mode's hook is called both when the mode is enabled and when it is
-disabled.
-
-\\{flymake-mode-map}
-
-(fn &optional ARG)" t nil))
-(fset 'flymake-mode-off '(autoload "flymake" "Turn Flymake mode off." nil nil))
-(fset 'flymake-mode-on '(autoload "flymake" "Turn Flymake mode on." nil nil))
-(fset 'grep '(autoload "grep" "Run Grep with user-specified COMMAND-ARGS.
-The output from the command goes to the \"*grep*\" buffer.
-
-While Grep runs asynchronously, you can use \\[next-error] (M-x next-error),
-or \\<grep-mode-map>\\[compile-goto-error] in the *grep* buffer, to go to the lines where Grep found
-matches.  To kill the Grep job before it finishes, type \\[kill-compilation].
-
-Noninteractively, COMMAND-ARGS should specify the Grep command-line
-arguments.
-
-For doing a recursive `grep', see the `rgrep' command.  For running
-Grep in a specific directory, see `lgrep'.
-
-This command uses a special history list for its COMMAND-ARGS, so you
-can easily repeat a grep command.
-
-A prefix argument says to default the COMMAND-ARGS based on the current
-tag the cursor is over, substituting it into the last Grep command
-in the Grep command history (or into `grep-command' if that history
-list is empty).
-
-(fn COMMAND-ARGS)" t nil))
-(fset 'grep-compute-defaults '(autoload "grep" "Compute the defaults for the `grep' command.
-The value depends on `grep-command', `grep-template',
-`grep-use-null-device', `grep-find-command', `grep-find-template',
-`grep-use-null-filename-separator', `grep-find-use-xargs',
-`grep-highlight-matches', and `grep-quoting-style'." nil nil))
-(fset 'grep-find '(autoload "grep" "Run grep via find, with user-specified args COMMAND-ARGS.
-Collect output in the \"*grep*\" buffer.
-While find runs asynchronously, you can use the \\[next-error] command
-to find the text that grep hits refer to.
-
-This command uses a special history list for its arguments, so you can
-easily repeat a find command.
-
-(fn COMMAND-ARGS)" t nil))
-(fset 'grep-mode '(autoload "grep" "Sets `grep-last-buffer' and `compilation-window-height'.
-
-In addition to any hooks its parent mode `compilation-mode' might have
-run, this mode runs the hook `grep-mode-hook', as the final or
-penultimate step during initialization.
-
-\\{grep-mode-map}" t nil))
-(fset 'grep-process-setup '(autoload "grep" "Setup compilation variables and buffer for `grep'.
-Set up `compilation-exit-message-function' and run `grep-setup-hook'." nil nil))
-(fset 'inferior-tcl '(autoload "tcl" "Run inferior Tcl process.
-Prefix arg means enter program name interactively.
-See documentation for function `inferior-tcl-mode' for more information.
-
-(fn CMD)" t nil))
-(fset 'lgrep '(autoload "grep" "Run grep, searching for REGEXP in FILES in directory DIR.
-The search is limited to file names matching shell pattern FILES.
-FILES may use abbreviations defined in `grep-files-aliases', e.g.
-entering `ch' is equivalent to `*.[ch]'.  As whitespace triggers
-completion when entering a pattern, including it requires
-quoting, e.g. `\\[quoted-insert]<space>'.
-
-With \\[universal-argument] prefix, you can edit the constructed shell command line
-before it is executed.
-With two \\[universal-argument] prefixes, directly edit and run `grep-command'.
-
-Collect output in the \"*grep*\" buffer.  While grep runs asynchronously, you
-can use \\[next-error] (M-x next-error), or \\<grep-mode-map>\\[compile-goto-error] in the grep output buffer,
-to go to the lines where grep found matches.
-
-This command shares argument histories with \\[rgrep] and \\[grep].
-
-If CONFIRM is non-nil, the user will be given an opportunity to edit the
-command before it's run.
-
-(fn REGEXP &optional FILES DIR CONFIRM)" t nil))
-(fset 'make-comint '(autoload "comint" "Make a Comint process NAME in a buffer, running PROGRAM.
-The name of the buffer is made by surrounding NAME with `*'s.
-PROGRAM should be either a string denoting an executable program to create
-via `start-file-process', or a cons pair of the form (HOST . SERVICE) denoting
-a TCP connection to be opened via `open-network-stream'.  If there is already
-a running process in that buffer, it is not restarted.  Optional third arg
-STARTFILE is the name of a file, whose contents are sent to the
-process as its initial input.
-
-If PROGRAM is a string, any more args are arguments to PROGRAM.
-
-Returns the (possibly newly created) process buffer.
-
-(fn NAME PROGRAM &optional STARTFILE &rest SWITCHES)" nil nil))
-(fset 'make-comint-in-buffer '(autoload "comint" "Make a Comint process NAME in BUFFER, running PROGRAM.
-If BUFFER is nil, it defaults to NAME surrounded by `*'s.
-If there is a running process in BUFFER, it is not restarted.
-
-PROGRAM should be one of the following:
-- a string, denoting an executable program to create via
-  `start-file-process'
-- a cons pair of the form (HOST . SERVICE), denoting a TCP
-  connection to be opened via `open-network-stream'
-- nil, denoting a newly-allocated pty.
-
-Optional fourth arg STARTFILE is the name of a file, whose
-contents are sent to the process as its initial input.
-
-If PROGRAM is a string, any more args are arguments to PROGRAM.
-
-Return the (possibly newly created) process buffer.
-
-(fn NAME BUFFER PROGRAM &optional STARTFILE &rest SWITCHES)" nil nil))
-(fset 'pcomplete '(autoload "pcomplete" "Support extensible programmable completion.
-To use this function, just bind the TAB key to it, or add it to your
-completion functions list (it should occur fairly early in the list).
-
-(fn &optional INTERACTIVELY)" t nil))
-(fset 'pcomplete-comint-setup '(autoload "pcomplete" "Setup a comint buffer to use pcomplete.
-COMPLETEF-SYM should be the symbol where the
-dynamic-complete-functions are kept.  For comint mode itself,
-this is `comint-dynamic-complete-functions'.
-
-(fn COMPLETEF-SYM)" nil nil))
-(fset 'pcomplete-continue '(autoload "pcomplete" "Complete without reference to any cycling completions." t nil))
-(fset 'pcomplete-expand '(autoload "pcomplete" "Expand the textual value of the current argument.
-This will modify the current buffer." t nil))
-(fset 'pcomplete-expand-and-complete '(autoload "pcomplete" "Expand the textual value of the current argument.
-This will modify the current buffer." t nil))
-(fset 'pcomplete-help '(autoload "pcomplete" "Display any help information relative to the current argument." t nil))
-(fset 'pcomplete-list '(autoload "pcomplete" "Show the list of possible completions for the current argument." t nil))
-(fset 'pcomplete-reverse '(autoload "pcomplete" "If cycling completion is in use, cycle backwards." t nil))
-(fset 'pcomplete-shell-setup '(autoload "pcomplete" "Setup `shell-mode' to use pcomplete." nil nil))
-(fset 'recompile '(autoload "compile" "Re-compile the program including the current buffer.
-If this is run in a Compilation mode buffer, reuse the arguments from the
-original use.  Otherwise, recompile using `compile-command'.
-If the optional argument `edit-command' is non-nil, the command can be edited.
-
-(fn &optional EDIT-COMMAND)" t nil))
-(fset 'rgrep '(autoload "grep" "Recursively grep for REGEXP in FILES in directory tree rooted at DIR.
-The search is limited to file names matching shell pattern FILES.
-FILES may use abbreviations defined in `grep-files-aliases', e.g.
-entering `ch' is equivalent to `*.[ch]'.  As whitespace triggers
-completion when entering a pattern, including it requires
-quoting, e.g. `\\[quoted-insert]<space>'.
-
-With \\[universal-argument] prefix, you can edit the constructed shell command line
-before it is executed.
-With two \\[universal-argument] prefixes, directly edit and run `grep-find-command'.
-
-Collect output in the \"*grep*\" buffer.  While the recursive grep is running,
-you can use \\[next-error] (M-x next-error), or \\<grep-mode-map>\\[compile-goto-error] in the grep output buffer,
-to visit the lines where matches were found.  To kill the job
-before it finishes, type \\[kill-compilation].
-
-This command shares argument histories with \\[lgrep] and \\[grep-find].
-
-When called programmatically and FILES is nil, REGEXP is expected
-to specify a command to run.
-
-If CONFIRM is non-nil, the user will be given an opportunity to edit the
-command before it's run.
-
-Interactively, the user can use \\<read-regexp-map>\\[read-regexp-toggle-case-fold] while entering the regexp
-to indicate whether the grep should be case sensitive or not.
-
-(fn REGEXP &optional FILES DIR CONFIRM)" t nil))
-(fset 'ruler-mode '(autoload "ruler-mode" "Toggle display of ruler in header line (Ruler mode).
-
-This is a minor mode.  If called interactively, toggle the `Ruler mode'
-mode.  If the prefix argument is positive, enable the mode, and if it is
-zero or negative, disable the mode.
-
-If called from Lisp, toggle the mode if ARG is `toggle'.  Enable the
-mode if ARG is nil, omitted, or is a positive number.  Disable the mode
-if ARG is a negative number.
-
-To check whether the minor mode is enabled in the current buffer,
-evaluate the variable `ruler-mode'.
-
-The mode's hook is called both when the mode is enabled and when it is
-disabled.
-
-(fn &optional ARG)" t nil))
-(fset 'tcl-help-on-word '(autoload "tcl" "Get help on Tcl command.  Default is word at point.
-Prefix argument means invert sense of `tcl-use-smart-word-finder'.
-
-(fn COMMAND &optional ARG)" t nil))
-(fset 'tcl-mode '(autoload "tcl" "Major mode for editing Tcl code.
-Expression and list commands understand all Tcl brackets.
-Tab indents for Tcl code.
-Paragraphs are separated by blank lines only.
-Delete converts tabs to spaces as it moves back.
-
-Variables controlling indentation style:
-  `tcl-indent-level'
-    Indentation of Tcl statements within surrounding block.
-  `tcl-continued-indent-level'
-    Indentation of continuation line relative to first line of command.
-
-Variables controlling user interaction with mode (see variable
-documentation for details):
-  `tcl-tab-always-indent'
-    Controls action of TAB key.
-  `tcl-auto-newline'
-    Non-nil means automatically newline before and after braces, brackets,
-    and semicolons inserted in Tcl code.
-  `tcl-use-smart-word-finder'
-    If not nil, use a smarter, Tcl-specific way to find the current
-    word when looking up help on a Tcl command.
-
-Turning on Tcl mode runs `tcl-mode-hook'.  Read the documentation for
-`tcl-mode-hook' to see what kinds of interesting hook functions
-already exist.
-
-\\{tcl-mode-map}" t nil))
-(fset 'verilog-mode '(autoload "verilog-mode" "Major mode for editing Verilog code.
-\\<verilog-mode-map>
-See \\[describe-function] verilog-auto (\\[verilog-auto]) for details on how
-AUTOs can improve coding efficiency.
-
-Use \\[verilog-faq] for a pointer to frequently asked questions.
-
-NEWLINE, TAB indents for Verilog code.
-Delete converts tabs to spaces as it moves back.
-
-Supports highlighting.
-
-Turning on Verilog mode calls the value of the variable `verilog-mode-hook'
-with no args, if that value is non-nil.
-
-Variables controlling indentation/edit style:
-
- variable `verilog-indent-level'      (default 3)
-   Indentation of Verilog statements with respect to containing block.
- `verilog-indent-level-module'        (default 3)
-   Absolute indentation of Module level Verilog statements.
-   Set to 0 to get initial and always statements lined up
-   on the left side of your screen.
- `verilog-indent-level-declaration'   (default 3)
-   Indentation of declarations with respect to containing block.
-   Set to 0 to get them list right under containing block.
- `verilog-indent-level-behavioral'    (default 3)
-   Indentation of first begin in a task or function block
-   Set to 0 to get such code to lined up underneath the task or
-   function keyword.
- `verilog-indent-level-directive'     (default 1)
-   Indentation of \\=`ifdef/\\=`endif blocks.
- `verilog-indent-ignore-multiline-defines' (default t)
-   Non-nil means ignore indentation on lines that are part of a multiline
-   define.
- `verilog-indent-ignore-regexp'     (default nil
-   Regexp that matches lines that should be ignored for indentation.
- `verilog-cexp-indent'              (default 1)
-   Indentation of Verilog statements broken across lines i.e.:
-      if (a)
-        begin
- `verilog-case-indent'              (default 2)
-   Indentation for case statements.
- `verilog-auto-newline'             (default nil)
-   Non-nil means automatically newline after semicolons and the punctuation
-   mark after an end.
- `verilog-auto-indent-on-newline'   (default t)
-   Non-nil means automatically indent line after newline.
- `verilog-tab-always-indent'        (default t)
-   Non-nil means TAB in Verilog mode should always reindent the current line,
-   regardless of where in the line point is when the TAB command is used.
- `verilog-indent-begin-after-if'    (default t)
-   Non-nil means to indent begin statements following a preceding
-   if, else, while, for and repeat statements, if any.  Otherwise,
-   the begin is lined up with the preceding token.  If t, you get:
-      if (a)
-         begin // amount of indent based on `verilog-cexp-indent'
-   otherwise you get:
-      if (a)
-      begin
- `verilog-indent-class-inside-pkg'  (default t)
-   Non-nil means indent classes inside packages.
-   Otherwise, classes have zero indentation.
- `verilog-auto-endcomments'         (default t)
-   Non-nil means a comment /* ... */ is set after the ends which ends
-   cases, tasks, functions and modules.
-   The type and name of the object will be set between the braces.
- `verilog-minimum-comment-distance' (default 10)
-   Minimum distance (in lines) between begin and end required before a comment
-   will be inserted.  Setting this variable to zero results in every
-   end acquiring a comment; the default avoids too many redundant
-   comments in tight quarters.
- `verilog-align-decl-expr-comments' (default t)
-   Non-nil means align declaration and expressions comments.
- `verilog-align-comment-distance'   (default 1)
-   Distance (in spaces) between longest declaration and comments.
-   Only works if `verilog-align-decl-expr-comments' is non-nil.
- `verilog-align-assign-expr'        (default nil)
-   Non-nil means align expressions of continuous assignments.
- `verilog-align-typedef-regexp'     (default nil)
-   Regexp that matches user typedefs for declaration alignment.
- `verilog-align-typedef-words'      (default nil)
-   List of words that match user typedefs for declaration alignment.
- `verilog-auto-lineup'              (default `declarations')
-   List of contexts where auto lineup of code should be done.
-
-Variables controlling other actions:
-
- `verilog-linter'                   (default `none')
-   Unix program to call to run the lint checker.  This is the default
-   command for \\[compile-command] and \\[verilog-auto-save-compile].
-
-See \\[customize] for the complete list of variables.
-
-AUTO expansion functions are, in part:
-
-    \\[verilog-auto]  Expand AUTO statements.
-    \\[verilog-delete-auto]  Remove the AUTOs.
-    \\[verilog-inject-auto]  Insert AUTOs for the first time.
-
-Some other functions are:
-
-    \\[completion-at-point]    Complete word with appropriate possibilities.
-    \\[verilog-mark-defun]  Mark function.
-    \\[verilog-beg-of-defun]  Move to beginning of current function.
-    \\[verilog-end-of-defun]  Move to end of current function.
-    \\[verilog-label-be]  Label matching begin ... end, fork ... join, etc
-                          statements.
-
-    \\[verilog-comment-region]  Put marked area in a comment.
-    \\[verilog-uncomment-region]  Uncomment an area commented with
-                                  \\[verilog-comment-region].
-    \\[verilog-insert-block]  Insert begin ... end.
-    \\[verilog-star-comment]    Insert /* ... */.
-
-    \\[verilog-sk-always]  Insert an always @(AS) begin .. end block.
-    \\[verilog-sk-begin]  Insert a begin .. end block.
-    \\[verilog-sk-case]  Insert a case block, prompting for details.
-    \\[verilog-sk-for]  Insert a for (...) begin .. end block, prompting for
-                        details.
-    \\[verilog-sk-generate]  Insert a generate .. endgenerate block.
-    \\[verilog-sk-header]  Insert a header block at the top of file.
-    \\[verilog-sk-initial]  Insert an initial begin .. end block.
-    \\[verilog-sk-fork]  Insert a fork begin .. end .. join block.
-    \\[verilog-sk-module]  Insert a module .. (/*AUTOARG*/);.. endmodule block.
-    \\[verilog-sk-ovm-class]  Insert an OVM Class block.
-    \\[verilog-sk-uvm-object]  Insert an UVM Object block.
-    \\[verilog-sk-uvm-component]  Insert an UVM Component block.
-    \\[verilog-sk-primitive]  Insert a primitive .. (.. );.. endprimitive block.
-    \\[verilog-sk-repeat]  Insert a repeat (..) begin .. end block.
-    \\[verilog-sk-specify]  Insert a specify .. endspecify block.
-    \\[verilog-sk-task]  Insert a task .. begin .. end endtask block.
-    \\[verilog-sk-while]  Insert a while (...) begin .. end block,
-                       prompting for details.
-    \\[verilog-sk-casex]  Insert a casex (...) item: begin.. end endcase block,
-                       prompting for details.
-    \\[verilog-sk-casez]  Insert a casez (...) item: begin.. end endcase block,
-                       prompting for details.
-    \\[verilog-sk-if]  Insert an if (..) begin .. end block.
-    \\[verilog-sk-else-if]  Insert an else if (..) begin .. end block.
-    \\[verilog-sk-comment]  Insert a comment block.
-    \\[verilog-sk-assign]  Insert an assign .. = ..; statement.
-    \\[verilog-sk-function]  Insert a function .. begin .. end endfunction
-                             block.
-    \\[verilog-sk-input]  Insert an input declaration, prompting for details.
-    \\[verilog-sk-output]  Insert an output declaration, prompting for details.
-    \\[verilog-sk-state-machine]  Insert a state machine definition, prompting
-                                  for details.
-    \\[verilog-sk-inout]  Insert an inout declaration, prompting for details.
-    \\[verilog-sk-wire]  Insert a wire declaration, prompting for details.
-    \\[verilog-sk-reg]  Insert a register declaration, prompting for details.
-    \\[verilog-sk-define-signal]  Define signal under point as a register at
-                                  the top of the module.
-
-All key bindings can be seen in a Verilog-buffer with \\[describe-bindings].
-Key bindings specific to `verilog-mode-map' are:
-
-\\{verilog-mode-map}" t nil))
-(fset 'widget-apply '(autoload "wid-edit" "Apply the value of WIDGET's PROPERTY to the widget itself.
-Return the result of applying the value of PROPERTY to WIDGET.
-ARGS are passed as extra arguments to the function.
-
-(fn WIDGET PROPERTY &rest ARGS)" nil nil))
-(fset 'widget-convert '(autoload "wid-edit" "Convert TYPE to a widget without inserting it in the buffer.
-The optional ARGS are additional keyword arguments.
-
-(fn TYPE &rest ARGS)" nil nil))
-(fset 'widget-create '(autoload "wid-edit" "Create widget of TYPE.
-The optional ARGS are additional keyword arguments.
-
-(fn TYPE &rest ARGS)" nil nil))
-(fset 'widget-delete '(autoload "wid-edit" "Delete WIDGET.
-
-(fn WIDGET)" nil nil))
-(fset 'widget-get '(autoload "wid-edit" "In WIDGET, get the value of PROPERTY.
-The value could either be specified when the widget was created, or
-later with `widget-put'.
-
-(fn WIDGET PROPERTY)" nil nil))
-(fset 'widget-insert '(autoload "wid-edit" "Call `insert' with ARGS even if surrounding text is read only.
-
-(fn &rest ARGS)" nil nil))
-(fset 'widget-prompt-value '(autoload "wid-edit" "Prompt for a value matching WIDGET, using PROMPT.
-The current value is assumed to be VALUE, unless UNBOUND is non-nil.
-
-(fn WIDGET PROMPT &optional VALUE UNBOUND)" nil nil))
-(fset 'widget-put '(autoload "wid-edit" nil nil nil))
-(fset 'widget-setup '(autoload "wid-edit" "Setup current buffer so editing string widgets works." nil nil))
-(fset 'widget-value '(autoload "wid-edit" nil nil nil))
-(fset 'widgetp '(autoload "wid-edit" "Return non-nil if WIDGET is a widget.
-
-(fn WIDGET)" nil nil))
-(fset 'zrgrep '(autoload "grep" "Recursively grep for REGEXP in gzipped FILES in tree rooted at DIR.
-Like `rgrep' but uses `zgrep' for `grep-program', sets the default
-file name to `*.gz', and sets `grep-highlight-matches' to `always'.
-
-If CONFIRM is non-nil, the user will be given an opportunity to edit the
-command before it's run.
-
-(fn REGEXP &optional FILES DIR CONFIRM TEMPLATE)" t nil))
-
-(defvar ruler-mode nil "Non-nil if Ruler mode is enabled.
-Use the command `ruler-mode' to change this variable.")
-
-
-;; emacs.c's daemon socket name (nil when not running as a daemon).
-(defvar internal--daemon-sockname nil)
-
-
-
-;; GNU font.c's weight/slant/width tables (verbatim values).
-(defconst font-weight-table
-  [[0 thin] [40 ultra-light ultralight extra-light extralight]
-   [50 light] [55 semi-light semilight demilight]
-   [80 regular normal unspecified book] [100 medium]
-   [180 semi-bold semibold demibold demi-bold demi] [200 bold]
-   [205 extra-bold extrabold ultra-bold ultrabold] [210 black heavy]
-   [250 ultra-heavy ultraheavy]])
-
-(defconst font-slant-table
-  [[0 reverse-oblique ro] [10 reverse-italic ri]
-   [100 normal r unspecified] [200 italic i ot] [210 oblique o]])
-
-(defconst font-width-table
-  [[50 ultra-condensed ultracondensed]
-   [63 extra-condensed extracondensed]
-   [75 condensed compressed narrow]
-   [87 semi-condensed semicondensed demicondensed]
-   [100 normal medium regular unspecified]
-   [113 semi-expanded semiexpanded demiexpanded]
-   [125 expanded] [150 extra-expanded extraexpanded]
-   [200 ultra-expanded ultraexpanded wide]])
-
-(defun face-valid-attribute-values (attribute &optional frame)
-  "Return valid values for face attribute ATTRIBUTE.
-The optional argument FRAME is used to determine available fonts
-and colors.  If it is nil or not specified, the selected frame is used.
-Value is an alist of (NAME . VALUE) if ATTRIBUTE expects a value out
-of a set of discrete values.  Value is `integerp' if ATTRIBUTE expects
-an integer value."
-  (let ((valid
-         (pcase attribute
-           (:family
-            (if (window-system frame)
-                (mapcar (lambda (x) (cons x x))
-                        (font-family-list))
-	      ;; Only one font on TTYs.
-	      (list (cons "default" "default"))))
-           (:foundry
-	    (list nil))
-	   (:width
-            (mapcar (lambda (x) (cons (symbol-name (aref x 1)) (aref x 1)))
-		    font-width-table))
-           (:weight
-            (mapcar (lambda (x) (cons (symbol-name (aref x 1)) (aref x 1)))
-		    font-weight-table))
-	   (:slant
-            (mapcar (lambda (x) (cons (symbol-name (aref x 1)) (aref x 1)))
-		    font-slant-table))
-	   ((or :inverse-video :extend)
-            (mapcar (lambda (x) (cons (symbol-name x) x))
-		    (internal-lisp-face-attribute-values attribute)))
-           ((or :underline :overline :strike-through :box)
-            (if (window-system frame)
-                (nconc (mapcar (lambda (x) (cons (symbol-name x) x))
-                               (internal-lisp-face-attribute-values attribute))
-                       (mapcar (lambda (c) (cons c c))
-                               (defined-colors frame)))
-              (mapcar (lambda (x) (cons (symbol-name x) x))
-		      (internal-lisp-face-attribute-values attribute))))
-           ((or :foreground :background)
-            (mapcar (lambda (c) (cons c c))
-                    (defined-colors frame)))
-           (:height
-            'integerp)
-           (:stipple
-            (and (memq (window-system frame) '(x ns pgtk haiku)) ; No stipple on w32
-                 (mapcar (lambda (item)
-                           (cons item item))
-                         (apply #'nconc
-                                (mapcar (lambda (dir)
-                                          (and (file-readable-p dir)
-                                               (file-directory-p dir)
-                                               (directory-files dir 'full)))
-                                        x-bitmap-file-path)))))
-           (:inherit
-            (cons '("none" . nil)
-                  (mapcar (lambda (c) (cons (symbol-name c) c))
-                          (face-list))))
-           (_
-            (error "Internal error")))))
-    (if (and (listp valid) (not (memq attribute '(:inherit))))
-	(nconc (list (cons "unspecified" 'unspecified)) valid)
-      valid)))
-
-(defvar mode-line-mode-menu (make-sparse-keymap "Minor Modes") "\
-Menu of mode operations in the mode line.")
-
-(defvar recentf-mode nil "Non-nil if Recentf mode is enabled.
-See the `recentf-mode' command
-for a description of this minor mode.
-Setting this variable directly does not take effect;
-either customize it (see the info node `Easy Customization')
-or call the function `recentf-mode'.")
-
-(defvar flyspell-mode nil "Non-nil if Flyspell mode is enabled.")
-
 (defun custom-add-choice (variable choice)
   "Add CHOICE to the custom type of VARIABLE.
 If a choice with the same tag already exists, no action is taken."
@@ -45474,6 +42617,19 @@ evaluate `etags-regen-mode'.
 
 The mode's hook is called both when the mode is enabled and when
 it is disabled." t nil)
+
+(defun custom-menu-create (symbol)
+  "Create menu for customization group SYMBOL.
+The menu is in a format applicable to `easy-menu-define'.
+This is a fallback: full member expansion needs wid-edit, so for
+non-empty groups this returns the submenu header (name, group item,
+separator) without the member entries."
+  (let ((item (vector (custom-unlispify-menu-entry symbol)
+                      `(customize-group ',symbol)
+                      t)))
+    (if (get symbol 'custom-group)
+        (list (custom-unlispify-menu-entry symbol t) item "--")
+      item)))
 
 (defvar etags-program-name "etags"
   "The default name of the etags program.
@@ -46799,6 +43955,25 @@ you can later apply as a patch after reviewing the changes.
 
 (fn REGEXP TO-STRING &optional DELIMITED)" t)
 (register-definition-prefixes "misearch" '("misearch-unload-function" "multi-"))
+
+;; isearch.el is dumped in GNU (loadup.el); until it is ported whole,
+;; `lazy-highlight-cleanup' is needed by replace.el's
+;; `replace-dehighlight'.  Verbatim from GNU isearch.el.
+(defun lazy-highlight-cleanup (&optional force procrastinate)
+  "Stop lazy highlighting and remove extra highlighting from current buffer.
+FORCE non-nil means do it whether or not `lazy-highlight-cleanup' is nil.
+PROCRASTINATE non-nil means postpone cleanup to a later time.
+This function is called when exiting an incremental search if
+`lazy-highlight-cleanup' is non-nil."
+  (interactive '(t))
+  (when (and (or force lazy-highlight-cleanup) (not procrastinate))
+    (while isearch-lazy-highlight-overlays
+      (delete-overlay (car isearch-lazy-highlight-overlays))
+      (setq isearch-lazy-highlight-overlays
+            (cdr isearch-lazy-highlight-overlays))))
+  (when isearch-lazy-highlight-timer
+    (cancel-timer isearch-lazy-highlight-timer)
+    (setq isearch-lazy-highlight-timer nil)))
 
 ;; nroff-mode.el autoloads (GNU loaddefs).
 (autoload 'nroff-mode "nroff-mode"
@@ -48622,549 +45797,114 @@ included; callers should bind `case-fold-search' to t."
 ;; the charsets defined in this file but might be required by user
 ;; code.
 
-;; --- Round-15 compatibility ---
-;; GNU loaddefs autoload cells for Round-15 libraries.
-(fset 'calculator '(autoload "calculator" "Run the Emacs calculator.\nSee the documentation for `calculator-mode' for more information." t nil))
-(fset 'custom-theme-visit-theme '(autoload "cus-theme" "Set up a Custom buffer to edit custom theme THEME.\n\n(fn THEME)" t nil))
-(fset 'customize-create-theme '(autoload "cus-theme" "Create or edit a custom theme.\nTHEME, if non-nil, should be an existing theme to edit.  If THEME\nis `user', the resulting *Custom Theme* buffer also contains a\ncheckbox for removing the theme settings specified in the buffer\nfrom the Custom save file.\nBUFFER, if non-nil, should be a buffer to use; the default is\nnamed *Custom Theme*.\n\n(fn &optional THEME BUFFER)" t nil))
-(fset 'customize-themes '(autoload "cus-theme" "Display a selectable list of Custom themes.\nWhen called from Lisp, BUFFER should be the buffer to use; if\nomitted, a buffer named *Custom Themes* is used.\n\n(fn &optional BUFFER)" t nil))
-(fset 'describe-theme '(autoload "cus-theme" "Display a description of the Custom theme THEME (a symbol).\n\n(fn THEME)" t nil))
-(fset 'global-so-long-mode '(autoload "so-long" "Toggle automated performance mitigation for files with long lines.\n\nMany Emacs modes struggle with buffers which contain excessively long lines,\nand may consequently cause unacceptable performance issues.\n\nThis is commonly on account of \"minified\" code (i.e. code that has been\ncompacted into the smallest file size possible, which often entails removing\nnewlines should they not be strictly necessary).\n\nWhen such files are detected by `so-long-predicate', we invoke the selected\n`so-long-action' to mitigate potential performance problems in the buffer.\n\nUse \\[so-long-commentary] for more information.\n\nUse \\[so-long-customize] to open the customization group `so-long' to\nconfigure the behavior.\n\nThis is a global minor mode.  If called interactively, toggle the\n`Global So-Long mode' mode.  If the prefix argument is positive, enable\nthe mode, and if it is zero or negative, disable the mode.\n\nIf called from Lisp, toggle the mode if ARG is `toggle'.  Enable the\nmode if ARG is nil, omitted, or is a positive number.  Disable the mode\nif ARG is a negative number.\n\nTo check whether the minor mode is enabled in the current buffer,\nevaluate `(default-value \\='global-so-long-mode)'.\n\nThe mode's hook is called both when the mode is enabled and when it is\ndisabled.\n\n(fn &optional ARG)" t nil))
-(fset 'hippie-expand '(autoload "hippie-exp" "Try to expand text before point, using multiple methods.\nThe expansion functions in `hippie-expand-try-functions-list' are\ntried in order, until a possible expansion is found.  Repeated\napplication of `hippie-expand' inserts successively possible\nexpansions.\nWith a positive numeric argument, jumps directly to the ARG next\nfunction in this list.  With a negative argument or just \\[universal-argument],\nundoes the expansion.\n\n(fn ARG)" t nil))
-(fset 'make-hippie-expand-function '(autoload "hippie-exp" "Construct a function similar to `hippie-expand'.\nMake it use the expansion functions in TRY-LIST.  An optional second\nargument VERBOSE non-nil makes the function verbose.\n\n(fn TRY-LIST &optional VERBOSE)" nil nil))
-(fset 'outline-minor-mode '(autoload "outline" "Toggle Outline minor mode.\n\nSee the command `outline-mode' for more information on this mode.\n\nThis is a minor mode.  If called interactively, toggle the `Outline\nminor mode' mode.  If the prefix argument is positive, enable the mode,\nand if it is zero or negative, disable the mode.\n\nIf called from Lisp, toggle the mode if ARG is `toggle'.  Enable the\nmode if ARG is nil, omitted, or is a positive number.  Disable the mode\nif ARG is a negative number.\n\nTo check whether the minor mode is enabled in the current buffer,\nevaluate the variable `outline-minor-mode'.\n\nThe mode's hook is called both when the mode is enabled and when it is\ndisabled.\n\n(fn &optional ARG)" t nil))
-(fset 'outline-mode '(autoload "outline" "Set major mode for editing outlines with selective display.\nHeadings are lines which start with asterisks: one for major headings,\ntwo for subheadings, etc.  Lines not starting with asterisks are body lines.\n\nBody text or subheadings under a heading can be made temporarily\ninvisible, or visible again.  Invisible lines are attached to the end\nof the heading, so they move with it, if the line is killed and yanked\nback.  A heading with text hidden under it is marked with an ellipsis (...).\n\n\\{outline-mode-map}\nThe commands `outline-hide-subtree', `outline-show-subtree',\n`outline-show-children', `outline-hide-entry',\n`outline-show-entry', `outline-hide-leaves', and `outline-show-branches'\nare used when point is on a heading line.\n\nThe variable `outline-regexp' can be changed to control what is a heading.\nA line is a heading if `outline-regexp' matches something at the\nbeginning of the line.  The longer the match, the deeper the level.\n\nTurning on outline mode calls the value of `text-mode-hook' and then of\n`outline-mode-hook', if they are non-nil." t nil))
-(fset 'outline-search-level '(autoload "outline" "Search for the next text property `outline-level'.\nThe arguments are the same as in `outline-search-text-property',\nexcept the hard-coded property name `outline-level'.\nThis function is intended to be used in `outline-search-function'.\n\n(fn &optional BOUND MOVE BACKWARD LOOKING-AT)" nil nil))
-(fset 'so-long '(autoload "so-long" "Invoke `so-long-action' and run `so-long-hook'.\n\nThis command is called automatically when long lines are detected, when\n`global-so-long-mode' is enabled.\n\nThe effects of the action can be undone by calling `so-long-revert'.\n\nIf ACTION is provided, it is used instead of `so-long-action'.\n\nWith a prefix argument, select the action to use interactively.\n\nIf an action was already active in the buffer, it will be reverted before\ninvoking the new action.\n\n(fn &optional ACTION)" t nil))
-(fset 'so-long-commentary '(autoload "so-long" "View the `so-long' library's documentation in `outline-mode'." t nil))
-(fset 'so-long-customize '(autoload "so-long" "Open the customization group `so-long'." t nil))
-(fset 'so-long-enable '(autoload "so-long" "Enable the `so-long' library's functionality.\n\nEquivalent to calling (global-so-long-mode 1)" t nil))
-(fset 'so-long-minor-mode '(autoload "so-long" "This is the minor mode equivalent of `so-long-mode'.\n\nAny active minor modes listed in `so-long-minor-modes' are disabled for the\ncurrent buffer, and buffer-local values are assigned to variables in accordance\nwith `so-long-variable-overrides'.\n\nThis minor mode is a standard `so-long-action' option.\n\nThis is a minor mode.  If called interactively, toggle the `So-Long\nminor mode' mode.  If the prefix argument is positive, enable the mode,\nand if it is zero or negative, disable the mode.\n\nIf called from Lisp, toggle the mode if ARG is `toggle'.  Enable the\nmode if ARG is nil, omitted, or is a positive number.  Disable the mode\nif ARG is a negative number.\n\nTo check whether the minor mode is enabled in the current buffer,\nevaluate the variable `so-long-minor-mode'.\n\nThe mode's hook is called both when the mode is enabled and when it is\ndisabled.\n\n(fn &optional ARG)" t nil))
-(fset 'so-long-mode '(autoload "so-long" "This major mode is the default `so-long-action' option.\n\nThe normal reason for this mode being active is that `global-so-long-mode' is\nenabled, and `so-long-predicate' has detected that the file contains long lines.\n\nMany Emacs modes struggle with buffers which contain excessively long lines,\nand may consequently cause unacceptable performance issues.\n\nThis is commonly on account of \"minified\" code (i.e. code that has been\ncompacted into the smallest file size possible, which often entails removing\nnewlines should they not be strictly necessary).  These kinds of files are\ntypically not intended to be edited, so not providing the usual editing mode\nin these cases will rarely be an issue.\n\nThis major mode disables any active minor modes listed in `so-long-minor-modes'\nfor the current buffer, and buffer-local values are assigned to variables in\naccordance with `so-long-variable-overrides'.\n\nTo restore the original major mode (along with the minor modes and variable\nvalues), despite potential performance issues, type \\[so-long-revert].\n\nUse \\[so-long-commentary] for more information.\n\nUse \\[so-long-customize] to open the customization group `so-long' to\nconfigure the behavior.\n\nThis mode runs the hook `so-long-mode-hook', as the final or\npenultimate step during initialization." t nil))
-(fset 'widget-browse '(autoload "wid-browse" "Create a widget browser for WIDGET.\n\n(fn WIDGET)" t nil))
-(fset 'widget-browse-at '(autoload "wid-browse" "Browse the widget under point.\n\n(fn POS)" t nil))
-(fset 'widget-browse-other-window '(autoload "wid-browse" "Show widget browser for WIDGET in other window.\n\n(fn &optional WIDGET)" t nil))
-(fset 'widget-minor-mode '(autoload "wid-browse" "Minor mode for traversing widgets.\n\nThis is a minor mode.  If called interactively, toggle the `Widget minor\nmode' mode.  If the prefix argument is positive, enable the mode, and if\nit is zero or negative, disable the mode.\n\nIf called from Lisp, toggle the mode if ARG is `toggle'.  Enable the\nmode if ARG is nil, omitted, or is a positive number.  Disable the mode\nif ARG is a negative number.\n\nTo check whether the minor mode is enabled in the current buffer,\nevaluate the variable `widget-minor-mode'.\n\nThe mode's hook is called both when the mode is enabled and when it is\ndisabled.\n\n(fn &optional ARG)" t nil))
-
-;; --- Round-16 compatibility ---
-(defconst frame--special-parameters
-  '("alpha" "alpha-background" "auto-hide-function" "auto-lower"
-    "auto-raise" "background-color" "background-mode" "border-color"
-    "border-width" "bottom-divider-width" "bottom-visible" "buffer-list"
-    "buffer-predicate" "child-frame-border-width" "cursor-color"
-    "cursor-type" "delete-before" "display" "display-type"
-    "drag-internal-border" "drag-with-header-line" "drag-with-mode-line"
-    "drag-with-tab-line" "explicit-name" "fit-frame-to-buffer-margins"
-    "fit-frame-to-buffer-sizes" "font" "font-backend" "foreground-color"
-    "fullscreen" "fullscreen-restore" "height" "horizontal-scroll-bars"
-    "icon-left" "icon-name" "icon-top" "icon-type"
-    "inhibit-double-buffering" "internal-border-width" "keep-ratio"
-    "left" "left-fringe" "line-spacing" "menu-bar-lines" "min-height"
-    "min-width" "minibuffer" "minibuffer-exit" "mouse-color"
-    "mouse-wheel-frame" "name" "no-accept-focus" "no-focus-on-map"
-    "no-other-frame" "no-special-glyphs" "ns-appearance"
-    "ns-transparent-titlebar" "outer-window-id" "override-redirect"
-    "parent-frame" "right-fringe" "right-divider-width" "screen-gamma"
-    "scroll-bar-background" "scroll-bar-foreground" "scroll-bar-height"
-    "scroll-bar-width" "shaded" "skip-taskbar" "snap-width" "sticky"
-    "tab-bar-lines" "title" "tool-bar-lines" "tool-bar-position" "top"
-    "top-visible" "tty-color-mode" "undecorated" "unspittable"
-    "use-frame-synchronization" "user-position" "user-size"
-    "vertical-scroll-bars" "visibility" "wait-for-wm" "width" "z-group")
-  "List of special frame parameters that makes sense to customize.")
-
-(defun make-face-bold (face &optional frame _noerror)
-  "Make the font of FACE be bold, if possible.
-FRAME nil or not specified means change face on all frames.
-Use `set-face-attribute' for finer control of the font weight."
-  (declare (advertised-calling-convention (face &optional frame) "29.1"))
-  (interactive (list (read-face-name "Make which face bold"
-                                     (face-at-point t))))
-  (set-face-attribute face frame :weight 'bold))
-
-
-(defun make-face-unbold (face &optional frame _noerror)
-  "Make the font of FACE be non-bold, if possible.
-FRAME nil or not specified means change face on all frames."
-  (declare (advertised-calling-convention (face &optional frame) "29.1"))
-  (interactive (list (read-face-name "Make which face non-bold"
-                                     (face-at-point t))))
-  (set-face-attribute face frame :weight 'normal))
-
-
-(defun make-face-italic (face &optional frame _noerror)
-  "Make the font of FACE be italic, if possible.
-FRAME nil or not specified means change face on all frames.
-Use `set-face-attribute' for finer control of the font slant."
-  (declare (advertised-calling-convention (face &optional frame) "29.1"))
-  (interactive (list (read-face-name "Make which face italic"
-                                     (face-at-point t))))
-  (set-face-attribute face frame :slant 'italic))
-
-
-(defun make-face-unitalic (face &optional frame _noerror)
-  "Make the font of FACE be non-italic, if possible.
-FRAME nil or not specified means change face on all frames."
-  (declare (advertised-calling-convention (face &optional frame) "29.1"))
-  (interactive (list (read-face-name "Make which face non-italic"
-                                     (face-at-point t))))
-  (set-face-attribute face frame :slant 'normal))
-
-
-(defun make-face-bold-italic (face &optional frame _noerror)
-  "Make the font of FACE be bold and italic, if possible.
-FRAME nil or not specified means change face on all frames.
-Use `set-face-attribute' for finer control of font weight and slant."
-  (declare (advertised-calling-convention (face &optional frame) "29.1"))
-  (interactive (list (read-face-name "Make which face bold-italic"
-                                     (face-at-point t))))
-  (set-face-attribute face frame :weight 'bold :slant 'italic))
-
-
-(defun set-face-font (face font &optional frame)
-  "Change font-related attributes of FACE to those of FONT.
-FONT can be a string, a font spec, a font entity, a font object,
-or a fontset.  However, interactively, only strings are accepted.
-The format of the font string specification varies based on the font
-system in use, but it can commonly be an X Logical Font
-Description (XLFD) string, or a simpler string like \"Courier-10\"
-or \"courier:size=10\".
-
-FRAME nil or not specified means change face on all frames.
-This sets the attributes `:family', `:foundry', `:width',
-`:height', `:weight', and `:slant'.  When called interactively,
-prompt for the face and font."
-  (interactive (read-face-and-attribute :font))
-  (set-face-attribute face frame :font font))
-
-
-;; Implementation note: Emulating gray background colors with a
-;; stipple pattern is now part of the face realization process, and is
-;; done in C depending on the frame on which the face is realized.
-
-(defun set-face-foreground (face color &optional frame)
-  "Change the foreground color of face FACE to COLOR (a string).
-FRAME nil or not specified means change face on all frames.
-COLOR can be a system-defined color name (see `list-colors-display')
-or a hex spec of the form #RRGGBB.
-When called interactively, prompts for the face and color."
-  (interactive (read-face-and-attribute :foreground))
-  (set-face-attribute face frame :foreground (or color 'unspecified)))
-
-
-(defun set-face-stipple (face stipple &optional frame)
-  "Change the stipple pixmap of face FACE to STIPPLE.
-FRAME nil or not specified means change face on all frames.
-STIPPLE should be a string, the name of a file of pixmap data.
-The directories listed in the `x-bitmap-file-path' variable are searched.
-
-Alternatively, STIPPLE may be a list of the form (WIDTH HEIGHT DATA)
-where WIDTH and HEIGHT are the size in pixels,
-and DATA is a string, containing the raw bits of the bitmap."
-  (interactive (read-face-and-attribute :stipple))
-  (set-face-attribute face frame :stipple (or stipple 'unspecified)))
-
-
-(defun set-face-underline (face underline &optional frame)
-  "Specify whether face FACE is underlined.
-UNDERLINE nil means FACE explicitly doesn't underline.
-UNDERLINE t means FACE underlines with its foreground color.
-If UNDERLINE is a string, underline with that color.
-
-UNDERLINE may also be a list of the form (:color COLOR :style STYLE),
-where COLOR is a string or `foreground-color', and STYLE is either
-`line' or `wave'.  :color may be omitted, which means to use the
-foreground color.  :style may be omitted, which means to use a line.
-
-FRAME nil or not specified means change face on all frames.
-Use `set-face-attribute' to \"unspecify\" underlining."
-  (interactive (read-face-and-attribute :underline))
-  (set-face-attribute face frame :underline underline))
-
-
-(defun set-face-inverse-video (face inverse-video-p &optional frame)
-  "Specify whether face FACE is in inverse video.
-INVERSE-VIDEO-P non-nil means FACE displays explicitly in inverse video.
-INVERSE-VIDEO-P nil means FACE explicitly is not in inverse video.
-FRAME nil or not specified means change face on all frames.
-Use `set-face-attribute' to \"unspecify\" the inverse video attribute."
-  (interactive
-   (let ((list (read-face-and-attribute :inverse-video)))
-     (list (car list) (if (cadr list) t))))
-  (set-face-attribute face frame :inverse-video inverse-video-p))
-
-(define-obsolete-function-alias 'set-face-inverse-video-p
-                                'set-face-inverse-video "24.4")
-
-(defun set-face-bold (face bold-p &optional frame)
-  "Specify whether face FACE is bold.
-BOLD-P non-nil means FACE should explicitly display bold.
-BOLD-P nil means FACE should explicitly display non-bold.
-FRAME nil or not specified means change face on all frames.
-Use `set-face-attribute' or `modify-face' for finer control."
-  (if (null bold-p)
-      (make-face-unbold face frame)
-    (make-face-bold face frame)))
-
-(define-obsolete-function-alias 'set-face-bold-p 'set-face-bold "24.4")
-
-
-(defun set-face-italic (face italic-p &optional frame)
-  "Specify whether face FACE is italic.
-ITALIC-P non-nil means FACE should explicitly display italic.
-ITALIC-P nil means FACE should explicitly display non-italic.
-FRAME nil or not specified means change face on all frames.
-Use `set-face-attribute' or `modify-face' for finer control."
-  (if (null italic-p)
-      (make-face-unitalic face frame)
-    (make-face-italic face frame)))
-
-(define-obsolete-function-alias 'set-face-italic-p 'set-face-italic "24.4")
-
-(defun set-face-extend (face extend-p &optional frame)
-  "Specify whether face FACE should be extended.
-EXTEND-P nil means FACE explicitly doesn't extend after EOL.
-EXTEND-P t means FACE extends after EOL.
-
-FRAME nil or not specified means change face on all frames.
-Use `set-face-attribute' to \"unspecify\" underlining."
-  (interactive
-   (let ((list (read-face-and-attribute :extend)))
-     (list (car list) (if (cadr list) t))))
-  (set-face-attribute face frame :extend extend-p))
-
-;; Round-16: GNU cus-start built-in variables missing from the C core,
-;; each with its GNU 31.1 default value and documentation.
-(defvar selective-display-ellipses t
-  "Non-nil means display ... on previous line when a line is invisible.")
-
-(defvar alter-fullscreen-frames 'inhibit
-  "How to handle requests to resize fullscreen frames.\nEmacs consults this option when asked to resize a fullscreen frame via\nfunctions like ‘set-frame-size’ or when setting the \\+‘width’ or \\+‘height’\nparameter of a frame.  The following values are provided:\n\n- nil means to forward the resize request to the window manager and\n  leave it to the latter how to proceed.\n\n- t means to first reset the fullscreen status and then forward the\n  request to the window manager.\n\n- \\+‘inhibit’ means to reject the resize request and leave the fullscreen\n  status unchanged.\n\nThe default is \\+‘inhibit’ in NS builds and nil everywhere else.")
-
-(defvar auto-save-no-message nil
-  "Non-nil means do not print any message when auto-saving.")
-
-(defvar bidi-paragraph-direction nil
-  "If non-nil, forces directionality of text paragraphs in the buffer.\n\nIf this is nil (the default), the direction of each paragraph is\ndetermined by the first strong directional character of its text.\nThe values of ‘right-to-left’ and ‘left-to-right’ override that.\nAny other value is treated as nil.\n\nThis variable has no effect unless the buffer’s value of\n‘bidi-display-reordering’ is non-nil.")
-
-(defvar blink-cursor-alist nil
-  "Alist specifying how to blink the cursor off.\nEach element has the form (ON-STATE . OFF-STATE).  Whenever the\n‘cursor-type’ frame-parameter or variable equals ON-STATE,\ncomparing using ‘equal’, Emacs uses OFF-STATE to specify\nhow to blink it off.  ON-STATE and OFF-STATE are values for\nthe ‘cursor-type’ frame parameter.\n\nIf a frame’s ON-STATE has no entry in this list,\nthe frame’s other specifications determine how to blink the cursor off.")
-
-(defvar composition-break-at-point nil
-  "If non-nil, prevent auto-composition of characters around point.\nThis makes it easier to edit character sequences that are\ncomposed on display.")
-
-(defvar debug-on-event 'sigusr2
-  "Enter debugger on this event.\nWhen Emacs receives the special event specified by this variable,\nit will try to break into the debugger as soon as possible instead\nof processing the event normally through ‘special-event-map’.\n\nCurrently, the only supported values for this\nvariable are ‘sigusr1’ and ‘sigusr2’.")
-
-(defvar debug-on-signal nil
-  "Non-nil means call the debugger regardless of condition handlers.\nNote that ‘debug-on-error’, ‘debug-on-quit’ and friends\nstill determine whether to handle the particular condition.")
-
-(defvar debugger-stack-frame-as-list nil
-  "Non-nil means display call stack frames as lists.")
-
-(defvar delete-by-moving-to-trash nil
-  "Specifies whether to use the system’s trash can.\nWhen non-nil, certain file deletion commands use the function\n‘move-file-to-trash’ instead of deleting files outright.\nThis includes interactive calls to ‘delete-file’ and\n‘delete-directory’ and the Dired deletion commands.")
-
-(defvar delete-frame-choose-selected 'mru
-  "What frame to select after frame deletion.\nThe value ‘mru’ means ‘delete-frame’ selects most recently used frame.\nIf this is nil, ‘delete-frame’ will select the oldest visible frame on\nthe same terminal.")
-
-(defvar display-fill-column-indicator-character nil
-  "Character to draw the indicator when ‘display-fill-column-indicator’ is non-nil.\nA good candidate is U+2502, and an alternative is (ascii 124) if the\nfont of ‘fill-column-indicator’ face does not support Unicode characters.\nSee Info node ‘Displaying Boundaries’ for details.")
-
-(defvar display-fill-column-indicator-column t
-  "Column for indicator when ‘display-fill-column-indicator’ is non-nil.\nThe default value is t which means that the indicator\nwill use the ‘fill-column’ variable.  If it is set to an integer the\nindicator will be drawn in that column.\nSee Info node ‘Displaying Boundaries’ for details.")
-
-(defvar display-hourglass t
-  "Non-nil means show an hourglass pointer, when Emacs is busy.\nThis feature only works when on a window system that can change\ncursor shapes.")
-
-(defvar display-line-numbers nil
-  "Non-nil means display line numbers.\n\nIf the value is t, display the absolute number of each line of a buffer\nshown in a window.  Absolute line numbers count from the beginning of\nthe current narrowing, or from buffer beginning.  The variable\n‘display-line-numbers-offset’, if non-zero, is a signed offset added\nto each absolute line number; it also forces line numbers to be counted\nfrom the beginning of the buffer, as if ‘display-line-numbers-widen’\nwere non-nil.  It has no effect when line numbers are not absolute.\n\nIf the value is ‘relative’, display for each line not containing the\nwindow’s point its relative number instead, i.e. the number of the line\nrelative to the line showing the window’s point.\n\nIn either case, line numbers are displayed at the beginning of each\nnon-continuation line that displays buffer text, i.e. after each newline\ncharacter that comes from the buffer.  The value ‘visual’ is like\n‘relative’ but counts screen lines instead of buffer lines.  In practice\nthis means that continuation lines count as well when calculating the\nrelative number of a line.\n\nLisp programs can disable display of a line number of a particular\nbuffer line by putting the ‘display-line-numbers-disable’ text property\nor overlay property on the first visible character of that line.")
-
-(defvar display-line-numbers-current-absolute t
-  "Non-nil means display absolute number of current line.\nThis variable has effect only when ‘display-line-numbers’ is\neither ‘relative’ or ‘visual’.")
-
-(defvar display-line-numbers-major-tick 0
-  "If an integer N > 0, highlight line number of every Nth line.\nThe line number is shown with the ‘line-number-major-tick’ face.\nOtherwise, no special highlighting is done every Nth line.\nNote that major ticks take precedence over minor ticks.")
-
-(defvar display-line-numbers-minor-tick 0
-  "If an integer N > 0, highlight line number of every Nth line.\nThe line number is shown with the ‘line-number-minor-tick’ face.\nOtherwise, no special highlighting is done every Nth line.\nNote that major ticks take precedence over minor ticks.")
-
-(defvar display-line-numbers-widen nil
-  "Non-nil means display line numbers disregarding any narrowing.")
-
-(defvar display-line-numbers-width nil
-  "Minimum width of space reserved for line number display.\nA positive number means reserve that many columns for line numbers,\neven if the actual number needs less space.\nThe default value of nil means compute the space dynamically.\nAny other value is treated as nil.")
-
-(defvar display-raw-bytes-as-hex nil
-  "Non-nil means display raw bytes in hexadecimal format.\nThe default is to use octal format (\\200) whereas hexadecimal (\\x80)\nmay be more familiar to users.")
-
-(defvar echo-keystrokes-help t
-  "Whether to append help text to echoed commands.\nWhen non-nil, a reference to ‘C-h’ is printed after echoed\nkeystrokes.")
-
-(defvar enable-character-translation t
-  "Non-nil enables character translation while encoding and decoding.")
-
-(defvar focus-follows-mouse nil
-  "Non-nil if window system changes focus when you move the mouse.\nYou should set this variable to tell Emacs how your window manager\nhandles focus, since there is no way in general for Emacs to find out\nautomatically.\n\nThere are three meaningful values:\n\n- The default nil should be used when your window manager follows a\n  \"click-to-focus\" policy where you have to click the mouse inside of a\n  frame in order for that frame to get focus.\n\n- The value t should be used when your window manager has the focus\n  automatically follow the position of the mouse pointer but a window\n  that gains focus is not raised automatically.\n\n- The value ‘auto-raise’ should be used when your window manager has the\n  focus automatically follow the position of the mouse pointer and a\n  window that gains focus is raised automatically.\n\nIf this option is non-nil, Emacs moves the mouse pointer to the frame\nselected by ‘select-frame-set-input-focus’.  This function is used by a\nnumber of commands like, for example, ‘other-frame’ and ‘pop-to-buffer’.\nIf this option is nil and your focus follows mouse window manager does\nnot autonomously move the mouse pointer to the newly selected frame, the\npreviously selected window manager window might get reselected instead\nimmediately.\n\nThe distinction between the values t and ‘auto-raise’ is not needed for\n\"normal\" frames because the window manager takes care of raising them.\nSetting this to ‘auto-raise’ will, however, override the standard\nbehavior of a window manager that does not automatically raise the frame\nthat gets focus.  Setting this to ‘auto-raise’ is also necessary to\nautomatically raise child frames which are usually left alone by the\nwindow manager.\n\nNote that this option does not distinguish \"sloppy\" focus (where the\nframe that previously had focus retains focus as long as the mouse\npointer does not move into another window manager window) from \"strict\"\nfocus (where a frame immediately loses focus when it’s left by the mouse\npointer).\n\nIn order to extend a \"focus follows mouse\" policy to individual Emacs\nwindows, customize the variable ‘mouse-autoselect-window’.")
-
-(defvar frame-resize-pixelwise nil
-  "Non-nil means resize frames pixelwise.\nIf this option is nil, resizing a frame rounds its sizes to the frame’s\ncurrent values of ‘frame-char-height’ and ‘frame-char-width’.  If this\nis non-nil, no rounding occurs, hence frame sizes can increase/decrease\nby one pixel.\n\nWith some window managers you may have to set this to non-nil in order\nto set the size of a frame in pixels, to maximize frames or to make them\nfullscreen.  To resize your initial frame pixelwise, set this option to\na non-nil value in your init file.")
-
-(defvar highlight-nonselected-windows nil
-  "Non-nil means highlight active region even in nonselected windows.\nWhen nil (the default), the active region is only highlighted when\nthe window is selected.")
-
-(defvar hourglass-delay 1
-  "Seconds to wait before displaying an hourglass pointer when Emacs is busy.")
-
-(defvar iconify-child-frame 'iconify-top-level
-  "How to handle iconification of child frames.\nThis variable tells Emacs how to proceed when it is asked to iconify a\nchild frame.  If it is nil, ‘iconify-frame’ will do nothing when invoked\non a child frame.  If it is ‘iconify-top-level’ and the child frame is\non a graphical terminal, Emacs will try to iconify the root frame of\nthis child frame.  If it is ‘make-invisible’, Emacs will try to make\nthis child frame invisible instead.\n\nAny other value means to try iconifying the child frame on a graphical\nterminal.  Since such an attempt is not honored by all window managers\nand may even lead to making the child frame unresponsive to user\nactions, the default is to iconify the root frame instead.")
-
-(defvar indicate-buffer-boundaries nil
-  "Visually indicate buffer boundaries and scrolling.\nIf non-nil, the first and last line of the buffer are marked in the fringe\nof a window on graphical displays with angle bitmaps, or if the window can be\nscrolled, the top and bottom line of the window are marked with up and down\narrow bitmaps.\n\nIf value is a symbol ‘left’ or ‘right’, both angle and arrow bitmaps\nare displayed in the left or right fringe, resp.  Any other value\nthat doesn’t look like an alist means display the angle bitmaps in\nthe left fringe but no arrows.\n\nYou can exercise more precise control by using an alist as the\nvalue.  Each alist element (INDICATOR . POSITION) specifies\nwhere to show one of the indicators.  INDICATOR is one of ‘top’,\n‘bottom’, ‘up’, ‘down’, or t, which specifies the default position,\nand POSITION is one of ‘left’, ‘right’, or nil, meaning do not show\nthis indicator.\n\nFor example, ((top . left) (t . right)) places the top angle bitmap in\nleft fringe, the bottom angle bitmap in right fringe, and both arrow\nbitmaps in right fringe.  To show just the angle bitmaps in the left\nfringe, but no arrow bitmaps, use ((top .  left) (bottom . left)).")
-
-(defvar indicate-empty-lines nil
-  "Visually indicate unused (\"empty\") screen lines after the buffer end.\nIf non-nil, a bitmap is displayed in the left fringe of a window\non graphical displays for each screen line that doesn’t correspond\nto any buffer text.")
-
-(defvar inhibit-eol-conversion nil
-  "Non-nil means always inhibit code conversion of end-of-line format.\nSee info node ‘Coding Systems’ and info node ‘Text and Binary’ concerning\nsuch conversion.")
-
-(defvar inverse-video nil
-  "Non-nil means invert the entire frame display.\nThis means everything is in inverse video which otherwise would not be.")
-
-(defvar kill-buffer-delete-auto-save-files nil
-  "If non-nil, offer to delete any autosave file when killing a buffer.\n\nIf ‘delete-auto-save-files’ is nil, any autosave deletion is inhibited.")
-
-(defvar make-cursor-line-fully-visible t
-  "Whether to scroll the window if the cursor line is not fully visible.\nIf the value is non-nil, Emacs scrolls or recenters the window to make\nthe cursor line fully visible.  The value could also be a function, which\nis called with a single argument, the window to be scrolled, and should\nreturn non-nil if the partially-visible cursor requires scrolling the\nwindow, nil if it’s okay to leave the cursor partially-visible.")
-
-(defvar make-pointer-invisible t
-  "If non-nil, make mouse pointer invisible while typing.\nThe pointer becomes visible again when the mouse is moved.\n\nWhen using this, you might also want to disable highlighting of\nclickable text.  See ‘mouse-highlight’.")
-
-(defvar maximum-scroll-margin 0.25
-  "Maximum effective value of ‘scroll-margin’.\nGiven as a fraction of the current window’s lines.  The value should\nbe a floating point number between 0.0 and 0.5.  The effective maximum\nis limited to (/ (1- window-lines) 2).  Non-float values for this\nvariable are ignored and the default 0.25 is used instead.")
-
-(defvar meta-prefix-char 27
-  "Meta-prefix character code.\nMeta-foo as command input turns into this character followed by foo.")
-
-(defvar minibuffer-follows-selected-frame t
-  "t means the active minibuffer always displays on the selected frame.\nNil means that a minibuffer will appear only in the frame which created it.\nAny other value means the minibuffer will move onto another frame, but\nonly when the user starts using a minibuffer there.\n\nAny buffer local or dynamic binding of this variable is ignored.  Only the\ndefault top level value is used.")
-
-(defvar mode-line-compact nil
-  "Non-nil means that mode lines should be compact.\nThis means that repeating spaces will be replaced with a single space.\nIf this variable is ‘long’, only mode lines that are wider than the\ncurrently selected window are compressed.")
-
-(defvar mode-line-in-non-selected-windows t
-  "Non-nil means to use ‘mode-line-inactive’ face in non-selected windows.\nIf the minibuffer is active, the ‘minibuffer-scroll-window’ mode line\nis displayed in the ‘mode-line’ face.")
-
-(defvar mouse-prefer-closest-glyph nil
-  "Non-nil means mouse click position is taken from glyph closest to click.\n\nWhen non-nil, mouse position lists will report buffer position set to\nthe position of the glyph that is the closest to the mouse pointer\nat the time of the click, instead of the glyph immediately under it.")
-
-(defvar multiple-terminals-merge-keyboards nil
-  "If non-nil, treat different terminals’ keyboards as less isolated.\nIf this option is non-nil, Emacs will not enter single-keyboard mode\nwhen entering a recursive edit.  It will still enter single-keyboard\nmode in certain other cases where doing so is necessary for the\noperation to work at all.")
-
-(defvar ns-alternate-modifier 'meta
-  "This variable describes the behavior of the alternate or option key.\nEither SYMBOL, describing the behavior for any event,\nor (:ordinary SYMBOL :function SYMBOL :mouse SYMBOL), describing behavior\nseparately for ordinary keys, function keys, and mouse events.\n\nEach SYMBOL is ‘control’, ‘meta’, ‘alt’, ‘super’, ‘hyper’ or ‘none’.\nIf ‘none’, the key is ignored by Emacs and retains its standard meaning.")
-
-(defvar ns-antialias-text t
-  "Non-nil (the default) means to render text antialiased.")
-
-(defvar ns-auto-hide-menu-bar nil
-  "Non-nil means that the menu bar is hidden, but appears when the mouse is near.\nOnly works on Mac OS X.")
-
-(defvar ns-click-through t
-  "Whether to pass activation clicks through to Emacs.\nWhen nil, if Emacs is not focused, the click that focuses Emacs will not\nbe interpreted as a common.  If t, it will be.  For example, when nil,\nif Emacs is inactive, two clicks are needed to move point: the first to\nactivate Emacs and the second to activate the mouse-1 binding.  When t,\nonly a single click is needed.")
-
-(defvar ns-command-modifier 'super
-  "This variable describes the behavior of the command key.\nEither SYMBOL, describing the behavior for any event,\nor (:ordinary SYMBOL :function SYMBOL :mouse SYMBOL), describing behavior\nseparately for ordinary keys, function keys, and mouse events.\n\nEach SYMBOL is ‘control’, ‘meta’, ‘alt’, ‘super’, ‘hyper’ or ‘none’.\nIf ‘none’, the key is ignored by Emacs and retains its standard meaning.")
-
-(defvar ns-confirm-quit nil
-  "Whether to confirm application quit using dialog.")
-
-(defvar ns-control-modifier 'control
-  "This variable describes the behavior of the control key.\nEither SYMBOL, describing the behavior for any event,\nor (:ordinary SYMBOL :function SYMBOL :mouse SYMBOL), describing behavior\nseparately for ordinary keys, function keys, and mouse events.\n\nEach SYMBOL is ‘control’, ‘meta’, ‘alt’, ‘super’, ‘hyper’ or ‘none’.\nIf ‘none’, the key is ignored by Emacs and retains its standard meaning.")
-
-(defvar ns-function-modifier 'none
-  "This variable describes the behavior of the function (fn) key.\nEither SYMBOL, describing the behavior for any event,\nor (:ordinary SYMBOL :function SYMBOL :mouse SYMBOL), describing behavior\nseparately for ordinary keys, function keys, and mouse events.\n\nEach SYMBOL is ‘control’, ‘meta’, ‘alt’, ‘super’, ‘hyper’ or ‘none’.\nIf ‘none’, the key is ignored by Emacs and retains its standard meaning.")
-
-(defvar ns-right-alternate-modifier 'left
-  "This variable describes the behavior of the right alternate or option key.\nEither SYMBOL, describing the behavior for any event,\nor (:ordinary SYMBOL :function SYMBOL :mouse SYMBOL), describing behavior\nseparately for ordinary keys, function keys, and mouse events.\nIt can also be ‘left’ to use the value of ‘ns-alternate-modifier’ instead.\n\nEach SYMBOL is ‘control’, ‘meta’, ‘alt’, ‘super’, ‘hyper’ or ‘none’.\nIf ‘none’, the key is ignored by Emacs and retains its standard meaning.")
-
-(defvar ns-right-command-modifier 'left
-  "This variable describes the behavior of the right command key.\nEither SYMBOL, describing the behavior for any event,\nor (:ordinary SYMBOL :function SYMBOL :mouse SYMBOL), describing behavior\nseparately for ordinary keys, function keys, and mouse events.\nIt can also be ‘left’ to use the value of ‘ns-command-modifier’ instead.\n\nEach SYMBOL is ‘control’, ‘meta’, ‘alt’, ‘super’, ‘hyper’ or ‘none’.\nIf ‘none’, the key is ignored by Emacs and retains its standard meaning.")
-
-(defvar ns-right-control-modifier 'left
-  "This variable describes the behavior of the right control key.\nEither SYMBOL, describing the behavior for any event,\nor (:ordinary SYMBOL :function SYMBOL :mouse SYMBOL), describing behavior\nseparately for ordinary keys, function keys, and mouse events.\nIt can also be ‘left’ to use the value of ‘ns-control-modifier’ instead.\n\nEach SYMBOL is ‘control’, ‘meta’, ‘alt’, ‘super’, ‘hyper’ or ‘none’.\nIf ‘none’, the key is ignored by Emacs and retains its standard meaning.")
-
-(defvar ns-scroll-event-delta-factor 1.0
-  "A factor to apply to pixel deltas reported in scroll events.\n This is only effective for pixel deltas generated from touch pads or\n mice with smooth scrolling capability.")
-
-(defvar ns-use-fullscreen-animation nil
-  "Non-nil means use animation on non-native fullscreen.\nFor native fullscreen, this does nothing.\nDefault is nil.")
-
-(defvar ns-use-native-fullscreen t
-  "Non-nil means to use native fullscreen on Mac OS X 10.7 and later.\nNil means use fullscreen the old (< 10.7) way.  The old way works better with\nmultiple monitors, but lacks tool bar.  This variable is ignored on\nMac OS X < 10.7.  Default is t.")
-
-(defvar ns-use-srgb-colorspace t
-  "Non-nil means to use sRGB colorspace on Mac OS X 10.7 and later.\nNote that this does not apply to images.\nThis variable is ignored on Mac OS X < 10.7 and GNUstep.")
-
-(defvar overline-margin 2
-  "Space between overline and text, in pixels.\nThe default value is 2: the height of the overline (1 pixel) plus 1 pixel\nmargin to the character height.")
-
-(defvar record-all-keys nil
-  "Non-nil means record all keys you type.\nWhen nil, the default, characters typed as part of passwords are\nnot recorded.  The non-nil value countermands ‘inhibit--record-char’,\nwhich see.")
-
-(defvar report-emacs-bug-address 
-  "bug-gnu-emacs@gnu.org" "Address of mailing list for GNU Emacs bugs.")
-
-(defvar resize-mini-frames nil
-  "Non-nil means resize minibuffer-only frames automatically.\nIf this is nil, do not resize minibuffer-only frames automatically.\n\nIf this is a function, call that function with the minibuffer-only\nframe that shall be resized as sole argument.  The buffer of the root\nwindow of that frame is the buffer whose text will be eventually shown\nin the minibuffer window.\n\nAny other non-nil value means to resize minibuffer-only frames by\ncalling ‘fit-mini-frame-to-buffer’.")
-
-(defvar scalable-fonts-allowed t
-  "Allowed scalable fonts.\nA value of nil means don’t allow any scalable fonts.\nA value of t means allow any scalable font.\nOtherwise, value must be a list of regular expressions.  A font may be\nscaled if its name matches a regular expression in the list.\nNote that if value is nil, a scalable font might still be used, if no\nother font of the appropriate family and registry is available.")
-
-(defvar select-active-regions t
-  "If non-nil, any active region automatically sets the primary selection.\nThis variable only has an effect when Transient Mark mode is enabled.\n\nIf the value is ‘only’, only temporarily active regions (usually made\nby mouse-dragging or shift-selection) set the window system’s primary\nselection.\n\nIf this variable causes the region to be set as the primary selection,\n‘post-select-region-hook’ is then run afterwards.")
-
-(defvar show-trailing-whitespace nil
-  "Non-nil means highlight trailing whitespace.\nThe face used for trailing whitespace is ‘trailing-whitespace’.")
-
-(defvar tab-bar-position nil
-  "Specify on which side from the tool bar the tab bar shall be.\nPossible values are t (below the tool bar), nil (above the tool bar).\nThis option affects only builds where the tool bar is not external.")
-
-(defvar tool-bar-max-label-size 14
-  "Maximum number of characters a label can have to be shown.\nThe tool bar style must also show labels for this to have any effect, see\n‘tool-bar-style’.")
-
-(defvar tool-bar-style nil
-  "Tool bar style to use.\nIt can be one of\n image            - show images only\n text             - show text only\n both             - show both, text below image\n both-horiz       - show text to the right of the image\n text-image-horiz - show text to the left of the image\n any other        - use system default or image if no system default.\n\nThis variable only affects the GTK+ toolkit version of Emacs.")
-
-(defvar tooltip-reuse-hidden-frame nil
-  "Non-nil means reuse hidden tooltip frames.\nWhen this is nil, delete a tooltip frame when hiding the associated\ntooltip.  When this is non-nil, make the tooltip frame invisible only,\nso it can be reused when the next tooltip is shown.\n\nSetting this to non-nil may drastically reduce the consing overhead\nincurred by creating new tooltip frames.  However, a value of non-nil\nmeans also that intermittent changes of faces or ‘default-frame-alist’\nare not applied when showing a tooltip in a reused frame.\n\nThis variable is effective only with the X toolkit (and there only when\nGtk+ tooltips are not used) and on Windows.")
-
-(defvar translate-upper-case-key-bindings t
-  "If non-nil, interpret upper case keys as lower case (when applicable).\nEmacs allows binding both upper and lower case key sequences to\ncommands.  However, if there is a lower case key sequence bound to a\ncommand, and the user enters an upper case key sequence that is not\nbound to a command, Emacs will use the lower case binding.  Setting\nthis variable to nil inhibits this behavior.")
-
-(defvar treesit-extra-load-path nil
-  "Additional directories to look for tree-sitter language definitions.\nThe value should be a list of directories.\nWhen trying to load a tree-sitter language definition,\nEmacs first looks in the directories mentioned in this variable,\nthen in the ‘tree-sitter’ subdirectory of ‘user-emacs-directory’, and\nthen in the system default locations for dynamic libraries, in that order.\nThe first writeable directory in the list is special: it’s used as the\ndefault directory when automatically installing the language grammar\nusing ‘treesit-ensure-installed’.")
-
-(defvar underline-minimum-offset 1
-  "Minimum distance between baseline and underline.\nThis can improve legibility of underlined text at small font sizes,\nparticularly when using variable ‘x-use-underline-position-properties’\nwith fonts that specify an UNDERLINE_POSITION relatively close to the\nbaseline.  The default value is 1.")
-
-(defvar unibyte-display-via-language-environment nil
-  "Non-nil means display unibyte text according to language environment.\nSpecifically, this means that raw bytes in the range 160-255 decimal\nare displayed by converting them to the equivalent multibyte characters\naccording to the current language environment.  As a result, they are\ndisplayed according to the current fontset.\n\nNote that this variable affects only how these bytes are displayed,\nbut does not change the fact they are interpreted as raw bytes.")
-
-(defvar use-system-tooltips t
-  "Whether to use the toolkit to display tooltips.\nThis option is only meaningful when Emacs is built with GTK+, NS or Haiku\nwindowing support, and, if it’s non-nil (the default), it results in\ntooltips that look like those displayed by other GTK+/NS/Haiku programs,\nbut will not be able to display text properties inside tooltip text.")
-
-(defvar vertical-centering-font-regexp 
-  "gb2312\\|gbk\\|gb18030\\|jisx0208\\|jisx0212\\|ksc5601\\|cns11643\\|big5" "Regexp matching font names that require vertical centering on display.\nWhen a character is displayed with such fonts, the character is displayed\nat the vertical center of lines.")
-
-(defvar void-text-area-pointer 'arrow
-  "The pointer shape to show in void text areas.\nA value of nil means to show the text pointer.  Other options are\n‘arrow’, ‘text’, ‘hand’, ‘vdrag’, ‘hdrag’, ‘nhdrag’, ‘modeline’, and\n‘hourglass’.")
-
-(defvar window-combination-resize nil
-  "If t, resize window combinations proportionally.\nIf this variable is nil, splitting a window gets the entire screen space\nfor displaying the new window from the window to split.  Deleting and\nresizing a window preferably resizes one adjacent window only.\n\nIf this variable is t, splitting a window tries to get the space\nproportionally from all windows in the same combination.  This means\nthat one can also split a window that is otherwise too small or of fixed\nsize.  Resizing and deleting a window then proportionally resizes all\nwindows in the same combination.\n\nOther values are reserved for future use.\n\nA specific split operation may ignore the value of this variable if it\nis affected by a non-nil value of ‘window-combination-limit’.  If you\nwant to use a sequence of ‘split-window’ calls to produce a specific,\npredefined layout of windows on a frame, bind this variable temporarily\nto nil.")
-
-(defvar window-resize-pixelwise nil
-  "Non-nil means resize windows pixelwise.\nThis currently affects the functions: ‘split-window’, ‘maximize-window’,\n‘minimize-window’, ‘fit-window-to-buffer’ and ‘fit-frame-to-buffer’, and\nall functions that symmetrically resize a parent window.\n\nNote that when a frame’s pixel size is not a multiple of the\nframe’s character size, at least one window may get resized\npixelwise even if this option is nil.")
-
-(defvar words-include-escapes nil
-  "Non-nil means ‘forward-word’, etc., should treat escape chars part of words.")
-
-(defvar x-bitmap-file-path '("/usr/include/X11/bitmaps")
-  "List of directories to search for window system bitmap files.")
-
-;; GNU loaddefs autoload cells for Round-16 libraries.
-(fset 'describe-char '(autoload "descr-text" "Describe position POS (interactively, point) and the char after POS.\nPOS is taken to be in BUFFER, or the current buffer if BUFFER is nil.\nThe information is displayed in buffer `*Help*'.\n\nThe position information includes POS; the total size of BUFFER; the\nregion limits, if narrowed; the column number; and the horizontal\nscroll amount, if the buffer is horizontally scrolled.\n\nThe character information includes:\n its codepoint;\n its charset (see `char-charset'), overridden by the `charset' text\n   property at POS, if any;\n the codepoint of the character in the above charset;\n the character's script (as defined by `char-script-table')\n the character's syntax, as produced by `syntax-after'\n   and `internal-describe-syntax-value';\n its category (see `char-category-set' and `describe-char-categories');\n how to input the character using the keyboard and input methods;\n how the character is encoded in BUFFER and in BUFFER's file;\n the font and font glyphs used to display the character;\n the composition information for displaying the character (if relevant);\n the character's canonical name and other properties defined by the\n   Unicode Data Base;\n and widgets, buttons, overlays, and text properties relevant to POS.\n\n(fn POS &optional BUFFER)" t nil))
-(fset 'describe-char-eldoc '(autoload "descr-text" "Return a description of character at point for use by ElDoc mode.\n\nReturn nil if character at point is a printable ASCII\ncharacter (i.e. codepoint between 32 and 127 inclusively).\nOtherwise return a description formatted by\n`describe-char-eldoc--format' function taking into account value\nof `eldoc-echo-area-use-multiline-p' variable and width of\nminibuffer window for width limit.\n\nThis function can be used as a value of\n`eldoc-documentation-functions' variable.\n\n(fn CALLBACK &rest _)" nil nil))
-(fset 'describe-text-properties '(autoload "descr-text" "Describe widgets, buttons, overlays, and text properties at POS.\nPOS is taken to be in BUFFER or in current buffer if nil.\nInteractively, describe them for the character after point.\nIf optional second argument OUTPUT-BUFFER is non-nil,\ninsert the output into that buffer, and don't initialize or clear it\notherwise.\n\n(fn POS &optional OUTPUT-BUFFER BUFFER)" t nil))
-(fset 'quail-define-package '(autoload "quail" "Define NAME as a new Quail package for input LANGUAGE.\nTITLE is a string to be displayed at mode-line to indicate this package.\nOptional arguments are GUIDANCE, DOCSTRING, TRANSLATION-KEYS,\n FORGET-LAST-SELECTION, DETERMINISTIC, KBD-TRANSLATE, SHOW-LAYOUT,\n CREATE-DECODE-MAP, MAXIMUM-SHORTEST, OVERLAY-PLIST,\n UPDATE-TRANSLATION-FUNCTION, CONVERSION-KEYS and SIMPLE.\n\nGUIDANCE specifies how a guidance string is shown in echo area.\nIf it is t, list of all possible translations for the current key is shown\n with the currently selected translation being highlighted.\nIf it is an alist, the element has the form (CHAR . STRING).  Each character\n in the current key is searched in the list and the corresponding string is\n shown.\nIf it is nil, the current key is shown.\n\nDOCSTRING is the documentation string of this package.  The command\n`describe-input-method' shows this string while replacing the form\n\\=\\=\\=\\<VAR> in the string by the value of VAR.  That value should be a\nstring.  For instance, the form \\=\\=\\=\\<quail-translation-docstring> is\nreplaced by a description about how to select a translation from a\nlist of candidates.\n\nTRANSLATION-KEYS specifies additional key bindings used while translation\nregion is active.  It is an alist of single key character vs. corresponding\ncommand to be called.\n\nFORGET-LAST-SELECTION non-nil means a selected translation is not kept\nfor the future to translate the same key.  If this flag is nil, a\ntranslation selected for a key is remembered so that it can be the\nfirst candidate when the same key is entered later.\n\nDETERMINISTIC non-nil means the first candidate of translation is\nselected automatically without allowing users to select another\ntranslation for a key.  In this case, unselected translations are of\nno use for an interactive use of Quail but can be used by some other\nprograms.  If this flag is non-nil, FORGET-LAST-SELECTION is also set\nto t.\n\nKBD-TRANSLATE non-nil means input characters are translated from a\nuser's keyboard layout to the standard keyboard layout.  See the\ndocumentation of `quail-keyboard-layout' and\n`quail-keyboard-layout-standard' for more detail.\n\nSHOW-LAYOUT non-nil means the function `quail-help' (as used by\nthe command `describe-input-method') should show the user's keyboard\nlayout visually with translated characters.  If KBD-TRANSLATE is\nset, it is desirable to also set this flag, unless this package\ndefines no translations for single character keys.\n\nCREATE-DECODE-MAP non-nil means decode map is also created.  A decode\nmap is an alist of translations and corresponding original keys.\nAlthough this map is not used by Quail itself, it can be used by some\nother programs.  For instance, Vietnamese supporting needs this map to\nconvert Vietnamese text to VIQR format which uses only ASCII\ncharacters to represent Vietnamese characters.\n\nMAXIMUM-SHORTEST non-nil means break key sequence to get maximum\nlength of the shortest sequence.  When we don't have a translation of\nkey \"..ABCD\" but have translations of \"..AB\" and \"CD..\", break\nthe key at \"..AB\" and start translation of \"CD..\".  Hangul\npackages, for instance, use this facility.  If this flag is nil, we\nbreak the key just at \"..ABC\" and start translation of \"D..\".\n\nOVERLAY-PLIST if non-nil is a property list put on an overlay which\ncovers Quail translation region.\n\nUPDATE-TRANSLATION-FUNCTION if non-nil is a function to call to update\nthe current translation region according to a new translation data.  By\ndefault, a translated text or a user's key sequence (if no translation\nfor it) is inserted.\n\nCONVERSION-KEYS specifies additional key bindings used while\nconversion region is active.  It is an alist of single key character\nvs. corresponding command to be called.\n\nIf SIMPLE is non-nil, then we do not alter the meanings of\ncommands such as \\[forward-char], \\[backward-char], \\[next-line], \\[previous-line] and \\[indent-for-tab-command]; they are treated as\nnon-Quail commands.\n\n(fn NAME LANGUAGE TITLE &optional GUIDANCE DOCSTRING TRANSLATION-KEYS FORGET-LAST-SELECTION DETERMINISTIC KBD-TRANSLATE SHOW-LAYOUT CREATE-DECODE-MAP MAXIMUM-SHORTEST OVERLAY-PLIST UPDATE-TRANSLATION-FUNCTION CONVERSION-KEYS SIMPLE)" nil nil))
-(fset 'quail-define-rules '(autoload "quail" "Define translation rules of the current Quail package.\nEach argument is a list of KEY and TRANSLATION.\nKEY is a string meaning a sequence of keystrokes to be translated.\nTRANSLATION is a character, a string, a vector, a Quail map, or a function.\nIf it is a character, it is the sole translation of KEY.\nIf it is a string, each character is a candidate for the translation.\nIf it is a vector, each element (string or character) is a candidate\n  for the translation.\nIn these cases, a key specific Quail map is generated and assigned to KEY.\n\nIf TRANSLATION is a Quail map or a function symbol which returns a Quail map,\n it is used to handle KEY.\n\nThe first argument may be an alist of annotations for the following\nrules.  Each element has the form (ANNOTATION . VALUE), where\nANNOTATION is a symbol indicating the annotation type.  Currently\nthe following annotation types are supported.\n\n  append -- the value non-nil means that the following rules should\n	be appended to the rules of the current Quail package.\n\n  face -- the value is a face to use for displaying TRANSLATIONs in\n	candidate list.\n\n  advice -- the value is a function to call after one of RULES is\n	selected.  The function is called with one argument, the\n	selected TRANSLATION string, after the TRANSLATION is\n	inserted.\n\n  no-decode-map --- the value non-nil means that decoding map is not\n	generated for the following translations.\n\n(fn &rest RULES)" nil t))
-(fset 'quail-defrule '(autoload "quail" "Add one translation rule, KEY to TRANSLATION, in the current Quail package.\nKEY is a string meaning a sequence of keystrokes to be translated.\nTRANSLATION is a character, a string, a vector, a Quail map,\n a function, or a cons.\nIf it is a character, it is the sole translation of KEY.\nIf it is a string, each character is a candidate for the translation.\nIf it is a vector, each element (string or character) is a candidate\n for the translation.\nIf it is a cons, the car is one of the above and the cdr is a function\n to call when translating KEY (the return value is assigned to the\n variable `quail-current-data').  If the cdr part is not a function,\n the value itself is assigned to `quail-current-data'.\nIn these cases, a key specific Quail map is generated and assigned to KEY.\n\nIf TRANSLATION is a Quail map or a function symbol which returns a Quail map,\n it is used to handle KEY.\n\nOptional 3rd argument NAME, if specified, says which Quail package\nto define this translation rule in.  The default is to define it in the\ncurrent Quail package.\n\nOptional 4th argument APPEND, if non-nil, appends TRANSLATION\nto the current translations for KEY instead of replacing them.\n\n(fn KEY TRANSLATION &optional NAME APPEND)" nil nil))
-(fset 'quail-defrule-internal '(autoload "quail" "Define KEY as TRANS in a Quail map MAP.\n\nIf Optional 4th arg APPEND is non-nil, TRANS is appended to the\ncurrent translations for KEY instead of replacing them.\n\nOptional 5th arg DECODE-MAP is a Quail decode map.\n\nOptional 6th arg PROPS is a property list annotating TRANS.  See the\nfunction `quail-define-rules' for the detail.\n\n(fn KEY TRANS MAP &optional APPEND DECODE-MAP PROPS)" nil nil))
-(fset 'quail-install-decode-map '(autoload "quail" "Install the Quail decode map DECODE-MAP in the current Quail package.\n\nOptional 2nd arg NAME, if non-nil, is a name of Quail package for\nwhich to install MAP.\n\nThe installed decode map can be referred by the function `quail-decode-map'.\n\n(fn DECODE-MAP &optional NAME)" nil nil))
-(fset 'quail-install-map '(autoload "quail" "Install the Quail map MAP in the current Quail package.\n\nOptional 2nd arg NAME, if non-nil, is a name of Quail package for\nwhich to install MAP.\n\nThe installed map can be referred by the function `quail-map'.\n\n(fn MAP &optional NAME)" nil nil))
-(fset 'quail-set-keyboard-layout '(autoload "quail" "Set the current keyboard layout to the same as keyboard KBD-TYPE.\n\nSince some Quail packages depends on a physical layout of keys (not\ncharacters generated by them), those are created by assuming the\nstandard layout defined in `quail-keyboard-layout-standard'.  This\nfunction tells Quail system the layout of your keyboard so that what\nyou type is correctly handled.\n\n(fn KBD-TYPE)" t nil))
-(fset 'quail-show-keyboard-layout '(autoload "quail" "Show the physical layout of the keyboard type KEYBOARD-TYPE.\n\nThe variable `quail-keyboard-layout-type' holds the currently selected\nkeyboard type.\n\n(fn &optional KEYBOARD-TYPE)" t nil))
-(fset 'quail-title '(autoload "quail" "Return the title of the current Quail package." nil nil))
-(fset 'quail-update-leim-list-file '(autoload "quail" "Update entries for Quail packages in `LEIM' list file in directory DIRNAME.\nDIRNAME is a directory containing Emacs input methods;\nnormally, it should specify the `leim' subdirectory\nof the Emacs source tree.\n\nIt searches for Quail packages under `quail' subdirectory of DIRNAME,\nand update the file \"leim-list.el\" in DIRNAME.\n\nWhen called from a program, the remaining arguments are additional\ndirectory names to search for Quail packages under `quail' subdirectory\nof each directory.\n\n(fn DIRNAME &rest DIRNAMES)" t nil))
-(fset 'quail-use-package '(autoload "quail" "Start using Quail package PACKAGE-NAME.\nThe remaining arguments are LIBRARIES to be loaded before using the package.\n\nThis activates input method defined by PACKAGE-NAME by running\n`quail-activate', which see.\n\n(fn PACKAGE-NAME &rest LIBRARIES)" nil nil))
-(fset 'table-backward-cell '(autoload "table" "Move backward to the beginning of the previous cell.\nWith argument ARG, do it ARG times;\na negative argument ARG = -N means move forward N cells.\n\n(fn &optional ARG)" t nil))
-(fset 'table-capture '(autoload "table" "Convert plain text into a table by capturing the text in the region.\nCreate a table with the text in region as cell contents.  BEG and END\nspecify the region.  The text in the region is replaced with a table.\nThe removed text is inserted in the table.  When optional\nCOL-DELIM-REGEXP and ROW-DELIM-REGEXP are provided the region contents\nis parsed and separated into individual cell contents by using the\ndelimiter regular expressions.  This parsing determines the number of\ncolumns and rows of the table automatically.  If COL-DELIM-REGEXP and\nROW-DELIM-REGEXP are omitted the result table has only one cell and\nthe entire region contents is placed in that cell.  Optional JUSTIFY\nis one of `left', `center' or `right', which specifies the cell\njustification.  Optional MIN-CELL-WIDTH specifies the minimum cell\nwidth.  Optional COLUMNS specify the number of columns when\nROW-DELIM-REGEXP is not specified.\n\n\nExample 1:\n\n1, 2, 3, 4\n5, 6, 7, 8\n, 9, 10\n\nRunning `table-capture' on above 3 line region with COL-DELIM-REGEXP\n\",\" and ROW-DELIM-REGEXP \"\\n\" creates the following table.  In\nthis example the cells are centered and minimum cell width is\nspecified as 5.\n\n+-----+-----+-----+-----+\n|  1  |  2  |  3  |  4  |\n+-----+-----+-----+-----+\n|  5  |  6  |  7  |  8  |\n+-----+-----+-----+-----+\n|     |  9  | 10  |     |\n+-----+-----+-----+-----+\n\nNote:\n\nIn case the function is called interactively user must use \\[quoted-insert] `quoted-insert'\nin order to enter \"\\n\" successfully.  COL-DELIM-REGEXP at the end\nof each row is optional.\n\n\nExample 2:\n\nThis example shows how a table can be used for text layout editing.\nLet `table-capture' capture the following region starting from\n-!- and ending at -*-, that contains three paragraphs and two item\nname headers.  This time specify empty string for both\nCOL-DELIM-REGEXP and ROW-DELIM-REGEXP.\n\n-!-`table-capture' is a powerful command however mastering its power\nrequires some practice.  Here is a list of items what it can do.\n\nParse Cell Items      By using column delimiter regular\n		      expression and raw delimiter regular\n		      expression, it parses the specified text\n		      area and extracts cell items from\n		      non-table text and then forms a table out\n		      of them.\n\nCapture Text Area     When no delimiters are specified it\n		      creates a single cell table.  The text in\n		      the specified region is placed in that\n		      cell.-*-\n\nNow the entire content is captured in a cell which is itself a table\nlike this.\n\n+-----------------------------------------------------------------+\n|`table-capture' is a powerful command however mastering its power|\n|requires some practice.  Here is a list of items what it can do. |\n|                                                                 |\n|Parse Cell Items      By using column delimiter regular          |\n|                      expression and raw delimiter regular       |\n|                      expression, it parses the specified text   |\n|                      area and extracts cell items from          |\n|                      non-table text and then forms a table out  |\n|                      of them.                                   |\n|                                                                 |\n|Capture Text Area     When no delimiters are specified it        |\n|                      creates a single cell table.  The text in  |\n|                      the specified region is placed in that     |\n|                      cell.                                      |\n+-----------------------------------------------------------------+\n\nBy splitting the cell appropriately we now have a table consisting of\nparagraphs occupying its own cell.  Each cell can now be edited\nindependently.\n\n+-----------------------------------------------------------------+\n|`table-capture' is a powerful command however mastering its power|\n|requires some practice.  Here is a list of items what it can do. |\n+---------------------+-------------------------------------------+\n|Parse Cell Items     |By using column delimiter regular          |\n|                     |expression and raw delimiter regular       |\n|                     |expression, it parses the specified text   |\n|                     |area and extracts cell items from          |\n|                     |non-table text and then forms a table out  |\n|                     |of them.                                   |\n+---------------------+-------------------------------------------+\n|Capture Text Area    |When no delimiters are specified it        |\n|                     |creates a single cell table.  The text in  |\n|                     |the specified region is placed in that     |\n|                     |cell.                                      |\n+---------------------+-------------------------------------------+\n\nBy applying `table-release', which does the opposite process, the\ncontents become once again plain text.  `table-release' works as\ncompanion command to `table-capture' this way.\n\n(fn BEG END &optional COL-DELIM-REGEXP ROW-DELIM-REGEXP JUSTIFY MIN-CELL-WIDTH COLUMNS)" t nil))
-(fset 'table-delete-column '(autoload "table" "Delete N column(s) of cells.\nDelete N columns of cells from current column.  The current column is\nthe column contains the current cell where point is located.  Each\ncolumn must consists from cells of same width.\n\n(fn N)" t nil))
-(fset 'table-delete-row '(autoload "table" "Delete N row(s) of cells.\nDelete N rows of cells from current row.  The current row is the row\ncontains the current cell where point is located.  Each row must\nconsists from cells of same height.\n\n(fn N)" t nil))
-(fset 'table-fixed-width-mode '(autoload "table" "Cell width is fixed when this is non-nil.\n\nNormally it should be nil for allowing automatic cell width expansion\nthat widens a cell when it is necessary.  When non-nil, typing in a\ncell does not automatically expand the cell width.  A word that is too\nlong to fit in a cell is chopped into multiple lines.  The chopped\nlocation is indicated by `table-word-continuation-char'.  This\nvariable's value can be toggled by \\[table-fixed-width-mode] at\nrun-time.\n\nThis is a minor mode.  If called interactively, toggle the\n`Table-Fixed-Width mode' mode.  If the prefix argument is positive,\nenable the mode, and if it is zero or negative, disable the mode.\n\nIf called from Lisp, toggle the mode if ARG is `toggle'.  Enable the\nmode if ARG is nil, omitted, or is a positive number.  Disable the mode\nif ARG is a negative number.\n\nTo check whether the minor mode is enabled in the current buffer,\nevaluate the variable `table-fixed-width-mode'.\n\nThe mode's hook is called both when the mode is enabled and when it is\ndisabled.\n\n(fn &optional ARG)" t nil))
-(fset 'table-forward-cell '(autoload "table" "Move point forward to the beginning of the next cell.\nWith argument ARG, do it ARG times;\na negative argument ARG = -N means move backward N cells.\n\nDo not specify NO-RECOGNIZE and UNRECOGNIZE.  They are for\ninternal use only.\n\nSample Cell Traveling Order (In Irregular Table Cases)\n\nYou can actually try how it works in this buffer.  Press\n\\[table-recognize] and go to cells in the following tables and press\n\\[table-forward-cell] or TAB key.\n\n+-----+--+  +--+-----+  +--+--+--+  +--+--+--+  +---------+  +--+---+--+\n|0    |1 |  |0 |1    |  |0 |1 |2 |  |0 |1 |2 |  |0        |  |0 |1  |2 |\n+--+--+  |  |  +--+--+  +--+  |  |  |  |  +--+  +----+----+  +--+-+-+--+\n|2 |3 |  |  |  |2 |3 |  |3 +--+  |  |  +--+3 |  |1   |2   |  |3   |4   |\n|  +--+--+  +--+--+  |  +--+4 |  |  |  |4 +--+  +--+-+-+--+  +----+----+\n|  |4    |  |4    |  |  |5 |  |  |  |  |  |5 |  |3 |4  |5 |  |5        |\n+--+-----+  +-----+--+  +--+--+--+  +--+--+--+  +--+---+--+  +---------+\n\n+--+--+--+  +--+--+--+  +--+--+--+  +--+--+--+\n|0 |1 |2 |  |0 |1 |2 |  |0 |1 |2 |  |0 |1 |2 |\n|  |  |  |  |  +--+  |  |  |  |  |  +--+  +--+\n+--+  +--+  +--+3 +--+  |  +--+  |  |3 +--+4 |\n|3 |  |4 |  |4 +--+5 |  |  |3 |  |  +--+5 +--+\n|  |  |  |  |  |6 |  |  |  |  |  |  |6 |  |7 |\n+--+--+--+  +--+--+--+  +--+--+--+  +--+--+--+\n\n+--+--+--+  +--+--+--+  +--+--+--+--+  +--+-----+--+  +--+--+--+--+\n|0 |1 |2 |  |0 |1 |2 |	|0 |1 |2 |3 |  |0 |1    |2 |  |0 |1 |2 |3 |\n|  +--+  |  |  +--+  |	|  +--+--+  |  |  |     |  |  |  +--+--+  |\n|  |3 +--+  +--+3 |  |	+--+4    +--+  +--+     +--+  +--+4    +--+\n+--+  |4 |  |4 |  +--+	|5 +--+--+6 |  |3 +--+--+4 |  |5 |     |6 |\n|5 +--+  |  |  +--+5 |	|  |7 |8 |  |  |  |5 |6 |  |  |  |     |  |\n|  |6 |  |  |  |6 |  |	+--+--+--+--+  +--+--+--+--+  +--+-----+--+\n+--+--+--+  +--+--+--+\n\n(fn &optional ARG NO-RECOGNIZE UNRECOGNIZE)" t nil))
-(fset 'table-generate-source '(autoload "table" "Generate source of the current table in the specified language.\nLANGUAGE is a symbol that specifies the language to describe the\nstructure of the table.  It must be either `html', `latex', `cals',\n`wiki', or `mediawiki'.\nThe function inserts the resulting source text into DEST-BUFFER, and\nreturns the buffer object.  When DEST-BUFFER is omitted or nil, the\nfunction uses the default buffer specified in `table-dest-buffer-name'.\nIn this case, the function erases the default buffer prior to the\nsource generation.\nWhen DEST-BUFFER is non-nil, it should be either a destination\nbuffer or a name of the destination buffer.  In that case, the\nfunction inserts the generated result at point in the destination\nbuffer, and leaves the previous contents of the buffer untouched.\n\nReferences used for this implementation:\n\nHTML:\n        URL `https://www.w3.org'\n\nLaTeX:\n        URL `https://www.maths.tcd.ie/~dwilkins/LaTeXPrimer/Tables.html'\n\nCALS (DocBook DTD):\n        URL `https://www.oasis-open.org/html/a502.htm'\n        URL `https://www.oreilly.com/catalog/docbook/chapter/book/table.html#AEN114751'\n\n(fn LANGUAGE &optional DEST-BUFFER CAPTION)" t nil))
-(fset 'table-heighten-cell '(autoload "table" "Heighten the current cell by N lines by expanding the cell vertically.\nHeightening is done by adding blank lines at the bottom of the current\ncell.  Other cells aligned horizontally with the current one are also\nheightened in order to keep the rectangular table structure.  The\noptional argument NO-COPY is internal use only and must not be\nspecified.\n\n(fn N &optional NO-COPY NO-UPDATE)" t nil))
-(fset 'table-insert '(autoload "table" "Insert an editable text table.\nInsert a table of specified number of COLUMNS and ROWS.  Optional\nparameter CELL-WIDTH and CELL-HEIGHT can specify the size of each\ncell.  The cell size is uniform across the table if the specified size\nis a number.  They can be a list of numbers to specify different size\nfor each cell.  When called interactively, the list of number is\nentered by simply listing all the numbers with space characters\ndelimiting them.\n\nExamples:\n\n\\[table-insert] inserts a table at the current point location.\n\nSuppose we have the following situation where `-!-' indicates the\nlocation of point.\n\n    -!-\n\nType \\[table-insert] and hit ENTER key.  As it asks table\nspecification, provide 3 for number of columns, 1 for number of rows,\n5 for cell width and 1 for cell height.  Now you shall see the next\ntable and the point is automatically moved to the beginning of the\nfirst cell.\n\n    +-----+-----+-----+\n    |-!-  |     |     |\n    +-----+-----+-----+\n\nInside a table cell, there are special key bindings.\n\\<table-cell-map>\nM-9 \\[table-widen-cell] (or \\[universal-argument] 9 \\[table-widen-cell]) widens the first cell by 9 character\nwidth, which results as\n\n    +--------------+-----+-----+\n    |-!-           |     |     |\n    +--------------+-----+-----+\n\nType TAB \\[table-widen-cell] then type TAB M-2 M-7 \\[table-widen-cell] (or \\[universal-argument] 2 7 \\[table-widen-cell]).  Typing\nTAB moves the point forward by a cell.  The result now looks like this:\n\n    +--------------+------+--------------------------------+\n    |              |      |-!-                             |\n    +--------------+------+--------------------------------+\n\nIf you knew each width of the columns prior to the table creation,\nwhat you could have done better was to have had given the complete\nwidth information to `table-insert'.\n\nCell width(s): 14 6 32\n\ninstead of\n\nCell width(s): 5\n\nThis would have eliminated the previously mentioned width adjustment\nwork all together.\n\nIf the point is in the last cell type S-TAB S-TAB to move it to the\nfirst cell.  Now type \\[table-heighten-cell] which heighten the row by a line.\n\n    +--------------+------+--------------------------------+\n    |-!-           |      |                                |\n    |              |      |                                |\n    +--------------+------+--------------------------------+\n\nType \\[table-insert-row-column] and tell it to insert a row.\n\n    +--------------+------+--------------------------------+\n    |-!-           |      |                                |\n    |              |      |                                |\n    +--------------+------+--------------------------------+\n    |              |      |                                |\n    |              |      |                                |\n    +--------------+------+--------------------------------+\n\nMove the point under the table as shown below.\n\n    +--------------+------+--------------------------------+\n    |              |      |                                |\n    |              |      |                                |\n    +--------------+------+--------------------------------+\n    |              |      |                                |\n    |              |      |                                |\n    +--------------+------+--------------------------------+\n    -!-\n\nType \\[table-insert-row] instead of \\[table-insert-row-column].  \\[table-insert-row-column] does not work\nwhen the point is outside of the table.  This insertion at\noutside of the table effectively appends a row at the end.\n\n    +--------------+------+--------------------------------+\n    |              |      |                                |\n    |              |      |                                |\n    +--------------+------+--------------------------------+\n    |              |      |                                |\n    |              |      |                                |\n    +--------------+------+--------------------------------+\n    |-!-           |      |                                |\n    |              |      |                                |\n    +--------------+------+--------------------------------+\n\nText editing inside the table cell produces reasonably expected\nresults.\n\n    +--------------+------+--------------------------------+\n    |              |      |                                |\n    |              |      |                                |\n    +--------------+------+--------------------------------+\n    |              |      |Text editing inside the table   |\n    |              |      |cell produces reasonably        |\n    |              |      |expected results.-!-            |\n    +--------------+------+--------------------------------+\n    |              |      |                                |\n    |              |      |                                |\n    +--------------+------+--------------------------------+\n\nInside a table cell has a special keymap.\n\n\\{table-cell-map}\n\n(fn COLUMNS ROWS &optional CELL-WIDTH CELL-HEIGHT)" t nil))
-(fset 'table-insert-column '(autoload "table" "Insert N table column(s).\nWhen point is in a table the newly inserted column(s) are placed left\nof the current column.  When point is outside of the table it must be\nright side of the table within the table height range, then the newly\ncreated column(s) are appended at the right of the table.\n\n(fn N)" t nil))
-(fset 'table-insert-row '(autoload "table" "Insert N table row(s).\nWhen point is in a table the newly inserted row(s) are placed above\nthe current row.  When point is outside of the table it must be below\nthe table within the table width range, then the newly created row(s)\nare appended at the bottom of the table.\n\n(fn N)" t nil))
-(fset 'table-insert-row-column '(autoload "table" "Insert row(s) or column(s).\nSee `table-insert-row' and `table-insert-column'.\n\n(fn ROW-COLUMN N)" t nil))
-(fset 'table-insert-sequence '(autoload "table" "Travel cells forward while inserting a specified sequence string in each cell.\nSTR is the base string from which the sequence starts.  When STR is an\nempty string then each cell content is erased.  When STR ends with\nnumerical characters (they may optionally be surrounded by a pair of\nparentheses) they are incremented as a decimal number.  Otherwise the\nlast character in STR is incremented in ASCII code order.  N is the\nnumber of sequence elements to insert.  When N is negative the cell\ntraveling direction is backward.  When N is zero it travels forward\nentire table.  INCREMENT is the increment between adjacent sequence\nelements and can be a negative number for effectively decrementing.\nINTERVAL is the number of cells to travel between sequence element\ninsertion which is normally 1.  When zero or less is given for\nINTERVAL it is interpreted as number of cells per row so that sequence\nis placed straight down vertically as long as the table's cell\nstructure is uniform.  JUSTIFY is a symbol `left', `center' or\n`right' that specifies justification of the inserted string.\n\nExample:\n\n  (progn\n    (table-insert 16 3 5 1)\n    (table-forward-cell 15)\n    (table-insert-sequence \"D0\" -16 1 1 \\='center)\n    (table-forward-cell 16)\n    (table-insert-sequence \"A[0]\" -16 1 1 \\='center)\n    (table-forward-cell 1)\n    (table-insert-sequence \"-\" 16 0 1 \\='center))\n\n  (progn\n    (table-insert 16 8 5 1)\n    (table-insert-sequence \"@\" 0 1 2 \\='right)\n    (table-forward-cell 1)\n    (table-insert-sequence \"64\" 0 1 2 \\='left))\n\n(fn STR N INCREMENT INTERVAL JUSTIFY)" t nil))
-(fset 'table-justify '(autoload "table" "Justify contents of a cell, a row of cells or a column of cells.\nWHAT is a symbol `cell', `row' or `column'.  JUSTIFY is a symbol\n`left', `center', `right', `top', `middle', `bottom' or `none'.\n\n(fn WHAT JUSTIFY)" t nil))
-(fset 'table-justify-cell '(autoload "table" "Justify cell contents.\nJUSTIFY is a symbol `left', `center' or `right' for horizontal, or `top',\n`middle', `bottom' or `none' for vertical.  When optional PARAGRAPH is\nnon-nil the justify operation is limited to the current paragraph,\notherwise the entire cell contents is justified.\n\n(fn JUSTIFY &optional PARAGRAPH)" t nil))
-(fset 'table-justify-column '(autoload "table" "Justify cells of a column.\nJUSTIFY is a symbol `left', `center' or `right' for horizontal,\nor `top', `middle', `bottom' or `none' for vertical.\n\n(fn JUSTIFY)" t nil))
-(fset 'table-justify-row '(autoload "table" "Justify cells of a row.\nJUSTIFY is a symbol `left', `center' or `right' for horizontal,\nor `top', `middle', `bottom' or `none' for vertical.\n\n(fn JUSTIFY)" t nil))
-(fset 'table-narrow-cell '(autoload "table" "Narrow the current cell by N columns and shrink the cell horizontally.\nSome other cells in the same table are narrowed as well to keep the\ntable's rectangle structure.\n\n(fn N)" t nil))
-(fset 'table-query-dimension '(autoload "table" "Return the dimension of the current cell and the current table.\nThe result is a list (cw ch tw th c r cells) where cw is the cell\nwidth, ch is the cell height, tw is the table width, th is the table\nheight, c is the number of columns, r is the number of rows and cells\nis the total number of cells.  The cell dimension excludes the cell\nframe while the table dimension includes the table frame.  The columns\nand the rows are counted by the number of cell boundaries.  Therefore\nthe number tends to be larger than it appears for the tables with\nnon-uniform cell structure (heavily spanned and split).  When optional\nWHERE is provided the cell and table at that location is reported.\n\n(fn &optional WHERE)" t nil))
-(fset 'table-recognize '(autoload "table" "Recognize all tables within the current buffer and activate them.\nScans the entire buffer and recognizes valid table cells.  If the\noptional numeric prefix argument ARG is negative the tables in the\nbuffer become inactive, meaning the tables become plain text and loses\nall the table specific features.\n\n(fn &optional ARG)" t nil))
-(fset 'table-recognize-cell '(autoload "table" "Recognize a table cell that contains current point.\nProbe the cell dimension and prepare the cell information.  The\noptional two arguments FORCE and NO-COPY are for internal use only and\nmust not be specified.  When the optional numeric prefix argument ARG\nis negative the cell becomes inactive, meaning that the cell becomes\nplain text and loses all the table specific features.\n\n(fn &optional FORCE NO-COPY ARG)" t nil))
-(fset 'table-recognize-region '(autoload "table" "Recognize all tables within region.\nBEG and END specify the region to work on.  If the optional numeric\nprefix argument ARG is negative the tables in the region become\ninactive, meaning the tables become plain text and lose all the table\nspecific features.\n\n(fn BEG END &optional ARG)" t nil))
-(fset 'table-recognize-table '(autoload "table" "Recognize a table at point.\nIf the optional numeric prefix argument ARG is negative the table\nbecomes inactive, meaning the table becomes plain text and loses all\nthe table specific features.\n\n(fn &optional ARG)" t nil))
-(fset 'table-release '(autoload "table" "Convert a table into plain text by removing the frame from a table.\nRemove the frame from a table and deactivate the table.  This command\nconverts a table into plain text without frames.  It is a companion to\n`table-capture' which does the opposite process." t nil))
-(fset 'table-shorten-cell '(autoload "table" "Shorten the current cell by N lines by shrinking the cell vertically.\nShortening is done by removing blank lines from the bottom of the cell\nand possibly from the top of the cell as well.  Therefore, the cell\nmust have some bottom/top blank lines to be shorten effectively.  This\nis applicable to all the cells aligned horizontally with the current\none because they are also shortened in order to keep the rectangular\ntable structure.\n\n(fn N)" t nil))
-(fset 'table-span-cell '(autoload "table" "Span current cell into adjacent cell in DIRECTION.\nDIRECTION is one of symbols; right, left, above or below.\n\n(fn DIRECTION)" t nil))
-(fset 'table-split-cell '(autoload "table" "Split current cell in ORIENTATION.\nORIENTATION is a symbol either horizontally or vertically.\n\n(fn ORIENTATION)" t nil))
-(fset 'table-split-cell-horizontally '(autoload "table" "Split current cell horizontally.\nCreates a cell on the left and a cell on the right of the current\npoint location." t nil))
-(fset 'table-split-cell-vertically '(autoload "table" "Split current cell vertically.\nCreates a cell above and a cell below the current point location." t nil))
-(fset 'table-unrecognize '(autoload "table" nil t nil))
-(fset 'table-unrecognize-cell '(autoload "table" nil t nil))
-(fset 'table-unrecognize-region '(autoload "table" "\n\n(fn BEG END)" t nil))
-(fset 'table-unrecognize-table '(autoload "table" nil t nil))
-(fset 'table-widen-cell '(autoload "table" "Widen the current cell by N columns and expand the cell horizontally.\nSome other cells in the same table are widen as well to keep the\ntable's rectangle structure.\n\n(fn N &optional NO-COPY NO-UPDATE)" t nil))
-
-;; Round-17: GNU desktop.el/mule-cmds.el autoloaded defvars that allout
-;; and the leim/quail input-method files consult at load time.
-(defvar desktop-minor-mode-handlers nil
-  "Alist of functions to restore non-standard minor modes.
-Functions are called by `desktop-create-buffer' to restore minor modes.
-List elements must have the form
-
-   (MINOR-MODE . RESTORE-FUNCTION).
-
-This is a global variable; do not make it buffer-local.")
-
-(defvar input-method-alist nil
-  "Alist of input method names vs how to use them.
-Each element has the form:
-   (INPUT-METHOD LANGUAGE-ENV ACTIVATE-FUNC TITLE DESCRIPTION ARGS...)
-See the function `register-input-method' for the meanings of the elements.")
-(put 'input-method-alist 'risky-local-variable t)
-
-;; GNU loaddefs autoload cells for Round-17 libraries.
-(fset 'allout-auto-activation-helper '(autoload "allout" "Institute `allout-auto-activation'.\n\nIntended to be used as the `allout-auto-activation' :set function.\n\n(fn VAR VALUE)" nil nil))
-(fset 'allout-mode '(autoload "allout" "Toggle Allout outline mode.\n\n\\<allout-mode-map-value>\nAllout outline mode is a minor mode that provides extensive\noutline oriented formatting and manipulation.  It enables\nstructural editing of outlines, as well as navigation and\nexposure.  It also is specifically aimed at accommodating\nsyntax-sensitive text like programming languages.  (For example,\nsee the allout code itself, which is organized as an allout\noutline.)\n\nIn addition to typical outline navigation and exposure, allout includes:\n\n - topic-oriented authoring, including keystroke-based topic creation,\n   repositioning, promotion/demotion, cut, and paste\n - incremental search with dynamic exposure and reconcealment of hidden text\n - adjustable format, so programming code can be developed in outline-structure\n - easy topic encryption and decryption, symmetric or key-pair\n - \"Hot-spot\" operation, for single-keystroke maneuvering and exposure control\n - integral outline layout, for automatic initial exposure when visiting a file\n - independent extensibility, using comprehensive exposure and authoring hooks\n\nand many other features.\n\nBelow is a description of the key bindings, and then description\nof special `allout-mode' features and terminology.  See also the\noutline menubar additions for quick reference to many of the\nfeatures.  Customize `allout-auto-activation' to prepare your\nEmacs session for automatic activation of `allout-mode'.\n\nThe bindings are those listed in `allout-prefixed-keybindings'\nand `allout-unprefixed-keybindings'.  We recommend customizing\n`allout-command-prefix' to use just `\\C-c' as the command\nprefix, if the allout bindings don't conflict with any personal\nbindings you have on \\C-c.  In any case, outline structure\nnavigation and authoring is simplified by positioning the cursor\non an item's bullet character, the \"hot-spot\" -- then you can\ninvoke allout commands with just the un-prefixed,\nun-control-shifted command letters.  This is described further in\nthe HOT-SPOT Operation section.\n\n        Exposure Control:\n        ----------------\n\\[allout-hide-current-subtree]   `allout-hide-current-subtree'\n\\[allout-show-children] `allout-show-children'\n\\[allout-show-current-subtree] `allout-show-current-subtree'\n\\[allout-show-current-entry] `allout-show-current-entry'\n\\[allout-show-all]   `allout-show-all'\n\n        Navigation:\n        ----------\n\\[allout-next-visible-heading] `allout-next-visible-heading'\n\\[allout-previous-visible-heading] `allout-previous-visible-heading'\n\\[allout-up-current-level] `allout-up-current-level'\n\\[allout-forward-current-level] `allout-forward-current-level'\n\\[allout-backward-current-level] `allout-backward-current-level'\n\\[allout-end-of-entry] `allout-end-of-entry'\n\\[allout-beginning-of-current-entry] `allout-beginning-of-current-entry' (alternately, goes to hot-spot)\n\\[allout-beginning-of-line]  `allout-beginning-of-line' -- like regular beginning-of-line, but\n     if immediately repeated cycles to the beginning of the current item\n     and then to the hot-spot (if `allout-beginning-of-line-cycles' is set).\n\n\n        Topic Header Production:\n        -----------------------\n\\[allout-open-sibtopic] `allout-open-sibtopic' Create a new sibling after current topic.\n\\[allout-open-subtopic]   `allout-open-subtopic' ... an offspring of current topic.\n\\[allout-open-supertopic] `allout-open-supertopic' ... a sibling of the current topic's parent.\n\n        Topic Level and Prefix Adjustment:\n        ---------------------------------\n\\[allout-shift-in] `allout-shift-in'   Shift current topic and all offspring deeper\n\\[allout-shift-out] `allout-shift-out' ... less deep\n\\[allout-rebullet-current-heading] `allout-rebullet-current-heading' Prompt for alternate bullet for\n            current topic\n\\[allout-rebullet-topic] `allout-rebullet-topic'   Reconcile bullets of topic and\n            its offspring -- distinctive bullets are not changed, others\n            are alternated according to nesting depth.\n\\[allout-number-siblings] `allout-number-siblings'  Number bullets of topic and siblings --\n           the offspring are not affected.\n           With repeat count, revoke numbering.\n\n        Topic-oriented Killing and Yanking:\n        ----------------------------------\n\\[allout-kill-topic] `allout-kill-topic'   Kill current topic, including offspring.\n\\[allout-copy-topic-as-kill] `allout-copy-topic-as-kill' Copy current topic, including offspring.\n\\[allout-kill-line]     `allout-kill-line'    Kill line, attending to outline structure.\n\\[allout-copy-line-as-kill]     `allout-copy-line-as-kill' Copy line but don't delete it.\n\\[allout-yank] `allout-yank'        Yank, adjusting depth of yanked topic to\n                             depth of heading if yanking into bare topic\n                             heading (ie, prefix sans text).\n\\[allout-yank-pop]     `allout-yank-pop'       Is to `allout-yank' as `yank-pop' is to `yank'.\n\n        Topic-oriented Encryption:\n        -------------------------\n\\[allout-toggle-current-subtree-encryption] `allout-toggle-current-subtree-encryption'\n          Encrypt/Decrypt topic content\n\n        Misc commands:\n        -------------\n\\[allout-outlinify-sticky] Activate outline mode for current buffer,\n                            and establish a default file-var setting\n                            for `allout-layout'.\n\\[allout-mark-topic]       `allout-mark-topic'\n\\[allout-copy-exposed-to-buffer] `allout-copy-exposed-to-buffer'\n                            Duplicate outline, sans concealed text, to\n                            buffer with name derived from derived from that\n                            of current buffer -- \"*BUFFERNAME exposed*\".\n\\[allout-flatten-exposed-to-buffer] `allout-flatten-exposed-to-buffer'\n                            Like above `copy-exposed', but convert topic\n                            prefixes to section.subsection... numeric\n                            format.\n\\[customize-variable] allout-auto-activation\n                            Prepare Emacs session for allout outline mode\n                            auto-activation.\n\n                  Topic Encryption\n\nOutline mode supports gpg encryption of topics, with support for\nsymmetric and key-pair modes, and auto-encryption of topics\npending encryption on save.\n\nTopics pending encryption are, by default, automatically\nencrypted during file saves, including checkpoint saves, to avoid\nexposing the plain text of encrypted topics in the file system.\nIf the content of the topic containing the cursor was encrypted\nfor a save, it is automatically decrypted for continued editing.\n\nNOTE: A few GnuPG v2 versions improperly preserve incorrect\nsymmetric decryption keys, preventing entry of the correct key on\nsubsequent decryption attempts until the cache times-out.  That\ncan take several minutes.  (Decryption of other entries is not\naffected.)  Upgrade your EasyPG version, if you can, and you can\ndeliberately clear your gpg-agent's cache by sending it a `-HUP'\nsignal.\n\nSee `allout-toggle-current-subtree-encryption' function docstring\nand `allout-encrypt-unencrypted-on-saves' customization variable\nfor details.\n\n                 HOT-SPOT Operation\n\nHot-spot operation provides a means for easy, single-keystroke outline\nnavigation and exposure control.\n\nWhen the text cursor is positioned directly on the bullet character of\na topic, regular characters (a to z) invoke the commands of the\ncorresponding allout-mode keymap control chars.  For example, \"f\"\nwould invoke the command typically bound to \"C-c<space>C-f\"\n(\\[allout-forward-current-level] `allout-forward-current-level').\n\nThus, by positioning the cursor on a topic bullet, you can\nexecute the outline navigation and manipulation commands with a\nsingle keystroke.  Regular navigation keys (eg, \\[forward-char], \\[next-line]) don't get\nthis special translation, so you can use them to get out of the\nhot-spot and back to normal editing operation.\n\nIn allout-mode, the normal beginning-of-line command (\\[allout-beginning-of-line]) is\nreplaced with one that makes it easy to get to the hot-spot.  If you\nrepeat it immediately it cycles (if `allout-beginning-of-line-cycles'\nis set) to the beginning of the item and then, if you hit it again\nimmediately, to the hot-spot.  Similarly, `allout-beginning-of-current-entry'\n(\\[allout-beginning-of-current-entry]) moves to the hot-spot when the cursor is already located\nat the beginning of the current entry.\n\n                             Extending Allout\n\nAllout exposure and authoring activities all have associated\nhooks, by which independent code can cooperate with allout\nwithout changes to the allout core.  Here are key ones:\n\n`allout-mode-hook'\n`allout-mode-off-hook'\n`allout-exposure-change-functions'\n`allout-structure-added-functions'\n`allout-structure-deleted-functions'\n`allout-structure-shifted-functions'\n`allout-after-copy-or-kill-hook'\n`allout-post-undo-hook'\n\n                            Terminology\n\nTopic hierarchy constituents -- TOPICS and SUBTOPICS:\n\nITEM:   A unitary outline element, including the HEADER and ENTRY text.\nTOPIC:  An ITEM and any ITEMs contained within it, ie having greater DEPTH\n        and with no intervening items of lower DEPTH than the container.\nCURRENT ITEM:\n        The visible ITEM most immediately containing the cursor.\nDEPTH:  The degree of nesting of an ITEM; it increases with containment.\n        The DEPTH is determined by the HEADER PREFIX.  The DEPTH is also\n        called the:\nLEVEL:  The same as DEPTH.\n\nANCESTORS:\n        Those ITEMs whose TOPICs contain an ITEM.\nPARENT: An ITEM's immediate ANCESTOR.  It has a DEPTH one less than that\n        of the ITEM.\nOFFSPRING:\n        The ITEMs contained within an ITEM's TOPIC.\nSUBTOPIC:\n        An OFFSPRING of its ANCESTOR TOPICs.\nCHILD:\n        An immediate SUBTOPIC of its PARENT.\nSIBLINGS:\n        TOPICs having the same PARENT and DEPTH.\n\nTopic text constituents:\n\nHEADER: The first line of an ITEM, include the ITEM PREFIX and HEADER\n        text.\nENTRY:  The text content of an ITEM, before any OFFSPRING, but including\n        the HEADER text and distinct from the ITEM PREFIX.\nBODY:   Same as ENTRY.\nPREFIX: The leading text of an ITEM which distinguishes it from normal\n        ENTRY text.  Allout recognizes the outline structure according\n        to the strict PREFIX format.  It consists of a PREFIX-LEAD string,\n        PREFIX-PADDING, and a BULLET.  The BULLET might be followed by a\n        number, indicating the ordinal number of the topic among its\n        siblings, or an asterisk indicating encryption, plus an optional\n        space.  After that is the ITEM HEADER text, which is not part of\n        the PREFIX.\n\n        The relative length of the PREFIX determines the nesting DEPTH\n        of the ITEM.\nPREFIX-LEAD:\n        The string at the beginning of a HEADER PREFIX, by default a `.'.\n        It can be customized by changing the setting of\n        `allout-header-prefix' and then reinitializing `allout-mode'.\n\n        When the PREFIX-LEAD is set to the comment-string of a\n        programming language, outline structuring can be embedded in\n        program code without interfering with processing of the text\n        (by Emacs or the language processor) as program code.  This\n        setting happens automatically when allout mode is used in\n        programming-mode buffers.  See `allout-use-mode-specific-leader'\n        docstring for more detail.\nPREFIX-PADDING:\n        Spaces or asterisks which separate the PREFIX-LEAD and the\n        bullet, determining the ITEM's DEPTH.\nBULLET: A character at the end of the ITEM PREFIX, it must be one of\n        the characters listed on `allout-plain-bullets-string' or\n        `allout-distinctive-bullets-string'.  When creating a TOPIC,\n        plain BULLETs are by default used, according to the DEPTH of the\n        TOPIC.  Choice among the distinctive BULLETs is offered when you\n        provide a universal argument (\\[universal-argument]) to the\n        TOPIC creation command, or when explicitly rebulleting a TOPIC.  The\n        significance of the various distinctive bullets is purely by\n        convention.  See the documentation for the above bullet strings for\n        more details.\nEXPOSURE:\n        The state of a TOPIC which determines the on-screen visibility\n        of its OFFSPRING and contained ENTRY text.\nCONCEALED:\n        TOPICs and ENTRY text whose EXPOSURE is inhibited.  Concealed\n        text is represented by \"...\" ellipses.\n\n        CONCEALED TOPICs are effectively collapsed within an ANCESTOR.\nCLOSED: A TOPIC whose immediate OFFSPRING and body-text is CONCEALED.\nOPEN:	A TOPIC that is not CLOSED, though its OFFSPRING or BODY may be.\n\nThis is a minor mode.  If called interactively, toggle the `Allout mode'\nmode.  If the prefix argument is positive, enable the mode, and if it is\nzero or negative, disable the mode.\n\nIf called from Lisp, toggle the mode if ARG is `toggle'.  Enable the\nmode if ARG is nil, omitted, or is a positive number.  Disable the mode\nif ARG is a negative number.\n\nTo check whether the minor mode is enabled in the current buffer,\nevaluate the variable `allout-mode'.\n\nThe mode's hook is called both when the mode is enabled and when it is\ndisabled.\n\n(fn &optional ARG)" t nil))
-(fset 'allout-mode-p '(autoload "allout" "Return t if `allout-mode' is active in current buffer." nil t))
-(fset 'allout-outlinify-sticky '(autoload "allout" "Activate outline mode and establish file var so it is started subsequently.\n\nSee `allout-layout' and customization of `allout-auto-activation'\nfor details on preparing Emacs for automatic allout activation.\n\n(fn &optional ARG)" t nil))
-(fset 'allout-setup '(autoload "allout" "Do fundamental Emacs session for allout auto-activation.\n\nEstablishes allout processing as part of visiting a file if\n`allout-auto-activation' is non-nil, or removes it otherwise.\n\nThe proper way to use this is through customizing the setting of\n`allout-auto-activation'." nil nil))
-(fset 'allout-widgets-mode '(autoload "allout-widgets" "Toggle Allout Widgets mode.\n\nAllout Widgets mode is an extension of Allout mode that provides\ngraphical decoration of outline structure.  It is meant to\noperate along with `allout-mode', via `allout-mode-hook'.\n\nThe graphics include:\n\n- guide lines connecting item bullet-icons with those of their subitems.\n\n- icons for item bullets, varying to indicate whether or not the item\n  has subitems, and if so, whether or not the item is expanded.\n\n- cue area between the bullet-icon and the start of the body headline,\n  for item numbering, encryption indicator, and distinctive bullets.\n\nThe bullet-icon and guide line graphics provide keybindings and mouse\nbindings for easy outline navigation and exposure control, extending\noutline hot-spot navigation (see `allout-mode').\n\nThis is a minor mode.  If called interactively, toggle the\n`Allout-Widgets mode' mode.  If the prefix argument is positive, enable\nthe mode, and if it is zero or negative, disable the mode.\n\nIf called from Lisp, toggle the mode if ARG is `toggle'.  Enable the\nmode if ARG is nil, omitted, or is a positive number.  Disable the mode\nif ARG is a negative number.\n\nTo check whether the minor mode is enabled in the current buffer,\nevaluate the variable `allout-widgets-mode'.\n\nThe mode's hook is called both when the mode is enabled and when it is\ndisabled.\n\n(fn &optional ARG)" t nil))
-(fset 'allout-widgets-setup '(autoload "allout-widgets" "Commission or decommission `allout-widgets-mode' along with `allout-mode'.\n\nMeant to be used by customization of `allout-widgets-auto-activation'.\n\n(fn VARNAME VALUE)" nil nil))
-(fset 'doctex-mode '(autoload "tex-mode" "Major mode to edit DocTeX files.\n\nIn addition to any hooks its parent mode `latex-mode' might have run,\nthis mode runs the hook `doctex-mode-hook', as the final or\npenultimate step during initialization.\n\n\\{doctex-mode-map}" t nil))
-(fset 'latex-mode '(autoload "tex-mode" "Major mode for editing files of input for LaTeX.\nMakes $ and } display the characters they match.\nMakes \" insert \\=`\\=` when it seems to be the beginning of a quotation,\nand \\='\\=' when it appears to be the end; it inserts \" only after a \\.\n\nUse \\[tex-region] to run LaTeX on the current region, plus the preamble\ncopied from the top of the file (containing \\documentstyle, etc.),\nrunning LaTeX under a special subshell.  \\[tex-buffer] does the whole buffer.\n\\[tex-file] saves the buffer and then processes the file.\n\\[tex-print] prints the .dvi file made by any of these.\n\\[tex-view] previews the .dvi file made by any of these.\n\\[tex-bibtex-file] runs bibtex on the file of the current buffer.\n\nUse \\[tex-validate-buffer] to check buffer for paragraphs containing\nmismatched $'s or braces.\n\nSpecial commands:\n\\{latex-mode-map}\n\nMode variables:\nlatex-run-command\n	Command string used by \\[tex-region] or \\[tex-buffer].\ntex-directory\n	Directory in which to create temporary files for LaTeX jobs\n	run by \\[tex-region] or \\[tex-buffer].\ntex-dvi-print-command\n	Command string used by \\[tex-print] to print a .dvi file.\ntex-alt-dvi-print-command\n	Alternative command string used by \\[tex-print] (when given a prefix\n	argument) to print a .dvi file.\ntex-dvi-view-command\n	Command string used by \\[tex-view] to preview a .dvi file.\ntex-show-queue-command\n	Command string used by \\[tex-show-print-queue] to show the print\n	queue that \\[tex-print] put your job on.\n\nEntering Latex mode runs the hook `text-mode-hook', then\n`tex-mode-hook', and finally `latex-mode-hook'.  When the special\nsubshell is initiated, `tex-shell-hook' is run." t nil))
-(fset 'plain-tex-mode '(autoload "tex-mode" "Major mode for editing files of input for plain TeX.\nMakes $ and } display the characters they match.\nMakes \" insert \\=`\\=` when it seems to be the beginning of a quotation,\nand \\='\\=' when it appears to be the end; it inserts \" only after a \\.\n\nUse \\[tex-region] to run TeX on the current region, plus a \"header\"\ncopied from the top of the file (containing macro definitions, etc.),\nrunning TeX under a special subshell.  \\[tex-buffer] does the whole buffer.\n\\[tex-file] saves the buffer and then processes the file.\n\\[tex-print] prints the .dvi file made by any of these.\n\\[tex-view] previews the .dvi file made by any of these.\n\\[tex-bibtex-file] runs bibtex on the file of the current buffer.\n\nUse \\[tex-validate-buffer] to check buffer for paragraphs containing\nmismatched $'s or braces.\n\nSpecial commands:\n\\{plain-tex-mode-map}\n\nMode variables:\ntex-run-command\n	Command string used by \\[tex-region] or \\[tex-buffer].\ntex-directory\n	Directory in which to create temporary files for TeX jobs\n	run by \\[tex-region] or \\[tex-buffer].\ntex-dvi-print-command\n	Command string used by \\[tex-print] to print a .dvi file.\ntex-alt-dvi-print-command\n	Alternative command string used by \\[tex-print] (when given a prefix\n	argument) to print a .dvi file.\ntex-dvi-view-command\n	Command string used by \\[tex-view] to preview a .dvi file.\ntex-show-queue-command\n	Command string used by \\[tex-show-print-queue] to show the print\n	queue that \\[tex-print] put your job on.\n\nEntering Plain-tex mode runs the hook `text-mode-hook', then the hook\n`tex-mode-hook', and finally the hook `plain-tex-mode-hook'.  When the\nspecial subshell is initiated, the hook `tex-shell-hook' is run." t nil))
-(fset 'slitex-mode '(autoload "tex-mode" "Major mode for editing files of input for SliTeX.\nMakes $ and } display the characters they match.\nMakes \" insert \\=`\\=` when it seems to be the beginning of a quotation,\nand \\='\\=' when it appears to be the end; it inserts \" only after a \\.\n\nUse \\[tex-region] to run SliTeX on the current region, plus the preamble\ncopied from the top of the file (containing \\documentstyle, etc.),\nrunning SliTeX under a special subshell.  \\[tex-buffer] does the whole buffer.\n\\[tex-file] saves the buffer and then processes the file.\n\\[tex-print] prints the .dvi file made by any of these.\n\\[tex-view] previews the .dvi file made by any of these.\n\\[tex-bibtex-file] runs bibtex on the file of the current buffer.\n\nUse \\[tex-validate-buffer] to check buffer for paragraphs containing\nmismatched $'s or braces.\n\nSpecial commands:\n\\{slitex-mode-map}\n\nMode variables:\nslitex-run-command\n	Command string used by \\[tex-region] or \\[tex-buffer].\ntex-directory\n	Directory in which to create temporary files for SliTeX jobs\n	run by \\[tex-region] or \\[tex-buffer].\ntex-dvi-print-command\n	Command string used by \\[tex-print] to print a .dvi file.\ntex-alt-dvi-print-command\n	Alternative command string used by \\[tex-print] (when given a prefix\n	argument) to print a .dvi file.\ntex-dvi-view-command\n	Command string used by \\[tex-view] to preview a .dvi file.\ntex-show-queue-command\n	Command string used by \\[tex-show-print-queue] to show the print\n	queue that \\[tex-print] put your job on.\n\nEntering SliTeX mode runs the hook `text-mode-hook', then the hook\n`tex-mode-hook', then the hook `latex-mode-hook', and finally the hook\n`slitex-mode-hook'.  When the special subshell is initiated, the hook\n`tex-shell-hook' is run." t nil))
-(fset 'tex-mode '(autoload "tex-mode" "Major mode for editing files of input for TeX, LaTeX, or SliTeX.\nThis is the shared parent mode of several submodes.\nTries to determine (by looking at the beginning of the file) whether\nthis file is for plain TeX, LaTeX, or SliTeX and calls `plain-tex-mode',\n`latex-mode', or `slitex-mode', accordingly.  If it cannot be determined,\nsuch as if there are no commands in the file, the value of `tex-default-mode'\nsays which mode to use.\n\nIn addition to any hooks its parent mode `text-mode' might have run,\nthis mode runs the hook `tex-mode-hook', as the final or penultimate\nstep during initialization.\n\n\\{tex-mode-map}" t nil))
-(fset 'tex-start-shell '(autoload "tex-mode" nil nil nil))
-(fset 'texinfo-mode '(autoload "texinfo" "Major mode for editing Texinfo files.\n\n  It has these extra commands:\n\\{texinfo-mode-map}\n\n  These are files that are used as input for TeX to make printed manuals\nand also to be turned into Info files with \\[makeinfo-buffer] or\nthe `makeinfo' program.  These files must be written in a very restricted and\nmodified version of TeX input format.\n\n  Editing commands are like `text-mode' except that the syntax table is\nset up so expression commands skip Texinfo bracket groups.  To see\nwhat the Info version of a region of the Texinfo file will look like,\nuse \\[makeinfo-region], which runs `makeinfo' on the current region.\n\n  You can show the structure of a Texinfo file with \\[texinfo-show-structure].\nThis command shows the structure of a Texinfo file by listing the\nlines with the @-sign commands for @chapter, @section, and the like.\nThese lines are displayed in another window called the *Occur* window.\nIn that window, you can position the cursor over one of the lines and\nuse \\[occur-mode-goto-occurrence], to jump to the corresponding spot\nin the Texinfo file.\n\n  In addition, Texinfo mode provides commands that insert various\nfrequently used @-sign commands into the buffer.  You can use these\ncommands to save keystrokes.  And you can insert balanced braces with\n\\[texinfo-insert-braces] and later use the command \\[up-list] to\nmove forward past the closing brace.\n\nAlso, Texinfo mode provides functions for automatically creating or\nupdating menus and node pointers.  These functions\n\n  * insert the `Next', `Previous' and `Up' pointers of a node,\n  * insert or update the menu for a section, and\n  * create a master menu for a Texinfo source file.\n\nHere are the functions:\n\n    `texinfo-update-node'                \\[texinfo-update-node]\n    `texinfo-every-node-update'          \\[texinfo-every-node-update]\n    `texinfo-sequential-node-update'\n\n    `texinfo-make-menu'                  \\[texinfo-make-menu]\n    `texinfo-all-menus-update'           \\[texinfo-all-menus-update]\n    `texinfo-master-menu'\n\n    `texinfo-indent-menu-description' (column &optional region-p)\n\nThe `texinfo-column-for-description' variable specifies the column to\nwhich menu descriptions are indented.\n\nPassed an argument (a prefix argument, if interactive), the\n`texinfo-update-node' and `texinfo-make-menu' functions do their jobs\nin the region.\n\nTo use the updating commands, you must structure your Texinfo file\nhierarchically, such that each `@node' line, with the exception of the\nTop node, is accompanied by some kind of section line, such as an\n`@chapter' or `@section' line.\n\nIf the file has a `top' node, it must be called `top' or `Top' and\nbe the first node in the file.\n\nEntering Texinfo mode calls the value of `text-mode-hook', and then the\nvalue of `texinfo-mode-hook'." t nil))
-
-;; GNU loaddefs autoload cells for Round-17b libraries.
-(fset 'inferior-octave '(autoload "octave" "Run an inferior Octave process, I/O via `inferior-octave-buffer'.\nThis buffer is put in Inferior Octave mode.  See `inferior-octave-mode'.\n\nUnless ARG is non-nil, switches to this buffer.\n\nThe elements of the list `inferior-octave-startup-args' are sent as\ncommand line arguments to the inferior Octave process on startup.\n\nAdditional commands to be executed on startup can be provided either in\nthe file specified by `inferior-octave-startup-file' or by the default\nstartup file, `~/.emacs-octave'.\n\n(fn &optional ARG)" t nil))
-(fset 'octave-maybe-mode '(autoload "octave" "Select `octave-mode' if the current buffer seems to hold Octave code." nil nil))
-(fset 'octave-mode '(autoload "octave" "Major mode for editing Octave code.\n\nOctave is a high-level language, primarily intended for numerical\ncomputations.  It provides a convenient command line interface\nfor solving linear and nonlinear problems numerically.  Function\ndefinitions can also be stored in files and used in batch mode.\n\nSee Info node `(octave-mode) Using Octave Mode' for more details.\n\nKey bindings:\n\\{octave-mode-map}\n\nIn addition to any hooks its parent mode `prog-mode' might have run,\nthis mode runs the hook `octave-mode-hook', as the final or\npenultimate step during initialization." t nil))
-(fset 'reftex-all-document-files '(autoload "reftex-parse" nil nil nil))
-(fset 'reftex-citation '(autoload "reftex-cite" nil t nil))
-(fset 'reftex-index-phrases-mode '(autoload "reftex-index" nil t nil))
-(fset 'reftex-isearch-minor-mode '(autoload "reftex-global" nil t nil))
-(fset 'reftex-mode '(autoload "reftex" "Minor mode with distinct support for \\label, \\ref and \\cite in LaTeX.\n\n\\<reftex-mode-map>A Table of Contents of the entire (multifile) document with browsing\ncapabilities is available with `\\[reftex-toc]'.\n\nLabels can be created with `\\[reftex-label]' and referenced with `\\[reftex-reference]'.\nWhen referencing, you get a menu with all labels of a given type and\ncontext of the label definition.  The selected label is inserted as a\n\\ref macro.\n\nCitations can be made with `\\[reftex-citation]' which will use a regular expression\nto pull out a *formatted* list of articles from your BibTeX\ndatabase.  The selected citation is inserted as a \\cite macro.\n\nIndex entries can be made with `\\[reftex-index-selection-or-word]' which indexes the word at point\nor the current selection.  More general index entries are created with\n`\\[reftex-index]'.  `\\[reftex-display-index]' displays the compiled index.\n\nMost command have help available on the fly.  This help is accessed by\npressing `?' to any prompt mentioning this feature.\n\nExtensive documentation about RefTeX is available in Info format.\nYou can view this information with `\\[reftex-info]'.\n\n\\{reftex-mode-map}\nUnder X, these and other functions will also be available as `Ref' menu\non the menu bar.\n\n------------------------------------------------------------------------------\n\nThis is a minor mode.  If called interactively, toggle the `Reftex mode'\nmode.  If the prefix argument is positive, enable the mode, and if it is\nzero or negative, disable the mode.\n\nIf called from Lisp, toggle the mode if ARG is `toggle'.  Enable the\nmode if ARG is nil, omitted, or is a positive number.  Disable the mode\nif ARG is a negative number.\n\nTo check whether the minor mode is enabled in the current buffer,\nevaluate the variable `reftex-mode'.\n\nThe mode's hook is called both when the mode is enabled and when it is\ndisabled.\n\n(fn &optional ARG)" t nil))
-(fset 'reftex-reset-scanning-information '(autoload "reftex" "Reset the symbols containing information from buffer scanning.\nThis enforces rescanning the buffer on next use." nil nil))
-(fset 'reporter-submit-bug-report '(autoload "reporter" "Begin submitting a bug report via email.\n\nADDRESS is the email address for the package's maintainer.  PKGNAME is\nthe name of the package (if you want to include version numbers,\nyou must put them into PKGNAME before calling this function).\nOptional PRE-HOOKS and POST-HOOKS are passed to `reporter-dump-state'.\nOptional SALUTATION is inserted at the top of the mail buffer,\nand point is left after the salutation.\n\nVARLIST is the list of variables to dump (see `reporter-dump-state'\nfor details).  The optional argument PRE-HOOKS and POST-HOOKS are\npassed to `reporter-dump-state'.  Optional argument SALUTATION is text\nto be inserted at the top of the mail buffer; in that case, point is\nleft after that text.\n\nThis function prompts for a summary if `reporter-prompt-for-summary-p'\nis non-nil.\n\nThis function does not send a message; it uses the given information\nto initialize a message, which the user can then edit and finally send\n(or decline to send).  The variable `mail-user-agent' controls which\nmail-sending package is used for editing and sending the message.\n\n(fn ADDRESS PKGNAME VARLIST &optional PRE-HOOKS POST-HOOKS SALUTATION)" nil nil))
-(fset 'turn-on-reftex '(autoload "reftex" "Turn on RefTeX mode." nil nil))
+;;; GNU 31.1 -Q boot parity: aliases, autoloads and dumped entry
+;;; points that GNU binds but remacs otherwise lacks.
+
+;; loaddefs.elc in GNU:
+(define-obsolete-function-alias 'close-rectangle #'delete-whitespace-rectangle "29.1")
+(define-obsolete-function-alias 'replace-rectangle #'string-rectangle "29.1")
+;; vc-hooks.elc in GNU:
+(defalias 'vc-resolve-conflicts 'smerge-ediff)
+;; cl-lib.elc autoload (the defvar + custom-autoload are already in
+;; lisp/loaddefs.el):
+(autoload 'cl-old-struct-compat-mode "cl-lib"
+  "Enable backward compatibility with old-style structs." t nil)
+
+;; paragraphs.elc in GNU.  The mode-marking body (hard newline
+;; properties) is omitted; the var, hook and toggle behavior are
+;; bound as GNU leaves them at -Q.
+(defvar use-hard-newlines nil
+  "Non-nil means distinguish hard and soft newlines in the current buffer.")
+(put 'use-hard-newlines 'permanent-local t)
+(defvar use-hard-newlines-hook nil
+  "Hook run when `use-hard-newlines' mode is toggled.")
+(defun use-hard-newlines (&optional arg _insert)
+  "Toggle between hard and soft newlines in the current buffer."
+  (interactive (list (or current-prefix-arg 'toggle) nil))
+  (setq use-hard-newlines
+        (if (eq arg 'toggle)
+            (not use-hard-newlines)
+          (> (prefix-numeric-value arg) 0)))
+  (run-hooks 'use-hard-newlines-hook))
+
+;; loadup.el in GNU.  Without native compilation the fixup is a
+;; no-op; the vars are bound nil as in GNU -Q.
+(defvar load--bin-dest-dir nil
+  "Directory holding the installed binaries (nil: no native comp).")
+(defvar load--eln-dest-dir nil
+  "Directory holding the installed eln files (nil: no native comp).")
+(defun load--fixup-all-elns ()
+  "Fix all compilation unit filenames (no-op without native comp)."
+  (when (and load--bin-dest-dir load--eln-dest-dir)
+    (setq eln-dest-dir
+          (concat load--eln-dest-dir "native-lisp/" comp-native-version-dir "/"))))
+
+;; startup.elc / window.elc in GNU; both return nil in a -Q batch.
+(defun fancy-startup-tail (&optional _concise)
+  "Insert the tail of the fancy startup screen (no-op in batch)."
+  (interactive)
+  nil)
+(defun fit-frame-to-buffer (&optional _frame _max-height _min-height _max-width _min-width _preserve-size)
+  "Fit the selected frame to its buffer (no-op without GUI frames)."
+  (interactive)
+  nil)
+
+;; isearch.elc in GNU.  At -Q (no isearch state) GNU produces the
+;; default backward prompt; approximate that.
+(defun isearch-message (&optional _c-q-hack _ellipsis)
+  "Return the current isearch prompt (approximation)."
+  (propertize "I-search backward: " 'face 'minibuffer-prompt 'read-only t))
+
+;; cl-print.elc autoloaded generic in GNU: bound at -Q with no
+;; methods, so calling it errors with `cl-no-applicable-method'.
+(cl-defgeneric cl-print-object (_object _stream)
+  "Dispatcher to print OBJECT on STREAM according to its type.
+You can add methods to it to customize the output.
+But if you just want to print something, don't call this directly:
+call other entry points instead, such as `cl-prin1'.")
+
+(defun cl-print-to-string-with-limit (print-function value limit)
+  "Return a string containing a printed representation of VALUE.
+Attempt to get the length of the returned string under LIMIT
+characters with appropriate settings of `print-level',
+`print-length', and `cl-print-string-length'.  Use
+PRINT-FUNCTION to print, which should take the arguments VALUE
+and STREAM and which should respect `print-length',
+`print-level', and `cl-print-string-length'.  LIMIT may be nil or
+zero in which case PRINT-FUNCTION will be called with these
+settings bound to nil, and it can also be t in which case
+PRINT-FUNCTION will be called with their current values.
+
+Use this function with `cl-prin1' to print an object,
+abbreviating it with ellipses to fit within a size limit."
+  (setq limit (and (not (eq limit 0)) limit))
+  (let* ((print-length (cond
+                        ((eq limit t) print-length)
+                        ((or (null limit) (zerop limit)) nil)
+                        (t (min limit 50))))
+         (print-level (cond
+                        ((eq limit t) print-level)
+                        ((or (null limit) (zerop limit)) nil)
+                        (t (min 8 (truncate (log limit))))))
+         (cl-print-string-length
+          (cond
+           ((eq limit t) cl-print-string-length)
+           ((or (null limit) (zerop limit)) nil)
+           (t (max 0 (- limit 3)))))
+         (delta-length (when (natnump limit)
+                         (max 1 (truncate (/ print-length print-level))))))
+    (with-temp-buffer
+      (catch 'done
+        (while t
+          (erase-buffer)
+          (funcall print-function value (current-buffer))
+          (let ((result (- (point-max) (point-min))))
+            (when (or (not (natnump limit)) (< result limit) (<= print-level 2))
+              (throw 'done (buffer-string)))
+            (let* ((ratio (/ result limit))
+                   (delta-level (max 1 (min (- print-level 2) ratio))))
+              (decf print-level delta-level)
+              (decf print-length (* delta-length delta-level))
+              (when cl-print-string-length
+                (decf cl-print-string-length
+                         (ceiling cl-print-string-length 4.0))))))))))

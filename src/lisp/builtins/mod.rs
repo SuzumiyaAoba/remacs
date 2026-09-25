@@ -6,8 +6,8 @@
 pub(crate) mod arith;
 pub(crate) mod bidi_table;
 pub(crate) mod charset;
-pub(crate) mod enc_tables;
 pub(crate) mod data;
+pub(crate) mod enc_tables;
 pub(crate) mod evalfn;
 pub(crate) mod hashfn;
 pub(crate) mod json;
@@ -375,9 +375,11 @@ pub fn eq_values(a: &Value, b: &Value) -> bool {
 }
 
 /// `eql` — eq, or equal numbers of the same type (int vs float differ).
+/// GNU compares floats bitwise: 0.0 and -0.0 differ, while NaN eqls
+/// NaN when the payloads match.
 pub fn eql_values(a: &Value, b: &Value) -> bool {
     match (a, b) {
-        (Value::Float(x), Value::Float(y)) => **x == **y,
+        (Value::Float(x), Value::Float(y)) => (**x).to_bits() == (**y).to_bits(),
         _ => eq_values(a, b),
     }
 }

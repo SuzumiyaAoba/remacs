@@ -216,6 +216,13 @@ pub(crate) static SUBRS: &[Subr] = &[
         "Internal trampoline applying one advice wrapper."
     ),
     S!(
+        "cl--advice--link",
+        1,
+        1,
+        f_advice_link,
+        "Internal: (FUN NEXT HOW PROPS) of an advice trampoline, or nil."
+    ),
+    S!(
         "cl--add-function",
         3,
         4,
@@ -606,17 +613,6 @@ fn f_macroexpand_1(i: &mut Interp, args: Vec<Value>) -> EvalResult {
                 }
             }
             if let Value::Sym(id) = car {
-                // GNU folds `eval-when-compile'/`eval-and-compile' during
-                // expansion: BODY runs now and the result is quoted.
-                if i.symbol_name(id) == "eval-when-compile"
-                    || i.symbol_name(id) == "eval-and-compile"
-                {
-                    let v = i.eval_progn(&cdr)?;
-                    return Ok(Value::cons(
-                        Value::Sym(i.intern("quote")),
-                        Value::cons(v, Value::Nil),
-                    ));
-                }
                 let f = i.symbol_function(id);
                 let is_mac = match &f {
                     Value::Lambda(l) => l.is_macro,
@@ -660,9 +656,72 @@ fn is_declare_form(i: &Interp, form: &Value) -> bool {
     false
 }
 
+/// GNU `macroexp--expand-all' applies the head symbol's
+/// `compiler-macro' property as (apply HANDLER FORM (cdr FORM)),
+/// following `symbol-function' aliases like `cl-compiler-macroexpand'.
+/// A result `eq' to FORM punts; a handler error warns and punts.
+/// Returns the replacement form to re-expand, or None.
+fn try_compiler_macro(i: &mut Interp, form: &Value) -> EvalResult {
+    let (car, cdr) = match form {
+        Value::Cons(c) => {
+            let b = c.borrow();
+            (b.car.clone(), b.cdr.clone())
+        }
+        _ => return Ok(Value::Nil),
+    };
+    let mut func = car;
+    let cmacro = i.intern("compiler-macro");
+    let mut handler = Value::Nil;
+    let mut guard = 0;
+    while let Value::Sym(id) = func {
+        let h = i.get_prop(id, cmacro);
+        if !h.is_nil() {
+            handler = h;
+            break;
+        }
+        let sf = i.symbol_function(id);
+        match sf {
+            Value::Sym(next) => {
+                guard += 1;
+                if guard > 200 {
+                    break;
+                }
+                func = Value::Sym(next);
+            }
+            _ => break,
+        }
+    }
+    if handler.is_nil() {
+        return Ok(Value::Nil);
+    }
+    let mut argv = vec![form.clone()];
+    match want_list(i, &cdr) {
+        Ok(v) => argv.extend(v),
+        Err(_) => return Ok(Value::Nil),
+    }
+    match i.apply(&handler, argv) {
+        Ok(newf) => {
+            if super::eq_values(&newf, form) {
+                Ok(Value::Nil)
+            } else {
+                Ok(newf)
+            }
+        }
+        Err(_) => Ok(Value::Nil),
+    }
+}
+
 /// Recursively expand macros throughout a form.
 pub(crate) fn macroexpand_all(i: &mut Interp, form: &Value) -> EvalResult {
     let expanded = i.macroexpand(form)?;
+    // Compiler macros expand through `macroexpand-all' but not
+    // `macroexpand'/`macroexpand-1'.
+    if let Value::Cons(_) = expanded {
+        let newf = try_compiler_macro(i, &expanded)?;
+        if !newf.is_nil() {
+            return macroexpand_all(i, &newf);
+        }
+    }
     match &expanded {
         Value::Cons(c) => {
             let (car, cdr) = {
@@ -755,15 +814,11 @@ pub(crate) fn macroexpand_all(i: &mut Interp, form: &Value) -> EvalResult {
                         if let Value::Cons(lc) = &items[1] {
                             let is_lam = {
                                 let b = lc.borrow();
-                                i.sym_is(&b.car, sym::LAMBDA)
-                                    || i.sym_is(&b.car, closure_id)
+                                i.sym_is(&b.car, sym::LAMBDA) || i.sym_is(&b.car, closure_id)
                             };
                             if is_lam {
                                 let arg = macroexpand_all(i, &items[1])?;
-                                return Ok(Value::list(vec![
-                                    items[0].clone(),
-                                    arg,
-                                ]));
+                                return Ok(Value::list(vec![items[0].clone(), arg]));
                             }
                         }
                         return Ok(expanded);
@@ -772,30 +827,64 @@ pub(crate) fn macroexpand_all(i: &mut Interp, form: &Value) -> EvalResult {
                         let mut out = vec![items[0].clone()];
                         match &items[1] {
                             Value::Cons(_) => {
-                                let binds = want_list(i, &items[1]).unwrap_or_default();
-                                let mut bs = Vec::with_capacity(binds.len());
-                                for b in binds {
-                                    let keep_head = matches!(
-                                        &b,
-                                        Value::Cons(c)
-                                            if matches!(c.borrow().car, Value::Sym(_))
-                                    );
-                                    if keep_head {
-                                        let parts = want_list(i, &b).unwrap_or_default();
-                                        if parts.is_empty() {
-                                            bs.push(b.clone());
-                                        } else {
-                                            let mut nb = vec![parts[0].clone()];
-                                            for p in &parts[1..] {
-                                                nb.push(macroexpand_all(i, p)?);
+                                // GNU's `macroexp--expand-all' walks the
+                                // varlist as a cons chain: each binding's
+                                // value-forms expand while the list
+                                // structure (including a dotted tail like
+                                // `((x 1) . 2)') is preserved verbatim.
+                                let mut newvarlist = Value::Nil;
+                                let mut tail_cell: Option<Value> = None;
+                                let mut cur = items[1].clone();
+                                loop {
+                                    match cur {
+                                        Value::Cons(c) => {
+                                            let (b, next) = {
+                                                let bb = c.borrow();
+                                                (bb.car.clone(), bb.cdr.clone())
+                                            };
+                                            let nb = {
+                                                let keep_head = matches!(
+                                                    &b,
+                                                    Value::Cons(bc)
+                                                        if matches!(bc.borrow().car, Value::Sym(_))
+                                                );
+                                                if keep_head {
+                                                    let parts =
+                                                        want_list(i, &b).unwrap_or_default();
+                                                    if parts.is_empty() {
+                                                        b.clone()
+                                                    } else {
+                                                        let mut nb = vec![parts[0].clone()];
+                                                        for p in &parts[1..] {
+                                                            nb.push(macroexpand_all(i, p)?);
+                                                        }
+                                                        Value::list(nb)
+                                                    }
+                                                } else {
+                                                    macroexpand_all(i, &b)?
+                                                }
+                                            };
+                                            let cell = Value::cons(nb, Value::Nil);
+                                            if let Some(Value::Cons(prev)) = &tail_cell {
+                                                prev.borrow_mut().cdr = cell.clone();
+                                            } else {
+                                                newvarlist = cell.clone();
                                             }
-                                            bs.push(Value::list(nb));
+                                            tail_cell = Some(cell);
+                                            cur = next;
                                         }
-                                    } else {
-                                        bs.push(macroexpand_all(i, &b)?);
+                                        other => {
+                                            // Improper tail: kept verbatim.
+                                            if let Some(Value::Cons(prev)) = &tail_cell {
+                                                prev.borrow_mut().cdr = other;
+                                            } else {
+                                                newvarlist = other;
+                                            }
+                                            break;
+                                        }
                                     }
                                 }
-                                out.push(Value::list(bs));
+                                out.push(newvarlist);
                             }
                             v => out.push(v.clone()),
                         }
@@ -1697,13 +1786,20 @@ fn f_eval_expression(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     Ok(v)
 }
 fn f_load(i: &mut Interp, args: Vec<Value>) -> EvalResult {
+    // (load FILE &optional NOERROR NOMESSAGE NOSUFFIX MUST-SUFFIX)
     let name = match &args[0] {
         Value::Str(s) => s.borrow().clone(),
         _ => return Err(i.wrong_type_mut("stringp", &args[0])),
     };
-    let ok = crate::lisp::load::load_library(i, &name)?;
+    let noerror = arg(&args, 1).truthy();
+    let nomessage = arg(&args, 2).truthy();
+    let nosuffix = arg(&args, 3).truthy();
+    let mustsuffix = arg(&args, 4).truthy();
+    let ok = crate::lisp::load::load_library_opts(i, &name, nosuffix, mustsuffix, nomessage)?;
     if ok {
         Ok(Value::t())
+    } else if noerror {
+        Ok(Value::Nil)
     } else {
         // GNU: file-missing ("Cannot open load file" REASON NAME).
         let fm = i.intern("file-missing");
@@ -1718,7 +1814,32 @@ fn f_load(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     }
 }
 fn f_load_file(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    f_load(i, args)
+    // GNU's `load-file': (load (expand-file-name FILE) nil nil t) —
+    // NOSUFFIX, so the literal name is opened (or fails).
+    let name = match &args[0] {
+        Value::Str(s) => s.borrow().clone(),
+        _ => return Err(i.wrong_type_mut("stringp", &args[0])),
+    };
+    let efn = i.intern("expand-file-name");
+    let expanded = i.apply(&Value::Sym(efn), vec![args[0].clone()])?;
+    let name = match &expanded {
+        Value::Str(s) => s.borrow().clone(),
+        _ => name,
+    };
+    let ok = crate::lisp::load::load_library_opts(i, &name, true, false, false)?;
+    if ok {
+        Ok(Value::t())
+    } else {
+        let fm = i.intern("file-missing");
+        Err(i.signal_data(
+            fm,
+            vec![
+                Value::string("Cannot open load file"),
+                Value::string("No such file or directory"),
+                Value::string(name),
+            ],
+        ))
+    }
 }
 fn f_locate_library(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     let name = match &args[0] {
@@ -1792,6 +1913,50 @@ pub(crate) fn autoload_do_load(i: &mut Interp, fundef: Value, macro_only: bool) 
         .all_ids()
         .into_iter()
         .find(|id| super::eq_values(&i.symbol_function(*id), &fundef));
+    if std::env::var_os("REMACS_TRACE_AUTOLOAD").is_some() {
+        eprintln!(
+            "[autoload {} -> {}]",
+            owner.map(|id| i.symbol_name(id)).unwrap_or("?".into()),
+            name
+        );
+    }
+    // Interpreted built-ins can meet a self-autoload: cl-loaddefs marks
+    // macros such as `cl-loop' as (autoload "cl-macs"), and loading
+    // cl-macs.el then expands bodies containing `cl-loop'.  GNU's .elc
+    // files are already expanded, so this cycle does not exist there.
+    // Resolve the dump-time definition instead of recursively loading
+    // the same file.
+    let stem = |s: &str| {
+        let s = s.strip_prefix("builtin:").unwrap_or(s);
+        let base = s.rsplit('/').next().unwrap_or(s);
+        let base = base.strip_suffix(".el").unwrap_or(base);
+        base.strip_suffix(".elc").unwrap_or(base).to_string()
+    };
+    let lfn = i.intern("load-file-name");
+    let loading_same = match i.symbol_value(lfn) {
+        Value::Str(s) => stem(&s.borrow()) == stem(&name),
+        _ => false,
+    };
+    if let Some(id) = owner {
+        let pk = i.intern("remacs--dump-fn");
+        let hidden = i.get_prop(id, pk);
+        let has_hidden =
+            !hidden.is_nil() && !matches!(hidden, Value::Sym(s) if s == crate::lisp::sym::UNBOUND);
+        if (macro_only || i.macroexp_call_depth > 0 || (loading_same && is_macro_autoload))
+            && has_hidden
+        {
+            return Ok(hidden);
+        }
+        if loading_same {
+            return Err(i.error(format!(
+                "Autoloading file {} recursively for {}",
+                name,
+                i.symbol_name(id)
+            )));
+        }
+    } else if loading_same {
+        return Err(i.error(format!("Autoloading file {name} recursively")));
+    }
     let _ = crate::lisp::load::load_library(i, &name)?;
     match owner {
         Some(id) => {
@@ -1802,6 +1967,18 @@ pub(crate) fn autoload_do_load(i: &mut Interp, fundef: Value, macro_only: bool) 
                 _ => false,
             };
             if still_auto {
+                // Some autoload cells point at a reduced source whose
+                // GNU .elc equivalent defines the function inline.  If
+                // the dump-time definition was stashed for -Q parity,
+                // keep the public autoload cell but use that definition
+                // for this call rather than failing the autoload.
+                let pk = i.intern("remacs--dump-fn");
+                let hidden = i.get_prop(id, pk);
+                if !hidden.is_nil()
+                    && !matches!(hidden, Value::Sym(s) if s == crate::lisp::sym::UNBOUND)
+                {
+                    return Ok(hidden);
+                }
                 return Err(i.error(format!(
                     "Autoloading file {} failed to define function {}",
                     name,
@@ -2566,19 +2743,26 @@ fn f_advice_add(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         ));
     }
     let name = advice_name(i, &arg(&a, 3));
-    advice_push(i, sym, w, a[2].clone(), name);
+    advice_push(i, sym, w, a[2].clone(), name)?;
     Ok(Value::Nil)
 }
 
-fn advice_retain(i: &mut Interp, key: SymId, sel: &Value) {
+fn advice_retain(i: &mut Interp, key: SymId, sel: &Value) -> Result<(), Flow> {
     if let Some(pos) = i.advices.iter().position(|(s, _)| *s == key) {
         let mut list = std::mem::take(&mut i.advices[pos].1);
         list.retain(|(_, f, n)| !advice_entry_matches(i, f, n, sel));
         i.advices[pos].1 = list;
     }
+    i.recompose_advice(key)
 }
 
-fn advice_push(i: &mut Interp, key: SymId, w: SymId, fun: Value, name: Value) {
+fn advice_push(i: &mut Interp, key: SymId, w: SymId, fun: Value, name: Value) -> Result<(), Flow> {
+    // The first advice on KEY captures the current cell as the chain's
+    // base (GNU's `advice--make' layers onto the existing definition).
+    if !i.advice_bases.iter().any(|(s, _)| *s == key) {
+        let base = i.symbol_function(key);
+        i.advice_bases.push((key, base));
+    }
     let entry = (w, fun.clone(), name.clone());
     let pos = match i.advices.iter().position(|(s, _)| *s == key) {
         Some(p) => p,
@@ -2588,12 +2772,17 @@ fn advice_push(i: &mut Interp, key: SymId, w: SymId, fun: Value, name: Value) {
         }
     };
     let mut list = std::mem::take(&mut i.advices[pos].1);
+    // GNU's advice--add-function replaces an existing entry by :name
+    // when PROPS supplies one; otherwise it matches on the function
+    // itself.  Same-function-different-name pieces coexist.
     if !name.is_nil() {
         list.retain(|(_, _, n)| !super::equal_values(i, n, &name));
+    } else {
+        list.retain(|(_, f, _)| !super::equal_values(i, f, &fun));
     }
-    list.retain(|(_, f, _)| !super::equal_values(i, f, &fun));
     list.push(entry);
     i.advices[pos].1 = list;
+    i.recompose_advice(key)
 }
 
 /// The property under which an advice-wrapper gensym records the
@@ -2624,7 +2813,7 @@ fn advice_unwrap(i: &mut Interp, v: &Value) -> Option<(SymId, Value)> {
 
 fn f_advice_remove(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let sym = want_sym(i, &a[0])?;
-    advice_retain(i, sym, &a[1]);
+    advice_retain(i, sym, &a[1])?;
     Ok(Value::Nil)
 }
 
@@ -2686,7 +2875,7 @@ fn f_add_function(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         }
     };
     let name = advice_name(i, &arg(&a, 3));
-    advice_push(i, key, w, a[2].clone(), name);
+    advice_push(i, key, w, a[2].clone(), name)?;
     Ok(Value::Nil)
 }
 
@@ -2723,7 +2912,7 @@ fn f_remove_function(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         }
         _ => return Ok(Value::Nil),
     };
-    advice_retain(i, key, &a[1]);
+    advice_retain(i, key, &a[1])?;
     if i.advice_list(key).is_empty() {
         if let Some((kind, sym, orig, prop)) = holder {
             match kind.as_str() {
@@ -2736,37 +2925,60 @@ fn f_remove_function(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 }
 
 fn f_advice_member_p(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let sym = match &a[1] {
-        Value::Sym(s) => *s,
-        _ => return Ok(Value::Nil),
+    // GNU's advice-member-p resolves FUNCTION-DEF through
+    // `advice--symbol-function' and walks the advice chain, returning
+    // the matching layer (our trampoline stands in for the oclosure).
+    let mut cur = match &a[1] {
+        Value::Sym(s) => i.symbol_function(*s),
+        v => v.clone(),
     };
-    // GNU returns the found advice object (or nil), not just t.
-    let hit = i
-        .advice_list(sym)
-        .into_iter()
-        .find(|(_, f, n)| advice_entry_matches(i, f, n, &a[0]));
-    Ok(match hit {
-        Some((_, f, _)) => f,
-        None => Value::Nil,
-    })
+    loop {
+        match i.advice_link_entry(&cur) {
+            Some((_, f, next, n)) => {
+                if advice_entry_matches(i, &f, &n, &a[0]) {
+                    return Ok(cur);
+                }
+                cur = next;
+            }
+            None => return Ok(Value::Nil),
+        }
+    }
 }
 
 fn f_advice_function_mapc(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let sym = match &a[1] {
-        Value::Sym(s) => *s,
-        _ => return Ok(Value::Nil),
-    };
-    for (w, f, n) in i.advice_list(sym) {
-        let name_kw = i.intern("name");
+    // GNU walks FUNCTION-DEF's `advice--p' chain — a bare symbol is not
+    // an advice object, so it iterates zero times there too.
+    let name_kw = i.intern("name");
+    let mut cur = a[1].clone();
+    while let Some((_, f, next, n)) = i.advice_link_entry(&cur) {
         let props = if n.is_nil() {
             Value::Nil
         } else {
             Value::list(vec![Value::cons(Value::Sym(name_kw), n)])
         };
         i.apply(&a[0], vec![f, props])?;
-        let _ = w;
+        cur = next;
     }
     Ok(Value::Nil)
+}
+
+/// `(cl--advice--link OBJ)` — when OBJ is an advice trampoline,
+/// `(FUN NEXT HOW PROPS)' describing its layer; else nil.  The Lisp
+/// `advice--car'/`advice--cdr'/`advice--how'/`advice--props' accessors
+/// read off this list, mirroring GNU's oclosure slot accessors.
+fn f_advice_link(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    match i.advice_link_entry(&a[0]) {
+        Some((w, f, next, n)) => {
+            let name_kw = i.intern("name");
+            let props = if n.is_nil() {
+                Value::Nil
+            } else {
+                Value::list(vec![Value::cons(Value::Sym(name_kw), n)])
+            };
+            Ok(Value::list(vec![f, next, w, props]))
+        }
+        None => Ok(Value::Nil),
+    }
 }
 
 /// `(cl--advice--apply IDX ARGS...)` — apply advice wrapper IDX:
@@ -2776,7 +2988,7 @@ fn f_advice_apply_link(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         Value::Int(n) => *n as usize,
         _ => return Err(i.wrong_type_mut("fixnump", &a[0])),
     };
-    let (w, f, next) = match i.advice_links.get(idx) {
+    let (w, f, next, _name) = match i.advice_links.get(idx) {
         Some(p) => p.clone(),
         None => return Err(i.error("Invalid advice link")),
     };
@@ -2816,18 +3028,19 @@ fn f_advice_apply_link(i: &mut Interp, a: Vec<Value>) -> EvalResult {
             i.apply(&f, args)?;
             Ok(r)
         }
+        // GNU: (or OLDFUN ADVICE)
         ":after-until" => {
             let r = i.apply(&next, args.clone())?;
-            let r2 = i.apply(&f, args)?;
-            Ok(if r2.truthy() { r2 } else { r })
+            Ok(if r.truthy() { r } else { i.apply(&f, args)? })
         }
+        // GNU: (and OLDFUN ADVICE)
         ":after-while" => {
             let r = i.apply(&next, args.clone())?;
-            Ok(if i.apply(&f, args)?.truthy() {
-                r
+            if r.truthy() {
+                i.apply(&f, args)
             } else {
-                Value::Nil
-            })
+                Ok(Value::Nil)
+            }
         }
         ":filter-args" => {
             let r = i.apply(&f, vec![Value::list(args)])?;

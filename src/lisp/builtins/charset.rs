@@ -8,8 +8,8 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use super::{S, arg, eq_values, misc};
 use super::misc::{coding_known, is_char_table};
+use super::{S, arg, eq_values, misc};
 use crate::lisp::error::Flow;
 use crate::lisp::value::{Subr, Value};
 use crate::lisp::{EvalResult, Interp};
@@ -320,6 +320,20 @@ fn prop_table<'a>(i: &'a mut Interp, name: &str) -> &'a mut Vec<(i64, Value)> {
         .1
 }
 
+/// GNU's `define-char-code-property': push `(NAME . TABLE-OR-FILE)'
+/// onto `char-code-property-alist', replacing an existing entry's cdr.
+fn register_prop_alist(i: &mut Interp, name: &str, backing: Value) {
+    let entry = prop_alist_entry(i, name);
+    if let Value::Cons(c) = entry {
+        c.borrow_mut().cdr = backing;
+    } else {
+        let vid = i.intern("char-code-property-alist");
+        let alist = i.symbol_value(vid);
+        let cell = Value::cons(Value::Sym(i.intern(name)), backing);
+        let _ = i.set_symbol(vid, Value::cons(cell, alist));
+    }
+}
+
 fn f_define_char_code_property(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let sid = want_sym(i, &a[0])?;
     let name = i.symbol_name(sid);
@@ -328,7 +342,8 @@ fn f_define_char_code_property(i: &mut Interp, a: Vec<Value>) -> EvalResult {
             // Keep the char-table as the property's backing store.
             prop_table(i, &name);
             i.char_code_prop_tables.retain(|(n, _)| n != &name);
-            i.char_code_prop_tables.push((name, v.clone()));
+            i.char_code_prop_tables.push((name.clone(), v.clone()));
+            register_prop_alist(i, &name, v.clone());
             Ok(Value::Nil)
         }
         Value::Str(_) => {
@@ -336,7 +351,8 @@ fn f_define_char_code_property(i: &mut Interp, a: Vec<Value>) -> EvalResult {
             // backing; any put/get then signals char-table-p — mirror that
             // by registering the string as the backing table.
             i.char_code_prop_tables.retain(|(n, _)| n != &name);
-            i.char_code_prop_tables.push((name, a[1].clone()));
+            i.char_code_prop_tables.push((name.clone(), a[1].clone()));
+            register_prop_alist(i, &name, a[1].clone());
             Ok(Value::Nil)
         }
         other => Err(i.error(format!(
@@ -703,8 +719,27 @@ fn f_coding_system_charset_list(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 }
 
 fn f_set_coding_system_priority(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let _ = &a;
-    let _ = i;
+    // Move each named coding system to the front of the priority
+    // table, preserving argument order (GNU rebuilds the per-category
+    // table the same way).
+    let var = i.intern("remacs-coding-system-priorities");
+    let mut rest = Vec::new();
+    {
+        let mut cur = i.symbol_value(var);
+        while let Value::Cons(c) = cur {
+            let (car, cdr) = {
+                let b = c.borrow();
+                (b.car.clone(), b.cdr.clone())
+            };
+            if !a.iter().any(|x| eq_values(x, &car)) {
+                rest.push(car);
+            }
+            cur = cdr;
+        }
+    }
+    let mut new_list: Vec<Value> = a.clone();
+    new_list.extend(rest);
+    let _ = i.set_symbol(var, Value::list(new_list));
     Ok(Value::Nil)
 }
 
@@ -763,51 +798,195 @@ fn f_charset_id_internal(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 
 /// GNU 31's `(charset-priority-list)' order at -Q.
 pub(crate) const GNU_CHARSET_PRIORITY: &[&str] = &[
-    "japanese-jisx0208", "japanese-jisx0212", "latin-jisx0201", "katakana-jisx0201", "japanese-jisx0213.2004-1", "japanese-jisx0213-1",
-    "japanese-jisx0213-2", "japanese-jisx0208-1978", "ascii", "chinese-gb2312", "korean-ksc5601", "latin-iso8859-1",
-    "greek-iso8859-7", "iso-8859-1", "unicode", "control-1", "iso-8859-2", "latin-iso8859-2",
-    "iso-8859-3", "latin-iso8859-3", "iso-8859-4", "latin-iso8859-4", "iso-8859-5", "cyrillic-iso8859-5",
-    "iso-8859-6", "arabic-iso8859-6", "iso-8859-7", "iso-8859-8", "hebrew-iso8859-8", "iso-8859-9",
-    "latin-iso8859-9", "iso-8859-10", "latin-iso8859-10", "iso-8859-11", "thai-iso8859-11", "iso-8859-13",
-    "latin-iso8859-13", "iso-8859-14", "latin-iso8859-14", "iso-8859-15", "latin-iso8859-15", "iso-8859-16",
-    "latin-iso8859-16", "thai-tis620", "tis620-2533", "jisx0201", "chinese-gbk", "chinese-cns11643-1",
-    "chinese-cns11643-2", "chinese-cns11643-3", "chinese-cns11643-4", "chinese-cns11643-5", "chinese-cns11643-6", "chinese-cns11643-7",
-    "big5", "cp932", "big5-hkscs", "cp949", "viscii", "vscii",
-    "vscii-2", "koi8-r", "alternativnyj", "cp866", "koi8-u", "koi8-t",
-    "georgian-ps", "georgian-academy", "windows-1250", "windows-1251", "windows-1252", "windows-1253",
-    "windows-1254", "windows-1255", "windows-1256", "windows-1257", "windows-1258", "next",
-    "cp1125", "cp437", "cp720", "cp737", "cp775", "cp851",
-    "cp852", "cp855", "cp857", "cp858", "cp860", "cp861",
-    "cp862", "cp863", "cp864", "cp865", "cp869", "cp874",
-    "unicode-bmp", "unicode-smp", "unicode-sip", "unicode-ssp", "mac-roman", "ebcdic-us",
-    "ebcdic-uk", "ibm038", "ibm256", "ibm273", "ibm274", "ibm275",
-    "ibm277", "ibm278", "ibm280", "ibm281", "ibm284", "ibm285",
-    "ibm290", "ibm297", "ibm1047", "hp-roman8", "adobe-standard-encoding", "symbol",
-    "ibm850", "mik", "ptcp154", "gb18030", "chinese-cns11643-15", "emacs",
-    "eight-bit", "eight-bit-control", "eight-bit-graphic", "chinese-big5-1", "chinese-big5-2", "japanese-jisx0213-a",
-    "katakana-sjis", "cp932-2-byte", "cp949-2-byte", "chinese-sisheng", "ipa", "vietnamese-viscii-lower",
-    "vietnamese-viscii-upper", "arabic-digit", "arabic-1-column", "arabic-2-column", "lao", "mule-lao",
-    "indian-is13194", "devanagari-cdac", "sanskrit-cdac", "bengali-cdac", "tamil-cdac", "telugu-cdac",
-    "assamese-cdac", "oriya-cdac", "kannada-cdac", "malayalam-cdac", "gujarati-cdac", "punjabi-cdac",
-    "devanagari-akruti", "bengali-akruti", "punjabi-akruti", "gujarati-akruti", "oriya-akruti", "tamil-akruti",
-    "telugu-akruti", "kannada-akruti", "malayalam-akruti", "indian-glyph", "indian-1-column", "indian-2-column",
-    "tibetan", "tibetan-1-column", "mule-unicode-2500-33ff", "mule-unicode-e000-ffff", "mule-unicode-0100-24ff", "ethiopic",
-    "gb18030-2-byte", "gb18030-4-byte-bmp", "gb18030-4-byte-smp", "gb18030-4-byte-ext-1", "gb18030-4-byte-ext-2",
+    "japanese-jisx0208",
+    "japanese-jisx0212",
+    "latin-jisx0201",
+    "katakana-jisx0201",
+    "japanese-jisx0213.2004-1",
+    "japanese-jisx0213-1",
+    "japanese-jisx0213-2",
+    "japanese-jisx0208-1978",
+    "ascii",
+    "chinese-gb2312",
+    "korean-ksc5601",
+    "latin-iso8859-1",
+    "greek-iso8859-7",
+    "iso-8859-1",
+    "unicode",
+    "control-1",
+    "iso-8859-2",
+    "latin-iso8859-2",
+    "iso-8859-3",
+    "latin-iso8859-3",
+    "iso-8859-4",
+    "latin-iso8859-4",
+    "iso-8859-5",
+    "cyrillic-iso8859-5",
+    "iso-8859-6",
+    "arabic-iso8859-6",
+    "iso-8859-7",
+    "iso-8859-8",
+    "hebrew-iso8859-8",
+    "iso-8859-9",
+    "latin-iso8859-9",
+    "iso-8859-10",
+    "latin-iso8859-10",
+    "iso-8859-11",
+    "thai-iso8859-11",
+    "iso-8859-13",
+    "latin-iso8859-13",
+    "iso-8859-14",
+    "latin-iso8859-14",
+    "iso-8859-15",
+    "latin-iso8859-15",
+    "iso-8859-16",
+    "latin-iso8859-16",
+    "thai-tis620",
+    "tis620-2533",
+    "jisx0201",
+    "chinese-gbk",
+    "chinese-cns11643-1",
+    "chinese-cns11643-2",
+    "chinese-cns11643-3",
+    "chinese-cns11643-4",
+    "chinese-cns11643-5",
+    "chinese-cns11643-6",
+    "chinese-cns11643-7",
+    "big5",
+    "cp932",
+    "big5-hkscs",
+    "cp949",
+    "viscii",
+    "vscii",
+    "vscii-2",
+    "koi8-r",
+    "alternativnyj",
+    "cp866",
+    "koi8-u",
+    "koi8-t",
+    "georgian-ps",
+    "georgian-academy",
+    "windows-1250",
+    "windows-1251",
+    "windows-1252",
+    "windows-1253",
+    "windows-1254",
+    "windows-1255",
+    "windows-1256",
+    "windows-1257",
+    "windows-1258",
+    "next",
+    "cp1125",
+    "cp437",
+    "cp720",
+    "cp737",
+    "cp775",
+    "cp851",
+    "cp852",
+    "cp855",
+    "cp857",
+    "cp858",
+    "cp860",
+    "cp861",
+    "cp862",
+    "cp863",
+    "cp864",
+    "cp865",
+    "cp869",
+    "cp874",
+    "unicode-bmp",
+    "unicode-smp",
+    "unicode-sip",
+    "unicode-ssp",
+    "mac-roman",
+    "ebcdic-us",
+    "ebcdic-uk",
+    "ibm038",
+    "ibm256",
+    "ibm273",
+    "ibm274",
+    "ibm275",
+    "ibm277",
+    "ibm278",
+    "ibm280",
+    "ibm281",
+    "ibm284",
+    "ibm285",
+    "ibm290",
+    "ibm297",
+    "ibm1047",
+    "hp-roman8",
+    "adobe-standard-encoding",
+    "symbol",
+    "ibm850",
+    "mik",
+    "ptcp154",
+    "gb18030",
+    "chinese-cns11643-15",
+    "emacs",
+    "eight-bit",
+    "eight-bit-control",
+    "eight-bit-graphic",
+    "chinese-big5-1",
+    "chinese-big5-2",
+    "japanese-jisx0213-a",
+    "katakana-sjis",
+    "cp932-2-byte",
+    "cp949-2-byte",
+    "chinese-sisheng",
+    "ipa",
+    "vietnamese-viscii-lower",
+    "vietnamese-viscii-upper",
+    "arabic-digit",
+    "arabic-1-column",
+    "arabic-2-column",
+    "lao",
+    "mule-lao",
+    "indian-is13194",
+    "devanagari-cdac",
+    "sanskrit-cdac",
+    "bengali-cdac",
+    "tamil-cdac",
+    "telugu-cdac",
+    "assamese-cdac",
+    "oriya-cdac",
+    "kannada-cdac",
+    "malayalam-cdac",
+    "gujarati-cdac",
+    "punjabi-cdac",
+    "devanagari-akruti",
+    "bengali-akruti",
+    "punjabi-akruti",
+    "gujarati-akruti",
+    "oriya-akruti",
+    "tamil-akruti",
+    "telugu-akruti",
+    "kannada-akruti",
+    "malayalam-akruti",
+    "indian-glyph",
+    "indian-1-column",
+    "indian-2-column",
+    "tibetan",
+    "tibetan-1-column",
+    "mule-unicode-2500-33ff",
+    "mule-unicode-e000-ffff",
+    "mule-unicode-0100-24ff",
+    "ethiopic",
+    "gb18030-2-byte",
+    "gb18030-4-byte-bmp",
+    "gb18030-4-byte-smp",
+    "gb18030-4-byte-ext-1",
+    "gb18030-4-byte-ext-2",
 ];
 
 fn f_charset_priority_list(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
-    let mut names: Vec<String> = GNU_CHARSET_PRIORITY
-        .iter()
-        .map(|n| n.to_string())
-        .collect();
+    let mut names: Vec<String> = GNU_CHARSET_PRIORITY.iter().map(|n| n.to_string()).collect();
     for (n, _) in &i.charsets {
         if !names.contains(n) {
             names.push(n.clone());
         }
     }
-    Ok(Value::list(
-        names.iter().map(|n| symv(i, n)).collect(),
-    ))
+    Ok(Value::list(names.iter().map(|n| symv(i, n)).collect()))
 }
 
 fn f_sort_charsets(i: &mut Interp, a: Vec<Value>) -> EvalResult {
@@ -882,21 +1061,100 @@ fn f_clear_charset_maps(_i: &mut Interp, _a: Vec<Value>) -> EvalResult {
     Ok(Value::Nil)
 }
 
-/// char-table for PROP, created lazily like GNU's on-demand tables.
+/// Build a fresh char-table for PROP carrying GNU's three extra
+/// slots: (PROP MAPPER INDEX).  MAPPER is `identity' where GNU stores
+/// an opaque unidata-gen function (computed properties); INDEX is a
+/// small unidata index or nil.
+fn new_unicode_prop_table(i: &mut Interp, prop: &str) -> Value {
+    // GNU's per-property slot shapes (slot1 slot2); "fn" = mapper fn.
+    let (s1, s2) = match prop {
+        "iso-10646-comment" | "old-name" | "decomposition" | "name" => ("fn", "fn"),
+        "bracket-type" => ("0", "1"),
+        "paired-bracket" => ("nil", "0"),
+        "special-titlecase" | "special-lowercase" | "special-uppercase" => ("nil", "nil"),
+        "titlecase" | "lowercase" | "uppercase" | "mirroring" => ("nil", "0"),
+        "mirrored"
+        | "digit-value"
+        | "decimal-digit-value"
+        | "bidi-class"
+        | "canonical-combining-class"
+        | "general-category" => ("0", "1"),
+        "numeric-value" => ("0", "2"),
+        // define-char-code-property'd customs default like a direct table.
+        _ => ("nil", "0"),
+    };
+    let v = |i: &mut Interp, tok: &str| match tok {
+        "fn" => symv(i, "identity"),
+        "nil" => Value::Nil,
+        n => Value::Int(n.parse::<i128>().unwrap()),
+    };
+    let tag = symv(i, "char-code-property-table");
+    let extras = vec![symv(i, prop), v(i, s1), v(i, s2)];
+    misc::make_ct(i, tag, Value::Nil, extras)
+}
+
+/// Entry `(prop . TABLE)' in `char-code-property-alist', or nil.
+fn prop_alist_entry(i: &mut Interp, prop: &str) -> Value {
+    let vid = i.intern("char-code-property-alist");
+    let alist = i.symbol_value(vid);
+    for e in alist.list_to_vec().unwrap_or_default() {
+        if let Value::Cons(c) = &e {
+            let (k, _) = {
+                let cc = c.borrow();
+                (cc.car.clone(), cc.cdr.clone())
+            };
+            if let Value::Sym(s) = &k {
+                if i.symbol_name(*s) == prop {
+                    return e;
+                }
+            }
+        }
+    }
+    Value::Nil
+}
+
+/// Materialize PROP's table: register it in `char_code_prop_tables'
+/// and point the alist entry's cdr at it — GNU's lazy-file mutation
+/// (`uni-name.el' becomes the loaded table).
+fn install_prop_table(i: &mut Interp, prop: &str) -> Value {
+    let t = new_unicode_prop_table(i, prop);
+    i.char_code_prop_tables.retain(|(n, _)| n != prop);
+    i.char_code_prop_tables.push((prop.to_string(), t.clone()));
+    let entry = prop_alist_entry(i, prop);
+    if let Value::Cons(c) = entry {
+        c.borrow_mut().cdr = t.clone();
+    }
+    t
+}
+
+/// char-table for PROP — GNU's `Funicode_property_table_internal':
+/// consult `char-code-property-alist' and return nil for unknown
+/// properties; a string cdr names a data file that loads into a table.
 fn unicode_prop_table(i: &mut Interp, prop: &str) -> Value {
     if let Some((_, t)) = i.char_code_prop_tables.iter().find(|(n, _)| n == prop) {
-        return t.clone();
+        return match t {
+            t if is_char_table(i, t) => t.clone(),
+            // File-backed registration: GNU loads the file, which builds
+            // the table via `define-char-code-property'/`put-unicode-
+            // property-internal'; we materialize the (empty) table.
+            Value::Str(_) => install_prop_table(i, prop),
+            _ => t.clone(),
+        };
     }
-    let tag = symv(i, "char-code-property-table");
-    // GNU's uniprop tables have 3 extra slots: slot 0 holds the
-    // property's parser state, slots 1-2 lazy-fill functions
-    // (`char-fold' reads slot 1 and funcalls it for cons ranges).
-    // We have no unidata, so slot 1 gets `ignore': the parser is
-    // callable but leaves the table empty.
-    let ignore = Value::Sym(i.intern("ignore"));
-    let t = misc::make_ct(i, tag, Value::Nil, vec![Value::Nil, ignore, Value::Nil]);
-    i.char_code_prop_tables.push((prop.to_string(), t.clone()));
-    t
+    match prop_alist_entry(i, prop) {
+        Value::Cons(c) => {
+            let cdr = c.borrow().cdr.clone();
+            match cdr {
+                v if is_char_table(i, &v) => {
+                    i.char_code_prop_tables.push((prop.to_string(), v.clone()));
+                    v
+                }
+                Value::Str(_) => install_prop_table(i, prop),
+                _ => cdr,
+            }
+        }
+        _ => Value::Nil,
+    }
 }
 
 fn f_unicode_property_table_internal(i: &mut Interp, a: Vec<Value>) -> EvalResult {
@@ -1268,9 +1526,7 @@ pub(crate) fn decode_charset_code(name: &str, code: i64) -> Option<i64> {
         }),
         "katakana-sjis" => (0xa1..=0xdf).contains(&code).then(|| code + 0xfec0),
         "japanese-jisx0208" => jisx0208_decode(u),
-        "jisx0201" | "katakana-jisx0201" | "latin-jisx0201" => {
-            tbl_decode(cjk::JISX0201_DECODE, u)
-        }
+        "jisx0201" | "katakana-jisx0201" | "latin-jisx0201" => tbl_decode(cjk::JISX0201_DECODE, u),
         "chinese-big5-1" => tbl_decode(cjk::BIG5_1_DECODE, u),
         "chinese-big5-2" => tbl_decode(cjk::BIG5_2_DECODE, u),
         // Defined charsets we don't model: pass the code through (ASCII-safe).
@@ -1306,9 +1562,7 @@ pub(crate) fn encode_charset_code(name: &str, ch: i64) -> Option<i64> {
         }),
         "katakana-sjis" => (0xff61..=0xff9f).contains(&ch).then(|| ch - 0xfec0),
         "japanese-jisx0208" => jisx0208_encode(u),
-        "jisx0201" | "katakana-jisx0201" | "latin-jisx0201" => {
-            tbl_encode(cjk::JISX0201_ENCODE, u)
-        }
+        "jisx0201" | "katakana-jisx0201" | "latin-jisx0201" => tbl_encode(cjk::JISX0201_ENCODE, u),
         "chinese-big5-1" => tbl_encode(cjk::BIG5_1_ENCODE, u),
         "chinese-big5-2" => tbl_encode(cjk::BIG5_2_ENCODE, u),
         _ => Some(ch),
@@ -1406,15 +1660,27 @@ fn jisx0213_encode(ch: u32, base: i64, t: &[(u32, u32)]) -> Option<i64> {
 }
 
 fn jisx0213_1_decode(code: u32) -> Option<i64> {
-    jisx0213_decode(code, JISX0213_1_PRIV_BASE, crate::lisp::cjk_tables::JISX0213_1_DECODE)
+    jisx0213_decode(
+        code,
+        JISX0213_1_PRIV_BASE,
+        crate::lisp::cjk_tables::JISX0213_1_DECODE,
+    )
 }
 
 fn jisx0213_1_encode(ch: u32) -> Option<i64> {
-    jisx0213_encode(ch, JISX0213_1_PRIV_BASE, crate::lisp::cjk_tables::JISX0213_1_ENCODE)
+    jisx0213_encode(
+        ch,
+        JISX0213_1_PRIV_BASE,
+        crate::lisp::cjk_tables::JISX0213_1_ENCODE,
+    )
 }
 
 fn jisx0213_2_encode(ch: u32) -> Option<i64> {
-    jisx0213_encode(ch, JISX0213_2_PRIV_BASE, crate::lisp::cjk_tables::JISX0213_2_ENCODE)
+    jisx0213_encode(
+        ch,
+        JISX0213_2_PRIV_BASE,
+        crate::lisp::cjk_tables::JISX0213_2_ENCODE,
+    )
 }
 
 /// coding.h SJIS_TO_JIS: shift_jis pair -> jisx0208 code.
@@ -1424,8 +1690,10 @@ fn sjis_to_jis(code: i64) -> (i64, i64) {
     if s2 >= 0x9f {
         (s1 * 2 - if s1 >= 0xe0 { 0x160 } else { 0xe0 }, s2 - 0x7e)
     } else {
-        (s1 * 2 - if s1 >= 0xe0 { 0x161 } else { 0xe1 },
-         s2 - if s2 >= 0x7f { 0x20 } else { 0x1f })
+        (
+            s1 * 2 - if s1 >= 0xe0 { 0x161 } else { 0xe1 },
+            s2 - if s2 >= 0x7f { 0x20 } else { 0x1f },
+        )
     }
 }
 
@@ -1434,8 +1702,10 @@ fn jis_to_sjis(code: i64) -> i64 {
     let j1 = code >> 8;
     let j2 = code & 0xff;
     let (s1, s2) = if j1 & 1 != 0 {
-        (j1 / 2 + if j1 < 0x5f { 0x71 } else { 0xb1 },
-         j2 + if j2 >= 0x60 { 0x20 } else { 0x1f })
+        (
+            j1 / 2 + if j1 < 0x5f { 0x71 } else { 0xb1 },
+            j2 + if j2 >= 0x60 { 0x20 } else { 0x1f },
+        )
     } else {
         (j1 / 2 + if j1 < 0x5f { 0x70 } else { 0xb0 }, j2 + 0x7e)
     };
@@ -1531,8 +1801,7 @@ fn f_encode_sjis_char(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     // GNU's Vsjis_coding_system ends as shift_jis-2004: charsets
     // (ascii katakana-jisx0201 jisx0213.2004-1 jisx0213-2).  Plane-2
     // chars get plain JIS_TO_SJIS, producing nonstandard codes as GNU.
-    let jis = jisx0213_1_encode(ch as u32)
-        .or_else(|| jisx0213_2_encode(ch as u32));
+    let jis = jisx0213_1_encode(ch as u32).or_else(|| jisx0213_2_encode(ch as u32));
     match jis {
         Some(jis) => Ok(Value::Int(jis_to_sjis(jis).into())),
         None => Err(i.error(format!("Can't encode by shift_jis encoding: {ch}"))),

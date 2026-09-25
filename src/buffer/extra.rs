@@ -229,7 +229,6 @@ pub(crate) static SUBRS: &[Subr] = &[
         f_constrain_to_field,
         "Clamp NEW-POS to field of OLD-POS."
     ),
-
     S!(
         "get-char-property-and-overlay",
         2,
@@ -237,7 +236,6 @@ pub(crate) static SUBRS: &[Subr] = &[
         f_get_char_prop_and_overlay,
         "Prop + overlay at POS."
     ),
-
     S!(
         "next-char-property-change",
         1,
@@ -2013,8 +2011,13 @@ fn str_slice(i: &mut Interp, src: &Value, f: usize, t: usize) -> Value {
                 .filter_map(|(a, b, pl)| {
                     let lo = (*a).max(f);
                     let hi = (*b).min(t);
-                    (lo < hi)
-                        .then(|| (lo - f, hi - f, crate::buffer::primitives::plist_pairs_rev(pl)))
+                    (lo < hi).then(|| {
+                        (
+                            lo - f,
+                            hi - f,
+                            crate::buffer::primitives::plist_pairs_rev(pl),
+                        )
+                    })
                 })
                 .collect();
             i.set_str_props(&ns, ivs);
@@ -2227,12 +2230,7 @@ fn f_make_translation_table_from_alist(i: &mut Interp, a: Vec<Value>) -> EvalRes
             };
             if let (Value::Int(f), Value::Int(t)) = (from, to) {
                 if (0..=crate::lisp::builtins::misc::CT_MAX_CHAR as i128).contains(&f) {
-                    crate::lisp::builtins::misc::ct_set(
-                        i,
-                        &tbl,
-                        f as u32,
-                        Value::Int(t),
-                    );
+                    crate::lisp::builtins::misc::ct_set(i, &tbl, f as u32, Value::Int(t));
                 }
             }
         }

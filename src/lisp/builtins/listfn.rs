@@ -255,7 +255,7 @@ pub(crate) static SUBRS: &[Subr] = &[
         2,
         2,
         f_equal_incl_props,
-        "equal (text props not modeled: same as equal)."
+        "Return t if two Lisp objects have similar structure and contents.\nThis is like `equal' except that it also requires text properties of\nstrings to be identical."
     ),
     S!("caar", 1, 1, f_caar, ""),
     S!("cadr", 1, 1, f_cadr, ""),
@@ -439,11 +439,7 @@ pub(crate) fn nthcdr_of(v: &Value, n: usize) -> Value {
 
 /// cdr N times the way GNU does: Cons → cdr, nil → stays nil,
 /// any other atom → wrong-type-argument.
-pub(crate) fn nthcdr_strict(
-    i: &mut Interp,
-    v: &Value,
-    n: usize,
-) -> Result<Value, Flow> {
+pub(crate) fn nthcdr_strict(i: &mut Interp, v: &Value, n: usize) -> Result<Value, Flow> {
     let mut cur = v.clone();
     for _ in 0..n {
         match cur {
@@ -1426,6 +1422,7 @@ fn f_apply_partially(i: &mut Interp, args: Vec<Value>) -> EvalResult {
         arglist: None,
         plain: false,
         dumped_doc: false,
+        advice_link: None,
     };
     Ok(Value::Lambda(std::rc::Rc::new(lam)))
 }
@@ -1490,8 +1487,25 @@ fn f_assoc_string(i: &mut Interp, args: Vec<Value>) -> EvalResult {
 }
 
 fn f_equal_incl_props(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    // Text properties on strings aren't modeled yet, so this is `equal`.
-    Ok(Value::from_bool(equal_values(i, &args[0], &args[1])))
+    let ok = match (&args[0], &args[1]) {
+        (Value::Str(sa), Value::Str(sb)) => {
+            let (ta, tb) = (sa.borrow(), sb.borrow());
+            *ta == *tb && {
+                // GNU's `internal_equal' requires every position's
+                // property list to be `equal'.
+                let (ia, ib) = (i.str_props(sa).to_vec(), i.str_props(sb).to_vec());
+                (0..ta.chars().count()).all(|p| {
+                    equal_values(
+                        i,
+                        &Value::list(crate::buffer::primitives::str_plist_at(&ia, p)),
+                        &Value::list(crate::buffer::primitives::str_plist_at(&ib, p)),
+                    )
+                })
+            }
+        }
+        _ => equal_values(i, &args[0], &args[1]),
+    };
+    Ok(Value::from_bool(ok))
 }
 
 // ---------- remove/delete (sequence-generic) ----------

@@ -261,7 +261,9 @@ fn print_circle_labels() {
     ];
     for (form, want) in cases {
         assert_eq!(
-            ev(&format!("(let ((print-circle t)) (prin1-to-string {form}))")),
+            ev(&format!(
+                "(let ((print-circle t)) (prin1-to-string {form}))"
+            )),
             *want,
             "{form}"
         );

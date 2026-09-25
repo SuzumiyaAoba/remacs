@@ -12,8 +12,8 @@ use std::cell::RefCell;
 use std::io::{Read, Write};
 use std::rc::Rc;
 
-use super::builtins::evalfn::timer_check;
 use super::builtins::S;
+use super::builtins::evalfn::timer_check;
 use super::error::Flow;
 use super::eval::plist_get;
 use super::obarray::sym;
@@ -1079,11 +1079,7 @@ fn f_make_network_process(i: &mut Interp, a: Vec<Value>) -> EvalResult {
                 )
             })?;
             let _ = listener.set_nonblocking(true);
-            let mut p = base_proc(
-                name,
-                "network",
-                ProcIo::LocalListen(listener, path.clone()),
-            );
+            let mut p = base_proc(name, "network", ProcIo::LocalListen(listener, path.clone()));
             p.status = "listen";
             let local_kw = symv(i, ":local");
             p.contact = {
@@ -2010,8 +2006,7 @@ fn f_delete_process(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         pb.dead = true;
         // GNU preserves an already-reported final status: deleting an
         // exited process leaves `process-status' showing `exit'.
-        let final_seen =
-            pb.reported || matches!(pb.status, "exit" | "signal" | "closed");
+        let final_seen = pb.reported || matches!(pb.status, "exit" | "signal" | "closed");
         ev = match &mut pb.io {
             ProcIo::Child {
                 child, master_fd, ..

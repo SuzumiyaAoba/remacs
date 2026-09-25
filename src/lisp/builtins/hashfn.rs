@@ -207,10 +207,7 @@ fn f_make_hash_table(i: &mut Interp, args: Vec<Value>) -> EvalResult {
                         if !i.get_prop(*id, prop).is_nil() {
                             HashTest::Equal
                         } else {
-                            return Err(i.error(&format!(
-                                "Invalid hash table test: {}",
-                                tname
-                            )));
+                            return Err(i.error(&format!("Invalid hash table test: {}", tname)));
                         }
                     }
                 };
@@ -228,10 +225,7 @@ fn f_make_hash_table(i: &mut Interp, args: Vec<Value>) -> EvalResult {
                             weakness = Some(val.clone());
                         }
                         _ => {
-                            return Err(i.error(&format!(
-                                "Invalid hash table weakness: {}",
-                                w
-                            )));
+                            return Err(i.error(&format!("Invalid hash table weakness: {}", w)));
                         }
                     }
                 }
@@ -432,10 +426,7 @@ fn f_hash_table_buckets(i: &mut Interp, args: Vec<Value>) -> EvalResult {
                 .map(|(_, k)| k)
                 .enumerate()
                 .map(|(n, k)| {
-                    Value::list(vec![Value::cons(
-                        k.clone(),
-                        Value::Int(1000 + n as i128),
-                    )])
+                    Value::list(vec![Value::cons(k.clone(), Value::Int(1000 + n as i128))])
                 })
                 .collect();
             Ok(Value::list(buckets))

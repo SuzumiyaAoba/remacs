@@ -99,21 +99,46 @@ are the mode's body, run on each toggle."
 (defmacro define-globalized-minor-mode (global-mode mode turn-on &rest keys)
   "Define a global minor mode GLOBAL-MODE corresponding to buffer-local MODE.
 TURN-ON is a function or form run in each buffer to enable MODE."
-  `(define-minor-mode ,global-mode
-     ,(format "Toggle %s in all buffers." global-mode)
-     :global t ,@keys
-     (dolist (buf (buffer-list))
-       (with-current-buffer buf
-         (if ,global-mode
+  (let* ((mode-name (symbol-name mode))
+         (set-explicitly (intern (concat mode-name "--set-explicitly")))
+         (suppress-set-explicitly
+          (intern (concat mode-name "--suppress-set-explicitly")))
+         (enable-in-buffer
+          (intern (concat (symbol-name global-mode) "-enable-in-buffer")))
+         (mode-hook (intern (concat mode-name "-hook"))))
+    `(progn
+       (define-minor-mode ,global-mode
+         ,(format "Toggle %s in all buffers." global-mode)
+         :global t ,@keys
+         (dolist (buf (buffer-list))
+           (with-current-buffer buf
+             (if ,global-mode
+                 (,enable-in-buffer)
+               (,mode -1)))))
+       ;; GNU's `define-globalized-minor-mode' records explicit user
+       ;; toggles in `MODE--set-explicitly' (cleared by
+       ;; `kill-all-local-variables' since it is `defvar-local'); a
+       ;; globalized enable skips buffers where it is set.
+       (defvar-local ,set-explicitly nil)
+       (defvar ,suppress-set-explicitly nil)
+       (defun ,set-explicitly ()
+         (unless ,suppress-set-explicitly
+           (setq ,set-explicitly t)))
+       (put ',set-explicitly 'definition-name ',global-mode)
+       (add-hook ',mode-hook #',set-explicitly)
+       (defun ,enable-in-buffer ()
+         (unless ,set-explicitly
+           (let ((,suppress-set-explicitly t))
              ,(if (symbolp turn-on)
                   (list 'funcall (list 'quote turn-on))
-                (list 'funcall turn-on))
-           (,mode -1))))))
+                (list 'funcall turn-on)))))
+       (put ',enable-in-buffer 'definition-name ',global-mode))))
 
 ;; GNU: `easy-mmode-define-minor-mode' is the pre-30.1 name, and
 ;; `define-global-minor-mode' the pre-29 name of the globalized macro.
 (defalias 'easy-mmode-define-minor-mode #'define-minor-mode)
 (defalias 'define-global-minor-mode #'define-globalized-minor-mode)
+
 
 (defun easy-mmode--prev (re name count &optional endfun narrowfun)
   "Go to the COUNT'th previous occurrence of RE.

@@ -3905,10 +3905,11 @@ fn desc_rgb(i: &mut Interp, color: &Value, frame: &Value) -> EvalResult {
 }
 
 fn f_color_values(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    // GNU's second arg is a TERMINAL (default: selected). Any non-nil
-    // non-terminal arg errors via get-device-terminal.
+    // GNU's second arg is a TERMINAL (default: selected); a live frame
+    // is accepted and resolved to its terminal.  Other non-nil args
+    // error via get-device-terminal.
     if let Some(v) = a.get(1) {
-        if !v.is_nil() {
+        if !v.is_nil() && !matches!(v, Value::Frame(_)) && !is_terminal(i, v) {
             return Err(i.error(format!(
                 "Invalid argument {} in ‘get-device-terminal’",
                 i.princ_to_string(v)
@@ -4036,21 +4037,6 @@ fn f_internal_char_font(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 /// `internal-lisp-face-empty-p' / `internal-lisp-face-attribute-
 /// values' — GNU signals a plain "Invalid face" error for unknown
 /// faces; a real face yields nil on a tty.
-/// `internal-lisp-face-attribute-values' — GNU xfaces.c returns the
-/// valid values for a face ATTRIBUTE keyword.  Batch/TTY values:
-/// boolean-style attributes give (t nil); the rest nil.
-fn f_lisp_face_attribute_values(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    if let Value::Sym(s) = &a[0] {
-        return Ok(match i.symbol_name(*s).as_str() {
-            ":underline" | ":overline" | ":strike-through" | ":inverse-video" | ":extend" => {
-                Value::list(vec![Value::t(), Value::Nil])
-            }
-            _ => Value::Nil,
-        });
-    }
-    Ok(Value::Nil)
-}
-
 fn f_lisp_face_check_nil(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let id = match &a[0] {
         Value::Sym(s) => *s,
@@ -4064,6 +4050,21 @@ fn f_lisp_face_check_nil(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         return Err(i.error(format!("Invalid face {name}")));
     }
     Ok(Value::Nil)
+}
+
+/// `internal-lisp-face-attribute-values' — on a tty GNU reports the
+/// boolean-valued attributes as `(t nil)' and everything else as nil;
+/// unknown attribute names likewise yield nil.
+fn f_lisp_face_attribute_values(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let Value::Sym(id) = &a[0] else {
+        return Err(i.wrong_type_mut("symbolp", &a[0]));
+    };
+    match i.symbol_name(*id).as_str() {
+        ":underline" | ":overline" | ":strike-through" | ":inverse-video" | ":extend" => {
+            Ok(Value::list(vec![Value::t(), Value::Nil]))
+        }
+        _ => Ok(Value::Nil),
+    }
 }
 
 /// `internal-merge-in-global-face' — FACE must name a known face and
@@ -4368,21 +4369,25 @@ pub(crate) fn keymap_char_table(i: &mut Interp) -> Value {
 
 fn f_make_keymap(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     // GNU: (keymap CHARTABLE . ALIST) — CHARTABLE holds unmodified
-    // char bindings; the optional STRING arg is the menu prompt.
+    // char bindings; any non-nil argument (menu prompt, or e.g. a
+    // keymap which then acts as a searchable element) follows it.
     let ct = keymap_char_table(i);
     let tail = match arg(&a, 0) {
-        Value::Str(_) => Value::cons(ct, Value::list(vec![a[0].clone()])),
-        _ => Value::cons(ct, Value::Nil),
+        Value::Nil => Value::cons(ct, Value::Nil),
+        v => Value::cons(ct, Value::list(vec![v.clone()])),
     };
     let km = Value::cons(Value::Sym(i.intern("keymap")), tail);
     register_builtin_keymap(i, &km);
     Ok(km)
 }
 fn f_make_sparse_keymap(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    // GNU: (keymap . ALIST) — sparse maps have no char-table.
+    // GNU: (keymap . ALIST) — sparse maps have no char-table.  A
+    // non-nil argument (menu prompt STRING, or any object — a keymap
+    // there becomes a searchable embedded element) is the first
+    // alist element.
     let rest = match arg(&a, 0) {
-        Value::Str(_) => Value::list(vec![a[0].clone()]),
-        _ => Value::Nil,
+        Value::Nil => Value::Nil,
+        v => Value::list(vec![v.clone()]),
     };
     let km = Value::cons(Value::Sym(i.intern("keymap")), rest);
     register_builtin_keymap(i, &km);
@@ -4784,10 +4789,28 @@ fn f_keymap_parent(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     if !is_keymap(i, &a[0]) {
         return Ok(Value::Nil);
     }
-    Ok(keymap_parents(i, &a[0])
-        .into_iter()
-        .next()
-        .unwrap_or(Value::Nil))
+    // GNU's `keymap-parent' reports only the improper spine tail (the
+    // slot `set-keymap-parent' writes); bare keymap ELEMENTS embedded
+    // in the alist are searched by lookup but are not the parent.  A
+    // symbol tail resolves to its keymap function cell.
+    let mut cur = match &a[0] {
+        Value::Cons(c) => c.borrow().cdr.clone(),
+        _ => return Ok(Value::Nil),
+    };
+    loop {
+        cur = match cur.clone() {
+            Value::Cons(c) => {
+                if is_keymap(i, &cur) {
+                    return Ok(cur);
+                }
+                c.borrow().cdr.clone()
+            }
+            tail => {
+                let r = keymap_def_noautoload(i, &tail);
+                return Ok(if is_keymap(i, &r) { r } else { Value::Nil });
+            }
+        };
+    }
 }
 
 fn f_set_keymap_parent(i: &mut Interp, a: Vec<Value>) -> EvalResult {
@@ -4847,6 +4870,12 @@ pub(crate) fn key_seq(i: &mut Interp, v: &Value) -> Result<Vec<i128>, Flow> {
                 // Chars 128-255 are metafied (like GNU's 8-bit string chars).
                 if (0x80..0x100).contains(&c) {
                     CHAR_META | (c - 0x80)
+                } else if let Some(b) =
+                    crate::lisp::value::eight_bit_byte(char::from_u32(c as u32).unwrap())
+                {
+                    // Eight-bit proxy chars (multibyte strings re-encoding
+                    // a raw byte) carry the meta bit on the byte itself.
+                    CHAR_META | (b as i128 - 0x80)
                 } else {
                     c
                 }
@@ -4978,34 +5007,24 @@ pub(crate) const META_BIT: i128 = 1 << 27;
 fn access_keymap(
     i: &mut Interp,
     km: &Value,
-    key: i128,
-    t_ok: bool,
-) -> Result<Option<Value>, Flow> {
-    access_keymap_full(i, km, key, t_ok, false)
-}
-
-fn access_keymap_full(
-    i: &mut Interp,
-    km: &Value,
     mut key: i128,
     t_ok: bool,
-    noinherit: bool,
 ) -> Result<Option<Value>, Flow> {
     // A meta-bit key is looked up through the map's meta-prefix (27)
     // binding — M-x means ESC x.
     if key & META_BIT != 0 {
-        let esc_b = access_keymap_full(i, km, 27, t_ok, noinherit)?;
+        let esc_b = access_keymap(i, km, 27, t_ok)?;
         let esc = match &esc_b {
             Some(v) => keymap_def(i, v.clone())?,
             None => Value::Nil,
         };
         if is_keymap(i, &esc) {
-            return access_keymap_full(i, &esc, key & !META_BIT, t_ok, noinherit);
+            return access_keymap(i, &esc, key & !META_BIT, t_ok);
         }
         return if t_ok {
             // No meta map: only the default (t) binding can match.
             key = event_code_for("t");
-            access_keymap_int(i, km, key, t_ok, noinherit)
+            access_keymap_int(i, km, key, t_ok)
         } else {
             // An explicit nil meta binding means nil; anything else
             // leaves the key unbound here.
@@ -5015,19 +5034,16 @@ fn access_keymap_full(
             }
         };
     }
-    access_keymap_int(i, km, key, t_ok, noinherit)
+    access_keymap_int(i, km, key, t_ok)
 }
 
 /// The element-walk of `access_keymap_1' once meta translation is
-/// done (KEY is a plain code or the `t' default key).  NOINHERIT
-/// mirrors GNU's argument: the walk stops at the map's own tail and
-/// never follows the parent keymap.
+/// done (KEY is a plain code or the `t' default key).
 fn access_keymap_int(
     i: &mut Interp,
     km: &Value,
     key: i128,
     mut t_ok: bool,
-    noinherit: bool,
 ) -> Result<Option<Value>, Flow> {
     let t_code = event_code_for("t");
     let t_sym = i.intern("t");
@@ -5059,18 +5075,13 @@ fn access_keymap_int(
         // An element that IS the `keymap' symbol means the spine has
         // reached the parent tail (the tail cons is itself a keymap).
         if matches!(&elem, Value::Sym(s) if *s == keymap_sym) {
-            // GNU's NOINHERIT: never consult the parent tail.
-            if noinherit {
-                break;
-            }
             match &retval {
                 // An explicit nil binding shadows the parent.
                 Some(v) if v.is_nil() => break,
                 // A keymap result absorbs the parent's binding for
                 // KEY when that is also a keymap, then stops.
                 Some(_) => {
-                    let pv =
-                        access_keymap_int(i, &cons, key, t_ok, noinherit)?.unwrap_or(Value::Nil);
+                    let pv = access_keymap_int(i, &cons, key, t_ok)?.unwrap_or(Value::Nil);
                     let pv = keymap_def(i, pv)?;
                     if is_keymap(i, &pv) {
                         append_keymap_hit(i, &mut retval, &mut retval_tail, pv);
@@ -5087,12 +5098,12 @@ fn access_keymap_int(
         // The binding this element yields for KEY: None = unbound.
         let val: Option<Value> = if is_keymap(i, &elem) {
             // Bare keymap element: searched inline.
-            access_keymap_int(i, &elem, key, t_ok, noinherit)?
+            access_keymap_int(i, &elem, key, t_ok)?
         } else if matches!(&elem, Value::Sym(_)) {
             // A bare symbol element whose function cell is a keymap
             // (composed maps can store raw symbols like `ESC-prefix').
             match keymap_def(i, elem.clone())? {
-                v if is_keymap(i, &v) => access_keymap_int(i, &v, key, t_ok, noinherit)?,
+                v if is_keymap(i, &v) => access_keymap_int(i, &v, key, t_ok)?,
                 _ => None,
             }
         } else if crate::lisp::builtins::misc::is_char_table(i, &elem) {
@@ -5263,11 +5274,8 @@ fn f_define_key(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     // maps; GNU errors when an intermediate binding is not a keymap.
     let mut km = map;
     for (n, &k) in keys[..keys.len() - 1].iter().enumerate() {
-        // GNU descends with access_keymap(c, t_ok=0, noinherit=1):
-        // a command binding in the PARENT map does not block creating
-        // a prefix here (sql-mode's C-c C-l under comint-mode-map).
-        let next_raw =
-            access_keymap_full(i, &km, k, false, true)?.unwrap_or(Value::Nil);
+        // GNU descends with access_keymap(c, t_ok=0, noinherit=1).
+        let next_raw = lookup_in_keymap(i, &km, k, false)?;
         let next = keymap_def(i, next_raw)?;
         if is_keymap(i, &next) {
             km = next;
@@ -6076,6 +6084,12 @@ fn seq_events(v: &Value) -> Vec<Value> {
                 let c = c as i128;
                 Value::Int(if (0x80..0x100).contains(&c) {
                     CHAR_META | (c - 0x80)
+                } else if let Some(b) =
+                    crate::lisp::value::eight_bit_byte(char::from_u32(c as u32).unwrap_or('\u{0}'))
+                {
+                    // Eight-bit proxy chars — the byte's high bit
+                    // becomes the meta bit.
+                    CHAR_META | (b as i128 - 0x80)
                 } else {
                     c
                 })
@@ -7185,16 +7199,18 @@ fn f_kill_new(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         let cur = i.symbol_value(kr);
         let mut items = cur.list_to_vec().unwrap_or_default();
         if items.is_empty() {
-            items.insert(0, Value::string(s));
+            items.insert(0, Value::string(s.clone()));
         } else {
-            items[0] = Value::string(s);
+            items[0] = Value::string(s.clone());
         }
         i.obarray.symbol_mut(kr).value = Value::list(items);
         let ring = i.symbol_value(kr);
         let ptr = i.intern("kill-ring-yank-pointer");
         let _ = i.set_symbol(ptr, ring);
+        // GNU: `(if interprogram-cut-function (funcall ... string))'.
+        crate::buffer::primitives::interprogram_cut(i, Value::string(s))?;
     } else {
-        crate::buffer::primitives::push_kill_ring(i, s);
+        crate::buffer::primitives::push_kill_ring(i, s)?;
     }
     Ok(Value::Nil)
 }
@@ -7219,6 +7235,17 @@ fn f_kill_append(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         items.insert(0, Value::string(s));
     }
     i.obarray.symbol_mut(kr).value = Value::list(items);
+    // GNU's kill-append delegates to kill-new, so the merged string
+    // also goes through `interprogram-cut-function'.
+    if let Some(icf_id) = i.intern_soft("interprogram-cut-function") {
+        let icf = i.symbol_value(icf_id);
+        if icf.truthy() {
+            let items = i.symbol_value(kr).list_to_vec().unwrap_or_default();
+            if let Some(top) = items.into_iter().next() {
+                i.apply(&icf, vec![top])?;
+            }
+        }
+    }
     Ok(Value::Nil)
 }
 
@@ -7280,7 +7307,7 @@ fn f_copy_region_as_kill(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         let (s, e) = (s.min(e), s.max(e));
         bb.text.substring(s, e)
     };
-    crate::buffer::primitives::push_kill_ring(i, text);
+    crate::buffer::primitives::push_kill_ring(i, text)?;
     // deactivate mark per Emacs
     let ma = i.intern_soft("mark-active").unwrap_or(0);
     b.borrow_mut().locals.insert(ma, Value::Nil);
@@ -7501,6 +7528,17 @@ fn f_file_writable_p(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let p = want_filename(i, &a[0])?;
     let path = std::path::Path::new(&p);
     if path.exists() {
+        // GNU uses access(2) W_OK, which also works on directories;
+        // opening a directory with write access always fails.
+        #[cfg(unix)]
+        {
+            use std::os::unix::ffi::OsStrExt;
+            if let Ok(cpath) = std::ffi::CString::new(path.as_os_str().as_bytes()) {
+                return Ok(Value::from_bool(
+                    unsafe { libc::access(cpath.as_ptr(), libc::W_OK) } == 0,
+                ));
+            }
+        }
         Ok(Value::from_bool(
             std::fs::OpenOptions::new().write(true).open(path).is_ok(),
         ))
@@ -8255,8 +8293,12 @@ fn f_make_temp_file(i: &mut Interp, a: Vec<Value>) -> EvalResult {
             .into_owned()
     };
     let dir_flag = a.get(1).map(|v| v.truthy()).unwrap_or(false);
+    let suffix = match a.get(2) {
+        Some(v) if v.truthy() => want_str(i, v)?,
+        _ => String::new(),
+    };
     for _ in 0..64 {
-        let name = format!("{}{}", prefix, temp_name_seed());
+        let name = format!("{}{}{}", prefix, temp_name_seed(), suffix);
         let r = if dir_flag {
             std::fs::create_dir(&name)
         } else {
@@ -8268,7 +8310,7 @@ fn f_make_temp_file(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         };
         match r {
             Ok(()) => {
-                if let Some(text) = a.get(2) {
+                if let Some(text) = a.get(3) {
                     if text.truthy() {
                         let s = want_str(i, text)?;
                         let _ = std::fs::write(&name, s);
@@ -8414,13 +8456,21 @@ fn f_insert_file_contents(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let beg = a.get(2).cloned().unwrap_or(Value::Nil);
     let end = a.get(3).cloned().unwrap_or(Value::Nil);
     let replace = a.get(4).cloned().unwrap_or(Value::Nil);
-    let is_regular = std::fs::metadata(&path).map(|m| m.is_file()).unwrap_or(true);
+    let is_regular = std::fs::metadata(&path)
+        .map(|m| m.is_file())
+        .unwrap_or(true);
     match std::fs::read_to_string(&path) {
         Ok(contents) => {
             // GNU: BEG/END are byte offsets into the file.
             let bytes = contents.as_bytes();
-            let lo = match &beg { Value::Int(n) if *n > 0 => (*n as usize).min(bytes.len()), _ => 0 };
-            let hi = match &end { Value::Int(n) if *n >= 0 => (*n as usize).min(bytes.len()), _ => bytes.len() };
+            let lo = match &beg {
+                Value::Int(n) if *n > 0 => (*n as usize).min(bytes.len()),
+                _ => 0,
+            };
+            let hi = match &end {
+                Value::Int(n) if *n >= 0 => (*n as usize).min(bytes.len()),
+                _ => bytes.len(),
+            };
             let contents = if lo == 0 && hi == bytes.len() {
                 contents
             } else {
@@ -8430,8 +8480,7 @@ fn f_insert_file_contents(i: &mut Interp, a: Vec<Value>) -> EvalResult {
             let b = cur(i);
             // GNU: REPLACE bypasses the non-empty check for VISIT.
             let if_reg = i.intern_soft("if-regular").unwrap_or(u32::MAX);
-            let do_replace = replace.truthy()
-                && (!i.sym_is(&replace, if_reg) || is_regular);
+            let do_replace = replace.truthy() && (!i.sym_is(&replace, if_reg) || is_regular);
             if visit && !do_replace && b.borrow().text.len() > 0 {
                 return Err(i.error("Cannot do file visiting in a non-empty buffer"));
             }
@@ -9309,7 +9358,7 @@ fn f_kill_line(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         drop(bb);
         killed = crate::buffer::primitives::chg_delete(i, p, le)?;
     }
-    crate::buffer::primitives::push_kill_ring(i, killed);
+    crate::buffer::primitives::push_kill_ring(i, killed)?;
     Ok(Value::Nil)
 }
 
@@ -9330,7 +9379,7 @@ fn f_kill_whole_line(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     drop(bb);
     let killed = crate::buffer::primitives::chg_delete(i, s, e.min(tlen))?;
     cur(i).borrow_mut().set_point(s);
-    crate::buffer::primitives::push_kill_ring(i, killed);
+    crate::buffer::primitives::push_kill_ring(i, killed)?;
     Ok(Value::Nil)
 }
 
@@ -9353,7 +9402,7 @@ fn f_kill_word(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     }
     drop(bb);
     let killed = crate::buffer::primitives::chg_delete(i, start, p)?;
-    crate::buffer::primitives::push_kill_ring(i, killed);
+    crate::buffer::primitives::push_kill_ring(i, killed)?;
     Ok(Value::Nil)
 }
 
@@ -9375,7 +9424,7 @@ fn f_backward_kill_word(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     }
     drop(bb);
     let killed = crate::buffer::primitives::chg_delete(i, p, end)?;
-    crate::buffer::primitives::push_kill_ring(i, killed);
+    crate::buffer::primitives::push_kill_ring(i, killed)?;
     Ok(Value::Nil)
 }
 
@@ -9939,9 +9988,7 @@ fn f_minibufferp(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     // GNU Fminibufferp: (memq buffer Vminibuffer_list) — the arg
     // defaults to the current buffer; ` *Minibuf-0*' counts too.
     match a.get(0) {
-        None | Some(Value::Nil) => {
-            Ok(Value::from_bool(i.is_minibuffer(i.current_buffer)))
-        }
+        None | Some(Value::Nil) => Ok(Value::from_bool(i.is_minibuffer(i.current_buffer))),
         Some(v) => match i.buffer_id_of(v) {
             Some(id) => Ok(Value::from_bool(i.is_minibuffer(id))),
             None => Ok(Value::Nil),
@@ -10607,6 +10654,24 @@ fn completion_candidates(i: &mut Interp, table: &Value) -> Vec<(Value, Value)> {
             .map(|x| (x.clone(), eltstring(i, x)))
             .collect(),
         Value::Nil => Vec::new(),
+        // An obarray is a tagged record; the `obarray' variable's record
+        // denotes the global symbol table (enumerated via all_ids),
+        // while `obarray-make' records carry their own symbol vec.
+        other if crate::lisp::builtins::data::is_default_obarray(i, other) => i
+            .obarray
+            .all_ids()
+            .iter()
+            .map(|&id| {
+                let s = i.sym(id);
+                (s.clone(), eltstring(i, &s))
+            })
+            .collect(),
+        other if crate::lisp::builtins::data::is_obarray(i, other) => {
+            crate::lisp::builtins::data::obarray_syms(i, other)
+                .iter()
+                .map(|x| (x.clone(), eltstring(i, x)))
+                .collect()
+        }
         _ => Vec::new(),
     }
 }
@@ -11020,36 +11085,54 @@ fn f_internal_complete_buffer(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     // GNU hides space-prefixed (internal) buffers unless STRING starts
     // with a space.
     let show_hidden = s.starts_with(' ');
-    let names: Vec<Value> = i
+    // GNU completes over `Vbuffer_alist': candidates are (NAME . BUFFER)
+    // conses and PRED is applied to each candidate element.
+    let items: Vec<Value> = i
         .buffers
         .list()
         .iter()
         .filter_map(|id| i.buffers.get(*id))
-        .map(|b| b.borrow().name.clone())
-        .filter(|n| show_hidden || !n.starts_with(' '))
-        .map(Value::string)
+        .filter(|b| show_hidden || !b.borrow().name.starts_with(' '))
+        .map(|b| {
+            Value::cons(
+                Value::string(b.borrow().name.clone()),
+                Value::Buffer(b.clone()),
+            )
+        })
         .collect();
-    let table = Value::list(names);
+    let table = Value::list(items);
+    let pred = arg(&a, 1);
     let flag = arg(&a, 2);
     match &flag {
-        Value::Nil => try_completions(i, &s, &table, &Value::Nil),
+        Value::Nil => try_completions(i, &s, &table, &pred),
         Value::Sym(sym) if i.symbol_name(*sym) == "lambda" => {
             let cands = completion_candidates(i, &table);
-            Ok(Value::from_bool(cands.iter().any(|(_, es)| {
-                cand_text(es).as_deref() == Some(s.as_str())
-            })))
+            let ignore_case = completion_ignore_case(i);
+            for (elt, es) in cands {
+                if let Some(c) = cand_text(&es) {
+                    if c == s.as_str() || (ignore_case && c.eq_ignore_ascii_case(s.as_str())) {
+                        if completion_candidate_ok(i, &elt, &c, &s, &pred, ignore_case)? {
+                            return Ok(Value::t());
+                        }
+                    }
+                }
+            }
+            Ok(Value::Nil)
         }
         Value::Sym(sym) if i.symbol_name(*sym) == "t" => {
             let cands = completion_candidates(i, &table);
-            Ok(Value::list(
-                cands
-                    .into_iter()
-                    .filter(|(_, es)| cand_text(es).map(|c| c.starts_with(&s)).unwrap_or(false))
-                    .map(|(_, es)| es)
-                    .collect(),
-            ))
+            let ignore_case = completion_ignore_case(i);
+            let mut out: Vec<Value> = Vec::new();
+            for (elt, es) in cands {
+                if let Some(c) = cand_text(&es) {
+                    if completion_candidate_ok(i, &elt, &c, &s, &pred, ignore_case)? {
+                        out.push(es);
+                    }
+                }
+            }
+            Ok(Value::list(out))
         }
-        _ => try_completions(i, &s, &table, &Value::Nil),
+        _ => try_completions(i, &s, &table, &pred),
     }
 }
 
@@ -11296,15 +11379,42 @@ fn f_commandp(i: &mut Interp, a: Vec<Value>) -> EvalResult {
             return Ok(Value::from_bool(has_interactive));
         }
     }
-    let cmd = match v {
+    let mut cmd = match v {
         Value::Sym(id) => i.symbol_function(*id),
         other => other.clone(),
     };
+    // Advised command: peel the trampoline layers to the base, then
+    // resolve a possible symbol-alias tail (GNU reaches the innermost
+    // definition through the oclosure's cdr chain).
+    for _ in 0..64 {
+        let peeled = i.advice_base_value(&cmd);
+        match peeled {
+            Value::Sym(id) => {
+                cmd = i.symbol_function(id);
+                if matches!(cmd, Value::Sym(s) if s == crate::lisp::obarray::sym::UNBOUND) {
+                    break;
+                }
+            }
+            other => {
+                cmd = other;
+                break;
+            }
+        }
+    }
     Ok(Value::from_bool(match &cmd {
         Value::Lambda(l) => l.interactive.is_some(),
         Value::Subr(s) => crate::lisp::eval::subr_interactive(s.name).is_some(),
         // strings and vectors are keyboard macros — commands.
         Value::Str(_) | Value::Vec(_) => true,
+        // `(autoload FILE DOC INTERACTIVE TYPE)': a command when its
+        // interactive flag is non-nil (GNU's Fcommandp checks the same
+        // slot before deciding whether to load the file).
+        Value::Cons(_) => {
+            let auto_id = i.intern("autoload");
+            let items: Vec<Value> = cmd.list_to_vec().unwrap_or_default();
+            matches!(items.first(), Some(h) if i.sym_is(h, auto_id))
+                && !items.get(3).map(|x| x.is_nil()).unwrap_or(true)
+        }
         _ => false,
     }))
 }
@@ -13136,12 +13246,12 @@ fn face_attr(i: &mut Interp, name: &str, attr: &str) -> Value {
         }
         ("default", ":background") => Value::string("unspecified-bg"),
         ("default", ":foreground") => Value::string("unspecified-fg"),
-        ("default", ":family") => Value::string("default"),
+        ("default", ":family") | ("default", ":foundry") => Value::string("default"),
         ("default", ":height") => Value::Int(1),
         (
             "default",
             ":underline" | ":overline" | ":strike-through" | ":box" | ":inverse-video" | ":stipple"
-            | ":extend",
+            | ":extend" | ":inherit",
         ) => Value::Nil,
         ("bold", ":weight") | ("bold-italic", ":weight") => Value::Sym(i.intern("bold")),
         ("italic", ":slant") | ("bold-italic", ":slant") => Value::Sym(i.intern("italic")),
@@ -13156,6 +13266,35 @@ fn f_face_attribute(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         Value::Sym(s) => i.symbol_name(*s),
         other => return Err(i.wrong_type_mut("symbolp", other)),
     };
+    // GNU signals (error "Invalid face attribute name" attr) for
+    // attribute names outside the known set.
+    const KNOWN_ATTRS: &[&str] = &[
+        ":family",
+        ":foundry",
+        ":width",
+        ":height",
+        ":weight",
+        ":slant",
+        ":foreground",
+        ":distant-foreground",
+        ":background",
+        ":underline",
+        ":overline",
+        ":strike-through",
+        ":box",
+        ":inverse-video",
+        ":stipple",
+        ":font",
+        ":fontset",
+        ":extend",
+        ":inherit",
+    ];
+    if !KNOWN_ATTRS.contains(&attr.as_str()) {
+        return Err(i.signal_data(
+            sym::ERROR,
+            vec![Value::string("Invalid face attribute name"), a[1].clone()],
+        ));
+    }
     Ok(face_attr(i, &name, &attr))
 }
 
@@ -13288,7 +13427,11 @@ fn f_set_face_attribute(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         other => return Err(i.wrong_type_mut("symbolp", other)),
     };
     if !face_known(i, &name) {
-        i.face_table.push((name.clone(), Value::Nil));
+        let err = i.intern("error");
+        return Err(i.signal_data(
+            err,
+            vec![Value::string("Invalid face".to_string()), a[0].clone()],
+        ));
     }
     for kv in a[2..].chunks(2) {
         if let (Value::Sym(k), Some(v)) = (&kv[0], kv.get(1)) {
@@ -14026,7 +14169,10 @@ fn f_exit_minibuffer(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
     // `read_minibuf'.  With no matching catch this signals `no-catch'
     // (f_throw semantics).
     let exit_sym = Value::Sym(i.intern("exit"));
-    if i.catch_tags.iter().any(|t| crate::lisp::eq_values(t, &exit_sym)) {
+    if i.catch_tags
+        .iter()
+        .any(|t| crate::lisp::eq_values(t, &exit_sym))
+    {
         Err(crate::lisp::error::Flow::Throw(exit_sym, Value::Nil))
     } else {
         let no_catch = i.intern("no-catch");

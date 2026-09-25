@@ -1627,6 +1627,11 @@ For more details, see Info node `(elisp) Extending Rx'.
 
 \(fn NAME [(ARGS...)] RX)"
   (declare (indent defun))
+  ;; remacs: register at macro-expansion time as well.  Our eager
+  ;; macro-expander does not evaluate `eval-and-compile' bodies, so
+  ;; without this a later `rx' use in the same expanded form cannot see
+  ;; the definition.  This mirrors what the byte compiler does.
+  (put name 'rx-definition (rx--make-binding name definition))
   `(eval-and-compile
      (put ',name 'rx-definition ',(rx--make-binding name definition))
      ',name))

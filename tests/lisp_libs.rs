@@ -91,10 +91,12 @@ fn dom_children_by_tag_and_pp() {
     );
     // dom-pp inserts a printed DOM representation into the current buffer.
     assert_eq!(
-        ev_out("(progn (require 'dom)
+        ev_out(
+            "(progn (require 'dom)
                       (with-temp-buffer
                         (dom-pp '(div ((id . \"x\")) \"hi\"))
-                        (princ (buffer-string))))"),
+                        (princ (buffer-string))))"
+        ),
         "(div ((id . \"x\"))\n \"hi\")"
     );
 }
@@ -170,10 +172,12 @@ fn subr_x_string_and_list_utils() {
 #[test]
 fn subr_x_work_buffer() {
     assert_eq!(
-        ev_out("(progn (require 'subr-x)
+        ev_out(
+            "(progn (require 'subr-x)
                        (with-work-buffer
                          (insert \"abc\")
-                         (princ (buffer-string))))"),
+                         (princ (buffer-string))))"
+        ),
         "abc"
     );
 }
@@ -269,7 +273,8 @@ fn map_let_and_others() {
 fn thingatpt_basics() {
     // GNU-verified goldens for the ported thingatpt + forward-symbol shim.
     assert_eq!(
-        ev_out("(progn (require 'thingatpt)
+        ev_out(
+            "(progn (require 'thingatpt)
                       (with-temp-buffer
                         (insert \"foo_bar baz-qux 42\")
                         (goto-char 2)
@@ -279,7 +284,8 @@ fn thingatpt_basics() {
                         (princ (thing-at-point 'word)) (terpri)
                         (goto-char 1)
                         (princ (list (forward-thing 'word) (point))) (terpri)
-                        (princ (symbol-at-point))))"),
+                        (princ (symbol-at-point))))"
+        ),
         "(foo_bar (1 . 8))\nbaz\n(t 4)\nfoo_bar"
     );
 }
@@ -331,7 +337,8 @@ fn avl_tree_insert_order_delete() {
 #[test]
 fn avl_tree_iter_and_stack() {
     assert_eq!(
-        ev_out("(progn (require 'avl-tree)
+        ev_out(
+            "(progn (require 'avl-tree)
                       (let ((t1 (avl-tree-create #'<)))
                         (avl-tree-enter t1 1) (avl-tree-enter t1 3)
                         (let ((it (avl-tree-iter t1)))
@@ -341,7 +348,8 @@ fn avl_tree_iter_and_stack() {
                                    (iter-end-of-sequence 'done))) (terpri))
                         (let ((s (avl-tree-stack t1)))
                           (princ (list (avl-tree-stack-pop s)
-                                       (avl-tree-stack-empty-p s))))))"),
+                                       (avl-tree-stack-empty-p s))))))"
+        ),
         "(1 3)\ndone\n(1 nil)"
     );
 }
@@ -408,9 +416,11 @@ fn seq_indexed_and_positions() {
         "(((a 0) (b 1) (c 2)) (0 2 4) (1 3))"
     );
     assert_eq!(
-        ev_out("(let ((acc nil))
+        ev_out(
+            "(let ((acc nil))
                  (seq-do-indexed (lambda (e i) (push (list i e) acc)) '(x y))
-                 (princ acc))"),
+                 (princ acc))"
+        ),
         "((1 y) (0 x))"
     );
 }
@@ -429,6 +439,38 @@ fn seq_set_ops_and_split() {
         ev("(list (seq-sort-by 'car '< '((3 . a) (1 . b) (2 . c)))
                  (condition-case e (seq-random-elt '()) (error (car e))))"),
         "(((1 . b) (2 . c) (3 . a)) error)"
+    );
+}
+
+// --------------------------------------------------------- radix-tree
+
+#[test]
+fn radix_tree_ops() {
+    // GNU-verified vs radix-tree.el on 31.1, including prefix-of-key
+    // splits, subtree iteration, and the literal-prefix quirk of
+    // `radix-tree-iter-mappings'.
+    assert_eq!(
+        ev("(progn (require 'radix-tree)
+                  (let ((t1 radix-tree-empty))
+                    (setq t1 (radix-tree-insert t1 \"al\" 'X))
+                    (setq t1 (radix-tree-insert t1 \"alpha\" 'Y))
+                    (setq t1 (radix-tree-insert t1 \"alpine\" 'Z))
+                    (list (radix-tree-lookup t1 \"al\")
+                          (radix-tree-lookup t1 \"alpha\")
+                          (radix-tree-lookup t1 \"alpine\")
+                          (radix-tree-lookup t1 \"nope\")
+                          (radix-tree-prefixes t1 \"alp\")
+                          (radix-tree-count t1))))"),
+        "(X Y Z nil ((\"al\" . X)) 3)"
+    );
+    assert_eq!(
+        ev("(progn (require 'radix-tree)
+                  (let ((t1 radix-tree-empty) (m nil))
+                    (setq t1 (radix-tree-insert t1 \"al\" 'X))
+                    (setq t1 (radix-tree-insert t1 \"alpha\" 'Y))
+                    (radix-tree-iter-mappings t1 (lambda (k v) (push (cons k v) m)) \"p\")
+                    (sort m (lambda (a b) (string< (car a) (car b))))))"),
+        "((\"pal\" . X) (\"palpha\" . Y))"
     );
 }
 
@@ -484,6 +526,6 @@ fn saveplace_mode_hooks() {
                         (memq #'save-place-find-file-hook find-file-hook)
                         (memq #'save-place-dired-hook dired-initial-position-hook)
                         (memq #'save-place-to-alist kill-buffer-hook)))"),
-        "(t (save-place-find-file-hook) (save-place-dired-hook) (save-place-to-alist uniquify-kill-buffer-function))"
+        "(t (save-place-find-file-hook) (save-place-dired-hook) (save-place-to-alist uniquify-kill-buffer-function vc-kill-buffer-hook))"
     );
 }

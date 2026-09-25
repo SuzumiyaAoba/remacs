@@ -29,20 +29,28 @@ fn sqlite_execute_rows_and_count() {
     // Affected-row count for DML; a row list for statements that
     // return data (GNU steps once and switches on SQLITE_ROW).
     assert_eq!(
-        ev("(let ((db (sqlite-open))) (sqlite-execute db \"create table t (a,b)\") (sqlite-execute db \"insert into t values (1,'x')\"))"),
+        ev(
+            "(let ((db (sqlite-open))) (sqlite-execute db \"create table t (a,b)\") (sqlite-execute db \"insert into t values (1,'x')\"))"
+        ),
         "1"
     );
     assert_eq!(
-        ev("(let ((db (sqlite-open))) (sqlite-execute db \"create table t (a,b)\") (sqlite-execute db \"insert into t values (1,'x')\") (sqlite-execute db \"insert into t values (2,'y')\") (sqlite-execute db \"select * from t order by a\"))"),
+        ev(
+            "(let ((db (sqlite-open))) (sqlite-execute db \"create table t (a,b)\") (sqlite-execute db \"insert into t values (1,'x')\") (sqlite-execute db \"insert into t values (2,'y')\") (sqlite-execute db \"select * from t order by a\"))"
+        ),
         "((1 \"x\") (2 \"y\"))"
     );
     // Parameter binding from a list and a vector.
     assert_eq!(
-        ev("(let ((db (sqlite-open))) (sqlite-execute db \"create table t (a,b)\") (sqlite-execute db \"insert into t values (?,?)\" '(7 \"q\")) (sqlite-execute db \"insert into t values (?,?)\" [8 \"r\"]) (sqlite-select db \"select a from t order by a\"))"),
+        ev(
+            "(let ((db (sqlite-open))) (sqlite-execute db \"create table t (a,b)\") (sqlite-execute db \"insert into t values (?,?)\" '(7 \"q\")) (sqlite-execute db \"insert into t values (?,?)\" [8 \"r\"]) (sqlite-select db \"select a from t order by a\"))"
+        ),
         "((7) (8))"
     );
     assert_eq!(
-        ev("(let ((db (sqlite-open))) (sqlite-execute db \"create table t (a)\") (sqlite-execute db \"insert into t values (1)\") (sqlite-execute db \"update t set a=5\") (sqlite-select db \"select a from t\"))"),
+        ev(
+            "(let ((db (sqlite-open))) (sqlite-execute db \"create table t (a)\") (sqlite-execute db \"insert into t values (1)\") (sqlite-execute db \"update t set a=5\") (sqlite-select db \"select a from t\"))"
+        ),
         "((5))"
     );
 }
@@ -56,7 +64,9 @@ fn sqlite_select_return_types() {
     );
     // `full' prepends the column-name list.
     assert_eq!(
-        ev(&format!("{pre} (sqlite-select db \"select * from t\" nil 'full))")),
+        ev(&format!(
+            "{pre} (sqlite-select db \"select * from t\" nil 'full))"
+        )),
         "((\"a\" \"b\") (1 \"x\"))"
     );
 }
@@ -66,16 +76,22 @@ fn sqlite_set_lazy_more_p() {
     // `sqlite-more-p' stays t until `sqlite-next' steps past the end;
     // even an empty set reports t before the first `sqlite-next'.
     assert_eq!(
-        ev("(let* ((db (sqlite-open)) (set (sqlite-select db \"select 1 where 0\" nil 'set))) (list (sqlite-more-p set) (sqlite-next set) (sqlite-more-p set)))"),
+        ev(
+            "(let* ((db (sqlite-open)) (set (sqlite-select db \"select 1 where 0\" nil 'set))) (list (sqlite-more-p set) (sqlite-next set) (sqlite-more-p set)))"
+        ),
         "(t nil nil)"
     );
     assert_eq!(
-        ev("(let* ((db (sqlite-open)) (_ (sqlite-execute db \"create table t (a)\")) (_ (sqlite-execute db \"insert into t values (1)\")) (_ (sqlite-execute db \"insert into t values (2)\")) (set (sqlite-select db \"select * from t order by a\" nil 'set))) (list (sqlite-columns set) (sqlite-next set) (sqlite-next set) (sqlite-next set) (sqlite-more-p set) (sqlite-finalize set)))"),
+        ev(
+            "(let* ((db (sqlite-open)) (_ (sqlite-execute db \"create table t (a)\")) (_ (sqlite-execute db \"insert into t values (1)\")) (_ (sqlite-execute db \"insert into t values (2)\")) (set (sqlite-select db \"select * from t order by a\" nil 'set))) (list (sqlite-columns set) (sqlite-next set) (sqlite-next set) (sqlite-next set) (sqlite-more-p set) (sqlite-finalize set)))"
+        ),
         "((\"a\") (1) (2) nil nil t)"
     );
     // A finalized set rejects further operations with sqlite-error.
     assert_eq!(
-        ev("(let* ((db (sqlite-open)) (set (sqlite-select db \"select 1\" nil 'set))) (sqlite-finalize set) (condition-case e (sqlite-next set) (sqlite-error (car e))))"),
+        ev(
+            "(let* ((db (sqlite-open)) (set (sqlite-select db \"select 1\" nil 'set))) (sqlite-finalize set) (condition-case e (sqlite-next set) (sqlite-error (car e))))"
+        ),
         "sqlite-error"
     );
 }
@@ -84,11 +100,15 @@ fn sqlite_set_lazy_more_p() {
 fn sqlite_transactions_and_pragma() {
     // Transaction helpers return t/nil, never signal on SQL failure.
     assert_eq!(
-        ev("(let ((db (sqlite-open))) (sqlite-execute db \"create table t (a)\") (list (sqlite-transaction db) (sqlite-execute db \"insert into t values (1)\") (sqlite-rollback db) (sqlite-select db \"select * from t\") (sqlite-rollback db) (sqlite-commit db)))"),
+        ev(
+            "(let ((db (sqlite-open))) (sqlite-execute db \"create table t (a)\") (list (sqlite-transaction db) (sqlite-execute db \"insert into t values (1)\") (sqlite-rollback db) (sqlite-select db \"select * from t\") (sqlite-rollback db) (sqlite-commit db)))"
+        ),
         "(t 1 t nil nil nil)"
     );
     assert_eq!(
-        ev("(let ((db (sqlite-open))) (list (sqlite-pragma db \"foreign_keys = on\") (sqlite-pragma db \"bogus !!!\") (sqlite-execute-batch db \"create table u(x); insert into u values(9)\") (sqlite-select db \"select * from u\") (sqlite-execute-batch db \"not sql ;;;\")))"),
+        ev(
+            "(let ((db (sqlite-open))) (list (sqlite-pragma db \"foreign_keys = on\") (sqlite-pragma db \"bogus !!!\") (sqlite-execute-batch db \"create table u(x); insert into u values(9)\") (sqlite-select db \"select * from u\") (sqlite-execute-batch db \"not sql ;;;\")))"
+        ),
         "(t nil t ((9)) nil)"
     );
 }
@@ -98,7 +118,9 @@ fn sqlite_errors() {
     // Closed db / prepare failure / non-allowlisted module all signal
     // sqlite-error, which `error' handlers also catch.
     assert_eq!(
-        ev("(let ((db (sqlite-open))) (sqlite-close db) (condition-case e (sqlite-execute db \"select 1\") (sqlite-error (car e))))"),
+        ev(
+            "(let ((db (sqlite-open))) (sqlite-close db) (condition-case e (sqlite-execute db \"select 1\") (sqlite-error (car e))))"
+        ),
         "sqlite-error"
     );
     assert_eq!(
@@ -106,7 +128,9 @@ fn sqlite_errors() {
         "sqlite-error"
     );
     assert_eq!(
-        ev("(condition-case e (sqlite-load-extension (sqlite-open) \"/tmp/evil.so\") (sqlite-error (car e)))"),
+        ev(
+            "(condition-case e (sqlite-load-extension (sqlite-open) \"/tmp/evil.so\") (sqlite-error (car e)))"
+        ),
         "sqlite-error"
     );
     // Non-sqlite arguments are a wrong-type-argument, not sqlite-error.
@@ -145,7 +169,9 @@ fn libxml_xml_basic() {
         r#"(top nil (comment nil "top") (a nil))"#
     );
     assert_eq!(
-        ev(r#"(with-temp-buffer (insert "<!--top--><a/>") (libxml-parse-xml-region nil nil nil t))"#),
+        ev(
+            r#"(with-temp-buffer (insert "<!--top--><a/>") (libxml-parse-xml-region nil nil nil t))"#
+        ),
         "(a nil)"
     );
 }
@@ -177,11 +203,15 @@ fn libxml_html() {
     // An implied <tbody> is unwrapped like GNU/libxml2; an explicit
     // one is retained.
     assert_eq!(
-        ev(r#"(with-temp-buffer (insert "<table><tr><td>x</td></tr></table>") (libxml-parse-html-region))"#),
+        ev(
+            r#"(with-temp-buffer (insert "<table><tr><td>x</td></tr></table>") (libxml-parse-html-region))"#
+        ),
         r#"(html nil (body nil (table nil (tr nil (td nil "x")))))"#
     );
     assert_eq!(
-        ev(r#"(with-temp-buffer (insert "<table><tbody><tr><td>x</td></tr></tbody></table>") (libxml-parse-html-region))"#),
+        ev(
+            r#"(with-temp-buffer (insert "<table><tbody><tr><td>x</td></tr></tbody></table>") (libxml-parse-html-region))"#
+        ),
         r#"(html nil (body nil (table nil (tbody nil (tr nil (td nil "x"))))))"#
     );
 }

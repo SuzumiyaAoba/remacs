@@ -158,7 +158,7 @@ Return a copy of TREE with all elements `eql' to OLD replaced by NEW.
 (defun cl-endp (x)
   "Return true if X is the empty list; false if it is a cons.
 Signal an error if X is not a list."
-  (cl-check-type x 'list)
+  (cl-check-type x list)
   (null x))
 
 ;; autoload-cookie stripped for remacs

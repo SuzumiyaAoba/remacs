@@ -939,4 +939,3 @@ fn f_bignump(_i: &mut Interp, args: Vec<Value>) -> EvalResult {
         Value::Int(n) if !(crate::lisp::value::FIXNUM_MIN..=crate::lisp::value::FIXNUM_MAX).contains(n)
     )))
 }
-
