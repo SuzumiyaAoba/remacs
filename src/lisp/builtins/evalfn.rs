@@ -2638,11 +2638,17 @@ fn f_macroexp_parse_body(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     ))
 }
 
-fn f_byte_code_function_p(_i: &mut Interp, _args: Vec<Value>) -> EvalResult {
-    Ok(Value::Nil)
+fn f_byte_code_function_p(_i: &mut Interp, args: Vec<Value>) -> EvalResult {
+    // `#[...]' byte-code literals are the only byte-code objects we
+    // have; interpreted lambdas (bc_items = None) answer nil like GNU.
+    Ok(Value::from_bool(matches!(&args[0], Value::Lambda(l) if l.bc_items.is_some())))
 }
 fn f_compiled_function_p(_i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    Ok(Value::from_bool(matches!(&args[0], Value::Subr(_))))
+    Ok(Value::from_bool(match &args[0] {
+        Value::Subr(_) => true,
+        Value::Lambda(l) => l.bc_items.is_some(),
+        _ => false,
+    }))
 }
 fn f_native_comp_available_p(_i: &mut Interp, _args: Vec<Value>) -> EvalResult {
     Ok(Value::Nil)

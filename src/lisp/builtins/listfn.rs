@@ -375,14 +375,13 @@ fn f_length(i: &mut Interp, args: Vec<Value>) -> EvalResult {
         }
         // Records (incl. EIEIO instances) report their slot count.
         Value::Record(r) => Ok(Value::Int(r.borrow().len() as i128)),
-        // `#[...]' byte-code objects are arrays; length is the
-        // element count of the literal.
+        // Function objects (closures and `#[...]' byte-code literals)
+        // answer `length' with their element count like GNU —
+        // `#[...]' uses the literal's count, others the synthesized
+        // [args body env] prefix.
         Value::Lambda(l) => match &l.bc_items {
             Some(items) => Ok(Value::Int(items.borrow().len() as i128)),
-            // Library-defined functions stand in for GNU's byte-code
-            // objects: report the [args body env] prefix length.
-            None if !l.plain => Ok(Value::Int(3)),
-            None => Err(i.wrong_type_mut("sequencep", &args[0])),
+            None => Ok(Value::Int(3)),
         },
         other => Err(i.wrong_type_mut("sequencep", other)),
     }

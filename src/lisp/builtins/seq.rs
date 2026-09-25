@@ -441,18 +441,17 @@ fn f_aref(i: &mut Interp, args: Vec<Value>) -> EvalResult {
             }
         }
         Value::Lambda(l) => {
-            // `#[...]' byte-code objects (and library-defined
-            // functions standing in for them): GNU exposes the
-            // element vector through `aref'.  Non-literal lambdas
-            // synthesize GNU's [args body env] prefix.
+            // GNU `aref' reads the elements of closures and byte-code
+            // objects even though `arrayp' is nil for both.
+            // `#[...]' literals expose their literal element list;
+            // other lambdas synthesize GNU's [args body env] layout.
             let items: Vec<Value> = match &l.bc_items {
                 Some(items) => items.borrow().clone(),
-                None if !l.plain => vec![
+                None => vec![
                     l.arglist.clone().unwrap_or(Value::Nil),
                     Value::list(l.body.clone()),
                     Value::Nil,
                 ],
-                None => return Err(i.wrong_type_mut("arrayp", &args[0])),
             };
             let n = want_int(i, &args[1])?;
             if n < 0 || n as usize >= items.len() {

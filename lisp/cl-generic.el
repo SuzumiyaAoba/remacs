@@ -213,12 +213,21 @@ CALL-CON indicates the calling convention expected by FUNCTION:
     (unless (or (not (fboundp name))
                 (autoloadp (symbol-function name))
                 (and (functionp name) generic)
+                ;; remacs: a prelude fallback generic (methods recorded
+                ;; on `cl--methods' before the machinery was available)
+                ;; is upgraded below rather than rejected.
+                (get origname 'cl--methods)
                 noerror)
       (error "%s is already defined as something else than a generic function"
              origname))
     (if generic
         (cl-assert (eq name (cl--generic-name generic)))
       (setf (cl--generic name) (setq generic (cl--generic-make name))))
+    ;; remacs: re-register fallback `cl--methods' entries through the
+    ;; real machinery so early `cl-defmethod's aren't lost.
+    (when (and (fboundp 'remacs--migrate-fallback-methods)
+               (get origname 'cl--methods))
+      (remacs--migrate-fallback-methods origname))
     generic))
 
 (defvar cl--generic-edebug-name nil)

@@ -592,6 +592,44 @@ fn pcase_cl_type_pattern_expands() {
 }
 
 #[test]
+fn cl_generic_real_dispatch() {
+    // GNU cl-generic.el is in the dump: its generalizer methods
+    // (t/eql/head/typeof/oclosure) must resolve every specializer kind
+    // — GNU-verified at -Q.
+    assert_eq!(
+        ev("(progn (load \"cl-generic\")
+                  (mapcar (lambda (s)
+                            (cl--generic-generalizer-name
+                             (car (cl-generic-generalizers s))))
+                          (list t '(eql 'image) 'list 'oclosure)))"),
+        "(cl--generic-t-generalizer cl--generic-eql-generalizer \
+cl--generic-typeof-generalizer cl--generic-oclosure-generalizer)"
+    );
+    // Method tables: vendored cl-defgeneric/defmethod forms that ran
+    // before the machinery was available migrate into real generics
+    // (GNU-verified counts at -Q after loading cl-generic).
+    assert_eq!(
+        ev("(progn (load \"cl-generic\")
+                  (list (length (cl--generic-method-table
+                                 (cl--generic 'cl-generic-generalizers)))
+                        (length (cl--generic-method-table
+                                 (cl--generic 'register-val-jump-to)))))"),
+        "(6 4)"
+    );
+    // End-to-end dispatch: integer specializer beats t, (eql 'z) beats
+    // integer-less fallback, :before runs first (GNU-verified output).
+    assert_eq!(
+        ev("(progn (load \"cl-generic\")
+                  (cl-defgeneric tg (x))
+                  (cl-defmethod tg ((x integer)) (list 'int x))
+                  (cl-defmethod tg ((x (eql 'z))) (list 'zed x))
+                  (cl-defmethod tg (x) (list 'other x))
+                  (list (tg 5) (tg 'z) (tg \"s\")))"),
+        "((int 5) (zed z) (other \"s\"))"
+    );
+}
+
+#[test]
 fn quail_subdir_load_and_leim_list() {
     // `quail/NAME' references must resolve to the leim/quail copies even
     // where `language/NAME' shares the basename (burmese, czech, …); the

@@ -44140,16 +44140,23 @@ by `find-composition'."
     (or found endpos)))
 
 ;;; Platform/language variables (boundp parity with GNU)
-(defvar cl--generic-combined-method-memoization nil)
-(defvar cl--generic-compiler 'byte-compile)
+;; The hash-tables and `cl--generic-compiler' need their GNU
+;; initializers, not a nil stub: cl-generic.el's own `defvar'
+;; forms skip init when the variable is already bound, so a
+;; nil here would survive the whole bootstrap and break the
+;; dispatcher/memoization tables.  `compiled-function-p' is nil
+;; under our interpreter, matching GNU's `(eval exp t)' branch.
+(defvar cl--generic-combined-method-memoization
+  (make-hash-table :test #'equal :weakness 'value))
+(defvar cl--generic-compiler (lambda (exp) (eval exp t)))
 (defvar cl--generic-derived-mode-generalizer nil)
-(defvar cl--generic-dispatchers nil)
+(defvar cl--generic-dispatchers (make-hash-table :test #'equal))
 (defvar cl--generic-edebug-name nil)
 (defvar cl--generic-eql-generalizer nil)
-(defvar cl--generic-eql-used nil)
+(defvar cl--generic-eql-used (make-hash-table :test #'eql))
 (defvar cl--generic-find-defgeneric-regexp '"(\\(?:cl-\\)?defgeneric[ 	]+%s\\_>")
 (defvar cl--generic-head-generalizer nil)
-(defvar cl--generic-head-used nil)
+(defvar cl--generic-head-used (make-hash-table :test #'eql))
 (defvar cl--generic-oclosure-generalizer nil)
 (defvar cl--generic-t-generalizer nil)
 (defvar cl--generic-typeof-generalizer nil)
@@ -45966,7 +45973,7 @@ also passed as second argument to SPECIALIZERS-FUNCTION." (declare (indent 1) (d
 (defun cl-generic-define-method (name qualifiers args call-con function) (pcase-let* ((generic (cl-generic-ensure-function name)) (`(,spec-args \, _) (cl--generic-split-args args)) (specializers (mapcar (lambda (spec-arg) (if (eq '&context (car-safe (car spec-arg))) spec-arg (cdr spec-arg))) spec-args)) (method (cl--generic-make-method specializers qualifiers call-con function)) (mt (cl--generic-method-table generic)) (me (cl--generic-member-method specializers qualifiers mt)) (dispatches (cl--generic-dispatches generic)) (i 0)) (dolist (spec-arg spec-args) (let* ((key (if (eq '&context (car-safe (car spec-arg))) (car spec-arg) i)) (generalizers (cl-generic-generalizers (cdr spec-arg))) (x (assoc key dispatches))) (unless x (setq x (cons key (cl-generic-generalizers t))) (setf (cl--generic-dispatches generic) (setq dispatches (cons x dispatches)))) (dolist (generalizer generalizers) (unless (member generalizer (cdr x)) (setf (cdr x) (sort (cons generalizer (cdr x)) (lambda (x y) (> (cl--generic-generalizer-priority x) (cl--generic-generalizer-priority y))))))) (setq i (1+ i)))) (setf (cl--generic-method-table generic) (if (null me) (cons method mt) (mapcar (lambda (x) (if (eq x (car me)) method x)) mt))) (let ((sym (cl--generic-name generic)) (gfun (cl--generic-make-function generic))) (cl-pushnew `(cl-defmethod \, (cl--generic-load-hist-format (cl--generic-name generic) qualifiers specializers)) current-load-list :test #'equal) (let ((old-adv-cc (get-advertised-calling-convention (symbol-function sym)))) (when (listp old-adv-cc) (set-advertised-calling-convention gfun old-adv-cc nil))) (if (not (symbol-function sym)) (defalias sym gfun) (let (current-load-list) (defalias sym gfun))))))
 
 ;;;; cl-generic-ensure-function (emacs-lisp/cl-generic.el)
-(defun cl-generic-ensure-function (name &optional noerror) (let (generic (origname name)) (while (and (null (setq generic (cl--generic name))) (fboundp name) (null noerror) (symbolp (symbol-function name))) (setq name (symbol-function name))) (unless (or (not (fboundp name)) (autoloadp (symbol-function name)) (and (functionp name) generic) noerror) (error "%s is already defined as something else than a generic function" origname)) (if generic (cl-assert (eq name (cl--generic-name generic))) (setf (cl--generic name) (setq generic (cl--generic-make name)))) generic))
+(defun cl-generic-ensure-function (name &optional noerror) (let (generic (origname name)) (while (and (null (setq generic (cl--generic name))) (fboundp name) (null noerror) (symbolp (symbol-function name))) (setq name (symbol-function name))) (unless (or (not (fboundp name)) (autoloadp (symbol-function name)) (and (functionp name) generic) (get origname 'cl--methods) noerror) (error "%s is already defined as something else than a generic function" origname)) (if generic (cl-assert (eq name (cl--generic-name generic))) (setf (cl--generic name) (setq generic (cl--generic-make name)))) (when (and (fboundp 'remacs--migrate-fallback-methods) (get origname 'cl--methods)) (remacs--migrate-fallback-methods origname)) generic))
 
 ;;;; cl-generic-function-options (emacs-lisp/cl-generic.el)
 (defun cl-generic-function-options (generic) "Return the options of the generic function GENERIC." (cl--generic-options generic))

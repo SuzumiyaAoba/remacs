@@ -847,6 +847,38 @@ impl Interp {
             // no `provide', so the feature stays nil while
             // `debug-early'/`debug-early-backtrace' are bound at -Q.
             let _ = crate::lisp::load::load_library(&mut interp, "debug-early");
+            // Snapshot the real definitions of GNU_VOID_FNS before
+            // `loaddefs' replaces some of them with (autoload ...) cells
+            // (e.g. `cl-loop' => "cl-macs"): the `remacs--dump-fn' stash
+            // must hold the true dumped definition, or cl-macs's restore
+            // would reinstall the autoload and recurse into its own load.
+            {
+                let pk = interp.intern("remacs--dump-fn");
+                let auto_id = interp.intern("autoload");
+                for name in GNU_VOID_FNS {
+                    let sid = interp.intern(name);
+                    let old = interp.obarray.symbol(sid).function.clone();
+                    let is_autoload = matches!(
+                        &old,
+                        Value::Cons(c) if matches!(&c.borrow().car, Value::Sym(s) if *s == auto_id)
+                    );
+                    if !matches!(old, Value::Sym(s) if s == sym::UNBOUND) && !is_autoload {
+                        interp.put_prop(sid, pk, old);
+                    }
+                }
+            }
+            // cl-generic.el is in GNU's dump (the `cl-generic' feature
+            // is pre-registered): its `cl-defmethod' forms install the
+            // real generalizer methods (`cl-generic-generalizers' for
+            // `t', `eql', `head', `typeof', ...) that the vendored
+            // machinery in subr-x needs to register any specialized
+            // method.  Loading it here — after the dump-fn snapshot so
+            // the cl-loaddefs autoloads pulled by its `(require
+            // 'cl-lib)' cannot corrupt the stash, and after subr-x so
+            // its `(require 'subr-x)' short-circuits — mirrors GNU's
+            // .elc, and keeps later cl-defmethod uses (icons, map,
+            // register, send-to) from hitting an empty method table.
+            let _ = crate::lisp::load::load_library(&mut interp, "cl-generic");
             // loaddefs.el is loaded by loadup.el right after subr.el:
             // it installs the (autoload ...) cells for every preloaded
             // library's entry points and provides the `loaddefs'
@@ -1931,8 +1963,25 @@ explicitly overridden.
                     let pk = interp.intern("cl--advice--apply--fn");
                     interp.put_prop(sid, pk, old.clone());
                 }
-                if !matches!(old, Value::Sym(s) if s == sym::UNBOUND) {
-                    let pk = interp.intern("remacs--dump-fn");
+                // Stash only a genuine pre-void definition: a cell that
+                // already holds an (autoload ...) form (installed by
+                // loaddefs after the real def was made) must not be
+                // recorded as the "dumped" definition, and an earlier
+                // snapshot must not be overwritten either.
+                let pk = interp.intern("remacs--dump-fn");
+                let auto_id = interp.intern("autoload");
+                let is_autoload = matches!(
+                    &old,
+                    Value::Cons(c) if matches!(&c.borrow().car, Value::Sym(s) if *s == auto_id)
+                );
+                let have_stash = !matches!(
+                    interp.get_prop(sid, pk),
+                    v if v.is_nil() || matches!(v, Value::Sym(s) if s == sym::UNBOUND)
+                );
+                if !matches!(old, Value::Sym(s) if s == sym::UNBOUND)
+                    && !is_autoload
+                    && !have_stash
+                {
                     interp.put_prop(sid, pk, old);
                 }
                 interp.obarray.symbol_mut(sid).function = Value::Sym(sym::UNBOUND);
@@ -2354,15 +2403,28 @@ explicitly overridden.
         match v {
             Value::Subr(_) | Value::Lambda(_) => true,
             Value::Cons(c) => self.sym_is(&c.borrow().car, sym::LAMBDA),
-            Value::Sym(id) => match self.symbol_function(*id) {
-                Value::Subr(s) => self
-                    .intern_soft(s.name)
-                    .and_then(|x| crate::lisp::special::special_form(x))
-                    .is_none(),
-                Value::Lambda(l) => !l.is_macro,
-                Value::Cons(c) => self.sym_is(&c.borrow().car, sym::LAMBDA),
-                _ => false,
-            },
+            Value::Sym(id) => {
+                // GNU resolves `defalias' chains: the alias's final
+                // target decides.
+                let mut f = self.symbol_function(*id);
+                let mut hops = 0usize;
+                while let Value::Sym(next) = f {
+                    if next == sym::UNBOUND || hops >= 64 {
+                        return false;
+                    }
+                    hops += 1;
+                    f = self.symbol_function(next);
+                }
+                match f {
+                    Value::Subr(s) => self
+                        .intern_soft(s.name)
+                        .and_then(|x| crate::lisp::special::special_form(x))
+                        .is_none(),
+                    Value::Lambda(l) => !l.is_macro,
+                    Value::Cons(c) => self.sym_is(&c.borrow().car, sym::LAMBDA),
+                    _ => false,
+                }
+            }
             _ => false,
         }
     }
@@ -3321,6 +3383,26 @@ explicitly overridden.
                     .take(90)
                     .collect::<String>()
             );
+        }
+        if std::env::var_os("REMACS_BT_AT").is_some() {
+            let limit: usize = std::env::var("REMACS_BT_AT")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(4000);
+            if self.lisp_stack.len() >= limit {
+                eprintln!("=== REMACS_BT_AT hit, last 40 frames ===");
+                for (f, a) in self.lisp_stack.iter().rev().take(40).rev() {
+                    eprintln!(
+                        "  {} {}",
+                        self.princ_to_string(f).chars().take(80).collect::<String>(),
+                        self.princ_to_string(&Value::list(a.clone()))
+                            .chars()
+                            .take(120)
+                            .collect::<String>()
+                    );
+                }
+                std::process::exit(3);
+            }
         }
         match fun {
             Value::Subr(s) => match s.arity {

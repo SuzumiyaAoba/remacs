@@ -513,8 +513,17 @@ fn f_functionp(i: &mut Interp, args: Vec<Value>) -> EvalResult {
         Value::Lambda(l) => !l.is_macro,
         Value::Sym(id) => {
             // a symbol is a function if its function cell is defined
-            // (and isn't a macro).
-            let f = i.symbol_function(*id);
+            // (and isn't a macro).  GNU follows `defalias' chains:
+            // `(functionp 'alias)' tests the alias's final target.
+            let mut f = i.symbol_function(*id);
+            let mut hops = 0usize;
+            while let Value::Sym(next) = f {
+                if next == sym::UNBOUND || hops >= 64 {
+                    return Ok(Value::Nil);
+                }
+                hops += 1;
+                f = i.symbol_function(next);
+            }
             match f {
                 // Special forms install pseudo-subrs but are not callable
                 // functions: (functionp #'if) -> nil.
@@ -620,10 +629,10 @@ fn f_arrayp(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     // `#[...]' byte-code objects are Lambdas tagged by `bc_items'.
     Ok(Value::from_bool(match &args[0] {
         Value::Str(_) | Value::Vec(_) => true,
-        // `#[...]' objects and library-defined functions stand in for
-        // GNU's byte-code objects (`plain' marks the interpreted
-        // lambdas GNU also reports as non-arrays).
-        Value::Lambda(l) => l.bc_items.is_some() || !l.plain,
+        // GNU `arrayp' excludes every function object — closures and
+        // byte-code objects alike (element access still works through
+        // `aref'/`length').
+        Value::Lambda(_) => false,
         other => super::misc::is_char_table(i, other),
     }))
 }
@@ -661,7 +670,13 @@ fn f_type_of(i: &mut Interp, args: Vec<Value>) -> EvalResult {
         }
         Value::Hash(_) => "hash-table",
         Value::Subr(_) => "subr",
-        Value::Lambda(_) => "interpreted-function",
+        Value::Lambda(l) => {
+            if l.bc_items.is_some() {
+                "byte-code-function"
+            } else {
+                "interpreted-function"
+            }
+        }
         Value::Buffer(_) => "buffer",
         Value::Marker(_) => "marker",
         Value::Process(_) => "process",

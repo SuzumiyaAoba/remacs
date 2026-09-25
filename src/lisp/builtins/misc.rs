@@ -1850,11 +1850,12 @@ fn f_subr_arity(i: &mut Interp, args: Vec<Value>) -> EvalResult {
 }
 
 fn f_closurep(_i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    Ok(Value::from_bool(matches!(&args[0], Value::Lambda(_))))
+    // Byte-code objects aren't closures in GNU's type lattice.
+    Ok(Value::from_bool(matches!(&args[0], Value::Lambda(l) if l.bc_items.is_none())))
 }
 
 fn f_interpreted_function_p(_i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    Ok(Value::from_bool(matches!(&args[0], Value::Lambda(_))))
+    Ok(Value::from_bool(matches!(&args[0], Value::Lambda(l) if l.bc_items.is_none())))
 }
 
 fn f_make_interpreted_closure(i: &mut Interp, args: Vec<Value>) -> EvalResult {
@@ -5085,7 +5086,13 @@ fn f_cl_type_of(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         Value::Record(_) => "record",
         Value::Hash(_) => "hash-table",
         Value::Subr(_) => "subr",
-        Value::Lambda(_) => "interpreted-function",
+        Value::Lambda(l) => {
+            if l.bc_items.is_some() {
+                "byte-code-function"
+            } else {
+                "interpreted-function"
+            }
+        }
         Value::Buffer(_) => "buffer",
         Value::Marker(_) => "marker",
         Value::Window(_) => "window",

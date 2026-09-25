@@ -15309,8 +15309,12 @@ When enabled, actual binary text editing is done via `overwrite-mode'."
 (define-error 'cl-no-next-method "No next method" 'error)
 
 ;; A generic function's methods live on its `cl--methods' plist entry:
-;; a list of (SPECIALIZERS QUALIFIER . FUNCTION), where SPECIALIZERS is
-;; a list of `t', a type symbol, or (eql FORM).
+;; a list of (SPECIALIZERS QUALIFIERS PARAMS . FUNCTION), where
+;; SPECIALIZERS is a list of `t', a type symbol, or (eql FORM),
+;; QUALIFIERS is the full GNU qualifier list (e.g. (:extra "head")),
+;; and PARAMS/SPECIALIZERS let `remacs--migrate-fallback-methods'
+;; rebuild the original method arglist when the real cl-generic
+;; machinery becomes available.
 
 (defvar cl--cnm nil
   "Dynamically bound chain of remaining applicable methods.")
@@ -15396,40 +15400,57 @@ When enabled, actual binary text editing is done via `overwrite-mode'."
       (setq more (cl--spec-more-specific-p (car sa) (car sb))))
     more))
 
-(defun cl--method-fn (m) (nth 2 m))
+(defun cl--method-fn (m) (nth 3 m))
 
 (defmacro cl-defgeneric (name args &rest body)
   "Define a generic function NAME with arglist ARGS.
 BODY may contain a docstring, declarations, and options (subset).
 Any remaining forms form the default method (specializers all `t')."
   (let ((doc (and (stringp (car body)) (car body)))
-        (rest (if (stringp (car body)) (cdr body) body)))
-    ;; Skip (declare ...) and (:keyword ...) option forms.
+        (rest (if (stringp (car body)) (cdr body) body))
+        (opts nil) (methods nil))
+    ;; Collect (declare ...) and (:keyword ...) option forms;
+    ;; (:method ...) forms become cl-defmethod definitions, GNU-style.
     (while (and rest
                 (let ((f (car rest)))
                   (or (eq (car-safe f) 'declare)
                       (keywordp (car-safe f))
                       (eq (car-safe f) :method))))
-      (setq rest (cdr rest)))
-    ;; Specializers cover only the args before the first lambda-list
-    ;; keyword.
-    (let ((specs nil) (rest2 args))
-      (while (and rest2
-                  (not (and (symbolp (car rest2))
-                            (eq (aref (symbol-name (car rest2)) 0) ?&))))
-        (push t specs)
-        (setq rest2 (cdr rest2)))
-      (setq specs (nreverse specs))
-      `(progn
-         (put ',name 'cl--methods nil)
-         ,@(and rest
-                `((put ',name 'cl--methods
-                       (list (list ',specs nil
-                                   (lambda ,args ,@rest))))))
-         (defun ,name (&rest cl--args)
-           ,@(and doc (list doc))
-           (cl--generic-dispatch ',name cl--args))
-         ',name))))
+      (let ((f (pop rest)))
+        (if (eq (car-safe f) :method)
+            (push (cdr f) methods)
+          (push f opts))))
+    `(progn
+         (cond
+          ((fboundp 'cl-generic-define)
+           ;; The real cl-generic machinery (vendored into subr-x, or
+           ;; cl-generic.el itself while loading) is present: delegate
+           ;; fully so the generic object and dispatcher stay
+           ;; GNU-shaped.  `cl-generic-define' registers the
+           ;; `cl--generic' object itself.
+           (defalias ',name
+             (cl-generic-define ',name ',args ',opts)))
+          (t
+           ;; When only the `cl--generic' constructor is available
+           ;; (late subr-x stage), still register a real generic
+           ;; object so that a later explicit load of cl-generic.el
+           ;; sees a generic here, not an ordinary defun — GNU's
+           ;; `cl-generic-ensure-function' errors out otherwise.
+           (when (and (fboundp 'cl--generic-make)
+                      (not (get ',name 'cl--generic)))
+             (put ',name 'cl--generic (cl--generic-make ',name)))
+           (put ',name 'cl--methods nil)
+           (defun ,name (&rest cl--args)
+             ,@(and doc (list doc))
+             (cl--generic-dispatch ',name cl--args))))
+         ;; `(:method ...)' option forms and a leftover default body
+         ;; both define methods, GNU-style: each goes through
+         ;; `cl-defmethod' (which itself dispatches between the real
+         ;; cl-generic table and the `cl--methods' fallback).
+         ,@(mapcar (lambda (m) `(cl-defmethod ,name ,@m))
+                   (nreverse methods))
+         ,@(and rest `((cl-defmethod ,name ,args ,@rest)))
+         ',name)))
 
 (defun cl--generic-dispatch (name args)
   (let* ((methods (get name 'cl--methods))
@@ -15463,8 +15484,52 @@ Any remaining forms form the default method (specializers all `t')."
 (defun cl--methods-with-qual (methods qual)
   (let (out)
     (dolist (m methods)
-      (when (eq (cadr m) qual) (push m out)))
+      ;; QUALIFIERS is the full GNU list; the combination qualifier is
+      ;; the last of :before/:after/:around/:primary present in it.
+      (let ((mq nil) (qs (nth 1 m)))
+        (while qs
+          (when (memq (car qs) '(:before :after :around :primary))
+            (setq mq (car qs)))
+          (setq qs (cdr qs)))
+        (when (eq mq qual) (push m out))))
     (nreverse out)))
+
+(defun remacs--fallback-method-args (params specs)
+  "Rebuild a `cl-defmethod' arglist from stored PARAMS and SPECS.
+Each PARAM whose SPEC isn't `t' becomes (PARAM SPEC); `&' markers and
+list-shaped params (e.g. (&rest X)) are kept verbatim."
+  (let ((out nil) (ps params) (ss specs))
+    (while ps
+      (let ((p (pop ps)) (s (pop ss)))
+        (push (if (or (eq s t)
+                      (memq p '(&optional &rest &aux &key &context))
+                      (consp p))
+                  p
+                (list p s))
+              out)))
+    (nreverse out)))
+
+(defun remacs--migrate-fallback-methods (name)
+  "Move NAME's `cl--methods' fallback entries into the real
+cl-generic method table via `cl-generic-define-method', then clear
+the fallback table.  Called by `cl-generic-ensure-function' once the
+vendored machinery is available."
+  (let ((ms (get name 'cl--methods)))
+    (when ms
+      (put name 'cl--methods nil)
+      (dolist (m ms)
+        (cl-generic-define-method
+         name (nth 1 m)
+         (remacs--fallback-method-args (nth 2 m) (car m))
+         nil (nth 3 m))))))
+
+;; GNU frame.el:36 — needed before any `&context (window-system X)'
+;; specializer (e.g. `frame-creation-function') is registered, since
+;; the real context-rewriter lives in frame.el which we fold into the
+;; prelude.
+(put 'window-system 'cl-generic--context-rewriter
+     (lambda (value)
+       `(window-system ,(if (consp value) value `(eql ',value)))))
 
 (defmacro cl-defmethod (name &rest args)
   "Define a method for generic function NAME.
@@ -15476,11 +15541,6 @@ VAR, (VAR TYPE), or (VAR (eql FORM))."
     ;; the last of :before/:after/:around/:primary among them.
     (while (and (car args) (not (listp (car args))))
       (push (pop args) quallist))
-    (let ((qual nil) (rest quallist))
-      (while rest
-        (when (memq (car rest) '(:before :after :around :primary))
-          (setq qual (car rest)))
-        (setq rest (cdr rest)))
     (let* ((arglist (car args))
            (mbody (cdr args))
            (doc (and (stringp (car mbody)) (pop mbody)))
@@ -15509,7 +15569,21 @@ VAR, (VAR TYPE), or (VAR (eql FORM))."
          (t (push a params) (push t specs))))
       (let ((specs (nreverse specs))
             (params (nreverse params)))
-        `(progn
+        `(if (and (fboundp 'cl-generic-define-method)
+                  (or (get ',name 'cl--generic)
+                      ;; A `cl--methods' table means this name was
+                      ;; defined while the machinery was absent:
+                      ;; `cl-generic-ensure-function' upgrades it.
+                      (get ',name 'cl--methods)
+                      (not (fboundp ',name))))
+             ;; Real cl-generic machinery is present and this name is
+             ;; either already a registered generic or a fresh
+             ;; method-only generic — register the method into the
+             ;; real method table.  `cl-generic-define-method' also
+             ;; replaces the dispatcher in the function cell.
+             (cl-generic-define-method
+              #',name ',(nreverse quallist) ',arglist nil
+              (lambda ,params ,@(and doc (list doc)) ,@mbody))
            (unless (fboundp ',name)
              ;; GNU's cl-generic installs the dispatcher implicitly
              ;; when the first `cl-defmethod' lands — no
@@ -15518,17 +15592,17 @@ VAR, (VAR TYPE), or (VAR (eql FORM))."
                (lambda (&rest cl--args)
                  (cl--generic-dispatch ',name cl--args))))
            (put ',name 'cl--methods
-                (cons (list ',specs ',qual
+                (cons (list ',specs ',(nreverse quallist) ',params
                             (lambda ,params
                               ,@(and doc (list doc)) ,@mbody))
                       (let ((old (get ',name 'cl--methods)) (out nil))
-                        ;; Replace a method with same specs+qualifier.
+                        ;; Replace a method with same specs+qualifiers.
                         (dolist (m old)
                           (unless (and (equal (car m) ',specs)
-                                       (eq (cadr m) ',qual))
+                                       (equal (nth 1 m) ',(nreverse quallist)))
                             (push m out)))
                         (nreverse out))))
-           ',name))))))
+           ',name)))))
 
 ;; ---------- cl-lib / cl-seq subset ----------
 
@@ -15868,22 +15942,40 @@ Keywords supported: :test :test-not :key :if :if-not :count :start :end
          ((and (symbolp type) (get type 'cl-deftype-handler))
           (cl-typep val (funcall (get type 'cl-deftype-handler))))
          (t
-          (funcall
-           (or (cdr (assq type '((integer . integerp) (number . numberp)
-                                 (float . floatp) (string . stringp)
-                                 (symbol . symbolp) (cons . consp)
-                                 (list . listp) (vector . vectorp)
-                                 (hash-table . hash-table-p)
-                                 (function . functionp)
-                                 (character . characterp)
-                                 (boolean . booleanp)
-                                 (sequence . sequencep) (array . arrayp)
-                                 (atom . atom) (keyword . keywordp)
-                                 (fixnum . fixnump) (buffer . bufferp)
-                                 (window . windowp) (process . processp)
-                                 (frame . framep) (marker . markerp))))
-               (error "cl-typep: unknown type %s" type))
-           val)))))))))
+          (let ((pred (cdr (assq type '((integer . integerp) (number . numberp)
+                                       (float . floatp) (string . stringp)
+                                       (symbol . symbolp) (cons . consp)
+                                       (list . listp) (vector . vectorp)
+                                       (hash-table . hash-table-p)
+                                       (function . functionp)
+                                       (character . characterp)
+                                       (boolean . booleanp)
+                                       (sequence . sequencep) (array . arrayp)
+                                       (atom . atom) (keyword . keywordp)
+                                       (fixnum . fixnump) (buffer . bufferp)
+                                       (window . windowp) (process . processp)
+                                       (frame . framep) (marker . markerp))))))
+            (if pred
+                (funcall pred val)
+              ;; A `cl--class' type (cl-defstruct record/vector/list
+              ;; name): instance check mirrors the generated `NAME-p'
+              ;; predicate — the object's tag must be in the type's
+              ;; `cl-struct-TYPE-tags' list (covers subclasses).
+              (let ((class (and (symbolp type) (get type 'cl--class)))
+                    (tagsv (and (symbolp type)
+                                (intern-soft (concat "cl-struct-"
+                                                     (symbol-name type)
+                                                     "-tags")))))
+                (cond
+                 ((null class)
+                  (error "cl-typep: unknown type %s" type))
+                 ((and tagsv (boundp tagsv))
+                  (let ((tags (symbol-value tagsv)))
+                    (cond ((recordp val) (memq (aref val 0) tags))
+                          ((vectorp val) (memq (aref val 0) tags))
+                          ((consp val) (memq (car val) tags))
+                          (t nil))))
+                 (t (eq (type-of val) type))))))))))))))
 
 (defun cl-some (pred seq &rest _keys)
   "First non-nil (PRED X) for X in SEQ."
@@ -15987,12 +16079,18 @@ To define new types, see `cl-deftype'."
        ((eq state 'done) nil)
        ;; Required or optional position: a cons CAR means a
        ;; destructuring pattern (req: the whole spec; opt:
-       ;; (pattern default)); otherwise a normal spec.
+       ;; (pattern default)); otherwise a normal spec.  The emitted
+       ;; arglist must keep the `&optional' marker or every optional
+       ;; parameter silently becomes required.
        ((and (consp a) (or (eq state 'req) (consp (car a))))
+        (when (and (eq state 'opt) (not (memq '&optional eargs)))
+          (push '&optional eargs))
         (let ((g (make-symbol "arg")) (def (cadr a)))
           (push (if (eq state 'opt) (list g def) g) eargs)
           (push (list (if (eq state 'req) a (car a)) g) lets)))
-       (t (push a eargs))))
+       (t (when (and (eq state 'opt) (not (memq '&optional eargs)))
+            (push '&optional eargs))
+         (push a eargs))))
     (if (and (null lets) (null keys) (null aux) (not (consp restsym)))
         ;; Plain arglist — just add the cl-block wrapper.
         `(,kind ,name ,args (cl-block ,name ,@body))
