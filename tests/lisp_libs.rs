@@ -529,3 +529,88 @@ fn saveplace_mode_hooks() {
         "(t (save-place-find-file-hook) (save-place-dired-hook) (save-place-to-alist uniquify-kill-buffer-function vc-kill-buffer-hook))"
     );
 }
+
+// ------------------------------------------------- round 19 runtime fixes
+
+#[test]
+fn macroexp_quote_is_function() {
+    // GNU macroexp.el: `macroexp-quote' is a *function* — its argument is
+    // evaluated before deciding whether to wrap in (quote …).  A bogus
+    // defmacro redefinition left raw subexpressions unquoted.
+    assert_eq!(ev("(list (macroexp-quote 5) (macroexp-quote 'x) (macroexp-quote nil))"),
+        "(5 'x nil)");
+}
+
+#[test]
+fn cl_typep_via_cl_macs() {
+    // GNU: `cl-typep' is autoloaded from cl-macs; loading cl-macs must
+    // restore the real (dumped) definition, and compound type specifiers
+    // follow GNU's lattice.
+    assert_eq!(
+        ev("(progn (require 'cl-macs)
+                  (list (cl-typep 'a 'symbol)
+                        (cl-typep 5 'symbol)
+                        (cl-typep 5 '(or vector (and symbol (not null))))
+                        (cl-typep \"x\" '(or vector (and symbol (not null))))))"),
+        "(t nil nil nil)"
+    );
+}
+
+#[test]
+fn cl_advised_dolist_wraps_in_nil_block() {
+    // cl.el advises `dolist' with cl--wrap-in-nil-block.  Loading cl.el
+    // used to loop forever: backquote-list* called dolist, the advice
+    // wrapped it in cl-block, whose backquote body spawned another
+    // backquote-list*.  GNU's while-based backquote-list* terminates.
+    assert_eq!(
+        ev("(progn (require 'cl)
+                  (car (macroexpand-1 '(dolist (x '(1 2)) x))))"),
+        "cl-block"
+    );
+}
+
+#[test]
+fn pcase_eieio_pattern_expands() {
+    // GNU eieio.el provides a `pcase' pattern `(eieio FIELDS…)' used by
+    // transient.el; without it expansion signals "Unknown eieio pattern".
+    assert_eq!(
+        ev("(progn (require 'eieio)
+                  (car (macroexpand-1 '(pcase v ((eieio a b) (list a b))))))"),
+        "if"
+    );
+}
+
+#[test]
+fn pcase_cl_type_pattern_expands() {
+    // GNU cl-macs.el's `(cl-type TYPE)' pcase pattern (transient.el uses
+    // `(cl-type symbol)' etc.); expansions dispatch on `cl-typep'.
+    assert_eq!(
+        ev("(progn (require 'cl-macs)
+                  (car (macroexpand-1 '(pcase v ((cl-type symbol) v)))))"),
+        "if"
+    );
+}
+
+#[test]
+fn quail_subdir_load_and_leim_list() {
+    // `quail/NAME' references must resolve to the leim/quail copies even
+    // where `language/NAME' shares the basename (burmese, czech, …); the
+    // flat tree stores those as quail-NAME.el.
+    assert_eq!(
+        ev("(progn (require 'quail)
+                  (load \"quail/arabic\")
+                  (and (quail-package \"arabic\")
+                       (list (car (assoc \"arabic\" input-method-alist)))))"),
+        "(\"arabic\")"
+    );
+    // The colliding name resolves to the quail copy: language/czech.el
+    // only calls `set-language-info-alist', while quail/czech.el
+    // registers quail packages (GNU-verified: -Q already has 'czech in
+    // features from the dumped language files).
+    assert_eq!(
+        ev("(progn (require 'quail)
+                  (load \"quail/czech\")
+                  (and (quail-package \"czech\") t))"),
+        "t"
+    );
+}

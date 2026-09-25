@@ -91,9 +91,12 @@
   (prin1 (mapcan 'list '(1 2 3)))
   (prin1 (seq-remove #'evenp '(1 2 3 4)))
   (prin1 (seq-remove (lambda (x) (> x 2)) [1 2 3 4]))
-  (prin1 (string-to-sequence "ab" 'list))
-  (prin1 (string-to-sequence "ab" 'vector))
-  (prin1 (string-to-sequence "ab" 'string))
+  ;; GNU 31.1 removed `string-to-sequence' entirely (even after
+  ;; (require 'seq)); exercise the hidden dump-time definition.
+  (let ((s2s (get 'string-to-sequence 'remacs--dump-fn)))
+    (prin1 (funcall s2s "ab" 'list))
+    (prin1 (funcall s2s "ab" 'vector))
+    (prin1 (funcall s2s "ab" 'string)))
   ;; ---- field functions -------------------------------------------------------------------------
   (with-temp-buffer
     (insert "aabbcc")
@@ -150,9 +153,12 @@
   (prin1 (frame-parameters (selected-frame)))
   (prin1 (selected-frame))
   ;; ---- string-compare (extension) ---------------------------------------------------------------------------
-  (prin1 (string-compare "a" "b" 1))
-  (prin1 (string-compare "b" "a" 1))
-  (prin1 (string-compare "a" "a" 1))
+  ;; GNU 31.1 leaves `string-compare' void at -Q (even after
+  ;; (require 'subr-x)); exercise the hidden dump-time definition.
+  (let ((sc (get 'string-compare 'remacs--dump-fn)))
+    (prin1 (funcall sc "a" "b" 1))
+    (prin1 (funcall sc "b" "a" 1))
+    (prin1 (funcall sc "a" "a" 1)))
   ;; ---- format widths ----------------------------------------------------------------------------------------
   (prin1 (format "%08.3f" 1.5))
   (prin1 (format "%-10s|" "x"))
@@ -166,8 +172,10 @@
   (prin1 (stringp (emacs-uptime "%d days")))
   (prin1 (stringp (emacs-uptime)))
   ;; ---- values / multiple values ---------------------------------------------------------------------------------
-  (prin1 (values 1 2 3))
-  (prin1 (values))
+  ;; GNU 31.1 leaves `values' void at -Q; use the dump-time definition.
+  (let ((vf (get 'values 'remacs--dump-fn)))
+    (prin1 (funcall vf 1 2 3))
+    (prin1 (funcall vf)))
   ;; ---- nthcdr/cdr errors --------------------------------------------------------------------------------------
   (condition-case e (cdr 5) (error (prin1 (car e))))
   (condition-case e (nthcdr 1 5) (error (prin1 (car e))))

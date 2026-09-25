@@ -457,10 +457,12 @@ fn read_key_sequence_paths() {
     // Vector variant returns a vector.
     let v = ev_in(&mut i, "(read-key-sequence-vector \"K: \")");
     assert!(i.prin1_to_string(&v).starts_with('['));
-    // Batch (no reader): empty string.
+    // Batch (no reader): GNU signals end-of-file reading stdin.
     let (mut j, _) = interp();
-    let v = ev_in(&mut j, "(read-key-sequence \"K: \")");
-    assert_eq!(j.prin1_to_string(&v), "\"\"");
+    assert_eq!(
+        ev_err_in(&mut j, "(read-key-sequence \"K: \")"),
+        "end-of-file"
+    );
 }
 
 #[test]
