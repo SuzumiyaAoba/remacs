@@ -314,6 +314,9 @@ static EMBEDDED_LISP: &[(&str, &str)] = &[
     ("dos-vars", include_str!("../../lisp/dos-vars.el")),
     ("fringe", include_str!("../../lisp/fringe.el")),
     ("font-core", include_str!("../../lisp/font-core.el")),
+    ("font-lock", include_str!("../../lisp/font-lock.el")),
+    ("jit-lock", include_str!("../../lisp/jit-lock.el")),
+    ("help", include_str!("../../lisp/help.el")),
     (
         "dynamic-setting",
         include_str!("../../lisp/dynamic-setting.el"),
@@ -2220,6 +2223,16 @@ fn eval_src_opts(
     i.loading_dumped |= dumped_like || file.starts_with("builtin:");
     let r = eval_str_for_load(i, &src);
     i.loading_dumped = was_dumped;
+    // File-scoped `defvar' declarations live on the root frame; merge
+    // them into `file_declared' before unwinding so `let's in later
+    // code bind those names dynamically — what the byte-compiled
+    // equivalent of the file would produce.
+    if let Some(root) = &i.lexenv {
+        let mut fd = i.file_declared.borrow_mut();
+        for s in root.declared.borrow().iter() {
+            fd.insert(*s);
+        }
+    }
     i.lexenv = saved_lexenv;
     if r.is_ok() {
         // GNU records the file in `load-history': (FILE . ENTRIES),

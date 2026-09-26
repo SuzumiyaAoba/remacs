@@ -133,7 +133,8 @@ impl Interp {
         val: Value,
     ) -> Result<(), Flow> {
         let is_special = self.obarray.symbol(sym).special
-            || crate::lisp::eval::lexenv_declared(&self.lexenv, sym);
+            || crate::lisp::eval::lexenv_declared(&self.lexenv, sym)
+            || self.file_declared.borrow().contains(&sym);
         match (lex_vars, is_special) {
             (Some(frame), false) => {
                 crate::lisp::eval::lexframe_bind(frame, sym, val);

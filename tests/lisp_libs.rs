@@ -1012,3 +1012,62 @@ fn translation_table_extra_slots() {
         "(marker :oor)"
     );
 }
+
+// ------------------------------------------------ file-scoped defvar decls
+
+#[test]
+fn bare_defvar_in_loaded_file_marks_special_for_later_lets() {
+    // GNU's `(defvar X)' is a scoped special declaration; interpreted
+    // it unwinds with the load's env, but the byte-compiled file would
+    // emit a permanent specbind for X — so lets in code that runs
+    // *after* the load still bind X dynamically (rx.el's
+    // `rx--pcase-vars' feeding pcase expansion inside other
+    // libraries).  Our `file_declared' set mirrors that: after a file
+    // with a top-level bare defvar finishes loading, subsequent lets
+    // on the name specbind so defuns see the value.
+    let path = std::env::temp_dir().join("remacs-scoped-defvar-test.el");
+    std::fs::write(
+        &path,
+        ";;; -*- lexical-binding: t -*-\n(defvar remacs--scoped-dv)\n\
+         (defun remacs--dv-reader () remacs--scoped-dv)\n",
+    )
+    .unwrap();
+    let p = path.to_string_lossy().to_string();
+    let form = format!(
+        "(progn (load {p:?} nil t)
+                (list (let* ((remacs--scoped-dv '(a b))) (remacs--dv-reader))
+                      (boundp 'remacs--scoped-dv)))"
+    );
+    assert_eq!(ev(&form), "((a b) nil)");
+    let _ = std::fs::remove_file(&path);
+}
+
+#[test]
+fn pcase_rx_let_binding_matches_gnu() {
+    // The exact erc.el path: `(rx (let V ...))' inside pcase expands
+    // through rx--pcase-transform, which collects names into
+    // `rx--pcase-vars' — dynamically bound by pcase-defmacro's let*
+    // since rx.el's bare defvar marks it file-scoped special.
+    assert_eq!(
+        ev("(pcase \"abc\" ((rx (let v \"abc\")) v) (_ 'no))"),
+        "\"abc\""
+    );
+}
+
+#[test]
+fn dumped_help_font_lock_jit_lock_loadable() {
+    // GNU's loadup loads help.el/jit-lock.el/font-lock.el: they are
+    // provided features at -Q and their entry points are bound, and
+    // an explicit `load' finds the embedded source.
+    assert_eq!(
+        ev("(list (featurep 'help) (fboundp 'help-mode)
+                  (featurep 'font-lock) (fboundp 'font-lock-mode)
+                  (featurep 'jit-lock) (fboundp 'jit-lock-mode))"),
+        "(t t t t t t)"
+    );
+    assert_eq!(
+        ev("(progn (load \"help\" nil t) (load \"font-lock\" nil t)
+                  (load \"jit-lock\" nil t) 'ok)"),
+        "ok"
+    );
+}

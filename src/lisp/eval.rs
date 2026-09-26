@@ -136,6 +136,15 @@ pub struct Interp {
     specbind: Vec<SpecBind>,
     /// Current lexical environment (non-nil only under lexical-binding).
     pub lexenv: LexEnv,
+    /// Names a bare `(defvar X)' declared at file top-level — GNU's
+    /// scoped `defvar' marker unwinds with the load, but the same file
+    /// byte-compiled would emit a permanent `specbind' for X, so
+    /// `let's see it dynamically forever after.  Root-frame
+    /// `declared' sets are merged here when each file finishes
+    /// loading, approximating the compiled effect for interpreted
+    /// code (e.g. rx.el's `rx--pcase-vars' feeding pcase expansion
+    /// during other libraries' loads).
+    pub file_declared: RefCell<std::collections::HashSet<SymId>>,
     /// The `lexical-binding` default (buffer-local in Emacs; we keep a
     /// default plus per-buffer locals).
     pub buffers: crate::buffer::BufferSet,
@@ -661,6 +670,7 @@ impl Interp {
             obarray,
             specbind: Vec::new(),
             lexenv: None,
+            file_declared: RefCell::new(std::collections::HashSet::new()),
             buffers: crate::buffer::BufferSet::new(),
             current_buffer: 0,
             features: feature_syms,
