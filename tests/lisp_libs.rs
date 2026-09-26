@@ -923,3 +923,92 @@ fn load_decodes_emacs_internal_chars() {
     assert_eq!(ev(&form), "(nil t 3 t)");
     let _ = std::fs::remove_file(&path);
 }
+
+// ----------------------------------------- GNU closure slot view / env alist
+
+#[test]
+fn closure_aref_env_and_docstring_slots() {
+    // GNU closures are [args body env nil docstring iform] vectors
+    // truncated to 3/5/6 (eval.c Fmake_interpreted_closure).  The env
+    // slot is GNU's internal-interpreter-environment: the flat alist
+    // specbind builds by prepending — reversed binding order.
+    assert_eq!(
+        ev("(let ((a 1) (b 2)) (aref (lambda (x) (+ a b x)) 2))"),
+        "((b . 2) (a . 1))"
+    );
+    // (:documentation FORM) lands in slot 4 as an arbitrary value —
+    // string for docs, symbol for oclosure's type marker.  Length
+    // grows to 5 per GNU.
+    assert_eq!(
+        ev("(let* ((f (lambda (x) (:documentation 'my-type) x)))
+             (list (length f) (aref f 3) (aref f 4)))"),
+        "(5 nil my-type)"
+    );
+    // make-interpreted-closure takes GNU's 3-5 args; the env alist is
+    // stored verbatim so positional readers see it unchanged.
+    assert_eq!(
+        ev("(let* ((e '((type . tt) (slot . ss) (index . 2)))
+                  (f (make-interpreted-closure '(x) '((identity x)) e
+                                               'the-type nil)))
+             (list (length f) (aref f 2) (aref f 4)
+                   (funcall f 42)))"),
+        "(5 ((type . tt) (slot . ss) (index . 2)) the-type 42)"
+    );
+}
+
+#[test]
+fn oclosure_accessors_and_type() {
+    // oclosure.el exercises the slot view: oclosure--get indexes the
+    // env alist positionally, oclosure-type reads slot 4's type symbol.
+    ev("(load \"oclosure\" nil t)");
+    assert_eq!(
+        ev("(let ((f (symbol-function 'accessor--type)))
+             (list (length f) (aref f 4) (oclosure-type f)))"),
+        "(5 oclosure-accessor oclosure-accessor)"
+    );
+    // A user oclosure type: the predicate returns memq's tail (same
+    // as GNU, not t) and oclosure-type reads the type slot.
+    assert_eq!(
+        ev("(progn (oclosure-define (my-oc (:predicate my-oc-p)) alpha beta)
+                  (let ((o (oclosure-lambda (my-oc (alpha) (beta)) (x) x)))
+                    (list (my-oc-p o) (oclosure-type o))))"),
+        "((my-oc oclosure) my-oc)"
+    );
+}
+
+// ------------------------------------------------------- charset registry
+
+#[test]
+fn mule_conf_charsets_registered_at_startup() {
+    // GNU's loadup runs international/mule-conf.el: define-charset'd
+    // names are `charsetp' at -Q and define-charset is mule.el's
+    // Lisp-level defun (not the bare subr).
+    assert_eq!(
+        ev("(list (charsetp 'chinese-gb2312) (charsetp 'japanese-jisx0213-1)
+                  (charsetp 'japanese-jisx0213.2004-1) (charsetp 'katakana-jisx0201)
+                  (subrp (symbol-function 'define-charset)))"),
+        "(t t t t nil)"
+    );
+    // unify-charset succeeds for define-charset'd names (their
+    // :unify-map/:code-offset carriers) like GNU, errors for ascii.
+    assert_eq!(
+        ev("(list (unify-charset 'chinese-gb2312)
+                  (condition-case e (progn (unify-charset 'ascii) :ok)
+                    (error :err)))"),
+        "(nil :err)"
+    );
+}
+
+#[test]
+fn translation_table_extra_slots() {
+    // coding.c gives translation-table 2 extra slots; japanese.el's
+    // define-translation-table writes slot 1.
+    assert_eq!(
+        ev("(let ((tt (make-char-table 'translation-table nil)))
+             (set-char-table-extra-slot tt 1 'marker)
+             (list (char-table-extra-slot tt 1)
+                   (condition-case e (progn (set-char-table-extra-slot tt 9 'x) :ok)
+                     (args-out-of-range :oor))))"),
+        "(marker :oor)"
+    );
+}

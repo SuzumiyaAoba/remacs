@@ -215,14 +215,38 @@ fn f_define_charset_alias(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 }
 
 fn f_unify_charset(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    // (charset &optional unify-map deunify-map) — GNU signals
-    // "Can't unify charset: X" when the charset cannot be unified
-    // (ucs, or any charset lacking a :map/:code-space map).  Charsets
-    // registered via `define-charset' (mule-conf's `:unify-map'/
-    // `:code-offset' carriers) unify fine; the map is not modeled, but
-    // registration is what loads depend on.
+    // (charset &optional unify-map deunify) — GNU charset.c: only
+    // OFFSET-method charsets whose :code-offset reaches the
+    // emacs-mule area (>= #x110000) can be unified; everything else
+    // (ascii, unicode, :map/:subset carriers) gets
+    // "Can't unify charset: X".
     let name = want_charset(i, &a[0])?;
-    if charset_entry(i, &name).is_none() {
+    let deunify = a.get(2).is_some_and(|v| !v.is_nil());
+    let offset = charset_entry(i, &name).and_then(|e| {
+        let mut cur = e.1.clone();
+        loop {
+            let (k, v, rest) = match &cur {
+                Value::Cons(c) => {
+                    let b = c.borrow();
+                    match &b.cdr {
+                        Value::Cons(c2) => {
+                            let b2 = c2.borrow();
+                            (b.car.clone(), b2.car.clone(), b2.cdr.clone())
+                        }
+                        _ => break None,
+                    }
+                }
+                _ => break None,
+            };
+            if matches!(&k, Value::Sym(s) if i.symbol_name(*s) == ":code-offset") {
+                break Some(v);
+            }
+            cur = rest;
+        }
+    });
+    let unified = !deunify
+        && matches!(offset, Some(v) if v.int().is_some_and(|n| n >= 0x110000));
+    if !unified {
         return Err(i.error(format!("Can't unify charset: {name}")));
     }
     Ok(Value::Nil)
@@ -2227,14 +2251,20 @@ fn f_encode_sjis_char(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 }
 
 fn f_define_charset_internal(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    // (define-charset-internal NAME DIMENSION CODE-SPACE MIN-CHAR MAX-CHAR
-    //  ISO-FINAL-CHAR ISO-GRAPHIC-PLANE ASCII-COMPATIBLE-P SUPPLEMENT-P
-    //  INVALID-CODE CODE-OFFSET MAP SUBSET-PARENTS SUPPLEMENT-CHARSET
-    //  UNIFY-MAP UNICODES &rest)
+    // (define-charset-internal NAME DIMENSION CODE-SPACE MIN-CODE MAX-CODE
+    //  ISO-FINAL-CHAR ISO-REVISION-NUMBER EMACS-MULE-ID ASCII-COMPATIBLE-P
+    //  SUPPLEMENTARY-P INVALID-CODE CODE-OFFSET MAP SUBSET SUPERSET
+    //  UNIFY-MAP PLIST) — mule.el's `define-charset' packs all attrs into
+    //  PLIST; GNU keeps them as the charset's attribute list.
     let sid = want_sym(i, &a[0])?;
     let name = i.symbol_name(sid);
-    if charset_entry(i, &name).is_none() {
-        i.charsets.push((name, Value::Nil));
+    let plist = a.get(16).cloned().unwrap_or(Value::Nil);
+    if let Some(e) = i.charsets.iter_mut().find(|(n, _)| *n == name) {
+        if e.1.is_nil() && !plist.is_nil() {
+            e.1 = plist;
+        }
+    } else {
+        i.charsets.push((name, plist));
     }
     Ok(Value::Nil)
 }

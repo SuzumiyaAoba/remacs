@@ -980,6 +980,13 @@ impl Interp {
                     }
                 }
             }
+            // oclosure.el is in GNU's dump (loadup.el:198, right after
+            // cl-preloaded — "Used by cl-generic"): interpreted closures
+            // now carry GNU's docstring/env slot view, so the real file
+            // provides `oclosure-define', `oclosure-lambda',
+            // `oclosure--copy' & the `accessor--*' OClosure accessors
+            // that cl-generic's `cl--generic-nnm' relies on.
+            let _ = crate::lisp::load::load_library(&mut interp, "oclosure");
             // cl-generic.el is in GNU's dump (the `cl-generic' feature
             // is pre-registered): its `cl-defmethod' forms install the
             // real generalizer methods (`cl-generic-generalizers' for
