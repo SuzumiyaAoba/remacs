@@ -17,6 +17,7 @@ pub(crate) mod json;
 pub(crate) mod lcms;
 pub(crate) mod listfn;
 pub mod misc;
+pub(crate) mod nsgui;
 pub(crate) mod printfn;
 pub(crate) mod readfn;
 pub(crate) mod seq;
@@ -89,6 +90,7 @@ fn collect() -> Vec<&'static Subr> {
     v.extend(filenotify::SUBRS);
     v.extend(gnutls::SUBRS);
     v.extend(dbus::SUBRS);
+    v.extend(nsgui::SUBRS);
     v.extend(crate::lisp::process::SUBRS);
     v
 }

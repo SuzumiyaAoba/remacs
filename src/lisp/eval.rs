@@ -1059,6 +1059,16 @@ impl Interp {
             ] {
                 let _ = crate::lisp::load::load_library(&mut interp, lib);
             }
+            // term/ns-win.el, term/common-win.el and fontset.el are in
+            // GNU's dump too (loadup.el): the `ns-win'/`common-win'/
+            // `fontset' feature marks are pre-registered, so evaluate
+            // the embedded sources for the real definitions —
+            // `ns-handle-nxopen', `ns-parse-geometry',
+            // `x-handle-args', `x-decompose-font-name' & co. must be
+            // bound at -Q.
+            let _ = crate::lisp::load::load_library(&mut interp, "ns-win");
+            let _ = crate::lisp::load::load_library(&mut interp, "common-win");
+            let _ = crate::lisp::load::load_library(&mut interp, "fontset");
             // Loading cconv.el interpretively expands its
             // `define-inline' call, which pulls in inline.el — GNU's
             // dump had it compiled away, so -Q keeps `define-inline'

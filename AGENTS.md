@@ -59,7 +59,8 @@ Registration rules:
   Punct-b5, japanese — all byte-identical to GNU.
 - `transient.el`, `eieio.el` eager macroexpansion `(invalid-function nil)`;
   `byte-opt` "lambda used as function name" warnings.
-- `xwidget-internal` and other GUI primitives unimplemented.
+- `xwidget-internal` unimplemented. NS/macOS GUI primitives are
+  covered by `src/lisp/builtins/nsgui.rs` (see below).
 - Bulk-load test (all lisp/*.el under --batch): only failures besides the
   above are `Lisp nesting exceeds max-lisp-eval-depth` during eager
   macro-expansion (~50 files), platform-gated *-win/android files, and
@@ -139,6 +140,44 @@ pays the ~30 s prelude; live-bus D-Bus tests live in `tests/dbus.rs`
 and skip when `DBUS_SESSION_BUS_ADDRESS` is unset). kqueue note:
 `NOTE_WRITE` only fires on a real write() — `write-region` over an
 empty point range is a no-op and produces no event.
+
+## NS/macOS GUI (`src/lisp/builtins/nsgui.rs`)
+
+NeXTstep primitives bridge to AppKit/Foundation via dlopen'd
+`libobjc.A.dylib` + `objc_msgSend` (Objc function table kept alive in
+a `OnceLock`; the AppKit dylib handle is stored in `Objc::_lib` so
+pointers stay valid). `AXIsProcessTrusted` comes from a separately
+dlopen'd ApplicationServices (`mem::forget` keeps it mapped —
+one-shot, process-lifetime). Headless-capable subrs really call
+AppKit: `ns-font-name`, `ns-list-colors` (all NSColorLists, GNU's
+<7-char/PANTONE filter + `framep` arg check),
+`ns-process-is-accessibility-trusted`, `ns-block/unblock-system-sleep`
+(`NSProcessInfo beginActivityWithOptions:` — the activity object is
+autoreleased, so **retain it** before the pool pops; passing the raw
+token to `endActivity:` used to crash), `ns-badge`,
+`ns-request-user-attention`, `ns-progress-indicator`,
+`ns-list-services`. GUI-only entry points signal GNU's exact text
+`Window system is not in use or not initialized` (macro
+`winsys_fn!`) — matching the NS reference build in batch.
+`x-create-frame`/`x-select-font` carry the NS-specific messages
+`Nextstep windows are not in use or not initialized` /
+`Window system frame should be used` (misc.rs).
+
+Startup: `term/ns-win`, `term/common-win` and `fontset` are
+pre-registered features, so `(require ...)` would skip them — they
+are loaded explicitly with `load_library` in `Interp::new` after the
+other dumped libraries (need `cl-generic` first for ns-win's
+`cl-defmethod`). This makes the Lisp-layer functions real at -Q:
+`ns-handle-nxopen`, `ns-parse-geometry` (Nextstep order
+`top left height width`), `x-handle-*`, `x-compose/decompose-font-name`,
+`ns-*-working-text`, `ns-define-service`, `x-file-dialog`,
+`x-begin-drag` (which consults the `XdndSelection` local binding and
+signals `No local value for XdndSelection` like GNU). Full
+`mapatoms` diff vs the NS reference build: 128/128 `ns-*`/`x-*`
+names bound — GNU marks many as `subr` only because that build has
+nativecomp (functions compile to native subrs).
+
+Regression suite: `tests/nsgui.rs` (macOS-gated, 4 tests).
 
 ## Verification recipe
 

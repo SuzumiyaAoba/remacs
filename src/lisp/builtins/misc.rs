@@ -1242,12 +1242,12 @@ pub(crate) static SUBRS: &[Subr] = &[
     ),
     S!("image-flush", 1, 2, f_image_flush, ""),
     S!("image-mask-p", 1, 2, f_image_spec_check, ""),
-    S!("image-metadata", 1, 2, f_nil, ""),
+    S!("image-metadata", 1, 2, f_image_metadata, ""),
     S!("image-size", 1, 3, f_image_spec_check, ""),
     S!("image-transforms-p", 0, 1, f_image_transforms_p, ""),
     S!("image-type", 1, 3, f_image_type, ""),
     S!("image-type-available-p", 1, 2, f_image_type_available_p, ""),
-    S!("init-image-library", 1, 1, f_t, ""),
+    S!("init-image-library", 1, 1, f_init_image_library, ""),
     S!("put-image", 2, 4, f_put_image, ""),
     S!("remove-images", 2, 3, f_nil, ""),
     S!("display-popup-menus-p", 0, 1, f_nil, ""),
@@ -1260,7 +1260,7 @@ pub(crate) static SUBRS: &[Subr] = &[
         "x-create-frame",
         1,
         1,
-        f_x_stub_err,
+        f_ns_frame_stub_err,
         "Create an X frame (no X toolkit)."
     ),
     S!("x-family-fonts", 0, 2, f_nil, "List X font families."),
@@ -1275,7 +1275,7 @@ pub(crate) static SUBRS: &[Subr] = &[
         "x-select-font",
         0,
         2,
-        f_x_stub_err,
+        f_select_font_err,
         "Select an X font (no X toolkit)."
     ),
     S!("x-display-backing-store", 0, 1, f_ns_display, ""),
@@ -1679,7 +1679,7 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!("system-move-file-to-trash", 1, 1, f_move_file_to_trash, ""),
     // ---------- display/font internals (no GUI) ----------
     S!("get-display-property", 2, 4, f_get_display_property, ""),
-    S!("lookup-image-map", 3, 3, f_nil, ""),
+    S!("lookup-image-map", 3, 3, f_lookup_image_map, ""),
     S!("clear-image-cache", 0, 2, f_clear_image_cache, ""),
     S!("image-cache-size", 0, 0, f_zero, ""),
     S!("display--line-is-continued-p", 0, 0, f_nil, ""),
@@ -2859,6 +2859,149 @@ fn f_t(_i: &mut Interp, _a: Vec<Value>) -> EvalResult {
 }
 
 fn f_nil(_i: &mut Interp, _a: Vec<Value>) -> EvalResult {
+    Ok(Value::Nil)
+}
+
+/// `on_hot_spot_p' (xdisp.c) — does AREA contain pixel (X, Y)?
+/// AREA is (rect . ((x0 . y0) . (x1 . y1))), (circle . ((x0 . y0) . r))
+/// or (poly . [x0 y0 x1 y1 ...]).
+fn on_hot_spot_p(i: &Interp, area: &Value, x: i128, y: i128) -> bool {
+    let Value::Cons(hs) = area else {
+        return false;
+    };
+    let (tag, body) = {
+        let b = hs.borrow();
+        (b.car.clone(), b.cdr.clone())
+    };
+    let Value::Sym(tag_id) = tag else {
+        return false;
+    };
+    let cons_parts = |v: &Value| -> Option<(Value, Value)> {
+        if let Value::Cons(c) = v {
+            let b = c.borrow();
+            Some((b.car.clone(), b.cdr.clone()))
+        } else {
+            None
+        }
+    };
+    let fixnum = |v: &Value| -> Option<i128> {
+        if let Value::Int(n) = v {
+            Some(*n)
+        } else {
+            None
+        }
+    };
+    match i.symbol_name(tag_id).as_str() {
+        "rect" => {
+            // ((x0 . y0) . (x1 . y1))
+            let Some((tl, br)) = cons_parts(&body) else {
+                return false;
+            };
+            let Some((x0v, y0v)) = cons_parts(&tl) else {
+                return false;
+            };
+            let Some((x1v, y1v)) = cons_parts(&br) else {
+                return false;
+            };
+            let (Some(x0), Some(y0), Some(x1), Some(y1)) =
+                (fixnum(&x0v), fixnum(&y0v), fixnum(&x1v), fixnum(&y1v))
+            else {
+                return false;
+            };
+            x >= x0 && y >= y0 && x <= x1 && y <= y1
+        }
+        "circle" => {
+            // ((x0 . y0) . r)
+            let Some((ctr, rv)) = cons_parts(&body) else {
+                return false;
+            };
+            let Some((x0v, y0v)) = cons_parts(&ctr) else {
+                return false;
+            };
+            let (Some(x0), Some(y0)) = (fixnum(&x0v), fixnum(&y0v)) else {
+                return false;
+            };
+            let r = match &rv {
+                Value::Int(n) => *n as f64,
+                Value::Float(f) => **f,
+                _ => return false,
+            };
+            let dx = (x0 - x) as f64;
+            let dy = (y0 - y) as f64;
+            dx * dx + dy * dy <= r * r
+        }
+        "poly" => {
+            // [x0 y0 x1 y1 x2 y2 ...]
+            let Value::Vec(v) = &body else {
+                return false;
+            };
+            let poly = v.borrow();
+            let n = poly.len();
+            if n < 6 || n % 2 != 0 {
+                return false;
+            }
+            let mut inside = false;
+            let (Some(mut x0), Some(mut y0)) =
+                (fixnum(&poly[n - 2]), fixnum(&poly[n - 1]))
+            else {
+                return false;
+            };
+            for k in (0..n).step_by(2) {
+                let x1 = x0;
+                let y1 = y0;
+                let (Some(nx), Some(ny)) = (fixnum(&poly[k]), fixnum(&poly[k + 1]))
+                else {
+                    return false;
+                };
+                x0 = nx;
+                y0 = ny;
+                // Does this segment cross the X line?
+                if x0 >= x {
+                    if x1 >= x {
+                        continue;
+                    }
+                } else if x1 < x {
+                    continue;
+                }
+                if y > y0 && y > y1 {
+                    continue;
+                }
+                if y < y0 + ((y1 - y0) * (x - x0)) / (x1 - x0) {
+                    inside = !inside;
+                }
+            }
+            inside
+        }
+        _ => false,
+    }
+}
+
+/// `lookup-image-map' — first map entry whose AREA contains (X, Y).
+fn f_lookup_image_map(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    if a[0].is_nil() {
+        return Ok(Value::Nil);
+    }
+    let (x, y) = match (&a[1], &a[2]) {
+        (Value::Int(x), Value::Int(y)) => (*x, *y),
+        (other, _) if !matches!(other, Value::Int(_)) => {
+            return Err(i.wrong_type_mut("fixnump", other));
+        }
+        (_, other) => return Err(i.wrong_type_mut("fixnump", other)),
+    };
+    let mut cur = a[0].clone();
+    while let Value::Cons(c) = cur {
+        let (entry, rest) = {
+            let b = c.borrow();
+            (b.car.clone(), b.cdr.clone())
+        };
+        cur = rest;
+        if let Value::Cons(e) = &entry {
+            let area = e.borrow().car.clone();
+            if on_hot_spot_p(i, &area, x, y) {
+                return Ok(entry);
+            }
+        }
+    }
     Ok(Value::Nil)
 }
 
@@ -7226,7 +7369,18 @@ fn f_coding_system_plist(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     };
     let table_id = i.intern("remacs-coding-system-plists");
     if let Value::Cons(_) = i.symbol_value(table_id) {
-        if let Some(entry) = assq(&i.symbol_value(table_id), &a[0]) {
+        // EOL variants share the base system's plist — GNU's
+        // coding-system objects for utf-8-unix/-dos/-mac all carry
+        // utf-8's attributes.
+        let key = match &a[0] {
+            Value::Sym(s) => {
+                let name = i.symbol_name(*s).to_string();
+                let (base, _) = eol_split(&name);
+                Value::Sym(i.intern(base))
+            }
+            other => other.clone(),
+        };
+        if let Some(entry) = assq(&i.symbol_value(table_id), &key) {
             if let Value::Cons(c) = entry {
                 return Ok(c.borrow().cdr.clone());
             }
@@ -7496,10 +7650,16 @@ fn f_gui_get_selection(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
     i.call_function(&f, &Value::Nil, None)
 }
 
-/// X-toolkit primitives that cannot run without X: signal `error'
-/// like GNU's window-system checks do.
-fn f_x_stub_err(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
-    Err(i.error("X windows are not in use or not initialized"))
+/// `x-create-frame' on an NS build: GNU's nsterm reports that
+/// Nextstep windows are unavailable.
+fn f_ns_frame_stub_err(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
+    Err(i.error("Nextstep windows are not in use or not initialized"))
+}
+
+/// `x-select-font' on an NS build: GNU's ns font panel requires a
+/// window-system frame, so batch signals `window-system-frame'.
+fn f_select_font_err(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
+    Err(i.error("Window system frame should be used"))
 }
 
 fn f_set_terminal_coding_system(i: &mut Interp, a: Vec<Value>) -> EvalResult {
@@ -7695,18 +7855,23 @@ fn f_x_show_tip(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
 }
 
 /// `image-size' / `image-mask-p' — GNU validates the spec first and
-/// signals "Invalid image specification" for anything else.
+/// signals "Invalid image specification" for anything else; a valid
+/// spec then hits `decode_window_system_frame', which on a tty is the
+/// "Window system frame should be used" error.
 fn f_image_spec_check(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let image_sym = i.intern("image");
-    let ok = match &a[0] {
-        Value::Cons(c) => i.sym_is(&c.borrow().car, image_sym),
-        _ => false,
-    };
-    if ok {
-        Ok(Value::Nil)
-    } else {
-        Err(i.error("Invalid image specification"))
+    if !valid_image_spec(i, &a[0]) {
+        return Err(i.error("Invalid image specification"));
     }
+    Err(i.error("Window system frame should be used"))
+}
+
+/// `image-metadata' — nil for an invalid spec; a valid spec hits the
+/// same window-system error as `image-size'.
+fn f_image_metadata(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    if !valid_image_spec(i, &a[0]) {
+        return Ok(Value::Nil);
+    }
+    Err(i.error("Window system frame should be used"))
 }
 
 fn f_detect_coding_string(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
@@ -7776,31 +7941,39 @@ fn f_image_type(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     }
 }
 
+/// The image types remacs claims (GNU `image_types[]' parity):
+/// `init-image-library'/`image-type-available-p' share the set.
+fn known_image_type(i: &Interp, v: &Value) -> bool {
+    let Value::Sym(s) = v else {
+        return false;
+    };
+    matches!(
+        i.symbol_name(*s).as_str(),
+        "png"
+            | "gif"
+            | "jpeg"
+            | "webp"
+            | "bmp"
+            | "xpm"
+            | "pbm"
+            | "xbm"
+            | "postscript"
+            | "tiff"
+            | "svg"
+            | "heic"
+    )
+}
+
 /// `image-type-available-p' — the types our (fake) image support
 /// claims: GNU batch reports all built-ins available.
 fn f_image_type_available_p(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let ok = match &a[0] {
-        Value::Sym(s) => {
-            let n = i.symbol_name(*s);
-            matches!(
-                n.as_str(),
-                "png"
-                    | "gif"
-                    | "jpeg"
-                    | "webp"
-                    | "bmp"
-                    | "xpm"
-                    | "pbm"
-                    | "xbm"
-                    | "postscript"
-                    | "tiff"
-                    | "svg"
-                    | "heic"
-            )
-        }
-        _ => false,
-    };
-    Ok(Value::from_bool(ok))
+    Ok(Value::from_bool(known_image_type(i, &a[0])))
+}
+
+/// `init-image-library' — GNU's `lookup_image_type': t iff TYPE is a
+/// registered (built-in) image type symbol.
+fn f_init_image_library(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    Ok(Value::from_bool(known_image_type(i, &a[0])))
 }
 
 /// `imagep' — GNU's valid_image_p: a list headed `image' whose plist
@@ -7825,22 +7998,8 @@ fn valid_image_spec(i: &Interp, v: &Value) -> bool {
             };
             match n.as_str() {
                 ":type" => {
-                    if let Value::Sym(s) = &val {
-                        ty = matches!(
-                            i.symbol_name(*s).as_str(),
-                            "png"
-                                | "gif"
-                                | "jpeg"
-                                | "webp"
-                                | "bmp"
-                                | "xpm"
-                                | "pbm"
-                                | "xbm"
-                                | "postscript"
-                                | "tiff"
-                                | "svg"
-                                | "heic"
-                        );
+                    if known_image_type(i, &val) {
+                        ty = true;
                     }
                 }
                 ":file" | ":data" => {
