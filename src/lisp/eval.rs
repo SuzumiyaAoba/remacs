@@ -4154,6 +4154,28 @@ explicitly overridden.
                 doc = Some(s.borrow().clone());
                 start = 1;
             }
+        } else if let Some(Value::Cons(c)) = body.first() {
+            // GNU `Flambda' handles `(:documentation <form>)' as a
+            // computed docstring: the form is evaluated at lambda
+            // construction and consumed (eval.c).
+            let is_doc_decl = {
+                let b = c.borrow();
+                matches!(&b.car, Value::Sym(s)
+                    if self.symbol_name(*s) == ":documentation")
+            };
+            if is_doc_decl {
+                let b = c.borrow();
+                let form = match &b.cdr {
+                    Value::Cons(args) => args.borrow().car.clone(),
+                    _ => Value::Nil,
+                };
+                drop(b);
+                let v = self.eval(&form)?;
+                if let Value::Str(s) = &v {
+                    doc = Some(s.borrow().clone());
+                }
+                start = 1;
+            }
         }
         for (i, f) in body.iter().enumerate().skip(start) {
             if let Value::Cons(c) = f {

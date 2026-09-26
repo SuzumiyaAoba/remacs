@@ -5074,8 +5074,15 @@ fn f_cl_type_of(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         Value::Vec(_) => "vector",
         Value::Record(r) => {
             let rr = r.borrow();
-            if let Some(Value::Sym(tag)) = rr.first() {
-                return Ok(Value::Sym(*tag));
+            match rr.first() {
+                Some(Value::Sym(tag)) => return Ok(Value::Sym(*tag)),
+                // GNU: when slot 0 is itself a record with size > 1 it
+                // is a class object (EIEIO instances mid-`initialize-instance')
+                // and the reported type is that object's name field (slot 1).
+                Some(Value::Record(t)) if t.borrow().len() > 1 => {
+                    return Ok(t.borrow()[1].clone());
+                }
+                _ => {}
             }
             "record"
         }

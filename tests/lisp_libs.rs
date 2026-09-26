@@ -659,13 +659,14 @@ fn eieio_class_specializers_dispatch() {
         "(t 3 t t)"
     );
     // `make-instance' is a real generic whose method table holds the
-    // subclass methods plus the `(class t)' default — GNU shape.
+    // subclass methods — GNU-verified order (eieio-named, eieio-singleton,
+    // eieio-default-superclass).
     assert_eq!(
         ev("(progn (require 'eieio-base)
                   (mapcar (lambda (m) (aref m 1))
                           (cl--generic-method-table
                            (cl--generic 'make-instance))))"),
-        "(((subclass eieio-named)) ((subclass eieio-singleton)) (t))"
+        "(((subclass eieio-named)) ((subclass eieio-singleton)) ((subclass eieio-default-superclass)))"
     );
 }
 

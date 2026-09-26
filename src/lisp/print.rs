@@ -457,119 +457,7 @@ impl Interp {
                 out.push(']');
             }
             Value::Record(items) => {
-                let rr = items.borrow();
-                // Positioned symbols print `#<symbol NAME at POS>'.
-                if let Some(Value::Sym(t)) = rr.first() {
-                    if self.symbol_name(*t) == "symbol-with-pos" {
-                        if let [_, Value::Sym(s), Value::Int(p)] = rr.as_slice() {
-                            let name = self.symbol_name(*s);
-                            let _ = write!(out, "#<symbol {} at {}>", name, p);
-                            return;
-                        }
-                    }
-                    if self.symbol_name(*t) == "window-configuration" {
-                        let _ = write!(out, "#<window-configuration>");
-                        return;
-                    }
-                    // Obarrays print `#<obarray n=COUNT>' — COUNT is
-                    // the number of interned symbols.
-                    if self.symbol_name(*t) == "obarray" {
-                        let n = match rr.get(1) {
-                            Some(Value::Vec(syms)) => syms
-                                .borrow()
-                                .iter()
-                                .filter(|x| matches!(x, Value::Sym(_)))
-                                .count(),
-                            _ => 0,
-                        };
-                        let _ = write!(out, "#<obarray n={}>", n);
-                        return;
-                    }
-                    // Terminals print `#<terminal N on NAME>'.
-                    if self.symbol_name(*t) == "terminal" {
-                        if let [_, Value::Int(n), Value::Str(name)] = rr.as_slice() {
-                            let _ = write!(out, "#<terminal {} on {}>", n, name.borrow());
-                            return;
-                        }
-                    }
-                    // Sub char tables print `#^^[DEPTH MIN-CHAR
-                    // SLOTS...]' — GNU's trie nodes.
-                    if self.symbol_name(*t) == "sub-char-table" {
-                        out.push_str("#^^[");
-                        if let Some(d) = rr.get(1) {
-                            self.prin1_inner(d, out, depth + 1, bq);
-                        }
-                        out.push(' ');
-                        if let Some(m) = rr.get(2) {
-                            self.prin1_inner(m, out, depth + 1, bq);
-                        }
-                        for s in &rr[3..] {
-                            out.push(' ');
-                            self.prin1_inner(s, out, depth + 1, bq);
-                        }
-                        out.push(']');
-                        return;
-                    }
-                    // Char tables print `#^[defalt parent purpose
-                    // ascii contents[64] extras...]' — GNU's
-                    // pseudovector layout.
-                    if self.symbol_name(*t) == "char-table" {
-                        if let Some(Value::Vec(slots)) = rr.get(2) {
-                            let ptr = std::rc::Rc::as_ptr(items) as usize;
-                            let slots = slots.borrow();
-                            self.print_char_table(
-                                ptr,
-                                rr.as_slice(),
-                                slots.as_slice(),
-                                out,
-                                depth,
-                                bq,
-                            );
-                            return;
-                        }
-                    }
-                }
-                // Bool vectors print `#&N"bytes"' with bits packed
-                // LSB-first per byte.
-                let is_bv = matches!(rr.first(), Some(Value::Sym(t))
-                    if self.symbol_name(*t) == "bool-vector");
-                if is_bv {
-                    if let Some(Value::Vec(bits)) = rr.get(1) {
-                        let bits = bits.borrow();
-                        let n = bits.len();
-                        let _ = write!(out, "#&{}\"", n);
-                        for k in 0..n.div_ceil(8) {
-                            let mut byte: u32 = 0;
-                            for j in 0..8 {
-                                if let Some(Value::Int(b)) = bits.get(k * 8 + j) {
-                                    if *b != 0 {
-                                        byte |= 1 << j;
-                                    }
-                                }
-                            }
-                            match byte {
-                                34 => out.push_str("\\\""),
-                                92 => out.push_str("\\\\"),
-                                0..=127 => out.push(byte as u8 as char),
-                                _ => {
-                                    let _ = write!(out, "\\{:03o}", byte);
-                                }
-                            }
-                        }
-                        out.push('"');
-                        return;
-                    }
-                }
-                drop(rr);
-                let rr = items.borrow();
-                out.push_str("#s(");
-                for (i, item) in rr.iter().enumerate() {
-                    if i > 0 {
-                        out.push(' ');
-                    }
-                    self.prin1_inner(item, out, depth + 1, bq);
-                }
-                out.push(')');
+                self.print_record(items, out, depth, bq, false);
             }
             Value::Hash(h) => {
                 // GNU: #s(hash-table) for defaults; `test' appears only
@@ -783,8 +671,157 @@ impl Interp {
                 }
                 out.push(']');
             }
+            // Records print `#s(elts...)' under `princ' too — delegating
+            // to `prin1_inner' would re-hit the being-printed check and
+            // emit `#N' for the pushed object itself.
+            Value::Record(items) => {
+                self.print_record(items, out, depth, bq, true);
+            }
             _ => self.prin1_inner(v, out, depth, bq),
         }
+    }
+
+    /// Print a record value. `princ' selects the unescaped inner
+    /// printer for record slots (`#s(foo x)' vs `#s(foo "x")').
+    fn print_record(
+        &self,
+        items: &std::rc::Rc<std::cell::RefCell<Vec<Value>>>,
+        out: &mut String,
+        depth: usize,
+        bq: bool,
+        princ: bool,
+    ) {
+        macro_rules! inner {
+            ($v:expr) => {
+                if princ {
+                    self.princ_inner($v, out, depth + 1, bq)
+                } else {
+                    self.prin1_inner($v, out, depth + 1, bq)
+                }
+            };
+        }
+        {
+            let rr = items.borrow();
+            // Positioned symbols print `#<symbol NAME at POS>'.
+            if let Some(Value::Sym(t)) = rr.first() {
+                if self.symbol_name(*t) == "symbol-with-pos" {
+                    if let [_, Value::Sym(s), Value::Int(p)] = rr.as_slice() {
+                        let name = self.symbol_name(*s);
+                        let _ = write!(out, "#<symbol {} at {}>", name, p);
+                        return;
+                    }
+                }
+                if self.symbol_name(*t) == "window-configuration" {
+                    let _ = write!(out, "#<window-configuration>");
+                    return;
+                }
+                // Obarrays print `#<obarray n=COUNT>' — COUNT is
+                // the number of interned symbols.
+                if self.symbol_name(*t) == "obarray" {
+                    let n = match rr.get(1) {
+                        Some(Value::Vec(syms)) => syms
+                            .borrow()
+                            .iter()
+                            .filter(|x| matches!(x, Value::Sym(_)))
+                            .count(),
+                        _ => 0,
+                    };
+                    let _ = write!(out, "#<obarray n={}>", n);
+                    return;
+                }
+                // Terminals print `#<terminal N on NAME>'.
+                if self.symbol_name(*t) == "terminal" {
+                    if let [_, Value::Int(n), Value::Str(name)] = rr.as_slice() {
+                        let _ = write!(out, "#<terminal {} on {}>", n, name.borrow());
+                        return;
+                    }
+                }
+                // Tree-sitter objects print `#<treesit-parser in
+                // BUF for LANG>' / `#<treesit-node TYPE in B-E>'.
+                if let Some(s) =
+                    crate::lisp::builtins::treesit::treesit_repr(self, rr.as_slice())
+                {
+                    out.push_str(&s);
+                    return;
+                }
+                // Sub char tables print `#^^[DEPTH MIN-CHAR
+                // SLOTS...]' — GNU's trie nodes.
+                if self.symbol_name(*t) == "sub-char-table" {
+                    out.push_str("#^^[");
+                    if let Some(d) = rr.get(1) {
+                        inner!(d);
+                    }
+                    out.push(' ');
+                    if let Some(m) = rr.get(2) {
+                        inner!(m);
+                    }
+                    for s in &rr[3..] {
+                        out.push(' ');
+                        inner!(s);
+                    }
+                    out.push(']');
+                    return;
+                }
+                // Char tables print `#^[defalt parent purpose
+                // ascii contents[64] extras...]' — GNU's
+                // pseudovector layout.
+                if self.symbol_name(*t) == "char-table" {
+                    if let Some(Value::Vec(slots)) = rr.get(2) {
+                        let ptr = std::rc::Rc::as_ptr(items) as usize;
+                        let slots = slots.borrow();
+                        self.print_char_table(
+                            ptr,
+                            rr.as_slice(),
+                            slots.as_slice(),
+                            out,
+                            depth,
+                            bq,
+                        );
+                        return;
+                    }
+                }
+            }
+            // Bool vectors print `#&N"bytes"' with bits packed
+            // LSB-first per byte.
+            let is_bv = matches!(rr.first(), Some(Value::Sym(t))
+                if self.symbol_name(*t) == "bool-vector");
+            if is_bv {
+                if let Some(Value::Vec(bits)) = rr.get(1) {
+                    let bits = bits.borrow();
+                    let n = bits.len();
+                    let _ = write!(out, "#&{}\"", n);
+                    for k in 0..n.div_ceil(8) {
+                        let mut byte: u32 = 0;
+                        for j in 0..8 {
+                            if let Some(Value::Int(b)) = bits.get(k * 8 + j) {
+                                if *b != 0 {
+                                    byte |= 1 << j;
+                                }
+                            }
+                        }
+                        match byte {
+                            34 => out.push_str("\\\""),
+                            92 => out.push_str("\\\\"),
+                            0..=127 => out.push(byte as u8 as char),
+                            _ => {
+                                let _ = write!(out, "\\{:03o}", byte);
+                            }
+                        }
+                    }
+                    out.push('"');
+                    return;
+                }
+            }
+        }
+        let rr = items.borrow();
+        out.push_str("#s(");
+        for (i, item) in rr.iter().enumerate() {
+            if i > 0 {
+                out.push(' ');
+            }
+            inner!(item);
+        }
+        out.push(')');
     }
 
     fn print_lambda_list(&self, l: &super::value::Lambda, out: &mut String) {

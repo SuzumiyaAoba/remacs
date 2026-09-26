@@ -657,11 +657,20 @@ fn f_type_of(i: &mut Interp, args: Vec<Value>) -> EvalResult {
         Value::Vec(_) => "vector",
         Value::Record(r) => {
             let rr = r.borrow();
-            if let Some(Value::Sym(tag)) = rr.first() {
-                // GNU's `type-of' returns the record's type field
-                // (slot 0) whenever it is a symbol — struct name for
-                // cl-defstruct instances, class name for EIEIO objects.
-                return Ok(Value::Sym(*tag));
+            match rr.first() {
+                Some(Value::Sym(tag)) => {
+                    // GNU's `type-of' returns the record's type field
+                    // (slot 0) whenever it is a symbol — struct name for
+                    // cl-defstruct instances, class name for EIEIO objects.
+                    return Ok(Value::Sym(*tag));
+                }
+                // GNU (`Fcl_type_of'): when slot 0 is itself a record
+                // with size > 1 it is a class object and the reported
+                // type is that object's name field (slot 1).
+                Some(Value::Record(t)) if t.borrow().len() > 1 => {
+                    return Ok(t.borrow()[1].clone());
+                }
+                _ => {}
             }
             "record"
         }
