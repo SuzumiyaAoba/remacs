@@ -6123,56 +6123,42 @@ explicitly overridden.
         }
     }
 
-    /// `char-code-property-alist': GNU dumps 20 entries at build time —
-    /// each property symbol consed onto its char-table, except `name'
-    /// which lazily loads from "uni-name.el".  Tables carry GNU's three
-    /// extra slots: (PROP MAPPER INDEX), where MAPPER is a unidata-gen
-    /// function for computed properties (we substitute `identity',
-    /// which satisfies functionp/fboundp like GNU's opaque bytecode)
-    /// and INDEX a small unidata table index or nil.
+    /// `char-code-property-alist': GNU's `charprop.el' registers each
+    /// property with its data file name; the file lazily loads into a
+    /// real char-table on first access (GNU's dump materializes twelve
+    /// of them — our `characters.el' run does the same through
+    /// `unicode-property-table-internal').
     pub fn seed_char_code_property_alist(&mut self) -> Value {
-        use crate::lisp::builtins::misc::make_ct;
-        // (prop slot1 slot2) in GNU's dumped order; "fn" = mapper fn.
-        let specs: &[(&str, &str, &str)] = &[
-            ("bracket-type", "0", "1"),
-            ("paired-bracket", "nil", "0"),
-            ("special-titlecase", "nil", "nil"),
-            ("special-lowercase", "nil", "nil"),
-            ("special-uppercase", "nil", "nil"),
-            ("titlecase", "nil", "0"),
-            ("lowercase", "nil", "0"),
-            ("uppercase", "nil", "0"),
-            ("iso-10646-comment", "fn", "fn"),
-            ("old-name", "fn", "fn"),
-            ("mirroring", "nil", "0"),
-            ("mirrored", "0", "1"),
-            ("numeric-value", "0", "2"),
-            ("digit-value", "0", "1"),
-            ("decimal-digit-value", "0", "1"),
-            ("decomposition", "fn", "fn"),
-            ("bidi-class", "0", "1"),
-            ("canonical-combining-class", "0", "1"),
-            ("general-category", "0", "1"),
-            ("name", "fn", "fn"),
+        // (prop . FILE) in GNU's dumped order.
+        let specs: &[(&str, &str)] = &[
+            ("bracket-type", "uni-brackets.el"),
+            ("paired-bracket", "uni-brackets.el"),
+            ("special-titlecase", "uni-special-titlecase.el"),
+            ("special-lowercase", "uni-special-lowercase.el"),
+            ("special-uppercase", "uni-special-uppercase.el"),
+            ("titlecase", "uni-titlecase.el"),
+            ("lowercase", "uni-lowercase.el"),
+            ("uppercase", "uni-uppercase.el"),
+            ("iso-10646-comment", "uni-comment.el"),
+            ("old-name", "uni-old-name.el"),
+            ("mirroring", "uni-mirrored.el"),
+            ("mirrored", "uni-mirrored.el"),
+            ("numeric-value", "uni-numeric.el"),
+            ("digit-value", "uni-digit.el"),
+            ("decimal-digit-value", "uni-decimal.el"),
+            ("decomposition", "uni-decomposition.el"),
+            ("bidi-class", "uni-bidi.el"),
+            ("canonical-combining-class", "uni-combining.el"),
+            ("general-category", "uni-category.el"),
+            ("name", "uni-name.el"),
         ];
-        let tag = Value::Sym(self.intern("char-code-property-table"));
-        let slot = |i: &mut Self, tok: &str| match tok {
-            "fn" => Value::Sym(i.intern("identity")),
-            "nil" => Value::Nil,
-            n => Value::Int(n.parse::<i128>().unwrap()),
-        };
         let mut alist = Vec::with_capacity(specs.len());
-        for &(prop, s1, s2) in specs {
+        for &(prop, file) in specs {
             let psym = Value::Sym(self.intern(prop));
-            if prop == "name" {
-                alist.push(Value::cons(psym, Value::string("uni-name.el")));
-                continue;
-            }
-            let extras = vec![psym.clone(), slot(self, s1), slot(self, s2)];
-            let t = make_ct(self, tag.clone(), Value::Nil, extras);
+            let backing = Value::string(file);
             self.char_code_prop_tables
-                .push((prop.to_string(), t.clone()));
-            alist.push(Value::cons(psym, t));
+                .push((prop.to_string(), backing.clone()));
+            alist.push(Value::cons(psym, backing));
         }
         Value::list(alist)
     }

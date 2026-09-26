@@ -9284,14 +9284,102 @@ fn make_sub_ct(i: &mut Interp, depth: usize, min_char: u32, fill: Value) -> Valu
 
 /// Raw value stored for C in the 65-slot contents vec CB — no
 /// defalt or parent inheritance (GNU's raw `contents' walk).
-fn ct_raw(i: &Interp, cb: &[Value], c: u32) -> Value {
-    ct_raw_tag(i.intern_soft("sub-char-table"), cb, c)
+fn ct_raw(i: &Interp, cb: &[Value], c: u32, uniprop: bool) -> Value {
+    ct_raw_tag(i.intern_soft("sub-char-table"), cb, c, uniprop)
+}
+
+/// GNU `UNIPROP_TABLE_P': purpose `char-code-property-table' with
+/// exactly five extra slots.
+pub(crate) fn is_uniprop_table(i: &Interp, v: &Value) -> bool {
+    match v {
+        Value::Record(r) => {
+            let rr = r.borrow();
+            rr.len() == 8
+                && matches!(rr.first(), Some(Value::Sym(s)) if i.symbol_name(*s) == "char-table")
+                && matches!(rr.get(1), Some(Value::Sym(s)) if i.symbol_name(*s) == "char-code-property-table")
+                && matches!(rr.get(2), Some(Value::Vec(_)))
+        }
+        _ => false,
+    }
+}
+
+/// GNU `UNIPROP_COMPRESSED_FORM_P': a string starting with character
+/// 1 or 2 encodes 128 per-character values in a depth-2 leaf slot.
+fn uniprop_compressed(v: &Value) -> bool {
+    match v {
+        Value::Str(s) => matches!(s.borrow().chars().next(), Some('\u{1}') | Some('\u{2}')),
+        _ => false,
+    }
+}
+
+/// GNU `uniprop_table_uncompress': expand a compressed leaf string in
+/// slot SLOT of VEC into a real depth-3 sub-table covering MIN3..MIN3+127,
+/// storing it back into VEC.  Format 1 is a plain sequence (0 = nil);
+/// format 2 is run-length (a char >= 128 repeats the previous value).
+fn uniprop_uncompress(
+    tag: SymId,
+    vec: &Rc<RefCell<Vec<Value>>>,
+    slot: usize,
+    min3: u32,
+) -> Value {
+    let val = vec.borrow().get(slot).cloned().unwrap_or(Value::Nil);
+    let mut rec = Vec::with_capacity(3 + 128);
+    rec.push(Value::Sym(tag));
+    rec.push(Value::Int(3));
+    rec.push(Value::Int(min3 as i128));
+    rec.extend(std::iter::repeat_n(Value::Nil, 128));
+    if let Value::Str(s) = &val {
+        let chars: Vec<char> = s.borrow().chars().collect();
+        match chars.first() {
+            Some('\u{1}') => {
+                let mut k = chars.get(1).map(|c| *c as usize).unwrap_or(0);
+                for c in chars.iter().skip(2) {
+                    if k >= 128 {
+                        break;
+                    }
+                    rec[3 + k] = if *c == '\0' {
+                        Value::Nil
+                    } else {
+                        Value::Int(*c as i128)
+                    };
+                    k += 1;
+                }
+            }
+            Some('\u{2}') => {
+                let (mut k, mut j) = (0usize, 1usize);
+                while j < chars.len() && k < 128 {
+                    let v = chars[j] as u32;
+                    j += 1;
+                    let mut count = 1usize;
+                    if j < chars.len() && (chars[j] as u32) >= 128 {
+                        count = chars[j] as usize - 128;
+                        j += 1;
+                    }
+                    for _ in 0..count {
+                        if k >= 128 {
+                            break;
+                        }
+                        rec[3 + k] = Value::Int(v as i128);
+                        k += 1;
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    let sub = Value::Record(Rc::new(RefCell::new(rec)));
+    if let Some(s) = vec.borrow_mut().get_mut(slot) {
+        *s = sub.clone();
+    }
+    sub
 }
 
 /// `ct_raw' with the `sub-char-table' tag id (None = no sub-tables
 /// can exist, so every slot is scalar).  Usable from `Syn' snapshots
-/// and other `&Interp'-free contexts.
-pub(crate) fn ct_raw_tag(tag: Option<SymId>, cb: &[Value], c: u32) -> Value {
+/// and other `&Interp'-free contexts.  UNIPROP mirrors GNU's
+/// `sub_char_table_ref' uniprop flag: compressed leaf strings are
+/// expanded in place.
+pub(crate) fn ct_raw_tag(tag: Option<SymId>, cb: &[Value], c: u32, uniprop: bool) -> Value {
     let is_sub = |v: &Value| tag.is_some_and(|t| is_sub_ct_tag(t, v));
     if c > CT_MAX_CHAR {
         return Value::Nil;
@@ -9316,9 +9404,17 @@ pub(crate) fn ct_raw_tag(tag: Option<SymId>, cb: &[Value], c: u32) -> Value {
                     return Value::Nil;
                 };
                 let idx = (c.saturating_sub(m) >> CHARTAB_BITS[d]) as usize;
-                cur = match r.borrow().get(3 + idx) {
+                let next = match r.borrow().get(3 + idx) {
                     Some(x) => x.clone(),
                     None => return Value::Nil,
+                };
+                cur = if uniprop && uniprop_compressed(&next) {
+                    match tag {
+                        Some(t) => uniprop_uncompress(t, &r, 3 + idx, m + 128 * idx as u32),
+                        None => next,
+                    }
+                } else {
+                    next
                 };
             }
             v => return v,
@@ -9354,8 +9450,9 @@ fn ct_refresh_ascii(i: &Interp, contents: &Rc<RefCell<Vec<Value>>>) {
 }
 
 /// GNU `sub_char_table_set': write VAL for C inside sub-table SUB,
-/// lazily materializing deeper levels.
-fn sub_ct_set(i: &mut Interp, sub: &Value, c: u32, val: Value) {
+/// lazily materializing deeper levels.  UNIPROP mirrors GNU: a
+/// compressed leaf string expands before the write descends.
+fn sub_ct_set(i: &mut Interp, sub: &Value, c: u32, val: Value, uniprop: bool) {
     let Some((depth, min, r)) = sub_ct_parts(sub) else {
         return;
     };
@@ -9367,6 +9464,11 @@ fn sub_ct_set(i: &mut Interp, sub: &Value, c: u32, val: Value) {
     let child = r.borrow().get(3 + idx).cloned().unwrap_or(Value::Nil);
     let child = if is_sub_ct(i, &child) {
         child
+    } else if uniprop && uniprop_compressed(&child) {
+        match i.intern_soft("sub-char-table") {
+            Some(t) => uniprop_uncompress(t, &r, 3 + idx, min + (idx as u32) * 128),
+            None => child,
+        }
     } else {
         let n = make_sub_ct(
             i,
@@ -9377,7 +9479,7 @@ fn sub_ct_set(i: &mut Interp, sub: &Value, c: u32, val: Value) {
         r.borrow_mut()[3 + idx] = n.clone();
         n
     };
-    sub_ct_set(i, &child, c, val);
+    sub_ct_set(i, &child, c, val, uniprop);
 }
 
 /// GNU `char_table_set': write VAL for C, splitting the path and
@@ -9412,7 +9514,7 @@ pub(crate) fn ct_set(i: &mut Interp, table: &Value, c: u32, val: Value) {
         contents.borrow_mut()[ti] = n.clone();
         n
     };
-    sub_ct_set(i, &sub, c, val);
+    sub_ct_set(i, &sub, c, val, is_uniprop_table(i, table));
     if c < 128 {
         ct_refresh_ascii(i, &contents);
     }
@@ -9421,7 +9523,8 @@ pub(crate) fn ct_set(i: &mut Interp, table: &Value, c: u32, val: Value) {
 /// GNU `sub_char_table_set_range': block-optimized range write —
 /// fully covered slots are overwritten with the scalar (collapsing
 /// any sub-table), partial slots are materialized and descended.
-fn sub_ct_set_range(i: &mut Interp, sub: &Value, from: u32, to: u32, val: &Value) {
+/// UNIPROP mirrors GNU: compressed leaf strings expand first.
+fn sub_ct_set_range(i: &mut Interp, sub: &Value, from: u32, to: u32, val: &Value, uniprop: bool) {
     let Some((depth, min, r)) = sub_ct_parts(sub) else {
         return;
     };
@@ -9437,12 +9540,17 @@ fn sub_ct_set_range(i: &mut Interp, sub: &Value, from: u32, to: u32, val: &Value
             let child = r.borrow()[3 + idx].clone();
             let child = if is_sub_ct(i, &child) {
                 child
+            } else if uniprop && uniprop_compressed(&child) {
+                match i.intern_soft("sub-char-table") {
+                    Some(t) => uniprop_uncompress(t, &r, 3 + idx, min + (idx as u32) * 128),
+                    None => child,
+                }
             } else {
                 let n = make_sub_ct(i, depth + 1, c, child);
                 r.borrow_mut()[3 + idx] = n.clone();
                 n
             };
-            sub_ct_set_range(i, &child, from, to, val);
+            sub_ct_set_range(i, &child, from, to, val, uniprop);
         }
         idx += 1;
         c += chars;
@@ -9460,6 +9568,7 @@ pub(crate) fn ct_set_range(i: &mut Interp, table: &Value, from: u32, to: u32, va
         return;
     };
     let to = to.min(CT_MAX_CHAR);
+    let uniprop = is_uniprop_table(i, table);
     let mut ti = (from >> 16) as usize;
     let lim = (to >> 16) as usize;
     while ti <= lim {
@@ -9478,7 +9587,7 @@ pub(crate) fn ct_set_range(i: &mut Interp, table: &Value, from: u32, to: u32, va
                 contents.borrow_mut()[1 + ti] = n.clone();
                 n
             };
-            sub_ct_set_range(i, &sub, from, to, &val);
+            sub_ct_set_range(i, &sub, from, to, &val, uniprop);
         }
         ti += 1;
     }
@@ -9694,17 +9803,32 @@ fn ct_optimize(i: &mut Interp, table: &Value, test: &Value) {
     ct_refresh_ascii(i, &contents);
 }
 
+/// GNU `char_table_ascii' for a uniprop table: a compressed string in
+/// the ASCII cache slot (chars 0-127) expands into a depth-3 leaf.
+fn ct_uncompress_ascii(i: &Interp, v: &Value, vec: &Rc<RefCell<Vec<Value>>>) {
+    let Some(tag) = i.intern_soft("sub-char-table") else {
+        return;
+    };
+    let cur = vec.borrow().first().cloned().unwrap_or(Value::Nil);
+    if is_uniprop_table(i, v) && uniprop_compressed(&cur) {
+        uniprop_uncompress(tag, vec, 0, 0);
+    }
+}
+
 /// Raw contents of TABLE for char C — no defalt/parent inheritance.
 pub(crate) fn char_table_raw(i: &Interp, v: &Value, idx: usize) -> Value {
     match char_table_vec(v) {
         Some(vec) => {
+            if idx < 128 {
+                ct_uncompress_ascii(i, v, &vec);
+            }
             let b = vec.borrow();
             // Flat legacy tables (bare vectors / old-style 256-vec
             // contents) index directly.
             if b.len() == 256 {
                 return b.get(idx).cloned().unwrap_or(Value::Nil);
             }
-            ct_raw(i, &b, idx as u32)
+            ct_raw(i, &b, idx as u32, is_uniprop_table(i, v))
         }
         None => Value::Nil,
     }
@@ -9730,11 +9854,14 @@ pub(crate) fn char_table_ref(i: &Interp, table: &Value, idx: usize) -> Value {
     for _ in 0..64 {
         let val = match char_table_vec(&cur) {
             Some(v) => {
+                if idx < 128 {
+                    ct_uncompress_ascii(i, &cur, &v);
+                }
                 let b = v.borrow();
                 if b.len() == 256 {
                     b.get(idx).cloned().unwrap_or(Value::Nil)
                 } else {
-                    ct_raw(i, &b, idx as u32)
+                    ct_raw(i, &b, idx as u32, is_uniprop_table(i, &cur))
                 }
             }
             None => return Value::Nil,
@@ -9873,16 +10000,34 @@ fn f_set_char_table_range(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 /// Walk the raw trie in char order, producing (FROM TO VAL) spans —
 /// every character is covered by exactly one span (scalar slots
 /// report their whole block).  Used by `map-char-table' and the
-/// keymap iterators.
-fn ct_walk(i: &Interp, v: &Value, from: u32, to: u32, out: &mut Vec<(u32, u32, Value)>) {
+/// keymap iterators.  UNIPROP mirrors GNU's `map_sub_char_table':
+/// compressed leaf strings expand into their 128 slots in place.
+fn ct_walk(
+    i: &Interp,
+    v: &Value,
+    from: u32,
+    to: u32,
+    uniprop: bool,
+    out: &mut Vec<(u32, u32, Value)>,
+) {
     if is_sub_ct(i, v) {
         if let Some((depth, min, r)) = sub_ct_parts(v) {
-            let b = r.borrow();
             for k in 0..CHARTAB_SIZE[depth] {
                 let lo = min + (k as u32) * (1 << CHARTAB_BITS[depth]);
                 let hi = lo + (1 << CHARTAB_BITS[depth]) - 1;
-                let child = b.get(3 + k).cloned().unwrap_or(Value::Nil);
-                ct_walk(i, &child, lo, hi.min(to), out);
+                let child = {
+                    let b = r.borrow();
+                    b.get(3 + k).cloned().unwrap_or(Value::Nil)
+                };
+                let child = if uniprop && uniprop_compressed(&child) {
+                    match i.intern_soft("sub-char-table") {
+                        Some(t) => uniprop_uncompress(t, &r, 3 + k, lo),
+                        None => child,
+                    }
+                } else {
+                    child
+                };
+                ct_walk(i, &child, lo, hi.min(to), uniprop, out);
             }
         }
         return;
@@ -9891,14 +10036,14 @@ fn ct_walk(i: &Interp, v: &Value, from: u32, to: u32, out: &mut Vec<(u32, u32, V
 }
 
 /// `ct_walk' over the whole table — 64 top slots of 65536 chars.
-fn ct_spans(i: &Interp, table: &Value) -> Vec<(u32, u32, Value)> {
+fn ct_spans(i: &Interp, table: &Value, uniprop: bool) -> Vec<(u32, u32, Value)> {
     let mut out = Vec::new();
     if let Some(contents) = char_table_vec(table) {
         let b = contents.borrow();
         for k in 0..64usize {
             let lo = (k as u32) << 16;
             let slot = b.get(1 + k).cloned().unwrap_or(Value::Nil);
-            ct_walk(i, &slot, lo, lo + 65535, &mut out);
+            ct_walk(i, &slot, lo, lo + 65535, uniprop, &mut out);
         }
     }
     out
@@ -9924,7 +10069,7 @@ fn merge_runs(spans: Vec<(u32, u32, Value)>) -> Vec<(u32, u32, Value)> {
 /// `map_char_table' semantics (the parent's own parent is excluded).
 fn ct_effective_runs(i: &Interp, table: &Value, with_parent: bool) -> Vec<(u32, u32, Value)> {
     let defalt = i.char_table_defalt(table);
-    let spans = ct_spans(i, table)
+    let spans = ct_spans(i, table, is_uniprop_table(i, table))
         .into_iter()
         .map(|(f, t, v)| (f, t, if v.is_nil() { defalt.clone() } else { v }))
         .collect();
@@ -9960,7 +10105,7 @@ fn ct_effective_runs(i: &Interp, table: &Value, with_parent: bool) -> Vec<(u32, 
 /// Raw non-nil runs of TABLE — for keymap iteration, which treats
 /// nil slots as unbound.
 pub(crate) fn ct_collect(i: &Interp, table: &Value) -> Vec<(u32, u32, Value)> {
-    merge_runs(ct_spans(i, table))
+    merge_runs(ct_spans(i, table, false))
         .into_iter()
         .filter(|(_, _, v)| !v.is_nil())
         .collect()
@@ -9970,15 +10115,35 @@ fn f_map_char_table(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     if !is_char_table(i, &a[1]) {
         return Err(i.wrong_type_mut("char-table-p", &a[1]));
     }
+    // GNU's `uniprop_get_decoder': emitted run values are decoded only
+    // when extra slot 1 is the fixnum decoder index (0 = run-length
+    // through the extra-slot-4 value vector); a Lisp-function slot
+    // (word-list tables) leaves the raw value untouched.
+    let decode = matches!(&a[1], Value::Record(r) if matches!(r.borrow().get(4), Some(Value::Int(0))))
+        && is_uniprop_table(i, &a[1]);
     let runs = ct_effective_runs(i, &a[1], true);
     // GNU's `map_char_table' only calls the function for ranges whose
     // effective value is non-nil — unset regions (and nil stores,
-    // which revert to the default) are skipped entirely.
+    // which revert to the default) are skipped entirely.  GNU passes
+    // ONE shared RANGE cons it mutates between calls (a lone
+    // character is passed as a fixnum) — retained keys all end up
+    // showing the final mutation; mirror that.
+    let range = Value::cons(Value::Int(0), Value::Int(0));
     for (from, to, val) in runs.into_iter().filter(|(_, _, v)| !v.is_nil()) {
         let key = if from == to {
             Value::Int(from as i128)
         } else {
-            Value::cons(Value::Int(from as i128), Value::Int(to as i128))
+            if let Value::Cons(c) = &range {
+                let mut cc = c.borrow_mut();
+                cc.car = Value::Int(from as i128);
+                cc.cdr = Value::Int(to as i128);
+            }
+            range.clone()
+        };
+        let val = if decode {
+            super::charset::uniprop_decode_run_length(&a[1], val)
+        } else {
+            val
         };
         i.call_function(&a[0], &Value::list(vec![quoted(key), quoted(val)]), None)?;
     }

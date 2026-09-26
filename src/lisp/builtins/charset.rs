@@ -362,56 +362,338 @@ fn f_define_char_code_property(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     }
 }
 
-/// ASCII subset of Unicode general-category, matching GNU's table.
-fn ascii_general_category(c: u32) -> Option<&'static str> {
-    let s = match c {
-        _ if c > 0xFF => return None,
-        0x00..=0x1F | 0x7F => "Cc",
-        32 => "Zs",
-        48..=57 => "Nd",
-        65..=90 => "Lu",
-        97..=122 => "Ll",
-        40 | 91 | 123 => "Ps",
-        41 | 93 | 125 => "Pe",
-        45 => "Pd",
-        95 => "Pc",
-        94 | 96 => "Sk",
-        36 => "Sc",
-        43 | 60 | 61 | 62 | 124 | 126 => "Sm",
-        0x80..=0x9F => "Cc",
-        _ if c < 0x80 => "Po",
-        _ => return None,
-    };
-    Some(s)
+/// Extra slot N of a char-table record (`char-table-extra-slot').
+fn ct_extra(tbl: &Value, n: usize) -> Value {
+    match tbl {
+        Value::Record(r) => r.borrow().get(3 + n).cloned().unwrap_or(Value::Nil),
+        _ => Value::Nil,
+    }
+}
+
+/// GNU `uniprop_decode_value_run_length': an integer raw value is an
+/// index into the vector stored in extra slot 4.
+pub(crate) fn uniprop_decode_run_length(tbl: &Value, raw: Value) -> Value {
+    if let (Value::Vec(vv), Value::Int(n)) = (ct_extra(tbl, 4), &raw) {
+        let v = vv.borrow();
+        if *n >= 0 && (*n as usize) < v.len() {
+            return v[*n as usize].clone();
+        }
+    }
+    raw
+}
+
+/// Decode the word-list compressed string S (first char is NUL) into
+/// the 128 entries GNU's `unidata-word-list-compress' packed.  Each
+/// stream char < 3 is a control code (0 = fresh list, 1 = new
+/// DIFF-HEAD, 2 = reuse DIFF-HEAD); chars >= 3 index WORD_TABLE —
+/// word symbols (name tables) or compatibility tags/char codes
+/// (decomposition).  NAME_MODE returns symbol-name strings like
+/// `unidata-get-name'; otherwise entries keep symbols and raw ints
+/// like `unidata-get-decomposition'.
+fn unidata_word_list_decode(
+    i: &mut Interp,
+    s: &str,
+    word_table: &[Value],
+    name_mode: bool,
+) -> Vec<Value> {
+    let chars: Vec<char> = s.chars().collect();
+    let mut vec = vec![Value::Nil; 128];
+    let mut idx = 0usize;
+    let (mut j, mut diff_head) = (1usize, 0usize);
+    let mut word: Vec<Value> = Vec::new();
+    let mut tail: Vec<Value> = Vec::new();
+    let mut last: Vec<Value> = Vec::new();
+    while j < chars.len() && idx < 128 {
+        let c = chars[j] as u32;
+        if c < 3 {
+            if !word.is_empty() || !tail.is_empty() {
+                word.extend(tail.iter().cloned());
+                vec[idx] = Value::list(word.clone());
+                last = word.clone();
+                word.clear();
+            }
+            tail.clear();
+            j += 1;
+            idx += 1;
+            if c > 0 {
+                if c == 1 && j < chars.len() {
+                    diff_head = chars[j] as usize;
+                    j += 1;
+                }
+                let t = diff_head % 16;
+                tail = last.get(t.min(last.len())..).unwrap_or(&[]).to_vec();
+                for e in last.iter().take(diff_head / 16) {
+                    word.push(e.clone());
+                }
+            }
+        } else {
+            let w = (c - 3) as usize;
+            let e = match word_table.get(w) {
+                Some(v) => {
+                    if name_mode {
+                        match v {
+                            Value::Sym(sid) => {
+                                Value::Str(Rc::new(RefCell::new(i.symbol_name(*sid))))
+                            }
+                            other => other.clone(),
+                        }
+                    } else {
+                        v.clone()
+                    }
+                }
+                None => {
+                    if name_mode {
+                        Value::Str(Rc::new(RefCell::new(
+                            char::from_u32(c).unwrap_or('\0').to_string(),
+                        )))
+                    } else {
+                        Value::Int(c as i128)
+                    }
+                }
+            };
+            word.push(e);
+            j += 1;
+        }
+    }
+    if idx < 128 && (!word.is_empty() || !tail.is_empty()) {
+        word.extend(tail.iter().cloned());
+        vec[idx] = Value::list(word);
+    }
+    vec
+}
+
+/// Write each decoded entry of a 128-char block back into TABLE —
+/// GNU's decoders memoize with `(aset table (+ first-char i) ...)'.
+fn unidata_memoize(i: &mut Interp, tbl: &Value, first: u32, vec: &[Value]) {
+    for (k, v) in vec.iter().enumerate().take(128) {
+        misc::ct_set(i, tbl, first + k as u32, v.clone());
+    }
+}
+
+/// GNU `unidata-get-decomposition': word-list block decode plus the
+/// Hangul-syllable formula; nil decodes to (list CHAR).
+fn unidata_get_decomposition(i: &mut Interp, ch: u32, raw: &Value, tbl: &Value) -> Value {
+    match raw {
+        Value::Nil => Value::list(vec![Value::Int(ch as i128)]),
+        Value::Cons(_) => raw.clone(),
+        Value::Str(s) => {
+            if s.borrow().chars().next() != Some('\0') {
+                return raw.clone();
+            }
+            let first = (ch >> 7) << 7;
+            let word_table = match ct_extra(tbl, 4) {
+                Value::Vec(v) => v.borrow().clone(),
+                _ => Vec::new(),
+            };
+            let vec = unidata_word_list_decode(i, &s.borrow(), &word_table, false);
+            unidata_memoize(i, tbl, first, &vec);
+            match vec[(ch - first) as usize].clone() {
+                Value::Nil => Value::list(vec![Value::Int(ch as i128)]),
+                v => v,
+            }
+        }
+        Value::Int(0) if (0xAC00..=0xD7A3).contains(&ch) => {
+            let c = ch - 0xAC00;
+            let l = 0x1100 + c / 588;
+            let v = 0x1161 + (c % 588) / 28;
+            let t = 0x11A7 + c % 28;
+            if t == 0x11A7 {
+                Value::list(vec![Value::Int(l as i128), Value::Int(v as i128)])
+            } else {
+                let lv = 0xAC00 + (c / 28) * 28;
+                Value::list(vec![Value::Int(lv as i128), Value::Int(t as i128)])
+            }
+        }
+        _ => Value::Nil,
+    }
+}
+
+/// GNU `unidata-get-name': word-list decode joined into a NAME
+/// string (a `-' element joins without spaces); a positive integer
+/// raw value indexes the block-name symbol table in extras[4][1]
+/// (Hangul syllables decompose into Jamo names).
+fn unidata_get_name(i: &mut Interp, ch: u32, raw: &Value, tbl: &Value) -> Value {
+    match raw {
+        Value::Str(s) => {
+            if s.borrow().chars().next() != Some('\0') {
+                return raw.clone();
+            }
+            let first = (ch >> 7) << 7;
+            let word_table = match ct_extra(tbl, 4) {
+                Value::Vec(v) => match v.borrow().first() {
+                    Some(Value::Vec(w)) => w.borrow().clone(),
+                    _ => Vec::new(),
+                },
+                _ => Vec::new(),
+            };
+            let vec = unidata_word_list_decode(i, &s.borrow(), &word_table, true);
+            let mut out = Value::Nil;
+            for (k, ent) in vec.iter().enumerate() {
+                let name = match ent {
+                    Value::Nil => Value::Nil,
+                    l => {
+                        let mut parts: Vec<String> = Vec::new();
+                        for (n, e) in l.list_to_vec().unwrap_or_default().iter().enumerate() {
+                            let w = match e {
+                                Value::Str(w) => w.borrow().clone(),
+                                Value::Sym(sid) => i.symbol_name(*sid),
+                                Value::Int(c) => char::from_u32(*c as u32)
+                                    .map(|c| c.to_string())
+                                    .unwrap_or_default(),
+                                _ => String::new(),
+                            };
+                            if n > 0 && w != "-" {
+                                parts.push(" ".to_string());
+                            }
+                            parts.push(w);
+                        }
+                        Value::Str(Rc::new(RefCell::new(parts.concat())))
+                    }
+                };
+                misc::ct_set(i, tbl, first + k as u32, name.clone());
+                if first + k as u32 == ch {
+                    out = name;
+                }
+            }
+            out
+        }
+        Value::Int(n) if *n > 0 => {
+            let sym_table = match ct_extra(tbl, 4) {
+                Value::Vec(v) => match v.borrow().get(1) {
+                    Some(Value::Vec(w)) => w.borrow().clone(),
+                    _ => Vec::new(),
+                },
+                _ => Vec::new(),
+            };
+            let name = match sym_table.get((*n - 1) as usize) {
+                Some(Value::Sym(sid)) => i.symbol_name(*sid),
+                _ => return Value::Nil,
+            };
+            match name.as_str() {
+                "HANGUL SYLLABLE" => {
+                    let jamo = match ct_extra(tbl, 4) {
+                        Value::Vec(v) => match v.borrow().get(2) {
+                            Some(Value::Vec(j)) => j.borrow().clone(),
+                            _ => Vec::new(),
+                        },
+                        _ => Vec::new(),
+                    };
+                    let c = ch - 0xAC00;
+                    let (l, v, t) = ((c / 588) as usize, ((c % 588) / 28) as usize, c % 28);
+                    let jamo_name = |part: usize, k: usize| -> String {
+                        match jamo.get(part) {
+                            Some(Value::Vec(jv)) => match jv.borrow().get(k) {
+                                Some(Value::Sym(sid)) => i.symbol_name(*sid),
+                                _ => String::new(),
+                            },
+                            _ => String::new(),
+                        }
+                    };
+                    let tail = if t == 0 {
+                        String::new()
+                    } else {
+                        jamo_name(2, t as usize - 1)
+                    };
+                    Value::Str(Rc::new(RefCell::new(format!(
+                        "HANGUL SYLLABLE {}{}{}",
+                        jamo_name(0, l),
+                        jamo_name(1, v),
+                        tail
+                    ))))
+                }
+                "CJK IDEOGRAPH" | "TANGUT IDEOGRAPH" | "CJK COMPATIBILITY IDEOGRAPH"
+                | "HIGH SURROGATE" | "LOW SURROGATE" => Value::Str(Rc::new(RefCell::new(
+                    format!("{}-{:04X}", name, ch),
+                ))),
+                "VARIATION SELECTOR" => Value::Str(Rc::new(RefCell::new(format!(
+                    "{}-{}",
+                    name,
+                    ch.wrapping_sub(0xE0100).wrapping_add(17)
+                )))),
+                _ => Value::Nil,
+            }
+        }
+        _ => Value::Nil,
+    }
+}
+
+/// GNU's `(if (functionp X1) (funcall X1 CH RAW TABLE) ...)' in
+/// `get-char-code-property': the uni-*.el tables store a compiled
+/// `unidata-get-*' Lisp decoder in extra slot 1 — implemented
+/// natively here keyed on the property name in extra slot 0 —
+/// while fixnum extra slot 1 selects a C decoder (0 = run-length
+/// through the extra-slot-4 value vector).
+fn uniprop_lookup(i: &mut Interp, tbl: &Value, ch: u32, raw: Value) -> Value {
+    match ct_extra(tbl, 1) {
+        Value::Int(0) => uniprop_decode_run_length(tbl, raw),
+        Value::Int(_) | Value::Nil => raw,
+        _ => match ct_extra(tbl, 0) {
+            Value::Sym(p) if i.symbol_name(p) == "decomposition" => {
+                unidata_get_decomposition(i, ch, &raw, tbl)
+            }
+            Value::Sym(p)
+                if matches!(
+                    i.symbol_name(p).as_str(),
+                    "name" | "old-name" | "iso-10646-comment"
+                ) =>
+            {
+                unidata_get_name(i, ch, &raw, tbl)
+            }
+            _ => raw,
+        },
+    }
 }
 
 fn get_char_prop(i: &mut Interp, ch: i64, prop: &str) -> Value {
-    if prop == "general-category" {
-        if let Some(cat) = ascii_general_category(ch as u32) {
-            return symv(i, cat);
-        }
-        return Value::Nil;
-    }
     if let Some(e) = i.char_code_props.iter().find(|(n, _)| n == prop) {
         if let Some((_, v)) = e.1.iter().find(|(c, _)| *c == ch) {
             return v.clone();
         }
     }
-    // Check a char-table backing store.
-    if let Some((_, tbl)) = i.char_code_prop_tables.iter().find(|(n, _)| n == prop) {
-        if is_char_table(i, tbl) {
-            let val = misc::char_table_ref(i, tbl, ch.max(0) as usize);
-            if !val.is_nil() {
-                return val;
-            }
-        }
+    // GNU `get-char-code-property': materialize the property's table
+    // (lazily loading its backing file), then apply the table's own
+    // decoder — a Lisp function in extra slot 1, or the fixnum C
+    // decoder index (run-length through extra slot 4).
+    let tbl = unicode_prop_table(i, prop);
+    if is_char_table(i, &tbl) {
+        let raw = misc::char_table_ref(i, &tbl, ch.max(0) as usize);
+        return uniprop_lookup(i, &tbl, ch.max(0) as u32, raw);
     }
     builtin_char_prop(i, ch, prop)
+}
+
+/// GNU charprop.c lazily loads the file backing a char-code property —
+/// `(load FILE nil t)' — and the uni-*.el file re-registers the property
+/// with a real char-table.
+fn load_file_backed_prop(i: &mut Interp, prop: &str) {
+    let file = i
+        .char_code_prop_tables
+        .iter()
+        .find(|(n, _)| n == prop)
+        .and_then(|(_, t)| match t {
+            Value::Str(s) => Some(s.borrow().clone()),
+            _ => None,
+        })
+        .or_else(|| {
+            let e = prop_alist_entry(i, prop);
+            if let Value::Cons(c) = &e {
+                match c.borrow().cdr.clone() {
+                    Value::Str(s) => Some(s.borrow().clone()),
+                    _ => None,
+                }
+            } else {
+                None
+            }
+        });
+    if let Some(file) = file {
+        let _ = crate::lisp::load::load_library_opts(i, &file, false, false, true);
+    }
 }
 
 /// GNU signals `wrong-type-argument (char-table-p FILE)` when a property
 /// registered with a file name is used for lookup or storage.
 fn check_prop_backing(i: &mut Interp, prop: &str) -> Result<(), Flow> {
+    load_file_backed_prop(i, prop);
     let bad = i
         .char_code_prop_tables
         .iter()
@@ -474,6 +756,39 @@ fn f_get_char_code_property(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     Ok(get_char_prop(i, ch, &prop))
 }
 
+/// GNU `put-unicode-property-internal' without the arg checking:
+/// a fixnum in extra slot 2 selects a C encoder — 0 requires a
+/// character (or nil), 1 looks VALUE up in the extra-slot-4 vector
+/// and stores its index; the result lands via `char_table_set'.
+fn put_unicode_internal(i: &mut Interp, tbl: &Value, ch: u32, val: Value) -> EvalResult {
+    let val = match ct_extra(tbl, 2) {
+        Value::Int(0) => {
+            if !val.is_nil() && !matches!(val, Value::Int(_)) {
+                return Err(i.wrong_type_mut("integerp", &val));
+            }
+            val
+        }
+        Value::Int(1) => {
+            let mut enc = Value::Nil;
+            if let Value::Vec(vv) = ct_extra(tbl, 4) {
+                for (k, e) in vv.borrow().iter().enumerate() {
+                    if eq_values(e, &val) {
+                        enc = Value::Int(k as i128);
+                        break;
+                    }
+                }
+            }
+            if enc.is_nil() {
+                return Err(i.wrong_type_mut("Unicode property value", &val));
+            }
+            enc
+        }
+        _ => val,
+    };
+    misc::ct_set(i, tbl, ch, val);
+    Ok(Value::Nil)
+}
+
 fn f_put_char_code_property(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let ch = match &a[0] {
         Value::Int(n) => *n as i64,
@@ -482,11 +797,34 @@ fn f_put_char_code_property(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let pid2 = want_sym(i, &a[1])?;
     let prop = i.symbol_name(pid2);
     check_prop_backing(i, &prop)?;
-    let tbl = prop_table(i, &prop);
-    if let Some(e) = tbl.iter_mut().find(|(c, _)| *c == ch) {
+    let tbl = unicode_prop_table(i, &prop);
+    if is_char_table(i, &tbl) {
+        match ct_extra(&tbl, 2) {
+            Value::Int(_) | Value::Nil => {
+                put_unicode_internal(i, &tbl, ch.max(0) as u32, a[2].clone())?;
+            }
+            _ => {
+                // GNU `(funcall X2 CH VAL TABLE)' — a `unidata-put-*'
+                // Lisp function: decode the current block first (so
+                // its memoization can't clobber VAL), then `aset'.
+                let raw = misc::char_table_ref(i, &tbl, ch.max(0) as usize);
+                if let Value::Str(s) = &raw {
+                    if s.borrow().chars().next() == Some('\0') {
+                        uniprop_lookup(i, &tbl, ch.max(0) as u32, raw);
+                    }
+                }
+                misc::ct_set(i, &tbl, ch.max(0) as u32, a[2].clone());
+            }
+        }
+        return Ok(a[2].clone());
+    }
+    // Non-table property: GNU stores into `char-code-property-table'
+    // plists; our overlay keeps the same get-side semantics.
+    let store = prop_table(i, &prop);
+    if let Some(e) = store.iter_mut().find(|(c, _)| *c == ch) {
         e.1 = a[2].clone();
     } else {
-        tbl.push((ch, a[2].clone()));
+        store.push((ch, a[2].clone()));
     }
     Ok(a[2].clone())
 }
@@ -1061,38 +1399,6 @@ fn f_clear_charset_maps(_i: &mut Interp, _a: Vec<Value>) -> EvalResult {
     Ok(Value::Nil)
 }
 
-/// Build a fresh char-table for PROP carrying GNU's three extra
-/// slots: (PROP MAPPER INDEX).  MAPPER is `identity' where GNU stores
-/// an opaque unidata-gen function (computed properties); INDEX is a
-/// small unidata index or nil.
-fn new_unicode_prop_table(i: &mut Interp, prop: &str) -> Value {
-    // GNU's per-property slot shapes (slot1 slot2); "fn" = mapper fn.
-    let (s1, s2) = match prop {
-        "iso-10646-comment" | "old-name" | "decomposition" | "name" => ("fn", "fn"),
-        "bracket-type" => ("0", "1"),
-        "paired-bracket" => ("nil", "0"),
-        "special-titlecase" | "special-lowercase" | "special-uppercase" => ("nil", "nil"),
-        "titlecase" | "lowercase" | "uppercase" | "mirroring" => ("nil", "0"),
-        "mirrored"
-        | "digit-value"
-        | "decimal-digit-value"
-        | "bidi-class"
-        | "canonical-combining-class"
-        | "general-category" => ("0", "1"),
-        "numeric-value" => ("0", "2"),
-        // define-char-code-property'd customs default like a direct table.
-        _ => ("nil", "0"),
-    };
-    let v = |i: &mut Interp, tok: &str| match tok {
-        "fn" => symv(i, "identity"),
-        "nil" => Value::Nil,
-        n => Value::Int(n.parse::<i128>().unwrap()),
-    };
-    let tag = symv(i, "char-code-property-table");
-    let extras = vec![symv(i, prop), v(i, s1), v(i, s2)];
-    misc::make_ct(i, tag, Value::Nil, extras)
-}
-
 /// Entry `(prop . TABLE)' in `char-code-property-alist', or nil.
 fn prop_alist_entry(i: &mut Interp, prop: &str) -> Value {
     let vid = i.intern("char-code-property-alist");
@@ -1113,18 +1419,31 @@ fn prop_alist_entry(i: &mut Interp, prop: &str) -> Value {
     Value::Nil
 }
 
-/// Materialize PROP's table: register it in `char_code_prop_tables'
-/// and point the alist entry's cdr at it — GNU's lazy-file mutation
-/// (`uni-name.el' becomes the loaded table).
+/// Materialize PROP's table: GNU loads the backing file, which
+/// re-registers the property with a real char-table.  When the file
+/// is absent or does not self-register, return the file-name string —
+/// GNU's `uniprop_table' likewise leaves the alist cdr alone so a
+/// later attempt can retry the load.
 fn install_prop_table(i: &mut Interp, prop: &str) -> Value {
-    let t = new_unicode_prop_table(i, prop);
-    i.char_code_prop_tables.retain(|(n, _)| n != prop);
-    i.char_code_prop_tables.push((prop.to_string(), t.clone()));
-    let entry = prop_alist_entry(i, prop);
-    if let Value::Cons(c) = entry {
-        c.borrow_mut().cdr = t.clone();
+    load_file_backed_prop(i, prop);
+    let found = i
+        .char_code_prop_tables
+        .iter()
+        .find(|(n, _)| n == prop)
+        .map(|(_, t)| t.clone());
+    if let Some(t) = found {
+        if is_char_table(i, &t) {
+            let entry = prop_alist_entry(i, prop);
+            if let Value::Cons(c) = entry {
+                c.borrow_mut().cdr = t.clone();
+            }
+        }
+        return t;
     }
-    t
+    match prop_alist_entry(i, prop) {
+        Value::Cons(c) => c.borrow().cdr.clone(),
+        _ => Value::Nil,
+    }
 }
 
 /// char-table for PROP — GNU's `Funicode_property_table_internal':
@@ -1179,12 +1498,23 @@ fn f_get_unicode_property_internal(i: &mut Interp, a: Vec<Value>) -> EvalResult 
         Value::Int(n) => *n as i64,
         _ => return Err(i.wrong_type_mut("characterp", &a[1])),
     };
-    if let Some(prop) = unicode_table_prop(i, &a[0]) {
-        // Route through get_char_prop so built-in defaults (e.g. ASCII
-        // general-category) still show through unset slots.
-        return Ok(get_char_prop(i, ch, &prop));
+    // GNU `get_unicode_property': CHAR_TABLE_REF (which lazily
+    // uncompresses leaf strings) plus the C decoder selected by a
+    // fixnum in extra slot 1.  A Lisp decoder there is NOT applied
+    // here — only `get-char-code-property' funcalls it.
+    let raw = misc::char_table_ref(i, &a[0], ch.max(0) as usize);
+    let val = match ct_extra(&a[0], 1) {
+        Value::Int(0) => uniprop_decode_run_length(&a[0], raw),
+        _ => raw,
+    };
+    if val.is_nil() {
+        if let Some(prop) = unicode_table_prop(i, &a[0]) {
+            // An absent value shows the built-in default, matching
+            // GNU where every property slot is populated.
+            return Ok(builtin_char_prop(i, ch, &prop));
+        }
     }
-    Ok(misc::char_table_ref(i, &a[0], ch.max(0) as usize))
+    Ok(val)
 }
 
 fn f_put_unicode_property_internal(i: &mut Interp, a: Vec<Value>) -> EvalResult {
@@ -1195,8 +1525,7 @@ fn f_put_unicode_property_internal(i: &mut Interp, a: Vec<Value>) -> EvalResult 
         Value::Int(n) if *n >= 0 => *n as usize,
         _ => return Err(i.wrong_type_mut("characterp", &a[1])),
     };
-    misc::ct_set(i, &a[0], ch as u32, a[2].clone());
-    Ok(Value::Nil)
+    put_unicode_internal(i, &a[0], ch as u32, a[2].clone())
 }
 
 pub(crate) static SUBRS: &[Subr] = &[

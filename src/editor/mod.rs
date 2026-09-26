@@ -11839,7 +11839,7 @@ impl SynTable {
     /// GNU `char_table_ref' over the snapshot levels.
     pub(crate) fn get(&self, c: u32) -> Value {
         for (vec, defalt) in &self.levels {
-            let v = crate::lisp::builtins::misc::ct_raw_tag(self.tag, &vec.borrow(), c);
+            let v = crate::lisp::builtins::misc::ct_raw_tag(self.tag, &vec.borrow(), c, false);
             if !v.is_nil() {
                 return v;
             }
