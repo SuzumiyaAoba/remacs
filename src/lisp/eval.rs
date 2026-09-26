@@ -3927,6 +3927,16 @@ explicitly overridden.
                         let b = c.borrow();
                         (b.car.clone(), b.cdr.clone())
                     };
+                    // GNU `macroexpand-1' (eval.c): a `(lambda ...)'
+                    // form is a function expression whose expansion is
+                    // `(function (lambda ...))'.  Since that result is a
+                    // fixpoint for `macroexpand', return it directly.
+                    if self.sym_is(&car, sym::LAMBDA) {
+                        return Ok(Value::list(vec![
+                            Value::Sym(sym::FUNCTION),
+                            cur.clone(),
+                        ]));
+                    }
                     match car {
                         Value::Sym(id) => {
                             // GNU `macroexpand-1' consults the ENVIRONMENT

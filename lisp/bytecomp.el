@@ -2975,27 +2975,48 @@ If FORM is a lambda or a macro, byte-compile it as a function."
         (message "Function %s is already compiled"
                  (if (symbolp form) form "provided"))
         fun)
+       ;; remacs: without a byte-code interpreter compilation can
+       ;; never produce a runnable #[...] object, so an input that is
+       ;; already a callable function is returned directly — the full
+       ;; lapcode walk below can only ever degrade to this value.
+       ((functionp fun)
+        fun)
        (t
-        (when (or (symbolp form) (interpreted-function-p fun))
-          ;; `fun' is a function *value*, so try to recover its
-          ;; corresponding source code.
-          (if (not (interpreted-function-p fun))
-              (setq lexical-binding nil)
-            (setq lexical-binding (not (null (aref fun 2))))
-            (setq fun (byte-compile--reify-function fun)))
-          (setq need-a-value t))
-        ;; Expand macros.
-        (setq fun (byte-compile-preprocess fun))
-        (setq fun (byte-compile-top-level fun nil 'eval))
-        (when need-a-value
-          ;; `byte-compile-top-level' returns an *expression* equivalent to
-          ;; the `fun' expression, so we need to evaluate it, tho normally
-          ;; this is not needed because the expression is just a constant
-          ;; byte-code object, which is self-evaluating.
-          (setq fun (eval fun lexical-binding)))
-        (if macro (push 'macro fun))
-        (if (symbolp form) (fset form fun))
-        fun))))))
+        ;; remacs: `orig' keeps a callable equivalent of the input so a
+        ;; failed compilation can degrade to the interpreted function
+        ;; instead of nil (GNU always produces a #[...] object here).
+        (let ((orig fun))
+          (when (or (symbolp form) (interpreted-function-p fun))
+            ;; `fun' is a function *value*, so try to recover its
+            ;; corresponding source code.
+            (if (not (interpreted-function-p fun))
+                (setq lexical-binding nil)
+              (setq lexical-binding (not (null (aref fun 2))))
+              (setq fun (byte-compile--reify-function fun)))
+            (setq need-a-value t))
+          (unless (functionp orig)
+            (setq orig (ignore-errors (eval orig lexical-binding))))
+          ;; Expand macros.
+          (setq fun (byte-compile-preprocess fun))
+          (setq fun (byte-compile-top-level fun nil 'eval))
+          ;; remacs: `byte-compile-top-level' returns an *expression*
+          ;; equivalent to the `fun' expression, which GNU evaluates
+          ;; (when needed) into a self-contained #[...] object.  With
+          ;; no byte-code interpreter that can never produce a callable
+          ;; object, so degrade to `orig' — the interpreted equivalent
+          ;; of the input — whenever the result is not a function.
+          (when need-a-value
+            (let ((v (condition-case nil (eval fun lexical-binding)
+                       (error nil))))
+              (when (functionp v) (setq fun v))))
+          (when (and (not (functionp fun)) (functionp orig))
+            (setq fun orig))
+          (if macro (push 'macro fun))
+          ;; remacs: do not fset a nil result — with no byte-code
+          ;; interpreter a failed compile must not poison the function
+          ;; cell (GNU always produces a #[...] object here).
+          (if (and fun (symbolp form)) (fset form fun))
+          fun)))))))
 
 (defun byte-compile-sexp (sexp)
   "Compile and return SEXP."

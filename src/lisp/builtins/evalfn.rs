@@ -578,6 +578,15 @@ fn f_macroexpand_1(i: &mut Interp, args: Vec<Value>) -> EvalResult {
                 let b = c.borrow();
                 (b.car.clone(), b.cdr.clone())
             };
+            // GNU `macroexpand-1' (eval.c): a `(lambda ...)' form in
+            // expansion position is a function expression, so its
+            // expansion is `(function (lambda ...))'.
+            if i.sym_is(&car, sym::LAMBDA) {
+                return Ok(Value::list(vec![
+                    Value::Sym(sym::FUNCTION),
+                    form.clone(),
+                ]));
+            }
             // GNU `macroexpand-1' consults ENVIRONMENT (its second
             // argument) before the global definition; remacs reads it
             // from the dynamically bound `macroexpand-all-environment'.
@@ -711,6 +720,179 @@ fn try_compiler_macro(i: &mut Interp, form: &Value) -> EvalResult {
     }
 }
 
+/// Whether V can be a `setq' target symbol — a symbol other than
+/// t/nil or a keyword (GNU `macroexp--expand-all' fast-path check).
+fn plain_setq_var(i: &Interp, v: &Value) -> bool {
+    match v {
+        Value::Sym(sid) if *sid != sym::NIL && *sid != sym::T => {
+            !i.symbol_name(*sid).starts_with(':')
+        }
+        _ => false,
+    }
+}
+
+/// Whether symbol ID's function cell holds a macro — `macrop' on the
+/// symbol, following its cell (including macro-autoload cells).
+fn sym_macrop(i: &mut Interp, id: SymId) -> bool {
+    match i.symbol_function(id) {
+        Value::Lambda(l) => l.is_macro,
+        Value::Cons(c) => {
+            let (car, form) = {
+                let b = c.borrow();
+                (b.car.clone(), Value::Cons(c.clone()))
+            };
+            if i.sym_is(&car, sym::MACRO) {
+                return true;
+            }
+            let auto_id = i.intern("autoload");
+            if i.sym_is(&car, auto_id) {
+                return form
+                    .list_to_vec()
+                    .ok()
+                    .and_then(|v| v.get(4).map(|x| x.truthy()))
+                    .unwrap_or(false);
+            }
+            false
+        }
+        _ => false,
+    }
+}
+
+/// Whether VAR is dynamically bound in `macroexp--expand-all'
+/// terms — `special-variable-p', a `macroexp--dynvars' member, or a
+/// `byte-compile-bound-variables' member.  Such a formal cannot be
+/// alpha-converted to a `let' binding (GNU's dynboundarg punt).
+fn macroexp_dynbound_p(i: &mut Interp, var: SymId) -> bool {
+    if i.obarray.symbol(var).special {
+        return true;
+    }
+    for name in ["macroexp--dynvars", "byte-compile-bound-variables"] {
+        let vid = i.intern(name);
+        let v = i.symbol_value(vid);
+        if let Value::Cons(_) = &v {
+            if let Ok(items) = v.list_to_vec() {
+                if items.iter().any(|x| i.sym_is(x, var)) {
+                    return true;
+                }
+            }
+        }
+    }
+    false
+}
+
+/// GNU `macroexp--unfold-lambda': `(funcall #'(lambda (X...) BODY...)
+/// A...)' unfolds to `(let ((X A)...) BODY...)' when arity and
+/// scoping allow — handling `&optional' (missing actuals bind nil)
+/// and `&rest' (the formal binds `(list . remaining-actuals)').
+/// Returns None when the lambda is not unfoldable (the caller then
+/// keeps the original `funcall' form, like GNU's too-many/few-args
+/// or dynamic-var punts).
+fn unfold_funcall_lambda(
+    i: &mut Interp,
+    lam: &Value,
+    actuals: &[Value],
+) -> Result<Option<Value>, Flow> {
+    let litems = match lam.list_to_vec() {
+        Ok(v) if v.len() >= 2 => v,
+        _ => return Ok(None),
+    };
+    let formals = match litems[1].list_to_vec() {
+        Ok(v) => v,
+        Err(_) => return Ok(None),
+    };
+    // `macroexp-parse-body': skip leading docstring/declare/interactive.
+    let mut body_start = 2;
+    while body_start < litems.len() {
+        match &litems[body_start] {
+            Value::Str(_) => body_start += 1,
+            v if is_declare_form(i, v) => body_start += 1,
+            Value::Cons(c) => {
+                let is_ia = {
+                    let b = c.borrow();
+                    i.sym_is(&b.car, sym::INTERACTIVE)
+                };
+                if is_ia {
+                    body_start += 1;
+                } else {
+                    break;
+                }
+            }
+            _ => break,
+        }
+    }
+    let mut bindings: Vec<Value> = Vec::with_capacity(formals.len());
+    let mut rest: &[Value] = actuals;
+    let mut optionalp = false;
+    let mut restp = false;
+    let mut exhausted = false;
+    for (k, fo) in formals.iter().enumerate() {
+        let sid = match i.sym_id(fo) {
+            Some(sid) => sid,
+            None => return Ok(None),
+        };
+        if sid == sym::OPTIONAL {
+            if restp || k + 1 == formals.len() {
+                return Ok(None);
+            }
+            optionalp = true;
+            continue;
+        }
+        if sid == sym::REST {
+            if k + 1 == formals.len() || k + 2 != formals.len() {
+                return Ok(None);
+            }
+            restp = true;
+            continue;
+        }
+        // Other `&'-keywords (`&key' etc.) are not unfoldable.
+        if i.symbol_name(sid).starts_with('&') {
+            return Ok(None);
+        }
+        if macroexp_dynbound_p(i, sid) {
+            return Ok(None);
+        }
+        if restp {
+            // The `&rest' formal soaks up the remaining actuals.
+            let tail = if rest.is_empty() {
+                Value::Nil
+            } else {
+                let mut l = vec![Value::Sym(i.intern("list"))];
+                l.extend(rest.iter().cloned());
+                Value::list(l)
+            };
+            bindings.push(Value::list(vec![fo.clone(), tail]));
+            rest = &[];
+            continue;
+        }
+        if !optionalp && rest.is_empty() {
+            // Too few arguments: GNU warns and keeps the call form.
+            exhausted = true;
+            break;
+        }
+        let head = rest.first().cloned().unwrap_or(Value::Nil);
+        bindings.push(Value::list(vec![fo.clone(), head]));
+        if !rest.is_empty() {
+            rest = &rest[1..];
+        }
+    }
+    if exhausted || !rest.is_empty() {
+        return Ok(None);
+    }
+    let body = &litems[body_start..];
+    if bindings.is_empty() {
+        // `(macroexp-progn body)'
+        if body.len() == 1 {
+            return Ok(Some(body[0].clone()));
+        }
+        let mut out = vec![Value::Sym(sym::PROGN)];
+        out.extend(body.iter().cloned());
+        return Ok(Some(Value::list(out)));
+    }
+    let mut out = vec![Value::Sym(sym::LET), Value::list(bindings)];
+    out.extend(body.iter().cloned());
+    Ok(Some(Value::list(out)))
+}
+
 /// Recursively expand macros throughout a form.
 pub(crate) fn macroexpand_all(i: &mut Interp, form: &Value) -> EvalResult {
     let expanded = i.macroexpand(form)?;
@@ -746,6 +928,7 @@ pub(crate) fn macroexpand_all(i: &mut Interp, form: &Value) -> EvalResult {
             // expansion — GNU's `macroexp--expand-all' keeps these
             // positions verbatim.
             let closure_id = i.intern("closure");
+            let funcall_id = i.intern("funcall");
             if let Some(id) = i.sym_id(&car) {
                 match id {
                     // `(closure ENV ARGLIST BODY...)': env and arglist
@@ -805,7 +988,7 @@ pub(crate) fn macroexpand_all(i: &mut Interp, form: &Value) -> EvalResult {
                         }
                         return Ok(Value::list(out));
                     }
-                    sym::FUNCTION if items.len() >= 2 => {
+                    sym::FUNCTION if items.len() == 2 => {
                         // GNU `macroexp--expand-all' only descends into
                         // a lambda-shaped function argument; any other
                         // `(function ...)' form is data (e.g. an `ftype'
@@ -817,8 +1000,38 @@ pub(crate) fn macroexpand_all(i: &mut Interp, form: &Value) -> EvalResult {
                                 i.sym_is(&b.car, sym::LAMBDA) || i.sym_is(&b.car, closure_id)
                             };
                             if is_lam {
-                                let arg = macroexpand_all(i, &items[1])?;
-                                return Ok(Value::list(vec![items[0].clone(), arg]));
+                                // Expand the lambda's elements the way
+                                // `macroexp--all-forms' does (arglist is
+                                // data, body elements are code); do NOT
+                                // recur through `macroexpand_all' on the
+                                // whole `(lambda ...)' — `macroexpand-1'
+                                // would just re-wrap it in `function'.
+                                let is_clo = {
+                                    let b = lc.borrow();
+                                    i.sym_is(&b.car, closure_id)
+                                };
+                                let head = if is_clo { 3 } else { 2 };
+                                let litems = match want_list(i, &items[1]) {
+                                    Ok(v) if v.len() >= head => v,
+                                    _ => return Ok(expanded),
+                                };
+                                let mut lout = litems[..head].to_vec();
+                                let mut lbody = litems[head..].iter();
+                                for it in &mut lbody {
+                                    if matches!(it, Value::Str(_)) || is_declare_form(i, it) {
+                                        lout.push(it.clone());
+                                    } else {
+                                        lout.push(macroexpand_all(i, it)?);
+                                        break;
+                                    }
+                                }
+                                for it in lbody {
+                                    lout.push(macroexpand_all(i, it)?);
+                                }
+                                return Ok(Value::list(vec![
+                                    items[0].clone(),
+                                    Value::list(lout),
+                                ]));
                             }
                         }
                         return Ok(expanded);
@@ -894,14 +1107,173 @@ pub(crate) fn macroexpand_all(i: &mut Interp, form: &Value) -> EvalResult {
                         return Ok(Value::list(out));
                     }
                     sym::SETQ | sym::SETQ_DEFAULT => {
-                        let mut out = vec![items[0].clone()];
-                        for (k, it) in items[1..].iter().enumerate() {
-                            if k % 2 == 0 {
-                                out.push(it.clone());
+                        // GNU `macroexp--expand-all' normalizes `setq'
+                        // so the byte compiler only ever sees
+                        // 3-element `(setq VAR EXPR)' forms; multi-pair
+                        // setqs become `(progn (setq A E1) (setq B E2))'.
+                        let args = &items[1..];
+                        let nargs = args.len();
+                        if nargs == 2 && plain_setq_var(i, &args[0]) {
+                            let expr = macroexpand_all(i, &args[1])?;
+                            return Ok(Value::list(vec![
+                                items[0].clone(),
+                                args[0].clone(),
+                                expr,
+                            ]));
+                        }
+                        if nargs % 2 == 1 {
+                            // `(signal 'wrong-number-of-arguments
+                            //          '(setq NARGS))'
+                            return Ok(Value::list(vec![
+                                Value::Sym(i.intern("signal")),
+                                Value::list(vec![
+                                    Value::Sym(sym::QUOTE),
+                                    Value::Sym(sym::WRONG_NUMBER_OF_ARGUMENTS),
+                                ]),
+                                Value::list(vec![
+                                    Value::Sym(sym::QUOTE),
+                                    Value::list(vec![
+                                        items[0].clone(),
+                                        Value::Int(nargs as i128),
+                                    ]),
+                                ]),
+                            ]));
+                        }
+                        let mut assigns = Vec::new();
+                        for pair in args.chunks(2) {
+                            let var = &pair[0];
+                            let expr = macroexpand_all(i, &pair[1])?;
+                            let assignment = if plain_setq_var(i, var) {
+                                Value::list(vec![items[0].clone(), var.clone(), expr])
+                            } else if matches!(var, Value::Sym(sid) if i.symbol_name(*sid).starts_with(':'))
+                            {
+                                // `(if (eq :k E) :k (signal 'setting-constant
+                                //                          (list ':k)))'
+                                Value::list(vec![
+                                    Value::Sym(sym::IF),
+                                    Value::list(vec![
+                                        Value::Sym(i.intern("eq")),
+                                        var.clone(),
+                                        expr,
+                                    ]),
+                                    var.clone(),
+                                    Value::list(vec![
+                                        Value::Sym(i.intern("signal")),
+                                        Value::list(vec![
+                                            Value::Sym(sym::QUOTE),
+                                            Value::Sym(sym::SETTING_CONSTANT),
+                                        ]),
+                                        Value::list(vec![
+                                            Value::Sym(i.intern("list")),
+                                            Value::list(vec![
+                                                Value::Sym(sym::QUOTE),
+                                                var.clone(),
+                                            ]),
+                                        ]),
+                                    ]),
+                                ])
                             } else {
-                                out.push(macroexpand_all(i, it)?);
+                                // `(signal 'setting-constant (list 'VAR))'
+                                // for t/nil, else a wrong-type-argument.
+                                let tag = match var {
+                                    Value::Sym(_) => sym::SETTING_CONSTANT,
+                                    _ => sym::WRONG_TYPE_ARGUMENT,
+                                };
+                                let data = match var {
+                                    Value::Sym(_) => Value::list(vec![
+                                        Value::Sym(i.intern("list")),
+                                        Value::list(vec![
+                                            Value::Sym(sym::QUOTE),
+                                            var.clone(),
+                                        ]),
+                                    ]),
+                                    _ => Value::list(vec![
+                                        Value::Sym(i.intern("list")),
+                                        Value::list(vec![
+                                            Value::Sym(sym::QUOTE),
+                                            Value::Sym(i.intern("symbolp")),
+                                        ]),
+                                        Value::list(vec![
+                                            Value::Sym(sym::QUOTE),
+                                            var.clone(),
+                                        ]),
+                                    ]),
+                                };
+                                Value::list(vec![
+                                    Value::Sym(i.intern("signal")),
+                                    Value::list(vec![Value::Sym(sym::QUOTE), Value::Sym(tag)]),
+                                    data,
+                                ])
+                            };
+                            assigns.push(assignment);
+                        }
+                        return Ok(Value::cons(Value::Sym(sym::PROGN), Value::list(assigns)));
+                    }
+                    _ if id == funcall_id => {
+                        // GNU `macroexp--expand-all' rewrites
+                        // `(funcall #'F A...)' to `(F A...)' when F is a
+                        // plain function symbol, and unfolds
+                        // `(funcall #'(lambda (X) E) A)' to
+                        // `(let ((X A)) E)'.
+                        if items.len() < 2 {
+                            // `(funcall)' alone: GNU keeps it verbatim
+                            // (bug#53227).
+                            return Ok(expanded);
+                        }
+                        let eexp = macroexpand_all(i, &items[1])?;
+                        let mut eargs = Vec::with_capacity(items.len() - 2);
+                        for a in &items[2..] {
+                            eargs.push(macroexpand_all(i, a)?);
+                        }
+                        let mut f: Option<Value> = None;
+                        if let Value::Cons(c) = &eexp {
+                            let is_fn = {
+                                let b = c.borrow();
+                                i.sym_is(&b.car, sym::FUNCTION)
+                            };
+                            if is_fn {
+                                if let Ok(v) = eexp.list_to_vec() {
+                                    if v.len() == 2 {
+                                        f = Some(v[1].clone());
+                                    }
+                                }
                             }
                         }
+                        if let Some(fv) = f {
+                            match i.sym_id(&fv) {
+                                Some(fsid) => {
+                                    // `(funcall #'sym A...)' → `(sym A...)'
+                                    // unless sym is a special form or macro.
+                                    let is_sf = crate::lisp::special::special_form(fsid)
+                                        .is_some();
+                                    if !is_sf && !sym_macrop(i, fsid) {
+                                        let mut call = vec![fv.clone()];
+                                        call.extend(eargs);
+                                        return macroexpand_all(i, &Value::list(call));
+                                    }
+                                }
+                                None => {
+                                    if let Value::Cons(lc) = &fv {
+                                        let is_lam = {
+                                            let b = lc.borrow();
+                                            i.sym_is(&b.car, sym::LAMBDA)
+                                        };
+                                        if is_lam {
+                                            if let Some(unfolded) =
+                                                unfold_funcall_lambda(i, &fv, &eargs)?
+                                            {
+                                                return Ok(unfolded);
+                                            }
+                                            // Unfoldable-but-unsafe shapes
+                                            // keep the whole original form.
+                                            return Ok(expanded);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        let mut out = vec![items[0].clone(), eexp];
+                        out.extend(eargs);
                         return Ok(Value::list(out));
                     }
                     sym::CONDITION_CASE if items.len() >= 3 => {
@@ -928,6 +1300,31 @@ pub(crate) fn macroexpand_all(i: &mut Interp, form: &Value) -> EvalResult {
                         return Ok(Value::list(out));
                     }
                     _ => {}
+                }
+            }
+            // GNU `macroexp--expand-all' case `(,(lambda ...) . ,args)':
+            // a lambda in function position keeps its `(lambda ARGLIST)'
+            // head verbatim (no `function' wrap) while its body and the
+            // call arguments expand.
+            if let Value::Cons(lc) = &items[0] {
+                let is_lam = {
+                    let b = lc.borrow();
+                    i.sym_is(&b.car, sym::LAMBDA)
+                };
+                if is_lam {
+                    let litems = match want_list(i, &items[0]) {
+                        Ok(v) if v.len() >= 2 => v,
+                        _ => return Ok(expanded),
+                    };
+                    let mut fun_items = litems[..2].to_vec();
+                    for it in &litems[2..] {
+                        fun_items.push(macroexpand_all(i, it)?);
+                    }
+                    let mut res = vec![Value::list(fun_items)];
+                    for it in &items[1..] {
+                        res.push(macroexpand_all(i, it)?);
+                    }
+                    return Ok(Value::list(res));
                 }
             }
             let mut out = Vec::with_capacity(items.len());
