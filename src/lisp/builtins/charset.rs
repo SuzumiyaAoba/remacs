@@ -2245,7 +2245,16 @@ fn f_define_coding_system_internal(i: &mut Interp, a: Vec<Value>) -> EvalResult 
     let sid = want_sym(i, &a[0])?;
     let name = i.symbol_name(sid);
     if !i.extra_coding_systems.iter().any(|n| *n == name) {
-        i.extra_coding_systems.push(name);
+        i.extra_coding_systems.push(name.clone());
+    }
+    // GNU's define-coding-system calls `add-to-coding-system-list':
+    // append the name to the `coding-system-list' variable (sorted
+    // order aside — membership is what the defun iterates).
+    let csl = i.intern("coding-system-list");
+    let mut items = i.symbol_value(csl).list_to_vec().unwrap_or_default();
+    if !items.iter().any(|v| matches!(v, Value::Sym(s) if *s == sid)) {
+        items.push(Value::Sym(sid));
+        i.set_symbol(csl, Value::list(items))?;
     }
     Ok(Value::Nil)
 }

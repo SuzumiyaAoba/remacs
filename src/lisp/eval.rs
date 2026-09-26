@@ -5895,7 +5895,19 @@ explicitly overridden.
             ("auto-coding-functions", Value::Nil),
             ("auto-coding-regexp-alist", Value::Nil),
             ("set-auto-coding-function", Value::Nil),
-            ("coding-system-list", Value::Nil),
+            // GNU's coding.c seeds Vcoding_system_list with every
+            // predefined name; mule.el's `coding-system-list' defun
+            // reads this variable (define-coding-system-internal
+            // appends later registrations).
+            (
+                "coding-system-list",
+                Value::list(
+                    crate::lisp::builtins::misc::CODING_SYSTEMS
+                        .iter()
+                        .map(|n| Value::Sym(self.intern(n)))
+                        .collect(),
+                ),
+            ),
             ("coding-system-alist", Value::Nil),
             ("coding-category-list", Value::Nil),
             ("translation-table-for-input", Value::Nil),
