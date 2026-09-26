@@ -45224,16 +45224,16 @@ For more information on Auto Composition mode, see
   name docstring parents slots index-table)
 
 (defun cl--class-allparents (class)
+  "Return the list of all the ancestors of CLASS, linearized."
   (cons (cl--class-name class)
         (let* ((parents (cl--class-parents class))
                (aps (mapcar #'cl--class-allparents parents)))
-          (if (null (cdr aps))
+          (if (null (cdr aps)) ;; Single-inheritance fast-path.
               (car aps)
-            (let ((res (car aps)))
-              (dolist (x (cdr aps))
-                (dolist (p x)
-                  (unless (memq p res) (push p res))))
-              (nreverse res))))))
+            (merge-ordered-lists
+             ;; Add the list of immediate parents, to control which
+             ;; linearization is chosen.  doi:10.1145/236337.236343
+             (nconc aps (list (mapcar #'cl--class-name parents))))))))
 
 (cl-defstruct (built-in-class
                (:conc-name built-in-class--)
