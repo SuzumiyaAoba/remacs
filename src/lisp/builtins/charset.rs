@@ -906,36 +906,111 @@ fn f_char_code_property_description(i: &mut Interp, a: Vec<Value>) -> EvalResult
 // ---------- translation tables ----------
 
 fn f_make_translation_table(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    // (make-translation-table &optional arg1 arg2) — char-table record.
+    // GNU mule.el: each arg is a list of (FROM . TO) pairs.  A prior
+    // mapping TO -> TO-ALT makes FROM also map to TO-ALT, and chars
+    // that mapped to FROM are updated to map to TO (tracked by
+    // REVLIST, an alist (TO . (FROM ...))).
     let tag = symv(i, "translation-table");
-    let t = misc::make_ct(i, tag, Value::Nil, vec![]);
+    let t = misc::make_ct(i, tag, Value::Nil, vec![Value::Nil; 2]);
+    let mut revlist: Vec<(i128, Vec<i128>)> = vec![];
     for arg in &a {
-        let t2 = t.clone();
-        arg.each_car(|pair| {
-            if let Value::Cons(c) = pair {
-                let (k, v) = {
+        let mut elts = Vec::new();
+        arg.each_car(|v| elts.push(v.clone()));
+        for elt in elts {
+            let (from, to) = match &elt {
+                Value::Cons(c) => {
                     let b = c.borrow();
                     (b.car.clone(), b.cdr.clone())
-                };
-                if let (Value::Int(k), Value::Int(vv)) = (k, v) {
-                    if (0..=misc::CT_MAX_CHAR as i128).contains(&k) {
-                        misc::ct_set(i, &t2, k as u32, Value::Int(vv));
-                    }
+                }
+                _ => continue,
+            };
+            let (Value::Int(f), Value::Int(t0)) = (&from, &to) else {
+                return Err(i.wrong_type_mut("fixnump", &from));
+            };
+            let (f, mut to_c) = (*f, *t0);
+            // (if (setq to-alt (aref table to)) (setq to to-alt))
+            if let Value::Int(ta) = misc::char_table_ref(i, &t, to_c as usize) {
+                to_c = ta;
+            }
+            misc::ct_set(i, &t, f as u32, Value::Int(to_c));
+            // Chars previously mapped to FROM now map to TO.
+            let mut rev_from: Vec<i128> = vec![];
+            if let Some(pos) = revlist.iter().position(|(k, _)| *k == f) {
+                let (_, list) = revlist.remove(pos);
+                for e in &list {
+                    misc::ct_set(i, &t, *e as u32, Value::Int(to_c));
+                }
+                rev_from = list;
+            }
+            match revlist.iter_mut().find(|(k, _)| *k == to_c) {
+                Some((_, l)) => {
+                    let mut nl = vec![f];
+                    nl.append(l);
+                    nl.extend(rev_from);
+                    *l = nl;
+                }
+                None => {
+                    let mut l = vec![f];
+                    l.extend(rev_from);
+                    revlist.push((to_c, l));
                 }
             }
-        });
+        }
+    }
+    // GNU sets extra slot 1 to 1 (max-lookup).
+    if let Value::Record(r) = &t {
+        r.borrow_mut()[4] = Value::Int(1);
     }
     Ok(t)
 }
 
 fn f_define_translation_table(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    // (define-translation-table SYMBOL &rest args) — store table on SYMBOL's
-    // 'translation-table property.
+    // GNU mule.el: a `translation-table' char-table arg is used
+    // directly; other args go to `make-translation-table'.  Registers
+    // (SYMBOL . TABLE) in `translation-table-vector' and sets the
+    // `translation-table'/`translation-table-id' properties.
     let id = want_sym(i, &a[0])?;
-    let tbl = f_make_translation_table(i, a[1..].to_vec())?;
+    let table = match a.get(1) {
+        Some(v)
+            if misc::is_char_table(i, v)
+                && matches!(v, Value::Record(r)
+                    if matches!(r.borrow().get(1), Some(Value::Sym(s)) if i.symbol_name(*s) == "translation-table")) =>
+        {
+            v.clone()
+        }
+        _ => f_make_translation_table(i, a[1..].to_vec())?,
+    };
+    let ttv = i.intern("translation-table-vector");
+    let mut vec = match i.symbol_value(ttv) {
+        Value::Vec(v) => v.borrow().clone(),
+        _ => Vec::new(),
+    };
+    if vec.is_empty() {
+        vec = vec![Value::Nil; 16];
+    }
+    let mut tid = 0usize;
+    loop {
+        if tid >= vec.len() {
+            let n = vec.len();
+            vec.extend(std::iter::repeat(Value::Nil).take(n));
+        }
+        let use_slot = match &vec[tid] {
+            Value::Nil => true,
+            Value::Cons(c) => matches!(&c.borrow().car, Value::Sym(s) if *s == id),
+            _ => false,
+        };
+        if use_slot {
+            break;
+        }
+        tid += 1;
+    }
+    vec[tid] = Value::cons(Value::Sym(id), table.clone());
+    let _ = i.set_symbol(ttv, Value::Vec(std::rc::Rc::new(std::cell::RefCell::new(vec))));
     let prop = i.intern("translation-table");
-    i.put_prop(id, prop, tbl);
-    Ok(Value::Nil)
+    i.put_prop(id, prop, table);
+    let tidp = i.intern("translation-table-id");
+    i.put_prop(id, tidp, Value::Int(tid as i128));
+    Ok(Value::Int(tid as i128))
 }
 
 fn f_make_translation_table_from_vector(i: &mut Interp, a: Vec<Value>) -> EvalResult {

@@ -550,28 +550,13 @@ fn f_combine_after_change_execute(_i: &mut Interp, _a: Vec<Value>) -> EvalResult
     Ok(Value::Nil)
 }
 
-/// (translate-region-internal START END TABLE) — map each character in
-/// the region through TABLE (a string): char c becomes table[c] when
-/// c < len(TABLE), else stays. GNU also accepts char-tables.
+/// (translate-region-internal START END TABLE) — GNU
+/// `translate-region-internal': TABLE is a string or a char-table of
+/// `translation-table' purpose; returns the number of chars changed.
 fn f_translate_region_internal(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let (s, e, _) = region_text(i, &a)?;
-    let table: Vec<char> = match &a[2] {
-        Value::Str(st) => st.borrow().chars().collect(),
-        // GNU signals a generic `error' for a non-string/non-chartable
-        // TABLE.
-        _ => return Err(i.error("Bad translation table")),
-    };
+    let (s, e) = beg_end(i, &a, 0, 1)?;
     check_writable(i)?;
-    let b = cur(i);
-    let mut bb = b.borrow_mut();
-    for pos in s..e {
-        let c = bb.text.char_at(pos);
-        let ci = c as usize;
-        if ci < table.len() {
-            bb.text.set_char_at(pos, table[ci]);
-        }
-    }
-    Ok(Value::Nil)
+    Ok(Value::Int(translate_region_core(i, s, e, &a[2])?))
 }
 
 /// (buffer-line-statistics) → (LINES LONGEST MEAN) over the accessible
@@ -2180,62 +2165,258 @@ fn f_subst_char_in_region(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     Ok(Value::Nil)
 }
 
-fn f_translate_region(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    check_writable(i)?;
-    let (s, e) = beg_end(i, &a, 0, 1)?;
-    // TABLE: string of 256 chars mapping byte->char, or char-table.
-    let strtab: Option<Vec<char>> = match &a[2] {
+/// GNU `check_translation': VAL is an alist (([FROM-CHAR ...] . TO)
+/// ...) — find the entry whose FROM sequence matches the text at
+/// POS, returning (FROM-LEN . TO).
+fn check_translation(chars: &[char], pos: usize, val: &Value) -> Option<(usize, Value)> {
+    let mut cur = val.clone();
+    while let Value::Cons(c) = cur {
+        let (elt, next) = {
+            let b = c.borrow();
+            (b.car.clone(), b.cdr.clone())
+        };
+        cur = next;
+        let (from, to) = match &elt {
+            Value::Cons(e) => {
+                let b = e.borrow();
+                (b.car.clone(), b.cdr.clone())
+            }
+            _ => continue,
+        };
+        let seq = match &from {
+            Value::Vec(v) => v.borrow().clone(),
+            _ => continue,
+        };
+        if seq.len() > chars.len() - pos {
+            continue;
+        }
+        let matches = seq.iter().enumerate().all(|(k, v)| {
+            matches!(v, Value::Int(n) if char::from_u32(*n as u32) == Some(chars[pos + k]))
+        });
+        if matches {
+            return Some((seq.len(), to));
+        }
+    }
+    None
+}
+
+/// Core of GNU `translate-region-internal': map chars in S..E
+/// through TABLE (a string or a `translation-table' char-table),
+/// returning the number of characters changed.
+fn translate_region_core(
+    i: &mut Interp,
+    s: usize,
+    e: usize,
+    table: &Value,
+) -> Result<i128, Flow> {
+    // TABLE: string of 256 chars mapping byte->char, or char-table
+    // with `translation-table' purpose (GNU signals otherwise).
+    let strtab: Option<Vec<char>> = match table {
         Value::Str(t) => Some(t.borrow().chars().collect()),
         _ => None,
     };
-    let is_ct = crate::lisp::builtins::misc::is_char_table(i, &a[2]);
-    if strtab.is_none() && !is_ct {
-        return Ok(Value::Nil);
+    if strtab.is_none() {
+        let is_tt = crate::lisp::builtins::misc::is_char_table(i, table)
+            && matches!(table, Value::Record(r)
+                if matches!(r.borrow().get(1), Some(Value::Sym(s)) if i.symbol_name(*s) == "translation-table"));
+        if !is_tt {
+            return Err(i.error("Not a translation table"));
+        }
     }
     let b = cur(i);
     let mut bb = b.borrow_mut();
-    let region = bb.text.substring(s, e);
+    let region: Vec<char> = bb.text.substring(s, e).chars().collect();
     let ii: &Interp = i;
-    let out: String = region
-        .chars()
-        .map(|c| {
-            if let Some(t) = &strtab {
-                return t
-                    .get(c as usize)
-                    .copied()
-                    .filter(|t| *t != '\0')
-                    .unwrap_or(c);
+    // GNU `translate-region-internal': per char, the table's value is
+    // a fixnum char (1:1), a [TO-CHAR ...] vector, or a CONS alist of
+    // (([FROM-CHAR ...] . TO) ...) checked against the text at point.
+    let mut out = String::new();
+    let mut pos = 0usize;
+    let mut changed = 0usize;
+    while pos < region.len() {
+        let oc = region[pos];
+        let val = if let Some(t) = &strtab {
+            match t.get(oc as usize) {
+                Some(&nc) if nc != '\0' => Value::Int(nc as i128),
+                _ => Value::Nil,
             }
-            match crate::lisp::builtins::misc::char_table_ref(ii, &a[2], c as usize) {
-                Value::Int(n) => char::from_u32(n as u32).unwrap_or(c),
-                _ => c,
-            }
-        })
-        .collect();
-    drop(bb);
-    crate::buffer::primitives::chg_delete(i, s, e)?;
-    crate::buffer::primitives::chg_insert(i, s, &out)?;
-    Ok(Value::Nil)
-}
-
-fn f_make_translation_table_from_alist(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let items = a[0].list_to_vec().unwrap_or_default();
-    let tag = Value::Sym(i.intern("translation-table"));
-    let tbl = crate::lisp::builtins::misc::make_ct(i, tag, Value::Nil, vec![]);
-    for item in items {
-        if let Value::Cons(c) = &item {
-            let (from, to) = {
-                let b = c.borrow();
-                (b.car.clone(), b.cdr.clone())
-            };
-            if let (Value::Int(f), Value::Int(t)) = (from, to) {
-                if (0..=crate::lisp::builtins::misc::CT_MAX_CHAR as i128).contains(&f) {
-                    crate::lisp::builtins::misc::ct_set(i, &tbl, f as u32, Value::Int(t));
+        } else {
+            crate::lisp::builtins::misc::char_table_ref(ii, table, oc as usize)
+        };
+        match val {
+            Value::Int(n) => {
+                if let Some(nc) = char::from_u32(n as u32) {
+                    out.push(nc);
+                    if nc != oc {
+                        changed += 1;
+                    }
+                } else {
+                    out.push(oc);
                 }
+                pos += 1;
+            }
+            Value::Vec(v) => {
+                let start = out.len();
+                for ch in v.borrow().iter() {
+                    if let Value::Int(c) = ch {
+                        if let Some(c) = char::from_u32(*c as u32) {
+                            out.push(c);
+                        }
+                    }
+                }
+                changed += out[start..].chars().count();
+                pos += 1;
+            }
+            Value::Cons(_) => match check_translation(&region, pos, &val) {
+                Some((len, to)) => {
+                    let start = out.len();
+                    match to {
+                        Value::Int(c) => {
+                            if let Some(c) = char::from_u32(c as u32) {
+                                out.push(c);
+                            }
+                        }
+                        Value::Vec(v) => {
+                            for ch in v.borrow().iter() {
+                                if let Value::Int(c) = ch {
+                                    if let Some(c) = char::from_u32(*c as u32) {
+                                        out.push(c);
+                                    }
+                                }
+                            }
+                        }
+                        _ => {
+                            for c in &region[pos..pos + len] {
+                                out.push(*c);
+                            }
+                        }
+                    }
+                    changed += out[start..].chars().count();
+                    pos += len;
+                }
+                None => {
+                    out.push(oc);
+                    pos += 1;
+                }
+            },
+            _ => {
+                out.push(oc);
+                pos += 1;
             }
         }
     }
-    Ok(tbl)
+    drop(bb);
+    crate::buffer::primitives::chg_delete(i, s, e)?;
+    crate::buffer::primitives::chg_insert(i, s, &out)?;
+    Ok(changed as i128)
+}
+
+fn f_translate_region(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    check_writable(i)?;
+    let (s, e) = beg_end(i, &a, 0, 1)?;
+    // GNU's Lisp `translate-region' resolves a SYMBOL table through
+    // its `translation-table' property, then delegates to
+    // `translate-region-internal'.
+    let mut table = a[2].clone();
+    if let Value::Sym(sid) = &table {
+        let tpid = i.intern("translation-table");
+        let p = i.get_prop(*sid, tpid);
+        // GNU: (or (char-table-p val) (error "Invalid translation table
+        // name: %s" table)).
+        if !crate::lisp::builtins::misc::is_char_table(i, &p) {
+            let name = i.symbol_name(*sid).to_string();
+            return Err(i.error(&format!("Invalid translation table name: {}", name)));
+        }
+        table = p;
+    }
+    Ok(Value::Int(translate_region_core(i, s, e, &table)?))
+}
+
+/// GNU mule.el `make-translation-table-from-alist': builds a forward
+/// table plus a reverse table (extra slot 0); extra slot 1 is the
+/// max FROM sequence length.  Each cell may hold TO, or a list of
+/// (([FROM-CHAR ...] . TO) ...) built by nconc'ing new entries.
+fn f_make_translation_table_from_alist(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let items = a[0].list_to_vec().unwrap_or_default();
+    let tag = Value::Sym(i.intern("translation-table"));
+    let forward = crate::lisp::builtins::misc::make_ct(
+        i,
+        tag.clone(),
+        Value::Nil,
+        vec![Value::Nil; 2],
+    );
+    let reverse = crate::lisp::builtins::misc::make_ct(i, tag, Value::Nil, vec![Value::Nil; 2]);
+    for pass in 0..2 {
+        let table = if pass == 0 { &forward } else { &reverse };
+        let mut max_lookup = 1i128;
+        for item in &items {
+            let (car, cdr) = match item {
+                Value::Cons(c) => {
+                    let b = c.borrow();
+                    (b.car.clone(), b.cdr.clone())
+                }
+                _ => continue,
+            };
+            let (from, to) = if pass == 0 { (car, cdr) } else { (cdr, car) };
+            let idx = match &from {
+                Value::Int(c) => Some(*c),
+                Value::Vec(v) => {
+                    let v = v.borrow();
+                    if v.is_empty() {
+                        None
+                    } else {
+                        max_lookup = max_lookup.max(v.len() as i128);
+                        match &v[0] {
+                            Value::Int(c) => Some(*c),
+                            _ => None,
+                        }
+                    }
+                }
+                _ => None,
+            };
+            let Some(idx) = idx else { continue };
+            if !(0..=crate::lisp::builtins::misc::CT_MAX_CHAR as i128).contains(&idx) {
+                continue;
+            }
+            let val =
+                crate::lisp::builtins::misc::char_table_ref(i, table, idx as usize);
+            let cell = if !val.is_nil() {
+                // Existing entry: a non-list value is first wrapped
+                // as ([idx] . val), then (from . to) is nconc'd on.
+                let mut vl = match &val {
+                    Value::Cons(_) => val.list_to_vec().unwrap_or_default(),
+                    _ => vec![Value::cons(
+                        Value::Vec(std::rc::Rc::new(std::cell::RefCell::new(vec![
+                            Value::Int(idx),
+                        ]))),
+                        val.clone(),
+                    )],
+                };
+                let f = match &from {
+                    Value::Int(c) => Value::Vec(std::rc::Rc::new(std::cell::RefCell::new(
+                        vec![Value::Int(*c)],
+                    ))),
+                    _ => from.clone(),
+                };
+                vl.push(Value::cons(f, to));
+                Value::list(vl)
+            } else if matches!(from, Value::Int(_)) {
+                to
+            } else {
+                Value::list(vec![Value::cons(from.clone(), to)])
+            };
+            crate::lisp::builtins::misc::ct_set(i, table, idx as u32, cell);
+        }
+        // Extra slot 1: max-lookup for this direction.
+        if let Value::Record(r) = table {
+            r.borrow_mut()[4] = Value::Int(max_lookup);
+        }
+    }
+    // Extra slot 0 of the forward table: the reverse table.
+    if let Value::Record(r) = &forward {
+        r.borrow_mut()[3] = reverse;
+    }
+    Ok(forward)
 }
 
 fn f_buffer_swap_text(i: &mut Interp, a: Vec<Value>) -> EvalResult {

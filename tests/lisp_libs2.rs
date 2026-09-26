@@ -246,18 +246,19 @@ fn macroexpand_all_preserves_arglists() {
                     (macroexpand-all '(lambda (m) m))
                     (macroexpand-all '(let ((m 1)) m))
                     (macroexpand-all '(function (lambda (m) m)))))"),
-        "((defun f (m) (list m 1)) (lambda (m) m) (let ((m 1)) m) #'(lambda (m) m))"
+        "((defun f (m) (list m 1)) #'(lambda (m) m) (let ((m 1)) m) #'(lambda (m) m))"
     );
 }
 
 #[test]
 fn macroexpand_all_setq_condition_case() {
+    // GNU expands each (setq VAR VAL) pair pair-wise into a progn.
     assert_eq!(
         ev("(progn (defmacro mm (&rest _a) \"Y\")
                   (list
                     (macroexpand-all '(setq mm 1 mm (mm)))
                     (macroexpand-all '(condition-case mm (mm) (mm (mm))))))"),
-        "((setq mm 1 mm \"Y\") (condition-case mm \"Y\" (mm \"Y\")))"
+        "((progn (setq mm 1) (setq mm \"Y\")) (condition-case mm \"Y\" (mm \"Y\")))"
     );
 }
 

@@ -40976,7 +40976,7 @@ they had none before." :type 'boolean :version "31.1" :set (lambda (symbol value
 (defvar tooltip-reuse-hidden-frame nil)
 (defvar translate-upper-case-key-bindings 't)
 (defvar translation-hash-table-vector nil)
-(defvar translation-table-vector nil)
+(defvar translation-table-vector (make-vector 16 nil))
 (defvar underline-minimum-offset '1)
 (defvar undo-outer-limit-function 'undo-outer-limit-truncate)
 (defvar unibyte-display-via-language-environment nil)
@@ -43004,6 +43004,14 @@ interactively, this is the prefix argument." (interactive "P") (let ((bfn buffer
 ;; --- ucs-normalize.el (GNU preloaded; data tables absent)
 
 (defconst ucs-normalize-version "1.2")
+;; GNU's dump embeds ucs-normalize.elc with its compile-time state
+;; (quick-check regexps, translation tables, combining-char list)
+;; already built.  Building it takes seconds interpreted, so remacs
+;; materializes the real file on first use — `require' already sees
+;; the feature mark, so `(load ...)' is used directly.
+(defun ucs-normalize--ensure-loaded ()
+  (unless ucs-normalize-combining-chars-regexp
+    (load "ucs-normalize" nil t)))
 (defvar ucs-normalize-combining-chars nil)
 (defvar ucs-normalize-combining-chars-regexp 'nil "Regular expression to match sequence of combining characters.")
 (defvar ucs-normalize-nfd-quick-check-regexp nil)
@@ -43023,7 +43031,7 @@ COMPOSITION-PREDICATE will be used to compose region." (save-excursion (save-res
 (defmacro ucs-normalize-string (ucs-normalize-region) "Normalize string STR using the function UCS-NORMALIZE-REGION." `(with-temp-buffer (insert str) (,ucs-normalize-region (point-min) (point-max)) (buffer-string)))
 (defun ucs-normalize-NFD-region (from to) "Decompose the region between FROM and TO according to the Unicode NFD.
 This replaces the text between FROM and TO with its canonical decomposition,
-a.k.a. the \"Unicode Normalization Form D\"." (interactive "r") (ucs-normalize-region from to ucs-normalize-nfd-quick-check-regexp 'ucs-normalize-nfd-table nil))
+a.k.a. the \"Unicode Normalization Form D\"." (interactive "r") (ucs-normalize--ensure-loaded) (ucs-normalize-region from to ucs-normalize-nfd-quick-check-regexp 'ucs-normalize-nfd-table nil))
 (defun ucs-normalize-NFD-string (str) "Decompose the string STR according to the Unicode NFD.
 This returns a new string that is the canonical decomposition of STR,
 a.k.a. the \"Unicode Normalization Form D\" of STR.  For instance:
@@ -43032,7 +43040,7 @@ a.k.a. the \"Unicode Normalization Form D\" of STR.  For instance:
 (defun ucs-normalize-NFC-region (from to) "Compose the region between FROM and TO according to the Unicode NFC.
 This replaces the text between FROM and TO with the result of its
 canonical decomposition (see `ucs-normalize-NFD-region') followed by
-canonical composition, a.k.a. the \"Unicode Normalization Form C\"." (interactive "r") (ucs-normalize-region from to ucs-normalize-nfc-quick-check-regexp 'ucs-normalize-nfd-table t))
+canonical composition, a.k.a. the \"Unicode Normalization Form C\"." (interactive "r") (ucs-normalize--ensure-loaded) (ucs-normalize-region from to ucs-normalize-nfc-quick-check-regexp 'ucs-normalize-nfd-table t))
 (defun ucs-normalize-NFC-string (str) "Compose STR according to the Unicode NFC.
 This returns a new string obtained by canonical decomposition
 of STR (see `ucs-normalize-NFC-string') followed by canonical
@@ -43042,7 +43050,7 @@ For instance:
   (string-glyph-compose \"Å\") => \"Å\"" (ucs-normalize-string ucs-normalize-NFC-region))
 (defun ucs-normalize-NFKD-region (from to) "Decompose the region between FROM and TO according to the Unicode NFKD.
 This replaces the text between FROM and TO with its compatibility
-decomposition, a.k.a. \"Unicode Normalization Form KD\"." (interactive "r") (ucs-normalize-region from to ucs-normalize-nfkd-quick-check-regexp 'ucs-normalize-nfkd-table nil))
+decomposition, a.k.a. \"Unicode Normalization Form KD\"." (interactive "r") (ucs-normalize--ensure-loaded) (ucs-normalize-region from to ucs-normalize-nfkd-quick-check-regexp 'ucs-normalize-nfkd-table nil))
 (defun ucs-normalize-NFKD-string (str) "Decompose the string STR according to the Unicode NFKD.
 This returns a new string obtained by compatibility decomposition
 of STR.  This is much like the NFD (canonical decomposition) form,
@@ -43054,7 +43062,7 @@ characters.  For instance:
 (defun ucs-normalize-NFKC-region (from to) "Compose the region between FROM and TO according to the Unicode NFKC.
 This replaces the text between FROM and TO with the result of its
 compatibility decomposition (see `ucs-normalize-NFC-region') followed by
-canonical composition, a.k.a. the \"Unicode Normalization Form KC\"." (interactive "r") (ucs-normalize-region from to ucs-normalize-nfkc-quick-check-regexp 'ucs-normalize-nfkd-table t))
+canonical composition, a.k.a. the \"Unicode Normalization Form KC\"." (interactive "r") (ucs-normalize--ensure-loaded) (ucs-normalize-region from to ucs-normalize-nfkc-quick-check-regexp 'ucs-normalize-nfkd-table t))
 (defun ucs-normalize-NFKC-string (str) "Compose STR according to the Unicode NFC.
 This returns a new string obtained by compatibility decomposition
 of STR (see `ucs-normalize-NFKD-string') followed by canonical
@@ -43064,9 +43072,9 @@ differs for precomposed characters.  For instance:
 
   (ucs-normalize-NFC-string \"ﬁ\") => \"ﬁ\"
   (ucs-normalize-NFKC-string \"ﬁ\") = \"fi\"" (ucs-normalize-string ucs-normalize-NFKC-region))
-(defun ucs-normalize-HFS-NFD-region (from to) "Normalize region between FROM and TO by Unicode NFD and Mac OS's HFS Plus." (interactive "r") (ucs-normalize-region from to ucs-normalize-hfs-nfd-quick-check-regexp 'ucs-normalize-hfs-nfd-table 'ucs-normalize-hfs-nfd-comp-p))
+(defun ucs-normalize-HFS-NFD-region (from to) "Normalize region between FROM and TO by Unicode NFD and Mac OS's HFS Plus." (interactive "r") (ucs-normalize--ensure-loaded) (ucs-normalize-region from to ucs-normalize-hfs-nfd-quick-check-regexp 'ucs-normalize-hfs-nfd-table 'ucs-normalize-hfs-nfd-comp-p))
 (defun ucs-normalize-HFS-NFD-string (str) "Normalize the string STR by the Unicode NFD and Mac OS's HFS Plus." (ucs-normalize-string ucs-normalize-HFS-NFD-region))
-(defun ucs-normalize-HFS-NFC-region (from to) "Normalize region between FROM and TO by Unicode NFC and Mac OS's HFS Plus." (interactive "r") (ucs-normalize-region from to ucs-normalize-hfs-nfc-quick-check-regexp 'ucs-normalize-hfs-nfd-table t))
+(defun ucs-normalize-HFS-NFC-region (from to) "Normalize region between FROM and TO by Unicode NFC and Mac OS's HFS Plus." (interactive "r") (ucs-normalize--ensure-loaded) (ucs-normalize-region from to ucs-normalize-hfs-nfc-quick-check-regexp 'ucs-normalize-hfs-nfd-table t))
 (defun ucs-normalize-HFS-NFC-string (str) "Normalize the string STR by the Unicode NFC and Mac OS's HFS Plus." (ucs-normalize-string ucs-normalize-HFS-NFC-region))
 (defun ucs-normalize-hfs-nfd-post-read-conversion (len) (save-excursion (save-restriction (save-match-data (narrow-to-region (point) (+ (point) len)) (ucs-normalize-HFS-NFC-region (point-min) (point-max)) (- (point-max) (point-min))))))
 (defun ucs-normalize-hfs-nfd-pre-write-conversion (_from _to) (save-match-data (ucs-normalize-HFS-NFD-region (point-min) (point-max))))

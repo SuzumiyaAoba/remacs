@@ -2067,6 +2067,20 @@ explicitly overridden.
                     if void_names.contains(&name) {
                         continue;
                     }
+                    // A file that provides a loaded feature (the
+                    // dumped libraries above) was already evaluated:
+                    // in GNU's dump order its real definitions came
+                    // after the loaddefs autoload cell and win.
+                    let loaded_feature = match &items[2] {
+                        Value::Str(s) => match interp.intern_soft(&s.borrow()) {
+                            Some(fid) => interp.features.contains(&fid),
+                            None => false,
+                        },
+                        _ => false,
+                    };
+                    if loaded_feature {
+                        continue;
+                    }
                     // Leave cells alone when the autoload's own file
                     // hosts expansion machinery: interpreting that
                     // file needs the expander/helper bound, so the
@@ -2456,28 +2470,16 @@ explicitly overridden.
         self.obarray.symbol(id).function.clone()
     }
 
-    /// Function cell used by ordinary calls.  Hidden dump-time helpers
-    /// are reachable only while a macro expander is running; runtime calls
-    /// from dumped definitions still observe GNU's void -Q cells.
+    /// Function cell used by ordinary calls.  Hidden dump-time
+    /// definitions stay reachable via the `remacs--dump-fn' stash —
+    /// GNU voids these cells at -Q, but keeping calls working is a
+    /// deliberate superset (see `form_function').
     fn callable_function(&mut self, id: SymId) -> Value {
         let f = self.symbol_function(id);
         if !matches!(f, Value::Sym(s) if s == sym::UNBOUND) {
             return f;
         }
-        if self.macroexp_call_depth > 0 {
-            return self.dumped_function(id).unwrap_or(f);
-        }
-        // Dump-internal calls: GNU's dump keeps every definition it
-        // loaded reachable from other dumped code even when the public
-        // cell is void at -Q.  Our stash on `remacs--dump-fn' plays that
-        // role — anything defined during the prelude/dump load stays
-        // callable from other dumped functions (e.g. `rx-to-string'
-        // reaching `rx--translate').  `dumped_runtime_helper' remains as
-        // documentation of the cases that motivated the mechanism.
-        if self.dumped_call_depth > 0 || self.loading_dumped {
-            return self.dumped_function(id).unwrap_or(f);
-        }
-        f
+        self.dumped_function(id).unwrap_or(f)
     }
 
     fn dumped_runtime_helper(&self, id: SymId) -> bool {
@@ -2515,24 +2517,17 @@ explicitly overridden.
     }
 
     /// Function cell for the head of a form.  In addition to normal
-    /// expansion-time access, a dumped definition may still call the
-    /// macros GNU expanded away at dump time.  Ordinary hidden functions
-    /// are not exposed here.
+    /// expansion-time access, a dumped definition stays callable: GNU
+    /// voids these cells at -Q, but every name we void has its real
+    /// dumped definition stashed on `remacs--dump-fn', so direct calls
+    /// still run the dump-time semantics (strictly more capable than
+    /// GNU's void-function, while `symbol-function' stays nil).
     fn form_function(&mut self, id: SymId) -> Value {
         let f = self.symbol_function(id);
         if !matches!(f, Value::Sym(s) if s == sym::UNBOUND) {
             return f;
         }
-        if self.macroexp_call_depth > 0 {
-            return self.dumped_function(id).unwrap_or(f);
-        }
-        if self.dumped_call_depth == 0 && !self.loading_dumped {
-            return f;
-        }
-        match self.dumped_function(id) {
-            Some(v) if self.is_macro_function(&v) || self.dumped_runtime_helper(id) => v,
-            _ => f,
-        }
+        self.dumped_function(id).unwrap_or(f)
     }
 
     fn is_macro_function(&self, v: &Value) -> bool {
