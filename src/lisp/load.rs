@@ -2005,6 +2005,53 @@ pub(crate) fn embedded(name: &str) -> Option<&'static str> {
         .map(|(_, src)| *src)
 }
 
+/// Decode file bytes for `load' like GNU's `utf-8-emacs' decode:
+/// valid UTF-8 decodes normally; 0xF5..0xF7 lead bytes with three
+/// continuation bytes are GNU-internal `emacs'-charset chars (codes
+/// > #x10FFFF — e.g. ethio-util.el's old mule text) and map to
+/// private-use chars U+E000+(code & #x1FFF), preserving distinctness
+/// for `eq'/`memq'.  Other undecodable bytes become U+FFFD.
+fn decode_load_bytes(bytes: &[u8]) -> String {
+    let mut out = String::with_capacity(bytes.len());
+    let mut ix = 0;
+    while ix < bytes.len() {
+        let b = bytes[ix];
+        if (0xF5..=0xF7).contains(&b)
+            && ix + 3 < bytes.len()
+            && bytes[ix + 1..=ix + 3].iter().all(|c| (0x80..0xC0).contains(c))
+        {
+            let code = (((b & 0x07) as u32) << 18)
+                | (((bytes[ix + 1] & 0x3F) as u32) << 12)
+                | (((bytes[ix + 2] & 0x3F) as u32) << 6)
+                | (bytes[ix + 3] & 0x3F) as u32;
+            // GNU's charset-`emacs' codes live above #x1A0000; fold
+            // into the BMP private-use area deterministically.
+            out.push(char::from_u32(0xE000 + (code & 0x1FFF)).unwrap_or('\u{FFFD}'));
+            ix += 4;
+            continue;
+        }
+        // Valid UTF-8 prefix, then loop so the byte at the error
+        // position gets the 0xF5..0xF7 check before falling back.
+        match std::str::from_utf8(&bytes[ix..]) {
+            Ok(s) => {
+                out.push_str(s);
+                break;
+            }
+            Err(e) => {
+                let vlen = e.valid_up_to();
+                out.push_str(std::str::from_utf8(&bytes[ix..ix + vlen]).unwrap_or(""));
+                ix += vlen;
+                if vlen > 0 {
+                    continue;
+                }
+                out.push('\u{FFFD}');
+                ix += e.error_len().unwrap_or(bytes.len() - ix).max(1);
+            }
+        }
+    }
+    out
+}
+
 /// Read the file at PATH and evaluate all forms in it.
 /// Binds `load-file-name` and `load-in-progress` like Emacs `load`.
 pub fn eval_file(i: &mut Interp, path: &str) -> EvalResult {
@@ -2028,8 +2075,29 @@ fn eval_file_lex_dumped(
     force_lex: bool,
     dumped_like: bool,
 ) -> EvalResult {
+    // GNU decodes the file with `utf-8-emacs' (load-coding auto-detect):
+    // internal charset `emacs' chars (4-byte leads 0xF5..0xF7, codes
+    // > #x10FFFF) decode without error.  Our strings can't hold those
+    // codes, so decode them to distinct private-use chars — `?X'
+    // literals and `eq'/`memq' comparisons stay consistent within a
+    // file (ethio-util.el relies on this).
     let src = match std::fs::read_to_string(path) {
         Ok(s) => s,
+        Err(e) if e.kind() == std::io::ErrorKind::InvalidData => {
+            match std::fs::read(path) {
+                Ok(b) => decode_load_bytes(&b),
+                Err(e) => {
+                    return Err(i.signal_data(
+                        crate::lisp::sym::FILE_ERROR,
+                        vec![
+                            Value::string("Opening input file"),
+                            Value::string(e.to_string()),
+                            Value::string(path),
+                        ],
+                    ));
+                }
+            }
+        }
         Err(e) => {
             // GNU signals `file-missing' for ENOENT, `file-error' for
             // other failures, with data (FORMAT REASON PATH).

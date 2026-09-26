@@ -392,13 +392,18 @@ fn doc_dir_under(emacs_share: &std::path::Path) -> Option<String> {
     None
 }
 
-/// Find `<prefix>/share/emacs/<ver>/etc/` (containing DOC) for the
-/// emacs binary at EXE. Wrapper scripts (`exec /real/emacs`, as in
-/// Nixpkgs' emacsWithPackages) are unwrapped up to DEPTH hops.
-fn doc_dir_of_emacs(exe: &std::path::Path, depth: u8) -> Option<String> {
+/// Find something under `<prefix>/share/` for the emacs binary at EXE.
+/// CHECK is called with each candidate share dir. Wrapper scripts
+/// (`exec /real/emacs`, as in Nixpkgs' emacsWithPackages) are unwrapped
+/// up to DEPTH hops.
+fn find_under_emacs_share(
+    exe: &std::path::Path,
+    depth: u8,
+    check: &dyn Fn(&std::path::Path) -> Option<String>,
+) -> Option<String> {
     let exe = std::fs::canonicalize(exe).ok()?;
     if let Some(prefix) = exe.parent().and_then(|p| p.parent()) {
-        if let Some(hit) = doc_dir_under(&prefix.join("share/emacs")) {
+        if let Some(hit) = check(&prefix.join("share")) {
             return Some(hit);
         }
         // Nixpkgs with-packages wrappers symlink share/* into the real
@@ -407,7 +412,7 @@ fn doc_dir_of_emacs(exe: &std::path::Path, depth: u8) -> Option<String> {
             for e in rd.flatten() {
                 if let Ok(real) = std::fs::canonicalize(e.path()) {
                     if let Some(share) = real.parent() {
-                        if let Some(hit) = doc_dir_under(&share.join("emacs")) {
+                        if let Some(hit) = check(share) {
                             return Some(hit);
                         }
                     }
@@ -426,7 +431,7 @@ fn doc_dir_of_emacs(exe: &std::path::Path, depth: u8) -> Option<String> {
                 };
                 let cand = std::path::PathBuf::from(target);
                 if cand.file_name().map(|n| n == "emacs").unwrap_or(false) {
-                    if let Some(hit) = doc_dir_of_emacs(&cand, depth + 1) {
+                    if let Some(hit) = find_under_emacs_share(&cand, depth + 1, check) {
                         return Some(hit);
                     }
                 }
@@ -434,6 +439,40 @@ fn doc_dir_of_emacs(exe: &std::path::Path, depth: u8) -> Option<String> {
         }
     }
     None
+}
+
+/// Find `<prefix>/share/emacs/<ver>/etc/` (containing DOC) for the
+/// emacs binary at EXE.
+fn doc_dir_of_emacs(exe: &std::path::Path, depth: u8) -> Option<String> {
+    find_under_emacs_share(exe, depth, &|share| doc_dir_under(&share.join("emacs")))
+}
+
+/// Find `<prefix>/share/info/` for the emacs binary at EXE — GNU's
+/// configure-time PATH_INFO.
+fn info_dir_of_emacs(exe: &std::path::Path, depth: u8) -> Option<String> {
+    find_under_emacs_share(exe, depth, &|share| {
+        let dir = share.join("info");
+        dir.is_dir().then(|| format!("{}/", dir.display()))
+    })
+}
+
+/// Scan PATH (plus conventional dirs) for an `emacs` binary and apply F.
+fn find_emacs_on_path(f: &dyn Fn(&std::path::Path) -> Option<String>) -> Option<String> {
+    std::env::var_os("PATH")
+        .map(|p| std::env::split_paths(&p).collect::<Vec<_>>())
+        .unwrap_or_default()
+        .into_iter()
+        .chain(
+            [
+                "/run/current-system/sw/bin",
+                "/usr/bin",
+                "/usr/local/bin",
+                "/opt/homebrew/bin",
+            ]
+            .into_iter()
+            .map(std::path::PathBuf::from),
+        )
+        .find_map(|dir| f(&dir.join("emacs")))
 }
 
 impl Interp {
@@ -4472,6 +4511,7 @@ explicitly overridden.
             "emacs-major-version",
             "emacs-minor-version",
             "doc-directory",
+            "configure-info-directory",
             "exec-directory",
             "exec-path",
             "process-environment",
@@ -5946,22 +5986,16 @@ explicitly overridden.
                 // DOC file) via the `emacs' on PATH; fall back to the
                 // conventional share path.
                 Value::string(
-                    std::env::var_os("PATH")
-                        .map(|p| std::env::split_paths(&p).collect::<Vec<_>>())
-                        .unwrap_or_default()
-                        .into_iter()
-                        .chain(
-                            [
-                                "/run/current-system/sw/bin",
-                                "/usr/bin",
-                                "/usr/local/bin",
-                                "/opt/homebrew/bin",
-                            ]
-                            .into_iter()
-                            .map(std::path::PathBuf::from),
-                        )
-                        .find_map(|dir| doc_dir_of_emacs(&dir.join("emacs"), 0))
+                    find_emacs_on_path(&|exe| doc_dir_of_emacs(exe, 0))
                         .unwrap_or_else(|| "/usr/share/emacs/".into()),
+                ),
+            ),
+            (
+                "configure-info-directory",
+                // GNU: PATH_INFO from configure (`<prefix>/share/info').
+                Value::string(
+                    find_emacs_on_path(&|exe| info_dir_of_emacs(exe, 0))
+                        .unwrap_or_else(|| "/usr/local/share/info/".into()),
                 ),
             ),
             (

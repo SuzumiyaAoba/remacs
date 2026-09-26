@@ -800,3 +800,126 @@ fn lambda_documentation_form_consumed() {
         "1"
     );
 }
+
+// ------------------------------------------------- defconst semantics
+
+#[test]
+fn defconst_not_enforced_and_marks_risky() {
+    // GNU Fdefconst_1: constancy is NOT enforced — `setq' on a defconst
+    // variable works.  It does add `risky-local-variable' to the plist.
+    assert_eq!(
+        ev("(progn (defconst tst-dc 9 \"doc\") (setq tst-dc 5)
+                  (list tst-dc (get 'tst-dc 'risky-local-variable)))"),
+        "(5 t)"
+    );
+    // The optional docstring lands in variable-documentation.
+    assert_eq!(
+        ev("(progn (defconst tst-dc2 1 \"dc doc\")
+                  (documentation-property 'tst-dc2 'variable-documentation))"),
+        "\"dc doc\""
+    );
+}
+
+// ------------------------------------------------- define-key prefix descent
+
+#[test]
+fn define_key_prefix_descent_noinherit() {
+    // GNU descends intermediate prefixes with access_keymap(noinherit=1):
+    // parent-map bindings on the prefix char must not leak into the
+    // descent — a fresh (keymap) prefix is created in the child map.
+    assert_eq!(
+        ev("(let ((p (make-sparse-keymap)) (c (make-sparse-keymap)))
+             (define-key p \"\\C-c\" 'parent-cmd)
+             (set-keymap-parent c p)
+             (define-key c \"\\C-c\\C-lx\" 'child-cmd)
+             (list (lookup-key c \"\\C-c\\C-lx\")
+                   (keymapp (lookup-key c \"\\C-c\"))
+                   (lookup-key c \"\\C-c\\C-l\")))"),
+        "(child-cmd t (keymap (120 . child-cmd)))"
+    );
+}
+
+// ------------------------------------------------- eval-when-compile macro
+
+#[test]
+fn eval_when_compile_evals_at_expansion() {
+    // GNU's byte-run defmacro: the body is EVALUATED at macroexpansion
+    // time and the expansion is `(quote RESULT)'.
+    assert_eq!(ev("(macroexpand '(eval-when-compile (+ 1 2)))"), "'3");
+    assert_eq!(ev("(eval-when-compile (+ 1 2))"), "3");
+    // The expansion-time eval sees dynamic bindings — the mechanism
+    // `let-when-compile' (lisp-mode.el) uses via `cl-progv' to keep
+    // compile-time bindings visible while forms expand.
+    assert_eq!(
+        ev("(progv '(lwc-var) '(inside)
+             (macroexpand '(eval-when-compile lwc-var)))"),
+        "'inside"
+    );
+}
+
+// ------------------------------------------------- progv special form
+
+#[test]
+fn progv_binds_dynamically() {
+    // GNU's `progv' special form: eval SYMBOLS and VALUES, bind each
+    // pair dynamically for BODY.  `eval'/`symbol-value' see them.
+    assert_eq!(
+        ev("(progv '(pv-a pv-b) '(1 2) (list pv-a (symbol-value 'pv-b)))"),
+        "(1 2)"
+    );
+    // Missing values bind nil; bindings unwind after BODY.
+    assert_eq!(
+        ev("(list (progv '(pv-c pv-d) '(3) (list pv-c pv-d))
+                  (boundp 'pv-c) (boundp 'pv-d))"),
+        "((3 nil) nil nil)"
+    );
+    // Non-symbol elements signal wrong-type-argument.
+    assert_eq!(
+        ev("(condition-case e (progv '(pv-e 7) '(1 2) pv-e)
+             (wrong-type-argument 'wta))"),
+        "wta"
+    );
+}
+
+// ------------------------------------------------- configure-info-directory
+
+#[test]
+fn configure_info_directory_bound() {
+    // GNU DEFVAR_LISP("configure-info-directory") in callproc.c — a
+    // string even when the directory doesn't exist; info-look/info.el
+    // pass it to `file-name-as-directory'.
+    assert_eq!(
+        ev("(list (boundp 'configure-info-directory)
+                  (stringp configure-info-directory))"),
+        "(t t)"
+    );
+}
+
+// ------------------------------------------------- utf-8-emacs load decode
+
+#[test]
+fn load_decodes_emacs_internal_chars() {
+    // ethio-util.el carries GNU-internal `emacs'-charset bytes (4-byte
+    // sequences, leads 0xF5..0xF7, codes > #x10FFFF).  The loader maps
+    // each to a distinct private-use char so `?X' literals read and
+    // `eq'/`memq' comparisons stay consistent.
+    let mut bytes = b"(defvar eu-chars '(?".to_vec();
+    bytes.extend_from_slice(&[0xf6, 0xa0, 0x87, 0x8b]);
+    bytes.extend_from_slice(b" ?");
+    bytes.extend_from_slice(&[0xf6, 0xa0, 0x87, 0x8c]);
+    bytes.extend_from_slice(b" ?");
+    bytes.extend_from_slice(&[0xf6, 0xa0, 0x87, 0x8b]);
+    bytes.extend_from_slice(
+        b"))\n(defvar eu-eq (eq (car eu-chars) (cadr eu-chars)))
+(defvar eu-same (eq (car eu-chars) (caddr eu-chars)))
+(defvar eu-len (length eu-chars))\n",
+    );
+    let path = std::env::temp_dir().join("remacs-utf8emacs-load-test.el");
+    std::fs::write(&path, &bytes).unwrap();
+    let p = path.to_string_lossy().to_string();
+    let form = format!(
+        "(progn (load {p:?} nil t) (list eu-eq eu-same eu-len (char-or-string-p (car eu-chars))))"
+    );
+    assert_eq!(ev(&form), "(nil t 3 t)");
+    let _ = std::fs::remove_file(&path);
+}

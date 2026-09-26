@@ -116,6 +116,7 @@ pub mod sym {
     pub const TOP_LEVEL: SymId = 70;
     pub const EXIT_RECURSIVE_EDIT: SymId = 71;
     pub const SAVE_MARK_AND_EXCURSION: SymId = 72;
+    pub const PROGV: SymId = 73;
 }
 
 const CORE_SYMBOLS: &[&str] = &[
@@ -192,6 +193,7 @@ const CORE_SYMBOLS: &[&str] = &[
     "top-level",
     "exit-recursive-edit",
     "save-mark-and-excursion",
+    "progv",
 ];
 
 /// The obarray: interned symbol table.

@@ -875,8 +875,9 @@ fn f_defvar_1(i: &mut Interp, args: Vec<Value>) -> EvalResult {
         }
     }
     if let Some(Value::Str(s)) = args.get(2) {
-        let doc = s.borrow().clone();
-        i.obarray.symbol_mut(id).variable_documentation = Some(doc);
+        // GNU: Fput(symbol, Qvariable_documentation, doc).
+        let vd = i.intern("variable-documentation");
+        i.put_prop(id, vd, Value::string(s.borrow().clone()));
     }
     Ok(args[0].clone())
 }
@@ -888,9 +889,12 @@ fn f_defconst_1(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     i.obarray.symbol_mut(id).special = true;
     i.set_symbol_default(id, args[1].clone())?;
     if let Some(Value::Str(s)) = args.get(2) {
-        let doc = s.borrow().clone();
-        i.obarray.symbol_mut(id).variable_documentation = Some(doc);
+        // GNU: Fput(symbol, Qvariable_documentation, doc).
+        let vd = i.intern("variable-documentation");
+        i.put_prop(id, vd, Value::string(s.borrow().clone()));
     }
+    let rlv = i.intern("risky-local-variable");
+    i.put_prop(id, rlv, Value::t());
     Ok(args[0].clone())
 }
 
@@ -900,8 +904,9 @@ fn f_define_uninitialized_variable(i: &mut Interp, args: Vec<Value>) -> EvalResu
     let id = want_sym(i, &args[0])?;
     i.obarray.symbol_mut(id).special = true;
     if let Some(Value::Str(s)) = args.get(1) {
-        let doc = s.borrow().clone();
-        i.obarray.symbol_mut(id).variable_documentation = Some(doc);
+        // GNU: Fput(symbol, Qvariable_documentation, doc).
+        let vd = i.intern("variable-documentation");
+        i.put_prop(id, vd, Value::string(s.borrow().clone()));
     }
     Ok(Value::Nil)
 }

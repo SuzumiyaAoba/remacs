@@ -45,6 +45,7 @@ pub fn special_form(id: SymId) -> Option<SpecialFn> {
         sym::WITH_CURRENT_BUFFER => sf_with_current_buffer,
         sym::SAVE_RESTRICTION => sf_save_restriction,
         sym::TRACK_MOUSE => sf_progn,
+        sym::PROGV => sf_progv,
         sym::BACKQUOTE => sf_backquote,
         _ => return None,
     })
@@ -66,7 +67,7 @@ pub fn special_form_min_args(id: SymId) -> u16 {
         | sym::LET
         | sym::LET_STAR
         | sym::BACKQUOTE => 1,
-        sym::IF | sym::PROG2 | sym::DEFUN | sym::DEFMACRO | sym::CONDITION_CASE => 2,
+        sym::IF | sym::PROG2 | sym::DEFUN | sym::DEFMACRO | sym::CONDITION_CASE | sym::PROGV => 2,
         _ => 0,
     }
 }
@@ -217,6 +218,49 @@ fn sf_prog2(i: &mut Interp, args: Value) -> EvalResult {
     let second = i.eval(&cadr(&args))?;
     i.eval_progn(&cdr(&cdr(&args)))?;
     Ok(second)
+}
+
+fn sf_progv(i: &mut Interp, args: Value) -> EvalResult {
+    // GNU Fprogv: eval SYMBOLS and VALUES, then dynamically bind each
+    // symbol to its value while evaluating BODY.  More values than
+    // symbols are ignored; missing values bind nil.  The bindings are
+    // visible to `eval'/`symbol-value' inside BODY (let-when-compile,
+    // cl-progv rely on this).
+    let syms = i.eval(&car(&args))?;
+    let vals = i.eval(&cadr(&args))?;
+    let mark = i.specbind_depth();
+    let mut cur_s = syms;
+    let mut cur_v = vals;
+    let mut bind_err = None;
+    while let Value::Cons(sc) = cur_s.clone() {
+        let (sym_v, rest_s) = {
+            let b = sc.borrow();
+            (b.car.clone(), b.cdr.clone())
+        };
+        let val = if let Value::Cons(vc) = cur_v.clone() {
+            let b = vc.borrow();
+            let v = b.car.clone();
+            cur_v = b.cdr.clone();
+            v
+        } else {
+            Value::Nil
+        };
+        let Some(sid) = i.sym_id(&sym_v) else {
+            bind_err = Some(i.wrong_type_mut("symbolp", &sym_v));
+            break;
+        };
+        if let Err(e) = i.specbind(sid, val) {
+            bind_err = Some(e);
+            break;
+        }
+        cur_s = rest_s;
+    }
+    let r = match bind_err {
+        Some(e) => Err(e),
+        None => i.eval_progn(&cdr(&cdr(&args))),
+    };
+    i.unbind_to(mark)?;
+    r
 }
 
 fn sf_and(i: &mut Interp, args: Value) -> EvalResult {
@@ -525,8 +569,9 @@ fn sf_defvar(i: &mut Interp, args: Value) -> EvalResult {
     // anyway, and the var does not become `special-variable-p'.
     let doc = nth_arg(&args, 2);
     if let Value::Str(s) = doc {
-        let doc_str = s.borrow().clone();
-        i.obarray.symbol_mut(sid).variable_documentation = Some(doc_str);
+        // GNU: Fput(symbol, Qvariable_documentation, doc).
+        let vd = i.intern("variable-documentation");
+        i.put_prop(sid, vd, Value::string(s.borrow().clone()));
     }
     Ok(name_v)
 }
@@ -537,12 +582,21 @@ fn sf_defconst(i: &mut Interp, args: Value) -> EvalResult {
         Some(s) => s,
         None => return Err(i.wrong_type_mut("symbolp", &name_v)),
     };
+    // GNU Fdefconst_1: special + set_default + docstring, plus
+    // `risky-local-variable t'.  Constancy is NOT enforced at runtime
+    // ("not actually enforced by Emacs Lisp") — only nil, t and
+    // keywords are NOWRITE; defconst must never set `constant'.
     i.obarray.symbol_mut(sid).special = true;
     let v = i.eval(&cadr(&args))?;
-    // defconst may (re)define a constant: bypass the constant check.
-    i.obarray.symbol_mut(sid).constant = false;
     i.set_symbol_default(sid, v)?;
-    i.obarray.symbol_mut(sid).constant = true;
+    let doc = nth_arg(&args, 2);
+    if let Value::Str(s) = doc {
+        // GNU: Fput(symbol, Qvariable_documentation, doc).
+        let vd = i.intern("variable-documentation");
+        i.put_prop(sid, vd, Value::string(s.borrow().clone()));
+    }
+    let rlv = i.intern("risky-local-variable");
+    i.put_prop(sid, rlv, Value::t());
     Ok(name_v)
 }
 

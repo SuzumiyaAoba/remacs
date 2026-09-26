@@ -42,6 +42,30 @@ inclusive, to COUNT, exclusive."
   "Execute BODY; if an error occurs, return nil."
   (list 'condition-case nil (cons 'progn body) '(error nil)))
 
+;; `eval-when-compile'/`eval-and-compile' — GNU's byte-run.el defmacros,
+;; verbatim: the body is EVALUATED at macroexpansion time and the
+;; expansion is `(quote RESULT)'.  `let-when-compile' (lisp-mode.el)
+;; depends on this eager evaluation under its `cl-progv' bindings.
+(defmacro eval-when-compile (&rest body)
+  "Like `progn', but evaluates the body at compile time if you're compiling.
+Thus, the result of the body appears to the compiler as a quoted
+constant.  In interpreted code, this is entirely equivalent to
+`progn', except that the value of the expression may be (but is
+not necessarily) computed at load time if eager macro expansion
+is enabled."
+  (declare (debug (&rest def-form)) (indent 0))
+  (list 'quote (eval (cons 'progn body) lexical-binding)))
+
+(defmacro eval-and-compile (&rest body)
+  "Like `progn', but evaluates the body at compile time and at load time.
+In interpreted code, this is entirely equivalent to `progn',
+except that the value of the expression may be (but is not
+necessarily) computed at load time if eager macro expansion is
+enabled."
+  (declare (debug (&rest def-form)) (indent 0))
+  (list 'quote (eval (cons 'progn body)
+                     (when lexical-binding (or macroexp--dynvars t)))))
+
 ;; ---------- macroexp.el helpers (GNU: dumped, always loaded) ----------
 ;; Ported from GNU lisp/emacs-lisp/macroexp.el; the parts that were once
 ;; internal subrs here had incompatible signatures and were replaced by
@@ -51,6 +75,14 @@ inclusive, to COUNT, exclusive."
   "Alist of (MACRO . DECLARATIONS-ALIST) for macro expanders.")
 (defvar defun-declarations-alist nil
   "Alist of (PROP . FN) handlers for `declare' specs in `defun'.")
+
+;; GNU DEFVAR_LISP("macroexp--dynvars") in lread.c — a plain global
+;; variable bound to nil; `macroexpand-all' let-binds it to collect
+;; defvar'd names, and `eval-and-compile' reads it as the `eval'
+;; environment during eager expansion.  `set-default' forces the
+;; global cell (an earlier half-declared state reports bound-but-void).
+(defvar macroexp--dynvars nil)
+(set-default 'macroexp--dynvars nil)
 
 (defun macroexp-progn (exps)
   "Return EXPS (a list of expressions) with `progn' prepended.
@@ -16058,14 +16090,16 @@ To define new types, see `cl-deftype'."
   ;; arglist of gensym placeholders plus destructuring/keyword
   ;; extraction forms wrapping (cl-block NAME ...).
   (let ((eargs nil) (lets nil) (keys nil) (kws nil) (aux nil)
-        (restsym nil) (state 'req))
+        (restsym nil) (state 'req) (allow-other nil))
     (dolist (a args)
       (cond
        ((eq a '&optional) (setq state 'opt))
        ((memq a '(&rest &body)) (setq state 'rest))
        ((eq a '&key) (setq state 'key))
        ((eq a '&aux) (setq state 'aux))
-       ((eq a '&allow-other-keys) nil)
+       ;; GNU `cl--do-arglist' emits no keyword check at all when
+       ;; &allow-other-keys is declared.
+       ((eq a '&allow-other-keys) (setq allow-other t))
        ((eq state 'rest)
         (if (consp a)
             (let ((g (make-symbol "rest")))
@@ -16112,7 +16146,7 @@ To define new types, see `cl-deftype'."
              (inner `(let* ,(append (when (and restsym keys)
                                       (list (list 'cl--keys restsym)))
                                     (nreverse keys) (nreverse aux))
-                       ,@(when keys
+                       ,@(when (and keys (not allow-other))
                            ;; `cl--check-keys' is voided at -Q for GNU
                            ;; parity; reach its stashed dump definition
                            ;; when the public cell is empty.
@@ -16130,12 +16164,17 @@ To define new types, see `cl-deftype'."
 
 (defun cl--check-keys (plist allowed)
   "Validate keyword PLIST against ALLOWED keyword list."
+  ;; GNU's emitted check walks pairs and stops entirely when the
+  ;; caller passed (:allow-other-keys t) in the same argument list.
   (let ((ks plist))
-    (while ks
-      (unless (memq (car ks) allowed)
-        (error "Keyword argument %S not one of %s" (car ks)
-               allowed))
-      (setq ks (cddr ks)))))
+    (unless (cadr (plist-member plist :allow-other-keys))
+      (while ks
+        (unless (memq (car ks) (cons :allow-other-keys allowed))
+          (error "Keyword argument %S not one of %s" (car ks)
+                 allowed))
+        (unless (cdr ks)
+          (error "Missing argument for %s" (car ks)))
+        (setq ks (cddr ks))))))
 
 (defmacro cl-case (expr &rest clauses)
   "Evaluate CLAUSES matching EXPR (each (KEYS . BODY))."
