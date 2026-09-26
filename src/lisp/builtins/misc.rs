@@ -671,13 +671,6 @@ pub(crate) static SUBRS: &[Subr] = &[
         "Height of the tab bar."
     ),
     S!(
-        "insert-special-event",
-        1,
-        1,
-        f_insert_special_event,
-        "Insert EVENT into the input queue."
-    ),
-    S!(
         "buffer-text-pixel-size",
         0,
         4,
@@ -4299,13 +4292,6 @@ fn f_tab_bar_height(_i: &mut Interp, _a: Vec<Value>) -> EvalResult {
     Ok(Value::Int(0))
 }
 
-fn f_insert_special_event(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    if !matches!(a[0], Value::Cons(_)) {
-        return Err(i.wrong_type_mut("consp", &a[0]));
-    }
-    Ok(Value::Nil)
-}
-
 fn f_buffer_text_pixel_size(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let buf = match a.first() {
         None | Some(Value::Nil) => i.current_buffer_ref(),
@@ -7086,14 +7072,15 @@ fn coding_alias_group<'a>(i: &'a Interp, v: &Value) -> Option<&'static [&'static
 }
 
 fn f_coding_system_eol_type(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    // GNU: nil means the default (unix ⇒ 0); a non-coding-system or
+    // non-symbol argument returns nil rather than signaling.
     let name = match &a[0] {
+        Value::Nil => return Ok(Value::Int(0)),
         Value::Sym(s) => i.symbol_name(*s).to_string(),
-        // GNU: non-symbol → `wrong-type-argument coding-system-p'.
-        other => return Err(i.wrong_type_mut("coding-system-p", other)),
+        _ => return Ok(Value::Nil),
     };
     if coding_known(i, &a[0]).is_none() {
-        let s = i.intern("coding-system-error");
-        return Err(i.signal_data(s, vec![a[0].clone()]));
+        return Ok(Value::Nil);
     }
     let (base, idx) = eol_split(&name);
     if let Some(idx) = idx {

@@ -2122,9 +2122,28 @@ fn eval_src_opts(
         i.face_table.push(("icon".to_string(), Value::Nil));
         i.face_table.push(("icon-button".to_string(), Value::Nil));
     }
-    let flist = Value::list(i.features.iter().map(|s| i.sym(*s)).collect::<Vec<_>>());
+    // Keep the `features' variable in sync with `i.features', but
+    // never clobber a live dynamic binding: Gnus's
+    // `(dlet ((features (cons 'gnus-group features))) (require ...))'
+    // cycle-breaker relies on the binding surviving into nested
+    // loads, so only append entries that are actually missing.
     let fid = i.intern("features");
-    i.obarray.symbol_mut(fid).value = flist;
+    let cur = i.symbol_value(fid);
+    let mut items = match &cur {
+        Value::Cons(_) | Value::Nil => cur.list_to_vec().unwrap_or_default(),
+        _ => vec![],
+    };
+    let mut missing: Vec<Value> = Vec::new();
+    for sid in i.features.clone() {
+        let sym_v = Value::Sym(sid);
+        if !items.iter().any(|v| matches!(v, Value::Sym(s) if *s == sid)) {
+            missing.push(sym_v);
+        }
+    }
+    if !missing.is_empty() {
+        items.extend(missing);
+        i.obarray.symbol_mut(fid).value = Value::list(items);
+    }
     i.specbind(cll, Value::Nil)?;
     // Embedded (`builtin:') libraries play the role of GNU's dumped
     // .elc files: functions defined while they load keep

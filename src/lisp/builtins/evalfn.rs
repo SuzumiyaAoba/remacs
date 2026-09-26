@@ -1534,9 +1534,12 @@ fn f_with_demoted_errors(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     f_ignore_errors_raw(i, args)
 }
 
-fn f_featurep(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    let id = want_sym(i, &args[0])?;
-    // consult the `features' variable (seeded with `emacs')
+/// GNU `require'/`featurep' test: membership in the Lisp-visible
+/// `features' variable — which dynamic binds (e.g. Gnus's
+/// `(dlet ((features (cons 'gnus-group features))) ...)' trick to
+/// break require cycles) can shadow — or in the Rust mirror kept by
+/// `provide'.
+fn feature_present(i: &mut Interp, id: SymId) -> bool {
     let fid = i.intern("features");
     let in_list = match i.symbol_value(fid) {
         Value::Cons(_) | Value::Nil => i
@@ -1546,7 +1549,12 @@ fn f_featurep(i: &mut Interp, args: Vec<Value>) -> EvalResult {
             .unwrap_or(false),
         _ => false,
     };
-    Ok(Value::from_bool(in_list || i.features.contains(&id)))
+    in_list || i.features.contains(&id)
+}
+
+fn f_featurep(i: &mut Interp, args: Vec<Value>) -> EvalResult {
+    let id = want_sym(i, &args[0])?;
+    Ok(Value::from_bool(feature_present(i, id)))
 }
 
 fn f_provide(i: &mut Interp, args: Vec<Value>) -> EvalResult {
@@ -1582,7 +1590,10 @@ fn f_provide(i: &mut Interp, args: Vec<Value>) -> EvalResult {
 
 fn f_require(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     let id = want_sym(i, &args[0])?;
-    if i.features.contains(&id) {
+    // GNU `require' is `(unless (memq feature features) (load ...))':
+    // the check consults the Lisp `features' variable, so a dynamic
+    // binding (the Gnus `dlet' cycle-breaker) counts as provided.
+    if feature_present(i, id) {
         return Ok(args[0].clone());
     }
     // Try to load feature file from load-path.
@@ -1597,7 +1608,7 @@ fn f_require(i: &mut Interp, args: Vec<Value>) -> EvalResult {
             // provided — a file that loads without `(provide FEATURE)'
             // signals `error' ("Loading file FILE failed to provide
             // feature ‘FEATURE’", e.g. userlock.el, buff-menu.el).
-            if !i.features.contains(&id) {
+            if !feature_present(i, id) {
                 return Err(i.signal_data(
                     sym::ERROR,
                     vec![Value::string(format!(
@@ -2644,6 +2655,8 @@ fn sleep_firing_timers(i: &mut Interp, secs: f64) -> EvalResult {
         // GNU's wait also drains subprocess output (filters/buffers/
         // sentinels) — sit-for/sleep-for both pump.
         crate::lisp::process::poll_all(i)?;
+        // File-notification events queued by the kqueue reader thread.
+        crate::lisp::builtins::filenotify::drain(i)?;
         let rest = deadline.saturating_duration_since(std::time::Instant::now());
         if rest.is_zero() {
             break;
@@ -2652,6 +2665,7 @@ fn sleep_firing_timers(i: &mut Interp, secs: f64) -> EvalResult {
     }
     timer_check(i)?;
     crate::lisp::process::poll_all(i)?;
+    crate::lisp::builtins::filenotify::drain(i)?;
     Ok(Value::Nil)
 }
 

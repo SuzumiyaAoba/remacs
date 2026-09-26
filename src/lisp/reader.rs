@@ -751,6 +751,13 @@ impl<'a> Reader<'a> {
                 let (tok, _) = self.read_symbol_token();
                 Ok(Value::Sym(self.interp.make_symbol(&tok)))
             }
+            Some('#') => {
+                // `##' — the interned empty-name symbol (this is its
+                // print representation), used e.g. in `declare-function'
+                // arglists to mean "unknown signature".
+                self.pos += 2;
+                Ok(Value::Sym(self.interp.intern("")))
+            }
             Some('&') => {
                 // `#&N"..."' — bool vector literal: N bits packed
                 // LSB-first within each string byte.
