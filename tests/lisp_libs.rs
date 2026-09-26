@@ -693,3 +693,110 @@ fn quail_subdir_load_and_leim_list() {
         "t"
     );
 }
+
+// ------------------------------------------------- eieio real machinery
+
+#[test]
+fn eieio_make_instance_and_initialize() {
+    // Real eieio.el/eieio-core: a cl-defmethod on `initialize-instance'
+    // runs for every `make-instance' (GNU semantics — the method table
+    // must dispatch on the class-object tag, not just the symbol).
+    assert_eq!(
+        ev("(progn (require 'eieio-base)
+                  (defvar ii-hits nil)
+                  (defclass tst-base () ((a :initarg :a :initform 7)))
+                  (cl-defmethod initialize-instance :after
+                      ((o tst-base) &rest _)
+                    (push (eieio-oref o 'a) ii-hits))
+                  (make-instance 'tst-base :a 9)
+                  ii-hits)"),
+        "(9)"
+    );
+    // class-object tag: during `initialize-instance' the object's slot
+    // 0 holds the `eieio--class' record; `cl-type-of' must still map it
+    // to the class NAME for dispatch (GNU PVEC_RECORD slot-1 rule).
+    assert_eq!(
+        ev("(progn (require 'eieio-base)
+                  (defvar ct-hits nil)
+                  (defclass tst-ct () ((a :initarg :a)))
+                  (cl-defmethod initialize-instance :after
+                      ((o tst-ct) &rest _)
+                    (push (list (type-of o) (cl-type-of o)) ct-hits))
+                  (make-instance 'tst-ct :a 1)
+                  (car ct-hits))"),
+        "(tst-ct tst-ct)"
+    );
+}
+
+#[test]
+fn ede_project_autoload_load_path() {
+    // The ede-loaddefs regression: `(wrong-type-argument arrayp
+    // ede-project-autoload)' — subclass-specializer dispatch plus
+    // `ede-add-project-autoload' over a make-instance'd object.
+    assert_eq!(
+        ev("(progn (require 'eieio-base)
+                  (load \"ede-auto\" nil t)
+                  (let ((o (make-instance 'ede-project-autoload
+                            :name \"T\" :file 'ede/emacs :proj-file \"f\"
+                            :load-type 'f :class-sym 'f :new-p nil
+                            :safe-p t)))
+                    (ede-add-project-autoload o 'unique)
+                    (oref o name)))"),
+        "\"T\""
+    );
+}
+
+// -------------------------------------------- cl-type-of / type-of records
+
+#[test]
+fn type_of_nested_record_tag() {
+    // GNU Fcl_type_of: when a record's slot 0 is itself a record with
+    // size > 1 (a class object), the reported type is that record's
+    // name field — slot 1 — for BOTH `type-of' and `cl-type-of'.
+    assert_eq!(
+        ev("(let ((o (make-record 'ign 2 'y)))
+             (aset o 0 (make-record 'inner 2 'x))
+             (list (type-of o) (cl-type-of o)))"),
+        "(x x)"
+    );
+    // Symbol tag stays the reported type (ordinary records).
+    assert_eq!(
+        ev("(list (type-of (make-record 'foo 2 'x))
+                  (cl-type-of (make-record 'foo 2 'x)))"),
+        "(foo foo)"
+    );
+}
+
+// ------------------------------------------------- princ records
+
+#[test]
+fn princ_record_prints_hash_s() {
+    // `princ'/format on a record prints `#s(tag elt ...)' with
+    // UNESCAPED items (GNU) — not the being-printed index `#N'.
+    assert_eq!(
+        ev_out("(let ((r (make-record 'foo 2 \"x\")))
+                 (princ r) (princ \"|\") (princ (format \"%s\" r)))"),
+        "#s(foo x x)|#s(foo x x)"
+    );
+    assert_eq!(
+        ev("(prin1-to-string (make-record 'foo 2 \"x\"))"),
+        "\"#s(foo \\\"x\\\" \\\"x\\\")\""
+    );
+}
+
+// ------------------------------------------------- (:documentation FORM)
+
+#[test]
+fn lambda_documentation_form_consumed() {
+    // GNU's Flambda evaluates and consumes `(:documentation <form>)'
+    // at the head of a lambda body (used by eieio-make-class-predicate).
+    assert_eq!(
+        ev("(funcall (lambda (x) (:documentation \"d\") (1+ x)) 4)"),
+        "5"
+    );
+    // The docstring form may compute the doc string dynamically.
+    assert_eq!(
+        ev("(funcall (lambda (x) (:documentation (concat \"a\" \"b\")) x) 1)"),
+        "1"
+    );
+}
