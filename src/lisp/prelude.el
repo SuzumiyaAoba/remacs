@@ -26513,6 +26513,9 @@ variable's :set function if it has one."
 (put 'syntax-table 'char-table-extra-slots 0)
 (put 'keyboard-translate-table 'char-table-extra-slots 0)
 (put 'display-table 'char-table-extra-slots 18)
+;; coding.c's init gives translation-table 2 extra slots (slot 0 =
+;; translation table id, slot 1 = obsolete-name pair).
+(put 'translation-table 'char-table-extra-slots 2)
 
 (defun make-display-table ()
   "Return a new, empty display table."

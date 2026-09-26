@@ -136,7 +136,7 @@ impl Interp {
             || crate::lisp::eval::lexenv_declared(&self.lexenv, sym);
         match (lex_vars, is_special) {
             (Some(frame), false) => {
-                frame.vars.borrow_mut().insert(sym, val);
+                crate::lisp::eval::lexframe_bind(frame, sym, val);
                 Ok(())
             }
             _ => self.specbind(sym, val),
@@ -385,6 +385,7 @@ fn sf_let(i: &mut Interp, args: Value) -> EvalResult {
     if i.lexical_binding_active() {
         let frame = Rc::new(LexFrame {
             vars: RefCell::new(HashMap::new()),
+            var_order: RefCell::new(Vec::new()),
             declared: RefCell::new(std::collections::HashSet::new()),
             parent: i.lexenv.clone(),
         });
@@ -432,6 +433,7 @@ fn sf_let_star(i: &mut Interp, args: Value) -> EvalResult {
     if i.lexical_binding_active() {
         let frame = Rc::new(LexFrame {
             vars: RefCell::new(HashMap::new()),
+            var_order: RefCell::new(Vec::new()),
             declared: RefCell::new(std::collections::HashSet::new()),
             parent: i.lexenv.clone(),
         });
@@ -851,6 +853,7 @@ fn sf_condition_case(i: &mut Interp, args: Value) -> EvalResult {
                             let lex_frame = if i.lexical_binding_active() {
                                 Some(Rc::new(LexFrame {
                                     vars: RefCell::new(HashMap::new()),
+                                    var_order: RefCell::new(Vec::new()),
                                     declared: RefCell::new(std::collections::HashSet::new()),
                                     parent: i.lexenv.clone(),
                                 }))

@@ -2657,6 +2657,8 @@ fn sleep_firing_timers(i: &mut Interp, secs: f64) -> EvalResult {
         crate::lisp::process::poll_all(i)?;
         // File-notification events queued by the kqueue reader thread.
         crate::lisp::builtins::filenotify::drain(i)?;
+        // D-Bus messages queued on open bus connections.
+        crate::lisp::builtins::dbus::drain(i)?;
         let rest = deadline.saturating_duration_since(std::time::Instant::now());
         if rest.is_zero() {
             break;
@@ -2666,6 +2668,7 @@ fn sleep_firing_timers(i: &mut Interp, secs: f64) -> EvalResult {
     timer_check(i)?;
     crate::lisp::process::poll_all(i)?;
     crate::lisp::builtins::filenotify::drain(i)?;
+    crate::lisp::builtins::dbus::drain(i)?;
     Ok(Value::Nil)
 }
 
@@ -2965,13 +2968,21 @@ fn parse_lexenv_spec(i: &mut Interp, env_v: &Value) -> crate::lisp::LexEnv {
     };
     let frame_of = |vars: Vec<(Value, Value)>, markers: Vec<SymId>| -> std::rc::Rc<LexFrame> {
         let mut m = HashMap::new();
+        let mut order = Vec::new();
         for (k, v) in vars {
             if let Value::Sym(id) = k {
+                if !m.contains_key(&id) {
+                    order.push(id);
+                }
                 m.insert(id, v);
             }
         }
+        // `vars' arrives in env order (newest first); store
+        // oldest-first so `lexenv_as_value' reproduces it.
+        order.reverse();
         std::rc::Rc::new(LexFrame {
             vars: std::cell::RefCell::new(m),
+            var_order: std::cell::RefCell::new(order),
             declared: std::cell::RefCell::new(markers.into_iter().collect()),
             parent: None,
         })
@@ -3013,6 +3024,7 @@ fn parse_lexenv_spec(i: &mut Interp, env_v: &Value) -> crate::lisp::LexEnv {
     for p in parents.into_iter().rev() {
         let q = std::rc::Rc::new(LexFrame {
             vars: p.vars.clone(),
+            var_order: std::cell::RefCell::new(p.var_order.borrow().clone()),
             declared: std::cell::RefCell::new(p.declared.borrow().clone()),
             parent: inner.take(),
         });

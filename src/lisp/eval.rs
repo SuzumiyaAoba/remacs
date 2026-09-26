@@ -28,12 +28,51 @@ struct SpecBind {
 /// A lexical environment frame (chained).
 pub struct LexFrame {
     pub vars: RefCell<HashMap<SymId, Value>>,
+    /// Insertion order of `vars' — GNU's `internal-interpreter-
+    /// environment' is the flat alist specbind builds by prepending,
+    /// so a frame's bindings appear in reverse binding order.  Needed
+    /// to reconstruct that alist for `aref' on closures (oclosure.el
+    /// indexes into it positionally).
+    pub var_order: RefCell<Vec<SymId>>,
     /// Scoped `defvar' declarations — GNU's bare-symbol elements of
     /// `internal-interpreter-environment': a name listed here is bound
     /// dynamically by `let'/`let*' for the rest of this scope's extent,
     /// then the declaration unwinds with the frame.
     pub declared: RefCell<HashSet<SymId>>,
     pub parent: Option<Rc<LexFrame>>,
+}
+
+/// Record a binding in a lexical frame, tracking GNU's env order.
+pub fn lexframe_bind(frame: &LexFrame, sym: SymId, val: Value) {
+    let mut vars = frame.vars.borrow_mut();
+    if !vars.contains_key(&sym) {
+        frame.var_order.borrow_mut().push(sym);
+    }
+    vars.insert(sym, val);
+}
+
+/// GNU's `internal-interpreter-environment' as a Lisp value: a flat
+/// alist of `(sym . val)' conses, innermost bindings first (specbind
+/// prepends).  Bare `defvar' markers appear as bare symbols.  An
+/// entirely empty chain prints as `(t)' — our root-env convention.
+pub fn lexenv_as_value(env: &LexEnv) -> Value {
+    let mut items: Vec<Value> = Vec::new();
+    let mut cur = env;
+    while let Some(frame) = cur {
+        for s in frame.declared.borrow().iter() {
+            items.push(Value::Sym(*s));
+        }
+        for s in frame.var_order.borrow().iter().rev() {
+            let v = frame.vars.borrow().get(s).cloned().unwrap_or(Value::Nil);
+            items.push(Value::cons(Value::Sym(*s), v));
+        }
+        cur = &frame.parent;
+    }
+    if items.is_empty() {
+        Value::list(vec![Value::Sym(crate::lisp::obarray::sym::T)])
+    } else {
+        Value::list(items)
+    }
 }
 
 pub type LexEnv = Option<Rc<LexFrame>>;
@@ -74,6 +113,7 @@ pub fn lexenv_declare(env: &LexEnv, sym: SymId) {
 pub fn lexenv_root() -> LexEnv {
     Some(Rc::new(LexFrame {
         vars: RefCell::new(HashMap::new()),
+        var_order: RefCell::new(Vec::new()),
         declared: RefCell::new(HashSet::new()),
         parent: None,
     }))
@@ -971,6 +1011,12 @@ impl Interp {
             // are bound at -Q.
             let _ = crate::lisp::load::load_library(&mut interp, "iso-transl");
             let _ = crate::lisp::load::load_library(&mut interp, "mule-util");
+            // mule.el and mule-conf.el are in GNU's dump (loadup.el):
+            // `define-charset', `load-with-code-conversion' & co. and
+            // the charsets (chinese-gb2312, japanese-jisx0213-*, ...)
+            // are registered at -Q.
+            let _ = crate::lisp::load::load_library(&mut interp, "mule");
+            let _ = crate::lisp::load::load_library(&mut interp, "mule-conf");
             let _ = crate::lisp::load::load_library(&mut interp, "epa-hook");
             // paren.el is in GNU's dump (loadup.el): `show-paren-mode'
             // and the `paren' feature are bound at -Q.
@@ -3678,17 +3724,15 @@ explicitly overridden.
             // `funcall_lambda' binds every parameter lexically — even
             // `defvar'd specials and scoped-declared names — since
             // `internal-interpreter-environment' is not consulted here.
-            let vars = RefCell::new(HashMap::new());
             let mark = self.specbind_depth();
-            let bind_result = self.bind_lambda_args_lexical(&l.clone(), &argv, &vars);
-            // `&optional` defaults may need evaluation in the new env;
-            // evaluate them after the frame exists.
             let frame = Rc::new(LexFrame {
-                vars,
+                vars: RefCell::new(HashMap::new()),
+                var_order: RefCell::new(Vec::new()),
                 declared: RefCell::new(HashSet::new()),
                 parent: l.env.clone(),
             });
             let saved = std::mem::replace(&mut self.lexenv, Some(frame.clone()));
+            let bind_result = self.bind_lambda_args_lexical(&l.clone(), &argv, &frame);
             let r = match bind_result {
                 Ok(()) => self.fill_optional_defaults(l, &argv, &frame),
                 Err(e) => Err(e),
@@ -3735,7 +3779,7 @@ explicitly overridden.
                 if self.obarray.symbol(opt.sym).special {
                     self.specbind(opt.sym, v)?;
                 } else {
-                    frame.vars.borrow_mut().insert(opt.sym, v);
+                    lexframe_bind(frame, opt.sym, v);
                 }
             }
             i += 1;
@@ -3750,7 +3794,7 @@ explicitly overridden.
         &mut self,
         l: &Rc<Lambda>,
         argv: &[Value],
-        vars: &RefCell<HashMap<SymId, Value>>,
+        frame: &Rc<LexFrame>,
     ) -> Result<(), Flow> {
         let bind = |i: &mut Self, sym: SymId, val: Value| -> Result<(), Flow> {
             // Like `let': `defvar'd specials specbind dynamically even
@@ -3758,7 +3802,7 @@ explicitly overridden.
             if i.obarray.symbol(sym).special {
                 i.specbind(sym, val)
             } else {
-                vars.borrow_mut().insert(sym, val);
+                lexframe_bind(frame, sym, val);
                 Ok(())
             }
         };
@@ -4186,17 +4230,21 @@ explicitly overridden.
 
         // Extract docstring and interactive spec from the body front.
         let mut doc = None;
+        let mut doc_value = None;
         let mut interactive = None;
         let mut start = 0;
         if let Some(Value::Str(s)) = body.first() {
             if body.len() > 1 {
                 doc = Some(s.borrow().clone());
+                doc_value = Some(body.first().unwrap().clone());
                 start = 1;
             }
         } else if let Some(Value::Cons(c)) = body.first() {
             // GNU `Flambda' handles `(:documentation <form>)' as a
             // computed docstring: the form is evaluated at lambda
-            // construction and consumed (eval.c).
+            // construction and consumed (eval.c).  The result is the
+            // closure's docstring slot — any value (oclosure.el stores
+            // its type symbol there).
             let is_doc_decl = {
                 let b = c.borrow();
                 matches!(&b.car, Value::Sym(s)
@@ -4213,6 +4261,7 @@ explicitly overridden.
                 if let Value::Str(s) = &v {
                     doc = Some(s.borrow().clone());
                 }
+                doc_value = Some(v);
                 start = 1;
             }
         }
@@ -4248,6 +4297,8 @@ explicitly overridden.
             dumped_doc: self.loading_dumped,
             advice_link: None,
             bc_items: None,
+            doc_value,
+            env_value: None,
         })
     }
 

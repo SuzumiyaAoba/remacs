@@ -217,11 +217,15 @@ fn f_define_charset_alias(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 fn f_unify_charset(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     // (charset &optional unify-map deunify-map) — GNU signals
     // "Can't unify charset: X" when the charset cannot be unified
-    // (ucs, or any charset lacking a :map/:code-space map).
+    // (ucs, or any charset lacking a :map/:code-space map).  Charsets
+    // registered via `define-charset' (mule-conf's `:unify-map'/
+    // `:code-offset' carriers) unify fine; the map is not modeled, but
+    // registration is what loads depend on.
     let name = want_charset(i, &a[0])?;
-    // GNU signals "Can't unify charset: X" for every charset we model —
-    // none of them carries a unification map.
-    Err(i.error(format!("Can't unify charset: {name}")))
+    if charset_entry(i, &name).is_none() {
+        return Err(i.error(format!("Can't unify charset: {name}")));
+    }
+    Ok(Value::Nil)
 }
 
 fn f_charset_after(i: &mut Interp, a: Vec<Value>) -> EvalResult {
@@ -1157,9 +1161,19 @@ fn f_set_coding_system_priority(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 }
 
 fn f_set_keyboard_coding_system_internal(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    // GNU: validates the coding system but the variable keeps its
-    // terminal default in batch.
+    // GNU: decode_live_terminal(TERMINAL), CHECK_SYMBOL, nil means
+    // `no-conversion', anything else must be a coding system.
+    if let Some(t) = a.get(1) {
+        match t {
+            Value::Nil | Value::Frame(_) => {}
+            other => return Err(i.wrong_type_mut("terminal-live-p", other)),
+        }
+    }
     let _ = want_sym(i, &a[0])?;
+    if !a[0].is_nil() && super::misc::coding_known(i, &a[0]).is_none() {
+        let e = i.intern("coding-system-error");
+        return Err(i.signal_data(e, vec![a[0].clone()]));
+    }
     Ok(Value::Nil)
 }
 
@@ -1750,7 +1764,7 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!(
         "set-keyboard-coding-system-internal",
         1,
-        1,
+        2,
         f_set_keyboard_coding_system_internal,
         "Set keyboard coding system."
     ),

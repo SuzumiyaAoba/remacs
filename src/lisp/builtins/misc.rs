@@ -38,7 +38,7 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!(
         "make-interpreted-closure",
         3,
-        3,
+        5,
         f_make_interpreted_closure,
         "Build a closure from args/env/body."
     ),
@@ -1852,10 +1852,38 @@ fn f_interpreted_function_p(_i: &mut Interp, args: Vec<Value>) -> EvalResult {
 }
 
 fn f_make_interpreted_closure(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    // (make-interpreted-closure ARGS BODY ENV) → Lambda value.
-    Ok(make_interpreted_closure(
-        i, &args[0], &args[1], &args[2], false, None,
-    ))
+    // (make-interpreted-closure ARGS BODY ENV &optional DOCSTRING IFORM)
+    // — GNU eval.c: slots [args body env nil docstring iform], length
+    // 3/5/6 by trailing non-nil slots.  IFORM is `(interactive X)'.
+    let doc = args.get(3).cloned().filter(|v| !v.is_nil());
+    let iform = args.get(4).cloned().filter(|v| !v.is_nil());
+    let v = make_interpreted_closure(i, &args[0], &args[1], &args[2], false, None);
+    let Value::Lambda(l) = &v else {
+        return Ok(v);
+    };
+    let doc_str = doc.as_ref().and_then(|d| match d {
+        Value::Str(s) => Some(s.borrow().clone()),
+        _ => None,
+    });
+    Ok(Value::Lambda(Rc::new(Lambda {
+        doc_value: doc,
+        env_value: Some(args[2].clone()),
+        interactive: iform.or_else(|| l.interactive.clone()),
+        is_macro: l.is_macro,
+        required: l.required.clone(),
+        optional: l.optional.clone(),
+        rest: l.rest,
+        body: l.body.clone(),
+        env: l.env.clone(),
+        doc: doc_str.or_else(|| l.doc.clone()),
+        name: l.name.clone(),
+        bad_arglist: l.bad_arglist,
+        arglist: l.arglist.clone(),
+        plain: l.plain,
+        dumped_doc: l.dumped_doc,
+        advice_link: l.advice_link,
+        bc_items: l.bc_items.clone(),
+    })))
 }
 
 /// Build an interpreted-closure Lambda from ARGLIST, BODY (a list of
@@ -1917,6 +1945,7 @@ pub(crate) fn make_interpreted_closure(
         {
             Some(Rc::new(crate::lisp::LexFrame {
                 vars: RefCell::new(std::collections::HashMap::new()),
+                var_order: RefCell::new(Vec::new()),
                 declared: RefCell::new(std::collections::HashSet::new()),
                 parent: None,
             }))
@@ -1925,6 +1954,7 @@ pub(crate) fn make_interpreted_closure(
         // alist lexical frame.
         alist => {
             let mut vars = std::collections::HashMap::new();
+            let mut var_order = Vec::new();
             let mut declared = std::collections::HashSet::new();
             let mut cur = alist.clone();
             // Peel off a possible outer context list.
@@ -1940,6 +1970,9 @@ pub(crate) fn make_interpreted_closure(
                             Value::Cons(p) => {
                                 let pb = p.borrow();
                                 if let Some(sid) = i.sym_id(&pb.car) {
+                                    if !vars.contains_key(&sid) {
+                                        var_order.push(sid);
+                                    }
                                     vars.insert(sid, pb.cdr.clone());
                                 }
                             }
@@ -1957,8 +1990,13 @@ pub(crate) fn make_interpreted_closure(
                 }
                 cur = next;
             }
+            // The alist is already in GNU env order (newest binding
+            // first); `var_order' records oldest-first so
+            // `lexenv_as_value' reproduces the input verbatim.
+            var_order.reverse();
             Some(Rc::new(crate::lisp::LexFrame {
                 vars: RefCell::new(vars),
+                var_order: RefCell::new(var_order),
                 declared: RefCell::new(declared),
                 parent: None,
             }))
@@ -1980,7 +2018,60 @@ pub(crate) fn make_interpreted_closure(
         dumped_doc: false,
         advice_link: None,
         bc_items: bc_items.map(|v| Rc::new(RefCell::new(v))),
+        doc_value: None,
+        env_value: None,
     }))
+}
+
+/// GNU's closure element view for `aref'/`length'/`copy-sequence':
+/// `[ARGS BODY ENV nil DOCSTRING IFORM]' truncated to 3, 5, or 6
+/// slots — 6 when interactive, 5 when a docstring/type slot is
+/// present, else 3 (eval.c `Fmake_interpreted_closure').  Byte-code
+/// `#[...]' literals keep their literal elements.
+pub(crate) fn lambda_slot_values(l: &Lambda) -> Vec<Value> {
+    if let Some(items) = &l.bc_items {
+        return items.borrow().clone();
+    }
+    // GNU's iform slot holds the spec *inside* `(interactive ...)':
+    // its single form, or a vector when several forms follow.
+    let iform_val = l.interactive.as_ref().and_then(|f| {
+        let inner = match f {
+            Value::Cons(c) => c.borrow().cdr.clone(),
+            other => other.clone(),
+        };
+        let forms = inner.list_to_vec().unwrap_or_default();
+        match forms.len() {
+            1 => Some(forms.into_iter().next().unwrap()),
+            0 => None,
+            _ => Some(Value::Vec(Rc::new(RefCell::new(forms)))),
+        }
+    });
+    // GNU sizes by `!NILP (iform)' — `(interactive)' alone still
+    // produces a 6-slot closure with a nil slot 5.
+    let has_if = l.interactive.is_some();
+    let env = l.env_value.clone().unwrap_or_else(|| {
+        if l.env.is_none() {
+            Value::Nil
+        } else {
+            crate::lisp::eval::lexenv_as_value(&l.env)
+        }
+    });
+    let mut slots = vec![
+        l.arglist.clone().unwrap_or(Value::Nil),
+        Value::list(l.body.clone()),
+        env,
+        Value::Nil,
+        l.doc_value.clone().unwrap_or(Value::Nil),
+        iform_val.unwrap_or(Value::Nil),
+    ];
+    slots.truncate(if has_if {
+        6
+    } else if l.doc_value.is_some() {
+        5
+    } else {
+        3
+    });
+    slots
 }
 
 fn f_getenv_internal(i: &mut Interp, args: Vec<Value>) -> EvalResult {

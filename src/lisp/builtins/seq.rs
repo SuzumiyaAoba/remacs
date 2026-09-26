@@ -442,17 +442,9 @@ fn f_aref(i: &mut Interp, args: Vec<Value>) -> EvalResult {
         }
         Value::Lambda(l) => {
             // GNU `aref' reads the elements of closures and byte-code
-            // objects even though `arrayp' is nil for both.
-            // `#[...]' literals expose their literal element list;
-            // other lambdas synthesize GNU's [args body env] layout.
-            let items: Vec<Value> = match &l.bc_items {
-                Some(items) => items.borrow().clone(),
-                None => vec![
-                    l.arglist.clone().unwrap_or(Value::Nil),
-                    Value::list(l.body.clone()),
-                    Value::Nil,
-                ],
-            };
+            // objects even though `arrayp' is nil for both — the
+            // [args body env nil docstring iform] view (truncated).
+            let items = super::misc::lambda_slot_values(l);
             let n = want_int(i, &args[1])?;
             if n < 0 || n as usize >= items.len() {
                 return Err(i.signal_data(

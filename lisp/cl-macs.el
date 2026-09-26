@@ -1068,5 +1068,24 @@ instead of accessor functions.
 TYPE is a type descriptor as accepted by `cl-typep', which see."
   `(pred (cl-typep _ ',type)))
 
+;;;; Arglist parsing helpers (GNU cl-macs.el).
+
+(defconst cl--lambda-list-keywords
+  '(&optional &rest &key &allow-other-keys &aux &whole &body &environment))
+
+(defun cl--arglist-args (args)
+  ;; GNU cl-macs.el: collect the variable names bound by an extended
+  ;; arglist — used by `oclosure--defstruct-make-copiers'.
+  (if (nlistp args) (list args)
+    (let ((res nil) (kind nil) arg)
+      (while (consp args)
+	(setq arg (pop args))
+	(if (memq arg cl--lambda-list-keywords) (setq kind arg)
+	  (if (eq arg '&cl-defs) (pop args)
+	    (and (consp arg) kind (setq arg (car arg)))
+	    (and (consp arg) (cdr arg) (eq kind '&key) (setq arg (cadr arg)))
+	    (setq res (nconc res (cl--arglist-args arg))))))
+      (nconc res (and args (list args))))))
+
 (provide 'cl-macs)
 ;;; cl-macs.el ends here

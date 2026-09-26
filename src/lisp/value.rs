@@ -273,6 +273,16 @@ pub struct Lambda {
     /// keep the original element list so `aref'/`length' see GNU's
     /// [args body env] slots; `nil' for ordinary lambdas.
     pub bc_items: Option<Rc<std::cell::RefCell<Vec<Value>>>>,
+    /// GNU closure slot 4: the docstring *value* — a string for
+    /// documented functions, but `(:documentation FORM)' may produce
+    /// any value (oclosure.el stores its type symbol there).
+    /// `doc' only holds the string case for `documentation'.
+    pub doc_value: Option<Value>,
+    /// GNU closure slot 2 verbatim: the env alist passed to
+    /// `make-interpreted-closure'.  `None' → reconstructed from `env'
+    /// (oldest-to-newest frame order reversed, like GNU's specbind
+    /// prepends).  `oclosure--get' indexes this positionally.
+    pub env_value: Option<Value>,
 }
 
 #[derive(Clone)]

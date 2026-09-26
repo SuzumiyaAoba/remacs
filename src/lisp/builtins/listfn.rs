@@ -379,10 +379,9 @@ fn f_length(i: &mut Interp, args: Vec<Value>) -> EvalResult {
         // answer `length' with their element count like GNU —
         // `#[...]' uses the literal's count, others the synthesized
         // [args body env] prefix.
-        Value::Lambda(l) => match &l.bc_items {
-            Some(items) => Ok(Value::Int(items.borrow().len() as i128)),
-            None => Ok(Value::Int(3)),
-        },
+        Value::Lambda(l) => Ok(Value::Int(
+            crate::lisp::builtins::misc::lambda_slot_values(l).len() as i128,
+        )),
         other => Err(i.wrong_type_mut("sequencep", other)),
     }
 }
@@ -1432,6 +1431,8 @@ fn f_apply_partially(i: &mut Interp, args: Vec<Value>) -> EvalResult {
         dumped_doc: false,
         advice_link: None,
         bc_items: None,
+        doc_value: None,
+        env_value: None,
     };
     Ok(Value::Lambda(std::rc::Rc::new(lam)))
 }

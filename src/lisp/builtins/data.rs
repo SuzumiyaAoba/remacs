@@ -1399,6 +1399,8 @@ fn normalize_fn_def(i: &mut Interp, def: Value) -> Value {
                         dumped_doc: l.dumped_doc,
                         advice_link: l.advice_link,
                         bc_items: l.bc_items.clone(),
+                        doc_value: l.doc_value.clone(),
+                        env_value: l.env_value.clone(),
                     };
                     l2.is_macro = true;
                     return Value::Lambda(std::rc::Rc::new(l2));
