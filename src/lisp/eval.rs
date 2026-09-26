@@ -258,6 +258,12 @@ pub struct Interp {
     pub processes: Vec<crate::lisp::value::ProcessRef>,
     /// Tree-sitter parsers/nodes/queries/languages (`treesit-*').
     pub treesit: crate::lisp::builtins::treesit::TsState,
+    /// File-notification (kqueue) watch table — GNU's `watch_list'
+    /// from `src/kqueue.c'.
+    pub filenotify: crate::lisp::builtins::filenotify::FnState,
+    /// D-Bus bus connections and registered fds — GNU's
+    /// `xd_registered_buses' / `xd_registered_fds' from `src/dbusbind.c'.
+    pub dbus: crate::lisp::builtins::dbus::DbusState,
     /// Charset name → plist (`define-charset` / `set-charset-plist`).
     pub charsets: Vec<(String, Value)>,
     /// Charset alias → canonical name (`define-charset-alias`).
@@ -700,6 +706,8 @@ impl Interp {
             face_table: Vec::new(),
             processes: Vec::new(),
             treesit: crate::lisp::builtins::treesit::TsState::new(),
+            filenotify: crate::lisp::builtins::filenotify::FnState::new(),
+            dbus: crate::lisp::builtins::dbus::DbusState::new(),
             charsets: Vec::new(),
             charset_aliases: Vec::new(),
             extra_coding_systems: Vec::new(),
@@ -2262,6 +2270,10 @@ explicitly overridden.
         // dumped loadup; the user-visible `features' list must match the
         // post-dump set.
         interp.features = dump_features;
+        // External-library features are registered at runtime (dlopen):
+        // re-check after the dump restore so `featurep' sees e.g.
+        // `lcms2'/`kqueue' when the libraries resolve.
+        crate::lisp::builtins::register_extlib_features(&mut interp);
         // `icons' faces created by boot-time loads are likewise
         // hidden until a real `load' triggers them.
         interp

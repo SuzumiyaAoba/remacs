@@ -101,6 +101,45 @@ Design notes:
 Verified: `treesit.el`, `json-ts-mode`, `c-ts-mode`, `rust-ts-mode`
 load, parse, and fontify correctly under `--batch`.
 
+## External libraries (`src/lisp/dynlib.rs` + builtins)
+
+Optional GNU libraries are dlopen'd at runtime (`dynlib::Library`):
+`libgnutls` (crypto + TLS sessions, `src/lisp/builtins/gnutls.rs` —
+TLS I/O routed inside `src/lisp/process.rs`), `liblcms2`
+(`lcms.rs`), `libdbus-1` (`dbus.rs`), kqueue file-notify
+(`filenotify.rs`). Features (`lcms2`, `gnutls`, `dbusbind`,
+`file-notify`) are provided only when the library actually loads;
+`register_extlib_features` re-runs installs after the dumped
+`features` list is restored.
+
+D-Bus event flow: incoming messages are turned into `(dbus-event
+BUS TYPE SERIAL SERVICE DESTINATION PATH INTERFACE MEMBER HANDLER
+&rest ARGS)` and dispatched *synchronously* through
+`special-event-map` (`filenotify::dispatch_special_event`), with
+`last-input-event` set first — the remacs stand-in for GNU's
+`kbd_buffer_store_event` + `read_char`. The pump runs inside
+`sleep_firing_timers` (`sleep-for`/`sit-for`) and inside the timed
+`read-event`/`read-char` path (`SECONDS` argument → pump until the
+deadline, nil on timeout, never touches batch stdin — GNU parity).
+No libdbus watches are used; `dbus_connection_read_write(0)` +
+`pop_message` polling is enough.
+
+Gotchas: libdbus `DBusDispatchStatus` is `DATA_REMAINS=0,
+COMPLETE=1` (easy to invert); `gnutls_free` is a data symbol holding
+a function pointer; `gnutls_x509_crt_fmt_t` DER=0/PEM=1. A
+`(:basic-type x)` Lisp list is an *array* of that type in GNU
+semantics, not a scalar — plain fixnums already map to `uint32`.
+
+Verified end-to-end: real session-bus `dbus-call-method` sync/async,
+method/signal registration and self round-trips, error replies →
+`dbus-error`; TLS 1.3 HTTPS fetch through `open-network-stream`
+`:type 'tls`; kqueue file+dir watches; LCMS color math vs GNU.
+Regression suite: `tests/extlib.rs` (9 tests, ~6 min — every `ev()`
+pays the ~30 s prelude; live-bus D-Bus tests live in `tests/dbus.rs`
+and skip when `DBUS_SESSION_BUS_ADDRESS` is unset). kqueue note:
+`NOTE_WRITE` only fires on a real write() — `write-region` over an
+empty point range is a no-op and produces no event.
+
 ## Verification recipe
 
 ```sh

@@ -7,10 +7,14 @@ pub(crate) mod arith;
 pub(crate) mod bidi_table;
 pub(crate) mod charset;
 pub(crate) mod data;
+pub(crate) mod dbus;
 pub(crate) mod enc_tables;
 pub(crate) mod evalfn;
+pub(crate) mod filenotify;
+pub(crate) mod gnutls;
 pub(crate) mod hashfn;
 pub(crate) mod json;
+pub(crate) mod lcms;
 pub(crate) mod listfn;
 pub mod misc;
 pub(crate) mod printfn;
@@ -81,6 +85,10 @@ fn collect() -> Vec<&'static Subr> {
     v.extend(sqlite::SUBRS);
     v.extend(xml::SUBRS);
     v.extend(treesit::SUBRS);
+    v.extend(lcms::SUBRS);
+    v.extend(filenotify::SUBRS);
+    v.extend(gnutls::SUBRS);
+    v.extend(dbus::SUBRS);
     v.extend(crate::lisp::process::SUBRS);
     v
 }
@@ -98,7 +106,20 @@ pub fn install(interp: &mut Interp) {
         interp.fset(id, Value::Subr(s));
     }
     sqlite::install(interp);
+    lcms::install(interp);
+    filenotify::install(interp);
+    gnutls::install(interp);
+    dbus::install(interp);
     install_aliases(interp);
+}
+
+/// Re-register runtime (dlopen-gated) features after the post-boot
+/// `features' list is restored from the dump snapshot.
+pub fn register_extlib_features(interp: &mut Interp) {
+    lcms::install(interp);
+    filenotify::install(interp);
+    gnutls::install(interp);
+    dbus::install(interp);
 }
 
 fn sf_cannot_call(i: &mut Interp, a: Vec<Value>) -> super::error::EvalResult {

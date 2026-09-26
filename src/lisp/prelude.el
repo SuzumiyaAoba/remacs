@@ -8730,6 +8730,11 @@ This is the first translation applied to input events.")
 (defvar special-event-map (make-sparse-keymap)
   "Keymap of bindings for events that should be handled at a low level.")
 
+;; GNU's keyboard.c `initial_define_lispy_key' defaults.
+(define-key special-event-map [file-notify] 'file-notify-handle-event)
+(define-key special-event-map [dbus-event] 'dbus-handle-event)
+(define-key special-event-map [config-changed-event] 'ignore)
+
 (defvar local-function-key-map
   (let ((map (make-sparse-keymap)))
     (set-keymap-parent map function-key-map)

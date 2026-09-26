@@ -128,11 +128,47 @@ pub struct Proc {
     /// Signal sent but not yet reflected in `status` (GNU applies
     /// status changes asynchronously via SIGCHLD notification).
     pub pending_status: Option<&'static str>,
+    /// GnuTLS state for TLS network processes (`gnutls-boot').
+    pub gnutls: Option<Box<GnutlsState>>,
+    /// GNU `p->gnutls_init_stage' — 0 until `gnutls-boot' progresses.
+    pub gnutls_initstage: i32,
+    /// `gnutls-log-level' in effect when the session was booted.
+    pub gnutls_log_level: i32,
+    /// Async-negotiation markers (`gnutls-asynchronous-parameters').
+    pub gnutls_async_connected: Value,
+    pub gnutls_async_signalled: Value,
+}
+
+/// Per-process GnuTLS session/credential handles (`lisp.h' fields).
+pub struct GnutlsState {
+    /// `gnutls_session_t'.
+    pub session: *mut core::ffi::c_void,
+    /// `gnutls_certificate_client_credentials' (x509 or anon).
+    pub cred: *mut core::ffi::c_void,
+    /// Hostname used for SNI + certificate verification.
+    pub hostname: String,
+    /// Raw status bits from the last `gnutls_certificate_verify_peers2'.
+    pub verify_status: u32,
+    /// Peer certificate chain as imported DER blobs.
+    pub certificates: Vec<Vec<u8>>,
+    /// Peer certificate did not match :hostname (extra verification).
+    pub host_mismatch: bool,
+    /// Credentials were allocated for `gnutls-anon' (not x509pki).
+    pub anon: bool,
 }
 
 impl Proc {
     pub fn alive(&self) -> bool {
         matches!(self.status, "run" | "stop" | "open" | "listen" | "connect")
+    }
+
+    /// The live `gnutls_session_t', if a TLS session was booted.
+    pub fn gnutls_session(&self) -> Option<*mut core::ffi::c_void> {
+        self.gnutls.as_ref().map(|s| s.session)
+    }
+
+    pub fn gnutls_hostname(&self) -> Option<String> {
+        self.gnutls.as_ref().map(|s| s.hostname.clone())
     }
 }
 
@@ -359,7 +395,32 @@ fn poll_proc(i: &mut Interp, pref: &ProcessRef) -> Result<bool, Flow> {
     let mut events = Vec::new();
     {
         let mut p = pref.borrow_mut();
-        match &mut p.io {
+        // TLS sessions read through gnutls_record_recv instead of the
+        // raw socket (GNU's emacs_gnutls_read); handled here because
+        // the gnutls state lives outside `p.io'.
+        if matches!(p.io, ProcIo::Net(_)) && crate::lisp::builtins::gnutls::tls_ready(&p) {
+            let mut buf = [0u8; 8192];
+            loop {
+                match crate::lisp::builtins::gnutls::record_read(&p, &mut buf) {
+                    n if n > 0 => {
+                        events.push(Ev::Out(buf[..n as usize].to_vec(), false));
+                        continue;
+                    }
+                    0 => {
+                        // Peer sent close_notify (or a fatal
+                        // error) — GNU's `closed' transition.
+                        if p.status != "closed" {
+                            p.status = "closed";
+                            p.exit_status = 0;
+                            events.push(Ev::Exit("closed", 0));
+                        }
+                        break;
+                    }
+                    _ => break, // would-block
+                }
+            }
+        } else {
+            match &mut p.io {
             ProcIo::Child {
                 child,
                 master_fd,
@@ -493,6 +554,7 @@ fn poll_proc(i: &mut Interp, pref: &ProcessRef) -> Result<bool, Flow> {
                 }
             }
             ProcIo::None => {}
+            }
         }
     }
     // accept-process-output returns t only when new output data
@@ -553,6 +615,11 @@ fn poll_proc(i: &mut Interp, pref: &ProcessRef) -> Result<bool, Flow> {
                     reported: false,
                     start_stopped: false,
                     pending_status: None,
+                    gnutls: None,
+                    gnutls_initstage: 0,
+                    gnutls_log_level: 0,
+                    gnutls_async_connected: Value::Nil,
+                    gnutls_async_signalled: Value::Nil,
                 }));
                 i.processes.push(child_proc);
                 // GNU re-registers the server in process_alist on accept,
@@ -602,6 +669,11 @@ fn poll_proc(i: &mut Interp, pref: &ProcessRef) -> Result<bool, Flow> {
                     reported: false,
                     start_stopped: false,
                     pending_status: None,
+                    gnutls: None,
+                    gnutls_initstage: 0,
+                    gnutls_log_level: 0,
+                    gnutls_async_connected: Value::Nil,
+                    gnutls_async_signalled: Value::Nil,
                 }));
                 i.processes.push(child_proc);
                 i.processes.push(pref.clone());
@@ -653,6 +725,11 @@ fn base_proc(name: String, kind: &'static str, io: ProcIo) -> Proc {
         reported: false,
         start_stopped: false,
         pending_status: None,
+        gnutls: None,
+        gnutls_initstage: 0,
+        gnutls_log_level: 0,
+        gnutls_async_connected: Value::Nil,
+        gnutls_async_signalled: Value::Nil,
     }
 }
 
@@ -1796,6 +1873,16 @@ fn proc_write(i: &mut Interp, p: &ProcessRef, bytes: &[u8]) -> EvalResult {
     let mut pb = p.borrow_mut();
     if !pb.alive() {
         return Err(i.error("Process is not running"));
+    }
+    // Route through the TLS record layer once gnutls-boot completed
+    // (GNU's emacs_gnutls_write).
+    if matches!(pb.io, ProcIo::Net(_))
+        && crate::lisp::builtins::gnutls::tls_ready(&pb)
+    {
+        return match crate::lisp::builtins::gnutls::record_write(&pb, bytes) {
+            Ok(_) => Ok(Value::Nil),
+            Err(()) => Err(i.error("Writing to process: broken pipe")),
+        };
     }
     let r = match &mut pb.io {
         ProcIo::Child { master_fd, .. } => {

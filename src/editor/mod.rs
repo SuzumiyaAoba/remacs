@@ -7189,6 +7189,37 @@ fn f_read_char(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     if let Some(ev) = pop_unread_command_event(i) {
         return Ok(ev);
     }
+    // SECONDS arg: a timed read waits for real events up to the
+    // deadline — it never consumes batch stdin (GNU returns nil on
+    // timeout even when stdin has data or is at EOF).  Special
+    // events (D-Bus messages, file notifications) are dispatched
+    // while we wait, the way GNU's read_char runs special-event-map
+    // inside wait_reading_process_output.
+    let secs = match a.get(2) {
+        Some(Value::Int(n)) => Some(*n as f64),
+        Some(Value::Float(f)) => Some(**f),
+        _ => None,
+    };
+    if let Some(secs) = secs {
+        let deadline = std::time::Instant::now()
+            + std::time::Duration::from_secs_f64(secs.max(0.0).min(3600.0));
+        loop {
+            // GNU's read_char waits inside
+            // `wait_reading_process_output', which runs `timer_check'
+            // — `with-timeout' must be able to fire while polling.
+            crate::lisp::builtins::evalfn::timer_check(i)?;
+            crate::lisp::builtins::filenotify::drain(i)?;
+            crate::lisp::builtins::dbus::drain(i)?;
+            crate::lisp::process::poll_all(i)?;
+            if let Some(ev) = pop_unread_command_event(i) {
+                return Ok(ev);
+            }
+            if std::time::Instant::now() >= deadline {
+                return Ok(Value::Nil);
+            }
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
+    }
     if i.minibuf_reader.is_none() && i.noninteractive {
         // GNU batch `read-char' consumes one character from stdin.
         return Ok(Value::Int(i.batch_read_char()?));

@@ -44057,17 +44057,9 @@ while it runs, and removed afterwards."
   '("SCCS" "RCS" "CVS" "MCVS" ".src" ".svn" ".git" ".hg" ".bzr" "_MTN"
     "_darcs" "{arch}" ".repo" ".jj"))
 
-;; C-level kqueue/native-comp functions: bound for `fboundp' parity;
-;; calling them errors (no kqueue/native-comp support).
-(defun kqueue-add-watch (&rest _args)
-  "Stub: kqueue file watching is not supported."
-  (signal 'error (list "kqueue file watching is not supported")))
-(defun kqueue-rm-watch (&rest _args)
-  "Stub: kqueue file watching is not supported."
-  (signal 'error (list "kqueue file watching is not supported")))
-(defun kqueue-valid-p (&rest _args)
-  "Stub: kqueue file watching is not supported."
-  (signal 'error (list "kqueue file watching is not supported")))
+;; C-level native-comp functions: bound for `fboundp' parity;
+;; calling them errors (no native-comp support).
+;; (kqueue-* are real subrs in remacs — see src/lisp/builtins/filenotify.rs.)
 (defun native-comp-unit-file (&rest _args)
   "Stub: native compilation is not supported."
   (signal 'error (list "native compilation is not supported")))
@@ -46310,42 +46302,6 @@ also passed as second argument to SPECIALIZERS-FUNCTION." (declare (indent 1) (d
   (signal 'error (list "comp-native-compiler-options-effective-p: not implemented (C primitive)")))
 (defun comp-native-driver-options-effective-p (&rest _args)
   (signal 'error (list "comp-native-driver-options-effective-p: not implemented (C primitive)")))
-(defun gnutls-asynchronous-parameters (&rest _args)
-  (signal 'error (list "gnutls-asynchronous-parameters: not implemented (C primitive)")))
-(defun gnutls-boot (&rest _args)
-  (signal 'error (list "gnutls-boot: not implemented (C primitive)")))
-(defun gnutls-bye (&rest _args)
-  (signal 'error (list "gnutls-bye: not implemented (C primitive)")))
-(defun gnutls-ciphers (&rest _args)
-  (signal 'error (list "gnutls-ciphers: not implemented (C primitive)")))
-(defun gnutls-deinit (&rest _args)
-  (signal 'error (list "gnutls-deinit: not implemented (C primitive)")))
-(defun gnutls-digests (&rest _args)
-  (signal 'error (list "gnutls-digests: not implemented (C primitive)")))
-(defun gnutls-error-fatalp (&rest _args)
-  (signal 'error (list "gnutls-error-fatalp: not implemented (C primitive)")))
-(defun gnutls-error-string (&rest _args)
-  (signal 'error (list "gnutls-error-string: not implemented (C primitive)")))
-(defun gnutls-errorp (&rest _args)
-  (signal 'error (list "gnutls-errorp: not implemented (C primitive)")))
-(defun gnutls-format-certificate (&rest _args)
-  (signal 'error (list "gnutls-format-certificate: not implemented (C primitive)")))
-(defun gnutls-get-initstage (&rest _args)
-  (signal 'error (list "gnutls-get-initstage: not implemented (C primitive)")))
-(defun gnutls-hash-digest (&rest _args)
-  (signal 'error (list "gnutls-hash-digest: not implemented (C primitive)")))
-(defun gnutls-hash-mac (&rest _args)
-  (signal 'error (list "gnutls-hash-mac: not implemented (C primitive)")))
-(defun gnutls-macs (&rest _args)
-  (signal 'error (list "gnutls-macs: not implemented (C primitive)")))
-(defun gnutls-peer-status (&rest _args)
-  (signal 'error (list "gnutls-peer-status: not implemented (C primitive)")))
-(defun gnutls-peer-status-warning-describe (&rest _args)
-  (signal 'error (list "gnutls-peer-status-warning-describe: not implemented (C primitive)")))
-(defun gnutls-symmetric-decrypt (&rest _args)
-  (signal 'error (list "gnutls-symmetric-decrypt: not implemented (C primitive)")))
-(defun gnutls-symmetric-encrypt (&rest _args)
-  (signal 'error (list "gnutls-symmetric-encrypt: not implemented (C primitive)")))
 (defun ns-badge (&rest _args)
   (signal 'error (list "ns-badge: not implemented (C primitive)")))
 (defun ns-begin-drag (&rest _args)
