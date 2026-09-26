@@ -256,6 +256,8 @@ pub struct Interp {
     /// Live process objects (`Value::Process`), including finished ones
     /// until `delete-process`.
     pub processes: Vec<crate::lisp::value::ProcessRef>,
+    /// Tree-sitter parsers/nodes/queries/languages (`treesit-*').
+    pub treesit: crate::lisp::builtins::treesit::TsState,
     /// Charset name → plist (`define-charset` / `set-charset-plist`).
     pub charsets: Vec<(String, Value)>,
     /// Charset alias → canonical name (`define-charset-alias`).
@@ -697,6 +699,7 @@ impl Interp {
             minibuf_exit_fn: None,
             face_table: Vec::new(),
             processes: Vec::new(),
+            treesit: crate::lisp::builtins::treesit::TsState::new(),
             charsets: Vec::new(),
             charset_aliases: Vec::new(),
             extra_coding_systems: Vec::new(),

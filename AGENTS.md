@@ -62,11 +62,44 @@ Registration rules:
 - `xwidget-internal` and other GUI primitives unimplemented.
 - Bulk-load test (all lisp/*.el under --batch): only failures besides the
   above are `Lisp nesting exceeds max-lisp-eval-depth` during eager
-  macro-expansion (~50 files), `treesit-query-p: not implemented`
-  (ts-mode family), platform-gated *-win/android files, and
+  macro-expansion (~50 files), platform-gated *-win/android files, and
   unregistered qualified requires (srecode/semantic/*).
 - `PRELUDE_MAX` env var truncates prelude evaluation for bisection;
   `--ieval` bisects a form interactively; `WHILE_WATCH` traces eval loops.
+
+## Tree-sitter support (`src/lisp/builtins/treesit.rs`)
+
+Implemented: grammar loading via `libloading` (lookup order:
+`treesit-extra-load-path`, `user-emacs-directory/tree-sitter/`, then bare
+library names; `~` expanded via `expand-file-name`), all `treesit-*`
+primitives (parser/node/query records stored in `Interp::treesit`,
+predicates `#eq?`/`#match?`/`#pred?`, searches, sparse trees, notifiers,
+included ranges, ABI queries). Grammar .dylib/.so files must be built
+separately (e.g. `~/.emacs.d/tree-sitter/libtree-sitter-<lang>.dylib`),
+same as GNU.
+
+Design notes:
+
+- Objects are Lisp records `[treesit-parser ID]` / `[treesit-node PID
+  NID]` / `[treesit-compiled-query ID]`; `print.rs` renders them as
+  `#<treesit-...>'.
+- **Never derive nodes from `Tree::clone()`** — it's `ts_tree_copy` (a
+  *different* `TSTree`; root id even differs). Nodes must come from the
+  parser's *stored* tree — see `stored_root()` which detaches via
+  `Node::into_raw`/`from_raw`.
+- Node staleness is GNU-style: `check_node` compares `parse_count`;
+  `treesit-node-check 'outdated` is passive (nil until a reparse
+  happens elsewhere).
+- Query capture uses raw `ts_query_cursor_next_match` FFI; a match may
+  carry 0 captures (predicate-only patterns).
+- `treesit-node-type` and `treesit-node-field-name-for-child` return
+  *strings* (not symbols) like GNU.
+- `treesit-language-available-p` with DETAIL returns `(t . nil)` /
+  `(nil . signal-data)`; `treesit-library-abi-version` returns an int
+  (min-compatible when arg non-nil).
+
+Verified: `treesit.el`, `json-ts-mode`, `c-ts-mode`, `rust-ts-mode`
+load, parse, and fontify correctly under `--batch`.
 
 ## Verification recipe
 

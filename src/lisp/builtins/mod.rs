@@ -18,6 +18,7 @@ pub(crate) mod readfn;
 pub(crate) mod seq;
 pub(crate) mod sqlite;
 pub(crate) mod strfn;
+pub(crate) mod treesit;
 pub(crate) mod xml;
 
 use super::Interp;
@@ -79,6 +80,7 @@ fn collect() -> Vec<&'static Subr> {
     v.extend(charset::SUBRS);
     v.extend(sqlite::SUBRS);
     v.extend(xml::SUBRS);
+    v.extend(treesit::SUBRS);
     v.extend(crate::lisp::process::SUBRS);
     v
 }
