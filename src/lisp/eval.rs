@@ -2406,6 +2406,26 @@ explicitly overridden.
     /// Mark a string as unibyte (encoder output); `prin1' escapes
     /// its ≥0x80 byte-chars as `\NNN' octal like GNU.
     pub fn mark_unibyte(&mut self, s: &crate::lisp::value::StrRef) {
+        // Normalize contents: a unibyte string's 0x80-0xFF chars are
+        // raw bytes — hold them as eight-bit PUA proxies so `aref',
+        // printing, and output transcode see byte semantics.
+        {
+            let mut text = s.borrow_mut();
+            if text.chars().any(|c| (0x80..=0xFF).contains(&(c as u32))) {
+                let conv: String = text
+                    .chars()
+                    .map(|c| {
+                        if (0x80..=0xFF).contains(&(c as u32)) {
+                            char::from_u32(crate::lisp::value::EIGHT_BIT_BASE + c as u32)
+                                .unwrap_or(c)
+                        } else {
+                            c
+                        }
+                    })
+                    .collect();
+                *text = conv;
+            }
+        }
         self.unibyte_strings
             .insert(std::rc::Rc::as_ptr(s) as usize, std::rc::Rc::downgrade(s));
     }
@@ -6569,7 +6589,32 @@ explicitly overridden.
                         let _ = self.apply(&f, vec![arg]);
                     }
                     Some(OutputSink::Stdout) => {
-                        print!("{}", s);
+                        // GNU's output encoding renders an eight-bit
+                        // char (0x80-0xFF) in its internal two-byte
+                        // form: 0xC0+((b>>6)&1), 0x80+(b&0x3F).
+                        if s.chars().any(|c| {
+                            crate::lisp::value::eight_bit_byte(c).is_some()
+                        }) {
+                            let mut bytes = Vec::with_capacity(s.len());
+                            for c in s.chars() {
+                                match crate::lisp::value::eight_bit_byte(c) {
+                                    Some(b) => {
+                                        bytes.push(0xC0 + ((b >> 6) & 1));
+                                        bytes.push(0x80 + (b & 0x3F));
+                                    }
+                                    None => {
+                                        let mut tmp = [0u8; 4];
+                                        bytes.extend_from_slice(
+                                            c.encode_utf8(&mut tmp).as_bytes(),
+                                        );
+                                    }
+                                }
+                            }
+                            use std::io::Write;
+                            let _ = std::io::stdout().write_all(&bytes);
+                        } else {
+                            print!("{}", s);
+                        }
                         use std::io::Write;
                         let _ = std::io::stdout().flush();
                         self.stderr_need_newline = true;

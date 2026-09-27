@@ -397,13 +397,16 @@ impl Interp {
                 }
                 out.push('"');
                 if self.is_unibyte_str(s) {
-                    // Unibyte strings (encoder output): byte-chars
-                    // ≥0x80 print as `\NNN' octal escapes like GNU.
+                    // Unibyte strings (encoder output): bytes ≥0x80
+                    // print as `\NNN' octal escapes like GNU; they may
+                    // be held as PUA proxies or plain byte-chars.
                     for c in s.borrow().chars() {
-                        if (c as u32) >= 0x80 {
-                            let _ = write!(out, "\\{:03o}", c as u32);
+                        if let Some(b) = crate::lisp::value::eight_bit_byte(c) {
+                            let _ = write!(out, "\\{:03o}", b);
+                        } else if (c as u32) >= 0x80 {
+                            let _ = write!(out, "\\{:03o}", (c as u32) & 0xFF);
                         } else {
-                            escape_char_for_string(c, out, nl, mb);
+                            escape_char_for_string(c, out, nl, mb, cc);
                         }
                     }
                 } else {

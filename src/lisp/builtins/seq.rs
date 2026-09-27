@@ -324,12 +324,33 @@ pub(crate) fn seq_to_vec(i: &mut Interp, v: &Value) -> Result<Vec<Value>, super:
     match v {
         Value::Nil => Ok(Vec::new()),
         Value::Cons(_) => want_list(i, v),
-        Value::Str(s) => Ok(s
-            .borrow()
-            .chars()
-            .map(|c| Value::Int(crate::lisp::value::lisp_char_code(c)))
-            .collect()),
+        Value::Str(s) => {
+            let unibyte = i.is_unibyte_str(s);
+            Ok(s.borrow()
+                .chars()
+                .map(|c| {
+                    // Unibyte strings iterate their raw byte values.
+                    if unibyte {
+                        Value::Int(
+                            crate::lisp::value::eight_bit_byte(c)
+                                .map(|b| b as i128)
+                                .unwrap_or((c as u32) as i128 & 0xFF),
+                        )
+                    } else {
+                        Value::Int(crate::lisp::value::lisp_char_code(c))
+                    }
+                })
+                .collect())
+        }
         Value::Vec(vec) => Ok(vec.borrow().clone()),
+        // Bool-vectors are bit sequences; GNU flattens them to
+        // t/nil elements (append, vconcat, & co.).
+        Value::Record(_) if super::misc::is_bool_vector(i, v) => Ok(super::misc::bool_vec_of(
+            i, v,
+        )?
+        .into_iter()
+        .map(Value::from_bool)
+        .collect()),
         other => Err(i.wrong_type_mut("sequencep", other)),
     }
 }
@@ -382,9 +403,17 @@ fn f_elt(i: &mut Interp, args: Vec<Value>) -> EvalResult {
                     vec![args[0].clone(), args[1].clone()],
                 ));
             }
-            Ok(Value::Int(crate::lisp::value::lisp_char_code(
-                chars[n as usize],
-            )))
+            let c = chars[n as usize];
+            // GNU: elements of a unibyte string are the raw byte
+            // values (eight-bit proxies read back as 0x80-0xFF).
+            let code = if i.is_unibyte_str(s) {
+                crate::lisp::value::eight_bit_byte(c)
+                    .map(|b| b as i128)
+                    .unwrap_or((c as u32) as i128 & 0xFF)
+            } else {
+                crate::lisp::value::lisp_char_code(c)
+            };
+            Ok(Value::Int(code))
         }
         Value::Vec(v) => {
             let items = v.borrow();
@@ -480,6 +509,7 @@ fn f_aset(i: &mut Interp, args: Vec<Value>) -> EvalResult {
             };
             let c = crate::lisp::value::lisp_char(nch as u32)
                 .ok_or_else(|| i.wrong_type_mut("characterp", &args[2]))?;
+            let unibyte = i.is_unibyte_str(s);
             let mut chars: Vec<char> = s.borrow().chars().collect();
             if n < 0 || n as usize >= chars.len() {
                 return Err(i.signal_data(
@@ -487,7 +517,48 @@ fn f_aset(i: &mut Interp, args: Vec<Value>) -> EvalResult {
                     vec![args[0].clone(), args[1].clone()],
                 ));
             }
-            chars[n as usize] = c;
+            let old = chars[n as usize];
+            if unibyte {
+                // GNU: a unibyte string only stores byte values; a
+                // 0x80-0xFF byte is the eight-bit char, held as its
+                // PUA proxy internally.
+                if !(0..=0xFF).contains(&nch) {
+                    return Err(i.error(
+                        "Attempt to store non-byte value into unibyte string",
+                    ));
+                }
+                chars[n as usize] = if nch >= 0x80 {
+                    char::from_u32(crate::lisp::value::EIGHT_BIT_BASE + nch as u32)
+                        .unwrap_or('\u{fffd}')
+                } else {
+                    c
+                };
+            } else if nch >= 0x80 || (old as u32) >= 0x80 {
+                // GNU multibyte rule: ASCII -> ASCII is always fine;
+                // otherwise the new char must encode to the same byte
+                // length as the old one.
+                let byte_len = |ch: char, code: i128| -> usize {
+                    if (0x3FFF80..=0x3FFFFF).contains(&code) {
+                        2 // eight-bit codes are 2 bytes internally
+                    } else {
+                        ch.len_utf8()
+                    }
+                };
+                let (nl, ol) = (
+                    byte_len(c, nch),
+                    byte_len(old, crate::lisp::value::lisp_char_code(old)),
+                );
+                if nl != ol {
+                    return Err(i.error(if nch < 0x80 {
+                        "Attempt to replace non-ASCII char in multibyte string"
+                    } else {
+                        "Attempt to store non-ASCII char into multibyte string"
+                    }));
+                }
+                chars[n as usize] = c;
+            } else {
+                chars[n as usize] = c;
+            }
             *s.borrow_mut() = chars.into_iter().collect();
             Ok(args[2].clone())
         }

@@ -9685,12 +9685,72 @@ fn f_gap_position(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
 fn f_gap_size(_i: &mut Interp, _a: Vec<Value>) -> EvalResult {
     Ok(Value::Int(64))
 }
-fn f_position_bytes(_i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    // Chars == bytes in our model (multibyte not implemented).
-    Ok(a[0].clone())
+/// UTF-8 byte length of a buffer char: eight-bit proxy chars occupy
+/// GNU's 2-byte internal encoding; everything else is its UTF-8 len.
+fn buf_char_byte_len(c: char) -> usize {
+    match crate::lisp::value::eight_bit_byte(c) {
+        Some(_) => 2,
+        None => c.len_utf8(),
+    }
 }
-fn f_byte_to_position(_i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    Ok(a[0].clone())
+
+fn f_position_bytes(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    // GNU: byte position corresponding to char position POSITION —
+    // 1 + byte length of the text before it; nil when POSITION is not
+    // a valid char position (accepts markers).
+    let pos = match &a[0] {
+        Value::Int(n) => *n,
+        Value::Marker(m) => m.borrow().position as i128 + 1,
+        other => return Err(i.wrong_type_mut("integer-or-marker-p", other)),
+    };
+    let sym = i.intern("enable-multibyte-characters");
+    let unibyte = !i.symbol_value(sym).truthy();
+    let text = cur(i).borrow().text.text();
+    let chars: Vec<char> = text.chars().collect();
+    if pos < 1 || pos as usize > chars.len() + 1 {
+        return Ok(Value::Nil);
+    }
+    let n = pos as usize - 1;
+    if unibyte {
+        return Ok(Value::Int(pos));
+    }
+    let bytes: usize = chars[..n].iter().map(|c| buf_char_byte_len(*c)).sum();
+    Ok(Value::Int(1 + bytes as i128))
+}
+fn f_byte_to_position(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    // GNU: char position holding byte position BYTEPOS; a byte inside
+    // a multibyte char yields that char's position; nil out of range.
+    let n = match &a[0] {
+        Value::Int(n) => *n,
+        other => return Err(i.wrong_type_mut("fixnump", other)),
+    };
+    let sym = i.intern("enable-multibyte-characters");
+    let unibyte = !i.symbol_value(sym).truthy();
+    let text = cur(i).borrow().text.text();
+    if unibyte {
+        let len = text.chars().count() as i128;
+        return Ok(if n >= 1 && n <= len + 1 {
+            a[0].clone()
+        } else {
+            Value::Nil
+        });
+    }
+    if n < 1 {
+        return Ok(Value::Nil);
+    }
+    let mut bytepos = 1usize;
+    for (idx, c) in text.chars().enumerate() {
+        let w = buf_char_byte_len(c);
+        if n as usize <= bytepos + w - 1 {
+            return Ok(Value::Int(idx as i128 + 1));
+        }
+        bytepos += w;
+    }
+    if n as usize == bytepos {
+        // One past the last byte == position after the last char.
+        return Ok(Value::Int(text.chars().count() as i128 + 1));
+    }
+    Ok(Value::Nil)
 }
 fn f_max_char(_i: &mut Interp, _a: Vec<Value>) -> EvalResult {
     Ok(Value::Int(0x3fffff))
