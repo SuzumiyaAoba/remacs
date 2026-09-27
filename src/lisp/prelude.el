@@ -17539,7 +17539,7 @@ nconc, sum, count, maximize, minimize, return, initially, finally."
     return while until repeat
     initially finally from to upto below downto above upfrom
     downfrom in on across by = then and it being the elements
-    hash-key hash-keys hash-value hash-values of each using
+    hash-key hash-keys hash-value hash-values buffers of each using
     thereis always never into named))
 
 (defun cl--loop-destruct-accessors (pat acc)
@@ -17837,6 +17837,18 @@ dynamically during expansion.")
                             pre)
                       (when dsetqs (push `(progn ,@dsetqs) pre))
                       (push `(setq ,pl (cdr ,pl)) steps)))
+                   ;; GNU: `for VAR being the buffers' iterates
+                   ;; `buffer-list' (bound once in the loop inits).
+                   ((eq op 'buffers)
+                    (let ((tl (gensym)))
+                      (setq inits (append inits
+                                          (list (list tl '(buffer-list))
+                                                (list rvar nil))
+                                          dbinds))
+                      (push `(consp ,tl) pretests)
+                      (push `(setq ,rvar (car ,tl)) pre)
+                      (when dsetqs (push `(progn ,@dsetqs) pre))
+                      (push `(setq ,tl (cdr ,tl)) steps)))
                    ((memq op '(from upfrom downfrom below above
                                   to upto downto))
                     (let ((down (memq op '(downfrom downto)))
