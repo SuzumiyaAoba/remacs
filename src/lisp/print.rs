@@ -876,12 +876,13 @@ impl Interp {
         bq: bool,
     ) {
         out.push_str("#^[");
-        // defalt (side-table keyed on the Record pointer)
+        // defalt (side-table keyed on the Record pointer; Weak guards
+        // against address reuse by a different live char-table)
         let defalt = self
             .char_table_defalts
             .iter()
-            .find(|(k, _)| *k == ptr)
-            .map(|(_, v)| v.clone())
+            .find(|(k, w, _)| *k == ptr && w.upgrade().is_some())
+            .map(|(_, _, v)| v.clone())
             .unwrap_or(Value::Nil);
         self.prin1_inner(&defalt, out, depth + 1, bq);
         out.push(' ');
@@ -889,8 +890,8 @@ impl Interp {
         let parent = self
             .char_table_parents
             .iter()
-            .find(|(k, _)| *k == ptr)
-            .map(|(_, v)| v.clone())
+            .find(|(k, w, _)| *k == ptr && w.upgrade().is_some())
+            .map(|(_, _, v)| v.clone())
             .unwrap_or(Value::Nil);
         self.prin1_inner(&parent, out, depth + 1, bq);
         out.push(' ');

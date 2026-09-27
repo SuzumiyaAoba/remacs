@@ -343,13 +343,17 @@ pub struct Interp {
     pub advice_links: Vec<(Value, Value, Value, Value)>,
     /// `set-char-table-parent' registry: record identity → parent table.
     /// Char-table parents live outside the record so existing record
-    /// layouts are untouched.
-    pub char_table_parents: Vec<(usize, Value)>,
+    /// layouts are untouched.  The Weak guards against a dead record's
+    /// address being reused by a different char-table (stale entries
+    /// must not alias onto the new allocation).
+    pub char_table_parents:
+        Vec<(usize, std::rc::Weak<std::cell::RefCell<Vec<Value>>>, Value)>,
     /// Char-table default values, same registry style as parents
     /// (record identity → defalt).  GNU has no Lisp accessor for the
     /// defalt; it shows in `#^[...]' printing and feeds
     /// `char-table-range' misses.
-    pub char_table_defalts: Vec<(usize, Value)>,
+    pub char_table_defalts:
+        Vec<(usize, std::rc::Weak<std::cell::RefCell<Vec<Value>>>, Value)>,
     /// Fingerprint seen by the last `frame-or-buffer-changed-p' call.
     pub frame_state_seen: Option<u64>,
     /// Live Lisp call frames `(FUNCTION . ARGS)', outermost first.
@@ -6233,14 +6237,17 @@ explicitly overridden.
 
     /// Char-table parent accessor (record identity → parent value).
     pub fn char_table_parent(&self, table: &Value) -> Value {
-        let id = match table {
-            Value::Record(r) => std::rc::Rc::as_ptr(r) as usize,
+        let r = match table {
+            Value::Record(r) => r,
             _ => return Value::Nil,
         };
+        let id = std::rc::Rc::as_ptr(r) as usize;
         self.char_table_parents
             .iter()
-            .find(|(k, _)| *k == id)
-            .map(|(_, v)| v.clone())
+            .find(|(k, w, _)| {
+                *k == id && w.upgrade().is_some_and(|u| std::rc::Rc::ptr_eq(&u, r))
+            })
+            .map(|(_, _, v)| v.clone())
             .unwrap_or(Value::Nil)
     }
 
@@ -6248,23 +6255,29 @@ explicitly overridden.
     pub fn set_char_table_parent(&mut self, table: &Value, parent: Value) {
         if let Value::Record(r) = table {
             let id = std::rc::Rc::as_ptr(r) as usize;
-            self.char_table_parents.retain(|(k, _)| *k != id);
+            self.char_table_parents.retain(|(k, w, _)| {
+                *k != id && w.upgrade().is_some()
+            });
             if !parent.is_nil() {
-                self.char_table_parents.push((id, parent));
+                self.char_table_parents
+                    .push((id, std::rc::Rc::downgrade(r), parent));
             }
         }
     }
 
     /// Char-table defalt accessor (record identity → defalt value).
     pub fn char_table_defalt(&self, table: &Value) -> Value {
-        let id = match table {
-            Value::Record(r) => std::rc::Rc::as_ptr(r) as usize,
+        let r = match table {
+            Value::Record(r) => r,
             _ => return Value::Nil,
         };
+        let id = std::rc::Rc::as_ptr(r) as usize;
         self.char_table_defalts
             .iter()
-            .find(|(k, _)| *k == id)
-            .map(|(_, v)| v.clone())
+            .find(|(k, w, _)| {
+                *k == id && w.upgrade().is_some_and(|u| std::rc::Rc::ptr_eq(&u, r))
+            })
+            .map(|(_, _, v)| v.clone())
             .unwrap_or(Value::Nil)
     }
 
@@ -6272,9 +6285,12 @@ explicitly overridden.
     pub fn set_char_table_defalt(&mut self, table: &Value, defalt: Value) {
         if let Value::Record(r) = table {
             let id = std::rc::Rc::as_ptr(r) as usize;
-            self.char_table_defalts.retain(|(k, _)| *k != id);
+            self.char_table_defalts.retain(|(k, w, _)| {
+                *k != id && w.upgrade().is_some()
+            });
             if !defalt.is_nil() {
-                self.char_table_defalts.push((id, defalt));
+                self.char_table_defalts
+                    .push((id, std::rc::Rc::downgrade(r), defalt));
             }
         }
     }
