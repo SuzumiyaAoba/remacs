@@ -16174,8 +16174,8 @@ To define new types, see `cl-deftype'."
   ;; arglist of gensym placeholders plus destructuring/keyword
   ;; extraction forms wrapping (cl-block NAME ...).
   (let ((eargs nil) (lets nil) (keys nil) (kws nil) (aux nil)
-        (restsym nil) (state 'req) (allow-other nil)
-        (defs nil))
+        (restsym nil) (clrest nil) (restseen nil) (state 'req)
+        (allow-other nil) (defs nil) (nargs 0))
     ;; `&cl-defs (DEF . DEFS)': GNU strips the marker and its
     ;; default-default spec from the arglist; DEF supplies the
     ;; default for &optional args that don't name one (oclosure's
@@ -16195,11 +16195,16 @@ To define new types, see `cl-deftype'."
        ;; &allow-other-keys is declared.
        ((eq a '&allow-other-keys) (setq allow-other t))
        ((eq state 'rest)
-        (if (consp a)
-            (let ((g (make-symbol "rest")))
-              (setq restsym g)
-              (push (list a g) lets))
-          (setq restsym a))
+        (if clrest
+            ;; `&rest' after a collapsed optional tail binds the
+            ;; post-pop remainder of --cl-rest--.
+            (push (list a clrest) lets)
+          (if (consp a)
+              (let ((g (make-symbol "rest")))
+                (setq restsym g)
+                (push (list a g) lets))
+            (setq restsym a)))
+        (setq restseen t)
         (setq state 'done))
        ((eq state 'key)
         (let* ((spec (if (consp a) a (list a)))
@@ -16213,38 +16218,70 @@ To define new types, see `cl-deftype'."
           (push `(,g (car (cdr (or (plist-member cl--keys ,kw)
                                    (list nil ,def)))))
                 keys)
+          ;; `(var init svar)': svar is non-nil when the keyword was
+          ;; supplied (GNU `cl--do-arglist' binds it likewise).
+          (when (caddr spec)
+            (push `(,(caddr spec) (and (plist-member cl--keys ,kw) t))
+                  keys))
           (unless (symbolp var) (push (list var g) lets))))
        ((eq state 'aux)
         (push (if (consp a) a (list a nil)) aux))
        ((eq state 'done) nil)
-       ;; Required or optional position: a cons CAR means a
-       ;; destructuring pattern (req: the whole spec; opt:
-       ;; (pattern default)); otherwise a normal spec.  The emitted
-       ;; arglist must keep the `&optional' marker or every optional
-       ;; parameter silently becomes required.
-       ((and (consp a) (or (eq state 'req) (consp (car a))))
-        (when (and (eq state 'opt) (not (memq '&optional eargs)))
-          (push '&optional eargs))
-        (let ((g (make-symbol "arg")) (def (cadr a)))
-          (push (if (eq state 'opt) (list g def) g) eargs)
-          (push (list (if (eq state 'req) a (car a)) g) lets)))
-       (t (when (and (eq state 'opt) (not (memq '&optional eargs)))
-            (push '&optional eargs))
-          ;; &cl-defs' DEF is the default for optional args without
-          ;; their own (a bare symbol or a (VAR) singleton spec).
-          (push (if (and (eq state 'opt) defs
-                         (or (symbolp a) (null (cdr-safe a))))
-                    (list (if (consp a) (car a) a) defs)
-                  a)
-                eargs))))
+       ;; Required position: a cons is a destructuring pattern.
+       ((and (consp a) (eq state 'req))
+        (setq nargs (1+ nargs))
+        (let ((g (make-symbol "arg")))
+          (push g eargs)
+          (push (list a g) lets)))
+       ((eq state 'opt)
+        (setq nargs (1+ nargs))
+        ;; GNU `cl--do-arglist': a spec'd optional `(var init [svar])'
+        ;; (or a destructuring one) collapses itself and every later
+        ;; arg into `&rest --cl-rest--' plus let* pops — plain `defun'
+        ;; arglists reject the `(var init)' form outright.
+        (if (or clrest (consp a) defs)
+            (let ((spec (if (consp a) a (list a))))
+              (unless clrest (setq clrest (make-symbol "cl-rest")))
+              ;; `(var init svar)': svar binds the supplied-p flag
+              ;; BEFORE the pop consumes it.
+              (when (caddr spec)
+                (push (list (caddr spec) `(and ,clrest t)) lets))
+              (if (consp (car spec))
+                  ;; `((pat...) init [svar])' — destructure via gensym.
+                  (let ((g (make-symbol "arg")))
+                    (push (list g `(if ,clrest (pop ,clrest)
+                                       ,(if (cdr-safe spec)
+                                            (cadr spec)
+                                          defs)))
+                          lets)
+                    (push (list (car spec) g) lets))
+                (push (list (car spec) `(if ,clrest (pop ,clrest)
+                                            ,(if (cdr-safe spec)
+                                                 (cadr spec)
+                                               defs)))
+                      lets)))
+          ;; Bare optional: the emitted arglist must keep the
+          ;; `&optional' marker or the parameter becomes required.
+          (unless (memq '&optional eargs) (push '&optional eargs))
+          (push a eargs)))
+       (t (setq nargs (1+ nargs))
+          (push a eargs))))
+    (when (and clrest (not restseen) (not keys))
+      ;; GNU emits the same `wrong-number-of-arguments' guard after
+      ;; the optional pops: arity is req+opt params total.
+      (push (list (make-symbol "chk")
+                  `(if ,clrest
+                       (signal 'wrong-number-of-arguments
+                               (list ',name (+ ,nargs (length ,clrest))))))
+            lets))
     (if (and (null lets) (null keys) (null aux) (not (consp restsym)))
         ;; Plain arglist — just add the cl-block wrapper.
         `(,kind ,name ,args (cl-block ,name ,@body))
       ;; &rest binds the target symbol/pattern-gensym directly;
       ;; &key extraction reads it via a cl--keys alias.
-      (let* ((restvar (or restsym (and keys 'cl--keys)))
-             (inner `(let* ,(append (when (and restsym keys)
-                                      (list (list 'cl--keys restsym)))
+      (let* ((restvar (or clrest restsym (and keys 'cl--keys)))
+             (inner `(let* ,(append (when (and keys (or clrest restsym))
+                                      (list (list 'cl--keys (or clrest restsym))))
                                     (nreverse keys) (nreverse aux))
                        ,@(when (and keys (not allow-other))
                            ;; `cl--check-keys' is voided at -Q for GNU
