@@ -1008,6 +1008,51 @@ fn mule_conf_charsets_registered_at_startup() {
 }
 
 #[test]
+fn viscii_unified_charset_maps() {
+    // GNU's MULE-uviscii/MULE-lviscii maps drive the
+    // vietnamese-viscii-{upper,lower} charsets characters.el loads.
+    // Mapped codes decode to Unicode; unmapped in-space codes decode
+    // to the :code-offset generic char indexed by code-space position
+    // (GNU's emacs_mule_char), and out-of-space codes give nil.
+    assert_eq!(
+        ev("(list (decode-char 'vietnamese-viscii-upper 33)
+                  (decode-char 'vietnamese-viscii-upper 65)
+                  (decode-char 'vietnamese-viscii-upper 200)
+                  (decode-char 'vietnamese-viscii-lower 33))"),
+        "(7854 2097825 nil 7855)"
+    );
+    assert_eq!(
+        ev("(list (encode-char #x1eae 'vietnamese-viscii-upper)
+                  (encode-char 2097857 'vietnamese-viscii-upper)
+                  (encode-char ?A 'vietnamese-viscii-upper)
+                  (encode-char #x1eaf 'vietnamese-viscii-lower))"),
+        "(33 97 nil 33)"
+    );
+    // 'ucs/'unicode cover [0,#x10ffff] (surrogates included);
+    // 'emacs covers internal chars below the eight-bit range.
+    assert_eq!(
+        ev("(list (encode-char ?A 'ucs) (encode-char #xd800 'ucs)
+                  (encode-char #x10ffff 'ucs) (encode-char #x110000 'ucs)
+                  (encode-char 2097825 'ucs))"),
+        "(65 55296 1114111 nil nil)"
+    );
+    assert_eq!(
+        ev("(list (encode-char 65 'emacs) (encode-char 2097825 'emacs)
+                  (encode-char #x3fff7f 'emacs) (encode-char #x3fff80 'emacs)
+                  (decode-char 'emacs #x3fff90) (decode-char 'emacs 65))"),
+        "(65 2097825 4194175 nil nil 65)"
+    );
+    // characters.el's VISCII loop used to write identity pairs into
+    // the standard case table (decode passed raw codes through);
+    // ASCII folding must survive init.
+    assert_eq!(
+        ev("(list (aref (standard-case-table) ?A)
+                  (downcase \"Scheme\") (upcase \"scheme\"))"),
+        "(97 \"scheme\" \"SCHEME\")"
+    );
+}
+
+#[test]
 fn translation_table_extra_slots() {
     // coding.c gives translation-table 2 extra slots; japanese.el's
     // define-translation-table writes slot 1.

@@ -2075,7 +2075,9 @@ pub(crate) fn decode_charset_code(name: &str, code: i64) -> Option<i64> {
             (code < 0x100).then_some(code)
         }
         "unicode" | "ucs" => (code < 0x110000).then_some(code),
-        "emacs" => (code < 0x400000).then_some(code),
+        // GNU `emacs' charset covers all internal chars except the
+        // eight-bit raw-byte range [0x3fff80,0x3fffff].
+        "emacs" => (code <= 0x3fff7f).then_some(code),
         "big5" => Some(if code < 0x80 {
             code
         } else {
@@ -2093,9 +2095,25 @@ pub(crate) fn decode_charset_code(name: &str, code: i64) -> Option<i64> {
         "jisx0201" | "katakana-jisx0201" | "latin-jisx0201" => tbl_decode(cjk::JISX0201_DECODE, u),
         "chinese-big5-1" => tbl_decode(cjk::BIG5_1_DECODE, u),
         "chinese-big5-2" => tbl_decode(cjk::BIG5_2_DECODE, u),
+        "vietnamese-viscii-lower" => mule_unified_decode(u, 0x200200, cjk::MULE_LVISCII_DECODE),
+        "vietnamese-viscii-upper" => mule_unified_decode(u, 0x200280, cjk::MULE_UVISCII_DECODE),
         // Defined charsets we don't model: pass the code through (ASCII-safe).
         _ => Some(code),
     }
+}
+
+/// GNU unified-charset `DECODE_CHAR': code-space is [32,127] for the
+/// VISCII MULE charsets; mapped codes give the Unicode char, unmapped
+/// in-space codes give the `:code-offset' generic char indexed by
+/// position in the code space (GNU `emacs_mule_char').
+fn mule_unified_decode(code: u32, offset: i64, map: &[(u32, u32)]) -> Option<i64> {
+    if !(32..=127).contains(&code) {
+        return None;
+    }
+    if let Some(u) = tbl_decode(map, code) {
+        return Some(u as i64);
+    }
+    Some(offset + (code as i64 - 32))
 }
 
 /// `encode-char CH CHARSET` semantics: nil when CH has no code in CHARSET.
@@ -2111,7 +2129,8 @@ pub(crate) fn encode_charset_code(name: &str, ch: i64) -> Option<i64> {
         "iso-8859-1" | "latin-iso8859-1" | "eight-bit-graphic" | "eight-bit-control" => {
             (ch < 0x100).then_some(ch)
         }
-        "unicode" | "ucs" | "emacs" => Some(ch),
+        "unicode" | "ucs" => (ch <= 0x10ffff).then_some(ch),
+        "emacs" => (ch <= 0x3fff7f).then_some(ch),
         "big5" => Some(if ch < 0x80 {
             ch
         } else {
@@ -2129,8 +2148,20 @@ pub(crate) fn encode_charset_code(name: &str, ch: i64) -> Option<i64> {
         "jisx0201" | "katakana-jisx0201" | "latin-jisx0201" => tbl_encode(cjk::JISX0201_ENCODE, u),
         "chinese-big5-1" => tbl_encode(cjk::BIG5_1_ENCODE, u),
         "chinese-big5-2" => tbl_encode(cjk::BIG5_2_ENCODE, u),
+        "vietnamese-viscii-lower" => mule_unified_encode(u, 0x200200, cjk::MULE_LVISCII_ENCODE),
+        "vietnamese-viscii-upper" => mule_unified_encode(u, 0x200280, cjk::MULE_UVISCII_ENCODE),
         _ => Some(ch),
     }
+}
+
+/// Reverse of `mule_unified_decode': mapped Unicode chars give the
+/// code, `:code-offset' generic chars give their in-space code.
+fn mule_unified_encode(ch: u32, offset: i64, map: &[(u32, u32)]) -> Option<i64> {
+    if let Some(c) = tbl_encode(map, ch) {
+        return Some(c as i64);
+    }
+    let idx = ch as i64 - offset;
+    (0..=(127 - 32)).contains(&idx).then_some(32 + idx)
 }
 
 /// GNU `big5' charset: code-space [64-254][161-254], code-offset
