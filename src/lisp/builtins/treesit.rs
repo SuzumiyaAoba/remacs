@@ -1876,7 +1876,7 @@ fn predicate_match(
         .map_err(|e| vec![Value::string(format!("Invalid regexp: {}", e.0))])?;
     let syn = crate::editor::re_syntax(i);
     let chars: Vec<char> = text.chars().collect();
-    Ok(crate::lisp::regexp::search(&re, &chars, 0, &syn).is_some())
+    Ok(crate::lisp::regexp::search(&re, &chars, 0, &syn, &crate::editor::re_category(i)).is_some())
 }
 
 /// `#pred?' predicate — apply the interned function name to the
@@ -2411,7 +2411,7 @@ fn match_predicate(
                 Ok(re) => {
                     let syn = crate::editor::re_syntax(i);
                     let chars: Vec<char> = typ.chars().collect();
-                    Ok(crate::lisp::regexp::search(&re, &chars, 0, &syn).is_some())
+                    Ok(crate::lisp::regexp::search(&re, &chars, 0, &syn, &crate::editor::re_category(i)).is_some())
                 }
                 Err(_) => Ok(false),
             }
@@ -2474,7 +2474,7 @@ fn match_predicate(
                         .map_err(|e| i.error(e.0.clone()))?;
                     let syn = crate::editor::re_syntax(i);
                     let chars: Vec<char> = typ.chars().collect();
-                    if crate::lisp::regexp::search(&re, &chars, 0, &syn).is_none() {
+                    if crate::lisp::regexp::search(&re, &chars, 0, &syn, &crate::editor::re_category(i)).is_none() {
                         return Ok(false);
                     }
                 }

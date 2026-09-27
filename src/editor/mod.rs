@@ -8193,7 +8193,7 @@ fn f_directory_files(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         match &re {
             Some(r) => {
                 let chars: Vec<char> = name.chars().collect();
-                crate::lisp::regexp::search(r, &chars, 0, &syn).is_some()
+                crate::lisp::regexp::search(r, &chars, 0, &syn, &crate::editor::re_category(i)).is_some()
             }
             None => true,
         }
@@ -10880,7 +10880,7 @@ fn completion_match_regexps(i: &Interp, s: &str, ignore_case: bool) -> bool {
                 };
                 if let Value::Str(rs) = &re_v {
                     if let Ok(re) = crate::lisp::regexp::compile_case(&rs.borrow(), ignore_case) {
-                        if crate::lisp::regexp::search(&re, &chars, 0, &syn).is_none() {
+                        if crate::lisp::regexp::search(&re, &chars, 0, &syn, &crate::editor::re_category(i)).is_none() {
                             return false;
                         }
                     }
@@ -11979,6 +11979,37 @@ pub(crate) fn syntax_code_buf(i: &Interp, c: char) -> u8 {
 pub(crate) fn re_syntax(i: &Interp) -> impl Fn(char) -> u8 + 'static {
     let syn = syntax_table_entries(i);
     move |c| syntax_entry_code(syn.as_ref(), c)
+}
+
+/// Regex-ready category lookup for `\cX'/`\CX' classes: `(c, BIT)'
+/// reports whether C's set in the current buffer's `category-table'
+/// (falling back to `standard-category-table') has BIT set.
+pub(crate) fn re_category(i: &Interp) -> impl Fn(char, u8) -> bool + 'static {
+    let cb: Option<std::rc::Rc<std::cell::RefCell<Vec<Value>>>> = i
+        .current_buffer_ref()
+        .and_then(|b| b.borrow().category_table.clone())
+        .or_else(|| i.standard_category_table.clone())
+        .and_then(|v| crate::lisp::builtins::misc::char_table_vec(&v));
+    let tag = i.intern_soft("sub-char-table");
+    move |c, bit| {
+        let Some(cb) = &cb else { return false };
+        let cb = cb.borrow();
+        let v = crate::lisp::builtins::misc::ct_raw_tag(tag, &cb, c as u32, false);
+        match v {
+            Value::Record(r) => {
+                let rr = r.borrow();
+                match rr.get(1) {
+                    Some(Value::Vec(b)) => b
+                        .borrow()
+                        .get(bit as usize)
+                        .map(|x| matches!(x, Value::Int(n) if *n != 0))
+                        .unwrap_or(false),
+                    _ => false,
+                }
+            }
+            _ => false,
+        }
+    }
 }
 
 /// Table-aware syntax classifier for the current buffer.  Construct
@@ -13089,7 +13120,7 @@ fn f_apropos_internal(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         let name = i.symbol_name(id);
         let syn = crate::editor::re_syntax(i);
         let chars: Vec<char> = name.chars().collect();
-        if crate::lisp::regexp::search(&re, &chars, 0, &syn).is_some() {
+        if crate::lisp::regexp::search(&re, &chars, 0, &syn, &crate::editor::re_category(i)).is_some() {
             out.push(i.sym(id));
         }
     }

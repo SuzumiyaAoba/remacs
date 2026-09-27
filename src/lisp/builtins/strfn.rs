@@ -1042,7 +1042,7 @@ fn trim_left_re(i: &mut Interp, s: &str, trim: &str) -> Result<String, Flow> {
         .map_err(|_| i.error("Invalid regexp"))?;
     let syn = crate::editor::re_syntax(i);
     let chars: Vec<char> = s.chars().collect();
-    match crate::lisp::regexp::looking_at(&re, &chars, 0, &syn) {
+    match crate::lisp::regexp::looking_at(&re, &chars, 0, &syn, &crate::editor::re_category(i)) {
         Some(regs) => {
             let end = regs.get(1).copied().flatten().unwrap_or(0);
             Ok(chars[end..].iter().collect())
@@ -1057,7 +1057,7 @@ fn trim_right_re(i: &mut Interp, s: &str, trim: &str) -> Result<String, Flow> {
         .map_err(|_| i.error("Invalid regexp"))?;
     let syn = crate::editor::re_syntax(i);
     let chars: Vec<char> = s.chars().collect();
-    match crate::lisp::regexp::search(&re, &chars, 0, &syn) {
+    match crate::lisp::regexp::search(&re, &chars, 0, &syn, &crate::editor::re_category(i)) {
         Some((ms, _me)) => Ok(chars[..ms].iter().collect()),
         None => Ok(s.to_string()),
     }
@@ -1133,7 +1133,7 @@ fn f_split_string(i: &mut Interp, args: Vec<Value>) -> EvalResult {
                 let syn = crate::editor::re_syntax(i);
                 let chars: Vec<char> = s.chars().collect();
                 while pos <= chars.len() {
-                    match crate::lisp::regexp::search(&re, &chars, pos, &syn) {
+                    match crate::lisp::regexp::search(&re, &chars, pos, &syn, &crate::editor::re_category(i)) {
                         Some((ms, me)) => {
                             out.push(chars[pos..ms].iter().collect());
                             pos = me.max(ms + 1);

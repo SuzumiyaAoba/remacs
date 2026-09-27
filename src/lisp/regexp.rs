@@ -63,10 +63,11 @@ struct CharSet {
     singles: Vec<char>,
     posix: Vec<(&'static str, bool)>, // (class-name, negated?)
     syntax: Vec<(u8, bool)>,          // (syntax code, negated?)
+    cats: Vec<(u8, bool)>,            // (category bit, negated?) — \cX / \CX
 }
 
 impl CharSet {
-    fn base_match(&self, c: char, syn: SynFn) -> bool {
+    fn base_match(&self, c: char, syn: SynFn, cat: CatFn) -> bool {
         self.singles.contains(&c)
             || self.ranges.iter().any(|(lo, hi)| c >= *lo && c <= *hi)
             || self
@@ -77,20 +78,21 @@ impl CharSet {
                 .syntax
                 .iter()
                 .any(|(code, neg)| syntax_match(*code, c, syn) != *neg)
+            || self.cats.iter().any(|(bit, neg)| cat(c, *bit) != *neg)
     }
 
-    fn contains(&self, c: char, case_fold: bool, syn: SynFn) -> bool {
-        let mut found = self.base_match(c, syn);
+    fn contains(&self, c: char, case_fold: bool, syn: SynFn, cat: CatFn) -> bool {
+        let mut found = self.base_match(c, syn, cat);
         if !found && case_fold {
             for lc in c.to_lowercase() {
-                if lc != c && self.base_match(lc, syn) {
+                if lc != c && self.base_match(lc, syn, cat) {
                     found = true;
                     break;
                 }
             }
             if !found {
                 for uc in c.to_uppercase() {
-                    if uc != c && self.base_match(uc, syn) {
+                    if uc != c && self.base_match(uc, syn, cat) {
                         found = true;
                         break;
                     }
@@ -154,6 +156,15 @@ fn posix_match(name: &str, c: char, syn: SynFn) -> bool {
 
 pub type SynFn<'a> = &'a dyn Fn(char) -> u8;
 
+/// Category-table lookup for `\cX'/`\CX': `(c, BIT)' where BIT is the
+/// category character's code (e.g. `j' = 106 for Japanese).
+pub type CatFn<'a> = &'a dyn Fn(char, u8) -> bool;
+
+/// No-categories fallback for callers without a category table.
+pub fn no_cat(_: char, _: u8) -> bool {
+    false
+}
+
 /// `syntax_code' (standard table) as a `SynFn' for callers without a
 /// buffer syntax table.
 pub fn std_syntax(c: char) -> u8 {
@@ -198,6 +209,7 @@ enum Ast {
     Backref(usize),
     Anchor(char), // ^ $ ` ' b B < > l g (l/g = \_< \_>)
     SyntaxClass(u8, bool),
+    CategoryClass(u8, bool), // \cX / \CX — category table lookup
 }
 
 impl Parser {
@@ -428,6 +440,14 @@ impl Parser {
                 let code = self.next().ok_or(RegexError("\\S without code".into()))?;
                 Ok(Ast::SyntaxClass(code as u8, true))
             }
+            Some('c') => {
+                let code = self.next().ok_or(RegexError("\\c without code".into()))?;
+                Ok(Ast::CategoryClass(code as u8, false))
+            }
+            Some('C') => {
+                let code = self.next().ok_or(RegexError("\\C without code".into()))?;
+                Ok(Ast::CategoryClass(code as u8, true))
+            }
             Some(d @ '1'..='9') => Ok(Ast::Backref(d as usize - '0' as usize)),
             Some('n') => Ok(Ast::Char('\n')),
             Some('t') => Ok(Ast::Char('\t')),
@@ -459,6 +479,7 @@ impl Parser {
             singles: Vec::new(),
             posix: Vec::new(),
             syntax: Vec::new(),
+            cats: Vec::new(),
         };
         if self.peek() == Some('^') {
             set.negated = true;
@@ -532,6 +553,16 @@ impl Parser {
                 let neg = self.next() == Some('S');
                 let code = self.next().ok_or(RegexError("bad \\s in class".into()))?;
                 set.syntax.push((code as u8, neg));
+                continue;
+            }
+            // \cX category class inside [].
+            if self.peek() == Some('\\')
+                && matches!(self.chars.get(self.pos + 1), Some('c') | Some('C'))
+            {
+                self.pos += 1;
+                let neg = self.next() == Some('C');
+                let code = self.next().ok_or(RegexError("bad \\c in class".into()))?;
+                set.cats.push((code as u8, neg));
                 continue;
             }
             prev_char = Some(self.class_char()?);
@@ -617,6 +648,18 @@ impl Codegen {
                     singles: Vec::new(),
                     posix: Vec::new(),
                     syntax: vec![(*code, *neg)],
+                    cats: Vec::new(),
+                };
+                self.push(Inst::Class(set));
+            }
+            Ast::CategoryClass(code, neg) => {
+                let set = CharSet {
+                    negated: false,
+                    ranges: Vec::new(),
+                    singles: Vec::new(),
+                    posix: Vec::new(),
+                    syntax: Vec::new(),
+                    cats: vec![(*code, *neg)],
                 };
                 self.push(Inst::Class(set));
             }
@@ -770,6 +813,7 @@ fn run(
     mut regs: Regs,
     depth: usize,
     syn: SynFn,
+    cat: CatFn,
 ) -> Option<Regs> {
     if depth > 10_000 {
         return None;
@@ -793,7 +837,7 @@ fn run(
                 }
             }
             Inst::Class(set) => {
-                if sp < text.len() && set.contains(text[sp], re.case_fold, syn) {
+                if sp < text.len() && set.contains(text[sp], re.case_fold, syn, cat) {
                     sp += 1;
                     pc += 1;
                 } else {
@@ -898,7 +942,7 @@ fn run(
                 }
             }
             Inst::Split(a, b) => {
-                if let Some(r) = run(re, text, *a, sp, regs.clone(), depth + 1, syn) {
+                if let Some(r) = run(re, text, *a, sp, regs.clone(), depth + 1, syn, cat) {
                     return Some(r);
                 }
                 pc = *b;
@@ -921,18 +965,18 @@ fn run(
 }
 
 /// Try to match at exactly `pos`. Returns regs on success.
-pub fn match_at(re: &Regex, text: &[char], pos: usize, syn: SynFn) -> Option<Regs> {
+pub fn match_at(re: &Regex, text: &[char], pos: usize, syn: SynFn, cat: CatFn) -> Option<Regs> {
     let n = 2 * (re.n_groups + 1);
-    let mut regs = run(re, text, 0, pos, vec![None; n + re.extra_regs], 0, syn)?;
+    let mut regs = run(re, text, 0, pos, vec![None; n + re.extra_regs], 0, syn, cat)?;
     regs.truncate(n);
     Some(regs)
 }
 
 /// Search forward from `pos`; returns (match_start, match_end) of group 0.
-pub fn search(re: &Regex, text: &[char], pos: usize, syn: SynFn) -> Option<(usize, usize)> {
+pub fn search(re: &Regex, text: &[char], pos: usize, syn: SynFn, cat: CatFn) -> Option<(usize, usize)> {
     let mut p = pos;
     while p <= text.len() {
-        if let Some(regs) = match_at(re, text, p, syn) {
+        if let Some(regs) = match_at(re, text, p, syn, cat) {
             let s = regs[0].unwrap_or(p);
             let e = regs[1].unwrap_or(p);
             return Some((s, e));
@@ -948,11 +992,12 @@ pub fn search_backward(
     text: &[char],
     pos: usize,
     syn: SynFn,
+    cat: CatFn,
 ) -> Option<(usize, usize)> {
     let mut best: Option<(usize, usize)> = None;
     let mut p = 0;
     while p <= pos.min(text.len()) {
-        if let Some(regs) = match_at(re, text, p, syn) {
+        if let Some(regs) = match_at(re, text, p, syn, cat) {
             let s = regs[0].unwrap_or(p);
             let e = regs[1].unwrap_or(p);
             if s <= pos && e >= s {
@@ -972,10 +1017,10 @@ pub struct FullMatch {
 }
 
 /// Search with full register info.
-pub fn search_full(re: &Regex, text: &[char], pos: usize, syn: SynFn) -> Option<Regs> {
+pub fn search_full(re: &Regex, text: &[char], pos: usize, syn: SynFn, cat: CatFn) -> Option<Regs> {
     let mut p = pos;
     while p <= text.len() {
-        if let Some(regs) = match_at(re, text, p, syn) {
+        if let Some(regs) = match_at(re, text, p, syn, cat) {
             return Some(regs);
         }
         p += 1;
@@ -985,11 +1030,11 @@ pub fn search_full(re: &Regex, text: &[char], pos: usize, syn: SynFn) -> Option<
 
 /// Backward search returning full regs: the match with the greatest
 /// start whose end is at or before `pos` (GNU semantics).
-pub fn search_backward_full(re: &Regex, text: &[char], pos: usize, syn: SynFn) -> Option<Regs> {
+pub fn search_backward_full(re: &Regex, text: &[char], pos: usize, syn: SynFn, cat: CatFn) -> Option<Regs> {
     let mut best: Option<Regs> = None;
     let mut p = 0;
     while p <= pos.min(text.len()) {
-        if let Some(regs) = match_at(re, text, p, syn) {
+        if let Some(regs) = match_at(re, text, p, syn, cat) {
             let s = regs[0].unwrap_or(p);
             let e = regs[1].unwrap_or(p);
             if s <= pos && e <= pos {
@@ -1005,6 +1050,6 @@ pub fn search_backward_full(re: &Regex, text: &[char], pos: usize, syn: SynFn) -
 /// convert buffer substrings are in the caller.
 
 /// Simple `looking-at` helper: match at pos.
-pub fn looking_at(re: &Regex, text: &[char], pos: usize, syn: SynFn) -> Option<Regs> {
-    match_at(re, text, pos, syn)
+pub fn looking_at(re: &Regex, text: &[char], pos: usize, syn: SynFn, cat: CatFn) -> Option<Regs> {
+    match_at(re, text, pos, syn, cat)
 }
