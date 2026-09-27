@@ -28,15 +28,21 @@ Then evaluate RESULT (default nil) with VAR bound to nil."
   "Loop a certain number of times.
 Evaluate BODY with VAR bound to successive integers from 0,
 inclusive, to COUNT, exclusive."
-  (let ((count (make-symbol "dotimes")))
-    (list 'let (list (list count (nth 1 spec))
-                     (list (nth 0 spec) 0))
-          (cons 'while
-                (cons (list '< (nth 0 spec) count)
-                      (append body
-                              (list (list 'setq (nth 0 spec)
-                                          (list '1+ (nth 0 spec)))))))
-          (nth 2 spec))))
+  ;;Remacs: GNU subr.el semantics — VAR is rebound to COUNTER each
+  ;;iteration inside the loop, and RESULT is wrapped in a LET keeping
+  ;;VAR bound to its final value.
+  (let ((var (nth 0 spec))
+        (end (nth 1 spec))
+        (upper-bound (make-symbol "upper-bound"))
+        (counter (make-symbol "counter")))
+    `(let ((,upper-bound ,end)
+           (,counter 0))
+       (while (< ,counter ,upper-bound)
+         (let ((,var ,counter))
+           ,@body)
+         (setq ,counter (1+ ,counter)))
+       ,@(if (cddr spec)
+             `((let ((,var ,counter)) ,@(cddr spec)))))))
 
 (defmacro ignore-errors (&rest body)
   "Execute BODY; if an error occurs, return nil."
@@ -65,6 +71,30 @@ enabled."
   (declare (debug (&rest def-form)) (indent 0))
   (list 'quote (eval (cons 'progn body)
                      (when lexical-binding (or macroexp--dynvars t)))))
+
+;; `declare' — GNU's subr.el defmacro, verbatim.  It must be a macro
+;; (not the raw subr): a stray `(declare X)' at runtime expands to a
+;; harmless `(progn 'X nil)' without ever evaluating X, and
+;; `advice--normalize' sees a macro cell so advising `declare'
+;; (cl.el's `cl--pass-args-to-cl-declare') wraps the expander instead
+;; of re-evaluating the specs.
+(defmacro declare (&rest specs)
+  "Do not evaluate any arguments, and return nil.
+If a `declare' form appears as the first form in the body of a
+`defun' or `defmacro' form, SPECS specifies various additional
+information about the function or macro; these go into effect
+during the evaluation of the `defun' or `defmacro' form.
+
+The possible values of SPECS are specified by
+`defun-declarations-alist' and `macro-declarations-alist'."
+  ;; `declare' is handled directly by `defun/defmacro' rather than here.
+  ;; If we get here, it's because there's a `declare' somewhere not attached
+  ;; to a `defun/defmacro', i.e. a `declare' which doesn't do what it's
+  ;; intended to do.
+  (let ((form `(declare . ,specs)))
+    (macroexp-warn-and-return
+     (format-message "Stray `declare' form: %S" form)
+     `(progn ',form nil) nil 'compile-only)))
 
 ;; ---------- macroexp.el helpers (GNU: dumped, always loaded) ----------
 ;; Ported from GNU lisp/emacs-lisp/macroexp.el; the parts that were once

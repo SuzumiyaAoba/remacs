@@ -710,10 +710,10 @@ fn f_symbol_name(i: &mut Interp, args: Vec<Value>) -> EvalResult {
 fn f_symbol_function(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     let id = want_sym(i, &args[0])?;
     let f = i.symbol_function(id);
-    // Present macros as (macro . fn) like Emacs; unbound cells read nil.
+    // GNU exposes the raw cell: macros are `(macro . fn)' conses (a
+    // stable identity `setcdr' can mutate); unbound cells read nil.
     match &f {
         Value::Sym(s) if *s == sym::UNBOUND => Ok(Value::Nil),
-        Value::Lambda(l) if l.is_macro => Ok(Value::cons(Value::Sym(i.intern("macro")), f)),
         _ => Ok(f),
     }
 }
@@ -1204,14 +1204,12 @@ fn f_mapatoms(i: &mut Interp, args: Vec<Value>) -> EvalResult {
 }
 fn f_indirect_function(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     let mut cur = args[0].clone();
-    let mut hops = 0;
+    let mut seen: std::collections::HashSet<crate::lisp::value::SymId> =
+        std::collections::HashSet::new();
     loop {
-        hops += 1;
-        if hops > 64 {
-            return Err(i.error("Symbol's function alias chain is circular"));
-        }
         match cur {
             Value::Sym(id) => {
+                seen.insert(id);
                 let f = i.symbol_function(id);
                 if let Value::Sym(s) = &f {
                     if *s == sym::UNBOUND {
@@ -1219,6 +1217,13 @@ fn f_indirect_function(i: &mut Interp, args: Vec<Value>) -> EvalResult {
                     }
                 }
                 match f {
+                    // GNU's `indirect_function' signals
+                    // `cyclic-function-indirection' with the symbol
+                    // whose alias points back into the chain.
+                    Value::Sym(next) if seen.contains(&next) => {
+                        let sig = i.intern("cyclic-function-indirection");
+                        return Err(i.signal_data(sig, vec![Value::Sym(id)]));
+                    }
                     Value::Sym(next) => cur = i.sym(next),
                     other => return Ok(other),
                 }
@@ -1371,43 +1376,11 @@ fn f_obarray_clear(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     Ok(Value::Nil)
 }
 
-/// Normalize a function definition for `fset`/`defalias`: `(macro . f)`
-/// becomes a macro Lambda when f is a lambda.
-fn normalize_fn_def(i: &mut Interp, def: Value) -> Value {
-    if let Value::Cons(c) = &def {
-        let b = c.borrow();
-        if i.sym_is(&b.car, sym::MACRO) {
-            let inner = b.cdr.clone();
-            drop(b);
-            match inner {
-                Value::Lambda(l) => {
-                    // Mark the lambda as a macro by wrapping in a new
-                    // Lambda with is_macro set.
-                    let mut l2 = crate::lisp::value::Lambda {
-                        is_macro: true,
-                        required: l.required.clone(),
-                        optional: l.optional.clone(),
-                        rest: l.rest,
-                        body: l.body.clone(),
-                        env: l.env.clone(),
-                        doc: l.doc.clone(),
-                        interactive: l.interactive.clone(),
-                        name: l.name.clone(),
-                        bad_arglist: l.bad_arglist,
-                        arglist: l.arglist.clone(),
-                        plain: l.plain,
-                        dumped_doc: l.dumped_doc,
-                        advice_link: l.advice_link,
-                        bc_items: l.bc_items.clone(),
-                        doc_value: l.doc_value.clone(),
-                        env_value: l.env_value.clone(),
-                    };
-                    l2.is_macro = true;
-                    return Value::Lambda(std::rc::Rc::new(l2));
-                }
-                other => return other,
-            }
-        }
-    }
+/// Normalize a function definition for `fset`/`defalias`: `(macro . f)'
+/// conses are stored verbatim — GNU keeps that cons as the literal
+/// function cell so `symbol-function'/`setcdr' mutations on it are
+/// visible to the interpreter.  (A bare macro Lambda gets wrapped by
+/// `fset' instead.)
+fn normalize_fn_def(_i: &mut Interp, def: Value) -> Value {
     def
 }

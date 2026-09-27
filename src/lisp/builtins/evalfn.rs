@@ -297,6 +297,10 @@ pub(crate) static SUBRS: &[Subr] = &[
         f_declare_function,
         "Declare external function (no-op)."
     ),
+    // The prelude's `(defmacro declare ...)' (GNU subr.el, verbatim)
+    // replaces this raw subr at init — a macro cell is required so
+    // advising `declare' composes through `advice--normalize''s
+    // `(macro . fn)' path instead of re-evaluating the specs.
     S!("declare", raw, f_declare, "Declare (no-op)."),
     S!(
         "eval-and-compile",

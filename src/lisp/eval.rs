@@ -2701,6 +2701,16 @@ explicitly overridden.
     }
 
     pub fn fset(&mut self, id: SymId, def: Value) {
+        // GNU stores `(macro . fn)' as the literal function cell, so
+        // `symbol-function' returns that cons — a stable identity that
+        // nadvice's `(cdr nf)' gv place mutates in place.  Call paths
+        // unwrap the cons at dispatch.
+        let def = match &def {
+            Value::Lambda(l) if l.is_macro => {
+                Value::cons(Value::Sym(sym::MACRO), def.clone())
+            }
+            _ => def,
+        };
         self.obarray.symbol_mut(id).function = def;
     }
 
@@ -3321,14 +3331,14 @@ explicitly overridden.
     ) -> EvalResult {
         match fun {
             Value::Sym(id) => {
-                // Function alias chain: chase.
+                // Function alias chain: chase.  GNU's
+                // `indirect_function' signals `cyclic-function-indirection'
+                // with the symbol whose alias points back into the chain.
                 let mut cur = *id;
-                let mut hops = 0;
+                let mut seen: std::collections::HashSet<SymId> =
+                    std::collections::HashSet::new();
                 loop {
-                    hops += 1;
-                    if hops > 64 {
-                        return Err(self.error("Function alias loop"));
-                    }
+                    seen.insert(cur);
                     // GNU resolves defalias chains in `eval' before
                     // dispatching, so an alias to a special form
                     // (e.g. `inline' -> `progn') is called as a
@@ -3342,6 +3352,13 @@ explicitly overridden.
                             if next == sym::UNBOUND {
                                 return Err(
                                     self.signal_data(sym::VOID_FUNCTION, vec![Value::Sym(cur)])
+                                );
+                            }
+                            if seen.contains(&next) {
+                                let sig =
+                                    self.intern("cyclic-function-indirection");
+                                return Err(
+                                    self.signal_data(sig, vec![Value::Sym(cur)])
                                 );
                             }
                             cur = next;
@@ -3515,18 +3532,23 @@ explicitly overridden.
         match fun {
             Value::Sym(id) => {
                 let mut cur = *id;
-                let mut hops = 0;
+                let mut seen: std::collections::HashSet<SymId> =
+                    std::collections::HashSet::new();
                 loop {
-                    hops += 1;
-                    if hops > 64 {
-                        return Err(self.error("Function alias loop"));
-                    }
+                    seen.insert(cur);
                     let f = self.callable_function(cur);
                     match f {
                         Value::Sym(next) => {
                             if next == sym::UNBOUND {
                                 return Err(
                                     self.signal_data(sym::VOID_FUNCTION, vec![Value::Sym(cur)])
+                                );
+                            }
+                            if seen.contains(&next) {
+                                let sig =
+                                    self.intern("cyclic-function-indirection");
+                                return Err(
+                                    self.signal_data(sig, vec![Value::Sym(cur)])
                                 );
                             }
                             cur = next;
@@ -4533,6 +4555,11 @@ explicitly overridden.
             &["wrong-length-argument", "error"],
         );
         put(self, "void-function", &["void-function", "error"]);
+        put(
+            self,
+            "cyclic-function-indirection",
+            &["cyclic-function-indirection", "error"],
+        );
         put(self, "void-variable", &["void-variable", "error"]);
         put(self, "setting-constant", &["setting-constant", "error"]);
         put(self, "invalid-function", &["invalid-function", "error"]);
@@ -4637,6 +4664,10 @@ explicitly overridden.
             ("args-out-of-range", "Args out of range"),
             ("wrong-length-argument", "Wrong length argument"),
             ("void-function", "Symbol's function definition is void"),
+            (
+                "cyclic-function-indirection",
+                "Symbol's chain of function indirections contains a loop",
+            ),
             ("void-variable", "Symbol's value as variable is void"),
             ("setting-constant", "Attempt to set a constant symbol"),
             ("invalid-function", "Invalid function"),
