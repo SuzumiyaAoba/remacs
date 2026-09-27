@@ -15,10 +15,7 @@ use crate::lisp::value::{Subr, Value};
 use crate::lisp::{EvalResult, Interp};
 
 fn want_sym(i: &mut Interp, v: &Value) -> Result<u32, Flow> {
-    match v {
-        Value::Sym(s) => Ok(*s),
-        _ => Err(i.wrong_type_mut("symbolp", v)),
-    }
+    i.sym_id(v).ok_or_else(|| i.wrong_type_mut("symbolp", v))
 }
 
 fn symv(i: &mut Interp, s: &str) -> Value {
@@ -219,7 +216,9 @@ fn f_unify_charset(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     // OFFSET-method charsets whose :code-offset reaches the
     // emacs-mule area (>= #x110000) can be unified; everything else
     // (ascii, unicode, :map/:subset carriers) gets
-    // "Can't unify charset: X".
+    // "Can't unify charset: X".  Unifying installs the charset's
+    // :unify-map table (parsed from etc/charsets/*.map) so later
+    // `decode-char'/`map-charset-chars' produce real Unicode chars.
     let name = want_charset(i, &a[0])?;
     let deunify = a.get(2).is_some_and(|v| !v.is_nil());
     let offset = charset_entry(i, &name).and_then(|e| {
@@ -248,7 +247,76 @@ fn f_unify_charset(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     if !unified {
         return Err(i.error(format!("Can't unify charset: {name}")));
     }
+    let key = format!("charset:{name}");
+    if deunify {
+        i.charset_maps.borrow_mut().remove(&key);
+        return Ok(Value::Nil);
+    }
+    // GNU: UNIFY-MAP defaults to the charset's :unify-map property;
+    // a string names etc/charsets/NAME.map, a vector is
+    // [CODE-1 CHAR-1 CODE-2 CHAR-2 ...].
+    let mapval = match a.get(1) {
+        Some(v @ (Value::Str(_) | Value::Vec(_))) => Some(v.clone()),
+        _ => None,
+    }
+    .or_else(|| {
+        let plist = charset_entry(i, &name).map(|e| e.1.clone())?;
+        let v = charset_prop(i, &plist, ":unify-map");
+        (!v.is_nil()).then_some(v)
+    });
+    match mapval {
+        Some(Value::Str(s)) => {
+            if let Some(t) = charset_table(i, &s.borrow()) {
+                i.charset_maps.borrow_mut().insert(key, t);
+            }
+        }
+        Some(v @ Value::Vec(_)) => {
+            i.charset_maps
+                .borrow_mut()
+                .insert(key, Rc::new(vec_map_table(&v)));
+        }
+        _ => {}
+    }
     Ok(Value::Nil)
+}
+
+/// `:map' property → table: a string names etc/charsets/NAME.map;
+/// a vector is inline [CODE-1 CHAR-1 ...] pairs (cached per charset).
+fn map_value_table(i: &Interp, name: &str, v: &Value) -> Option<Rc<CharsetTable>> {
+    match v {
+        Value::Str(s) => charset_table(i, &s.borrow()),
+        Value::Vec(_) => {
+            let key = format!("vecmap:{name}");
+            let cached = i.charset_maps.borrow().get(&key).cloned();
+            Some(match cached {
+                Some(t) => t,
+                None => {
+                    let t = Rc::new(vec_map_table(v));
+                    i.charset_maps.borrow_mut().insert(key, t.clone());
+                    t
+                }
+            })
+        }
+        _ => None,
+    }
+}
+
+/// `[CODE-1 CHAR-1 CODE-2 CHAR-2 ...]' → CharsetTable of 1-char runs.
+fn vec_map_table(v: &Value) -> CharsetTable {
+    let mut dec = Vec::new();
+    let mut enc = Vec::new();
+    if let Value::Vec(vec) = v {
+        let vec = vec.borrow();
+        for p in vec.chunks(2) {
+            if let (Some(c), Some(ch)) = (p[0].int(), p.get(1).and_then(|x| x.int())) {
+                dec.push((c as i64, c as i64, ch as i64));
+                enc.push((ch as i64, ch as i64, c as i64));
+            }
+        }
+    }
+    dec.sort_unstable();
+    enc.sort_unstable();
+    CharsetTable { dec, enc }
 }
 
 fn f_charset_after(i: &mut Interp, a: Vec<Value>) -> EvalResult {
@@ -1521,7 +1589,9 @@ fn f_map_charset_chars(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     // (map-charset-chars FUNCTION CHARSET &optional ARG FROM TO)
     // GNU calls FUNCTION once per run of contiguous Emacs characters
     // with `(FROM . TO)' and ARG.  FROM/TO bound the *charset code
-    // points* visited (big-endian packed per the :code-space dims).
+    // points* visited (big-endian packed per the :code-space dims),
+    // clamped to the charset's min/max code like GNU's
+    // Fmap_charset_chars.
     let name = want_charset(i, &a[1])?;
     let function = a[0].clone();
     let arg = a.get(2).cloned().unwrap_or(Value::Nil);
@@ -1534,88 +1604,207 @@ fn f_map_charset_chars(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     };
     let from_req = read_bound(a.get(3))?;
     let to_req = read_bound(a.get(4))?;
-
-    // Code-space dims from the charset's plist (packed big-endian).
     let plist = charset_entry(i, &name)
         .map(|e| e.1.clone())
         .unwrap_or(Value::Nil);
-    let cs = crate::lisp::eval::plist_get(&plist, i.intern(":code-space"));
-    let dims: Vec<(i64, i64)> = match &cs {
-        Value::Vec(v) => {
-            let v = v.borrow();
-            v.chunks(2)
-                .filter_map(|p| match (p[0].int(), p[1].int()) {
-                    (Some(lo), Some(hi)) => Some((lo as i64, hi as i64)),
-                    _ => None,
-                })
-                .collect()
-        }
-        _ => vec![(0, 127)],
+    let dims = charset_dims(i, &plist).unwrap_or_else(|| vec![(0, 127)]);
+    let pack = |sel: usize| -> i64 {
+        dims.iter().fold(0i64, |c, d| (c << 8) | if sel == 0 { d.0 } else { d.1 })
     };
-    if dims.is_empty() {
+    // GNU Fmap_charset_chars clamps the arguments to min/max code.
+    let from = from_req.unwrap_or_else(|| pack(0)).max(pack(0));
+    let to = to_req.unwrap_or_else(|| pack(1)).min(pack(1));
+    map_cc(i, &name, from, to, &function, &arg, 0)
+}
+
+/// GNU `map_charset_chars': recurse through :subset/:superset
+/// composition and, at a leaf charset, walk the encoder (ascending
+/// *characters*) emitting maximal contiguous-char runs — or, for
+/// code-offset charsets, emit the single (OFFSET+IDX . OFFSET+IDX)
+/// range.  FROM/TO of None mean the charset's min/max code.
+fn map_cc(
+    i: &mut Interp,
+    name: &str,
+    from: i64,
+    to: i64,
+    function: &Value,
+    arg: &Value,
+    depth: u8,
+) -> EvalResult {
+    if depth > 8 {
         return Ok(Value::Nil);
     }
-    let pack = |digits: &[i64]| -> i64 {
-        let mut c = 0i64;
-        for &d in digits {
-            c = (c << 8) | d;
-        }
-        c
+    let name = canonical_charset(i, name);
+    let plist = charset_entry(i, &name)
+        .map(|e| e.1.clone())
+        .unwrap_or(Value::Nil);
+    let dims = charset_dims(i, &plist).unwrap_or_else(|| vec![(0, 127)]);
+    let pack = |sel: usize| -> i64 {
+        dims.iter().fold(0i64, |c, d| (c << 8) | if sel == 0 { d.0 } else { d.1 })
     };
-    let los: Vec<i64> = dims.iter().map(|d| d.0).collect();
-    let his: Vec<i64> = dims.iter().map(|d| d.1).collect();
-    let min_code = pack(&los);
-    let max_code = pack(&his);
-    let from = from_req.unwrap_or(min_code).max(min_code);
-    let to = to_req.unwrap_or(max_code).min(max_code);
+    // GNU does not re-clamp from/to on internal recursion — they are
+    // used as-is for the `partial' test (own min/max) and the emit.
+    let min_code = pack(0);
+    let max_code = pack(1);
+    let partial = from > min_code || to < max_code;
 
-    // Enumerate the code space in row-major order, emitting a call per
-    // maximal run of contiguous decoded characters.
-    let mut digits = los.clone();
-    let mut run_start: Option<i64> = None;
-    let mut last_char: i64 = -2;
-    loop {
-        let code = pack(&digits);
-        let mut emitted_char = false;
-        if code >= from && code <= to {
-            if let Some(c) = decode_charset_code(&name, code) {
-                emitted_char = true;
-                if c != last_char + 1 {
-                    if let Some(s) = run_start.take() {
-                        let range =
-                            Value::cons(Value::Int(s as i128), Value::Int(last_char as i128));
-                        i.apply(&function, vec![range, arg.clone()])?;
-                    }
-                    run_start = Some(c);
+    // :subset — adjust the window into parent code space and recurse.
+    if let Some((parent, pmin, pmax, off)) = subset_spec(i, &plist) {
+        let f = (from - off).max(pmin);
+        let t = (to - off).min(pmax);
+        return map_cc(i, &parent, f, t, function, arg, depth + 1);
+    }
+    // :superset — one recursion per parent with offset subtraction;
+    // GNU clamps each window to the parent's min/max code.
+    let supers = superset_list(i, &plist);
+    if !supers.is_empty() {
+        for (pname, off) in supers {
+            let mut this_from = if from > off { from - off } else { 0 };
+            let mut this_to = if to > off { to - off } else { 0 };
+            let pplist = charset_entry(i, &pname)
+                .map(|e| e.1.clone())
+                .unwrap_or(Value::Nil);
+            if let Some(pd) = charset_dims(i, &pplist) {
+                let ppack = |sel: usize| -> i64 {
+                    pd.iter()
+                        .fold(0i64, |c, d| (c << 8) | if sel == 0 { d.0 } else { d.1 })
+                };
+                this_from = this_from.max(ppack(0));
+                this_to = this_to.min(ppack(1));
+            }
+            map_cc(i, &pname, this_from, this_to, function, arg, depth + 1)?;
+        }
+        return Ok(Value::Nil);
+    }
+
+    let unified = i
+        .charset_maps
+        .borrow()
+        .get(&format!("charset:{name}"))
+        .cloned();
+    let off = prop_int(&charset_prop(i, &plist, ":code-offset"));
+    let table = unified
+        .clone()
+        .or_else(|| map_value_table(i, &name, &charset_prop(i, &plist, ":map")));
+    let emit = |i: &mut Interp, lo: i64, hi: i64| -> EvalResult {
+        let range = Value::cons(Value::Int(lo as i128), Value::Int(hi as i128));
+        i.apply(function, vec![range, arg.clone()])
+    };
+    if let Some(t) = &table {
+        // Encoder walk: chars ascending, maximal runs of contiguous
+        // encodable chars (filtered by code ∈ [from,to] when partial).
+        // Each enc entry (LO,HI,BASE) maps chars LO..=HI to codes
+        // BASE..=BASE+(HI-LO); the in-window subrange is arithmetic.
+        let mut run_start: Option<i64> = None;
+        let mut last: i64 = -2;
+        for &(lo_c, hi_c, base) in &t.enc {
+            let (lo, hi) = if partial {
+                let lo_cut = (from - base).max(0);
+                let hi_cut = (to - base).min(hi_c - lo_c);
+                if hi_cut < lo_cut {
+                    continue;
                 }
-                last_char = c;
-            }
-        }
-        if !emitted_char {
-            if let Some(s) = run_start.take() {
-                let range = Value::cons(Value::Int(s as i128), Value::Int(last_char as i128));
-                i.apply(&function, vec![range, arg.clone()])?;
-            }
-            last_char = -2;
-        }
-        // Next digit tuple (last dim fastest), or done.
-        let mut d = dims.len();
-        loop {
-            if d == 0 {
+                (lo_c + lo_cut, lo_c + hi_cut)
+            } else {
+                (lo_c, hi_c)
+            };
+            if lo == last + 1 {
+                last = hi;
+            } else {
                 if let Some(s) = run_start.take() {
-                    let range = Value::cons(Value::Int(s as i128), Value::Int(last_char as i128));
-                    i.apply(&function, vec![range, arg.clone()])?;
+                    emit(i, s, last)?;
                 }
-                return Ok(Value::Nil);
+                run_start = Some(lo);
+                last = hi;
             }
-            d -= 1;
-            if digits[d] < his[d] {
-                digits[d] += 1;
-                break;
-            }
-            digits[d] = los[d];
+        }
+        if let Some(s) = run_start.take() {
+            emit(i, s, last)?;
         }
     }
+    // GNU emits the code-offset range for OFFSET-method charsets —
+    // always for a unified charset (mapped chars above plus the
+    // private-char window), or as the sole output otherwise.
+    if let Some(o) = off {
+        if table.is_none() || unified.is_some() {
+            // GNU code_linear_p: `dimension' drops most-significant
+            // zero-width dims; linear when 1 dim remains or every dim
+            // below the top one spans 256.  For linear charsets the
+            // index is `code - min_code' unconditionally (no per-dim
+            // range check — degenerate ranges like (144 . 127) still
+            // get emitted).
+            let sig = {
+                let s = dims
+                    .iter()
+                    .position(|d| d.1 > 0)
+                    .unwrap_or(dims.len());
+                if s >= dims.len() { &dims[..] } else { &dims[s..] }
+            };
+            let linear =
+                sig.len() == 1 || sig[1..].iter().all(|d| d.1 - d.0 == 255);
+            let fi = if linear {
+                Some(from - min_code)
+            } else {
+                linear_index(&dims, from)
+            };
+            let ti = if linear {
+                Some(to - min_code)
+            } else {
+                linear_index(&dims, to)
+            };
+            if let (Some(fi), Some(ti)) = (fi, ti) {
+                emit(i, o + fi, o + ti)?;
+            }
+        }
+    }
+    if table.is_none() && off.is_none() {
+        // Charset with no map/offset plist data (internal charsets
+        // like `unicode'): enumerate the code space in code order,
+        // grouping contiguous decoded characters.
+        let los: Vec<i64> = dims.iter().map(|d| d.0).collect();
+        let his: Vec<i64> = dims.iter().map(|d| d.1).collect();
+        let mut digits = los.clone();
+        let mut run_start: Option<i64> = None;
+        let mut last_char: i64 = -2;
+        loop {
+            let code = digits.iter().fold(0i64, |c, &d| (c << 8) | d);
+            let mut ok = false;
+            if code >= from && code <= to {
+                if let Some(c) = charset_decode(i, &name, code) {
+                    ok = true;
+                    if c != last_char + 1 {
+                        if let Some(s) = run_start.take() {
+                            emit(i, s, last_char)?;
+                        }
+                        run_start = Some(c);
+                    }
+                    last_char = c;
+                }
+            }
+            if !ok {
+                if let Some(s) = run_start.take() {
+                    emit(i, s, last_char)?;
+                }
+                last_char = -2;
+            }
+            let mut d = dims.len();
+            loop {
+                if d == 0 {
+                    if let Some(s) = run_start.take() {
+                        emit(i, s, last_char)?;
+                    }
+                    return Ok(Value::Nil);
+                }
+                d -= 1;
+                if digits[d] < his[d] {
+                    digits[d] += 1;
+                    break;
+                }
+                digits[d] = los[d];
+            }
+        }
+    }
+    Ok(Value::Nil)
 }
 
 fn f_declare_equiv_charset(i: &mut Interp, a: Vec<Value>) -> EvalResult {
@@ -1685,19 +1874,51 @@ fn install_prop_table(i: &mut Interp, prop: &str) -> Value {
 /// consult `char-code-property-alist' and return nil for unknown
 /// properties; a string cdr names a data file that loads into a table.
 fn unicode_prop_table(i: &mut Interp, prop: &str) -> Value {
+    let dbg = std::env::var_os("REMACS_UNIPROP_DEBUG").is_some();
     if let Some((_, t)) = i.char_code_prop_tables.iter().find(|(n, _)| n == prop) {
         return match t {
-            t if is_char_table(i, t) => t.clone(),
+            t if is_char_table(i, t) => {
+                if dbg {
+                    eprintln!("[uniprop] {prop}: cache hit table");
+                }
+                t.clone()
+            }
             // File-backed registration: GNU loads the file, which builds
             // the table via `define-char-code-property'/`put-unicode-
             // property-internal'; we materialize the (empty) table.
-            Value::Str(_) => install_prop_table(i, prop),
+            Value::Str(_) => {
+                if dbg {
+                    eprintln!("[uniprop] {prop}: cache Str -> install");
+                }
+                let v = install_prop_table(i, prop);
+                if dbg {
+                    let tn = match &v {
+                        Value::Nil => "nil",
+                        Value::Str(_) => "str",
+                        Value::Cons(_) => "cons",
+                        Value::Vec(_) => "vec",
+                        Value::Sym(_) => "sym",
+                        _ => "other",
+                    };
+                    eprintln!(
+                        "[uniprop] {prop}: install -> {tn} char-table={}",
+                        is_char_table(i, &v)
+                    );
+                }
+                v
+            }
             _ => t.clone(),
         };
+    }
+    if dbg {
+        eprintln!("[uniprop] {prop}: no cache entry");
     }
     match prop_alist_entry(i, prop) {
         Value::Cons(c) => {
             let cdr = c.borrow().cdr.clone();
+            if dbg {
+                eprintln!("[uniprop] {prop}: alist cdr hit");
+            }
             match cdr {
                 v if is_char_table(i, &v) => {
                     i.char_code_prop_tables.push((prop.to_string(), v.clone()));
@@ -2092,14 +2313,355 @@ pub(crate) fn decode_charset_code(name: &str, code: i64) -> Option<i64> {
         }),
         "katakana-sjis" => (0xa1..=0xdf).contains(&code).then(|| code + 0xfec0),
         "japanese-jisx0208" => jisx0208_decode(u),
-        "jisx0201" | "katakana-jisx0201" | "latin-jisx0201" => tbl_decode(cjk::JISX0201_DECODE, u),
+        // `latin-jisx0201'/`katakana-jisx0201' are :subset charsets —
+        // resolved generically through the plist path.
+        "jisx0201" => tbl_decode(cjk::JISX0201_DECODE, u),
         "chinese-big5-1" => tbl_decode(cjk::BIG5_1_DECODE, u),
         "chinese-big5-2" => tbl_decode(cjk::BIG5_2_DECODE, u),
         "vietnamese-viscii-lower" => mule_unified_decode(u, 0x200200, cjk::MULE_LVISCII_DECODE),
         "vietnamese-viscii-upper" => mule_unified_decode(u, 0x200280, cjk::MULE_UVISCII_DECODE),
-        // Defined charsets we don't model: pass the code through (ASCII-safe).
-        _ => Some(code),
+        _ => None,
     }
+}
+
+/// `decode-char'/`map-charset-chars' entry point: hardcoded tables for
+/// the CJK staples, then the generic plist-driven resolution
+/// (`:map'/`:unify-map' tables, `:subset'/`:superset' composition,
+/// `:code-offset' linear indexing) like GNU `DECODE_CHAR'.
+pub(crate) fn charset_decode(i: &Interp, name: &str, code: i64) -> Option<i64> {
+    charset_decode_at(i, name, code, 0)
+}
+
+fn charset_decode_at(i: &Interp, name: &str, code: i64, depth: u8) -> Option<i64> {
+    if depth > 8 {
+        return None;
+    }
+    let name = canonical_charset(i, name);
+    decode_charset_code(&name, code)
+        .or_else(|| charset_decode_plist(i, &name, code, depth))
+}
+
+/// A charset map table parsed from `etc/charsets/*.map': each entry
+/// (LO,HI,BASE) maps codes LO..=HI to chars BASE..=BASE+(HI-LO).
+/// `dec' is sorted by LO for decode lookup, `enc' by char BASE for
+/// encode lookup.
+pub(crate) struct CharsetTable {
+    dec: Vec<(i64, i64, i64)>,
+    enc: Vec<(i64, i64, i64)>,
+}
+
+fn table_lookup(tab: &[(i64, i64, i64)], x: i64) -> Option<i64> {
+    let mut lo = 0usize;
+    let mut hi = tab.len();
+    while lo < hi {
+        let mid = (lo + hi) / 2;
+        let (l, h, b) = tab[mid];
+        if x < l {
+            hi = mid;
+        } else if x > h {
+            lo = mid + 1;
+        } else {
+            return Some(b + (x - l));
+        }
+    }
+    None
+}
+
+fn parse_charset_map(text: &str) -> CharsetTable {
+    let hex = |s: &str| -> Option<i64> {
+        let s = s.trim().strip_prefix("0x").or_else(|| s.trim().strip_prefix("0X"))?;
+        i64::from_str_radix(s, 16).ok()
+    };
+    let mut dec = Vec::new();
+    let mut enc = Vec::new();
+    for line in text.lines() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let mut it = line.split_whitespace();
+        let (Some(a), Some(b)) = (it.next(), it.next()) else {
+            continue;
+        };
+        let (lo, hi) = match a.split_once('-') {
+            Some((l, h)) => (hex(l), hex(h)),
+            None => (hex(a), hex(a)),
+        };
+        let (Some(lo), Some(hi), Some(base)) = (lo, hi, hex(b)) else {
+            continue;
+        };
+        dec.push((lo, hi, base));
+        enc.push((base, base + (hi - lo), lo));
+    }
+    dec.sort_unstable();
+    enc.sort_unstable();
+    CharsetTable { dec, enc }
+}
+
+/// Candidate dirs for `etc/charsets': next to every `lisp' dir that
+/// `builtin_dirs' would use (repo checkout or install prefix), plus
+/// the compile-time manifest dir so the dev binary finds the maps
+/// regardless of cwd.
+fn charset_map_dirs() -> Vec<std::path::PathBuf> {
+    let mut v: Vec<std::path::PathBuf> = crate::lisp::load::builtin_dirs()
+        .iter()
+        .map(|lispdir| {
+            std::path::Path::new(lispdir)
+                .parent()
+                .unwrap_or_else(|| std::path::Path::new("."))
+                .join("etc/charsets")
+        })
+        .collect();
+    v.push(std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("etc/charsets"));
+    v
+}
+
+/// Load (and cache) `etc/charsets/NAME.map'.  A missing file caches an
+/// empty table so we don't rescan per character.
+fn charset_table(i: &Interp, mapname: &str) -> Option<Rc<CharsetTable>> {
+    if let Some(t) = i.charset_maps.borrow().get(mapname) {
+        return if t.dec.is_empty() { None } else { Some(t.clone()) };
+    }
+    for d in charset_map_dirs() {
+        let p = d.join(format!("{mapname}.map"));
+        if let Ok(text) = std::fs::read_to_string(&p) {
+            let t = Rc::new(parse_charset_map(&text));
+            i.charset_maps
+                .borrow_mut()
+                .insert(mapname.to_string(), t.clone());
+            return Some(t);
+        }
+    }
+    i.charset_maps.borrow_mut().insert(
+        mapname.to_string(),
+        Rc::new(CharsetTable {
+            dec: Vec::new(),
+            enc: Vec::new(),
+        }),
+    );
+    None
+}
+
+fn charset_prop(i: &Interp, plist: &Value, key: &str) -> Value {
+    match i.intern_soft(key) {
+        Some(id) => crate::lisp::eval::plist_get(plist, id),
+        None => Value::Nil,
+    }
+}
+
+fn prop_int(v: &Value) -> Option<i64> {
+    v.int().map(|n| n as i64)
+}
+
+fn prop_str(v: &Value) -> Option<String> {
+    match v {
+        Value::Str(s) => Some(s.borrow().clone()),
+        _ => None,
+    }
+}
+
+/// `:code-space' vector → per-dimension (lo,hi) pairs.  GNU lists the
+/// LEAST significant byte's dimension first (`code_space[0..2]' is the
+/// low byte); we return dims most-significant-first for packed codes.
+fn charset_dims(i: &Interp, plist: &Value) -> Option<Vec<(i64, i64)>> {
+    match charset_prop(i, plist, ":code-space") {
+        Value::Vec(v) => {
+            let v = v.borrow();
+            let mut out: Vec<(i64, i64)> = v
+                .chunks(2)
+                .filter_map(|p| match (p[0].int(), p[1].int()) {
+                    (Some(lo), Some(hi)) => Some((lo as i64, hi as i64)),
+                    _ => None,
+                })
+                .collect();
+            out.reverse();
+            (!out.is_empty()).then_some(out)
+        }
+        _ => None,
+    }
+}
+
+/// GNU `emacs_mule_char' index: position of packed CODE within the
+/// multi-dimensional code space (big-endian digits, row-major).
+fn linear_index(dims: &[(i64, i64)], code: i64) -> Option<i64> {
+    let nd = dims.len();
+    let mut idx = 0i64;
+    for (k, &(lo, hi)) in dims.iter().enumerate() {
+        let shift = 8 * (nd - 1 - k);
+        let d = (code >> shift) & 0xff;
+        if d < lo || d > hi {
+            return None;
+        }
+        idx = idx * (hi - lo + 1) + (d - lo);
+    }
+    Some(idx)
+}
+
+/// Inverse of `linear_index'.
+fn unlinear_index(dims: &[(i64, i64)], mut idx: i64) -> Option<i64> {
+    let nd = dims.len();
+    let mut digits = vec![0i64; nd];
+    for k in (0..nd).rev() {
+        let (lo, hi) = dims[k];
+        let span = hi - lo + 1;
+        let d = lo + idx % span;
+        idx /= span;
+        digits[k] = d;
+    }
+    if idx != 0 {
+        return None;
+    }
+    let mut code = 0i64;
+    for &d in &digits {
+        code = (code << 8) | d;
+    }
+    Some(code)
+}
+
+/// `(PARENT MIN-CODE MAX-CODE OFFSET)' from a `:subset' property.
+fn subset_spec(i: &Interp, plist: &Value) -> Option<(String, i64, i64, i64)> {
+    let spec = charset_prop(i, plist, ":subset");
+    let items = spec.list_to_vec().ok()?;
+    if items.len() != 4 {
+        return None;
+    }
+    let parent = match &items[0] {
+        Value::Sym(s) => i.symbol_name(*s),
+        _ => return None,
+    };
+    Some((
+        parent,
+        prop_int(&items[1])?,
+        prop_int(&items[2])?,
+        prop_int(&items[3])?,
+    ))
+}
+
+/// `(P1 P2 (P3 . OFF) ...)' from a `:superset' property — each entry
+/// is a bare parent symbol (offset 0) or a (PARENT . OFFSET) cons.
+fn superset_list(i: &Interp, plist: &Value) -> Vec<(String, i64)> {
+    let spec = charset_prop(i, plist, ":superset");
+    let Ok(items) = spec.list_to_vec() else {
+        return Vec::new();
+    };
+    items
+        .iter()
+        .filter_map(|e| match e {
+            Value::Sym(s) => Some((i.symbol_name(*s), 0i64)),
+            Value::Cons(c) => {
+                let b = c.borrow();
+                match (&b.car, &b.cdr) {
+                    (Value::Sym(s), off) => {
+                        Some((i.symbol_name(*s), prop_int(off)?))
+                    }
+                    _ => None,
+                }
+            }
+            _ => None,
+        })
+        .collect()
+}
+
+/// Generic plist-driven `DECODE_CHAR': installed unify map → `:map'
+/// table → `:subset'/`:superset' composition → `:code-offset'.
+fn charset_decode_plist(i: &Interp, name: &str, code: i64, depth: u8) -> Option<i64> {
+    if depth > 8 {
+        return None;
+    }
+    let plist = charset_entry(i, name).map(|e| e.1.clone()).unwrap_or(Value::Nil);
+    // Map installed by `unify-charset' wins over :code-offset (GNU
+    // semantics: a unified charset decodes via its map, unmapped
+    // in-space codes fall back to the private char).
+    let unified = i
+        .charset_maps
+        .borrow()
+        .get(&format!("charset:{name}"))
+        .cloned();
+    if let Some(t) = unified {
+        if let Some(c) = table_lookup(&t.dec, code) {
+            return Some(c);
+        }
+    } else if let Some(t) = map_value_table(i, &name, &charset_prop(i, &plist, ":map")) {
+        if let Some(c) = table_lookup(&t.dec, code) {
+            return Some(c);
+        }
+        // Map-method charset, unmapped code → nil (no offset
+        // fallback in GNU for non-unified map charsets).
+        if prop_int(&charset_prop(i, &plist, ":code-offset")).is_none() {
+            return None;
+        }
+    }
+    if let Some((parent, min, max, off)) = subset_spec(i, &plist) {
+        let pc = code - off;
+        if (min..=max).contains(&pc) {
+            return charset_decode_at(i, &parent, pc, depth + 1);
+        }
+        return None;
+    }
+    let supers = superset_list(i, &plist);
+    for (pname, off) in &supers {
+        if let Some(c) = charset_decode_at(i, pname, code - off, depth + 1) {
+            return Some(c);
+        }
+    }
+    if !supers.is_empty() {
+        return None;
+    }
+    if let Some(off) = prop_int(&charset_prop(i, &plist, ":code-offset")) {
+        let dims = charset_dims(i, &plist)?;
+        return linear_index(&dims, code).map(|idx| off + idx);
+    }
+    None
+}
+
+/// Mirror of `charset_decode_plist' for `ENCODE_CHAR'.
+fn charset_encode_plist(i: &Interp, name: &str, ch: i64, depth: u8) -> Option<i64> {
+    if depth > 8 {
+        return None;
+    }
+    let plist = charset_entry(i, name).map(|e| e.1.clone()).unwrap_or(Value::Nil);
+    let unified = i
+        .charset_maps
+        .borrow()
+        .get(&format!("charset:{name}"))
+        .cloned();
+    if let Some(t) = unified {
+        if let Some(c) = table_lookup(&t.enc, ch) {
+            return Some(c);
+        }
+    } else if let Some(t) = map_value_table(i, &name, &charset_prop(i, &plist, ":map")) {
+        if let Some(c) = table_lookup(&t.enc, ch) {
+            return Some(c);
+        }
+        if prop_int(&charset_prop(i, &plist, ":code-offset")).is_none() {
+            return None;
+        }
+    }
+    if let Some((parent, min, max, off)) = subset_spec(i, &plist) {
+        if let Some(pc) = charset_encode_at(i, &parent, ch, depth + 1) {
+            if (min..=max).contains(&pc) {
+                return Some(pc + off);
+            }
+        }
+        return None;
+    }
+    let supers = superset_list(i, &plist);
+    for (pname, off) in &supers {
+        if let Some(c) = charset_encode_at(i, pname, ch, depth + 1) {
+            return Some(c + off);
+        }
+    }
+    if !supers.is_empty() {
+        return None;
+    }
+    if let Some(off) = prop_int(&charset_prop(i, &plist, ":code-offset")) {
+        let idx = ch - off;
+        if idx >= 0 {
+            let dims = charset_dims(i, &plist)?;
+            return unlinear_index(&dims, idx);
+        }
+    }
+    None
 }
 
 /// GNU unified-charset `DECODE_CHAR': code-space is [32,127] for the
@@ -2145,13 +2707,29 @@ pub(crate) fn encode_charset_code(name: &str, ch: i64) -> Option<i64> {
         }),
         "katakana-sjis" => (0xff61..=0xff9f).contains(&ch).then(|| ch - 0xfec0),
         "japanese-jisx0208" => jisx0208_encode(u),
-        "jisx0201" | "katakana-jisx0201" | "latin-jisx0201" => tbl_encode(cjk::JISX0201_ENCODE, u),
+        // `latin-jisx0201'/`katakana-jisx0201' go through :subset.
+        "jisx0201" => tbl_encode(cjk::JISX0201_ENCODE, u),
         "chinese-big5-1" => tbl_encode(cjk::BIG5_1_ENCODE, u),
         "chinese-big5-2" => tbl_encode(cjk::BIG5_2_ENCODE, u),
         "vietnamese-viscii-lower" => mule_unified_encode(u, 0x200200, cjk::MULE_LVISCII_ENCODE),
         "vietnamese-viscii-upper" => mule_unified_encode(u, 0x200280, cjk::MULE_UVISCII_ENCODE),
-        _ => Some(ch),
+        _ => None,
     }
+}
+
+/// `encode-char' entry point: hardcoded tables, then the plist-driven
+/// resolution (`charset_decode's mirror image).
+pub(crate) fn charset_encode(i: &Interp, name: &str, ch: i64) -> Option<i64> {
+    charset_encode_at(i, name, ch, 0)
+}
+
+fn charset_encode_at(i: &Interp, name: &str, ch: i64, depth: u8) -> Option<i64> {
+    if depth > 8 {
+        return None;
+    }
+    let name = canonical_charset(i, name);
+    encode_charset_code(&name, ch)
+        .or_else(|| charset_encode_plist(i, &name, ch, depth))
 }
 
 /// Reverse of `mule_unified_decode': mapped Unicode chars give the

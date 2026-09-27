@@ -277,6 +277,14 @@ pub struct Interp {
     pub charsets: Vec<(String, Value)>,
     /// Charset alias → canonical name (`define-charset-alias`).
     pub charset_aliases: Vec<(String, String)>,
+    /// Lazily parsed `etc/charsets/*.map' tables and maps installed
+    /// by `unify-charset' (key `charset:NAME'); see builtins/charset.rs.
+    pub charset_maps: std::cell::RefCell<
+        std::collections::HashMap<
+            String,
+            std::rc::Rc<crate::lisp::builtins::charset::CharsetTable>,
+        >,
+    >,
     /// Coding systems defined via `define-coding-system-internal`.
     pub extra_coding_systems: Vec<String>,
     /// Current `terminal-coding-system' value (nil after set-nil).
@@ -722,6 +730,7 @@ impl Interp {
             dbus: crate::lisp::builtins::dbus::DbusState::new(),
             charsets: Vec::new(),
             charset_aliases: Vec::new(),
+            charset_maps: std::cell::RefCell::new(std::collections::HashMap::new()),
             extra_coding_systems: Vec::new(),
             terminal_coding: Value::Nil,
             keyboard_coding: Value::Nil,

@@ -2846,7 +2846,7 @@ fn f_encode_char(i: &mut Interp, args: Vec<Value>) -> EvalResult {
         _ => return Err(i.wrong_type_mut("characterp", &args[0])),
     };
     let name = super::charset::want_charset(i, &args[1])?;
-    match super::charset::encode_charset_code(&name, ch) {
+    match super::charset::charset_encode(i, &name, ch) {
         Some(c) => Ok(Value::Int(c.into())),
         None => Ok(Value::Nil),
     }
@@ -2856,7 +2856,7 @@ fn f_decode_char(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     // (decode-char CHARSET CODE) — nil when CODE is outside CHARSET's space.
     let name = super::charset::want_charset(i, &args[0])?;
     let code = want_int(i, &args[1])?;
-    match super::charset::decode_charset_code(&name, code as i64) {
+    match super::charset::charset_decode(i, &name, code as i64) {
         Some(c) => Ok(Value::Int(c.into())),
         None => Ok(Value::Nil),
     }
