@@ -440,7 +440,7 @@
        vowel sign for `a'.
     2. Tsheg is assigned to SPC key.  You can input a space
        by typing `>'.
-    4. To avoid the default stacking ���� and to obtain གཡ,
+    4. To avoid the default stacking  and to obtain གཡ,
        type `E' instead of `v' (=ཡ).
     3. There are many characters that are not supported in the
        current implementation (especially special signs).

@@ -27,10 +27,14 @@ subr (stub only), window. Also skipped: `.dir-locals.el`, `ldefs-boot.el`
 
 ## EMBEDDED_LISP registration (done — regenerate with tools/gen_embedded.py)
 
-`src/lisp/load.rs` `EMBEDDED_LISP` covers all ported files except the 13
-non-UTF-8 ones (`include_str!` cannot embed them; they resolve via the
-filesystem fallback in `builtin_dirs()` and are rejected by
-`insert-file-contents` anyway — see the encoding gap below). Run
+`src/lisp/load.rs` `EMBEDDED_LISP` covers all ported files — every
+`lisp/*.el` is now valid UTF-8, so `include_str!` embeds the lot.
+(The 13 files that used to carry GNU's emacs-mule internal encoding
+— ARRAY30, ECDICT, Punct-b5, ethio-util, ethiopic, ind-util,
+quail-ethiopic, quail-tibetan, quick-cns, tibet-util, tibetan,
+titdic-cnv, tsang-cns — were transcoded to UTF-8; private-plane
+chars Unicode can't name became U+FFFD, so they are no longer
+byte-identical to GNU.) Run
 `python3 tools/gen_embedded.py` to regenerate the entry lines — it maps
 each file to its GNU key by content hash (qualified keys like
 `semantic/ctxt` where the flat name came from a subdir) and emits
@@ -52,15 +56,16 @@ Registration rules:
 
 - Reader stack overflow on deeply nested data: `ja-dic.el`, `ZIRANMA.el`
   (both byte-identical to GNU; recursion depth limit).
-- `insert-file-contents` rejects Emacs-internal-encoding files
-  (surrogate-encoded unibyte bytes): ARRAY30, ECDICT, ETZY, QJ, QJ-b5,
-  ZOZY, pinyin, sisheng, tsang-b5, ethio-util, ethiopic, ind-util,
-  leim-list, uni-confusable, uni-name, titdic-cnv, tibetan, tibet-util,
-  Punct-b5, japanese — all byte-identical to GNU.
+- The files that used to be Emacs-internal-encoding (see the
+  EMBEDDED_LISP note above) are now UTF-8 transcodes — readable by
+  `insert-file-contents`, but with U+FFFD where GNU stored
+  private-plane chars; not byte-identical to GNU.
 - `transient.el`, `eieio.el` eager macroexpansion `(invalid-function nil)`;
   `byte-opt` "lambda used as function name" warnings.
 - `xwidget-internal` unimplemented. NS/macOS GUI primitives are
-  covered by `src/lisp/builtins/nsgui.rs` (see below).
+  covered by `src/lisp/builtins/nsgui.rs` (see below). Native
+  compilation is implemented in `src/lisp/builtins/comp.rs` (see
+  below).
 - Bulk-load test (all lisp/*.el under --batch): only failures besides the
   above are `Lisp nesting exceeds max-lisp-eval-depth` during eager
   macro-expansion (~50 files), platform-gated *-win/android files, and
@@ -178,6 +183,56 @@ names bound — GNU marks many as `subr` only because that build has
 nativecomp (functions compile to native subrs).
 
 Regression suite: `tests/nsgui.rs` (macOS-gated, 4 tests).
+
+## Native compilation (`src/lisp/builtins/comp.rs`)
+
+Not a libgccjit port — an equivalent pipeline: parse `.el`, generate
+C, compile with system `cc` into a shared object named `*.eln`, and
+`dlopen` it. `(native-comp-available-p)` is t iff `cc` is usable.
+
+Architecture:
+
+- Generated C treats Lisp values as opaque `em_obj` handles; every
+  operation goes through an `em_api` callback table (cons/car/cdr,
+  intern, funcall, eval, set, signal, …). `em_env` is the `Interp`
+  pointer while loading/calling.
+- `EmObj` handles index a thread-local object table (`Value` holds
+  `Rc`, so all native-comp state — `OBJTAB`, `NATIVES`, `META`,
+  `UNITS`, `PENDING` — is `thread_local!`, never `static Mutex`).
+- Native functions register as real `Subr`s via `api_defsubr`;
+  since `Subr.func` is a static fn pointer, a fixed trampoline pool
+  `tramp::t0..t255` dispatches through `NATIVES`. `native-comp-function-p`
+  recognizes subrs by trampoline identity.
+- `defmacro` forms are serialized in the unit and evaluated at load
+  time (so they stay macros, `macrop` → t); unsupported bodies
+  (unwind forms, closures) fall back to interpreter eval via
+  `make-interpreted-closure`.
+- `.eln` naming matches GNU: `<base>-<md5(truename)[:8]>-<md5(contents)[:8]>.eln`
+  under `~/.emacs.d/eln-cache/31.1-remacs/`.
+- `native-compile` accepts files, symbols, and lambda objects;
+  `native-compile-async`/`native-compile-directory` compile
+  synchronously (a documented simplification); `(load "x.eln")`
+  works — `load.rs` prefers `.eln` over `.elc`/`.el` like GNU and
+  routes through `comp::native_load_file`. `--batch -f
+  batch-native-compile FILE...` works via `command-line-args-left`
+  (main.rs now implements `-f`/`--funcall`, which GNU had and remacs
+  lacked).
+- Public `native-*`/`batch-*` entry points are thin `defun` wrappers
+  over `comp--remacs-*` subrs installed at startup in `Interp::new`
+  — deliberately NOT named `native-compile` so loaddefs autoloads
+  can't pull GNU's comp.el LIMPLE pipeline in. `interactive-form`,
+  `commandp`, `call-interactively`, `documentation`, and
+  `subr-native-lambda-list` consult the native metadata table.
+- `comp-libgccjit-version` → nil (no jit), same as a GNU
+  `--without-native-compilation` build's surface.
+- Known limits: max 256 native functions/units (trampoline pool),
+  `comp--*` internals cover the stable entry points only
+  (`comp--register-subr`, `comp--init/release-ctxt`,
+  `comp--compile-ctxt-to-file0`, `comp--late-register-subr`,
+  `comp--install-trampoline`), `comp.el`'s LIMPLE/optimizing passes
+  are not run.
+
+Regression suite: `tests/nativecomp.rs` (8 tests).
 
 ## Verification recipe
 

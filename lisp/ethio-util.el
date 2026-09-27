@@ -826,18 +826,18 @@ The 2nd and 3rd arguments BEGIN and END specify the region."
 ;;;###autoload
 (defun ethio-input-special-character (arg)
   "This function is deprecated."
-  (interactive "*cInput number: 1.ö ‡  2.ö ‡‚  3.ö ‡ƒ  4.ö ‡„  5.ö ‡€")
+  (interactive "*cInput number: 1.î‡  2.î‡‚  3.î‡ƒ  4.î‡„  5.î‡€")
   (cond
    ((eq arg ?1)
-    (insert "ö ‡"))
+    (insert "î‡"))
    ((eq arg ?2)
-    (insert "ö ‡‚"))
+    (insert "î‡‚"))
    ((eq arg ?3)
-    (insert "ö ‡ƒ"))
+    (insert "î‡ƒ"))
    ((eq arg ?4)
-    (insert "ö ‡„"))
+    (insert "î‡„"))
    ((eq arg ?5)
-    (insert "ö ‡€"))
+    (insert "î‡€"))
    (t
     (error ""))))
 
@@ -856,7 +856,7 @@ FIDEL is the Amharic/Ethiopic alphabet."
     ;; Special treatment for geminated characters.
     ;; Geminated characters la", etc. change into \geminateG{\laG}, etc.
     (goto-char (point-min))
-    (while (re-search-forward "áŸ\\|ö ‡Š" nil t)
+    (while (re-search-forward "áŸ\\|î‡Š" nil t)
       (setq comp (find-composition (match-beginning 0)))
       (if (null comp)
 	  (replace-match "\\\\geminateG{}" t)
@@ -1084,7 +1084,7 @@ many Ethiopic word separators."
    ((save-excursion
       (skip-chars-backward " ")
       (memq (preceding-char)
-	    '(?á¡ ?á¢ ?á£ ?á¤ ?á¥ ?á¦ ?á§ ?á¨ ?ö ‡‹ ?ö ‡Œ ?ö ‡ ?ö ‡Ž ?ö ‡)))
+	    '(?á¡ ?á¢ ?á£ ?á¤ ?á¥ ?á¦ ?á§ ?á¨ ?î‡‹ ?î‡Œ ?î‡ ?î‡Ž ?î‡)))
     (insert-char 32 arg))
    (t
     (insert-char ?á¡ arg))))
@@ -1103,7 +1103,7 @@ With ARG, insert that many delimiters."
 ;;;###autoload
 (defun ethio-composition-function (pos _to _font-object string _direction)
   (setq pos (1- pos))
-  (let ((pattern "\\ce\\(áŸ\\|ö ‡Š\\)"))
+  (let ((pattern "\\ce\\(áŸ\\|î‡Š\\)"))
     (if string
 	(if (and (>= pos 0)
 		 (eq (string-match pattern string pos) pos))
@@ -1124,10 +1124,10 @@ mark."
   (interactive "*")
   (let ((ch (preceding-char)))
     (cond
-     ((and (= ch ?ö ‡Š) (find-composition (1- (point))))
+     ((and (= ch ?î‡Š) (find-composition (1- (point))))
       (decompose-region (- (point) 2) (point)))
      ((and (>= ch #x1200) (<= ch #x137f))
-      (insert "ö ‡Š")
+      (insert "î‡Š")
       (compose-region (- (point) 2) (point)))
      (t
       (error "")))))
@@ -2000,98 +2000,98 @@ representation of Ethiopic script."
  ;; private extension
  ;;
 
- ("\\yWaG" ?ö ƒ¯)				; U+1A00EF (was U+12EF)
+ ("\\yWaG" ?îƒ¯)				; U+1A00EF (was U+12EF)
 
- ("\\GWaG" ?ö „Ÿ)				; U+1A011F (was U+131F)
+ ("\\GWaG" ?î„Ÿ)				; U+1A011F (was U+131F)
 
- ("\\qqeG" ?ö †€)				; U+1A0180 .. (was U+1380 ..)
- ("\\qquG" ?ö †)
- ("\\qqiG" ?ö †‚)
- ("\\qqaG" ?ö †ƒ)
- ("\\qqEG" ?ö †„)
- ("\\qqG" ?ö †…)
- ("\\qqoG" ?ö ††)
+ ("\\qqeG" ?î†€)				; U+1A0180 .. (was U+1380 ..)
+ ("\\qquG" ?î†)
+ ("\\qqiG" ?î†‚)
+ ("\\qqaG" ?î†ƒ)
+ ("\\qqEG" ?î†„)
+ ("\\qqG" ?î†…)
+ ("\\qqoG" ?î††)
  ;; unused
- ("\\MWeG" ?ö †ˆ)
- ("\\bWeG" ?ö †‰)
- ("\\GWeG" ?ö †Š)
- ("\\fWeG" ?ö †‹)
- ("\\pWeG" ?ö †Œ)
- ;; unused
- ;; unused
- ;; unused
-
- ("\\kkeG" ?ö †)				; U+1A0190 .. (was U+1390 ..)
- ("\\kkuG" ?ö †‘)
- ("\\kkiG" ?ö †’)
- ("\\kkaG" ?ö †“)
- ("\\kkEG" ?ö †”)
- ("\\kkG" ?ö †•)
- ("\\kkoG" ?ö †–)
- ;; unused
- ("\\mWiG" ?ö †˜)
- ("\\bWiG" ?ö †™)
- ("\\GWiG" ?ö †š)
- ("\\fWiG" ?ö †›)
- ("\\pWiG" ?ö †œ)
+ ("\\MWeG" ?î†ˆ)
+ ("\\bWeG" ?î†‰)
+ ("\\GWeG" ?î†Š)
+ ("\\fWeG" ?î†‹)
+ ("\\pWeG" ?î†Œ)
  ;; unused
  ;; unused
  ;; unused
 
- ("\\XeG" ?ö † )				; U+1A01A0 .. (was U+13A0 ..)
- ("\\XuG" ?ö †¡)
- ("\\XiG" ?ö †¢)
- ("\\XaG" ?ö †£)
- ("\\XEG" ?ö †¤)
- ("\\XG" ?ö †¥)
- ("\\XoG" ?ö †¦)
+ ("\\kkeG" ?î†)				; U+1A0190 .. (was U+1390 ..)
+ ("\\kkuG" ?î†‘)
+ ("\\kkiG" ?î†’)
+ ("\\kkaG" ?î†“)
+ ("\\kkEG" ?î†”)
+ ("\\kkG" ?î†•)
+ ("\\kkoG" ?î†–)
  ;; unused
- ("\\mWEG" ?ö †¨)
- ("\\bWEG" ?ö †©)
- ("\\GWEG" ?ö †ª)
- ("\\fWEG" ?ö †«)
- ("\\pWEG" ?ö †¬)
- ;; unused
- ;; unused
- ;; unused
-
- ("\\ggeG" ?ö †°)				; U+1A01B0 .. (was U+13B0 ..)
- ("\\gguG" ?ö †±)
- ("\\ggiG" ?ö †²)
- ("\\ggaG" ?ö †³)
- ("\\ggEG" ?ö †´)
- ("\\ggG" ?ö †µ)
- ("\\ggoG" ?ö †¶)
- ;; unused
- ("\\mWG" ?ö †¸)
- ("\\bWG" ?ö †¹)
- ("\\GWG" ?ö †º)
- ("\\fWG" ?ö †»)
- ("\\pWG" ?ö †¼)
+ ("\\mWiG" ?î†˜)
+ ("\\bWiG" ?î†™)
+ ("\\GWiG" ?î†š)
+ ("\\fWiG" ?î†›)
+ ("\\pWiG" ?î†œ)
  ;; unused
  ;; unused
  ;; unused
 
- ("\\ornamentG" ?ö ‡€)			; U+1A01C0 .. (was U+FDF0 ..)
- ("\\flandG" ?ö ‡)
- ("\\iflandG" ?ö ‡‚)
- ("\\africaG" ?ö ‡ƒ)
- ("\\iafricaG" ?ö ‡„)
- ("\\wWeG" ?ö ‡…)
- ("\\wWiG" ?ö ‡†)
- ("\\wWaG" ?ö ‡‡)
- ("\\wWEG" ?ö ‡ˆ)
- ("\\wWG" ?ö ‡‰)
- ;; Gemination (ö ‡Š) is handled in a special way.
- ("\\slaqG" ?ö ‡‹)
+ ("\\XeG" ?î† )				; U+1A01A0 .. (was U+13A0 ..)
+ ("\\XuG" ?î†¡)
+ ("\\XiG" ?î†¢)
+ ("\\XaG" ?î†£)
+ ("\\XEG" ?î†¤)
+ ("\\XG" ?î†¥)
+ ("\\XoG" ?î†¦)
+ ;; unused
+ ("\\mWEG" ?î†¨)
+ ("\\bWEG" ?î†©)
+ ("\\GWEG" ?î†ª)
+ ("\\fWEG" ?î†«)
+ ("\\pWEG" ?î†¬)
+ ;; unused
+ ;; unused
+ ;; unused
+
+ ("\\ggeG" ?î†°)				; U+1A01B0 .. (was U+13B0 ..)
+ ("\\gguG" ?î†±)
+ ("\\ggiG" ?î†²)
+ ("\\ggaG" ?î†³)
+ ("\\ggEG" ?î†´)
+ ("\\ggG" ?î†µ)
+ ("\\ggoG" ?î†¶)
+ ;; unused
+ ("\\mWG" ?î†¸)
+ ("\\bWG" ?î†¹)
+ ("\\GWG" ?î†º)
+ ("\\fWG" ?î†»)
+ ("\\pWG" ?î†¼)
+ ;; unused
+ ;; unused
+ ;; unused
+
+ ("\\ornamentG" ?î‡€)			; U+1A01C0 .. (was U+FDF0 ..)
+ ("\\flandG" ?î‡)
+ ("\\iflandG" ?î‡‚)
+ ("\\africaG" ?î‡ƒ)
+ ("\\iafricaG" ?î‡„)
+ ("\\wWeG" ?î‡…)
+ ("\\wWiG" ?î‡†)
+ ("\\wWaG" ?î‡‡)
+ ("\\wWEG" ?î‡ˆ)
+ ("\\wWG" ?î‡‰)
+ ;; Gemination (î‡Š) is handled in a special way.
+ ("\\slaqG" ?î‡‹)
 
  ;; Assign reverse conversion to Fidel chars.
  ;; Then override forward conversion with ASCII chars.
  ;; ASCII chars should not have reverse conversions.
- ("\\dotG" ?ö ‡Œ) ("\\dotG" ".")
- ("\\lquoteG" ?ö ‡) ("\\lquoteG" "Â«")
- ("\\rquoteG" ?ö ‡Ž) ("\\rquoteG" "Â»")
- ("\\qmarkG" ?ö ‡) ("\\qmarkG" "?")
+ ("\\dotG" ?î‡Œ) ("\\dotG" ".")
+ ("\\lquoteG" ?î‡) ("\\lquoteG" "Â«")
+ ("\\rquoteG" ?î‡Ž) ("\\rquoteG" "Â»")
+ ("\\qmarkG" ?î‡) ("\\qmarkG" "?")
 
  ;;
  ;; New characters in Unicode 4.1.

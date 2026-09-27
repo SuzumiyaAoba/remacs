@@ -173,7 +173,7 @@ The returned string has no composition information."
     ;; If 'a follows a consonant, turn it into the subjoined form.
     ;; * Disabled by Tomabechi 2000/06/09 *
     ;; Because in Unicode, འ may follow directly a consonant without
-    ;; any intervening vowel, as in མཁ����འ་=མ ཁ འ not མ ཁ ���� འ
+    ;; any intervening vowel, as in མཁའ་=མ ཁ འ not མ ཁ  འ
     ;;(if (and (= char ?འ)
     ;;	     (aref (char-category-set (car last)) ?0))
     ;;	(setq char ?ཱ)) ;; modified for new font by Tomabechi 1999/12/10
@@ -195,7 +195,7 @@ The returned string has no composition information."
 
      ;; Compose lower vowel sign vertically under.
      ((aref (char-category-set char) ?3)
-      (if (or (eq char ?����) ;; `����' and `཰' should not visible when composed.
+      (if (or (eq char ?) ;; `' and `཰' should not visible when composed.
 	      (eq char #xF70))
 	  (setq rule nil)
 	(setq rule stack-under)))
@@ -203,7 +203,7 @@ The returned string has no composition information."
      ;; consonant other than w, ', y, r.
      ((and (= (car last) ?ར)
 	   (not (memq char '(?ྭ ?ཱ ?ྱ ?ྲ))))
-      (setcar last ?����) ;; modified for newfont by Tomabechi 1999/12/10
+      (setcar last ?) ;; modified for newfont by Tomabechi 1999/12/10
       (setq rule stack-under))
      ;; Transform initial base consonant if followed by a subjoined
      ;; consonant but 'a.
@@ -379,7 +379,7 @@ See also docstring of the function `tibetan-compose-region'."
 ;;;
 
 (defvar tibetan-canonicalize-for-unicode-alist
-  '(("����" . "")	;; remove vowel a
+  '(("" . "")	;; remove vowel a
     ("ཱི" . "ཱི") ;; decompose vowels whose use is ``discouraged'' in Unicode 3.0
     ("ཱུ" . "ཱུ")
     ("ྲྀ" . "ྲྀ")
@@ -390,7 +390,7 @@ See also docstring of the function `tibetan-compose-region'."
   "Rules for canonicalizing Tibetan vowels for Unicode.")
 
 (defvar tibetan-canonicalize-for-unicode-regexp
-  "[����ཱཱིུྲྀཷླྀཹཱྀ]"
+  "[ཱཱིུྲྀཷླྀཹཱྀ]"
   "Regexp for Tibetan vowels to be canonicalized in Unicode.")
 
 (defun tibetan-canonicalize-for-unicode-region (from to)
