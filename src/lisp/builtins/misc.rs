@@ -407,7 +407,7 @@ pub(crate) static SUBRS: &[Subr] = &[
     // ---------- predicates ----------
     S!("string-or-null-p", 1, 1, f_string_or_null_p, ""),
     S!("vector-or-char-table-p", 1, 1, f_vector_or_char_table_p, ""),
-    S!("subr-native-elisp-p", 1, 1, f_false, ""),
+    S!("subr-native-elisp-p", 1, 1, f_subr_native_elisp_p, ""),
     S!("threadp", 1, 1, f_threadp, "t if OBJECT is a thread."),
     S!("all-threads", 0, 0, f_all_threads, "List of all threads."),
     S!(
@@ -1552,13 +1552,6 @@ pub(crate) static SUBRS: &[Subr] = &[
         "Load a dynamic module FILE."
     ),
     S!(
-        "native-elisp-load",
-        1,
-        2,
-        f_native_elisp_load,
-        "Load a native-compiled .eln FILE."
-    ),
-    S!(
         "dump-emacs-portable",
         1,
         2,
@@ -1627,17 +1620,7 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!("tty-frame-edges", 0, 2, f_nil, ""),
     S!("tty-frame-geometry", 0, 1, f_nil, ""),
     // ---------- native compilation / module stubs ----------
-    S!("comp-libgccjit-version", 0, 0, f_comp_libgccjit_version, ""),
-    S!("subr-native-comp-unit", 1, 1, f_subr_native_comp_unit, ""),
-    S!("native-comp-function-p", 1, 1, f_nil, ""),
     S!("module-function-p", 1, 1, f_nil, ""),
-    S!(
-        "comp-el-to-eln-filename",
-        1,
-        2,
-        f_comp_el_to_eln_filename,
-        ""
-    ),
     // ---------- thread/process internals ----------
     S!(
         "thread-buffer-disposition",
@@ -8116,15 +8099,6 @@ fn f_gnutls_available_p(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
     Ok(Value::list(vals))
 }
 
-/// `comp-libgccjit-version' — the libgccjit version GNU built with.
-fn f_comp_libgccjit_version(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
-    let _ = i;
-    Ok(Value::list(vec![
-        Value::Int(15),
-        Value::Int(2),
-        Value::Int(0),
-    ]))
-}
 
 /// `help--describe-vector' — GNU's fifth argument is a keymap (the
 /// doc context for the vector).
@@ -11038,13 +11012,6 @@ fn f_make_terminal_frame(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
     Err(i.error("Don't know how to create a terminal frame"))
 }
 
-fn f_subr_native_comp_unit(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    // GNU: arg must satisfy `subrp'; a C subr without a comp unit → nil.
-    match &a[0] {
-        Value::Subr(_) => Ok(Value::Nil),
-        other => Err(i.wrong_type_mut("subrp", other)),
-    }
-}
 
 fn f_define_coding_system_alias(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let _ = want_sym(i, &a[0])?;
@@ -11056,31 +11023,6 @@ fn f_define_coding_system_alias(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     Ok(Value::Nil)
 }
 
-fn f_comp_el_to_eln_filename(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let path = want_string(i, &a[0])?;
-    if !std::path::Path::new(&path).exists() {
-        return Err(i.signal_data(
-            sym::FILE_MISSING,
-            vec![
-                Value::string("Applying native-compiler to missing file"),
-                a[0].clone(),
-            ],
-        ));
-    }
-    let base = std::path::Path::new(&path)
-        .file_name()
-        .and_then(|s| s.to_str())
-        .unwrap_or("anon.el")
-        .trim_end_matches(".el")
-        .to_string();
-    let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
-    Ok(Value::string(format!(
-        "{}/.emacs.d/eln-cache/remacs/{}-{:x}.eln",
-        home,
-        base,
-        path.len()
-    )))
-}
 
 fn f_thread_buffer_disposition(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     match a.first() {
@@ -11632,22 +11574,6 @@ fn f_module_load(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     ))
 }
 
-/// `native-elisp-load` — no native compiler; GNU errors when the file
-/// is absent (message literally says "does not exists").
-fn f_native_elisp_load(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let f = want_string(i, &a[0])?;
-    let e = i.intern("error");
-    if !std::path::Path::new(&f).exists() {
-        return Err(i.signal_data(
-            e,
-            vec![Value::string("file does not exists"), Value::string(f)],
-        ));
-    }
-    Err(i.signal_data(
-        e,
-        vec![Value::string("native compilation not in this build")],
-    ))
-}
 
 /// `backtrace--frames-from-thread` — threadp-checks its arg; we keep
 /// no suspended frames, so nil for a real thread.
@@ -11898,4 +11824,15 @@ fn f_profiler_memory_stop(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
 fn f_profiler_memory_log(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
     let _ = i;
     Ok(Value::Nil)
+}
+
+/// `subr-native-elisp-p' — t when SUBR is a native-compiled Lisp
+/// function (our cc-emitted code), nil for built-in primitives.
+fn f_subr_native_elisp_p(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    match &a[0] {
+        Value::Subr(s) => {
+            Ok(Value::from_bool(crate::lisp::builtins::comp::is_native(s).is_some()))
+        }
+        other => Err(i.wrong_type_mut("subrp", other)),
+    }
 }

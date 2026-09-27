@@ -43932,15 +43932,8 @@ while it runs, and removed afterwards."
   '("SCCS" "RCS" "CVS" "MCVS" ".src" ".svn" ".git" ".hg" ".bzr" "_MTN"
     "_darcs" "{arch}" ".repo" ".jj"))
 
-;; C-level native-comp functions: bound for `fboundp' parity;
-;; calling them errors (no native-comp support).
-;; (kqueue-* are real subrs in remacs — see src/lisp/builtins/filenotify.rs.)
-(defun native-comp-unit-file (&rest _args)
-  "Stub: native compilation is not supported."
-  (signal 'error (list "native compilation is not supported")))
-(defun native-comp-unit-set-file (&rest _args)
-  "Stub: native compilation is not supported."
-  (signal 'error (list "native compilation is not supported")))
+;; C-level native-comp functions are real subrs in remacs —
+;; see src/lisp/builtins/comp.rs.
 
 ;;; composite.el glyph accessors (GNU composite.el)
 (defsubst lgstring-header (gstring) (aref gstring 0))
@@ -45927,32 +45920,6 @@ also passed as second argument to SPECIALIZERS-FUNCTION." (declare (indent 1) (d
      ((string-equal (upcase res) "YES") t)
      ((string-equal (upcase res) "NO")  nil)
      (t (read res)))))
-
-;;; C-level platform primitives not implemented by remacs
-;;; (tree-sitter, GnuTLS, Nextstep, X11, native-comp).  Bound as error
-;;; stubs so `fboundp' matches GNU; calls signal a clean error.
-(defun comp--compile-ctxt-to-file0 (&rest _args)
-  (signal 'error (list "comp--compile-ctxt-to-file0: not implemented (C primitive)")))
-(defun comp--init-ctxt (&rest _args)
-  (signal 'error (list "comp--init-ctxt: not implemented (C primitive)")))
-(defun comp--install-trampoline (&rest _args)
-  (signal 'error (list "comp--install-trampoline: not implemented (C primitive)")))
-(defun comp--late-register-subr (&rest _args)
-  (signal 'error (list "comp--late-register-subr: not implemented (C primitive)")))
-(defun comp--register-lambda (&rest _args)
-  (signal 'error (list "comp--register-lambda: not implemented (C primitive)")))
-(defun comp--register-subr (&rest _args)
-  (signal 'error (list "comp--register-subr: not implemented (C primitive)")))
-(defun comp--release-ctxt (&rest _args)
-  (signal 'error (list "comp--release-ctxt: not implemented (C primitive)")))
-(defun comp--subr-signature (&rest _args)
-  (signal 'error (list "comp--subr-signature: not implemented (C primitive)")))
-(defun comp-el-to-eln-rel-filename (&rest _args)
-  (signal 'error (list "comp-el-to-eln-rel-filename: not implemented (C primitive)")))
-(defun comp-native-compiler-options-effective-p (&rest _args)
-  (signal 'error (list "comp-native-compiler-options-effective-p: not implemented (C primitive)")))
-(defun comp-native-driver-options-effective-p (&rest _args)
-  (signal 'error (list "comp-native-driver-options-effective-p: not implemented (C primitive)")))
 
 (provide 'subr-x)
 

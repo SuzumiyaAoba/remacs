@@ -138,6 +138,29 @@ fn real_main(args: Vec<String>) {
                     }
                 }
             }
+            "-f" | "--funcall" => {
+                // GNU's `command-line-1': call FUNCTION immediately,
+                // leaving the not-yet-processed args in
+                // `command-line-args-left' for batch functions such as
+                // `batch-native-compile' to consume.
+                idx += 1;
+                if idx < args.len() {
+                    batch = true;
+                    let left: Vec<Value> = args[idx + 1..]
+                        .iter()
+                        .map(|a| Value::string(a.clone()))
+                        .collect();
+                    let lid = i.intern("command-line-args-left");
+                    let _ = i.set_symbol_default(lid, Value::list(left));
+                    let form = format!("(funcall (intern {:?}))", args[idx]);
+                    if !run_batch(&mut i, &form, &args[idx - 1..]) {
+                        batch_exit(&mut i, 255);
+                    }
+                    if i.quit_editor {
+                        std::process::exit(exit);
+                    }
+                }
+            }
             "--script" => {
                 idx += 1;
                 if idx < args.len() {

@@ -444,13 +444,6 @@ pub(crate) static SUBRS: &[Subr] = &[
         "t if OBJECT is compiled."
     ),
     S!(
-        "native-comp-available-p",
-        0,
-        0,
-        f_native_comp_available_p,
-        "t if native compilation is available."
-    ),
-    S!(
         "interactive-p",
         0,
         0,
@@ -3076,9 +3069,6 @@ fn f_compiled_function_p(_i: &mut Interp, args: Vec<Value>) -> EvalResult {
         Value::Lambda(l) => l.bc_items.is_some(),
         _ => false,
     }))
-}
-fn f_native_comp_available_p(_i: &mut Interp, _args: Vec<Value>) -> EvalResult {
-    Ok(Value::Nil)
 }
 fn f_interactive_p(_i: &mut Interp, _args: Vec<Value>) -> EvalResult {
     Ok(Value::Nil)

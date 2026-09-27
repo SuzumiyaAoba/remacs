@@ -11540,7 +11540,11 @@ fn f_commandp(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     }
     Ok(Value::from_bool(match &cmd {
         Value::Lambda(l) => l.interactive.is_some(),
-        Value::Subr(s) => crate::lisp::eval::subr_interactive(s.name).is_some(),
+        Value::Subr(s) => {
+            crate::lisp::eval::subr_interactive(s.name).is_some()
+                || crate::lisp::builtins::comp::native_iform_by_name(s.name)
+                    .is_some()
+        }
         // strings and vectors are keyboard macros — commands.
         Value::Str(_) | Value::Vec(_) => true,
         // `(autoload FILE DOC INTERACTIVE TYPE)': a command when its

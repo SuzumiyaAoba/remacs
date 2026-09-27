@@ -2306,6 +2306,47 @@ explicitly overridden.
                               (nreverse custom-delayed-init-variables)) \
                          (setq custom-delayed-init-variables t))",
             );
+            // GNU's `native-compile'/`native-compile-async' live in
+            // comp.el/comp-run.el over the LIMPLE→libgccjit pipeline.
+            // Remacs compiles through its own cc-driven emitter (see
+            // builtins/comp.rs); bind the public entry points to
+            // wrappers over `comp--remacs-*' subrs so the loaddefs
+            // autoloads for comp.el never pull the GNU pipeline in.
+            let _ = interp.eval_str(
+                "(progn \
+                   (defun native-compile (function-or-file &optional output) \
+                     \"Compile FUNCTION-OR-FILE into native code.\" \
+                     (comp--remacs-native-compile function-or-file output)) \
+                   (defun native-compile-async \
+                          (files &optional recursively load selector) \
+                     \"Compile FILES asynchronously (synchronous in remacs).\" \
+                     (comp--remacs-native-compile-async \
+                      files recursively load selector)) \
+                   (defun native-compile-directory (dir) \
+                     \"Native-compile all .el files under DIR recursively.\" \
+                     (comp--remacs-native-compile-async \
+                      (list dir) t nil nil)) \
+                   (defun batch-native-compile () \
+                     \"Perform batch native compilation of remaining \
+command-line arguments.\" \
+                     (mapc #'native-compile command-line-args-left) \
+                     (kill-emacs)) \
+                   (defun batch-byte+native-compile () \
+                     \"Like `batch-native-compile', but for bootstrap.\" \
+                     (batch-native-compile)) \
+                   (defun native-compile-prune-cache () \
+                     \"Remove *.eln files unusable by this build.\" \
+                     nil) \
+                   (defun emacs-lisp-native-compile () \
+                     \"Native-compile the file visited in the current buffer.\" \
+                     (interactive) \
+                     (native-compile (buffer-file-name))) \
+                   (defun emacs-lisp-native-compile-and-load () \
+                     \"Native-compile the current buffer's file and load it.\" \
+                     (interactive) \
+                     (native-elisp-load \
+                      (native-compile (buffer-file-name)))))",
+            );
         }
         if std::env::var("REMACS_NO_PRELUDE").is_err() {
             // GNU records every dumped library in `load-history'; do the
@@ -7805,6 +7846,9 @@ explicitly overridden.
 /// stored as strings; a leading `(' means the string is an expression to
 /// read and evaluate rather than callint letter codes.
 pub(crate) fn subr_interactive_form(i: &mut Interp, name: &str) -> Option<Value> {
+    if let Some(f) = crate::lisp::builtins::comp::native_iform_by_name(name) {
+        return Some(f);
+    }
     let spec = subr_interactive(name)?;
     // "\u{1}nil" is a sentinel for GNU's `(interactive)' (no argument),
     // which `interactive-form' renders as `(interactive nil)'.

@@ -7,6 +7,7 @@ pub(crate) mod arith;
 pub(crate) mod bidi_table;
 pub(crate) mod charset;
 pub(crate) mod data;
+pub(crate) mod comp;
 pub(crate) mod dbus;
 pub(crate) mod enc_tables;
 pub(crate) mod evalfn;
@@ -91,6 +92,7 @@ fn collect() -> Vec<&'static Subr> {
     v.extend(gnutls::SUBRS);
     v.extend(dbus::SUBRS);
     v.extend(nsgui::SUBRS);
+    v.extend(comp::SUBRS);
     v.extend(crate::lisp::process::SUBRS);
     v
 }
@@ -112,6 +114,7 @@ pub fn install(interp: &mut Interp) {
     filenotify::install(interp);
     gnutls::install(interp);
     dbus::install(interp);
+    comp::install(interp);
     install_aliases(interp);
 }
 
@@ -122,6 +125,7 @@ pub fn register_extlib_features(interp: &mut Interp) {
     filenotify::install(interp);
     gnutls::install(interp);
     dbus::install(interp);
+    comp::install(interp);
 }
 
 fn sf_cannot_call(i: &mut Interp, a: Vec<Value>) -> super::error::EvalResult {

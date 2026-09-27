@@ -14,11 +14,13 @@ fn candidates(dir: &Path, name: &str, nosuffix: bool, mustsuffix: bool) -> Vec<P
     let base = dir.join(name);
     if nosuffix {
         v.push(base);
-    } else if name.ends_with(".el") || name.ends_with(".elc") {
+    } else if name.ends_with(".el") || name.ends_with(".elc") || name.ends_with(".eln") {
         v.push(base);
     } else if mustsuffix {
         // `openp' with a suffix predicate never opens the bare name.
     } else {
+        // GNU prefers the native-compiled file when one exists.
+        v.push(base.with_extension("eln"));
         v.push(base.with_extension("elc"));
         v.push(base.with_extension("el"));
         v.push(base);
@@ -2623,7 +2625,14 @@ pub(crate) fn load_library_opts(
     let result = match locate_opts(i, name, nosuffix, mustsuffix) {
         Some(path) => {
             announce(i, &path);
-            eval_file_lex_dumped(i, &path, false, bundled).map(|_| true)
+            if path.ends_with(".eln") {
+                // Native-compiled unit: register via dlopen instead of
+                // evaluating source.
+                crate::lisp::builtins::comp::native_load_file(i, &path)
+                    .map(|_| true)
+            } else {
+                eval_file_lex_dumped(i, &path, false, bundled).map(|_| true)
+            }
         }
         // Fall back to the embedded copy of a built-in library, so that
         // autoloads work even when the lisp/ dir isn't reachable by path.
