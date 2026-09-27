@@ -11584,6 +11584,9 @@ Keywords supported:  :test :test-not :key"
          ,pl
        (setq ,pl (cons ,el ,pl)))))
 
+;;Remacs: GNU cl-macs block mechanism — the catch tag is a fresh cons
+;;bound to the --cl-block-NAME-- variable, so `cl-return-from' outside a
+;;block evaluates the unbound variable and signals `void-variable'.
 (defmacro cl-block (name &rest body)
   "Define a lexically-scoped block named NAME.
 NAME may be any symbol.  Code inside the BODY forms can call `cl-return-from'
@@ -11594,9 +11597,21 @@ dynamically scoped:  Only references to it within BODY will work.  These
 references may appear inside macro expansions, but not inside functions
 called from BODY."
   (declare (indent 1) (debug (symbolp body)))
-  ;; GNU uses a fresh cons tag via macroexpand-all-environment; the
-  ;; mangled symbol achieves the same for non-shadowed uses.
-  `(catch ',(intern (format "--cl-block-%s--" name)) ,@body))
+  (if (cl--safe-expr-p `(progn ,@body)) `(progn ,@body)
+    (let ((var (intern (format "--cl-block-%s--" name))))
+      `(cl--block-wrapper
+        (let ((,var (cons ',var nil)))
+          (catch ,var ,@body))))))
+
+;;Remacs: GNU's cl--block-wrapper is a compiler-macro that strips unused
+;;wrappers; interpreted, it just expands to the wrapped form.
+(defmacro cl--block-wrapper (form)
+  form)
+
+;;Remacs: GNU emits (throw TAG VAL) with TAG evaluated — outside a
+;;`cl-block' the tag variable is unbound (`void-variable').
+(defmacro cl--block-throw (cl-tag cl-value)
+  `(throw ,cl-tag ,cl-value))
 
 (defmacro cl-return-from (name &optional result)
   "Return from the block named NAME.
@@ -11605,7 +11620,8 @@ returning RESULT from that form (or nil if RESULT is omitted).
 This is compatible with Common Lisp, but note that `defun' and
 `defmacro' do not create implicit blocks as they do in Common Lisp."
   (declare (indent 1) (debug (symbolp &optional form)))
-  `(throw ',(intern (format "--cl-block-%s--" name)) ,result))
+  (let ((name2 (intern (format "--cl-block-%s--" name))))
+    `(cl--block-throw ,name2 ,result)))
 
 (defmacro cl-return (&optional result)
   "Return from the block named nil.
@@ -16125,7 +16141,17 @@ To define new types, see `cl-deftype'."
   ;; arglist of gensym placeholders plus destructuring/keyword
   ;; extraction forms wrapping (cl-block NAME ...).
   (let ((eargs nil) (lets nil) (keys nil) (kws nil) (aux nil)
-        (restsym nil) (state 'req) (allow-other nil))
+        (restsym nil) (state 'req) (allow-other nil)
+        (defs nil))
+    ;; `&cl-defs (DEF . DEFS)': GNU strips the marker and its
+    ;; default-default spec from the arglist; DEF supplies the
+    ;; default for &optional args that don't name one (oclosure's
+    ;; generated copiers put an `absent' marker there).
+    (let ((p (memq '&cl-defs args)))
+      (when p
+        (setq defs (cadr p))
+        (setq args (delq '&cl-defs (cl-copy-list args)))
+        (setq args (delq defs args))))
     (dolist (a args)
       (cond
        ((eq a '&optional) (setq state 'opt))
@@ -16171,7 +16197,13 @@ To define new types, see `cl-deftype'."
           (push (list (if (eq state 'req) a (car a)) g) lets)))
        (t (when (and (eq state 'opt) (not (memq '&optional eargs)))
             (push '&optional eargs))
-         (push a eargs))))
+          ;; &cl-defs' DEF is the default for optional args without
+          ;; their own (a bare symbol or a (VAR) singleton spec).
+          (push (if (and (eq state 'opt) defs
+                         (or (symbolp a) (null (cdr-safe a))))
+                    (list (if (consp a) (car a) a) defs)
+                  a)
+                eargs))))
     (if (and (null lets) (null keys) (null aux) (not (consp restsym)))
         ;; Plain arglist — just add the cl-block wrapper.
         `(,kind ,name ,args (cl-block ,name ,@body))
@@ -16721,13 +16753,23 @@ NAME and the slots, as in GNU's `cl-defstruct'."
          (base (if named 1 0))
          (snames (mapcar (lambda (x) (if (consp x) (car x) x)) slots))
          (sdefs (mapcar (lambda (x) (and (consp x) (cadr x))) slots))
-         (ctspecs (let ((cs nil))
+         ;; GNU `cl-defstruct': `make-NAME' is always defined unless a
+         ;; (:constructor NAME ARGLIST) names it, (:constructor nil)
+         ;; suppresses it, or (:constructor NAME) renames it; a bare
+         ;; (:constructor) leaves it in place.
+         (ctspecs (let ((ctor (intern (concat "make-" (symbol-name n))))
+                        (cs nil))
                     (dolist (o opts)
                       (when (and (consp o) (eq (car o) :constructor))
-                        (push (cdr o) cs)))
-                    (or (nreverse cs)
-                        (list (list (intern (concat "make-"
-                                                    (symbol-name n))))))))
+                        (let ((a (cdr o)))
+                          (cond ((cdr a)
+                                 (when (eq (car a) ctor)
+                                   (setq ctor nil))
+                                 (push a cs))
+                                (a (setq ctor (car a)))))))
+                    (when ctor
+                      (push (list ctor) cs))
+                    (nreverse cs)))
          (defs nil)
          (mk (cond ((eq type 'list) 'list)
                    ((eq type 'vector) 'vector)
@@ -17418,7 +17460,7 @@ nconc, sum, count, maximize, minimize, return, initially, finally."
     initially finally from to upto below downto above upfrom
     downfrom in on across by = then and it being the elements
     hash-key hash-keys hash-value hash-values of each using
-    thereis always never into))
+    thereis always never into named))
 
 (defun cl--loop-destruct-accessors (pat acc)
   "Return list of (VAR . ACCESSOR-FORM) destructuring PAT under ACC."
@@ -17590,12 +17632,16 @@ dynamically during expansion.")
 (defun cl--loop-expand (clauses)
   (let ((inits nil) (initially nil) (pretests nil) (pre nil)
         (steps nil) (body nil) (finally nil) (finret nil)
-        (kinds nil) (i 0) (n (length clauses)))
+        (kinds nil) (i 0) (n (length clauses)) (loop-name nil))
     (setq cl--loop--into-vars nil)
     (while (< i n)
       (let ((kw (nth i clauses)))
         (cond
-         ((memq kw '(for as))
+         ((eq kw 'named)
+          ;; GNU: `named NAME' wraps the loop in (cl-block NAME ...) so
+          ;; `cl-return-from NAME' exits it.
+          (setq loop-name (nth (1+ i) clauses) i (+ i 2)))
+         ((memq kw '(for as each))
           ;; for VAR <iter> [and VAR <iter>]*
           (let ((var nil))
             (setq i (1+ i))
@@ -17608,6 +17654,12 @@ dynamically during expansion.")
                        (dsetqs (nth 2 dv))
                        (op (nth i clauses)))
                   (setq i (1+ i))
+                  ;; GNU: after FOR VAR, `being' and then `the'/`each'
+                  ;; are optional prefixes on the iteration keyword.
+                  (when (eq op 'being)
+                    (setq op (nth i clauses) i (1+ i)))
+                  (when (memq op '(the each))
+                    (setq op (nth i clauses) i (1+ i)))
                   (cond
                    ((memq op '(in on in-ref))
                     ;; `in-ref' binds VAR as a place into the list in
@@ -17660,57 +17712,51 @@ dynamically during expansion.")
                         (if then
                             (push `(progn ,@dsetqs) steps)
                           (push `(progn ,@dsetqs) pre)))))
-                   ((eq op 'being)
-                    (when (eq (nth i clauses) 'the) (setq i (1+ i)))
-                    (let ((what (nth i clauses)))
-                      (cond
-                       ((memq what '(elements element))
-                        (setq i (1+ i))
-                        (when (eq (nth i clauses) 'of) (setq i (1+ i)))
-                        (let ((v (gensym)) (ix (gensym)))
-                          (setq inits
-                                (append inits (list (list v (nth i clauses))
-                                                    (list ix 0)
-                                                    (list rvar nil))
+                   ((memq op '(elements element))
+                    (when (eq (nth i clauses) 'of) (setq i (1+ i)))
+                    (let ((v (gensym)) (ix (gensym)))
+                      (setq inits
+                            (append inits (list (list v (nth i clauses))
+                                                (list ix 0)
+                                                (list rvar nil))
                                           dbinds))
-                          (push `(< ,ix (length ,v)) pretests)
-                          (push `(setq ,rvar (aref ,v ,ix)) pre)
-                          (when dsetqs (push `(progn ,@dsetqs) pre))
-                          (push `(setq ,ix (1+ ,ix)) steps)
-                          (setq i (1+ i))))
-                       ;; GNU: `for VAR being the hash-keys of TABLE
-                       ;; [using (hash-values VAR2)]' (and vice versa).
-                       ((memq what '(hash-key hash-keys hash-value
-                                              hash-values))
-                        (setq i (1+ i))
-                        (when (memq (nth i clauses) '(of in))
-                          (setq i (1+ i)))
-                        (let ((src (nth i clauses))
-                              (pl (gensym)) (other nil))
-                          (setq i (1+ i))
-                          (when (eq (nth i clauses) 'using)
-                            (setq other (cadr (nth (1+ i) clauses))
-                                  i (+ i 2)))
-                          (setq inits
-                                (append inits
-                                        (list
-                                         (list pl `(cl--loop-hash-pairs ,src))
-                                         (list rvar nil))
-                                        dbinds
-                                        (and other (list (list other nil)))))
-                          (push `(consp ,pl) pretests)
-                          (push (if (memq what '(hash-key hash-keys))
-                                    `(progn (setq ,rvar (caar ,pl))
-                                            ,@(when other
-                                                (list `(setq ,other
-                                                             (cdar ,pl)))))
-                                  `(progn (setq ,rvar (cdar ,pl))
-                                          ,@(when other
-                                              (list `(setq ,other
-                                                           (caar ,pl))))))
-                                pre)
-                          (when dsetqs (push `(progn ,@dsetqs) pre))
-                          (push `(setq ,pl (cdr ,pl)) steps))))))
+                      (push `(< ,ix (length ,v)) pretests)
+                      (push `(setq ,rvar (aref ,v ,ix)) pre)
+                      (when dsetqs (push `(progn ,@dsetqs) pre))
+                      (push `(setq ,ix (1+ ,ix)) steps)
+                      (setq i (1+ i))))
+                   ;; GNU: `for VAR [being] [the|each] hash-keys of
+                   ;; TABLE [using (hash-values VAR2)]' (and vice versa).
+                   ((memq op '(hash-key hash-keys hash-value
+                                        hash-values))
+                    (when (memq (nth i clauses) '(of in))
+                      (setq i (1+ i)))
+                    (let ((src (nth i clauses))
+                          (pl (gensym)) (other nil))
+                      (setq i (1+ i))
+                      (when (eq (nth i clauses) 'using)
+                        (setq other (cadr (nth (1+ i) clauses))
+                              i (+ i 2)))
+                      (setq inits
+                            (append inits
+                                    (list
+                                     (list pl `(cl--loop-hash-pairs ,src))
+                                     (list rvar nil))
+                                    dbinds
+                                    (and other (list (list other nil)))))
+                      (push `(consp ,pl) pretests)
+                      (push (if (memq op '(hash-key hash-keys))
+                                `(progn (setq ,rvar (caar ,pl))
+                                        ,@(when other
+                                            (list `(setq ,other
+                                                         (cdar ,pl)))))
+                              `(progn (setq ,rvar (cdar ,pl))
+                                      ,@(when other
+                                          (list `(setq ,other
+                                                       (caar ,pl))))))
+                            pre)
+                      (when dsetqs (push `(progn ,@dsetqs) pre))
+                      (push `(setq ,pl (cdr ,pl)) steps)))
                    ((memq op '(from upfrom downfrom below above
                                   to upto downto))
                     (let ((down (memq op '(downfrom downto)))
@@ -17835,7 +17881,7 @@ dynamically during expansion.")
                     (mapcar (lambda (v) (list (car v) (if (cdr v) 0 nil)))
                             cl--loop--into-vars))
        (catch 'cl--loop
-         (cl-block nil
+         (cl-block ,loop-name
            ,@(nreverse initially)
            (catch 'cl--loop-finish
              (while (and ,@(nreverse pretests))
