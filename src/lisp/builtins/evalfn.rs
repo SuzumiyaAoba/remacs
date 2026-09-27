@@ -2363,6 +2363,23 @@ pub(crate) fn autoload_do_load(i: &mut Interp, fundef: Value, macro_only: bool) 
             return Ok(hidden);
         }
         if loading_same {
+            if std::env::var_os("REMACS_TRACE_ERR").is_some() {
+                eprintln!(
+                    "=== recursive autoload of {} for {}; last 30 frames ===",
+                    name,
+                    i.symbol_name(id)
+                );
+                for (f, a) in i.lisp_stack.iter().rev().take(30).rev() {
+                    eprintln!(
+                        "  {} {}",
+                        i.princ_to_string(f).chars().take(80).collect::<String>(),
+                        i.princ_to_string(&Value::list(a.clone()))
+                            .chars()
+                            .take(120)
+                            .collect::<String>()
+                    );
+                }
+            }
             return Err(i.error(format!(
                 "Autoloading file {} recursively for {}",
                 name,
@@ -2381,6 +2398,24 @@ pub(crate) fn autoload_do_load(i: &mut Interp, fundef: Value, macro_only: bool) 
     } else if loading_same {
         return Err(i.error(format!("Autoloading file {name} recursively")));
     }
+    // If the target's feature is already provided, the file's real
+    // definitions ran before the loaddefs pass reinstalled this
+    // autoload cell — loading it again would just re-evaluate the
+    // file.  The dump-time stash holds the definition GNU's .elc
+    // would have installed; resolve through it directly.
+    let feat = i.intern(&stem(&name));
+    if i.features.contains(&feat) {
+        if let Some(id) = owner {
+            let pk = i.intern("remacs--dump-fn");
+            let hidden = i.get_prop(id, pk);
+            if !hidden.is_nil()
+                && !matches!(hidden, Value::Sym(s) if s == crate::lisp::sym::UNBOUND)
+            {
+                i.fset(id, hidden.clone());
+                return Ok(hidden);
+            }
+        }
+    }
     let _ = crate::lisp::load::load_library(i, &name)?;
     match owner {
         Some(id) => {
@@ -2394,13 +2429,15 @@ pub(crate) fn autoload_do_load(i: &mut Interp, fundef: Value, macro_only: bool) 
                 // Some autoload cells point at a reduced source whose
                 // GNU .elc equivalent defines the function inline.  If
                 // the dump-time definition was stashed for -Q parity,
-                // keep the public autoload cell but use that definition
-                // for this call rather than failing the autoload.
+                // install it: GNU resolves an autoload cell once, so
+                // leaving it in place would reload the file on every
+                // call (each interpreted load costs ~0.4s).
                 let pk = i.intern("remacs--dump-fn");
                 let hidden = i.get_prop(id, pk);
                 if !hidden.is_nil()
                     && !matches!(hidden, Value::Sym(s) if s == crate::lisp::sym::UNBOUND)
                 {
+                    i.fset(id, hidden.clone());
                     return Ok(hidden);
                 }
                 return Err(i.error(format!(

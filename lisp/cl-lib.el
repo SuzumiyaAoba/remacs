@@ -46,9 +46,13 @@ Keywords supported:  :test :test-not :key
                cl-nth-value cl-oddp cl-pairlis cl-plusp cl-proclaim
                cl-pushnew cl-rest cl-second cl-seventh cl-sixth cl-svref
                cl-tenth cl-third cl-values cl-values-list))
-  (unless (fboundp sym)
-    (let ((def (get sym 'remacs--dump-fn)))
-      (when def (fset sym def)))))
+  ;;Remacs: an (autoload ...) cell still needs the stash restored —
+  ;; `fboundp' counts it as bound, which left the cell in place and
+  ;; made every call reload this file.
+  (let ((cell (and (fboundp sym) (symbol-function sym))))
+    (when (or (null cell) (eq (car-safe cell) 'autoload))
+      (let ((def (get sym 'remacs--dump-fn)))
+        (when def (fset sym def))))))
 
 ;; These are aliases in GNU, not independent subrs/lambdas.
 (defalias 'cl-evenp #'evenp)

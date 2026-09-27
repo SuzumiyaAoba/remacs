@@ -28,9 +28,13 @@
                cl-symbol-macrolet cl-tagbody cl-the
                cl-type--pcase-macroexpander cl-typecase cl-typep
                cl-with-accessors cl-with-gensyms))
-  (unless (fboundp sym)
-    (let ((def (get sym 'remacs--dump-fn)))
-      (when def (fset sym def)))))
+  ;;Remacs: an (autoload ...) cell still needs the stash restored —
+  ;; `fboundp' counts it as bound, which left the cell in place and
+  ;; made every call reload this file.
+  (let ((cell (and (fboundp sym) (symbol-function sym))))
+    (when (or (null cell) (eq (car-safe cell) 'autoload))
+      (let ((def (get sym 'remacs--dump-fn)))
+        (when def (fset sym def))))))
 
 ;;; Predicates for analyzing Lisp forms (GNU cl-macs.el).
 
