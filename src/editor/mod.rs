@@ -4442,7 +4442,17 @@ fn copy_keymap_elem(i: &Interp, v: &Value, depth: usize) -> Value {
                 copy_keymap_elem(i, &cdr, depth + 1),
             )
         }
-        Value::Record(r) if crate::lisp::builtins::misc::is_char_table(i, v) => {
+        Value::Record(r)
+            if crate::lisp::builtins::misc::is_char_table(i, v)
+                || i
+                    .intern_soft("sub-char-table")
+                    .map(|tag| crate::lisp::builtins::misc::is_sub_ct_tag(tag, v))
+                    .unwrap_or(false) =>
+        {
+            // GNU copies a char-table's whole trie; the leaf
+            // `sub-char-table' records must detach too or an `aset' on
+            // the copy leaks into the original (calc-ext.el's
+            // `copy-keymap esc-map' then `aset' clobbered esc-map).
             let items: Vec<Value> = r
                 .borrow()
                 .iter()
@@ -12023,15 +12033,22 @@ pub(crate) fn re_syntax(i: &Interp) -> impl Fn(char) -> u8 + 'static {
 /// reports whether C's set in the current buffer's `category-table'
 /// (falling back to `standard-category-table') has BIT set.
 pub(crate) fn re_category(i: &Interp) -> impl Fn(char, u8) -> bool + 'static {
+    // try_borrow: several regexp call sites invoke us while the buffer
+    // is mutably borrowed (mid-edit); fall back to the standard table
+    // rather than panic.
     let cb: Option<std::rc::Rc<std::cell::RefCell<Vec<Value>>>> = i
         .current_buffer_ref()
-        .and_then(|b| b.borrow().category_table.clone())
+        .and_then(|b| {
+            b.try_borrow()
+                .ok()
+                .and_then(|bb| bb.category_table.clone())
+        })
         .or_else(|| i.standard_category_table.clone())
         .and_then(|v| crate::lisp::builtins::misc::char_table_vec(&v));
     let tag = i.intern_soft("sub-char-table");
     move |c, bit| {
         let Some(cb) = &cb else { return false };
-        let cb = cb.borrow();
+        let Ok(cb) = cb.try_borrow() else { return false };
         let v = crate::lisp::builtins::misc::ct_raw_tag(tag, &cb, c as u32, false);
         match v {
             Value::Record(r) => {
@@ -12115,17 +12132,33 @@ impl Syn {
                     }
                 }
             }
-            // Collect `syntax-table' property ranges.
+            // Collect `syntax-table' property ranges, newest first
+            // (last write wins like `prop_at').  GNU's
+            // `lookup_char_property' falls back to the `category'
+            // symbol's plist when the prop isn't set directly —
+            // cc-mode marks template parens that way — so collect
+            // category-derived `syntax-table' values into a second
+            // list consulted only after the direct ones.
             let stid = i.intern("syntax-table");
+            let catid = i.intern("category");
             let buf = cur(i);
             let bb = buf.borrow();
-            for tp in &bb.text_props {
+            let mut cat_ranges = Vec::new();
+            for tp in bb.text_props.iter().rev() {
                 if tp.prop == stid {
                     if let Value::Cons(_) = tp.value {
                         prop_ranges.push((tp.start, tp.end, tp.value.clone()));
                     }
+                } else if tp.prop == catid {
+                    if let Value::Sym(cs) = tp.value {
+                        let v = i.get_prop(cs, stid);
+                        if let Value::Cons(_) = v {
+                            cat_ranges.push((tp.start, tp.end, v));
+                        }
+                    }
                 }
             }
+            prop_ranges.append(&mut cat_ranges);
         }
         Self {
             entries: syntax_table_entries(i),
