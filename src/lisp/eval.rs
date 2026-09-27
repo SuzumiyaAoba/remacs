@@ -212,6 +212,23 @@ pub struct Interp {
     /// dumped function's ordinary runtime calls still see GNU's void
     /// function cells.
     pub macroexp_call_depth: usize,
+    /// Macro expansion cache: call-site cons pointer -> (generation,
+    /// fn cell, expansion, pin).  GNU re-expands macro forms on every
+    /// interpreted evaluation, which is fine when the code is actually
+    /// byte-compiled; remacs interprets the dumped libraries, so a
+    /// `cl-typep'/`pcase' inside a hot function (eieio-core's
+    /// `eieio-oref-default') re-expanded per call makes `defclass'
+    /// take seconds.  The pin holds the call-site cons alive so its
+    /// `Rc' pointer stays unique.  Entries validate on the current
+    /// `macro_gen' plus `eq' identity of the resolved fn cell.
+    pub macro_cache: std::collections::HashMap<usize, (u64, Value, Value, Value)>,
+    /// Generation counter bumped by `fset'/`put_prop'/`setplist'/
+    /// `fmakunbound' — any global change that could alter expansion
+    /// output (expanders consult symbol properties like
+    /// `pcase-defmacro', `cl-deftype-satisfies', compiler macros).
+    /// Cheap coarse invalidation: entries only re-expand once per
+    /// generation.
+    pub macro_gen: u64,
     /// GNU's `noninteractive_need_newline`: set when batch stdout was
     /// written, so the next stderr message is preceded by a newline.
     pub stderr_need_newline: bool,
@@ -709,6 +726,8 @@ impl Interp {
             loading_dumped: false,
             dumped_call_depth: 0,
             macroexp_call_depth: 0,
+            macro_cache: std::collections::HashMap::new(),
+            macro_gen: 0,
             stderr_need_newline: false,
             out_last_char: None,
             frames: Vec::new(),
@@ -2826,6 +2845,7 @@ command-line arguments.\" \
             Value::Lambda(l) if l.is_macro => Value::cons(Value::Sym(sym::MACRO), def.clone()),
             _ => def,
         };
+        self.macro_gen += 1;
         self.obarray.symbol_mut(id).function = def;
     }
 
@@ -2837,6 +2857,7 @@ command-line arguments.\" \
 
     /// `put` — set symbol property, returns value.
     pub fn put_prop(&mut self, id: SymId, prop: SymId, val: Value) {
+        self.macro_gen += 1;
         let plist = self.obarray.symbol(id).plist.clone();
         let new_plist = plist_put(&plist, prop, val);
         self.obarray.symbol_mut(id).plist = new_plist;
@@ -2977,6 +2998,27 @@ command-line arguments.\" \
     /// `(signal sym data-list-from-vec)`.
     pub fn signal_data(&self, sym_id: SymId, data: Vec<Value>) -> Flow {
         *self.last_error_stack.borrow_mut() = self.lisp_stack.clone();
+        if let Some(filter) = std::env::var("REMACS_BT_ERR").ok() {
+            let rendered = self
+                .prin1_to_string(&Value::list(data.clone()))
+                .chars()
+                .take(160)
+                .collect::<String>();
+            let shown = format!("{} {}", self.symbol_name(sym_id), rendered);
+            if filter == "1" || shown.contains(&filter) {
+                eprintln!("=== SIGNAL {shown} ===");
+                for (f, a) in self.lisp_stack.iter().rev().take(30).rev() {
+                    eprintln!(
+                        "  {} {}",
+                        self.princ_to_string(f).chars().take(80).collect::<String>(),
+                        self.princ_to_string(&Value::list(a.clone()))
+                            .chars()
+                            .take(100)
+                            .collect::<String>()
+                    );
+                }
+            }
+        }
         Flow::Signal(Value::Sym(sym_id), Value::list(data), false)
     }
 
@@ -3299,6 +3341,21 @@ command-line arguments.\" \
     }
 
     fn eval_inner(&mut self, form: &Value) -> EvalResult {
+        if cfg!(debug_assertions) && std::env::var("REMACS_EVAL_WATCH").is_ok() {
+            static N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+            let n = N.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            if n > 0 && n % 20_000_000 == 0 {
+                let names: Vec<String> = self
+                    .lisp_stack
+                    .iter()
+                    .rev()
+                    .take(30)
+                    .map(|(f, _)| self.prin1_to_string(f))
+                    .collect();
+                eprintln!("EVAL-WATCH n={n} stack={names:?}");
+                eprintln!("EVAL-WATCH form={}", self.prin1_to_string(form));
+            }
+        }
         match form {
             Value::Nil => Ok(Value::Nil),
             Value::Int(_)
@@ -3392,6 +3449,40 @@ command-line arguments.\" \
                     if *s == sym::UNBOUND {
                         return Err(self.signal_data(sym::VOID_FUNCTION, vec![Value::Sym(id)]));
                     }
+                }
+                // Macro call: GNU's evaluator re-expands the form on
+                // every call, but its dumped libraries run
+                // byte-compiled so expansion happens once at compile
+                // time.  remacs interprets them — caching the
+                // expansion on the call-site cons cell (invalidated
+                // by `macro_gen' and the fn cell's identity) keeps
+                // interpreted cl-*/pcase/eieio code usable.
+                if self.is_macro_function(&fun) {
+                    let key = Rc::as_ptr(cons) as usize;
+                    if let Some((stamp, fncell, expansion, _pin)) = self.macro_cache.get(&key) {
+                        // `(macro . f)' cells are mutated in place by
+                        // nadvice's gv machinery, so compare the cdr
+                        // too, not just the cons identity.
+                        let same_fn = match (&fun, fncell) {
+                            (Value::Cons(a), Value::Cons(b)) => {
+                                let (aa, bb) = (a.borrow(), b.borrow());
+                                crate::lisp::builtins::eq_values(&aa.car, &bb.car)
+                                    && crate::lisp::builtins::eq_values(&aa.cdr, &bb.cdr)
+                            }
+                            _ => crate::lisp::builtins::eq_values(&fun, fncell),
+                        };
+                        if *stamp == self.macro_gen && same_fn {
+                            let expansion = expansion.clone();
+                            return self.eval(&expansion);
+                        }
+                    }
+                    let expansion = self.macro_expand_call(&fun, &args)?;
+                    if self.macro_cache.len() >= 262144 {
+                        self.macro_cache.clear();
+                    }
+                    self.macro_cache
+                        .insert(key, (self.macro_gen, fun, expansion.clone(), form.clone()));
+                    return self.eval(&expansion);
                 }
                 self.call_function(&fun, &args, Some(id))
             }

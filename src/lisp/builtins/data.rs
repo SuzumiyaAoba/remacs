@@ -965,6 +965,7 @@ fn f_text_quoting_style(i: &mut Interp, _args: Vec<Value>) -> EvalResult {
 }
 fn f_fmakunbound(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     let id = want_sym(i, &args[0])?;
+    i.macro_gen += 1;
     i.obarray.symbol_mut(id).function = Value::Sym(sym::UNBOUND);
     Ok(args[0].clone())
 }
@@ -981,6 +982,7 @@ fn f_put(i: &mut Interp, args: Vec<Value>) -> EvalResult {
 }
 fn f_setplist(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     let id = want_sym(i, &args[0])?;
+    i.macro_gen += 1;
     i.obarray.symbol_mut(id).plist = args[1].clone();
     Ok(args[1].clone())
 }
