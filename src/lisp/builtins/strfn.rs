@@ -2731,9 +2731,64 @@ fn f_make_char(i: &mut Interp, args: Vec<Value>) -> EvalResult {
 }
 
 fn f_split_char(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    let ch = want_int(i, &args[0])?;
-    let cs = i.intern(if ch < 0x80 { "ascii" } else { "unicode" });
-    Ok(Value::list(vec![Value::Sym(cs), Value::Int(ch)]))
+    // GNU `split_char': (CHARSET . CODE-ELEMENTS) where CHARSET is the
+    // `char-charset' winner and the elements are the charset's
+    // code-space decomposition (JIS row/cell, eight-bit raw byte).
+    let ch = match &args[0] {
+        Value::Int(n) if (0..=0x3FFFFF).contains(n) => *n,
+        other => return Err(i.wrong_type_mut("characterp", other)),
+    };
+    let u = ch as u32;
+    if (0x3FFF80..=0x3FFFFF).contains(&u) {
+        let cs = i.intern("eight-bit");
+        return Ok(Value::list(vec![
+            Value::Sym(cs),
+            Value::Int(ch - 0x3FFF00),
+        ]));
+    }
+    let name = char_charset_of(ch).unwrap_or("unicode");
+    let cs = i.intern(name);
+    match name {
+        "ascii" => Ok(Value::list(vec![Value::Sym(cs), Value::Int(ch)])),
+        "japanese-jisx0212" => {
+            // euc-jp SS2 entry: 0x8F row+0x80 cell+0x80.
+            let codes = super::enc_tables::ENC_EUC_JP
+                .binary_search_by_key(&u, |&(x, _)| x)
+                .ok()
+                .map(|ix| super::enc_tables::ENC_EUC_JP[ix].1)
+                .filter(|&packed| (packed >> 56) >= 3);
+            match codes {
+                Some(packed) => Ok(Value::list(vec![
+                    Value::Sym(cs),
+                    Value::Int(((packed >> 40) & 0xFF) as i128 - 0x80),
+                    Value::Int(((packed >> 32) & 0xFF) as i128 - 0x80),
+                ])),
+                None => Ok(Value::list(vec![Value::Sym(cs), Value::Int(ch)])),
+            }
+        }
+        "japanese-jisx0208" | "japanese-jisx0208-1978" => {
+            let codes = super::enc_tables::ENC_SHIFT_JIS
+                .binary_search_by_key(&u, |&(x, _)| x)
+                .ok()
+                .map(|ix| super::enc_tables::ENC_SHIFT_JIS[ix].1)
+                .filter(|&packed| (packed >> 56) >= 2);
+            match codes {
+                Some(packed) => {
+                    let sjis =
+                        ((packed >> 40) & 0xFFFF) as i64;
+                    let (j1, j2) =
+                        super::charset::sjis_to_jis(sjis);
+                    Ok(Value::list(vec![
+                        Value::Sym(cs),
+                        Value::Int(j1 as i128),
+                        Value::Int(j2 as i128),
+                    ]))
+                }
+                None => Ok(Value::list(vec![Value::Sym(cs), Value::Int(ch)])),
+            }
+        }
+        _ => Ok(Value::list(vec![Value::Sym(cs), Value::Int(ch)])),
+    }
 }
 
 fn f_encode_char(i: &mut Interp, args: Vec<Value>) -> EvalResult {
@@ -2867,6 +2922,11 @@ fn f_char_charset(i: &mut Interp, args: Vec<Value>) -> EvalResult {
         Some(v) => charset_restriction(i, v)?,
     };
     if restriction.is_empty() {
+        // GNU's internal eight-bit chars (0x3FFF80-0x3FFFFF) report
+        // `eight-bit'; the generated winner table only spans Unicode.
+        if (0x3FFF80..=0x3FFFFF).contains(&(ch as u32)) {
+            return Ok(Value::Sym(i.intern("eight-bit")));
+        }
         let name = char_charset_of(ch).unwrap_or("unicode");
         return Ok(Value::Sym(i.intern(name)));
     }

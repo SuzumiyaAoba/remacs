@@ -3771,7 +3771,124 @@ explicitly overridden.
         r
     }
 
+    /// Dispatch for `#[ARGDESC BYTE-CODE CONSTANTS DEPTH FILE]' literals
+    /// read from the dumped uni-*.el char-table extra slots.  GNU runs
+    /// the embedded byte-code (unidata-gen.el's `unidata-get-*'/
+    /// `unidata-put-*'/describe helpers); we route each of the three
+    /// emitted shapes to the native equivalents in builtins::charset.
+    /// Returns None for any unrecognized shape so ordinary arity
+    /// checking reports the usual error.
+    fn unidata_bc_dispatch(&mut self, l: &Rc<Lambda>, argv: &[Value]) -> Option<EvalResult> {
+        if !matches!(&l.arglist, Some(Value::Int(_))) {
+            return None;
+        }
+        let items = l.bc_items.as_ref()?.borrow();
+        let consts = match items.get(2) {
+            Some(Value::Vec(v)) => v.borrow().clone(),
+            _ => return None,
+        };
+        let cts = self.intern("char-table-extra-slot");
+        if argv.len() == 3 {
+            let (ch, raw, tbl) = (&argv[0], &argv[1], &argv[2]);
+            let Value::Int(n) = ch else { return None };
+            if !crate::lisp::builtins::misc::is_char_table(self, tbl) {
+                return None;
+            }
+            if consts.len() == 3
+                && matches!(consts[0], Value::Int(0))
+                && matches!(&consts[1], Value::Sym(s) if *s == cts)
+                && matches!(consts[2], Value::Int(1))
+            {
+                // `unidata-put-decomposition'/`unidata-put-name': flush
+                // the compressed block through the slot-1 getter first,
+                // then store VAL verbatim.
+                let cur = crate::lisp::builtins::misc::char_table_ref(
+                    self,
+                    tbl,
+                    (*n).max(0) as usize,
+                );
+                if let Value::Str(s) = &cur {
+                    if s.borrow().chars().next() == Some('\0') {
+                        let _ = crate::lisp::builtins::charset::uniprop_lookup(
+                            self,
+                            tbl,
+                            (*n).max(0) as u32,
+                            cur.clone(),
+                        );
+                    }
+                }
+                crate::lisp::builtins::misc::ct_set(
+                    self,
+                    tbl,
+                    (*n).max(0) as u32,
+                    raw.clone(),
+                );
+                return Some(Ok(raw.clone()));
+            }
+            // `unidata-get-decomposition'/`unidata-get-name' & kin:
+            // decode RAW through the table's slot-1 machinery (keyed on
+            // the property name in slot 0).
+            if consts.iter().any(|c| matches!(c, Value::Sym(s) if *s == cts)) {
+                return Some(Ok(crate::lisp::builtins::charset::uniprop_lookup(
+                    self,
+                    tbl,
+                    (*n).max(0) as u32,
+                    raw.clone(),
+                )));
+            }
+            return None;
+        }
+        if argv.len() == 1 {
+            if consts.is_empty() {
+                return None;
+            }
+            let mconcat = self.intern("mapconcat");
+            if matches!(&consts[0], Value::Sym(s) if *s == mconcat) {
+                // `unidata-describe-decomposition': (mapconcat INNER
+                // VAL " ") where INNER renders symbols by name and
+                // characters as 'C' (compose-string display aside).
+                let parts: Vec<String> = argv[0]
+                    .list_to_vec()
+                    .unwrap_or_default()
+                    .iter()
+                    .map(|x| match x {
+                        Value::Sym(s) => self.symbol_name(*s),
+                        Value::Int(n) => char::from_u32((*n).max(0) as u32)
+                            .map(|c| format!("'{}'", c))
+                            .unwrap_or_default(),
+                        _ => self.prin1_to_string(x),
+                    })
+                    .collect();
+                return Some(Ok(Value::string(parts.join(" "))));
+            }
+            // `unidata-describe-*' alist lookups: (cdr (assq VAL ALIST)).
+            let alist = consts.first()?;
+            if matches!(alist, Value::Cons(_) | Value::Vec(_)) {
+                let v = argv[0].clone();
+                let elems: Vec<Value> = match alist {
+                    Value::Cons(_) => alist.list_to_vec().unwrap_or_default(),
+                    Value::Vec(vv) => vv.borrow().clone(),
+                    _ => Vec::new(),
+                };
+                for e in elems {
+                    if let Value::Cons(p) = &e {
+                        if crate::lisp::builtins::eq_values(&p.borrow().car, &v) {
+                            return Some(Ok(p.borrow().cdr.clone()));
+                        }
+                    }
+                }
+                return Some(Ok(Value::Nil));
+            }
+        }
+        None
+    }
+
     fn call_lambda_inner(&mut self, l: &Rc<Lambda>, argv: Vec<Value>, shown: &Value) -> EvalResult {
+        if l.bc_items.is_some() {
+            if let Some(r) = self.unidata_bc_dispatch(l, &argv) {
+                return r;
+            }
+        }
         // Arity.
         let (min, max_ok) = (l.required.len(), l.rest.is_some());
         if argv.len() < min || (!max_ok && argv.len() > min + l.optional.len()) {

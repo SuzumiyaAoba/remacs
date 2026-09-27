@@ -651,7 +651,7 @@ fn unidata_get_name(i: &mut Interp, ch: u32, raw: &Value, tbl: &Value) -> Value 
 /// natively here keyed on the property name in extra slot 0 —
 /// while fixnum extra slot 1 selects a C decoder (0 = run-length
 /// through the extra-slot-4 value vector).
-fn uniprop_lookup(i: &mut Interp, tbl: &Value, ch: u32, raw: Value) -> Value {
+pub(crate) fn uniprop_lookup(i: &mut Interp, tbl: &Value, ch: u32, raw: Value) -> Value {
     match ct_extra(tbl, 1) {
         Value::Int(0) => uniprop_decode_run_length(tbl, raw),
         Value::Int(_) | Value::Nil => raw,
@@ -718,16 +718,46 @@ fn load_file_backed_prop(i: &mut Interp, prop: &str) {
     }
 }
 
+/// `char-code-property-alist' is the authoritative registry — GNU's
+/// `define-char-code-property' is a mule-cmds defun that updates it
+/// directly, so a lazily loaded uni-*.el file can register its table
+/// without the Rust cache seeing the define call.  Mirror a table
+/// found there back into `char_code_prop_tables'.
+fn sync_prop_table(i: &mut Interp, prop: &str) {
+    if let Value::Cons(c) = prop_alist_entry(i, prop) {
+        let v = c.borrow().cdr.clone();
+        if is_char_table(i, &v) {
+            let stale = i
+                .char_code_prop_tables
+                .iter()
+                .find(|(n, _)| n == prop)
+                .map(|(_, t)| t.clone());
+            if stale.as_ref().map_or(true, |t| !eq_values(t, &v)) {
+                i.char_code_prop_tables.retain(|(n, _)| n != prop);
+                i.char_code_prop_tables.push((prop.to_string(), v));
+            }
+        }
+    }
+}
+
 /// GNU signals `wrong-type-argument (char-table-p FILE)` when a property
 /// registered with a file name is used for lookup or storage.
 fn check_prop_backing(i: &mut Interp, prop: &str) -> Result<(), Flow> {
     load_file_backed_prop(i, prop);
+    sync_prop_table(i, prop);
     let bad = i
         .char_code_prop_tables
         .iter()
         .find(|(n, _)| n == prop)
         .filter(|(_, tbl)| matches!(tbl, Value::Str(_)))
-        .map(|(_, tbl)| tbl.clone());
+        .map(|(_, tbl)| tbl.clone())
+        .or_else(|| match prop_alist_entry(i, prop) {
+            Value::Cons(c) => match c.borrow().cdr.clone() {
+                Value::Str(s) => Some(Value::Str(s)),
+                _ => None,
+            },
+            _ => None,
+        });
     if let Some(tbl) = bad {
         return Err(i.wrong_type_mut("char-table-p", &tbl));
     }
@@ -1484,17 +1514,103 @@ fn f_iso_charset(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 
 fn f_map_charset_chars(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     // (map-charset-chars FUNCTION CHARSET &optional ARG FROM TO)
-    let _ = want_charset(i, &a[1])?;
-    for v in a.iter().skip(3) {
-        if !v.is_nil() {
-            match v {
-                Value::Int(n) if *n >= 0 => {}
-                _ => return Err(i.wrong_type_mut("wholenump", v)),
+    // GNU calls FUNCTION once per run of contiguous Emacs characters
+    // with `(FROM . TO)' and ARG.  FROM/TO bound the *charset code
+    // points* visited (big-endian packed per the :code-space dims).
+    let name = want_charset(i, &a[1])?;
+    let function = a[0].clone();
+    let arg = a.get(2).cloned().unwrap_or(Value::Nil);
+    let mut read_bound = |v: Option<&Value>| -> Result<Option<i64>, Flow> {
+        match v {
+            None | Some(Value::Nil) => Ok(None),
+            Some(v @ Value::Int(n)) if *n >= 0 => Ok(Some(*n as i64)),
+            Some(v) => Err(i.wrong_type_mut("wholenump", v)),
+        }
+    };
+    let from_req = read_bound(a.get(3))?;
+    let to_req = read_bound(a.get(4))?;
+
+    // Code-space dims from the charset's plist (packed big-endian).
+    let plist = charset_entry(i, &name)
+        .map(|e| e.1.clone())
+        .unwrap_or(Value::Nil);
+    let cs = crate::lisp::eval::plist_get(&plist, i.intern(":code-space"));
+    let dims: Vec<(i64, i64)> = match &cs {
+        Value::Vec(v) => {
+            let v = v.borrow();
+            v.chunks(2)
+                .filter_map(|p| match (p[0].int(), p[1].int()) {
+                    (Some(lo), Some(hi)) => Some((lo as i64, hi as i64)),
+                    _ => None,
+                })
+                .collect()
+        }
+        _ => vec![(0, 127)],
+    };
+    if dims.is_empty() {
+        return Ok(Value::Nil);
+    }
+    let pack = |digits: &[i64]| -> i64 {
+        let mut c = 0i64;
+        for &d in digits {
+            c = (c << 8) | d;
+        }
+        c
+    };
+    let los: Vec<i64> = dims.iter().map(|d| d.0).collect();
+    let his: Vec<i64> = dims.iter().map(|d| d.1).collect();
+    let min_code = pack(&los);
+    let max_code = pack(&his);
+    let from = from_req.unwrap_or(min_code).max(min_code);
+    let to = to_req.unwrap_or(max_code).min(max_code);
+
+    // Enumerate the code space in row-major order, emitting a call per
+    // maximal run of contiguous decoded characters.
+    let mut digits = los.clone();
+    let mut run_start: Option<i64> = None;
+    let mut last_char: i64 = -2;
+    loop {
+        let code = pack(&digits);
+        let mut emitted_char = false;
+        if code >= from && code <= to {
+            if let Some(c) = decode_charset_code(&name, code) {
+                emitted_char = true;
+                if c != last_char + 1 {
+                    if let Some(s) = run_start.take() {
+                        let range = Value::cons(Value::Int(s as i128), Value::Int(last_char as i128));
+                        i.apply(&function, vec![range, arg.clone()])?;
+                    }
+                    run_start = Some(c);
+                }
+                last_char = c;
             }
         }
+        if !emitted_char {
+            if let Some(s) = run_start.take() {
+                let range = Value::cons(Value::Int(s as i128), Value::Int(last_char as i128));
+                i.apply(&function, vec![range, arg.clone()])?;
+            }
+            last_char = -2;
+        }
+        // Next digit tuple (last dim fastest), or done.
+        let mut d = dims.len();
+        loop {
+            if d == 0 {
+                if let Some(s) = run_start.take() {
+                    let range =
+                        Value::cons(Value::Int(s as i128), Value::Int(last_char as i128));
+                    i.apply(&function, vec![range, arg.clone()])?;
+                }
+                return Ok(Value::Nil);
+            }
+            d -= 1;
+            if digits[d] < his[d] {
+                digits[d] += 1;
+                break;
+            }
+            digits[d] = los[d];
+        }
     }
-    // Our charsets carry no per-char ranges to map over.
-    Ok(Value::Nil)
 }
 
 fn f_declare_equiv_charset(i: &mut Interp, a: Vec<Value>) -> EvalResult {
@@ -1539,6 +1655,7 @@ fn prop_alist_entry(i: &mut Interp, prop: &str) -> Value {
 /// later attempt can retry the load.
 fn install_prop_table(i: &mut Interp, prop: &str) -> Value {
     load_file_backed_prop(i, prop);
+    sync_prop_table(i, prop);
     let found = i
         .char_code_prop_tables
         .iter()
@@ -2126,7 +2243,7 @@ fn jisx0213_2_encode(ch: u32) -> Option<i64> {
 }
 
 /// coding.h SJIS_TO_JIS: shift_jis pair -> jisx0208 code.
-fn sjis_to_jis(code: i64) -> (i64, i64) {
+pub(crate) fn sjis_to_jis(code: i64) -> (i64, i64) {
     let s1 = code >> 8;
     let s2 = code & 0xff;
     if s2 >= 0x9f {
