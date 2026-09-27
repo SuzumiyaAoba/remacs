@@ -13,7 +13,7 @@ use std::os::raw::{c_char, c_void};
 use std::sync::OnceLock;
 
 use super::hashfn::hash_key_for;
-use super::{arg, want_int, want_string, S};
+use super::{S, arg, want_int, want_string};
 use crate::lisp::error::{EvalResult, Flow};
 use crate::lisp::obarray::sym;
 use crate::lisp::value::{HashTest, SymId, Value};
@@ -421,7 +421,11 @@ fn object_to_dbus_type(i: &mut Interp, v: &Value) -> i32 {
             if is_dbus_type_sym(i, &car) {
                 if let Value::Sym(s) = car {
                     let ty = symbol_to_dbus_type(i, s);
-                    return if is_basic_dtype(ty) { DBUS_TYPE_ARRAY } else { ty };
+                    return if is_basic_dtype(ty) {
+                        DBUS_TYPE_ARRAY
+                    } else {
+                        ty
+                    };
                 }
             }
             return DBUS_TYPE_ARRAY;
@@ -540,11 +544,7 @@ fn validate_bus_name(i: &mut Interp, v: &Value) -> Result<(), Flow> {
     Ok(())
 }
 
-fn validate_interface_member(
-    i: &mut Interp,
-    v: &Value,
-    iface: bool,
-) -> Result<(), Flow> {
+fn validate_interface_member(i: &mut Interp, v: &Value, iface: bool) -> Result<(), Flow> {
     if v.is_nil() {
         return Ok(());
     }
@@ -621,12 +621,8 @@ fn xd_signature(
             check_fixnum(i, object)?;
             signature.push(dtype as u8 as char);
         }
-        DBUS_TYPE_UINT32
-        | DBUS_TYPE_UINT64
-        | DBUS_TYPE_UNIX_FD
-        | DBUS_TYPE_INT32
-        | DBUS_TYPE_INT64
-        | DBUS_TYPE_DOUBLE => {
+        DBUS_TYPE_UINT32 | DBUS_TYPE_UINT64 | DBUS_TYPE_UNIX_FD | DBUS_TYPE_INT32
+        | DBUS_TYPE_INT64 | DBUS_TYPE_DOUBLE => {
             check_number(i, object)?;
             signature.push(dtype as u8 as char);
         }
@@ -640,8 +636,7 @@ fn xd_signature(
         }
         DBUS_TYPE_ARRAY => {
             check_cons(i, object)?;
-            if matches!(&elt, Value::Cons(c) if i.sym_id(&c.borrow().car) == Some(kw(i, "array")))
-            {
+            if matches!(&elt, Value::Cons(c) if i.sym_id(&c.borrow().car) == Some(kw(i, "array"))) {
                 elt = next_value(i, &elt);
             }
             let subtype;
@@ -915,7 +910,7 @@ fn xd_append_arg(
     }
 
     /* Compound types.  All except array carry a type symbol — skip it
-       (array's is optional). */
+    (array's is optional). */
     let mut object = object.clone();
     if !is_basic_dtype(object_to_dbus_type(i, &car_safe(&object))) {
         object = next_value(i, &object);
@@ -954,12 +949,7 @@ fn xd_append_arg(
                     signature = sig;
                 }
                 let cs = cstr(&signature);
-                if (d.dbus_message_iter_open_container)(
-                    iter,
-                    dtype,
-                    cs.as_ptr(),
-                    &mut subiter,
-                ) == 0
+                if (d.dbus_message_iter_open_container)(iter, dtype, cs.as_ptr(), &mut subiter) == 0
                 {
                     return Err(dbus_error_val(
                         i,
@@ -975,12 +965,7 @@ fn xd_append_arg(
                 let st = object_to_dbus_type(i, &car_safe(&object));
                 xd_signature(i, &mut sig, st, dtype, &nv_car)?;
                 let cs = cstr(&sig);
-                if (d.dbus_message_iter_open_container)(
-                    iter,
-                    dtype,
-                    cs.as_ptr(),
-                    &mut subiter,
-                ) == 0
+                if (d.dbus_message_iter_open_container)(iter, dtype, cs.as_ptr(), &mut subiter) == 0
                 {
                     return Err(dbus_error_val(
                         i,
@@ -990,12 +975,8 @@ fn xd_append_arg(
                 }
             }
             DBUS_TYPE_STRUCT | DBUS_TYPE_DICT_ENTRY => {
-                if (d.dbus_message_iter_open_container)(
-                    iter,
-                    dtype,
-                    std::ptr::null(),
-                    &mut subiter,
-                ) == 0
+                if (d.dbus_message_iter_open_container)(iter, dtype, std::ptr::null(), &mut subiter)
+                    == 0
                 {
                     return Err(dbus_error(i, "Cannot open container"));
                 }
@@ -1074,10 +1055,7 @@ fn xd_retrieve_arg(i: &mut Interp, dtype: i32, iter: *mut DBusMessageIter) -> Va
             }
             DBUS_TYPE_STRING | DBUS_TYPE_OBJECT_PATH | DBUS_TYPE_SIGNATURE => {
                 let mut val: *mut c_char = std::ptr::null_mut();
-                (d.dbus_message_iter_get_basic)(
-                    iter,
-                    &mut val as *mut *mut c_char as *mut c_void,
-                );
+                (d.dbus_message_iter_get_basic)(iter, &mut val as *mut *mut c_char as *mut c_void);
                 let s = if val.is_null() {
                     String::new()
                 } else {
@@ -1175,9 +1153,7 @@ fn validate_bus_address(i: &mut Interp, bus: &mut Value) -> Result<(), Flow> {
         return Err(dbus_error_val(i, "Wrong bus name", bus));
     }
     // No autolaunch for the session bus.
-    if (id == kw(i, "session") || id == kw(i, "session-private"))
-        && session_addr.is_none()
-    {
+    if (id == kw(i, "session") || id == kw(i, "session-private")) && session_addr.is_none() {
         return Err(dbus_error_val(i, "No connection to bus", bus));
     }
     Ok(())
@@ -1317,7 +1293,9 @@ fn f_get_unique_name(i: &mut Interp, a: Vec<Value>) -> EvalResult {
             return Err(dbus_error(i, "No unique name available"));
         }
         Ok(Value::string(
-            std::ffi::CStr::from_ptr(name).to_string_lossy().into_owned(),
+            std::ffi::CStr::from_ptr(name)
+                .to_string_lossy()
+                .into_owned(),
         ))
     }
 }
@@ -1340,11 +1318,7 @@ fn f_message_internal(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     let count: usize;
 
     let mtype = match &message_type {
-        Value::Int(n) if *n >= DBUS_MESSAGE_TYPE_INVALID as i128
-            && *n < 5_i128 =>
-        {
-            *n as i32
-        }
+        Value::Int(n) if *n >= DBUS_MESSAGE_TYPE_INVALID as i128 && *n < 5_i128 => *n as i32,
         _ => {
             check_fixnat(i, &message_type)?;
             return Err(dbus_error_val(i, "Invalid message type", &message_type));
@@ -1368,7 +1342,11 @@ fn f_message_internal(i: &mut Interp, args: Vec<Value>) -> EvalResult {
         if mtype == DBUS_MESSAGE_TYPE_ERROR {
             error_name = arg(&args, 4);
         }
-        count = if mtype == DBUS_MESSAGE_TYPE_ERROR { 5 } else { 4 };
+        count = if mtype == DBUS_MESSAGE_TYPE_ERROR {
+            5
+        } else {
+            4
+        };
     } else {
         count = 3;
     }
@@ -1472,7 +1450,9 @@ fn f_message_internal_2(
                     let mine_s = if mine.is_null() {
                         String::new()
                     } else {
-                        std::ffi::CStr::from_ptr(mine).to_string_lossy().into_owned()
+                        std::ffi::CStr::from_ptr(mine)
+                            .to_string_lossy()
+                            .into_owned()
                     };
                     if us != mine_s && (d.dbus_message_set_destination)(dmsg, cs.as_ptr()) == 0 {
                         return Err(dbus_error_val(
@@ -1571,12 +1551,7 @@ fn f_message_internal_2(
 
     if !handler.is_nil() {
         let ok = unsafe {
-            (d.dbus_connection_send_with_reply)(
-                conn,
-                dmsg,
-                std::ptr::null_mut(),
-                timeout as i32,
-            )
+            (d.dbus_connection_send_with_reply)(conn, dmsg, std::ptr::null_mut(), timeout as i32)
         };
         if ok == 0 {
             return Err(dbus_error(i, "Cannot send message"));
@@ -1623,7 +1598,11 @@ fn f_fd_open(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let cs = cstr(&filename);
     let fd = unsafe { libc::open(cs.as_ptr(), libc::O_RDONLY) };
     if fd <= 0 {
-        return Err(dbus_error_val(i, "Cannot open file", &Value::string(filename)));
+        return Err(dbus_error_val(
+            i,
+            "Cannot open file",
+            &Value::string(filename),
+        ));
     }
     i.dbus.fds.push((fd as i64, filename));
     Ok(Value::Int(fd as i128))
@@ -1642,7 +1621,10 @@ fn f_fd_close(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 fn f_registered_fds(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
     let mut out = Vec::new();
     for (fd, f) in &i.dbus.fds {
-        out.push(Value::cons(Value::Int(*fd as i128), Value::string(f.clone())));
+        out.push(Value::cons(
+            Value::Int(*fd as i128),
+            Value::string(f.clone()),
+        ));
     }
     Ok(Value::list(out))
 }
@@ -1651,7 +1633,10 @@ fn f_registered_fds(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
 // Incoming message → `dbus-event' (GNU `xd_read_message_1' + `xd_store_event')
 // ---------------------------------------------------------------------------
 
-fn msg_str(f: unsafe extern "C" fn(*mut c_void) -> *const c_char, m: *mut c_void) -> Option<String> {
+fn msg_str(
+    f: unsafe extern "C" fn(*mut c_void) -> *const c_char,
+    m: *mut c_void,
+) -> Option<String> {
     unsafe {
         let p = f(m);
         if p.is_null() {
@@ -1820,12 +1805,7 @@ fn read_message_1_inner(
             (Value::string(iface.clone()), Value::Nil),
             (Value::Nil, Value::Nil),
         ] {
-            let k = Value::list(vec![
-                Value::Sym(kw(i, "signal")),
-                bus.clone(),
-                iv,
-                mv,
-            ]);
+            let k = Value::list(vec![Value::Sym(kw(i, "signal")), bus.clone(), iv, mv]);
             let v = gethash(i, &k, &tbl);
             if !v.is_nil() {
                 let mut merged: Vec<Value> = Vec::new();
@@ -1860,10 +1840,7 @@ fn read_message_1_inner(
             if handler.is_nil() {
                 continue;
             }
-            if called
-                .iter()
-                .any(|h| super::eq_values(h, &handler))
-            {
+            if called.iter().any(|h| super::eq_values(h, &handler)) {
                 continue;
             }
             called.push(handler.clone());
@@ -1924,8 +1901,7 @@ pub fn drain(i: &mut Interp) -> EvalResult {
             // GNU: internal_catch (Qdbus_error, ...) — only D-Bus
             // errors are swallowed; everything else propagates.
             match f {
-                Flow::Signal(ref sig, _, _)
-                    if matches!(sig, Value::Sym(s) if *s == dbe) => {}
+                Flow::Signal(ref sig, _, _) if matches!(sig, Value::Sym(s) if *s == dbe) => {}
                 _ => return Err(f),
             }
         }
@@ -1938,12 +1914,42 @@ pub fn drain(i: &mut Interp) -> EvalResult {
 // ---------------------------------------------------------------------------
 
 pub(crate) static SUBRS: &[crate::lisp::value::Subr] = &[
-    S!("dbus--init-bus", 1, 2, f_init_bus, "Establish the connection to D-Bus BUS."),
-    S!("dbus-get-unique-name", 1, 1, f_get_unique_name, "Return the unique name of Emacs registered at D-Bus BUS."),
+    S!(
+        "dbus--init-bus",
+        1,
+        2,
+        f_init_bus,
+        "Establish the connection to D-Bus BUS."
+    ),
+    S!(
+        "dbus-get-unique-name",
+        1,
+        1,
+        f_get_unique_name,
+        "Return the unique name of Emacs registered at D-Bus BUS."
+    ),
     S!("dbus-message-internal", many 3, f_message_internal, "Send a D-Bus message.\nThis is an internal function, it shall not be used outside dbus.el."),
-    S!("dbus--fd-open", 1, 1, f_fd_open, "Open FILENAME and return the respective read-only file descriptor."),
-    S!("dbus--fd-close", 1, 1, f_fd_close, "Close file descriptor FD."),
-    S!("dbus--registered-fds", 0, 0, f_registered_fds, "Return registered file descriptors, an alist."),
+    S!(
+        "dbus--fd-open",
+        1,
+        1,
+        f_fd_open,
+        "Open FILENAME and return the respective read-only file descriptor."
+    ),
+    S!(
+        "dbus--fd-close",
+        1,
+        1,
+        f_fd_close,
+        "Close file descriptor FD."
+    ),
+    S!(
+        "dbus--registered-fds",
+        0,
+        0,
+        f_registered_fds,
+        "Return registered file descriptors, an alist."
+    ),
 ];
 
 /// `(provide 'dbusbind)` + `dbus-error' conditions +
@@ -1983,8 +1989,14 @@ pub(crate) fn install(i: &mut Interp) {
     // Message-type variables GNU sets from the constants.
     for (name, val) in [
         ("dbus-message-type-invalid", DBUS_MESSAGE_TYPE_INVALID),
-        ("dbus-message-type-method-call", DBUS_MESSAGE_TYPE_METHOD_CALL),
-        ("dbus-message-type-method-return", DBUS_MESSAGE_TYPE_METHOD_RETURN),
+        (
+            "dbus-message-type-method-call",
+            DBUS_MESSAGE_TYPE_METHOD_CALL,
+        ),
+        (
+            "dbus-message-type-method-return",
+            DBUS_MESSAGE_TYPE_METHOD_RETURN,
+        ),
         ("dbus-message-type-error", DBUS_MESSAGE_TYPE_ERROR),
         ("dbus-message-type-signal", DBUS_MESSAGE_TYPE_SIGNAL),
     ] {
@@ -2003,8 +2015,7 @@ pub(crate) fn install(i: &mut Interp) {
                 unsafe {
                     let (mut a, mut b, mut c) = (0, 0, 0);
                     (d.dbus_get_version)(&mut a, &mut b, &mut c);
-                    let _ =
-                        i.set_symbol(v, Value::string(format!("{}.{}.{}", a, b, c)));
+                    let _ = i.set_symbol(v, Value::string(format!("{}.{}.{}", a, b, c)));
                 }
             }
         }

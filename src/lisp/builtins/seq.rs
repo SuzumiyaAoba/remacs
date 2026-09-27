@@ -345,12 +345,12 @@ pub(crate) fn seq_to_vec(i: &mut Interp, v: &Value) -> Result<Vec<Value>, super:
         Value::Vec(vec) => Ok(vec.borrow().clone()),
         // Bool-vectors are bit sequences; GNU flattens them to
         // t/nil elements (append, vconcat, & co.).
-        Value::Record(_) if super::misc::is_bool_vector(i, v) => Ok(super::misc::bool_vec_of(
-            i, v,
-        )?
-        .into_iter()
-        .map(Value::from_bool)
-        .collect()),
+        Value::Record(_) if super::misc::is_bool_vector(i, v) => {
+            Ok(super::misc::bool_vec_of(i, v)?
+                .into_iter()
+                .map(Value::from_bool)
+                .collect())
+        }
         other => Err(i.wrong_type_mut("sequencep", other)),
     }
 }
@@ -523,9 +523,7 @@ fn f_aset(i: &mut Interp, args: Vec<Value>) -> EvalResult {
                 // 0x80-0xFF byte is the eight-bit char, held as its
                 // PUA proxy internally.
                 if !(0..=0xFF).contains(&nch) {
-                    return Err(i.error(
-                        "Attempt to store non-byte value into unibyte string",
-                    ));
+                    return Err(i.error("Attempt to store non-byte value into unibyte string"));
                 }
                 chars[n as usize] = if nch >= 0x80 {
                     char::from_u32(crate::lisp::value::EIGHT_BIT_BASE + nch as u32)

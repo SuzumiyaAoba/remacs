@@ -346,14 +346,12 @@ pub struct Interp {
     /// layouts are untouched.  The Weak guards against a dead record's
     /// address being reused by a different char-table (stale entries
     /// must not alias onto the new allocation).
-    pub char_table_parents:
-        Vec<(usize, std::rc::Weak<std::cell::RefCell<Vec<Value>>>, Value)>,
+    pub char_table_parents: Vec<(usize, std::rc::Weak<std::cell::RefCell<Vec<Value>>>, Value)>,
     /// Char-table default values, same registry style as parents
     /// (record identity → defalt).  GNU has no Lisp accessor for the
     /// defalt; it shows in `#^[...]' printing and feeds
     /// `char-table-range' misses.
-    pub char_table_defalts:
-        Vec<(usize, std::rc::Weak<std::cell::RefCell<Vec<Value>>>, Value)>,
+    pub char_table_defalts: Vec<(usize, std::rc::Weak<std::cell::RefCell<Vec<Value>>>, Value)>,
     /// Fingerprint seen by the last `frame-or-buffer-changed-p' call.
     pub frame_state_seen: Option<u64>,
     /// Live Lisp call frames `(FUNCTION . ARGS)', outermost first.
@@ -1076,12 +1074,35 @@ impl Interp {
             // `tibetan-vowel-transcription-alist', needed by quail's
             // tibetan.el) are live at -Q.
             for lib in [
-                "chinese", "cyrillic", "indian", "sinhala", "english",
-                "ethiopic", "european", "czech", "slovak", "romanian",
-                "greek", "hebrew", "cp51932", "eucjp-ms", "japanese",
-                "korean", "lao", "tai-viet", "thai", "tibetan",
-                "vietnamese", "misc-lang", "utf-8-lang", "georgian",
-                "khmer", "burmese", "cham", "philippine", "indonesian",
+                "chinese",
+                "cyrillic",
+                "indian",
+                "sinhala",
+                "english",
+                "ethiopic",
+                "european",
+                "czech",
+                "slovak",
+                "romanian",
+                "greek",
+                "hebrew",
+                "cp51932",
+                "eucjp-ms",
+                "japanese",
+                "korean",
+                "lao",
+                "tai-viet",
+                "thai",
+                "tibetan",
+                "vietnamese",
+                "misc-lang",
+                "utf-8-lang",
+                "georgian",
+                "khmer",
+                "burmese",
+                "cham",
+                "philippine",
+                "indonesian",
             ] {
                 let _ = crate::lisp::load::load_library(&mut interp, lib);
             }
@@ -2166,9 +2187,7 @@ explicitly overridden.
                     interp.get_prop(sid, pk),
                     v if v.is_nil() || matches!(v, Value::Sym(s) if s == sym::UNBOUND)
                 );
-                if !matches!(old, Value::Sym(s) if s == sym::UNBOUND)
-                    && !is_autoload
-                    && !have_stash
+                if !matches!(old, Value::Sym(s) if s == sym::UNBOUND) && !is_autoload && !have_stash
                 {
                     interp.put_prop(sid, pk, old);
                 }
@@ -2785,9 +2804,7 @@ command-line arguments.\" \
         // nadvice's `(cdr nf)' gv place mutates in place.  Call paths
         // unwrap the cons at dispatch.
         let def = match &def {
-            Value::Lambda(l) if l.is_macro => {
-                Value::cons(Value::Sym(sym::MACRO), def.clone())
-            }
+            Value::Lambda(l) if l.is_macro => Value::cons(Value::Sym(sym::MACRO), def.clone()),
             _ => def,
         };
         self.obarray.symbol_mut(id).function = def;
@@ -3167,7 +3184,10 @@ command-line arguments.\" \
             eprintln!(
                 "[depth={}] {}",
                 self.eval_depth,
-                self.princ_to_string(form).chars().take(80).collect::<String>()
+                self.princ_to_string(form)
+                    .chars()
+                    .take(80)
+                    .collect::<String>()
             );
         }
         if self.eval_depth > self.max_lisp_eval_depth {
@@ -3414,8 +3434,7 @@ command-line arguments.\" \
                 // `indirect_function' signals `cyclic-function-indirection'
                 // with the symbol whose alias points back into the chain.
                 let mut cur = *id;
-                let mut seen: std::collections::HashSet<SymId> =
-                    std::collections::HashSet::new();
+                let mut seen: std::collections::HashSet<SymId> = std::collections::HashSet::new();
                 loop {
                     seen.insert(cur);
                     // GNU resolves defalias chains in `eval' before
@@ -3434,11 +3453,8 @@ command-line arguments.\" \
                                 );
                             }
                             if seen.contains(&next) {
-                                let sig =
-                                    self.intern("cyclic-function-indirection");
-                                return Err(
-                                    self.signal_data(sig, vec![Value::Sym(cur)])
-                                );
+                                let sig = self.intern("cyclic-function-indirection");
+                                return Err(self.signal_data(sig, vec![Value::Sym(cur)]));
                             }
                             cur = next;
                         }
@@ -3611,8 +3627,7 @@ command-line arguments.\" \
         match fun {
             Value::Sym(id) => {
                 let mut cur = *id;
-                let mut seen: std::collections::HashSet<SymId> =
-                    std::collections::HashSet::new();
+                let mut seen: std::collections::HashSet<SymId> = std::collections::HashSet::new();
                 loop {
                     seen.insert(cur);
                     let f = self.callable_function(cur);
@@ -3624,11 +3639,8 @@ command-line arguments.\" \
                                 );
                             }
                             if seen.contains(&next) {
-                                let sig =
-                                    self.intern("cyclic-function-indirection");
-                                return Err(
-                                    self.signal_data(sig, vec![Value::Sym(cur)])
-                                );
+                                let sig = self.intern("cyclic-function-indirection");
+                                return Err(self.signal_data(sig, vec![Value::Sym(cur)]));
                             }
                             cur = next;
                         }
@@ -3903,11 +3915,8 @@ command-line arguments.\" \
                 // `unidata-put-decomposition'/`unidata-put-name': flush
                 // the compressed block through the slot-1 getter first,
                 // then store VAL verbatim.
-                let cur = crate::lisp::builtins::misc::char_table_ref(
-                    self,
-                    tbl,
-                    (*n).max(0) as usize,
-                );
+                let cur =
+                    crate::lisp::builtins::misc::char_table_ref(self, tbl, (*n).max(0) as usize);
                 if let Value::Str(s) = &cur {
                     if s.borrow().chars().next() == Some('\0') {
                         let _ = crate::lisp::builtins::charset::uniprop_lookup(
@@ -3918,18 +3927,16 @@ command-line arguments.\" \
                         );
                     }
                 }
-                crate::lisp::builtins::misc::ct_set(
-                    self,
-                    tbl,
-                    (*n).max(0) as u32,
-                    raw.clone(),
-                );
+                crate::lisp::builtins::misc::ct_set(self, tbl, (*n).max(0) as u32, raw.clone());
                 return Some(Ok(raw.clone()));
             }
             // `unidata-get-decomposition'/`unidata-get-name' & kin:
             // decode RAW through the table's slot-1 machinery (keyed on
             // the property name in slot 0).
-            if consts.iter().any(|c| matches!(c, Value::Sym(s) if *s == cts)) {
+            if consts
+                .iter()
+                .any(|c| matches!(c, Value::Sym(s) if *s == cts))
+            {
                 return Some(Ok(crate::lisp::builtins::charset::uniprop_lookup(
                     self,
                     tbl,
@@ -4294,10 +4301,7 @@ command-line arguments.\" \
                     // `(function (lambda ...))'.  Since that result is a
                     // fixpoint for `macroexpand', return it directly.
                     if self.sym_is(&car, sym::LAMBDA) {
-                        return Ok(Value::list(vec![
-                            Value::Sym(sym::FUNCTION),
-                            cur.clone(),
-                        ]));
+                        return Ok(Value::list(vec![Value::Sym(sym::FUNCTION), cur.clone()]));
                     }
                     match car {
                         Value::Sym(id) => {
@@ -4742,7 +4746,10 @@ command-line arguments.\" \
                 "RANGES are invalid: they have to be ordered and should not overlap",
             ),
             ("treesit-buffer-too-large", "Buffer too large (> 4GiB)"),
-            ("treesit-load-language-error", "Cannot load language definition"),
+            (
+                "treesit-load-language-error",
+                "Cannot load language definition",
+            ),
             (
                 "treesit-node-outdated",
                 "This node is outdated, please retrieve a new one",
@@ -4755,7 +4762,10 @@ command-line arguments.\" \
                 "treesit-node-buffer-killed",
                 "The buffer associated with this node is killed",
             ),
-            ("treesit-parser-deleted", "This parser is deleted and cannot be used"),
+            (
+                "treesit-parser-deleted",
+                "This parser is deleted and cannot be used",
+            ),
             (
                 "treesit-invalid-predicate",
                 "Invalid predicate, see `treesit-thing-settings' for valid forms for a predicate",
@@ -6536,9 +6546,7 @@ command-line arguments.\" \
         let id = std::rc::Rc::as_ptr(r) as usize;
         self.char_table_parents
             .iter()
-            .find(|(k, w, _)| {
-                *k == id && w.upgrade().is_some_and(|u| std::rc::Rc::ptr_eq(&u, r))
-            })
+            .find(|(k, w, _)| *k == id && w.upgrade().is_some_and(|u| std::rc::Rc::ptr_eq(&u, r)))
             .map(|(_, _, v)| v.clone())
             .unwrap_or(Value::Nil)
     }
@@ -6547,9 +6555,8 @@ command-line arguments.\" \
     pub fn set_char_table_parent(&mut self, table: &Value, parent: Value) {
         if let Value::Record(r) = table {
             let id = std::rc::Rc::as_ptr(r) as usize;
-            self.char_table_parents.retain(|(k, w, _)| {
-                *k != id && w.upgrade().is_some()
-            });
+            self.char_table_parents
+                .retain(|(k, w, _)| *k != id && w.upgrade().is_some());
             if !parent.is_nil() {
                 self.char_table_parents
                     .push((id, std::rc::Rc::downgrade(r), parent));
@@ -6566,9 +6573,7 @@ command-line arguments.\" \
         let id = std::rc::Rc::as_ptr(r) as usize;
         self.char_table_defalts
             .iter()
-            .find(|(k, w, _)| {
-                *k == id && w.upgrade().is_some_and(|u| std::rc::Rc::ptr_eq(&u, r))
-            })
+            .find(|(k, w, _)| *k == id && w.upgrade().is_some_and(|u| std::rc::Rc::ptr_eq(&u, r)))
             .map(|(_, _, v)| v.clone())
             .unwrap_or(Value::Nil)
     }
@@ -6577,9 +6582,8 @@ command-line arguments.\" \
     pub fn set_char_table_defalt(&mut self, table: &Value, defalt: Value) {
         if let Value::Record(r) = table {
             let id = std::rc::Rc::as_ptr(r) as usize;
-            self.char_table_defalts.retain(|(k, w, _)| {
-                *k != id && w.upgrade().is_some()
-            });
+            self.char_table_defalts
+                .retain(|(k, w, _)| *k != id && w.upgrade().is_some());
             if !defalt.is_nil() {
                 self.char_table_defalts
                     .push((id, std::rc::Rc::downgrade(r), defalt));
@@ -6867,9 +6871,9 @@ command-line arguments.\" \
                         // GNU's output encoding renders an eight-bit
                         // char (0x80-0xFF) in its internal two-byte
                         // form: 0xC0+((b>>6)&1), 0x80+(b&0x3F).
-                        if s.chars().any(|c| {
-                            crate::lisp::value::eight_bit_byte(c).is_some()
-                        }) {
+                        if s.chars()
+                            .any(|c| crate::lisp::value::eight_bit_byte(c).is_some())
+                        {
                             let mut bytes = Vec::with_capacity(s.len());
                             for c in s.chars() {
                                 match crate::lisp::value::eight_bit_byte(c) {
@@ -6879,9 +6883,7 @@ command-line arguments.\" \
                                     }
                                     None => {
                                         let mut tmp = [0u8; 4];
-                                        bytes.extend_from_slice(
-                                            c.encode_utf8(&mut tmp).as_bytes(),
-                                        );
+                                        bytes.extend_from_slice(c.encode_utf8(&mut tmp).as_bytes());
                                     }
                                 }
                             }

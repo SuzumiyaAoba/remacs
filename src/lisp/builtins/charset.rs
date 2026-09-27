@@ -244,8 +244,7 @@ fn f_unify_charset(i: &mut Interp, a: Vec<Value>) -> EvalResult {
             cur = rest;
         }
     });
-    let unified = !deunify
-        && matches!(offset, Some(v) if v.int().is_some_and(|n| n >= 0x110000));
+    let unified = !deunify && matches!(offset, Some(v) if v.int().is_some_and(|n| n >= 0x110000));
     if !unified {
         return Err(i.error(format!("Can't unify charset: {name}")));
     }
@@ -629,10 +628,13 @@ fn unidata_get_name(i: &mut Interp, ch: u32, raw: &Value, tbl: &Value) -> Value 
                         tail
                     ))))
                 }
-                "CJK IDEOGRAPH" | "TANGUT IDEOGRAPH" | "CJK COMPATIBILITY IDEOGRAPH"
-                | "HIGH SURROGATE" | "LOW SURROGATE" => Value::Str(Rc::new(RefCell::new(
-                    format!("{}-{:04X}", name, ch),
-                ))),
+                "CJK IDEOGRAPH"
+                | "TANGUT IDEOGRAPH"
+                | "CJK COMPATIBILITY IDEOGRAPH"
+                | "HIGH SURROGATE"
+                | "LOW SURROGATE" => {
+                    Value::Str(Rc::new(RefCell::new(format!("{}-{:04X}", name, ch))))
+                }
                 "VARIATION SELECTOR" => Value::Str(Rc::new(RefCell::new(format!(
                     "{}-{}",
                     name,
@@ -1063,7 +1065,10 @@ fn f_define_translation_table(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         tid += 1;
     }
     vec[tid] = Value::cons(Value::Sym(id), table.clone());
-    let _ = i.set_symbol(ttv, Value::Vec(std::rc::Rc::new(std::cell::RefCell::new(vec))));
+    let _ = i.set_symbol(
+        ttv,
+        Value::Vec(std::rc::Rc::new(std::cell::RefCell::new(vec))),
+    );
     let prop = i.intern("translation-table");
     i.put_prop(id, prop, table);
     let tidp = i.intern("translation-table-id");
@@ -1577,7 +1582,8 @@ fn f_map_charset_chars(i: &mut Interp, a: Vec<Value>) -> EvalResult {
                 emitted_char = true;
                 if c != last_char + 1 {
                     if let Some(s) = run_start.take() {
-                        let range = Value::cons(Value::Int(s as i128), Value::Int(last_char as i128));
+                        let range =
+                            Value::cons(Value::Int(s as i128), Value::Int(last_char as i128));
                         i.apply(&function, vec![range, arg.clone()])?;
                     }
                     run_start = Some(c);
@@ -1597,8 +1603,7 @@ fn f_map_charset_chars(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         loop {
             if d == 0 {
                 if let Some(s) = run_start.take() {
-                    let range =
-                        Value::cons(Value::Int(s as i128), Value::Int(last_char as i128));
+                    let range = Value::cons(Value::Int(s as i128), Value::Int(last_char as i128));
                     i.apply(&function, vec![range, arg.clone()])?;
                 }
                 return Ok(Value::Nil);
@@ -2399,7 +2404,10 @@ fn f_define_coding_system_internal(i: &mut Interp, a: Vec<Value>) -> EvalResult 
     // order aside — membership is what the defun iterates).
     let csl = i.intern("coding-system-list");
     let mut items = i.symbol_value(csl).list_to_vec().unwrap_or_default();
-    if !items.iter().any(|v| matches!(v, Value::Sym(s) if *s == sid)) {
+    if !items
+        .iter()
+        .any(|v| matches!(v, Value::Sym(s) if *s == sid))
+    {
         items.push(Value::Sym(sid));
         i.set_symbol(csl, Value::list(items))?;
     }

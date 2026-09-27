@@ -421,139 +421,141 @@ fn poll_proc(i: &mut Interp, pref: &ProcessRef) -> Result<bool, Flow> {
             }
         } else {
             match &mut p.io {
-            ProcIo::Child {
-                child,
-                master_fd,
-                stderr,
-            } => {
-                let mut buf = [0u8; 8192];
-                loop {
-                    let n =
-                        unsafe { libc::read(*master_fd, buf.as_mut_ptr() as *mut _, buf.len()) };
-                    if n > 0 {
-                        events.push(Ev::Out(buf[..n as usize].to_vec(), false));
-                    } else {
-                        break;
+                ProcIo::Child {
+                    child,
+                    master_fd,
+                    stderr,
+                } => {
+                    let mut buf = [0u8; 8192];
+                    loop {
+                        let n = unsafe {
+                            libc::read(*master_fd, buf.as_mut_ptr() as *mut _, buf.len())
+                        };
+                        if n > 0 {
+                            events.push(Ev::Out(buf[..n as usize].to_vec(), false));
+                        } else {
+                            break;
+                        }
+                    }
+                    if let Some(s) = stderr.as_mut() {
+                        loop {
+                            match s.read(&mut buf) {
+                                Ok(0) => break,
+                                Ok(n) => events.push(Ev::Out(buf[..n].to_vec(), true)),
+                                Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => break,
+                                Err(_) => break,
+                            }
+                        }
+                    }
+                    // GNU notices process exit asynchronously; when output
+                    // arrived this poll the exit is picked up next round.
+                    match child.try_wait() {
+                        Ok(Some(st)) if events.is_empty() => {
+                            // Child is reaped; release the pty master.
+                            unsafe { libc::close(*master_fd) };
+                            *master_fd = -1;
+                            if let Some(sig) = std::os::unix::process::ExitStatusExt::signal(&st) {
+                                p.status = "signal";
+                                p.exit_status = sig;
+                                events.push(Ev::Exit("signal", sig));
+                            } else {
+                                let code = st.code().unwrap_or(-1);
+                                p.status = "exit";
+                                p.exit_status = code;
+                                events.push(Ev::Exit("exit", code));
+                            }
+                        }
+                        _ => {}
                     }
                 }
-                if let Some(s) = stderr.as_mut() {
+                ProcIo::Pipe {
+                    read_fd, child_wfd, ..
+                } => {
+                    let mut buf = [0u8; 8192];
+                    loop {
+                        let n =
+                            unsafe { libc::read(*read_fd, buf.as_mut_ptr() as *mut _, buf.len()) };
+                        if n > 0 {
+                            events.push(Ev::Out(buf[..n as usize].to_vec(), false));
+                        } else {
+                            // EOF once every writer (a child's stderr dup)
+                            // is gone — GNU marks the pipe "closed".
+                            if n == 0 && *child_wfd < 0 && p.status != "closed" {
+                                p.status = "closed";
+                                p.exit_status = 0;
+                                events.push(Ev::Exit("finished", 0));
+                            }
+                            break;
+                        }
+                    }
+                }
+                ProcIo::Net(s) => {
+                    let mut buf = [0u8; 8192];
                     loop {
                         match s.read(&mut buf) {
-                            Ok(0) => break,
-                            Ok(n) => events.push(Ev::Out(buf[..n].to_vec(), true)),
+                            Ok(0) => {
+                                // Remote closed the connection — GNU marks
+                                // network processes `closed' (a routine
+                                // transition: the default sentinel stays
+                                // silent).
+                                if p.status != "closed" {
+                                    p.status = "closed";
+                                    p.exit_status = 0;
+                                    events.push(Ev::Exit("closed", 0));
+                                }
+                                break;
+                            }
+                            Ok(n) => events.push(Ev::Out(buf[..n].to_vec(), false)),
                             Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => break,
                             Err(_) => break,
                         }
                     }
                 }
-                // GNU notices process exit asynchronously; when output
-                // arrived this poll the exit is picked up next round.
-                match child.try_wait() {
-                    Ok(Some(st)) if events.is_empty() => {
-                        // Child is reaped; release the pty master.
-                        unsafe { libc::close(*master_fd) };
-                        *master_fd = -1;
-                        if let Some(sig) = std::os::unix::process::ExitStatusExt::signal(&st) {
-                            p.status = "signal";
-                            p.exit_status = sig;
-                            events.push(Ev::Exit("signal", sig));
-                        } else {
-                            let code = st.code().unwrap_or(-1);
-                            p.status = "exit";
-                            p.exit_status = code;
-                            events.push(Ev::Exit("exit", code));
-                        }
+                ProcIo::Listen(l) => loop {
+                    match l.accept() {
+                        Ok((stream, addr)) => events.push(Ev::Accepted(stream, addr)),
+                        Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => break,
+                        Err(_) => break,
                     }
-                    _ => {}
-                }
-            }
-            ProcIo::Pipe {
-                read_fd, child_wfd, ..
-            } => {
-                let mut buf = [0u8; 8192];
-                loop {
-                    let n = unsafe { libc::read(*read_fd, buf.as_mut_ptr() as *mut _, buf.len()) };
-                    if n > 0 {
-                        events.push(Ev::Out(buf[..n as usize].to_vec(), false));
-                    } else {
-                        // EOF once every writer (a child's stderr dup)
-                        // is gone — GNU marks the pipe "closed".
-                        if n == 0 && *child_wfd < 0 && p.status != "closed" {
-                            p.status = "closed";
-                            p.exit_status = 0;
-                            events.push(Ev::Exit("finished", 0));
-                        }
-                        break;
-                    }
-                }
-            }
-            ProcIo::Net(s) => {
-                let mut buf = [0u8; 8192];
-                loop {
-                    match s.read(&mut buf) {
-                        Ok(0) => {
-                            // Remote closed the connection — GNU marks
-                            // network processes `closed' (a routine
-                            // transition: the default sentinel stays
-                            // silent).
-                            if p.status != "closed" {
-                                p.status = "closed";
-                                p.exit_status = 0;
-                                events.push(Ev::Exit("closed", 0));
+                },
+                ProcIo::LocalNet(s) => {
+                    let mut buf = [0u8; 8192];
+                    loop {
+                        match s.read(&mut buf) {
+                            Ok(0) => {
+                                // Same `closed' transition as TCP sockets.
+                                if p.status != "closed" {
+                                    p.status = "closed";
+                                    p.exit_status = 0;
+                                    events.push(Ev::Exit("closed", 0));
+                                }
+                                break;
                             }
-                            break;
+                            Ok(n) => events.push(Ev::Out(buf[..n].to_vec(), false)),
+                            Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => break,
+                            Err(_) => break,
                         }
-                        Ok(n) => events.push(Ev::Out(buf[..n].to_vec(), false)),
+                    }
+                }
+                ProcIo::LocalListen(l, _) => loop {
+                    match l.accept() {
+                        Ok((stream, _addr)) => events.push(Ev::AcceptedLocal(stream)),
                         Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => break,
                         Err(_) => break,
                     }
-                }
-            }
-            ProcIo::Listen(l) => loop {
-                match l.accept() {
-                    Ok((stream, addr)) => events.push(Ev::Accepted(stream, addr)),
-                    Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => break,
-                    Err(_) => break,
-                }
-            },
-            ProcIo::LocalNet(s) => {
-                let mut buf = [0u8; 8192];
-                loop {
-                    match s.read(&mut buf) {
-                        Ok(0) => {
-                            // Same `closed' transition as TCP sockets.
-                            if p.status != "closed" {
-                                p.status = "closed";
-                                p.exit_status = 0;
-                                events.push(Ev::Exit("closed", 0));
-                            }
-                            break;
+                },
+                ProcIo::Serial(f) => {
+                    let mut buf = [0u8; 8192];
+                    loop {
+                        match f.read(&mut buf) {
+                            Ok(0) => break,
+                            Ok(n) => events.push(Ev::Out(buf[..n].to_vec(), false)),
+                            Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => break,
+                            Err(_) => break,
                         }
-                        Ok(n) => events.push(Ev::Out(buf[..n].to_vec(), false)),
-                        Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => break,
-                        Err(_) => break,
                     }
                 }
-            }
-            ProcIo::LocalListen(l, _) => loop {
-                match l.accept() {
-                    Ok((stream, _addr)) => events.push(Ev::AcceptedLocal(stream)),
-                    Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => break,
-                    Err(_) => break,
-                }
-            },
-            ProcIo::Serial(f) => {
-                let mut buf = [0u8; 8192];
-                loop {
-                    match f.read(&mut buf) {
-                        Ok(0) => break,
-                        Ok(n) => events.push(Ev::Out(buf[..n].to_vec(), false)),
-                        Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => break,
-                        Err(_) => break,
-                    }
-                }
-            }
-            ProcIo::None => {}
+                ProcIo::None => {}
             }
         }
     }
@@ -1876,9 +1878,7 @@ fn proc_write(i: &mut Interp, p: &ProcessRef, bytes: &[u8]) -> EvalResult {
     }
     // Route through the TLS record layer once gnutls-boot completed
     // (GNU's emacs_gnutls_write).
-    if matches!(pb.io, ProcIo::Net(_))
-        && crate::lisp::builtins::gnutls::tls_ready(&pb)
-    {
+    if matches!(pb.io, ProcIo::Net(_)) && crate::lisp::builtins::gnutls::tls_ready(&pb) {
         return match crate::lisp::builtins::gnutls::record_write(&pb, bytes) {
             Ok(_) => Ok(Value::Nil),
             Err(()) => Err(i.error("Writing to process: broken pipe")),

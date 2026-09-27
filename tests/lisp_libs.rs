@@ -537,8 +537,10 @@ fn macroexp_quote_is_function() {
     // GNU macroexp.el: `macroexp-quote' is a *function* — its argument is
     // evaluated before deciding whether to wrap in (quote …).  A bogus
     // defmacro redefinition left raw subexpressions unquoted.
-    assert_eq!(ev("(list (macroexp-quote 5) (macroexp-quote 'x) (macroexp-quote nil))"),
-        "(5 'x nil)");
+    assert_eq!(
+        ev("(list (macroexp-quote 5) (macroexp-quote 'x) (macroexp-quote nil))"),
+        "(5 'x nil)"
+    );
 }
 
 #[test]
@@ -774,8 +776,10 @@ fn princ_record_prints_hash_s() {
     // `princ'/format on a record prints `#s(tag elt ...)' with
     // UNESCAPED items (GNU) — not the being-printed index `#N'.
     assert_eq!(
-        ev_out("(let ((r (make-record 'foo 2 \"x\")))
-                 (princ r) (princ \"|\") (princ (format \"%s\" r)))"),
+        ev_out(
+            "(let ((r (make-record 'foo 2 \"x\")))
+                 (princ r) (princ \"|\") (princ (format \"%s\" r)))"
+        ),
         "#s(foo x x)|#s(foo x x)"
     );
     assert_eq!(
@@ -969,9 +973,11 @@ fn oclosure_accessors_and_type() {
     // A user oclosure type: the predicate returns memq's tail (same
     // as GNU, not t) and oclosure-type reads the type slot.
     assert_eq!(
-        ev("(progn (oclosure-define (my-oc (:predicate my-oc-p)) alpha beta)
+        ev(
+            "(progn (oclosure-define (my-oc (:predicate my-oc-p)) alpha beta)
                   (let ((o (oclosure-lambda (my-oc (alpha) (beta)) (x) x)))
-                    (list (my-oc-p o) (oclosure-type o))))"),
+                    (list (my-oc-p o) (oclosure-type o))))"
+        ),
         "((my-oc oclosure) my-oc)"
     );
 }
@@ -984,9 +990,11 @@ fn mule_conf_charsets_registered_at_startup() {
     // names are `charsetp' at -Q and define-charset is mule.el's
     // Lisp-level defun (not the bare subr).
     assert_eq!(
-        ev("(list (charsetp 'chinese-gb2312) (charsetp 'japanese-jisx0213-1)
+        ev(
+            "(list (charsetp 'chinese-gb2312) (charsetp 'japanese-jisx0213-1)
                   (charsetp 'japanese-jisx0213.2004-1) (charsetp 'katakana-jisx0201)
-                  (subrp (symbol-function 'define-charset)))"),
+                  (subrp (symbol-function 'define-charset)))"
+        ),
         "(t t t t nil)"
     );
     // unify-charset succeeds for define-charset'd names (their

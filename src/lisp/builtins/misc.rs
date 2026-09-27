@@ -1827,11 +1827,15 @@ fn f_subr_arity(i: &mut Interp, args: Vec<Value>) -> EvalResult {
 
 fn f_closurep(_i: &mut Interp, args: Vec<Value>) -> EvalResult {
     // Byte-code objects aren't closures in GNU's type lattice.
-    Ok(Value::from_bool(matches!(&args[0], Value::Lambda(l) if l.bc_items.is_none())))
+    Ok(Value::from_bool(
+        matches!(&args[0], Value::Lambda(l) if l.bc_items.is_none()),
+    ))
 }
 
 fn f_interpreted_function_p(_i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    Ok(Value::from_bool(matches!(&args[0], Value::Lambda(l) if l.bc_items.is_none())))
+    Ok(Value::from_bool(
+        matches!(&args[0], Value::Lambda(l) if l.bc_items.is_none()),
+    ))
 }
 
 fn f_make_interpreted_closure(i: &mut Interp, args: Vec<Value>) -> EvalResult {
@@ -2924,16 +2928,13 @@ fn on_hot_spot_p(i: &Interp, area: &Value, x: i128, y: i128) -> bool {
                 return false;
             }
             let mut inside = false;
-            let (Some(mut x0), Some(mut y0)) =
-                (fixnum(&poly[n - 2]), fixnum(&poly[n - 1]))
-            else {
+            let (Some(mut x0), Some(mut y0)) = (fixnum(&poly[n - 2]), fixnum(&poly[n - 1])) else {
                 return false;
             };
             for k in (0..n).step_by(2) {
                 let x1 = x0;
                 let y1 = y0;
-                let (Some(nx), Some(ny)) = (fixnum(&poly[k]), fixnum(&poly[k + 1]))
-                else {
+                let (Some(nx), Some(ny)) = (fixnum(&poly[k]), fixnum(&poly[k + 1])) else {
                     return false;
                 };
                 x0 = nx;
@@ -8102,7 +8103,6 @@ fn f_gnutls_available_p(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
     Ok(Value::list(vals))
 }
 
-
 /// `help--describe-vector' — GNU's fifth argument is a keymap (the
 /// doc context for the vector).
 fn f_help_describe_vector(i: &mut Interp, a: Vec<Value>) -> EvalResult {
@@ -9540,12 +9540,7 @@ fn uniprop_compressed(v: &Value) -> bool {
 /// slot SLOT of VEC into a real depth-3 sub-table covering MIN3..MIN3+127,
 /// storing it back into VEC.  Format 1 is a plain sequence (0 = nil);
 /// format 2 is run-length (a char >= 128 repeats the previous value).
-fn uniprop_uncompress(
-    tag: SymId,
-    vec: &Rc<RefCell<Vec<Value>>>,
-    slot: usize,
-    min3: u32,
-) -> Value {
+fn uniprop_uncompress(tag: SymId, vec: &Rc<RefCell<Vec<Value>>>, slot: usize, min3: u32) -> Value {
     let val = vec.borrow().get(slot).cloned().unwrap_or(Value::Nil);
     let mut rec = Vec::with_capacity(3 + 128);
     rec.push(Value::Sym(tag));
@@ -11018,7 +11013,6 @@ fn f_make_terminal_frame(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
     Err(i.error("Don't know how to create a terminal frame"))
 }
 
-
 fn f_define_coding_system_alias(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let _ = want_sym(i, &a[0])?;
     let _ = want_sym(i, &a[1])?;
@@ -11028,7 +11022,6 @@ fn f_define_coding_system_alias(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     }
     Ok(Value::Nil)
 }
-
 
 fn f_thread_buffer_disposition(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     match a.first() {
@@ -11580,7 +11573,6 @@ fn f_module_load(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     ))
 }
 
-
 /// `backtrace--frames-from-thread` — threadp-checks its arg; we keep
 /// no suspended frames, so nil for a real thread.
 fn f_backtrace_frames_from_thread(i: &mut Interp, a: Vec<Value>) -> EvalResult {
@@ -11836,9 +11828,9 @@ fn f_profiler_memory_log(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
 /// function (our cc-emitted code), nil for built-in primitives.
 fn f_subr_native_elisp_p(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     match &a[0] {
-        Value::Subr(s) => {
-            Ok(Value::from_bool(crate::lisp::builtins::comp::is_native(s).is_some()))
-        }
+        Value::Subr(s) => Ok(Value::from_bool(
+            crate::lisp::builtins::comp::is_native(s).is_some(),
+        )),
         other => Err(i.wrong_type_mut("subrp", other)),
     }
 }

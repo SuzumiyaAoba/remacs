@@ -747,9 +747,7 @@ impl Interp {
                 }
                 // Tree-sitter objects print `#<treesit-parser in
                 // BUF for LANG>' / `#<treesit-node TYPE in B-E>'.
-                if let Some(s) =
-                    crate::lisp::builtins::treesit::treesit_repr(self, rr.as_slice())
-                {
+                if let Some(s) = crate::lisp::builtins::treesit::treesit_repr(self, rr.as_slice()) {
                     out.push_str(&s);
                     return;
                 }
@@ -778,14 +776,7 @@ impl Interp {
                     if let Some(Value::Vec(slots)) = rr.get(2) {
                         let ptr = std::rc::Rc::as_ptr(items) as usize;
                         let slots = slots.borrow();
-                        self.print_char_table(
-                            ptr,
-                            rr.as_slice(),
-                            slots.as_slice(),
-                            out,
-                            depth,
-                            bq,
-                        );
+                        self.print_char_table(ptr, rr.as_slice(), slots.as_slice(), out, depth, bq);
                         return;
                     }
                 }

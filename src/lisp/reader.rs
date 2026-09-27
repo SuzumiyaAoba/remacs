@@ -964,9 +964,7 @@ impl<'a> Reader<'a> {
                 }
                 if let Value::Sym(t) = &items[0] {
                     if self.interp.symbol_name(*t) == "hash-table" {
-                        if let Some(h) =
-                            read_hash_literal(self.interp, &items[1..])
-                        {
+                        if let Some(h) = read_hash_literal(self.interp, &items[1..]) {
                             return Ok(h);
                         }
                     }
@@ -1254,7 +1252,9 @@ fn read_hash_literal(i: &mut Interp, fields: &[Value]) -> Option<Value> {
     let mut weakness: Option<Value> = None;
     let mut k = 0;
     while k + 1 < fields.len() {
-        let Value::Sym(name_id) = &fields[k] else { return None };
+        let Value::Sym(name_id) = &fields[k] else {
+            return None;
+        };
         let name = i.symbol_name(*name_id).to_string();
         let val = &fields[k + 1];
         match name.as_str() {
@@ -1280,7 +1280,11 @@ fn read_hash_literal(i: &mut Interp, fields: &[Value]) -> Option<Value> {
             }
             "weakness" => {
                 if matches!(val, Value::Sym(_) | Value::Nil) {
-                    weakness = if val.is_nil() { None } else { Some(val.clone()) };
+                    weakness = if val.is_nil() {
+                        None
+                    } else {
+                        Some(val.clone())
+                    };
                 }
             }
             // rehash-size/rehash-threshold/purecopy are accepted and

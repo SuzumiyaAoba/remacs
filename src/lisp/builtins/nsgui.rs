@@ -86,46 +86,39 @@ unsafe impl Sync for Objc {}
 static OBJC: OnceLock<Option<Objc>> = OnceLock::new();
 
 fn objc() -> Option<&'static Objc> {
-    OBJC
-        .get_or_init(|| {
-            let lib = crate::lisp::dynlib::open_library(
-                "REMACS_OBJC_LIBRARY",
-                &[
-                    "/usr/lib/libobjc.A.dylib",
-                    "libobjc.A.dylib",
-                    "libobjc.dylib",
-                ],
-                "",
-                "",
-            )?;
-            unsafe {
-                Some(Objc {
-                    id0: crate::lisp::dynlib::sym(&lib, b"objc_msgSend\0")?,
-                    id1: crate::lisp::dynlib::sym(&lib, b"objc_msgSend\0")?,
-                    int0: crate::lisp::dynlib::sym(&lib, b"objc_msgSend\0")?,
-                    int1: crate::lisp::dynlib::sym(&lib, b"objc_msgSend\0")?,
-                    u64_2: crate::lisp::dynlib::sym(&lib, b"objc_msgSend\0")?,
-                    void0: crate::lisp::dynlib::sym(&lib, b"objc_msgSend\0")?,
-                    void1: crate::lisp::dynlib::sym(&lib, b"objc_msgSend\0")?,
-                    dbl1: crate::lisp::dynlib::sym(&lib, b"objc_msgSend\0")?,
-                    range1: crate::lisp::dynlib::sym(&lib, b"objc_msgSend\0")?,
-                    size0: crate::lisp::dynlib::sym(&lib, b"objc_msgSend\0")?,
-                    rect1: crate::lisp::dynlib::sym(&lib, b"objc_msgSend\0")?,
-                    pool_push: crate::lisp::dynlib::sym(
-                        &lib,
-                        b"objc_autoreleasePoolPush\0",
-                    )?,
-                    pool_pop: crate::lisp::dynlib::sym(
-                        &lib,
-                        b"objc_autoreleasePoolPop\0",
-                    )?,
-                    get_class: crate::lisp::dynlib::sym(&lib, b"objc_getClass\0")?,
-                    sel_name: crate::lisp::dynlib::sym(&lib, b"sel_registerName\0")?,
-                    _lib: lib,
-                })
-            }
-        })
-        .as_ref()
+    OBJC.get_or_init(|| {
+        let lib = crate::lisp::dynlib::open_library(
+            "REMACS_OBJC_LIBRARY",
+            &[
+                "/usr/lib/libobjc.A.dylib",
+                "libobjc.A.dylib",
+                "libobjc.dylib",
+            ],
+            "",
+            "",
+        )?;
+        unsafe {
+            Some(Objc {
+                id0: crate::lisp::dynlib::sym(&lib, b"objc_msgSend\0")?,
+                id1: crate::lisp::dynlib::sym(&lib, b"objc_msgSend\0")?,
+                int0: crate::lisp::dynlib::sym(&lib, b"objc_msgSend\0")?,
+                int1: crate::lisp::dynlib::sym(&lib, b"objc_msgSend\0")?,
+                u64_2: crate::lisp::dynlib::sym(&lib, b"objc_msgSend\0")?,
+                void0: crate::lisp::dynlib::sym(&lib, b"objc_msgSend\0")?,
+                void1: crate::lisp::dynlib::sym(&lib, b"objc_msgSend\0")?,
+                dbl1: crate::lisp::dynlib::sym(&lib, b"objc_msgSend\0")?,
+                range1: crate::lisp::dynlib::sym(&lib, b"objc_msgSend\0")?,
+                size0: crate::lisp::dynlib::sym(&lib, b"objc_msgSend\0")?,
+                rect1: crate::lisp::dynlib::sym(&lib, b"objc_msgSend\0")?,
+                pool_push: crate::lisp::dynlib::sym(&lib, b"objc_autoreleasePoolPush\0")?,
+                pool_pop: crate::lisp::dynlib::sym(&lib, b"objc_autoreleasePoolPop\0")?,
+                get_class: crate::lisp::dynlib::sym(&lib, b"objc_getClass\0")?,
+                sel_name: crate::lisp::dynlib::sym(&lib, b"sel_registerName\0")?,
+                _lib: lib,
+            })
+        }
+    })
+    .as_ref()
 }
 
 fn cls(o: &Objc, name: &str) -> usize {
@@ -211,10 +204,7 @@ fn ax_trusted() -> Option<AxTrusted> {
     })
 }
 
-fn f_ns_process_is_accessibility_trusted(
-    _i: &mut Interp,
-    _a: Vec<Value>,
-) -> EvalResult {
+fn f_ns_process_is_accessibility_trusted(_i: &mut Interp, _a: Vec<Value>) -> EvalResult {
     let ok = ax_trusted().map(|f| unsafe { f() } != 0).unwrap_or(false);
     Ok(Value::from_bool(ok))
 }
@@ -294,10 +284,7 @@ fn f_ns_list_colors(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     Ok(with_pool(o, |o| {
         let mut list = Value::Nil;
         unsafe {
-            let lists = (o.id0)(
-                cls(o, "NSColorList"),
-                sel(o, "availableColorLists"),
-            );
+            let lists = (o.id0)(cls(o, "NSColorList"), sel(o, "availableColorLists"));
             let n = (o.int0)(lists, sel(o, "count"));
             for k in 0..n {
                 let clist = (o.id1)(lists, sel(o, "objectAtIndex:"), k as usize);
@@ -360,11 +347,7 @@ fn f_ns_request_user_attention(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         let app = ns_app(o);
         let mut guard = ATTENTION_ID.lock().unwrap();
         if *guard != -1 {
-            (o.void1)(
-                app,
-                sel(o, "cancelUserAttentionRequest:"),
-                *guard as usize,
-            );
+            (o.void1)(app, sel(o, "cancelUserAttentionRequest:"), *guard as usize);
             *guard = -1;
         }
         if is_sym {
@@ -409,8 +392,7 @@ fn f_ns_block_system_sleep(i: &mut Interp, a: Vec<Value>) -> EvalResult {
             opts |= 1u64 << 46;
         }
         let reason = ns_str(o, why.as_deref().unwrap_or("Emacs"));
-        let act =
-            (o.u64_2)(pi, sel(o, "beginActivityWithOptions:reason:"), opts, reason);
+        let act = (o.u64_2)(pi, sel(o, "beginActivityWithOptions:reason:"), opts, reason);
         // The activity object is autoreleased; keep it alive past the
         // pool pop so `endActivity:' can use it later.
         if act != 0 {
@@ -467,10 +449,7 @@ fn f_ns_progress_indicator(_i: &mut Interp, a: Vec<Value>) -> EvalResult {
             if n > 0 {
                 let last = (o.id0)(subs, sel(o, "lastObject"));
                 let lcls = (o.id0)(last, sel(o, "class"));
-                let lname = utf8(
-                    o,
-                    (o.id0)(lcls, sel(o, "description")),
-                );
+                let lname = utf8(o, (o.id0)(lcls, sel(o, "description")));
                 if lname == "NSLevelIndicator" {
                     indicator = last;
                 }
@@ -483,8 +462,7 @@ fn f_ns_progress_indicator(_i: &mut Interp, a: Vec<Value>) -> EvalResult {
                     (o.id0)(cls(o, "NSImageView"), sel(o, "alloc")),
                     sel(o, "init"),
                 );
-                let icon =
-                    (o.id0)(ns_app(o), sel(o, "applicationIconImage"));
+                let icon = (o.id0)(ns_app(o), sel(o, "applicationIconImage"));
                 (o.void1)(iv, sel(o, "setImage:"), icon);
                 (o.void1)(dock, sel(o, "setContentView:"), iv);
                 cv = iv;
@@ -507,15 +485,8 @@ fn f_ns_progress_indicator(_i: &mut Interp, a: Vec<Value>) -> EvalResult {
             (o.void1)(li, sel(o, "setWantsLayer:"), 1usize);
             (o.void1)(li, sel(o, "setEnabled:"), 0usize);
             // NSLevelIndicatorStyleContinuousCapacity = 1.
-            (o.void1)(
-                li,
-                sel(o, "setLevelIndicatorStyle:"),
-                1usize,
-            );
-            let accent = (o.id0)(
-                cls(o, "NSColor"),
-                sel(o, "controlAccentColor"),
-            );
+            (o.void1)(li, sel(o, "setLevelIndicatorStyle:"), 1usize);
+            let accent = (o.id0)(cls(o, "NSColor"), sel(o, "controlAccentColor"));
             (o.void1)(li, sel(o, "setFillColor:"), accent);
             (o.dbl1)(li, sel(o, "setMinValue:"), 0.0);
             (o.dbl1)(li, sel(o, "setMaxValue:"), 1.0);
@@ -630,40 +601,249 @@ fn f_ns_reset_menu(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 // ---------------------------------------------------------------------------
 
 pub(crate) static SUBRS: &[Subr] = &[
-    S!("ns-font-name", 1, 1, f_ns_font_name, "Determine font PostScript or family name for font NAME."),
-    S!("ns-process-is-accessibility-trusted", 0, 0, f_ns_process_is_accessibility_trusted, "Return non-nil if Emacs is trusted by macOS Accessibility."),
-    S!("ns-list-colors", 0, 1, f_ns_list_colors, "Return a list of all available colors."),
-    S!("ns-badge", 1, 1, f_ns_badge, "Set the app icon badge to BADGE."),
-    S!("ns-request-user-attention", 1, 1, f_ns_request_user_attention, "Bounce the app dock icon to request user attention."),
-    S!("ns-progress-indicator", 1, 1, f_ns_progress_indicator, "Show a progress indicator on the app dock icon."),
-    S!("ns-block-system-sleep", 2, 2, f_ns_block_system_sleep, "Block system idle sleep."),
-    S!("ns-unblock-system-sleep", 1, 1, f_ns_unblock_system_sleep, "Unblock system idle sleep."),
-    S!("ns-get-resource", 2, 2, f_ns_get_resource, "Return the value of the property NAME of OWNER from the defaults database."),
-    S!("ns-set-resource", 3, 3, f_ns_set_resource, "Set property NAME of OWNER to VALUE, from the defaults database."),
-    S!("ns-hide-emacs", 1, 1, f_ns_hide_emacs, "Hide Emacs (TYPE says whether to unhide)."),
-    S!("ns-hide-others", 0, 0, f_ns_hide_others, "Hide all applications except Emacs."),
-    S!("ns-emacs-info-panel", 0, 0, f_ns_emacs_info_panel, "Show the Emacs info panel."),
-    S!("ns-popup-color-panel", 0, 1, f_ns_popup_color_panel, "Pop up the NS color panel."),
-    S!("ns-read-file-name", 1, 5, f_ns_read_file_name, "Use a graphical panel to read a file name."),
-    S!("ns-perform-service", 2, 2, f_ns_perform_service, "Perform Nextstep SERVICE on SEND."),
-    S!("ns-send-items", 1, 1, f_ns_send_items, "Send ITEMS to the pasteboard for a service."),
-    S!("ns-frame-restack", 2, 3, f_ns_frame_restack, "Restack FRAME1 above FRAME2."),
-    S!("ns-frame-edges", 0, 2, f_ns_frame_edges, "Return edge coordinates of FRAME."),
-    S!("ns-frame-geometry", 0, 1, f_ns_frame_geometry, "Return geometric attributes of FRAME."),
-    S!("ns-frame-list-z-order", 0, 1, f_ns_frame_list_z_order, "Return list of Emacs' frames, in Z (stacking) order."),
-    S!("ns-mouse-absolute-pixel-position", 0, 0, f_ns_mouse_absolute_pixel_position, "Return absolute mouse position."),
-    S!("ns-set-mouse-absolute-pixel-position", 2, 2, f_ns_set_mouse_absolute_pixel_position, "Move mouse pointer to absolute pixel position."),
-    S!("ns-display-monitor-attributes-list", 0, 1, f_ns_display_monitor_attributes_list, "Return list of monitor attributes."),
-    S!("ns-show-character-palette", 0, 0, f_ns_show_character_palette, "Show the character palette."),
-    S!("ns-own-selection-internal", 2, 2, f_ns_own_selection_internal, "Assert an NS selection of type SELECTION and value VALUE."),
-    S!("ns-disown-selection-internal", 1, 1, f_ns_disown_selection_internal, "If we own the selection SELECTION, disown it."),
-    S!("ns-get-selection", 2, 2, f_ns_get_selection, "Return text selected from some Nextstep window."),
-    S!("ns-selection-exists-p", 0, 1, f_ns_selection_exists_p, "Whether there is an owner for the given X selection."),
-    S!("ns-selection-owner-p", 0, 1, f_ns_selection_owner_p, "Whether the current Emacs process owns the given selection."),
-    S!("ns-begin-drag", 3, 6, f_ns_begin_drag, "Drag and drop an item described by TARGETS."),
-    S!("ns-list-services", 0, 0, f_ns_list_services, "List available Nextstep services."),
-    S!("ns-reset-menu", 0, 0, f_ns_reset_menu, "Reset the menu bar."),
-    S!("ns-do-applescript", 1, 1, f_ns_do_applescript, "Compile and execute AppleScript SCRIPT."),
-    S!("x-apply-session-resources", 0, 0, f_x_apply_session_resources, "Apply session resources."),
+    S!(
+        "ns-font-name",
+        1,
+        1,
+        f_ns_font_name,
+        "Determine font PostScript or family name for font NAME."
+    ),
+    S!(
+        "ns-process-is-accessibility-trusted",
+        0,
+        0,
+        f_ns_process_is_accessibility_trusted,
+        "Return non-nil if Emacs is trusted by macOS Accessibility."
+    ),
+    S!(
+        "ns-list-colors",
+        0,
+        1,
+        f_ns_list_colors,
+        "Return a list of all available colors."
+    ),
+    S!(
+        "ns-badge",
+        1,
+        1,
+        f_ns_badge,
+        "Set the app icon badge to BADGE."
+    ),
+    S!(
+        "ns-request-user-attention",
+        1,
+        1,
+        f_ns_request_user_attention,
+        "Bounce the app dock icon to request user attention."
+    ),
+    S!(
+        "ns-progress-indicator",
+        1,
+        1,
+        f_ns_progress_indicator,
+        "Show a progress indicator on the app dock icon."
+    ),
+    S!(
+        "ns-block-system-sleep",
+        2,
+        2,
+        f_ns_block_system_sleep,
+        "Block system idle sleep."
+    ),
+    S!(
+        "ns-unblock-system-sleep",
+        1,
+        1,
+        f_ns_unblock_system_sleep,
+        "Unblock system idle sleep."
+    ),
+    S!(
+        "ns-get-resource",
+        2,
+        2,
+        f_ns_get_resource,
+        "Return the value of the property NAME of OWNER from the defaults database."
+    ),
+    S!(
+        "ns-set-resource",
+        3,
+        3,
+        f_ns_set_resource,
+        "Set property NAME of OWNER to VALUE, from the defaults database."
+    ),
+    S!(
+        "ns-hide-emacs",
+        1,
+        1,
+        f_ns_hide_emacs,
+        "Hide Emacs (TYPE says whether to unhide)."
+    ),
+    S!(
+        "ns-hide-others",
+        0,
+        0,
+        f_ns_hide_others,
+        "Hide all applications except Emacs."
+    ),
+    S!(
+        "ns-emacs-info-panel",
+        0,
+        0,
+        f_ns_emacs_info_panel,
+        "Show the Emacs info panel."
+    ),
+    S!(
+        "ns-popup-color-panel",
+        0,
+        1,
+        f_ns_popup_color_panel,
+        "Pop up the NS color panel."
+    ),
+    S!(
+        "ns-read-file-name",
+        1,
+        5,
+        f_ns_read_file_name,
+        "Use a graphical panel to read a file name."
+    ),
+    S!(
+        "ns-perform-service",
+        2,
+        2,
+        f_ns_perform_service,
+        "Perform Nextstep SERVICE on SEND."
+    ),
+    S!(
+        "ns-send-items",
+        1,
+        1,
+        f_ns_send_items,
+        "Send ITEMS to the pasteboard for a service."
+    ),
+    S!(
+        "ns-frame-restack",
+        2,
+        3,
+        f_ns_frame_restack,
+        "Restack FRAME1 above FRAME2."
+    ),
+    S!(
+        "ns-frame-edges",
+        0,
+        2,
+        f_ns_frame_edges,
+        "Return edge coordinates of FRAME."
+    ),
+    S!(
+        "ns-frame-geometry",
+        0,
+        1,
+        f_ns_frame_geometry,
+        "Return geometric attributes of FRAME."
+    ),
+    S!(
+        "ns-frame-list-z-order",
+        0,
+        1,
+        f_ns_frame_list_z_order,
+        "Return list of Emacs' frames, in Z (stacking) order."
+    ),
+    S!(
+        "ns-mouse-absolute-pixel-position",
+        0,
+        0,
+        f_ns_mouse_absolute_pixel_position,
+        "Return absolute mouse position."
+    ),
+    S!(
+        "ns-set-mouse-absolute-pixel-position",
+        2,
+        2,
+        f_ns_set_mouse_absolute_pixel_position,
+        "Move mouse pointer to absolute pixel position."
+    ),
+    S!(
+        "ns-display-monitor-attributes-list",
+        0,
+        1,
+        f_ns_display_monitor_attributes_list,
+        "Return list of monitor attributes."
+    ),
+    S!(
+        "ns-show-character-palette",
+        0,
+        0,
+        f_ns_show_character_palette,
+        "Show the character palette."
+    ),
+    S!(
+        "ns-own-selection-internal",
+        2,
+        2,
+        f_ns_own_selection_internal,
+        "Assert an NS selection of type SELECTION and value VALUE."
+    ),
+    S!(
+        "ns-disown-selection-internal",
+        1,
+        1,
+        f_ns_disown_selection_internal,
+        "If we own the selection SELECTION, disown it."
+    ),
+    S!(
+        "ns-get-selection",
+        2,
+        2,
+        f_ns_get_selection,
+        "Return text selected from some Nextstep window."
+    ),
+    S!(
+        "ns-selection-exists-p",
+        0,
+        1,
+        f_ns_selection_exists_p,
+        "Whether there is an owner for the given X selection."
+    ),
+    S!(
+        "ns-selection-owner-p",
+        0,
+        1,
+        f_ns_selection_owner_p,
+        "Whether the current Emacs process owns the given selection."
+    ),
+    S!(
+        "ns-begin-drag",
+        3,
+        6,
+        f_ns_begin_drag,
+        "Drag and drop an item described by TARGETS."
+    ),
+    S!(
+        "ns-list-services",
+        0,
+        0,
+        f_ns_list_services,
+        "List available Nextstep services."
+    ),
+    S!(
+        "ns-reset-menu",
+        0,
+        0,
+        f_ns_reset_menu,
+        "Reset the menu bar."
+    ),
+    S!(
+        "ns-do-applescript",
+        1,
+        1,
+        f_ns_do_applescript,
+        "Compile and execute AppleScript SCRIPT."
+    ),
+    S!(
+        "x-apply-session-resources",
+        0,
+        0,
+        f_x_apply_session_resources,
+        "Apply session resources."
+    ),
 ];
-

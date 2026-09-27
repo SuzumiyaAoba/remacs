@@ -11,7 +11,7 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicI32, Ordering};
 use std::sync::{Mutex, OnceLock};
 
-use super::{want_list, want_string, S};
+use super::{S, want_list, want_string};
 use crate::lisp::error::{EvalResult, Flow};
 use crate::lisp::obarray::sym;
 use crate::lisp::value::{SymId, Value};
@@ -223,11 +223,7 @@ fn file_notify_error(i: &mut crate::lisp::eval::Interp, data: Vec<Value>) -> Flo
     i.signal_data(s, data)
 }
 
-fn call_lisp(
-    i: &mut crate::lisp::eval::Interp,
-    f: &str,
-    args: Vec<Value>,
-) -> Result<Value, Flow> {
+fn call_lisp(i: &mut crate::lisp::eval::Interp, f: &str, args: Vec<Value>) -> Result<Value, Flow> {
     let fun = Value::Sym(i.intern(f));
     i.apply(&fun, args)
 }
@@ -259,9 +255,9 @@ pub(crate) fn dispatch_special_event(
     }
     let lookup = Value::Sym(intern(i, "lookup-key"));
     let vec = match &key {
-        Value::Sym(s) => Value::Vec(std::rc::Rc::new(std::cell::RefCell::new(vec![
-            Value::Sym(*s),
-        ]))),
+        Value::Sym(s) => Value::Vec(std::rc::Rc::new(std::cell::RefCell::new(vec![Value::Sym(
+            *s,
+        )]))),
         _ => return Ok(Value::Nil),
     };
     let binding = i.apply(&lookup, vec![map, vec, Value::t()])?;
@@ -281,9 +277,9 @@ fn f_insert_special_event(i: &mut crate::lisp::eval::Interp, a: Vec<Value>) -> E
     let map = i.symbol_value(sem);
     let lookup = Value::Sym(intern(i, "lookup-key"));
     let vec = match &key {
-        Value::Sym(s) => Value::Vec(std::rc::Rc::new(std::cell::RefCell::new(vec![
-            Value::Sym(*s),
-        ]))),
+        Value::Sym(s) => Value::Vec(std::rc::Rc::new(std::cell::RefCell::new(vec![Value::Sym(
+            *s,
+        )]))),
         _ => return Ok(Value::Nil),
     };
     let binding = i.apply(&lookup, vec![map, vec, Value::t()])?;
@@ -331,20 +327,14 @@ fn f_kqueue_add_watch(i: &mut crate::lisp::eval::Interp, a: Vec<Value>) -> EvalR
     if !HAVE_KQUEUE {
         return Err(file_notify_error(
             i,
-            vec![
-                Value::string("File watching is not available"),
-                Value::Nil,
-            ],
+            vec![Value::string("File watching is not available"), Value::Nil],
         ));
     }
     let kq = ensure_kqueue();
     if kq < 0 {
         return Err(file_notify_error(
             i,
-            vec![
-                Value::string("File watching is not available"),
-                Value::Nil,
-            ],
+            vec![Value::string("File watching is not available"), Value::Nil],
         ));
     }
 
@@ -374,8 +364,8 @@ fn f_kqueue_add_watch(i: &mut crate::lisp::eval::Interp, a: Vec<Value>) -> EvalR
     }
 
     // Open the file the way GNU does (O_EVTONLY|O_SYMLINK preferred).
-    let cpath = std::ffi::CString::new(file.clone())
-        .map_err(|_| i.error("File name contains NUL"))?;
+    let cpath =
+        std::ffi::CString::new(file.clone()).map_err(|_| i.error("File name contains NUL"))?;
     let mut oflags = libc::O_NONBLOCK | sys::O_EVTONLY;
     if sys::O_SYMLINK != 0 {
         oflags |= sys::O_SYMLINK;
@@ -421,7 +411,7 @@ fn f_kqueue_rm_watch(i: &mut crate::lisp::eval::Interp, a: Vec<Value>) -> EvalRe
             return Err(file_notify_error(
                 i,
                 vec![Value::string("Not a watch descriptor"), a[0].clone()],
-            ))
+            ));
         }
     };
     let Some(pos) = find_watch_pos(&i.filenotify, desc) else {
@@ -445,11 +435,7 @@ fn f_kqueue_rm_watch(i: &mut crate::lisp::eval::Interp, a: Vec<Value>) -> EvalRe
 
 fn f_kqueue_valid_p(i: &mut crate::lisp::eval::Interp, a: Vec<Value>) -> EvalResult {
     let ok = matches!(&a[0], Value::Int(n) if find_watch_pos(&i.filenotify, *n as i64).is_some());
-    if ok {
-        Ok(Value::t())
-    } else {
-        Ok(Value::Nil)
-    }
+    if ok { Ok(Value::t()) } else { Ok(Value::Nil) }
 }
 
 // ---------------------------------------------------------------------------
@@ -498,10 +484,7 @@ fn emit(
 }
 
 /// Port of GNU `kqueue_compare_dir_list'.
-fn compare_dir_list(
-    i: &mut crate::lisp::eval::Interp,
-    idx: usize,
-) -> EvalResult {
+fn compare_dir_list(i: &mut crate::lisp::eval::Interp, idx: usize) -> EvalResult {
     let (dir, old) = {
         let w = &i.filenotify.watches[idx];
         (w.file.clone(), w.dir_list.clone().unwrap_or_default())
@@ -538,13 +521,7 @@ fn compare_dir_list(
                 }
             } else {
                 let w = i.filenotify.watches[idx].clone_watch();
-                emit(
-                    i,
-                    &w,
-                    &["rename"],
-                    &old_e.name,
-                    Some(&ne.name),
-                )?;
+                emit(i, &w, &["rename"], &old_e.name, Some(&ne.name))?;
                 deleted.push(ne.clone());
             }
             new_dl.remove(np);
@@ -561,13 +538,7 @@ fn compare_dir_list(
         if let Some(pp) = pending.iter().position(|n| n.ino == old_e.ino) {
             let ne = pending.remove(pp);
             let w = i.filenotify.watches[idx].clone_watch();
-            emit(
-                i,
-                &w,
-                &["rename"],
-                &old_e.name,
-                Some(&ne.name),
-            )?;
+            emit(i, &w, &["rename"], &old_e.name, Some(&ne.name))?;
             continue;
         }
 
@@ -691,10 +662,34 @@ impl KqWatch {
 }
 
 pub(crate) static SUBRS: &[crate::lisp::value::Subr] = &[
-    S!("kqueue-add-watch", 3, 3, f_kqueue_add_watch, "Add a watch for filesystem events pertaining to FILE."),
-    S!("kqueue-rm-watch", 1, 1, f_kqueue_rm_watch, "Remove an existing WATCH-DESCRIPTOR."),
-    S!("kqueue-valid-p", 1, 1, f_kqueue_valid_p, "Check a watch specified by its WATCH-DESCRIPTOR."),
-    S!("insert-special-event", 1, 1, f_insert_special_event, "Insert the special EVENT into the input event queue."),
+    S!(
+        "kqueue-add-watch",
+        3,
+        3,
+        f_kqueue_add_watch,
+        "Add a watch for filesystem events pertaining to FILE."
+    ),
+    S!(
+        "kqueue-rm-watch",
+        1,
+        1,
+        f_kqueue_rm_watch,
+        "Remove an existing WATCH-DESCRIPTOR."
+    ),
+    S!(
+        "kqueue-valid-p",
+        1,
+        1,
+        f_kqueue_valid_p,
+        "Check a watch specified by its WATCH-DESCRIPTOR."
+    ),
+    S!(
+        "insert-special-event",
+        1,
+        1,
+        f_insert_special_event,
+        "Insert the special EVENT into the input event queue."
+    ),
 ];
 
 /// `(provide 'kqueue)' — GNU registers it in `syms_of_kqueue' on

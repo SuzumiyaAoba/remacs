@@ -624,7 +624,9 @@ fn f_reverse(i: &mut Interp, args: Vec<Value>) -> EvalResult {
         Value::Record(_) if crate::lisp::builtins::misc::is_bool_vector(i, &args[0]) => {
             let mut bits = crate::lisp::builtins::misc::bool_vec_of(i, &args[0])?;
             bits.reverse();
-            return Ok(Value::list(bits.into_iter().map(Value::from_bool).collect()));
+            return Ok(Value::list(
+                bits.into_iter().map(Value::from_bool).collect(),
+            ));
         }
         _ => {}
     }

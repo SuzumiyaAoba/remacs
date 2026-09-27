@@ -4444,8 +4444,7 @@ fn copy_keymap_elem(i: &Interp, v: &Value, depth: usize) -> Value {
         }
         Value::Record(r)
             if crate::lisp::builtins::misc::is_char_table(i, v)
-                || i
-                    .intern_soft("sub-char-table")
+                || i.intern_soft("sub-char-table")
                     .map(|tag| crate::lisp::builtins::misc::is_sub_ct_tag(tag, v))
                     .unwrap_or(false) =>
         {
@@ -5099,8 +5098,7 @@ fn access_keymap_int(
                 // A keymap result absorbs the parent's binding for
                 // KEY when that is also a keymap, then stops.
                 Some(_) => {
-                    let pv = access_keymap_int(i, &cons, key, t_ok, false)?
-                        .unwrap_or(Value::Nil);
+                    let pv = access_keymap_int(i, &cons, key, t_ok, false)?.unwrap_or(Value::Nil);
                     let pv = keymap_def(i, pv)?;
                     if is_keymap(i, &pv) {
                         append_keymap_hit(i, &mut retval, &mut retval_tail, pv);
@@ -5122,9 +5120,7 @@ fn access_keymap_int(
             // A bare symbol element whose function cell is a keymap
             // (composed maps can store raw symbols like `ESC-prefix').
             match keymap_def(i, elem.clone())? {
-                v if is_keymap(i, &v) => {
-                    access_keymap_int(i, &v, key, t_ok, noinherit)?
-                }
+                v if is_keymap(i, &v) => access_keymap_int(i, &v, key, t_ok, noinherit)?,
                 _ => None,
             }
         } else if crate::lisp::builtins::misc::is_char_table(i, &elem) {
@@ -8203,7 +8199,8 @@ fn f_directory_files(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         match &re {
             Some(r) => {
                 let chars: Vec<char> = name.chars().collect();
-                crate::lisp::regexp::search(r, &chars, 0, &syn, &crate::editor::re_category(i)).is_some()
+                crate::lisp::regexp::search(r, &chars, 0, &syn, &crate::editor::re_category(i))
+                    .is_some()
             }
             None => true,
         }
@@ -10924,7 +10921,15 @@ fn completion_match_regexps(i: &Interp, s: &str, ignore_case: bool) -> bool {
                 };
                 if let Value::Str(rs) = &re_v {
                     if let Ok(re) = crate::lisp::regexp::compile_case(&rs.borrow(), ignore_case) {
-                        if crate::lisp::regexp::search(&re, &chars, 0, &syn, &crate::editor::re_category(i)).is_none() {
+                        if crate::lisp::regexp::search(
+                            &re,
+                            &chars,
+                            0,
+                            &syn,
+                            &crate::editor::re_category(i),
+                        )
+                        .is_none()
+                        {
                             return false;
                         }
                     }
@@ -11586,8 +11591,7 @@ fn f_commandp(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         Value::Lambda(l) => l.interactive.is_some(),
         Value::Subr(s) => {
             crate::lisp::eval::subr_interactive(s.name).is_some()
-                || crate::lisp::builtins::comp::native_iform_by_name(s.name)
-                    .is_some()
+                || crate::lisp::builtins::comp::native_iform_by_name(s.name).is_some()
         }
         // strings and vectors are keyboard macros — commands.
         Value::Str(_) | Value::Vec(_) => true,
@@ -12038,17 +12042,15 @@ pub(crate) fn re_category(i: &Interp) -> impl Fn(char, u8) -> bool + 'static {
     // rather than panic.
     let cb: Option<std::rc::Rc<std::cell::RefCell<Vec<Value>>>> = i
         .current_buffer_ref()
-        .and_then(|b| {
-            b.try_borrow()
-                .ok()
-                .and_then(|bb| bb.category_table.clone())
-        })
+        .and_then(|b| b.try_borrow().ok().and_then(|bb| bb.category_table.clone()))
         .or_else(|| i.standard_category_table.clone())
         .and_then(|v| crate::lisp::builtins::misc::char_table_vec(&v));
     let tag = i.intern_soft("sub-char-table");
     move |c, bit| {
         let Some(cb) = &cb else { return false };
-        let Ok(cb) = cb.try_borrow() else { return false };
+        let Ok(cb) = cb.try_borrow() else {
+            return false;
+        };
         let v = crate::lisp::builtins::misc::ct_raw_tag(tag, &cb, c as u32, false);
         match v {
             Value::Record(r) => {
@@ -13191,7 +13193,9 @@ fn f_apropos_internal(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         let name = i.symbol_name(id);
         let syn = crate::editor::re_syntax(i);
         let chars: Vec<char> = name.chars().collect();
-        if crate::lisp::regexp::search(&re, &chars, 0, &syn, &crate::editor::re_category(i)).is_some() {
+        if crate::lisp::regexp::search(&re, &chars, 0, &syn, &crate::editor::re_category(i))
+            .is_some()
+        {
             out.push(i.sym(id));
         }
     }

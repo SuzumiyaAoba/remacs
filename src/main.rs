@@ -21,9 +21,20 @@ fn main() {
     let headless = args.iter().any(|a| {
         matches!(
             a.as_str(),
-            "-Q" | "--quick" | "-q" | "--no-init" | "--batch" | "-batch"
-                | "--eval" | "--execute" | "--load" | "-l" | "--script"
-                | "--ieval" | "-nw" | "--no-window-system" | "--version"
+            "-Q" | "--quick"
+                | "-q"
+                | "--no-init"
+                | "--batch"
+                | "-batch"
+                | "--eval"
+                | "--execute"
+                | "--load"
+                | "-l"
+                | "--script"
+                | "--ieval"
+                | "-nw"
+                | "--no-window-system"
+                | "--version"
         )
     });
     if headless {

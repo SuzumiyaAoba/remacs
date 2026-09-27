@@ -973,7 +973,13 @@ pub fn match_at(re: &Regex, text: &[char], pos: usize, syn: SynFn, cat: CatFn) -
 }
 
 /// Search forward from `pos`; returns (match_start, match_end) of group 0.
-pub fn search(re: &Regex, text: &[char], pos: usize, syn: SynFn, cat: CatFn) -> Option<(usize, usize)> {
+pub fn search(
+    re: &Regex,
+    text: &[char],
+    pos: usize,
+    syn: SynFn,
+    cat: CatFn,
+) -> Option<(usize, usize)> {
     let mut p = pos;
     while p <= text.len() {
         if let Some(regs) = match_at(re, text, p, syn, cat) {
@@ -1030,7 +1036,13 @@ pub fn search_full(re: &Regex, text: &[char], pos: usize, syn: SynFn, cat: CatFn
 
 /// Backward search returning full regs: the match with the greatest
 /// start whose end is at or before `pos` (GNU semantics).
-pub fn search_backward_full(re: &Regex, text: &[char], pos: usize, syn: SynFn, cat: CatFn) -> Option<Regs> {
+pub fn search_backward_full(
+    re: &Regex,
+    text: &[char],
+    pos: usize,
+    syn: SynFn,
+    cat: CatFn,
+) -> Option<Regs> {
     let mut best: Option<Regs> = None;
     let mut p = 0;
     while p <= pos.min(text.len()) {

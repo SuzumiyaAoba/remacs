@@ -4998,7 +4998,9 @@ fn f_looking_back(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     };
     let syn = crate::editor::re_syntax(i);
     for start in order {
-        if let Some(regs) = crate::lisp::regexp::match_at(&re, &text, start, &syn, &crate::editor::re_category(i)) {
+        if let Some(regs) =
+            crate::lisp::regexp::match_at(&re, &text, start, &syn, &crate::editor::re_category(i))
+        {
             if regs[1] == Some(pos) {
                 i.match_data = Some(MatchData {
                     regs,
@@ -7439,7 +7441,13 @@ fn f_looking_at(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         let stop = bb.text_len();
         let pos = bb.point() - begv;
         let text = bb.text.as_slice();
-        crate::lisp::regexp::looking_at(&re, &text[begv..stop], pos, &syn, &crate::editor::re_category(i))
+        crate::lisp::regexp::looking_at(
+            &re,
+            &text[begv..stop],
+            pos,
+            &syn,
+            &crate::editor::re_category(i),
+        )
     };
     match regs {
         Some(regs) => {
@@ -7471,7 +7479,13 @@ fn f_string_match(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         .map_err(|e| err_sym(i, "invalid-regexp", vec![Value::string(e.0)]))?;
     let syn = crate::editor::re_syntax(i);
     let chars: Vec<char> = text.chars().collect();
-    match crate::lisp::regexp::search_full(&re, &chars, start.min(chars.len()), &syn, &crate::editor::re_category(i)) {
+    match crate::lisp::regexp::search_full(
+        &re,
+        &chars,
+        start.min(chars.len()),
+        &syn,
+        &crate::editor::re_category(i),
+    ) {
         Some(regs) => {
             let start0 = regs[0].unwrap_or(0);
             i.match_data = Some(MatchData {
@@ -7544,9 +7558,21 @@ pub(crate) fn search_common(
             let hit = match (re, needle) {
                 (Some(r), _) => {
                     if backward {
-                        crate::lisp::regexp::search_backward_full(r, text, cur_pos, &syn, &crate::editor::re_category(i))
+                        crate::lisp::regexp::search_backward_full(
+                            r,
+                            text,
+                            cur_pos,
+                            &syn,
+                            &crate::editor::re_category(i),
+                        )
                     } else {
-                        crate::lisp::regexp::search_full(r, text, cur_pos, &syn, &crate::editor::re_category(i))
+                        crate::lisp::regexp::search_full(
+                            r,
+                            text,
+                            cur_pos,
+                            &syn,
+                            &crate::editor::re_category(i),
+                        )
                     }
                 }
                 (_, Some(n)) => literal_search(text, n, cur_pos, backward),

@@ -579,10 +579,7 @@ fn f_macroexpand_1(i: &mut Interp, args: Vec<Value>) -> EvalResult {
             // expansion position is a function expression, so its
             // expansion is `(function (lambda ...))'.
             if i.sym_is(&car, sym::LAMBDA) {
-                return Ok(Value::list(vec![
-                    Value::Sym(sym::FUNCTION),
-                    form.clone(),
-                ]));
+                return Ok(Value::list(vec![Value::Sym(sym::FUNCTION), form.clone()]));
             }
             // GNU `macroexpand-1' consults ENVIRONMENT (its second
             // argument) before the global definition; remacs reads it
@@ -1025,10 +1022,7 @@ pub(crate) fn macroexpand_all(i: &mut Interp, form: &Value) -> EvalResult {
                                 for it in lbody {
                                     lout.push(macroexpand_all(i, it)?);
                                 }
-                                return Ok(Value::list(vec![
-                                    items[0].clone(),
-                                    Value::list(lout),
-                                ]));
+                                return Ok(Value::list(vec![items[0].clone(), Value::list(lout)]));
                             }
                         }
                         return Ok(expanded);
@@ -1112,11 +1106,7 @@ pub(crate) fn macroexpand_all(i: &mut Interp, form: &Value) -> EvalResult {
                         let nargs = args.len();
                         if nargs == 2 && plain_setq_var(i, &args[0]) {
                             let expr = macroexpand_all(i, &args[1])?;
-                            return Ok(Value::list(vec![
-                                items[0].clone(),
-                                args[0].clone(),
-                                expr,
-                            ]));
+                            return Ok(Value::list(vec![items[0].clone(), args[0].clone(), expr]));
                         }
                         if nargs % 2 == 1 {
                             // `(signal 'wrong-number-of-arguments
@@ -1129,10 +1119,7 @@ pub(crate) fn macroexpand_all(i: &mut Interp, form: &Value) -> EvalResult {
                                 ]),
                                 Value::list(vec![
                                     Value::Sym(sym::QUOTE),
-                                    Value::list(vec![
-                                        items[0].clone(),
-                                        Value::Int(nargs as i128),
-                                    ]),
+                                    Value::list(vec![items[0].clone(), Value::Int(nargs as i128)]),
                                 ]),
                             ]));
                         }
@@ -1162,10 +1149,7 @@ pub(crate) fn macroexpand_all(i: &mut Interp, form: &Value) -> EvalResult {
                                         ]),
                                         Value::list(vec![
                                             Value::Sym(i.intern("list")),
-                                            Value::list(vec![
-                                                Value::Sym(sym::QUOTE),
-                                                var.clone(),
-                                            ]),
+                                            Value::list(vec![Value::Sym(sym::QUOTE), var.clone()]),
                                         ]),
                                     ]),
                                 ])
@@ -1179,10 +1163,7 @@ pub(crate) fn macroexpand_all(i: &mut Interp, form: &Value) -> EvalResult {
                                 let data = match var {
                                     Value::Sym(_) => Value::list(vec![
                                         Value::Sym(i.intern("list")),
-                                        Value::list(vec![
-                                            Value::Sym(sym::QUOTE),
-                                            var.clone(),
-                                        ]),
+                                        Value::list(vec![Value::Sym(sym::QUOTE), var.clone()]),
                                     ]),
                                     _ => Value::list(vec![
                                         Value::Sym(i.intern("list")),
@@ -1190,10 +1171,7 @@ pub(crate) fn macroexpand_all(i: &mut Interp, form: &Value) -> EvalResult {
                                             Value::Sym(sym::QUOTE),
                                             Value::Sym(i.intern("symbolp")),
                                         ]),
-                                        Value::list(vec![
-                                            Value::Sym(sym::QUOTE),
-                                            var.clone(),
-                                        ]),
+                                        Value::list(vec![Value::Sym(sym::QUOTE), var.clone()]),
                                     ]),
                                 };
                                 Value::list(vec![
@@ -1241,8 +1219,7 @@ pub(crate) fn macroexpand_all(i: &mut Interp, form: &Value) -> EvalResult {
                                 Some(fsid) => {
                                     // `(funcall #'sym A...)' → `(sym A...)'
                                     // unless sym is a special form or macro.
-                                    let is_sf = crate::lisp::special::special_form(fsid)
-                                        .is_some();
+                                    let is_sf = crate::lisp::special::special_form(fsid).is_some();
                                     if !is_sf && !sym_macrop(i, fsid) {
                                         let mut call = vec![fv.clone()];
                                         call.extend(eargs);
@@ -3063,7 +3040,9 @@ fn f_macroexp_parse_body(i: &mut Interp, args: Vec<Value>) -> EvalResult {
 fn f_byte_code_function_p(_i: &mut Interp, args: Vec<Value>) -> EvalResult {
     // `#[...]' byte-code literals are the only byte-code objects we
     // have; interpreted lambdas (bc_items = None) answer nil like GNU.
-    Ok(Value::from_bool(matches!(&args[0], Value::Lambda(l) if l.bc_items.is_some())))
+    Ok(Value::from_bool(
+        matches!(&args[0], Value::Lambda(l) if l.bc_items.is_some()),
+    ))
 }
 fn f_compiled_function_p(_i: &mut Interp, args: Vec<Value>) -> EvalResult {
     Ok(Value::from_bool(match &args[0] {

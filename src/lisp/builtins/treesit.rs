@@ -15,10 +15,10 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 
-use tree_sitter::{ffi, Language, Node, Parser, Point, Range, Tree, TreeCursor};
+use tree_sitter::{Language, Node, Parser, Point, Range, Tree, TreeCursor, ffi};
 use tree_sitter_language::LanguageFn;
 
-use super::{arg, want_int, want_string, want_sym, S};
+use super::{S, arg, want_int, want_string, want_sym};
 use crate::lisp::error::{EvalResult, Flow};
 use crate::lisp::obarray::sym;
 use crate::lisp::value::{BufferRef, SymId, Value};
@@ -400,9 +400,7 @@ fn push_suffix_candidates(base: &str, suffixes: &[String], out: &mut Vec<String>
         let c1 = format!("{base}{sfx}");
         out.push(format!("{c1}.0.0"));
         out.push(format!("{c1}.0"));
-        for v in
-            tree_sitter::MIN_COMPATIBLE_LANGUAGE_VERSION..=tree_sitter::LANGUAGE_VERSION
-        {
+        for v in tree_sitter::MIN_COMPATIBLE_LANGUAGE_VERSION..=tree_sitter::LANGUAGE_VERSION {
             out.push(format!("{c1}.{v}.0"));
         }
         out.push(c1);
@@ -431,10 +429,7 @@ fn find_override(i: &mut Interp, lang: SymId) -> Option<(String, String)> {
 
 /// Load (or reuse) the grammar for LANGUAGE symbol.
 /// On error returns (error-symbol, data) suitable for a signal.
-fn load_language(
-    i: &mut Interp,
-    lang: SymId,
-) -> Result<&'static LoadedLang, (SymId, Vec<Value>)> {
+fn load_language(i: &mut Interp, lang: SymId) -> Result<&'static LoadedLang, (SymId, Vec<Value>)> {
     let mapped = resolve_language(i, lang);
     if i.treesit.languages.contains_key(&mapped) {
         let r: &'static LoadedLang =
@@ -621,11 +616,7 @@ fn reparse(i: &mut Interp, pid: u64, buf: &BufferRef) -> Result<Vec<(usize, usiz
     if text.len() > u32::MAX as usize {
         return Err(sig(i, "treesit-buffer-too-large", vec![]));
     }
-    let old_tree = i
-        .treesit
-        .parsers
-        .get_mut(&pid)
-        .and_then(|p| p.tree.take());
+    let old_tree = i.treesit.parsers.get_mut(&pid).and_then(|p| p.tree.take());
     let p = i.treesit.parsers.get_mut(&pid).unwrap();
     let new_tree = p.parser.parse(&text, old_tree.as_ref());
     let new_tree = match new_tree {
@@ -776,9 +767,7 @@ fn f_query_p(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 
 fn f_query_eagerly_compiled_p(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     match want_query(i, &a[0]) {
-        Ok(id) => Ok(Value::from_bool(
-            i.treesit.queries[&id].query.is_some(),
-        )),
+        Ok(id) => Ok(Value::from_bool(i.treesit.queries[&id].query.is_some())),
         Err(_) => Ok(Value::Nil),
     }
 }
@@ -812,10 +801,7 @@ fn language_needs_linecol(i: &mut Interp, lang: SymId) -> bool {
 }
 
 /// `(BUFFER)' arg → (base BufferRef, base buffer Value).  nil = current.
-fn want_buffer_or_current(
-    i: &mut Interp,
-    v: &Value,
-) -> Result<(BufferRef, Value), Flow> {
+fn want_buffer_or_current(i: &mut Interp, v: &Value) -> Result<(BufferRef, Value), Flow> {
     let (buf, buf_val) = match v {
         Value::Nil => {
             let b = i
@@ -1033,11 +1019,7 @@ fn f_buffer_root_node(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 
 /// Convert `(BEG . END)' charpos ranges into `TSRange's in visible-text
 /// byte offsets, like `treesit_make_ts_ranges'.
-fn make_ts_ranges(
-    i: &mut Interp,
-    ranges: &Value,
-    buf: &BufferRef,
-) -> Result<Vec<Range>, Flow> {
+fn make_ts_ranges(i: &mut Interp, ranges: &Value, buf: &BufferRef) -> Result<Vec<Range>, Flow> {
     let items = ranges.list_to_vec().map_err(|e| match e {
         crate::lisp::value::ListError::Circular => {
             i.signal_data(sym::CIRCULAR_LIST, vec![ranges.clone()])
@@ -1125,12 +1107,7 @@ fn f_parser_notifiers(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 fn f_parser_add_notifier(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let pid = want_parser(i, &a[0])?;
     let f = a[1].clone();
-    i.treesit
-        .parsers
-        .get_mut(&pid)
-        .unwrap()
-        .notifiers
-        .push(f);
+    i.treesit.parsers.get_mut(&pid).unwrap().notifiers.push(f);
     Ok(Value::Nil)
 }
 
@@ -1149,10 +1126,7 @@ fn f_parse_string(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let gen_sym = sname(i, "generate-new-buffer-name");
     let name = i.call_function(
         &Value::Sym(gen_sym),
-        &Value::list(vec![
-            Value::string(" *treesit-parse-string*"),
-            Value::Nil,
-        ]),
+        &Value::list(vec![Value::string(" *treesit-parse-string*"), Value::Nil]),
         Some(gen_sym),
     )?;
     let gc = sname(i, "get-buffer-create");
@@ -1313,7 +1287,7 @@ fn f_node_check(i: &mut Interp, a: Vec<Value>) -> EvalResult {
                     "Expecting `named', `missing', `extra', `outdated', `has-error', or `live', but got {}",
                     pname
                 ))],
-            ))
+            ));
         }
     };
     Ok(Value::from_bool(result))
@@ -1691,16 +1665,10 @@ fn resolve_node(i: &mut Interp, v: &Value) -> Result<(u64, usize), Flow> {
     } else if i.sym_id(v).is_some() {
         // Language symbol: create (or reuse) a parser in the current
         // buffer like GNU.
-        let parser = f_parser_create(
-            i,
-            vec![v.clone(), Value::Nil, Value::Nil, Value::Nil],
-        )?;
+        let parser = f_parser_create(i, vec![v.clone(), Value::Nil, Value::Nil, Value::Nil])?;
         want_parser(i, &parser)?
     } else {
-        return Err(i.wrong_type_mut(
-            "(or treesit-node-p treesit-parser-p symbolp)",
-            v,
-        ));
+        return Err(i.wrong_type_mut("(or treesit-node-p treesit-parser-p symbolp)", v));
     };
     ensure_parsed(i, pid)?;
     let root = stored_root(i, pid);
@@ -1725,9 +1693,7 @@ unsafe fn predicates_for_pattern(
         match step.type_ {
             ffi::TSQueryPredicateStepTypeCapture => {
                 let mut len: u32 = 0;
-                let s = unsafe {
-                    ffi::ts_query_capture_name_for_id(q, step.value_id, &mut len)
-                };
+                let s = unsafe { ffi::ts_query_capture_name_for_id(q, step.value_id, &mut len) };
                 let name = unsafe {
                     std::str::from_utf8_unchecked(std::slice::from_raw_parts(
                         s as *const u8,
@@ -1739,9 +1705,7 @@ unsafe fn predicates_for_pattern(
             }
             ffi::TSQueryPredicateStepTypeString => {
                 let mut len: u32 = 0;
-                let s = unsafe {
-                    ffi::ts_query_string_value_for_id(q, step.value_id, &mut len)
-                };
+                let s = unsafe { ffi::ts_query_string_value_for_id(q, step.value_id, &mut len) };
                 let text = unsafe {
                     std::str::from_utf8_unchecked(std::slice::from_raw_parts(
                         s as *const u8,
@@ -1793,17 +1757,11 @@ fn capture_name_to_node(
     Err(vec![
         Value::string("Cannot find captured node"),
         name.clone(),
-        Value::string(
-            "A predicate can only refer to captured nodes in the same pattern",
-        ),
+        Value::string("A predicate can only refer to captured nodes in the same pattern"),
     ])
 }
 
-fn capture_name_to_text(
-    name: &Value,
-    captures: &[Value],
-    i: &Interp,
-) -> Result<Value, Vec<Value>> {
+fn capture_name_to_text(name: &Value, captures: &[Value], i: &Interp) -> Result<Value, Vec<Value>> {
     let node = capture_name_to_node(name, captures, i)?;
     captured_node_text(i, &node)
         .map(Value::string)
@@ -1811,11 +1769,7 @@ fn capture_name_to_text(
 }
 
 /// `#eq?' predicate — GNU `treesit_predicate_equal'.
-fn predicate_equal(
-    args: &[Value],
-    captures: &[Value],
-    i: &Interp,
-) -> Result<bool, Vec<Value>> {
+fn predicate_equal(args: &[Value], captures: &[Value], i: &Interp) -> Result<bool, Vec<Value>> {
     if args.len() != 2 {
         return Err(vec![
             Value::string("Predicate `equal' requires two arguments but got"),
@@ -1838,11 +1792,7 @@ fn predicate_equal(
 
 /// `#match?' predicate — GNU `treesit_predicate_match'.  Uses the
 /// Emacs regexp engine on the node text.
-fn predicate_match(
-    i: &mut Interp,
-    args: &[Value],
-    captures: &[Value],
-) -> Result<bool, Vec<Value>> {
+fn predicate_match(i: &mut Interp, args: &[Value], captures: &[Value]) -> Result<bool, Vec<Value>> {
     if args.len() != 2 {
         return Err(vec![
             Value::string("Predicate `match?' requires two arguments but got"),
@@ -1862,12 +1812,12 @@ fn predicate_match(
                     "Predicate `match?' takes a regexp and a node capture (order doesn't matter), but got",
                 ),
                 Value::Int(args.len() as i128),
-            ])
+            ]);
         }
     };
     let node = capture_name_to_node(&capname, captures, i)?;
-    let text = captured_node_text(i, &node)
-        .map_err(|_| vec![Value::string("Cannot get node text")])?;
+    let text =
+        captured_node_text(i, &node).map_err(|_| vec![Value::string("Cannot get node text")])?;
     let case_fold = {
         let cf = i.intern_soft("case-fold-search");
         cf.map(|s| i.symbol_value(s).truthy()).unwrap_or(false)
@@ -1889,9 +1839,7 @@ fn predicate_pred(
 ) -> Result<bool, Vec<Value>> {
     if args.len() < 2 {
         return Err(vec![
-            Value::string(
-                "Predicate `pred' requires at least two arguments, but only got",
-            ),
+            Value::string("Predicate `pred' requires at least two arguments, but only got"),
             Value::Int(args.len() as i128),
         ]);
     }
@@ -1902,7 +1850,7 @@ fn predicate_pred(
             return Err(vec![
                 Value::string("Invalid `pred' function name"),
                 other.clone(),
-            ])
+            ]);
         }
     };
     let fsym = i.intern(&fname);
@@ -2014,11 +1962,7 @@ fn f_query_capture(i: &mut Interp, a: Vec<Value>) -> EvalResult {
             bb_.1 = charpos_to_byte(&bb, p2);
         }
         if bb_.0 > bb_.1 {
-            return Err(sig(
-                i,
-                "args-out-of-range",
-                vec![beg.clone(), end.clone()],
-            ));
+            return Err(sig(i, "args-out-of-range", vec![beg.clone(), end.clone()]));
         }
         bb_
     };
@@ -2054,16 +1998,14 @@ fn f_query_capture(i: &mut Interp, a: Vec<Value>) -> EvalResult {
             let mut group: Vec<Value> = Vec::new();
             // A match can carry zero captures (e.g. a pattern that is only
             // a predicate); `captures` is NULL then.
-            let caps: &[ffi::TSQueryCapture] = if m.capture_count == 0 || m.captures.is_null()
-            {
+            let caps: &[ffi::TSQueryCapture] = if m.capture_count == 0 || m.captures.is_null() {
                 &[]
             } else {
                 std::slice::from_raw_parts(m.captures, m.capture_count as usize)
             };
             for cap in caps {
                 let mut len: u32 = 0;
-                let cname =
-                    ffi::ts_query_capture_name_for_id(qptr, cap.index, &mut len);
+                let cname = ffi::ts_query_capture_name_for_id(qptr, cap.index, &mut len);
                 let name = std::str::from_utf8_unchecked(std::slice::from_raw_parts(
                     cname as *const u8,
                     len as usize,
@@ -2299,10 +2241,7 @@ fn validate_predicate(
                     let xs = cdr.list_to_vec().map_err(|_| {
                         (
                             "treesit-invalid-predicate".to_string(),
-                            vec![
-                                Value::string("Invalid `not' predicate"),
-                                pred.clone(),
-                            ],
+                            vec![Value::string("Invalid `not' predicate"), pred.clone()],
                         )
                     })?;
                     if xs.len() != 1 {
@@ -2373,12 +2312,7 @@ fn validate_predicate(
 
 /// Call a predicate function with a node, checking the buffer was not
 /// re-parsed during the call (`treesit_pred_with_guard').
-fn pred_call_guard(
-    i: &mut Interp,
-    f: &Value,
-    node_val: Value,
-    pid: u64,
-) -> Result<Value, Flow> {
+fn pred_call_guard(i: &mut Interp, f: &Value, node_val: Value, pid: u64) -> Result<Value, Flow> {
     let ts = i.treesit.parsers[&pid].parse_count;
     let args = Value::list(vec![node_val]);
     let v = i.call_function(f, &args, None)?;
@@ -2411,7 +2345,14 @@ fn match_predicate(
                 Ok(re) => {
                     let syn = crate::editor::re_syntax(i);
                     let chars: Vec<char> = typ.chars().collect();
-                    Ok(crate::lisp::regexp::search(&re, &chars, 0, &syn, &crate::editor::re_category(i)).is_some())
+                    Ok(crate::lisp::regexp::search(
+                        &re,
+                        &chars,
+                        0,
+                        &syn,
+                        &crate::editor::re_category(i),
+                    )
+                    .is_some())
                 }
                 Err(_) => Ok(false),
             }
@@ -2474,7 +2415,15 @@ fn match_predicate(
                         .map_err(|e| i.error(e.0.clone()))?;
                     let syn = crate::editor::re_syntax(i);
                     let chars: Vec<char> = typ.chars().collect();
-                    if crate::lisp::regexp::search(&re, &chars, 0, &syn, &crate::editor::re_category(i)).is_none() {
+                    if crate::lisp::regexp::search(
+                        &re,
+                        &chars,
+                        0,
+                        &syn,
+                        &crate::editor::re_category(i),
+                    )
+                    .is_none()
+                    {
                         return Ok(false);
                     }
                 }
@@ -3014,7 +2963,13 @@ pub(crate) static SUBRS: &[Subr] = &[
         f_parser_tracking_line_column_p,
         "Whether PARSER tracks line and column."
     ),
-    S!("treesit-parser-p", 1, 1, f_parser_p, "t if OBJECT is a parser."),
+    S!(
+        "treesit-parser-p",
+        1,
+        1,
+        f_parser_p,
+        "t if OBJECT is a parser."
+    ),
     S!("treesit-node-p", 1, 1, f_node_p, "t if OBJECT is a node."),
     S!(
         "treesit-compiled-query-p",
@@ -3051,7 +3006,13 @@ pub(crate) static SUBRS: &[Subr] = &[
         f_query_source,
         "Source form of compiled QUERY."
     ),
-    S!("treesit-node-parser", 1, 1, f_node_parser, "Parser of NODE."),
+    S!(
+        "treesit-node-parser",
+        1,
+        1,
+        f_node_parser,
+        "Parser of NODE."
+    ),
     S!(
         "treesit-parser-create",
         1,
@@ -3173,7 +3134,13 @@ pub(crate) static SUBRS: &[Subr] = &[
         f_node_start,
         "Start position of NODE."
     ),
-    S!("treesit-node-end", 1, 1, f_node_end, "End position of NODE."),
+    S!(
+        "treesit-node-end",
+        1,
+        1,
+        f_node_end,
+        "End position of NODE."
+    ),
     S!(
         "treesit-node-string",
         1,

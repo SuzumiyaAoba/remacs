@@ -1171,7 +1171,13 @@ fn f_split_string(i: &mut Interp, args: Vec<Value>) -> EvalResult {
                 let syn = crate::editor::re_syntax(i);
                 let chars: Vec<char> = s.chars().collect();
                 while pos <= chars.len() {
-                    match crate::lisp::regexp::search(&re, &chars, pos, &syn, &crate::editor::re_category(i)) {
+                    match crate::lisp::regexp::search(
+                        &re,
+                        &chars,
+                        pos,
+                        &syn,
+                        &crate::editor::re_category(i),
+                    ) {
                         Some((ms, me)) => {
                             out.push(chars[pos..ms].iter().collect());
                             pos = me.max(ms + 1);
@@ -2366,9 +2372,7 @@ fn f_make_string(i: &mut Interp, args: Vec<Value>) -> EvalResult {
         other => return Err(i.wrong_type_mut("wholenump", other)),
     };
     let ch = match &args[1] {
-        Value::Int(c) if (0..=0x3f_ffff).contains(c) => {
-            lisp_char(*c as u32).unwrap_or('\u{FFFD}')
-        }
+        Value::Int(c) if (0..=0x3f_ffff).contains(c) => lisp_char(*c as u32).unwrap_or('\u{FFFD}'),
         other => return Err(i.wrong_type_mut("characterp", other)),
     };
     // The optional MULTIBYTE flag only selects unibyte storage in
@@ -2790,10 +2794,7 @@ fn f_split_char(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     let u = ch as u32;
     if (0x3FFF80..=0x3FFFFF).contains(&u) {
         let cs = i.intern("eight-bit");
-        return Ok(Value::list(vec![
-            Value::Sym(cs),
-            Value::Int(ch - 0x3FFF00),
-        ]));
+        return Ok(Value::list(vec![Value::Sym(cs), Value::Int(ch - 0x3FFF00)]));
     }
     let name = char_charset_of(ch).unwrap_or("unicode");
     let cs = i.intern(name);
@@ -2823,10 +2824,8 @@ fn f_split_char(i: &mut Interp, args: Vec<Value>) -> EvalResult {
                 .filter(|&packed| (packed >> 56) >= 2);
             match codes {
                 Some(packed) => {
-                    let sjis =
-                        ((packed >> 40) & 0xFFFF) as i64;
-                    let (j1, j2) =
-                        super::charset::sjis_to_jis(sjis);
+                    let sjis = ((packed >> 40) & 0xFFFF) as i64;
+                    let (j1, j2) = super::charset::sjis_to_jis(sjis);
                     Ok(Value::list(vec![
                         Value::Sym(cs),
                         Value::Int(j1 as i128),

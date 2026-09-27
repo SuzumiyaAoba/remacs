@@ -575,11 +575,19 @@ fn round_with(i: &mut Interp, args: &[Value], mode: u8) -> EvalResult {
                     0 => q,
                     1 => {
                         // floor: toward negative infinity.
-                        if r != 0 && ((r < 0) != (b < 0)) { q - 1 } else { q }
+                        if r != 0 && ((r < 0) != (b < 0)) {
+                            q - 1
+                        } else {
+                            q
+                        }
                     }
                     2 => {
                         // ceiling: toward positive infinity.
-                        if r != 0 && ((r < 0) == (b < 0)) { q + 1 } else { q }
+                        if r != 0 && ((r < 0) == (b < 0)) {
+                            q + 1
+                        } else {
+                            q
+                        }
                     }
                     _ => {
                         // round: nearest, ties to even (GNU parity).

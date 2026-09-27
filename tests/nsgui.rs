@@ -19,7 +19,8 @@ fn startup_platform_lisp_defs() {
     // pre-registered features whose real definitions must still be
     // evaluated during Interp::new — GNU's -Q has all of these bound.
     assert_eq!(
-        ev("(list (fboundp 'ns-ignore-1-arg) (fboundp 'ns-parse-geometry)
+        ev(
+            "(list (fboundp 'ns-ignore-1-arg) (fboundp 'ns-parse-geometry)
                   (fboundp 'ns-handle-nxopen) (fboundp 'ns-handle-nxopentemp)
                   (fboundp 'x-handle-args) (fboundp 'x-handle-geometry)
                   (fboundp 'x-compose-font-name) (fboundp 'x-decompose-font-name)
@@ -29,7 +30,8 @@ fn startup_platform_lisp_defs() {
                   (fboundp 'ns-drag-n-drop) (fboundp 'ns-handle-drag-motion)
                   (fboundp 'x-file-dialog) (fboundp 'x-setup-function-keys)
                   (boundp 'ns-input-file) (boundp 'ns-version-string)
-                  (boundp 'ns-initialized) (boundp 'ns-alternate-modifier))"),
+                  (boundp 'ns-initialized) (boundp 'ns-alternate-modifier))"
+        ),
         "(t t t t t t t t t t t t t t t t t t t t t t)"
     );
     // GNU -Q leaves these unbound (nsterm creates them lazily).
@@ -127,12 +129,9 @@ fn window_system_errors_and_nils() {
         "(ns-set-resource \"a\" \"b\" \"c\")",
         "(ns-begin-drag '(a) 'b nil)",
     ] {
-        let r = ev(&format!(
-            "(condition-case e {form} (error (car (cdr e))))"
-        ));
+        let r = ev(&format!("(condition-case e {form} (error (car (cdr e))))"));
         assert_eq!(
-            r,
-            "\"Window system is not in use or not initialized\"",
+            r, "\"Window system is not in use or not initialized\"",
             "{form}"
         );
     }

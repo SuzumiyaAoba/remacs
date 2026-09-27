@@ -44,7 +44,9 @@ fn lcms_white_point_and_roundtrip() {
     );
     // xyz -> jch -> jab -> jch -> xyz roughly round-trips.
     assert_eq!(
-        ev("(let* ((j (lcms-xyz->jch '(0.5 0.4 0.3))) (x (lcms-jch->xyz (lcms-jab->jch (lcms-jch->jab j))))) (< (abs (- (car x) 0.5)) 0.01))"),
+        ev(
+            "(let* ((j (lcms-xyz->jch '(0.5 0.4 0.3))) (x (lcms-jch->xyz (lcms-jab->jch (lcms-jch->jab j))))) (< (abs (- (car x) 0.5)) 0.01))"
+        ),
         "t"
     );
     // CAM02-UCS distance is symmetric-ish and non-negative.
@@ -71,19 +73,20 @@ fn gnutls_digests_and_hash() {
     );
     // Raw digest bytes → hex = sha256("abc").
     assert_eq!(
-        ev("(mapconcat (lambda (c) (format \"%02x\" c)) (gnutls-hash-digest 'SHA256 \"abc\") \"\")"),
+        ev(
+            "(mapconcat (lambda (c) (format \"%02x\" c)) (gnutls-hash-digest 'SHA256 \"abc\") \"\")"
+        ),
         "\"ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad\""
     );
     // HMAC-SHA1(key="key", msg="abc").
     assert_eq!(
-        ev("(mapconcat (lambda (c) (format \"%02x\" c)) (gnutls-hash-mac 'SHA1 \"abc\" \"key\") \"\")"),
+        ev(
+            "(mapconcat (lambda (c) (format \"%02x\" c)) (gnutls-hash-mac 'SHA1 \"abc\" \"key\") \"\")"
+        ),
         "\"ec2270489838611e59c95b51012a92b09d04977e\""
     );
     // Unknown digest name → error.
-    assert_eq!(
-        ev_err("(gnutls-hash-digest 'NOSUCHDIGEST \"x\")"),
-        "error"
-    );
+    assert_eq!(ev_err("(gnutls-hash-digest 'NOSUCHDIGEST \"x\")"), "error");
 }
 
 #[test]
@@ -93,12 +96,16 @@ fn gnutls_symmetric_roundtrip() {
     }
     // AES-128-CBC encrypt → (ciphertext iv); decrypt round-trips.
     assert_eq!(
-        ev("(let* ((r (gnutls-symmetric-encrypt 'AES-128-CBC \"0123456789abcdef\" \"0123456789abcdef\" \"hello12345678901\")) (d (gnutls-symmetric-decrypt 'AES-128-CBC \"0123456789abcdef\" \"0123456789abcdef\" (car r)))) (string= (car d) \"hello12345678901\"))"),
+        ev(
+            "(let* ((r (gnutls-symmetric-encrypt 'AES-128-CBC \"0123456789abcdef\" \"0123456789abcdef\" \"hello12345678901\")) (d (gnutls-symmetric-decrypt 'AES-128-CBC \"0123456789abcdef\" \"0123456789abcdef\" (car r)))) (string= (car d) \"hello12345678901\"))"
+        ),
         "t"
     );
     // Result is (ciphertext . actual-iv) list.
     assert_eq!(
-        ev("(length (gnutls-symmetric-encrypt 'AES-128-CBC \"0123456789abcdef\" \"0123456789abcdef\" \"hello12345678901\"))"),
+        ev(
+            "(length (gnutls-symmetric-encrypt 'AES-128-CBC \"0123456789abcdef\" \"0123456789abcdef\" \"hello12345678901\"))"
+        ),
         "2"
     );
 }
@@ -129,7 +136,9 @@ fn kqueue_watch_roundtrip() {
     // Watch a file, write it, drain via sleep-for → event delivered
     // (event = (DESCRIPTOR ACTION FILE) — ACTION is an atom).
     assert_eq!(
-        ev("(progn (require 'filenotify) (let* ((f (make-temp-file \"remacs-kq\")) (evv nil) (desc (file-notify-add-watch f '(change) (lambda (e) (setq evv e))))) (unwind-protect (progn (file-notify-valid-p desc) (write-region \"hello\" nil f) (let ((n 0)) (while (and (null evv) (< n 200)) (sleep-for 0.01) (setq n (1+ n)))) (and evv (consp (memq (nth 1 evv) '(created changed renamed deleted attribute-changed))))) (when desc (file-notify-rm-watch desc)) (delete-file f))))"),
+        ev(
+            "(progn (require 'filenotify) (let* ((f (make-temp-file \"remacs-kq\")) (evv nil) (desc (file-notify-add-watch f '(change) (lambda (e) (setq evv e))))) (unwind-protect (progn (file-notify-valid-p desc) (write-region \"hello\" nil f) (let ((n 0)) (while (and (null evv) (< n 200)) (sleep-for 0.01) (setq n (1+ n)))) (and evv (consp (memq (nth 1 evv) '(created changed renamed deleted attribute-changed))))) (when desc (file-notify-rm-watch desc)) (delete-file f))))"
+        ),
         "t"
     );
     // Removing/validating an unknown descriptor → nil (GNU shape).
@@ -147,13 +156,17 @@ fn kqueue_watch_roundtrip() {
 fn image_spec_tty_behavior() {
     // Valid spec on a tty frame → "Window system frame should be used".
     assert_eq!(
-        ev("(condition-case e (image-size '(image :type xbm :file \"/tmp/x.xbm\")) (error (error-message-string e)))"),
+        ev(
+            "(condition-case e (image-size '(image :type xbm :file \"/tmp/x.xbm\")) (error (error-message-string e)))"
+        ),
         "\"Window system frame should be used\""
     );
     // image-metadata: nil for invalid spec, window-system error for valid.
     assert_eq!(ev("(image-metadata 'nonsense)"), "nil");
     assert_eq!(
-        ev("(condition-case e (image-metadata '(image :type xbm :file \"/tmp/x.xbm\")) (error (error-message-string e)))"),
+        ev(
+            "(condition-case e (image-metadata '(image :type xbm :file \"/tmp/x.xbm\")) (error (error-message-string e)))"
+        ),
         "\"Window system frame should be used\""
     );
     // imagep predicate validates spec shape.
@@ -178,7 +191,9 @@ fn init_image_library_types() {
 fn lookup_image_map_geometry() {
     // rect hit-test.
     assert_eq!(
-        ev("(cadr (lookup-image-map (list (list (cons 'rect (cons '(0 . 0) '(10 . 10))) 'hit)) 5 5))"),
+        ev(
+            "(cadr (lookup-image-map (list (list (cons 'rect (cons '(0 . 0) '(10 . 10))) 'hit)) 5 5))"
+        ),
         "hit"
     );
     assert_eq!(
@@ -192,7 +207,9 @@ fn lookup_image_map_geometry() {
     );
     // polygon (20x20 square at 20,20).
     assert_eq!(
-        ev("(cadr (lookup-image-map (list (list (cons 'poly [20 20 40 20 40 40 20 40]) 'p)) 30 30))"),
+        ev(
+            "(cadr (lookup-image-map (list (list (cons 'poly [20 20 40 20 40 40 20 40]) 'p)) 30 30))"
+        ),
         "p"
     );
     assert_eq!(

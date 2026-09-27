@@ -13,9 +13,9 @@ use std::ffi::CStr;
 use std::os::raw::c_char;
 use std::sync::OnceLock;
 
-use super::{arg, want_int, S};
+use super::{S, arg, want_int};
 use crate::lisp::error::{EvalResult, Flow};
-use crate::lisp::eval::{plist_get, Interp};
+use crate::lisp::eval::{Interp, plist_get};
 use crate::lisp::value::{SymId, Value};
 
 // ---------------------------------------------------------------------------
@@ -295,30 +295,12 @@ pub(crate) fn gnutls() -> Option<&'static GnutlsFns> {
                         &lib,
                         b"gnutls_certificate_set_x509_trust_file\0",
                     ),
-                    cert_set_x509_crl_file: sym(
-                        &lib,
-                        b"gnutls_certificate_set_x509_crl_file\0",
-                    ),
-                    cert_set_x509_key_file: sym(
-                        &lib,
-                        b"gnutls_certificate_set_x509_key_file\0",
-                    ),
-                    cert_set_verify_flags: sym(
-                        &lib,
-                        b"gnutls_certificate_set_verify_flags\0",
-                    ),
-                    cert_set_system_trust: sym(
-                        &lib,
-                        b"gnutls_certificate_set_x509_system_trust\0",
-                    ),
-                    anon_alloc_cred: sym(
-                        &lib,
-                        b"gnutls_anon_allocate_client_credentials\0",
-                    ),
-                    anon_free_cred: sym(
-                        &lib,
-                        b"gnutls_anon_free_client_credentials\0",
-                    ),
+                    cert_set_x509_crl_file: sym(&lib, b"gnutls_certificate_set_x509_crl_file\0"),
+                    cert_set_x509_key_file: sym(&lib, b"gnutls_certificate_set_x509_key_file\0"),
+                    cert_set_verify_flags: sym(&lib, b"gnutls_certificate_set_verify_flags\0"),
+                    cert_set_system_trust: sym(&lib, b"gnutls_certificate_set_x509_system_trust\0"),
+                    anon_alloc_cred: sym(&lib, b"gnutls_anon_allocate_client_credentials\0"),
+                    anon_free_cred: sym(&lib, b"gnutls_anon_free_client_credentials\0"),
                     credentials_set: sym(&lib, b"gnutls_credentials_set\0"),
                     server_name_set: sym(&lib, b"gnutls_server_name_set\0"),
                     dh_set_prime_bits: sym(&lib, b"gnutls_dh_set_prime_bits\0"),
@@ -329,10 +311,7 @@ pub(crate) fn gnutls() -> Option<&'static GnutlsFns> {
                     record_send: sym(&lib, b"gnutls_record_send\0"),
                     record_recv: sym(&lib, b"gnutls_record_recv\0"),
 
-                    certificate_verify_peers2: sym(
-                        &lib,
-                        b"gnutls_certificate_verify_peers2\0",
-                    ),
+                    certificate_verify_peers2: sym(&lib, b"gnutls_certificate_verify_peers2\0"),
                     certificate_get_peers: sym(&lib, b"gnutls_certificate_get_peers\0"),
                     certificate_type_get: sym(&lib, b"gnutls_certificate_type_get\0"),
                     x509_crt_init: sym(&lib, b"gnutls_x509_crt_init\0"),
@@ -341,10 +320,7 @@ pub(crate) fn gnutls() -> Option<&'static GnutlsFns> {
                     x509_crt_deinit: sym(&lib, b"gnutls_x509_crt_deinit\0"),
                     x509_crt_get_dn: sym(&lib, b"gnutls_x509_crt_get_dn\0"),
                     x509_crt_get_issuer_dn: sym(&lib, b"gnutls_x509_crt_get_issuer_dn\0"),
-                    x509_crt_check_hostname: sym(
-                        &lib,
-                        b"gnutls_x509_crt_check_hostname\0",
-                    ),
+                    x509_crt_check_hostname: sym(&lib, b"gnutls_x509_crt_check_hostname\0"),
                     x509_crt_check_issuer: sym(&lib, b"gnutls_x509_crt_check_issuer\0"),
                     x509_crt_get_version: sym(&lib, b"gnutls_x509_crt_get_version\0"),
                     x509_crt_get_serial: sym(&lib, b"gnutls_x509_crt_get_serial\0"),
@@ -356,10 +332,7 @@ pub(crate) fn gnutls() -> Option<&'static GnutlsFns> {
                         &lib,
                         b"gnutls_x509_crt_get_expiration_time\0",
                     ),
-                    x509_crt_get_pk_algorithm: sym(
-                        &lib,
-                        b"gnutls_x509_crt_get_pk_algorithm\0",
-                    ),
+                    x509_crt_get_pk_algorithm: sym(&lib, b"gnutls_x509_crt_get_pk_algorithm\0"),
                     x509_crt_get_issuer_unique_id: sym(
                         &lib,
                         b"gnutls_x509_crt_get_issuer_unique_id\0",
@@ -373,10 +346,7 @@ pub(crate) fn gnutls() -> Option<&'static GnutlsFns> {
                         b"gnutls_x509_crt_get_signature_algorithm\0",
                     ),
                     x509_crt_get_key_id: sym(&lib, b"gnutls_x509_crt_get_key_id\0"),
-                    x509_crt_get_fingerprint: sym(
-                        &lib,
-                        b"gnutls_x509_crt_get_fingerprint\0",
-                    ),
+                    x509_crt_get_fingerprint: sym(&lib, b"gnutls_x509_crt_get_fingerprint\0"),
                     x509_crt_export: sym(&lib, b"gnutls_x509_crt_export\0"),
                     pk_algorithm_get_name: sym(&lib, b"gnutls_pk_algorithm_get_name\0"),
                     sign_get_name: sym(&lib, b"gnutls_sign_get_name\0"),
@@ -391,16 +361,12 @@ pub(crate) fn gnutls() -> Option<&'static GnutlsFns> {
                     compression_get: sym(&lib, b"gnutls_compression_get\0"),
                     compression_get_name: sym(&lib, b"gnutls_compression_get_name\0"),
                     session_etm_status: sym(&lib, b"gnutls_session_etm_status\0"),
-                    safe_renegotiation_status: sym(
-                        &lib,
-                        b"gnutls_safe_renegotiation_status\0",
-                    ),
+                    safe_renegotiation_status: sym(&lib, b"gnutls_safe_renegotiation_status\0"),
                     // `gnutls_free' is a function-pointer *variable*
                     // (gnutls_free_function), not a function symbol —
                     // read the pointer stored at its address.
                     free: {
-                        let var: Option<*mut core::ffi::c_void> =
-                            sym(&lib, b"gnutls_free\0");
+                        let var: Option<*mut core::ffi::c_void> = sym(&lib, b"gnutls_free\0");
                         var.and_then(|p| {
                             let fp = *(p as *const usize);
                             if fp == 0 {
@@ -506,11 +472,8 @@ fn extract_data(i: &mut Interp, spec: &Value) -> Result<Vec<u8>, Flow> {
         _ => {
             return Err(i.signal_data(
                 crate::lisp::obarray::sym::ERROR,
-                vec![
-                    Value::string("Invalid object argument"),
-                    obj.clone(),
-                ],
-            ))
+                vec![Value::string("Invalid object argument"), obj.clone()],
+            ));
         }
     };
     // START/END are character positions; map to byte offsets by
@@ -629,7 +592,11 @@ fn f_ciphers(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
                 Value::Sym(intern(i, ":type")),
                 Value::Sym(intern(i, "gnutls-symmetric-cipher")),
                 Value::Sym(intern(i, ":cipher-aead-capable")),
-                if tag_size == 0 { Value::Nil } else { Value::t() },
+                if tag_size == 0 {
+                    Value::Nil
+                } else {
+                    Value::t()
+                },
                 Value::Sym(intern(i, ":cipher-tagsize")),
                 Value::Int(tag_size as i128),
                 Value::Sym(intern(i, ":cipher-blocksize")),
@@ -660,10 +627,7 @@ fn f_macs(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
             let gma = *list.add(pos);
             pos += 1;
             let name = cstr((g.mac_get_name)(gma));
-            let nonce = g
-                .mac_get_nonce_size
-                .map(|f| f(gma))
-                .unwrap_or(0);
+            let nonce = g.mac_get_nonce_size.map(|f| f(gma)).unwrap_or(0);
             let entry = Value::list(vec![
                 Value::Sym(intern(i, &name)),
                 Value::Sym(intern(i, ":mac-algorithm-id")),
@@ -788,10 +752,7 @@ fn f_hash_digest(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     )?;
     let digest_length = unsafe { (g.hash_get_len)(gda) };
     if digest_length == 0 {
-        return Err(i.error_obj(
-            "GnuTLS digest-method is invalid or not found",
-            &a[0],
-        ));
+        return Err(i.error_obj("GnuTLS digest-method is invalid or not found", &a[0]));
     }
     let mut hd: Hd = std::ptr::null_mut();
     let ret = unsafe { (g.hash_init)(&mut hd, gda) };
@@ -840,10 +801,7 @@ fn f_hash_mac(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     )?;
     let digest_length = unsafe { (g.hmac_get_len)(gma) };
     if digest_length == 0 {
-        return Err(i.error_obj(
-            "GnuTLS MAC-method is invalid or not found",
-            &a[0],
-        ));
+        return Err(i.error_obj("GnuTLS MAC-method is invalid or not found", &a[0]));
     }
     let mut hd: Hd = std::ptr::null_mut();
     let kdata = extract_data(i, &key)?;
@@ -974,7 +932,11 @@ fn gnutls_symmetric(i: &mut Interp, encrypting: bool, a: Vec<Value>) -> EvalResu
                 hd,
                 vdata.as_ptr(),
                 vdata.len(),
-                if asize > 0 { adata.as_ptr() } else { std::ptr::null() },
+                if asize > 0 {
+                    adata.as_ptr()
+                } else {
+                    std::ptr::null()
+                },
                 asize,
                 tag_size,
                 idata.as_ptr(),
@@ -1091,18 +1053,14 @@ fn f_error_fatalp(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 fn f_error_string(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let err = match &a[0] {
         Value::Sym(s) if *s == crate::lisp::obarray::sym::T => {
-            return Ok(Value::string("Not an error"))
+            return Ok(Value::string("Not an error"));
         }
         Value::Sym(s) => {
             let prop = intern(i, "gnutls-code");
             let code = i.get_prop(*s, prop);
             match code {
                 Value::Int(_) => code,
-                _ => {
-                    return Ok(Value::string(
-                        "Symbol has no numeric gnutls-code property",
-                    ))
-                }
+                _ => return Ok(Value::string("Symbol has no numeric gnutls-code property")),
             }
         }
         v => v.clone(),
@@ -1318,9 +1276,18 @@ fn f_peer_status(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         (CERT_NOT_ACTIVATED, ":not-activated"),
         (CERT_EXPIRED, ":expired"),
         (CERT_SIGNATURE_FAILURE, ":signature-failure"),
-        (CERT_REVOCATION_DATA_SUPERSEDED, ":revocation-data-superseded"),
-        (CERT_REVOCATION_DATA_ISSUED_IN_FUTURE, ":revocation-data-issued-in-future"),
-        (CERT_SIGNER_CONSTRAINTS_FAILURE, ":signer-constraints-failure"),
+        (
+            CERT_REVOCATION_DATA_SUPERSEDED,
+            ":revocation-data-superseded",
+        ),
+        (
+            CERT_REVOCATION_DATA_ISSUED_IN_FUTURE,
+            ":revocation-data-issued-in-future",
+        ),
+        (
+            CERT_SIGNER_CONSTRAINTS_FAILURE,
+            ":signer-constraints-failure",
+        ),
         (CERT_PURPOSE_MISMATCH, ":purpose-mismatch"),
         (CERT_MISSING_OCSP_STATUS, ":missing-ocsp-status"),
         (CERT_INVALID_OCSP_STATUS, ":invalid-ocsp-status"),
@@ -1446,11 +1413,7 @@ fn append_in_place(_i: &mut Interp, result: &mut Value, pair: Value) {
 /// GNU `emacs_gnutls_certificate_details' — build the per-certificate
 /// plist from the stored DER blob.
 fn certificate_details(i: &mut Interp, g: &GnutlsFns, der: &[u8]) -> Option<Value> {
-    let (init, import, deinit) = (
-        g.x509_crt_init?,
-        g.x509_crt_import?,
-        g.x509_crt_deinit?,
-    );
+    let (init, import, deinit) = (g.x509_crt_init?, g.x509_crt_import?, g.x509_crt_deinit?);
     let mut crt: Hd = std::ptr::null_mut();
     unsafe {
         if init(&mut crt) < 0 {
@@ -1539,7 +1502,12 @@ fn certificate_details(i: &mut Interp, g: &GnutlsFns, der: &[u8]) -> Option<Valu
                 if let (Some(b2s), Some(sn)) = (g.pk_bits_to_sec_param, g.sec_param_get_name) {
                     let name = cstr(sn(b2s(pk, bits)));
                     if !name.is_empty() {
-                        kv(i, &mut res, ":certificate-security-level", Value::string(name));
+                        kv(
+                            i,
+                            &mut res,
+                            ":certificate-security-level",
+                            Value::string(name),
+                        );
                     }
                 }
             }
@@ -1575,7 +1543,12 @@ fn certificate_details(i: &mut Interp, g: &GnutlsFns, der: &[u8]) -> Option<Valu
         // :public-key-id (sha1 hex) / :public-key-id-sha256
         if let Some(f) = g.x509_crt_get_key_id {
             if let Some(buf) = sized_buf(|b, n| f(crt, 0, b, n)) {
-                kv(i, &mut res, ":public-key-id", Value::string(hex(&buf, "sha1:")));
+                kv(
+                    i,
+                    &mut res,
+                    ":public-key-id",
+                    Value::string(hex(&buf, "sha1:")),
+                );
             }
             if let Some(buf) = sized_buf(|b, n| f(crt, 1 /* KEYID_USE_SHA256 */, b, n)) {
                 kv(
@@ -1591,7 +1564,12 @@ fn certificate_details(i: &mut Interp, g: &GnutlsFns, der: &[u8]) -> Option<Valu
         if let Some(f) = g.x509_crt_get_fingerprint {
             // GNUTLS_DIG_SHA1 = 3.
             if let Some(buf) = sized_buf(|b, n| f(crt, 3, b, n)) {
-                kv(i, &mut res, ":certificate-id", Value::string(hex(&buf, "sha1:")));
+                kv(
+                    i,
+                    &mut res,
+                    ":certificate-id",
+                    Value::string(hex(&buf, "sha1:")),
+                );
             }
         }
         // :pem
@@ -1669,7 +1647,9 @@ fn f_peer_status_warn_desc(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         ":invalid" => "certificate could not be verified",
         ":revoked" => "certificate was revoked (CRL)",
         ":self-signed" => "certificate signer was not found (self-signed)",
-        ":unknown-ca" => "the certificate was signed by an unknown and therefore untrusted authority",
+        ":unknown-ca" => {
+            "the certificate was signed by an unknown and therefore untrusted authority"
+        }
         ":not-ca" => "certificate signer is not a CA",
         ":insecure" => "certificate was signed with an insecure algorithm",
         ":not-activated" => "certificate is not yet activated",
@@ -1838,7 +1818,7 @@ fn f_boot(i: &mut Interp, a: Vec<Value>) -> EvalResult {
             return Err(boot_error(
                 i,
                 "gnutls-boot: invalid :hostname parameter (not a string)",
-            ))
+            ));
         }
     };
 
@@ -1871,10 +1851,7 @@ fn f_boot(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         };
         let ret = unsafe { alloc(&mut cred) };
         if ret < 0 {
-            return Err(i.error(&format!(
-                "memory exhausted: {}",
-                strerror(g, ret)
-            )));
+            return Err(i.error(&format!("memory exhausted: {}", strerror(g, ret))));
         }
         let verify_flags = pl(":verify-flags");
         let vf = match &verify_flags {
@@ -1890,10 +1867,7 @@ fn f_boot(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         };
         let ret = unsafe { alloc(&mut cred) };
         if ret < 0 {
-            return Err(i.error(&format!(
-                "memory exhausted: {}",
-                strerror(g, ret)
-            )));
+            return Err(i.error(&format!("memory exhausted: {}", strerror(g, ret))));
         }
     }
 
@@ -1930,10 +1904,10 @@ fn f_boot(i: &mut Interp, a: Vec<Value>) -> EvalResult {
                 Value::Str(s) => {
                     let path = crate::editor::expand_file_name_str(i, &s.borrow());
                     let cpath = std::ffi::CString::new(path).unwrap_or_default();
-                    let Some(f) = g.cert_set_x509_trust_file else { continue };
-                    let ret = unsafe {
-                        f(cred, cpath.as_ptr(), GNUTLS_X509_FMT_PEM)
+                    let Some(f) = g.cert_set_x509_trust_file else {
+                        continue;
                     };
+                    let ret = unsafe { f(cred, cpath.as_ptr(), GNUTLS_X509_FMT_PEM) };
                     if ret < 0 {
                         return Ok(gnutls_make_error(i, ret));
                     }
@@ -1958,7 +1932,9 @@ fn f_boot(i: &mut Interp, a: Vec<Value>) -> EvalResult {
                 Value::Str(s) => {
                     let path = crate::editor::expand_file_name_str(i, &s.borrow());
                     let cpath = std::ffi::CString::new(path).unwrap_or_default();
-                    let Some(f) = g.cert_set_x509_crl_file else { continue };
+                    let Some(f) = g.cert_set_x509_crl_file else {
+                        continue;
+                    };
                     let ret = unsafe { f(cred, cpath.as_ptr(), GNUTLS_X509_FMT_PEM) };
                     if ret < 0 {
                         return Ok(gnutls_make_error(i, ret));
@@ -1985,20 +1961,18 @@ fn f_boot(i: &mut Interp, a: Vec<Value>) -> EvalResult {
             let certfile = car_safe(&cdr_safe(&elem));
             match (&keyfile, &certfile) {
                 (Value::Str(k), Value::Str(cf)) => {
-                    let kp = std::ffi::CString::new(crate::editor::expand_file_name_str(
-                        i,
-                        &k.borrow(),
-                    ))
-                    .unwrap_or_default();
+                    let kp =
+                        std::ffi::CString::new(crate::editor::expand_file_name_str(i, &k.borrow()))
+                            .unwrap_or_default();
                     let cp = std::ffi::CString::new(crate::editor::expand_file_name_str(
                         i,
                         &cf.borrow(),
                     ))
                     .unwrap_or_default();
-                    let Some(f) = g.cert_set_x509_key_file else { continue };
-                    let ret = unsafe {
-                        f(cred, cp.as_ptr(), kp.as_ptr(), GNUTLS_X509_FMT_PEM)
+                    let Some(f) = g.cert_set_x509_key_file else {
+                        continue;
                     };
+                    let ret = unsafe { f(cred, cp.as_ptr(), kp.as_ptr(), GNUTLS_X509_FMT_PEM) };
                     if ret < 0 {
                         return Ok(gnutls_make_error(i, ret));
                     }
@@ -2208,7 +2182,7 @@ fn verify_boot(i: &mut Interp, proc: &Value, proplist: &Value, g: &GnutlsFns) ->
             return Err(boot_error(
                 i,
                 "gnutls-boot: invalid :hostname parameter (not a string)",
-            ))
+            ));
         }
     };
     let mut member = |sym: &str| -> bool {
@@ -2285,9 +2259,7 @@ fn verify_boot(i: &mut Interp, proc: &Value, proplist: &Value, g: &GnutlsFns) ->
             unsafe {
                 for k in 0..n as usize {
                     let d = *list.add(k);
-                    certs.push(
-                        std::slice::from_raw_parts(d.data, d.size as usize).to_vec(),
-                    );
+                    certs.push(std::slice::from_raw_parts(d.data, d.size as usize).to_vec());
                 }
             }
             if let Value::Process(p) = proc {
@@ -2309,8 +2281,7 @@ fn verify_boot(i: &mut Interp, proc: &Value, proplist: &Value, g: &GnutlsFns) ->
                             data: certs[0].as_ptr() as *mut u8,
                             size: certs[0].len() as u32,
                         };
-                        let chost =
-                            std::ffi::CString::new(hostname_s.clone()).unwrap_or_default();
+                        let chost = std::ffi::CString::new(hostname_s.clone()).unwrap_or_default();
                         let mut matched = false;
                         let ir = import(crt, &d, GNUTLS_X509_FMT_DER);
                         if std::env::var("GNUTLS_DEBUG").is_ok() {
@@ -2437,25 +2408,139 @@ pub(crate) fn tls_ready(pb: &crate::lisp::process::Proc) -> bool {
 // ---------------------------------------------------------------------------
 
 pub(crate) static SUBRS: &[crate::lisp::value::Subr] = &[
-    S!("gnutls-ciphers", 0, 0, f_ciphers, "Return alist of GnuTLS symmetric cipher descriptions as plists."),
-    S!("gnutls-macs", 0, 0, f_macs, "Return alist of GnuTLS mac-algorithm method descriptions as plists."),
-    S!("gnutls-digests", 0, 0, f_digests, "Return alist of GnuTLS digest-algorithm method descriptions as plists."),
-    S!("gnutls-hash-mac", 3, 3, f_hash_mac, "Hash INPUT with HASH-METHOD and KEY into a unibyte string."),
-    S!("gnutls-hash-digest", 2, 2, f_hash_digest, "Digest INPUT with DIGEST-METHOD into a unibyte string."),
-    S!("gnutls-symmetric-encrypt", 4, 5, f_symmetric_encrypt, "Encrypt INPUT with symmetric CIPHER, KEY+AEAD_AUTH, and IV to a unibyte string."),
-    S!("gnutls-symmetric-decrypt", 4, 5, f_symmetric_decrypt, "Decrypt INPUT with symmetric CIPHER, KEY+AEAD_AUTH, and IV to a unibyte string."),
-    S!("gnutls-available-p", 0, 0, f_available_p, "Return list of capabilities if GnuTLS is available in this instance of Emacs."),
-    S!("gnutls-errorp", 1, 1, f_errorp, "Return t if ERROR indicates a GnuTLS problem."),
-    S!("gnutls-error-fatalp", 1, 1, f_error_fatalp, "Return non-nil if ERROR is fatal."),
-    S!("gnutls-error-string", 1, 1, f_error_string, "Return a description of ERROR."),
-    S!("gnutls-get-initstage", 1, 1, f_get_initstage, "Return the GnuTLS init stage of PROCESS."),
-    S!("gnutls-asynchronous-parameters", 3, 3, f_async_params, "Mark the result of the asynchronous GnuTLS negotiation."),
-    S!("gnutls-deinit", 1, 1, f_deinit, "Deallocate GnuTLS resources associated with PROCESS."),
-    S!("gnutls-bye", 2, 2, f_bye, "Terminate current GnuTLS connection for process PROC."),
-    S!("gnutls-peer-status", 1, 1, f_peer_status, "Return the peer certificate status for process PROC."),
-    S!("gnutls-peer-status-warning-describe", 1, 1, f_peer_status_warn_describe, "Return a description of the peer-status warning WARN."),
-    S!("gnutls-format-certificate", 1, 1, f_format_certificate, "Format a X.509 certificate, DER or PEM format, to a string."),
-    S!("gnutls-boot", 3, 3, f_boot, "Initialize client-side GnuTLS connection for process PROC."),
+    S!(
+        "gnutls-ciphers",
+        0,
+        0,
+        f_ciphers,
+        "Return alist of GnuTLS symmetric cipher descriptions as plists."
+    ),
+    S!(
+        "gnutls-macs",
+        0,
+        0,
+        f_macs,
+        "Return alist of GnuTLS mac-algorithm method descriptions as plists."
+    ),
+    S!(
+        "gnutls-digests",
+        0,
+        0,
+        f_digests,
+        "Return alist of GnuTLS digest-algorithm method descriptions as plists."
+    ),
+    S!(
+        "gnutls-hash-mac",
+        3,
+        3,
+        f_hash_mac,
+        "Hash INPUT with HASH-METHOD and KEY into a unibyte string."
+    ),
+    S!(
+        "gnutls-hash-digest",
+        2,
+        2,
+        f_hash_digest,
+        "Digest INPUT with DIGEST-METHOD into a unibyte string."
+    ),
+    S!(
+        "gnutls-symmetric-encrypt",
+        4,
+        5,
+        f_symmetric_encrypt,
+        "Encrypt INPUT with symmetric CIPHER, KEY+AEAD_AUTH, and IV to a unibyte string."
+    ),
+    S!(
+        "gnutls-symmetric-decrypt",
+        4,
+        5,
+        f_symmetric_decrypt,
+        "Decrypt INPUT with symmetric CIPHER, KEY+AEAD_AUTH, and IV to a unibyte string."
+    ),
+    S!(
+        "gnutls-available-p",
+        0,
+        0,
+        f_available_p,
+        "Return list of capabilities if GnuTLS is available in this instance of Emacs."
+    ),
+    S!(
+        "gnutls-errorp",
+        1,
+        1,
+        f_errorp,
+        "Return t if ERROR indicates a GnuTLS problem."
+    ),
+    S!(
+        "gnutls-error-fatalp",
+        1,
+        1,
+        f_error_fatalp,
+        "Return non-nil if ERROR is fatal."
+    ),
+    S!(
+        "gnutls-error-string",
+        1,
+        1,
+        f_error_string,
+        "Return a description of ERROR."
+    ),
+    S!(
+        "gnutls-get-initstage",
+        1,
+        1,
+        f_get_initstage,
+        "Return the GnuTLS init stage of PROCESS."
+    ),
+    S!(
+        "gnutls-asynchronous-parameters",
+        3,
+        3,
+        f_async_params,
+        "Mark the result of the asynchronous GnuTLS negotiation."
+    ),
+    S!(
+        "gnutls-deinit",
+        1,
+        1,
+        f_deinit,
+        "Deallocate GnuTLS resources associated with PROCESS."
+    ),
+    S!(
+        "gnutls-bye",
+        2,
+        2,
+        f_bye,
+        "Terminate current GnuTLS connection for process PROC."
+    ),
+    S!(
+        "gnutls-peer-status",
+        1,
+        1,
+        f_peer_status,
+        "Return the peer certificate status for process PROC."
+    ),
+    S!(
+        "gnutls-peer-status-warning-describe",
+        1,
+        1,
+        f_peer_status_warn_describe,
+        "Return a description of the peer-status warning WARN."
+    ),
+    S!(
+        "gnutls-format-certificate",
+        1,
+        1,
+        f_format_certificate,
+        "Format a X.509 certificate, DER or PEM format, to a string."
+    ),
+    S!(
+        "gnutls-boot",
+        3,
+        3,
+        f_boot,
+        "Initialize client-side GnuTLS connection for process PROC."
+    ),
 ];
 
 fn f_peer_status_warn_describe(i: &mut Interp, a: Vec<Value>) -> EvalResult {
@@ -2470,7 +2555,10 @@ pub(crate) fn install(i: &mut Interp) {
         ("gnutls-e-interrupted", GNUTLS_E_INTERRUPTED),
         ("gnutls-e-again", GNUTLS_E_AGAIN),
         ("gnutls-e-invalid-session", GNUTLS_E_INVALID_SESSION),
-        ("gnutls-e-not-ready-for-handshake", GNUTLS_E_APPLICATION_ERROR_MIN),
+        (
+            "gnutls-e-not-ready-for-handshake",
+            GNUTLS_E_APPLICATION_ERROR_MIN,
+        ),
     ] {
         let s = intern(i, name);
         i.put_prop(s, code, Value::Int(n as i128));

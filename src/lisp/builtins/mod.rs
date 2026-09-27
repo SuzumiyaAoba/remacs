@@ -6,8 +6,8 @@
 pub(crate) mod arith;
 pub(crate) mod bidi_table;
 pub(crate) mod charset;
-pub(crate) mod data;
 pub(crate) mod comp;
+pub(crate) mod data;
 pub(crate) mod dbus;
 pub(crate) mod enc_tables;
 pub(crate) mod evalfn;

@@ -484,7 +484,15 @@ fn f_find_file_name_handler(i: &mut Interp, a: Vec<Value>) -> EvalResult {
                         let chars: Vec<char> = file.chars().collect();
                         let matched = crate::lisp::regexp::compile_case(&pat, false)
                             .ok()
-                            .and_then(|re| crate::lisp::regexp::search_full(&re, &chars, 0, &syn, &crate::editor::re_category(i)))
+                            .and_then(|re| {
+                                crate::lisp::regexp::search_full(
+                                    &re,
+                                    &chars,
+                                    0,
+                                    &syn,
+                                    &crate::editor::re_category(i),
+                                )
+                            })
                             .is_some();
                         if matched {
                             let mut excluded = false;
@@ -1144,7 +1152,15 @@ fn f_sort_paragraphs(i: &mut Interp, a: Vec<Value>) -> EvalResult {
                         bb.begv,
                     )
                 };
-                if crate::lisp::regexp::looking_at(&re, &text, p - begv, &syn, &crate::editor::re_category(i)).is_none() {
+                if crate::lisp::regexp::looking_at(
+                    &re,
+                    &text,
+                    p - begv,
+                    &syn,
+                    &crate::editor::re_category(i),
+                )
+                .is_none()
+                {
                     break;
                 }
                 line_next(i)?;
@@ -1816,7 +1832,9 @@ fn f_how_many(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let chars: Vec<char> = bb.text.substring(s, e).chars().collect();
     let mut count = 0i128;
     let mut pos = 0usize;
-    while let Some(regs) = crate::lisp::regexp::search_full(&re, &chars, pos, &syn, &crate::editor::re_category(i)) {
+    while let Some(regs) =
+        crate::lisp::regexp::search_full(&re, &chars, pos, &syn, &crate::editor::re_category(i))
+    {
         let (ms, me) = (regs[0].unwrap_or(0), regs[1].unwrap_or(0));
         count += 1;
         pos = if me > ms { me } else { me + 1 };
@@ -1850,7 +1868,9 @@ fn delete_lines_matching(i: &mut Interp, a: &[Value], keep_match: bool) -> EvalR
     for part in region.split_inclusive('\n') {
         let line = part.strip_suffix('\n').unwrap_or(part);
         let chars: Vec<char> = line.chars().collect();
-        let hit = crate::lisp::regexp::search_full(&re, &chars, 0, &syn, &crate::editor::re_category(i)).is_some();
+        let hit =
+            crate::lisp::regexp::search_full(&re, &chars, 0, &syn, &crate::editor::re_category(i))
+                .is_some();
         let keep = if keep_match { hit } else { !hit };
         if keep {
             out.push_str(part);
@@ -1909,7 +1929,9 @@ fn f_replace_regexp(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let mut out = String::new();
     let mut pos = 0usize;
     let mut n = 0usize;
-    while let Some(regs) = crate::lisp::regexp::search_full(&re, &region, pos, &syn, &crate::editor::re_category(i)) {
+    while let Some(regs) =
+        crate::lisp::regexp::search_full(&re, &region, pos, &syn, &crate::editor::re_category(i))
+    {
         let (ms, me) = (regs[0].unwrap_or(0), regs[1].unwrap_or(0));
         out.extend(&region[pos..ms]);
         expand_rep(i, &to, &regs, &region, &mut out, false)?;
@@ -2049,7 +2071,9 @@ fn f_replace_regexp_in_string(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let mut pos = start;
     let mut n = 0usize;
     let syn = crate::editor::re_syntax(i);
-    while let Some(regs) = crate::lisp::regexp::search_full(&re, &chars, pos, &syn, &crate::editor::re_category(i)) {
+    while let Some(regs) =
+        crate::lisp::regexp::search_full(&re, &chars, pos, &syn, &crate::editor::re_category(i))
+    {
         let (ms, me) = (regs[0].unwrap_or(0), regs[1].unwrap_or(0));
         out.extend(&chars[pos..ms]);
         // GNU: for a function REP, the match data is translated to the
@@ -2204,12 +2228,7 @@ fn check_translation(chars: &[char], pos: usize, val: &Value) -> Option<(usize, 
 /// Core of GNU `translate-region-internal': map chars in S..E
 /// through TABLE (a string or a `translation-table' char-table),
 /// returning the number of characters changed.
-fn translate_region_core(
-    i: &mut Interp,
-    s: usize,
-    e: usize,
-    table: &Value,
-) -> Result<i128, Flow> {
+fn translate_region_core(i: &mut Interp, s: usize, e: usize, table: &Value) -> Result<i128, Flow> {
     // TABLE: string of 256 chars mapping byte->char, or char-table
     // with `translation-table' purpose (GNU signals otherwise).
     let strtab: Option<Vec<char>> = match table {
@@ -2340,12 +2359,8 @@ fn f_translate_region(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 fn f_make_translation_table_from_alist(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let items = a[0].list_to_vec().unwrap_or_default();
     let tag = Value::Sym(i.intern("translation-table"));
-    let forward = crate::lisp::builtins::misc::make_ct(
-        i,
-        tag.clone(),
-        Value::Nil,
-        vec![Value::Nil; 2],
-    );
+    let forward =
+        crate::lisp::builtins::misc::make_ct(i, tag.clone(), Value::Nil, vec![Value::Nil; 2]);
     let reverse = crate::lisp::builtins::misc::make_ct(i, tag, Value::Nil, vec![Value::Nil; 2]);
     for pass in 0..2 {
         let table = if pass == 0 { &forward } else { &reverse };
@@ -2379,26 +2394,26 @@ fn f_make_translation_table_from_alist(i: &mut Interp, a: Vec<Value>) -> EvalRes
             if !(0..=crate::lisp::builtins::misc::CT_MAX_CHAR as i128).contains(&idx) {
                 continue;
             }
-            let val =
-                crate::lisp::builtins::misc::char_table_ref(i, table, idx as usize);
+            let val = crate::lisp::builtins::misc::char_table_ref(i, table, idx as usize);
             let cell = if !val.is_nil() {
                 // Existing entry: a non-list value is first wrapped
                 // as ([idx] . val), then (from . to) is nconc'd on.
                 let mut vl = match &val {
                     Value::Cons(_) => val.list_to_vec().unwrap_or_default(),
                     _ => vec![Value::cons(
-                        Value::Vec(std::rc::Rc::new(std::cell::RefCell::new(vec![
-                            Value::Int(idx),
-                        ]))),
+                        Value::Vec(std::rc::Rc::new(std::cell::RefCell::new(vec![Value::Int(
+                            idx,
+                        )]))),
                         val.clone(),
                     )],
                 };
-                let f = match &from {
-                    Value::Int(c) => Value::Vec(std::rc::Rc::new(std::cell::RefCell::new(
-                        vec![Value::Int(*c)],
-                    ))),
-                    _ => from.clone(),
-                };
+                let f =
+                    match &from {
+                        Value::Int(c) => Value::Vec(std::rc::Rc::new(std::cell::RefCell::new(
+                            vec![Value::Int(*c)],
+                        ))),
+                        _ => from.clone(),
+                    };
                 vl.push(Value::cons(f, to));
                 Value::list(vl)
             } else if matches!(from, Value::Int(_)) {

@@ -6,7 +6,7 @@
 use std::rc::Rc;
 use std::sync::OnceLock;
 
-use super::{arg, want_num, S};
+use super::{S, arg, want_num};
 use crate::lisp::error::{EvalResult, Flow};
 use crate::lisp::value::Value;
 
@@ -82,37 +82,33 @@ unsafe impl Sync for LcmsFns {}
 static LCMS: OnceLock<Option<LcmsFns>> = OnceLock::new();
 
 fn lcms() -> Option<&'static LcmsFns> {
-    LCMS
-        .get_or_init(|| {
-            let lib = crate::lisp::dynlib::open_library(
-                "REMACS_LCMS2_LIBRARY",
-                &[
-                    "liblcms2.2.dylib",
-                    "liblcms2.so.2",
-                    "liblcms2.so",
-                    "liblcms2.dylib",
-                ],
-                "lcms2",
+    LCMS.get_or_init(|| {
+        let lib = crate::lisp::dynlib::open_library(
+            "REMACS_LCMS2_LIBRARY",
+            &[
+                "liblcms2.2.dylib",
+                "liblcms2.so.2",
+                "liblcms2.so",
                 "liblcms2.dylib",
-            )?;
-            let f = unsafe {
-                LcmsFns {
-                    cie2000: crate::lisp::dynlib::sym(&lib, b"cmsCIE2000DeltaE\0")?,
-                    cam02_init: crate::lisp::dynlib::sym(&lib, b"cmsCIECAM02Init\0")?,
-                    cam02_fwd: crate::lisp::dynlib::sym(&lib, b"cmsCIECAM02Forward\0")?,
-                    cam02_rev: crate::lisp::dynlib::sym(&lib, b"cmsCIECAM02Reverse\0")?,
-                    cam02_done: crate::lisp::dynlib::sym(&lib, b"cmsCIECAM02Done\0")?,
-                    white_point_from_temp: crate::lisp::dynlib::sym(
-                        &lib,
-                        b"cmsWhitePointFromTemp\0",
-                    )?,
-                    xyy2xyz: crate::lisp::dynlib::sym(&lib, b"cmsxyY2XYZ\0")?,
-                    _lib: lib,
-                }
-            };
-            Some(f)
-        })
-        .as_ref()
+            ],
+            "lcms2",
+            "liblcms2.dylib",
+        )?;
+        let f = unsafe {
+            LcmsFns {
+                cie2000: crate::lisp::dynlib::sym(&lib, b"cmsCIE2000DeltaE\0")?,
+                cam02_init: crate::lisp::dynlib::sym(&lib, b"cmsCIECAM02Init\0")?,
+                cam02_fwd: crate::lisp::dynlib::sym(&lib, b"cmsCIECAM02Forward\0")?,
+                cam02_rev: crate::lisp::dynlib::sym(&lib, b"cmsCIECAM02Reverse\0")?,
+                cam02_done: crate::lisp::dynlib::sym(&lib, b"cmsCIECAM02Done\0")?,
+                white_point_from_temp: crate::lisp::dynlib::sym(&lib, b"cmsWhitePointFromTemp\0")?,
+                xyy2xyz: crate::lisp::dynlib::sym(&lib, b"cmsxyY2XYZ\0")?,
+                _lib: lib,
+            }
+        };
+        Some(f)
+    })
+    .as_ref()
 }
 
 // ---- list parsing (GNU parse_*_list ports) ----------------------------------
@@ -362,7 +358,12 @@ fn want_wp_and_vc(
     } else {
         match parse_xyz(whitepoint) {
             Some(w) => w,
-            None => return Err(i.signal_data(crate::lisp::obarray::sym::ERROR, vec![Value::string("Invalid white point"), whitepoint.clone()])),
+            None => {
+                return Err(i.signal_data(
+                    crate::lisp::obarray::sym::ERROR,
+                    vec![Value::string("Invalid white point"), whitepoint.clone()],
+                ));
+            }
         }
     };
     let vc = if view.is_nil() {
@@ -370,7 +371,12 @@ fn want_wp_and_vc(
     } else {
         match parse_viewing(view, &xyzw) {
             Some(v) => v,
-            None => return Err(i.signal_data(crate::lisp::obarray::sym::ERROR, vec![Value::string("Invalid viewing conditions"), view.clone()])),
+            None => {
+                return Err(i.signal_data(
+                    crate::lisp::obarray::sym::ERROR,
+                    vec![Value::string("Invalid viewing conditions"), view.clone()],
+                ));
+            }
         }
     };
     Ok(vc)
@@ -380,19 +386,24 @@ fn f_lcms_cie_de2000(i: &mut crate::lisp::eval::Interp, a: Vec<Value>) -> EvalRe
     let g = need(i)?;
     let lab1 = match parse_lab(&arg(&a, 0)) {
         Some(v) => v,
-        None => return Err(i.signal_data(crate::lisp::obarray::sym::ERROR, vec![Value::string("Invalid color"), a[0].clone()])),
+        None => {
+            return Err(i.signal_data(
+                crate::lisp::obarray::sym::ERROR,
+                vec![Value::string("Invalid color"), a[0].clone()],
+            ));
+        }
     };
     let lab2 = match parse_lab(&arg(&a, 1)) {
         Some(v) => v,
-        None => return Err(i.signal_data(crate::lisp::obarray::sym::ERROR, vec![Value::string("Invalid color"), a[1].clone()])),
-    };
-    let mut opt_k = |v: &Value| -> Result<f64, Flow> {
-        if v.is_nil() {
-            Ok(1.0)
-        } else {
-            want_num(i, v)
+        None => {
+            return Err(i.signal_data(
+                crate::lisp::obarray::sym::ERROR,
+                vec![Value::string("Invalid color"), a[1].clone()],
+            ));
         }
     };
+    let mut opt_k =
+        |v: &Value| -> Result<f64, Flow> { if v.is_nil() { Ok(1.0) } else { want_num(i, v) } };
     let kl = opt_k(&arg(&a, 2))?;
     let kc = opt_k(&arg(&a, 3))?;
     let kh = opt_k(&arg(&a, 4))?;
@@ -403,7 +414,12 @@ fn f_lcms_xyz_to_jch(i: &mut crate::lisp::eval::Interp, a: Vec<Value>) -> EvalRe
     need(i)?;
     let xyz = match parse_xyz(&arg(&a, 0)) {
         Some(v) => v,
-        None => return Err(i.signal_data(crate::lisp::obarray::sym::ERROR, vec![Value::string("Invalid color"), a[0].clone()])),
+        None => {
+            return Err(i.signal_data(
+                crate::lisp::obarray::sym::ERROR,
+                vec![Value::string("Invalid color"), a[0].clone()],
+            ));
+        }
     };
     let vc = want_wp_and_vc(i, &arg(&a, 1), &arg(&a, 2))?;
     let jch = xyz_to_jch(&xyz, &vc);
@@ -414,18 +430,32 @@ fn f_lcms_jch_to_xyz(i: &mut crate::lisp::eval::Interp, a: Vec<Value>) -> EvalRe
     need(i)?;
     let jch = match parse_jch(&arg(&a, 0)) {
         Some(v) => v,
-        None => return Err(i.signal_data(crate::lisp::obarray::sym::ERROR, vec![Value::string("Invalid color"), a[0].clone()])),
+        None => {
+            return Err(i.signal_data(
+                crate::lisp::obarray::sym::ERROR,
+                vec![Value::string("Invalid color"), a[0].clone()],
+            ));
+        }
     };
     let vc = want_wp_and_vc(i, &arg(&a, 1), &arg(&a, 2))?;
     let xyz = jch_to_xyz(&jch, &vc);
-    Ok(list3(fl(xyz.x / 100.0), fl(xyz.y / 100.0), fl(xyz.z / 100.0)))
+    Ok(list3(
+        fl(xyz.x / 100.0),
+        fl(xyz.y / 100.0),
+        fl(xyz.z / 100.0),
+    ))
 }
 
 fn f_lcms_jch_to_jab(i: &mut crate::lisp::eval::Interp, a: Vec<Value>) -> EvalResult {
     need(i)?;
     let jch = match parse_jch(&arg(&a, 0)) {
         Some(v) => v,
-        None => return Err(i.signal_data(crate::lisp::obarray::sym::ERROR, vec![Value::string("Invalid color"), a[0].clone()])),
+        None => {
+            return Err(i.signal_data(
+                crate::lisp::obarray::sym::ERROR,
+                vec![Value::string("Invalid color"), a[0].clone()],
+            ));
+        }
     };
     let vc = want_wp_and_vc(i, &arg(&a, 1), &arg(&a, 2))?;
     let fl_ = fl_factor(vc.la);
@@ -437,7 +467,12 @@ fn f_lcms_jab_to_jch(i: &mut crate::lisp::eval::Interp, a: Vec<Value>) -> EvalRe
     need(i)?;
     let jabv = match parse_jab(&arg(&a, 0)) {
         Some(v) => v,
-        None => return Err(i.signal_data(crate::lisp::obarray::sym::ERROR, vec![Value::string("Invalid color"), a[0].clone()])),
+        None => {
+            return Err(i.signal_data(
+                crate::lisp::obarray::sym::ERROR,
+                vec![Value::string("Invalid color"), a[0].clone()],
+            ));
+        }
     };
     let vc = want_wp_and_vc(i, &arg(&a, 1), &arg(&a, 2))?;
     let fl_ = fl_factor(vc.la);
@@ -454,11 +489,21 @@ fn f_lcms_cam02_ucs(i: &mut crate::lisp::eval::Interp, a: Vec<Value>) -> EvalRes
     need(i)?;
     let xyz1 = match parse_xyz(&arg(&a, 0)) {
         Some(v) => v,
-        None => return Err(i.signal_data(crate::lisp::obarray::sym::ERROR, vec![Value::string("Invalid color"), a[0].clone()])),
+        None => {
+            return Err(i.signal_data(
+                crate::lisp::obarray::sym::ERROR,
+                vec![Value::string("Invalid color"), a[0].clone()],
+            ));
+        }
     };
     let xyz2 = match parse_xyz(&arg(&a, 1)) {
         Some(v) => v,
-        None => return Err(i.signal_data(crate::lisp::obarray::sym::ERROR, vec![Value::string("Invalid color"), a[1].clone()])),
+        None => {
+            return Err(i.signal_data(
+                crate::lisp::obarray::sym::ERROR,
+                vec![Value::string("Invalid color"), a[1].clone()],
+            ));
+        }
     };
     let vc = want_wp_and_vc(i, &arg(&a, 2), &arg(&a, 3))?;
     let jch1 = xyz_to_jch(&xyz1, &vc);
@@ -466,7 +511,9 @@ fn f_lcms_cam02_ucs(i: &mut crate::lisp::eval::Interp, a: Vec<Value>) -> EvalRes
     let fl_ = fl_factor(vc.la);
     let jab1 = jch_to_jab(&jch1, fl_, 0.007, 0.0228);
     let jab2 = jch_to_jab(&jch2, fl_, 0.007, 0.0228);
-    Ok(fl((jab2.j - jab1.j).hypot((jab2.a - jab1.a).hypot(jab2.b - jab1.b))))
+    Ok(fl(
+        (jab2.j - jab1.j).hypot((jab2.a - jab1.a).hypot(jab2.b - jab1.b))
+    ))
 }
 
 fn f_lcms_temp_to_white_point(i: &mut crate::lisp::eval::Interp, a: Vec<Value>) -> EvalResult {
@@ -475,7 +522,10 @@ fn f_lcms_temp_to_white_point(i: &mut crate::lisp::eval::Interp, a: Vec<Value>) 
     let mut wp = CmsxyY::default();
     let ok = unsafe { (g.white_point_from_temp)(&mut wp, t) };
     if ok == 0 {
-        return Err(i.signal_data(crate::lisp::obarray::sym::ERROR, vec![Value::string("Invalid temperature"), a[0].clone()]));
+        return Err(i.signal_data(
+            crate::lisp::obarray::sym::ERROR,
+            vec![Value::string("Invalid temperature"), a[0].clone()],
+        ));
     }
     let mut xyz = CmsXYZ::default();
     unsafe { (g.xyy2xyz)(&mut xyz, &wp) };
@@ -491,14 +541,62 @@ fn f_lcms2_available_p(_i: &mut crate::lisp::eval::Interp, _a: Vec<Value>) -> Ev
 }
 
 pub(crate) static SUBRS: &[crate::lisp::value::Subr] = &[
-    S!("lcms-cie-de2000", 2, 5, f_lcms_cie_de2000, "Compute CIEDE2000 metric distance between COLOR1 and COLOR2."),
-    S!("lcms-xyz->jch", 1, 3, f_lcms_xyz_to_jch, "Convert CIE XYZ to CIE CAM02 JCh."),
-    S!("lcms-jch->xyz", 1, 3, f_lcms_jch_to_xyz, "Convert CIE CAM02 JCh to CIE XYZ."),
-    S!("lcms-jch->jab", 1, 3, f_lcms_jch_to_jab, "Convert CIE CAM02 JCh to CAM02-UCS J'a'b'."),
-    S!("lcms-jab->jch", 1, 3, f_lcms_jab_to_jch, "Convert CAM02-UCS J'a'b' to CIE CAM02 JCh."),
-    S!("lcms-cam02-ucs", 2, 4, f_lcms_cam02_ucs, "Compute CAM02-UCS metric distance between COLOR1 and COLOR2."),
-    S!("lcms-temp->white-point", 1, 1, f_lcms_temp_to_white_point, "Return XYZ black body chromaticity from TEMPERATURE in K."),
-    S!("lcms2-available-p", 0, 0, f_lcms2_available_p, "Return t if lcms2 color calculations are available."),
+    S!(
+        "lcms-cie-de2000",
+        2,
+        5,
+        f_lcms_cie_de2000,
+        "Compute CIEDE2000 metric distance between COLOR1 and COLOR2."
+    ),
+    S!(
+        "lcms-xyz->jch",
+        1,
+        3,
+        f_lcms_xyz_to_jch,
+        "Convert CIE XYZ to CIE CAM02 JCh."
+    ),
+    S!(
+        "lcms-jch->xyz",
+        1,
+        3,
+        f_lcms_jch_to_xyz,
+        "Convert CIE CAM02 JCh to CIE XYZ."
+    ),
+    S!(
+        "lcms-jch->jab",
+        1,
+        3,
+        f_lcms_jch_to_jab,
+        "Convert CIE CAM02 JCh to CAM02-UCS J'a'b'."
+    ),
+    S!(
+        "lcms-jab->jch",
+        1,
+        3,
+        f_lcms_jab_to_jch,
+        "Convert CAM02-UCS J'a'b' to CIE CAM02 JCh."
+    ),
+    S!(
+        "lcms-cam02-ucs",
+        2,
+        4,
+        f_lcms_cam02_ucs,
+        "Compute CAM02-UCS metric distance between COLOR1 and COLOR2."
+    ),
+    S!(
+        "lcms-temp->white-point",
+        1,
+        1,
+        f_lcms_temp_to_white_point,
+        "Return XYZ black body chromaticity from TEMPERATURE in K."
+    ),
+    S!(
+        "lcms2-available-p",
+        0,
+        0,
+        f_lcms2_available_p,
+        "Return t if lcms2 color calculations are available."
+    ),
 ];
 
 /// Register the `lcms2' feature when the library is usable (GNU's

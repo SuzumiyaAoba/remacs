@@ -847,8 +847,7 @@ fn sf_condition_case(i: &mut Interp, args: Value) -> EvalResult {
                             (b.car.clone(), b.cdr.clone())
                         };
                         let conds = car(&handler);
-                        let is_success =
-                            matches!(&conds, Value::Sym(s) if *s == success);
+                        let is_success = matches!(&conds, Value::Sym(s) if *s == success);
                         if !is_success {
                             cur = next;
                             continue;
@@ -869,9 +868,7 @@ fn sf_condition_case(i: &mut Interp, args: Value) -> EvalResult {
                             Some(f) => std::mem::replace(&mut i.lexenv, Some(f.clone())),
                             None => None,
                         };
-                        if let Some(vid) =
-                            i.sym_id(&var_v).filter(|_| !var_v.is_nil())
-                        {
+                        if let Some(vid) = i.sym_id(&var_v).filter(|_| !var_v.is_nil()) {
                             if let Err(e) = i.bind_var(lex_frame.as_ref(), vid, v.clone()) {
                                 if lex_frame.is_some() {
                                     i.lexenv = saved_lex;

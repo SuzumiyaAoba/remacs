@@ -633,9 +633,7 @@ fn f_arrayp(i: &mut Interp, args: Vec<Value>) -> EvalResult {
         // byte-code objects alike (element access still works through
         // `aref'/`length').
         Value::Lambda(_) => false,
-        other => {
-            super::misc::is_char_table(i, other) || super::misc::is_bool_vector(i, other)
-        }
+        other => super::misc::is_char_table(i, other) || super::misc::is_bool_vector(i, other),
     }))
 }
 fn f_special_form_p(_i: &mut Interp, args: Vec<Value>) -> EvalResult {

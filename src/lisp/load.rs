@@ -1368,7 +1368,10 @@ static EMBEDDED_LISP: &[(&str, &str)] = &[
     ("TONEPY", include_str!("../../lisp/TONEPY.el")),
     ("ZIRANMA", include_str!("../../lisp/ZIRANMA.el")),
     ("ZOZY", include_str!("../../lisp/ZOZY.el")),
-    ("quail-ethiopic", include_str!("../../lisp/quail-ethiopic.el")),
+    (
+        "quail-ethiopic",
+        include_str!("../../lisp/quail-ethiopic.el"),
+    ),
     ("quail-tibetan", include_str!("../../lisp/quail-tibetan.el")),
     ("quick-cns", include_str!("../../lisp/quick-cns.el")),
     ("tsang-cns", include_str!("../../lisp/tsang-cns.el")),
@@ -1390,7 +1393,10 @@ static EMBEDDED_LISP: &[(&str, &str)] = &[
     ("lrt", include_str!("../../lisp/lrt.el")),
     ("pakistan", include_str!("../../lisp/pakistan.el")),
     ("persian", include_str!("../../lisp/persian.el")),
-    ("programmer-dvorak", include_str!("../../lisp/programmer-dvorak.el")),
+    (
+        "programmer-dvorak",
+        include_str!("../../lisp/programmer-dvorak.el"),
+    ),
     ("py-punct", include_str!("../../lisp/py-punct.el")),
     ("pypunct-b5", include_str!("../../lisp/pypunct-b5.el")),
     ("quick-b5", include_str!("../../lisp/quick-b5.el")),
@@ -1410,25 +1416,46 @@ static EMBEDDED_LISP: &[(&str, &str)] = &[
     ("welsh", include_str!("../../lisp/welsh.el")),
     ("quail/burmese", include_str!("../../lisp/quail-burmese.el")),
     ("quail/cham", include_str!("../../lisp/quail-cham.el")),
-    ("quail/cyrillic", include_str!("../../lisp/quail-cyrillic.el")),
+    (
+        "quail/cyrillic",
+        include_str!("../../lisp/quail-cyrillic.el"),
+    ),
     ("quail/czech", include_str!("../../lisp/quail-czech.el")),
     ("quail/emoji", include_str!("../../lisp/quail-emoji.el")),
-    ("quail/georgian", include_str!("../../lisp/quail-georgian.el")),
+    (
+        "quail/georgian",
+        include_str!("../../lisp/quail-georgian.el"),
+    ),
     ("quail/greek", include_str!("../../lisp/quail-greek.el")),
     ("quail/hebrew", include_str!("../../lisp/quail-hebrew.el")),
     ("quail/indian", include_str!("../../lisp/quail-indian.el")),
-    ("quail/indonesian", include_str!("../../lisp/quail-indonesian.el")),
-    ("quail/japanese", include_str!("../../lisp/quail-japanese.el")),
+    (
+        "quail/indonesian",
+        include_str!("../../lisp/quail-indonesian.el"),
+    ),
+    (
+        "quail/japanese",
+        include_str!("../../lisp/quail-japanese.el"),
+    ),
     ("quail/lao", include_str!("../../lisp/quail-lao.el")),
-    ("quail/misc-lang", include_str!("../../lisp/quail-misc-lang.el")),
-    ("quail/philippine", include_str!("../../lisp/quail-philippine.el")),
+    (
+        "quail/misc-lang",
+        include_str!("../../lisp/quail-misc-lang.el"),
+    ),
+    (
+        "quail/philippine",
+        include_str!("../../lisp/quail-philippine.el"),
+    ),
     ("quail/slovak", include_str!("../../lisp/quail-slovak.el")),
     ("quail/thai", include_str!("../../lisp/quail-thai.el")),
     ("leim-list", include_str!("../../lisp/leim-list.el")),
     ("ja-dic", include_str!("../../lisp/ja-dic.el")),
     ("5x5", include_str!("../../lisp/5x5.el")),
-    ("ange-ftp", include_str!("../../lisp/ange-ftp.el")),  // not in GNU tree (adapted/remacs-specific)
-    ("auth-source-pass", include_str!("../../lisp/auth-source-pass.el")),
+    ("ange-ftp", include_str!("../../lisp/ange-ftp.el")), // not in GNU tree (adapted/remacs-specific)
+    (
+        "auth-source-pass",
+        include_str!("../../lisp/auth-source-pass.el"),
+    ),
     ("battery", include_str!("../../lisp/battery.el")),
     ("bibtex", include_str!("../../lisp/bibtex.el")),
     ("button", include_str!("../../lisp/button.el")),
@@ -1445,10 +1472,19 @@ static EMBEDDED_LISP: &[(&str, &str)] = &[
     ("data-debug", include_str!("../../lisp/data-debug.el")),
     ("deuglify", include_str!("../../lisp/deuglify.el")),
     ("dframe", include_str!("../../lisp/dframe.el")),
-    ("diary-icalendar", include_str!("../../lisp/diary-icalendar.el")),  // not in GNU tree (adapted/remacs-specific)
-    ("dictionary-connection", include_str!("../../lisp/dictionary-connection.el")),
+    (
+        "diary-icalendar",
+        include_str!("../../lisp/diary-icalendar.el"),
+    ), // not in GNU tree (adapted/remacs-specific)
+    (
+        "dictionary-connection",
+        include_str!("../../lisp/dictionary-connection.el"),
+    ),
     ("dictionary", include_str!("../../lisp/dictionary.el")),
-    ("dired-loaddefs", include_str!("../../lisp/dired-loaddefs.el")),
+    (
+        "dired-loaddefs",
+        include_str!("../../lisp/dired-loaddefs.el"),
+    ),
     ("dnd", include_str!("../../lisp/dnd.el")),
     ("doc-view", include_str!("../../lisp/doc-view.el")),
     ("ebnf-abn", include_str!("../../lisp/ebnf-abn.el")),
@@ -1459,46 +1495,64 @@ static EMBEDDED_LISP: &[(&str, &str)] = &[
     ("ebnf-otz", include_str!("../../lisp/ebnf-otz.el")),
     ("ebnf-yac", include_str!("../../lisp/ebnf-yac.el")),
     ("ebnf2ps", include_str!("../../lisp/ebnf2ps.el")),
-    ("ede/auto", include_str!("../../lisp/ede-auto.el")),  // GNU ede/auto
-    ("ede/autoconf-edit", include_str!("../../lisp/ede-autoconf-edit.el")),  // GNU ede/autoconf-edit
-    ("ede/base", include_str!("../../lisp/ede-base.el")),  // GNU ede/base
-    ("ede/config", include_str!("../../lisp/ede-config.el")),  // GNU ede/config
-    ("ede/cpp-root", include_str!("../../lisp/ede-cpp-root.el")),  // GNU ede/cpp-root
-    ("ede/custom", include_str!("../../lisp/ede-custom.el")),  // GNU ede/custom
-    ("ede/detect", include_str!("../../lisp/ede-detect.el")),  // GNU ede/detect
-    ("ede/dired", include_str!("../../lisp/ede-dired.el")),  // GNU ede/dired
-    ("ede/emacs", include_str!("../../lisp/ede-emacs.el")),  // GNU ede/emacs
-    ("ede/files", include_str!("../../lisp/ede-files.el")),  // GNU ede/files
-    ("ede/generic", include_str!("../../lisp/ede-generic.el")),  // GNU ede/generic
-    ("ede/linux", include_str!("../../lisp/ede-linux.el")),  // GNU ede/linux
-    ("ede/loaddefs", include_str!("../../lisp/ede-loaddefs.el")),  // GNU ede/loaddefs
-    ("ede/locate", include_str!("../../lisp/ede-locate.el")),  // GNU ede/locate
-    ("ede/make", include_str!("../../lisp/ede-make.el")),  // GNU ede/make
-    ("ede/pconf", include_str!("../../lisp/ede-pconf.el")),  // GNU ede/pconf
-    ("ede/pmake", include_str!("../../lisp/ede-pmake.el")),  // GNU ede/pmake
-    ("ede/proj-archive", include_str!("../../lisp/ede-proj-archive.el")),  // GNU ede/proj-archive
-    ("ede/proj-aux", include_str!("../../lisp/ede-proj-aux.el")),  // GNU ede/proj-aux
-    ("ede/proj-comp", include_str!("../../lisp/ede-proj-comp.el")),  // GNU ede/proj-comp
-    ("ede/proj-elisp", include_str!("../../lisp/ede-proj-elisp.el")),  // GNU ede/proj-elisp
-    ("ede/proj-info", include_str!("../../lisp/ede-proj-info.el")),  // GNU ede/proj-info
-    ("ede/proj-misc", include_str!("../../lisp/ede-proj-misc.el")),  // GNU ede/proj-misc
-    ("ede/proj-obj", include_str!("../../lisp/ede-proj-obj.el")),  // GNU ede/proj-obj
-    ("ede/proj-prog", include_str!("../../lisp/ede-proj-prog.el")),  // GNU ede/proj-prog
-    ("ede/proj-scheme", include_str!("../../lisp/ede-proj-scheme.el")),  // GNU ede/proj-scheme
-    ("ede/proj-shared", include_str!("../../lisp/ede-proj-shared.el")),  // GNU ede/proj-shared
-    ("ede/proj", include_str!("../../lisp/ede-proj.el")),  // GNU ede/proj
-    ("ede/project-am", include_str!("../../lisp/ede-project-am.el")),  // GNU ede/project-am
-    ("ede/shell", include_str!("../../lisp/ede-shell.el")),  // GNU ede/shell
-    ("ede/simple", include_str!("../../lisp/ede-simple.el")),  // GNU ede/simple
-    ("ede/source", include_str!("../../lisp/ede-source.el")),  // GNU ede/source
-    ("ede/speedbar", include_str!("../../lisp/ede-speedbar.el")),  // GNU ede/speedbar
-    ("ede/srecode", include_str!("../../lisp/ede-srecode.el")),  // GNU ede/srecode
-    ("ede/system", include_str!("../../lisp/ede-system.el")),  // GNU ede/system
-    ("ede/util", include_str!("../../lisp/ede-util.el")),  // GNU ede/util
+    ("ede/auto", include_str!("../../lisp/ede-auto.el")), // GNU ede/auto
+    (
+        "ede/autoconf-edit",
+        include_str!("../../lisp/ede-autoconf-edit.el"),
+    ), // GNU ede/autoconf-edit
+    ("ede/base", include_str!("../../lisp/ede-base.el")), // GNU ede/base
+    ("ede/config", include_str!("../../lisp/ede-config.el")), // GNU ede/config
+    ("ede/cpp-root", include_str!("../../lisp/ede-cpp-root.el")), // GNU ede/cpp-root
+    ("ede/custom", include_str!("../../lisp/ede-custom.el")), // GNU ede/custom
+    ("ede/detect", include_str!("../../lisp/ede-detect.el")), // GNU ede/detect
+    ("ede/dired", include_str!("../../lisp/ede-dired.el")), // GNU ede/dired
+    ("ede/emacs", include_str!("../../lisp/ede-emacs.el")), // GNU ede/emacs
+    ("ede/files", include_str!("../../lisp/ede-files.el")), // GNU ede/files
+    ("ede/generic", include_str!("../../lisp/ede-generic.el")), // GNU ede/generic
+    ("ede/linux", include_str!("../../lisp/ede-linux.el")), // GNU ede/linux
+    ("ede/loaddefs", include_str!("../../lisp/ede-loaddefs.el")), // GNU ede/loaddefs
+    ("ede/locate", include_str!("../../lisp/ede-locate.el")), // GNU ede/locate
+    ("ede/make", include_str!("../../lisp/ede-make.el")), // GNU ede/make
+    ("ede/pconf", include_str!("../../lisp/ede-pconf.el")), // GNU ede/pconf
+    ("ede/pmake", include_str!("../../lisp/ede-pmake.el")), // GNU ede/pmake
+    (
+        "ede/proj-archive",
+        include_str!("../../lisp/ede-proj-archive.el"),
+    ), // GNU ede/proj-archive
+    ("ede/proj-aux", include_str!("../../lisp/ede-proj-aux.el")), // GNU ede/proj-aux
+    ("ede/proj-comp", include_str!("../../lisp/ede-proj-comp.el")), // GNU ede/proj-comp
+    (
+        "ede/proj-elisp",
+        include_str!("../../lisp/ede-proj-elisp.el"),
+    ), // GNU ede/proj-elisp
+    ("ede/proj-info", include_str!("../../lisp/ede-proj-info.el")), // GNU ede/proj-info
+    ("ede/proj-misc", include_str!("../../lisp/ede-proj-misc.el")), // GNU ede/proj-misc
+    ("ede/proj-obj", include_str!("../../lisp/ede-proj-obj.el")), // GNU ede/proj-obj
+    ("ede/proj-prog", include_str!("../../lisp/ede-proj-prog.el")), // GNU ede/proj-prog
+    (
+        "ede/proj-scheme",
+        include_str!("../../lisp/ede-proj-scheme.el"),
+    ), // GNU ede/proj-scheme
+    (
+        "ede/proj-shared",
+        include_str!("../../lisp/ede-proj-shared.el"),
+    ), // GNU ede/proj-shared
+    ("ede/proj", include_str!("../../lisp/ede-proj.el")), // GNU ede/proj
+    (
+        "ede/project-am",
+        include_str!("../../lisp/ede-project-am.el"),
+    ), // GNU ede/project-am
+    ("ede/shell", include_str!("../../lisp/ede-shell.el")), // GNU ede/shell
+    ("ede/simple", include_str!("../../lisp/ede-simple.el")), // GNU ede/simple
+    ("ede/source", include_str!("../../lisp/ede-source.el")), // GNU ede/source
+    ("ede/speedbar", include_str!("../../lisp/ede-speedbar.el")), // GNU ede/speedbar
+    ("ede/srecode", include_str!("../../lisp/ede-srecode.el")), // GNU ede/srecode
+    ("ede/system", include_str!("../../lisp/ede-system.el")), // GNU ede/system
+    ("ede/util", include_str!("../../lisp/ede-util.el")), // GNU ede/util
     ("ede", include_str!("../../lisp/ede.el")),
     ("ediff-diff", include_str!("../../lisp/ediff-diff.el")),
     ("ediff-help", include_str!("../../lisp/ediff-help.el")),
-    ("ediff-init", include_str!("../../lisp/ediff-init.el")),  // not in GNU tree (adapted/remacs-specific)
+    ("ediff-init", include_str!("../../lisp/ediff-init.el")), // not in GNU tree (adapted/remacs-specific)
     ("ediff-merg", include_str!("../../lisp/ediff-merg.el")),
     ("ediff-mult", include_str!("../../lisp/ediff-mult.el")),
     ("ediff-ptch", include_str!("../../lisp/ediff-ptch.el")),
@@ -1506,14 +1560,14 @@ static EMBEDDED_LISP: &[(&str, &str)] = &[
     ("ediff-vers", include_str!("../../lisp/ediff-vers.el")),
     ("ediff-wind", include_str!("../../lisp/ediff-wind.el")),
     ("ediff", include_str!("../../lisp/ediff.el")),
-    ("edmacro", include_str!("../../lisp/edmacro.el")),  // not in GNU tree (adapted/remacs-specific)
-    ("elp", include_str!("../../lisp/elp.el")),  // not in GNU tree (adapted/remacs-specific)
+    ("edmacro", include_str!("../../lisp/edmacro.el")), // not in GNU tree (adapted/remacs-specific)
+    ("elp", include_str!("../../lisp/elp.el")),         // not in GNU tree (adapted/remacs-specific)
     ("em-alias", include_str!("../../lisp/em-alias.el")),
     ("em-banner", include_str!("../../lisp/em-banner.el")),
     ("em-basic", include_str!("../../lisp/em-basic.el")),
     ("em-cmpl", include_str!("../../lisp/em-cmpl.el")),
     ("em-dirs", include_str!("../../lisp/em-dirs.el")),
-    ("em-elecslash", include_str!("../../lisp/em-elecslash.el")),  // not in GNU tree (adapted/remacs-specific)
+    ("em-elecslash", include_str!("../../lisp/em-elecslash.el")), // not in GNU tree (adapted/remacs-specific)
     ("em-extpipe", include_str!("../../lisp/em-extpipe.el")),
     ("em-glob", include_str!("../../lisp/em-glob.el")),
     ("em-hist", include_str!("../../lisp/em-hist.el")),
@@ -1524,10 +1578,13 @@ static EMBEDDED_LISP: &[(&str, &str)] = &[
     ("em-script", include_str!("../../lisp/em-script.el")),
     ("em-smart", include_str!("../../lisp/em-smart.el")),
     ("em-term", include_str!("../../lisp/em-term.el")),
-    ("em-tramp", include_str!("../../lisp/em-tramp.el")),  // not in GNU tree (adapted/remacs-specific)
+    ("em-tramp", include_str!("../../lisp/em-tramp.el")), // not in GNU tree (adapted/remacs-specific)
     ("em-unix", include_str!("../../lisp/em-unix.el")),
     ("em-xtra", include_str!("../../lisp/em-xtra.el")),
-    ("emacs-news-mode", include_str!("../../lisp/emacs-news-mode.el")),
+    (
+        "emacs-news-mode",
+        include_str!("../../lisp/emacs-news-mode.el"),
+    ),
     ("epa-dired", include_str!("../../lisp/epa-dired.el")),
     ("epa-file", include_str!("../../lisp/epa-file.el")),
     ("epa-ks", include_str!("../../lisp/epa-ks.el")),
@@ -1536,8 +1593,11 @@ static EMBEDDED_LISP: &[(&str, &str)] = &[
     ("esh-cmd", include_str!("../../lisp/esh-cmd.el")),
     ("esh-ext", include_str!("../../lisp/esh-ext.el")),
     ("esh-io", include_str!("../../lisp/esh-io.el")),
-    ("esh-mode", include_str!("../../lisp/esh-mode.el")),  // not in GNU tree (adapted/remacs-specific)
-    ("esh-module-loaddefs", include_str!("../../lisp/esh-module-loaddefs.el")),
+    ("esh-mode", include_str!("../../lisp/esh-mode.el")), // not in GNU tree (adapted/remacs-specific)
+    (
+        "esh-module-loaddefs",
+        include_str!("../../lisp/esh-module-loaddefs.el"),
+    ),
     ("esh-module", include_str!("../../lisp/esh-module.el")),
     ("esh-opt", include_str!("../../lisp/esh-opt.el")),
     ("esh-proc", include_str!("../../lisp/esh-proc.el")),
@@ -1574,7 +1634,10 @@ static EMBEDDED_LISP: &[(&str, &str)] = &[
     ("gnus-gravatar", include_str!("../../lisp/gnus-gravatar.el")),
     ("gnus-group", include_str!("../../lisp/gnus-group.el")),
     ("gnus-html", include_str!("../../lisp/gnus-html.el")),
-    ("gnus-icalendar", include_str!("../../lisp/gnus-icalendar.el")),
+    (
+        "gnus-icalendar",
+        include_str!("../../lisp/gnus-icalendar.el"),
+    ),
     ("gnus-int", include_str!("../../lisp/gnus-int.el")),
     ("gnus-kill", include_str!("../../lisp/gnus-kill.el")),
     ("gnus-logic", include_str!("../../lisp/gnus-logic.el")),
@@ -1582,7 +1645,10 @@ static EMBEDDED_LISP: &[(&str, &str)] = &[
     ("gnus-ml", include_str!("../../lisp/gnus-ml.el")),
     ("gnus-mlspl", include_str!("../../lisp/gnus-mlspl.el")),
     ("gnus-msg", include_str!("../../lisp/gnus-msg.el")),
-    ("gnus-notifications", include_str!("../../lisp/gnus-notifications.el")),
+    (
+        "gnus-notifications",
+        include_str!("../../lisp/gnus-notifications.el"),
+    ),
     ("gnus-picon", include_str!("../../lisp/gnus-picon.el")),
     ("gnus-range", include_str!("../../lisp/gnus-range.el")),
     ("gnus-registry", include_str!("../../lisp/gnus-registry.el")),
@@ -1605,20 +1671,41 @@ static EMBEDDED_LISP: &[(&str, &str)] = &[
     ("gnus", include_str!("../../lisp/gnus.el")),
     ("gssapi", include_str!("../../lisp/gssapi.el")),
     ("handwrite", include_str!("../../lisp/handwrite.el")),
-    ("hexl", include_str!("../../lisp/hexl.el")),  // not in GNU tree (adapted/remacs-specific)
+    ("hexl", include_str!("../../lisp/hexl.el")), // not in GNU tree (adapted/remacs-specific)
     ("hilit-chg", include_str!("../../lisp/hilit-chg.el")),
     ("htmlfontify", include_str!("../../lisp/htmlfontify.el")),
     ("ibuf-ext", include_str!("../../lisp/ibuf-ext.el")),
-    ("ibuffer-loaddefs", include_str!("../../lisp/ibuffer-loaddefs.el")),
+    (
+        "ibuffer-loaddefs",
+        include_str!("../../lisp/ibuffer-loaddefs.el"),
+    ),
     ("ibuffer", include_str!("../../lisp/ibuffer.el")),
-    ("icalendar-ast", include_str!("../../lisp/icalendar-ast.el")),  // not in GNU tree (adapted/remacs-specific)
-    ("icalendar-macs", include_str!("../../lisp/icalendar-macs.el")),  // not in GNU tree (adapted/remacs-specific)
-    ("icalendar-mode", include_str!("../../lisp/icalendar-mode.el")),  // not in GNU tree (adapted/remacs-specific)
-    ("icalendar-parser", include_str!("../../lisp/icalendar-parser.el")),  // not in GNU tree (adapted/remacs-specific)
-    ("icalendar-recur", include_str!("../../lisp/icalendar-recur.el")),  // not in GNU tree (adapted/remacs-specific)
-    ("icalendar-shortdoc", include_str!("../../lisp/icalendar-shortdoc.el")),
-    ("icalendar-utils", include_str!("../../lisp/icalendar-utils.el")),  // not in GNU tree (adapted/remacs-specific)
-    ("icalendar", include_str!("../../lisp/icalendar.el")),  // not in GNU tree (adapted/remacs-specific)
+    ("icalendar-ast", include_str!("../../lisp/icalendar-ast.el")), // not in GNU tree (adapted/remacs-specific)
+    (
+        "icalendar-macs",
+        include_str!("../../lisp/icalendar-macs.el"),
+    ), // not in GNU tree (adapted/remacs-specific)
+    (
+        "icalendar-mode",
+        include_str!("../../lisp/icalendar-mode.el"),
+    ), // not in GNU tree (adapted/remacs-specific)
+    (
+        "icalendar-parser",
+        include_str!("../../lisp/icalendar-parser.el"),
+    ), // not in GNU tree (adapted/remacs-specific)
+    (
+        "icalendar-recur",
+        include_str!("../../lisp/icalendar-recur.el"),
+    ), // not in GNU tree (adapted/remacs-specific)
+    (
+        "icalendar-shortdoc",
+        include_str!("../../lisp/icalendar-shortdoc.el"),
+    ),
+    (
+        "icalendar-utils",
+        include_str!("../../lisp/icalendar-utils.el"),
+    ), // not in GNU tree (adapted/remacs-specific)
+    ("icalendar", include_str!("../../lisp/icalendar.el")), // not in GNU tree (adapted/remacs-specific)
     ("image-mode", include_str!("../../lisp/image-mode.el")),
     ("inf-lisp", include_str!("../../lisp/inf-lisp.el")),
     ("info-look", include_str!("../../lisp/info-look.el")),
@@ -1626,7 +1713,7 @@ static EMBEDDED_LISP: &[(&str, &str)] = &[
     ("info", include_str!("../../lisp/info.el")),
     ("informat", include_str!("../../lisp/informat.el")),
     ("isearch", include_str!("../../lisp/isearch.el")),
-    ("jsonrpc", include_str!("../../lisp/jsonrpc.el")),  // not in GNU tree (adapted/remacs-specific)
+    ("jsonrpc", include_str!("../../lisp/jsonrpc.el")), // not in GNU tree (adapted/remacs-specific)
     ("kermit", include_str!("../../lisp/kermit.el")),
     ("loadup", include_str!("../../lisp/loadup.el")),
     ("log-edit", include_str!("../../lisp/log-edit.el")),
@@ -1657,10 +1744,16 @@ static EMBEDDED_LISP: &[(&str, &str)] = &[
     ("mpc", include_str!("../../lisp/mpc.el")),
     ("mwheel", include_str!("../../lisp/mwheel.el")),
     ("newst-backend", include_str!("../../lisp/newst-backend.el")),
-    ("newst-plainview", include_str!("../../lisp/newst-plainview.el")),
+    (
+        "newst-plainview",
+        include_str!("../../lisp/newst-plainview.el"),
+    ),
     ("newst-reader", include_str!("../../lisp/newst-reader.el")),
     ("newst-ticker", include_str!("../../lisp/newst-ticker.el")),
-    ("newst-treeview", include_str!("../../lisp/newst-treeview.el")),
+    (
+        "newst-treeview",
+        include_str!("../../lisp/newst-treeview.el"),
+    ),
     ("newsticker", include_str!("../../lisp/newsticker.el")),
     ("nnagent", include_str!("../../lisp/nnagent.el")),
     ("nnatom", include_str!("../../lisp/nnatom.el")),
@@ -1763,7 +1856,10 @@ static EMBEDDED_LISP: &[(&str, &str)] = &[
     ("ol", include_str!("../../lisp/ol.el")),
     ("org-agenda", include_str!("../../lisp/org-agenda.el")),
     ("org-archive", include_str!("../../lisp/org-archive.el")),
-    ("org-attach-git", include_str!("../../lisp/org-attach-git.el")),
+    (
+        "org-attach-git",
+        include_str!("../../lisp/org-attach-git.el"),
+    ),
     ("org-attach", include_str!("../../lisp/org-attach.el")),
     ("org-capture", include_str!("../../lisp/org-capture.el")),
     ("org-clock", include_str!("../../lisp/org-clock.el")),
@@ -1774,7 +1870,10 @@ static EMBEDDED_LISP: &[(&str, &str)] = &[
     ("org-cycle", include_str!("../../lisp/org-cycle.el")),
     ("org-datetree", include_str!("../../lisp/org-datetree.el")),
     ("org-duration", include_str!("../../lisp/org-duration.el")),
-    ("org-element-ast", include_str!("../../lisp/org-element-ast.el")),  // not in GNU tree (adapted/remacs-specific)
+    (
+        "org-element-ast",
+        include_str!("../../lisp/org-element-ast.el"),
+    ), // not in GNU tree (adapted/remacs-specific)
     ("org-element", include_str!("../../lisp/org-element.el")),
     ("org-entities", include_str!("../../lisp/org-entities.el")),
     ("org-faces", include_str!("../../lisp/org-faces.el")),
@@ -1786,7 +1885,10 @@ static EMBEDDED_LISP: &[(&str, &str)] = &[
     ("org-habit", include_str!("../../lisp/org-habit.el")),
     ("org-id", include_str!("../../lisp/org-id.el")),
     ("org-indent", include_str!("../../lisp/org-indent.el")),
-    ("org-inlinetask", include_str!("../../lisp/org-inlinetask.el")),
+    (
+        "org-inlinetask",
+        include_str!("../../lisp/org-inlinetask.el"),
+    ),
     ("org-keys", include_str!("../../lisp/org-keys.el")),
     ("org-lint", include_str!("../../lisp/org-lint.el")),
     ("org-list", include_str!("../../lisp/org-list.el")),
@@ -1811,7 +1913,10 @@ static EMBEDDED_LISP: &[(&str, &str)] = &[
     ("ox-beamer", include_str!("../../lisp/ox-beamer.el")),
     ("ox-html", include_str!("../../lisp/ox-html.el")),
     ("ox-icalendar", include_str!("../../lisp/ox-icalendar.el")),
-    ("ox-koma-letter", include_str!("../../lisp/ox-koma-letter.el")),
+    (
+        "ox-koma-letter",
+        include_str!("../../lisp/ox-koma-letter.el"),
+    ),
     ("ox-latex", include_str!("../../lisp/ox-latex.el")),
     ("ox-man", include_str!("../../lisp/ox-man.el")),
     ("ox-md", include_str!("../../lisp/ox-md.el")),
@@ -1827,98 +1932,293 @@ static EMBEDDED_LISP: &[(&str, &str)] = &[
     ("pcmpl-rpm", include_str!("../../lisp/pcmpl-rpm.el")),
     ("pcmpl-unix", include_str!("../../lisp/pcmpl-unix.el")),
     ("pcmpl-x", include_str!("../../lisp/pcmpl-x.el")),
-    ("peg", include_str!("../../lisp/peg.el")),  // not in GNU tree (adapted/remacs-specific)
+    ("peg", include_str!("../../lisp/peg.el")), // not in GNU tree (adapted/remacs-specific)
     ("pgtk-dnd", include_str!("../../lisp/pgtk-dnd.el")),
     ("ps-bdf", include_str!("../../lisp/ps-bdf.el")),
     ("ps-mode", include_str!("../../lisp/ps-mode.el")),
     ("ps-mule", include_str!("../../lisp/ps-mule.el")),
     ("refer", include_str!("../../lisp/refer.el")),
-    ("remacs-compat", include_str!("../../lisp/remacs-compat.el")),  // not in GNU tree (adapted/remacs-specific)
+    ("remacs-compat", include_str!("../../lisp/remacs-compat.el")), // not in GNU tree (adapted/remacs-specific)
     ("score-mode", include_str!("../../lisp/score-mode.el")),
-    ("semantic/analyze/complete", include_str!("../../lisp/semantic-analyze-complete.el")),  // GNU semantic/analyze/complete
-    ("semantic/analyze/debug", include_str!("../../lisp/semantic-analyze-debug.el")),  // GNU semantic/analyze/debug
-    ("semantic/analyze/fcn", include_str!("../../lisp/semantic-analyze-fcn.el")),  // GNU semantic/analyze/fcn
-    ("semantic/analyze/refs", include_str!("../../lisp/semantic-analyze-refs.el")),  // GNU semantic/analyze/refs
-    ("semantic/analyze", include_str!("../../lisp/semantic-analyze.el")),  // GNU semantic/analyze
-    ("semantic/bovine/c-by", include_str!("../../lisp/semantic-bovine-c-by.el")),  // GNU semantic/bovine/c-by
-    ("semantic/bovine/c", include_str!("../../lisp/semantic-bovine-c.el")),  // GNU semantic/bovine/c
-    ("semantic/bovine/debug", include_str!("../../lisp/semantic-bovine-debug.el")),  // GNU semantic/bovine/debug
-    ("semantic/bovine/el", include_str!("../../lisp/semantic-bovine-el.el")),  // GNU semantic/bovine/el
-    ("semantic/bovine/gcc", include_str!("../../lisp/semantic-bovine-gcc.el")),  // GNU semantic/bovine/gcc
-    ("semantic/bovine/grammar", include_str!("../../lisp/semantic-bovine-grammar.el")),  // GNU semantic/bovine/grammar
-    ("semantic/bovine/make-by", include_str!("../../lisp/semantic-bovine-make-by.el")),  // GNU semantic/bovine/make-by
-    ("semantic/bovine/make", include_str!("../../lisp/semantic-bovine-make.el")),  // GNU semantic/bovine/make
-    ("semantic/bovine/scm-by", include_str!("../../lisp/semantic-bovine-scm-by.el")),  // GNU semantic/bovine/scm-by
-    ("semantic/bovine/scm", include_str!("../../lisp/semantic-bovine-scm.el")),  // GNU semantic/bovine/scm
-    ("semantic/bovine", include_str!("../../lisp/semantic-bovine.el")),  // GNU semantic/bovine
-    ("semantic/chart", include_str!("../../lisp/semantic-chart.el")),  // GNU semantic/chart
-    ("semantic/complete", include_str!("../../lisp/semantic-complete.el")),  // GNU semantic/complete
-    ("semantic/ctxt", include_str!("../../lisp/semantic-ctxt.el")),  // GNU semantic/ctxt
-    ("semantic/db-debug", include_str!("../../lisp/semantic-db-debug.el")),  // GNU semantic/db-debug
-    ("semantic/db-ebrowse", include_str!("../../lisp/semantic-db-ebrowse.el")),  // GNU semantic/db-ebrowse
-    ("semantic/db-el", include_str!("../../lisp/semantic-db-el.el")),  // GNU semantic/db-el
-    ("semantic/db-file", include_str!("../../lisp/semantic-db-file.el")),  // GNU semantic/db-file
-    ("semantic/db-find", include_str!("../../lisp/semantic-db-find.el")),  // GNU semantic/db-find
-    ("semantic/db-global", include_str!("../../lisp/semantic-db-global.el")),  // GNU semantic/db-global
-    ("semantic/db-javascript", include_str!("../../lisp/semantic-db-javascript.el")),  // GNU semantic/db-javascript
-    ("semantic/db-mode", include_str!("../../lisp/semantic-db-mode.el")),  // GNU semantic/db-mode
-    ("semantic/db-ref", include_str!("../../lisp/semantic-db-ref.el")),  // GNU semantic/db-ref
-    ("semantic/db-typecache", include_str!("../../lisp/semantic-db-typecache.el")),  // GNU semantic/db-typecache
-    ("semantic/db", include_str!("../../lisp/semantic-db.el")),  // GNU semantic/db
-    ("semantic/debug", include_str!("../../lisp/semantic-debug.el")),  // GNU semantic/debug
-    ("semantic/decorate/include", include_str!("../../lisp/semantic-decorate-include.el")),  // GNU semantic/decorate/include
-    ("semantic/decorate/mode", include_str!("../../lisp/semantic-decorate-mode.el")),  // GNU semantic/decorate/mode
-    ("semantic/decorate", include_str!("../../lisp/semantic-decorate.el")),  // GNU semantic/decorate
-    ("semantic/dep", include_str!("../../lisp/semantic-dep.el")),  // GNU semantic/dep
-    ("semantic/doc", include_str!("../../lisp/semantic-doc.el")),  // GNU semantic/doc
-    ("semantic/ede-grammar", include_str!("../../lisp/semantic-ede-grammar.el")),  // GNU semantic/ede-grammar
-    ("semantic/edit", include_str!("../../lisp/semantic-edit.el")),  // GNU semantic/edit
-    ("semantic/find", include_str!("../../lisp/semantic-find.el")),  // GNU semantic/find
-    ("semantic/format", include_str!("../../lisp/semantic-format.el")),  // GNU semantic/format
-    ("semantic/fw", include_str!("../../lisp/semantic-fw.el")),  // GNU semantic/fw
-    ("semantic/grammar-wy", include_str!("../../lisp/semantic-grammar-wy.el")),  // GNU semantic/grammar-wy
-    ("semantic/grammar", include_str!("../../lisp/semantic-grammar.el")),  // GNU semantic/grammar
-    ("semantic/grm-wy-boot", include_str!("../../lisp/semantic-grm-wy-boot.el")),  // GNU semantic/grm-wy-boot
-    ("semantic/html", include_str!("../../lisp/semantic-html.el")),  // GNU semantic/html
-    ("semantic/ia-sb", include_str!("../../lisp/semantic-ia-sb.el")),  // GNU semantic/ia-sb
-    ("semantic/ia", include_str!("../../lisp/semantic-ia.el")),  // GNU semantic/ia
-    ("semantic/idle", include_str!("../../lisp/semantic-idle.el")),  // GNU semantic/idle
-    ("semantic/imenu", include_str!("../../lisp/semantic-imenu.el")),  // GNU semantic/imenu
-    ("semantic/java", include_str!("../../lisp/semantic-java.el")),  // GNU semantic/java
-    ("semantic/lex-spp", include_str!("../../lisp/semantic-lex-spp.el")),  // GNU semantic/lex-spp
-    ("semantic/lex", include_str!("../../lisp/semantic-lex.el")),  // GNU semantic/lex
-    ("semantic/loaddefs", include_str!("../../lisp/semantic-loaddefs.el")),  // GNU semantic/loaddefs
-    ("semantic/mru-bookmark", include_str!("../../lisp/semantic-mru-bookmark.el")),  // GNU semantic/mru-bookmark
-    ("semantic/sb", include_str!("../../lisp/semantic-sb.el")),  // GNU semantic/sb
-    ("semantic/scope", include_str!("../../lisp/semantic-scope.el")),  // GNU semantic/scope
-    ("semantic/senator", include_str!("../../lisp/semantic-senator.el")),  // GNU semantic/senator
-    ("semantic/sort", include_str!("../../lisp/semantic-sort.el")),  // GNU semantic/sort
-    ("semantic/symref/cscope", include_str!("../../lisp/semantic-symref-cscope.el")),  // GNU semantic/symref/cscope
-    ("semantic/symref/filter", include_str!("../../lisp/semantic-symref-filter.el")),  // GNU semantic/symref/filter
-    ("semantic/symref/global", include_str!("../../lisp/semantic-symref-global.el")),  // GNU semantic/symref/global
-    ("semantic/symref/grep", include_str!("../../lisp/semantic-symref-grep.el")),  // GNU semantic/symref/grep
-    ("semantic/symref/idutils", include_str!("../../lisp/semantic-symref-idutils.el")),  // GNU semantic/symref/idutils
-    ("semantic/symref/list", include_str!("../../lisp/semantic-symref-list.el")),  // GNU semantic/symref/list
-    ("semantic/symref", include_str!("../../lisp/semantic-symref.el")),  // GNU semantic/symref
-    ("semantic/tag-file", include_str!("../../lisp/semantic-tag-file.el")),  // GNU semantic/tag-file
-    ("semantic/tag-ls", include_str!("../../lisp/semantic-tag-ls.el")),  // GNU semantic/tag-ls
-    ("semantic/tag-write", include_str!("../../lisp/semantic-tag-write.el")),  // GNU semantic/tag-write
-    ("semantic/tag", include_str!("../../lisp/semantic-tag.el")),  // GNU semantic/tag
-    ("semantic/texi", include_str!("../../lisp/semantic-texi.el")),  // GNU semantic/texi
-    ("semantic/util-modes", include_str!("../../lisp/semantic-util-modes.el")),  // GNU semantic/util-modes
-    ("semantic/util", include_str!("../../lisp/semantic-util.el")),  // GNU semantic/util
-    ("semantic/wisent/comp", include_str!("../../lisp/semantic-wisent-comp.el")),  // GNU semantic/wisent/comp
-    ("semantic/wisent/grammar", include_str!("../../lisp/semantic-wisent-grammar.el")),  // GNU semantic/wisent/grammar
-    ("semantic/wisent/java-tags", include_str!("../../lisp/semantic-wisent-java-tags.el")),  // GNU semantic/wisent/java-tags
-    ("semantic/wisent/javascript", include_str!("../../lisp/semantic-wisent-javascript.el")),  // GNU semantic/wisent/javascript
-    ("semantic/wisent/javat-wy", include_str!("../../lisp/semantic-wisent-javat-wy.el")),  // GNU semantic/wisent/javat-wy
-    ("semantic/wisent/js-wy", include_str!("../../lisp/semantic-wisent-js-wy.el")),  // GNU semantic/wisent/js-wy
-    ("semantic/wisent/python-wy", include_str!("../../lisp/semantic-wisent-python-wy.el")),  // GNU semantic/wisent/python-wy
-    ("semantic/wisent/python", include_str!("../../lisp/semantic-wisent-python.el")),  // GNU semantic/wisent/python
-    ("semantic/wisent/wisent", include_str!("../../lisp/semantic-wisent-wisent.el")),  // GNU semantic/wisent/wisent
-    ("semantic/wisent", include_str!("../../lisp/semantic-wisent.el")),  // GNU semantic/wisent
+    (
+        "semantic/analyze/complete",
+        include_str!("../../lisp/semantic-analyze-complete.el"),
+    ), // GNU semantic/analyze/complete
+    (
+        "semantic/analyze/debug",
+        include_str!("../../lisp/semantic-analyze-debug.el"),
+    ), // GNU semantic/analyze/debug
+    (
+        "semantic/analyze/fcn",
+        include_str!("../../lisp/semantic-analyze-fcn.el"),
+    ), // GNU semantic/analyze/fcn
+    (
+        "semantic/analyze/refs",
+        include_str!("../../lisp/semantic-analyze-refs.el"),
+    ), // GNU semantic/analyze/refs
+    (
+        "semantic/analyze",
+        include_str!("../../lisp/semantic-analyze.el"),
+    ), // GNU semantic/analyze
+    (
+        "semantic/bovine/c-by",
+        include_str!("../../lisp/semantic-bovine-c-by.el"),
+    ), // GNU semantic/bovine/c-by
+    (
+        "semantic/bovine/c",
+        include_str!("../../lisp/semantic-bovine-c.el"),
+    ), // GNU semantic/bovine/c
+    (
+        "semantic/bovine/debug",
+        include_str!("../../lisp/semantic-bovine-debug.el"),
+    ), // GNU semantic/bovine/debug
+    (
+        "semantic/bovine/el",
+        include_str!("../../lisp/semantic-bovine-el.el"),
+    ), // GNU semantic/bovine/el
+    (
+        "semantic/bovine/gcc",
+        include_str!("../../lisp/semantic-bovine-gcc.el"),
+    ), // GNU semantic/bovine/gcc
+    (
+        "semantic/bovine/grammar",
+        include_str!("../../lisp/semantic-bovine-grammar.el"),
+    ), // GNU semantic/bovine/grammar
+    (
+        "semantic/bovine/make-by",
+        include_str!("../../lisp/semantic-bovine-make-by.el"),
+    ), // GNU semantic/bovine/make-by
+    (
+        "semantic/bovine/make",
+        include_str!("../../lisp/semantic-bovine-make.el"),
+    ), // GNU semantic/bovine/make
+    (
+        "semantic/bovine/scm-by",
+        include_str!("../../lisp/semantic-bovine-scm-by.el"),
+    ), // GNU semantic/bovine/scm-by
+    (
+        "semantic/bovine/scm",
+        include_str!("../../lisp/semantic-bovine-scm.el"),
+    ), // GNU semantic/bovine/scm
+    (
+        "semantic/bovine",
+        include_str!("../../lisp/semantic-bovine.el"),
+    ), // GNU semantic/bovine
+    (
+        "semantic/chart",
+        include_str!("../../lisp/semantic-chart.el"),
+    ), // GNU semantic/chart
+    (
+        "semantic/complete",
+        include_str!("../../lisp/semantic-complete.el"),
+    ), // GNU semantic/complete
+    ("semantic/ctxt", include_str!("../../lisp/semantic-ctxt.el")), // GNU semantic/ctxt
+    (
+        "semantic/db-debug",
+        include_str!("../../lisp/semantic-db-debug.el"),
+    ), // GNU semantic/db-debug
+    (
+        "semantic/db-ebrowse",
+        include_str!("../../lisp/semantic-db-ebrowse.el"),
+    ), // GNU semantic/db-ebrowse
+    (
+        "semantic/db-el",
+        include_str!("../../lisp/semantic-db-el.el"),
+    ), // GNU semantic/db-el
+    (
+        "semantic/db-file",
+        include_str!("../../lisp/semantic-db-file.el"),
+    ), // GNU semantic/db-file
+    (
+        "semantic/db-find",
+        include_str!("../../lisp/semantic-db-find.el"),
+    ), // GNU semantic/db-find
+    (
+        "semantic/db-global",
+        include_str!("../../lisp/semantic-db-global.el"),
+    ), // GNU semantic/db-global
+    (
+        "semantic/db-javascript",
+        include_str!("../../lisp/semantic-db-javascript.el"),
+    ), // GNU semantic/db-javascript
+    (
+        "semantic/db-mode",
+        include_str!("../../lisp/semantic-db-mode.el"),
+    ), // GNU semantic/db-mode
+    (
+        "semantic/db-ref",
+        include_str!("../../lisp/semantic-db-ref.el"),
+    ), // GNU semantic/db-ref
+    (
+        "semantic/db-typecache",
+        include_str!("../../lisp/semantic-db-typecache.el"),
+    ), // GNU semantic/db-typecache
+    ("semantic/db", include_str!("../../lisp/semantic-db.el")),     // GNU semantic/db
+    (
+        "semantic/debug",
+        include_str!("../../lisp/semantic-debug.el"),
+    ), // GNU semantic/debug
+    (
+        "semantic/decorate/include",
+        include_str!("../../lisp/semantic-decorate-include.el"),
+    ), // GNU semantic/decorate/include
+    (
+        "semantic/decorate/mode",
+        include_str!("../../lisp/semantic-decorate-mode.el"),
+    ), // GNU semantic/decorate/mode
+    (
+        "semantic/decorate",
+        include_str!("../../lisp/semantic-decorate.el"),
+    ), // GNU semantic/decorate
+    ("semantic/dep", include_str!("../../lisp/semantic-dep.el")),   // GNU semantic/dep
+    ("semantic/doc", include_str!("../../lisp/semantic-doc.el")),   // GNU semantic/doc
+    (
+        "semantic/ede-grammar",
+        include_str!("../../lisp/semantic-ede-grammar.el"),
+    ), // GNU semantic/ede-grammar
+    ("semantic/edit", include_str!("../../lisp/semantic-edit.el")), // GNU semantic/edit
+    ("semantic/find", include_str!("../../lisp/semantic-find.el")), // GNU semantic/find
+    (
+        "semantic/format",
+        include_str!("../../lisp/semantic-format.el"),
+    ), // GNU semantic/format
+    ("semantic/fw", include_str!("../../lisp/semantic-fw.el")),     // GNU semantic/fw
+    (
+        "semantic/grammar-wy",
+        include_str!("../../lisp/semantic-grammar-wy.el"),
+    ), // GNU semantic/grammar-wy
+    (
+        "semantic/grammar",
+        include_str!("../../lisp/semantic-grammar.el"),
+    ), // GNU semantic/grammar
+    (
+        "semantic/grm-wy-boot",
+        include_str!("../../lisp/semantic-grm-wy-boot.el"),
+    ), // GNU semantic/grm-wy-boot
+    ("semantic/html", include_str!("../../lisp/semantic-html.el")), // GNU semantic/html
+    (
+        "semantic/ia-sb",
+        include_str!("../../lisp/semantic-ia-sb.el"),
+    ), // GNU semantic/ia-sb
+    ("semantic/ia", include_str!("../../lisp/semantic-ia.el")),     // GNU semantic/ia
+    ("semantic/idle", include_str!("../../lisp/semantic-idle.el")), // GNU semantic/idle
+    (
+        "semantic/imenu",
+        include_str!("../../lisp/semantic-imenu.el"),
+    ), // GNU semantic/imenu
+    ("semantic/java", include_str!("../../lisp/semantic-java.el")), // GNU semantic/java
+    (
+        "semantic/lex-spp",
+        include_str!("../../lisp/semantic-lex-spp.el"),
+    ), // GNU semantic/lex-spp
+    ("semantic/lex", include_str!("../../lisp/semantic-lex.el")),   // GNU semantic/lex
+    (
+        "semantic/loaddefs",
+        include_str!("../../lisp/semantic-loaddefs.el"),
+    ), // GNU semantic/loaddefs
+    (
+        "semantic/mru-bookmark",
+        include_str!("../../lisp/semantic-mru-bookmark.el"),
+    ), // GNU semantic/mru-bookmark
+    ("semantic/sb", include_str!("../../lisp/semantic-sb.el")),     // GNU semantic/sb
+    (
+        "semantic/scope",
+        include_str!("../../lisp/semantic-scope.el"),
+    ), // GNU semantic/scope
+    (
+        "semantic/senator",
+        include_str!("../../lisp/semantic-senator.el"),
+    ), // GNU semantic/senator
+    ("semantic/sort", include_str!("../../lisp/semantic-sort.el")), // GNU semantic/sort
+    (
+        "semantic/symref/cscope",
+        include_str!("../../lisp/semantic-symref-cscope.el"),
+    ), // GNU semantic/symref/cscope
+    (
+        "semantic/symref/filter",
+        include_str!("../../lisp/semantic-symref-filter.el"),
+    ), // GNU semantic/symref/filter
+    (
+        "semantic/symref/global",
+        include_str!("../../lisp/semantic-symref-global.el"),
+    ), // GNU semantic/symref/global
+    (
+        "semantic/symref/grep",
+        include_str!("../../lisp/semantic-symref-grep.el"),
+    ), // GNU semantic/symref/grep
+    (
+        "semantic/symref/idutils",
+        include_str!("../../lisp/semantic-symref-idutils.el"),
+    ), // GNU semantic/symref/idutils
+    (
+        "semantic/symref/list",
+        include_str!("../../lisp/semantic-symref-list.el"),
+    ), // GNU semantic/symref/list
+    (
+        "semantic/symref",
+        include_str!("../../lisp/semantic-symref.el"),
+    ), // GNU semantic/symref
+    (
+        "semantic/tag-file",
+        include_str!("../../lisp/semantic-tag-file.el"),
+    ), // GNU semantic/tag-file
+    (
+        "semantic/tag-ls",
+        include_str!("../../lisp/semantic-tag-ls.el"),
+    ), // GNU semantic/tag-ls
+    (
+        "semantic/tag-write",
+        include_str!("../../lisp/semantic-tag-write.el"),
+    ), // GNU semantic/tag-write
+    ("semantic/tag", include_str!("../../lisp/semantic-tag.el")),   // GNU semantic/tag
+    ("semantic/texi", include_str!("../../lisp/semantic-texi.el")), // GNU semantic/texi
+    (
+        "semantic/util-modes",
+        include_str!("../../lisp/semantic-util-modes.el"),
+    ), // GNU semantic/util-modes
+    ("semantic/util", include_str!("../../lisp/semantic-util.el")), // GNU semantic/util
+    (
+        "semantic/wisent/comp",
+        include_str!("../../lisp/semantic-wisent-comp.el"),
+    ), // GNU semantic/wisent/comp
+    (
+        "semantic/wisent/grammar",
+        include_str!("../../lisp/semantic-wisent-grammar.el"),
+    ), // GNU semantic/wisent/grammar
+    (
+        "semantic/wisent/java-tags",
+        include_str!("../../lisp/semantic-wisent-java-tags.el"),
+    ), // GNU semantic/wisent/java-tags
+    (
+        "semantic/wisent/javascript",
+        include_str!("../../lisp/semantic-wisent-javascript.el"),
+    ), // GNU semantic/wisent/javascript
+    (
+        "semantic/wisent/javat-wy",
+        include_str!("../../lisp/semantic-wisent-javat-wy.el"),
+    ), // GNU semantic/wisent/javat-wy
+    (
+        "semantic/wisent/js-wy",
+        include_str!("../../lisp/semantic-wisent-js-wy.el"),
+    ), // GNU semantic/wisent/js-wy
+    (
+        "semantic/wisent/python-wy",
+        include_str!("../../lisp/semantic-wisent-python-wy.el"),
+    ), // GNU semantic/wisent/python-wy
+    (
+        "semantic/wisent/python",
+        include_str!("../../lisp/semantic-wisent-python.el"),
+    ), // GNU semantic/wisent/python
+    (
+        "semantic/wisent/wisent",
+        include_str!("../../lisp/semantic-wisent-wisent.el"),
+    ), // GNU semantic/wisent/wisent
+    (
+        "semantic/wisent",
+        include_str!("../../lisp/semantic-wisent.el"),
+    ), // GNU semantic/wisent
     ("semantic", include_str!("../../lisp/semantic.el")),
-    ("seq", include_str!("../../lisp/seq.el")),  // not in GNU tree (adapted/remacs-specific)
+    ("seq", include_str!("../../lisp/seq.el")), // not in GNU tree (adapted/remacs-specific)
     ("ses", include_str!("../../lisp/ses.el")),
     ("shadowfile", include_str!("../../lisp/shadowfile.el")),
     ("simple", include_str!("../../lisp/simple.el")),
@@ -1930,40 +2230,88 @@ static EMBEDDED_LISP: &[(&str, &str)] = &[
     ("spam-wash", include_str!("../../lisp/spam-wash.el")),
     ("spam", include_str!("../../lisp/spam.el")),
     ("speedbar", include_str!("../../lisp/speedbar.el")),
-    ("srecode/args", include_str!("../../lisp/srecode-args.el")),  // GNU srecode/args
-    ("srecode/compile", include_str!("../../lisp/srecode-compile.el")),  // GNU srecode/compile
-    ("srecode/cpp", include_str!("../../lisp/srecode-cpp.el")),  // GNU srecode/cpp
-    ("srecode/ctxt", include_str!("../../lisp/srecode-ctxt.el")),  // GNU srecode/ctxt
-    ("srecode/dictionary", include_str!("../../lisp/srecode-dictionary.el")),  // GNU srecode/dictionary
-    ("srecode/document", include_str!("../../lisp/srecode-document.el")),  // GNU srecode/document
-    ("srecode/el", include_str!("../../lisp/srecode-el.el")),  // GNU srecode/el
-    ("srecode/expandproto", include_str!("../../lisp/srecode-expandproto.el")),  // GNU srecode/expandproto
-    ("srecode/extract", include_str!("../../lisp/srecode-extract.el")),  // GNU srecode/extract
-    ("srecode/fields", include_str!("../../lisp/srecode-fields.el")),  // GNU srecode/fields
-    ("srecode/filters", include_str!("../../lisp/srecode-filters.el")),  // GNU srecode/filters
-    ("srecode/find", include_str!("../../lisp/srecode-find.el")),  // GNU srecode/find
-    ("srecode/getset", include_str!("../../lisp/srecode-getset.el")),  // GNU srecode/getset
-    ("srecode/insert", include_str!("../../lisp/srecode-insert.el")),  // GNU srecode/insert
-    ("srecode/java", include_str!("../../lisp/srecode-java.el")),  // GNU srecode/java
-    ("srecode/loaddefs", include_str!("../../lisp/srecode-loaddefs.el")),  // GNU srecode/loaddefs
-    ("srecode/map", include_str!("../../lisp/srecode-map.el")),  // GNU srecode/map
-    ("srecode/mode", include_str!("../../lisp/srecode-mode.el")),  // GNU srecode/mode
-    ("srecode/semantic", include_str!("../../lisp/srecode-semantic.el")),  // GNU srecode/semantic
-    ("srecode/srt-mode", include_str!("../../lisp/srecode-srt-mode.el")),  // GNU srecode/srt-mode
-    ("srecode/srt-wy", include_str!("../../lisp/srecode-srt-wy.el")),  // GNU srecode/srt-wy
-    ("srecode/srt", include_str!("../../lisp/srecode-srt.el")),  // GNU srecode/srt
-    ("srecode/table", include_str!("../../lisp/srecode-table.el")),  // GNU srecode/table
-    ("srecode/template", include_str!("../../lisp/srecode-template.el")),  // GNU srecode/template
-    ("srecode/texi", include_str!("../../lisp/srecode-texi.el")),  // GNU srecode/texi
+    ("srecode/args", include_str!("../../lisp/srecode-args.el")), // GNU srecode/args
+    (
+        "srecode/compile",
+        include_str!("../../lisp/srecode-compile.el"),
+    ), // GNU srecode/compile
+    ("srecode/cpp", include_str!("../../lisp/srecode-cpp.el")),   // GNU srecode/cpp
+    ("srecode/ctxt", include_str!("../../lisp/srecode-ctxt.el")), // GNU srecode/ctxt
+    (
+        "srecode/dictionary",
+        include_str!("../../lisp/srecode-dictionary.el"),
+    ), // GNU srecode/dictionary
+    (
+        "srecode/document",
+        include_str!("../../lisp/srecode-document.el"),
+    ), // GNU srecode/document
+    ("srecode/el", include_str!("../../lisp/srecode-el.el")),     // GNU srecode/el
+    (
+        "srecode/expandproto",
+        include_str!("../../lisp/srecode-expandproto.el"),
+    ), // GNU srecode/expandproto
+    (
+        "srecode/extract",
+        include_str!("../../lisp/srecode-extract.el"),
+    ), // GNU srecode/extract
+    (
+        "srecode/fields",
+        include_str!("../../lisp/srecode-fields.el"),
+    ), // GNU srecode/fields
+    (
+        "srecode/filters",
+        include_str!("../../lisp/srecode-filters.el"),
+    ), // GNU srecode/filters
+    ("srecode/find", include_str!("../../lisp/srecode-find.el")), // GNU srecode/find
+    (
+        "srecode/getset",
+        include_str!("../../lisp/srecode-getset.el"),
+    ), // GNU srecode/getset
+    (
+        "srecode/insert",
+        include_str!("../../lisp/srecode-insert.el"),
+    ), // GNU srecode/insert
+    ("srecode/java", include_str!("../../lisp/srecode-java.el")), // GNU srecode/java
+    (
+        "srecode/loaddefs",
+        include_str!("../../lisp/srecode-loaddefs.el"),
+    ), // GNU srecode/loaddefs
+    ("srecode/map", include_str!("../../lisp/srecode-map.el")),   // GNU srecode/map
+    ("srecode/mode", include_str!("../../lisp/srecode-mode.el")), // GNU srecode/mode
+    (
+        "srecode/semantic",
+        include_str!("../../lisp/srecode-semantic.el"),
+    ), // GNU srecode/semantic
+    (
+        "srecode/srt-mode",
+        include_str!("../../lisp/srecode-srt-mode.el"),
+    ), // GNU srecode/srt-mode
+    (
+        "srecode/srt-wy",
+        include_str!("../../lisp/srecode-srt-wy.el"),
+    ), // GNU srecode/srt-wy
+    ("srecode/srt", include_str!("../../lisp/srecode-srt.el")),   // GNU srecode/srt
+    ("srecode/table", include_str!("../../lisp/srecode-table.el")), // GNU srecode/table
+    (
+        "srecode/template",
+        include_str!("../../lisp/srecode-template.el"),
+    ), // GNU srecode/template
+    ("srecode/texi", include_str!("../../lisp/srecode-texi.el")), // GNU srecode/texi
     ("srecode", include_str!("../../lisp/srecode.el")),
     ("subdirs", include_str!("../../lisp/subdirs.el")),
     ("subr", include_str!("../../lisp/subr.el")),
     ("system-sleep", include_str!("../../lisp/system-sleep.el")),
-    ("system-taskbar", include_str!("../../lisp/system-taskbar.el")),
-    ("term", include_str!("../../lisp/term.el")),  // not in GNU tree (adapted/remacs-specific)
+    (
+        "system-taskbar",
+        include_str!("../../lisp/system-taskbar.el"),
+    ),
+    ("term", include_str!("../../lisp/term.el")), // not in GNU tree (adapted/remacs-specific)
     ("texinfmt", include_str!("../../lisp/texinfmt.el")),
     ("texnfo-upd", include_str!("../../lisp/texnfo-upd.el")),
-    ("theme-loaddefs", include_str!("../../lisp/theme-loaddefs.el")),
+    (
+        "theme-loaddefs",
+        include_str!("../../lisp/theme-loaddefs.el"),
+    ),
     ("transient", include_str!("../../lisp/transient.el")),
     ("treesit-x", include_str!("../../lisp/treesit-x.el")),
     ("treesit", include_str!("../../lisp/treesit.el")),
@@ -1978,7 +2326,7 @@ static EMBEDDED_LISP: &[(&str, &str)] = &[
     ("url-ftp", include_str!("../../lisp/url-ftp.el")),
     ("url-future", include_str!("../../lisp/url-future.el")),
     ("url-gw", include_str!("../../lisp/url-gw.el")),
-    ("url-handlers", include_str!("../../lisp/url-handlers.el")),  // not in GNU tree (adapted/remacs-specific)
+    ("url-handlers", include_str!("../../lisp/url-handlers.el")), // not in GNU tree (adapted/remacs-specific)
     ("url-history", include_str!("../../lisp/url-history.el")),
     ("url-http", include_str!("../../lisp/url-http.el")),
     ("url-imap", include_str!("../../lisp/url-imap.el")),
@@ -1995,9 +2343,12 @@ static EMBEDDED_LISP: &[(&str, &str)] = &[
     ("url-queue", include_str!("../../lisp/url-queue.el")),
     ("url-tramp", include_str!("../../lisp/url-tramp.el")),
     ("url-util", include_str!("../../lisp/url-util.el")),
-    ("url-vars", include_str!("../../lisp/url-vars.el")),  // not in GNU tree (adapted/remacs-specific)
-    ("url", include_str!("../../lisp/url.el")),  // not in GNU tree (adapted/remacs-specific)
-    ("window-tool-bar", include_str!("../../lisp/window-tool-bar.el")),
+    ("url-vars", include_str!("../../lisp/url-vars.el")), // not in GNU tree (adapted/remacs-specific)
+    ("url", include_str!("../../lisp/url.el")), // not in GNU tree (adapted/remacs-specific)
+    (
+        "window-tool-bar",
+        include_str!("../../lisp/window-tool-bar.el"),
+    ),
     ("xwidget", include_str!("../../lisp/xwidget.el")),
 ];
 
@@ -2042,7 +2393,9 @@ fn decode_load_bytes(bytes: &[u8]) -> String {
         let b = bytes[ix];
         if (0xF5..=0xF7).contains(&b)
             && ix + 3 < bytes.len()
-            && bytes[ix + 1..=ix + 3].iter().all(|c| (0x80..0xC0).contains(c))
+            && bytes[ix + 1..=ix + 3]
+                .iter()
+                .all(|c| (0x80..0xC0).contains(c))
         {
             let code = (((b & 0x07) as u32) << 18)
                 | (((bytes[ix + 1] & 0x3F) as u32) << 12)
@@ -2107,21 +2460,19 @@ fn eval_file_lex_dumped(
     // file (ethio-util.el relies on this).
     let src = match std::fs::read_to_string(path) {
         Ok(s) => s,
-        Err(e) if e.kind() == std::io::ErrorKind::InvalidData => {
-            match std::fs::read(path) {
-                Ok(b) => decode_load_bytes(&b),
-                Err(e) => {
-                    return Err(i.signal_data(
-                        crate::lisp::sym::FILE_ERROR,
-                        vec![
-                            Value::string("Opening input file"),
-                            Value::string(e.to_string()),
-                            Value::string(path),
-                        ],
-                    ));
-                }
+        Err(e) if e.kind() == std::io::ErrorKind::InvalidData => match std::fs::read(path) {
+            Ok(b) => decode_load_bytes(&b),
+            Err(e) => {
+                return Err(i.signal_data(
+                    crate::lisp::sym::FILE_ERROR,
+                    vec![
+                        Value::string("Opening input file"),
+                        Value::string(e.to_string()),
+                        Value::string(path),
+                    ],
+                ));
             }
-        }
+        },
         Err(e) => {
             // GNU signals `file-missing' for ENOENT, `file-error' for
             // other failures, with data (FORMAT REASON PATH).
@@ -2228,7 +2579,10 @@ fn eval_src_opts(
     let mut missing: Vec<Value> = Vec::new();
     for sid in i.features.clone() {
         let sym_v = Value::Sym(sid);
-        if !items.iter().any(|v| matches!(v, Value::Sym(s) if *s == sid)) {
+        if !items
+            .iter()
+            .any(|v| matches!(v, Value::Sym(s) if *s == sid))
+        {
             missing.push(sym_v);
         }
     }
@@ -2628,8 +2982,7 @@ pub(crate) fn load_library_opts(
             if path.ends_with(".eln") {
                 // Native-compiled unit: register via dlopen instead of
                 // evaluating source.
-                crate::lisp::builtins::comp::native_load_file(i, &path)
-                    .map(|_| true)
+                crate::lisp::builtins::comp::native_load_file(i, &path).map(|_| true)
             } else {
                 eval_file_lex_dumped(i, &path, false, bundled).map(|_| true)
             }

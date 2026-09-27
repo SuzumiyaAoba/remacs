@@ -129,8 +129,10 @@ fn compile_lambda_object() {
         return;
     }
     assert_eq!(
-        ev("(let ((f (native-compile (lambda (x y) (list x y (+ x y)))))) \
-             (list (funcall f 2 5) (native-comp-function-p f) (subrp f)))"),
+        ev(
+            "(let ((f (native-compile (lambda (x y) (list x y (+ x y)))))) \
+             (list (funcall f 2 5) (native-comp-function-p f) (subrp f)))"
+        ),
         "((2 5 7) t t)"
     );
     // By symbol: replaces the function cell with the native subr.
@@ -196,10 +198,7 @@ fn metadata_surface() {
     assert!(r.contains("(interactive \"p\")"), "iform: {r}");
     assert!(r.ends_with("t)"), "commandp: {r}");
     // Built-in subr → t (not a lambda list).
-    assert_eq!(
-        ev("(subr-native-lambda-list (symbol-function 'car))"),
-        "t"
-    );
+    assert_eq!(ev("(subr-native-lambda-list (symbol-function 'car))"), "t");
     // comp--subr-signature matches GNU: (NAME MIN . MAX).
     assert_eq!(ev("(comp--subr-signature 'car)"), "(car 1 . 1)");
     assert_eq!(ev("(comp--subr-signature 'apply)"), "(apply 1 . many)");
