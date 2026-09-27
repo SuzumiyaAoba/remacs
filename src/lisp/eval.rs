@@ -1066,7 +1066,17 @@ impl Interp {
             let _ = crate::lisp::load::load_library(&mut interp, "mule-cmds");
             let _ = crate::lisp::load::load_library(&mut interp, "case-table");
             let _ = crate::lisp::load::load_library(&mut interp, "charprop");
+            // GNU's temacs runs loadup.el with `dump-mode' non-nil,
+            // so characters.el takes its `(load
+            // "international/charscript")' branch and the script &
+            // category side effects really execute.  Here the
+            // `charscript'/`emoji-zwj' features are already
+            // registered, so `(require ...)' would be a no-op —
+            // pretend dump-mode for this one library.
+            let dump_mode = interp.intern("dump-mode");
+            let _ = interp.set_symbol(dump_mode, Value::string("dump"));
             let _ = crate::lisp::load::load_library(&mut interp, "characters");
+            let _ = interp.set_symbol(dump_mode, Value::Nil);
             // The language-specific files are all in GNU's dump
             // (loadup.el:219-247, after mule-cmds/charprop/composite):
             // their charset registration, `set-language-environment'

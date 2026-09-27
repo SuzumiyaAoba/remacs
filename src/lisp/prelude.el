@@ -8753,6 +8753,10 @@ modify the table."
 (defvar glyphless-char-display
   (make-char-table 'glyphless-char-display nil)
   "Char-table defining glyphs for characters that have no font.")
+;; xdisp.c's init defaults the `no-font' method to `empty-box';
+;; characters.el's `glyphless-char-display-control' defcustom then
+;; overrides it (to `hex-code') via `update-glyphless-char-display'.
+(set-char-table-extra-slot glyphless-char-display 0 'empty-box)
 
 ;; ---------- GNU key translation maps ----------
 ;; In GNU these live on the kboard; function-key-map comes preloaded
@@ -8811,6 +8815,28 @@ lower-level `keyboard-translate' to modify it.")
 
 (defvar char-width-table (remacs--char-width-table)
   "A char-table for width (columns) of each character.")
+
+;; GNU creates this empty char-table in charset.c at init;
+;; characters.el fills it with the ambiguous-width ranges at load.
+(defvar ambiguous-width-chars (make-char-table nil)
+  "Char-table of characters that have ambiguous East-Asian width.")
+
+;; GNU's character.c init: nil defalt with (32 . 126) and
+;; (160 . MAX_5_BYTE_CHAR) set to t; characters.el then clears the
+;; Cs/Cn (surrogate/unassigned) ranges it discovers via
+;; `unicode-property-table-internal'.
+(defvar printable-chars
+  (let ((tbl (make-char-table nil)))
+    (set-char-table-range tbl '(32 . 126) t)
+    (set-char-table-range tbl '(160 . 4194303) t)
+    tbl)
+  "A char-table for printable characters.
+Such characters have the value t in this table.")
+
+;; GNU's xdisp.c creates this char-table at init; characters.el
+;; populates it with the pre-defined mirror pairs (arrow chars, etc.).
+(defvar special-mirror-table (make-char-table nil)
+  "Char-table used to mirror special characters.")
 
 ;; ---------- GNU `event-apply-*-modifier' commands ----------
 ;; In GNU these are C subrs that defer the modifier application to the
