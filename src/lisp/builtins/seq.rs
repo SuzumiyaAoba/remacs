@@ -643,7 +643,16 @@ fn f_copy_sequence(i: &mut Interp, args: Vec<Value>) -> EvalResult {
             }
             Ok(Value::Str(ns))
         }
-        Value::Nil | Value::Vec(_) | Value::Hash(_) => Ok(args[0].clone()),
+        Value::Nil => Ok(Value::Nil),
+        // GNU's `copy_sequence' allocates a fresh vector with the same
+        // elements; sharing the backing store would let `aset' mutate
+        // the original (CC Mode's `c-find-assignment-for-mode' relies
+        // on the copy for its source-position backup).
+        Value::Vec(v) => Ok(Value::Vec(std::rc::Rc::new(std::cell::RefCell::new(
+            v.borrow().clone(),
+        )))),
+        // Hash tables aren't sequences in GNU (`sequencep' is nil):
+        // `copy-sequence' signals `wrong-type-argument sequencep'.
         // Char-tables copy through `copy_char_table' (deep trie copy,
         // shared slot objects); other Records shallow-copy the vec.
         Value::Record(_) if super::misc::is_char_table(i, &args[0]) => {
@@ -780,7 +789,18 @@ fn f_mapconcat(i: &mut Interp, args: Vec<Value>) -> EvalResult {
             }
             out.push_str(&s.borrow());
         } else {
-            out.push_str(&i.princ_to_string(p));
+            // GNU's mapconcat passes each result to `concat': non-string
+            // results must be sequences of characters (an int signals
+            // sequencep, a non-char element signals characterp).
+            for item in seq_to_vec(i, p)? {
+                match item {
+                    Value::Int(n) => match crate::lisp::value::lisp_char(n as u32) {
+                        Some(c) => out.push(c),
+                        None => return Err(i.wrong_type_mut("characterp", &item)),
+                    },
+                    _ => return Err(i.wrong_type_mut("characterp", &item)),
+                }
+            }
         }
     }
     let ns = std::rc::Rc::new(std::cell::RefCell::new(out));
@@ -1360,7 +1380,7 @@ fn f_seq_find(i: &mut Interp, args: Vec<Value>) -> EvalResult {
             return Ok(v);
         }
     }
-    Ok(Value::Nil)
+    Ok(args.get(2).cloned().unwrap_or(Value::Nil))
 }
 fn f_seq_remove(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     let pred = args[0].clone();

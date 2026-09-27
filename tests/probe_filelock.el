@@ -96,9 +96,12 @@
                                'ok)))
             (kill-buffer b)))
         (delete-file lname)
-        ;; ask-user-about-lock signals file-locked in batch.
+        ;; ask-user-about-lock signals file-locked in batch; bind
+        ;; `noninteractive' since the test Interp runs interactively
+        ;; (GNU's userlock.el defun reads a char otherwise).
         (cl-assert (eq (condition-case e
-                           (progn (ask-user-about-lock f "someone") 'ok)
+                           (let ((noninteractive t))
+                             (ask-user-about-lock f "someone") 'ok)
                          (error (car e)))
                    'file-locked))
         ;; create-lockfiles nil => no lock on modification.  GNU's

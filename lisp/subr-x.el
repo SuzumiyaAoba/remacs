@@ -25834,12 +25834,8 @@ No problems result if this variable is not bound.
 (setq file-name-handler-alist
       (list epa-file-handler
             (car file-name-handler-alist)
-            '("\`/\(?:-\|[^/:|]\{2,\}\):" . tramp-autoload-file-name-handler)
-            '("\`/:" . file-name-non-special)))
-(unless (assoc "\.elc\'" auto-mode-alist)
-  (setq auto-mode-alist
-        (cons '("\.elc\'" . elisp-byte-code-mode)
-              (cons epa-file-auto-mode-alist-entry auto-mode-alist))))
+            '("\\`/\\(?:-\\|[^/:|]\\{2,\\}\\):" . tramp-autoload-file-name-handler)
+            '("\\`/:" . file-name-non-special)))
 (add-hook 'find-file-hook 'epa-file-find-file-hook)
 (add-hook 'find-file-hook #'vc-refresh-state)
 (add-hook 'kill-buffer-hook #'vc-kill-buffer-hook)

@@ -27,12 +27,12 @@ fn region_text(i: &mut Interp, a: &[Value]) -> Result<String, Flow> {
     let s = match &arg(a, 0) {
         Value::Nil => bb.begv,
         Value::Int(n) => pos_idx(len, *n),
-        v => return Err(i.wrong_type_mut("integerp", v)),
+        v => return Err(i.wrong_type_mut("integer-or-marker-p", v)),
     };
     let e = match &arg(a, 1) {
         Value::Nil => bb.zv,
         Value::Int(n) => pos_idx(len, *n),
-        v => return Err(i.wrong_type_mut("integerp", v)),
+        v => return Err(i.wrong_type_mut("integer-or-marker-p", v)),
     };
     Ok(bb.text.substring(s.min(e), s.max(e)))
 }

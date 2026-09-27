@@ -106,13 +106,6 @@ pub(crate) static SUBRS: &[Subr] = &[
         "Tail of LIST whose car satisfies PRED."
     ),
     S!(
-        "member-if-not",
-        2,
-        2,
-        f_member_if_not,
-        "Tail of LIST whose car fails PRED."
-    ),
-    S!(
         "assq",
         2,
         2,
@@ -445,7 +438,8 @@ pub(crate) fn nthcdr_of(v: &Value, n: usize) -> Value {
 }
 
 /// cdr N times the way GNU does: Cons → cdr, nil → stays nil,
-/// any other atom → wrong-type-argument.
+/// any other atom → wrong-type-argument.  GNU's CHECK_LIST_CONS
+/// reports the whole list argument, not the offending tail.
 pub(crate) fn nthcdr_strict(i: &mut Interp, v: &Value, n: usize) -> Result<Value, Flow> {
     let mut cur = v.clone();
     for _ in 0..n {
@@ -455,7 +449,7 @@ pub(crate) fn nthcdr_strict(i: &mut Interp, v: &Value, n: usize) -> Result<Value
                 cur = next;
             }
             Value::Nil => {}
-            ref other => return Err(i.wrong_type_mut("listp", other)),
+            _ => return Err(i.wrong_type_mut("listp", v)),
         }
     }
     Ok(cur)
@@ -627,6 +621,11 @@ fn f_reverse(i: &mut Interp, args: Vec<Value>) -> EvalResult {
                 v.borrow().iter().rev().cloned().collect(),
             ))));
         }
+        Value::Record(_) if crate::lisp::builtins::misc::is_bool_vector(i, &args[0]) => {
+            let mut bits = crate::lisp::builtins::misc::bool_vec_of(i, &args[0])?;
+            bits.reverse();
+            return Ok(Value::list(bits.into_iter().map(Value::from_bool).collect()));
+        }
         _ => {}
     }
     let items = want_list(i, &args[0])?;
@@ -720,9 +719,6 @@ fn member_if_impl(i: &mut Interp, pred: &Value, list: &Value, want: bool) -> Eva
 
 fn f_member_if(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     member_if_impl(i, &args[0], &args[1], true)
-}
-fn f_member_if_not(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    member_if_impl(i, &args[0], &args[1], false)
 }
 
 fn assoc_impl(

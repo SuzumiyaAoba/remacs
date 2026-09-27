@@ -2708,8 +2708,10 @@ fn f_current_time_string(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     let mon = [
         "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
     ][tm.tm_mon.clamp(0, 11) as usize];
+    // GNU uses ctime's format: the day-of-month is space-padded
+    // ("%e"), so single digits print as " 1" not "01".
     Ok(Value::string(format!(
-        "{} {} {:02} {:02}:{:02}:{:02} {}",
+        "{} {} {:2} {:02}:{:02}:{:02} {}",
         wday,
         mon,
         tm.tm_mday,

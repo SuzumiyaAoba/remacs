@@ -833,7 +833,64 @@ fn sf_condition_case(i: &mut Interp, args: Value) -> EvalResult {
     let body_result = i.eval(&bodyform);
     i.case_handlers.pop();
     match body_result {
-        Ok(v) => Ok(v),
+        Ok(v) => {
+            // GNU: a `:success' pseudo-handler runs when BODYFORM
+            // returns normally — VAR is bound to the body's value.
+            let success = i.intern(":success");
+            let mut cur = handlers;
+            loop {
+                match cur {
+                    Value::Nil => return Ok(v),
+                    Value::Cons(c) => {
+                        let (handler, next) = {
+                            let b = c.borrow();
+                            (b.car.clone(), b.cdr.clone())
+                        };
+                        let conds = car(&handler);
+                        let is_success =
+                            matches!(&conds, Value::Sym(s) if *s == success);
+                        if !is_success {
+                            cur = next;
+                            continue;
+                        }
+                        let hbody = cdr(&handler);
+                        let mark = i.specbind_depth();
+                        let lex_frame = if i.lexical_binding_active() {
+                            Some(Rc::new(LexFrame {
+                                vars: RefCell::new(HashMap::new()),
+                                var_order: RefCell::new(Vec::new()),
+                                declared: RefCell::new(std::collections::HashSet::new()),
+                                parent: i.lexenv.clone(),
+                            }))
+                        } else {
+                            None
+                        };
+                        let saved_lex = match &lex_frame {
+                            Some(f) => std::mem::replace(&mut i.lexenv, Some(f.clone())),
+                            None => None,
+                        };
+                        if let Some(vid) =
+                            i.sym_id(&var_v).filter(|_| !var_v.is_nil())
+                        {
+                            if let Err(e) = i.bind_var(lex_frame.as_ref(), vid, v.clone()) {
+                                if lex_frame.is_some() {
+                                    i.lexenv = saved_lex;
+                                }
+                                let _ = i.unbind_to(mark);
+                                return Err(e);
+                            }
+                        }
+                        let r = i.eval_progn(&hbody);
+                        if lex_frame.is_some() {
+                            i.lexenv = saved_lex;
+                        }
+                        i.unbind_to(mark)?;
+                        return r;
+                    }
+                    _ => return Ok(v),
+                }
+            }
+        }
         Err(Flow::Signal(sig, data, offered)) => {
             // Build the condition object: (sig . data)
             let err_val = Value::cons(sig.clone(), data.clone());

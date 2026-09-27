@@ -1960,11 +1960,12 @@ fn expand_rep(
                 }
                 Some('&') => out.extend(&region[ms..me]),
                 Some('?') => out.push_str("\\?"),
+                Some('\\') => out.push('\\'),
                 _ => {
                     return Err(err_sym(
                         i,
                         "error",
-                        vec![Value::string("Invalid use of `\\' in replacement text")],
+                        vec![Value::string("Invalid use of ‘\\’ in replacement text")],
                     ));
                 }
             }

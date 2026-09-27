@@ -4727,8 +4727,44 @@ command-line arguments.\" \
         put(self, "mark-set", &["mark-set"]);
         put(self, "mark-active", &["mark-active"]);
 
-        // `error-message` property strings (as in Emacs's data.c put_error).
+        // Tree-sitter errors (treesit.c): a `treesit-error' parent so
+        // `ignore-errors'/`condition-case error' catches them — GNU's
+        // `treesit-query-valid-p' relies on that to probe grammars.
         let em = self.intern("error-message");
+        put(self, "treesit-error", &["treesit-error", "error"]);
+        let te = self.intern("treesit-error");
+        self.put_prop(te, em, Value::string("Generic tree-sitter error"));
+        for (name, msg) in [
+            ("treesit-query-error", "Query pattern is malformed"),
+            ("treesit-parse-error", "Parse failed"),
+            (
+                "treesit-range-invalid",
+                "RANGES are invalid: they have to be ordered and should not overlap",
+            ),
+            ("treesit-buffer-too-large", "Buffer too large (> 4GiB)"),
+            ("treesit-load-language-error", "Cannot load language definition"),
+            (
+                "treesit-node-outdated",
+                "This node is outdated, please retrieve a new one",
+            ),
+            (
+                "treesit-buffer-changed",
+                "Buffer content changed, please don't edit buffer in predicate function, etc",
+            ),
+            (
+                "treesit-node-buffer-killed",
+                "The buffer associated with this node is killed",
+            ),
+            ("treesit-parser-deleted", "This parser is deleted and cannot be used"),
+            (
+                "treesit-invalid-predicate",
+                "Invalid predicate, see `treesit-thing-settings' for valid forms for a predicate",
+            ),
+        ] {
+            put(self, name, &[name, "treesit-error", "error"]);
+            let s = self.intern(name);
+            self.put_prop(s, em, Value::string(msg));
+        }
         let msgs: &[(&str, &str)] = &[
             ("error", "error"),
             ("quit", "Quit"),
@@ -5574,7 +5610,7 @@ command-line arguments.\" \
             // `benchmark-run' reads them.
             ("gc-elapsed", Value::float(0.0)),
             ("gcs-done", Value::Int(0)),
-            ("history-length", Value::Int(60)),
+            ("history-length", Value::Int(100)),
             ("kill-ring-max", Value::Int(120)),
             ("mark-ring-max", Value::Int(16)),
             ("global-mark-ring-max", Value::Int(16)),

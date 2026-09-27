@@ -553,12 +553,53 @@ fn round_with(i: &mut Interp, args: &[Value], mode: u8) -> EvalResult {
         None => return Err(i.wrong_type_mut("numberp", &args[0])),
     };
     let y = match args.get(1) {
-        None => None,
+        // GNU rounds with Y = 1 when the divisor is omitted OR nil.
+        None | Some(Value::Nil) => None,
         Some(v) => match to_num(v) {
             Some(n) => Some(n),
             None => return Err(i.wrong_type_mut("numberp", v)),
         },
     };
+    // Integer inputs take the exact path — routing them through f64
+    // loses low bits above 2**53, e.g. (truncate most-positive-fixnum).
+    if let Num::I(a) = x {
+        match y {
+            None => return Ok(Value::Int(a)),
+            Some(Num::I(b)) => {
+                if b == 0 {
+                    return Err(arith_err(i, "Division by zero"));
+                }
+                let q = a / b;
+                let r = a % b;
+                let d = match mode {
+                    0 => q,
+                    1 => {
+                        // floor: toward negative infinity.
+                        if r != 0 && ((r < 0) != (b < 0)) { q - 1 } else { q }
+                    }
+                    2 => {
+                        // ceiling: toward positive infinity.
+                        if r != 0 && ((r < 0) == (b < 0)) { q + 1 } else { q }
+                    }
+                    _ => {
+                        // round: nearest, ties to even (GNU parity).
+                        // Compare 2*|r| vs |b| in u128 so i128::MIN works.
+                        let ra = r.unsigned_abs();
+                        let ba = b.unsigned_abs();
+                        let gt = ra > ba / 2;
+                        let eq = ba % 2 == 0 && ra == ba / 2;
+                        if gt || (eq && q % 2 != 0) {
+                            if (r < 0) == (b < 0) { q + 1 } else { q - 1 }
+                        } else {
+                            q
+                        }
+                    }
+                };
+                return Ok(Value::Int(d));
+            }
+            _ => {}
+        }
+    }
     let (xf, yf) = match (x, y) {
         (Num::I(a), None) => (a as f64, 1.0),
         (Num::I(a), Some(Num::I(b))) => (a as f64, b as f64),
@@ -690,7 +731,12 @@ fn f_atan(i: &mut Interp, args: Vec<Value>) -> EvalResult {
 fn f_log(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     let n = want_number(i, &args[0])?;
     match args.get(1) {
-        Some(b) => Ok(Value::float(n.log(want_number(i, b)?))),
+        Some(b) => {
+            let b = want_number(i, b)?;
+            // GNU's Flog calls log10() directly for base 10, so
+            // (log 1000 10) yields exactly 3.0.
+            Ok(Value::float(if b == 10.0 { n.log10() } else { n.log(b) }))
+        }
         None => Ok(Value::float(n.ln())),
     }
 }
@@ -719,6 +765,15 @@ fn f_logxor(i: &mut Interp, args: Vec<Value>) -> EvalResult {
 fn f_lognot(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     Ok(Value::Int(!want_int_or_marker(i, &args[0])?))
 }
+/// Left shift with overflow detection: `wrapping_shl' yields the
+/// wrapped result even at c = 127 (where 1 << 127 becomes the
+/// negative MIN), so round-trip a right shift to verify the value
+/// survived — exactly the bits GNU's bignum would keep.
+fn shl_checked(v: i128, c: u32) -> Option<i128> {
+    let r = v.wrapping_shl(c);
+    if r >> c == v { Some(r) } else { None }
+}
+
 fn f_ash(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     let v = want_int(i, &args[0])?;
     let c = want_int(i, &args[1])?;
@@ -726,7 +781,7 @@ fn f_ash(i: &mut Interp, args: Vec<Value>) -> EvalResult {
         if c >= 128 {
             return Err(overflow_err(i, &args[0]));
         }
-        match v.checked_mul(1i128 << c) {
+        match shl_checked(v, c as u32) {
             Some(r) => r,
             None => return Err(overflow_err(i, &args[0])),
         }
@@ -756,7 +811,7 @@ fn f_lsh(i: &mut Interp, args: Vec<Value>) -> EvalResult {
         if c >= 128 {
             return Err(overflow_err(i, &args[0]));
         }
-        match v.checked_mul(1i128 << c) {
+        match shl_checked(v, c as u32) {
             Some(r) => r,
             None => return Err(overflow_err(i, &args[0])),
         }

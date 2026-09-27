@@ -8478,6 +8478,11 @@ fn f_file_local_copy(_i: &mut Interp, _a: Vec<Value>) -> EvalResult {
 fn f_file_in_directory_p(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let file = want_filename(i, &a[0])?;
     let dir = want_filename(i, &a[1])?;
+    // GNU files.el: "DIR must be an existing directory, otherwise
+    // the function returns nil."
+    if !std::path::Path::new(&dir).is_dir() {
+        return Ok(Value::Nil);
+    }
     let canon = |p: &str| {
         std::fs::canonicalize(p)
             .map(|c| c.to_string_lossy().into_owned())
@@ -8485,6 +8490,10 @@ fn f_file_in_directory_p(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     };
     let f = canon(&file);
     let d = canon(&dir);
+    // GNU: "a directory is considered to be a parent of itself".
+    if f == d {
+        return Ok(Value::t());
+    }
     let d = if d.ends_with('/') {
         d
     } else {
@@ -9298,12 +9307,37 @@ fn f_call_process(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         }
     };
     let dest = arg(&a, 2);
-    let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
-    // A cons dest is (REALDEST . STDERR); recurse on REALDEST only.
-    let real_dest = match &dest {
-        Value::Cons(c) => c.borrow().car.clone(),
-        other => other.clone(),
+    // A cons dest is (REALDEST . STDERR-FILE); STDERR-FILE t means mix
+    // stderr with ordinary output, a string writes it to that file,
+    // nil discards it (GNU callproc.c).
+    let file_sym = i.intern(":file");
+    let (real_dest, stderr_to_stdout, stderr_file) = match &dest {
+        Value::Cons(c) if !matches!(&c.borrow().car, Value::Sym(s) if *s == file_sym) => {
+            let cb = c.borrow();
+            // `(BUFF . t)' has STDERR-FILE = t in the cdr directly;
+            // `(BUFF "file")'/'(BUFF nil)' carry it in cadr.
+            let err = match &cb.cdr {
+                Value::Cons(cc) => cc.borrow().car.clone(),
+                other => other.clone(),
+            };
+            match &err {
+                Value::Sym(s) if *s == sym::T => (cb.car.clone(), true, None),
+                Value::Str(p) => (cb.car.clone(), false, Some(p.borrow().clone())),
+                _ => (cb.car.clone(), false, None),
+            }
+        }
+        other => (other.clone(), false, None),
     };
+    let stdout = {
+        let mut s = String::from_utf8_lossy(&output.stdout).into_owned();
+        if stderr_to_stdout {
+            s.push_str(&String::from_utf8_lossy(&output.stderr));
+        }
+        s
+    };
+    if let Some(path) = stderr_file {
+        let _ = std::fs::write(&path, &output.stderr);
+    }
     // (:file FILE) — write stdout to FILE.
     let mut file_dest: Option<String> = None;
     if let Value::Cons(c) = &real_dest {

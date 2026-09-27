@@ -166,13 +166,13 @@ fn f_make_hash_table(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     // keyword, or a bad value all signal `error'.
     let items = &args[..];
     if items.len() % 2 != 0 {
-        return Err(i.error("Invalid keyword argument"));
+        return Err(i.error("Odd number of arguments"));
     }
     let mut test = HashTest::Eql;
     let mut weakness: Option<Value> = None;
     let mut size: i128 = 0;
-    let mut rehash_size = Value::float(1.5);
-    let mut rehash_threshold = Value::float(0.8125);
+    let rehash_size = Value::float(1.5);
+    let rehash_threshold = Value::float(0.8125);
     let mut k = 0;
     while k < items.len() {
         let name = match &items[k] {
@@ -188,8 +188,8 @@ fn f_make_hash_table(i: &mut Interp, args: Vec<Value>) -> EvalResult {
                 let tname = match val {
                     Value::Sym(id) => i.symbol_name(*id).to_string(),
                     other => {
-                        let msg = i.prin1_to_string(other);
-                        return Err(i.error(&format!("Invalid hash table test: {}", msg)));
+                        // GNU signals (wrong-type-argument symbolp VAL).
+                        return Err(i.wrong_type_mut("symbolp", other));
                     }
                 };
                 test = match tname.as_str() {
@@ -207,7 +207,7 @@ fn f_make_hash_table(i: &mut Interp, args: Vec<Value>) -> EvalResult {
                         if !i.get_prop(*id, prop).is_nil() {
                             HashTest::Equal
                         } else {
-                            return Err(i.error(&format!("Invalid hash table test: {}", tname)));
+                            return Err(i.error(&format!("Invalid hash table test {}", tname)));
                         }
                     }
                 };
@@ -225,32 +225,25 @@ fn f_make_hash_table(i: &mut Interp, args: Vec<Value>) -> EvalResult {
                             weakness = Some(val.clone());
                         }
                         _ => {
-                            return Err(i.error(&format!("Invalid hash table weakness: {}", w)));
+                            return Err(i.error(&format!("Invalid hash table weakness {}", w)));
                         }
                     }
                 }
                 other => {
                     let msg = i.prin1_to_string(other);
-                    return Err(i.error(&format!("Invalid hash table weakness: {}", msg)));
+                    return Err(i.error(&format!("Invalid hash table weakness {}", msg)));
                 }
             },
             ":size" => match val {
                 Value::Int(n) if *n >= 0 => size = *n,
                 other => {
                     let msg = i.prin1_to_string(other);
-                    return Err(i.error(&format!("Invalid hash table size: {}", msg)));
+                    return Err(i.error(&format!("Invalid hash table size {}", msg)));
                 }
             },
-            // GNU stores numeric rehash values and silently ignores
-            // anything else (a symbol falls back to the default).
-            ":rehash-size" => match val {
-                Value::Int(_) | Value::Float(_) => rehash_size = val.clone(),
-                _ => {}
-            },
-            ":rehash-threshold" => match val {
-                Value::Int(_) | Value::Float(_) => rehash_threshold = val.clone(),
-                _ => {}
-            },
+            // GNU 31 ignores :rehash-size/:rehash-threshold entirely
+            // (the accessors always report the fixed defaults).
+            ":rehash-size" | ":rehash-threshold" => {}
             ":purecopy" => {}
             _ => return Err(i.error(&format!("Invalid keyword argument {}", name))),
         }

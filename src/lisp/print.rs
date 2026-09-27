@@ -8,15 +8,20 @@ use super::Interp;
 use super::value::Value;
 
 /// Escape a character inside a printed string. Emacs escapes only
-/// `"` and `\` — newlines and other control chars print literally
-/// unless `print-escape-newlines`/`print-escape-multibyte` are set.
-fn escape_char_for_string(c: char, out: &mut String, nl: bool, mb: bool) {
+/// `"` and `\` — newlines print literally unless `print-escape-newlines`
+/// is set; `print-escape-control-characters` prints C0/DEL as `\N'
+/// (unpadded octal) and `print-escape-multibyte` hex-escapes non-ASCII
+/// as `\xNNNN' (minimum 4 digits).
+fn escape_char_for_string(c: char, out: &mut String, nl: bool, mb: bool, cc: bool) {
     match c {
         '"' => out.push_str("\\\""),
         '\\' => out.push_str("\\\\"),
         '\n' if nl => out.push_str("\\n"),
+        c if cc && ((c as u32) < 0x20 || c == '\u{7f}') => {
+            let _ = write!(out, "\\{:o}", c as u32);
+        }
         c if mb && (c as u32) > 0x7f => {
-            let _ = write!(out, "\\x{:x}", c as u32);
+            let _ = write!(out, "\\x{:04x}", c as u32);
         }
         c => out.push(c),
     }
@@ -321,6 +326,7 @@ impl Interp {
             Value::Str(s) => {
                 let nl = self.print_escape_newlines();
                 let mb = self.print_escape_multibyte();
+                let cc = self.print_var("print-escape-control-characters").truthy();
                 // GNU prints #("..." s e (plist) ...) when the string
                 // carries non-empty text-property intervals.  The
                 // `charset' prop is hidden unless
@@ -416,7 +422,7 @@ impl Interp {
                         if let Some(b) = crate::lisp::value::eight_bit_byte(c) {
                             let _ = write!(out, "\\{:03o}", b);
                         } else {
-                            escape_char_for_string(c, out, nl, mb);
+                            escape_char_for_string(c, out, nl, mb, cc);
                         }
                     }
                 }

@@ -5008,8 +5008,11 @@ fn f_string_or_null_p(_i: &mut Interp, a: Vec<Value>) -> EvalResult {
     )))
 }
 
-fn f_vector_or_char_table_p(_i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    Ok(Value::from_bool(matches!(&a[0], Value::Vec(_))))
+fn f_vector_or_char_table_p(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    // GNU's VECTOR_OR_CHAR_TABLE_P covers vectors and char-tables.
+    Ok(Value::from_bool(
+        matches!(&a[0], Value::Vec(_)) || is_char_table(i, &a[0]),
+    ))
 }
 
 // ---------- threads ----------
@@ -8941,8 +8944,11 @@ fn f_window_sizable(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 }
 
 fn f_window_max_chars(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let (w, _) = win_dims(i, &a[0]);
-    Ok(Value::Int(w as i128))
+    // Optional WINDOW arg — nil/missing means the selected window.
+    // GNU's tty window reserves the rightmost column for the
+    // continuation glyph, so an 80-col window reports 79.
+    let (w, _) = win_dims(i, &arg(&a, 0));
+    Ok(Value::Int(w.saturating_sub(1) as i128))
 }
 
 fn f_pos_visible(i: &mut Interp, a: Vec<Value>) -> EvalResult {
@@ -10132,7 +10138,7 @@ fn f_char_table_range(i: &mut Interp, a: Vec<Value>) -> EvalResult {
             }
             Ok(ct_ref_defalt(i, &a[0], from))
         }
-        _ => Err(i.error("Invalid RANGE argument to `char-table-range'")),
+        _ => Err(i.error("Invalid RANGE argument to ‘char-table-range’")),
     }
 }
 
@@ -10210,7 +10216,7 @@ fn f_set_char_table_range(i: &mut Interp, a: Vec<Value>) -> EvalResult {
             }
             ct_set_range(i, &a[0], from, to, val.clone());
         }
-        _ => return Err(i.error("Invalid RANGE argument to `set-char-table-range'")),
+        _ => return Err(i.error("Invalid RANGE argument to ‘set-char-table-range’")),
     }
     Ok(val)
 }

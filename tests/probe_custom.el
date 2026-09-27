@@ -197,7 +197,10 @@
   (cl-assert (equal (custom-quote '(a (custom-quote (+ 1 2)) c)) '(a 3 c)))
   (custom-note-var-changed 'probe-cv)
   (cl-assert (equal (get 'probe-cv 'customized-value) '(8)))
-  (cl-assert (eq (custom-variable-state 'probe-cv) 'saved))
+  ;; GNU's cus-edit `custom-variable-state' is (SYMBOL VAL) and
+  ;; reports `changed' here (variable-comment "sc" differs from the
+  ;; customized-variable-comment "cmt" recorded above).
+  (cl-assert (eq (custom-variable-state 'probe-cv probe-cv) 'changed))
   (cl-assert (eq (custom-face-state 'probe-pf) 'saved))
   (cl-assert (eq (custom-make-theme-feature 'abc) 'abc-theme))
   (provide-theme 'probe-th)

@@ -950,7 +950,8 @@ impl<'a> Reader<'a> {
                 ))
             }
             Some('s') => {
-                // `#s(...)' — record object.
+                // `#s(...)' — record object; `#s(hash-table ...)' reads
+                // a real hash table (GNU's printed-hash-table format).
                 self.pos += 2;
                 if self.peek() != Some('(') {
                     return Err(read_err_sym(self.interp, "#s "));
@@ -960,6 +961,15 @@ impl<'a> Reader<'a> {
                 // `#s(TYPE ...)' — the type symbol is required.
                 if items.is_empty() {
                     return Err(read_err_sym(self.interp, "#s"));
+                }
+                if let Value::Sym(t) = &items[0] {
+                    if self.interp.symbol_name(*t) == "hash-table" {
+                        if let Some(h) =
+                            read_hash_literal(self.interp, &items[1..])
+                        {
+                            return Ok(h);
+                        }
+                    }
                 }
                 Ok(Value::Record(std::rc::Rc::new(std::cell::RefCell::new(
                     items,
@@ -1228,6 +1238,73 @@ pub fn parse_number(tok: &str) -> Option<Value> {
         }
     }
     None
+}
+
+/// Build a real `Value::Hash' from GNU's `#s(hash-table ...)' printed
+/// literal: fields are a flat list (`test SYM data (K V ...) size N
+/// weakness SYM rehash-size F rehash-threshold F purecopy B').
+/// Returns None when the shape doesn't match (caller falls back to a
+/// plain record).
+fn read_hash_literal(i: &mut Interp, fields: &[Value]) -> Option<Value> {
+    use crate::lisp::builtins::hashfn::hash_key_for;
+    use crate::lisp::value::{HashTest, LispHash};
+    let mut test = HashTest::Eql;
+    let mut data: Option<Vec<Value>> = None;
+    let mut size: i128 = 0;
+    let mut weakness: Option<Value> = None;
+    let mut k = 0;
+    while k + 1 < fields.len() {
+        let Value::Sym(name_id) = &fields[k] else { return None };
+        let name = i.symbol_name(*name_id).to_string();
+        let val = &fields[k + 1];
+        match name.as_str() {
+            "test" => {
+                let Value::Sym(tid) = val else { return None };
+                test = match i.symbol_name(*tid).as_str() {
+                    "eq" => HashTest::Eq,
+                    "eql" => HashTest::Eql,
+                    "equal" => HashTest::Equal,
+                    _ => return None,
+                };
+            }
+            "data" => {
+                data = val.list_to_vec().ok();
+                if data.is_none() && !val.is_nil() {
+                    return None;
+                }
+            }
+            "size" => {
+                if let Value::Int(n) = val {
+                    size = *n;
+                }
+            }
+            "weakness" => {
+                if matches!(val, Value::Sym(_) | Value::Nil) {
+                    weakness = if val.is_nil() { None } else { Some(val.clone()) };
+                }
+            }
+            // rehash-size/rehash-threshold/purecopy are accepted and
+            // ignored like `make-hash-table'.
+            "rehash-size" | "rehash-threshold" | "purecopy" => {}
+            _ => return None,
+        }
+        k += 2;
+    }
+    if k != fields.len() {
+        return None;
+    }
+    let mut h = LispHash::new(test);
+    h.size = size;
+    h.weakness = weakness;
+    if let Some(pairs) = data {
+        let mut it = pairs.into_iter();
+        while let (Some(ky), Some(vl)) = (it.next(), it.next()) {
+            let key = hash_key_for(i, &ky, test);
+            h.map.insert(key.clone(), vl);
+            h.put_key(key, ky);
+        }
+    }
+    Some(Value::Hash(std::rc::Rc::new(std::cell::RefCell::new(h))))
 }
 
 fn parse_float(tok: &str) -> Option<f64> {

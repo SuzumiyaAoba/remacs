@@ -15,6 +15,10 @@
        (consp (cdr x)) (integerp (cadr x))
        (vectorp (cddr x))))
 
+;; GNU ring.el registers `ring' as a `satisfies' cl type so that
+;; `cl-typep'/`cl-check-type' accept rings by name.
+(cl-deftype ring () '(satisfies ring-p))
+
 ;;;###autoload
 (defun make-ring (size)
   "Make a ring that can contain SIZE elements."

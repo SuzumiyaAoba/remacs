@@ -234,14 +234,14 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!(
         "string-collate-equalp",
         2,
-        3,
+        4,
         f_string_collate_equalp,
         "Collation equality (simple)."
     ),
     S!(
         "string-collate-lessp",
         2,
-        3,
+        4,
         f_string_collate_lessp,
         "Collation lessp (simple)."
     ),
@@ -344,7 +344,7 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!(
         "make-string",
         2,
-        2,
+        3,
         f_make_string,
         "String of LENGTH copies of INIT char."
     ),
@@ -483,7 +483,7 @@ fn f_string(i: &mut Interp, args: Vec<Value>) -> EvalResult {
 }
 
 /// Concatenate a sequence value's characters into `out`.
-fn concat_seq(i: &mut Interp, v: &Value, out: &mut String) -> Result<(), super::Flow> {
+pub(crate) fn concat_seq(i: &mut Interp, v: &Value, out: &mut String) -> Result<(), super::Flow> {
     match v {
         Value::Nil => Ok(()),
         Value::Str(s) => {
@@ -514,6 +514,14 @@ fn concat_seq(i: &mut Interp, v: &Value, out: &mut String) -> Result<(), super::
                 }
             }
             Ok(())
+        }
+        // Bool-vectors are sequences of t/nil bits; concatenating one
+        // hits the non-char element error like any other sequence.
+        Value::Record(_) if super::misc::is_bool_vector(i, v) => {
+            match super::misc::bool_vec_of(i, v)?.first() {
+                Some(bit) => Err(i.wrong_type_mut("characterp", &Value::from_bool(*bit))),
+                None => Ok(()),
+            }
         }
         _ => Err(i.wrong_type_mut("sequencep", v)),
     }
@@ -570,6 +578,11 @@ fn f_vconcat(i: &mut Interp, args: Vec<Value>) -> EvalResult {
             Value::Str(s) => {
                 for c in s.borrow().chars() {
                     out.push(Value::Int(lisp_char_code(c)));
+                }
+            }
+            Value::Record(_) if super::misc::is_bool_vector(i, a) => {
+                for b in super::misc::bool_vec_of(i, a)? {
+                    out.push(Value::from_bool(b));
                 }
             }
             other => return Err(i.wrong_type_mut("sequencep", other)),
@@ -688,6 +701,9 @@ fn f_string_lessp(i: &mut Interp, args: Vec<Value>) -> EvalResult {
 fn f_string_collate_equalp(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     let a = want_string(i, &args[0])?;
     let b = want_string(i, &args[1])?;
+    // GNU accepts any LOCALE object without validating it, and on
+    // this build IGNORE-CASE is inert (no locale collation support):
+    // both extra args are ignored, comparison is plain byte order.
     Ok(Value::from_bool(a == b))
 }
 fn f_string_collate_lessp(i: &mut Interp, args: Vec<Value>) -> EvalResult {
@@ -1004,9 +1020,15 @@ fn f_string_to_char(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     ))
 }
 fn f_char_to_string(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    let n = want_int(i, &args[0])?;
-    let c = char::from_u32((n & 0x3f_ffff) as u32).unwrap_or('\0');
-    Ok(Value::string(c.to_string()))
+    match &args[0] {
+        // GNU CHECK_CHARACTER: any fixnum 0..#x3FFFFF is a char;
+        // eight-bit codes map to PUA proxies like the rest of strfn.
+        Value::Int(n) if (0..=0x3f_ffff).contains(n) => {
+            let c = lisp_char(*n as u32).unwrap_or('\u{FFFD}');
+            Ok(Value::string(c.to_string()))
+        }
+        other => Err(i.wrong_type_mut("characterp", other)),
+    }
 }
 /// `string-trim-left/right` use regexps (subr-x): strip ONE match of
 /// TRIM at the edge. TRIM nil or absent defaults to whitespace.
@@ -1085,17 +1107,33 @@ fn f_string_pad(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     }))
 }
 fn f_string_join(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    let items = super::want_list(i, &args[0])?;
-    let sep = args
-        .get(1)
-        .map(|v| want_string(i, v))
-        .transpose()?
-        .unwrap_or_default();
-    let mut parts = Vec::new();
-    for item in items {
-        parts.push(want_string(i, &item)?);
+    let items = super::seq::seq_to_vec(i, &args[0])?;
+    // GNU's string-join is `(mapconcat #'identity STRINGS SEPARATOR)':
+    // elements and SEPARATOR are concat'ed, so they may be any char
+    // sequence, and SEPARATOR is only coerced when a join happens.
+    let mut sep: Option<String> = None;
+    let mut parts: Vec<String> = Vec::with_capacity(items.len());
+    for item in &items {
+        let mut p = String::new();
+        concat_seq(i, item, &mut p)?;
+        parts.push(p);
     }
-    Ok(Value::string(parts.join(&sep)))
+    let mut out = String::new();
+    for (k, p) in parts.iter().enumerate() {
+        if k > 0 {
+            if sep.is_none() {
+                let mut s = String::new();
+                match args.get(1) {
+                    None | Some(Value::Nil) => {}
+                    Some(v) => concat_seq(i, v, &mut s)?,
+                }
+                sep = Some(s);
+            }
+            out.push_str(sep.as_deref().unwrap_or_default());
+        }
+        out.push_str(p);
+    }
+    Ok(Value::string(out))
 }
 fn f_split_string(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     let s = want_string(i, &args[0])?;
@@ -2321,9 +2359,20 @@ fn format_g(f: f64, prec: Option<usize>) -> String {
 // ---------- added builtins ----------
 
 fn f_make_string(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    let n = want_int(i, &args[0])?.max(0) as usize;
-    let c = want_int(i, &args[1])?;
-    let ch = char::from_u32(c as u32).unwrap_or('\u{0}');
+    // GNU CHECK_NATNUM: anything but a nonnegative fixnum signals
+    // wholenump; INIT takes the full CHECK_CHARACTER range.
+    let n = match &args[0] {
+        Value::Int(n) if *n >= 0 => *n as usize,
+        other => return Err(i.wrong_type_mut("wholenump", other)),
+    };
+    let ch = match &args[1] {
+        Value::Int(c) if (0..=0x3f_ffff).contains(c) => {
+            lisp_char(*c as u32).unwrap_or('\u{FFFD}')
+        }
+        other => return Err(i.wrong_type_mut("characterp", other)),
+    };
+    // The optional MULTIBYTE flag only selects unibyte storage in
+    // GNU — remacs strings are always multibyte, so it's ignored.
     let s: String = std::iter::repeat_n(ch, n).collect();
     Ok(Value::string(s))
 }
