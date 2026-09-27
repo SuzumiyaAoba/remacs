@@ -26597,6 +26597,9 @@ variable's :set function if it has one."
 ;; coding.c's init gives translation-table 2 extra slots (slot 0 =
 ;; translation table id, slot 1 = obsolete-name pair).
 (put 'translation-table 'char-table-extra-slots 2)
+;; character.c's init gives char-script-table 1 extra slot (the list
+;; of script symbols, filled in by characters.el and charscript.el).
+(put 'char-script-table 'char-table-extra-slots 1)
 
 (defun make-display-table ()
   "Return a new, empty display table."
@@ -46771,13 +46774,11 @@ included; callers should bind `case-fold-search' to t."
   "Return the current isearch prompt (approximation)."
   (propertize "I-search backward: " 'face 'minibuffer-prompt 'read-only t))
 
-;; cl-print.elc autoloaded generic in GNU: bound at -Q with no
-;; methods, so calling it errors with `cl-no-applicable-method'.
-(cl-defgeneric cl-print-object (_object _stream)
-  "Dispatcher to print OBJECT on STREAM according to its type.
-You can add methods to it to customize the output.
-But if you just want to print something, don't call this directly:
-call other entry points instead, such as `cl-prin1'.")
+;; cl-print-object is NOT defined here: GNU keeps it a pure autoload
+;; (registered in loaddefs from cl-print.el), so `cl-defmethod' uses
+;; during init (nadvice.el's `cl-print-object ((object advice)') hit
+;; the `autoloadp' clause of `cl-generic-ensure-function' and register
+;; on the fresh generic rather than erroring on a stale stub shape.
 
 (defun cl-print-to-string-with-limit (print-function value limit)
   "Return a string containing a printed representation of VALUE.

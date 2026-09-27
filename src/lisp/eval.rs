@@ -1013,6 +1013,16 @@ impl Interp {
             // .elc, and keeps later cl-defmethod uses (icons, map,
             // register, send-to) from hitting an empty method table.
             let _ = crate::lisp::load::load_library(&mut interp, "cl-generic");
+            // nadvice.el is dumped by loadup.el right after cl-generic
+            // (loadup.el:253): its `oclosure-define' builds the real
+            // `advice' OClosure accessors (`advice--car',
+            // `advice--copy', ...) and the `advice--how-alist'
+            // prototypes — required so later `advice-add'/
+            // `add-function' uses (org's `org-macs' etc.) create real
+            // 5-slot oclosures, and its `cl-defmethod
+            // oclosure-interactive-form' needs cl-generic's method
+            // table already installed.
+            let _ = crate::lisp::load::load_library(&mut interp, "nadvice");
             // loaddefs.el is loaded by loadup.el right after subr.el:
             // it installs the (autoload ...) cells for every preloaded
             // library's entry points and provides the `loaddefs'
@@ -1049,6 +1059,32 @@ impl Interp {
             // are registered at -Q.
             let _ = crate::lisp::load::load_library(&mut interp, "mule");
             let _ = crate::lisp::load::load_library(&mut interp, "mule-conf");
+            // mule-cmds/case-table/charprop/characters are in GNU's
+            // dump (loadup.el:208-215, between mule-conf and the
+            // language files).  `characters' populates the standard
+            // category table (`modify-category-entry' ranges and
+            // `map-charset-chars'), which `\\cX' regexes (e.g. `\\cj'
+            // in ja-dic-cnv) rely on.
+            let _ = crate::lisp::load::load_library(&mut interp, "mule-cmds");
+            let _ = crate::lisp::load::load_library(&mut interp, "case-table");
+            let _ = crate::lisp::load::load_library(&mut interp, "charprop");
+            let _ = crate::lisp::load::load_library(&mut interp, "characters");
+            // The language-specific files are all in GNU's dump
+            // (loadup.el:219-247, after mule-cmds/charprop/composite):
+            // their charset registration, `set-language-environment'
+            // calls and transcription alists (e.g.
+            // `tibetan-vowel-transcription-alist', needed by quail's
+            // tibetan.el) are live at -Q.
+            for lib in [
+                "chinese", "cyrillic", "indian", "sinhala", "english",
+                "ethiopic", "european", "czech", "slovak", "romanian",
+                "greek", "hebrew", "cp51932", "eucjp-ms", "japanese",
+                "korean", "lao", "tai-viet", "thai", "tibetan",
+                "vietnamese", "misc-lang", "utf-8-lang", "georgian",
+                "khmer", "burmese", "cham", "philippine", "indonesian",
+            ] {
+                let _ = crate::lisp::load::load_library(&mut interp, lib);
+            }
             let _ = crate::lisp::load::load_library(&mut interp, "epa-hook");
             // paren.el is in GNU's dump (loadup.el): `show-paren-mode'
             // and the `paren' feature are bound at -Q.
@@ -1230,6 +1266,8 @@ impl Interp {
                            (cond \
                             ((and (consp item) (memq (car item) '(defun defmacro))) \
                              (push (cdr item) fns)) \
+                            ((and (consp item) (memq (car item) '(cl-defgeneric cl-defmethod))) \
+                             (push (cadr item) fns)) \
                             ((and (consp item) (memq (car item) '(defface require provide autoload))) \
                              nil) \
                             ((symbolp item) (push item vars)) \
@@ -6099,12 +6137,21 @@ explicitly overridden.
             ),
             ("coding-system-alist", Value::Nil),
             ("coding-category-list", Value::Nil),
+            // GNU's coding.c: `Vlatin_extra_code_table =
+            // make_nil_vector (256)'; mule-conf.el `aset's into it.
+            (
+                "latin-extra-code-table",
+                Value::Vec(std::rc::Rc::new(std::cell::RefCell::new(vec![
+                    Value::Nil;
+                    256
+                ]))),
+            ),
             ("translation-table-for-input", Value::Nil),
             ("file-name-handler-alist", Value::Nil),
             ("directory-listing-before-filename-regexp", Value::Nil),
             ("directory-free-space-program", Value::string("df")),
             ("directory-free-space-args", Value::string("-k")),
-            ("directory-sep-char", Value::Int(47)),
+            // GNU 31 removed `directory-sep-char' — `void-variable' at -Q.
             ("insert-directory-program", Value::string("ls")),
             ("auto-save-list-file-prefix", Value::Nil),
             ("auto-save-visited-file-name", Value::Nil),
@@ -6503,13 +6550,16 @@ explicitly overridden.
         Value::list(alist)
     }
 
-    /// `standard-category-table': the shared category table, with
-    /// GNU's ASCII membership and label docstrings.
+    /// `standard-category-table': the shared category table.  Like
+    /// GNU's temacs it starts empty — `international/characters.el'
+    /// (loaded during init, loadup.el:215) fills in the category
+    /// docstrings and per-char membership via `define-category' /
+    /// `modify-category-entry'.
     pub fn standard_category_table(&mut self) -> Value {
         if let Some(v) = &self.standard_category_table {
             return v.clone();
         }
-        let t = crate::lisp::builtins::misc::make_category_table_value(self, true);
+        let t = crate::lisp::builtins::misc::make_category_table_value(self, false);
         self.standard_category_table = Some(t.clone());
         t
     }

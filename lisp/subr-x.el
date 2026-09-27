@@ -40859,7 +40859,8 @@ they had none before." :type 'boolean :version "31.1" :set (lambda (symbol value
 (defvar large-hscroll-threshold '10000)
 (defvar last-code-conversion-error nil)
 (defvar last-coding-system-used 'undecided-unix)
-(defvar latin-extra-code-table nil)
+;; `latin-extra-code-table' is a 256-vector bound in C (coding.c:
+;; `make_nil_vector (256)'), not a Lisp defvar — see eval.rs init.
 (defvar-local left-fringe-width nil)
 (defvar libgnutls-version '30813)
 (defvar-local line-prefix nil)
@@ -41832,143 +41833,17 @@ Turning on Paragraph-Indent minor mode runs the normal hook
   "Try to complete the word before or under point." t)
 
 ;;; --- nadvice.el ----------------------------------------------------
-;;; GNU's `advice' is an oclosure type.  Remacs implements advice-add
-;;; natively in the interpreter, so the oclosure accessors below are
-;;; metadata parity: they assert `closurep' like GNU's generated
-;;; accessors and read the same constant-vector slots for real
-;;; oclosure-shaped objects.  `oclosure-lambda' is stubbed to produce
-;;; an ordinary lambda so that `advice--how-alist' evaluates.
+;;; GNU's `advice' is an oclosure type built by the real oclosure.el
+;;; (loaded at init) and nadvice.el's oclosure-define-generated
+;;; accessors/copiers.  An earlier shim defined `oclosure-lambda' as a
+;;; plain-lambda macro plus `cl--advice--link' slot readers here; both
+;;; were removed since real nadvice now defines them.
 
 (put 'cl-assertion-failed 'error-message "Assertion failed")
 
-(defmacro oclosure-lambda (_otype args &rest body)
-  "Compatibility stub: builds a plain lambda.
-GNU produces an oclosure object carrying OTYPE slots; remacs's
-advice machinery is native and never inspects those slots."
-  `(lambda ,args ,@body))
+;;; Vendored nadvice.el block removed — real nadvice.el is loaded
+;;; at init (it defines the complete advice oclosure API).
 
-(defun advice--car (oclosure)
-  (nth 0 (cl--advice--link oclosure)))
-(defun advice--cdr (oclosure)
-  (nth 1 (cl--advice--link oclosure)))
-(defun advice--how (oclosure)
-  (nth 2 (cl--advice--link oclosure)))
-(defun advice--props (oclosure)
-  (nth 3 (cl--advice--link oclosure)))
-(defun advice--cons (oclosure _cdr)
-  (cl-assert (closurep oclosure))
-  oclosure)
-(defun advice--copy (oclosure _car _cdr _how _props)
-  (cl-assert (closurep oclosure))
-  oclosure)
-(defun advice--forward-p (_object) nil)
-
-(defun advice--normalize-place (place)
-  (cond ((eq 'local (car-safe place)) `(advice--buffer-local ,@(cdr place)))
-        ((eq 'var (car-safe place))   (nth 1 place))
-        ((symbolp place)              `(default-value ',place))
-        (t place)))
-
-(defmacro advice--make-how-alist (&rest args)
-  `(list
-    ,@(mapcar
-       (lambda (arg)
-         (pcase-let ((`(,how . ,body) arg))
-           `(list ,how
-                  (oclosure-lambda (advice (how ,how)) (&rest r)
-                    ,@body)
-                  ,(replace-regexp-in-string
-                    "\\<car\\>" "FUNCTION"
-                    (replace-regexp-in-string
-                     "\\<cdr\\>" "OLDFUN"
-                     (format "%S" `(lambda (&rest r) ,@body))
-                     t t)
-                    t t))))
-       args)))
-
-(define-obsolete-function-alias 'advice--where #'advice--how "29.1")
-
-;; advice--how-alist
-(defvar advice--how-alist (advice--make-how-alist (:around (apply car cdr r)) (:before (apply car r) (apply cdr r)) (:after (prog1 (apply cdr r) (apply car r))) (:override (apply car r)) (:after-until (or (apply cdr r) (apply car r))) (:after-while (and (apply cdr r) (apply car r))) (:before-until (or (apply car r) (apply cdr r))) (:before-while (and (apply car r) (apply cdr r))) (:filter-args (apply cdr (funcall car r))) (:filter-return (funcall car (apply cdr r))) (:interactive-only (apply cdr r))) "List of descriptions of how to add a function.
-Each element has the form (HOW OCL DOC) where HOW is a keyword,
-OCL is a \"prototype\" function of type `advice', and
-DOC is a string where \"FUNCTION\" and \"OLDFUN\" are expected.")
-
-;; advice--make-single-doc
-(defun advice--make-single-doc (flist function macrop) (let ((how (advice--how flist))) (concat (format "This %s has %s advice: " (if macrop "macro" "function") how) (let ((fun (advice--car flist))) (if (symbolp fun) (format-message "`%S'." fun) (let* ((name (cdr (assq 'name (advice--props flist)))) (doc (documentation fun t)) (usage (help-split-fundoc doc function))) (if usage (setq doc (cdr usage))) (if name (if doc (format "%s
-%s" name doc) (format "%s" name)) (or doc "No documentation"))))) "
-" (and (eq how :override) (concat (format-message "
-This is an :override advice, which means that `%s' isn't
-" function) "run at all, and the documentation below may be irrelevant.
-")))))
-
-;; advice--make-docstring
-(defun advice--make-docstring (function) "Build the raw docstring for FUNCTION, presumably advised." (let* ((flist (indirect-function function)) (docfun nil) (macrop (eq 'macro (car-safe flist))) (before nil) (after nil)) (when macrop (setq flist (cdr flist))) (if (and (autoloadp flist) (get function 'advice--pending)) (setq after (advice--make-single-doc (get function 'advice--pending) function macrop)) (while (advice--p flist) (when (integerp (aref flist 4)) (setq docfun flist)) (let ((doc-bit (advice--make-single-doc flist function macrop))) (if (eq (advice--how flist) :override) (setq before (concat before doc-bit)) (setq after (concat after doc-bit)))) (setq flist (advice--cdr flist)))) (unless docfun (setq docfun flist)) (let* ((origdoc (unless (eq function docfun) (documentation docfun t))) (usage (help-split-fundoc origdoc function))) (setq usage (if (null usage) (let ((arglist (help-function-arglist flist))) (if (stringp arglist) t (help--make-usage-docstring function arglist))) (setq origdoc (cdr usage)) (car usage))) (help-add-fundoc-usage (with-temp-buffer (when before (insert before) (ensure-empty-lines 1)) (when origdoc (insert origdoc)) (when after (ensure-empty-lines 1) (insert after)) (buffer-string)) usage))))
-
-;; advice-eval-interactive-spec
-(defun advice-eval-interactive-spec (spec) "Evaluate the interactive spec SPEC." (cond ((stringp spec) (call-interactively (cconv--interactive-helper (lambda (&rest args) args) spec))) (t (eval spec))))
-
-;; advice--interactive-form-1
-(defun advice--interactive-form-1 (function) "Like `interactive-form' but preserves the static context if needed." (let ((if (interactive-form function))) (if (not (and if (interpreted-function-p function))) if (cl-assert (eq 'interactive (car if))) (let ((form (cadr if))) (if (macroexp-const-p form) if (let ((ctx (aref function 2))) `(interactive ,(let* ((f (if (eq 'function (car-safe form)) (cadr form) form))) (if (eq 'lambda (car-safe f)) (eval form ctx) `(eval ',form ',ctx))))))))))
-
-;; advice--interactive-form
-(defun advice--interactive-form (function) "Like `interactive-form' but tries to avoid autoloading functions." (if (not (and (symbolp function) (autoloadp (indirect-function function)))) (advice--interactive-form-1 function) (when (commandp function) `(interactive (advice-eval-interactive-spec (cadr (advice--interactive-form-1 ',function)))))))
-
-;; advice--make-interactive-form
-(defun advice--make-interactive-form (iff ifm) (let* ((fspec (cadr iff))) (when (memq (car-safe fspec) '#'quote) (setq fspec (eval fspec t))) (if (functionp fspec) `(funcall ',fspec ',(cadr ifm)) (cadr (or iff ifm)))))
-
-;; advice--make
-(defun advice--make (how function main props) "Build a function value that adds FUNCTION to MAIN at HOW.
-HOW is a symbol to select an entry in `advice--how-alist'." (let ((fd (or (cdr (assq 'depth props)) 0)) (md (if (advice--p main) (or (cdr (assq 'depth (advice--props main))) 0)))) (if (and md (> fd md)) (let ((rest (advice--make how function (advice--cdr main) props))) (advice--cons main rest)) (let ((proto (assq how advice--how-alist))) (unless proto (error "Unknown add-function location `%S'" how)) (advice--copy (cadr proto) function main how props)))))
-
-;; advice--member-p
-(defun advice--member-p (function use-name definition) (let ((found nil)) (while (and (not found) (advice--p definition)) (if (if (eq use-name :use-both) (or (equal function (cdr (assq 'name (advice--props definition)))) (equal function (advice--car definition))) (equal function (if use-name (cdr (assq 'name (advice--props definition))) (advice--car definition)))) (setq found definition) (setq definition (advice--cdr definition)))) found))
-
-;; advice--tweak
-(defun advice--tweak (flist tweaker) (if (not (advice--p flist)) (funcall tweaker nil flist nil) (let ((first (advice--car flist)) (rest (advice--cdr flist)) (props (advice--props flist))) (let ((val (funcall tweaker first rest props))) (if val (car val) (let ((nrest (advice--tweak rest tweaker))) (if (eq rest nrest) flist (advice--cons flist nrest))))))))
-
-;; advice--remove-function
-(defun advice--remove-function (flist function) (advice--tweak flist (lambda (first rest props) (cond ((not first) rest) ((or (equal function first) (equal function (cdr (assq 'name props)))) (list (advice--remove-function rest function)))))))
-
-;; advice--set-buffer-local
-(defun advice--set-buffer-local (var val) (if (advice--forward-p val) (kill-local-variable var) (set (make-local-variable var) val)))
-
-;; advice--buffer-local
-(defun advice--buffer-local (var) "Buffer-local value of VAR, presumed to contain a function." (declare (gv-setter advice--set-buffer-local)) (if (local-variable-p var) (symbol-value var) (oclosure-lambda (advice--forward) (&rest args) (apply (default-value var) args))))
-
-;; advice--make-nadvice-docstring
-(defun advice--make-nadvice-docstring (sym) "Make docstring for a nadvice function.
-Modifies the function's docstring by replacing \"<<>>\" with the
-description of the possible HOWs." (let* ((main (documentation (symbol-function sym) 'raw)) (ud (help-split-fundoc main 'pcase)) (doc (or (cdr ud) main)) (col1width (apply #'max (mapcar (lambda (x) (string-width (symbol-name (car x)))) advice--how-alist))) (table (mapconcat (lambda (x) (format (format " %%-%ds %%s" col1width) (car x) (nth 2 x))) advice--how-alist "
-")) (table (if global-prettify-symbols-mode (replace-regexp-in-string "(lambda\\>" "(λ" table t t) table)) (combined-doc (if (not (string-match "<<>>" doc)) doc (replace-match table t t doc)))) (if ud (help-add-fundoc-usage combined-doc (car ud)) combined-doc)))
-
-;; advice--add-function
-(defun advice--add-function (how ref function props)
-  ;; Use remacs's native advice machinery for arbitrary GV places: keep
-  ;; the current function value in a gensym holder, compose it there,
-  ;; then store the holder's function cell back through REF's setter.
-  (let ((holder (make-symbol "remacs-advice-place")))
-    (fset holder (gv-deref ref))
-    (cl--add-function how (list 'function holder) function props)
-    (funcall (cdr ref) (symbol-function holder))))
-
-;; advice--subst-main
-(defun advice--subst-main (old new) (advice--tweak old (lambda (first _rest _props) (if (not first) new))))
-
-;; advice--normalize
-(defun advice--normalize (symbol def) (cond ((special-form-p def) (error "Advice impossible: %S is a special form" symbol)) ((and (symbolp def) (macrop def)) (let ((newval `(macro \, (lambda (&rest r) (macroexpand `(,def \, r)))))) (put symbol 'advice--saved-rewrite (cons def (cdr newval))) newval)) ((and (eq 'macro (car-safe def)) (not (ignore-errors (setcdr def (cdr def)) t))) (cons 'macro (cdr def))) (t def)))
-
-;; advice--strip-macro
-(defsubst advice--strip-macro (x) (if (eq 'macro (car-safe x)) (cdr x) x))
-
-;; advice--symbol-function
-(defun advice--symbol-function (symbol) (or (get symbol 'advice--pending) (advice--strip-macro (symbol-function symbol))))
-
-;; advice--defalias-fset
-(defun advice--defalias-fset (fsetfun symbol newdef) (unless fsetfun (setq fsetfun #'fset)) (cond ((advice--p newdef) (setq newdef (advice--cd*r newdef))) ((and (eq 'macro (car-safe newdef)) (advice--p (cdr newdef))) (setq newdef `(macro \, (advice--cd*r (cdr newdef)))))) (when (get symbol 'advice--saved-rewrite) (put symbol 'advice--saved-rewrite nil)) (setq newdef (advice--normalize symbol newdef)) (let ((oldadv (advice--symbol-function symbol))) (if (and newdef (not (autoloadp newdef))) (let* ((snewdef (advice--strip-macro newdef)) (snewadv (advice--subst-main oldadv snewdef))) (put symbol 'advice--pending nil) (funcall fsetfun symbol (if (eq snewdef newdef) snewadv (cons 'macro snewadv)))) (unless (eq oldadv (get symbol 'advice--pending)) (put symbol 'advice--pending (advice--subst-main oldadv nil))) (funcall fsetfun symbol newdef))))
-
-;; advice--called-interactively-skip
-(defun advice--called-interactively-skip (origi frame1 frame2) (let* ((i origi) (get-next-frame (lambda nil (setq frame1 frame2) (setq frame2 (backtrace-frame i #'called-interactively-p)) (setq i (1+ i))))) (when (and (eq (nth 1 frame2) 'apply) (progn (funcall get-next-frame) (advice--p (indirect-function (nth 1 frame2))))) (funcall get-next-frame) (while (advice--p (nth 1 frame1)) (let ((inneradvice (nth 1 frame1))) (if (and (eq (nth 1 frame2) 'apply) (progn (funcall get-next-frame) (advice--p (indirect-function (nth 1 frame2))))) (funcall get-next-frame) (while (progn (funcall get-next-frame) (and frame2 (not (and (eq (nth 1 frame2) 'apply) (eq (nth 3 frame2) inneradvice)))))) (funcall get-next-frame) (funcall get-next-frame)))) (- i origi 1))))
 
 
 ;;; --- format.el ------------------------------------------------------
