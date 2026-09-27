@@ -56,7 +56,12 @@
 ;; handle derived types, `satisfies' specs or ranged numeric specifiers.
 ;; Install compatible definitions here (they are supersets of the
 ;; prelude's and no-ops once the core provides real ones).
-(unless (eq 'macro (car-safe (symbol-function 'cl-deftype)))
+(unless (or (eq 'macro (car-safe (symbol-function 'cl-deftype)))
+            ;; The dump-time definition survives on `remacs--dump-fn'
+            ;; even when the public cell is voided for -Q parity;
+            ;; installing this shim would shadow it and leave
+            ;; `cl-deftype-handler' unset on types defined later.
+            (get 'cl-deftype 'remacs--dump-fn))
   (defmacro cl-deftype (name _args &rest spec)
     "Subset of GNU `cl-deftype': record SPEC on NAME's property list.
 The derived type resolves through `cl-typep' via `cl-deftype-spec'."
