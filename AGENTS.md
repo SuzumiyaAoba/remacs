@@ -12,10 +12,11 @@ subdirectories — name collisions were resolved by renaming:
 - `lisp/<dir>-<name>.el` — CEDET files from `cedet/semantic/`, `cedet/ede/`,
   `cedet/srecode/` flattened with their directory prefix. They still
   `(provide 'semantic/ctxt)` etc. with qualified feature names.
-- `lisp/subr.el` — 8-line feature stub; subr functionality is folded into
-  `src/lisp/prelude.el` but ~100 libraries `(require 'subr)`.
 - `lisp/remacs-compat.el` — compatibility fallbacks; guard new shims with
   `(unless (fboundp ...))` and mark edits with `;Remacs:` comments.
+- `lisp/subr.el` — real GNU file now; subr's functionality is still
+  provided by `src/lisp/prelude.el` at init, and `(require 'subr)` hits
+  the pre-registered feature, so the file only matters for `load`.
 - `etc/themes/*.el` — the 25 built-in themes referenced by
   `lisp/theme-loaddefs.el`.
 
@@ -57,22 +58,19 @@ Registration rules:
 
 ## Known runtime gaps (not port defects)
 
-- Reader stack overflow on deeply nested data: `ja-dic.el`, `ZIRANMA.el`
-  (both byte-identical to GNU; recursion depth limit).
 - The files that used to be Emacs-internal-encoding (see the
   EMBEDDED_LISP note above) are now UTF-8 transcodes — readable by
   `insert-file-contents`, but with U+FFFD where GNU stored
   private-plane chars; not byte-identical to GNU.
-- `transient.el`, `eieio.el` eager macroexpansion `(invalid-function nil)`;
-  `byte-opt` "lambda used as function name" warnings.
+- `byte-opt` "lambda used as function name" warnings.
 - `xwidget-internal` unimplemented. NS/macOS GUI primitives are
   covered by `src/lisp/builtins/nsgui.rs` (see below). Native
   compilation is implemented in `src/lisp/builtins/comp.rs` (see
   below).
-- Bulk-load test (all lisp/*.el under --batch): only failures besides the
-  above are `Lisp nesting exceeds max-lisp-eval-depth` during eager
-  macro-expansion (~50 files), platform-gated *-win/android files, and
-  unregistered qualified requires (srecode/semantic/*).
+- Bulk-load test (all lisp/*.el under --batch, `blessmail.el` skipped —
+  it writes the `blessmail` script to CWD and calls `kill-emacs` by
+  design): platform-gated *-win/android files fail as on any macOS
+  build.
 - `PRELUDE_MAX` env var truncates prelude evaluation for bisection;
   `--ieval` bisects a form interactively; `WHILE_WATCH` traces eval loops.
 
