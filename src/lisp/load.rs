@@ -147,6 +147,12 @@ static EMBEDDED_LISP: &[(&str, &str)] = &[
     ("macros", include_str!("../../lisp/macros.el")),
     ("map", include_str!("../../lisp/map.el")),
     ("minibuf-eldef", include_str!("../../lisp/minibuf-eldef.el")),
+    ("keymap", include_str!("../../lisp/keymap.el")),
+    ("bindings", include_str!("../../lisp/bindings.el")),
+    ("window", include_str!("../../lisp/window.el")),
+    ("indent", include_str!("../../lisp/indent.el")),
+    ("minibuffer", include_str!("../../lisp/minibuffer.el")),
+    ("startup", include_str!("../../lisp/startup.el")),
     ("pcase", include_str!("../../lisp/pcase.el")),
     ("pp", include_str!("../../lisp/pp.el")),
     ("pulse", include_str!("../../lisp/pulse.el")),
@@ -1423,7 +1429,7 @@ static EMBEDDED_LISP: &[(&str, &str)] = &[
     ("auth-source-pass", include_str!("../../lisp/auth-source-pass.el")),
     ("battery", include_str!("../../lisp/battery.el")),
     ("bibtex", include_str!("../../lisp/bibtex.el")),
-    ("button", include_str!("../../lisp/button.el")),  // not in GNU tree (adapted/remacs-specific)
+    ("button", include_str!("../../lisp/button.el")),
     ("canlock", include_str!("../../lisp/canlock.el")),
     ("cedet-cscope", include_str!("../../lisp/cedet-cscope.el")),
     ("cedet-files", include_str!("../../lisp/cedet-files.el")),
@@ -1433,7 +1439,7 @@ static EMBEDDED_LISP: &[(&str, &str)] = &[
     ("cl-compat", include_str!("../../lisp/cl-compat.el")),
     ("crisp", include_str!("../../lisp/crisp.el")),
     ("cus-load", include_str!("../../lisp/cus-load.el")),
-    ("custom", include_str!("../../lisp/custom.el")),  // not in GNU tree (adapted/remacs-specific)
+    ("custom", include_str!("../../lisp/custom.el")),
     ("data-debug", include_str!("../../lisp/data-debug.el")),
     ("deuglify", include_str!("../../lisp/deuglify.el")),
     ("dframe", include_str!("../../lisp/dframe.el")),
@@ -1537,12 +1543,12 @@ static EMBEDDED_LISP: &[(&str, &str)] = &[
     ("esh-var", include_str!("../../lisp/esh-var.el")),
     ("eshell", include_str!("../../lisp/eshell.el")),
     ("exif", include_str!("../../lisp/exif.el")),
-    ("faces", include_str!("../../lisp/faces.el")),  // not in GNU tree (adapted/remacs-specific)
+    ("faces", include_str!("../../lisp/faces.el")),
     ("ffap", include_str!("../../lisp/ffap.el")),
-    ("files", include_str!("../../lisp/files.el")),  // not in GNU tree (adapted/remacs-specific)
+    ("files", include_str!("../../lisp/files.el")),
     ("finder-inf", include_str!("../../lisp/finder-inf.el")),
     ("finder", include_str!("../../lisp/finder.el")),
-    ("frame", include_str!("../../lisp/frame.el")),  // not in GNU tree (adapted/remacs-specific)
+    ("frame", include_str!("../../lisp/frame.el")),
     ("gametree", include_str!("../../lisp/gametree.el")),
     ("generic-x", include_str!("../../lisp/generic-x.el")),
     ("gmm-utils", include_str!("../../lisp/gmm-utils.el")),
@@ -1617,7 +1623,7 @@ static EMBEDDED_LISP: &[(&str, &str)] = &[
     ("info-xref", include_str!("../../lisp/info-xref.el")),
     ("info", include_str!("../../lisp/info.el")),
     ("informat", include_str!("../../lisp/informat.el")),
-    ("isearch", include_str!("../../lisp/isearch.el")),  // not in GNU tree (adapted/remacs-specific)
+    ("isearch", include_str!("../../lisp/isearch.el")),
     ("jsonrpc", include_str!("../../lisp/jsonrpc.el")),  // not in GNU tree (adapted/remacs-specific)
     ("kermit", include_str!("../../lisp/kermit.el")),
     ("loadup", include_str!("../../lisp/loadup.el")),
@@ -1629,7 +1635,7 @@ static EMBEDDED_LISP: &[(&str, &str)] = &[
     ("mailabbrev", include_str!("../../lisp/mailabbrev.el")),
     ("mailalias", include_str!("../../lisp/mailalias.el")),
     ("makefile-edit", include_str!("../../lisp/makefile-edit.el")),
-    ("menu-bar", include_str!("../../lisp/menu-bar.el")),  // not in GNU tree (adapted/remacs-specific)
+    ("menu-bar", include_str!("../../lisp/menu-bar.el")),
     ("message", include_str!("../../lisp/message.el")),
     ("mm-archive", include_str!("../../lisp/mm-archive.el")),
     ("mm-bodies", include_str!("../../lisp/mm-bodies.el")),
@@ -1647,7 +1653,7 @@ static EMBEDDED_LISP: &[(&str, &str)] = &[
     ("mml2015", include_str!("../../lisp/mml2015.el")),
     ("mode-local", include_str!("../../lisp/mode-local.el")),
     ("mpc", include_str!("../../lisp/mpc.el")),
-    ("mwheel", include_str!("../../lisp/mwheel.el")),  // not in GNU tree (adapted/remacs-specific)
+    ("mwheel", include_str!("../../lisp/mwheel.el")),
     ("newst-backend", include_str!("../../lisp/newst-backend.el")),
     ("newst-plainview", include_str!("../../lisp/newst-plainview.el")),
     ("newst-reader", include_str!("../../lisp/newst-reader.el")),
@@ -1913,7 +1919,7 @@ static EMBEDDED_LISP: &[(&str, &str)] = &[
     ("seq", include_str!("../../lisp/seq.el")),  // not in GNU tree (adapted/remacs-specific)
     ("ses", include_str!("../../lisp/ses.el")),
     ("shadowfile", include_str!("../../lisp/shadowfile.el")),
-    ("simple", include_str!("../../lisp/simple.el")),  // not in GNU tree (adapted/remacs-specific)
+    ("simple", include_str!("../../lisp/simple.el")),
     ("smiley", include_str!("../../lisp/smiley.el")),
     ("smime", include_str!("../../lisp/smime.el")),
     ("smtpmail", include_str!("../../lisp/smtpmail.el")),
@@ -1949,7 +1955,7 @@ static EMBEDDED_LISP: &[(&str, &str)] = &[
     ("srecode/texi", include_str!("../../lisp/srecode-texi.el")),  // GNU srecode/texi
     ("srecode", include_str!("../../lisp/srecode.el")),
     ("subdirs", include_str!("../../lisp/subdirs.el")),
-    ("subr", include_str!("../../lisp/subr.el")),  // not in GNU tree (adapted/remacs-specific)
+    ("subr", include_str!("../../lisp/subr.el")),
     ("system-sleep", include_str!("../../lisp/system-sleep.el")),
     ("system-taskbar", include_str!("../../lisp/system-taskbar.el")),
     ("term", include_str!("../../lisp/term.el")),  // not in GNU tree (adapted/remacs-specific)

@@ -19,10 +19,13 @@ subdirectories — name collisions were resolved by renaming:
 - `etc/themes/*.el` — the 25 built-in themes referenced by
   `lisp/theme-loaddefs.el`.
 
-Core GNU files intentionally **not** ported (folded into prelude.el):
-bindings, button, custom, faces, files, font-lock, frame, help, indent,
-isearch, jit-lock, keymap, menu-bar, minibuffer, mwheel, simple, startup,
-subr (stub only), window. Also skipped: `.dir-locals.el`, `ldefs-boot.el`
+All core GNU files are now ported byte-identically — including the
+ones that used to be folded into `src/lisp/prelude.el` (bindings,
+button, custom, faces, files, font-lock, frame, help, indent, isearch,
+jit-lock, keymap, menu-bar, minibuffer, mwheel, simple, startup, subr,
+window).  The prelude's own folded definitions still drive init; the
+real files resolve `(require ...)`/`load` through EMBEDDED_LISP.
+Skipped: `.dir-locals.el`, `ldefs-boot.el`
 (loaddefs.el is already generated for remacs).
 
 ## EMBEDDED_LISP registration (done — regenerate with tools/gen_embedded.py)
