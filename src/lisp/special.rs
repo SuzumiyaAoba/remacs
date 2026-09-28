@@ -45,7 +45,6 @@ pub fn special_form(id: SymId) -> Option<SpecialFn> {
         sym::WITH_CURRENT_BUFFER => sf_with_current_buffer,
         sym::SAVE_RESTRICTION => sf_save_restriction,
         sym::TRACK_MOUSE => sf_progn,
-        sym::PROGV => sf_progv,
         sym::BACKQUOTE => sf_backquote,
         _ => return None,
     })
@@ -71,7 +70,6 @@ pub fn special_form_min_args(id: SymId) -> u16 {
         | sym::DEFUN
         | sym::DEFMACRO
         | sym::CONDITION_CASE
-        | sym::PROGV
         // GNU DEFUN's min covers DEFCONST too (SYMBOL INITVALUE).
         | sym::DEFCONST => 2,
         _ => 0,
@@ -227,7 +225,10 @@ fn sf_prog2(i: &mut Interp, args: Value) -> EvalResult {
     Ok(second)
 }
 
-fn sf_progv(i: &mut Interp, args: Value) -> EvalResult {
+/// `progv' stays out of `special_form': GNU has no Fprogv subr —
+/// `eval_sub' dispatches on the bare symbol, so `fboundp',
+/// `special-form-p' and `func-arity' all see a void function cell.
+pub(crate) fn sf_progv(i: &mut Interp, args: Value) -> EvalResult {
     // GNU Fprogv: eval SYMBOLS and VALUES, then dynamically bind each
     // symbol to its value while evaluating BODY.  More values than
     // symbols are ignored; missing values bind nil.  The bindings are

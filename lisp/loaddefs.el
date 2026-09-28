@@ -21182,6 +21182,29 @@ or call the function `cl-old-struct-compat-mode'.")
 
 (custom-autoload 'cl-old-struct-compat-mode "cl-lib" nil)
 
+(autoload 'cl-old-struct-compat-mode "cl-lib"
+"Enable backward compatibility with old-style structs.
+
+This can be needed when using code byte-compiled using the old
+macro-expansion of `cl-defstruct' that used vectors objects instead
+of record objects.
+
+This is a global minor mode.  If called interactively, toggle the
+`Cl-Old-Struct-Compat mode' mode.  If the prefix argument is positive,
+enable the mode, and if it is zero or negative, disable the mode.
+
+If called from Lisp, toggle the mode if ARG is `toggle'.  Enable the
+mode if ARG is nil, omitted, or is a positive number.  Disable the mode
+if ARG is a negative number.
+
+To check whether the minor mode is enabled in the current buffer,
+evaluate `(default-value \\='cl-old-struct-compat-mode)'.
+
+The mode's hook is called both when the mode is enabled and when it is
+disabled.
+
+(fn &optional ARG)" t)
+
 (defvar compilation-mode-hook nil
 "List of hook functions run by `compilation-mode'.")
 
