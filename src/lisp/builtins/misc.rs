@@ -150,10 +150,7 @@ pub(crate) static SUBRS: &[Subr] = &[
         f_flush_stdout,
         "Flush stdout."
     ),
-    S!(
-        "encode-time",
-        0,
-        9,
+    S!("encode-time", many 1,
         f_encode_time,
         "Convert time components to Lisp time."
     ),
@@ -175,9 +172,7 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!("time-less-p", 2, 2, f_time_less_p, "t if TIME1 < TIME2."),
     S!("time-equal-p", 2, 2, f_time_equal_p, "t if TIME1 == TIME2."),
     S!(
-        "time-convert",
-        1,
-        3,
+        "time-convert", 1, 2,
         f_time_convert,
         "Convert TIME to FORM ticks."
     ),
@@ -199,9 +194,7 @@ pub(crate) static SUBRS: &[Subr] = &[
         "Program directory."
     ),
     S!(
-        "internal--build-binding",
-        2,
-        3,
+        "internal--build-binding", 2, 2,
         f_build_binding,
         "Make a binding object."
     ),
@@ -235,9 +228,7 @@ pub(crate) static SUBRS: &[Subr] = &[
         "Base64 encode STRING."
     ),
     S!(
-        "base64-decode-string",
-        1,
-        2,
+        "base64-decode-string", 1, 3,
         f_b64_decode_string,
         "Base64 decode STRING."
     ),
@@ -426,9 +417,7 @@ pub(crate) static SUBRS: &[Subr] = &[
         "t if THREAD is alive (not yet joined)."
     ),
     S!(
-        "make-thread",
-        1,
-        2,
+        "make-thread", 1, 3,
         f_make_thread,
         "Run FUNCTION in a new thread named NAME."
     ),
@@ -441,9 +430,7 @@ pub(crate) static SUBRS: &[Subr] = &[
     ),
     S!("thread-yield", 0, 0, f_nil, "Yield to other threads."),
     S!(
-        "thread-last-error",
-        0,
-        0,
+        "thread-last-error", 0, 1,
         f_thread_last_error,
         "Last error form recorded by a thread."
     ),
@@ -506,9 +493,7 @@ pub(crate) static SUBRS: &[Subr] = &[
         "Suffixes tried by `load'."
     ),
     S!(
-        "num-processors",
-        0,
-        0,
+        "num-processors", 0, 1,
         f_num_processors,
         "Number of available processors."
     ),
@@ -600,9 +585,7 @@ pub(crate) static SUBRS: &[Subr] = &[
         "Execute registered CCL-PROG with registers STATUS."
     ),
     S!(
-        "ccl-execute-on-string",
-        3,
-        4,
+        "ccl-execute-on-string", 3, 5,
         f_ccl_execute_on_string,
         "Execute CCL-PROG on STRING with registers STATUS."
     ),
@@ -778,7 +761,7 @@ pub(crate) static SUBRS: &[Subr] = &[
     ),
     S!("cl-type-of", 1, 1, f_cl_type_of, ""),
     S!("bool-vector-p", 1, 1, f_bool_vector_p, ""),
-    S!("record", many 0, f_record, "Create a record of TYPE with SLOTS."),
+    S!("record", many 1, f_record, "Create a record of TYPE with SLOTS."),
     S!("recordp", 1, 1, f_recordp, "t if OBJECT is a record."),
     S!("make-bool-vector", 2, 2, f_make_bool_vector, ""),
     S!("bool-vector-length", 1, 1, f_bool_vector_length, ""),
@@ -844,7 +827,7 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!("command-line", 0, 0, f_command_line, ""),
     S!("minibuffer-depth", 0, 0, f_minibuffer_depth, ""),
     S!("detect-coding-string", 1, 2, f_detect_coding_string, ""),
-    S!("detect-coding-region", 1, 3, f_detect_coding_region, ""),
+    S!("detect-coding-region", 2, 3, f_detect_coding_region, ""),
     S!("coding-system-list", 0, 1, f_coding_system_list, ""),
     S!("coding-system-p", 1, 1, f_coding_system_p, ""),
     S!("check-coding-system", 1, 1, f_check_coding_system, ""),
@@ -867,9 +850,9 @@ pub(crate) static SUBRS: &[Subr] = &[
     // exist only as variables, not functions.
     S!("encode-coding-string", 2, 4, f_encode_coding_string, ""),
     S!("decode-coding-string", 2, 4, f_decode_coding_string, ""),
-    S!("encode-coding-char", 1, 3, f_encode_coding_char, ""),
-    S!("decode-coding-region", 2, 4, f_decode_coding_region, ""),
-    S!("encode-coding-region", 2, 4, f_encode_coding_region, ""),
+    S!("encode-coding-char", 2, 3, f_encode_coding_char, ""),
+    S!("decode-coding-region", 3, 4, f_decode_coding_region, ""),
+    S!("encode-coding-region", 3, 4, f_encode_coding_region, ""),
     S!(
         "check-coding-systems-region",
         3,
@@ -924,7 +907,7 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!("xw-display-color-p", 0, 1, f_ns_display, ""),
     S!("xw-color-defined-p", 1, 2, f_xw_color_defined_p, ""),
     S!("color-gray-p", 1, 2, f_color_gray_p, ""),
-    S!("color-supported-p", 1, 2, f_color_defined_p, ""),
+    S!("color-supported-p", 1, 3, f_color_defined_p, ""),
     S!("invert-face", 1, 2, f_invert_face, ""),
     S!("clear-face-cache", 0, 1, f_nil, ""),
     // ---------- windows ----------
@@ -944,8 +927,8 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!("window-line", 0, 1, f_window_line, ""),
     S!("window-normalize-window", 1, 1, f_window_normalize, ""),
     S!("window-normalize-buffer", 1, 1, f_window_norm_buffer, ""),
-    S!("window-normalize-frame", 0, 1, f_window_norm_frame, ""),
-    S!("delete-windows-on", 0, 3, f_delete_windows_on, ""),
+    S!("window-normalize-frame", 1, 1, f_window_norm_frame, ""),
+    S!("delete-windows-on", 0, 2, f_delete_windows_on, ""),
     // `split-window-sensibly' is Lisp (GNU window.el) — see prelude.
     S!("window-child", 1, 1, f_window_valid_nil, ""),
     S!("window-child-count", 1, 1, f_window_valid_zero, ""),
@@ -963,13 +946,14 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!("window-main-window", 0, 1, f_window_main_window, ""),
     // `get-mru-window' lives in editor::winxtra with the real
     // use-time scan.
-    S!("get-window-with-predicate", 1, 3, f_get_window_pred, ""),
+    S!("get-window-with-predicate", 1, 4, f_get_window_pred, ""),
     // ---------- keymap ops ----------
     S!("suppress-keymap", 1, 2, f_suppress_keymap, ""),
     S!("make-composed-keymap", 1, 2, f_make_composed_keymap, ""),
     S!("current-active-maps", 0, 2, f_current_active_maps, ""),
     S!("keymap-canonicalize", 1, 1, f_keymap_canonicalize, ""),
-    S!("set-transient-map", 1, 3, f_set_transient_map, ""),
+    // `set-transient-map' is a Lisp defun (GNU subr.el → our
+    // lisp/subr-x.el) so KEEP-PRED/ON-EXIT/MESSAGE/TIMEOUT all work.
     // `text-mode-map' is a variable (keymap) in GNU, not a subr.
     // ---------- tables ----------
     // `buffer-display-table' is a buffer-local variable in GNU.
@@ -1107,9 +1091,7 @@ pub(crate) static SUBRS: &[Subr] = &[
         "Set the multibyte flag."
     ),
     S!(
-        "window-with-parameter",
-        1,
-        3,
+        "window-with-parameter", 1, 5,
         f_window_with_parameter,
         "Window whose PARAMETER is VALUE."
     ),
@@ -1125,9 +1107,7 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!("primitive-function-p", 1, 1, f_primitive_function_p, ""),
     S!("setenv-internal", 4, 4, f_setenv_internal, ""),
     S!(
-        "read--expression",
-        0,
-        2,
+        "read--expression", 1, 2,
         f_read_expression,
         "Read one form."
     ),
@@ -1172,8 +1152,8 @@ pub(crate) static SUBRS: &[Subr] = &[
         ""
     ),
     S!("scroll-bar-scale", 2, 2, f_scroll_bar_scale, ""),
-    S!("popup-menu", 1, 2, f_popup_menu, ""),
-    S!("set-frame-font", 1, 3, f_set_frame_font, ""),
+    S!("popup-menu", 1, 4, f_popup_menu, ""),
+    S!("set-frame-font", 1, 4, f_set_frame_font, ""),
     S!(
         "set-keyboard-coding-system",
         1,
@@ -1195,16 +1175,12 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!("default-font-width", 0, 0, f_one, "Char cell width."),
     S!("default-font-height", 0, 0, f_one, "Char cell height."),
     S!(
-        "window-font-width",
-        0,
-        1,
+        "window-font-width", 0, 2,
         f_window_font_metric,
         "Char cell width."
     ),
     S!(
-        "window-font-height",
-        0,
-        1,
+        "window-font-height", 0, 2,
         f_window_font_metric,
         "Char cell height."
     ),
@@ -1231,7 +1207,7 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!("font-face-attributes", 1, 2, f_font_face_attributes, ""),
     S!("font-spec", many 0, f_font_spec, ""),
     S!("face-name", 1, 1, f_face_name, ""),
-    S!("face-font", 1, 2, f_face_font, ""),
+    S!("face-font", 1, 3, f_face_font, ""),
     S!("face-documentation", 1, 1, f_face_documentation, ""),
     S!(
         "face-attributes-as-vector",
@@ -4983,7 +4959,7 @@ fn f_modify_category_entry(i: &mut Interp, a: Vec<Value>) -> EvalResult {
             e += 1;
         }
         let mut bits = vec![false; 128];
-        if !reset {
+        if !reset && is_bool_vector(i, &old) {
             if let Ok(b) = bool_vec_of(i, &old) {
                 for (k, v) in b.iter().enumerate() {
                     if k < 128 {
@@ -9532,14 +9508,6 @@ fn f_current_active_maps(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     Ok(Value::list(maps))
 }
 
-fn f_set_transient_map(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    if !is_keymap(i, &a[0]) {
-        return Err(i.wrong_type_mut("keymapp", &a[0]));
-    }
-    let sid = i.intern("overriding-terminal-local-map");
-    let _ = i.set_symbol(sid, a[0].clone());
-    Ok(Value::Nil)
-}
 
 // ---------- char tables (GNU chartab.c trie: 64/16/32/128)
 

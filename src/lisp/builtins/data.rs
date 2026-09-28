@@ -4,7 +4,8 @@ use super::{S, arg, eq_values, equal_values, want_sym};
 use crate::lisp::Interp;
 use crate::lisp::error::{EvalResult, Flow};
 use crate::lisp::obarray::sym;
-use crate::lisp::value::{Subr, Value};
+use crate::lisp::value::{Lambda, Subr, Value};
+use std::rc::Rc;
 
 pub(crate) static SUBRS: &[Subr] = &[
     S!(
@@ -72,9 +73,7 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!("seqp", 1, 1, f_sequencep, "t if OBJECT is a sequence."),
     S!("booleanp", 1, 1, f_booleanp, "t if OBJECT is t or nil."),
     S!(
-        "characterp",
-        1,
-        1,
+        "characterp", 1, 2,
         f_characterp,
         "t if OBJECT is a character."
     ),
@@ -189,16 +188,12 @@ pub(crate) static SUBRS: &[Subr] = &[
         "Toplevel default value of SYMBOL."
     ),
     S!(
-        "buffer-local-toplevel-value",
-        1,
-        1,
+        "buffer-local-toplevel-value", 1, 2,
         f_buffer_local_toplevel_value,
         "Toplevel buffer-local value of SYMBOL."
     ),
     S!(
-        "set-buffer-local-toplevel-value",
-        2,
-        2,
+        "set-buffer-local-toplevel-value", 2, 3,
         f_set_buffer_local_toplevel_value,
         "Set SYMBOL's toplevel buffer-local value."
     ),
@@ -209,7 +204,7 @@ pub(crate) static SUBRS: &[Subr] = &[
         f_internal_subr_documentation,
         "Docstring of a primitive subr."
     ),
-    S!("defvar-1", 1, 3, f_defvar_1, "Internal defvar helper."),
+    S!("defvar-1", 2, 3, f_defvar_1, "Internal defvar helper."),
     S!(
         "internal--define-uninitialized-variable",
         1,
@@ -369,9 +364,7 @@ pub(crate) static SUBRS: &[Subr] = &[
     ),
     S!("obarrayp", 1, 1, f_obarrayp, "t if OBJECT is an obarray."),
     S!(
-        "obarray-clear",
-        0,
-        1,
+        "obarray-clear", 1, 1,
         f_obarray_clear,
         "Remove all symbols from OBARRAY."
     ),
@@ -813,6 +806,12 @@ fn f_indirect_variable(i: &mut Interp, args: Vec<Value>) -> EvalResult {
 fn f_makunbound(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     let id = want_sym(i, &args[0])?;
     let id = i.var_alias_target(id);
+    if std::env::var_os("WATCH_MAKUNBOUND").is_some() {
+        let name = i.symbol_name(id);
+        if std::env::var("WATCH_MAKUNBOUND").unwrap().split(',').any(|w| w == name) {
+            eprintln!("[makunbound] {}\n{}", name, std::backtrace::Backtrace::capture());
+        }
+    }
     // GNU refuses to unbind C-backed variables.
     if i.obarray.symbol(id).builtin_variable {
         return Err(i.error(format!(
@@ -1268,7 +1267,11 @@ fn f_interactive_form(i: &mut Interp, args: Vec<Value>) -> EvalResult {
             }
         }
         _ => match f.as_lambda() {
-            Some(l) => Ok(l.interactive.clone().unwrap_or(Value::Nil)),
+            Some(l) => Ok(l
+                .interactive
+                .clone()
+                .or_else(|| bc_interactive_form(i, &l))
+                .unwrap_or(Value::Nil)),
             // GNU scans the body of a `(lambda ...)'/`(closure ...)'
             // /`(macro . (lambda ...))' form: docstring and `declare'
             // /`interactive-declare' elements are skipped and the first
@@ -1276,6 +1279,21 @@ fn f_interactive_form(i: &mut Interp, args: Vec<Value>) -> EvalResult {
             None => Ok(interactive_form_list(i, &f)),
         },
     }
+}
+
+/// The `(interactive SPEC)' form of a `#[argdesc str consts depth
+/// doc ispec]' byte-code object — GNU stores the interactive spec as
+/// element 5 (Ffetch_bytecode / `interactive-form' read it from there).
+pub(crate) fn bc_interactive_form(i: &mut Interp, l: &Rc<Lambda>) -> Option<Value> {
+    let items = l.bc_items.as_ref()?.borrow();
+    let spec = items.get(5)?;
+    if spec.is_nil() {
+        return None;
+    }
+    Some(Value::list(vec![
+        Value::Sym(i.intern("interactive")),
+        spec.clone(),
+    ]))
 }
 
 /// `interactive-form' over a cons-shaped function (unevaluated

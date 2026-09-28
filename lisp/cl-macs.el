@@ -121,6 +121,15 @@ Thus, `(cl-list* A B C D)' is equivalent to `(nconc (list A B C) D)', or to
       (setq form `(cons ,(car args) ,form)))
     form))
 
+;; GNU cl-macs.el: compiler macro for `cl-adjoin' (the
+;; `cl-define-compiler-macro' source form is only expanded at
+;; byte-compile time in GNU, so the property is installed
+;; separately).
+(defun cl--compiler-macro-adjoin (form a list &rest keys)
+  (if (memq :key keys) form
+    (macroexp-let2* macroexp-copyable-p ((va a) (vlist list))
+      `(if (cl-member ,va ,vlist ,@keys) ,vlist (cons ,va ,vlist)))))
+
 ;;; Aliases (GNU cl-lib.el / cl-macs.el).
 
 (defalias 'cl-values #'list)

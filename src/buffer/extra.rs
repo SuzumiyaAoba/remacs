@@ -9,9 +9,7 @@ use crate::lisp::value::{Subr, Value};
 
 pub(crate) static SUBRS: &[Subr] = &[
     S!(
-        "current-indentation",
-        0,
-        1,
+        "current-indentation", 0, 0,
         f_current_indentation,
         "Column of first nonblank char."
     ),
@@ -142,9 +140,7 @@ pub(crate) static SUBRS: &[Subr] = &[
         "Transpose two regions."
     ),
     S!(
-        "subst-char-in-region",
-        4,
-        4,
+        "subst-char-in-region", 4, 5,
         f_subst_char_in_region,
         "Replace FROMCHAR with TOCHAR in region."
     ),
@@ -199,9 +195,7 @@ pub(crate) static SUBRS: &[Subr] = &[
         "Set match data from LIST."
     ),
     S!(
-        "match-data--translate",
-        2,
-        2,
+        "match-data--translate", 1, 1,
         f_nil2,
         "Adjust match data (no-op)."
     ),
@@ -213,11 +207,9 @@ pub(crate) static SUBRS: &[Subr] = &[
         "Start of field at POS."
     ),
     S!("field-end", 0, 3, f_field_end, "End of field at POS."),
-    S!("field-string", 0, 2, f_field_string, "Field text at POS."),
+    S!("field-string", 0, 1, f_field_string, "Field text at POS."),
     S!(
-        "field-string-no-properties",
-        0,
-        2,
+        "field-string-no-properties", 0, 1,
         f_field_string,
         "Field text (no props)."
     ),
@@ -237,16 +229,12 @@ pub(crate) static SUBRS: &[Subr] = &[
         "Prop + overlay at POS."
     ),
     S!(
-        "next-char-property-change",
-        1,
-        3,
+        "next-char-property-change", 1, 2,
         f_next_prop_change_fwd,
         "Next position where any prop changes."
     ),
     S!(
-        "previous-char-property-change",
-        1,
-        3,
+        "previous-char-property-change", 1, 2,
         f_prev_prop_change,
         "Previous prop boundary."
     ),
@@ -258,16 +246,12 @@ pub(crate) static SUBRS: &[Subr] = &[
         "Last known position of MARKER."
     ),
     S!(
-        "compute-motion",
-        6,
-        7,
+        "compute-motion", 7, 7,
         f_compute_motion,
         "Compute motion to TO (simplified)."
     ),
     S!(
-        "vertical-motion",
-        1,
-        4,
+        "vertical-motion", 1, 3,
         f_vertical_motion,
         "Move point LINES lines."
     ),
@@ -279,9 +263,7 @@ pub(crate) static SUBRS: &[Subr] = &[
         "Pixel height of a line (1 col)."
     ),
     S!(
-        "window-line-height",
-        0,
-        3,
+        "window-line-height", 0, 2,
         f_win_line_height,
         "Height of line in window (1)."
     ),
@@ -307,9 +289,7 @@ pub(crate) static SUBRS: &[Subr] = &[
         "Base64-encode region."
     ),
     S!(
-        "base64-decode-region",
-        2,
-        3,
+        "base64-decode-region", 2, 4,
         f_b64_decode_region,
         "Base64-decode region."
     ),
@@ -372,9 +352,7 @@ pub(crate) static SUBRS: &[Subr] = &[
         "Translate chars in START..END through TABLE (a string)."
     ),
     S!(
-        "buffer-line-statistics",
-        0,
-        0,
+        "buffer-line-statistics", 0, 1,
         f_buffer_line_statistics,
         "Return (LINES LONGEST-LINE MEAN-LINE-LENGTH) for the buffer."
     ),

@@ -691,6 +691,11 @@ fn f_library_abi_version(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 }
 
 fn f_language_abi_version(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    // GNU: LANGUAGE nil → the latest ABI version this tree-sitter
+    // runtime supports.
+    if arg(&a, 0).is_nil() {
+        return Ok(Value::Int(tree_sitter::LANGUAGE_VERSION as i128));
+    }
     let lang = want_sym(i, &a[0])?;
     match load_language(i, lang) {
         Ok(l) => {
@@ -2936,9 +2941,7 @@ pub(crate) static SUBRS: &[Subr] = &[
         "ABI version of the tree-sitter library."
     ),
     S!(
-        "treesit-language-abi-version",
-        1,
-        2,
+        "treesit-language-abi-version", 0, 1,
         f_language_abi_version,
         "ABI version of LANGUAGE's grammar."
     ),

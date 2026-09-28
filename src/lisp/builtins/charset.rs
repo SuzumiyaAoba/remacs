@@ -2037,16 +2037,12 @@ pub(crate) static SUBRS: &[Subr] = &[
         "Charset of char after POS."
     ),
     S!(
-        "find-charset-string",
-        1,
-        1,
+        "find-charset-string", 1, 2,
         f_find_charset_string,
         "Charsets needed for STRING."
     ),
     S!(
-        "find-charset-region",
-        0,
-        2,
+        "find-charset-region", 2, 3,
         f_find_charset_region,
         "Charsets needed for region."
     ),
@@ -2136,9 +2132,7 @@ pub(crate) static SUBRS: &[Subr] = &[
         "Set keyboard coding system."
     ),
     S!(
-        "find-coding-systems-region-internal",
-        2,
-        2,
+        "find-coding-systems-region-internal", 2, 3,
         f_find_coding_systems_region_internal,
         "Coding systems covering region."
     ),

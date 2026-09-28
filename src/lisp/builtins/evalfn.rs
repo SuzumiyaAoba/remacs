@@ -44,7 +44,7 @@ pub(crate) static SUBRS: &[Subr] = &[
     ),
     S!(
         "signal",
-        2,
+        1,
         2,
         f_signal,
         "Signal an error (ERROR-SYMBOL . DATA)."
@@ -243,9 +243,7 @@ pub(crate) static SUBRS: &[Subr] = &[
         "Run BODY with condition handlers bound (see `handler-bind')."
     ),
     S!(
-        "access-file",
-        1,
-        2,
+        "access-file", 2, 2,
         f_access_file,
         "Access FILENAME for reading; signal `file-missing' on failure."
     ),
@@ -285,9 +283,7 @@ pub(crate) static SUBRS: &[Subr] = &[
         "t if called interactively."
     ),
     S!(
-        "funcall-with-delayed-message",
-        2,
-        2,
+        "funcall-with-delayed-message", 3, 3,
         f_funcall_with_delayed_message,
         "Call FUNCTION, show message."
     ),
@@ -333,7 +329,7 @@ pub(crate) static SUBRS: &[Subr] = &[
         f_sleep_for,
         "Sleep SECONDS (+ MILLISECONDS)."
     ),
-    S!("sit-for", 1, 3, f_sit_for, "Wait SECONDS or until input."),
+    S!("sit-for", 1, 2, f_sit_for, "Wait SECONDS or until input."),
     S!(
         "current-time",
         0,
@@ -342,9 +338,7 @@ pub(crate) static SUBRS: &[Subr] = &[
         "Current time as (HIGH LOW USEC PSEC)."
     ),
     S!(
-        "current-time-string",
-        0,
-        1,
+        "current-time-string", 0, 2,
         f_current_time_string,
         "Current time as a string."
     ),
@@ -412,7 +406,7 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!("system-name", 0, 0, f_system_name, "Host name."),
     S!("emacs-version", 0, 0, f_emacs_version, "Version string."),
     S!("emacs-build-time", 0, 0, f_emacs_build_time, "Build time."),
-    S!("set-message-functions", 0, 0, f_noop, ""),
+    S!("set-message-functions", 1, 1, f_noop, ""),
     S!("set-fill-prefix", 0, 0, f_noop, ""),
     S!(
         "internal-make-interpreted-closure-function",
@@ -457,7 +451,7 @@ pub(crate) static SUBRS: &[Subr] = &[
         f_byte_code,
         "Execute byte code (not supported — eval form)."
     ),
-    S!("make-byte-code", many 0, f_make_byte_code, "Make byte-code object (stub lambda)."),
+    S!("make-byte-code", many 4, f_make_byte_code, "Make byte-code object (stub lambda)."),
     S!(
         "subr-native-lambda-list",
         1,
@@ -912,8 +906,11 @@ pub(crate) fn macroexpand_all(i: &mut Interp, form: &Value) -> EvalResult {
                 return Ok(expanded);
             }
             // Rebuild with expanded elements; improper lists pass
-            // through unexpanded rather than failing.
-            let items = match want_list(i, &expanded) {
+            // through unexpanded rather than failing.  (Plain
+            // `list_to_vec' — `want_list' builds a `listp' signal that
+            // is only discarded here, which also pollutes the
+            // REMACS_BT_ERR log.)
+            let items = match expanded.list_to_vec() {
                 Ok(v) => v,
                 Err(_) => return Ok(expanded),
             };
@@ -1330,7 +1327,11 @@ fn f_signal(i: &mut Interp, args: Vec<Value>) -> EvalResult {
             ));
         }
     }
-    Err(Flow::Signal(args[0].clone(), args[1].clone(), false))
+    Err(Flow::Signal(
+        args[0].clone(),
+        arg(&args, 1),
+        false,
+    ))
 }
 
 fn f_error(i: &mut Interp, args: Vec<Value>) -> EvalResult {

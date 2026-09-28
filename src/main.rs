@@ -12,6 +12,18 @@ use remacs::lisp::{Flow, Interp, OutputSink, Value};
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
+    // GNU sets its `noninteractive' flag during main()'s argv scan —
+    // before the interpreter is initialized — so init-time code like
+    // `global-font-lock-mode''s `:init-value (not noninteractive)'
+    // already sees the batch state.  Carry it to `Interp::new'.
+    if args
+        .iter()
+        .any(|a| matches!(a.as_str(), "--batch" | "-batch" | "--script"))
+    {
+        // SAFETY: set before Interp::new spawns work; the value is
+        // only read during startup on this same thread anyway.
+        unsafe { std::env::set_var("REMACS_NONINTERACTIVE", "1") };
+    }
     // Deep Lisp recursion (eager macroexpansion of nested backquotes
     // in e.g. transient.el) overflows the default thread stack; GNU's
     // C eval frames are far smaller.  Batch and terminal sessions run

@@ -77,9 +77,7 @@ pub(crate) static SUBRS: &[Subr] = &[
         "Return or create buffer NAME."
     ),
     S!(
-        "generate-new-buffer",
-        1,
-        1,
+        "generate-new-buffer", 1, 2,
         f_generate_new_buffer,
         "Create a fresh buffer."
     ),
@@ -108,9 +106,7 @@ pub(crate) static SUBRS: &[Subr] = &[
     ),
     S!("set-buffer", 1, 1, f_set_buffer, "Make BUFFER current."),
     S!(
-        "rename-buffer",
-        0,
-        2,
+        "rename-buffer", 1, 2,
         f_rename_buffer,
         "Rename current buffer."
     ),
@@ -129,9 +125,7 @@ pub(crate) static SUBRS: &[Subr] = &[
         "Move BUFFER-OR-NAME to the end of the buffer list."
     ),
     S!(
-        "unbury-buffer",
-        0,
-        1,
+        "unbury-buffer", 0, 0,
         f_unbury_buffer,
         "Last buffer in the list."
     ),
@@ -186,15 +180,13 @@ pub(crate) static SUBRS: &[Subr] = &[
     ),
     S!(
         "clone-indirect-buffer",
-        1,
         2,
+        3,
         f_clone_indirect_buffer,
         "Create an indirect buffer cloning the current buffer."
     ),
     S!(
-        "clone-buffer",
-        0,
-        1,
+        "clone-buffer", 0, 2,
         f_clone_buffer,
         "Create a clone of the current buffer."
     ),
@@ -472,9 +464,7 @@ pub(crate) static SUBRS: &[Subr] = &[
         "Line number of POSITION."
     ),
     S!(
-        "count-lines",
-        2,
-        2,
+        "count-lines", 2, 3,
         f_count_lines,
         "Lines between START and END."
     ),
@@ -569,23 +559,17 @@ pub(crate) static SUBRS: &[Subr] = &[
     ),
     S!("newline", 0, 2, f_newline, "Insert a newline."),
     S!(
-        "open-line",
-        0,
-        1,
+        "open-line", 1, 1,
         f_open_line,
         "Insert newline without moving point."
     ),
     S!(
-        "delete-char",
-        0,
-        2,
+        "delete-char", 1, 2,
         f_delete_char,
         "Delete N chars after point."
     ),
     S!(
-        "delete-backward-char",
-        0,
-        2,
+        "delete-backward-char", 1, 2,
         f_delete_backward_char,
         "Delete N chars before point."
     ),
@@ -633,16 +617,12 @@ pub(crate) static SUBRS: &[Subr] = &[
     ),
     S!("erase-buffer", 0, 0, f_erase_buffer, "Delete all text."),
     S!(
-        "kill-region",
-        2,
-        2,
+        "kill-region", 2, 3,
         f_kill_region,
         "Kill text between START and END."
     ),
     S!(
-        "append-next-kill",
-        0,
-        0,
+        "append-next-kill", 0, 1,
         f_append_next_kill,
         "Make the next kill append to the last kill-ring entry."
     ),
@@ -699,7 +679,7 @@ pub(crate) static SUBRS: &[Subr] = &[
         "Whole accessible text."
     ),
     S!("buffer-word-at-point", 0, 0, f_word_at_point, ""),
-    S!("current-word", 0, 3, f_current_word, "Word at point."),
+    S!("current-word", 0, 2, f_current_word, "Word at point."),
     // `thing-at-point', `bounds-of-thing-at-point', `symbol-at-point'
     // and `word-at-point' live in thingatpt.el (autoloaded in GNU);
     // registered as autoloads in the prelude.
@@ -1029,7 +1009,7 @@ pub(crate) static SUBRS: &[Subr] = &[
         f_make_marker,
         "Create a marker pointing nowhere."
     ),
-    S!("copy-marker", 1, 2, f_copy_marker, "Copy MARKER."),
+    S!("copy-marker", 0, 2, f_copy_marker, "Copy MARKER."),
     S!(
         "set-marker",
         2,
@@ -1178,8 +1158,8 @@ pub(crate) static SUBRS: &[Subr] = &[
         f_regexp_quote,
         "Quote STRING for literal regexp match."
     ),
-    S!("posix-looking-at", 1, 1, f_looking_at, ""),
-    S!("posix-string-match", 2, 3, f_string_match, ""),
+    S!("posix-looking-at", 1, 2, f_looking_at, ""),
+    S!("posix-string-match", 2, 4, f_string_match, ""),
     S!("posix-search-forward", 1, 4, f_re_search_forward, ""),
     S!("posix-search-backward", 1, 4, f_re_search_backward, ""),
     S!("word-search-forward", 1, 4, f_search_forward, ""),
@@ -1291,7 +1271,7 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!("activate-change-group", 0, 0, f_noop, ""),
     S!("accept-change-group", 1, 1, f_accept_change_group, ""),
     S!("handle-change-group", 0, 0, f_noop, ""),
-    S!("undo-outer-limit-truncate", 0, 0, f_noop, ""),
+    S!("undo-outer-limit-truncate", 1, 1, f_noop, ""),
     // --- gap/position misc ---
     S!(
         "gap-position",
@@ -1315,18 +1295,14 @@ pub(crate) static SUBRS: &[Subr] = &[
         f_byte_to_position,
         "Char position from byte."
     ),
-    S!("max-char", 0, 0, f_max_char, "Max character code."),
+    S!("max-char", 0, 1, f_max_char, "Max character code."),
     S!(
-        "barf-if-buffer-read-only",
-        0,
-        2,
+        "barf-if-buffer-read-only", 0, 1,
         f_barf_if_buffer_read_only,
         "Signal if read-only."
     ),
     S!(
-        "verify-visited-file-modtime",
-        1,
-        1,
+        "verify-visited-file-modtime", 0, 1,
         f_verify_visited_file_modtime,
         "t if last mod time of BUF's visited file matches what BUF records."
     ),
@@ -2658,6 +2634,8 @@ fn f_local_variable_if_set_p(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 
 fn f_default_value(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let sid = want_sym(i, &a[0])?;
+    // Follow `defvaralias' chains like GNU's find_symbol_value.
+    let sid = i.var_alias_target(sid);
     // GNU's `default-value' signals void-variable for a var without a
     // default binding — the internal UNBOUND marker must not escape.
     match i.obarray.symbol(sid).value {
@@ -2670,12 +2648,14 @@ fn f_default_value(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 
 fn f_set_default(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let sid = want_sym(i, &a[0])?;
+    let sid = i.var_alias_target(sid);
     i.set_symbol_default(sid, a[1].clone())?;
     Ok(a[1].clone())
 }
 
 fn f_default_boundp(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let sid = want_sym(i, &a[0])?;
+    let sid = i.var_alias_target(sid);
     Ok(Value::from_bool(!matches!(
         i.obarray.symbol(sid).value,
         Value::Sym(s) if s == sym::UNBOUND
@@ -7294,6 +7274,20 @@ fn f_make_marker(_i: &mut Interp, _a: Vec<Value>) -> EvalResult {
 }
 
 fn f_copy_marker(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    // GNU: MARKER nil/omitted → a fresh marker at point in the
+    // current buffer.
+    if arg(&a, 0).is_nil() {
+        let b = cur(i);
+        let pos = b.borrow().point;
+        let insertion_type = arg(&a, 1).truthy();
+        let r = Rc::new(RefCell::new(Marker {
+            buffer: Some(b.borrow().id),
+            position: pos,
+            insertion_type,
+        }));
+        b.borrow_mut().register_marker(&r);
+        return Ok(Value::Marker(r));
+    }
     match &a[0] {
         Value::Marker(m) => {
             let mm = m.borrow();

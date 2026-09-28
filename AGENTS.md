@@ -62,7 +62,9 @@ Registration rules:
   EMBEDDED_LISP note above) are now UTF-8 transcodes — readable by
   `insert-file-contents`, but with U+FFFD where GNU stored
   private-plane chars; not byte-identical to GNU.
-- `byte-opt` "lambda used as function name" warnings.
+- `byte-opt` "lambda used as function name" warnings (stale — no
+  longer emitted since the `equal`-on-`#[...]` fix; keep the note as
+  a canary: if the warning returns, suspect the constant-dedup path).
 - `xwidget-internal` unimplemented. NS/macOS GUI primitives are
   covered by `src/lisp/builtins/nsgui.rs` (see below). Native
   compilation is implemented in `src/lisp/builtins/comp.rs` (see

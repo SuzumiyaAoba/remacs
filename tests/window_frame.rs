@@ -80,15 +80,25 @@ fn split_and_delete() {
 
 #[test]
 fn window_resize() {
+    // GNU: the root window of a frame cannot be resized.
     assert_eq!(
-        ev("(progn (window-resize (selected-window) -4 nil)
-                  (window-height))"),
-        "20"
+        ev("(condition-case e (window-resize (selected-window) -4 nil)
+             (error (cadr e)))"),
+        "\"Cannot resize the root window of a frame\""
     );
+    // GNU -Q --batch: split halves 24→12, resize -4 → window-height 8.
     assert_eq!(
-        ev("(progn (window-resize (selected-window) -10 t)
+        ev("(progn (split-window)
+                  (window-resize (selected-window) -4 nil)
+                  (window-height))"),
+        "8"
+    );
+    // GNU -Q --batch: hsplit 80→40, resize -10 horizontal → width 29.
+    assert_eq!(
+        ev("(progn (split-window (selected-window) nil t)
+                  (window-resize (selected-window) -10 t)
                   (window-width))"),
-        "70"
+        "29"
     );
 }
 
@@ -111,6 +121,54 @@ fn minibuffer_window() {
     assert_eq!(
         ev("(buffer-name (window-buffer (minibuffer-window)))"),
         "\" *Minibuf-0*\""
+    );
+}
+
+#[test]
+fn get_buffer_window_list() {
+    // GNU 31.1 batch results: minibuffer window only counted when
+    // MINIBUF is t (or nil while the minibuffer is active); 'nomini
+    // never counts it.  Selected window comes first.
+    assert_eq!(
+        ev("(list (length (get-buffer-window-list (current-buffer)))
+                 (length (get-buffer-window-list (current-buffer) 'nomini t t))
+                 (length (get-buffer-window-list \" *Minibuf-0*\"))
+                 (length (get-buffer-window-list \" *Minibuf-0*\" t))
+                 (length (get-buffer-window-list \" *Minibuf-0*\" 'nomini))
+                 (length (get-buffer-window-list nil 'nomini (selected-frame)))
+                 (eq (car (get-buffer-window-list nil nil nil t))
+                     (selected-window)))"),
+        "(1 1 0 1 0 1 t)"
+    );
+    // `window-normalize-buffer' errors on dead/missing buffers.
+    assert_eq!(
+        ev("(condition-case e (progn (get-buffer-window-list \"no-such-xyz\")
+                                    :noerr)
+               (error (car e)))"),
+        "error"
+    );
+    assert_eq!(
+        ev("(let ((b (get-buffer-create \"gbwl-dead\")) v)
+              (setq v b) (kill-buffer b)
+              (condition-case e (progn (get-buffer-window-list v) :noerr)
+                  (error (car e))))"),
+        "error"
+    );
+    // INDIRECT: a window showing an indirect buffer counts for its
+    // base buffer's window list (and vice versa).
+    assert_eq!(
+        ev("(let ((base (current-buffer))
+                 (ind (make-indirect-buffer (current-buffer) \"gbwl-ind\")))
+              (set-window-buffer (selected-window) ind)
+              (prog1
+                  (list (eq (car (get-buffer-window-list
+                                    base 'nomini t t))
+                            (selected-window))
+                        (eq (car (get-buffer-window-list
+                                    ind 'nomini t t))
+                            (selected-window)))
+                (set-window-buffer (selected-window) base)))"),
+        "(t t)"
     );
 }
 

@@ -1149,7 +1149,7 @@ fn f_async_params(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     if let Value::Process(p) = &a[0] {
         let mut pb = p.borrow_mut();
         pb.gnutls_async_connected = a[1].clone();
-        pb.gnutls_async_signalled = a[2].clone();
+        pb.gnutls_async_signalled = arg(&a, 2);
     }
     Ok(Value::Nil)
 }
@@ -2493,9 +2493,7 @@ pub(crate) static SUBRS: &[crate::lisp::value::Subr] = &[
         "Return the GnuTLS init stage of PROCESS."
     ),
     S!(
-        "gnutls-asynchronous-parameters",
-        3,
-        3,
+        "gnutls-asynchronous-parameters", 2, 2,
         f_async_params,
         "Mark the result of the asynchronous GnuTLS negotiation."
     ),

@@ -33,7 +33,7 @@ fn to_num(v: &Value) -> Option<Num> {
 
 pub(crate) static SUBRS: &[Subr] = &[
     S!("+", many 0, f_plus, "Return sum of any number of arguments."),
-    S!("-", many 1, f_minus, "Negate number or subtract numbers."),
+    S!("-", many 0, f_minus, "Negate number or subtract numbers."),
     S!("*", many 0, f_times, "Return product of any number of arguments."),
     S!("/", many 1, f_div, "Divide numbers (integer division if all ints)."),
     S!("%", 2, 2, f_mod, "Return remainder of X divided by Y."),
@@ -149,7 +149,7 @@ pub(crate) static SUBRS: &[Subr] = &[
         f_frexp,
         "Split float into fraction and exponent (FRAC . EXP)."
     ),
-    S!("ldexp", 1, 2, f_ldexp, "SGNFCAND * 2**EXPONENT."),
+    S!("ldexp", 2, 2, f_ldexp, "SGNFCAND * 2**EXPONENT."),
     S!(
         "fround",
         1,
@@ -216,6 +216,10 @@ fn f_plus(i: &mut Interp, args: Vec<Value>) -> EvalResult {
 }
 
 fn f_minus(i: &mut Interp, args: Vec<Value>) -> EvalResult {
+    // GNU `Fminus': no arguments → 0.
+    if args.is_empty() {
+        return Ok(Value::Int(0));
+    }
     if args.len() == 1 {
         return match to_num(&args[0]) {
             Some(Num::I(n)) => n

@@ -12,7 +12,7 @@ use std::cell::RefCell;
 use std::io::{Read, Write};
 use std::rc::Rc;
 
-use super::builtins::S;
+use super::builtins::{S, arg};
 use super::builtins::evalfn::timer_check;
 use super::error::Flow;
 use super::eval::plist_get;
@@ -1931,7 +1931,8 @@ fn f_process_send_region(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 }
 
 fn f_process_send_eof(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let p = want_proc(i, &a[0])?;
+    // GNU: PROCESS nil/omitted → the process of the current buffer.
+    let p = want_proc(i, &arg(&a, 0))?;
     {
         let mut pb = p.borrow_mut();
         match &mut pb.io {
@@ -2086,7 +2087,8 @@ fn f_continue_process(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 }
 
 fn f_delete_process(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let p = want_proc(i, &a[0])?;
+    // GNU: PROCESS nil/omitted → the process of the current buffer.
+    let p = want_proc(i, &arg(&a, 0))?;
     let ev;
     {
         let mut pb = p.borrow_mut();
@@ -2569,9 +2571,7 @@ pub(crate) static SUBRS: &[Subr] = &[
         "List of live processes."
     ),
     S!(
-        "list-processes",
-        0,
-        1,
+        "list-processes", 0, 2,
         f_list_processes,
         "Show a process list buffer."
     ),
@@ -2636,7 +2636,7 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!(
         "process-contact",
         1,
-        2,
+        3,
         f_process_contact,
         "Contact info of PROCESS."
     ),
@@ -2711,9 +2711,7 @@ pub(crate) static SUBRS: &[Subr] = &[
         "Set process sentinel."
     ),
     S!(
-        "process-tty-name",
-        1,
-        1,
+        "process-tty-name", 1, 2,
         f_process_tty_name,
         "Controlling tty name or nil."
     ),
@@ -2802,23 +2800,17 @@ pub(crate) static SUBRS: &[Subr] = &[
         "Send region text to PROCESS."
     ),
     S!(
-        "process-send-eof",
-        1,
-        1,
+        "process-send-eof", 0, 1,
         f_process_send_eof,
         "Send EOF to PROCESS."
     ),
     S!(
-        "delete-process",
-        1,
-        1,
+        "delete-process", 0, 1,
         f_delete_process,
         "Delete PROCESS (kill if live)."
     ),
     S!(
-        "signal-process",
-        2,
-        2,
+        "signal-process", 2, 3,
         f_signal_process,
         "Send SIGNAL to process or pid."
     ),
@@ -2895,9 +2887,7 @@ pub(crate) static SUBRS: &[Subr] = &[
         "Alist of attributes of PID."
     ),
     S!(
-        "network-interface-list",
-        0,
-        0,
+        "network-interface-list", 0, 2,
         f_network_interface_list,
         "Network interfaces and addresses."
     ),

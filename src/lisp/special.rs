@@ -59,7 +59,6 @@ pub fn special_form_min_args(id: SymId) -> u16 {
         | sym::FUNCTION
         | sym::PROG1
         | sym::DEFVAR
-        | sym::DEFCONST
         | sym::LAMBDA
         | sym::WHILE
         | sym::CATCH
@@ -67,7 +66,14 @@ pub fn special_form_min_args(id: SymId) -> u16 {
         | sym::LET
         | sym::LET_STAR
         | sym::BACKQUOTE => 1,
-        sym::IF | sym::PROG2 | sym::DEFUN | sym::DEFMACRO | sym::CONDITION_CASE | sym::PROGV => 2,
+        sym::IF
+        | sym::PROG2
+        | sym::DEFUN
+        | sym::DEFMACRO
+        | sym::CONDITION_CASE
+        | sym::PROGV
+        // GNU DEFUN's min covers DEFCONST too (SYMBOL INITVALUE).
+        | sym::DEFCONST => 2,
         _ => 0,
     }
 }
@@ -548,14 +554,18 @@ fn sf_defvar(i: &mut Interp, args: Value) -> EvalResult {
         Some(s) => s,
         None => return Err(i.wrong_type_mut("symbolp", &name_v)),
     };
+    // GNU's defvar operates through `indirect-variable'.
+    let sid = i.var_alias_target(sid);
     let init = cadr(&args);
     let has_init = !cdr(&args).is_nil();
     if has_init {
         // `(defvar SYM INIT ...)': GNU marks the symbol permanently
         // special (`declared_special') and installs the default only if
-        // the var is currently void.
+        // the DEFAULT binding is currently void (Fdefvar_1 consults
+        // `default_bound_p', not `boundp' — a buffer-local binding in
+        // the current buffer must not suppress it).
         i.obarray.symbol_mut(sid).special = true;
-        if !i.bound_p(sid) {
+        if matches!(i.obarray.symbol(sid).value, Value::Sym(s) if s == sym::UNBOUND) {
             let v = i.eval(&init)?;
             i.set_symbol_default(sid, v)?;
         }

@@ -21835,6 +21835,25 @@ either customize it (see the info node `Easy Customization')
 or call the function `mouse-wheel-mode'.")
 
 (custom-autoload 'mouse-wheel-mode "mwheel" nil)
+(when (bound-and-true-p mouse-wheel-mode) (add-to-list 'global-minor-modes 'mouse-wheel-mode))
+(autoload 'mouse-wheel-mode "mwheel"
+"Toggle mouse wheel support (Mouse Wheel mode).
+
+This is a global minor mode.  If called interactively, toggle the
+`Mouse-Wheel mode' mode.  If the prefix argument is positive, enable the
+mode, and if it is zero or negative, disable the mode.
+
+If called from Lisp, toggle the mode if ARG is `toggle'.  Enable the
+mode if ARG is nil, omitted, or is a positive number.  Disable the mode
+if ARG is a negative number.
+
+To check whether the minor mode is enabled in the current buffer,
+evaluate `(default-value \\='mouse-wheel-mode)'.
+
+The mode's hook is called both when the mode is enabled and when it is
+disabled.
+
+(fn &optional ARG)" t)
 
 (custom-autoload 'package-enable-at-startup "package" t)
 
@@ -22115,6 +22134,7 @@ either customize it (see the info node `Easy Customization')
 or call the function `gpm-mouse-mode'.")
 
 (custom-autoload 'gpm-mouse-mode "t-mouse" nil)
+(when (bound-and-true-p gpm-mouse-mode) (add-to-list 'global-minor-modes 'gpm-mouse-mode))
 
 (defvar global-tab-line-mode nil
 "Non-nil if Global Tab-Line mode is enabled.
@@ -22323,6 +22343,25 @@ See the `windmove-mode' command
 for a description of this minor mode.")
 
 (custom-autoload 'windmove-mode "windmove" nil)
+(when (bound-and-true-p windmove-mode) (add-to-list 'global-minor-modes 'windmove-mode))
+(autoload 'windmove-mode "windmove"
+"Global minor mode for default windmove commands.
+
+This is a global minor mode.  If called interactively, toggle the
+`Windmove mode' mode.  If the prefix argument is positive, enable the
+mode, and if it is zero or negative, disable the mode.
+
+If called from Lisp, toggle the mode if ARG is `toggle'.  Enable the
+mode if ARG is nil, omitted, or is a positive number.  Disable the mode
+if ARG is a negative number.
+
+To check whether the minor mode is enabled in the current buffer,
+evaluate `(default-value \\='windmove-mode)'.
+
+The mode's hook is called both when the mode is enabled and when it is
+disabled.
+
+(fn &optional ARG)" t)
 
 (defvar global-window-tool-bar-mode nil
 "Non-nil if Global Window-Tool-Bar mode is enabled.

@@ -8,9 +8,7 @@ use crate::lisp::value::{Subr, Value};
 
 pub(crate) static SUBRS: &[Subr] = &[
     S!(
-        "prin1",
-        1,
-        2,
+        "prin1", 1, 3,
         f_prin1,
         "Print OBJECT readably to standard-output."
     ),
@@ -31,9 +29,7 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!("terpri", 0, 2, f_terpri, "Output a newline."),
     S!("write-char", 1, 2, f_write_char, "Output CHARACTER."),
     S!(
-        "prin1-to-string",
-        1,
-        2,
+        "prin1-to-string", 1, 3,
         f_prin1_to_string,
         "Return printed representation of OBJECT."
     ),

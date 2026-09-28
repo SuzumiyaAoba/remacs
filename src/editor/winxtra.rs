@@ -67,16 +67,14 @@ pub(crate) static SUBRS: &[Subr] = &[
         f_window_prev_buffers,
         "List of buffers previously shown in WINDOW."
     ),
-    S!("window-normal-size", 0, 3, f_one_f, "Normal size (1.0)."),
+    S!("window-normal-size", 0, 2, f_one_f, "Normal size (1.0)."),
     S!(
-        "window-new-total",
-        0,
-        2,
+        "window-new-total", 0, 1,
         f_window_height2,
         "Total lines after resize."
     ),
-    S!("window-new-normal", 0, 2, f_one_f, ""),
-    S!("window-new-pixel", 0, 2, f_window_height_px, ""),
+    S!("window-new-normal", 0, 1, f_one_f, ""),
+    S!("window-new-pixel", 0, 1, f_window_height_px, ""),
     S!(
         "window-old-point",
         0,
@@ -96,9 +94,7 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!("window-old-body-pixel-width", 0, 1, f_window_width_px, ""),
     S!("window-old-body-pixel-height", 0, 1, f_window_height_px, ""),
     S!(
-        "window-combination-p",
-        1,
-        2,
+        "window-combination-p", 0, 2,
         f_false,
         "t if WINDOW is internal (no)."
     ),
@@ -110,9 +106,7 @@ pub(crate) static SUBRS: &[Subr] = &[
         "t if WINDOW has parameters."
     ),
     S!(
-        "window-deletable-p",
-        0,
-        1,
+        "window-deletable-p", 0, 2,
         f_window_live_t,
         "t if WINDOW can be deleted."
     ),
@@ -132,10 +126,10 @@ pub(crate) static SUBRS: &[Subr] = &[
         f_window_safe_min_size,
         "Absolute minimum window size."
     ),
-    S!("window-max-delta", 0, 5, f_zero, ""),
-    S!("window-min-delta", 0, 5, f_zero, ""),
-    S!("window-sizable-p", 1, 4, f_window_sizable_p, ""),
-    S!("window-size-fixed-p", 0, 2, f_window_size_fixed_p, ""),
+    S!("window-max-delta", 0, 7, f_zero, ""),
+    S!("window-min-delta", 0, 7, f_zero, ""),
+    S!("window-sizable-p", 2, 5, f_window_sizable_p, ""),
+    S!("window-size-fixed-p", 0, 3, f_window_size_fixed_p, ""),
     S!(
         "window-resize",
         2,
@@ -143,22 +137,18 @@ pub(crate) static SUBRS: &[Subr] = &[
         f_window_resize,
         "Resize WINDOW by DELTA lines."
     ),
-    S!("window-resize-apply", 2, 3, f_true2, ""),
-    S!("window-resize-apply-total", 2, 3, f_true2, ""),
+    S!("window-resize-apply", 0, 2, f_true2, ""),
+    S!("window-resize-apply-total", 0, 2, f_true2, ""),
     S!("window-resize-no-error", 2, 5, f_window_resize_no_error, ""),
     S!(
-        "window-list-1",
-        0,
-        4,
+        "window-list-1", 0, 3,
         f_window_list1,
         "Windows in cyclic order."
     ),
     S!("window-bump-use-time", 0, 1, f_window_live_nil, ""),
     S!("window-discard-buffer-from-window", 2, 3, f_nil, ""),
     S!(
-        "split-window-internal",
-        4,
-        4,
+        "split-window-internal", 4, 5,
         f_split_window_internal,
         "Split WINDOW."
     ),
@@ -172,23 +162,17 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!("uncombine-window", 1, 1, f_uncombine_window, ""),
     S!("combine-windows", 2, 2, f_combine_windows, ""),
     S!(
-        "get-lru-window",
-        0,
-        3,
+        "get-lru-window", 0, 4,
         f_get_lru_window,
         "Least recently used window."
     ),
     S!(
-        "get-mru-window",
-        0,
-        3,
+        "get-mru-window", 0, 4,
         f_get_mru_window,
         "Most recently used window."
     ),
     S!(
-        "get-largest-window",
-        0,
-        3,
+        "get-largest-window", 0, 4,
         f_get_largest_window,
         "Largest window by pixel area."
     ),
@@ -237,9 +221,7 @@ pub(crate) static SUBRS: &[Subr] = &[
         "Scroll right COUNT columns."
     ),
     S!(
-        "window-fringes",
-        0,
-        2,
+        "window-fringes", 0, 1,
         f_zero4,
         "(l r w out) fringe widths."
     ),
@@ -275,11 +257,9 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!("window-divider-width-valid-p", 1, 1, f_false, ""),
     S!("window-lines-pixel-dimensions", 0, 6, f_window_live_nil, ""),
     S!("window-text-pixel-size", 0, 7, f_window_text_pixel_size, ""),
-    S!("window-absolute-pixel-position", 2, 2, f_posn_pair, ""),
+    S!("window-absolute-pixel-position", 0, 2, f_posn_pair, ""),
     S!(
-        "window-screen-lines",
-        0,
-        1,
+        "window-screen-lines", 0, 0,
         f_window_screen_lines,
         "Lines visible."
     ),
@@ -342,20 +322,16 @@ pub(crate) static SUBRS: &[Subr] = &[
     // `window-safe-min-height'/`window-safe-min-width' are GNU variables.
     // --- frames ---
     S!(
-        "frame-root-window",
-        0,
-        2,
+        "frame-root-window", 0, 1,
         f_frame_root_window,
         "Root window of FRAME."
     ),
     S!(
-        "frame-selected-window",
-        0,
-        2,
+        "frame-selected-window", 0, 1,
         f_frame_sel_window,
         "Selected window of FRAME."
     ),
-    S!("frame-first-window", 0, 2, f_frame_sel_window, ""),
+    S!("frame-first-window", 0, 1, f_frame_first_window, ""),
     S!(
         "minibuffer-window",
         0,
@@ -440,7 +416,7 @@ pub(crate) static SUBRS: &[Subr] = &[
         f_frame_set_was_invisible,
         ""
     ),
-    S!("frame--z-order-lessp", 2, 3, f_true2, ""),
+    S!("frame--z-order-lessp", 2, 2, f_true2, ""),
     S!("frame--face-hash-table", 0, 1, f_frame_face_hash_table, ""),
     S!("frame-font-cache", 0, 1, f_nil, ""),
     S!("next-frame", 0, 2, f_frame_self, "Next frame (only one)."),
@@ -457,13 +433,11 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!("reconsider-frame-fonts", 1, 1, f_reconsider_frame_fonts, ""),
     S!("frame--list-z-order", 0, 1, f_frame_list, ""),
     S!("tty-frame-list-z-order", 0, 1, f_frame_list, ""),
-    S!("tty-frame-restack", 2, 2, f_tty_frame_restack, ""),
+    S!("tty-frame-restack", 2, 3, f_tty_frame_restack, ""),
     S!("tty-frame-at", 2, 2, f_frame_self, ""),
-    S!("tty-display-color-p", 0, 3, f_nil, ""),
+    S!("tty-display-color-p", 0, 1, f_nil, ""),
     S!(
-        "tty-display-color-cells",
-        0,
-        2,
+        "tty-display-color-cells", 0, 1,
         f_tty_colors,
         "Number of tty colors."
     ),
@@ -1055,9 +1029,14 @@ fn f_posn_at_xy(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 }
 
 fn f_posn_pair(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let x = want_int(i, &a[0])?;
-    let y = want_int(i, &a[1])?;
-    Ok(Value::cons(Value::Int(x), Value::Int(y)))
+    // `window-absolute-pixel-position' (POSITION WINDOW): on a batch
+    // terminal every pixel coordinate is 0,0.
+    if let Some(v) = a.first() {
+        if !v.is_nil() {
+            want_int(i, v)?;
+        }
+    }
+    Ok(Value::cons(Value::Int(0), Value::Int(0)))
 }
 
 fn f_set_window_vscroll(i: &mut Interp, a: Vec<Value>) -> EvalResult {
@@ -1173,6 +1152,17 @@ fn f_frame_root_window(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 fn f_frame_sel_window(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let f = frame_of(i, &arg(&a, 0))?;
     Ok(Value::Window(f.borrow().selected.clone()))
+}
+
+fn f_frame_first_window(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    // GNU `frame_first_window' walks the window tree to the leftmost/
+    // topmost leaf; `windows' is kept in display order, so the first
+    // entry is that leaf.
+    let f = frame_of(i, &arg(&a, 0))?;
+    match f.borrow().windows.first() {
+        Some(w) => Ok(Value::Window(w.clone())),
+        None => Ok(Value::Nil),
+    }
 }
 
 fn f_minibuffer_window(i: &mut Interp, a: Vec<Value>) -> EvalResult {

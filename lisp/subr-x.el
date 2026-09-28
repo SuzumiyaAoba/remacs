@@ -635,15 +635,6 @@ Use `$$' to insert a single dollar sign."
 		   start (+ (match-beginning 0) 1)))))
     string))
 
-(defun substitute-env-in-file-name (filename)
-  (declare (important-return-value t))
-  (substitute-env-vars filename
-                       ;; How 'bout we lookup other tables than the env?
-                       ;; E.g. we could accept bookmark names as well!
-                       (if (memq system-type '(windows-nt ms-dos))
-                           (lambda (var) (getenv (upcase var)))
-                         t)))
-
 (defun pwd (&optional insert)
   "Show the current default directory.
 With prefix argument INSERT, insert the current default directory
@@ -997,115 +988,6 @@ string will be displayed only if BODY takes longer than TIMEOUT seconds.
 
 ;;; Buffer/region functions (GNU subr.el).
 
-(defun insert-buffer-substring-no-properties (buffer &optional start end)
-  "Insert before point a substring of BUFFER, without text properties.
-BUFFER may be a buffer or a buffer name.
-Arguments START and END are character positions specifying the substring.
-They default to the values of (point-min) and (point-max) in BUFFER."
-  (let ((opoint (point)))
-    (insert-buffer-substring buffer start end)
-    (let ((inhibit-read-only t))
-      (set-text-properties opoint (point) nil))))
-
-(defun insert-into-buffer (buffer &optional start end)
-  "Insert the contents of the current buffer into BUFFER.
-If START/END, only insert that region from the current buffer.
-Point in BUFFER will be placed after the inserted text."
-  (let ((current (current-buffer)))
-    (with-current-buffer buffer
-      (insert-buffer-substring current start end))))
-
-(defun remove-yank-excluded-properties (start end)
-  "Process text properties between START and END, inserted for a `yank'.
-Perform the handling specified by `yank-handled-properties', then
-remove properties specified by `yank-excluded-properties'."
-  (let ((inhibit-read-only t))
-    (dolist (handler yank-handled-properties)
-      (let ((prop (car handler))
-            (fun  (cdr handler))
-            (run-start start))
-        (while (< run-start end)
-          (let ((value (get-text-property run-start prop))
-                (run-end (next-single-property-change
-                          run-start prop nil end)))
-            (funcall fun value run-start run-end)
-            (setq run-start run-end)))))
-    (if (eq yank-excluded-properties t)
-        (set-text-properties start end nil)
-      (remove-list-of-text-properties start end yank-excluded-properties))))
-
-(defun insert-buffer-substring-as-yank (buffer &optional start end)
-  "Insert before point a part of BUFFER, stripping some text properties.
-BUFFER may be a buffer or a buffer name.
-Arguments START and END are character positions specifying the substring.
-They default to the values of (point-min) and (point-max) in BUFFER.
-Before insertion, process text properties according to
-`yank-handled-properties' and `yank-excluded-properties'."
-  ;; Since the buffer text should not normally have yank-handler properties,
-  ;; there is no need to handle them here.
-  (let ((opoint (point)))
-    (insert-buffer-substring buffer start end)
-    (remove-yank-excluded-properties opoint (point))))
-
-(defun replace-string-in-region (string replacement &optional start end)
-  "Replace STRING with REPLACEMENT in the region from START to END.
-The number of replaced occurrences are returned, or nil if STRING
-doesn't exist in the region.
-If START is nil, use the current point.  If END is nil, use `point-max'.
-Comparisons and replacements are done with fixed case."
-  (if start
-      (when (< start (point-min))
-        (error "Start before start of buffer"))
-    (setq start (point)))
-  (if end
-      (when (> end (point-max))
-        (error "End after end of buffer"))
-    (setq end (point-max)))
-  (save-excursion
-    (goto-char start)
-    (save-restriction
-      (narrow-to-region start end)
-      (let ((matches 0)
-            (case-fold-search nil))
-        (while (search-forward string nil t)
-          (delete-region (match-beginning 0) (match-end 0))
-          (insert replacement)
-          (setq matches (1+ matches)))
-        (and (not (zerop matches))
-             matches)))))
-
-(defun replace-regexp-in-region (regexp replacement &optional start end)
-  "Replace REGEXP with REPLACEMENT in the region from START to END.
-The number of replaced occurrences are returned, or nil if REGEXP
-doesn't exist in the region.
-If START is nil, use the current point.  If END is nil, use `point-max'.
-Comparisons and replacements are done with fixed case.
-REPLACEMENT can use the following special elements:
-  `\\&' in NEWTEXT means substitute original matched text.
-  `\\N' means substitute what matched the Nth `\\(...\\)'.
-       If Nth parens didn't match, substitute nothing.
-  `\\\\' means insert one `\\'.
-  `\\?' is treated literally."
-  (if start
-      (when (< start (point-min))
-        (error "Start before start of buffer"))
-    (setq start (point)))
-  (if end
-      (when (> end (point-max))
-        (error "End after end of buffer"))
-    (setq end (point-max)))
-  (save-excursion
-    (goto-char start)
-    (save-restriction
-      (narrow-to-region start end)
-      (let ((matches 0)
-            (case-fold-search nil))
-          (while (re-search-forward regexp nil t)
-          (replace-match replacement t)
-          (setq matches (1+ matches)))
-        (and (not (zerop matches))
-             matches)))))
-
 (defun delete-line ()
   "Delete the current line."
   ;; remacs's `pos-bol' ignores its argument, so use
@@ -1202,55 +1084,6 @@ inserted, and should return the transformed string.")
 
 (defvar yank-undo-function nil
   "Function used to remove the text inserted by the last `yank' command.")
-
-(defun insert-for-yank (string)
-  "Insert STRING at point for the `yank' command.
-This function is like `insert', except it honors the variables
-`yank-handled-properties' and `yank-excluded-properties', and the
-`yank-handler' text property, in the way that `yank' does.
-It also runs the string through `yank-transform-functions'."
-  ;; Allow altering the yank string.
-  (run-hook-wrapped 'yank-transform-functions
-                    (lambda (f) (setq string (funcall f string)) nil))
-  (let (to)
-    (while (setq to (next-single-property-change 0 'yank-handler string))
-      (insert-for-yank-1 (substring string 0 to))
-      (setq string (substring string to))))
-  (insert-for-yank-1 string))
-
-(defun insert-for-yank-1 (string)
-  "Helper for `insert-for-yank', which see."
-  (let* ((handler (and (stringp string)
-		       (get-text-property 0 'yank-handler string)))
-	 (param (or (nth 1 handler) string))
-	 (opoint (point))
-	 (inhibit-read-only inhibit-read-only)
-	 end)
-
-    ;; FIXME: This throws away any yank-undo-function set by previous calls
-    ;; to insert-for-yank-1 within the loop of insert-for-yank!
-    (setq yank-undo-function t)
-    (if (nth 0 handler) ; FUNCTION
-	(funcall (car handler) param)
-      (insert param))
-    (setq end (point))
-
-    ;; Prevent read-only properties from interfering with the
-    ;; following text property changes.
-    (setq inhibit-read-only t)
-
-    (unless (nth 2 handler) ; NOEXCLUDE
-      (remove-yank-excluded-properties opoint end))
-
-    ;; If last inserted char has properties, mark them as rear-nonsticky.
-    (if (and (> end opoint)
-	     (text-properties-at (1- end)))
-	(put-text-property (1- end) end 'rear-nonsticky t))
-
-    (if (eq yank-undo-function t)		   ; not set by FUNCTION
-	(setq yank-undo-function (nth 3 handler))) ; UNDO
-    (if (nth 4 handler)				   ; COMMAND
-	(setq this-command (nth 4 handler)))))
 
 ;;; Delayed warnings (GNU subr.el).
 
@@ -1519,20 +1352,6 @@ seconds."
      nil)))
 
 ;;; Misc functions (GNU subr.el).
-
-(defun use-dialog-box-p ()
-  "Return non-nil if the current command should prompt the user via a dialog box."
-  ;; remacs: `use-dialog-box-override' is unbound; guard all the
-  ;; event-state variables with `bound-and-true-p'.
-  (or (bound-and-true-p use-dialog-box-override)
-      (and (bound-and-true-p last-input-event)
-           (or (and (boundp 'last-nonmenu-event)
-                    (consp last-nonmenu-event))
-               (and (boundp 'last-nonmenu-event)
-                    (null last-nonmenu-event)
-                    (consp last-input-event))
-               (bound-and-true-p from--tty-menu-p))
-           (bound-and-true-p use-dialog-box))))
 
 (defun json-available-p ()
   "Return non-nil if Emacs has native JSON support."
@@ -1899,176 +1718,7 @@ exit status."
 (defvar progress-reporter--pulse-characters ["-" "\\" "|" "/"]
   "Characters to use for pulsing progress reporters.")
 
-(defsubst progress-reporter-update (reporter &optional value suffix)
-  "Report progress of an operation in the echo area.
-REPORTER should be the result of a call to `make-progress-reporter'.
-
-If REPORTER is a numerical progress reporter---i.e. if it was
- made using non-nil MIN-VALUE and MAX-VALUE arguments to
- `make-progress-reporter'---then VALUE should be a number between
- MIN-VALUE and MAX-VALUE.
-
-Optional argument SUFFIX is a string to be displayed after
-REPORTER's main message and progress text.  If REPORTER is a
-non-numerical reporter, then VALUE should be nil, or a string to
-use instead of SUFFIX.
-
-This function is relatively inexpensive.  If the change since
-last update is too small or insufficient time has passed, it does
-nothing."
-  (when (or (not (numberp value))      ; For pulsing reporter
-	    (>= value (car reporter))) ; For numerical reporter
-    (progress-reporter-do-update reporter value suffix)))
-
-(defun make-progress-reporter (message &optional min-value max-value
-				       current-value min-change min-time)
-  "Return progress reporter object for use with `progress-reporter-update'.
-
-MESSAGE is shown in the echo area, with a status indicator
-appended to the end.  When you call `progress-reporter-done', the
-word \"done\" is printed after the MESSAGE.  You can change the
-MESSAGE of an existing progress reporter by calling
-`progress-reporter-force-update'.
-
-MIN-VALUE and MAX-VALUE, if non-nil, are starting (0% complete)
-and final (100% complete) states of operation; the latter should
-be larger.  In this case, the status message shows the percentage
-progress.
-
-If MIN-VALUE and/or MAX-VALUE is omitted or nil, the status
-message shows a \"spinning\", non-numeric indicator.
-
-Optional CURRENT-VALUE is the initial progress; the default is
-MIN-VALUE.
-Optional MIN-CHANGE is the minimal change in percents to report;
-the default is 1%.
-CURRENT-VALUE and MIN-CHANGE do not have any effect if MIN-VALUE
-and/or MAX-VALUE are nil.
-
-Optional MIN-TIME specifies the minimum interval time between
-echo area updates (default is 0.2 seconds.)  If the OS is not
-capable of measuring fractions of seconds, this parameter is
-effectively rounded up."
-  (when (string-match "[[:alnum:]]\\'" message)
-    (setq message (concat message "...")))
-  (unless min-time
-    (setq min-time 0.2))
-  (let ((reporter
-	 (cons (or min-value 0)
-	       (vector (if (>= min-time 0.02)
-			   (float-time) nil)
-		       min-value
-		       max-value
-		       message
-		       (if min-change (max (min min-change 50) 1) 1)
-                       min-time
-                       ;; SUFFIX
-                       nil))))
-    ;; Force a call to `message' now.
-    (progress-reporter-update reporter (or current-value min-value))
-    reporter))
-
 (defalias 'progress-reporter-make #'make-progress-reporter)
-
-(defun progress-reporter-force-update (reporter &optional value new-message suffix)
-  "Report progress of an operation in the echo area unconditionally.
-
-REPORTER, VALUE, and SUFFIX are the same as in `progress-reporter-update'.
-NEW-MESSAGE, if non-nil, sets a new message for the reporter."
-  (let ((parameters (cdr reporter)))
-    (when new-message
-      (aset parameters 3 new-message))
-    (when (aref parameters 0)
-      (aset parameters 0 (float-time)))
-    (progress-reporter-do-update reporter value suffix)))
-
-(defun progress-reporter-do-update (reporter value &optional suffix)
-  (let* ((parameters   (cdr reporter))
-	 (update-time  (aref parameters 0))
-	 (min-value    (aref parameters 1))
-	 (max-value    (aref parameters 2))
-	 (text         (aref parameters 3))
-	 (enough-time-passed
-	  ;; See if enough time has passed since the last update.
-	  (or (not update-time)
-	      (when (time-less-p update-time nil)
-		;; Calculate time for the next update
-		(aset parameters 0 (+ update-time (aref parameters 5)))))))
-    (cond ((and min-value max-value)
-	   ;; Numerical indicator
-	   (let* ((one-percent (/ (- max-value min-value) 100.0))
-		  (percentage  (if (= max-value min-value)
-				   0
-				 (truncate (/ (- value min-value)
-					      one-percent)))))
-	     ;; Calculate NEXT-UPDATE-VALUE.  If we are not printing
-	     ;; message because not enough time has passed, use 1
-	     ;; instead of MIN-CHANGE.  This makes delays between echo
-	     ;; area updates closer to MIN-TIME.
-	     (setcar reporter
-		     (min (+ min-value (* (+ percentage
-					     (if enough-time-passed
-						 ;; MIN-CHANGE
-						 (aref parameters 4)
-					       1))
-					  one-percent))
-			  max-value))
-	     (when (integerp value)
-	       (setcar reporter (ceiling (car reporter))))
-	     ;; Print message only if enough time has passed
-	     (when enough-time-passed
-               (if suffix
-                   (aset parameters 6 suffix)
-                 (setq suffix (or (aref parameters 6) "")))
-               (if (> percentage 0)
-                   (message "%s%d%% %s" text percentage suffix)
-                 (message "%s %s" text suffix)))))
-	  ;; Pulsing indicator
-	  (enough-time-passed
-           (when (and value (not suffix))
-             (setq suffix value))
-           (if suffix
-               (aset parameters 6 suffix)
-             (setq suffix (or (aref parameters 6) "")))
-           (let* ((index (mod (1+ (car reporter)) 4))
-                  (message-log-max nil)
-                  (pulse-char (aref progress-reporter--pulse-characters
-                                    index)))
-	     (setcar reporter index)
-             (message "%s %s %s" text pulse-char suffix))))))
-
-(defun progress-reporter-done (reporter)
-  "Print reporter's message followed by word \"done\" in echo area."
-  (message "%sdone" (aref (cdr reporter) 3)))
-
-(defmacro dotimes-with-progress-reporter (spec reporter-or-message &rest body)
-  "Loop a certain number of times and report progress in the echo area.
-Evaluate BODY with VAR bound to successive integers running from
-0, inclusive, to COUNT, exclusive.  Then evaluate RESULT to get
-the return value (nil if RESULT is omitted).
-
-REPORTER-OR-MESSAGE is a progress reporter object or a string.  In the latter
-case, use this string to create a progress reporter.
-
-At each iteration, print the reporter message followed by progress
-percentage in the echo area.  After the loop is finished,
-print the reporter message followed by the word \"done\".
-
-This macro is a convenience wrapper around `make-progress-reporter' and friends.
-
-\(fn (VAR COUNT [RESULT]) REPORTER-OR-MESSAGE BODY...)"
-  (declare (indent 2) (debug ((symbolp form &optional form) form body)))
-  (let ((prep (make-symbol "--dotimes-prep--"))
-        (end (make-symbol "--dotimes-end--")))
-    `(let ((,prep ,reporter-or-message)
-           (,end ,(cadr spec)))
-       (when (stringp ,prep)
-         (setq ,prep (make-progress-reporter ,prep 0 ,end)))
-       (dotimes (,(car spec) ,end)
-         ,@body
-         (progress-reporter-update ,prep (1+ ,(car spec))))
-       (progress-reporter-done ,prep)
-       (or ,@(cdr (cdr spec)) nil))))
 
 (defmacro dolist-with-progress-reporter (spec reporter-or-message &rest body)
   "Loop over a list and report progress in the echo area.
@@ -3599,14 +3249,6 @@ If `auto-fill-mode' is active, re-fills region to fit in new margin."
   (when (eq last-command 'kill-region)
     (setq this-command 'kill-region))
   nil)
-
-(defun make-mode-line-mouse-map (mouse function)
-  "Return a keymap with single entry for mouse key MOUSE on the mode line.
-MOUSE is defined to run function FUNCTION with no args in the buffer
-corresponding to the mode line clicked."
-  (let ((map (make-sparse-keymap)))
-    (define-key map (vector 'mode-line mouse) function)
-    map))
 
 (defun mode-line-toggle-read-only (event)
   "Like toggling `read-only-mode', for the mode-line."
@@ -5766,10 +5408,6 @@ It also runs the string through `yank-transform-functions'."
     (if (nth 4 handler)				   ; COMMAND
 	(setq this-command (nth 4 handler)))))
 
-(defun delete-trailing-whitespace-if-possible ()
-  "Call `delete-trailing-whitespace' unless the buffer is read-only."
-  (unless buffer-read-only (delete-trailing-whitespace)))
-
 (defvar cycle-spacing--context nil
   "Stored context used in consecutive calls to `cycle-spacing' command.
 The value is a property list with the following elements:
@@ -6491,10 +6129,21 @@ the signal symbol."
         (string-to-number value)
       (intern (concat "sig" (downcase value))))))
 
-(defun use-dialog-box-p (&rest _args)
-  "Non-nil if input events are invoked via mouse or pointer gestures.
-remacs has no GUI dialog boxes, so this always returns nil."
-  nil)
+;Remacs: subr.el is preloaded, so GNU's `use-dialog-box-p' is
+;provided here with identical semantics.
+(defun use-dialog-box-p ()
+  "Return non-nil if the current command should prompt the user via a dialog box."
+  (or use-dialog-box-override
+      (and last-input-event                 ; not during startup
+           (or (consp last-nonmenu-event)   ; invoked by a mouse event
+               (and (null last-nonmenu-event)
+                    (consp last-input-event))
+               (and (featurep 'android)	; Prefer dialog boxes on
+                                        ; Android.
+                    (not (android-detect-keyboard))) ; If no keyboard is
+                                                     ; connected.
+               from--tty-menu-p)            ; invoked via TTY menu
+           use-dialog-box)))
 
 (defvar line-spacing nil
   "Additional space between lines of text, in pixels.")
@@ -7857,10 +7506,6 @@ Don't call it from programs!  Use `insert-file-contents-literally' instead.
 (defvar command-line-max-length 262144
   "Maximum length of a single command line.")
 
-(defmacro connection-local-value (variable &optional _application)
-  "Return the value of VARIABLE (connection-local profiles unsupported)."
-  variable)
-
 (defun byte-compile-warn-x (_form _format &rest _args)
   "Placeholder for byte-compiler warnings (no-op).")
 
@@ -8807,20 +8452,6 @@ the original string if not."
 		  (cons 'concat to)
 		(car to))))
     to))
-(defun query-replace-read-from-suggestions ()
-  "Return a list of standard suggestions for `query-replace-read-from'.
-By default, the list includes the active region, the identifier
-(a.k.a. \"tag\") at point (see Info node `(emacs) Identifier Search'),
-the last isearch string, and the last replacement regexp.
-`query-replace-read-from' appends the list returned
-by this function to the end of values available via
-\\<minibuffer-local-map>\\[next-history-element]."
-  (delq nil (list (when (use-region-p)
-                    (buffer-substring-no-properties
-                     (region-beginning) (region-end)))
-                  (find-tag-default)
-                  (car search-ring)
-                  (car (symbol-value query-replace-from-history-variable)))))
 (defun keep-lines-read-args (prompt)
   "Read arguments for `keep-lines' and friends.
 Prompt for a regexp with PROMPT.
@@ -12256,9 +11887,6 @@ are not directories are omitted from the expansion."
       (if (file-directory-p f)
 	  (push f lpath)))
     (nreverse lpath)))
-(defsubst custom-theme-enabled-p (theme)
-  "Return non-nil if THEME is enabled."
-  (memq theme custom-enabled-themes))
 (defun custom-theme-load-confirm (hash)
   "Query the user about loading a Custom theme that may not be safe.
 The theme should be in the current buffer.  If the user agrees,
@@ -15267,6 +14895,102 @@ after which to deactivate the keymap set by `set-transient-map',
 thus overriding the value of the TIMEOUT argument to that function.")
 (defvar set-transient-map-timer nil
   "Timer for `set-transient-map-timeout'.")
+
+;Remacs: GNU subr.el definition; the Rust stub is gone
+;so keymap timeouts, KEEP-PRED and the exit function work.
+(defun set-transient-map (map &optional keep-pred on-exit message timeout)
+  "Set MAP as a temporary keymap taking precedence over other keymaps.
+Normally, MAP is used only once, to look up the very next key.
+However, if the optional argument KEEP-PRED is t, MAP stays
+active if a key from MAP is used.  KEEP-PRED can also be a
+function of no arguments: it is called from `pre-command-hook' and
+if it returns non-nil, then MAP stays active.
+
+Optional arg ON-EXIT, if non-nil, specifies a function that is
+called, with no arguments, after MAP is deactivated.
+
+Optional arg MESSAGE, if non-nil, requests display of an informative
+message after activating the transient map.  If MESSAGE is a string,
+it specifies the format string for the message to display, and the %k
+specifier in the string is replaced with the list of keys from the
+transient map.  Any other non-nil value of MESSAGE means to use the
+message format string \"Repeat with %k\".  Upon deactivating the map,
+the displayed message will be cleared out.
+
+Optional arg TIMEOUT, if non-nil, should be a number specifying the
+number of seconds of idle time after which the map is deactivated.
+The variable `set-transient-map-timeout', if non-nil, overrides the
+value of TIMEOUT.
+
+This function uses `overriding-terminal-local-map', which takes precedence
+over all other keymaps.  As usual, if no match for a key is found in MAP,
+the normal key lookup sequence then continues.
+
+This returns an \"exit function\", which can be called with no argument
+to deactivate this transient map, regardless of KEEP-PRED."
+  (let* ((timeout (or set-transient-map-timeout timeout))
+         (message
+          (when message
+            (let (keys)
+              (map-keymap (lambda (key cmd) (and cmd (push key keys))) map)
+              (format-spec (if (stringp message) message "Repeat with %k")
+                           `((?k . ,(mapconcat
+                                     (lambda (key)
+                                       (substitute-command-keys
+                                        (format "\\`%s'"
+                                                (key-description (vector key)))))
+                                     keys ", ")))))))
+         (clearfun (make-symbol "clear-transient-map"))
+         (exitfun
+          (lambda ()
+            (internal-pop-keymap map 'overriding-terminal-local-map)
+            (remove-hook 'pre-command-hook clearfun)
+            ;; Clear the prompt after exiting.
+            (when message (message ""))
+            (when set-transient-map-timer (cancel-timer set-transient-map-timer))
+            (when on-exit (funcall on-exit)))))
+    ;; Don't use letrec, because equal (in add/remove-hook) could get trapped
+    ;; in a cycle. (bug#46326)
+    (fset clearfun
+          (lambda ()
+            (with-demoted-errors "set-transient-map PCH: %S"
+              (if (cond
+                       ((null keep-pred) nil)
+                       ((and (not (eq map (cadr overriding-terminal-local-map)))
+                             (memq map (cddr overriding-terminal-local-map)))
+                        ;; There's presumably some other transient-map in
+                        ;; effect.  Wait for that one to terminate before we
+                        ;; remove ourselves.
+                        ;; For example, if isearch and C-u both use transient
+                        ;; maps, then the lifetime of the C-u should be nested
+                        ;; within isearch's, so the pre-command-hook of
+                        ;; isearch should be suspended during the C-u one so
+                        ;; we don't exit isearch just because we hit 1 after
+                        ;; C-u and that 1 exits isearch whereas it doesn't
+                        ;; exit C-u.
+                        t)
+                       ((eq t keep-pred)
+                        (let ((mc (lookup-key map (this-command-keys-vector))))
+                          ;; We may have a remapped command, so chase
+                          ;; down that.
+                          (when (and mc (symbolp mc))
+                            (setq mc (or (command-remapping mc) mc)))
+                          ;; If the key is unbound `this-command` is
+                          ;; nil and so is `mc`.
+                          (and mc (eq this-command mc))))
+                       (t (funcall keep-pred)))
+                  ;; Repeat the message for the next command.
+                  (when message (message "%s" message))
+                (funcall exitfun)))))
+    (add-hook 'pre-command-hook clearfun)
+    (internal-push-keymap map 'overriding-terminal-local-map)
+    (when timeout
+      (when set-transient-map-timer (cancel-timer set-transient-map-timer))
+      (setq set-transient-map-timer (run-with-idle-timer timeout nil exitfun)))
+    (when message (message "%s" message))
+    exitfun))
+
+;;;; Progress reporters.
 (defconst split-string-default-separators "[ \f\t\n\r\v]+"
   "The default value of separators for `split-string'.
 
@@ -18973,34 +18697,6 @@ it, compare the selection timestamp too."
    (or (not (eq window-system 'x))
        (eq gui--last-selection-timestamp-primary
            (gui-backend-get-selection 'PRIMARY 'TIMESTAMP)))))
-(defun gui--selection-value-internal (type)
-  "Get a selection value of type TYPE.
-Call `gui-get-selection' with an appropriate DATA-TYPE argument
-decided by `x-select-request-type'.  The return value is already
-decoded.  If `gui-get-selection' signals an error, return nil."
-  ;; The doc string of `interprogram-paste-function' says to return
-  ;; nil if no other program has provided text to paste.
-  (unless (and gui-last-cut-in-clipboard
-               ;; `gui-backend-selection-owner-p' might be unreliable on
-               ;; some other window systems.
-               (memq window-system '(x haiku))
-               (eq type 'CLIPBOARD)
-               ;; Should we unify this with gui--clipboard-selection-unchanged-p?
-               (gui-backend-selection-owner-p type))
-    (let ((request-type (if (memq window-system '(x pgtk haiku))
-                            (or x-select-request-type
-                                '(UTF8_STRING COMPOUND_TEXT STRING text/plain\;charset=utf-8))
-                          'STRING))
-	  text)
-      (with-demoted-errors "gui-get-selection: %S"
-        (if (consp request-type)
-            (while (and request-type (not text))
-              (setq text (gui-get-selection type (car request-type)))
-              (setq request-type (cdr request-type)))
-          (setq text (gui-get-selection type request-type))))
-      (if text
-	  (remove-text-properties 0 (length text) '(foreign-selection nil) text))
-      text)))
 (defun gui--set-last-clipboard-selection (text)
   "Save last clipboard selection.
 Save the selected text, passed as argument, and for window
@@ -45204,32 +44900,6 @@ This macro can only be used within the lexical scope of a cl-generic method."
 (fset (intern "(setf cl--generic)")
       (lambda (newval name) (put name 'cl--generic newval)))
 
-(defmacro cl--find-class (type)
-  `(get ,type 'cl--class))
-
-(defmacro cl--define-built-in-type (name parents &optional docstring &rest slots)
-  (declare (indent 2) (doc-string 3))
-  (unless (listp parents) (setq parents (list parents)))
-  (unless (or parents (eq name t))
-    (error "Missing parents for %S: %S" name parents))
-  (let ((predicate (intern-soft (format
-                                 (if (string-match "-" (symbol-name name))
-                                     "%s-p" "%sp")
-                                 name)))
-        (nas nil))
-    (unless (fboundp predicate) (setq predicate nil))
-    (while (keywordp (car slots))
-      (let ((kw (pop slots)) (val (pop slots)))
-        (pcase kw
-          (:predicate (setq predicate val))
-          (:non-abstract-supertype (setq nas val))
-          (_ (error "Unknown keyword arg: %S" kw)))))
-    `(progn
-       ,(if predicate `(put ',name 'cl-deftype-satisfies #',predicate) nil)
-       (put ',name 'cl--class
-            (built-in-class--make ',name ,docstring ',parents
-                                  ,@(if nas '(t)))))))
-
 (cl-defstruct (cl-structure-object
                (:predicate cl-struct-p)
                (:constructor nil)
@@ -45915,6 +45585,151 @@ also passed as second argument to SPECIALIZERS-FUNCTION." (declare (indent 1) (d
      ((string-equal (upcase res) "YES") t)
      ((string-equal (upcase res) "NO")  nil)
      (t (read res)))))
+
+;; `compiler-macro' registrations for declare specs evaluated
+;; only at byte-compile time in GNU but never run here (subr.el
+;; is pre-registered; struct cmacros likewise).
+(function-put 'caaaar 'compiler-macro #'internal--compiler-macro-cXXr)
+(function-put 'caaadr 'compiler-macro #'internal--compiler-macro-cXXr)
+(function-put 'caaar 'compiler-macro #'internal--compiler-macro-cXXr)
+(function-put 'caadar 'compiler-macro #'internal--compiler-macro-cXXr)
+(function-put 'caaddr 'compiler-macro #'internal--compiler-macro-cXXr)
+(function-put 'caadr 'compiler-macro #'internal--compiler-macro-cXXr)
+(function-put 'caar 'compiler-macro #'internal--compiler-macro-cXXr)
+(function-put 'cadaar 'compiler-macro #'internal--compiler-macro-cXXr)
+(function-put 'cadadr 'compiler-macro #'internal--compiler-macro-cXXr)
+(function-put 'cadar 'compiler-macro #'internal--compiler-macro-cXXr)
+(function-put 'caddar 'compiler-macro #'internal--compiler-macro-cXXr)
+(function-put 'cadddr 'compiler-macro #'internal--compiler-macro-cXXr)
+(function-put 'caddr 'compiler-macro #'internal--compiler-macro-cXXr)
+(function-put 'cadr 'compiler-macro #'internal--compiler-macro-cXXr)
+(function-put 'cdaaar 'compiler-macro #'internal--compiler-macro-cXXr)
+(function-put 'cdaadr 'compiler-macro #'internal--compiler-macro-cXXr)
+(function-put 'cdaar 'compiler-macro #'internal--compiler-macro-cXXr)
+(function-put 'cdadar 'compiler-macro #'internal--compiler-macro-cXXr)
+(function-put 'cdaddr 'compiler-macro #'internal--compiler-macro-cXXr)
+(function-put 'cdadr 'compiler-macro #'internal--compiler-macro-cXXr)
+(function-put 'cdar 'compiler-macro #'internal--compiler-macro-cXXr)
+(function-put 'cddaar 'compiler-macro #'internal--compiler-macro-cXXr)
+(function-put 'cddadr 'compiler-macro #'internal--compiler-macro-cXXr)
+(function-put 'cddar 'compiler-macro #'internal--compiler-macro-cXXr)
+(function-put 'cdddar 'compiler-macro #'internal--compiler-macro-cXXr)
+(function-put 'cddddr 'compiler-macro #'internal--compiler-macro-cXXr)
+(function-put 'cdddr 'compiler-macro #'internal--compiler-macro-cXXr)
+(function-put 'cddr 'compiler-macro #'internal--compiler-macro-cXXr)
+(function-put 'cl--class-docstring 'compiler-macro #'cl--class-docstring--inliner)
+(function-put 'cl--class-index-table 'compiler-macro #'cl--class-index-table--inliner)
+(function-put 'cl--class-name 'compiler-macro #'cl--class-name--inliner)
+(function-put 'cl--class-p 'compiler-macro #'cl--class-p--inliner)
+(function-put 'cl--class-parents 'compiler-macro #'cl--class-parents--inliner)
+(function-put 'cl--class-slots 'compiler-macro #'cl--class-slots--inliner)
+(function-put 'cl--generic-dispatches 'compiler-macro #'cl--generic-dispatches--inliner)
+(function-put 'cl--generic-generalizer-name 'compiler-macro #'cl--generic-generalizer-name--inliner)
+(function-put 'cl--generic-generalizer-p 'compiler-macro #'cl--generic-generalizer-p--inliner)
+(function-put 'cl--generic-generalizer-priority 'compiler-macro #'cl--generic-generalizer-priority--inliner)
+(function-put 'cl--generic-generalizer-specializers-function 'compiler-macro #'cl--generic-generalizer-specializers-function--inliner)
+(function-put 'cl--generic-generalizer-tagcode-function 'compiler-macro #'cl--generic-generalizer-tagcode-function--inliner)
+(function-put 'cl--generic-lazy-function 'compiler-macro #'cl--generic-lazy-function--inliner)
+(function-put 'cl--generic-make 'compiler-macro #'cl--generic-make--cmacro)
+(function-put 'cl--generic-make-method 'compiler-macro #'cl--generic-make-method--cmacro)
+(function-put 'cl--generic-method-call-con 'compiler-macro #'cl--generic-method-call-con--inliner)
+(function-put 'cl--generic-method-function 'compiler-macro #'cl--generic-method-function--inliner)
+(function-put 'cl--generic-method-qualifiers 'compiler-macro #'cl--generic-method-qualifiers--inliner)
+(function-put 'cl--generic-method-specializers 'compiler-macro #'cl--generic-method-specializers--inliner)
+(function-put 'cl--generic-method-table 'compiler-macro #'cl--generic-method-table--inliner)
+(function-put 'cl--generic-name 'compiler-macro #'cl--generic-name--inliner)
+(function-put 'cl--generic-options 'compiler-macro #'cl--generic-options--inliner)
+(function-put 'cl--make-slot-descriptor 'compiler-macro #'cl--make-slot-descriptor--cmacro)
+(function-put 'cl--slot-descriptor-initform 'compiler-macro #'cl--slot-descriptor-initform--inliner)
+(function-put 'cl--slot-descriptor-name 'compiler-macro #'cl--slot-descriptor-name--inliner)
+(function-put 'cl--slot-descriptor-props 'compiler-macro #'cl--slot-descriptor-props--inliner)
+(function-put 'cl--slot-descriptor-type 'compiler-macro #'cl--slot-descriptor-type--inliner)
+(function-put 'cl--struct-cl--generic-method-p 'compiler-macro #'cl--struct-cl--generic-method-p--inliner)
+(function-put 'cl--struct-cl--generic-p 'compiler-macro #'cl--struct-cl--generic-p--inliner)
+(function-put 'cl--struct-class-children-sym 'compiler-macro #'cl--struct-class-children-sym--inliner)
+(function-put 'cl--struct-class-docstring 'compiler-macro #'cl--struct-class-docstring--inliner)
+(function-put 'cl--struct-class-index-table 'compiler-macro #'cl--struct-class-index-table--inliner)
+(function-put 'cl--struct-class-name 'compiler-macro #'cl--struct-class-name--inliner)
+(function-put 'cl--struct-class-named 'compiler-macro #'cl--struct-class-named--inliner)
+(function-put 'cl--struct-class-p 'compiler-macro #'cl--struct-class-p--inliner)
+(function-put 'cl--struct-class-parents 'compiler-macro #'cl--struct-class-parents--inliner)
+(function-put 'cl--struct-class-print 'compiler-macro #'cl--struct-class-print--inliner)
+(function-put 'cl--struct-class-slots 'compiler-macro #'cl--struct-class-slots--inliner)
+(function-put 'cl--struct-class-tag 'compiler-macro #'cl--struct-class-tag--inliner)
+(function-put 'cl--struct-class-type 'compiler-macro #'cl--struct-class-type--inliner)
+(function-put 'cl--struct-new-class 'compiler-macro #'cl--struct-new-class--cmacro)
+(function-put 'cl-adjoin 'compiler-macro #'cl--compiler-macro-adjoin)
+(function-put 'cl-generic-make-generalizer 'compiler-macro #'cl-generic-make-generalizer--cmacro)
+(function-put 'cl-slot-descriptor-p 'compiler-macro #'cl-slot-descriptor-p--inliner)
+(function-put 'cl-struct-p 'compiler-macro #'cl-struct-p--inliner)
+(function-put 'decoded-time-day 'compiler-macro #'decoded-time-day--inliner)
+(function-put 'decoded-time-dst 'compiler-macro #'decoded-time-dst--inliner)
+(function-put 'decoded-time-hour 'compiler-macro #'decoded-time-hour--inliner)
+(function-put 'decoded-time-minute 'compiler-macro #'decoded-time-minute--inliner)
+(function-put 'decoded-time-month 'compiler-macro #'decoded-time-month--inliner)
+(function-put 'decoded-time-second 'compiler-macro #'decoded-time-second--inliner)
+(function-put 'decoded-time-weekday 'compiler-macro #'decoded-time-weekday--inliner)
+(function-put 'decoded-time-year 'compiler-macro #'decoded-time-year--inliner)
+(function-put 'decoded-time-zone 'compiler-macro #'decoded-time-zone--inliner)
+(function-put 'define-keymap 'compiler-macro #'define-keymap--compile)
+(function-put 'isearch--state-barrier 'compiler-macro #'isearch--state-barrier--inliner)
+(function-put 'isearch--state-case-fold-search 'compiler-macro #'isearch--state-case-fold-search--inliner)
+(function-put 'isearch--state-error 'compiler-macro #'isearch--state-error--inliner)
+(function-put 'isearch--state-forward 'compiler-macro #'isearch--state-forward--inliner)
+(function-put 'isearch--state-match-data 'compiler-macro #'isearch--state-match-data--inliner)
+(function-put 'isearch--state-message 'compiler-macro #'isearch--state-message--inliner)
+(function-put 'isearch--state-other-end 'compiler-macro #'isearch--state-other-end--inliner)
+(function-put 'isearch--state-p 'compiler-macro #'isearch--state-p--inliner)
+(function-put 'isearch--state-point 'compiler-macro #'isearch--state-point--inliner)
+(function-put 'isearch--state-pop-fun 'compiler-macro #'isearch--state-pop-fun--inliner)
+(function-put 'isearch--state-string 'compiler-macro #'isearch--state-string--inliner)
+(function-put 'isearch--state-success 'compiler-macro #'isearch--state-success--inliner)
+(function-put 'isearch--state-word 'compiler-macro #'isearch--state-word--inliner)
+(function-put 'isearch--state-wrapped 'compiler-macro #'isearch--state-wrapped--inliner)
+(function-put 'make-ppss 'compiler-macro #'make-ppss--cmacro)
+(function-put 'oclosure--class-allparents 'compiler-macro #'oclosure--class-allparents--inliner)
+(function-put 'oclosure--class-docstring 'compiler-macro #'oclosure--class-docstring--inliner)
+(function-put 'oclosure--class-index-table 'compiler-macro #'oclosure--class-index-table--inliner)
+(function-put 'oclosure--class-name 'compiler-macro #'oclosure--class-name--inliner)
+(function-put 'oclosure--class-p 'compiler-macro #'oclosure--class-p--inliner)
+(function-put 'oclosure--class-parents 'compiler-macro #'oclosure--class-parents--inliner)
+(function-put 'oclosure--class-slots 'compiler-macro #'oclosure--class-slots--inliner)
+(function-put 'ppss-comment-depth 'compiler-macro #'ppss-comment-depth--inliner)
+(function-put 'ppss-comment-or-string-start 'compiler-macro #'ppss-comment-or-string-start--inliner)
+(function-put 'ppss-comment-style 'compiler-macro #'ppss-comment-style--inliner)
+(function-put 'ppss-depth 'compiler-macro #'ppss-depth--inliner)
+(function-put 'ppss-innermost-start 'compiler-macro #'ppss-innermost-start--inliner)
+(function-put 'ppss-last-complete-sexp-start 'compiler-macro #'ppss-last-complete-sexp-start--inliner)
+(function-put 'ppss-min-depth 'compiler-macro #'ppss-min-depth--inliner)
+(function-put 'ppss-open-parens 'compiler-macro #'ppss-open-parens--inliner)
+(function-put 'ppss-quoted-p 'compiler-macro #'ppss-quoted-p--inliner)
+(function-put 'ppss-string-terminator 'compiler-macro #'ppss-string-terminator--inliner)
+(function-put 'ppss-two-character-syntax 'compiler-macro #'ppss-two-character-syntax--inliner)
+(function-put 'registerv-data 'compiler-macro #'registerv-data--inliner)
+(function-put 'registerv-insert-func 'compiler-macro #'registerv-insert-func--inliner)
+(function-put 'registerv-jump-func 'compiler-macro #'registerv-jump-func--inliner)
+(function-put 'registerv-p 'compiler-macro #'registerv-p--inliner)
+(function-put 'registerv-print-func 'compiler-macro #'registerv-print-func--inliner)
+(function-put 'timer--args 'compiler-macro #'timer--args--inliner)
+(function-put 'timer--function 'compiler-macro #'timer--function--inliner)
+(function-put 'timer--high-seconds 'compiler-macro #'timer--high-seconds--inliner)
+(function-put 'timer--idle-delay 'compiler-macro #'timer--idle-delay--inliner)
+(function-put 'timer--integral-multiple 'compiler-macro #'timer--integral-multiple--inliner)
+(function-put 'timer--low-seconds 'compiler-macro #'timer--low-seconds--inliner)
+(function-put 'timer--psecs 'compiler-macro #'timer--psecs--inliner)
+(function-put 'timer--repeat-delay 'compiler-macro #'timer--repeat-delay--inliner)
+(function-put 'timer--triggered 'compiler-macro #'timer--triggered--inliner)
+(function-put 'timer--usecs 'compiler-macro #'timer--usecs--inliner)
+(function-put 'uniquify-item-base 'compiler-macro #'uniquify-item-base--inliner)
+(function-put 'uniquify-item-buffer 'compiler-macro #'uniquify-item-buffer--inliner)
+(function-put 'uniquify-item-dirname 'compiler-macro #'uniquify-item-dirname--inliner)
+(function-put 'uniquify-item-p 'compiler-macro #'uniquify-item-p--inliner)
+(function-put 'uniquify-item-proposed 'compiler-macro #'uniquify-item-proposed--inliner)
+(function-put 'xref-elisp-location-file 'compiler-macro #'xref-elisp-location-file--inliner)
+(function-put 'xref-elisp-location-p 'compiler-macro #'xref-elisp-location-p--inliner)
+(function-put 'xref-elisp-location-symbol 'compiler-macro #'xref-elisp-location-symbol--inliner)
+(function-put 'xref-elisp-location-type 'compiler-macro #'xref-elisp-location-type--inliner)
+(function-put 'xref-make-elisp-location 'compiler-macro #'xref-make-elisp-location--cmacro)
 
 (provide 'subr-x)
 

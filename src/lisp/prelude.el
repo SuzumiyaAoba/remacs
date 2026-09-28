@@ -3786,11 +3786,11 @@ The line number is relative to the start of the page."
     (set-buffer b)
     b))
 
-(defun switch-to-buffer (buffer)
-  "Select BUFFER in the current window."
+(defun switch-to-buffer (buffer-or-name &optional norecord force-same-window)
+  "Select BUFFER-OR-NAME in the current window."
   (interactive "BSwitch to buffer: ")
-  (let ((b (get-buffer-create (if (stringp buffer) buffer
-                                (buffer-name buffer)))))
+  (let ((b (get-buffer-create (if (stringp buffer-or-name) buffer-or-name
+                                (buffer-name buffer-or-name)))))
     (set-window-buffer (selected-window) b)
     (set-buffer b)
     b))
@@ -4575,7 +4575,7 @@ interactively or with optional argument FORCE, it will be fixed."
 
 (defun delete-to-left-margin (&optional from to)
   "Delete left margin indentation of each line between FROM and TO."
-  (interactive "r")
+  ;; GNU 31.1's indent.el defines this without `interactive' (verified).
   (let ((from (or from (point)))
         (to (or to (point))))
     (save-excursion
@@ -5648,15 +5648,37 @@ The normal global definition of the character ESC indirects to this keymap.")
 
 (fset 'facemenu-menu
   '(autoload "facemenu" nil nil keymap))
+;; Variables GNU defines in C or early Lisp files at -Q that remacs
+;; otherwise leaves unbound (boundp parity with a -Q NS build):
+;;   Vsystem_name (keyboard.c), Vtrack_mouse (keyboard.c),
+;;   Vcombine_after_change_calls (C internals), window.el's defvar,
+;;   startup.el's `(setq top-level '(normal-top-level))'.
+(defvar system-name (system-name)
+  "The host name of the machine Emacs is running on, as a string.")
+(defvar track-mouse nil
+  "Non-nil means mouse motion events should be delivered.")
+(defvar combine-after-change-calls nil
+  "Used internally by the `combine-after-change-calls' macro.")
+(defvar display-buffer-mark-dedicated nil
+  "Non-nil means `display-buffer' marks the window dedicated.")
+(setq top-level '(normal-top-level))
+
 ;; Menu-item defs whose symbols carry keymaps (yank-menu et al).
+;; GNU binds these as variables too (menu-bar.el defvars / loaddefs).
+(defvar yank-menu '("Select Yank" nil)
+  "Menu title and filter for the `yank-menu' command.")
 (fset 'yank-menu
   '(keymap "Select Yank" nil))
 
 (fset 'menu-bar-bookmark-map
   '(keymap (jump menu-item "Jump to Bookmark..." bookmark-jump :help "Jump to a bookmark (a point in some file)") (set menu-item "Set Bookmark..." bookmark-set :help "Set a bookmark named inside a file.") (insert menu-item "Insert Contents..." bookmark-insert :help "Insert the text of the file pointed to by a bookmark") (locate menu-item "Insert Location..." bookmark-locate :help "Insert the name of the file associated with a bookmark") (rename menu-item "Rename Bookmark..." bookmark-rename :help "Change the name of a bookmark") (delete-all menu-item "Delete all Bookmarks..." bookmark-delete-all :help "Delete all bookmarks from the bookmark list") (delete menu-item "Delete Bookmark..." bookmark-delete :help "Delete a bookmark from the bookmark list") (edit menu-item "Edit Bookmark List" bookmark-bmenu-list :help "Display a list of existing bookmarks") (save menu-item "Save Bookmarks" bookmark-save :help "Save currently defined bookmarks") (write menu-item "Save Bookmarks As..." bookmark-write :help "Write bookmarks to a file (reading the file name with the minibuffer)") (load menu-item "Load a Bookmark File..." bookmark-load :help "Load bookmarks from a bookmark file)") "Bookmark functions"))
 
+;; GNU binds `ispell-menu-map' as a variable via loaddefs' defconst.
+(defvar ispell-menu-map nil
+  "Keymap for the spell-checking menu (see also the `fset' below).")
 (fset 'ispell-menu-map
   '(keymap (ispell-buffer menu-item "Spell-Check Buffer" ispell-buffer :help "Check spelling of selected buffer") (ispell-message menu-item "Spell-Check Message" ispell-message :visible (eq major-mode 'mail-mode) :help "Skip headers and included message text") (ispell-region menu-item "Spell-Check Region" ispell-region :enable mark-active :help "Spell-check text in marked region") (ispell-comments-and-strings menu-item "Spell-Check Comments" ispell-comments-and-strings :help "Spell-check only comments and strings") (ispell-word menu-item "Spell-Check Word" ispell-word :help "Spell-check word at cursor") (ispell-continue menu-item "Continue Spell-Checking" ispell-continue :enable (and (boundp 'ispell-region-end) (marker-position ispell-region-end) (equal (marker-buffer ispell-region-end) (current-buffer))) :help "Continue spell checking last region") (ispell-complete-word-interior-frag menu-item "Complete Word Fragment" ispell-complete-word-interior-frag :help "Complete word fragment at cursor") (ispell-complete-word menu-item "Complete Word" ispell-complete-word :help "Complete word at cursor using dictionary") (flyspell-mode menu-item "Automatic spell checking (Flyspell)" flyspell-mode :help "Check spelling while you edit the text" :button (:toggle bound-and-true-p flyspell-mode)) (ispell-help menu-item "Help" nil :help "Show standard Ispell keybindings and commands") (ispell-customize menu-item "Customize..." nil :help "Customize spell checking options") (ispell-pdict-save menu-item "Save Dictionary" nil :help "Save personal dictionary") (ispell-kill-ispell menu-item "Kill Process" nil :enable (and (boundp 'ispell-process) ispell-process (eq (ispell-process-status) 'run)) :help "Terminate Ispell subprocess") (ispell-change-dictionary menu-item "Change Dictionary..." ispell-change-dictionary :help "Supply explicit dictionary file name") "Spell"))
+(setq ispell-menu-map (symbol-function 'ispell-menu-map))
 
 (fset 'menu-bar-ediff-menu
   '(keymap (ediff-files menu-item "Two Files..." ediff-files :help "Compare two files simultaneously") (ediff-buffers menu-item "Two Buffers..." ediff-buffers :help "Compare two buffers simultaneously") (ediff-files3 menu-item "Three Files..." ediff-files3 :help "Compare three files simultaneously") (ediff-buffers3 menu-item "Three Buffers..." ediff-buffers3 :help "Compare three buffers simultaneously") (separator-ediff-files "--") (ediff-directories menu-item "Two Directories..." ediff-directories :help "Compare files common to two directories simultaneously") (ediff-directories3 menu-item "Three Directories..." ediff-directories3 :help "Compare files common to three directories simultaneously") (separator-ediff-directories "--") (ediff-revision menu-item "File with Revision..." ediff-revision :help "Compare file with its older versions") (ediff-dir-revision menu-item "Directory Revisions..." ediff-directory-revisions :help "Compare directory files with their older versions") (separator-ediff-regions "--") (ediff-regions-wordwise menu-item "Regions Word-by-word..." ediff-regions-wordwise :help "Compare regions word-wise") (ediff-regions-linewise menu-item "Regions Line-by-line..." ediff-regions-linewise :help "Compare regions line-wise") (separator-ediff-windows "--") (ediff-windows-wordwise menu-item "Windows Word-by-word..." ediff-windows-wordwise :help "Compare windows word-wise") (ediff-windows-linewise menu-item "Windows Line-by-line..." ediff-windows-linewise :help "Compare windows line-wise") (window menu-item "This Window and Next Window" compare-windows :help "Compare the current window and the next window") (separator-ediff-misc "--") (ediff-misc menu-item "Ediff Miscellanea" menu-bar-ediff-misc-menu) "Compare"))
@@ -5802,7 +5824,7 @@ The normal global definition of the character ESC indirects to this keymap.")
 (defvar help-char ?\C-h)
 (defun help-form-show ()
   "Display the output of a non-nil `help-form'."
-  (interactive)
+  ;; GNU's help.el has no `interactive' here.
   (when help-form (message "%s" (eval help-form))))
 
 (defun read-char-from-minibuffer (prompt &optional chars history)
@@ -6341,11 +6363,14 @@ indirectly called by the latter."
 	(unless (cdr (assq 'inhibit-switch-frame alist))
 	  (window--maybe-raise-frame (window-frame window)))))))
 
-(defun display-buffer (buffer &optional action)
+(defun display-buffer (buffer-or-name &optional action frame)
   "Make BUFFER visible in a window without selecting it.
 Return the window used to display BUFFER, like GNU's
 `window--display-buffer' callers expect."
-  (let* ((buffer (get-buffer-create buffer))
+  ;; GNU-verbatim interactive spec (window.el).
+  (interactive (list (read-buffer "Display buffer: " (other-buffer))
+		     (if current-prefix-arg t)))
+  (let* ((buffer (get-buffer-create buffer-or-name))
          (window nil))
     ;; GNU tries `display-buffer-overriding-action' (then the user
     ;; action lists) before the fallback actions.  Each entry is
@@ -6634,6 +6659,118 @@ places where expressions are evaluated and inserted or spliced in."
 
 (defvar minor-mode-alist nil
   "Alist of (MODE . LIGHTER-STRINGS) for minor modes.")
+
+;; GNU seeds `minor-mode-alist' in bindings.el (dumped by loadup) with
+;; these C-variable toggles; isearch.el nconc's (isearch-mode
+;; isearch-mode) when it loads.
+(defvar mode-line-defining-kbd-macro
+  (propertize " Def" 'face 'font-lock-warning-face)
+  "Mode line construct for `defining-kbd-macro'.")
+(setq minor-mode-alist
+      '((abbrev-mode " Abbrev")
+        (overwrite-mode overwrite-mode)
+        (auto-fill-function " Fill")
+        ;; not really a minor mode...
+        (defining-kbd-macro mode-line-defining-kbd-macro)))
+
+;; GNU's isearch.el (dumped) appends these after bindings.el's seeds;
+;; `isearch' is pre-registered here so the file's toplevel forms never
+;; run — register the same entries directly.  `isearch-mode-map' is
+;; defined above.
+(or (assq 'isearch-mode minor-mode-alist)
+    (nconc minor-mode-alist
+	   (list '(isearch-mode isearch-mode))))
+;; `nconc' on a nil alist doesn't update the variable, so assign.
+(unless (assq 'isearch-mode minor-mode-map-alist)
+  (setq minor-mode-map-alist
+        (nconc minor-mode-map-alist
+               (list (cons 'isearch-mode isearch-mode-map)))))
+
+;; GNU defvars these in subr.el (dumped); `define-minor-mode' pushes
+;; onto them, so they must be bound before the first call below.
+(defvar minor-mode-list '(auto-save-mode auto-fill-mode abbrev-mode
+					 overwrite-mode view-mode
+					 hs-minor-mode)
+  "List of all minor mode functions.")
+
+(defvar minor-mode-map-alist nil
+  "Alist of keymaps to use for minor modes.
+Each element looks like (VARIABLE . KEYMAP): VARIABLE is the variable
+which stores the minor-mode's enabled state.  If the variable is
+enabled, the minor mode is active and the keymap is active.")
+(defvar emulation-mode-map-alists nil
+  "Alist of keymap alists to use for emulation modes.")
+
+(defvar local-minor-modes nil
+  "A list of the currently enabled non-global minor modes.
+This is a list of symbols.")
+
+(defvar global-minor-modes nil
+  "A list of the currently enabled global minor modes.
+This is a list of symbols.")
+
+;; GNU subr.el `add-minor-mode' (verbatim): NAME nil → no
+;; `minor-mode-alist' entry; AFTER controls insertion position;
+;; TOGGLE-FUN defaults to TOGGLE and is recorded on
+;; `:minor-mode-function'.  Defined this early because the first
+;; `define-minor-mode' call below already expands to a call to it.
+(defun add-minor-mode (toggle name &optional keymap after toggle-fun)
+  "Register a new minor mode.
+
+TOGGLE is a symbol that is the name of a buffer-local variable that
+is toggled on or off to say whether the minor mode is active or not.
+NAME should be either a string starting with a space, or a symbol
+whose value is such a string."
+  (unless (memq toggle minor-mode-list)
+    (push toggle minor-mode-list))
+
+  (unless toggle-fun (setq toggle-fun toggle))
+  (unless (eq toggle-fun toggle)
+    (put toggle :minor-mode-function toggle-fun))
+  ;; Add the name to the minor-mode-alist.
+  (when name
+    (let ((existing (assq toggle minor-mode-alist)))
+      (if existing
+	  (setcdr existing (list name))
+	(let ((tail minor-mode-alist) found)
+	  (while (and tail (not found))
+	    (if (eq after (caar tail))
+		(setq found tail)
+	      (setq tail (cdr tail))))
+	  (if found
+	      (let ((rest (cdr found)))
+		(setcdr found nil)
+		(nconc found (list (list toggle name)) rest))
+	    (push (list toggle name) minor-mode-alist))))))
+  ;; Add the toggle to the minor-modes menu if requested.
+  (when (get toggle :included)
+    (define-key mode-line-mode-menu
+      (vector toggle)
+      (list 'menu-item
+	    (concat
+	     (or (get toggle :menu-tag)
+		 (if (stringp name) name (symbol-name toggle)))
+	     (let ((mode-name (if (symbolp name) (symbol-value name))))
+	       (if (and (stringp mode-name) (string-match "[^ ]+" mode-name))
+		   (concat " (" (match-string 0 mode-name) ")"))))
+	    toggle-fun
+	    :button (cons :toggle toggle))))
+
+  ;; Add the map to the minor-mode-map-alist.
+  (when keymap
+    (let ((existing (assq toggle minor-mode-map-alist)))
+      (if existing
+	  (setcdr existing keymap)
+	(let ((tail minor-mode-map-alist) found)
+	  (while (and tail (not found))
+	    (if (eq after (caar tail))
+		(setq found tail)
+	      (setq tail (cdr tail))))
+	  (if found
+	      (let ((rest (cdr found)))
+		(setcdr found nil)
+		(nconc found (list (cons toggle keymap)) rest))
+	    (push (cons toggle keymap) minor-mode-map-alist)))))))
 
 ;; GNU registers these as autoload cells; calling them loads the
 ;; library from lisp/ (see load-path handling in load.rs).
@@ -7287,8 +7424,13 @@ variable, such as for global minor modes."
   ;; value like nil (evaluating `value` is not an option because it
   ;; may have undesirable side-effects).
   (if (not load-file-name)
-      ;; There's no "after file" to speak of.
-      (custom-initialize-set symbol value)
+      ;; There's no "after file" to speak of.  During the prelude
+      ;; the mode function this typically initializes
+      ;; (`minibuffer-regexp-mode' & co.) is not yet defined, so defer
+      ;; like `custom-initialize-delay' instead of calling :set now.
+      (if (listp custom-delayed-init-variables)
+          (push symbol custom-delayed-init-variables)
+        (custom-initialize-set symbol value))
     (let ((thisfile load-file-name))
       (letrec ((f (lambda (file)
                     (when (equal file thisfile)
@@ -7495,7 +7637,7 @@ argument 1 (enable) or -1 (disable), like minor-mode functions do."
 
 (defun custom-reevaluate-setting (symbol)
   "Re-execute :set function of SYMBOL with the saved/customized value."
-  (interactive "vVariable: ")
+  ;; Not interactive in GNU's custom.el.
   (funcall (or (get symbol 'custom-set) 'set) symbol
            (eval (car (or (get symbol 'saved-value)
                           (get symbol 'standard-value))))))
@@ -15360,8 +15502,15 @@ for a match.  Return the absolute directory name, or nil."
 
 ;; These are defined (not autoloaded) at GNU startup, so plain
 ;; `define-minor-mode' forms give the same observable state.
+;; GNU scroll-bar.el uses a `:variable' GET/SET pair (no defcustom,
+;; no `global-minor-modes' entry); the mode's state lives in the C-ish
+;; frame parameter, exposed as the `scroll-bar-mode' variable.
+(defvar scroll-bar-mode 'right)
 (define-minor-mode scroll-bar-mode "Toggle scroll bars."
-  :global t :init-value 'right)
+  :variable ((get-scroll-bar-mode)
+             . (lambda (v) (set-scroll-bar-mode
+			    (if v (or previous-scroll-bar-mode
+				      default-frame-scroll-bars))))))
 (define-minor-mode horizontal-scroll-bar-mode
   "Toggle horizontal scroll bars." :global t)
 (define-minor-mode display-time-mode "Toggle display of time."
@@ -15380,8 +15529,18 @@ for a match.  Return the absolute directory name, or nil."
   "Transparently handle compressed files." :global t :init-value t)
 (define-minor-mode auto-encryption-mode
   "Transparently handle encrypted files." :global t :init-value t)
+;; GNU composite.el: `auto-composition-mode' is a per-buffer C variable
+;; (default t) used as the `:variable' of both mode functions — so
+;; neither registers on `global-minor-modes'.
+(defvar auto-composition-mode t
+  "Non-nil if Auto Composition mode is enabled in the current buffer.")
+(make-variable-buffer-local 'auto-composition-mode)
 (define-minor-mode auto-composition-mode
-  "Toggle automatic character composition." :global t :init-value t)
+  "Toggle automatic character composition."
+  :variable auto-composition-mode)
+(define-minor-mode global-auto-composition-mode
+  "Toggle Auto Composition mode in all buffers."
+  :global t :variable (default-value 'auto-composition-mode))
 (define-minor-mode mouse-wheel-mode "Toggle mouse wheel support."
   :global t :init-value t)
 (define-minor-mode show-paren-mode
@@ -15440,7 +15599,16 @@ for a match.  Return the absolute directory name, or nil."
   nil)
 (define-minor-mode eldoc-mode "Toggle echo-area documentation."
   :init-value t)
+;; GNU simple.el: visual-line-mode's keymap lands the mode on
+;; `minor-mode-map-alist'.
+(defvar visual-line-mode-map
+  (let ((map (make-sparse-keymap)))
+    (define-key map [remap kill-line] 'kill-visual-line)
+    (define-key map [remap move-beginning-of-line] 'beginning-of-visual-line)
+    (define-key map [remap move-end-of-line]  'end-of-visual-line)
+    map))
 (define-minor-mode visual-line-mode "Toggle visual word wrapping."
+  :keymap visual-line-mode-map
   :lighter " Wrap")
 ;; GNU lacks `diff-auto-refine-mode' as a defined symbol.
 ;; `binary-overwrite-mode' is a plain obsolete command, not a mode var.
@@ -20358,17 +20526,6 @@ elements that can be added."
       (setq buffer-invisibility-spec
             (delete element buffer-invisibility-spec))))
 
-(defun add-minor-mode (toggle name &optional keymap after lighter)
-  "Register a minor mode in `minor-mode-alist'."
-  (let ((existing (assq toggle minor-mode-alist))
-        (entry (list toggle (or lighter name))))
-    (if existing
-        (setcdr existing (cdr entry))
-      (setq minor-mode-alist (cons entry minor-mode-alist)))
-    (when keymap
-      (setq minor-mode-map-alist
-            (cons (cons toggle keymap) minor-mode-map-alist)))))
-
 (defun event--posn-at-point ()
   (if (fboundp 'posn-at-point)
       (or (posn-at-point)
@@ -20717,6 +20874,7 @@ list is used."
                          italic-p underline-p inverse-p frame)
   "Change the display attributes of FACE.
 Obsolete: use `set-face-attribute' instead."
+  (interactive)
   (declare (obsolete set-face-attribute "22.1"))
   (unless (memq face (face-list))
     (signal 'error (list 'Invalid 'face face)))
@@ -33452,6 +33610,22 @@ An interface to `buffer-face-mode' which uses the `variable-pitch' face."
   (interactive (list (or current-prefix-arg 'toggle)))
   (buffer-face-mode-invoke 'variable-pitch (or arg t)
 			   (called-interactively-p 'interactive)))
+
+;; GNU does not dump face-remap.el, so its `define-minor-mode' side
+;; effects never reach the -Q `minor-mode-alist'/`minor-mode-map-alist'.
+;; Keep the folded definitions (the functions are real at -Q) but undo
+;; the alist registrations to match GNU's startup state.
+(dolist (mode '(text-scale-mode buffer-face-mode))
+  (set-default 'minor-mode-alist
+               (delq (assq mode (default-value 'minor-mode-alist))
+                     (default-value 'minor-mode-alist)))
+  (set-default 'minor-mode-map-alist
+               (delq (assq mode (default-value 'minor-mode-map-alist))
+                     (default-value 'minor-mode-map-alist)))
+  (setq minor-mode-alist (delq (assq mode minor-mode-alist)
+                               minor-mode-alist))
+  (setq minor-mode-map-alist (delq (assq mode minor-mode-map-alist)
+                                   minor-mode-map-alist)))
 
 ;; ---------- window-swap-states ----------
 
@@ -47084,7 +47258,7 @@ included; callers should bind `case-fold-search' to t."
 ;; startup.elc / window.elc in GNU; both return nil in a -Q batch.
 (defun fancy-startup-tail (&optional _concise)
   "Insert the tail of the fancy startup screen (no-op in batch)."
-  (interactive)
+  ;; Not interactive in GNU's startup.el.
   nil)
 (defun fit-frame-to-buffer (&optional _frame _max-height _min-height _max-width _min-width _preserve-size)
   "Fit the selected frame to its buffer (no-op without GUI frames)."
@@ -47148,3 +47322,156 @@ abbreviating it with ellipses to fit within a size limit."
               (when cl-print-string-length
                 (decf cl-print-string-length
                          (ceiling cl-print-string-length 4.0))))))))))
+
+;; GNU's loadup/loaddefs run this: tramp-archive registers its archive
+;; file-name handler from `after-init-hook' (verified at -Q).
+(add-hook 'after-init-hook 'tramp-register-archive-autoload-file-name-handler)
+;; GNU parity: `risky-local-variable'/`permanent-local' props that
+;; GNU installs from files loaded at dump time but remacs only
+;; pre-registers as features (files.el, bindings.el, calendar, ...).
+(put 'backquote-backquote-symbol 'risky-local-variable t)
+(put 'backquote-splice-symbol 'risky-local-variable t)
+(put 'backquote-unquote-symbol 'risky-local-variable t)
+(put 'backup-inhibited 'permanent-local t)
+(put 'battery-mode-line-string 'risky-local-variable t)
+(put 'binhex-begin-line 'risky-local-variable t)
+(put 'buffer-display-count 'permanent-local t)
+(put 'buffer-display-time 'permanent-local t)
+(put 'buffer-file-coding-system 'permanent-local t)
+(put 'buffer-file-number 'permanent-local t)
+(put 'buffer-offer-save 'permanent-local t)
+(put 'buffer-read-only 'permanent-local t)
+(put 'buffer-undo-list 'permanent-local t)
+(put 'calendar-chinese-time-zone 'risky-local-variable t)
+(put 'calendar-current-time-zone-cache 'risky-local-variable t)
+(put 'calendar-daylight-savings-ends 'risky-local-variable t)
+(put 'calendar-daylight-savings-starts 'risky-local-variable t)
+(put 'calendar-holidays 'risky-local-variable t)
+(put 'custom-enabled-themes 'risky-local-variable t)
+(put 'custom-local-buffer 'permanent-local t)
+(put 'dabbrev-case-fold-search 'risky-local-variable t)
+(put 'dabbrev-case-replace 'risky-local-variable t)
+(put 'desktop-buffer-mode-handlers 'risky-local-variable t)
+(put 'desktop-minor-mode-handlers 'risky-local-variable t)
+(put 'display-buffer--other-frame-action 'risky-local-variable t)
+(put 'display-buffer--same-window-action 'risky-local-variable t)
+(put 'display-time-string 'risky-local-variable t)
+(put 'dynamic-library-alist 'risky-local-variable t)
+(put 'enable-local-variables 'risky-local-variable t)
+(put 'enable-multibyte-characters 'permanent-local t)
+(put 'fancy-about-text 'risky-local-variable t)
+(put 'fancy-startup-text 'risky-local-variable t)
+(put 'find-file-literally 'permanent-local t)
+(put 'holiday-bahai-holidays 'risky-local-variable t)
+(put 'holiday-christian-holidays 'risky-local-variable t)
+(put 'holiday-general-holidays 'risky-local-variable t)
+(put 'holiday-hebrew-holidays 'risky-local-variable t)
+(put 'holiday-islamic-holidays 'risky-local-variable t)
+(put 'holiday-local-holidays 'risky-local-variable t)
+(put 'holiday-oriental-holidays 'risky-local-variable t)
+(put 'holiday-other-holidays 'risky-local-variable t)
+(put 'holiday-solar-holidays 'risky-local-variable t)
+(put 'ispell-html-skip-alists 'risky-local-variable t)
+(put 'ispell-menu-map 'risky-local-variable t)
+(put 'japanese-alpha-numeric-table 'risky-local-variable t)
+(put 'japanese-kana-table 'risky-local-variable t)
+(put 'japanese-symbol-table 'risky-local-variable t)
+(put 'kill-buffer-hook 'permanent-local t)
+(put 'lisp-mode-autoload-regexp 'risky-local-variable t)
+(put 'local-write-file-hooks 'permanent-local t)
+(put 'major-mode--suspended 'permanent-local t)
+(put 'mark-active 'permanent-local t)
+(put 'mark-ring 'permanent-local t)
+(put 'mh-lib 'risky-local-variable t)
+(put 'mh-lib-progs 'risky-local-variable t)
+(put 'mh-progs 'risky-local-variable t)
+(put 'minor-mode-alist 'risky-local-variable t)
+(put 'mode-line-buffer-identification 'risky-local-variable t)
+(put 'mode-line-client 'risky-local-variable t)
+(put 'mode-line-defining-kbd-macro 'risky-local-variable t)
+(put 'mode-line-end-spaces 'risky-local-variable t)
+(put 'mode-line-format-right-align 'risky-local-variable t)
+(put 'mode-line-frame-identification 'risky-local-variable t)
+(put 'mode-line-front-space 'risky-local-variable t)
+(put 'mode-line-invisible--buf-state 'permanent-local t)
+(put 'mode-line-minor-modes 'risky-local-variable t)
+(put 'mode-line-misc-info 'risky-local-variable t)
+(put 'mode-line-modes 'risky-local-variable t)
+(put 'mode-line-modified 'risky-local-variable t)
+(put 'mode-line-mule-info 'risky-local-variable t)
+(put 'mode-line-position 'risky-local-variable t)
+(put 'mode-line-process 'risky-local-variable t)
+(put 'mode-line-remote 'risky-local-variable t)
+(put 'mode-line-window-dedicated 'risky-local-variable t)
+(put 'move-to-window-group-line-function 'permanent-local t)
+(put 'outline-level 'risky-local-variable t)
+(put 'package-directory-list 'risky-local-variable t)
+(put 'package-user-dir 'risky-local-variable t)
+(put 'parse-time-rules 'risky-local-variable t)
+(put 'point-before-scroll 'permanent-local t)
+(put 'pos-visible-in-window-group-p-function 'permanent-local t)
+(put 'python--auto-mode-alist-regexp 'risky-local-variable t)
+(put 'read-face-name-sample-text 'risky-local-variable t)
+(put 'recenter-window-group-function 'permanent-local t)
+(put 'revert-buffer-function 'permanent-local t)
+(put 'revert-buffer-insert-file-contents-function 'permanent-local t)
+(put 'rmail-output-file-alist 'risky-local-variable t)
+(put 'save-buffer-coding-system 'permanent-local t)
+(put 'selected-window-group-function 'permanent-local t)
+(put 'server-auth-dir 'risky-local-variable t)
+(put 'server-host 'risky-local-variable t)
+(put 'server-port 'risky-local-variable t)
+(put 'set-window-group-start-function 'permanent-local t)
+(put 'shell-command-buffer-name 'risky-local-variable t)
+(put 'shell-command-buffer-name-async 'risky-local-variable t)
+(put 'special-display-buffer-names 'risky-local-variable t)
+(put 'special-display-regexps 'risky-local-variable t)
+(put 'tramp-archive-compression-suffixes 'risky-local-variable t)
+(put 'tramp-archive-suffixes 'risky-local-variable t)
+(put 'tramp-autoload-file-name-regexp 'risky-local-variable t)
+(put 'tramp-initial-file-name-regexp 'risky-local-variable t)
+(put 'truncate-lines 'permanent-local t)
+(put 'trusted-content 'risky-local-variable t)
+(put 'untrusted-content 'permanent-local t)
+(put 'url-ircs-default-port 'risky-local-variable t)
+(put 'which-func-current 'risky-local-variable t)
+(put 'which-func-format 'risky-local-variable t)
+(put 'window-group-end-function 'permanent-local t)
+(put 'window-group-start-function 'permanent-local t)
+(put 'window-safe-min-height 'risky-local-variable t)
+(put 'window-safe-min-width 'risky-local-variable t)
+(put 'write-file-functions 'permanent-local t)
+(put 'x-font-regexp-adstyle-subnum 'risky-local-variable t)
+(put 'x-font-regexp-slant-subnum 'risky-local-variable t)
+(put 'x-font-regexp-swidth-subnum 'risky-local-variable t)
+(put 'x-font-regexp-weight-subnum 'risky-local-variable t)
+
+;; `safe-local-variable' predicates from cus-start.el/lisp-mode.el/
+;; elisp-mode.el, which GNU evaluates during loadup while remacs only
+;; pre-registers the features.
+(put 'display-fill-column-indicator-column 'safe-local-variable
+     (lambda (value) (or (booleanp value) (integerp value))))
+(put 'display-fill-column-indicator-character 'safe-local-variable
+     (lambda (value) (or (characterp value) (null value))))
+(put 'lisp-indent-offset 'safe-local-variable
+     (lambda (x) (or (null x) (integerp x))))
+(put 'lisp-indent-local-overrides 'safe-local-variable
+     (lambda (value)
+       (and (listp value)
+            (seq-every-p (lambda (elt)
+                           (and (symbolp (car elt))
+                                (or (eq (cdr elt) 'defun)
+                                    (integerp (cdr elt)))))
+                         value))))
+(put 'elisp-flymake-byte-compile-load-path 'safe-local-variable
+     (lambda (x) (and (listp x)
+                      (catch 'tag
+                        (dolist (path x t)
+                          (unless (stringp path) (throw 'tag nil)))))))
+
+;; Remaining prop-parity stragglers: warnings.el's risky-local marks
+;; and cl-macs's cl-list* compiler-macro (a `declare' spec GNU only
+;; expands at byte-compile time).
+(put 'warning-levels 'risky-local-variable t)
+(put 'warning-series 'risky-local-variable t)
+(function-put 'cl-list* 'compiler-macro 'cl--compiler-macro-list*)

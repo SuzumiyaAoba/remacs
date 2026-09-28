@@ -582,7 +582,6 @@ impl Interp {
             "vc-hooks",
             "lisp-float-type",
             "elisp-mode",
-            "mwheel",
             "term/ns-win",
             "ns-win",
             "ucs-normalize",
@@ -723,7 +722,10 @@ impl Interp {
             output_buffer: String::new(),
             capture_output: false,
             match_data: None,
-            noninteractive: false,
+            // `main' argv-scans --batch/--script before `Interp::new'
+            // (GNU does the same in its C main), so startup-time Lisp
+            // already sees the batch state.
+            noninteractive: std::env::var_os("REMACS_NONINTERACTIVE").is_some(),
             default_obarray: None,
             loading_dumped: false,
             dumped_call_depth: 0,
@@ -911,7 +913,27 @@ impl Interp {
             // sources (subr.el, minibuffer.el, ...); `lexical-binding'
             // defaults to t, so `eval_str' installs a `(t)' root env
             // and it evals lexically like GNU's dump does.
-            let _ = interp.eval_str(crate::lisp::prelude::PRELUDE);
+            if let Err(f) = interp.eval_str(crate::lisp::prelude::PRELUDE) {
+                // An error aborts `eval_str' mid-file, silently dropping
+                // every definition after the failing form — surface it.
+                let detail = match &f {
+                    crate::lisp::Flow::Signal(sym, data, _) => format!(
+                        "signal {} {}",
+                        interp.print_to_string(sym),
+                        interp.print_to_string(data)
+                    ),
+                    _ => format!("{:?}", f),
+                };
+                eprintln!("[prelude] eval aborted: {}", detail);
+            }
+            if std::env::var_os("WATCH_TERM_CODING").is_some() {
+                let _ = interp.eval_str(
+                    "(add-variable-watcher 'default-terminal-coding-system \
+                       (lambda (s v op w) \
+                         (princ (format \"[WATCH d-t-c-s] op=%s v=%s in-load=%s file=%s\\n\" \
+                                op v load-in-progress load-file-name))))",
+                );
+            }
             // First stash snapshot, right after the prelude: GNU_VOID_FNS
             // members the prelude defines (`cl-loop', `cl-defstruct', ...)
             // hold their real definitions now.  Libraries loaded below may
@@ -1185,6 +1207,11 @@ impl Interp {
                 "newcomment",
                 "image",
                 "tab-bar",
+                // mwheel/t-mouse/windmove are NOT dumped by GNU's
+                // loadup: their `:init-value t' modes reach
+                // `global-minor-modes' via the `add-to-list' autoload
+                // cookies in loaddefs.el, leaving the real files
+                // autoload-only.
             ] {
                 let _ = crate::lisp::load::load_library(&mut interp, lib);
             }
@@ -1332,7 +1359,12 @@ impl Interp {
             let rolled_back = interp.eval_str(
                 "(let (fns vars) \
                    (dolist (lib '(\"rect\" \"send-to\" \"map\")) \
-                     (let ((entry (assoc (concat \"lisp/\" lib \".el\") load-history))) \
+                     (let ((entry (cl-find lib load-history \
+                               :key #'car \
+                               :test (lambda (want key) \
+                                       (and (stringp key) \
+                                            (string-suffix-p \
+                                             (concat \"/\" want \".el\") key)))))) \
                        (when entry \
                          (dolist (item (cdr entry)) \
                            (cond \
@@ -1365,8 +1397,14 @@ impl Interp {
                     }
                     for v in vars.into_iter().flatten() {
                         if let Value::Sym(sid) = v {
+                            let _dbg_name = std::env::var_os("WATCH_ROLLBACK")
+                                .is_some()
+                                .then(|| interp.symbol_name(sid));
                             {
                                 let s = interp.obarray.symbol_mut(sid);
+                                if let Some(n) = &_dbg_name {
+                                    eprintln!("[rollback-unbind] {}", n);
+                                }
                                 s.value = Value::Sym(sym::UNBOUND);
                                 s.special = false;
                                 s.constant = false;
@@ -1382,6 +1420,28 @@ impl Interp {
                     }
                 }
             }
+            // The rolled-back loads also pushed `minor-mode-map-alist'
+            // entries (rect.el's `define-minor-mode' has a :keymap);
+            // GNU's -Q alist doesn't have them.
+            let _ = interp.eval_str(
+                "(progn \
+                   (set-default 'minor-mode-map-alist \
+                       (delq (assq 'rectangle-mark-mode \
+                                   (default-value 'minor-mode-map-alist)) \
+                             (default-value 'minor-mode-map-alist))) \
+                   (set-default 'minor-mode-alist \
+                       (delq (assq 'rectangle-mark-mode \
+                                   (default-value 'minor-mode-alist)) \
+                             (default-value 'minor-mode-alist))) \
+                   (setq minor-mode-map-alist \
+                         (delq (assq 'rectangle-mark-mode \
+                                     minor-mode-map-alist) \
+                               minor-mode-map-alist) \
+                         minor-mode-alist \
+                         (delq (assq 'rectangle-mark-mode \
+                                     minor-mode-alist) \
+                               minor-mode-alist)))",
+            );
             let _ = interp.eval_str(
                 "(progn
   (fset 'clear-rectangle '(autoload \"rect\" \"Blank out the region-rectangle.
@@ -2376,6 +2436,33 @@ explicitly overridden.
                               (nreverse custom-delayed-init-variables)) \
                          (setq custom-delayed-init-variables t))",
             );
+            // GNU's `command-line' runs `set-locale-environment', which
+            // calls `prefer-coding-system' for UTF-8 locales — yielding
+            // default-terminal-coding-system, default buffer-file
+            // coding and process-coding of utf-8-unix at -Q.  Mirror
+            // the UTF-8 case (the only one remacs supports anyway).
+            let utf8_locale = match ["LC_ALL", "LC_CTYPE", "LANG"]
+                .iter()
+                .filter_map(|v| std::env::var(v).ok())
+                .find(|v| !v.is_empty())
+            {
+                // GNU honours the first non-empty locale var.
+                Some(v) => {
+                    let v = v.to_ascii_lowercase();
+                    v.contains("utf-8") || v.contains("utf8")
+                }
+                // No locale vars at all: treat as UTF-8 (the platform
+                // default on macOS is a UTF-8 system).
+                None => true,
+            };
+            if utf8_locale {
+                let _ = interp.eval_str("(prefer-coding-system 'utf-8-unix)");
+                // `set-language-environment' also seeds
+                // default-sendmail-coding-system from the locale.
+                let _ = interp.eval_str(
+                    "(setq default-sendmail-coding-system 'utf-8-unix)",
+                );
+            }
             // GNU's `native-compile'/`native-compile-async' live in
             // comp.el/comp-run.el over the LIMPLE→libgccjit pipeline.
             // Remacs compiles through its own cc-driven emitter (see
@@ -2406,6 +2493,7 @@ command-line arguments.\" \
                      (batch-native-compile)) \
                    (defun native-compile-prune-cache () \
                      \"Remove *.eln files unusable by this build.\" \
+                     (interactive) \
                      nil) \
                    (defun emacs-lisp-native-compile () \
                      \"Native-compile the file visited in the current buffer.\" \
@@ -2443,6 +2531,10 @@ command-line arguments.\" \
                 .insert(pch, Value::list(vec![Value::Sym(eldoc), Value::t()]));
             br.locals
                 .insert(prech, Value::list(vec![Value::Sym(eldoc_pre), Value::t()]));
+            // GNU's *scratch* has `require-final-newline' t (captured
+            // before files.el's defcustom nils the default).
+            let rfn = interp.intern("require-final-newline");
+            br.locals.insert(rfn, Value::t());
         }
         let tooltip_hide = interp.intern("tooltip-hide");
         interp.obarray.symbol_mut(prech).value = Value::list(vec![Value::Sym(tooltip_hide)]);
@@ -2733,6 +2825,15 @@ command-line arguments.\" \
     pub fn set_symbol_default(&mut self, id: SymId, val: Value) -> Result<(), Flow> {
         if self.obarray.symbol(id).constant {
             return Err(self.signal_data(sym::SETTING_CONSTANT, vec![self.sym(id)]));
+        }
+        if std::env::var_os("WATCH_TERM_CODING").is_some()
+            && self.symbol_name(id) == "default-terminal-coding-system"
+        {
+            eprintln!(
+                "[WATCH set-default] -> {} \n{}",
+                self.prin1_to_string(&val),
+                std::backtrace::Backtrace::capture()
+            );
         }
         self.obarray.symbol_mut(id).value = val.clone();
         self.sync_undo_inhibit(id, &val);
@@ -3034,6 +3135,9 @@ command-line arguments.\" \
                             .take(100)
                             .collect::<String>()
                     );
+                }
+                if self.lisp_stack.is_empty() {
+                    eprintln!("{}", std::backtrace::Backtrace::capture());
                 }
             }
         }
@@ -4857,12 +4961,27 @@ command-line arguments.\" \
         put(
             self,
             "overflow-error",
-            &["overflow-error", "arith-error", "error"],
+            &["overflow-error", "range-error", "arith-error", "error"],
         );
         put(
             self,
             "underflow-error",
-            &["underflow-error", "arith-error", "error"],
+            &[
+                "underflow-error",
+                "range-error",
+                "arith-error",
+                "error",
+            ],
+        );
+        put(
+            self,
+            "singularity-error",
+            &[
+                "singularity-error",
+                "domain-error",
+                "arith-error",
+                "error",
+            ],
         );
         put(
             self,
@@ -4920,6 +5039,16 @@ command-line arguments.\" \
         put(self, "scan-error", &["scan-error", "error"]);
         put(self, "invalid-regexp", &["invalid-regexp", "error"]);
         put(self, "recursion-error", &["recursion-error", "error"]);
+        put(
+            self,
+            "excessive-lisp-nesting",
+            &["excessive-lisp-nesting", "recursion-error", "error"],
+        );
+        put(
+            self,
+            "excessive-variable-binding",
+            &["excessive-variable-binding", "recursion-error", "error"],
+        );
         put(self, "unknown-image-type", &["unknown-image-type", "error"]);
         put(
             self,
@@ -4971,8 +5100,147 @@ command-line arguments.\" \
                 "error",
             ],
         );
+        put(
+            self,
+            "json-escape-sequence-error",
+            &[
+                "json-escape-sequence-error",
+                "json-parse-error",
+                "json-error",
+                "error",
+            ],
+        );
+        put(
+            self,
+            "json-trailing-content",
+            &[
+                "json-trailing-content",
+                "json-parse-error",
+                "json-error",
+                "error",
+            ],
+        );
+        put(
+            self,
+            "json-invalid-surrogate-error",
+            &["json-invalid-surrogate-error", "json-error", "error"],
+        );
+        put(
+            self,
+            "json-number-out-of-range-error",
+            &["json-number-out-of-range-error", "json-error", "error"],
+        );
+        put(
+            self,
+            "json-object-too-deep",
+            &["json-object-too-deep", "json-error", "error"],
+        );
+        put(
+            self,
+            "json-out-of-memory",
+            &["json-out-of-memory", "json-error", "error"],
+        );
+        put(
+            self,
+            "json-utf8-decode-error",
+            &["json-utf8-decode-error", "json-error", "error"],
+        );
         put(self, "mark-set", &["mark-set"]);
         put(self, "mark-active", &["mark-active"]);
+
+        // Remaining GNU error symbols (fileio.c, keyboard.c, module.c,
+        // comp.c, alloc.c, thread.c, xdisp.c, search.c, eval.c, ...).
+        for (name, conds) in [
+            (
+                "cyclic-variable-indirection",
+                &["cyclic-variable-indirection", "error"][..],
+            ),
+            ("file-date-error", &["file-date-error", "file-error", "error"]),
+            (
+                "file-notify-error",
+                &["file-notify-error", "file-error", "error"],
+            ),
+            ("remote-file-error", &["remote-file-error", "file-error", "error"]),
+            (
+                "inhibited-interaction",
+                &["inhibited-interaction", "error"],
+            ),
+            ("invalid-arity", &["invalid-arity", "error"]),
+            (
+                "malformed-keyword-arg-list",
+                &["malformed-keyword-arg-list", "error"],
+            ),
+            (
+                "memory-buffer-too-small",
+                &["memory-buffer-too-small", "error"],
+            ),
+            ("minibuffer-quit", &["minibuffer-quit", "quit"]),
+            ("module-load-failed", &["module-load-failed", "error"]),
+            (
+                "missing-module-init-function",
+                &["missing-module-init-function", "module-load-failed", "error"],
+            ),
+            (
+                "module-init-failed",
+                &["module-init-failed", "module-load-failed", "error"],
+            ),
+            (
+                "module-not-gpl-compatible",
+                &["module-not-gpl-compatible", "module-load-failed", "error"],
+            ),
+            (
+                "module-open-failed",
+                &["module-open-failed", "module-load-failed", "error"],
+            ),
+            ("module-out-of-memory", &["module-out-of-memory", "error"]),
+            ("native-compiler-error", &["native-compiler-error", "error"]),
+            (
+                "native-ice",
+                &["native-ice", "native-compiler-error", "error"],
+            ),
+            (
+                "native-lisp-load-failed",
+                &["native-lisp-load-failed", "error"],
+            ),
+            (
+                "native-lisp-file-inconsistent",
+                &[
+                    "native-lisp-file-inconsistent",
+                    "native-lisp-load-failed",
+                    "error",
+                ],
+            ),
+            (
+                "native-lisp-wrong-reloc",
+                &["native-lisp-wrong-reloc", "native-lisp-load-failed", "error"],
+            ),
+            (
+                "wrong-register-subr-call",
+                &[
+                    "wrong-register-subr-call",
+                    "native-lisp-load-failed",
+                    "error",
+                ],
+            ),
+            (
+                "comp-sanitizer-error",
+                &["comp-sanitizer-error", "error"],
+            ),
+            ("protected-field", &["protected-field", "error"]),
+            ("thread-buffer-killed", &["thread-buffer-killed", "error"]),
+            ("trapping-constant", &["trapping-constant", "error"]),
+            ("type-mismatch", &["type-mismatch", "error"]),
+            (
+                "user-search-failed",
+                &["user-search-failed", "user-error", "search-failed", "error"],
+            ),
+            (
+                "treesit-buffer_changed",
+                &["treesit-buffer_changed", "treesit-error", "error"],
+            ),
+        ] {
+            put(self, name, conds);
+        }
 
         // Tree-sitter errors (treesit.c): a `treesit-error' parent so
         // `ignore-errors'/`condition-case error' catches them — GNU's
@@ -5057,14 +5325,95 @@ command-line arguments.\" \
             ("coding-conversion-error", "Coding conversion error"),
             ("file-already-exists", "File already exists"),
             ("file-supersession", "File is already being edited"),
-            ("permission-denied", "Permission denied"),
+            ("permission-denied", "Cannot access file or directory"),
             ("file-locked", "File is locked"),
             ("cl-assertion-failed", "Assertion failed"),
+            ("recursion-error", "Excessive recursive calling error"),
             (
-                "recursion-error",
+                "excessive-lisp-nesting",
+                "Lisp nesting exceeds `max-lisp-eval-depth'",
+            ),
+            (
+                "excessive-variable-binding",
                 "Variable binding depth exceeds max-specpdl-size",
             ),
+            ("singularity-error", "Arithmetic singularity error"),
             ("unknown-image-type", "Cannot determine image type"),
+            ("json-error", "generic JSON error"),
+            ("json-parse-error", "could not parse JSON stream"),
+            ("json-end-of-file", "end of JSON stream"),
+            ("json-escape-sequence-error", "invalid escape sequence"),
+            (
+                "json-trailing-content",
+                "trailing content after JSON stream",
+            ),
+            ("json-invalid-surrogate-error", "invalid surrogate pair"),
+            ("json-number-out-of-range-error", "number out of range"),
+            (
+                "json-object-too-deep",
+                "object cyclic or Lisp evaluation too deep",
+            ),
+            (
+                "json-out-of-memory",
+                "not enough memory for creating JSON object",
+            ),
+            ("json-utf8-decode-error", "invalid utf-8 encoding"),
+            (
+                "cyclic-variable-indirection",
+                "Symbol's chain of variable indirections contains a loop",
+            ),
+            ("file-date-error", "Cannot set file date"),
+            ("file-notify-error", "File notification error"),
+            ("remote-file-error", "Remote file error"),
+            ("inhibited-interaction", "User interaction while inhibited"),
+            ("invalid-arity", "Invalid function arity"),
+            (
+                "malformed-keyword-arg-list",
+                "Keyword lacks a corresponding value",
+            ),
+            ("memory-buffer-too-small", "Memory buffer too small"),
+            ("minibuffer-quit", "Quit"),
+            ("module-load-failed", "Module load failed"),
+            (
+                "missing-module-init-function",
+                "Module does not export an initialization function",
+            ),
+            ("module-init-failed", "Module initialization failed"),
+            (
+                "module-not-gpl-compatible",
+                "Module is not GPL compatible",
+            ),
+            ("module-open-failed", "Module could not be opened"),
+            ("module-out-of-memory", "Module out of memory"),
+            ("native-compiler-error", "Native compiler error"),
+            ("native-ice", "Internal native compiler error"),
+            ("native-lisp-load-failed", "Native elisp load failed"),
+            (
+                "native-lisp-file-inconsistent",
+                "eln file inconsistent with current runtime configuration, please recompile",
+            ),
+            (
+                "native-lisp-wrong-reloc",
+                "Primitive redefined or wrong relocation",
+            ),
+            (
+                "wrong-register-subr-call",
+                "comp--register-subr can only be called during native lisp load phase.",
+            ),
+            (
+                "comp-sanitizer-error",
+                "Native code sanitizer runtime error",
+            ),
+            ("protected-field", "Attempt to modify a protected field"),
+            ("thread-buffer-killed", "Thread's current buffer killed"),
+            ("trapping-constant", "Attempt to trap writes to a constant symbol"),
+            ("type-mismatch", "Types do not match"),
+            ("user-search-failed", "Search failed"),
+            ("sqlite-error", "Database error"),
+            (
+                "treesit-buffer_changed",
+                "Buffer content changed, please don't edit buffer in predicate function, etc",
+            ),
         ];
         for (name, msg) in msgs {
             let s = self.intern(name);
@@ -5694,6 +6043,9 @@ command-line arguments.\" \
             "major-mode",
             "mark-active",
             "mode-name",
+            // DEFVAR_PER_BUFFER: GNU reports `local-variable-p' t in
+            // every buffer (e.g. `require-final-newline').
+            "require-final-newline",
         ];
         for name in per_buffer {
             let id = self.intern(name);
@@ -5844,7 +6196,14 @@ command-line arguments.\" \
             ("indent-tabs-mode", Value::t()),
             ("case-fold-search", Value::t()),
             ("case-replace", Value::t()),
-            ("noninteractive", Value::Nil),
+            (
+                "noninteractive",
+                if std::env::var_os("REMACS_NONINTERACTIVE").is_some() {
+                    Value::t()
+                } else {
+                    Value::Nil
+                },
+            ),
             ("standard-output", Value::t()),
             ("standard-input", Value::t()),
             (
@@ -5872,7 +6231,8 @@ command-line arguments.\" \
             ("next-screen-context-lines", Value::Int(2)),
             ("undo-limit", Value::Int(160_000)),
             ("undo-strong-limit", Value::Int(240_000)),
-            ("undo-outer-limit", Value::Int(24_000_000)),
+            // GNU 31: nil means "no outer limit" (cus-start choice).
+            ("undo-outer-limit", Value::Nil),
             ("pending-undo-list", Value::Nil),
             ("undo-in-region", Value::Nil),
             ("undo-no-redo", Value::Nil),
@@ -5927,7 +6287,9 @@ command-line arguments.\" \
             ),
             ("completion-ignore-case", Value::Nil),
             ("read-buffer-completion-ignore-case", Value::Nil),
-            ("read-file-name-completion-ignore-case", Value::Nil),
+            // GNU defaults to t on case-insensitive filesystems
+            // (darwin): minibuffer.el's defcustom probes the fs.
+            ("read-file-name-completion-ignore-case", Value::Sym(sym::T)),
             ("history-delete-duplicates", Value::Nil),
             ("minibuffer-history", Value::Nil),
             ("buffer-name-history", Value::Nil),
@@ -5936,7 +6298,27 @@ command-line arguments.\" \
             ("print-level", Value::Nil),
             ("print-length", Value::Nil),
             ("print-circle", Value::Nil),
-            ("load-path", Value::Nil),
+            // GNU initializes `load-path' to the directories holding
+            // the bundled Lisp libraries (the installation's lisp/ +
+            // subdirs).  remacs resolves bundled libs through
+            // EMBEDDED_LISP plus `load::builtin_dirs'; expose the
+            // existing on-disk dirs so `load'/`locate-file' behave
+            // the same for files on disk.
+            (
+                "load-path",
+                Value::list(crate::lisp::load::builtin_dirs()
+                    .iter()
+                    .filter(|d| {
+                        let p = std::path::Path::new(d);
+                        p.is_dir()
+                    })
+                    .filter_map(|d| {
+                        std::fs::canonicalize(d)
+                            .ok()
+                            .map(|p| Value::string(p.to_string_lossy().into_owned()))
+                    })
+                    .collect()),
+            ),
             // GNU: `load-file-name' is a C variable bound to nil
             // outside of `load' (Vload_file_name), so it is always
             // readable (e.g. by `custom-current-group').
@@ -6055,7 +6437,7 @@ command-line arguments.\" \
             ("word-wrap", Value::Nil),
             ("scroll-step", Value::Int(0)),
             ("scroll-error-top-bottom", Value::Nil),
-            ("scroll-preserve-screen-position", Value::Sym(sym::T)),
+            ("scroll-preserve-screen-position", Value::Nil),
             ("scroll-up-aggressively", Value::Nil),
             ("scroll-down-aggressively", Value::Nil),
             ("scroll-minibuffer-conservatively", Value::Sym(sym::T)),
@@ -6079,8 +6461,8 @@ command-line arguments.\" \
             ("print-continuous-numbering", Value::Nil),
             ("print-number-table", Value::Nil),
             ("print-readably", Value::Sym(sym::T)),
-            ("eval-expression-print-length", Value::Nil),
-            ("eval-expression-print-level", Value::Nil),
+            ("eval-expression-print-length", Value::Int(12)),
+            ("eval-expression-print-level", Value::Int(4)),
             ("font-lock-maximum-decoration", Value::Sym(sym::T)),
             ("font-lock-maximum-size", Value::Nil),
             ("jit-lock-stealth-time", Value::Nil),
@@ -6153,7 +6535,9 @@ command-line arguments.\" \
             ("paragraph-start", Value::string("\x0c\\|[ \t]*$")),
             ("page-delimiter", Value::string("^\x0c")),
             ("parse-sexp-ignore-comments", Value::Nil),
-            ("require-final-newline", Value::Sym(sym::T)),
+            // GNU: files.el's defcustom makes the default nil; the
+            // *scratch* buffer-local value (t) is seeded at init.
+            ("require-final-newline", Value::Nil),
             ("sort-numeric-base", Value::Int(10)),
             ("sort-fold-case", Value::Nil),
             ("resize-mini-windows", Value::Sym(self.intern("grow-only"))),
@@ -6448,9 +6832,10 @@ command-line arguments.\" \
                 ),
             ),
             ("emacs-basic-display", Value::Nil),
-            ("auto-coding-alist", Value::Nil),
+            // GNU's files.el/mule.el initial contents (verified at -Q).
+            ("auto-coding-alist", Value::Nil),   // set from Lisp below
             ("auto-coding-functions", Value::Nil),
-            ("auto-coding-regexp-alist", Value::Nil),
+            ("auto-coding-regexp-alist", Value::Nil), // set below
             ("set-auto-coding-function", Value::Nil),
             // GNU's coding.c seeds Vcoding_system_list with every
             // predefined name; mule.el's `coding-system-list' defun
@@ -6525,7 +6910,7 @@ command-line arguments.\" \
             ),
             ("read-symbol-positions-list", Value::Nil),
             ("eval-expression-print-maximum-character", Value::Int(127)),
-            ("print-integers-as-characters", Value::Sym(sym::T)),
+            ("print-integers-as-characters", Value::Nil),
             ("print-escape-control-characters", Value::Nil),
             (
                 "print-charset-text-property",
@@ -6674,9 +7059,18 @@ command-line arguments.\" \
             ("debug-on-error", Value::Nil),
             ("sentence-end-double-space", Value::t()),
             ("inhibit-startup-message", Value::t()),
-            ("use-dialog-box", Value::Nil),
+            // GNU's defcustom default is t (cus-start.el).
+            ("use-dialog-box", Value::Sym(sym::T)),
             ("menu-prompting", Value::Nil),
-            ("minibuffer-prompt-properties", Value::Nil),
+            (
+                "minibuffer-prompt-properties",
+                Value::list(vec![
+                    Value::Sym(self.intern("read-only")),
+                    Value::Sym(sym::T),
+                    Value::Sym(self.intern("face")),
+                    Value::Sym(self.intern("minibuffer-prompt")),
+                ]),
+            ),
             (
                 "completion-styles",
                 Value::list(vec![Value::Sym(self.intern("basic"))]),
@@ -6686,6 +7080,30 @@ command-line arguments.\" \
             let id = self.intern(name);
             self.obarray.symbol_mut(id).value = val.clone();
         }
+
+        // GNU seeds auto-coding tables at dump (files.el/mule.el).
+        // Quoted literals — identical to a -Q build's contents.
+        let _ = self.eval_str(
+            "(progn \
+               (setq auto-coding-functions \
+                     '(sgml-xml-auto-coding-function \
+                       sgml-html-meta-auto-coding-function)) \
+               (setq auto-coding-alist \
+                     '((\"\\\\.\\\\(arc\\\\|zip\\\\|lzh\\\\|lha\\\\|zoo\\\\|[jew]ar\\\\|xpi\\\\|rar\\\\|7z\\\\|squashfs\\\\|ARC\\\\|ZIP\\\\|LZH\\\\|LHA\\\\|ZOO\\\\|[JEW]AR\\\\|XPI\\\\|RAR\\\\|7Z\\\\|SQUASHFS\\\\)\\\\'\" . no-conversion-multibyte) \
+                       (\"\\\\.\\\\(exe\\\\|EXE\\\\)\\\\'\" . no-conversion) \
+                       (\"\\\\.\\\\(sx[dmicw]\\\\|odt\\\\|tar\\\\|t[bg]z\\\\)\\\\'\" . no-conversion) \
+                       (\"\\\\.\\\\(gz\\\\|Z\\\\|bz\\\\|bz2\\\\|xz\\\\|gpg\\\\)\\\\'\" . no-conversion) \
+                       (\"\\\\.\\\\(jpe?g\\\\|png\\\\|gif\\\\|tiff?\\\\|p[bpgn]m\\\\)\\\\'\" . no-conversion) \
+                       (\"\\\\.pdf\\\\'\" . no-conversion) \
+                       (\"/\\\\.editorconfig\\\\'\" . utf-8) \
+                       (\"/#[^/]+#\\\\'\" . utf-8-emacs-unix))) \
+               (setq auto-coding-regexp-alist \
+                     '((\"\\\\`BABYL OPTIONS:[ \t]*-\\\\*-[ \t]*rmail[ \t]*-\\\\*-\" . no-conversion) \
+                       (\"\\\\`\\376\\377\" . utf-16be-with-signature) \
+                       (\"\\\\`\\377\\376\" . utf-16le-with-signature) \
+                       (\"\\\\`\\357\\273\\277\" . utf-8-with-signature) \
+                       (\"\\\\`;ELC\\024\\000\\000\\000\" . emacs-mule))))",
+        );
     }
 
     // ---------- buffers ----------
@@ -7847,8 +8265,11 @@ command-line arguments.\" \
         // Interactive spec: evaluate it to get args (simplified — the
         // editor drives real prompting; batch mode uses defaults).
         if let Some(l) = fun.as_lambda() {
-            if let Some(spec) = &l.interactive {
-                let argv = self.eval_interactive_spec(spec)?;
+            let spec = l.interactive.clone().or_else(|| {
+                crate::lisp::builtins::data::bc_interactive_form(self, l)
+            });
+            if let Some(spec) = spec {
+                let argv = self.eval_interactive_spec(&spec)?;
                 return self.apply(&fun, argv);
             }
         }
@@ -8752,6 +9173,70 @@ pub(crate) fn subr_interactive(name: &str) -> Option<&'static str> {
         ("yank", "*P"),
         ("yank-in-context", "*P"),
         ("yank-pop", "p"),
+            ("append-to-buffer", "(list (read-buffer \"Append to buffer: \" (other-buffer (current-buffer) t)) (region-beginning) (region-end))"),
+        ("balance-windows", "\\u{1}nil"),
+        ("bury-buffer", "\\u{1}nil"),
+        ("capitalize-region", "(list (region-beginning) (region-end) (region-noncontiguous-p))"),
+        ("clone-buffer", "(progn (if buffer-file-name (error \"Cannot clone a file-visiting buffer\")) (if (get major-mode 'no-clone) (error \"Cannot clone a buffer in %s mode\" mode-name)) (list (if current-prefix-arg (read-buffer \"Name of new cloned buffer: \" (current-buffer))) t))"),
+        ("clone-indirect-buffer", "(progn (if (get major-mode 'no-clone-indirect) (error \"Cannot indirectly clone a buffer in %s mode\" mode-name)) (list (if current-prefix-arg (read-buffer \"Name of indirect buffer: \" (current-buffer))) t))"),
+        ("copy-region-as-kill", "(list (mark) (point) 'region)"),
+        ("delete-directory", "(let* ((trashing (and delete-by-moving-to-trash (null current-prefix-arg))) (dir (expand-file-name (read-directory-name (if trashing \"Move directory to trash: \" \"Delete directory: \") default-directory default-directory nil nil)))) (list dir (if (directory-files dir nil directory-files-no-dot-files-regexp) (y-or-n-p (format-message \"Directory `%s' is not empty, really %s? \" dir (if trashing \"trash\" \"delete\"))) nil) (null current-prefix-arg)))"),
+        ("delete-file", "(list (read-file-name (if (and delete-by-moving-to-trash (null current-prefix-arg)) \"Move file to trash: \" \"Delete file: \") nil default-directory (confirm-nonexistent-file-or-buffer)) (null current-prefix-arg))"),
+        ("delete-indentation", "(progn (barf-if-buffer-read-only) (cons current-prefix-arg (and (use-region-p) (list (region-beginning) (region-end)))))"),
+        ("delete-minibuffer-contents", "\\u{1}nil"),
+        ("delete-process", "(list 'message)"),
+        ("delete-trailing-whitespace", "(progn (barf-if-buffer-read-only) (if (use-region-p) (list (region-beginning) (region-end)) (list nil nil)))"),
+        ("delete-window", "\\u{1}nil"),
+        ("delete-windows-on", "(let ((frame (cond ((and (numberp current-prefix-arg) (zerop current-prefix-arg)) 0) (current-prefix-arg t)))) (list (read-buffer \"Delete windows on (buffer): \" nil nil (lambda (buf) (get-buffer-window (if (consp buf) (car buf) buf) (cond ((null frame) t) ((numberp frame) frame))))) frame))"),
+        ("display-buffer", "(list (read-buffer \"Display buffer: \" (other-buffer)) (if current-prefix-arg t))"),
+        ("downcase-region", "(list (region-beginning) (region-end) (region-noncontiguous-p))"),
+        ("exit-minibuffer", "\\u{1}nil"),
+        ("find-file", "(find-file-read-args \"Find file: \" (confirm-nonexistent-file-or-buffer))"),
+        ("fit-window-to-buffer", "\\u{1}nil"),
+        ("fundamental-mode", "\\u{1}nil"),
+        ("global-set-key", "(let* ((menu-prompting nil) (key (read-key-sequence \"Set key globally: \" nil t))) (list key (read-command (format \"Set key %s to command: \" (key-description key)))))"),
+        ("goto-char", "(goto-char--read-natnum-interactive \"Go to char: \")"),
+        ("ignore", "\\u{1}nil"),
+        ("insert-char", "(list (read-char-by-name \"Insert character (Unicode name or hex): \") (prefix-numeric-value current-prefix-arg) t)"),
+        ("invert-face", "(list (read-face-name \"Invert face\" (face-at-point t)))"),
+        ("join-line", "(progn (barf-if-buffer-read-only) (cons current-prefix-arg (and (use-region-p) (list (region-beginning) (region-end)))))"),
+        ("kill-buffer-and-window", "\\u{1}nil"),
+        ("kill-process", "(list (read-process-name \"Kill process\"))"),
+        ("kill-ring-save", "(list (mark) (point) 'region)"),
+        ("list-processes", "\\u{1}nil"),
+        ("load-file", "(list (let ((completion-ignored-extensions (remove module-file-suffix (remove \".elc\" completion-ignored-extensions)))) (read-file-name \"Load file: \" nil nil 'lambda)))"),
+        ("locate-library", "(list (read-library-name) nil nil t)"),
+        ("lossage-size", "(list (read-number \"Set maximum keystrokes to: \" (lossage-size)))"),
+        ("make-directory", "(list (read-file-name \"Make directory: \" default-directory default-directory nil nil) t)"),
+        ("make-face", "(list (read-from-minibuffer \"Make face: \" nil nil t 'face-name-history))"),
+        ("make-frame", "\\u{1}nil"),
+        ("maximize-window", "\\u{1}nil"),
+        ("minimize-window", "\\u{1}nil"),
+        ("remove-hook", "(let* ((default (and (symbolp (variable-at-point)) (symbol-name (variable-at-point)))) (hook (intern (completing-read (format-prompt \"Hook variable\" default) obarray #'boundp t nil nil default))) (local (and (local-variable-p hook) (symbol-value hook) (or (not (default-value hook)) (y-or-n-p (format \"%s has a buffer-local binding, use that? \" hook))))) (fn-alist (mapcar (lambda (x) (cons (with-output-to-string (prin1 x)) x)) (if local (symbol-value hook) (default-value hook)))) (function (alist-get (completing-read (format \"%s hook to remove: \" (if local \"Buffer-local\" \"Global\")) fn-alist nil t nil 'set-variable-value-history) fn-alist nil nil #'string=))) (list hook function local))"),
+        ("rename-buffer", "(list (read-string \"Rename buffer (to new name): \" nil 'buffer-name-history (buffer-name (current-buffer))) current-prefix-arg)"),
+        ("replace-region-contents", "(list (if (use-region-p) (region-beginning) (point-min)) (if (use-region-p) (region-end) (point-max)) (get-buffer (read-buffer-to-switch \"Source buffer: \")))"),
+        ("self-insert-and-exit", "\\u{1}nil"),
+        ("set-face-background", "(read-face-and-attribute :background)"),
+        ("set-face-extend", "(let ((list (read-face-and-attribute :extend))) (list (car list) (if (cadr list) t)))"),
+        ("set-file-modes", "(let ((file (read-file-name \"File: \"))) (list file (read-file-modes nil file)))"),
+        ("set-frame-font", "(let* ((completion-ignore-case t) (default (frame-parameter nil 'font)) (font (completing-read (format-prompt \"Font name\" default) (x-list-fonts \"*\" nil (selected-frame)) nil nil nil nil default))) (list font current-prefix-arg nil))"),
+        ("set-frame-height", "(set-frame-property--interactive \"Frame height: \" (frame-height))"),
+        ("set-frame-width", "(set-frame-property--interactive \"Frame width: \" (frame-width))"),
+        ("shrink-window-if-larger-than-buffer", "\\u{1}nil"),
+        ("signal-process", "(list (read-string \"Process (name or number): \") (read-signal-name))"),
+        ("split-window-below", "(list (when current-prefix-arg (prefix-numeric-value current-prefix-arg)) (selected-window))"),
+        ("split-window-horizontally", "(list (when current-prefix-arg (prefix-numeric-value current-prefix-arg)) (selected-window))"),
+        ("split-window-right", "(list (when current-prefix-arg (prefix-numeric-value current-prefix-arg)) (selected-window))"),
+        ("split-window-vertically", "(list (when current-prefix-arg (prefix-numeric-value current-prefix-arg)) (selected-window))"),
+        ("switch-to-buffer-other-frame", "(list (read-buffer-to-switch \"Switch to buffer in other frame: \"))"),
+        ("switch-to-buffer-other-window", "(list (read-buffer-to-switch \"Switch to buffer in other window: \"))"),
+        ("transpose-regions", "(if (< (length mark-ring) 2) (error \"Other region must be marked before transposing two regions\") (let* ((num (if current-prefix-arg (prefix-numeric-value current-prefix-arg) 0)) (ring-length (length mark-ring)) (eltnum (mod num ring-length)) (eltnum2 (mod (1+ num) ring-length))) (list (point) (mark) (elt mark-ring eltnum) (elt mark-ring eltnum2))))"),
+        ("unbury-buffer", "\\u{1}nil"),
+        ("upcase-initials-region", "(list (region-beginning) (region-end) (region-noncontiguous-p))"),
+        ("upcase-region", "(list (region-beginning) (region-end) (region-noncontiguous-p))"),
+        ("what-line", "\\u{1}nil"),
+        ("write-file", "(list (if buffer-file-name (read-file-name \"Write file: \" nil nil nil nil) (read-file-name \"Write file: \" default-directory (expand-file-name (file-name-nondirectory (buffer-name)) default-directory) nil nil)) (not current-prefix-arg))"),
+        ("zap-to-char", "(list (prefix-numeric-value current-prefix-arg) (read-char-from-minibuffer \"Zap to char: \" nil 'read-char-history) t)"),
     ];
     T.iter().find(|(n, _)| *n == name).map(|(_, s)| *s)
 }

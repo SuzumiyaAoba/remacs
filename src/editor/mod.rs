@@ -234,9 +234,7 @@ pub(crate) static SUBRS: &[Subr] = &[
         "Set WINDOW's start."
     ),
     S!(
-        "window-end",
-        0,
-        3,
+        "window-end", 0, 2,
         f_window_end,
         "Last visible position in WINDOW."
     ),
@@ -262,7 +260,7 @@ pub(crate) static SUBRS: &[Subr] = &[
         f_minibuffer_window_active_p,
         "t if WINDOW is an active minibuffer."
     ),
-    S!("split-window", 0, 4, f_split_window, "Split WINDOW."),
+    S!("split-window", 0, 5, f_split_window, "Split WINDOW."),
     S!(
         "split-window-below",
         0,
@@ -293,16 +291,12 @@ pub(crate) static SUBRS: &[Subr] = &[
     ),
     S!("delete-window", 0, 1, f_delete_window, "Delete WINDOW."),
     S!(
-        "delete-other-windows",
-        0,
-        1,
+        "delete-other-windows", 0, 2,
         f_delete_other_windows,
         "Delete all but WINDOW."
     ),
     S!(
-        "other-window",
-        0,
-        2,
+        "other-window", 1, 3,
         f_other_window,
         "Select the next window."
     ),
@@ -314,9 +308,7 @@ pub(crate) static SUBRS: &[Subr] = &[
         "Make WINDOW selected."
     ),
     S!(
-        "one-window-p",
-        0,
-        1,
+        "one-window-p", 0, 2,
         f_one_window_p,
         "t if only one window."
     ),
@@ -447,7 +439,7 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!(
         "get-buffer-window-list",
         0,
-        3,
+        4,
         f_get_buffer_window_list,
         "Windows displaying BUFFER."
     ),
@@ -492,7 +484,7 @@ pub(crate) static SUBRS: &[Subr] = &[
         "Edge coords of WINDOW."
     ),
     S!("window-inside-edges", 0, 1, f_window_edges, ""),
-    S!("window-at", 2, 2, f_window_at, "Window at X,Y."),
+    S!("window-at", 2, 3, f_window_at, "Window at X,Y."),
     S!(
         "recenter",
         0,
@@ -516,16 +508,12 @@ pub(crate) static SUBRS: &[Subr] = &[
         "Scroll down one line."
     ),
     S!(
-        "window-left",
-        0,
-        1,
+        "window-left", 1, 1,
         f_window_left,
         "Window to the left of WINDOW."
     ),
     S!(
-        "window-right",
-        0,
-        1,
+        "window-right", 1, 1,
         f_window_right,
         "Window to the right of WINDOW."
     ),
@@ -862,16 +850,12 @@ pub(crate) static SUBRS: &[Subr] = &[
         "Describe character."
     ),
     S!(
-        "read-key-sequence",
-        1,
-        7,
+        "read-key-sequence", 1, 6,
         f_read_key_sequence,
         "Read a key sequence."
     ),
     S!(
-        "read-key-sequence-vector",
-        1,
-        7,
+        "read-key-sequence-vector", 1, 6,
         f_read_key_sequence_vector,
         "Read keys to a vector."
     ),
@@ -911,21 +895,17 @@ pub(crate) static SUBRS: &[Subr] = &[
     // kill ring
     S!("kill-new", 1, 2, f_kill_new, "Push STRING onto kill-ring."),
     S!(
-        "kill-append",
-        1,
-        2,
+        "kill-append", 2, 2,
         f_kill_append,
         "Append STRING to latest kill."
     ),
     S!("current-kill", 1, 2, f_current_kill, "Nth kill-ring entry."),
     S!(
-        "copy-region-as-kill",
-        2,
-        2,
+        "copy-region-as-kill", 2, 3,
         f_copy_region_as_kill,
         "Copy region to kill-ring."
     ),
-    S!("kill-ring-save", 2, 2, f_copy_region_as_kill, ""),
+    S!("kill-ring-save", 2, 3, f_copy_region_as_kill, ""),
     S!("yank", 0, 1, f_yank, "Insert the latest kill."),
     S!(
         "yank-pop",
@@ -1071,9 +1051,7 @@ pub(crate) static SUBRS: &[Subr] = &[
         ""
     ),
     S!(
-        "file-name-base",
-        1,
-        1,
+        "file-name-base", 0, 1,
         f_file_name_base,
         "FILENAME minus dir and ext."
     ),
@@ -1121,9 +1099,7 @@ pub(crate) static SUBRS: &[Subr] = &[
         "Files in DIRECTORY."
     ),
     S!(
-        "directory-files-and-attributes",
-        1,
-        5,
+        "directory-files-and-attributes", 1, 6,
         f_directory_files_and_attributes,
         ""
     ),
@@ -1157,9 +1133,7 @@ pub(crate) static SUBRS: &[Subr] = &[
         "Unique name with PREFIX."
     ),
     S!(
-        "make-temp-file",
-        1,
-        5,
+        "make-temp-file", 1, 4,
         f_make_temp_file,
         "Create a new temp file."
     ),
@@ -1207,18 +1181,16 @@ pub(crate) static SUBRS: &[Subr] = &[
         f_rename_file,
         "Rename FILE to NEWNAME."
     ),
-    S!("copy-file", 2, 4, f_copy_file, "Copy FILE to NEWNAME."),
+    S!("copy-file", 2, 6, f_copy_file, "Copy FILE to NEWNAME."),
     S!(
         "add-name-to-file",
         2,
         3,
-        f_rename_file,
+        f_add_name_to_file,
         "Hard link FILE to NEWNAME."
     ),
     S!(
-        "insert-file-contents",
-        1,
-        7,
+        "insert-file-contents", 1, 5,
         f_insert_file_contents,
         "Insert contents of FILENAME."
     ),
@@ -1248,8 +1220,8 @@ pub(crate) static SUBRS: &[Subr] = &[
     ),
     S!(
         "set-visited-file-name",
-        0,
-        2,
+        1,
+        3,
         f_set_visited_file_name,
         "Set buffer-file-name."
     ),
@@ -1271,16 +1243,12 @@ pub(crate) static SUBRS: &[Subr] = &[
         "Write buffer to FILENAME."
     ),
     S!(
-        "append-to-file",
-        3,
-        4,
+        "append-to-file", 3, 3,
         f_append_to_file,
         "Append region to FILENAME."
     ),
     S!(
-        "file-truename",
-        1,
-        1,
+        "file-truename", 1, 3,
         f_file_truename,
         "Canonical name of FILENAME."
     ),
@@ -1358,9 +1326,7 @@ pub(crate) static SUBRS: &[Subr] = &[
         "One space around point."
     ),
     S!(
-        "delete-indentation",
-        0,
-        1,
+        "delete-indentation", 0, 3,
         f_delete_indentation,
         "Join this line to previous."
     ),
@@ -1472,9 +1438,7 @@ pub(crate) static SUBRS: &[Subr] = &[
     // are Lisp (prelude window.el port).
     // minibuffer/echo
     S!(
-        "minibufferp",
-        0,
-        1,
+        "minibufferp", 0, 2,
         f_minibufferp,
         "t if BUFFER is a minibuffer."
     ),
@@ -1524,21 +1488,17 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!("set-minibuffer-window", 1, 1, f_set_minibuffer_window, ""),
     S!("minibuffer-message", many 1, f_minibuffer_message, "Message in minibuffer."),
     S!(
-        "read-from-minibuffer",
-        1,
-        8,
+        "read-from-minibuffer", 1, 7,
         f_read_from_minibuffer,
         "Read from minibuffer."
     ),
     S!("read-buffer", 1, 4, f_read_buffer, "Read a buffer name."),
     S!(
-        "read-file-name",
-        1,
-        8,
+        "read-file-name", 1, 6,
         f_read_file_name,
         "Read a file name."
     ),
-    S!("read-directory-name", 1, 7, f_read_file_name, ""),
+    S!("read-directory-name", 1, 6, f_read_file_name, ""),
     S!("read-number", 1, 3, f_read_number, "Read a number."),
     S!("read-regexp", 1, 3, f_read_regexp, "Read a regexp."),
     S!(
@@ -1556,9 +1516,7 @@ pub(crate) static SUBRS: &[Subr] = &[
         "Completion of STRING."
     ),
     S!(
-        "all-completions",
-        2,
-        4,
+        "all-completions", 2, 3,
         f_all_completions,
         "All completions of STRING."
     ),
@@ -1708,9 +1666,7 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!("suspend-frame", 0, 0, f_suspend_emacs, "Suspend the frame."),
     S!("byteorder", 0, 0, f_byteorder, "Byte order: ?l or ?B."),
     S!(
-        "command-line-1",
-        0,
-        1,
+        "command-line-1", 1, 1,
         f_nil,
         "Process command-line args (done)."
     ),
@@ -1757,7 +1713,7 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!(
         "execute-extended-command",
         1,
-        2,
+        3,
         f_execute_extended_command,
         "M-x."
     ),
@@ -1903,7 +1859,7 @@ pub(crate) static SUBRS: &[Subr] = &[
         "The default major mode."
     ),
     S!("major-mode-suspend", 0, 0, f_major_mode_suspend, ""),
-    S!("major-mode-restore", 0, 0, f_major_mode_restore, ""),
+    S!("major-mode-restore", 0, 1, f_major_mode_restore, ""),
     // delay-mode-hooks / run-mode-hooks /
     // normal-mode / set-auto-mode{,-0} / set-buffer-major-mode /
     // hack-local-variables / hack-dir-local-variables /
@@ -2015,11 +1971,11 @@ pub(crate) static SUBRS: &[Subr] = &[
         ""
     ),
     S!("merge-face-attribute", 3, 3, f_merge_face_attribute, ""),
-    S!("face-all-attributes", 1, 2, f_face_all_attributes, ""),
+    S!("face-all-attributes", 1, 3, f_face_all_attributes, ""),
     S!("face-list", 0, 0, f_face_list, ""),
     S!("make-face", 1, 1, f_make_face, ""),
     S!("copy-face", 2, 4, f_copy_face, ""),
-    S!("face-equal", 2, 2, f_face_equal, ""),
+    S!("face-equal", 2, 3, f_face_equal, ""),
     S!("face-id", 1, 2, f_face_id, ""),
     S!("face-background", 1, 3, f_face_background, ""),
     S!("face-foreground", 1, 3, f_face_foreground, ""),
@@ -2062,7 +2018,7 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!("display-color-p", 0, 1, f_display_color_p, ""),
     S!("display-grayscale-p", 0, 1, f_nil, ""),
     S!("display-mouse-p", 0, 1, f_nil, ""),
-    S!("color-defined-p", 1, 1, f_color_defined_p, ""),
+    S!("color-defined-p", 1, 2, f_color_defined_p, ""),
     S!("defined-colors", 0, 1, f_defined_colors, ""),
     S!("color-values", 1, 2, f_color_values, ""),
     S!("x-color-values", 1, 1, f_x_color_values, ""),
@@ -2072,7 +2028,7 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!("internal-char-font", 1, 2, f_internal_char_font, ""),
     S!("fontp", 1, 2, f_fontp, ""),
     S!("find-font", 1, 2, f_find_font, ""),
-    S!("font-xlfd-name", 1, 1, f_font_xlfd_name, ""),
+    S!("font-xlfd-name", 1, 3, f_font_xlfd_name, ""),
     S!("clear-font-cache", 0, 0, f_nil, ""),
     S!("list-fonts", 1, 4, f_list_fonts, ""),
     // cursor/display misc
@@ -2081,7 +2037,7 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!("blink-cursor-mode", 0, 1, f_blink_cursor_mode, ""),
     S!("internal-show-cursor", 2, 2, f_nil, ""),
     S!("internal-show-cursor-p", 0, 1, f_show_cursor_p, ""),
-    S!("set-window-cursor-type", 2, 3, f_set_window_cursor_type, ""),
+    S!("set-window-cursor-type", 2, 2, f_set_window_cursor_type, ""),
     // `make-display-table', `display-table-slot', `set-display-table-slot'
     // are Lisp in GNU (disp-table.el) — see prelude.rs.
     S!("describe-display-table", 1, 1, f_describe_display_table, ""),
@@ -2092,7 +2048,7 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!("font-put", 3, 3, f_font_put, ""),
     S!("set-fontset-font", 3, 5, f_fontset_font, ""),
     S!("new-fontset", 2, 2, f_new_fontset, ""),
-    S!("fontset-info", 1, 1, f_x_no_display, ""),
+    S!("fontset-info", 1, 2, f_x_no_display, ""),
     S!("fontset-font", 2, 3, f_fontset_font, ""),
     S!("fontset-list", 0, 0, f_fontset_list, ""),
     // menus/popups
@@ -2124,9 +2080,7 @@ pub(crate) static SUBRS: &[Subr] = &[
         ""
     ),
     S!(
-        "substitute-command-keys",
-        1,
-        1,
+        "substitute-command-keys", 1, 3,
         f_substitute_command_keys,
         "Substitute key descriptions in STRING."
     ),
@@ -3331,20 +3285,87 @@ fn f_get_buffer_window(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 }
 
 fn f_get_buffer_window_list(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let bid = match a.get(0) {
+    // GNU window.el's Lisp version: (BUFFER-OR-NAME MINIBUF
+    // ALL-FRAMES INDIRECT).  Buffer normalization matches
+    // `window-normalize-buffer': nil → current buffer; a dead buffer
+    // object or a name with no live buffer → `error "No such live
+    // buffer"'; a non-string non-buffer → `stringp' type error.
+    let bid = match a.first() {
         None => i.current_buffer,
-        // Nonexistent buffer name → empty list.
-        Some(v) => match i.buffer_id_of(v) {
-            Some(b) => b,
-            None => return Ok(Value::Nil),
-        },
-    };
-    let mut out = Vec::new();
-    for f in &i.frames {
-        for w in &f.borrow().windows {
-            if w.borrow().buffer == bid {
-                out.push(Value::Window(w.clone()));
+        Some(Value::Nil) => i.current_buffer,
+        Some(Value::Buffer(b)) => {
+            let id = b.borrow().id;
+            if !i.buffer_live(id) {
+                return Err(i.error(format!(
+                    "No such live buffer {}",
+                    i.prin1_to_string(&a[0])
+                )));
             }
+            id
+        }
+        Some(Value::Str(s)) => match i.buffers.by_name(&s.borrow()) {
+            Some(id) => id,
+            None => {
+                return Err(i.error(format!(
+                    "No such live buffer {}",
+                    s.borrow()
+                )))
+            }
+        },
+        Some(other) => return Err(i.wrong_type_mut("stringp", other)),
+    };
+    // MINIBUF: t → always include the minibuffer window, nil → only
+    // while the minibuffer is active, anything else → never.
+    let minibuf_ok = match a.get(1) {
+        Some(v) if v.truthy() => i.sym_is(v, crate::lisp::obarray::sym::T),
+        _ => i.minibuf_level > 0,
+    };
+    // ALL-FRAMES: a frame → that frame only; any non-nil value
+    // (t/`visible'/0) → all existing frames; nil → selected frame.
+    let frames: Vec<FrameRef> = match a.get(2) {
+        Some(Value::Frame(f)) => vec![f.clone()],
+        Some(v) if v.truthy() => i.frames.clone(),
+        _ => i.selected_frame.iter().cloned().collect(),
+    };
+    let indirect = a.get(3).map(|v| v.truthy()).unwrap_or(false);
+    let base_of =
+        |id: usize| i.buffers.get(id).and_then(|b| b.borrow().base_buffer);
+    let buf_base = base_of(bid);
+    let mut out: Vec<Value> = Vec::new();
+    for f in &frames {
+        let fb = f.borrow();
+        let wins = fb.windows.iter().chain(fb.minibuffer.iter());
+        for w in wins {
+            let wb = w.borrow();
+            if wb.minibuffer && !minibuf_ok {
+                continue;
+            }
+            if wb.buffer == bid {
+                out.push(Value::Window(w.clone()));
+            } else if indirect {
+                // `window-indirect-buffer-p': the window's buffer is
+                // B's base, is an indirect buffer of B, or shares B's
+                // base buffer.
+                let wbase = base_of(wb.buffer);
+                if buf_base == Some(wb.buffer)
+                    || wbase == Some(bid)
+                    || (buf_base.is_some() && buf_base == wbase)
+                {
+                    out.push(Value::Window(w.clone()));
+                }
+            }
+        }
+    }
+    // GNU puts the selected window first when it displays the buffer
+    // (window-list-1 starts there).
+    if let Some(sf) = &i.selected_frame {
+        let sel = sf.borrow().selected.clone();
+        if let Some(pos) = out
+            .iter()
+            .position(|v| matches!(v, Value::Window(w) if Rc::ptr_eq(w, &sel)))
+        {
+            let w = out.remove(pos);
+            out.insert(0, w);
         }
     }
     Ok(Value::list(out))
@@ -3358,13 +3379,30 @@ fn f_window_body_height(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let w = win_of(i, &arg(&a, 0))?;
     Ok(Value::Int(w.borrow().height.saturating_sub(1) as i128))
 }
+/// Body width = total width minus the one-column window divider that
+/// separates horizontally adjacent windows on a tty.  GNU: a window
+/// whose right edge is not the frame's right edge shows a divider
+/// column inside its rectangle.
+fn win_body_width(i: &Interp, w: &WindowRef) -> usize {
+    let ww = w.borrow();
+    let frame_w = i
+        .frames
+        .iter()
+        .find(|f| f.borrow().windows.iter().any(|x| Rc::ptr_eq(x, w)))
+        .map(|f| f.borrow().width);
+    match frame_w {
+        Some(fw) if ww.left + ww.width < fw => ww.width.saturating_sub(1),
+        _ => ww.width,
+    }
+}
+
 fn f_window_width(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let w = win_of(i, &arg(&a, 0))?;
-    Ok(Value::Int(w.borrow().width as i128))
+    Ok(Value::Int(win_body_width(i, &w) as i128))
 }
 fn f_window_body_width(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let w = win_of(i, &arg(&a, 0))?;
-    Ok(Value::Int(w.borrow().width as i128))
+    Ok(Value::Int(win_body_width(i, &w) as i128))
 }
 fn f_window_hscroll(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let w = win_of(i, &arg(&a, 0))?;
@@ -8023,7 +8061,18 @@ fn f_file_name_sans_extension(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     }
 }
 fn f_file_name_base(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let s = want_str(i, &a[0])?;
+    // GNU: FILENAME nil/omitted → `buffer-file-name' of the current
+    // buffer.
+    let sv = arg(&a, 0);
+    let s = match &sv {
+        // GNU CHECK_STRINGs the resolved name: a nil buffer-file-name
+        // signals `wrong-type-argument (stringp nil)'.
+        Value::Nil => match cur(i).borrow().file_name.clone() {
+            Some(f) => f,
+            None => return Err(i.wrong_type_mut("stringp", &sv)),
+        },
+        _ => want_str(i, &sv)?,
+    };
     let base = s.rsplit('/').next().unwrap_or(&s);
     match base.rfind('.') {
         Some(idx) if idx > 0 => Ok(Value::string(&base[..idx])),
@@ -8583,6 +8632,24 @@ fn f_delete_directory_internal(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 fn f_rename_file(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let from = want_filename(i, &a[0])?;
     let to = want_filename(i, &a[1])?;
+    // GNU: OK-IF-ALREADY-EXISTS nil/missing → file-already-exists
+    // when NEWNAME exists; an integer would prompt (batch → error);
+    // other non-nil values overwrite.
+    if std::path::Path::new(&to).exists() {
+        match a.get(2) {
+            None | Some(Value::Nil) | Some(Value::Int(_)) => {
+                let tag = i.intern("file-already-exists");
+                return Err(i.signal_data(
+                    tag,
+                    vec![
+                        Value::string("File already exists"),
+                        Value::string(to),
+                    ],
+                ));
+            }
+            _ => {}
+        }
+    }
     match std::fs::rename(&from, &to) {
         Ok(()) => Ok(Value::Nil),
         Err(e) => Err(i.signal_data(
@@ -8591,14 +8658,146 @@ fn f_rename_file(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         )),
     }
 }
-fn f_copy_file(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+
+/// `add-name-to-file' — GNU makes NEWNAME a hard link to FILE
+/// (the original name stays), with the same OK-IF-ALREADY-EXISTS
+/// rule as `rename-file'.
+fn f_add_name_to_file(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let from = want_filename(i, &a[0])?;
     let to = want_filename(i, &a[1])?;
-    match std::fs::copy(&from, &to) {
-        Ok(_) => Ok(Value::Nil),
+    if std::path::Path::new(&to).exists() {
+        match a.get(2) {
+            None | Some(Value::Nil) | Some(Value::Int(_)) => {
+                let tag = i.intern("file-already-exists");
+                return Err(i.signal_data(
+                    tag,
+                    vec![
+                        Value::string("File already exists"),
+                        Value::string(to),
+                    ],
+                ));
+            }
+            // GNU unlinks the old name first when overwriting.
+            _ => {
+                let _ = std::fs::remove_file(&to);
+            }
+        }
+    }
+    match std::fs::hard_link(&from, &to) {
+        Ok(()) => Ok(Value::Nil),
         Err(e) => Err(i.signal_data(
             sym::FILE_ERROR,
-            vec![Value::string(format!("Copying: {}", e))],
+            vec![
+                Value::string("Adding name"),
+                Value::string(format!("{}", e)),
+                Value::string(from),
+                Value::string(to),
+            ],
+        )),
+    }
+}
+fn f_copy_file(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    // (copy-file FILENAME NEWNAME &optional OK-IF-ALREADY-EXISTS
+    //   KEEP-TIME PRESERVE-UID-GID PRESERVE-PERMISSIONS)
+    let from = want_filename(i, &a[0])?;
+    let mut to = want_filename(i, &a[1])?;
+    let keep_time = a.get(3).map(|v| v.truthy()).unwrap_or(false);
+    let keep_uid_gid = a.get(4).map(|v| v.truthy()).unwrap_or(false);
+    let meta = match std::fs::metadata(&from) {
+        Ok(m) => m,
+        Err(e) => {
+            return Err(i.signal_data(
+                sym::FILE_ERROR,
+                vec![
+                    Value::string("Copying"),
+                    Value::string(format!("{}", e)),
+                    Value::string(from),
+                ],
+            ));
+        }
+    };
+    // GNU rejects non-regular files with "Non-regular file".
+    if !meta.is_file() {
+        return Err(i.signal_data(
+            sym::FILE_ERROR,
+            vec![
+                Value::string("Non-regular file"),
+                Value::string(format!("{}", std::io::Error::from_raw_os_error(21))),
+                Value::string(from),
+            ],
+        ));
+    }
+    // GNU: a NEWNAME ending in '/' (or naming an existing directory)
+    // copies FILE into it under the same basename.
+    if to.ends_with('/')
+        || std::fs::metadata(&to).map(|m| m.is_dir()).unwrap_or(false)
+    {
+        let base = from.rsplit('/').next().unwrap_or(&from);
+        to = format!("{}{}", to.trim_end_matches('/'), {
+            // keep a single separator
+            format!("/{}", base)
+        });
+    }
+    if std::path::Path::new(&to).exists() {
+        match a.get(2) {
+            // nil → file-already-exists, no overwrite.
+            None | Some(Value::Nil) => {
+                let tag = i.intern("file-already-exists");
+                return Err(i.signal_data(
+                    tag,
+                    vec![
+                        Value::string("File already exists"),
+                        Value::string(to),
+                    ],
+                ));
+            }
+            // An integer means "ask the user" — in batch GNU signals
+            // file-already-exists too (no interactive query).
+            Some(Value::Int(_)) => {
+                let tag = i.intern("file-already-exists");
+                return Err(i.signal_data(
+                    tag,
+                    vec![
+                        Value::string("File already exists"),
+                        Value::string(to),
+                    ],
+                ));
+            }
+            _ => {}
+        }
+    }
+    match std::fs::copy(&from, &to) {
+        Ok(_) => {
+            // GNU always propagates the input file's modes.
+            let _ = std::fs::set_permissions(&to, meta.permissions());
+            if keep_time {
+                if let Ok(f) = std::fs::File::options().write(true).open(&to) {
+                    let times = std::fs::FileTimes::new()
+                        .set_accessed(meta.accessed().unwrap_or(std::time::SystemTime::UNIX_EPOCH))
+                        .set_modified(meta.modified().unwrap_or(std::time::SystemTime::UNIX_EPOCH));
+                    let _ = f.set_times(times);
+                }
+            }
+            if keep_uid_gid {
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::MetadataExt;
+                    unsafe {
+                        let cpath = std::ffi::CString::new(to.as_str()).unwrap();
+                        libc::chown(cpath.as_ptr(), meta.uid(), meta.gid());
+                    }
+                }
+            }
+            Ok(Value::Nil)
+        }
+        Err(e) => Err(i.signal_data(
+            sym::FILE_ERROR,
+            vec![
+                Value::string("Copying"),
+                Value::string(format!("{}", e)),
+                Value::string(from),
+                Value::string(to),
+            ],
         )),
     }
 }
@@ -11588,7 +11787,11 @@ fn f_commandp(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         }
     }
     Ok(Value::from_bool(match &cmd {
-        Value::Lambda(l) => l.interactive.is_some(),
+        Value::Lambda(l) => {
+            l.interactive.is_some()
+                || crate::lisp::builtins::data::bc_interactive_form(i, l)
+                    .is_some()
+        }
         Value::Subr(s) => {
             crate::lisp::eval::subr_interactive(s.name).is_some()
                 || crate::lisp::builtins::comp::native_iform_by_name(s.name).is_some()
@@ -13553,15 +13756,23 @@ fn f_face_attribute(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 }
 
 fn f_facep(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let name = match face_name_of(i, &a[0]) {
-        Ok(n) => n,
-        Err(_) => return Ok(Value::Nil),
+    // GNU `internal-lisp-face-p' never signals: unknown (or non-symbol)
+    // names just yield nil, so `face-spec-set'/`defface' can use it as
+    // a plain predicate during early startup.
+    let name = match i.sym_id(&a[0]) {
+        Some(s) => i.symbol_name(s),
+        None => match &a[0] {
+            Value::Str(s) => s.borrow().clone(),
+            _ => return Ok(Value::Nil),
+        },
     };
+    if !face_known(i, &name) {
+        return Ok(Value::Nil);
+    }
     let mut v = Vec::with_capacity(20);
     v.push(Value::Sym(i.intern("face")));
     let un = Value::Sym(i.intern("unspecified"));
     v.resize(20, un);
-    let _ = name;
     Ok(Value::Vec(Rc::new(RefCell::new(v))))
 }
 

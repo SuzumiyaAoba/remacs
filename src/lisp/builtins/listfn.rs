@@ -172,9 +172,7 @@ pub(crate) static SUBRS: &[Subr] = &[
         "Extract value from PLIST for PROP (eq)."
     ),
     S!(
-        "plist-put",
-        3,
-        3,
+        "plist-put", 3, 4,
         f_plist_put,
         "Set value in PLIST for PROP (eq)."
     ),

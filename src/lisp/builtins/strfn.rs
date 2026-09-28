@@ -181,7 +181,7 @@ pub(crate) static SUBRS: &[Subr] = &[
         f_string_lines,
         "Split STRING on newlines."
     ),
-    S!("upcase-initials-region", 2, 2, f_upcase_initials_region, ""),
+    S!("upcase-initials-region", 2, 3, f_upcase_initials_region, ""),
     S!(
         "string-to-multibyte",
         1,
@@ -363,9 +363,7 @@ pub(crate) static SUBRS: &[Subr] = &[
         "Vector of chars in STRING."
     ),
     S!(
-        "string-bytes",
-        1,
-        2,
+        "string-bytes", 1, 1,
         f_string_bytes,
         "Number of bytes in STRING (utf-8)."
     ),
