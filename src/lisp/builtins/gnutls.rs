@@ -1639,10 +1639,10 @@ fn fmt_ymd(t: i64) -> Option<String> {
 }
 
 fn f_peer_status_warn_desc(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let Value::Sym(s) = &a[0] else {
+    let Some(s) = i.sym_id(&a[0]) else {
         return Err(i.wrong_type_mut("symbolp", &a[0]));
     };
-    let name = i.symbol_name(*s);
+    let name = i.symbol_name(s);
     let msg = match name.as_str() {
         ":invalid" => "certificate could not be verified",
         ":revoked" => "certificate was revoked (CRL)",

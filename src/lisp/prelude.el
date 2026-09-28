@@ -96,6 +96,25 @@ The possible values of SPECS are specified by
      (format-message "Stray `declare' form: %S" form)
      `(progn ',form nil) nil 'compile-only)))
 
+;; GNU subr.el: `declare-function' is a macro expanding to nil.  remacs
+;; also registers a no-op subr of the same name; this defmacro (added
+;; after it in init order) makes the function cell a macro so that
+;; `macroexpand' actually expands `declare-function' forms -- the byte
+;; compiler's `byte-compile-macroexpand-declare-function' expander
+;; relies on it (a non-macro cell makes `macroexpand' return the form
+;; unchanged, looping forever in `macroexp-macroexpand').
+(defmacro declare-function (_fn _file &rest _args)
+  "Tell the byte-compiler that function FN is defined, in FILE.
+The FILE argument is not used by the byte-compiler, but by the
+`check-declare' package, which checks that FILE contains a
+definition for FN.  (FILE can be nil, and that disables this
+check.)"
+  (declare (advertised-calling-convention
+	    (fn file &optional arglist fileonly) nil))
+  ;; Does nothing - `byte-compile-macroexpand-declare-function' does
+  ;; the work.
+  nil)
+
 ;; ---------- macroexp.el helpers (GNU: dumped, always loaded) ----------
 ;; Ported from GNU lisp/emacs-lisp/macroexp.el; the parts that were once
 ;; internal subrs here had incompatible signatures and were replaced by
@@ -124,6 +143,17 @@ prepended, but that expression is returned instead."
   "Turn EXP into a list of expressions to execute in sequence.
 Never returns an empty list."
   (if (eq (car-safe exp) 'progn) (or (cdr exp) '(nil)) (list exp)))
+
+;; GNU macroexp.el verbatim — needed by `cl--self-tco' during eager
+;; expansion, before macroexp.el itself is loadable.
+(defun macroexp--dynamic-variable-p (var)
+  "Whether the variable VAR is dynamically scoped.
+Only valid during macro-expansion."
+  (or (not lexical-binding)
+      (special-variable-p var)
+      (memq var macroexp--dynvars)
+      (and (boundp 'byte-compile-bound-variables)
+           (memq var byte-compile-bound-variables))))
 
 (defun macroexp-let* (bindings exp)
   "Return an expression equivalent to \\=`(let* ,BINDINGS ,EXP)."
@@ -11662,15 +11692,39 @@ called from BODY."
         (let ((,var (cons ',var nil)))
           (catch ,var ,@body))))))
 
-;;Remacs: GNU's cl--block-wrapper is a compiler-macro that strips unused
-;;wrappers; interpreted, it just expands to the wrapped form.
-(defmacro cl--block-wrapper (form)
-  form)
+;;Remacs: GNU defines both as plain aliases (`identity'/`throw'); the
+;;real optimization lives in their `compiler-macro' property, which
+;;`macroexpand-all' applies — dropping the `catch' wrapper entirely when
+;;no `cl-return-from' refers to the block, so `cl--self-tco' can see the
+;;tail call (cl-macs.el:3736).
+(defalias 'cl--block-wrapper #'identity)
+(defalias 'cl--block-throw #'throw)
 
-;;Remacs: GNU emits (throw TAG VAL) with TAG evaluated — outside a
-;;`cl-block' the tag variable is unbound (`void-variable').
-(defmacro cl--block-throw (cl-tag cl-value)
+(defvar cl--active-block-names nil)
+
+(defun cl--block-wrapper--cmacro (_cl-whole form)
+  (pcase form
+    (`(let ((,var . ,val)) (catch ,var . ,body))
+     (let* ((cl-entry (cons var nil))
+            (cl--active-block-names (cons cl-entry cl--active-block-names))
+            (cl-body (macroexpand-all      ;Performs compiler-macro expansions.
+                      (macroexp-progn body)
+                      macroexpand-all-environment)))
+       ;; FIXME: To avoid re-applying macroexpand-all, we'd like to be able
+       ;; to indicate that this return value is already fully expanded.
+       (if (cdr cl-entry)
+           `(let ((,var . ,val)) (catch ,var ,@(macroexp-unprogn cl-body)))
+           cl-body)))
+    ;; `form' was somehow mangled, god knows what happened, let's not touch it.
+    (_ _cl-whole)))
+
+(defun cl--block-throw--cmacro (_cl-whole cl-tag cl-value)
+  (let ((cl-found (and (symbolp cl-tag) (assq cl-tag cl--active-block-names))))
+    (if cl-found (setcdr cl-found t)))
   `(throw ,cl-tag ,cl-value))
+
+(put 'cl--block-wrapper 'compiler-macro #'cl--block-wrapper--cmacro)
+(put 'cl--block-throw 'compiler-macro #'cl--block-throw--cmacro)
 
 (defmacro cl-return-from (name &optional result)
   "Return from the block named NAME.
@@ -16772,6 +16826,153 @@ Like `cl-flet' but the definitions can refer to previous ones.
    ((null (cdr bindings)) `(cl-flet ,bindings ,@body))
    (t `(cl-flet (,(pop bindings)) (cl-flet* ,bindings ,@body)))))
 
+;; GNU cl-macs.el verbatim — used by `cl--self-tco' during expansion;
+;; cl-macs.el itself is not loaded this early.
+(defconst cl--lambda-list-keywords
+  '(&optional &rest &key &allow-other-keys &aux &whole &body &environment))
+
+;; GNU's `cl--self-tco'/`cl--self-tco-on-form' (cl-macs.el), verbatim
+;; except `mapcar' in place of `cl-mapcar' (identical for the two-list
+;; use here; cl-mapcar is not loaded this early):
+;; self-tail-call elimination for `cl-labels' functions — long
+;; recursions such as `bytecomp--check-memq-args' over big quoted
+;; lists would otherwise blow `max-lisp-eval-depth'.
+(defun cl--self-tco (var fargs body)
+  ;; This tries to "optimize" tail calls for the specific case
+  ;; of recursive self-calls by replacing them with a `while' loop.
+  ;; It is quite far from a general tail-call optimization, since it doesn't
+  ;; even handle mutually recursive functions.
+  (letrec
+      ((done nil) ;; Non-nil if some TCO happened.
+       ;; This var always holds the value nil until (just before) we
+       ;; exit the loop.
+       (retvar (make-symbol "retval"))
+       (ofargs (mapcar (lambda (s) (if (memq s cl--lambda-list-keywords) s
+                                (make-symbol (symbol-name s))))
+                       fargs))
+       (opt-exps (lambda (exps) ;; `exps' is in tail position!
+                   (append (butlast exps)
+                           (list (funcall opt (car (last exps)))))))
+       (opt
+        (lambda (exp) ;; `exp' is in tail position!
+          (pcase exp
+            ;; FIXME: Optimize `apply'?
+            (`(funcall ,(pred (eq var)) . ,aargs)
+             ;; This is a self-recursive call in tail position.
+             (let ((sets nil)
+                   (fargs ofargs))
+               (while fargs
+                 (pcase (pop fargs)
+                   ('&rest
+                    (push (pop fargs) sets)
+                    (push `(list . ,aargs) sets)
+                    ;; (cl-assert (null fargs))
+                    )
+                   ('&optional nil)
+                   (farg
+                    (push farg sets)
+                    (push (pop aargs) sets))))
+               (setq done t)
+               `(progn (setq . ,(nreverse sets))
+                       :recurse)))
+            (`(progn . ,exps) `(progn . ,(funcall opt-exps exps)))
+            (`(if ,cond ,then . ,else)
+             `(if ,cond ,(funcall opt then) . ,(funcall opt-exps else)))
+            (`(and  . ,exps) `(and . ,(funcall opt-exps exps)))
+            (`(or ,arg) (funcall opt arg))
+            (`(or ,arg . ,args)
+             (let ((val (make-symbol "val")))
+               `(let ((,val ,arg))
+                  (if ,val ,(funcall opt val) ,(funcall opt `(or . ,args))))))
+            (`(cond . ,conds)
+             (let ((cs '()))
+               (while conds
+                 (pcase (pop conds)
+                   (`(,exp)
+                    (push (if conds
+                              ;; This returns the value of `exp' but it's
+                              ;; only in tail position if it's the
+                              ;; last condition.
+                              ;; Note: This may set the var before we
+                              ;; actually exit the loop, but luckily it's
+                              ;; only the case if we set the var to nil,
+                              ;; so it does preserve the invariant that
+                              ;; the var is nil until we exit the loop.
+                              `((setq ,retvar ,exp) nil)
+                            `(,(funcall opt exp)))
+                          cs))
+                   (exps
+                    (push (funcall opt-exps exps) cs))))
+               ;; No need to set `retvar' to return nil.
+               `(cond . ,(nreverse cs))))
+            ((and `(,(or 'let 'let*) ,bindings . ,exps)
+                  (guard
+                   ;; Note: it's OK for this `let' to shadow any
+                   ;; of the formal arguments since we will only
+                   ;; setq the fresh new `ofargs' vars instead ;-)
+                   (let ((shadowings
+                          (mapcar (lambda (b) (if (consp b) (car b) b)) bindings)))
+                     (and
+                      ;; If `var' is shadowed, then it clearly can't be
+                      ;; tail-called any more.
+                      (not (memq var shadowings))
+                      ;; If any of the new bindings is a dynamic
+                      ;; variable, the body is not in tail position.
+                      (not (delq nil (mapcar #'macroexp--dynamic-variable-p
+                                             shadowings)))))))
+             `(,(car exp) ,bindings . ,(funcall opt-exps exps)))
+            ((and `(condition-case ,err-var ,bodyform . ,handlers)
+                  (guard (not (eq err-var var))))
+             `(condition-case ,err-var
+                  ,(if (assq :success handlers)
+                       bodyform
+                     `(progn (setq ,retvar ,bodyform) nil))
+                . ,(mapcar (lambda (h)
+                             (cons (car h) (funcall opt-exps (cdr h))))
+                           handlers)))
+            ('nil nil)  ;No need to set `retvar' to return nil.
+            (_ `(progn (setq ,retvar ,exp) nil))))))
+
+    (let ((optimized-body (funcall opt-exps body)))
+      (if (not done)
+          (cons fargs body)
+        ;; We use two sets of vars: `ofargs' and `fargs' because we need
+        ;; to be careful that if a closure captures a formal argument
+        ;; in one iteration, it needs to capture a different binding
+        ;; then that of other iterations, e.g.
+        (cons
+         ofargs
+         `((let (,retvar)
+             (while (let ,(delq nil
+                                ;;Remacs: `cl-mapcar' is not available
+                                ;;this early; zip `fargs'/`ofargs' with
+                                ;;a plain loop instead.
+                                (let ((out nil) (as fargs) (oas ofargs))
+                                  (while (and as oas)
+                                    (let ((a (pop as)) (oa (pop oas)))
+                                      (unless (memq a cl--lambda-list-keywords)
+                                        (push (list a oa) out))))
+                                  (nreverse out)))
+                      . ,optimized-body))
+             ,retvar)))))))
+
+(defun cl--self-tco-on-form (var form)
+  ;; Apply self-tco to the function returned by FORM, assuming that
+  ;; it will be bound to VAR.
+  (pcase form
+    (`(function (lambda ,fargs . ,ebody)) form
+     (pcase-let* ((`(,decls . ,body) (macroexp-parse-body ebody))
+                  (`(,ofargs . ,obody) (cl--self-tco var fargs body)))
+       `(function (lambda ,ofargs ,@decls . ,obody))))
+    (`(let ,bindings ,form)
+     `(let ,bindings ,(cl--self-tco-on-form var form)))
+    (`(if ,cond ,exp1 ,exp2)
+     `(if ,cond ,(cl--self-tco-on-form var exp1)
+        ,(cl--self-tco-on-form var exp2)))
+    (`(oclosure--fix-type ,exp1 ,exp2)
+     `(oclosure--fix-type ,exp1 ,(cl--self-tco-on-form var exp2)))
+    (_ form)))
+
 (defmacro cl-labels (bindings &rest body)
   "Make local (recursive) function definitions.
 Each definition can take the form (FUNC ARGLIST BODY...); FUNC is in
@@ -16793,24 +16994,25 @@ are allowed.
     ;; Don't override lexical-let's macro-expander.
     (unless (assq 'function newenv)
       (push (cons 'function #'cl--labels-convert) newenv))
-    ;; GNU additionally performs self-tail-call elimination here via
-    ;; `cl--self-tco-on-form'; we expand without it (same semantics,
-    ;; no TCO).
+    ;; Perform self-tail call elimination (GNU parity: without it,
+    ;; long self-recursions overflow `max-lisp-eval-depth').
     `(letrec ,(mapcar
                (lambda (bind)
                  (let* ((var (car bind)) (fun (nth 1 bind))
                         (sargs (nth 2 bind)) (sbody (nthcdr 3 bind)))
-                   `(,var ,(macroexpand-all
-                            (if (null sbody)
-                                sargs ;A (FUNC EXP) definition.
-                              (let ((parsed-body
-                                     (macroexp-parse-body sbody)))
-                                `(cl-function
-                                  (lambda ,sargs
-                                    ,@(car parsed-body)
-                                    (cl-block ,fun
-                                      ,@(cdr parsed-body))))))
-                            newenv))))
+                   `(,var ,(cl--self-tco-on-form
+                            var
+                            (macroexpand-all
+                             (if (null sbody)
+                                 sargs ;A (FUNC EXP) definition.
+                               (let ((parsed-body
+                                      (macroexp-parse-body sbody)))
+                                 `(cl-function
+                                   (lambda ,sargs
+                                     ,@(car parsed-body)
+                                     (cl-block ,fun
+                                       ,@(cdr parsed-body))))))
+                             newenv)))))
                (nreverse binds))
        . ,(macroexp-unprogn
            (macroexpand-all
@@ -27798,9 +28000,12 @@ constraints do not force a specific format."
   :version "27.1")
 
 ;; subr.el: mode-hook machinery (verbatim GNU).
-;; `delay-mode-hooks' is a plain defvar in GNU (verified: not buffer-local).
+;; `delay-mode-hooks' is a plain defvar in GNU (verified: not buffer-local),
+;; but it is `permanent-local': kill-all-local-variables must preserve the
+;; buffer-local binding installed by the `delay-mode-hooks' macro.
 (defvar delay-mode-hooks nil
   "If non-nil, `run-mode-hooks' should delay running the hooks.")
+(put 'delay-mode-hooks 'permanent-local t)
 (defvar-local delayed-mode-hooks nil
   "List of delayed mode hooks waiting to be run.")
 (defvar-local delayed-after-hook-functions nil

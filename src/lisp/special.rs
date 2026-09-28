@@ -326,7 +326,9 @@ fn parse_let_specs(i: &mut Interp, specs: &Value) -> Result<Vec<(Value, Value)>,
                     let b = c.borrow();
                     (b.car.clone(), b.cdr.clone())
                 };
-                if matches!(spec, Value::Sym(_)) {
+                if i.sym_id(&spec).is_some() {
+                    // A bare symbol spec (possibly a positioned symbol)
+                    // binds to nil.
                     out.push((spec, Value::Nil));
                 } else {
                     // GNU: (cdr (cdr SPEC)) must be nil; the value-form
@@ -774,7 +776,13 @@ fn sf_while(i: &mut Interp, args: Value) -> EvalResult {
                 .iter()
                 .rev()
                 .take(24)
-                .map(|(f, _)| i.prin1_to_string(f))
+                .map(|(f, a)| {
+                    format!(
+                        "{} {}",
+                        i.prin1_to_string(f),
+                        i.prin1_to_string(&Value::list(a.clone()))
+                    )
+                })
                 .collect();
             eprintln!("WHILE-LOOP-STACK: {names:?}");
             let cond = i.prin1_to_string(&test);

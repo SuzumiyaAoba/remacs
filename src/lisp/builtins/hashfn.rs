@@ -110,6 +110,11 @@ pub(crate) fn hash_key_for(interp: &Interp, v: &Value, test: HashTest) -> HashKe
 }
 
 fn eq_key(v: &Value) -> HashKey {
+    // `symbols-with-pos-enabled' objects hash as their bare symbol
+    // (they are `eq' to it, so the hash must agree).
+    if let Some((s, _)) = super::misc::as_sympos(v) {
+        return HashKey::Sym(s);
+    }
     match v {
         Value::Nil => HashKey::Nil,
         Value::Int(n) => HashKey::Int(*n),
@@ -146,6 +151,12 @@ fn eql_key(v: &Value) -> HashKey {
 fn equal_key(interp: &Interp, v: &Value) -> HashKey {
     match v {
         Value::Str(s) => HashKey::Str(s.borrow().clone()),
+        // Enabled sympos are `equal' to their bare symbol — same key
+        // as the plain symbol arm below.
+        _ if super::misc::as_sympos(v).is_some() => {
+            let (s, _) = super::misc::as_sympos(v).unwrap();
+            HashKey::Sym(s)
+        }
         Value::Cons(c) => {
             let b = c.borrow();
             HashKey::Cons(
@@ -155,6 +166,43 @@ fn equal_key(interp: &Interp, v: &Value) -> HashKey {
         }
         Value::Vec(vec) => {
             HashKey::Vec(vec.borrow().iter().map(|x| equal_key(interp, x)).collect())
+        }
+        // `equal' compares records elementwise — hash contents too,
+        // tagged so records never collide with plain vectors.
+        Value::Record(r) => HashKey::Tagged(
+            1,
+            r.borrow().iter().map(|x| equal_key(interp, x)).collect(),
+        ),
+        Value::Lambda(l) => {
+            if let Some(items) = &l.bc_items {
+                let mut keys = vec![HashKey::Int(l.env.is_none() as i128)];
+                keys.extend(items.borrow().iter().map(|x| equal_key(interp, x)));
+                HashKey::Tagged(2, keys)
+            } else {
+                // Interpreted lambdas are `equal' by structure — cover
+                // the same fields `equal_values' compares.
+                let mut keys = vec![
+                    HashKey::Int(l.is_macro as i128),
+                    HashKey::Int(l.env.is_none() as i128),
+                ];
+                keys.extend(l.required.iter().map(|s| HashKey::Sym(*s)));
+                keys.extend(l.rest.iter().map(|s| HashKey::Sym(*s)));
+                keys.extend(l.optional.iter().map(|p| {
+                    HashKey::Vec(vec![
+                        HashKey::Sym(p.sym),
+                        match &p.supplied {
+                            Some(s) => HashKey::Sym(*s),
+                            None => HashKey::Nil,
+                        },
+                        match &p.default {
+                            Some(d) => equal_key(interp, d),
+                            None => HashKey::Nil,
+                        },
+                    ])
+                }));
+                keys.extend(l.body.iter().map(|x| equal_key(interp, x)));
+                HashKey::Tagged(3, keys)
+            }
         }
         _ => eql_key(v),
     }
@@ -175,21 +223,21 @@ fn f_make_hash_table(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     let rehash_threshold = Value::float(0.8125);
     let mut k = 0;
     while k < items.len() {
-        let name = match &items[k] {
-            Value::Sym(s) => i.symbol_name(*s).to_string(),
-            other => {
-                let msg = i.prin1_to_string(other);
+        let name = match i.sym_id(&items[k]) {
+            Some(s) => i.symbol_name(s).to_string(),
+            None => {
+                let msg = i.prin1_to_string(&items[k]);
                 return Err(i.error(&format!("Invalid keyword argument {}", msg)));
             }
         };
         let val = &items[k + 1];
         match name.as_str() {
             ":test" => {
-                let tname = match val {
-                    Value::Sym(id) => i.symbol_name(*id).to_string(),
-                    other => {
+                let tname = match i.sym_id(val) {
+                    Some(id) => i.symbol_name(id).to_string(),
+                    None => {
                         // GNU signals (wrong-type-argument symbolp VAL).
-                        return Err(i.wrong_type_mut("symbolp", other));
+                        return Err(i.wrong_type_mut("symbolp", val));
                     }
                 };
                 test = match tname.as_str() {
@@ -202,9 +250,9 @@ fn f_make_hash_table(i: &mut Interp, args: Vec<Value>) -> EvalResult {
                         // GNU). remacs can't plug arbitrary test/hash
                         // functions into the table — accept the name and
                         // use `equal' semantics.
-                        let Value::Sym(id) = val else { unreachable!() };
+                        let Some(id) = i.sym_id(val) else { unreachable!() };
                         let prop = i.intern("hash-table-test");
-                        if !i.get_prop(*id, prop).is_nil() {
+                        if !i.get_prop(id, prop).is_nil() {
                             HashTest::Equal
                         } else {
                             return Err(i.error(&format!("Invalid hash table test {}", tname)));
@@ -214,15 +262,16 @@ fn f_make_hash_table(i: &mut Interp, args: Vec<Value>) -> EvalResult {
             }
             ":weakness" => match val {
                 Value::Nil => {}
-                Value::Sym(id) => {
-                    let w = i.symbol_name(*id).to_string();
+                _ if i.sym_id(val).is_some() => {
+                    let id = i.sym_id(val).unwrap();
+                    let w = i.symbol_name(id).to_string();
                     match w.as_str() {
                         // GNU: `t' is a synonym for `key-and-value'.
                         "t" => {
                             weakness = Some(Value::Sym(i.intern("key-and-value")));
                         }
                         "key" | "value" | "key-or-value" | "key-and-value" => {
-                            weakness = Some(val.clone());
+                            weakness = Some(Value::Sym(id));
                         }
                         _ => {
                             return Err(i.error(&format!("Invalid hash table weakness {}", w)));
@@ -394,12 +443,12 @@ fn f_copy_hash_table(i: &mut Interp, args: Vec<Value>) -> EvalResult {
 fn f_define_hash_table_test(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     // GNU: (put NAME 'hash-table-test (list TEST HASH)) — the test is
     // a symbol property, and the return value is (TEST HASH).
-    let Value::Sym(name) = &args[0] else {
+    let Some(name) = i.sym_id(&args[0]) else {
         return Err(i.wrong_type_mut("symbolp", &args[0]));
     };
     let entry = Value::list(vec![args[1].clone(), args[2].clone()]);
     let prop = i.intern("hash-table-test");
-    i.put_prop(*name, prop, entry.clone());
+    i.put_prop(name, prop, entry.clone());
     Ok(entry)
 }
 

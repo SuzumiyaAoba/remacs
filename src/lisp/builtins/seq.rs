@@ -456,6 +456,9 @@ fn f_aref(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     match &args[0] {
         Value::Str(_) | Value::Vec(_) => {}
         Value::Record(r) => {
+            if super::misc::as_sympos(&args[0]).is_some() {
+                return Err(i.wrong_type_mut("arrayp", &args[0]));
+            }
             if !super::misc::is_bool_vector(i, &args[0]) && !super::misc::is_char_table(i, &args[0])
             {
                 let n = want_int(i, &args[1])?;
@@ -588,6 +591,10 @@ fn f_aset(i: &mut Interp, args: Vec<Value>) -> EvalResult {
             Ok(args[2].clone())
         }
         Value::Record(r) => {
+            // `symbols-with-pos-enabled' objects are not arrays.
+            if super::misc::as_sympos(&args[0]).is_some() {
+                return Err(i.wrong_type_mut("arrayp", &args[0]));
+            }
             // Ordinary records: GNU allows writing any slot (even the
             // tag at index 0).
             let mut items = r.borrow_mut();

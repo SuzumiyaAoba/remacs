@@ -13467,10 +13467,12 @@ pub(crate) fn face_known(i: &Interp, name: &str) -> bool {
 }
 
 fn face_name_of(i: &mut Interp, v: &Value) -> Result<String, Flow> {
-    let name = match v {
-        Value::Sym(s) => i.symbol_name(*s),
-        Value::Str(s) => s.borrow().clone(),
-        other => return Err(i.wrong_type_mut("symbolp", other)),
+    let name = match i.sym_id(v) {
+        Some(s) => i.symbol_name(s),
+        None => match v {
+            Value::Str(s) => s.borrow().clone(),
+            other => return Err(i.wrong_type_mut("symbolp", other)),
+        },
     };
     if !face_known(i, &name) {
         return Err(i.error(format!("Invalid face: {}", name)));
@@ -13656,14 +13658,16 @@ fn set_face_attr(i: &mut Interp, name: &str, attr: &str, val: Value) {
 }
 
 fn f_internal_set_lisp_face_attribute(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let name = match &a[0] {
-        Value::Sym(s) => i.symbol_name(*s),
-        Value::Str(s) => s.borrow().clone(),
-        other => return Err(i.wrong_type_mut("symbolp", other)),
+    let name = match i.sym_id(&a[0]) {
+        Some(s) => i.symbol_name(s),
+        None => match &a[0] {
+            Value::Str(s) => s.borrow().clone(),
+            other => return Err(i.wrong_type_mut("symbolp", other)),
+        },
     };
-    let attr = match &a[1] {
-        Value::Sym(s) => i.symbol_name(*s),
-        other => return Err(i.wrong_type_mut("symbolp", other)),
+    let attr = match i.sym_id(&a[1]) {
+        Some(s) => i.symbol_name(s),
+        None => return Err(i.wrong_type_mut("symbolp", &a[1])),
     };
     if !face_known(i, &name) {
         i.face_table.push((name.clone(), Value::Nil));
@@ -13674,9 +13678,9 @@ fn f_internal_set_lisp_face_attribute(i: &mut Interp, a: Vec<Value>) -> EvalResu
 
 fn f_set_face_attribute(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     // (set-face-attribute FACE FRAME &rest ARGS)
-    let name = match &a[0] {
-        Value::Sym(s) => i.symbol_name(*s),
-        other => return Err(i.wrong_type_mut("symbolp", other)),
+    let name = match i.sym_id(&a[0]) {
+        Some(s) => i.symbol_name(s),
+        None => return Err(i.wrong_type_mut("symbolp", &a[0])),
     };
     if !face_known(i, &name) {
         let err = i.intern("error");
@@ -13686,8 +13690,8 @@ fn f_set_face_attribute(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         ));
     }
     for kv in a[2..].chunks(2) {
-        if let (Value::Sym(k), Some(v)) = (&kv[0], kv.get(1)) {
-            let attr = i.symbol_name(*k);
+        if let (Some(k), Some(v)) = (i.sym_id(&kv[0]), kv.get(1)) {
+            let attr = i.symbol_name(k);
             set_face_attr(i, &name, &attr, v.clone());
         }
     }

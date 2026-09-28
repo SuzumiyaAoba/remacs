@@ -2,6 +2,7 @@
 //! evaluator, special forms, builtins, regexp engine, loader.
 
 pub mod builtins;
+pub(crate) mod bytecode;
 pub(crate) mod cjk_tables;
 pub(crate) mod ctdata;
 pub mod dynlib;

@@ -7427,8 +7427,9 @@ pub(crate) fn regexp_compile(
     let case_fold = i
         .symbol_value(i.intern_soft("case-fold-search").unwrap_or(0))
         .truthy();
-    crate::lisp::regexp::compile_case(&pat, case_fold)
-        .map_err(|e| err_sym(i, "invalid-regexp", vec![Value::string(e.0)]))
+    crate::lisp::regexp::compile_case(&pat, case_fold).map_err(|e| {
+        err_sym(i, "invalid-regexp", vec![Value::string(e.0)])
+    })
 }
 
 fn f_looking_at(i: &mut Interp, a: Vec<Value>) -> EvalResult {

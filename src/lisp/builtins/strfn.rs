@@ -1,6 +1,6 @@
 //! String subrs: concat, substring, comparison, case, format, etc.
 
-use super::{S, arg, want_int, want_string};
+use super::{S, arg, misc, want_int, want_string};
 use crate::lisp::Interp;
 use crate::lisp::error::{EvalResult, Flow};
 use crate::lisp::obarray::sym;
@@ -1802,6 +1802,11 @@ fn sxhash_obj(i: &Interp, v: &Value, depth: usize) -> u64 {
     if depth > SXHASH_MAX_DEPTH {
         return 0;
     }
+    // `symbols-with-pos-enabled' objects are `equal'/`eql' to their
+    // bare symbol — hash the symbol so the invariant holds.
+    if let Some((id, _)) = misc::as_sympos(v) {
+        return sxhash_sym_hash(id);
+    }
     match v {
         // XUFIXNUM: the fixnum's value bits — the low 62 bits of the
         // two's-complement representation.
@@ -1820,11 +1825,47 @@ fn sxhash_obj(i: &Interp, v: &Value, depth: usize) -> u64 {
             }
             hash
         }
-        // Records, hash tables and other pseudovectors: GNU hashes
-        // them by address (XHASH).
-        Value::Record(r) => sxhash_xhash_ptr(r),
+        // Records (including char-tables): GNU's `equal' compares them
+        // elementwise, so hash contents the same way to keep the
+        // `equal ⇒ same-hash' invariant.
+        Value::Record(r) => {
+            let r = r.borrow();
+            let mut hash = r.len() as u64;
+            for item in r.iter().take(SXHASH_MAX_LEN) {
+                hash = sxhash_combine(hash, sxhash_obj(i, item, depth + 1));
+            }
+            hash
+        }
         Value::Hash(h) => sxhash_xhash_ptr(h),
-        Value::Lambda(l) => sxhash_xhash_ptr(l),
+        Value::Lambda(l) => {
+            // GNU hashes byte-code objects (`#[...]') by contents like
+            // vectors, keeping the `equal ⇒ same-hash' invariant that
+            // `equal'-test hash tables and constant dedup rely on.
+            if let Some(items) = &l.bc_items {
+                let items = items.borrow();
+                let mut hash = items.len() as u64;
+                for item in items.iter().take(SXHASH_MAX_LEN) {
+                    hash = sxhash_combine(hash, sxhash_obj(i, item, depth + 1));
+                }
+                hash
+            } else {
+                // Interpreted lambdas are `equal' by structure: hash the
+                // same fields `equal_values' compares.
+                let mut hash = l.is_macro as u64;
+                for s in l
+                    .required
+                    .iter()
+                    .chain(l.optional.iter().map(|p| &p.sym))
+                    .chain(l.rest.iter())
+                {
+                    hash = sxhash_combine(hash, sxhash_sym_hash(*s));
+                }
+                for f in l.body.iter().take(SXHASH_MAX_LEN) {
+                    hash = sxhash_combine(hash, sxhash_obj(i, f, depth + 1));
+                }
+                hash
+            }
+        }
         Value::Buffer(b) => sxhash_xhash_ptr(b),
         Value::Marker(m) => sxhash_xhash_ptr(m),
         Value::Window(w) => sxhash_xhash_ptr(w),
@@ -1842,6 +1883,11 @@ fn sxhash_obj(i: &Interp, v: &Value, depth: usize) -> u64 {
 /// LSB tagging are: symbol 0, cons 3, string 4, vectorlike 5, int
 /// 2|6 (2 when the value is even), float 7.
 fn sxhash_eq(i: &Interp, v: &Value) -> u64 {
+    // `symbols-with-pos-enabled' objects ARE the symbol in GNU — hash
+    // the bare symbol, ignoring the position.
+    if let Some((id, _)) = misc::as_sympos(v) {
+        return sxhash_sym_hash(id);
+    }
     match v {
         // XHASH ^ XTYPE: ints tag 2 (even) or 6 (odd).
         Value::Int(n) => ((*n as u64) & 0x3fff_ffff_ffff_ffff) ^ (2 + 4 * (*n as u64 & 1)),

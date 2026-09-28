@@ -1576,11 +1576,60 @@ fn f_remove(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     remove_impl(i, &args[0], &args[1], |ii, a, b| equal_values(ii, a, b))
 }
 fn f_remq(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    // GNU `remq` is list-only (unlike sequence-generic `remove`).
-    match args[1] {
-        Value::Cons(_) | Value::Nil => {
-            remove_impl(i, &args[0], &args[1], |_ii, a, b| eq_values(a, b))
+    // GNU `remq' (subr.el): `(while (and (eq elt (car list)) (setq
+    // list (cdr list)))) (if (memq elt list) (delq elt
+    // (copy-sequence list)) list)' — when nothing is removed the
+    // ORIGINAL list object is returned (cell identity preserved),
+    // which fixpoint loops such as `byte-optimize-cond' rely on.
+    let elt = &args[0];
+    let mut list = args[1].clone();
+    loop {
+        match &list {
+            Value::Cons(c) => {
+                let (car, next) = {
+                    let b = c.borrow();
+                    (b.car.clone(), b.cdr.clone())
+                };
+                if eq_values(elt, &car) {
+                    list = next;
+                } else {
+                    break;
+                }
+            }
+            Value::Nil => break,
+            other => return Err(i.wrong_type_mut("listp", other)),
         }
-        ref other => Err(i.wrong_type_mut("listp", other)),
+    }
+    // memq the remainder: if ELT still occurs, delq a copy.
+    let mut found = false;
+    let mut cur = list.clone();
+    let mut guard = 0usize;
+    loop {
+        guard += 1;
+        if guard > 500_000 {
+            return Err(err_circular(i));
+        }
+        match &cur {
+            Value::Cons(c) => {
+                let (car, next) = {
+                    let b = c.borrow();
+                    (b.car.clone(), b.cdr.clone())
+                };
+                if eq_values(elt, &car) {
+                    found = true;
+                    break;
+                }
+                cur = next;
+            }
+            _ => break,
+        }
+    }
+    if found {
+        // copy-sequence + delq (delq splices the copy in place).
+        let items = want_list(i, &list)?;
+        let copied = Value::list(items);
+        del_impl(i, elt, &copied, true)
+    } else {
+        Ok(list)
     }
 }

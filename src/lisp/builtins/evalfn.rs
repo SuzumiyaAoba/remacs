@@ -554,16 +554,11 @@ fn f_special_form_via_apply(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
 }
 
 fn f_macroexpand(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    // GNU: (macroexpand FORM &optional ENVIRONMENT); the env is
-    // consulted through `macroexpand-all-environment'.
-    if args.len() > 1 {
-        let id = i.intern("macroexpand-all-environment");
-        i.specbind(id, args[1].clone())?;
-        let r = i.macroexpand(&args[0]);
-        i.unbind(1)?;
-        return r;
-    }
-    i.macroexpand(&args[0])
+    // GNU: (macroexpand FORM &optional ENVIRONMENT) consults only the
+    // explicit ENVIRONMENT alist; the dynamic variable
+    // `macroexpand-all-environment' is `macroexpand-all''s business.
+    let env = args.get(1).cloned().unwrap_or(Value::Nil);
+    i.macroexpand_env(&args[0], &env)
 }
 
 fn f_macroexpand_1(i: &mut Interp, args: Vec<Value>) -> EvalResult {
@@ -599,8 +594,10 @@ fn f_macroexpand_1(i: &mut Interp, args: Vec<Value>) -> EvalResult {
                                     let b = e.borrow();
                                     (b.car.clone(), b.cdr.clone())
                                 };
-                                if let (Value::Sym(eid), Value::Sym(id)) = (ek, &car) {
-                                    if eid == *id {
+                                // Sympos env keys unwrap to their bare
+                                // symbol id (GNU's `assq' matches `eq').
+                                if let (Some(eid), Some(id)) = (i.sym_id(&ek), i.sym_id(&car)) {
+                                    if eid == id {
                                         if ev.is_nil() {
                                             return Ok(form.clone());
                                         }
@@ -615,7 +612,7 @@ fn f_macroexpand_1(i: &mut Interp, args: Vec<Value>) -> EvalResult {
                     }
                 }
             }
-            if let Value::Sym(id) = car {
+            if let Some(id) = i.sym_id(&car) {
                 let f = i.symbol_function(id);
                 let is_mac = match &f {
                     Value::Lambda(l) => l.is_macro,
@@ -652,7 +649,7 @@ fn f_macroexpand_all(i: &mut Interp, args: Vec<Value>) -> EvalResult {
 fn is_declare_form(i: &Interp, form: &Value) -> bool {
     if let Value::Cons(c) = form {
         let b = c.borrow();
-        if let Value::Sym(id) = b.car {
+        if let Some(id) = i.sym_id(&b.car) {
             return i.symbol_name(id) == "declare";
         }
     }
@@ -672,7 +669,7 @@ fn try_compiler_macro(i: &mut Interp, form: &Value) -> EvalResult {
         }
         _ => return Ok(Value::Nil),
     };
-    let mut func = car;
+    let mut func = crate::lisp::builtins::misc::unpos(&car);
     let cmacro = i.intern("compiler-macro");
     let mut handler = Value::Nil;
     let mut guard = 0;
@@ -717,9 +714,11 @@ fn try_compiler_macro(i: &mut Interp, form: &Value) -> EvalResult {
 /// Whether V can be a `setq' target symbol — a symbol other than
 /// t/nil or a keyword (GNU `macroexp--expand-all' fast-path check).
 fn plain_setq_var(i: &Interp, v: &Value) -> bool {
-    match v {
-        Value::Sym(sid) if *sid != sym::NIL && *sid != sym::T => {
-            !i.symbol_name(*sid).starts_with(':')
+    // `symbols-with-pos-enabled' objects are settable symbols: GNU's
+    // `(symbolp var)' accepts them, so unwrap via `sym_id'.
+    match i.sym_id(v) {
+        Some(sid) if sid != sym::NIL && sid != sym::T => {
+            !i.symbol_name(sid).starts_with(':')
         }
         _ => false,
     }
@@ -889,7 +888,11 @@ fn unfold_funcall_lambda(
 
 /// Recursively expand macros throughout a form.
 pub(crate) fn macroexpand_all(i: &mut Interp, form: &Value) -> EvalResult {
-    let expanded = i.macroexpand(form)?;
+    // GNU `macroexp--expand-all' passes `macroexpand-all-environment'
+    // (bound by `macroexpand-all') to `macroexpand' explicitly.
+    let env_id = i.intern("macroexpand-all-environment");
+    let env = i.symbol_value(env_id);
+    let expanded = i.macroexpand_env(form, &env)?;
     // Compiler macros expand through `macroexpand-all' but not
     // `macroexpand'/`macroexpand-1'.
     if let Value::Cons(_) = expanded {
@@ -1050,7 +1053,7 @@ pub(crate) fn macroexpand_all(i: &mut Interp, form: &Value) -> EvalResult {
                                                 let keep_head = matches!(
                                                     &b,
                                                     Value::Cons(bc)
-                                                        if matches!(bc.borrow().car, Value::Sym(_))
+                                                        if i.sym_id(&bc.borrow().car).is_some()
                                                 );
                                                 if keep_head {
                                                     let parts =
@@ -1129,7 +1132,10 @@ pub(crate) fn macroexpand_all(i: &mut Interp, form: &Value) -> EvalResult {
                             let expr = macroexpand_all(i, &pair[1])?;
                             let assignment = if plain_setq_var(i, var) {
                                 Value::list(vec![items[0].clone(), var.clone(), expr])
-                            } else if matches!(var, Value::Sym(sid) if i.symbol_name(*sid).starts_with(':'))
+                            } else if i
+                                .sym_id(var)
+                                .map(|sid| i.symbol_name(sid).starts_with(':'))
+                                .unwrap_or(false)
                             {
                                 // `(if (eq :k E) :k (signal 'setting-constant
                                 //                          (list ':k)))'
@@ -1156,12 +1162,12 @@ pub(crate) fn macroexpand_all(i: &mut Interp, form: &Value) -> EvalResult {
                             } else {
                                 // `(signal 'setting-constant (list 'VAR))'
                                 // for t/nil, else a wrong-type-argument.
-                                let tag = match var {
-                                    Value::Sym(_) => sym::SETTING_CONSTANT,
+                                let tag = match i.sym_id(var) {
+                                    Some(_) => sym::SETTING_CONSTANT,
                                     _ => sym::WRONG_TYPE_ARGUMENT,
                                 };
-                                let data = match var {
-                                    Value::Sym(_) => Value::list(vec![
+                                let data = match i.sym_id(var) {
+                                    Some(_) => Value::list(vec![
                                         Value::Sym(i.intern("list")),
                                         Value::list(vec![Value::Sym(sym::QUOTE), var.clone()]),
                                     ]),
@@ -1314,9 +1320,9 @@ pub(crate) fn macroexpand_all(i: &mut Interp, form: &Value) -> EvalResult {
 fn f_signal(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     // Emacs: signaling a symbol with no `error-conditions' property
     // signals `error' with ("Invalid error symbol" SYM) instead.
-    if let Value::Sym(sid) = &args[0] {
+    if let Some(sid) = i.sym_id(&args[0]) {
         let ec = i.intern("error-conditions");
-        if i.get_prop(*sid, ec).is_nil() {
+        if i.get_prop(sid, ec).is_nil() {
             return Err(Flow::Signal(
                 Value::Sym(sym::ERROR),
                 Value::list(vec![Value::string("Invalid error symbol"), args[0].clone()]),
@@ -1519,7 +1525,7 @@ fn feature_present(i: &mut Interp, id: SymId) -> bool {
         Value::Cons(_) | Value::Nil => i
             .symbol_value(fid)
             .list_to_vec()
-            .map(|items| items.iter().any(|v| matches!(v, Value::Sym(s) if *s == id)))
+            .map(|items| items.iter().any(|v| i.sym_id(v) == Some(id)))
             .unwrap_or(false),
         _ => false,
     };
@@ -1542,7 +1548,7 @@ fn f_provide(i: &mut Interp, args: Vec<Value>) -> EvalResult {
                 let mut ok = matches!(sub.list_to_vec(), Ok(_));
                 if ok {
                     if let Ok(items) = sub.list_to_vec() {
-                        ok = items.iter().all(|v| matches!(v, Value::Sym(_)));
+                        ok = items.iter().all(|v| i.sym_id(v).is_some());
                     }
                 }
                 if !ok {
@@ -1636,11 +1642,8 @@ fn hook_fns(i: &Interp, hook: &Value) -> Vec<Value> {
     match local {
         Some(v) => {
             let mut fns = hook_list(&v);
-            if fns
-                .iter()
-                .any(|f| matches!(f, Value::Sym(s) if *s == sym::T))
-            {
-                fns.retain(|f| !matches!(f, Value::Sym(s) if *s == sym::T));
+            if fns.iter().any(|f| i.sym_is(f, sym::T)) {
+                fns.retain(|f| !i.sym_is(f, sym::T));
                 let mut globals = hook_list(&i.obarray.symbol(id).value);
                 fns.append(&mut globals);
             }
@@ -1651,9 +1654,9 @@ fn hook_fns(i: &Interp, hook: &Value) -> Vec<Value> {
 }
 
 fn want_hook_sym(i: &mut Interp, hook: &Value) -> Result<(), super::Flow> {
-    match hook {
-        Value::Sym(_) | Value::Nil => Ok(()),
-        other => Err(i.wrong_type_mut("symbolp", other)),
+    match i.sym_id(hook) {
+        Some(_) => Ok(()),
+        None => Err(i.wrong_type_mut("symbolp", hook)),
     }
 }
 
@@ -3091,14 +3094,42 @@ fn f_compiled_function_p(_i: &mut Interp, args: Vec<Value>) -> EvalResult {
 fn f_interactive_p(_i: &mut Interp, _args: Vec<Value>) -> EvalResult {
     Ok(Value::Nil)
 }
-fn f_byte_code(_i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    // We don't have a byte-compiler; treat (byte-code template consts)
-    // as an error to surface unsupported paths.
-    let _ = args;
-    Err(_i.error("byte-code not supported (no byte compiler)"))
+fn f_byte_code(i: &mut Interp, args: Vec<Value>) -> EvalResult {
+    // GNU `Fbyte_code': run a raw (bytecode, constants, depth) triple
+    // as a zero-argument byte-code object.
+    let _depth = &args[2];
+    crate::lisp::bytecode::exec_raw(i, &args[0], &args[1])
 }
-fn f_make_byte_code(_i: &mut Interp, _args: Vec<Value>) -> EvalResult {
-    Ok(Value::Nil)
+fn f_make_byte_code(_i: &mut Interp, args: Vec<Value>) -> EvalResult {
+    // GNU `make-byte-code': pack ARGLIST BYTE-CODE CONSTANTS DEPTH
+    // (and optional doc/interactive slots) into a `#[...]' object.
+    // The Lambda keeps the raw slots in `bc_items' so `aref'/`arrayp'
+    // see GNU's element view and `bytecode::exec' can run it.
+    let argdesc = args[0].clone();
+    let doc = args.get(4).and_then(|v| match v {
+        Value::Str(s) => Some(s.borrow().clone()),
+        _ => None,
+    });
+    let interactive = args.get(5).cloned();
+    Ok(Value::Lambda(std::rc::Rc::new(crate::lisp::value::Lambda {
+        is_macro: false,
+        required: Vec::new(),
+        optional: Vec::new(),
+        rest: None,
+        body: Vec::new(),
+        env: None,
+        doc,
+        interactive,
+        name: None,
+        bad_arglist: false,
+        arglist: Some(argdesc),
+        plain: false,
+        dumped_doc: false,
+        advice_link: None,
+        bc_items: Some(std::rc::Rc::new(std::cell::RefCell::new(args))),
+        doc_value: None,
+        env_value: None,
+    })))
 }
 fn f_subr_native_lambda_list(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     // Emacs 31: t for primitives, wrong-type-argument otherwise.

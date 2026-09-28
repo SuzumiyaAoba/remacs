@@ -491,10 +491,11 @@ fn f_nlistp(_i: &mut Interp, args: Vec<Value>) -> EvalResult {
     )))
 }
 fn f_symbolp(_i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    Ok(Value::from_bool(matches!(
-        &args[0],
-        Value::Sym(_) | Value::Nil
-    )))
+    Ok(Value::from_bool(match &args[0] {
+        Value::Sym(_) | Value::Nil => true,
+        // `symbols-with-pos-enabled' objects are real symbols in GNU.
+        v => crate::lisp::builtins::misc::as_sympos(v).is_some(),
+    }))
 }
 fn f_stringp(_i: &mut Interp, args: Vec<Value>) -> EvalResult {
     Ok(Value::from_bool(matches!(&args[0], Value::Str(_))))
@@ -506,7 +507,8 @@ fn f_hash_table_p(_i: &mut Interp, args: Vec<Value>) -> EvalResult {
     Ok(Value::from_bool(matches!(&args[0], Value::Hash(_))))
 }
 fn f_functionp(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    let v = &args[0];
+    let v = crate::lisp::builtins::misc::unpos(&args[0]);
+    let v = &v;
     let r = match v {
         Value::Subr(s) => crate::lisp::special::special_form(i.intern(s.name)).is_none(),
         // GNU `functionp' on a macro object (`(macro . fn)') is nil.
@@ -593,8 +595,8 @@ fn f_macrop(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     Ok(Value::Nil)
 }
 fn f_keywordp(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    match &args[0] {
-        Value::Sym(id) => Ok(Value::from_bool(i.symbol_name(*id).starts_with(':'))),
+    match i.sym_id(&args[0]) {
+        Some(id) => Ok(Value::from_bool(i.symbol_name(id).starts_with(':'))),
         _ => Ok(Value::Nil),
     }
 }
@@ -636,10 +638,10 @@ fn f_arrayp(i: &mut Interp, args: Vec<Value>) -> EvalResult {
         other => super::misc::is_char_table(i, other) || super::misc::is_bool_vector(i, other),
     }))
 }
-fn f_special_form_p(_i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    match &args[0] {
-        Value::Sym(id) => Ok(Value::from_bool(
-            crate::lisp::special::special_form(*id).is_some(),
+fn f_special_form_p(i: &mut Interp, args: Vec<Value>) -> EvalResult {
+    match i.sym_id(&args[0]) {
+        Some(id) => Ok(Value::from_bool(
+            crate::lisp::special::special_form(id).is_some(),
         )),
         _ => Ok(Value::Nil),
     }
@@ -656,6 +658,10 @@ fn f_type_of(i: &mut Interp, args: Vec<Value>) -> EvalResult {
         Value::Str(_) => "string",
         Value::Vec(_) => "vector",
         Value::Record(r) => {
+            // `symbols-with-pos-enabled' objects are `symbol'.
+            if crate::lisp::builtins::misc::as_sympos(&args[0]).is_some() {
+                return Ok(Value::Sym(i.intern("symbol")));
+            }
             let rr = r.borrow();
             match rr.first() {
                 Some(Value::Sym(tag)) => {
@@ -1011,7 +1017,7 @@ fn f_intern(i: &mut Interp, args: Vec<Value>) -> EvalResult {
             let id = i.intern(&name);
             Ok(i.sym(id))
         }
-        Value::Sym(_) => Ok(args[0].clone()),
+        _ if i.sym_id(&args[0]).is_some() => Ok(args[0].clone()),
         _ => Err(i.wrong_type_mut("stringp", &args[0])),
     }
 }
@@ -1033,7 +1039,7 @@ fn f_intern_soft(i: &mut Interp, args: Vec<Value>) -> EvalResult {
                 None => Ok(Value::Nil),
             }
         }
-        Value::Sym(_) => Ok(args[0].clone()),
+        _ if i.sym_id(&args[0]).is_some() => Ok(args[0].clone()),
         _ => Err(i.wrong_type_mut("stringp", &args[0])),
     }
 }
@@ -1045,13 +1051,18 @@ fn f_unintern(i: &mut Interp, args: Vec<Value>) -> EvalResult {
         }
     }
     match &args[0] {
-        Value::Sym(id) => {
+        _ if i.sym_id(&args[0]).is_some() => {
+            let id = i.sym_id(&args[0]).unwrap();
+            if id == sym::NIL || id == sym::T {
+                // GNU refuses to unintern `nil'/`t' (returns nil).
+                return Ok(Value::Nil);
+            }
             // Our obarray can't physically remove (indices are stable),
             // but we can drop the name mapping so a fresh intern creates
             // a new symbol — matching unintern semantics.
-            let name = i.symbol_name(*id);
+            let name = i.symbol_name(id);
             // Only if name actually maps to this symbol.
-            if i.intern_soft(&name) == Some(*id) {
+            if i.intern_soft(&name) == Some(id) {
                 // Remove mapping.
                 i.obarray.unintern_by_name(&name);
             }
@@ -1205,7 +1216,7 @@ fn f_mapatoms(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     Ok(Value::Nil)
 }
 fn f_indirect_function(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    let mut cur = args[0].clone();
+    let mut cur = crate::lisp::builtins::misc::unpos(&args[0]);
     let mut seen: std::collections::HashSet<crate::lisp::value::SymId> =
         std::collections::HashSet::new();
     loop {

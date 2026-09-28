@@ -162,6 +162,44 @@ fn circle_counted(k: usize) -> bool {
     })
 }
 
+/// `print-number-table' substitution for a heap object.
+///
+/// GNU lets a non-nil table replace what an object prints as: a
+/// string value is emitted verbatim (bytecomp's `#$' filename
+/// placeholder), an integer value is a pre-assigned label printed
+/// `#N=' on first occurrence.  After `#N=' prints we rewrite the
+/// entry to a `(N . printed)' marker so later occurrences print
+/// `#N#' — GNU keeps the same flag inside its table.
+fn number_table_subst(i: &Interp, v: &Value) -> Option<String> {
+    let nt = i.print_var("print-number-table");
+    let Value::Hash(h) = nt else {
+        return None;
+    };
+    let key = crate::lisp::builtins::hashfn::hash_key_for(
+        i,
+        v,
+        crate::lisp::value::HashTest::Eq,
+    );
+    let found = h.borrow().map.get(&key).cloned()?;
+    match &found {
+        Value::Str(s) => Some(s.borrow().clone()),
+        Value::Int(n) => {
+            let n = *n;
+            let marker = Value::cons(Value::Int(n), Value::t());
+            h.borrow_mut().map.insert(key, marker);
+            Some(format!("#{n}="))
+        }
+        Value::Cons(c) => {
+            let n = match &c.borrow().car {
+                Value::Int(n) => *n,
+                _ => return None,
+            };
+            Some(format!("#{n}#"))
+        }
+        _ => None,
+    }
+}
+
 impl Interp {
     /// `prin1` representation: readable, escaped.
     pub fn print_to_string(&self, v: &Value) -> String {
@@ -250,6 +288,10 @@ impl Interp {
 
     fn prin1_inner(&self, v: &Value, out: &mut String, depth: usize, bq: bool) {
         if let Some(k) = print_stack_key(v) {
+            if let Some(sub) = number_table_subst(self, v) {
+                out.push_str(&sub);
+                return;
+            }
             if circle_active() {
                 // `print-circle': shared/cyclic objects print `#N='
                 // at first occurrence and `#N#' afterwards.
@@ -509,9 +551,22 @@ impl Interp {
                 let _ = write!(out, "#<subr {}>", s.name);
             }
             Value::Lambda(l) => {
+                out.push_str("#[");
+                if let Some(bc) = &l.bc_items {
+                    // Byte-code objects print as their raw slots like
+                    // GNU: #[ARGDESC "BYTESTR" [CONSTS] DEPTH ...].
+                    let items = bc.borrow();
+                    for (i, item) in items.iter().enumerate() {
+                        if i > 0 {
+                            out.push(' ');
+                        }
+                        self.prin1_inner(item, out, depth + 1, bq);
+                    }
+                    out.push(']');
+                    return;
+                }
                 // Emacs 31 prints interpreted functions like
                 // #[(x) (x) nil] — arglist, body forms, environment.
-                out.push_str("#[");
                 self.print_lambda_list(l, out);
                 out.push(' ');
                 // An empty body is a single implicit nil form.
@@ -608,6 +663,10 @@ impl Interp {
 
     fn princ_inner(&self, v: &Value, out: &mut String, depth: usize, bq: bool) {
         if let Some(k) = print_stack_key(v) {
+            if let Some(sub) = number_table_subst(self, v) {
+                out.push_str(&sub);
+                return;
+            }
             if circle_active() {
                 match circle_label(k) {
                     Some((n, false)) => {
@@ -711,6 +770,22 @@ impl Interp {
         }
         {
             let rr = items.borrow();
+            // `symbols-with-pos-enabled' sympos: a real symbol in GNU —
+            // `princ' prints the bare name; `prin1' prints `#<symbol
+            // NAME at POS>' unless `print-symbols-bare' is bound.
+            if let Some(Value::Int(t)) = rr.first() {
+                if *t == crate::lisp::builtins::misc::SYMPOS_MAGIC {
+                    if let [_, Value::Sym(s), Value::Int(p)] = rr.as_slice() {
+                        if princ || self.print_var("print-symbols-bare").truthy() {
+                            push_sym_name(&self.symbol_name(*s), out);
+                        } else {
+                            let name = self.symbol_name(*s);
+                            let _ = write!(out, "#<symbol {} at {}>", name, p);
+                        }
+                        return;
+                    }
+                }
+            }
             // Positioned symbols print `#<symbol NAME at POS>'.
             if let Some(Value::Sym(t)) = rr.first() {
                 if self.symbol_name(*t) == "symbol-with-pos" {

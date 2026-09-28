@@ -2521,6 +2521,24 @@ fn eval_src_opts(
     let lex_id = i.intern("lexical-binding");
     let lex_on = force_lex || file_lexical_binding(&src);
     i.specbind(lex_id, if lex_on { Value::t() } else { Value::Nil })?;
+    // Disable the byte-compiler's optimizer for the whole load:
+    // `(eval-when-compile ...)' forms inside a file loaded *during* a
+    // byte-compilation expand through the ambient
+    // `macroexpand-all-environment' into `byte-compile-top-level', whose
+    // `byte-optimize-one-form' call would autoload `byte-opt' while
+    // `byte-opt' itself is still loading — a cycle GNU never sees
+    // because it loads .elc bytecode there instead of source.  Binding
+    // `byte-optimize' to nil keeps subsidiary compilations correct
+    // (unoptimized code evaluates the same) without recursion.  The
+    // binding is only installed when the variable already has a global
+    // value: otherwise a `defcustom byte-optimize' in the file being
+    // loaded (bytecomp.el's own) would write its default into this
+    // throwaway dynamic binding, leaving the variable unbound after
+    // unwinding.
+    let bo = i.intern("byte-optimize");
+    if i.bound_p(bo) {
+        i.specbind(bo, Value::Nil)?;
+    }
     // GNU's `readevalloop' specbinds `internal-interpreter-environment'
     // to `(t)' for lexical files (nil for dynamic) for the file's whole
     // dynamic extent: toplevel bare `defvar's become file-scoped special
@@ -2536,7 +2554,13 @@ fn eval_src_opts(
     // GNU's `internal--get-default-lexical-binding': a non-empty file
     // with no cookie gets a `files missing-lexbind-cookie' warning
     // before its forms run.  (--script forces lexical, so no warning.)
-    if !lex_on && !src.is_empty() && !file.starts_with("builtin:") {
+    // Byte-compiled `.elc' files carry their own `;ELC\0\0\0' magic —
+    // GNU does not warn for them either.
+    if !lex_on
+        && !src.is_empty()
+        && !file.starts_with("builtin:")
+        && !src.starts_with(";ELC\u{1f}\u{0}\u{0}\u{0}")
+    {
         let ty = Value::list(vec![
             Value::Sym(i.intern("files")),
             Value::Sym(i.intern("missing-lexbind-cookie")),
@@ -2676,6 +2700,10 @@ fn eval_str_for_load(i: &mut Interp, src: &str) -> EvalResult {
         let next = {
             let mut reader = crate::lisp::reader::Reader::with_chars(i, chars.clone());
             reader.set_position(pos);
+            // GNU `readevalloop' reads loaded code with
+            // `locate_syms = false': `load' never produces positioned
+            // symbols even when `symbols-with-pos-enabled' is
+            // dynamically bound (e.g. by `byte-compile-from-buffer').
             match reader.read()? {
                 Some(f) => Some((f, reader.position())),
                 None => None,
@@ -2733,7 +2761,12 @@ fn eval_for_load(i: &mut Interp, form: Value) -> EvalResult {
         return Ok(last);
     }
     i.macroexp_call_depth += 1;
+    // GNU's `internal-macroexpand-for-load' runs `macroexpand-all' with
+    // a nil ENVIRONMENT, i.e. `macroexpand-all-environment' bound to nil.
+    let env_id = i.intern("macroexpand-all-environment");
+    i.specbind(env_id, Value::Nil)?;
     let expanded_result = crate::lisp::builtins::evalfn::macroexpand_all(i, &form);
+    let _ = i.unbind(1);
     i.macroexp_call_depth -= 1;
     let expanded = match expanded_result {
         Ok(f) => f,
@@ -3000,6 +3033,27 @@ pub(crate) fn load_library_opts(
     };
     if let Some(v) = saved_gc {
         i.obarray.symbol_mut(gc).value = v;
+    }
+    if std::env::var_os("REMACS_LOAD_DEBUG").is_some() {
+        match &result {
+            Err(f) => {
+                let msg = match f {
+                    crate::lisp::Flow::Signal(sig, data, _) => {
+                        format!(
+                            "signal {} {}",
+                            i.print_to_string(sig),
+                            i.print_to_string(data)
+                        )
+                    }
+                    crate::lisp::Flow::Throw(t, _) => {
+                        format!("throw {}", i.print_to_string(t))
+                    }
+                    _ => "other flow".to_string(),
+                };
+                eprintln!("[load-debug] {name}: {msg}");
+            }
+            Ok(ok) => eprintln!("[load-debug] {name}: ok={ok}"),
+        }
     }
     result
 }

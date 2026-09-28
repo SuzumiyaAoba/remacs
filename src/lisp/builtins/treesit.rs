@@ -1799,7 +1799,7 @@ fn predicate_match(i: &mut Interp, args: &[Value], captures: &[Value]) -> Result
             Value::Int(args.len() as i128),
         ]);
     }
-    let (regexp, capname) = if matches!(args[1], Value::Sym(_)) {
+    let (regexp, capname) = if i.sym_id(&args[1]).is_some() {
         (args[0].clone(), args[1].clone())
     } else {
         (args[1].clone(), args[0].clone())

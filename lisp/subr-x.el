@@ -43870,9 +43870,8 @@ while it runs, and removed afterwards."
           (plist-get args :symbol)
           (plist-get args :type)
           (plist-get args :file)))
-(defun make-xref-elisp-location--cmacro (form &rest args)
+(defun make-xref-elisp-location--cmacro (_form &rest args)
   "Compiler macro for `make-xref-elisp-location'."
-  (declare (ignore form))
   `(record 'xref-elisp-location
            ,(plist-get args :symbol)
            ,(plist-get args :type)

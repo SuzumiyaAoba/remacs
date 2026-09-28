@@ -374,8 +374,18 @@ pub(crate) fn want_list(i: &mut Interp, v: &Value) -> Result<Vec<Value>, Flow> {
     }
 }
 
-/// `eq` — identity.
+/// `eq` — identity.  GNU's `symbols-with-pos-enabled' objects are
+/// `eq' to their bare symbol (and to each other across positions):
+/// unwrap them here so list/search predicates agree.
 pub fn eq_values(a: &Value, b: &Value) -> bool {
+    if misc::as_sympos(a).is_some() || misc::as_sympos(b).is_some() {
+        return match (misc::as_sympos(a), misc::as_sympos(b)) {
+            (Some((x, _)), Some((y, _))) => x == y,
+            (Some((x, _)), None) => matches!(b, Value::Sym(y) if *y == x),
+            (None, Some((y, _))) => matches!(a, Value::Sym(x) if *x == y),
+            (None, None) => unreachable!(),
+        };
+    }
     match (a, b) {
         (Value::Nil, Value::Nil) => true,
         (Value::Nil, Value::Sym(0)) | (Value::Sym(0), Value::Nil) => true,
@@ -415,6 +425,11 @@ pub fn eql_values(a: &Value, b: &Value) -> bool {
 
 /// `equal` — structural equality.
 pub fn equal_values(interp: &Interp, a: &Value, b: &Value) -> bool {
+    // Enabled sympos are atoms (symbols): compare by `eq' unwrapping,
+    // not record slot contents (positions must not matter).
+    if misc::as_sympos(a).is_some() || misc::as_sympos(b).is_some() {
+        return eql_values(a, b);
+    }
     match (a, b) {
         (Value::Str(x), Value::Str(y)) => *x.borrow() == *y.borrow(),
         (Value::Cons(_x), Value::Cons(_y)) => {
@@ -470,6 +485,24 @@ pub fn equal_values(interp: &Interp, a: &Value, b: &Value) -> bool {
                 .all(|(a, b)| equal_values(interp, a, b))
         }
         (Value::Lambda(x), Value::Lambda(y)) => {
+            // `#[...]' byte-code objects are pseudovectors in GNU:
+            // `equal' compares their elements (argdesc, bytecode
+            // string, constants vector, ...) pairwise, so two distinct
+            // prototypes are never `equal'.
+            match (&x.bc_items, &y.bc_items) {
+                (Some(xi), Some(yi)) => {
+                    let xi = xi.borrow();
+                    let yi = yi.borrow();
+                    return xi.len() == yi.len()
+                        && xi
+                            .iter()
+                            .zip(yi.iter())
+                            .all(|(a, b)| equal_values(interp, a, b))
+                        && x.env.is_none() == y.env.is_none();
+                }
+                (None, None) => {}
+                _ => return false,
+            }
             // GNU compares interpreted lambdas as list structure.
             x.is_macro == y.is_macro
                 && x.required == y.required

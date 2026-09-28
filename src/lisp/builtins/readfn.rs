@@ -29,11 +29,13 @@ fn f_read(i: &mut Interp, args: Vec<Value>) -> EvalResult {
         }
         Some(Value::Buffer(b)) => {
             // Read one form starting at point, advance point past it.
+            // GNU `Fread' uses `locate_syms = false' — plain `read'
+            // never produces positioned symbols.
             let (src, pos) = {
                 let bb = b.borrow();
                 (bb.text.text(), bb.point)
             };
-            let (v, end) = i.read_from_string(&src, pos)?;
+            let (v, end) = i.read_from_string_pos(&src, pos, None)?;
             b.borrow_mut().set_point(end);
             Ok(v)
         }
@@ -45,7 +47,7 @@ fn f_read(i: &mut Interp, args: Vec<Value>) -> EvalResult {
             match buf.and_then(|id| i.buffers.get(id)) {
                 Some(b) => {
                     let src = b.borrow().text.text();
-                    let (v, end) = i.read_from_string(&src, pos)?;
+                    let (v, end) = i.read_from_string_pos(&src, pos, None)?;
                     m.borrow_mut().position = end;
                     Ok(v)
                 }

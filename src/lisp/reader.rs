@@ -38,6 +38,10 @@ pub struct Reader<'a> {
     /// token reads as a `symbol-with-pos' record carrying position
     /// `base + token_start' (`read' keeps it off).
     pub annotate_pos: Option<i128>,
+    /// `symbols-with-pos-enabled': positioned tokens emit GNU's enabled
+    /// sympos (a real symbol for every primitive) instead of the
+    /// `symbol-with-pos' record.
+    pub sympos_enabled: bool,
 }
 
 fn read_err(interp: &mut Interp, msg: &str) -> Flow {
@@ -108,6 +112,7 @@ impl<'a> Reader<'a> {
             pending_labels: Vec::new(),
             label_markers: HashMap::new(),
             annotate_pos: None,
+            sympos_enabled: false,
         }
     }
 
@@ -350,6 +355,18 @@ impl<'a> Reader<'a> {
             }
             items.push(self.read_object()?);
         }
+    }
+
+    /// `read_seq' with symbol positioning disabled — GNU's reader sets
+    /// `locate_syms = false' inside `#s(...)', `#[...]', `#^[...]' and
+    /// `#(...)' literals, so their contents stay bare symbols even
+    /// under `read-positioning-symbols'.  (lread.c RE_record,
+    /// RE_byte_code, RE_char_table, RE_string_props.)
+    fn read_seq_unannotated(&mut self, close: char) -> Result<Vec<Value>, Flow> {
+        let saved = self.annotate_pos.take();
+        let items = self.read_seq(close);
+        self.annotate_pos = saved;
+        items
     }
 
     fn read_string(&mut self) -> Result<Value, Flow> {
@@ -849,7 +866,7 @@ impl<'a> Reader<'a> {
                 // literal; after the string each (beg end plist)
                 // triple attaches properties to that char range.
                 self.pos += 2;
-                let items = self.read_seq(')')?;
+                let items = self.read_seq_unannotated(')')?;
                 match items.first() {
                     Some(Value::Str(s)) => {
                         let s = s.clone();
@@ -887,7 +904,7 @@ impl<'a> Reader<'a> {
                 if self.next() != Some('[') {
                     return Err(read_err_sym(self.interp, "#^"));
                 }
-                let items = self.read_seq(']')?;
+                let items = self.read_seq_unannotated(']')?;
                 if sub {
                     let mut rec = Vec::with_capacity(items.len() + 1);
                     rec.push(Value::Sym(self.interp.intern("sub-char-table")));
@@ -923,7 +940,7 @@ impl<'a> Reader<'a> {
                 // GNU we reject the degenerate shapes `#[]' and `#[x]'
                 // (the first element must be a list or nil arglist).
                 self.pos += 2;
-                let items = self.read_seq(']')?;
+                let items = self.read_seq_unannotated(']')?;
                 match items.first() {
                     None => return Err(read_err_sym(self.interp, "Invalid byte-code object")),
                     // GNU also accepts an integer arglist — the
@@ -957,7 +974,7 @@ impl<'a> Reader<'a> {
                     return Err(read_err_sym(self.interp, "#s "));
                 }
                 self.pos += 1;
-                let items = self.read_seq(')')?;
+                let items = self.read_seq_unannotated(')')?;
                 // `#s(TYPE ...)' — the type symbol is required.
                 if items.is_empty() {
                     return Err(read_err_sym(self.interp, "#s"));
@@ -1188,6 +1205,12 @@ impl<'a> Reader<'a> {
         }
         let sym = self.interp.intern(&tok);
         if let Some(base) = self.annotate_pos {
+            if self.sympos_enabled {
+                return Ok(crate::lisp::builtins::misc::make_sympos(
+                    sym,
+                    base + start as i128,
+                ));
+            }
             return Ok(crate::lisp::builtins::misc::make_symbol_with_pos(
                 self.interp,
                 sym,

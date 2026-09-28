@@ -2984,7 +2984,8 @@ If FOR-EFFECT is non-nil, the return value is assumed to be of no importance."
 ;; itself, compile some of its most used recursive functions (at load time).
 ;;
 (eval-when-compile
- (or (compiled-function-p (symbol-function 'byte-optimize-form))
+ (and nil ;; Remacs: self-compile disabled while debugging VM
+     (compiled-function-p (symbol-function 'byte-optimize-form))
      (let ((byte-optimize nil)
 	   (byte-compile-warnings nil))
        (mapc (lambda (x)

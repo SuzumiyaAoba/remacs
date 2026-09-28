@@ -1738,8 +1738,8 @@ fn f_gensym(i: &mut Interp, args: Vec<Value>) -> EvalResult {
 
 fn f_func_arity(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     // GNU signals void-function for unbound symbols (indirect-function).
-    if let Value::Sym(id) = &args[0] {
-        if matches!(i.symbol_function(*id), Value::Sym(s) if s == sym::UNBOUND) {
+    if let Some(id) = i.sym_id(&args[0]) {
+        if matches!(i.symbol_function(id), Value::Sym(s) if s == sym::UNBOUND) {
             return Err(i.signal_data(sym::VOID_FUNCTION, vec![args[0].clone()]));
         }
     }
@@ -1785,7 +1785,58 @@ fn f_func_arity(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     };
     let arity = match &fun {
         Value::Subr(s) => s.arity,
-        Value::Lambda(l) => l.arity(),
+        Value::Lambda(l) => {
+            // `#[...]' byte-code objects keep their argdesc in
+            // bc_items[0] — an integer (packed req/opt/rest) or a
+            // dynamic-style arglist — rather than parsed arg fields.
+            if let Some(items) = &l.bc_items {
+                match items.borrow().first() {
+                    Some(Value::Int(n)) => {
+                        let req = (*n & 0x7f) as u16;
+                        let rest = (*n >> 7) & 1 != 0;
+                        let max = ((*n >> 8) & 0x7f) as u16;
+                        if rest {
+                            Arity::Many { min: req }
+                        } else {
+                            Arity::Range { min: req, max }
+                        }
+                    }
+                    Some(list @ (Value::Cons(_) | Value::Nil)) => {
+                        let opt = i.intern("&optional");
+                        let rst = i.intern("&rest");
+                        let (mut min, mut max, mut rest, mut mode) = (0u16, 0u16, false, 0);
+                        let mut cur = list.clone();
+                        while let Value::Cons(c) = cur {
+                            let (hd, tl) = {
+                                let b = c.borrow();
+                                (b.car.clone(), b.cdr.clone())
+                            };
+                            match i.sym_id(&hd) {
+                                Some(s) if s == opt => mode = 1,
+                                Some(s) if s == rst => {
+                                    rest = true;
+                                    mode = 2;
+                                }
+                                Some(_) => {
+                                    min += (mode == 0) as u16;
+                                    max += (mode <= 1) as u16;
+                                }
+                                None => {}
+                            }
+                            cur = tl;
+                        }
+                        if rest {
+                            Arity::Many { min }
+                        } else {
+                            Arity::Range { min, max }
+                        }
+                    }
+                    _ => l.arity(),
+                }
+            } else {
+                l.arity()
+            }
+        }
         v => match list_arity(v) {
             Some(a) => a,
             None => {
@@ -2342,7 +2393,17 @@ fn f_set_this_command_keys(_i: &mut Interp, _a: Vec<Value>) -> EvalResult {
 }
 
 fn f_documentation_stringp(_i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    Ok(Value::from_bool(matches!(&args[0], Value::Str(_))))
+    // GNU VALID_DOC_STRING_P (doc.h): a string, a fixnum (position in
+    // DOC file), or a lazy (FILENAME . POS) cons from an .elc reader.
+    let ok = match &args[0] {
+        Value::Str(_) | Value::Int(_) => true,
+        Value::Cons(c) => {
+            let b = c.borrow();
+            matches!(b.car, Value::Str(_)) && matches!(b.cdr, Value::Int(_))
+        }
+        _ => false,
+    };
+    Ok(Value::from_bool(ok))
 }
 
 fn f_error_message_string(i: &mut Interp, args: Vec<Value>) -> EvalResult {
@@ -2788,9 +2849,9 @@ fn f_face_name(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     if let Value::Str(_) = &a[0] {
         return Err(i.wrong_type_mut("symbolp", &a[0]));
     }
-    if let Value::Sym(s) = &a[0] {
+    if let Some(s) = i.sym_id(&a[0]) {
         if face_exists(i, &a[0]) {
-            return Ok(Value::string(i.symbol_name(*s)));
+            return Ok(Value::string(i.symbol_name(s)));
         }
     }
     Err(i.error(format!("Not a face: {}", i.princ_to_string(&a[0]))))
@@ -3008,6 +3069,56 @@ pub(crate) fn sym_pos_parts(i: &Interp, v: &Value) -> Option<(SymId, i128)> {
     None
 }
 
+/// Tag head of a `symbols-with-pos-enabled' symbol-with-position.
+/// GNU's enabled sympos are a different object flavor from the
+/// `symbol-with-pos' PVEC: `type-of' reports `symbol', `symbolp' is
+/// t, symbol primitives work on them, and `eq' unwraps to the bare
+/// symbol.  We encode them as `[Int(MAGIC) BARE POS]' records — the
+/// magic Int head keeps detection `Interp'-free (`eq_values', hash
+/// keys) and cannot be produced by any Lisp-visible record.
+pub(crate) const SYMPOS_MAGIC: i128 = 0x5EED_CAFE_1;
+
+/// `symbols-with-pos-enabled' parts: (bare symbol, position).
+pub(crate) fn as_sympos(v: &Value) -> Option<(SymId, i128)> {
+    if let Value::Record(r) = v {
+        let rr = r.borrow();
+        if let [Value::Int(tag), Value::Sym(s), Value::Int(p)] = rr.as_slice() {
+            if *tag == SYMPOS_MAGIC {
+                return Some((*s, *p));
+            }
+        }
+    }
+    None
+}
+
+/// Build an enabled `symbols-with-pos-enabled' sympos for BARE at POS.
+pub(crate) fn make_sympos(bare: SymId, pos: i128) -> Value {
+    Value::Record(std::rc::Rc::new(std::cell::RefCell::new(vec![
+        Value::Int(SYMPOS_MAGIC),
+        Value::Sym(bare),
+        Value::Int(pos),
+    ])))
+}
+
+/// Strip an enabled sympos to its bare symbol; everything else is
+/// returned unchanged.  Cheap because `as_sympos' borrows only when V
+/// is a record.
+pub(crate) fn unpos(v: &Value) -> Value {
+    match as_sympos(v) {
+        Some((s, _)) => Value::Sym(s),
+        None => v.clone(),
+    }
+}
+
+/// Is `symbols-with-pos-enabled' dynamically bound to a non-nil value?
+pub(crate) fn sympos_enabled_p(i: &mut Interp) -> bool {
+    let Some(id) = i.intern_soft("symbols-with-pos-enabled") else {
+        return false;
+    };
+    let v = i.symbol_value(id);
+    !matches!(v, Value::Nil) && !matches!(v, Value::Sym(s) if s == crate::lisp::sym::UNBOUND)
+}
+
 /// Build a `symbol-with-pos' object for SYM at POS.
 pub(crate) fn make_symbol_with_pos(i: &mut Interp, sym: SymId, pos: i128) -> Value {
     Value::Record(std::rc::Rc::new(std::cell::RefCell::new(vec![
@@ -3018,7 +3129,7 @@ pub(crate) fn make_symbol_with_pos(i: &mut Interp, sym: SymId, pos: i128) -> Val
 }
 
 fn f_bare_symbol(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    if let Some((s, _)) = sym_pos_parts(i, &args[0]) {
+    if let Some((s, _)) = sym_pos_parts(i, &args[0]).or_else(|| as_sympos(&args[0])) {
         return Ok(Value::Sym(s));
     }
     match &args[0] {
@@ -3035,20 +3146,29 @@ fn f_bare_symbol_p(i: &mut Interp, args: Vec<Value>) -> EvalResult {
 }
 
 fn f_position_symbol(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    let s = match &args[0] {
-        Value::Sym(s) => *s,
-        other => return Err(i.wrong_type_mut("symbolp", other)),
+    let s = match i.sym_id(&args[0]) {
+        Some(s) => s,
+        None => return Err(i.wrong_type_mut("symbolp", &args[0])),
     };
     let pos = args.get(1).and_then(|v| v.int()).unwrap_or(0);
-    Ok(make_symbol_with_pos(i, s, pos))
+    // GNU `Fposition_symbol': under `symbols-with-pos-enabled' the
+    // result is a real positioned symbol; otherwise a
+    // `symbol-with-pos' record.
+    if sympos_enabled_p(i) {
+        Ok(make_sympos(s, pos))
+    } else {
+        Ok(make_symbol_with_pos(i, s, pos))
+    }
 }
 
 fn f_symbol_with_pos_p(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    Ok(Value::from_bool(sym_pos_parts(i, &args[0]).is_some()))
+    Ok(Value::from_bool(
+        sym_pos_parts(i, &args[0]).is_some() || as_sympos(&args[0]).is_some(),
+    ))
 }
 
 fn f_symbol_with_pos_pos(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    match sym_pos_parts(i, &args[0]) {
+    match sym_pos_parts(i, &args[0]).or_else(|| as_sympos(&args[0])) {
         Some((_, p)) => Ok(Value::Int(p)),
         None => Err(i.wrong_type_mut("symbol-with-pos-p", &args[0])),
     }
@@ -4844,13 +4964,26 @@ fn f_modify_category_entry(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         ));
     }
     let table = Value::Record(t.clone());
-    for ch in lo..=hi {
-        if !(0..=CT_MAX_CHAR as i128).contains(&ch) {
-            continue;
+    // Group the range by runs of equal old category-set: one
+    // bool-vector per run shared over the whole run — a per-char
+    // loop allocates a vector for every codepoint (multi-GB churn
+    // on CJK-wide categories), and `ct_effective_runs' walks the
+    // whole (possibly fragmented) table per call.
+    let lo = lo.max(0) as u32;
+    let hi = hi.min(CT_MAX_CHAR as i128).max(lo as i128) as u32;
+    let mut c = lo;
+    while c <= hi {
+        let old = char_table_ref(i, &table, c as usize);
+        let mut e = c;
+        while e < hi {
+            let nx = char_table_ref(i, &table, e as usize + 1);
+            if !super::eq_values(&nx, &old) {
+                break;
+            }
+            e += 1;
         }
         let mut bits = vec![false; 128];
         if !reset {
-            let old = char_table_raw(i, &table, ch as usize);
             if let Ok(b) = bool_vec_of(i, &old) {
                 for (k, v) in b.iter().enumerate() {
                     if k < 128 {
@@ -4861,7 +4994,12 @@ fn f_modify_category_entry(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         }
         bits[cat as usize] = true;
         let bv = make_bool_vector(i, bits);
-        ct_set(i, &table, ch as u32, bv);
+        if e == c {
+            ct_set(i, &table, c, bv);
+        } else {
+            ct_set_range(i, &table, c, e, bv);
+        }
+        c = e + 1;
     }
     Ok(Value::Nil)
 }
@@ -5684,14 +5822,14 @@ fn f_event_modifiers(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let mods = event_mod_list(i, &a[0]);
     // GNU's parse caches `event-symbol-elements' on the symbol, which
     // `event-basic-type' then reads back.
-    if let Value::Sym(s) = &a[0] {
-        let (base, ms) = event_sym_elements(&i.symbol_name(*s));
+    if let Some(s) = i.sym_id(&a[0]) {
+        let (base, ms) = event_sym_elements(&i.symbol_name(s));
         let el = Value::cons(
             Value::Sym(i.intern(&base)),
             Value::list(ms.iter().map(|m| Value::Sym(i.intern(m))).collect()),
         );
         let prop = i.intern("event-symbol-elements");
-        i.put_prop(*s, prop, el);
+        i.put_prop(s, prop, el);
     }
     Ok(Value::list(
         mods.iter().map(|m| Value::Sym(i.intern(m))).collect(),
@@ -7421,8 +7559,8 @@ fn f_coding_system_get(i: &mut Interp, a: Vec<Value>) -> EvalResult {
                     let b = c.borrow();
                     (b.car.clone(), b.cdr.clone())
                 };
-                if let (Value::Sym(k), Value::Sym(q)) = (&k, &a[1]) {
-                    if k == q {
+                if let (Value::Sym(k), Some(q)) = (&k, i.sym_id(&a[1])) {
+                    if *k == q {
                         if let Value::Cons(v) = rest {
                             return Ok(v.borrow().car.clone());
                         }
@@ -8266,7 +8404,10 @@ fn f_read_positioning_symbols(i: &mut Interp, a: Vec<Value>) -> EvalResult {
                 let bb = b.borrow();
                 (bb.text.text(), bb.point)
             };
-            let r = i.read_from_string_pos(&src, pos, Some(pos as i128 + 1));
+            // GNU positions are absolute 1-based buffer positions;
+            // reader token starts are absolute 0-based indices into
+            // SRC, so the base is 1 regardless of where reading begins.
+            let r = i.read_from_string_pos(&src, pos, Some(1));
             match r {
                 Ok((v, end)) => {
                     b.borrow_mut().set_point(end);
@@ -8281,7 +8422,7 @@ fn f_read_positioning_symbols(i: &mut Interp, a: Vec<Value>) -> EvalResult {
                 let bb = b.borrow();
                 (bb.text.text(), bb.point)
             };
-            let r = i.read_from_string_pos(&src, pos, Some(pos as i128 + 1));
+            let r = i.read_from_string_pos(&src, pos, Some(1));
             match r {
                 Ok((v, end)) => {
                     b.borrow_mut().set_point(end);
@@ -10434,7 +10575,10 @@ fn f_record(_i: &mut Interp, a: Vec<Value>) -> EvalResult {
 }
 
 fn f_recordp(_i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    Ok(Value::from_bool(matches!(a[0], Value::Record(_))))
+    // `symbols-with-pos-enabled' objects are symbols, not records.
+    Ok(Value::from_bool(
+        matches!(a[0], Value::Record(_)) && as_sympos(&a[0]).is_none(),
+    ))
 }
 
 // ---------- added GNU compat subrs ----------
@@ -11160,18 +11304,23 @@ fn f_font_spec(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     while idx + 1 < a.len() {
         let prop = &a[idx];
         let val = &a[idx + 1];
-        if let Value::Sym(id) = prop {
-            let name = i.symbol_name(*id).to_string();
+        if let Some(id) = i.sym_id(prop) {
+            let name = i.symbol_name(id).to_string();
             let invalid = match name.as_str() {
                 ":weight" => {
-                    !matches!(val, Value::Sym(s) if WEIGHTS.contains(&i.symbol_name(*s).as_str()))
+                    !i.sym_id(val)
+                        .map(|s| WEIGHTS.contains(&i.symbol_name(s).as_str()))
+                        .unwrap_or(false)
                         && !matches!(val, Value::Int(_))
                 }
-                ":slant" => {
-                    !matches!(val, Value::Sym(s) if SLANTS.contains(&i.symbol_name(*s).as_str()))
-                }
+                ":slant" => !i
+                    .sym_id(val)
+                    .map(|s| SLANTS.contains(&i.symbol_name(s).as_str()))
+                    .unwrap_or(false),
                 ":width" => {
-                    !matches!(val, Value::Sym(s) if WIDTHS.contains(&i.symbol_name(*s).as_str()))
+                    !i.sym_id(val)
+                        .map(|s| WIDTHS.contains(&i.symbol_name(s).as_str()))
+                        .unwrap_or(false)
                         && !matches!(val, Value::Int(_))
                 }
                 ":size" | ":dpi" => !matches!(val, Value::Int(_) | Value::Float(_)),
@@ -11508,10 +11657,46 @@ fn f_gc_heapsize(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
     ]))
 }
 
-/// `make-closure` — only valid on byte-code prototypes, which we don't
-/// have; GNU signals wrong-type-argument byte-code-function-p.
+/// `make-closure` — GNU's `Fmake_closure': splice the runtime
+/// ENV values over the `V0..Vn' placeholder slots at the head of the
+/// prototype's constant vector (see `byte-compile-make-closure'),
+/// producing a real byte-code closure.
 fn f_make_closure(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    Err(i.wrong_type_mut("byte-code-function-p", &a[0]))
+    let Value::Lambda(l) = &a[0] else {
+        return Err(i.wrong_type_mut("byte-code-function-p", &a[0]));
+    };
+    let Some(items) = &l.bc_items else {
+        return Err(i.wrong_type_mut("byte-code-function-p", &a[0]));
+    };
+    let mut new_items = items.borrow().clone();
+    let env = &a[1..];
+    let Value::Vec(consts) = &new_items[2] else {
+        return Err(i.wrong_type_mut("vectorp", &new_items[2]));
+    };
+    let old = consts.borrow();
+    let mut spliced: Vec<Value> = env.to_vec();
+    spliced.extend_from_slice(&old[env.len().min(old.len())..]);
+    drop(old);
+    new_items[2] = Value::Vec(Rc::new(RefCell::new(spliced)));
+    Ok(Value::Lambda(Rc::new(Lambda {
+        is_macro: l.is_macro,
+        required: l.required.clone(),
+        optional: l.optional.clone(),
+        rest: l.rest,
+        body: l.body.clone(),
+        env: l.env.clone(),
+        doc: l.doc.clone(),
+        interactive: l.interactive.clone(),
+        name: l.name.clone(),
+        bad_arglist: l.bad_arglist,
+        arglist: l.arglist.clone(),
+        plain: l.plain,
+        dumped_doc: l.dumped_doc,
+        advice_link: l.advice_link.clone(),
+        bc_items: Some(Rc::new(RefCell::new(new_items))),
+        doc_value: l.doc_value.clone(),
+        env_value: l.env_value.clone(),
+    })))
 }
 
 /// `bidi-find-overridden-directionality` — STRING is arg 2 (GNU

@@ -211,6 +211,11 @@ pub enum HashKey {
     Ptr(usize),
     Cons(Box<HashKey>, Box<HashKey>),
     Vec(Vec<HashKey>),
+    /// Content key for records / lambdas (`equal' compares them
+    /// elementwise but they are never `equal' to a plain vector, so
+    /// the tag keeps the namespaces apart).  Tag: 1 = record,
+    /// 2 = `#[...]' byte-code object, 3 = interpreted lambda.
+    Tagged(u64, Vec<HashKey>),
 }
 
 /// Max argument count for a subr: fixed or unlimited.

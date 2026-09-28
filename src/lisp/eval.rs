@@ -383,6 +383,8 @@ pub struct Interp {
     /// Pushed by `apply' so `mapbacktrace'/backtrace internals can
     /// walk the stack like GNU's specpdl entries do.
     pub lisp_stack: Vec<(Value, Vec<Value>)>,
+    /// Debug: the raw form whose head symbol call is in progress.
+    pub cur_head_form: Value,
     /// `lisp_stack' snapshot taken when the last signal was raised —
     /// the frames GNU's batch debugger prints after `Error:' (the live
     /// stack itself has already unwound by the time main sees it).
@@ -787,6 +789,7 @@ impl Interp {
             char_table_defalts: Vec::new(),
             frame_state_seen: None,
             lisp_stack: Vec::new(),
+            cur_head_form: Value::Nil,
             last_error_stack: std::cell::RefCell::new(Vec::new()),
             cpu_profiler: false,
             terminal: None,
@@ -932,6 +935,16 @@ impl Interp {
                     }
                 }
             }
+            // byte-run.el is loaded by GNU's loadup.el near the top
+            // (right after backquote/macroexp, both folded into the
+            // prelude): it defines the `defmacro', `defun', `defsubst'
+            // and `eval-when-compile'/`eval-and-compile' *macros* —
+            // GNU expands `(defun ...)' to `(defalias ...)' at
+            // macroexpand time, which `byte-compile-preprocess'
+            // relies on to route definitions through the
+            // `byte-hunk-handler' machinery.  The file has no
+            // `provide', matching GNU's `featurep' => nil at -Q.
+            let _ = crate::lisp::load::load_library(&mut interp, "byte-run");
             // env.el is preloaded into GNU's dump (loadup.el): its
             // feature is already registered, but the definitions must
             // exist too — `(require 'env)' short-circuits on the
@@ -2491,16 +2504,21 @@ command-line arguments.\" \
         match v {
             Value::Sym(s) => *s == id,
             Value::Nil => id == sym::NIL,
-            _ => false,
+            _ => crate::lisp::builtins::misc::as_sympos(v)
+                .map(|(s, _)| s == id)
+                .unwrap_or(false),
         }
     }
 
-    /// The symbol id of a `Value::Sym`/`Value::Nil`, if it is one.
+    /// The symbol id of a `Value::Sym`/`Value::Nil`/enabled
+    /// `symbols-with-pos-enabled' object, if it is one.  GNU's enabled
+    /// sympos are symbols for every primitive (`symbol-name', `get',
+    /// `fboundp', ...), so they unwrap to their bare id here.
     pub fn sym_id(&self, v: &Value) -> Option<SymId> {
         match v {
             Value::Sym(s) => Some(*s),
             Value::Nil => Some(sym::NIL),
-            _ => None,
+            _ => crate::lisp::builtins::misc::as_sympos(v).map(|(s, _)| s),
         }
     }
 
@@ -2637,7 +2655,7 @@ command-line arguments.\" \
     /// Follow a symbol's function-alias chain; return the final
     /// non-symbol value (or UNBOUND sym).
     pub fn indirect_function_value(&self, v: &Value) -> Value {
-        let mut cur = v.clone();
+        let mut cur = crate::lisp::builtins::misc::unpos(v);
         for _ in 0..64 {
             match cur {
                 Value::Sym(id) => {
@@ -3049,8 +3067,8 @@ command-line arguments.\" \
     pub fn signal_matches(&self, sig: &Value, handlers: &Value) -> bool {
         // A handler's car is either a single condition name or a list
         // of names; `t` matches everything, `nil` (debug) nothing.
-        if let Value::Sym(s) = handlers {
-            if *s == sym::NIL {
+        if let Some(s) = self.sym_id(handlers) {
+            if s == sym::NIL {
                 return false;
             }
             return self.signal_matches(sig, &Value::list(vec![handlers.clone()]));
@@ -3062,11 +3080,14 @@ command-line arguments.\" \
             }
             match h {
                 Value::Sym(s) if *s == sym::T => found = true,
-                Value::Sym(cond) => {
+                _ if self.sym_id(h).is_some() => {
                     // A signal matches if `cond` is the signal symbol or
                     // appears in its `error-conditions` property.
+                    // Handler names may be positioned symbols (records)
+                    // when `symbols-with-pos-enabled' is on.
+                    let cond = self.sym_id(h).unwrap();
                     if let Value::Sym(sig_id) = sig {
-                        if sig_id == cond || self.condition_has(*sig_id, *cond) {
+                        if *sig_id == cond || self.condition_has(*sig_id, cond) {
                             found = true;
                         }
                     }
@@ -3074,8 +3095,8 @@ command-line arguments.\" \
                 Value::Cons(_) => {
                     // (cond ...) group? Emacs allows a list of symbols too.
                     h.each_car(|c| {
-                        if let (Value::Sym(c_id), Value::Sym(sig_id)) = (c, sig) {
-                            if *sig_id == *c_id || self.condition_has(*sig_id, *c_id) {
+                        if let (Some(c_id), Value::Sym(sig_id)) = (self.sym_id(c), sig) {
+                            if *sig_id == c_id || self.condition_has(*sig_id, c_id) {
                                 found = true;
                             }
                         }
@@ -3218,16 +3239,26 @@ command-line arguments.\" \
 
     /// `read_from_string' with `read-positioning-symbols' mode: symbol
     /// tokens become `symbol-with-pos' records carrying `base + token
-    /// char index' as their position.
+    /// char index' as their position.  Under a non-nil
+    /// `symbols-with-pos-enabled' the reader emits GNU's enabled sympos
+    /// instead (real symbols for all primitives; `eq' unwraps them).
+    /// The flag also activates position emission for plain `read' calls
+    /// (GNU `readevalloop' parity).
     pub fn read_from_string_pos(
         &mut self,
         src: &str,
         start: usize,
         pos_base: Option<i128>,
     ) -> Result<(Value, usize), Flow> {
+        let enabled = crate::lisp::builtins::misc::sympos_enabled_p(self);
         let mut reader = Reader::new(self, src);
         reader.set_position(start);
+        // GNU parity: `locate_syms' is a per-read flag set only by
+        // `read-positioning-symbols' (our explicit pos_base).  Plain
+        // `read'/`read-from-string' never position symbols, no matter
+        // how `symbols-with-pos-enabled' is bound.
         reader.annotate_pos = pos_base;
+        reader.sympos_enabled = enabled;
         match reader.read()? {
             None => Err(self.signal(sym::END_OF_FILE, Value::Nil)),
             Some(v) => Ok((v, reader.position())),
@@ -3252,8 +3283,19 @@ command-line arguments.\" \
             );
         }
         if self.eval_depth > self.max_lisp_eval_depth {
-            self.eval_depth -= 1;
-            return Err(self.error("Lisp nesting exceeds `max-lisp-eval-depth'"));
+            // GNU reads Vmax_lisp_eval_depth on every entry: `setq' and
+            // dynamic `let' both change the live limit, so resync the
+            // cached field from the variable before failing.
+            let vid = self.intern("max-lisp-eval-depth");
+            if let Value::Int(d) = self.symbol_value(vid) {
+                if d > 0 {
+                    self.max_lisp_eval_depth = d as usize;
+                }
+            }
+            if self.eval_depth > self.max_lisp_eval_depth {
+                self.eval_depth -= 1;
+                return Err(self.error("Lisp nesting exceeds `max-lisp-eval-depth'"));
+            }
         }
         let result = self.eval_inner(form);
         self.eval_depth -= 1;
@@ -3366,7 +3408,6 @@ command-line arguments.\" \
             | Value::Subr(_)
             | Value::Lambda(_)
             | Value::Buffer(_)
-            | Value::Record(_)
             | Value::Marker(_)
             | Value::Window(_)
             | Value::Frame(_)
@@ -3376,6 +3417,14 @@ command-line arguments.\" \
             | Value::CondVar(_)
             | Value::Finalizer(_) => Ok(form.clone()),
             Value::Sym(id) => self.eval_symbol(*id),
+            Value::Record(_) => {
+                // `symbols-with-pos-enabled' objects evaluate like
+                // their bare symbol (GNU: they are real symbols).
+                match crate::lisp::builtins::misc::as_sympos(form) {
+                    Some((s, _)) => self.eval_symbol(s),
+                    None => Ok(form.clone()),
+                }
+            }
             Value::Cons(_) => self.eval_form(form),
         }
     }
@@ -3435,6 +3484,9 @@ command-line arguments.\" \
             let b = cons.borrow();
             (b.car.clone(), b.cdr.clone())
         };
+        // `symbols-with-pos-enabled' symbols in operator position are
+        // real symbols (GNU parity): dispatch on the bare symbol.
+        let head = crate::lisp::builtins::misc::unpos(&head);
 
         match &head {
             Value::Sym(id) => {
@@ -3442,6 +3494,9 @@ command-line arguments.\" \
                 // Special form?
                 if let Some(sf) = super::special::special_form(id) {
                     return sf(self, args);
+                }
+                if std::env::var_os("DBG_FUNCALL").is_some() {
+                    self.cur_head_form = form.clone();
                 }
                 // Function cell.
                 let fun = self.form_function(id);
@@ -3538,7 +3593,8 @@ command-line arguments.\" \
         args: &Value,
         sym_name: Option<SymId>,
     ) -> EvalResult {
-        match fun {
+        let fun = crate::lisp::builtins::misc::unpos(fun);
+        match &fun {
             Value::Sym(id) => {
                 // Function alias chain: chase.  GNU's
                 // `indirect_function' signals `cyclic-function-indirection'
@@ -3599,7 +3655,7 @@ command-line arguments.\" \
             Value::Lambda(l) => {
                 // Macro: expand then eval.
                 if l.is_macro {
-                    let expansion = self.macro_expand_call(fun, args)?;
+                    let expansion = self.macro_expand_call(&fun, args)?;
                     return self.eval(&expansion);
                 }
                 // GNU byte-compiles its dumped defuns, and compiled
@@ -3613,12 +3669,12 @@ command-line arguments.\" \
                 }
                 let argv = self.eval_args(args)?;
                 let shown = sym_name.map(Value::Sym).unwrap_or_else(|| fun.clone());
-                self.apply_resolved(fun, argv, shown)
+                self.apply_resolved(&fun, argv, shown)
             }
             Value::Cons(_) => {
                 // A cons as function: `(lambda ...)` form or `(macro . f)`.
                 let (car, cdr) = {
-                    let c = match fun {
+                    let c = match &fun {
                         Value::Cons(c) => c,
                         _ => unreachable!(),
                     };
@@ -3631,7 +3687,7 @@ command-line arguments.\" \
                     return self.eval(&expansion);
                 }
                 if self.sym_is(&car, sym::LAMBDA) || self.sym_is(&car, sym::QUOTE_FUNCTION) {
-                    let lambda = Rc::new(self.lambda_from_form(fun, sym_name)?);
+                    let lambda = Rc::new(self.lambda_from_form(&fun, sym_name)?);
                     let argv = self.eval_args(args)?;
                     let shown = sym_name
                         .map(Value::Sym)
@@ -3646,9 +3702,33 @@ command-line arguments.\" \
                         crate::lisp::builtins::evalfn::autoload_do_load(self, fun.clone(), false)?;
                     return self.call_function(&newdef, args, sym_name);
                 }
+                if std::env::var_os("DBG_FUNCALL").is_some() {
+                    eprintln!(
+                        "[invfun {} head={:?} callform={}]",
+                        self.princ_to_string(&fun),
+                        sym_name.map(|s| self.symbol_name(s)),
+                        self.princ_to_string(&self.cur_head_form)
+                            .chars()
+                            .take(200)
+                            .collect::<String>(),
+                    );
+                }
                 Err(self.signal_data(sym::INVALID_FUNCTION, vec![fun.clone()]))
             }
-            _ => Err(self.signal_data(sym::INVALID_FUNCTION, vec![fun.clone()])),
+            _ => {
+                if std::env::var_os("DBG_FUNCALL").is_some() {
+                    eprintln!(
+                        "[invfun_ {} head={:?} callform={}]",
+                        self.princ_to_string(&fun),
+                        sym_name.map(|s| self.symbol_name(s)),
+                        self.princ_to_string(&self.cur_head_form)
+                            .chars()
+                            .take(200)
+                            .collect::<String>(),
+                    );
+                }
+                Err(self.signal_data(sym::INVALID_FUNCTION, vec![fun.clone()]))
+            }
         }
     }
 
@@ -3734,7 +3814,20 @@ command-line arguments.\" \
 
     /// `apply`/`funcall`: call `fun` with already-evaluated `argv`.
     pub fn apply(&mut self, fun: &Value, argv: Vec<Value>) -> EvalResult {
-        match fun {
+        if std::env::var_os("DBG_FUNCALL").is_some() {
+            if let Value::Cons(c) = fun {
+                let car = c.borrow().car.clone();
+                if !(self.sym_is(&car, sym::LAMBDA) || self.sym_is(&car, sym::MACRO)) {
+                    eprintln!(
+                        "[apply-raw {}]\n{}",
+                        self.princ_to_string(fun).chars().take(150).collect::<String>(),
+                        std::backtrace::Backtrace::capture()
+                    );
+                }
+            }
+        }
+        let fun = crate::lisp::builtins::misc::unpos(fun);
+        match &fun {
             Value::Sym(id) => {
                 let mut cur = *id;
                 let mut seen: std::collections::HashSet<SymId> = std::collections::HashSet::new();
@@ -3758,7 +3851,7 @@ command-line arguments.\" \
                     }
                 }
             }
-            _ => self.apply_resolved(fun, argv, fun.clone()),
+            _ => self.apply_resolved(&fun, argv, fun.clone()),
         }
     }
 
@@ -3838,9 +3931,33 @@ command-line arguments.\" \
                         crate::lisp::builtins::evalfn::autoload_do_load(self, fun.clone(), false)?;
                     return self.apply(&newdef, argv);
                 }
+                if std::env::var_os("DBG_FUNCALL").is_some() {
+                    eprintln!(
+                        "[apply-in {} shown={} callform={}]",
+                        self.princ_to_string(&fun),
+                        self.princ_to_string(&shown),
+                        self.princ_to_string(&self.cur_head_form)
+                            .chars()
+                            .take(200)
+                            .collect::<String>(),
+                    );
+                }
                 Err(self.signal_data(sym::INVALID_FUNCTION, vec![fun.clone()]))
             }
-            _ => Err(self.signal_data(sym::INVALID_FUNCTION, vec![fun.clone()])),
+            _ => {
+                if std::env::var_os("DBG_FUNCALL").is_some() {
+                    eprintln!(
+                        "[applyin_ {} shown={} callform={}]",
+                        self.princ_to_string(&fun),
+                        self.princ_to_string(&shown),
+                        self.princ_to_string(&self.cur_head_form)
+                            .chars()
+                            .take(200)
+                            .collect::<String>(),
+                    );
+                }
+                Err(self.signal_data(sym::INVALID_FUNCTION, vec![fun.clone()]))
+            }
         }
     }
 
@@ -4102,9 +4219,15 @@ command-line arguments.\" \
     }
 
     fn call_lambda_inner(&mut self, l: &Rc<Lambda>, argv: Vec<Value>, shown: &Value) -> EvalResult {
-        if l.bc_items.is_some() {
+        if let Some(items) = &l.bc_items {
             if let Some(r) = self.unidata_bc_dispatch(l, &argv) {
                 return r;
+            }
+            // `#[ARGDESC BYTESTR CONSTS DEPTH]' shape → the byte-code
+            // interpreter (also reached by `#[...]' literals read from
+            // `.elc' files).
+            if super::bytecode::is_byte_code(&items.borrow()) {
+                return super::bytecode::exec(self, l, argv);
             }
         }
         // Arity.
@@ -4387,6 +4510,14 @@ command-line arguments.\" \
 
     /// `macroexpand`: repeatedly expand while the form is a macro call.
     pub fn macroexpand(&mut self, form: &Value) -> EvalResult {
+        self.macroexpand_env(form, &Value::Nil)
+    }
+
+    /// GNU `macroexpand' (eval.c): ENV is an explicit alist of local
+    /// macro definitions shadowing the global ones.  Unlike
+    /// `macroexpand-all', it does not consult the dynamically bound
+    /// `macroexpand-all-environment' variable.
+    pub fn macroexpand_env(&mut self, form: &Value, env: &Value) -> EvalResult {
         let mut cur = form.clone();
         let mut iters = 0;
         loop {
@@ -4413,20 +4544,20 @@ command-line arguments.\" \
                     if self.sym_is(&car, sym::LAMBDA) {
                         return Ok(Value::list(vec![Value::Sym(sym::FUNCTION), cur.clone()]));
                     }
+                    // Enabled `symbols-with-pos' cars expand through
+                    // their bare symbol's function cell.
+                    let car = crate::lisp::builtins::misc::unpos(&car);
                     match car {
                         Value::Sym(id) => {
                             // GNU `macroexpand-1' consults the ENVIRONMENT
-                            // argument first; here that is the dynamically
-                            // bound `macroexpand-all-environment'.  An entry
-                            // (SYM . DEF) shadows SYM's global definition:
-                            // a nil DEF stops expansion, otherwise DEF is
-                            // applied to the form's argument list (this is
-                            // how GNU `cl-flet'/`rx-let' rewrite calls).
-                            let env_id = self.intern("macroexpand-all-environment");
-                            let env = self.symbol_value(env_id);
+                            // argument first.  An entry (SYM . DEF) shadows
+                            // SYM's global definition: a nil DEF stops
+                            // expansion, otherwise DEF is applied to the
+                            // form's argument list (this is how GNU
+                            // `cl-flet'/`rx-let' rewrite calls).
                             let mut env_hit = false;
                             let mut env_def = Value::Nil;
-                            let mut tail = env;
+                            let mut tail = env.clone();
                             loop {
                                 match tail {
                                     Value::Cons(cc) => {
@@ -4439,11 +4570,13 @@ command-line arguments.\" \
                                                 let b = e.borrow();
                                                 (b.car.clone(), b.cdr.clone())
                                             };
-                                            if let Value::Sym(eid) = ek {
-                                                if eid == id {
-                                                    env_hit = true;
-                                                    env_def = ev;
-                                                }
+                                            // Enabled sympos keys unwrap to
+                                            // their bare symbol id (GNU's
+                                            // `assq' via `macroexpand-1'
+                                            // compares with `eq').
+                                            if self.sym_id(&ek) == Some(id) {
+                                                env_hit = true;
+                                                env_def = ev;
                                             }
                                         }
                                         tail = d;
