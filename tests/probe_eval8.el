@@ -7,7 +7,8 @@
   (prin1 (condition-case e (funcall 'condition-case) (error (car e))))
   ;; ---- buffer args by name --------------------------------------------
   (with-temp-buffer
-    (prin1 (buffer-size (buffer-name (current-buffer))))
+    ;; GNU Fbuffer_size CHECK_BUFFERs — a name string errors.
+    (prin1 (condition-case e (buffer-size (buffer-name (current-buffer))) (error (car e))))
     (prin1 (buffer-size)))
   (condition-case e (buffer-size "no-such-buf-xyz") (error (prin1 (car e))))
   ;; ---- move-to-column force ---------------------------------------------
@@ -113,7 +114,12 @@
     (with-current-buffer b2 (insert "X"))
     (with-temp-buffer
       (insert "Y")
-      (buffer-swap-text " *swap2*")
+      ;; GNU CHECK_BUFFERs BUFFER — a bare string is wrong-type; pass
+      ;; the buffer object (the name-lookup convenience was a remacs
+      ;; extension, removed for parity).
+      (condition-case e (buffer-swap-text " *swap2*")
+        (error (prin1 (car e))))
+      (buffer-swap-text b2)
       (prin1 (buffer-string))
       (prin1 (with-current-buffer b2 (buffer-string)))))
   ;; ---- window-frame misc -------------------------------------------------------------------------

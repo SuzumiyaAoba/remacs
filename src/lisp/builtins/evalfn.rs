@@ -1,7 +1,7 @@
 //! Evaluation-related subrs: eval, apply, funcall, signal, error, throw,
 //! featurep, run-hooks, etc.
 
-use super::{S, arg, want_list, want_sym};
+use super::{S, arg, want_list, want_string, want_sym};
 use crate::lisp::Interp;
 use crate::lisp::SymId;
 use crate::lisp::error::{EvalResult, Flow};
@@ -489,20 +489,28 @@ fn f_eval(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     // `internal-interpreter-environment' to LEXICAL when nil (dynamic)
     // or a cons (an actual env), else to `(t)' (fresh lexical env).
     let lex = arg(&args, 1);
+    // GNU `Feval': nil LEXICAL means dynamic evaluation — the dynamic
+    // `lexical-binding' value is NOT consulted (verified on 31.1:
+    // `(eval '(let ((x 5)) (symbol-value 'x)))' returns 5 even with
+    // lexical-binding=t).  Non-nil non-cons LEXICAL uses a fresh
+    // lexical environment; a cons is an actual env.
     let lexenv = if matches!(lex, Value::Cons(_)) {
         parse_lexenv_spec(i, &lex)
-    } else if lex.is_nil() {
-        None
-    } else {
+    } else if lex.truthy() {
         crate::lisp::eval::lexenv_root()
+    } else {
+        None
     };
     i.explicit_eval_depth += 1;
-    let id = i.intern("lexical-binding");
-    i.specbind(id, if lex.is_nil() { Value::Nil } else { Value::t() })?;
+    // GNU `Feval' does NOT bind the `lexical-binding' variable (only
+    // `internal-interpreter-environment' is set): `(eval
+    // 'lexical-binding t)' reads the ordinary dynamic value
+    // (verified on 31.1 → nil).  The `lexical-binding' specbind GNU
+    // installs lives solely around eval-driven macroexpansion
+    // (`eval_macro_expand').
     let saved = std::mem::replace(&mut i.lexenv, lexenv);
     let r = i.eval(&args[0]);
     i.lexenv = saved;
-    i.unbind(1)?;
     i.explicit_eval_depth -= 1;
     r
 }
@@ -535,7 +543,13 @@ fn f_funcall(i: &mut Interp, args: Vec<Value>) -> EvalResult {
 }
 
 fn f_funcall_interactively(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    f_funcall(i, args)
+    // GNU Ffuncall_interactively counts as an interactive call for
+    // `called-interactively-p' (the evaluator sees a `funcall-interactively'
+    // stack frame).
+    i.interactive_call_depth += 1;
+    let r = f_funcall(i, args);
+    i.interactive_call_depth = i.interactive_call_depth.saturating_sub(1);
+    r
 }
 
 fn f_function_raw(i: &mut Interp, _args: Vec<Value>) -> EvalResult {
@@ -607,17 +621,37 @@ fn f_macroexpand_1(i: &mut Interp, args: Vec<Value>) -> EvalResult {
                 }
             }
             if let Some(id) = i.sym_id(&car) {
-                let f = i.symbol_function(id);
-                let is_mac = match &f {
-                    Value::Lambda(l) => l.is_macro,
-                    Value::Cons(cc) => {
-                        let b = cc.borrow();
-                        i.sym_is(&b.car, sym::MACRO)
+                // GNU macroexp.el: `autoload-do-load' resolves an
+                // autoload cell (macro-only); then aliases to macros
+                // re-expanda, and `(macro . FN)' cells call FN.
+                let def = i.symbol_function(id);
+                let def = autoload_do_load(i, def, true)?;
+                // (and (symbolp def) (macrop def)) → (cons def cdr):
+                // let the outer macroexpand re-enter on the alias.
+                if let Value::Sym(did) = def {
+                    if did != sym::UNBOUND {
+                        let f = i.symbol_function(did);
+                        let is_mac = match &f {
+                            Value::Lambda(l) => l.is_macro,
+                            Value::Cons(cc) => i.sym_is(&cc.borrow().car, sym::MACRO),
+                            _ => false,
+                        };
+                        if is_mac {
+                            return Ok(Value::cons(Value::Sym(did), cdr));
+                        }
                     }
-                    _ => false,
-                };
-                if is_mac {
-                    return i.macro_expand_call(&f, &cdr);
+                    return Ok(form.clone());
+                }
+                match &def {
+                    Value::Cons(cc) if i.sym_is(&cc.borrow().car, sym::MACRO) => {
+                        let fn_ = cc.borrow().cdr.clone();
+                        let argv = cdr.list_to_vec().unwrap_or_default();
+                        return i.apply(&fn_, argv);
+                    }
+                    Value::Lambda(l) if l.is_macro => {
+                        return i.macro_expand_call(&def, &cdr);
+                    }
+                    _ => return Ok(form.clone()),
                 }
             }
             Ok(form.clone())
@@ -882,6 +916,42 @@ fn unfold_funcall_lambda(
 
 /// Recursively expand macros throughout a form.
 pub(crate) fn macroexpand_all(i: &mut Interp, form: &Value) -> EvalResult {
+    // Memoize on the input cons's identity: `pcase' and other big
+    // macros duplicate shared subforms across their expansion, so
+    // recursing on each copy re-expands the same cons exponentially.
+    // Entries validate against `macro_gen' so definition/property
+    // changes re-expand once.  Expansion depends on
+    // `macroexpand-all-environment', so only the nil-environment case
+    // (the `load'/`require' path, where env is invariant) is memoized.
+    let env_nil = {
+        let env_id = i.intern("macroexpand-all-environment");
+        i.symbol_value(env_id).is_nil()
+    };
+    let cons_key = match form {
+        Value::Cons(c) if env_nil => Some(std::rc::Rc::as_ptr(c) as usize),
+        _ => None,
+    };
+    if let Some(k) = cons_key {
+        let mut cache = i.macroexpand_all_cache.borrow_mut();
+        if cache.0 != i.macro_gen {
+            cache.0 = i.macro_gen;
+            cache.1.clear();
+        }
+        if let Some(hit) = cache.1.get(&k) {
+            return Ok(hit.1.clone());
+        }
+    }
+    let out = macroexpand_all_inner(i, form)?;
+    if let Some(k) = cons_key {
+        i.macroexpand_all_cache
+            .borrow_mut()
+            .1
+            .insert(k, (form.clone(), out.clone()));
+    }
+    Ok(out)
+}
+
+fn macroexpand_all_inner(i: &mut Interp, form: &Value) -> EvalResult {
     // GNU `macroexp--expand-all' passes `macroexpand-all-environment'
     // (bound by `macroexpand-all') to `macroexpand' explicitly.
     let env_id = i.intern("macroexpand-all-environment");
@@ -1335,10 +1405,9 @@ fn f_signal(i: &mut Interp, args: Vec<Value>) -> EvalResult {
 }
 
 fn f_error(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    let fmt = match &args[0] {
-        Value::Str(s) => s.borrow().clone(),
-        _ => "%s".into(),
-    };
+    // GNU `Ferror' stringp-checks the format (non-strings like
+    // `(error 'sym)' signal wrong-type-argument).
+    let fmt = want_string(i, &args[0])?;
     let msg = apply_format_simple(i, &fmt, &args[1..]);
     Err(Flow::Signal(
         Value::Sym(sym::ERROR),
@@ -1360,16 +1429,33 @@ fn f_user_error(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     ))
 }
 
-/// GNU's `format-message' quote convention: every `` `' `` and `'` in
-/// the FORMAT STRING becomes U+2018/U+2019 (curve quoting).  Only the
-/// format string is translated, never the substituted arguments.
-pub(crate) fn translate_message_quotes(fmt: &str) -> String {
+/// GNU's `format-message' quote convention honors the
+/// `text-quoting-style' variable: `grave' leaves `` `' `` and `'`
+/// verbatim, `straight' maps both to ASCII `'', and anything else —
+/// nil, `curve', or an unrecognized value — curve-quotes them to
+/// U+2018/U+2019.  Only the format string is translated, never the
+/// substituted arguments.
+pub(crate) fn translate_message_quotes(i: &Interp, fmt: &str) -> String {
+    let style = i
+        .intern_soft("text-quoting-style")
+        .map(|id| i.symbol_value(id))
+        .unwrap_or(Value::Nil);
     let mut out = String::with_capacity(fmt.len());
-    for c in fmt.chars() {
-        match c {
-            '`' => out.push('\u{2018}'),
-            '\'' => out.push('\u{2019}'),
-            _ => out.push(c),
+    match &style {
+        Value::Sym(s) if i.symbol_name(*s) == "grave" => out.push_str(fmt),
+        Value::Sym(s) if i.symbol_name(*s) == "straight" => {
+            for c in fmt.chars() {
+                out.push(if c == '`' { '\'' } else { c });
+            }
+        }
+        _ => {
+            for c in fmt.chars() {
+                match c {
+                    '`' => out.push('\u{2018}'),
+                    '\'' => out.push('\u{2019}'),
+                    _ => out.push(c),
+                }
+            }
         }
     }
     out
@@ -1377,7 +1463,7 @@ pub(crate) fn translate_message_quotes(fmt: &str) -> String {
 
 /// Simple format for error strings: %s → princ, %S → prin1, %% → %.
 pub(crate) fn apply_format_simple(i: &Interp, fmt: &str, args: &[Value]) -> String {
-    let fmt = translate_message_quotes(fmt);
+    let fmt = translate_message_quotes(i, fmt);
     let mut out = String::new();
     let mut ai = 0;
     let mut chars = fmt.chars().peekable();
@@ -1520,52 +1606,105 @@ fn f_with_demoted_errors(i: &mut Interp, args: Vec<Value>) -> EvalResult {
 /// `(dlet ((features (cons 'gnus-group features))) ...)' trick to
 /// break require cycles) can shadow — or in the Rust mirror kept by
 /// `provide'.
+/// `featurep' on the dynamic `features' list — GNU consults the plain
+/// variable, so a `dlet' binding (the Gnus cycle-breaker) counts and a
+/// `delq' removal hides the feature.  `i.features' is boot bookkeeping
+/// only, never the authority here.
 fn feature_present(i: &mut Interp, id: SymId) -> bool {
     let fid = i.intern("features");
-    let in_list = match i.symbol_value(fid) {
+    match i.symbol_value(fid) {
         Value::Cons(_) | Value::Nil => i
             .symbol_value(fid)
             .list_to_vec()
             .map(|items| items.iter().any(|v| i.sym_id(v) == Some(id)))
             .unwrap_or(false),
         _ => false,
+    }
+}
+
+/// GNU's LOADHIST_ATTACH: push `elt' onto `current-load-list' when a
+/// load is in progress (and the list is still list-shaped).
+fn loadhist_attach(i: &mut Interp, entry: Value) {
+    let cll = i.intern("current-load-list");
+    let cur = match i.symbol_value(cll) {
+        Value::Sym(s) if s == crate::lisp::sym::UNBOUND => return,
+        v => v,
     };
-    in_list || i.features.contains(&id)
+    let mut items = cur.list_to_vec().unwrap_or_default();
+    items.insert(0, entry);
+    i.obarray.symbol_mut(cll).value = Value::list(items);
 }
 
 fn f_featurep(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     let id = want_sym(i, &args[0])?;
+    // GNU Ffeaturep: SUBFEATURE non-nil looks it up in the feature's
+    // `subfeatures' plist entry instead of the features list.
+    let sub = arg(&args, 1);
+    if !sub.is_nil() {
+        let prop = i.intern("subfeatures");
+        let subs = i.get_prop(id, prop);
+        let found = subs
+            .list_to_vec()
+            .map(|items| items.iter().any(|v| super::equal_values(i, v, &sub)))
+            .unwrap_or(false);
+        return Ok(Value::from_bool(found));
+    }
     Ok(Value::from_bool(feature_present(i, id)))
 }
 
 fn f_provide(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     let id = want_sym(i, &args[0])?;
-    // SUBFEATURES must be a list of symbols.
-    if let Some(sub) = args.get(1) {
-        match sub {
-            Value::Nil => {}
-            Value::Cons(_) => {
-                // must be a proper list of symbols
-                let mut ok = matches!(sub.list_to_vec(), Ok(_));
-                if ok {
-                    if let Ok(items) = sub.list_to_vec() {
-                        ok = items.iter().all(|v| i.sym_id(v).is_some());
-                    }
-                }
-                if !ok {
-                    return Err(i.wrong_type_mut("listp", sub));
-                }
+    // GNU Fprovide: CHECK_LIST on SUBFEATURES, then record it on the
+    // feature's `subfeatures' plist.
+    let sub = arg(&args, 1);
+    if !sub.is_nil() && sub.list_to_vec().is_err() {
+        return Err(i.wrong_type_mut("listp", &sub));
+    }
+    if !sub.is_nil() {
+        let prop = i.intern("subfeatures");
+        i.put_prop(id, prop, sub);
+    }
+    // `remacs--provided': `features' is seeded at boot with GNU's dump
+    // state, which includes libraries remacs never actually loads
+    // (`cl-preloaded' & friends).  `eval-after-load' uses this mark to
+    // tell "feature really provided" (GNU evaluates immediately) from
+    // a seed-only entry (defer — the deferred forms may need machinery
+    // the never-loaded file would have defined).
+    let prov_mark = i.intern("remacs--provided");
+    i.put_prop(id, prov_mark, Value::t());
+    // Symbol-keyed `after-load-alist' entries run their delayed
+    // wrappers now (they defer to `after-load-functions' when a file
+    // load is in progress, per GNU's eval-after-load indirection).
+    let alist_sym = i.intern("after-load-alist");
+    let entries = i.symbol_value(alist_sym).list_to_vec().unwrap_or_default();
+    let feat_v = i.sym(id);
+    for entry in entries {
+        let mut parts = entry.list_to_vec().unwrap_or_default();
+        if parts.is_empty() {
+            continue;
+        }
+        let key = parts.remove(0);
+        if super::eq_values(&key, &feat_v) {
+            for f in parts {
+                i.apply(&f, vec![])?;
             }
-            other => return Err(i.wrong_type_mut("listp", other)),
         }
     }
+    // GNU records `(provide . FEATURE)' on `current-load-list' at
+    // provide time (catches nested provides too).
+    let provide_id = i.intern("provide");
+    loadhist_attach(i, Value::cons(i.sym(provide_id), feat_v.clone()));
+    // `(push feature features)' on the current binding, deduped.
+    if !feature_present(i, id) {
+        let fid = i.intern("features");
+        let cur = i.symbol_value(fid);
+        let mut items = cur.list_to_vec().unwrap_or_default();
+        items.insert(0, feat_v.clone());
+        i.set_symbol(fid, Value::list(items))?;
+    }
     if !i.features.contains(&id) {
-        // GNU `provide' is `(push feature features)'.
         i.features.insert(0, id);
     }
-    let flist = Value::list(i.features.iter().map(|s| i.sym(*s)).collect::<Vec<_>>());
-    let fid = i.intern("features");
-    i.obarray.symbol_mut(fid).value = flist;
     Ok(args[0].clone())
 }
 
@@ -1583,26 +1722,32 @@ fn f_require(i: &mut Interp, args: Vec<Value>) -> EvalResult {
         _ => i.symbol_name(id),
     };
     let noerror = args.get(2).map(|v| v.truthy()).unwrap_or(false);
+    // GNU records `(require . FEATURE)' on `current-load-list' before
+    // the load runs.
+    let require_id = i.intern("require");
+    loadhist_attach(i, Value::cons(i.sym(require_id), i.sym(id)));
     match crate::lisp::load::load_library(i, &name) {
-        Ok(true) => {
+        Ok(crate::lisp::load::LoadOutcome::Loaded(found)) => {
             // GNU's `require': after loading FILE, FEATURE must be
             // provided — a file that loads without `(provide FEATURE)'
-            // signals `error' ("Loading file FILE failed to provide
-            // feature ‘FEATURE’", e.g. userlock.el, buff-menu.el).
+            // signals `error' with the RESOLVED file name ("Loading
+            // file FILE failed to provide feature ‘FEATURE’"), and
+            // NOERROR does not suppress it.
             if !feature_present(i, id) {
                 return Err(i.signal_data(
                     sym::ERROR,
                     vec![Value::string(format!(
                         "Loading file {} failed to provide feature ‘{}’",
-                        name,
+                        found,
                         i.symbol_name(id)
                     ))],
                 ));
             }
             Ok(args[0].clone())
         }
-        Ok(false) | Err(_) if noerror => Ok(Value::Nil),
-        Ok(false) => {
+        Ok(crate::lisp::load::LoadOutcome::Missing) if noerror => Ok(Value::Nil),
+        Ok(crate::lisp::load::LoadOutcome::Dir(_)) if noerror => Ok(Value::Nil),
+        Ok(crate::lisp::load::LoadOutcome::Missing) => {
             let fm = i.intern("file-missing");
             Err(i.signal_data(
                 fm,
@@ -1613,9 +1758,21 @@ fn f_require(i: &mut Interp, args: Vec<Value>) -> EvalResult {
                 ],
             ))
         }
+        Ok(crate::lisp::load::LoadOutcome::Dir(d)) => {
+            Err(i.signal_data(
+                crate::lisp::sym::FILE_ERROR,
+                vec![
+                    Value::string("Cannot open load file"),
+                    Value::string("Is a directory"),
+                    Value::string(d),
+                ],
+            ))
+        }
         Err(e) => Err(e),
     }
 }
+
+
 
 /// Normalize a hook value to a function list (a single non-list
 /// function counts as one element).
@@ -1744,7 +1901,7 @@ pub(crate) fn signal_before_change(i: &mut Interp, beg1: usize, end1: usize) -> 
     let unmodified = !i
         .buffers
         .get(i.current_buffer)
-        .map(|b| b.borrow().modified)
+        .map(|b| b.borrow().is_modified())
         .unwrap_or(false);
     if unmodified {
         let id = i.intern("first-change-hook");
@@ -1870,7 +2027,15 @@ fn hook_is_local(i: &Interp, id: SymId) -> bool {
 
 fn hook_local_if_set(i: &Interp, id: SymId) -> bool {
     let s = i.obarray.symbol(id);
-    s.make_local_if_set || s.always_local
+    // GNU `local-variable-if-set-p' is per-buffer: `defvar' /
+    // `permanent-local' globals count, but a `make-local-variable'
+    // performed in another buffer does not.
+    s.make_local_if_set
+        || s.always_local
+        || i.buffers
+            .get(i.current_buffer)
+            .map(|b| b.borrow().locals.contains_key(&id))
+            .unwrap_or(false)
 }
 
 fn hook_boundp(i: &Interp, id: SymId) -> bool {
@@ -1882,7 +2047,9 @@ fn hook_default_boundp(i: &Interp, id: SymId) -> bool {
 }
 
 /// `(make-local-variable SYM)': create the buffer-local binding (seeded
-/// with the default value) when absent.
+/// with the default value) when absent.  GNU's `make-local-variable'
+/// does NOT mark the symbol auto-local: `local-variable-if-set-p' is
+/// nil in other buffers and `set' there stays global.
 fn hook_make_local(i: &mut Interp, id: SymId) {
     let seed = i.obarray.symbol(id).value.clone();
     if let Some(b) = i.buffers.get(i.current_buffer) {
@@ -2066,11 +2233,12 @@ fn f_add_hook(i: &mut Interp, args: Vec<Value>) -> EvalResult {
                 i.put_prop(hook_id, pl_sym, Value::Sym(plh_sym));
             }
         }
-        i.set_symbol(hook_id, Value::list(list))?;
+        i.set_symbol(hook_id, Value::list(list.clone()))?;
     } else {
-        i.set_symbol_default(hook_id, Value::list(list))?;
+        i.set_symbol_default(hook_id, Value::list(list.clone()))?;
     }
-    Ok(Value::Nil)
+    // GNU `add-hook' returns the resulting hook list.
+    Ok(Value::list(list))
 }
 
 fn f_remove_hook(i: &mut Interp, args: Vec<Value>) -> EvalResult {
@@ -2120,7 +2288,7 @@ fn f_remove_hook(i: &mut Interp, args: Vec<Value>) -> EvalResult {
             }
         }
     };
-    if let Some(old) = removed {
+    if let Some(old) = &removed {
         // Drop the removed function's depth record.
         if let Some(mut alist) = hook_depth_alist(i, hook_id, local, false) {
             let before = alist.len();
@@ -2131,7 +2299,7 @@ fn f_remove_hook(i: &mut Interp, args: Vec<Value>) -> EvalResult {
         }
     }
     if !local {
-        i.set_symbol_default(hook_id, Value::list(list))?;
+        i.set_symbol_default(hook_id, Value::list(list.clone()))?;
     } else if list.len() == 1 && matches!(&list[0], Value::Sym(s) if *s == sym::T) {
         // A local value of exactly (t) kills the local binding.
         if let Some(b) = i.buffers.get(i.current_buffer) {
@@ -2140,9 +2308,14 @@ fn f_remove_hook(i: &mut Interp, args: Vec<Value>) -> EvalResult {
             }
         }
     } else {
-        i.set_symbol(hook_id, Value::list(list))?;
+        i.set_symbol(hook_id, Value::list(list.clone()))?;
     }
-    Ok(Value::Nil)
+    // GNU `remove-hook' returns the resulting hook list (or the
+    // untouched non-list value when nothing matched).
+    if removed.is_none() && hook_value.list_to_vec().is_err() {
+        return Ok(hook_value);
+    }
+    Ok(Value::list(list))
 }
 
 fn f_identity(_i: &mut Interp, args: Vec<Value>) -> EvalResult {
@@ -2193,22 +2366,41 @@ fn f_load(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     let nomessage = arg(&args, 2).truthy();
     let nosuffix = arg(&args, 3).truthy();
     let mustsuffix = arg(&args, 4).truthy();
-    let ok = crate::lisp::load::load_library_opts(i, &name, nosuffix, mustsuffix, nomessage)?;
-    if ok {
-        Ok(Value::t())
-    } else if noerror {
-        Ok(Value::Nil)
-    } else {
-        // GNU: file-missing ("Cannot open load file" REASON NAME).
-        let fm = i.intern("file-missing");
-        Err(i.signal_data(
-            fm,
+    let outcome = crate::lisp::load::load_library_opts_msg(
+        i,
+        &name,
+        nosuffix,
+        mustsuffix,
+        true,
+        nomessage,
+    )?;
+    match outcome {
+        crate::lisp::load::LoadOutcome::Loaded(_) => Ok(Value::t()),
+        crate::lisp::load::LoadOutcome::Missing | crate::lisp::load::LoadOutcome::Dir(_)
+            if noerror =>
+        {
+            Ok(Value::Nil)
+        }
+        crate::lisp::load::LoadOutcome::Missing => {
+            // GNU: file-missing ("Cannot open load file" REASON NAME).
+            let fm = i.intern("file-missing");
+            Err(i.signal_data(
+                fm,
+                vec![
+                    Value::string("Cannot open load file"),
+                    Value::string("No such file or directory"),
+                    args[0].clone(),
+                ],
+            ))
+        }
+        crate::lisp::load::LoadOutcome::Dir(d) => Err(i.signal_data(
+            crate::lisp::sym::FILE_ERROR,
             vec![
                 Value::string("Cannot open load file"),
-                Value::string("No such file or directory"),
-                args[0].clone(),
+                Value::string("Is a directory"),
+                Value::string(d),
             ],
-        ))
+        )),
     }
 }
 fn f_load_file(i: &mut Interp, args: Vec<Value>) -> EvalResult {
@@ -2224,44 +2416,161 @@ fn f_load_file(i: &mut Interp, args: Vec<Value>) -> EvalResult {
         Value::Str(s) => s.borrow().clone(),
         _ => name,
     };
-    let ok = crate::lisp::load::load_library_opts(i, &name, true, false, false)?;
-    if ok {
-        Ok(Value::t())
-    } else {
-        let fm = i.intern("file-missing");
-        Err(i.signal_data(
-            fm,
+    let outcome = crate::lisp::load::load_library_opts(i, &name, true, false, true)?;
+    match outcome {
+        crate::lisp::load::LoadOutcome::Loaded(_) => Ok(Value::t()),
+        crate::lisp::load::LoadOutcome::Dir(d) => Err(i.signal_data(
+            crate::lisp::sym::FILE_ERROR,
             vec![
                 Value::string("Cannot open load file"),
-                Value::string("No such file or directory"),
-                Value::string(name),
+                Value::string("Is a directory"),
+                Value::string(d),
             ],
-        ))
+        )),
+        crate::lisp::load::LoadOutcome::Missing => {
+            let fm = i.intern("file-missing");
+            Err(i.signal_data(
+                fm,
+                vec![
+                    Value::string("Cannot open load file"),
+                    Value::string("No such file or directory"),
+                    Value::string(name),
+                ],
+            ))
+        }
     }
 }
 fn f_locate_library(i: &mut Interp, args: Vec<Value>) -> EvalResult {
+    // (locate-library LIBRARY &optional NOSUFFIX PATH INTERACTIVE-CALL)
+    // GNU subr.el: `locate-file' over PATH (default `load-path') with
+    // suffixes (get-load-suffixes) ∪ load-file-rep-suffixes when
+    // NOSUFFIX is nil, else just load-file-rep-suffixes.
     let name = match &args[0] {
         Value::Str(s) => s.borrow().clone(),
         _ => return Err(i.wrong_type_mut("stringp", &args[0])),
     };
-    match crate::lisp::load::locate(i, &name) {
-        Some(path) => Ok(Value::string(path)),
-        None => Ok(Value::Nil),
+    let nosuffix = arg(&args, 1).truthy();
+    let path = arg(&args, 2);
+    let interactive = arg(&args, 3).truthy();
+    let file = if !path.truthy() {
+        crate::lisp::load::locate_opts(i, &name, nosuffix, false)
+    } else {
+        locate_library_in(i, &name, nosuffix, &path)?
+    };
+    if interactive {
+        // GNU reports through `message' for M-x calls.
+        let msg = match &file {
+            Some(f) => format!("Library is file {f}"),
+            None => format!("No library {name} in search path"),
+        };
+        let msg_sym = i.intern("message");
+        let _ = i.apply(
+            &Value::Sym(msg_sym),
+            vec![Value::string("%s"), Value::string(msg)],
+        );
     }
+    Ok(match file {
+        Some(f) => Value::string(f),
+        None => Value::Nil,
+    })
+}
+
+/// `locate-library''s PATH-given search: scan DIRS only (no bundled
+/// `builtin_dirs` fallback — an explicit PATH is authoritative, so a
+/// bogus dir list yields nil like GNU's `locate-file').
+fn locate_library_in(
+    i: &mut Interp,
+    name: &str,
+    nosuffix: bool,
+    path: &Value,
+) -> Result<Option<String>, Flow> {
+    let dirs = match path.list_to_vec() {
+        Ok(d) => d,
+        Err(_) => return Err(i.wrong_type_mut("listp", path)),
+    };
+    let suffixes = locate_library_suffixes(i, nosuffix);
+    if std::path::Path::new(name).is_absolute() {
+        // GNU `locate-file': absolute names only get suffix variants.
+        for suf in &suffixes {
+            let cand = format!("{name}{suf}");
+            if std::path::Path::new(&cand).is_file() {
+                return Ok(Some(cand));
+            }
+        }
+        return Ok(None);
+    }
+    for dir_v in &dirs {
+        let dir = match dir_v {
+            Value::Str(s) => s.borrow().clone(),
+            _ => return Err(i.wrong_type_mut("stringp", dir_v)),
+        };
+        for suf in &suffixes {
+            let cand = format!("{}/{}{}", dir.trim_end_matches('/'), name, suf);
+            if std::path::Path::new(&cand).is_file() {
+                return Ok(Some(cand));
+            }
+        }
+    }
+    Ok(None)
+}
+
+/// Suffix list GNU's `locate-library' feeds to `locate-file':
+/// `get-load-suffixes' (NOSUFFIX drops it) then `load-file-rep-suffixes'.
+fn locate_library_suffixes(i: &mut Interp, nosuffix: bool) -> Vec<String> {
+    let str_list = |i: &mut Interp, var: &str| -> Vec<String> {
+        let id = i.intern(var);
+        i.symbol_value(id)
+            .list_to_vec()
+            .unwrap_or_default()
+            .iter()
+            .filter_map(|v| match v {
+                Value::Str(s) => Some(s.borrow().clone()),
+                _ => None,
+            })
+            .collect()
+    };
+    let mut sufs: Vec<String> = Vec::new();
+    if !nosuffix {
+        // get-load-suffixes: load-suffixes with rep-suffixes attached
+        // to the .elc/.el entries, then `load-file-rep-suffixes' (the
+        // "" entry gives the bare-name try).
+        for s in str_list(i, "load-suffixes") {
+            if s.ends_with(".elc") || s.ends_with(".el") {
+                for rep in str_list(i, "load-file-rep-suffixes") {
+                    sufs.push(format!("{s}{rep}"));
+                }
+            } else {
+                sufs.push(s);
+            }
+        }
+    }
+    sufs.extend(str_list(i, "load-file-rep-suffixes"));
+    if sufs.is_empty() {
+        sufs.push(String::new());
+    }
+    sufs
 }
 fn f_autoload(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     // (autoload FUNCTION FILE &optional DOCSTRING INTERACTIVE TYPE)
     // Register an autoload stub: on first call, load FILE then call.
     let fid = want_sym(i, &args[0])?;
     let file = args[1].clone();
-    if !i.fbound_p(fid) {
-        // Store GNU's autoload cell shape:
-        // (autoload FILE &optional DOCSTRING INTERACTIVE TYPE).
-        let auto_id = i.intern("autoload");
-        let mut cell = vec![Value::Sym(auto_id), file];
-        cell.extend(args[2..].iter().cloned());
-        i.fset(fid, Value::list(cell));
+    // GNU `Fautoload' checks FILE's type before the fbound early-out.
+    if !matches!(file, Value::Str(_)) {
+        return Err(i.wrong_type_mut("stringp", &file));
     }
+    if i.fbound_p(fid) {
+        // Already defined: GNU's `autoload' is a no-op returning nil.
+        return Ok(Value::Nil);
+    }
+    // GNU's autoload cell is always (autoload FILE DOC INTERACTIVE TYPE)
+    // — absent optional fields are stored as nil.
+    let auto_id = i.intern("autoload");
+    let mut cell = vec![Value::Sym(auto_id), file];
+    for k in 2..5 {
+        cell.push(args.get(k).cloned().unwrap_or(Value::Nil));
+    }
+    i.fset(fid, Value::list(cell));
     // GNU's `autoload' returns FUNCTION.
     Ok(args[0].clone())
 }
@@ -2278,7 +2587,9 @@ fn f_autoloadp(i: &mut Interp, args: Vec<Value>) -> EvalResult {
 
 fn f_autoload_do_load(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     let fundef = args[0].clone();
-    let macro_only = args.get(1).map(|v| v.truthy()).unwrap_or(false);
+    // GNU: (autoload-do-load FUNDEF &optional FUNNAME MACRO-ONLY) —
+    // MACRO-ONLY is the THIRD argument.
+    let macro_only = args.get(2).map(|v| v.truthy()).unwrap_or(false);
     autoload_do_load(i, fundef, macro_only)
 }
 
@@ -2408,7 +2719,7 @@ pub(crate) fn autoload_do_load(i: &mut Interp, fundef: Value, macro_only: bool) 
     // file.  The dump-time stash holds the definition GNU's .elc
     // would have installed; resolve through it directly.
     let feat = i.intern(&stem(&name));
-    if i.features.contains(&feat) {
+    if feature_present(i, feat) {
         if let Some(id) = owner {
             let pk = i.intern("remacs--dump-fn");
             let hidden = i.get_prop(id, pk);
@@ -2420,7 +2731,32 @@ pub(crate) fn autoload_do_load(i: &mut Interp, fundef: Value, macro_only: bool) 
             }
         }
     }
-    let _ = crate::lisp::load::load_library(i, &name)?;
+    // GNU autoload_do_load → load_with_autoload_queue passes
+    // nomessage=t to Fload: autoload-triggered loads don't echo
+    // "Loading ..." (stderr or *Messages*).
+    match crate::lisp::load::load_library_opts_msg(i, &name, false, false, true, true)? {
+        crate::lisp::load::LoadOutcome::Missing => {
+            return Err(i.signal_data(
+                crate::lisp::sym::FILE_MISSING,
+                vec![
+                    Value::string("Cannot open load file"),
+                    Value::string("No such file or directory"),
+                    Value::string(&name),
+                ],
+            ));
+        }
+        crate::lisp::load::LoadOutcome::Dir(d) => {
+            return Err(i.signal_data(
+                crate::lisp::sym::FILE_ERROR,
+                vec![
+                    Value::string("Cannot open load file"),
+                    Value::string("Is a directory"),
+                    Value::string(d),
+                ],
+            ));
+        }
+        crate::lisp::load::LoadOutcome::Loaded(_) => {}
+    }
     match owner {
         Some(id) => {
             let newdef = i.symbol_function(id);
@@ -2519,7 +2855,7 @@ fn f_eval_buffer(i: &mut Interp, args: Vec<Value>) -> EvalResult {
         .get(buf_id)
         .map(|b| b.borrow().text.text())
         .unwrap_or_default();
-    i.eval_str(&text)
+    i.eval_str_buf(&text)
 }
 fn f_eval_region(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     // (eval-region START END) — eval region of current buffer.
@@ -2544,16 +2880,21 @@ fn f_eval_region(i: &mut Interp, args: Vec<Value>) -> EvalResult {
             bb.text.substring((s - 1) as usize, (e - 1) as usize)
         })
         .unwrap_or_default();
-    i.eval_str(&text)
+    i.eval_str_buf(&text)
 }
 fn f_command_execute(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     i.command_execute(&args[0])
 }
-fn f_called_interactively_p(_i: &mut Interp, _args: Vec<Value>) -> EvalResult {
-    Ok(Value::Nil)
+fn f_called_interactively_p(i: &mut Interp, _args: Vec<Value>) -> EvalResult {
+    // True while a `call-interactively'/command-loop call is on the
+    // stack (the KIND argument selects among frames; the depth flag
+    // collapses them like a batch GNU where only `any' matters).
+    Ok(Value::from_bool(i.interactive_call_depth > 0))
 }
 fn f_funcall_with_delayed_message(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    i.apply(&args[1], vec![])
+    // ARGS = (TIMEOUT MESSAGE FUNCTION): GNU runs FUNCTION in place and
+    // flashes MESSAGE via an idle timer; here just call FUNCTION.
+    i.apply(&args[2], vec![])
 }
 fn f_declare_function(i: &mut Interp, _args: Vec<Value>) -> EvalResult {
     let _ = i;
@@ -2721,7 +3062,7 @@ fn f_current_time_string(i: &mut Interp, args: Vec<Value>) -> EvalResult {
         None => super::misc::lisp_time_to_us(i, &Value::Nil)?,
     };
     let secs = (t / 1_000_000) as i64;
-    let tm = super::misc::local_tm(secs);
+    let tm = super::misc::interp_local_tm(i, secs);
     let wday = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][tm.tm_wday.clamp(0, 6) as usize];
     let mon = [
         "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
@@ -2739,76 +3080,237 @@ fn f_current_time_string(i: &mut Interp, args: Vec<Value>) -> EvalResult {
         tm.tm_year + 1900
     )))
 }
-fn f_current_time_zone(_i: &mut Interp, _args: Vec<Value>) -> EvalResult {
-    let secs = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs() as i64;
-    let tm = super::misc::local_tm(secs);
-    let zone = if tm.tm_zone.is_null() {
+/// `current-time-zone' — (OFFSET NAME) for TIME under ZONE.  GNU's
+/// decode_time_zone: nil/`wall' = ambient local zone, t and
+/// "UTC"/"t" = Universal Time, integer = fixed seconds-east offset
+/// (named "+HH[MM[SS]]"), other strings name a TZ spec, a cons uses
+/// its car as the fixed offset (cadr as the name when a string).
+/// Anything else signals "Invalid time zone specification".
+fn f_current_time_zone(i: &mut Interp, args: Vec<Value>) -> EvalResult {
+    /// GNU's name for an integer zone: sign plus HH, then MM/SS only
+    /// when non-zero ("+01", "+0130", "+010101").
+    fn offset_name(off: i64) -> String {
+        let sign = if off < 0 { '-' } else { '+' };
+        let a = off.abs();
+        let (h, m, s) = (a / 3600, (a % 3600) / 60, a % 60);
+        if s != 0 {
+            format!("{}{:02}{:02}{:02}", sign, h, m, s)
+        } else if m != 0 {
+            format!("{}{:02}{:02}", sign, h, m)
+        } else {
+            format!("{}{:02}", sign, h)
+        }
+    }
+    let t = match args.get(0) {
+        Some(v) => super::misc::lisp_time_to_us(i, v)?,
+        None => super::misc::lisp_time_to_us(i, &Value::Nil)?,
+    };
+    let secs = t.div_euclid(1_000_000) as i64;
+    let t_sym = i.intern("t");
+    let wall_sym = i.intern("wall");
+    let (off, name) = match args.get(1) {
+        Some(Value::Int(off)) => (*off as i64, offset_name(*off as i64)),
+        Some(Value::Sym(s)) if *s == t_sym => (0, "UTC".to_string()),
+        Some(Value::Sym(s)) if *s == wall_sym => {
+            // `wall' = startup wall clock, unaffected by
+            // `set-time-zone-rule' (GNU's `wall_tz').
+            let tm = super::misc::local_tm(secs);
+            (tm.tm_gmtoff, tm_zone_name(&tm))
+        }
+        Some(Value::Str(z)) => {
+            let z = z.borrow().clone();
+            if z == "UTC" || z == "t" {
+                (0, "UTC".to_string())
+            } else {
+                let (tm, name) = super::misc::tz_local_tm(secs, &z);
+                (tm.tm_gmtoff, name)
+            }
+        }
+        Some(Value::Cons(c)) => {
+            let (off, name) = {
+                let b = c.borrow();
+                let off = match &b.car {
+                    Value::Int(n) => *n as i64,
+                    _ => 0,
+                };
+                let name = match &b.cdr {
+                    Value::Cons(c2) => match &c2.borrow().car {
+                        Value::Str(s) => s.borrow().clone(),
+                        _ => String::new(),
+                    },
+                    Value::Str(s) => s.borrow().clone(),
+                    _ => String::new(),
+                };
+                (off, name)
+            };
+            (
+                off,
+                if name.is_empty() {
+                    offset_name(off)
+                } else {
+                    name
+                },
+            )
+        }
+        Some(Value::Nil) | None => {
+            // Under a tz_rule the Tm's tm_zone pointer dangles after
+            // tz_local_tm's restore tzset — use the captured name.
+            let (tm, name) = super::misc::interp_local_tm_named(i, secs);
+            (tm.tm_gmtoff, name)
+        }
+        Some(v) => {
+            return Err(i.signal_data(
+                crate::lisp::obarray::sym::ERROR,
+                vec![
+                    Value::string("Invalid time zone specification"),
+                    v.clone(),
+                ],
+            ));
+        }
+    };
+    Ok(Value::list(vec![Value::Int(off as i128), Value::string(name)]))
+}
+
+/// `tm_zone' as an owned string (empty when the field is null).
+fn tm_zone_name(tm: &super::misc::Tm) -> String {
+    if tm.tm_zone.is_null() {
         String::new()
     } else {
         unsafe { std::ffi::CStr::from_ptr(tm.tm_zone as *const i8) }
             .to_string_lossy()
             .into_owned()
-    };
-    Ok(Value::list(vec![
-        Value::Int(tm.tm_gmtoff as i128),
-        Value::string(zone),
-    ]))
+    }
 }
 fn f_float_time(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     let t = match args.get(0) {
         Some(v) => super::misc::lisp_time_to_ps(i, v)?,
         None => super::misc::lisp_time_to_ps(i, &Value::Nil)?,
     };
-    Ok(Value::float(t as f64 / 1e12))
+    // GNU `decode_float' computes seconds and the sub-second part as
+    // separate doubles — a single `i128 as f64' division loses the low
+    // bits (1592230530000000000ps rounds above the integer).
+    let secs = t.div_euclid(1_000_000_000_000) as f64;
+    let frac = t.rem_euclid(1_000_000_000_000) as f64 / 1e12;
+    Ok(Value::float(secs + frac))
 }
+
+/// How `format-time-string' renders %Z for a given ZONE argument.
+enum ZoneLabel {
+    /// Fixed numeric offset — GNU prints a sign plus two-digit hour
+    /// count (plus minutes when non-multiple of an hour).
+    Offset(i64),
+    /// Literal name ("UTC" for t, the TZ name for a named zone).
+    Named(String),
+    /// Use tm_zone from the C library breakdown.
+    Libc,
+}
+
 fn f_format_time_string(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     let fmt = match &args[0] {
         Value::Str(s) => s.borrow().clone(),
         other => return Err(i.wrong_type_mut("stringp", other)),
     };
+    // Work in picoseconds so %N can see the PICO slot.
     let t = match args.get(1) {
-        Some(v) => super::misc::lisp_time_to_us(i, v)?,
-        None => super::misc::lisp_time_to_us(i, &Value::Nil)?,
+        Some(v) => super::misc::lisp_time_to_ps(i, v)?,
+        None => super::misc::lisp_time_to_ps(i, &Value::Nil)?,
     };
-    let secs = t.div_euclid(1_000_000) as i64;
-    let nsecs = t.rem_euclid(1_000_000) * 1000;
+    let secs = t.div_euclid(1_000_000_000_000) as i64;
+    // sub-second digits as a 12-digit picosecond fraction.
+    let frac12 = t.rem_euclid(1_000_000_000_000);
     // GNU (format-time-string FORMAT TIME ZONE): nil/`wall' = local,
-    // integer = fixed offset, string = TZ spec, `t' is treated as UTC.
+    // integer = fixed offset, string = TZ spec, `t' is UTC; anything
+    // else signals "Invalid time zone specification".
     let t_sym = i.intern("t");
     let wall_sym = i.intern("wall");
-    let tm = match args.get(2) {
+    let (tm, zlabel) = match args.get(2) {
         Some(Value::Int(off)) => {
             let mut tm = super::misc::gmt_tm(secs + *off as i64);
             tm.tm_gmtoff = *off as i64;
-            tm
+            (tm, ZoneLabel::Offset(*off as i64))
         }
-        Some(Value::Sym(s)) if *s == wall_sym => super::misc::local_tm(secs),
-        Some(Value::Sym(s)) if *s == t_sym => super::misc::gmt_tm(secs),
+        Some(Value::Sym(s)) if *s == t_sym => (
+            super::misc::gmt_tm(secs),
+            ZoneLabel::Named("UTC".to_string()),
+        ),
+        Some(Value::Sym(s)) if *s == wall_sym => (
+            // `wall' = startup wall clock; the interp's tz_rule is the
+            // nil/default zone, not `wall'.
+            super::misc::local_tm(secs),
+            ZoneLabel::Libc,
+        ),
         Some(Value::Str(z)) => {
             let z = z.borrow().clone();
             if z == "UTC" || z == "t" {
-                super::misc::gmt_tm(secs)
+                let mut tm = super::misc::gmt_tm(secs);
+                tm.tm_gmtoff = 0;
+                (tm, ZoneLabel::Named("UTC".to_string()))
             } else {
-                super::misc::tz_local_tm(secs, &z)
+                // GNU decode_time_zone: the TZ spec sets the zone and
+                // %Z prints the resolved tm_zone abbreviation (e.g.
+                // "UTC0" → "UTC"), not the spec text.  The name is
+                // copied by tz_local_tm before TZ is restored.
+                let (tm, name) = super::misc::tz_local_tm(secs, &z);
+                (tm, ZoneLabel::Named(name))
             }
         }
         // GNU's decode_time_zone accepts `current-time-zone' output —
         // a (OFFSET NAME) cons — and uses the car as the fixed offset.
         Some(Value::Cons(c)) => {
-            let off = match &c.borrow().car {
-                Value::Int(n) => *n as i64,
-                _ => 0,
+            let (off, name) = {
+                let b = c.borrow();
+                let off = match &b.car {
+                    Value::Int(n) => *n as i64,
+                    _ => 0,
+                };
+                let name = match &b.cdr {
+                    Value::Cons(c2) => match &c2.borrow().car {
+                        Value::Str(s) => s.borrow().clone(),
+                        _ => String::new(),
+                    },
+                    Value::Str(s) => s.borrow().clone(),
+                    _ => String::new(),
+                };
+                (off, name)
             };
             let mut tm = super::misc::gmt_tm(secs + off);
             tm.tm_gmtoff = off;
-            tm
+            (
+                tm,
+                if name.is_empty() {
+                    ZoneLabel::Offset(off)
+                } else {
+                    ZoneLabel::Named(name)
+                },
+            )
         }
-        Some(v) if v.truthy() => super::misc::gmt_tm(secs),
-        _ => super::misc::local_tm(secs),
+        Some(Value::Nil) | None => {
+            let (tm, name) = super::misc::interp_local_tm_named(i, secs);
+            // Under a tz_rule tm.tm_zone dangles (restore tzset), so
+            // %Z must use the name captured before the restore.
+            let label = if i.tz_rule.is_some() {
+                ZoneLabel::Named(name)
+            } else {
+                ZoneLabel::Libc
+            };
+            (tm, label)
+        }
+        Some(v) => {
+            return Err(i.signal_data(
+                crate::lisp::obarray::sym::ERROR,
+                vec![Value::string("Invalid time zone specification"), v.clone()],
+            ));
+        }
     };
+    // `system-time-locale' overrides LC_TIME for this call, falling
+    // back to "C" for names the C library rejects (like GNU).
+    let locale: Option<String> = i
+        .intern_soft("system-time-locale")
+        .filter(|id| i.bound_p(*id))
+        .and_then(|id| match i.symbol_value(id) {
+            Value::Str(s) => Some(s.borrow().clone()),
+            _ => None,
+        });
     let mut out = String::new();
     let chars: Vec<char> = fmt.chars().collect();
     let mut k = 0;
@@ -2819,35 +3321,216 @@ fn f_format_time_string(i: &mut Interp, args: Vec<Value>) -> EvalResult {
             k += 1;
             continue;
         }
-        // GNU passes flags/width (e.g. %-d, %_3a, %05Y, %::z) through to
-        // the underlying strftime.
+        // %- flags, _ space-pad, 0 zero-pad, ^ uppercase, # case-swap,
+        // then an optional width, then (for %z) colons before the spec.
         let mut j = k + 1;
+        let flag_start = j;
         while j < chars.len() && matches!(chars[j], '-' | '_' | '0' | '^' | '#') {
             j += 1;
         }
-        while j < chars.len() && (chars[j].is_ascii_digit() || matches!(chars[j], '.' | ',' | ':'))
-        {
+        let flags: Vec<char> = chars[flag_start..j].to_vec();
+        let pad = if flags.contains(&'-') {
+            '-'
+        } else if flags.contains(&'_') {
+            '_'
+        } else {
+            '0'
+        };
+        let mut width = 0usize;
+        while j < chars.len() && chars[j].is_ascii_digit() {
+            width = width * 10 + (chars[j] as usize - '0' as usize);
+            j += 1;
+        }
+        let mut colons = 0usize;
+        while j < chars.len() && chars[j] == ':' {
+            colons += 1;
             j += 1;
         }
         let spec = chars.get(j).copied();
         let spec_text: String = chars[k..=j.min(chars.len() - 1)].iter().collect();
         k = j + 1;
-        match spec {
-            Some('N') => out.push_str(&format!("{:09}", nsecs)),
-            Some('s') => out.push_str(&format!("{}", secs)),
-            // macOS strftime derives %z from the process TZ, not the
-            // broken-down time — compute it from tm_gmtoff instead.
-            Some('z') => {
-                let off = tm.tm_gmtoff;
+        // %E and %O are POSIX alternative-representation modifiers:
+        // when a conversion letter follows, they're part of the spec
+        // (%Ec); a bare %E/%O is a literal per GNU.
+        if matches!(spec, Some('E') | Some('O')) {
+            if let Some(&nxt) = chars.get(k) {
+                if nxt.is_ascii_alphabetic() {
+                    let ext: String = chars[k..=k].iter().collect();
+                    let spec2 = format!("{}{}", spec_text, ext);
+                    out.push_str(&super::misc::strftime_spec(
+                        &spec2,
+                        &tm,
+                        locale.as_deref(),
+                    ));
+                    k += 1;
+                    continue;
+                }
+            }
+            out.push_str(&spec_text);
+            continue;
+        }
+        let off = tm.tm_gmtoff;
+        // gnulib nstrftime %z rules (verified against GNU 31.1):
+        //  colons 0 → sign+hhmm; 1 → hh:mm; 2 → hh:mm:ss; 3 →
+        //  minimal (drop zero seconds, then zero minutes).  `-'/`_'
+        //  unpad just the hour field (colons=0 collapses to the
+        //  numeric hhmm); an explicit WIDTH zero-pads the hour so the
+        //  whole output reaches WIDTH chars; `_' = " " + `-'.
+        //  `compact' drops the colons — GNU's integer-zone %Z.
+        let signed_zone =
+            |off: i64, colons: usize, pad: char, width: usize, compact: bool| -> String {
                 let sign = if off < 0 { '-' } else { '+' };
                 let a = off.abs();
-                out.push_str(&format!("{}{:02}{:02}", sign, a / 3600, (a % 3600) / 60));
+                let (h, m, s) = (a / 3600, (a % 3600) / 60, a % 60);
+                let minimal = pad != '0';
+                let hh = |w: usize| -> String {
+                    if minimal {
+                        format!("{}", h)
+                    } else {
+                        format!("{:0w$}", h, w = w.max(2))
+                    }
+                };
+                let body = if compact {
+                    if s != 0 {
+                        format!("{:02}{:02}{:02}", h, m, s)
+                    } else if m != 0 {
+                        format!("{:02}{:02}", h, m)
+                    } else {
+                        format!("{:02}", h)
+                    }
+                } else {
+                    match colons {
+                        0 => {
+                            if minimal {
+                                format!("{}", h * 100 + m)
+                            } else {
+                                format!("{}{:02}", hh(width.saturating_sub(3)), m)
+                            }
+                        }
+                        1 => format!("{}:{:02}", hh(width.saturating_sub(4)), m),
+                        2 => format!("{}:{:02}:{:02}", hh(width.saturating_sub(7)), m, s),
+                        _ => {
+                            if s != 0 {
+                                format!("{}:{:02}:{:02}", hh(0), m, s)
+                            } else if m != 0 {
+                                format!("{}:{:02}", hh(0), m)
+                            } else {
+                                hh(0)
+                            }
+                        }
+                    }
+                };
+                if pad == '_' {
+                    format!(" {}{}", sign, body)
+                } else {
+                    format!("{}{}", sign, body)
+                }
+            };
+        match spec {
+            Some('P') => {
+                // glibc %P = lowercase %p; macOS strftime lacks it.
+                let p = super::misc::strftime_spec("%p", &tm, locale.as_deref());
+                out.push_str(&p.to_lowercase());
             }
-            Some(_) => out.push_str(&super::misc::strftime_spec(&spec_text, &tm)),
+            Some('N') => {
+                // Width selects the number of fraction digits
+                // (default 9 = nanoseconds; up to 12 = picoseconds).
+                let w = if width == 0 { 9 } else { width.min(12) };
+                let s = format!("{:012}", frac12);
+                out.push_str(&s[..w]);
+            }
+            Some('s') => out.push_str(&format!("{}", secs)),
+            Some('q') => {
+                // GNU extension: quarter of year (not in strftime).
+                out.push_str(&format!("{}", tm.tm_mon / 3 + 1));
+            }
+            Some('l') => {
+                // macOS strftime lacks %l (space-padded 12-hour).
+                let h12 = if tm.tm_hour % 12 == 0 { 12 } else { tm.tm_hour % 12 };
+                out.push_str(&format!("{:2}", h12));
+            }
+            Some('k') => {
+                out.push_str(&format!("{:2}", tm.tm_hour));
+            }
+            // macOS strftime derives %z from the process TZ and lacks
+            // the colon variants — compute it from tm_gmtoff instead.
+            Some('z') => out.push_str(&signed_zone(off, colons, pad, width, false)),
+            Some('Z') => match &zlabel {
+                // GNU: an integer-zone %Z renders compactly — sign plus
+                // hh[mm[ss]] with trailing zero fields dropped.
+                ZoneLabel::Offset(off) => {
+                    out.push_str(&signed_zone(*off, 3, '0', 0, true));
+                }
+                ZoneLabel::Named(n) => out.push_str(n),
+                ZoneLabel::Libc => {
+                    let name = if tm.tm_zone.is_null() {
+                        String::new()
+                    } else {
+                        unsafe { std::ffi::CStr::from_ptr(tm.tm_zone as *const i8) }
+                            .to_string_lossy()
+                            .into_owned()
+                    };
+                    out.push_str(&name);
+                }
+            },
+            // Unsupported spec letters pass through literally (GNU's
+            // Emacs-only specs like %q are handled above; unknown
+            // strftime letters echo the whole "%<flags>X" text).
+            Some(s) if !matches!(s, 'a'..='z' | 'A'..='Z' | '%') => {
+                out.push_str(&spec_text);
+            }
+            Some(s) => {
+                let known = matches!(
+                    s,
+                    'a' | 'A'
+                        | 'b'
+                        | 'B'
+                        | 'c'
+                        | 'C'
+                        | 'd'
+                        | 'D'
+                        | 'e'
+                        | 'F'
+                        | 'g'
+                        | 'G'
+                        | 'h'
+                        | 'H'
+                        | 'I'
+                        | 'j'
+                        | 'm'
+                        | 'M'
+                        | 'n'
+                        | 'p'
+                        | 'P'
+                        | 'r'
+                        | 'R'
+                        | 'S'
+                        | 't'
+                        | 'T'
+                        | 'u'
+                        | 'U'
+                        | 'V'
+                        | 'w'
+                        | 'W'
+                        | 'x'
+                        | 'X'
+                        | 'y'
+                        | 'Y'
+                        | '%'
+                );
+                if known {
+                    out.push_str(&super::misc::strftime_spec(
+                        &spec_text,
+                        &tm,
+                        locale.as_deref(),
+                    ));
+                } else {
+                    out.push_str(&spec_text);
+                }
+            }
             None => out.push('%'),
         }
     }
-    let _ = i;
     Ok(Value::string(out))
 }
 
@@ -3079,16 +3762,16 @@ fn f_macroexp_parse_body(i: &mut Interp, args: Vec<Value>) -> EvalResult {
 }
 
 fn f_byte_code_function_p(_i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    // `#[...]' byte-code literals are the only byte-code objects we
-    // have; interpreted lambdas (bc_items = None) answer nil like GNU.
+    // `#[...]' byte-code literals (string code slot) answer t;
+    // interpreted closures (cons code slot) and lambdas answer nil.
     Ok(Value::from_bool(
-        matches!(&args[0], Value::Lambda(l) if l.bc_items.is_some()),
+        matches!(&args[0], Value::Lambda(l) if l.is_bytecode()),
     ))
 }
 fn f_compiled_function_p(_i: &mut Interp, args: Vec<Value>) -> EvalResult {
     Ok(Value::from_bool(match &args[0] {
         Value::Subr(_) => true,
-        Value::Lambda(l) => l.bc_items.is_some(),
+        Value::Lambda(l) => l.is_bytecode(),
         _ => false,
     }))
 }
@@ -3126,6 +3809,7 @@ fn f_make_byte_code(_i: &mut Interp, args: Vec<Value>) -> EvalResult {
         arglist: Some(argdesc),
         plain: false,
         dumped_doc: false,
+        compiled: false,
         advice_link: None,
         bc_items: Some(std::rc::Rc::new(std::cell::RefCell::new(args))),
         doc_value: None,
@@ -3160,7 +3844,7 @@ fn f_smae_save(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
         let bb = b.borrow();
         let ma = i.intern_soft("mark-active").unwrap_or(0);
         (
-            bb.mark,
+            bb.mark_position(),
             bb.locals.get(&ma).map(|v| v.truthy()).unwrap_or(false),
         )
     };
@@ -3192,7 +3876,8 @@ fn f_smae_restore(i: &mut Interp, a: Vec<Value>) -> EvalResult {
             let ma = i.intern_soft("mark-active").unwrap_or(0);
             let mut bb = b.borrow_mut();
             if let Value::Marker(m) = &mk {
-                bb.mark = Some(m.borrow().position.min(bb.text.len()));
+                let len = bb.text.len();
+                bb.set_mark(m.borrow().position.min(len));
             }
             bb.locals
                 .insert(ma, if act.truthy() { Value::t() } else { Value::Nil });

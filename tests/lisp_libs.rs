@@ -855,8 +855,9 @@ fn eval_when_compile_evals_at_expansion() {
     // `let-when-compile' (lisp-mode.el) uses via `cl-progv' to keep
     // compile-time bindings visible while forms expand.
     assert_eq!(
-        ev("(progv '(lwc-var) '(inside)
-             (macroexpand '(eval-when-compile lwc-var)))"),
+        ev("(progn (require 'cl)
+                  (progv '(lwc-var) '(inside)
+                    (macroexpand '(eval-when-compile lwc-var))))"),
         "'inside"
     );
 }
@@ -865,22 +866,26 @@ fn eval_when_compile_evals_at_expansion() {
 
 #[test]
 fn progv_binds_dynamically() {
-    // GNU's `progv' special form: eval SYMBOLS and VALUES, bind each
-    // pair dynamically for BODY.  `eval'/`symbol-value' see them.
+    // GNU's `progv' lives in obsolete cl.el (load it first): eval
+    // SYMBOLS and VALUES, bind each pair dynamically for BODY.
+    // `eval'/`symbol-value' see them.
     assert_eq!(
-        ev("(progv '(pv-a pv-b) '(1 2) (list pv-a (symbol-value 'pv-b)))"),
+        ev("(progn (require 'cl)
+                  (progv '(pv-a pv-b) '(1 2) (list pv-a (symbol-value 'pv-b))))"),
         "(1 2)"
     );
     // Missing values bind nil; bindings unwind after BODY.
     assert_eq!(
-        ev("(list (progv '(pv-c pv-d) '(3) (list pv-c pv-d))
-                  (boundp 'pv-c) (boundp 'pv-d))"),
+        ev("(progn (require 'cl)
+                  (list (progv '(pv-c pv-d) '(3) (list pv-c pv-d))
+                        (boundp 'pv-c) (boundp 'pv-d)))"),
         "((3 nil) nil nil)"
     );
     // Non-symbol elements signal wrong-type-argument.
     assert_eq!(
-        ev("(condition-case e (progv '(pv-e 7) '(1 2) pv-e)
-             (wrong-type-argument 'wta))"),
+        ev("(progn (require 'cl)
+                  (condition-case e (progv '(pv-e 7) '(1 2) pv-e)
+                    (wrong-type-argument 'wta)))"),
         "wta"
     );
 }
@@ -987,15 +992,17 @@ fn oclosure_accessors_and_type() {
 #[test]
 fn mule_conf_charsets_registered_at_startup() {
     // GNU's loadup runs international/mule-conf.el: define-charset'd
-    // names are `charsetp' at -Q and define-charset is mule.el's
-    // Lisp-level defun (not the bare subr).
+    // names are `charsetp' at -Q.  `define-charset' is mule.el's Lisp
+    // defun, but GNU 31.1 native-compiles the dump — `subrp' reports t
+    // (verified on GNU -Q; remacs marks bundled definitions compiled
+    // so the same surface holds).
     assert_eq!(
         ev(
             "(list (charsetp 'chinese-gb2312) (charsetp 'japanese-jisx0213-1)
                   (charsetp 'japanese-jisx0213.2004-1) (charsetp 'katakana-jisx0201)
                   (subrp (symbol-function 'define-charset)))"
         ),
-        "(t t t t nil)"
+        "(t t t t t)"
     );
     // unify-charset succeeds for define-charset'd names (their
     // :unify-map/:code-offset carriers) like GNU, errors for ascii.

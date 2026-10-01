@@ -506,30 +506,11 @@ returns nil, at which point the elements gathered so far are returned."
       (push (pop list) result))
     (nreverse result)))
 
-(defmacro and-let* (varlist &rest body)
-  "Bind variables according to VARLIST and conditionally evaluate BODY.
-Like `when-let*', except that BODY is only evaluated when every
-binding's value is non-nil.
-
-Each element of VARLIST is a list (SYMBOL VALUEFORM) which binds
-SYMBOL to the value of VALUEFORM.  An element can additionally be
-of the form (VALUEFORM), which is evaluated and checked for nil;
-i.e. SYMBOL can be omitted if only the test result is of interest.
-It can also be of the form (SYMBOL), which is a shorthand
-for (SYMBOL SYMBOL)."
-  (declare (indent 1))
-  (if (null varlist)
-      (cons 'progn body)
-    (let* ((binding (car varlist))
-           (spec (if (consp binding) binding (list binding binding)))
-           (var (car spec))
-           (val (if (cdr spec) (cadr spec) var)))
-      (if (symbolp var)
-          `(let ((,var ,val))
-             (when ,var
-               (and-let* ,(cdr varlist) ,@body)))
-        `(when ,var
-           (and-let* ,(cdr varlist) ,@body))))))
+;;Remacs: `and-let*' dropped — GNU 31.1 moved it to subr.el and the
+;;Remacs: prelude already defines it with GNU's shape (empty BODY
+;;Remacs: returns the last binding value).  This file's old subr-x
+;;Remacs: copy used the Emacs-28 recursive `when' expansion and
+;;Remacs: shadowed the prelude's, making `(and-let* ((a 1) (b 2)))' → nil.
 
 (defalias 'string-split #'split-string)
 
@@ -2260,6 +2241,20 @@ FUNCTION is expected to be a function value rather than, say, a mere symbol."
       ((or `(lambda ,_args . ,body) `(autoload ,_file . ,body))
        (let ((doc (car body)))
          (when (funcall docstring-p doc)
+           doc)))
+      ;; GNU simple.el's cl-defgeneric arms the remacs copy dropped:
+      ;; symbols chase `indirect-function' (so SUBRs land in the
+      ;; catch-all below), `(macro . F)' recurses into F, and the
+      ;; default arm asks `internal-subr-documentation'.
+      ((pred symbolp)
+       (let ((f (indirect-function function)))
+         (if f (function-documentation f)
+           (signal 'void-function (list function)))))
+      (`(macro . ,f) (function-documentation f))
+      (_
+       (let ((doc (internal-subr-documentation function)))
+         (if (eq t doc)
+             (signal 'invalid-function (list function))
            doc))))))
 
 ;;;; Mark commands (GNU simple.el).
@@ -7781,6 +7776,73 @@ something strange, such as redefining an Emacs function."
 The variable `loadhist-unload-filename' holds the name of the file we're
 unloading."
   (message "Unexpected element %S in load-history" x))
+
+;;Remacs: GNU loadhist.el method specializations; without them the
+;;default method merely messages "Unexpected element" and
+;;`unload-feature' neither unbinds the file's definitions nor removes
+;;its features.
+(cl-defmethod loadhist-unload-element ((x (head defun)))
+  (let* ((fun (cdr x))
+         (hist (get fun 'function-history)))
+    (cond
+     ((null hist)
+      (defalias fun nil)
+      ;; FIXME: Arguably these properties should be applied via
+      ;; `define-symbol-prop', but most code still uses just `put'.
+      ;; FIXME: Maybe these properties should be attached to the
+      ;; function itself (as for `advertised-calling-convention')
+      ;; rather than to its symbol.
+      (if (get fun 'compiler-macro) (put fun 'compiler-macro nil))
+      (if (get fun 'gv-expander)    (put fun 'gv-expander nil))
+      ;; Override the change that `defalias' just recorded.
+      (put fun 'function-history nil))
+     ((equal (car hist) loadhist-unload-filename)
+      (defalias fun (cadr hist))
+      ;; Set the history afterwards, to override the change that
+      ;; `defalias' records otherwise.
+      (put fun 'function-history (cddr hist)))
+     (t
+      ;; Unloading a file whose definition is "inactive" (i.e. has been
+      ;; overridden by another file): just remove it from the history,
+      ;; so future unloading of that other file has a chance to DTRT.
+      (let* ((tmp (plist-member hist loadhist-unload-filename #'equal))
+             (pos (- (length hist) (length tmp))))
+        (cl-assert (> pos 1))
+        (setcdr (nthcdr (- pos 2) hist) (cdr tmp)))))))
+
+(cl-defmethod loadhist-unload-element ((_ (head require))) nil)
+(cl-defmethod loadhist-unload-element ((_ (head defface))) nil)
+
+(cl-defmethod loadhist-unload-element ((x (head provide)))
+  ;; Remove any feature names that this file provided.
+  (setq features (delq (cdr x) features)))
+
+(cl-defmethod loadhist-unload-element ((x symbol))
+  ;; Kill local values as much as possible.
+  (dolist (buf (buffer-list))
+    (with-current-buffer buf
+      (if (and (boundp x) (timerp (symbol-value x)))
+	  (cancel-timer (symbol-value x)))
+      (kill-local-variable x)))
+  (if (and (boundp x) (timerp (symbol-value x)))
+      (cancel-timer (symbol-value x)))
+  (cond
+   ;; "Unbind" indirect variable.
+   ((not (eq (indirect-variable x) x))
+    (internal-delete-indirect-variable x))
+   ;; Get rid of the default binding if we can.
+   ((not (local-variable-if-set-p x))
+    (makunbound x))))
+
+(cl-defmethod loadhist-unload-element ((x (head define-type)))
+  (let* ((name (cdr x)))
+    ;; Remove the struct.
+    (setf (cl--find-class name) nil)))
+
+(cl-defmethod loadhist-unload-element ((x (head define-symbol-props)))
+  (pcase-dolist (`(,symbol . ,props) (cdr x))
+    (dolist (prop props)
+      (put symbol prop nil))))
 (defsubst file-set-intersect (p q)
   "Return the set intersection of two lists."
   (declare (obsolete seq-intersection "28.1"))
@@ -18651,11 +18713,13 @@ face height."
   :type 'boolean)
 
 (setq fringe-mode-explicit t)
-;; GNU runs `(when mouse-wheel-mode (mouse-wheel--setup-bindings))' at
-;; the end of mwheel.el; guard the push so re-loading this file
-;; (e.g. `require' on `subr-x') does not install the bindings twice.
-(unless mouse-wheel--installed-bindings-alist
-  (mouse-wheel--setup-bindings))
+;;Remacs: GNU runs `(when mouse-wheel-mode (mouse-wheel--setup-bindings))'
+;;Remacs: at the end of mwheel.el — which this build now really loads at
+;;Remacs: init (loadup order), so installing the bindings here is dropped:
+;;Remacs: with `mouse-wheel--installed-bindings-alist' non-nil while
+;;Remacs: `mouse-wheel-mode' was still an autoload cell, re-running these
+;;Remacs: defcustoms (e.g. `(require 'subr-x)' from time-date.el) made the
+;;Remacs: `:set' hook call the autoload → recursive "mwheel" load error.
 
 
 ;;; select.el / paren.el compatibility

@@ -51,8 +51,12 @@
   (prin1 (replace-regexp-in-string "a\\(b\\)" "X\\1Y" "ab ab"))
   (prin1 (replace-regexp-in-string "o" "0" "foo" t))
   (prin1 (replace-regexp-in-string "o" "0" "foo" nil t))
-  (prin1 (replace-regexp-in-string "o" "0" "foo" nil nil 1))
-  (prin1 (replace-regexp-in-string "o" "0" "foo" nil nil nil 2))
+  ;; GNU signals `replace-match subexpression does not exist' when
+  ;; SUBEXP exceeds the regexp's group count.
+  (prin1 (condition-case e (replace-regexp-in-string "o" "0" "foo" nil nil 1)
+           (error (car e))))
+  (prin1 (condition-case e (replace-regexp-in-string "o" "0" "foo" nil nil nil 2)
+           (error (car e))))
   ;; ---- posix matching ------------------------------------------------
   (prin1 (posix-string-match "a\\|ab" "ab"))
   (prin1 (string-match "a\\|ab" "ab"))
@@ -147,9 +151,9 @@
   (condition-case e (cons 1 2 3) (error (prin1 e)))
   ;; ---- optional defaults fill ----------------------------------------------------
   ;; (var init supplied-p) triples are valid in macro arglists.
-  (funcall (defmacro m1 (&optional (p 10) (q 20 s-p)) `(list ',p ',q ',s-p)))
-  (funcall (defmacro m2 (&optional (p 10) (q 20 s-p)) `(list ',p ',q ',s-p)) 1)
-  (funcall (defmacro m3 (&optional (p 10) (q 20 s-p)) `(list ',p ',q ',s-p)) 1 2)
+  (condition-case e (funcall (defmacro m1 (&optional (p 10) (q 20 s-p)) `(list ',p ',q ',s-p))) (error (prin1 (car e))))
+  (condition-case e (funcall (defmacro m2 (&optional (p 10) (q 20 s-p)) `(list ',p ',q ',s-p)) 1) (error (prin1 (car e))))
+  (condition-case e (funcall (defmacro m3 (&optional (p 10) (q 20 s-p)) `(list ',p ',q ',s-p)) 1 2) (error (prin1 (car e))))
   (condition-case e
       (funcall (defmacro m4 (&optional (p 10) (q 20 s-p)) `(list ',p ',q ',s-p)) 1 2 3)
     (error (prin1 (car e))))

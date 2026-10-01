@@ -1,7 +1,7 @@
 //! Tests for window/frame primitives (src/editor/{mod,winxtra}.rs).
 
 mod common;
-use common::ev;
+use common::{ev, ev_err};
 
 #[test]
 fn window_basics() {
@@ -32,8 +32,8 @@ fn frame_basics() {
 fn window_edges() {
     assert_eq!(ev("(window-edges)"), "(0 0 80 24)");
     assert_eq!(ev("(window-pixel-edges)"), "(0 0 80 24)");
-    assert_eq!(ev("(window-inside-pixel-edges)"), "(0 0 80 24)");
-    // Body excludes the mode line.
+    // GNU -Q batch tty: inside edges exclude the mode line.
+    assert_eq!(ev("(window-inside-pixel-edges)"), "(0 0 80 23)");
     assert_eq!(ev("(window-body-pixel-edges)"), "(0 0 80 23)");
 }
 
@@ -49,27 +49,36 @@ fn window_sizes() {
 
 #[test]
 fn split_and_delete() {
+    // GNU -Q --batch (tty frame): `split-window-internal' requires a
+    // fixnum SIZE and then fails on every explicit value — positive in
+    // `wset_new_size' ("Resizing old window failed"), non-positive in
+    // the minimum-size check ("Size of new window too small (after
+    // split)").  Only `split-window' (which normalizes size first)
+    // succeeds interactively.
+    assert_eq!(
+        ev_err("(split-window-internal (selected-window) 10 'right nil)"),
+        "error"
+    );
+    assert_eq!(
+        ev_err("(split-window-internal (selected-window) 8 'below nil)"),
+        "error"
+    );
+    // A usable split goes through `split-window'.  GNU -Q tty: a
+    // 'right split is unshifted — the menu-bar line only materializes
+    // on a *vertical* split.
     assert_eq!(
         ev(
-            "(let ((w2 (split-window-internal (selected-window) 10 'right nil)))
+            "(let ((w2 (split-window nil nil 'right)))
               (list (length (window-list-1))
                     (window-edges (selected-window))
                     (window-edges w2)))"
         ),
-        "(2 (0 0 10 24) (10 0 80 24))"
-    );
-    assert_eq!(
-        ev(
-            "(let ((w2 (split-window-internal (selected-window) 8 'below nil)))
-              (list (window-edges (selected-window))
-                    (window-edges w2)))"
-        ),
-        "((0 0 80 8) (0 8 80 24))"
+        "(2 (0 0 40 24) (40 0 80 24))"
     );
     // Deleting the new window leaves the original.
     assert_eq!(
         ev(
-            "(let ((w2 (split-window-internal (selected-window) 10 'right nil)))
+            "(let ((w2 (split-window nil nil 'right)))
               (delete-window-internal w2)
               (list (length (window-list-1))
                     (window-live-p w2)))"
@@ -104,9 +113,11 @@ fn window_resize() {
 
 #[test]
 fn window_navigation() {
+    // GNU -Q tty: `split-window-internal' rejects an explicit fixnum
+    // SIZE; the sibling-navigation check goes through `split-window'.
     assert_eq!(
         ev("(let ((w (selected-window))
-                (w2 (split-window-internal (selected-window) 10 'right nil)))
+                (w2 (split-window nil nil 'right)))
               (list (eq (window-next-sibling w) w2)
                     (eq (window-prev-sibling w2) w)))"),
         "(t t)"

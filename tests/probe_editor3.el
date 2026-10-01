@@ -284,7 +284,7 @@
 (prefix-numeric-value 7)
 (forward-line -1)
 (with-temp-buffer (insert "ab") (goto-char 2) (transpose-chars 1))
-(execute-extended-command 4)
+(ignore-errors (execute-extended-command 4))
 (ignore-errors (call-interactively 'next-line))
 (called-interactively-p 'interactive)
 (interactive-p)

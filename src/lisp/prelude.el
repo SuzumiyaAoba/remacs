@@ -3,12 +3,24 @@
 ;; ---------- control-flow macros ----------
 
 (defmacro when (cond &rest body)
-  "If COND yields non-nil, do BODY, else return nil."
-  (list 'if cond (cons 'progn body)))
+  "If COND yields non-nil, do BODY, else return nil.
+When COND yields non-nil, eval BODY forms sequentially and return
+value of last one, or nil if there are none."
+  (declare (indent 1) (debug t))
+  (if body
+      (list 'if cond (cons 'progn body))
+    (macroexp-warn-and-return (format-message "`when' with empty body")
+                              (list 'progn cond nil) '(empty-body when) t)))
 
 (defmacro unless (cond &rest body)
-  "If COND yields nil, do BODY."
-  (cons 'if (cons cond (cons nil body))))
+  "If COND yields nil, do BODY, else return nil.
+When COND yields nil, eval BODY forms sequentially and return
+value of last one, or nil if there are none."
+  (declare (indent 1) (debug t))
+  (if body
+      (cons 'if (cons cond (cons nil body)))
+    (macroexp-warn-and-return (format-message "`unless' with empty body")
+                              (list 'progn cond nil) '(empty-body unless) t)))
 
 (defmacro dolist (spec &rest body)
   "Loop over a list.
@@ -822,6 +834,39 @@ pair.
       (setq pairs (cdr (cdr pairs))))
     (macroexp-progn (nreverse expr))))
 
+;; GNU's `setq-default' is a subr.el macro over `set-default' (not a
+;; special form — `special-form-p' must return nil for it).  Defined
+;; here so it exists before its earliest preload call sites.
+;; GNU subr.el: `lambda' and `prog2' are macros (special-form-p nil).
+(defmacro lambda (&rest cdr)
+  "Return an anonymous function.
+Under dynamic binding, a call of the form (lambda ARGS DOCSTRING
+INTERACTIVE BODY) is self-quoting.  Under lexical binding, the result
+is a closure."
+  (declare (doc-string 2) (indent defun))
+  ;; GNU: "this definition should not use backquotes; subr.el should
+  ;; not depend on backquote.el" — same constraint here (prelude is
+  ;; earlier than the backquote section).
+  (list 'function (cons 'lambda cdr)))
+
+(defmacro prog2 (form1 form2 &rest body)
+  "Eval FORM1, FORM2 and BODY sequentially; return value from FORM2."
+  (declare (indent 2))
+  `(progn ,form1 (prog1 ,form2 ,@body)))
+
+(defmacro setq-default (&rest args)
+  "Set the default value of variable VAR to VALUE.
+VAR, the variable name, is literal (not evaluated); VALUE is an
+expression: it is evaluated and its value returned.  Multiple
+VAR VALUE pairs may follow, each VALUE evaluated in order.
+
+\\(fn [VAR VALUE]...)"
+  (declare (debug setq))
+  (let ((exps nil))
+    (while args
+      (push (list 'set-default (list 'quote (pop args)) (pop args)) exps))
+    (cons 'progn (nreverse exps))))
+
 ;; ---------- small functions ----------
 
 (defun number-sequence (from &optional to inc)
@@ -830,6 +875,8 @@ If TO is nil or equal to FROM, return (FROM)."
   (if (or (not to) (= from to))
       (list from)
     (or inc (setq inc 1))
+    (if (= inc 0)
+        (error "The increment can not be zero"))
     (let ((res nil) (n from))
       (if (> inc 0)
           (while (<= n to)
@@ -861,6 +908,11 @@ returning that buffer's contents as a string."
 (defalias 'string= 'string-equal)
 (defalias 'string< 'string-lessp)
 (defalias 'string> 'string-greaterp)
+
+;; GNU subr.el: these are defalias'd to the SAME subr cell, so
+;; `(symbol-function 'search-forward-regexp)' is `eq' re-search-forward.
+(defalias 'search-forward-regexp (symbol-function 're-search-forward))
+(defalias 'search-backward-regexp (symbol-function 're-search-backward))
 
 (defun string-greaterp (string1 string2)
   "Return non-nil if STRING1 is greater than STRING2 in lexicographic order.
@@ -960,6 +1012,12 @@ The elements of LIST are not required to be strings."
 
 (defun delete-dups (list)
   "Destructively remove duplicate `equal' elements from LIST."
+  ;; GNU's C Fdelete_dups runs CHECK_LIST_END first: a dotted tail
+  ;; reports (listp ATOM), not the enclosing cons.
+  (let ((l list))
+    (while (consp l) (setq l (cdr l)))
+    (unless (null l)
+      (signal 'wrong-type-argument (list 'listp l))))
   (let ((tail list))
     (while tail
       (setcdr tail (delete (car tail) (cdr tail)))
@@ -1503,14 +1561,54 @@ a buffer-local setting."
   nil)
 
 (defun beginning-of-buffer (&optional arg)
-  "Move point to the beginning of the buffer."
+  "Move point to the beginning of the buffer.
+With numeric arg N, put point N/10 of the way from the beginning.
+If the buffer is narrowed, this command uses the beginning of the
+accessible part of the buffer.
+
+Push mark at previous position, unless either a \\[universal-argument] prefix
+is supplied, or Transient Mark mode is enabled and the mark is active."
+  (declare (interactive-only "use `(goto-char (point-min))' instead."))
   (interactive "^P")
-  (goto-char (point-min)))
+  (or (consp arg)
+      (region-active-p)
+      (push-mark))
+  (let ((size (- (point-max) (point-min))))
+    (goto-char (if (and arg (not (consp arg)))
+		   (+ (point-min) 1
+		      (/ (* size (prefix-numeric-value arg)) 10))
+		 (point-min))))
+  (if (and arg (not (consp arg))) (forward-line 1)))
 
 (defun end-of-buffer (&optional arg)
-  "Move point to the end of the buffer."
+  "Move point to the end of the buffer.
+With numeric arg N, put point N/10 of the way from the end.
+If the buffer is narrowed, this command uses the end of the
+accessible part of the buffer.
+
+Push mark at previous position, unless either a \\[universal-argument] prefix
+is supplied, or Transient Mark mode is enabled and the mark is active."
+  (declare (interactive-only "use `(goto-char (point-max))' instead."))
   (interactive "^P")
-  (goto-char (point-max)))
+  (or (consp arg) (region-active-p) (push-mark))
+  (let ((size (- (point-max) (point-min))))
+    (goto-char (if (and arg (not (consp arg)))
+		   (- (point-max)
+		      (/ (* size (prefix-numeric-value arg)) 10))
+		 (point-max))))
+  ;; If we went to a place in the middle of the buffer,
+  ;; adjust it to the beginning of a line.
+  (cond ((and arg (not (consp arg))) (forward-line 1))
+	((and (eq (current-buffer) (window-buffer))
+              (> (point) (window-end nil t)))
+	 ;; If the end of the buffer is not already on the screen,
+	 ;; then scroll specially to put it near, but not at, the bottom.
+	 (overlay-recenter (point))
+	 ;; FIXME: Arguably if `scroll-conservatively' is set, then
+         ;; we should pass -1 to `recenter'.
+	 (recenter (if (and scroll-minibuffer-conservatively
+	                    (window-minibuffer-p))
+	               -1 -3)))))
 
 (defun mark-whole-buffer ()
   "Put point at beginning and mark at end of buffer."
@@ -1538,17 +1636,66 @@ a buffer-local setting."
   (interactive)
   (signal 'quit nil))
 
-(defun mark-word (arg)
-  "Set mark ARG words from point."
-  (interactive "P")
-  (set-mark (point))
-  (forward-word (prefix-numeric-value arg)))
+(defun mark-word (&optional arg allow-extend)
+  "Set mark ARG words from point or move mark one word.
+When called from Lisp with ALLOW-EXTEND omitted or nil, mark is
+set ARG words from point.
+With ARG and ALLOW-EXTEND both non-nil (interactively, with prefix
+argument), the place to which mark goes is the same place \\[forward-word]
+would move to with the same argument; if the mark is active, it moves
+ARG words from its current position, otherwise it is set ARG words
+from point."
+  (interactive "P\np")
+  (cond ((and allow-extend
+	      (or (and (eq last-command this-command) (mark t))
+		  (region-active-p)))
+	 (setq arg (if arg (prefix-numeric-value arg)
+		     (if (< (mark) (point)) -1 1)))
+	 (set-mark
+	  (save-excursion
+	    (goto-char (mark))
+	    (forward-word arg)
+	    (point))))
+	(t
+	 (push-mark
+	  (save-excursion
+	    (forward-word (prefix-numeric-value arg))
+	    (point))
+	  nil t))))
 
-(defun mark-sexp (arg)
-  "Set mark ARG sexps from point."
-  (interactive "P")
-  (set-mark (point))
-  (forward-sexp (prefix-numeric-value arg)))
+(defun mark-sexp (&optional arg allow-extend)
+  "Set mark ARG sexps from point or move mark one sexp.
+When called from Lisp with ALLOW-EXTEND omitted or nil, mark is
+set ARG sexps from point."
+  (interactive "P\np")
+  (cond ((and allow-extend
+	      (or (and (eq last-command this-command) (mark t))
+		  (and transient-mark-mode mark-active)))
+	 (setq arg (if arg (prefix-numeric-value arg)
+		     (if (< (mark) (point)) -1 1)))
+	 (set-mark
+	  (save-excursion
+	    (goto-char (mark))
+            (condition-case error
+	        (forward-sexp arg)
+              (scan-error
+               (user-error (if (equal (cadr error)
+                                      "Containing expression ends prematurely")
+                               "No more sexp to select"
+                             (cadr error)))))
+	    (point))))
+	(t
+	 (push-mark
+	  (save-excursion
+            (condition-case error
+	        (forward-sexp (prefix-numeric-value arg))
+              (scan-error
+               (user-error (if (equal (cadr error)
+                                      "Containing expression ends prematurely")
+                               "No sexp to select"
+                             (cadr error)))))
+	    (point))
+	  nil t))))
 
 (defun mark-paragraph (&optional arg)
   "Put mark at end of this paragraph, point at beginning."
@@ -1584,16 +1731,18 @@ a buffer-local setting."
   (interactive "P")
   (insert "\t"))
 
-(defun indent-relative (&optional unindented-ok)
-  "Space out to under next indent point in previous nonblank line."
-  (interactive "P")
-  (insert "\t"))
-
-(defun newline-and-indent ()
-  "Insert a newline, then indent."
-  (interactive "*")
-  (newline)
-  (insert "\t"))
+(defun newline-and-indent (&optional arg)
+  "Insert a newline, then indent according to major mode.
+GNU simple.el: delete horizontal space, insert ARG newlines, indent
+each new line through `indent-line-function'."
+  (interactive "*p")
+  (delete-horizontal-space t)
+  (unless arg
+    (setq arg 1))
+  (let ((electric-indent-mode nil))
+    (dotimes (_ arg)
+      (newline nil t)
+      (indent-according-to-mode))))
 
 (defun transpose-words (arg)
   "Interchange the word at point with the previous word ARG times."
@@ -1673,6 +1822,142 @@ a buffer-local setting."
       (setq pos2 (funcall aux arg))
       (transpose-subr-1 pos1 pos2)
       (goto-char (+ (car pos2) (- (cdr pos1) (car pos1))))))))
+
+(defun transpose-chars (arg)
+  "Interchange characters around point, moving forward one character.
+With prefix arg ARG, effect is to take character before point
+and drag it forward past ARG other characters (backward if ARG negative).
+If at end of line, the previous two chars are exchanged."
+  (interactive "*p")
+  (when (and (eolp) (not (bobp))
+	     (not (get-text-property (1- (point)) 'read-only)))
+    (forward-char -1))
+  (transpose-subr #'forward-char arg))
+
+(defun transpose-lines (arg)
+  "Exchange current line and previous line, leaving point after both.
+With argument ARG, takes previous line and moves it past ARG lines.
+With argument 0, interchanges line point is in with line mark is in."
+  (interactive "*p")
+  (transpose-subr (lambda (arg)
+                    (if (> arg 0)
+                        (progn
+                          ;; Move forward over ARG lines,
+                          ;; but create newlines if necessary.
+                          (setq arg (forward-line arg))
+                          (if (/= (preceding-char) ?\n)
+                              (setq arg (1+ arg)))
+                          (if (> arg 0)
+                              (newline arg)))
+                      (forward-line arg)))
+		  arg))
+
+(defun kill-line (&optional arg)
+  "Kill the rest of the current line; if no nonblanks there, kill thru newline.
+With prefix argument ARG, kill that many lines from point.
+Negative arguments kill lines backward.
+With zero argument, kills the text before point on the current line."
+  (interactive "P")
+  (kill-region (point)
+	       ;; It is better to move point to the other end of the kill
+	       ;; before killing.  That way, in a read-only buffer, point
+	       ;; moves across the text that is copied to the kill ring.
+	       ;; The choice has no effect on undo now that undo records
+	       ;; the value of point from before the command was run.
+	       (progn
+		 (if arg
+		     (forward-visible-line (prefix-numeric-value arg))
+		   (if (eobp)
+		       (signal 'end-of-buffer nil))
+		   (let ((end
+			  (save-excursion
+			    (end-of-visible-line) (point))))
+		     (if (or (save-excursion
+			       ;; If trailing whitespace is visible,
+			       ;; don't treat it as nothing.
+			       (unless show-trailing-whitespace
+				 (skip-chars-forward " \t" end))
+			       (= (point) end))
+			     (and kill-whole-line (bolp)))
+			 (forward-visible-line 1)
+		       (goto-char end))))
+		 (point))))
+
+(defun backward-delete-char-untabify (arg &optional killp)
+  "Delete characters backward, changing tabs into spaces.
+The exact behavior depends on `backward-delete-char-untabify-method'."
+  (interactive "*p\nP")
+  (if (and (use-region-p)
+           delete-active-region
+           (= arg 1))
+      (with-no-warnings (delete-backward-char 1 killp))
+    (when (eq backward-delete-char-untabify-method 'untabify)
+      (let ((count arg))
+        (save-excursion
+	  (while (and (> count 0) (not (bobp)))
+	    (if (= (preceding-char) ?\t)
+	        (let ((col (current-column)))
+		  (forward-char -1)
+		  (setq col (- col (current-column)))
+		  (insert-char ?\s col)
+		  (delete-char 1)))
+	    (forward-char -1)
+	    (setq count (1- count))))))
+    (let* ((skip (cond ((eq backward-delete-char-untabify-method 'hungry) " \t")
+                       ((eq backward-delete-char-untabify-method 'all)
+                        " \t\n\r")))
+           (n (if skip
+                  (let* ((oldpt (point))
+                         (wh (- oldpt (save-excursion
+                                        (skip-chars-backward skip)
+                                        (constrain-to-field nil oldpt)))))
+                    (+ arg (if (zerop wh) 0 (1- wh))))
+                arg)))
+      (with-no-warnings (delete-backward-char n killp)))))
+
+(defun delete-trailing-whitespace (&optional start end)
+  "Delete trailing whitespace between START and END.
+If called interactively, START and END are the start/end of the
+region if the mark is active, or of the buffer's accessible
+portion if the mark is inactive.
+
+This command deletes whitespace characters after the last
+non-whitespace character in each line between START and END.  It
+does not consider formfeed characters to be whitespace.
+
+If this command acts on the entire buffer (i.e. if called
+interactively with the mark inactive, or called from Lisp with
+END nil), it also deletes all trailing lines at the end of the
+buffer if the variable `delete-trailing-lines' is non-nil."
+  (interactive (progn
+                 (barf-if-buffer-read-only)
+                 (if (use-region-p)
+                     (list (region-beginning) (region-end))
+                   (list nil nil))))
+  (save-match-data
+    (save-excursion
+      (let ((end-marker (and end (copy-marker end))))
+        (goto-char (or start (point-min)))
+        (with-syntax-table (make-syntax-table (syntax-table))
+          ;; Don't delete formfeeds, even if they are considered whitespace.
+          (modify-syntax-entry ?\f "_")
+          (while (re-search-forward "\\s-$" end-marker t)
+            (skip-syntax-backward "-" (line-beginning-position))
+            (let ((b (point)) (e (match-end 0)))
+              (if (region-modifiable-p b e)
+                  (delete-region b e)
+                (goto-char e)))))
+        (if end
+            (set-marker end-marker nil)
+          ;; Delete trailing empty lines.
+          (and delete-trailing-lines
+               ;; Really the end of buffer.
+               (= (goto-char (point-max)) (1+ (buffer-size)))
+               (<= (skip-chars-backward "\n") -2)
+               (region-modifiable-p (1+ (point)) (point-max))
+               (delete-region (1+ (point)) (point-max)))))))
+  ;; Return nil for the benefit of `write-file-functions'.
+  nil)
 
 ;; ---------- undo (GNU simple.el) ----------
 
@@ -3713,7 +3998,70 @@ and `inhibit-local-variables-suffixes' that were added
 by `jka-compr-install'.")
 
 ;; GNU faces.el: the built-in `default' face's doc string.
+;; GNU faces.el: built-in faces' doc strings (their defface specs are
+;; simulated by the Rust face_table realized layer, but the docs are
+;; observable via `face-documentation').
 (put 'default 'face-documentation "Basic default face.")
+(put 'bold 'face-documentation "Basic bold face.")
+(put 'italic 'face-documentation "Basic italic face.")
+(put 'bold-italic 'face-documentation "Basic bold-italic face.")
+(put 'underline 'face-documentation "Basic underlined face.")
+(put 'fixed-pitch 'face-documentation "The basic fixed-pitch face.")
+(put 'variable-pitch 'face-documentation "The basic variable-pitch face.")
+(put 'shadow 'face-documentation "Basic face for shadowed text.")
+(put 'link 'face-documentation "Basic face for unvisited links.")
+(put 'link-visited 'face-documentation "Basic face for visited links.")
+(put 'highlight 'face-documentation "Basic face for highlighting.")
+(put 'region 'face-documentation "Basic face for highlighting the region.")
+(put 'secondary-selection 'face-documentation
+     "Basic face for displaying the secondary selection.")
+(put 'trailing-whitespace 'face-documentation
+     "Basic face for highlighting trailing whitespace.")
+(put 'escape-glyph 'face-documentation
+     "Face for characters displayed as sequences using `^' or `\\'.")
+(put 'homoglyph 'face-documentation "Face for lookalike characters.")
+(put 'nobreak-space 'face-documentation "Face for displaying nobreak space.")
+(put 'nobreak-hyphen 'face-documentation "Face for displaying nobreak hyphens.")
+(put 'mode-line 'face-documentation
+     "Face for the mode lines as well as header lines.
+See `mode-line-active' and `mode-line-inactive' for the faces
+used on mode lines.")
+(put 'mode-line-active 'face-documentation "Face for the selected mode line.")
+(put 'mode-line-inactive 'face-documentation
+     "Basic mode line face for non-selected windows.")
+(put 'mode-line-highlight 'face-documentation
+     "Basic mode line face for highlighting.")
+(put 'mode-line-emphasis 'face-documentation
+     "Face used to emphasize certain mode line features.")
+(put 'mode-line-buffer-id 'face-documentation
+     "Face used for buffer identification parts of the mode line.")
+(put 'header-line 'face-documentation "Basic header-line face.")
+(put 'vertical-border 'face-documentation
+     "Face used for vertical window dividers on ttys.")
+(put 'minibuffer-prompt 'face-documentation "Face for minibuffer prompts.")
+(put 'fringe 'face-documentation
+     "Basic face for the fringes to the left and right of windows under X.")
+(put 'scroll-bar 'face-documentation
+     "Basic face for the scroll bar colors under X.")
+(put 'border 'face-documentation
+     "Basic face for the frame border under X.")
+(put 'cursor 'face-documentation "Basic face for the cursor color under X.")
+(put 'mouse 'face-documentation "Basic face for the mouse color under X.")
+(put 'tool-bar 'face-documentation "Basic tool-bar face.")
+(put 'tab-bar 'face-documentation "Tab bar face.")
+(put 'menu 'face-documentation
+     "Basic face for the font and colors of the menu bar and popup menus.")
+(put 'glyphless-char 'face-documentation
+     "Face for displaying non-graphic characters (e.g. U+202A (LRE)).")
+(put 'error 'face-documentation
+     "Basic face used to highlight errors and to denote failure.")
+(put 'warning 'face-documentation
+     "Basic face used to highlight warnings.")
+(put 'success 'face-documentation
+     "Basic face used to indicate successful operation.")
+(put 'show-paren-match 'face-documentation "Face used for a matching paren.")
+(put 'show-paren-mismatch 'face-documentation
+     "Face used for a mismatching paren.")
 ;; GNU: `default' is defined by C code; its defface spec is ((t nil)).
 (put 'default 'face-defface-spec '((t nil)))
 
@@ -4440,41 +4788,49 @@ spaced `tab-width' columns apart.")
   (interactive "r\nP")
   (indent-rigidly start end (prefix-numeric-value arg)))
 
-(defun indent-relative (&optional unindented-ok first-only)
-  "Space out to under next indent point in previous nonblank line."
+(defun indent-relative (&optional first-only unindented-ok)
+  "Space out to under next indent point in previous nonblank line.
+GNU indent.el order is (FIRST-ONLY UNINDENTED-OK); the return value
+is the marker left by `point-marker' (GNU returns it)."
   (interactive "P")
-  (let ((stops (save-excursion
-                 (beginning-of-line)
-                 (when (re-search-backward "^[^\n]" nil t)
-                   (end-of-line)
-                   (let ((eol (point)) (pos nil) (in-run nil))
-                     (beginning-of-line)
-                     (while (< (point) eol)
-                       (let ((c (char-after)))
-                         (cond ((memq c '(?\s ?\t))
-                                (setq in-run t))
-                               (in-run
-                                (push (current-column) pos)
-                                (setq in-run nil))))
-                       (forward-char 1))
-                     (nreverse pos))))))
-    (let* ((col (current-column))
-           (beyond (delq nil (mapcar (lambda (c) (and (> c col) c)) stops)))
-           (target (or (car beyond)
-                       (and stops (if first-only (car stops) (car stops))))))
-      (cond (target (indent-to target))
-            (unindented-ok (indent-to 0))
-            (t (tab-to-tab-stop))))))
+  (if (and abbrev-mode
+	   (eq (char-syntax (preceding-char)) ?w))
+      (expand-abbrev))
+  (let ((start-column (current-column))
+	indent)
+    (save-excursion
+      (beginning-of-line)
+      (if (re-search-backward "^[^\n]" nil t)
+	  (let ((end (save-excursion (forward-line 1) (point))))
+	    (move-to-column start-column)
+	    ;; Is start-column inside a tab on this line?
+	    (if (> (current-column) start-column)
+		(backward-char 1))
+	    (or (looking-at "[ \t]")
+		first-only
+		(skip-chars-forward "^ \t" end))
+	    (skip-chars-forward " \t" end)
+	    (or (= (point) end) (setq indent (current-column))))))
+    (cond (indent
+           (let ((opoint (point-marker)))
+             (indent-to indent 0)
+             (if (> opoint (point))
+                 (goto-char opoint))
+             (move-marker opoint nil)))
+          (unindented-ok nil)
+          (t (tab-to-tab-stop)))))
 
 (defun indent-relative-first-indent-point ()
   "Indent to the first indent stop of the previous nonblank line."
   (interactive)
-  (indent-relative nil t))
+  ;; GNU arg order: FIRST-ONLY first.
+  (indent-relative t))
 
 (defun indent-relative-maybe ()
   "Indent like `indent-relative', defaulting to unindented."
   (interactive)
-  (indent-relative t))
+  ;; GNU arg order: FIRST-ONLY first.
+  (indent-relative nil t))
 
 (defvar indent-line-ignored-functions '(indent-relative
                                         indent-relative-maybe
@@ -4512,23 +4868,133 @@ non-nil."
     (funcall indent-line-function))))
 
 (defun indent-region (start end &optional column)
-  "Indent each nonblank line in the region using `indent-line-function'."
-  (interactive "r")
+  "Indent each nonblank line in the region.
+A numeric prefix argument specifies a column: indent each line to that column.
+
+With no prefix argument, the command chooses one of these methods and
+indents all the lines with it:
+
+  1) If `fill-prefix' is non-nil, insert `fill-prefix' at the
+     beginning of each line in the region that does not already begin
+     with it.
+  2) If `indent-region-function' is non-nil, call that function
+     to indent the region.
+  3) Indent each line via `indent-according-to-mode'.
+
+Called from a program, START and END specify the region to indent.
+If the third argument COLUMN is an integer, it specifies the
+column to indent to; if it is nil, use one of the three methods above."
+  (interactive "r\nP")
+  (cond
+   ;; If a numeric prefix is given, indent to that column.
+   (column
+    (setq column (prefix-numeric-value column))
+    (save-excursion
+      (goto-char end)
+      (setq end (point-marker))
+      (goto-char start)
+      (or (bolp) (forward-line 1))
+      (while (< (point) end)
+	(delete-region (point) (progn (skip-chars-forward " \t") (point)))
+	(or (eolp)
+	    (indent-to column 0))
+        (forward-line 1))
+      (move-marker end nil)))
+   ;; If a fill-prefix is specified, use it.
+   (fill-prefix
+    (save-excursion
+      (goto-char end)
+      (setq end (point-marker))
+      (goto-char start)
+      (let ((regexp (regexp-quote fill-prefix)))
+	(while (< (point) end)
+	  (or (looking-at regexp)
+	      (and (bolp) (eolp))
+	      (insert fill-prefix))
+	  (forward-line 1)))))
+   ;; Use indent-region-function is available.
+   (indent-region-function
+    (save-restriction
+      (widen)
+      (funcall indent-region-function start end)))
+   ;; Else, use a default implementation that calls indent-line-function on
+   ;; each line.
+   (t
+    (save-restriction
+      (widen)
+      (indent-region-line-by-line start end))))
+  ;; In most cases, reindenting modifies the buffer, but it may also
+  ;; leave it unmodified, in which case we have to deactivate the mark
+  ;; by hand.
+  (setq deactivate-mark t))
+
+(defun indent-region-line-by-line (start end)
   (save-excursion
-    (goto-char start)
     (setq end (copy-marker end))
-    (while (< (point) end)
-      (or (and (bolp) (eolp))
-          (if column
-              (indent-to-column column)
-            (indent-according-to-mode)))
-      (forward-line 1))))
+    (goto-char start)
+    (let ((pr (unless (minibufferp)
+                (make-progress-reporter "Indenting region..." (point) end))))
+      (while (< (point) end)
+        (or (and (bolp) (eolp))
+            (indent-according-to-mode t))
+        (forward-line 1)
+        (and pr (progress-reporter-update pr (point))))
+      (and pr (progress-reporter-done pr))
+      (move-marker end nil))))
 
 (defun indent-sexp (&optional endpos)
-  "Indent each line of the list starting just after point."
-  (interactive "P")
-  (let ((e (or endpos (save-excursion (forward-sexp 1) (point)))))
-    (indent-region (point) e)))
+  "Indent each line of the list starting just after point.
+If optional arg ENDPOS is given, indent each line, stopping when
+ENDPOS is encountered."
+  (interactive)
+  (let* ((parse-state (lisp-indent-initial-state)))
+    ;; We need a marker because we modify the buffer
+    ;; text preceding endpos.
+    (setq endpos (copy-marker
+                  (if endpos endpos
+                    ;; Get error now if we don't have a complete sexp
+                    ;; after point.
+                    (save-excursion
+                      (forward-sexp 1)
+                      (let ((eol (line-end-position)))
+                        ;; We actually look for a sexp which ends
+                        ;; after the current line so that we properly
+                        ;; indent things like #s(...).  This might not
+                        ;; be needed if Bug#15998 is fixed.
+                        (when (and (< (point) eol)
+                                   ;; Check if eol is within a sexp.
+                                   (> (nth 0 (save-excursion
+                                               (parse-partial-sexp
+                                                (point) eol)))
+                                      0))
+                          (condition-case ()
+                              (while (< (point) eol)
+                                (forward-sexp 1))
+                            ;; But don't signal an error for incomplete
+                            ;; sexps following the first complete sexp
+                            ;; after point.
+                            (scan-error nil))))
+                      (point)))))
+    (save-excursion
+      (while (let ((indent (lisp-indent-calc-next parse-state))
+                   (ppss (lisp-indent-state-ppss parse-state)))
+               ;; If the line contains a comment indent it now with
+               ;; `indent-for-comment'.
+               (when (and (nth 4 ppss) (<= (nth 8 ppss) endpos))
+                 (save-excursion
+                   (goto-char (lisp-indent-state-ppss-point parse-state))
+                   (indent-for-comment)
+                   (setf (lisp-indent-state-ppss-point parse-state)
+                         (line-end-position))))
+               (when (< (point) endpos)
+                 ;; Indent the next line, unless it's blank, or just a
+                 ;; comment (we will `indent-for-comment' the latter).
+                 (skip-chars-forward " \t")
+                 (unless (or (eolp) (not indent)
+                             (eq (char-syntax (char-after)) ?<))
+                   (indent-line-to indent))
+                 t))))
+    (move-marker endpos nil)))
 
 (defun current-left-margin ()
   "Return the left margin to use for this line.
@@ -4574,20 +5040,20 @@ interactively or with optional argument FORCE, it will be fixed."
     (skip-chars-forward " \t")))
 
 (defun delete-to-left-margin (&optional from to)
-  "Delete left margin indentation of each line between FROM and TO."
-  ;; GNU 31.1's indent.el defines this without `interactive' (verified).
-  (let ((from (or from (point)))
-        (to (or to (point))))
-    (save-excursion
-      (goto-char from)
-      (while (< (point) to)
-        (beginning-of-line)
-        (let ((col (current-indentation)))
-          (when (> col left-margin)
-            (let ((beg (point)))
-              (move-to-column left-margin t)
-              (delete-region beg (point)))))
-        (forward-line 1)))))
+  "Remove left margin indentation from a region.
+This deletes to the column given by `current-left-margin'.
+In no case will it delete non-whitespace.
+Args FROM and TO are optional; default is the whole buffer.
+GNU indent.el verbatim."
+  (save-excursion
+    (goto-char (or to (point-max)))
+    (setq to (point-marker))
+    (goto-char (or from (point-min)))
+    (or (bolp) (forward-line 1))
+    (while (< (point) to)
+      (delete-region (point) (progn (move-to-left-margin nil t) (point)))
+      (forward-line 1))
+    (move-marker to nil)))
 
 (defun center-region (from to &optional nlates)
   "Center each nonblank line between FROM and TO."
@@ -4633,9 +5099,9 @@ Leave one space or none, according to the context."
   (interactive "*")
   (save-excursion
     (delete-horizontal-space)
-    (if (or (looking-at "^\\|\\s)")
+    (if (or (looking-at "^\\|$\\|\\s)")
             (save-excursion (forward-char -1)
-                            (looking-at "\\\|$\\|\\s(\\|\\s'")))
+                            (looking-at "$\\|\\s(\\|\\s'")))
         nil
       (insert ?\s))))
 
@@ -6657,6 +7123,7 @@ places where expressions are evaluated and inserted or spliced in."
 
 
 
+
 (defvar minor-mode-alist nil
   "Alist of (MODE . LIGHTER-STRINGS) for minor modes.")
 
@@ -7182,12 +7649,13 @@ Users should not set it.")
 
 (defun custom-add-to-group (group member type)
   "To existing GROUP add a new MEMBER of type TYPE.
-If there already is an entry for MEMBER, change its type to TYPE."
-  (let* ((mems (get group 'custom-group))
-         (elt (assq member mems)))
-    (if elt
-        (setcar (cdr elt) type)
-      (put group 'custom-group (append mems (list (list member type)))))))
+If there already is an entry for MEMBER and TYPE, nothing is done."
+  ;; GNU custom.el: `member' check makes a same-type re-add a no-op;
+  ;; `put' return is discarded → always nil.
+  (let ((members (get group 'custom-group))
+	(entry (list member type)))
+    (unless (member entry members)
+      (put group 'custom-group (nconc members (list entry))))))
 
 (defun custom-add-link (symbol widget)
   "To the custom option SYMBOL add the link WIDGET."
@@ -7625,8 +8093,12 @@ This records the current value in SYMBOL's `customized-value' property."
 
 (defun custom-set-default (variable value)
   "Default :set function for a customizable variable.
-VALUE is evaluated; the variable's default is set to the result."
-  (set-default variable value))
+VALUE is evaluated; the variable's default is set to the result.
+GNU custom.el honors `custom-local-buffer' and returns nil."
+  (if custom-local-buffer
+      (with-current-buffer custom-local-buffer
+        (set variable value))
+    (set-default-toplevel-value variable value)))
 
 (defun custom-set-minor-mode (variable value)
   ":set function for minor mode variables.
@@ -7710,22 +8182,42 @@ SPEC is a list of (DISPLAY . PLIST) entries; ARGS are custom keywords."
 ;;; themes
 
 (defun custom-make-theme-feature (theme)
-  "Given a symbol THEME, create a new symbol named THEME-theme.
-This is used to convert a symbol into a feature name."
+  "Given a symbol THEME, create a new symbol by appending \"-theme\".
+Store this symbol in the `theme-feature' property of THEME."
   (intern (concat (symbol-name theme) "-theme")))
 
-(defun custom-declare-theme (theme &optional doc)
-  "Like `deftheme', but THEME is evaluated as a normal argument."
+(defun custom-theme-name-valid-p (name)
+  "Return t if NAME is a valid name for a Custom theme, nil otherwise.
+NAME should be a symbol."
+  (and (not (memq name '(nil user changed)))
+       (symbolp name)
+       (not (string= "" (symbol-name name)))))
+
+;; GNU custom.el shape: FEATURE arg + PROPERTIES plist; returns nil
+;; (last `when' yields nil when PROPERTIES is nil).
+(defun custom-declare-theme (theme feature &optional doc properties)
+  "Like `deftheme', but THEME is evaluated as a normal argument.
+FEATURE is the feature this theme provides."
+  (unless (custom-theme-name-valid-p theme)
+    (error "Custom theme cannot be named %S" theme))
   (unless (memq theme custom-known-themes)
     (push theme custom-known-themes))
-  (put theme 'theme-feature (custom-make-theme-feature theme))
-  (put theme 'theme-documentation doc)
-  theme)
+  (put theme 'theme-feature feature)
+  (when doc
+    (put theme 'theme-documentation doc))
+  (when properties
+    (put theme 'theme-properties properties)))
 
-(defmacro deftheme (theme &optional doc)
-  "Define THEME (a symbol) as a custom theme, and return THEME.
-Optional argument DOC is a doc string describing the theme."
-  `(custom-declare-theme ',theme ,doc))
+(defmacro deftheme (theme &optional doc &rest properties)
+  "Declare THEME to be a Custom theme.
+PROPERTIES are interpreted as a property list stored in THEME's
+`theme-properties' property.  GNU returns nil."
+  (declare (doc-string 2) (indent 1))
+  (let ((feature (custom-make-theme-feature theme)))
+    ;; GNU custom.el: no backquote (bootstrap); the expansion ends in
+    ;; `custom-declare-theme', which returns nil.
+    (list 'custom-declare-theme (list 'quote theme) (list 'quote feature) doc
+          (cons 'list properties))))
 
 (defun custom-theme-p (theme)
   "Return non-nil if THEME is a valid custom theme name."
@@ -7741,104 +8233,242 @@ Raise an error if THEME is not a custom theme; return nil otherwise."
   "Indicate that this file provides THEME feature."
   (provide (custom-make-theme-feature theme)))
 
-(defun custom-push-theme (prop symbol theme mode value)
-  "Add (PROP SYMBOL THEME VALUE) to the THEME's `theme-settings' property.
-If THEME is `user', instead record a (THEME VALUE) entry in SYMBOL's
-PROP property (a user setting stored on the symbol itself).
-MODE `set' or `set-buffer' records a new setting; `reset' removes none
-here (removal is done by `custom-theme-reset-variables' et al)."
-  (if (eq theme 'user)
-      (put symbol prop (cons (list theme value) (get symbol prop)))
-    (when (memq mode '(set set-buffer))
+(defun custom-push-theme (prop symbol theme mode &optional value)
+  "Record VALUE for face or variable SYMBOL in custom theme THEME.
+PROP is `theme-face' for a face, `theme-value' for a variable.
+
+MODE can be either the symbol `set' or the symbol `reset'.  If it is the
+symbol `set', then VALUE is the value to use.  If it is the symbol
+`reset', then SYMBOL will be removed from THEME (VALUE is ignored).
+
+See `custom-known-themes' for a list of known themes."
+  (unless (memq prop '(theme-value theme-face theme-icon))
+    (error "Unknown theme property"))
+  (let* ((old (get symbol prop))
+	 (setting (assq theme old))  ; '(theme value)
+	 (theme-settings             ; '(prop symbol theme value)
+	  (get theme 'theme-settings)))
+    (cond
+     ;; Remove a setting:
+     ((eq mode 'reset)
+      (when setting
+	(let (res)
+	  (dolist (theme-setting theme-settings)
+	    (if (and (eq (car  theme-setting) prop)
+		     (eq (cadr theme-setting) symbol))
+		(setq res theme-setting)))
+	  (put theme 'theme-settings (delq res theme-settings)))
+	(put symbol prop (delq setting old))))
+     ;; Alter an existing setting:
+     (setting
+      (let (res)
+	(dolist (theme-setting theme-settings)
+	  (if (and (eq (car  theme-setting) prop)
+		   (eq (cadr theme-setting) symbol))
+	      (setq res theme-setting)))
+	(put theme 'theme-settings
+	     (cons (list prop symbol theme value)
+		   (delq res theme-settings)))
+        ;; It's tempting to use setcar here, but that could
+        ;; inadvertently modify other properties in SYMBOL's proplist,
+        ;; if those just happen to share elements with the value of PROP.
+        (put symbol prop (cons (list theme value) (delq setting old)))))
+     ;; Add a new setting:
+     (t
+      (when (custom--should-apply-setting theme)
+	(unless old
+	  ;; If the user changed a variable outside of Customize, save
+	  ;; the value to a fake theme, `changed'.  If the theme is
+	  ;; later disabled, we use this to bring back the old value.
+	  ;;
+	  ;; For faces, we just use `face--new-frame-defaults' to
+	  ;; recompute when the theme is disabled.
+	  (when (and (eq prop 'theme-value)
+		     (boundp symbol))
+	    (let ((val (symbol-value symbol)))
+	      (unless (or
+                       ;; We only do this trick if the current value
+                       ;; is different from the standard value.
+                       (custom--standard-value-p symbol val)
+                       ;; And we don't do it if we would end up recording
+                       ;; the same value for the user theme.  This way we avoid
+                       ;; having ((user VALUE) (changed VALUE)).  That would be
+                       ;; useless, because we don't disable the user theme.
+                       (and (eq theme 'user) (equal (custom-quote val) value)))
+		(setq old `((changed ,(custom-quote val))))))))
+	(put symbol prop (cons (list theme value) old)))
       (put theme 'theme-settings
-           (cons (list prop symbol theme value)
-                 (get theme 'theme-settings))))))
+	   (cons (list prop symbol theme value) theme-settings))))))
 
 (defun custom-theme-set-variables (theme &rest args)
-  "Record a list of variable settings for THEME.
-Each argument in ARGS should be a list of the form (VAR EXP [NOW
-[REQUEST [COMMENT]]]); only VAR and EXP are recorded."
+  "Initialize variables for theme THEME according to settings in ARGS.
+Each of the arguments in ARGS should be a list of this form:
+
+  (SYMBOL EXP [NOW [REQUEST [COMMENT]]])
+
+SYMBOL is the variable name, and EXP is an expression which
+evaluates to the customized value.  EXP will also be stored,
+without evaluating it, in SYMBOL's `saved-value' property, so
+that it can be restored via the Customize interface.  It is also
+added to the alist in SYMBOL's `theme-value' property (by
+calling `custom-push-theme').
+
+NOW, if present and non-nil, means to install the variable's
+value directly now, even if its `defcustom' declaration has not
+been executed.  This is for internal use only.
+
+REQUEST is a list of features to `require' (which are loaded
+prior to evaluating EXP).
+
+COMMENT is a comment string about SYMBOL."
   (custom-check-theme theme)
+  ;; Process all the needed autoloads before anything else, so that the
+  ;; subsequent code has all the info it needs (e.g. which var corresponds
+  ;; to a minor mode), regardless of the ordering of the variables.
   (dolist (entry args)
-    (custom-push-theme 'theme-value (car entry) theme 'set
-                       (car (cdr entry)))))
+    (let* ((symbol (indirect-variable (nth 0 entry))))
+      (unless (or (get symbol 'standard-value)
+                  (memq (get symbol 'custom-autoload) '(nil noset)))
+        ;; This symbol needs to be autoloaded, even just for a `set'.
+        (custom-load-symbol symbol))))
+  (setq args (custom--sort-vars args))
+  (dolist (entry args)
+    (unless (listp entry)
+      (error "Incompatible Custom theme spec"))
+    (let* ((symbol (indirect-variable (nth 0 entry)))
+	   (value (nth 1 entry)))
+      (custom-push-theme 'theme-value symbol theme 'set value)
+      (when (custom--should-apply-setting theme)
+	;; Now set the variable.
+	(let* ((now (nth 2 entry))
+	       (requests (nth 3 entry))
+	       (comment (nth 4 entry))
+	       set)
+	  (when requests
+	    (put symbol 'custom-requests requests)
+            ;; Load any libraries that the setting has specified as
+            ;; being required, but don't error out if the package has
+            ;; been removed.
+            (mapc (lambda (lib) (require lib nil t)) requests))
+          (setq set (or (get symbol 'custom-set) #'custom-set-default))
+	  (put symbol 'saved-value (list value))
+	  (put symbol 'saved-variable-comment comment)
+	  ;; Allow for errors in the case where the setter has
+	  ;; changed between versions, say, but let the user know.
+	  (condition-case data
+	      (cond (now
+		     ;; Rogue variable, set it now.
+		     (put symbol 'force-value t)
+		     (funcall set symbol (eval value)))
+		    ((default-boundp symbol)
+		     ;; Something already set this, overwrite it.
+		     (funcall set symbol (eval value))))
+	    (error
+	     (message "Error setting %s: %s" symbol data)))
+	  (and (or now (default-boundp symbol))
+	       (put symbol 'variable-comment comment)))))))
 
 (defun custom-theme-set-faces (theme &rest args)
-  "Record a list of face settings for THEME.
-Each argument in ARGS should be a list of the form (FACE SPEC
-[NOW [COMMENT]]); only FACE and SPEC are recorded."
+  "Apply a list of face specs associated with theme THEME.
+THEME should be a theme name (a symbol).  The special theme named
+`user' refers to user settings applied via Customize.
+
+The remaining ARGS should be a list where each entry is a list of
+the form:
+
+  (FACE SPEC [NOW [COMMENT]])
+
+FACE should be a face name (a symbol).  If FACE is a face alias,
+the setting refers to the parent face.
+
+SPEC should be a face spec.  For details, see `defface'.
+
+NOW, if present and non-nil, forces the face settings to take
+immediate effect in the Emacs display; in particular, FACE is
+initialized as a face if it is not yet one.  If NOW is omitted or
+nil, the caller is responsible for making the settings take
+effect later, by calling `custom-theme-recalc-face' or
+`face-spec-recalc'.
+
+COMMENT is a string comment about FACE.
+
+This function works by calling `custom-push-theme' to record each
+SPEC in each FACE's `theme-face' property, and in THEME's
+`theme-settings' property.  If FACE has not already been
+customized, it also stores SPEC in the `saved-face' property.
+
+If THEME has a non-nil `theme-immediate' property, this is
+equivalent to providing the NOW argument to all faces in the
+argument list."
   (custom-check-theme theme)
-  (dolist (entry args)
-    (custom-push-theme 'theme-face (car entry) theme 'set
-                       (car (cdr entry)))))
-
-(defun custom--settings-delete (settings prop symbol)
-  "Delete the (PROP SYMBOL ...) entries from a `theme-settings' list."
-  (let (out)
-    (dolist (e settings (nreverse out))
-      (unless (and (eq (car e) prop) (eq (car (cdr e)) symbol))
-        (push e out)))))
-
-(defun custom--theme-entry-delete (entries theme)
-  "Delete the (THEME ...) entries from a `theme-value'/`theme-face' list."
-  (let (out)
-    (dolist (e entries (nreverse out))
-      (unless (eq (car e) theme)
-        (push e out)))))
+  (let ((immediate (get theme 'theme-immediate)))
+    (dolist (entry args)
+      (unless (listp entry)
+	(error "Incompatible Custom theme spec"))
+      (let ((face (car entry))
+	    (spec (nth 1 entry)))
+	;; If FACE is actually an alias, customize the face it
+	;; is aliased to.
+	(if (get face 'face-alias)
+	    (setq face (get face 'face-alias)))
+	(if (not (custom--should-apply-setting theme))
+	    ;; Just update theme settings.
+	    (custom-push-theme 'theme-face face theme 'set spec)
+	  ;; Update theme settings and set the face spec.
+	  (let ((now (nth 2 entry))
+		(comment (nth 3 entry))
+		(oldspec (get face 'theme-face)))
+	    (when (not (and oldspec (eq 'user (caar oldspec))))
+	      (put face 'saved-face spec)
+	      (put face 'saved-face-comment comment))
+	    (custom-push-theme 'theme-face face theme 'set spec)
+	    (when (or now immediate)
+	      (put face 'force-face (if now 'rogue 'immediate)))
+	    (when (or now immediate (facep face))
+	      (put face 'face-comment comment)
+	      (face-spec-set face spec t))))))))
 
 (defun custom-theme-reset-variables (theme &rest args)
-  "Reset the value of the variables to values previously recorded.
-Each element of ARGS is a variable name, or a list (VAR VAL)."
+  "Reset some variable settings in THEME to their values in other themes.
+Each of the arguments ARGS has this form:
+
+    (VARIABLE IGNORED)
+
+This means reset VARIABLE.  (The argument IGNORED is ignored)."
   (custom-check-theme theme)
   (dolist (arg args)
-    (let ((var (if (consp arg) (car arg) arg)))
-      (put theme 'theme-settings
-           (custom--settings-delete (get theme 'theme-settings)
-                                    'theme-value var))
-      (when (memq theme custom-enabled-themes)
-        (put var 'theme-value
-             (custom--theme-entry-delete (get var 'theme-value) theme))
-        (custom-theme-recalc-variable var)))))
+    (custom-push-theme 'theme-value (car arg) theme 'reset)))
 
 (defun custom-theme-reset-faces (theme &rest args)
-  "Reset the specs of the faces to values previously recorded.
-Each element of ARGS is a face name, or a list (FACE SPEC)."
+  "Reset the specs in THEME of some faces to their specs in other themes.
+Each of the arguments ARGS has this form:
+
+    (FACE IGNORED)
+
+This means reset FACE.  The argument IGNORED is ignored."
   (custom-check-theme theme)
   (dolist (arg args)
-    (let ((face (if (consp arg) (car arg) arg)))
-      (put theme 'theme-settings
-           (custom--settings-delete (get theme 'theme-settings)
-                                    'theme-face face))
-      (when (memq theme custom-enabled-themes)
-        (put face 'theme-face
-             (custom--theme-entry-delete (get face 'theme-face) theme))
-        (custom-theme-recalc-face face)))))
+    (custom-push-theme 'theme-face (car arg) theme 'reset)))
 
-(defun custom-theme-recalc-variable (variable &optional _frame)
-  "Set the default value of VARIABLE to a theme setting, if one exists.
-This consults VARIABLE's `theme-value' property for settings made by
-enabled themes (or `user'), falling back to a `changed' entry, then
-`saved-value' and `customized-value'."
-  (let ((theme-values (get variable 'theme-value))
-        (rest custom-enabled-themes)
-        (set (or (get variable 'custom-set) 'set))
-        winner)
-    (while (and rest (not winner))
-      (let ((e (assq (car rest) theme-values)))
-        (when e (setq winner e)))
-      (setq rest (cdr rest)))
-    (unless winner (setq winner (assq 'user theme-values)))
-    (cond
-     (winner
-      (funcall set variable (car (cdr winner))))
-     ((assq 'changed theme-values)
-      (funcall set variable (car (cdr (assq 'changed theme-values)))))
-     ((get variable 'saved-value)
-      (funcall set variable (eval (car (get variable 'saved-value)))))
-     ((get variable 'customized-value)
-      (funcall set variable (car (get variable 'customized-value))))
-     ((get variable 'standard-value)
-      (funcall set variable (eval (car (get variable 'standard-value))))))))
+(defun custom-theme-recalc-variable (variable)
+  "Set VARIABLE according to currently enabled custom themes."
+  (let ((valspec (custom-variable-theme-value variable)))
+    ;; We used to save VALSPEC under the saved-value property unconditionally,
+    ;; but that is a recipe for trouble because we might end up saving session
+    ;; customizations if the user loads a theme.  (Bug#21355)
+    ;; It's better to only use the saved-value property to stash the value only
+    ;; if we really need to stash it (i.e., VARIABLE is void).
+    (condition-case nil
+        (default-toplevel-value variable) ; See if it doesn't fail.
+      (void-variable (when valspec
+                       (put variable 'saved-value valspec))))
+    (unless valspec
+      (setq valspec (get variable 'standard-value)))
+    (if (and valspec
+	     (or (get variable 'force-value)
+		 (default-boundp variable)))
+        (funcall (or (get variable 'custom-set) #'set-default) variable
+		 (eval (car valspec))))))
 
 (defun custom-theme-recalc-face (face &optional _frame)
   "Set the attributes of FACE to a theme spec, if one exists.
@@ -7857,55 +8487,134 @@ themes (or `user'), falling back to `face-defface-spec'."
      ((get face 'face-defface-spec)
       (face-spec-set face (get face 'face-defface-spec))))))
 
+(defcustom enable-theme-functions nil
+  "Abnormal hook that is run after a theme has been enabled.
+The functions in the hook are called with one parameter -- the
+ name of the theme that's been enabled (as a symbol)."
+  :type 'hook
+  :group 'customize
+  :version "29.1")
+
 (defun enable-theme (theme)
   "Reenable all variable and face settings defined by THEME.
-THEME should be either `user', or a theme defined via `deftheme'."
-  (interactive "SEnable custom theme: ")
-  (if (memq theme custom-enabled-themes)
-      (message "Theme `%s' is already enabled" theme)
-    (custom-check-theme theme)
-    ;; Record `changed' entries for variables that differ from their
-    ;; standard value, then record the theme's settings on the symbols.
-    (dolist (setting (get theme 'theme-settings))
-      (let ((prop (nth 0 setting)) (symbol (nth 1 setting))
-            (val (nth 3 setting)))
-        (when (eq prop 'theme-value)
-          ;; Record the pre-theme value as `changed' — but only when the
-          ;; variable is not already under theme control, and only when
-          ;; its current value differs from the standard value.
-          (when (and (null (get symbol prop)) (boundp symbol))
-            (let ((std (car (get symbol 'standard-value))))
-              (unless (and std
-                           (equal (eval std) (default-value symbol)))
-                (put symbol prop
-                     (list (list 'changed (default-value symbol))))))))
-        (put symbol prop
-             (cons (list theme val) (get symbol prop)))))
-    (push theme custom-enabled-themes)
-    (dolist (setting (get theme 'theme-settings))
-      (let ((prop (nth 0 setting)) (symbol (nth 1 setting)))
-        (cond ((eq prop 'theme-value)
-               (custom-theme-recalc-variable symbol))
-              ((eq prop 'theme-face)
-               (custom-theme-recalc-face symbol))))))
-  theme)
+THEME should be either `user', or a theme loaded via `load-theme'.
+
+After this function completes, THEME will have the highest
+precedence (after `user') among enabled themes.
+
+Note that any already-enabled themes remain enabled after this
+function runs.  To disable other themes, use `disable-theme'.
+
+After THEME has been enabled, runs `enable-theme-functions'."
+  (interactive (list (intern
+		      (completing-read
+		       "Enable custom theme: "
+		       obarray (lambda (sym) (get sym 'theme-settings)) t))))
+  (unless (custom-theme-p theme)
+    (error "Undefined Custom theme %s" theme))
+  (let ((settings (get theme 'theme-settings)) ; '(prop symbol theme value)
+        ;; We are enabling the theme, so don't inhibit enabling it.  (Bug#34027)
+        (custom--inhibit-theme-enable nil))
+    ;; Loop through theme settings, recalculating vars/faces.
+    (dolist (s settings)
+      (let* ((prop (car s))
+             (symbol (cadr s))
+             (spec-list (get symbol prop))
+             (val (and (boundp symbol) (symbol-value symbol))))
+        ;; We can't call `custom-push-theme' when enabling the theme: it's not
+        ;; that the theme settings have changed, it's just that we want to
+        ;; enable those settings.  But we might need to save a user setting
+        ;; outside of Customize, in order to get back to it when disabling
+        ;; the theme, just like in `custom-push-theme'.
+        (when (and (custom--should-apply-setting theme)
+                   ;; Only do it for variables; for faces, using
+                   ;; `face-new-frame-defaults' is enough.
+                   (eq prop 'theme-value)
+                   (boundp symbol)
+                   (not (or spec-list
+                            ;; Only if the current value is different from
+                            ;; the standard value.
+                            (custom--standard-value-p symbol val)
+                            ;; And only if the changed value is different
+                            ;; from the new value under the user theme.
+                            (and (eq theme 'user)
+                                 (equal (custom-quote val) (nth 3 s))))))
+          (setq spec-list `((changed ,(custom-quote val)))))
+        (put symbol prop (cons (cddr s) (assq-delete-all theme spec-list)))
+	(cond
+	 ((eq prop 'theme-face)
+	  (custom-theme-recalc-face symbol))
+	 ((eq prop 'theme-value)
+	  ;; Ignore `custom-enabled-themes' and `custom-safe-themes'.
+	  (unless (memq symbol '(custom-enabled-themes custom-safe-themes))
+	    (custom-theme-recalc-variable symbol)))))))
+  (unless (eq theme 'user)
+    (setq custom-enabled-themes
+	  (cons theme (remq theme custom-enabled-themes)))
+    ;; Give the `user' theme the highest priority.
+    (enable-theme 'user))
+  ;; Allow callers to react to the enabling.
+  (run-hook-with-args 'enable-theme-functions theme))
+
+(defcustom disable-theme-functions nil
+  "Abnormal hook that is run after a theme has been disabled.
+The functions in the hook are called with one parameter -- the
+name of the theme that's been disabled (as a symbol)."
+  :type 'hook
+  :group 'customize
+  :version "29.1")
 
 (defun disable-theme (theme)
-  "Disable all variable and face settings defined by THEME."
-  (interactive "SDisable custom theme: ")
-  (custom-check-theme theme)
-  (if (not (memq theme custom-enabled-themes))
-      (message "%s theme is not currently enabled" theme)
-    (setq custom-enabled-themes (delq theme custom-enabled-themes))
-    (dolist (setting (get theme 'theme-settings))
-      (let ((prop (nth 0 setting)) (symbol (nth 1 setting)))
-        (put symbol prop
-             (custom--theme-entry-delete (get symbol prop) theme))
-        (cond ((eq prop 'theme-value)
-               (custom-theme-recalc-variable symbol))
-              ((eq prop 'theme-face)
-               (custom-theme-recalc-face symbol))))))
-  theme)
+  "Disable all variable and face settings defined by THEME.
+See `custom-enabled-themes' for a list of enabled themes.
+
+After THEME has been disabled, runs `disable-theme-functions'."
+  (interactive (list (intern
+		      (completing-read
+		       "Disable custom theme: "
+                       (mapcar #'symbol-name custom-enabled-themes)
+		       nil t))))
+  (when (custom-theme-enabled-p theme)
+    (let ((settings (get theme 'theme-settings)))
+      (dolist (s settings)
+	(let* ((prop   (car s))
+	       (symbol (cadr s))
+	       (val (assq-delete-all theme (get symbol prop))))
+          (put symbol prop val)
+	  (cond
+	   ((eq prop 'theme-value)
+            (custom-theme-recalc-variable symbol)
+            ;; We might have to reset the stashed value of the variable, if
+            ;; no other theme is customizing it.  Without this, loading a theme
+            ;; that has a setting for an unbound user option and then disabling
+            ;; it will leave this lingering setting for the option, and if then
+            ;; Emacs evaluates the defcustom the saved-value might be used to
+            ;; set the variable.  (Bug#20766)
+            (unless (get symbol 'theme-value)
+              (put symbol 'saved-value nil)))
+	   ((eq prop 'theme-face)
+	    ;; If the face spec specified by this theme is in the
+	    ;; saved-face property, reset that property.
+	    (when (equal (nth 3 s) (get symbol 'saved-face))
+              (put symbol 'saved-face (cadar val))))))))
+    ;; Recompute faces on all frames.
+    (dolist (frame (frame-list))
+      ;; We must reset the fg and bg color frame parameters, or
+      ;; `face-set-after-frame-default' will use the existing
+      ;; parameters, which could be from the disabled theme.
+      (set-frame-parameter frame 'background-color
+                           (custom--frame-color-default
+                            frame :background "background" "Background"
+                            "unspecified-bg" "white"))
+      (set-frame-parameter frame 'foreground-color
+                           (custom--frame-color-default
+                            frame :foreground "foreground" "Foreground"
+                            "unspecified-fg" "black"))
+      (face-set-after-frame-default frame))
+    (setq custom-enabled-themes
+          (delq theme custom-enabled-themes))
+    ;; Allow callers to react to the disabling.
+    (run-hook-with-args 'disable-theme-functions theme)))
 
 (defun custom-theme-load-themes (&optional _update)
   "Load themes specified by the variable `custom-enabled-themes'."
@@ -7913,20 +8622,28 @@ THEME should be either `user', or a theme defined via `deftheme'."
     (load-theme theme)))
 
 (defun custom-available-themes ()
-  "Return a list of available custom themes (symbols like `foo-theme')."
-  (let (out)
-    (dolist (dir custom-theme-load-path)
-      (when (eq dir 'custom-theme-directory)
-        (setq dir custom-theme-directory))
-      (when (eq dir t)
-        (setq dir (bound-and-true-p data-directory)))
-      (when (and (stringp dir) (file-directory-p dir))
-        (dolist (file (directory-files dir nil "-theme\\.el\\'"))
-          ;; "foo-theme.el" names the theme `foo'.
-          (let ((theme (intern (substring file 0 (- (length file) 9)))))
-            (unless (memq theme out)
-              (push theme out))))))
-    (nreverse out)))
+  "Return a list of Custom themes available for loading.
+Search the directories specified by `custom-theme-load-path' for
+files named FOO-theme.el, and return a list of FOO symbols.
+
+The returned symbols may not correspond to themes that have been
+loaded, and no effort is made to check that the files contain
+valid Custom themes.  For a list of loaded themes, check the
+variable `custom-known-themes'."
+  (let ((suffix "-theme\\.el\\'")
+        themes)
+    (dolist (dir (custom-theme--load-path))
+      ;; `custom-theme--load-path' promises DIR exists and is a
+      ;; directory, but `custom.el' is loaded too early during
+      ;; bootstrap to use `cl-lib' macros, so guard with
+      ;; `file-directory-p' instead of calling `cl-assert'.
+      (dolist (file (and (file-directory-p dir)
+                         (directory-files dir nil suffix)))
+        (let ((theme (intern (substring file 0 (string-match suffix file)))))
+          (and (custom-theme-name-valid-p theme)
+               (not (memq theme themes))
+               (push theme themes)))))
+    (nreverse themes)))
 
 (defun load-theme (theme &optional _no-confirm no-enable)
   "Load Custom theme THEME from its file and enable it.
@@ -7941,7 +8658,8 @@ The theme file is named THEME-theme.el; it is searched in
         (when (eq dir 'custom-theme-directory)
           (setq dir custom-theme-directory))
         (when (eq dir t)
-          (setq dir (bound-and-true-p data-directory)))
+          (setq dir (bound-and-true-p
+                     (expand-file-name "themes" data-directory))))
         (when (and (not found) (stringp dir) (file-directory-p dir))
           (let ((full (expand-file-name (concat file ".el") dir)))
             (when (file-exists-p full)
@@ -7958,36 +8676,31 @@ The theme file is named THEME-theme.el; it is searched in
 ;;; set/get user values
 
 (defun custom-set-variables (&rest args)
-  "Initialize variables according to user specifications.
-Each argument should be a list of the form (VAR VALUE [NOW [REQUEST
-[COMMENT]]]).  VALUE is evaluated to give the value; REQUEST is a list
-of features to load; COMMENT is a comment string."
-  (dolist (entry args)
-    (let ((var (nth 0 entry)) (val (nth 1 entry))
-          (requests (nth 3 entry)) (comment (nth 4 entry)))
-      (when requests
-        (put var 'custom-requests
-             (append (get var 'custom-requests) requests)))
-      ;; Record the setting as a user (pseudo-theme) setting.
-      (put var 'saved-value (list val))
-      (put var 'saved-variable-comment comment)
-      (custom-push-theme 'theme-value var 'user 'set (eval val))
-      ;; If VAR is a declared customizable variable, apply now.
-      (when (custom-variable-p var)
-        (custom-theme-recalc-variable var)))))
+  "Install user customizations of variable values specified in ARGS.
+These settings are registered as theme `user'.
+The arguments should each be a list of the form:
+
+  (SYMBOL EXP [NOW [REQUEST [COMMENT]]])
+
+This stores EXP (without evaluating it) as the saved value for SYMBOL.
+If NOW is present and non-nil, then also evaluate EXP and set
+the default value for the SYMBOL to the value of EXP.
+
+REQUEST is a list of features we must require in order to
+handle SYMBOL properly.
+COMMENT is a comment string about SYMBOL."
+  (apply #'custom-theme-set-variables 'user args))
 
 (defun custom-set-faces (&rest args)
-  "Initialize faces according to user specifications.
-Each argument should be a list of the form (FACE SPEC [NOW
-[COMMENT]])."
-  (dolist (entry args)
-    (let ((face (nth 0 entry)) (spec (nth 1 entry))
-          (comment (nth 3 entry)))
-      (put face 'saved-face spec)
-      (put face 'saved-face-comment comment)
-      (custom-push-theme 'theme-face face 'user 'set spec)
-      (when (custom-facep face)
-        (custom-theme-recalc-face face)))))
+  "Apply a list of face specs for user customizations.
+This works by calling `custom-theme-set-faces' for the `user'
+theme, a special theme referring to settings made via Customize.
+The arguments ARGS should be a list where each entry has the form:
+
+  (FACE SPEC [NOW [COMMENT]])
+
+See the documentation of `custom-theme-set-faces' for details."
+  (apply #'custom-theme-set-faces 'user args))
 
 (defun customize-set-variable (variable value &optional comment)
   "Set the default value of VARIABLE to VALUE, and return VALUE.
@@ -7997,7 +8710,7 @@ If COMMENT is non-nil, set `customized-variable-comment' to it."
   (custom-load-symbol variable)
   (put variable 'customized-value (list (custom-quote value)))
   (put variable 'customized-variable-comment comment)
-  (custom-push-theme 'theme-value variable 'user 'set value)
+  (custom-push-theme 'theme-value variable 'user 'set (custom-quote value))
   (funcall (or (get variable 'custom-set) 'set) variable value)
   value)
 
@@ -8016,7 +8729,7 @@ otherwise just set it and warn that the change is temporary."
                           (default-value variable) nil)))))
         (put variable 'customized-value (list (custom-quote value)))
         (put variable 'customized-variable-comment comment)
-        (custom-push-theme 'theme-value variable 'user 'set value)
+        (custom-push-theme 'theme-value variable 'user 'set (custom-quote value))
         (funcall (or (get variable 'custom-set) 'set) variable value))
     (message "Setting `%s' temporarily since \"emacs -q\" would overwrite customizations"
              variable)
@@ -8029,7 +8742,7 @@ Like `customize-set-variable', but records VALUE as `saved-value'."
   (custom-load-symbol variable)
   (put variable 'saved-value (list (custom-quote value)))
   (put variable 'saved-variable-comment comment)
-  (custom-push-theme 'theme-value variable 'user 'set value)
+  (custom-push-theme 'theme-value variable 'user 'set (custom-quote value))
   (funcall (or (get variable 'custom-set) 'set) variable value)
   value)
 
@@ -8188,7 +8901,7 @@ previous tests were non-nil."
 
 (defmacro when-let* (varlist &rest body)
   "Bind each VAR in VARLIST; when all non-nil, eval BODY."
-  `(if-let* ,varlist (progn ,@body)))
+  `(if-let* ,varlist ,(macroexp-progn body)))
 
 ;; The non-* variants take a single (VAR VAL) spec or legacy [VAR VAL].
 (defmacro if-let (varlist then &rest else)
@@ -8201,26 +8914,40 @@ previous tests were non-nil."
 
 (defmacro when-let (varlist &rest body)
   "Like `when-let*' for a single binding (obsolete shape)."
-  `(if-let ,varlist (progn ,@body)))
+  `(if-let ,varlist ,(macroexp-progn body)))
 
 (defmacro and-let* (varlist &rest body)
-  "Bind (VAR VAL) specs in sequence; eval BODY when all yield non-nil.
-A (FORM) spec evaluates FORM for truth without binding; a bare
-VAR spec tests VAR's current value."
+  "Bind variables according to VARLIST and conditionally evaluate BODY.
+Evaluate each binding in turn, stopping if a binding value is nil.
+If all bindings are non-nil, evaluate the forms in BODY
+and return the value of the last form, or else the last binding value
+if BODY is empty.
+
+Like `when-let*', except for the handling of an empty BODY."
+  ;; GNU subr.el shape, using prelude's inline binding builder:
+  ;; with an empty BODY the expansion returns the last binding value.
+  (declare (indent 1) (debug if-let*))
   (if (null varlist)
-      `(progn ,@body)
-    (let ((spec (car varlist))
-          (rest (cdr varlist)))
-      (cond
-       ((and (consp spec) (symbolp (car spec)) (cdr spec))
-        `(let* ((,(car spec) (and t ,(cadr spec))))
-           (and ,(car spec) (and-let* ,rest ,@body))))
-       ((consp spec)
-        (let ((tmp (gensym)))
-          `(let* ((,tmp (and t ,(car spec))))
-             (and ,tmp (and-let* ,rest ,@body)))))
-       (t
-        `(and ,spec (and-let* ,rest ,@body)))))))
+      `(let* () ,@(or body '(t)))
+    (let ((bs nil) (prev t) (spec nil))
+      (dolist (b varlist)
+        (setq spec
+              (cond
+               ((symbolp b) (list b b))
+               ((null (cdr b)) (list (make-symbol "s") (car b)))
+               ((eq '_ (car b)) (list (make-symbol "s") (cadr b)))
+               (t
+                (when (cddr b)
+                  (signal 'error
+                          (cons "`let' bindings can have only one value-form"
+                                b)))
+                b)))
+        (push (list (car spec) (list 'and prev (cadr spec))) bs)
+        (setq prev (car spec)))
+      (setq bs (nreverse bs))
+      `(let* ,bs
+         ,(let ((res (car (car (last bs)))))
+            (if body `(and ,res ,(macroexp-progn body)) res))))))
 
 (defun cl--thread-expand (x forms last)
   (if (null forms)
@@ -8277,17 +9004,99 @@ Defaults to `error'."
 (defvar after-load-alist nil
   "Alist of (FILE . FORMS) to eval after FILE is loaded.")
 
+(defun load-history-filename-element (file-regexp)
+  "Get the first elt of `load-history' whose car matches FILE-REGEXP.
+Return nil if there isn't one."
+  ;; `load-history' may still be unbound in early prelude.
+  (let* ((loads (and (boundp 'load-history) load-history))
+	 (load-elt (and loads (car loads))))
+    (save-match-data
+      (while (and loads
+		  (not (and (car load-elt)
+                            (string-match-p file-regexp (car load-elt)))))
+	(setq loads (cdr loads)
+	      load-elt (and loads (car loads)))))
+    load-elt))
+
 (defun eval-after-load (file form)
-  "Arrange that FORM is evaluated after FILE is loaded.
-String FILEs become a regexp matching the file name at the end of
-any path, with optional .so/.dylib/.elc/.el/.gz extension."
-  (let ((key (if (stringp file)
-                 (concat "\\(\\`\\|/\\)" (regexp-quote file)
-                         "\\(\\.so\\|\\.dylib\\|\\.elc\\|\\.el\\)?\\(\\.gz\\)?\\'")
-               file)))
-    (setq after-load-alist
-          (cons (list key `(lambda () ,form)) after-load-alist)))
-  nil)
+  "Arrange that if FILE is loaded, FORM will be run immediately afterwards.
+If FILE is already loaded, evaluate FORM right now.
+FORM can be an Elisp expression (in which case it's passed to `eval'),
+or a function (in which case it's passed to `funcall' with no argument).
+
+If a matching file is loaded again, FORM will be evaluated again.
+
+If FILE is a string, it may be either an absolute or a relative file
+name, and may have an extension (e.g. \".el\") or may lack one.
+Alternatively, FILE can be a feature (i.e. a symbol), in which case FORM
+is evaluated at the end of any file that `provide's this feature.  If the
+feature is provided when evaluating code not associated with a file,
+FORM is evaluated immediately after the provide statement.
+
+This function makes or adds to an entry on `after-load-alist'.
+
+See also `with-eval-after-load'."
+  (declare (indent 1))
+  ;; Add this FORM into after-load-alist (regardless of whether we'll be
+  ;; evaluating it now).  Ported from GNU subr.el; the delayed function
+  ;; embeds FUNC via `quote' (rather than capturing it lexically) so
+  ;; that `member's `equal' comparison keeps identical registrations
+  ;; deduplicated while distinct forms stay distinct.
+  (let* ((regexp-or-feature
+	  (if (stringp file)
+              ;; Same extension pattern this file has always used.
+              (setq file (concat "\\(\\`\\|/\\)" (regexp-quote file)
+                                 "\\(\\.so\\|\\.dylib\\|\\.elc\\|\\.el\\)?"
+                                 "\\(\\.gz\\)?\\'"))
+            file))
+	 (elt (assoc regexp-or-feature after-load-alist))
+         (func
+          (if (functionp form) form
+            ;; Try to use the "current" lexical/dynamic mode for `form'.
+            (eval `(lambda () ,form) lexical-binding))))
+    (unless elt
+      (setq elt (list regexp-or-feature))
+      (push elt after-load-alist))
+    ;; Is there an already loaded file whose name (or `provide' name)
+    ;; matches FILE?  For a feature key, `remacs--provided' filters the
+    ;; boot-time `features' seed (featurep-positive but never loaded:
+    ;; their hooks must stay deferred like before, e.g. pcase's
+    ;; `cl-preloaded' upgrade whose form needs the vendored cl
+    ;; machinery that doesn't exist yet when pcase is required).
+    (prog1 (if (if (stringp file)
+		   (load-history-filename-element regexp-or-feature)
+		 (and (featurep file) (get file 'remacs--provided)))
+	       (funcall func))
+      (let ((delayed-func
+             (if (not (symbolp regexp-or-feature)) func
+               ;; For features, the after-load-alist elements get run when
+               ;; `provide' is called rather than at the end of the file.
+               ;; So add an indirection to make sure that `func' is really run
+               ;; "after-load" in case the provide call happens early.
+               ;; GNU builds this as a lexical closure over `func'; eval
+               ;; forces lexical mode and quotes FUNC into the body —
+               ;; equivalent at call time and visible to `equal'.
+               (eval `(lambda ()
+                        (if (not load-file-name)
+                            ;; Not being provided from a file, run func now.
+                            (funcall ',func)
+                          (let ((lfn load-file-name)
+                                ;; Don't use letrec, because equal (in
+                                ;; add/remove-hook) could get trapped in
+                                ;; a cycle (bug#46326).
+                                (fun (make-symbol
+                                      "eval-after-load-helper")))
+                            (fset fun (lambda (ofile)
+                                        (when (equal ofile lfn)
+                                          (remove-hook
+                                           'after-load-functions fun)
+                                          (funcall ',func))))
+                            (add-hook 'after-load-functions fun
+                                      'append))))
+                     t))))
+        ;; Add FORM to the element unless it's already there.
+        (unless (member delayed-func (cdr elt))
+          (nconc elt (list delayed-func)))))))
 
 (defmacro with-eval-after-load (file &rest body)
   "Arrange that BODY runs after FILE is loaded."
@@ -9673,6 +10482,82 @@ is either `foreground-color', `background-color', or a keyword."
        (not (memq (car face-or-list)
 		  '(foreground-color background-color)))
        (not (keywordp (car face-or-list)))))
+
+;; GNU faces.el layering: `face-attribute' is Lisp over the
+;; `internal-get-lisp-face-attribute' subr — INHERIT merges through
+;; the face's :inherit chain and then through INHERIT itself.
+(defun face-attribute (face attribute &optional frame inherit)
+  "Return the value of FACE's ATTRIBUTE on FRAME.
+If INHERIT is nil, only attributes directly defined by FACE are
+considered, so the return value may be `unspecified' or a relative
+value.  If INHERIT is a face or a list of faces, the result is
+further merged with that face (or faces) until specified."
+  (let ((value (internal-get-lisp-face-attribute face attribute frame)))
+    (when (and inherit (face-attribute-relative-p attribute value))
+      (let ((inh-from (face-attribute face :inherit frame)))
+        (unless (or (null inh-from) (eq inh-from 'unspecified))
+          (condition-case nil
+              (setq value
+                    (face-attribute-merged-with attribute value inh-from frame))
+            ;; The `inherit' attribute may point to non existent faces.
+            (error nil)))))
+    (when (and inherit
+               (not (eq inherit t))
+               (face-attribute-relative-p attribute value))
+      ;; We should merge with INHERIT as well
+      (setq value (face-attribute-merged-with attribute value inherit frame)))
+    value))
+
+(defun face-attribute-merged-with (attribute value faces &optional frame)
+  "Merges ATTRIBUTE, initially VALUE, with faces from FACES until absolute.
+FACES may be either a single face or a list of faces.
+[This is an internal function.]"
+  (cond ((not (face-attribute-relative-p attribute value))
+         value)
+        ((null faces)
+         value)
+        ((consp faces)
+         (face-attribute-merged-with
+          attribute
+          (face-attribute-merged-with attribute value (car faces) frame)
+          (cdr faces)
+          frame))
+        (t
+         (merge-face-attribute attribute
+                               value
+                               (face-attribute faces attribute frame t)))))
+
+(defconst face-attribute-name-alist
+  '((:family . "font family")
+    (:foundry . "font foundry")
+    (:width . "character set width")
+    (:height . "height in 1/10 pt")
+    (:weight . "weight")
+    (:slant . "slant")
+    (:underline . "underline")
+    (:overline . "overline")
+    (:extend . "extend")
+    (:strike-through . "strike-through")
+    (:box . "box")
+    (:inverse-video . "inverse-video display")
+    (:foreground . "foreground color")
+    (:background . "background color")
+    (:stipple . "background stipple")
+    (:inherit . "inheritance"))
+  "An alist of descriptive names for face attributes.
+Each element has the form (ATTRIBUTE-NAME . DESCRIPTION).")
+
+(defun face-all-attributes (face &optional frame inherit)
+  "Return an alist stating the attributes of FACE.
+Each element of the result has the form (ATTR-NAME . ATTR-VALUE).
+If FRAME is omitted or nil the value describes the default attributes,
+but if you specify FRAME, the value describes the attributes of FACE
+on FRAME.
+INHERIT has the same meaning as in `face-attribute', which see."
+  (mapcar (lambda (pair)
+            (let ((attr (car pair)))
+              (cons attr (face-attribute face attr (or frame t) inherit))))
+          face-attribute-name-alist))
 
 (defun face-at-point (&optional text multiple)
   "Return a face name from point in the current buffer.
@@ -11515,31 +12400,37 @@ returns (function SYM) for an unsafe call head."
        (t (throw 'unsafe (list 'function head))))))))
 
 (defun readablep (object)
-  "Return OBJECT if it has a readable printed representation, else nil."
-  (cond
-   ((or (null object) (numberp object) (stringp object)
-        (symbolp object) (keywordp object))
-    object)
-   ((consp object)
-    (let ((ok t) (rest object))
-      (while (consp rest)
-        (unless (readablep (car rest)) (setq ok nil rest nil))
-        (setq rest (cdr rest)))
-      (and ok (or (null rest) (readablep rest)) object)))
-   ((or (vectorp object) (recordp object))
-    (let ((ok t) (idx 0) (n (length object)))
-      (while (< idx n)
-        (unless (readablep (aref object idx)) (setq ok nil idx n))
-        (setq idx (1+ idx)))
-      (and ok object)))
-   ((hash-table-p object)
-    (let ((ok t))
-      (maphash (lambda (k v)
-                 (unless (and (readablep k) (readablep v))
-                   (setq ok nil)))
-               object)
-      (and ok object)))
-   (t nil)))
+  "Return OBJECT if it has a readable printed representation, else nil.
+In GNU Emacs the result is the printed representation STRING."
+  (let ((ok (cond
+             ((or (null object) (numberp object) (stringp object)
+                  (symbolp object) (keywordp object))
+              t)
+             ((consp object)
+              (let ((ok t) (rest object))
+                (while (consp rest)
+                  (unless (readablep (car rest)) (setq ok nil rest nil))
+                  (setq rest (cdr rest)))
+                (and ok (or (null rest) (readablep rest)))))
+             ((or (vectorp object) (recordp object))
+              (let ((ok t) (idx 0) (n (length object)))
+                (while (< idx n)
+                  (unless (readablep (aref object idx)) (setq ok nil idx n))
+                  (setq idx (1+ idx)))
+                ok))
+             ((hash-table-p object)
+              (let ((ok t))
+                (maphash (lambda (k v)
+                           (unless (and (readablep k) (readablep v))
+                             (setq ok nil)))
+                         object)
+                ok))
+             ;; ;Remacs: lambda/byte-code objects print as readable
+             ;; `#[...]'; subrs (`#<subr ...>') stay unreadable.
+             ((and (functionp object) (not (subrp object))) t)
+             (t nil))))
+    ;; GNU returns the printed form, not OBJECT itself.
+    (and ok (prin1-to-string object))))
 
 (defun undefined ()
   "Beep to tell the user this binding is undefined."
@@ -11789,7 +12680,11 @@ a `let' form, except that the list of symbols can be computed at run-time."
                      ;; BODYFUN is dynamically bound by the outer let*.
                      (list 'funcall ,bodyfun)))))))
 
-(require 'pcase)
+;; (require 'pcase) is deferred to just after the `cl' machinery
+;; block: pcase's `with-eval-after-load 'cl-preloaded' fires
+;; immediately here (cl-preloaded is a pre-registered feature) and
+;; calls `pcase--subtype-bitsets', which needs `built-in-class-p' —
+;; defined only after the cl-defstruct block below evaluates.
 
 (defun drop-while (pred list)
   "Drop elements from the front of LIST that satisfy PRED.
@@ -15776,18 +16671,23 @@ BODY may contain a docstring, declarations, and options (subset).
 Any remaining forms form the default method (specializers all `t')."
   (let ((doc (and (stringp (car body)) (car body)))
         (rest (if (stringp (car body)) (cdr body) body))
-        (opts nil) (methods nil))
+        (opts nil) (methods nil) (decls nil))
     ;; Collect (declare ...) and (:keyword ...) option forms;
     ;; (:method ...) forms become cl-defmethod definitions, GNU-style.
+    ;; `declare' heads go to `decls' instead of `opts' so their
+    ;; specs are evaluated like GNU's cl-defgeneric does.
     (while (and rest
                 (let ((f (car rest)))
                   (or (eq (car-safe f) 'declare)
                       (keywordp (car-safe f))
                       (eq (car-safe f) :method))))
       (let ((f (pop rest)))
-        (if (eq (car-safe f) :method)
-            (push (cdr f) methods)
-          (push f opts))))
+        (cond
+         ((eq (car-safe f) :method)
+          (push (cdr f) methods))
+         ((eq (car-safe f) 'declare)
+          (push (cdr f) decls))
+         (t (push f opts)))))
     `(progn
          (cond
           ((fboundp 'cl-generic-define)
@@ -15818,6 +16718,20 @@ Any remaining forms form the default method (specializers all `t')."
          ,@(mapcar (lambda (m) `(cl-defmethod ,name ,@m))
                    (nreverse methods))
          ,@(and rest `((cl-defmethod ,name ,args ,@rest)))
+         ;; GNU's cl-defgeneric evaluates `declare' specs at
+         ;; definition time via `defun-declarations-alist' (e.g.
+         ;; `gv-expander' registers the `setf' expander).
+         ,@(mapcan
+            (lambda (declaration)
+              (let ((f (cdr (assq (car declaration)
+                                  defun-declarations-alist))))
+                (if f
+                    (list (apply (car f) name args
+                                 (cdr declaration)))
+                  (message "Warning: Unknown defun property `%S' in %S"
+                           (car declaration) name)
+                  nil)))
+            (apply #'append (nreverse decls)))
          ',name)))
 
 (defun cl--generic-dispatch (name args)
@@ -16034,8 +16948,16 @@ VAR, (VAR TYPE), or (VAR (eql FORM))."
   "Random number < LIM (STATE ignored)."
   (random lim))
 
-(defun cl-copy-list (list) "Return a copy of LIST's spine."
-  (copy-sequence list))
+;; GNU cl-lib.el: the copy must preserve a dotted tail — `(a . b)'
+;; copies to `(a . b)', unlike `copy-sequence' which rejects it.
+(defun cl-copy-list (list)
+  "Return a copy of LIST, which may be a dotted list.
+The elements of LIST are not copied, just the list structure itself."
+  (if (consp list)
+      (let ((res nil))
+	(while (consp list) (push (pop list) res))
+	(prog1 (nreverse res) (setcdr res list)))
+    (car list)))
 
 (defun cl-tailp (sublist list)
   "Return t if SUBLIST is a tail (eq) of LIST."
@@ -16274,84 +17196,96 @@ Keywords supported: :test :test-not :key :if :if-not :count :start :end
    (t (error "cl-coerce: unsupported type %s" type))))
 
 (defun cl-typep (val type)
-  "Return t if VAL is of TYPE (subset of CL type specifiers)."
+  "Return t if VAL is of TYPE (GNU `cl-typep' expansion semantics).
+Mirrors the `define-inline' body of GNU cl-macs.el: compound
+specifiers `and'/`or'/`not'/`eql'/`member'/`satisfies', the hybrid
+ranged `(integer|float|number MIN MAX)', `cl-deftype-handler'
+expansion, `cl-deftype-satisfies' predicates, and struct classes."
   (cond
    ((consp type)
-    (let ((op (car type)))
+    (let* ((op (car type))
+           (args (cdr type))
+           (h (and (symbolp op) (get op 'cl-deftype-handler))))
       (cond
-       ;; `cl-some'/`cl-every' are dump-voided and carry no autoload at
-       ;; -Q (as in GNU), so compound specifiers can't reach them here.
-       ((eq op 'or)
-        (let ((res nil) (ts (cdr type)))
-          (while (and ts (not res))
-            (setq res (cl-typep val (car ts)) ts (cdr ts)))
-          res))
+       (h (cl-typep val (apply h args)))
+       ;; FIXME: Move this to a `cl-deftype'.  The problem being that these
+       ;; types are hybrid "built-in and derived".
+       ((memq op '(integer float number))
+        (let* ((min (car args)) (max (cadr args)))
+          (and (cl-typep val op)
+               (if (memq min '(* nil)) t
+                 (if (consp min) (> val (car min)) (>= val min)))
+               (if (memq max '(* nil)) t
+                 (if (consp max) (< val (car max)) (<= val max))))))
+       ((eq op 'not) (not (cl-typep val (car args))))
        ((eq op 'and)
-        (let ((res t) (ts (cdr type)))
+        (let ((res t) (ts args))
           (while (and ts res)
             (setq res (cl-typep val (car ts)) ts (cdr ts)))
           res))
-       ((eq op 'not) (not (cl-typep val (cadr type))))
-       ((eq op 'member) (memql val (cdr type)))
-       ((eq op 'satisfies) (funcall (cadr type) val))
-       (t (let ((h (and (symbolp op) (get op 'cl-deftype-handler))))
-            (if h
-                (cl-typep val (apply h (cdr type)))
-              (funcall op val)))))))
+       ((eq op 'or)
+        (let ((res nil) (ts args))
+          (while (and ts (not res))
+            (setq res (cl-typep val (car ts)) ts (cdr ts)))
+          res))
+       ((eq op 'eql) (and (eql val (car args)) t))
+       ((eq op 'member) (and (memql val args) t))
+       ;; A GNU `(satisfies . F)' dotted spec carries the function
+       ;; object; `(satisfies F)' a name/lambda form.
+       ((eq op 'satisfies)
+        (funcall (if (consp args) (car args) args) val))
+       (t (funcall op val)))))
    (t
-    (cond
-     ((eq type t) t)
-     ((eq type 'null) (null val))
-     (t
-      (let ((pred (and (symbolp type)
-                       (get type 'cl-deftype-satisfies))))
-        (cond
-         (pred (funcall pred val))
-         ((and (symbolp type) (get type 'cl-deftype-handler))
-          (cl-typep val (funcall (get type 'cl-deftype-handler))))
-         (t
-          (let ((pred (cdr (assq type '((integer . integerp) (number . numberp)
-                                       (float . floatp) (string . stringp)
-                                       (symbol . symbolp) (cons . consp)
-                                       (list . listp) (vector . vectorp)
-                                       (hash-table . hash-table-p)
-                                       (function . functionp)
-                                       (character . characterp)
-                                       (boolean . booleanp)
-                                       (sequence . sequencep) (array . arrayp)
-                                       (atom . atom) (keyword . keywordp)
-                                       (fixnum . fixnump) (buffer . bufferp)
-                                       (window . windowp) (process . processp)
-                                       (frame . framep) (marker . markerp))))))
-            (if pred
-                (funcall pred val)
-              ;; A `cl--class' type (cl-defstruct record/vector/list
-              ;; name): instance check mirrors the generated `NAME-p'
-              ;; predicate — the object's tag must be in the type's
-              ;; `cl-struct-TYPE-tags' list (covers subclasses).
-              (let ((class (and (symbolp type) (get type 'cl--class)))
-                    (tagsv (and (symbolp type)
-                                (intern-soft (concat "cl-struct-"
-                                                     (symbol-name type)
-                                                     "-tags")))))
-                (cond
-                 ((null class)
-                  (error "cl-typep: unknown type %s" type))
-                 ((and tagsv (boundp tagsv))
-                  (let ((tags (symbol-value tagsv)))
-                    (cond ((recordp val) (memq (aref val 0) tags))
-                          ((vectorp val) (memq (aref val 0) tags))
-                          ((consp val) (memq (car val) tags))
-                          (t nil))))
-                 ;; GNU: (cl-typep X CLASS) is true when the class of X
-                 ;; descends from CLASS — walk the value's own class
-                 ;; hierarchy (covers eieio--class types which have no
-                 ;; cl-struct-*-tags variable).
-                 (t (let* ((vt (type-of val))
-                           (vc (and (symbolp vt) (get vt 'cl--class))))
-                      (and vc
-                           (memq type (cl--class-allparents vc))
-                           t)))))))))))))))
+    (let ((pred (and (symbolp type)
+                     (get type 'cl-deftype-satisfies))))
+      (cond
+       (pred (funcall pred val))
+       ((and (symbolp type) (get type 'cl-deftype-handler))
+        (cl-typep val (funcall (get type 'cl-deftype-handler))))
+       ((memq type '(nil t)) type)
+       (t
+        (let ((pred (cdr (assq type '((integer . integerp) (number . numberp)
+                                     (float . floatp) (string . stringp)
+                                     (symbol . symbolp) (cons . consp)
+                                     (list . listp) (vector . vectorp)
+                                     (hash-table . hash-table-p)
+                                     (function . functionp)
+                                     (character . characterp)
+                                     (boolean . booleanp)
+                                     (sequence . sequencep) (array . arrayp)
+                                     (atom . atom) (keyword . keywordp)
+                                     (fixnum . fixnump) (buffer . bufferp)
+                                     (window . windowp) (process . processp)
+                                     (frame . framep) (marker . markerp))))))
+          (if pred
+              (funcall pred val)
+            ;; A `cl--class' type (cl-defstruct record/vector/list
+            ;; name): instance check mirrors the generated `NAME-p'
+            ;; predicate — the object's tag must be in the type's
+            ;; `cl-struct-TYPE-tags' list (covers subclasses).
+            (let ((class (and (symbolp type) (get type 'cl--class)))
+                  (tagsv (and (symbolp type)
+                              (intern-soft (concat "cl-struct-"
+                                                   (symbol-name type)
+                                                   "-tags")))))
+              (cond
+               ((null class)
+                (error "cl-typep: unknown type %s" type))
+               ((and tagsv (boundp tagsv))
+                (let ((tags (symbol-value tagsv)))
+                  (cond ((recordp val) (memq (aref val 0) tags))
+                        ((vectorp val) (memq (aref val 0) tags))
+                        ((consp val) (memq (car val) tags))
+                        (t nil))))
+               ;; GNU: (cl-typep X CLASS) is true when the class of X
+               ;; descends from CLASS — walk the value's own class
+               ;; hierarchy (covers eieio--class types which have no
+               ;; cl-struct-*-tags variable).
+               (t (let* ((vt (type-of val))
+                         (vc (and (symbolp vt) (get vt 'cl--class))))
+                    (and vc
+                         (memq type (cl--class-allparents vc))
+                         t)))))))))))))
 
 (defun cl-some (pred seq &rest _keys)
   "First non-nil (PRED X) for X in SEQ."
@@ -16400,11 +17334,8 @@ To define new types, see `cl-deftype'."
                                    ,temp ',form)))
                  nil))))
 
-(defmacro cl-assert (form &optional show-args string &rest args)
-  "Signal an error unless FORM is non-nil."
-  `(unless ,form
-     (signal 'cl-assertion-failed
-             (list ',form ,show-args ,string ,@args))))
+;; `cl-assert' keeps its GNU-verbatim definition above (~12053); a
+;; subset redefinition that signaled wrong error data was removed.
 
 ;; ---------- cl-macs subset ----------
 
@@ -16561,34 +17492,68 @@ To define new types, see `cl-deftype'."
           (error "Missing argument for %s" (car ks)))
         (setq ks (cddr ks))))))
 
+;; GNU cl-macs.el, verbatim: the `mapcar' runs during macroexpansion,
+;; so a mid-list `t'/`otherwise' clause (or a `cl--ecase-error-flag'
+;; non-final clause) errors at expansion time.
 (defmacro cl-case (expr &rest clauses)
-  "Evaluate CLAUSES matching EXPR (each (KEYS . BODY))."
-  (let ((v (gensym)) (default nil) (cases nil))
-    (dolist (cl clauses)
-      (if (memq (car cl) '(t otherwise))
-          (setq default `(progn ,@(cdr cl)))
-        (let ((k (car cl)))
-          (push (list (if (consp k) `(memql ,v ',k) `(eql ,v ',k))
-                      `(progn ,@(cdr cl)))
-                cases))))
-    `(let ((,v ,expr))
-       (cond ,@(nreverse cases) (t ,default)))))
+  "Eval EXPR and choose among clauses on that value.
+Each clause looks like (KEYLIST BODY...).  EXPR is evaluated and
+compared against each key in each KEYLIST; the corresponding BODY
+is evaluated.  If no clause succeeds, this macro returns nil.  A
+single non-nil atom may be used in place of a KEYLIST of one
+atom.  A KEYLIST of t or `otherwise' is allowed only in the final
+clause, and matches if no other keys match.  Key values are
+compared by `eql'.
+
+\(fn EXPR (KEYLIST BODY...)...)"
+  (declare (indent 1) (debug (form &rest (sexp body))))
+  (macroexp-let2 macroexp-copyable-p temp expr
+    (let* ((head-list nil)
+           (has-otherwise nil))
+      `(cond
+        ,@(mapcar
+           (lambda (c)
+             (cons (cond (has-otherwise
+                          (error "Misplaced t or `otherwise' clause"))
+                         ((memq (car c) '(t otherwise))
+                          (setq has-otherwise t)
+                          t)
+                         ((eq (car c) 'cl--ecase-error-flag)
+                          `(error "cl-ecase failed: %s, %s"
+                                  ,temp ',(reverse head-list)))
+                         ((null (car c))
+                          (macroexp-warn-and-return
+                           "Case nil will never match"
+                           nil 'suspicious))
+                         ((and (consp (car c)) (cdar c) (not (cddar c))
+                               (memq (caar c) '(quote function)))
+                          (macroexp-warn-and-return
+                           (format-message
+                            (concat "Case %s will match `%s'.  If "
+                                    "that's intended, write %s "
+                                    "instead.  Otherwise, don't "
+                                    "quote `%s'.")
+                            (car c) (caar c) (list (cadar c) (caar c))
+                            (cadar c))
+                           `(cl-member ,temp ',(car c)) 'suspicious))
+                         ((listp (car c))
+                          (setq head-list (append (car c) head-list))
+                          `(cl-member ,temp ',(car c)))
+                         (t
+                          (if (memq (car c) head-list)
+                              (error "Duplicate key in case: %s"
+                                     (car c)))
+                          (push (car c) head-list)
+                          `(eql ,temp ',(car c))))
+                   (or (cdr c) '(nil))))
+           clauses)))))
 
 (defmacro cl-ecase (expr &rest clauses)
-  "Like `cl-case' but signals an error when no clause matches."
-  (let ((v (gensym)) (cases nil) (allkeys nil))
-    (dolist (cl clauses)
-      (let ((k (car cl)))
-        (setq allkeys (append allkeys (if (consp k) k (list k))))
-        (push (list (if (consp k) `(memql ,v ',k) `(eql ,v ',k))
-                    `(progn ,@(cdr cl)))
-              cases)))
-    `(let ((,v ,expr))
-       (cond ,@(nreverse cases)
-             (t (error "cl-ecase failed: %s, %s" ,v
-                       ',allkeys))))))
-
-;; ---------- seq additions ----------
+  "Like `cl-case', but error if no case fits.
+`otherwise'-clauses are not allowed.
+\n(fn EXPR (KEYLIST BODY...)...)"
+  (declare (indent 1) (debug cl-case))
+  `(cl-case ,expr ,@clauses (cl--ecase-error-flag)))
 
 (defun seq-sort (predicate sequence)
   "Return SEQUENCE sorted by PREDICATE (non-destructive)."
@@ -16745,102 +17710,244 @@ This does not modify SEQUENCE."
   (apply #'seq-concatenate (or type 'list)
          (seq-map function sequence)))
 
-(defalias 'cl-dolist 'dolist)
-(defalias 'cl-dotimes 'dotimes)
+;; GNU cl-macs: `cl-dolist'/`cl-dotimes' are `dolist'/`dotimes' wrapped
+;; in an implicit `(cl-block nil ...)' so `cl-return' exits them.
+(defmacro cl-dolist (spec &rest body)
+  "Like `dolist', but with an implicit nil block for `cl-return'."
+  `(cl-block nil (dolist ,spec ,@body)))
 
+(defmacro cl-dotimes (spec &rest body)
+  "Like `dotimes', but with an implicit nil block for `cl-return'."
+  `(cl-block nil (dotimes ,spec ,@body)))
+
+;; GNU cl-macs.el, verbatim.  `otherwise' is a plain default clause —
+;; checked before `cl-typep' clauses, so even a mid-list `otherwise'
+;; just stops matching early (GNU quirk, no error).  `t' in clause
+;; position is the type `t' (cl-typep returns t for it).
 (defmacro cl-typecase (expr &rest clauses)
-  "Evaluate CLAUSES matching the type of EXPR (each (TYPE . BODY))."
-  (let ((v (gensym)) (default nil) (cases nil))
-    (dolist (cl clauses)
-      (if (memq (car cl) '(t otherwise))
-          (setq default `(progn ,@(cdr cl)))
-        (push (list `(cl-typep ,v ',(car cl))
-                    `(progn ,@(cdr cl)))
-              cases)))
-    `(let ((,v ,expr))
-       (cond ,@(nreverse cases) (t ,default)))))
+  "Eval EXPR and choose among clauses on that value.
+Each clause looks like (TYPE BODY...).  EXPR is evaluated and, if it
+satisfies TYPE, the corresponding BODY is evaluated.  If no clause
+succeeds, this macro returns nil.  A TYPE of t or `otherwise' is
+allowed only in the final clause, and matches if no other keys match.
+\n(fn EXPR (TYPE BODY...)...)"
+  (declare (indent 1)
+           (debug (form &rest ([&or cl-type-spec "otherwise"] body))))
+  (macroexp-let2 macroexp-copyable-p temp expr
+    (let* ((type-list nil))
+      (cons
+       'cond
+       (mapcar
+        (lambda (c)
+          (cons (cond ((eq (car c) 'otherwise) t)
+                      ((eq (car c) 'cl--ecase-error-flag)
+                       `(error "cl-etypecase failed: %s, %s"
+                               ,temp ',(reverse type-list)))
+                      (t
+                       (push (car c) type-list)
+                       `(cl-typep ,temp ',(car c))))
+                (or (cdr c) '(nil))))
+        clauses)))))
 
 (defmacro cl-etypecase (expr &rest clauses)
-  "Like `cl-typecase' but signals an error when no clause matches."
-  (let ((v (gensym)) (cases nil) (types nil))
-    (dolist (cl clauses)
-      (push (car cl) types)
-      (push (list `(cl-typep ,v ',(car cl)) `(progn ,@(cdr cl))) cases))
-    `(let ((,v ,expr))
-       (cond ,@(nreverse cases)
-             (t (error "cl-etypecase failed: %s, %s" ,v
-                       ',(nreverse types)))))))
+  "Like `cl-typecase', but error if no case fits.
+`otherwise'-clauses are not allowed.
+\n(fn EXPR (TYPE BODY...)...)"
+  (declare (indent 1) (debug cl-typecase))
+  `(cl-typecase ,expr ,@clauses (cl--ecase-error-flag)))
+;; GNU cl-macs.el `cl--do-arglist' machinery, verbatim modulo
+;; `cl--slet*' (substituted by `macroexp-let*' — the dynamic-binding
+;; check only matters for byte-compiled warnings).  Used by
+;; `cl-destructuring-bind' and `cl-deftype' expanders.
+
+(defvar cl--bind-block) ;Name of surrounding block, only use for `signal' data.
+(defvar cl--bind-defs) ;(DEF . DEFS) giving the "default default" for optargs.
+(defvar cl--bind-enquote)      ;Non-nil if &cl-quote was in the formal arglist!
+(defvar cl--bind-lets) (defvar cl--bind-forms)
+
+(defmacro cl--pop2 (place)
+  `(prog1 (car (cdr ,place))
+     (setq ,place (cdr (cdr ,place)))))
+
+(defun cl--const-expr-p (x)
+  "Check if X is constant (i.e., no side effects or dependencies).
+
+See `macroexp-const-p' for similar functionality without cl-lib dependency."
+  (cond ((consp x)
+	 (or (eq (car x) 'quote)
+	     (and (memq (car x) '(function cl-function))
+		  (or (symbolp (nth 1 x))
+		      (and (eq (car-safe (nth 1 x)) 'lambda) 'func)))))
+	((symbolp x) (and (memq x '(nil t)) t))
+	(t t)))
+
+(defun cl--const-expr-val (x)
+  "Return the value of X known at compile-time.
+If X is not known at compile time, return nil.  Before testing
+whether X is known at compile time, macroexpand it completely in
+`macroexpand-all-environment'."
+  (let ((x (macroexpand-all x macroexpand-all-environment)))
+    (if (macroexp-const-p x)
+        (if (consp x) (nth 1 x) x))))
+
+(defun cl--do-&aux (args)
+  (while (and (eq (car args) '&aux) (pop args))
+    (while (and args (not (memq (car args) cl--lambda-list-keywords)))
+      (if (consp (car args))
+          (if (and cl--bind-enquote (cadar args))
+              (cl--do-arglist (caar args)
+                              `',(cadr (pop args)))
+            (cl--do-arglist (caar args) (cadr (pop args))))
+        (cl--do-arglist (pop args) nil))))
+  (if args (error "Malformed argument list ends with: %S" args)))
+
+(defun cl--do-arglist (args expr &optional num)   ; uses cl--bind-*
+  (if (nlistp args)
+      (if (or (memq args cl--lambda-list-keywords) (not (symbolp args)))
+	  (error "Invalid argument name: %s" args)
+	(push (list args expr) cl--bind-lets))
+    (setq args (cl-copy-list args))
+    (let ((p (last args))) (if (cdr p) (setcdr p (list '&rest (cdr p)))))
+    (let ((p (memq '&body args))) (if p (setcar p '&rest)))
+    (if (memq '&environment args) (error "&environment used incorrectly"))
+    (let ((restarg (memq '&rest args))
+	  (safety (if (macroexp-compiling-p) cl--optimize-safety 3))
+	  (keys t)
+	  (laterarg nil) (exactarg nil) minarg)
+      (or num (setq num 0))
+      (setq restarg (if (listp (cadr restarg))
+                        (make-symbol "--cl-rest--")
+                      (cadr restarg)))
+      (push (list restarg expr) cl--bind-lets)
+      (if (eq (car args) '&whole)
+	  (push (list (cl--pop2 args) restarg) cl--bind-lets))
+      (let ((p args))
+	(setq minarg restarg)
+	(while (and p (not (memq (car p) cl--lambda-list-keywords)))
+	  (or (eq p args) (setq minarg (list 'cdr minarg)))
+	  (setq p (cdr p)))
+	(if (memq (car p) '(nil &aux))
+	    (setq minarg `(= (length ,restarg)
+                             ,(length (cl-ldiff args p)))
+		  exactarg (not (eq args p)))))
+      (while (and args (not (memq (car args) cl--lambda-list-keywords)))
+	(let ((poparg (list (if (or (cdr args) (not exactarg)) 'pop 'car-safe)
+			    restarg)))
+	  (cl--do-arglist
+	   (pop args)
+	   (if (or laterarg (= safety 0)) poparg
+	     `(if ,minarg ,poparg
+                (signal 'wrong-number-of-arguments
+                        (list ,(and (not (eq cl--bind-block 'cl-none))
+                                    `',cl--bind-block)
+                              (length ,restarg)))))))
+	(setq num (1+ num) laterarg t))
+      (while (and (eq (car args) '&optional) (pop args))
+	(while (and args (not (memq (car args) cl--lambda-list-keywords)))
+	  (let ((arg (pop args)))
+	    (or (consp arg) (setq arg (list arg)))
+	    (if (cddr arg) (cl--do-arglist (nth 2 arg) `(and ,restarg t)))
+	    (let ((def (if (cdr arg) (nth 1 arg)
+			 (or (car cl--bind-defs)
+			     (nth 1 (assq (car arg) cl--bind-defs)))))
+		  (poparg `(pop ,restarg)))
+	      (and def cl--bind-enquote (setq def `',def))
+	      (cl--do-arglist (car arg)
+			     (if def `(if ,restarg ,poparg ,def) poparg))
+	      (setq num (1+ num))))))
+      (if (eq (car args) '&rest)
+	  (let ((arg (cl--pop2 args)))
+	    (if (consp arg) (cl--do-arglist arg restarg)))
+	(or (eq (car args) '&key) (= safety 0) exactarg
+	    (push `(if ,restarg
+                       (signal 'wrong-number-of-arguments
+                               (list
+                                ,(and (not (eq cl--bind-block 'cl-none))
+                                      `',cl--bind-block)
+                                (+ ,num (length ,restarg)))))
+                  cl--bind-forms)))
+      (while (and (eq (car args) '&key) (pop args))
+        (unless (listp keys) (setq keys nil))
+	(while (and args (not (memq (car args) cl--lambda-list-keywords)))
+	  (let ((arg (pop args)))
+	    (or (consp arg) (setq arg (list arg)))
+	    (let* ((karg (if (consp (car arg)) (caar arg)
+                           (let ((name (symbol-name (car arg))))
+                             ;; Strip a leading underscore, since it only
+                             ;; means that this argument is unused, but
+                             ;; shouldn't affect the key's name (bug#12367).
+                             (if (eq ?_ (aref name 0))
+                                 (setq name (substring name 1)))
+                             (intern (format ":%s" name)))))
+                   (varg (if (consp (car arg)) (cadar arg) (car arg)))
+		   (def (if (cdr arg) (cadr arg)
+                          ;; The ordering between those two or clauses is
+                          ;; irrelevant, since in practice only one of the two
+                          ;; is ever non-nil (the car is only used for
+                          ;; cl-deftype which doesn't use the cdr).
+			  (or (car cl--bind-defs)
+                              (cadr (assq varg cl--bind-defs)))))
+                   (look `(plist-member ,restarg ',karg)))
+	      (and def cl--bind-enquote (setq def `',def))
+	      (if (cddr arg)
+		  (let* ((temp (or (nth 2 arg) (make-symbol "--cl-var--")))
+			 (val `(car (cdr ,temp))))
+		    (cl--do-arglist temp look)
+		    (cl--do-arglist varg
+				   `(if ,temp
+                                        (prog1 ,val (setq ,temp t))
+                                      ,def)))
+		(cl--do-arglist
+		 varg
+		 `(car (cdr ,(if (null def)
+				 look
+			       `(or ,look
+                                    ,(if (eq (cl--const-expr-p def) t)
+					 `'(nil ,(cl--const-expr-val def))
+				       `(list nil ,def))))))))
+	      (push karg keys)))))
+      (when (consp keys) (setq keys (nreverse keys)))
+      (or (and (eq (car args) '&allow-other-keys) (pop args))
+	  (= safety 0)
+          (cond
+           ((eq keys t) nil)            ;No &keys at all
+           ((null keys)                 ;A &key but no actual keys specified.
+            (push `(when ,restarg
+                     (error ,(format "Keyword argument %%S not one of %S"
+                                     keys)
+                            (car ,restarg)))
+                  cl--bind-forms))
+           (t
+	    (let* ((var (make-symbol "--cl-keys--"))
+		   (allow '(:allow-other-keys))
+		   (check `(while ,var
+                             (cond
+                              ((memq (car ,var) ',(append keys allow))
+                               (unless (cdr ,var)
+                                 (error "Missing argument for %s" (car ,var)))
+                               (setq ,var (cdr (cdr ,var))))
+                              ((car (cdr (memq (quote ,@allow) ,restarg)))
+                               (setq ,var nil))
+                              (t
+                               (error
+                                ,(format "Keyword argument %%S not one of %S"
+                                         keys)
+                                (car ,var)))))))
+	      (push `(let ((,var ,restarg)) ,check) cl--bind-forms)))))
+      (cl--do-&aux args)
+      nil)))
 
 (defmacro cl-destructuring-bind (args expr &rest body)
-  "Bind ARGS (a list pattern) to elements of EXPR.
-Subset: &optional/&rest/&key/&aux specifiers; a dotted tail
-binds the remaining list; nested list patterns destructure
-recursively, as in GNU `cl-destructuring-bind'."
-  (let ((vals (gensym)) (binds nil) (nested nil)
-        (i 0) (state 'req) (cur args) (restv nil))
-    (while (consp cur)
-      (let ((a (car cur)))
-        (cond
-         ((eq a '&optional) (setq state 'opt))
-         ((memq a '(&rest &body)) (setq state 'rest))
-         ((eq a '&key)
-          (unless restv
-            (setq restv (gensym "rest"))
-            (push (list restv `(nthcdr ,i ,vals)) binds))
-          (setq state 'key))
-         ((eq a '&allow-other-keys) nil)
-         ((eq a '&aux) (setq state 'aux))
-         ((eq state 'rest)
-          (if (symbolp a)
-              (push (list a `(nthcdr ,i ,vals)) binds)
-            (let ((g (gensym "rest")))
-              (push (list g `(nthcdr ,i ,vals)) binds)
-              (push (list a g) nested)
-              (setq restv g)))
-          (when (symbolp a) (setq restv a))
-          (setq state 'done))
-         ((eq state 'key)
-          ;; Spec: SYM | (SYM DEF [PRE]) | ((:KW SYM-OR-PAT) DEF [PRE])
-          (let* ((spec (if (consp a) a (list a)))
-                 (v (car spec))
-                 (def (cadr spec))
-                 (pre (caddr spec))
-                 (kw (if (consp v) (car v)
-                       (intern (concat ":" (symbol-name v)))))
-                 (var (if (consp v) (cadr v) v))
-                 (g (gensym "key")))
-            (push (list g `(car (cdr (or (plist-member ,restv ,kw)
-                                         (list nil ,def)))))
-                  binds)
-            (when pre
-              (push (list pre `(and (plist-member ,restv ,kw) t))
-                    binds))
-            (if (symbolp var)
-                (push (list var g) binds)
-              (push (list var g) nested))))
-         ((eq state 'aux)
-          (push (if (consp a) a (list a nil)) binds))
-         ((eq state 'done) nil)
-         (t
-          (let ((v (if (consp a) (car a) a))
-                (def (and (consp a) (cadr a))))
-            (if (symbolp v)
-                (push (list v `(or (nth ,i ,vals) ,def)) binds)
-              ;; Nested list pattern (e.g. ((x y) DEFAULT)): bind a
-              ;; temp and destructure it around the body.
-              (let ((g (gensym "pat")))
-                (push (list g `(or (nth ,i ,vals) ,def)) binds)
-                (push (list v g) nested)))
-            (setq i (1+ i))))))
-      (setq cur (cdr cur)))
-    ;; Dotted tail: (a b . rest) — REST gets the remainder, like
-    ;; GNU's `cl--destructuring-bind'.
-    (when (and cur (not (eq state 'done)))
-      (push (list cur `(nthcdr ,i ,vals)) binds))
-    (let ((exp `(let* ((,vals ,expr) ,@(nreverse binds)) ,@body)))
-      (dolist (pr nested)
-        (setq exp `(cl-destructuring-bind ,(car pr) ,(cadr pr) ,exp)))
-      exp)))
+  "Bind the variables in ARGS to the result of EXPR and execute BODY."
+  (declare (indent 2))
+  (let* ((cl--bind-lets nil)
+         (cl--bind-forms nil)
+	 (cl--bind-defs nil)
+         (cl--bind-block args)
+         (cl--bind-enquote nil))
+    (cl--do-arglist (or args '(&aux)) expr)
+    (macroexp-let* (nreverse cl--bind-lets)
+                   (macroexp-progn (append (nreverse cl--bind-forms) body)))))
 
 (defmacro cl-letf (bindings &rest body)
   "Temporarily bind to PLACEs.
@@ -17294,34 +18401,38 @@ NAME and the slots, as in GNU's `cl-defstruct'."
                `(defun ,ctor (&rest cl--keys)
                   (,mk ,@(when named `(',n)) ,@(nreverse vals)))
                defs))))))
-    ;; Predicate.  Named structs test tag membership in the
-    ;; `cl-struct-NAME-tags' list so subclasses count, like GNU's
-    ;; `cl-struct-p' hierarchy; anonymous types test the container.
+    ;; Predicate.  GNU only defines a predicate for *named* structs
+    ;; (or when :predicate names one): the name defaults to `NAME-p'
+    ;; for named structs, `cl--struct-NAME-p' when (:predicate nil)
+    ;; suppresses the public name.  Named structs test tag membership
+    ;; in the `cl-struct-NAME-tags' list so subclasses count, like
+    ;; GNU's `cl-struct-p' hierarchy; vector structs also require the
+    ;; instance to be at least as long as the descriptor list.
     (let ((po (funcall opt :predicate)))
-      (when (or (not po) (cadr po))
-        (let ((pred (if po (cadr po)
-                      (intern (concat (symbol-name n) "-p"))))
+      (when (or named (and po (cadr po)))
+        (let ((pred (cond ((and po (cadr po)) (cadr po))
+                          ((and po (null (cadr po)))
+                           (intern (concat "cl--struct-" (symbol-name n) "-p")))
+                          (t (intern (concat (symbol-name n) "-p")))))
               (tags (intern (concat "cl-struct-" (symbol-name n)
                                     "-tags"))))
           (push
            `(defun ,pred (ob)
               ,(cond
                 ((eq type 'vector)
-                 (if named
-                     `(and (vectorp ob)
-                           (memq (aref ob 0) ,tags)
-                           t)
-                   `(vectorp ob)))
+                 `(and (vectorp ob)
+                       (>= (length ob) ,(1+ (length slots)))
+                       (memq (aref ob 0) ,tags)
+                       t))
                 ((eq type 'list)
-                 (if named
-                     `(and (consp ob)
-                           (memq (car ob) ,tags)
-                           t)
-                   `(listp ob)))
-                (t `(and (recordp ob)
-                         (memq (aref ob 0) ,tags)
-                         t))))
-           defs))))
+                 `(and (consp ob)
+                       (memq (car ob) ,tags)
+                       t))
+                (t `(and (memq (type-of ob) ,tags) t))))
+           defs)
+          ;; GNU registers the predicate as the type's
+          ;; `cl-deftype-satisfies' so (cl-typep X 'NAME) works.
+          (push `(put ',n 'cl-deftype-satisfies #',pred) defs))))
     ;; Copier.
     (let ((co (funcall opt :copier)))
       (when (or (not co) (cadr co))
@@ -17421,21 +18532,27 @@ indicates a `record' struct type."
 
 (defun cl-struct-slot-info (struct-type)
   "Return a list of slot names of struct STRUCT-TYPE.
-Each entry is a list (SLOT-NAME . OPTS) as in GNU's cl-macs.
-Dummy slots that represent the struct name may appear first."
+Each entry is a list (SLOT-NAME . OPTS), where SLOT-NAME is a
+slot name symbol and OPTS is a list of slot options given to
+`cl-defstruct'.  Dummy slots that represent the struct name and
+slots skipped by :initial-offset may appear in the list."
   (declare (side-effect-free t) (pure t))
-  (let* ((info (get struct-type 'cl-struct--pcase-info))
-         (slots (get struct-type 'cl--defstruct-slots))
-         (named (get struct-type 'cl--defstruct-named))
-         descs)
-    (unless info
-      (error "%s is not a known cl-struct type" struct-type))
-    (if named (push '(cl-tag-slot) descs))
-    (dolist (slot slots)
-      (push (if (consp slot)
-                (list (car slot) (cadr slot))
-              (list slot))
-            descs))
+  (let* ((class (cl--struct-get-class struct-type))
+         (slots (cl--struct-class-slots class))
+         (type (cl--struct-class-type class))
+         (named (cl--struct-class-named class))
+         (descs (if type () (list '(cl-tag-slot)))))
+    ;; GNU emits a `cl-tag-slot' descriptor for named vector/list
+    ;; structs too (the tag occupies element 0): mirror that entry.
+    (when (and type named) (push '(cl-tag-slot nil) descs))
+    (dotimes (i (length slots))
+      (let ((slot (aref slots i)))
+        (push `(,(cl--slot-descriptor-name slot)
+                ,(cl--slot-descriptor-initform slot)
+                ,@(if (not (eq (cl--slot-descriptor-type slot) t))
+                      `(:type ,(cl--slot-descriptor-type slot)))
+                ,@(cl--alist-to-plist (cl--slot-descriptor-props slot)))
+              descs)))
     (nreverse descs)))
 
 (defun cl-struct-slot-offset (struct-type slot-name)
@@ -17477,6 +18594,15 @@ Signal `cl-struct-unknown-slot' if there is no such slot."
 (defmacro cl--find-class (type)
   "Return the class descriptor of TYPE, or nil."
   `(get ,type 'cl--class))
+
+;; `setf' on a macro-named place expands lazily under the interpreter;
+;; after `cl--find-class's cell is voided for GNU -Q parity the gv
+;; expansion falls back to a `(setf cl--find-class)' function (GNU
+;; never needs one — its copy is byte-compiled, `setf' becoming `put'
+;; at compile time).  The cell is voided into `remacs--dump-fn' by
+;; eval.rs so `symbol-function'/`fboundp' still match GNU's nil.
+(fset (intern "(setf cl--find-class)")
+      (lambda (v name) (put name 'cl--class v)))
 
 (defvar cl--struct-default-parent nil
   "Indirect default parent for record structs (bootstrapping).")
@@ -17697,8 +18823,10 @@ and stores it under `cl--class'."
              'cl-struct-built-in-class-tags))
 
 (defun cl--builtin-type-p (name)
-  (let ((class (and (symbolp name) (get name 'cl--class))))
-    (and class (built-in-class-p class))))
+  (if (not (fboundp 'built-in-class-p)) ;; Early bootstrap
+      nil
+    (let ((class (and (symbolp name) (get name 'cl--class))))
+      (and class (built-in-class-p class)))))
 
 (defun cl--struct-name-p (name)
   "Return t if NAME is a valid structure name for `cl-defstruct'."
@@ -17852,9 +18980,11 @@ and stores it under `cl--class'."
 
 (defmacro cl-deftype (name arglist &rest body)
   "Define NAME as a new data type (subset of GNU `cl-deftype').
-Registers a `cl-deftype-handler' expander and, when the expansion is
-a literal `(satisfies PRED)', a `cl-deftype-satisfies' predicate.
-A `declare' spec of the form (parents T...) registers the parents."
+Registers a `cl-deftype-handler' expander; the type specifier
+computed with default arguments seeds `cl-deftype-satisfies' with
+`#f' for `(satisfies f)' specs and `(lambda (x) (cl-typep x 'SPEC))'
+otherwise (GNU `cl-deftype').  A `declare' spec of the form
+(parents T...) registers the parents."
   (declare (indent 2) (doc-string 3))
   (when (stringp (car body)) (pop body))
   (let ((parents nil))
@@ -17862,11 +18992,19 @@ A `declare' spec of the form (parents T...) registers the parents."
       (dolist (d (cdr (pop body)))
         (when (eq (car-safe d) 'parents)
           (setq parents (cdr d)))))
-    ;; GNU's `&cl-defs' makes every argument optional with default `*'
-    ;; so the expander can also be called with no arguments.
-    (let ((dargs (mapcar (lambda (a)
-                           (if (symbolp a) (list a ''*) a))
-                         arglist)))
+    ;; GNU's `&cl-defs ('*)' makes every &optional argument whose spec
+    ;; omits a default default to `*' (the "don't care" bound used by
+    ;; ranged types like (integer LO HI)); bare symbols keep their
+    ;; position's requiredness (a required arg still errors on a
+    ;; short call, matching GNU).
+    (let ((dargs (let ((state nil) (out nil))
+                   (dolist (a arglist (nreverse out))
+                     (cond
+                      ((memq a cl--lambda-list-keywords)
+                       (setq state a) (push a out))
+                      ((and (eq state '&optional) (symbolp a))
+                       (push (list a ''*) out))
+                      (t (push a out)))))))
       `(cl--define-derived-type
         ',name
         (lambda (&rest cl--args)
@@ -17876,15 +19014,38 @@ A `declare' spec of the form (parents T...) registers the parents."
                                    (cl-destructuring-bind
                                        ,dargs cl--args ,@body)))
                       (error nil))))
-          (and (consp spec) (eq (car spec) 'satisfies)
-               (cadr spec)))
+          (cond ((eq (car-safe spec) 'satisfies) (cadr spec))
+                ((null spec) nil)
+                (t `(lambda (x) (cl-typep x ',spec)))))
         ',parents))))
+
+;; GNU cl-macs.el derives `real' (ranged number) via its
+;; `cl--defnumtype'/`cl-deftype'; the bounds specifiers use dotted
+;; `(satisfies . FUNCTION)' pairs, which `cl-typep' funcalls directly.
+;; The bound value is embedded literally, so the lambda is
+;; self-contained under either scoping mode.
+(cl-deftype real (&optional min max)
+  `(and number
+        ,(if (memq min '(* nil)) t
+           `(satisfies . ,(eval `(function (lambda (val)
+                                            (>= val ,min))))))
+        ,(if (memq max '(* nil)) t
+           `(satisfies . ,(eval `(function (lambda (val)
+                                            (<= val ,max))))))))
 
 ;; ---------- registers / misc ----------
 
 (defun register-read-with-preview (prompt)
   "Read a register name, showing PROMPT."
   (read-char prompt))
+
+;; GNU's loadup evaluates cl-preloaded.el before pcase.el, so
+;; `built-in-class-p' already exists when pcase's
+;; `with-eval-after-load 'cl-preloaded' registration runs.  The cl
+;; machinery above plays cl-preloaded's role; requiring pcase here —
+;; AFTER `built-in-class-p' is defined — keeps its eager
+;; `pcase--subtype-bitsets' upgrade from crashing on a void function.
+(require 'pcase)
 
 (defun append-to-register (register start end &optional delete-flag)
   "Append region text to REGISTER."
@@ -17923,19 +19084,26 @@ A `declare' spec of the form (parents T...) registers the parents."
 ;; ---------- cl-loop (subset) ----------
 
 (defmacro cl-loop (&rest clauses)
-  "Common Lisp `loop' macro subset: for/in/on/across/=,/from..to,
-with, while, until, repeat, if/when/unless, do, collect, append,
-nconc, sum, count, maximize, minimize, return, initially, finally."
+  "Common Lisp `loop' macro subset: for/in/on/in-ref/across/
+across-ref/=/from..to, `being the' symbols/frames/screens/windows/
+key-codes/key-bindings/key-seqs/overlays/intervals/elements, with,
+while, until, repeat, if/when/unless with `it', do, collect, append,
+nconc, sum, count, maximize, minimize, concat, vconcat, return,
+thereis, always, never, into, named, initially, finally."
   (cl--loop-expand clauses))
 
 (defconst cl--loop-keywords
   '(for as with if when unless else end do doing collect collecting
-    append appending nconc nconcing sum counting count maximize
-    maximizing minimize minimizing concat concatenating vconcat
-    return while until repeat
+    append appending nconc nconcing sum summing counting count maximize
+    maximizing minimize minimizing concat concatenating concating vconcat
+    vconcating return while until repeat
     initially finally from to upto below downto above upfrom
-    downfrom in on across by = then and it being the elements
-    hash-key hash-keys hash-value hash-values buffers of each using
+    downfrom in on across across-ref in-ref by = then and it being the
+    elements element of-ref of in hash-key hash-keys hash-value
+    hash-values buffers symbols symbol present-symbol present-symbols
+    external-symbol external-symbols frames screens windows overlays
+    intervals key-code key-codes key-binding key-bindings key-seq
+    key-seqs index property each using
     thereis always never into named))
 
 (defun cl--loop-destruct-accessors (pat acc)
@@ -17965,8 +19133,11 @@ to bind in the `let*', and SETQS re-derive VARs after each step."
   "Parse one action clause at index I; return (FORMS KINDS NEW-I).
 `and' chains additional action clauses in the same context; chained
 accumulations share the same accumulators, as in GNU cl-loop.
-Accumulation refers to the `cl--loop-list-acc' and
-`cl--loop-num-acc' variables bound by the generated code."
+Anonymous accumulation refers to the single `cl--loop-acc' variable
+bound by the generated code (GNU uses one anonymous accumulator, so
+mixed anonymous accumulation kinds collide there); named `into'
+accumulators keep their own variables and don't affect the loop's
+implicit result."
   (let ((forms nil) (kinds nil) (more t))
     (while more
       (let ((kw (nth i clauses)))
@@ -17986,11 +19157,14 @@ Accumulation refers to the `cl--loop-list-acc' and
                         (not (memq (nth i clauses) cl--loop-keywords)))
               (push (nth i clauses) df)
               (setq i (1+ i)))
+            ;; GNU: a `do' with no form at all is a syntax error.
+            (when (null df)
+              (error "cl-loop: missing form after `do'"))
             (push (cons 'progn (nreverse df)) forms)))
          ((memq kw '(thereis always never))
           (let ((e (nth (1+ i) clauses)))
             (setq i (+ i 2))
-            (push kw kinds)
+            (setq kinds (append kinds (list kw)))
             (push
              (cond
               ((eq kw 'thereis)
@@ -18002,17 +19176,19 @@ Accumulation refers to the `cl--loop-list-acc' and
               (t `(when ,e (throw 'cl--loop nil))))
              forms)))
          ((memq kw '(collect collecting append appending nconc nconcing
-                     sum counting count maximize maximizing minimize
-                     minimizing concat concatenating vconcat))
+                     sum summing count counting maximize maximizing minimize
+                     minimizing concat concatenating concating vconcat
+                     vconcating))
           (let* ((e (nth (1+ i) clauses))
                  (kind (cond ((memq kw '(collect collecting)) 'collect)
                              ((memq kw '(append appending)) 'append)
                              ((memq kw '(nconc nconcing)) 'nconc)
-                             ((memq kw '(sum counting)) 'sum)
-                             ((eq kw 'count) 'count)
+                             ((memq kw '(sum summing)) 'sum)
+                             ((memq kw '(count counting)) 'count)
                              ((memq kw '(maximize maximizing)) 'max)
-                             ((memq kw '(concat concatenating)) 'concat)
-                             ((eq kw 'vconcat) 'vconcat)
+                             ((memq kw '(concat concatenating concating))
+                              'concat)
+                             ((memq kw '(vconcat vconcating)) 'vconcat)
                              (t 'min)))
                  (into nil))
             (setq i (+ i 2))
@@ -18023,32 +19199,37 @@ Accumulation refers to the `cl--loop-list-acc' and
                       cl--loop--into-vars)))
             ;; A named `into' accumulator doesn't determine the loop's
             ;; implicit return value.
-            (unless into (push kind kinds))
-            (let ((lacc (or into 'cl--loop-list-acc))
-                  (nacc (or into 'cl--loop-num-acc))
-                  (xacc (or into 'cl--loop-ext-acc)))
+            (unless into (setq kinds (append kinds (list kind))))
+            ;; GNU: `into' accumulators grow forward via nconc/append;
+            ;; anonymous ones accumulate reversed into cl--loop-acc and
+            ;; are nreverse'd at the end for list kinds.
+            (let ((acc (or into 'cl--loop-acc)))
               (push
                (cond
                 ((eq kind 'collect)
                  (if into
-                     `(setq ,lacc (nconc ,lacc (list ,e)))
-                   `(push ,e ,lacc)))
+                     `(setq ,acc (nconc ,acc (list ,e)))
+                   `(push ,e ,acc)))
                 ((eq kind 'append)
-                 `(setq ,lacc (nconc ,lacc (append ,e nil))))
+                 (if into
+                     `(setq ,acc (append ,acc ,e))
+                   `(setq ,acc (nconc (reverse ,e) ,acc))))
                 ((eq kind 'nconc)
-                 `(setq ,lacc (nconc ,lacc ,e)))
+                 (if into
+                     `(setq ,acc (nconc ,acc ,e))
+                   `(setq ,acc (nconc (nreverse ,e) ,acc))))
                 ((eq kind 'sum)
-                 `(setq ,nacc (+ ,nacc ,e)))
+                 `(setq ,acc (+ ,acc ,e)))
                 ((eq kind 'count)
-                 `(when ,e (setq ,nacc (1+ ,nacc))))
+                 `(when ,e (setq ,acc (1+ ,acc))))
                 ((eq kind 'concat)
-                 `(setq ,xacc (concat ,xacc ,e)))
+                 `(setq ,acc (concat ,acc ,e)))
                 ((eq kind 'vconcat)
-                 `(setq ,xacc (vconcat ,xacc ,e)))
-                (t `(setq ,xacc
-                          (if ,xacc
+                 `(setq ,acc (vconcat ,acc ,e)))
+                (t `(setq ,acc
+                          (if ,acc
                               (,(if (eq kind 'max) 'max 'min)
-                               ,xacc ,e)
+                               ,acc ,e)
                             ,e))))
                forms))))
          ((eq kw 'return)
@@ -18062,12 +19243,13 @@ Accumulation refers to the `cl--loop-list-acc' and
 (defun cl--loop-cond (clauses i)
   "Parse a conditional clause starting at index I (an `if', `when',
 or `unless' keyword); return (FORM KINDS NEW-I).
-GNU cl-loop chains `else if' conditions into nested ifs inside the
-else part, with a single optional `end' terminating the whole
-conditional."
+GNU binds `it' to the test value around the clause's action forms (in
+both branches), like `(let ((it TEST)) (if it ...))'; `unless' keeps
+the raw test and swaps branches, so `it' in the body is the un-negated
+value.  `else if' chains into nested conditionals inside the else
+part, with a single optional `end' terminating the whole conditional."
   (let* ((kw (nth i clauses))
          (raw (nth (1+ i) clauses))
-         (cnd (if (eq kw 'unless) `(not ,raw) raw))
          (a (cl--loop-action clauses (+ i 2)))
          (then-forms (car a)) (kinds (cadr a)) (j (nth 2 a))
          (elseifs nil) (else-forms nil))
@@ -18076,23 +19258,33 @@ conditional."
       (let ((k2 (nth j clauses)))
         (if (memq k2 '(if when unless))
             (let* ((raw2 (nth (1+ j) clauses))
-                   (cnd2 (if (eq k2 'unless) `(not ,raw2) raw2))
                    (b (cl--loop-action clauses (+ j 2))))
               (setq kinds (append kinds (cadr b))
                     j (nth 2 b)
                     elseifs (append elseifs
-                                    (list (list cnd2 (car b))))))
+                                    (list (list k2 raw2 (car b))))))
           (let ((b (cl--loop-action clauses j)))
             (setq else-forms (append else-forms (car b))
                   kinds (append kinds (cadr b))
                   j (nth 2 b))))))
     (when (eq (nth j clauses) 'end) (setq j (1+ j)))
-    (let ((exp `(progn ,@else-forms)))
+    ;; Deepest else part is the trailing `else' forms; each `else if'
+    ;; level wraps its own `(let ((it TEST)) (if it THEN ELSE))'
+    ;; around everything nested below it.
+    (let ((exp (when else-forms `(progn ,@else-forms))))
       (dolist (ei (reverse elseifs))
-        (setq exp `(if ,(car ei) (progn ,@(cadr ei)) ,exp)))
-      (when (and (null else-forms) (null elseifs))
-        (setq exp nil))
-      (list `(if ,cnd (progn ,@then-forms) ,@(when exp (list exp)))
+        (let ((k2 (nth 0 ei)) (raw2 (nth 1 ei)) (acts (nth 2 ei)))
+          (setq exp
+                `(let ((it ,raw2))
+                   (if it
+                       ,@(if (eq k2 'unless)
+                             (list exp `(progn ,@acts))
+                           (list `(progn ,@acts) exp)))))))
+      (list `(let ((it ,raw))
+               (if it
+                   ,@(if (eq kw 'unless)
+                         (list exp `(progn ,@then-forms))
+                       (list `(progn ,@then-forms) exp))))
             kinds j))))
 
 (defun cl--loop-hash-pairs (table)
@@ -18105,12 +19297,124 @@ conditional."
   "Alist of (VAR . NUMERICP) for named `cl-loop' accumulators, bound
 dynamically during expansion.")
 
+(defun cl-sort (seq pred &rest keys)
+  "Sort SEQ destructively per PRED; supports :key (GNU cl-seq subset)."
+  (let* ((key (plist-get keys :key))
+         (keyfun (cond ((or (null key) (eq key 'identity)) nil)
+                       ((and (consp key) (eq (car key) 'function))
+                        (cadr key))
+                       (t key)))
+         (pred2 (if keyfun
+                    (lambda (a b) (funcall pred (funcall keyfun a)
+                                           (funcall keyfun b)))
+                  pred)))
+    (cond
+     ((stringp seq)
+      (concat (sort (vconcat seq) pred2)))
+     ((vectorp seq)
+      (let ((sorted (sort (append seq nil) pred2)))
+        (dotimes (i (length seq) seq)
+          (aset seq i (nth i sorted)))))
+     (t (sort seq pred2)))))
+
+(defun cl--loop-obarray-symbols (ob)
+  "Return a list of the symbols interned in obarray OB."
+  (let (acc)
+    (mapatoms (lambda (s) (push s acc)) ob)
+    (nreverse acc)))
+
+(defun cl--loop-keymap-pairs (map)
+  "Return a list of (KEY . BINDING) for the top level of MAP."
+  (let (acc)
+    (map-keymap (lambda (k b) (push (cons k b) acc)) map)
+    (nreverse acc)))
+
+(defun cl--loop-keymap-seqs (map)
+  "Return a list of (KEYSEQ . BINDING) for all of MAP, descending
+into prefix keymaps (like GNU's `cl--map-keymap-recursively')."
+  (let (acc)
+    (cl--map-keymap-recursively (lambda (s b) (push (cons s b) acc))
+                                map)
+    (nreverse acc)))
+
+(defun cl--loop-overlays (&optional buffer start end)
+  "Return the overlays of BUFFER (default: current) overlapping the
+START..END range, like GNU's `cl--map-overlays' collecting pass."
+  (or buffer (setq buffer (current-buffer)))
+  (let (ovl acc)
+    (with-current-buffer buffer
+      (setq ovl (overlay-lists))
+      (if start (setq start (copy-marker start)))
+      (if end (setq end (copy-marker end))))
+    (setq ovl (nconc (car ovl) (cdr ovl)))
+    (dolist (o ovl)
+      (unless (or (not (overlay-start o))
+                  (and end (>= (overlay-start o) end))
+                  (and start (<= (overlay-end o) start)))
+        (push o acc)))
+    (if start (set-marker start nil))
+    (if end (set-marker end nil))
+    (nreverse acc)))
+
+(defun cl--loop-intervals (&optional what prop start end)
+  "Return a list of (START . END) position pairs describing the
+text-property runs of WHAT (a buffer or string), like GNU's
+`cl--map-intervals' collecting pass."
+  (or what (setq what (current-buffer)))
+  (let (acc)
+    (if (bufferp what)
+        (let (mark mark2 (next t) next2)
+          (with-current-buffer what
+            (setq mark (copy-marker (or start (point-min))))
+            (setq mark2 (and end (copy-marker end))))
+          (while (and next (or (not mark2) (< mark mark2)))
+            (setq next (if prop (next-single-property-change
+                                 mark prop what)
+                         (next-property-change mark what))
+                  next2 (or next (with-current-buffer what
+                                   (point-max))))
+            (push (cons (prog1 (marker-position mark)
+                          (set-marker mark next2))
+                        (if mark2 (min next2 mark2) next2))
+                  acc))
+          (set-marker mark nil) (if mark2 (set-marker mark2 nil)))
+      (or start (setq start 0))
+      (or end (setq end (length what)))
+      (while (< start end)
+        (let ((next (or (if prop (next-single-property-change
+                                  start prop what)
+                          (next-property-change start what))
+                        end)))
+          (push (cons start (min next end)) acc)
+          (setq start next))))
+    (nreverse acc)))
+
 (defun cl--loop-expand (clauses)
   (let ((inits nil) (initially nil) (pretests nil) (pre nil)
         (steps nil) (body nil) (finally nil) (finret nil)
-        (kinds nil) (i 0) (n (length clauses)) (loop-name nil))
-    (setq cl--loop--into-vars nil)
-    (while (< i n)
+        (kinds nil) (i 0) (n (length clauses)) (loop-name nil)
+        ;; (VAR . PLACE) pairs for `-ref' iteration vars: VAR is not a
+        ;; real binding; every use in the expanded form is rewritten to
+        ;; PLACE via `cl--sm-subst' (setq → setf), like GNU's
+        ;; `cl-symbol-macrolet' wrapping.
+        (refsubs nil))
+    ;; GNU cl-macs `cl-loop': when NO clause head is a keyword symbol
+    ;; (nil/t don't count), the arglist is an implicit `do' body —
+    ;; `(cl-block nil (while t FORMS))'.  winner.el's `winner-undo-this'
+    ;; relies on it via `(cl-loop (cond ...))'; a clause-less loop is
+    ;; the same shape with an empty body.
+    (if (let ((bare t) (cs clauses))
+          (while (and bare cs)
+            (let ((c (car cs)))
+              (when (and (symbolp c) (not (memq c '(nil t))))
+                (setq bare nil)))
+            (setq cs (cdr cs)))
+          bare)
+        `(cl--block-wrapper
+          (let ((--cl-block-nil-- (cons '--cl-block-nil-- nil)))
+            (catch --cl-block-nil-- (while t ,@clauses))))
+      (setq cl--loop--into-vars nil)
+      (while (< i n)
       (let ((kw (nth i clauses)))
         (cond
          ((eq kw 'named)
@@ -18137,11 +19441,7 @@ dynamically during expansion.")
                   (when (memq op '(the each))
                     (setq op (nth i clauses) i (1+ i)))
                   (cond
-                   ((memq op '(in on in-ref))
-                    ;; `in-ref' binds VAR as a place into the list in
-                    ;; GNU (symbol-macrolet to (car CELL)); our subset
-                    ;; iterates like `in' — read and element-mutation
-                    ;; uses (`setf (nth N VAR)') behave the same.
+                   ((memq op '(in on))
                     (let ((tl (gensym)) (src (nth i clauses)) (by nil))
                       (setq i (1+ i))
                       (when (eq (nth i clauses) 'by)
@@ -18158,15 +19458,35 @@ dynamically during expansion.")
                       (push (if by `(setq ,tl (funcall ,by ,tl))
                               `(setq ,tl (cdr ,tl)))
                             steps)))
-                   ((eq op 'across)
-                    (let ((v (gensym)) (ix (gensym)))
+                   ((eq op 'in-ref)
+                    ;; GNU: VAR is a `cl-symbol-macrolet' place over
+                    ;; (car CELL), so `setq'/`cl-incf' on VAR write
+                    ;; into the list.  We substitute post-expansion.
+                    (let ((tl (gensym)) (src (nth i clauses)) (by nil))
+                      (setq i (1+ i))
+                      (when (eq (nth i clauses) 'by)
+                        (setq by (nth (1+ i) clauses) i (+ i 2)))
+                      (setq inits (append inits (list (list tl src))
+                                          dbinds))
+                      (push `(consp ,tl) pretests)
+                      (when dsetqs (push `(progn ,@dsetqs) pre))
+                      (push (if by `(setq ,tl (funcall ,by ,tl))
+                              `(setq ,tl (cdr ,tl)))
+                            steps)
+                      (push (list rvar `(car ,tl)) refsubs)))
+                   ((memq op '(across across-ref))
+                    (let ((v (gensym)) (ix (gensym))
+                          (refp (eq op 'across-ref)))
                       (setq inits (append inits
                                           (list (list v (nth i clauses))
-                                                (list ix 0)
-                                                (list rvar nil))
+                                                (list ix 0))
+                                          (unless refp
+                                            (list (list rvar nil)))
                                           dbinds))
                       (push `(< ,ix (length ,v)) pretests)
-                      (push `(setq ,rvar (aref ,v ,ix)) pre)
+                      (if refp
+                          (push (list rvar `(aref ,v ,ix)) refsubs)
+                        (push `(setq ,rvar (aref ,v ,ix)) pre))
                       (when dsetqs (push `(progn ,@dsetqs) pre))
                       (push `(setq ,ix (1+ ,ix)) steps)
                       (setq i (1+ i))))
@@ -18189,18 +19509,54 @@ dynamically during expansion.")
                             (push `(progn ,@dsetqs) steps)
                           (push `(progn ,@dsetqs) pre)))))
                    ((memq op '(elements element))
-                    (when (eq (nth i clauses) 'of) (setq i (1+ i)))
-                    (let ((v (gensym)) (ix (gensym)))
-                      (setq inits
-                            (append inits (list (list v (nth i clauses))
-                                                (list ix 0)
-                                                (list rvar nil))
-                                          dbinds))
-                      (push `(< ,ix (length ,v)) pretests)
-                      (push `(setq ,rvar (aref ,v ,ix)) pre)
-                      (when dsetqs (push `(progn ,@dsetqs) pre))
-                      (push `(setq ,ix (1+ ,ix)) steps)
-                      (setq i (1+ i))))
+                    ;; `for X [being] [the] element[s] [of|in|of-ref|
+                    ;; in-ref] SEQ [using (index IX)]' — GNU walks cons
+                    ;; cells with `pop' and arrays with `aref'; the
+                    ;; `-ref' variants bind X to the (elt SEQ IX)
+                    ;; place.  `using (index V)' makes V the counter.
+                    (let ((sub (nth i clauses)))
+                      (when (memq sub '(of in of-ref in-ref))
+                        (setq i (1+ i)))
+                      (let* ((src (nth i clauses))
+                             (v (gensym)) (ix (gensym)))
+                        (setq i (1+ i))
+                        (when (eq (nth i clauses) 'using)
+                          (let ((uspec (nth (1+ i) clauses)))
+                            (unless (and (consp uspec)
+                                         (eq (car uspec) 'index))
+                              (error "cl-loop: bad `using' for `elements': %s"
+                                     uspec))
+                            (setq ix (cadr uspec)))
+                          (setq i (+ i 2)))
+                        (if (memq sub '(of-ref in-ref))
+                            (let ((len (gensym)))
+                              (setq inits
+                                    (append inits
+                                            (list (list v src)
+                                                  (list ix 0)
+                                                  (list len
+                                                        `(length ,v)))
+                                            dbinds))
+                              (push `(< ,ix ,len) pretests)
+                              (push (list rvar `(elt ,v ,ix)) refsubs)
+                              (when dsetqs
+                                (push `(progn ,@dsetqs) pre))
+                              (push `(setq ,ix (1+ ,ix)) steps))
+                          (setq inits
+                                (append inits (list (list v src)
+                                                    (list ix 0)
+                                                    (list rvar nil))
+                                        dbinds))
+                          (push `(and ,v (or (consp ,v)
+                                             (< ,ix (length ,v))))
+                                pretests)
+                          (push `(setq ,rvar
+                                       (if (consp ,v)
+                                           (pop ,v)
+                                         (aref ,v ,ix)))
+                                pre)
+                          (when dsetqs (push `(progn ,@dsetqs) pre))
+                          (push `(setq ,ix (1+ ,ix)) steps)))))
                    ;; GNU: `for VAR [being] [the|each] hash-keys of
                    ;; TABLE [using (hash-values VAR2)]' (and vice versa).
                    ((memq op '(hash-key hash-keys hash-value
@@ -18234,13 +19590,188 @@ dynamically during expansion.")
                       (when dsetqs (push `(progn ,@dsetqs) pre))
                       (push `(setq ,pl (cdr ,pl)) steps)))
                    ;; GNU: `for VAR being the buffers' iterates
-                   ;; `buffer-list' (bound once in the loop inits).
+                   ;; `buffer-list' (bound once in the loop inits);
+                   ;; an `of'/`in' argument is a syntax error.
                    ((eq op 'buffers)
+                    (when (memq (nth i clauses) '(of in))
+                      (error "cl-loop: `buffers' takes no `of' argument"))
                     (let ((tl (gensym)))
                       (setq inits (append inits
                                           (list (list tl '(buffer-list))
                                                 (list rvar nil))
                                           dbinds))
+                      (push `(consp ,tl) pretests)
+                      (push `(setq ,rvar (car ,tl)) pre)
+                      (when dsetqs (push `(progn ,@dsetqs) pre))
+                      (push `(setq ,tl (cdr ,tl)) steps)))
+                   ;; GNU: `for VAR being [the|each] symbol[s] [of
+                   ;; OBARRAY]' iterates OBARRAY (default `obarray')
+                   ;; via `mapatoms'.  `present-symbols' and
+                   ;; `external-symbols' are the same for Emacs Lisp.
+                   ((memq op '(symbol symbols present-symbol
+                               present-symbols external-symbol
+                               external-symbols))
+                    (let ((tl (gensym)) (src nil))
+                      (when (memq (nth i clauses) '(of in))
+                        (setq i (1+ i))
+                        (setq src (nth i clauses) i (1+ i)))
+                      (setq inits
+                            (append inits
+                                    (list (list tl
+                                                `(cl--loop-obarray-symbols
+                                                  ,(or src 'obarray)))
+                                          (list rvar nil))
+                                    dbinds))
+                      (push `(consp ,tl) pretests)
+                      (push `(setq ,rvar (car ,tl)) pre)
+                      (when dsetqs (push `(progn ,@dsetqs) pre))
+                      (push `(setq ,tl (cdr ,tl)) steps)))
+                   ;; GNU: `being the frames'/`screens' walks the frame
+                   ;; ring from `selected-frame' with `next-frame',
+                   ;; stopping when it comes back around.
+                   ((memq op '(frames screens))
+                    (let ((first (gensym)))
+                      (setq inits
+                            (append inits
+                                    (list (list rvar '(selected-frame))
+                                          (list first nil))
+                                    dbinds))
+                      (push `(prog1 (not (eq ,rvar ,first))
+                               (or ,first (setq ,first ,rvar)))
+                            pretests)
+                      (when dsetqs (push `(progn ,@dsetqs) pre))
+                      (push `(setq ,rvar (next-frame ,rvar)) steps)))
+                   ;; GNU: `being the windows [of FRAME]' walks the
+                   ;; window ring of FRAME (default selected) from its
+                   ;; selected window with `next-window'.
+                   ((eq op 'windows)
+                    (let ((src nil) (first (gensym)) (minip (gensym)))
+                      (when (memq (nth i clauses) '(of in))
+                        (setq src (nth (1+ i) clauses) i (+ i 2)))
+                      (setq inits
+                            (append inits
+                                    (list
+                                     (list rvar
+                                           `(frame-selected-window
+                                             ,(or src
+                                                  '(selected-frame))))
+                                     (list minip
+                                           `(minibufferp
+                                             (window-buffer ,rvar)))
+                                     (list first nil))
+                                    dbinds))
+                      (push `(prog1 (not (eq ,rvar ,first))
+                               (or ,first (setq ,first ,rvar)))
+                            pretests)
+                      (when dsetqs (push `(progn ,@dsetqs) pre))
+                      (push `(setq ,rvar
+                                   (next-window ,rvar ,minip))
+                            steps)))
+                   ;; GNU: `being the key-codes'/`key-bindings' of MAP
+                   ;; iterate `map-keymap'; `key-seqs' descends into
+                   ;; prefix maps yielding full key sequences.
+                   ;; `using' pairs the sibling kind's variable.
+                   ((memq op '(key-code key-codes key-binding
+                               key-bindings key-seq key-seqs))
+                    (when (memq (nth i clauses) '(of in))
+                      (setq i (1+ i)))
+                    (let ((src (nth i clauses))
+                          (tl (gensym)) (other nil))
+                      (setq i (1+ i))
+                      (when (eq (nth i clauses) 'using)
+                        (let ((uspec (nth (1+ i) clauses))
+                              (want (if (memq op '(key-code key-codes
+                                                  key-seq key-seqs))
+                                        '(key-binding key-bindings)
+                                      '(key-code key-codes key-seq
+                                        key-seqs))))
+                          (unless (and (consp uspec)
+                                       (memq (car uspec) want))
+                            (error "cl-loop: bad `using' for `%s': %s"
+                                   op uspec))
+                          (setq other (cadr uspec)
+                                i (+ i 2))))
+                      (setq inits
+                            (append inits
+                                    (list
+                                     (list tl
+                                           (if (memq op
+                                                     '(key-seq key-seqs))
+                                               `(cl--loop-keymap-seqs
+                                                 ,src)
+                                             `(cl--loop-keymap-pairs
+                                               ,src)))
+                                     (list rvar nil))
+                                    dbinds
+                                    (and other (list (list other nil)))))
+                      (push `(consp ,tl) pretests)
+                      (push `(progn
+                               (setq ,rvar
+                                     (,(if (memq op '(key-binding
+                                                      key-bindings))
+                                          'cdr
+                                        'car)
+                                      (car ,tl)))
+                               ,@(when other
+                                   (list `(setq ,other
+                                                (,(if (memq op
+                                                            '(key-binding
+                                                              key-bindings))
+                                                      'car
+                                                    'cdr)
+                                                 (car ,tl))))))
+                            pre)
+                      (when dsetqs (push `(progn ,@dsetqs) pre))
+                      (push `(setq ,tl (cdr ,tl)) steps)))
+                   ;; GNU: `being the overlays [of BUFFER] [from BEG]
+                   ;; [to END]' iterates the buffer's overlays via
+                   ;; `cl--map-overlays' semantics.
+                   ((eq op 'overlays)
+                    (let ((src nil) (from nil) (to nil) (tl (gensym)))
+                      (when (memq (nth i clauses) '(of in))
+                        (setq src (nth (1+ i) clauses) i (+ i 2)))
+                      (while (memq (nth i clauses) '(from to))
+                        (let ((k2 (nth i clauses))
+                              (e2 (nth (1+ i) clauses)))
+                          (if (eq k2 'from) (setq from e2)
+                            (setq to e2))
+                          (setq i (+ i 2))))
+                      (setq inits
+                            (append inits
+                                    (list
+                                     (list tl
+                                           `(cl--loop-overlays
+                                             ,src ,from ,to))
+                                     (list rvar nil))
+                                    dbinds))
+                      (push `(consp ,tl) pretests)
+                      (push `(setq ,rvar (car ,tl)) pre)
+                      (when dsetqs (push `(progn ,@dsetqs) pre))
+                      (push `(setq ,tl (cdr ,tl)) steps)))
+                   ;; GNU: `being the intervals [of WHAT] [property P]
+                   ;; [from BEG] [to END]' yields (START . END) runs,
+                   ;; like `cl--map-intervals'.
+                   ((eq op 'intervals)
+                    (let ((src nil) (prop nil) (from nil) (to nil)
+                          (tl (gensym)))
+                      (when (memq (nth i clauses) '(of in))
+                        (setq src (nth (1+ i) clauses) i (+ i 2)))
+                      (when (eq (nth i clauses) 'property)
+                        (setq prop (nth (1+ i) clauses) i (+ i 2)))
+                      (while (memq (nth i clauses) '(from to))
+                        (let ((k2 (nth i clauses))
+                              (e2 (nth (1+ i) clauses)))
+                          (if (eq k2 'from) (setq from e2)
+                            (setq to e2))
+                          (setq i (+ i 2))))
+                      (setq inits
+                            (append inits
+                                    (list
+                                     (list tl
+                                           `(cl--loop-intervals
+                                             ,src ,prop ,from ,to))
+                                     (list rvar nil))
+                                    dbinds))
                       (push `(consp ,tl) pretests)
                       (push `(setq ,rvar (car ,tl)) pre)
                       (when dsetqs (push `(progn ,@dsetqs) pre))
@@ -18271,39 +19802,56 @@ dynamically during expansion.")
                               (e2 (nth (1+ i) clauses)))
                           (cond
                            ((memq k2 '(to upto))
-                            (setq bound e2 cmp '<=))
+                            (setq bound e2 cmp (if down '>= '<=)))
                            ((eq k2 'below)
-                            (setq bound e2 cmp '<))
+                            (setq bound e2 cmp (if down '> '<)))
                            ((eq k2 'downto)
                             (setq bound e2 cmp '>= down t))
                            ((eq k2 'above)
                             (setq bound e2 cmp '> down t))
                            ((eq k2 'by) (setq step e2)))
                           (setq i (+ i 2))))
-                      (setq inits
-                            (append inits (list (list var init-e))))
-                      (when bound
-                        (push (list cmp var bound) pretests))
+                      ;; GNU: the bound is evaluated once, at the
+                      ;; clause's position in the bindings — a later
+                      ;; `with' can't supply it.
+                      (let ((bv (and bound (gensym))))
+                        (setq inits
+                              (append inits (list (list var init-e))
+                                      (and bv (list (list bv bound)))))
+                        (when bv
+                          (push (list cmp var bv) pretests)))
                       (push `(setq ,var (,(if down '- '+) ,var ,step))
                             steps)))
                    (t (error "cl-loop: bad for clause %s" op))))
                 (setq more (eq (nth i clauses) 'and))
                 (when more (setq i (1+ i)))))))
          ((eq kw 'with)
-          (let ((more t))
+          ;; GNU: `with V = E and V2 = E2' is a parallel `let' group —
+          ;; every E sees only the bindings that precede the `with'
+          ;; clause, so we evaluate each init into a gensym first, then
+          ;; bind the real variables from them (destructurers cascade
+          ;; sequentially off their own temp like GNU's let* specs).
+          (let ((more t) (ginit nil) (gbind nil))
             (setq i (1+ i))
             (while more
               (let* ((v (nth i clauses))
                      (dv (cl--loop-destruct v))
                      (rvar (car dv))
                      (dbinds (nth 1 dv))
-                     (e nil))
+                     (e nil)
+                     (etmp (gensym)))
                 (setq i (1+ i))
                 (when (eq (nth i clauses) '=)
                   (setq e (nth (1+ i) clauses) i (+ i 2)))
-                (setq inits (append inits (list (list rvar e)) dbinds))
+                ;; All the group's RHSes are evaluated into temps
+                ;; BEFORE any real binding, so `b = a' sees the OUTER
+                ;; `a' (GNU: the group is a `let', not `let*').
+                (setq ginit (append ginit (list (list etmp e)))
+                      gbind (append gbind (list (list rvar etmp))
+                                    dbinds))
                 (setq more (eq (nth i clauses) 'and))
-                (when more (setq i (1+ i)))))))
+                (when more (setq i (1+ i)))))
+            (setq inits (append inits ginit gbind))))
          ((eq kw 'repeat)
           (let ((c (gensym)))
             (setq inits
@@ -18332,99 +19880,234 @@ dynamically during expansion.")
                   i (nth 2 a))))
          ((eq kw 'initially)
           (setq i (1+ i))
-          (while (and (< i n)
-                      (not (memq (nth i clauses) cl--loop-keywords)))
-            (push (nth i clauses) initially)
-            (setq i (1+ i))))
+          ;; GNU accepts an optional `do'/`doing' marker: `initially do F'.
+          (when (memq (nth i clauses) '(do doing)) (setq i (1+ i)))
+          (let ((before (length initially)))
+            (while (and (< i n)
+                        (not (memq (nth i clauses) cl--loop-keywords)))
+              (push (nth i clauses) initially)
+              (setq i (1+ i)))
+            (when (= (length initially) before)
+              (error "cl-loop: missing form after `initially'"))))
          ((eq kw 'finally)
           (setq i (1+ i))
           (when (memq (nth i clauses) '(do doing)) (setq i (1+ i)))
           (if (eq (nth i clauses) 'return)
               (setq finret (nth (1+ i) clauses) i (+ i 2))
-            (while (and (< i n)
-                        (not (memq (nth i clauses) cl--loop-keywords)))
-              (push (nth i clauses) finally)
-              (setq i (1+ i)))))
+            (let ((before (length finally)))
+              (while (and (< i n)
+                          (not (memq (nth i clauses) cl--loop-keywords)))
+                ;; GNU: in an unnamed loop `finally do (return X)'
+                ;; makes X the loop's result value; in a named loop it
+                ;; stays a literal `return' call (→ void-function).
+                (let ((ff (nth i clauses)))
+                  (if (and (null loop-name) (consp ff)
+                           (eq (car ff) 'return))
+                      (setq finret (cadr ff))
+                    (push ff finally)))
+                (setq i (1+ i)))
+              (when (and (= (length finally) before) (null finret))
+                (error "cl-loop: missing form after `finally'")))))
          ((memq kw '(if when unless))
           (let ((a (cl--loop-cond clauses i)))
             (setq body (append body (list (car a)))
                   kinds (append kinds (cadr a))
                   i (nth 2 a))))
          ((memq kw '(do doing collect collecting append appending
-                    nconc nconcing sum counting count maximize
+                    nconc nconcing sum summing count counting maximize
                     maximizing minimize minimizing return
-                    concat concatenating vconcat
+                    concat concatenating concating vconcat vconcating
                     thereis always never))
           (let ((a (cl--loop-action clauses i)))
             (setq body (append body (car a))
                   kinds (append kinds (cadr a))
                   i (nth 2 a))))
-         ;; GNU: a clause not starting with a keyword is a `do' form.
-         (t (setq body (append body (list kw))
-                  kinds (append kinds '(do))
-                  i (1+ i))))))
-    `(let* ,(append inits
-                    '((cl--loop-list-acc nil) (cl--loop-num-acc 0)
-                      (cl--loop-ext-acc nil))
-                    (mapcar (lambda (v) (list (car v) (if (cdr v) 0 nil)))
-                            cl--loop--into-vars))
-       (catch 'cl--loop
-         (cl-block ,loop-name
-           ,@(nreverse initially)
-           (catch 'cl--loop-finish
-             (while (and ,@(nreverse pretests))
-               ,@(nreverse pre)
-               ,@body
-               ,@(nreverse steps)))
-           ,@(nreverse finally)
-           ,(or finret
-              (cond
-               ((memq 'collect kinds) '(nreverse cl--loop-list-acc))
-               ((or (memq 'append kinds) (memq 'nconc kinds))
-                'cl--loop-list-acc)
-               ((or (memq 'sum kinds) (memq 'count kinds))
-                'cl--loop-num-acc)
-               ((or (memq 'always kinds) (memq 'never kinds)) t)
-               ((or (memq 'max kinds) (memq 'min kinds)
-                    (memq 'concat kinds) (memq 'vconcat kinds))
-                'cl--loop-ext-acc)
-               (t nil))))))))
+         ;; GNU: a top-level `and' is a plain clause joiner (`while P
+         ;; and collect X').
+         ((eq kw 'and) (setq i (1+ i)))
+         ;; GNU: a clause not starting with a keyword is a syntax error
+         ;; at expansion time (bare forms need an explicit `do').
+         (t (error "cl-loop: bad clause %s" kw)))))
+      (let* ((k1 (car kinds))
+             ;; GNU: the single anonymous accumulator starts at 0 for
+             ;; sum/count, "" for concat, [] for vconcat, nil otherwise.
+             (acc-init (cond ((memq k1 '(sum count)) 0)
+                             ((eq k1 'concat) "")
+                             ((eq k1 'vconcat) [])
+                             (t nil)))
+             (result
+              (or finret
+                  (cond
+                   ((memq k1 '(collect append nconc))
+                    '(nreverse cl--loop-acc))
+                   ((memq k1 '(always never)) t)
+                   (kinds 'cl--loop-acc)
+                   (t nil))))
+             (form
+              `(cl--block-wrapper
+                (let ((,(intern (format "--cl-block-%s--" loop-name))
+                       (cons ',(intern (format "--cl-block-%s--"
+                                               loop-name))
+                             nil)))
+                  (catch ,(intern (format "--cl-block-%s--" loop-name))
+                    (let* ,(append inits
+                                   (list (list 'cl--loop-acc acc-init))
+                                   (mapcar
+                                    (lambda (v)
+                                      (list (car v) (if (cdr v) 0 nil)))
+                                    cl--loop--into-vars))
+                      (catch 'cl--loop
+                        ,@(nreverse initially)
+                        (catch 'cl--loop-finish
+                          (while (and ,@(nreverse pretests))
+                            ,@(nreverse pre)
+                            ,@body
+                            ,@(nreverse steps)))
+                        ,@(nreverse finally)
+                        ,result)))))))
+        ;; `-ref' iteration vars are places, not bindings: rewrite all
+        ;; their uses, turning `setq' into `setf'.
+        (if refsubs
+            (cl--sm-subst form (nreverse refsubs))
+          form)))))
+
+(defun cl--sm-exp (binding)
+  "The expansion of a symbol-macro BINDING.
+`cl-symbol-macrolet' bindings are (SYM EXP); `cl--loop-expand''s
+ref-substitutions are (SYM . PLACE-FORM) conses."
+  (let ((d (cdr binding)))
+    (if (and (consp d) (null (cdr d))) (car d) d)))
+
+(defun cl--sm-shadow (bindings vars)
+  "BINDINGS with the symbol-macro entries for VARS removed.
+Implements the CL shadowing rule (bug#26073): a `let'/`lambda'/
+`condition-case' binding hides the surrounding symbol-macro."
+  (delq nil (mapcar (lambda (b) (unless (memq (car b) vars) b))
+                    bindings)))
 
 (defun cl--sm-subst (form bindings)
   "Substitute symbol-macrolet BINDINGS ((SYM FORM)...) in FORM tree.
 `setq' on a bound symbol becomes `setf' on its expansion, like GNU's
-`cl--sm-macroexpand'."
+`cl--sm-macroexpand'.  Bound variables shadow the symbol-macro in
+`let'/`let*'/`lambda'/`condition-case'/`cl-flet'/`cl-labels' binders,
+and a function-position name (head of a call) is never substituted —
+symbol macros only apply to variable positions."
   (cond
    ((symbolp form)
     (let ((b (assq form bindings)))
-      (if b (cadr b) form)))
+      (if b (cl--sm-exp b) form)))
    ((consp form)
-    (cond
-     ((memq (car form) '(quote function))
-      form)
-     ((memq (car form) '(setq setq-default))
-      ;; (setq SYM VAL ...) → (setf EXPANSION VAL ...) for bound syms.
-      (let ((args (cdr form)) (out nil))
-        (while args
-          (let* ((s (car args)) (v (cadr args))
-                 (b (assq s bindings)))
-            (if b
-                (push (list 'setf (cl--sm-subst (cadr b) bindings)
+    (let ((head (car form)))
+      (cond
+       ((memq head '(quote function))
+        form)
+       ((memq head '(setq setq-default))
+        ;; (setq SYM VAL ...) → (setf EXPANSION VAL ...) for bound syms.
+        (let ((args (cdr form)) (out nil))
+          (while args
+            (let* ((s (car args)) (v (cadr args))
+                   (b (assq s bindings)))
+              (if b
+                  (push (list 'setf (cl--sm-subst (cl--sm-exp b) bindings)
+                              (cl--sm-subst v bindings))
+                        out)
+                (push (list head s
                             (cl--sm-subst v bindings))
-                      out)
-              (push (list (car form) s
-                          (cl--sm-subst v bindings))
-                    out)))
-          (setq args (cddr args)))
-        (if (cdr out) (cons 'progn (nreverse out)) (car out))))
-     (t
-      (cons (cl--sm-subst (car form) bindings)
-            (cl--sm-subst (cdr form) bindings)))))
+                      out)))
+            (setq args (cddr args)))
+          (if (cdr out) (cons 'progn (nreverse out)) (car out))))
+       ((memq head '(let let*))
+        ;; Binding names are not code; a bound var shadows its
+        ;; symbol-macro.  `let''s values see the outer bindings, `let*''s
+        ;; see progressively fewer.  Body runs with all bound names
+        ;; shadowed.
+        (let* ((blist (cadr form))
+               (seqp (eq head 'let*))
+               (vbs bindings)
+               (nbs nil))
+          (dolist (b blist)
+            (let* ((var (if (consp b) (car b) b))
+                   (vals (and (consp b)
+                              (mapcar (lambda (v) (cl--sm-subst v vbs))
+                                      (cdr b)))))
+              (push (if vals (cons var vals) var) nbs)
+              (when seqp (setq vbs (cl--sm-shadow vbs (list var))))))
+          (let ((body-binds
+                 (if seqp vbs
+                   (cl--sm-shadow
+                    bindings
+                    (mapcar (lambda (b) (if (consp b) (car b) b)) blist)))))
+            `(,head ,(nreverse nbs)
+                    ,@(mapcar (lambda (f) (cl--sm-subst f body-binds))
+                              (cddr form))))))
+       ((memq head '(lambda))
+        ;; Lambda list is not code; its params shadow the macros in BODY.
+        (let* ((args (cadr form))
+               (vars (let (vs) (dolist (a args)
+                                 (when (and (symbolp a)
+                                            (not (memq a
+                                                       cl--lambda-list-keywords)))
+                                   (push a vs)))
+                               vs)))
+          `(lambda ,args
+             ,@(mapcar (lambda (f) (cl--sm-subst f (cl--sm-shadow bindings vars)))
+                       (cddr form)))))
+       ((eq head 'condition-case)
+        ;; The handler var shadows its symbol-macro inside the clauses.
+        (let ((var (cadr form)))
+          `(condition-case ,var
+               ,(cl--sm-subst (nth 2 form) bindings)
+             ,@(mapcar (lambda (cl)
+                         (cons (car cl)
+                               (mapcar (lambda (f)
+                                         (cl--sm-subst
+                                          f (cl--sm-shadow bindings
+                                                           (list var))))
+                                       (cdr cl))))
+                       (cdddr form)))))
+       ((memq head '(cl-flet cl-flet* cl-labels cl-macrolet))
+        ;; Function names/arglists are not variable references: leave
+        ;; each binding's name and arglist verbatim; substitute only in
+        ;; the definition bodies (lambda args shadow the macros there
+        ;; approximately — enough for the bindings we generate).
+        (let ((defs
+               (mapcar
+                (lambda (b)
+                  (let* ((bname (car b)) (rest (cdr b)))
+                    (if (consp rest)
+                        (let ((args (car rest)) (dbody (cdr rest)))
+                          (cons bname
+                                (cons args
+                                      (mapcar
+                                       (lambda (f)
+                                         (cl--sm-subst
+                                          f (cl--sm-shadow
+                                             bindings
+                                             (let (vs)
+                                               (dolist (a args)
+                                                 (when (and (symbolp a)
+                                                            (not (memq
+                                                                  a
+                                                                  cl--lambda-list-keywords)))
+                                                   (push a vs)))
+                                               vs))))
+                                       dbody))))
+                      b)))
+                (cadr form))))
+          `(,head ,defs
+                  ,@(mapcar (lambda (f) (cl--sm-subst f bindings))
+                            (cddr form)))))
+       (t
+        ;; A call: the function-position head is a function name (or a
+        ;; lambda form), not a variable — never substitute the symbol.
+        (cons (if (consp head) (cl--sm-subst head bindings) head)
+              (mapcar (lambda (f) (cl--sm-subst f bindings))
+                      (cdr form)))))))
    (t form)))
 
 (defmacro cl-symbol-macrolet (bindings &rest body)
   "Bind symbols as macros expanding to their forms (subset)."
-  `(progn ,@(cl--sm-subst body bindings)))
+  `(progn ,@(mapcar (lambda (f) (cl--sm-subst f bindings)) body)))
 
 ;; ---------- completion styles engine (minibuffer.el PCM core) ----------
 
@@ -19505,10 +21188,14 @@ usual. Returns (ALL PAT PREFIX SUFFIX)."
 ;; ---------- more subr.el / simple.el helpers ----------
 
 (defun alist-get (key alist &optional default remove testfn)
-  "Return the value associated with KEY in ALIST."
+  "Return the value associated with KEY in ALIST.
+Equality with KEY is tested by TESTFN, defaulting to `eq' (GNU
+subr.el: `assq' when TESTFN is nil, `assoc' TESTFN otherwise)."
+  (declare (important-return-value t))
+  (ignore remove)
   (let ((x (if testfn
-               (cl-assoc key alist :test testfn)
-             (assoc key alist))))
+               (assoc key alist testfn)
+             (assq key alist))))
     (if x (cdr x) default)))
 
 (defun flatten-list (list)
@@ -19581,6 +21268,11 @@ double-quoted spans; the quotes are removed."
 ;; GNU startup.el timestamps: `before-init-time' is sampled when
 ;; startup begins and `after-init-time' once the init file has been
 ;; processed.  Batch startup approximates both at preload time.
+(defvar system-time-locale nil
+  "Locale name used by `format-time-string' and `decode-time'.
+nil means the ambient LC_TIME locale; a string overrides it for the
+duration of the call (GNU: setlocale LC_TIME).")
+
 (defvar before-init-time (current-time)
   "Value of `current-time' when Emacs begins initialization.")
 (defvar after-init-time (current-time)
@@ -20899,13 +22591,28 @@ Obsolete: use `set-face-attribute' instead."
 ;; ---------- eval-after-load plumbing is in load.rs ----------
 
 (defmacro with-buffer-unmodified-if-unchanged (&rest body)
-  (let ((doc (if (stringp (car body)) (pop body))))
-    `(let ((modp (buffer-modified-p))
+  "Like `progn', but change buffer-modified status only if buffer text changes.
+;Remacs: GNU subr-x.el semantics — `prog1' keeps the body value; the
+;unmodified flag is restored only when the buffer was unmodified before
+;and its raw text hash is unchanged afterwards."
+  (declare (debug t) (indent 0))
+  (let ((hash (make-symbol "hash"))
+        (buffer (make-symbol "buffer")))
+    `(let ((,hash (and (not (buffer-modified-p))
+                       (buffer-hash)))
+           (,buffer (current-buffer))
            (buffer-undo-list buffer-undo-list))
-       (with-silent-modifications
-         ,doc
-         ,@body
-         (restore-buffer-modified-p modp)))))
+       (prog1
+           (with-silent-modifications
+             ,@body)
+         ;; If we didn't change anything in the buffer (and the buffer
+         ;; was previously unmodified), then flip the modification status
+         ;; back to "unchanged".
+         (when (and ,hash (buffer-live-p ,buffer))
+           (with-current-buffer ,buffer
+             (when (and (buffer-modified-p)
+                        (equal ,hash (buffer-hash)))
+               (restore-buffer-modified-p nil))))))))
 
 ;; Character categories are implemented as bool-vector sets in
 ;; category tables (see `make-category-table').
@@ -24372,8 +26079,16 @@ Just \\[universal-argument] as argument means to use the current column."
   "Dynamically bound during `calculate-lisp-indent'.")
 
 (defun lisp-ppss (&optional pos)
-  "Return the parse-partial-sexp state at POS (or point)."
-  (syntax-ppss pos))
+  "Return Parse-Partial-Sexp State at POS, defaulting to point.
+Like `syntax-ppss' but includes the character address of the last
+complete sexp in the innermost containing list at position
+2 (counting from 0).  This is important for Lisp indentation."
+  (unless pos (setq pos (point)))
+  (let ((pss (syntax-ppss pos)))
+    (if (and (not (nth 2 pss)) (nth 9 pss))
+        (let ((sexp-start (car (last (nth 9 pss)))))
+          (parse-partial-sexp sexp-start pos nil nil (syntax-ppss sexp-start)))
+      pss)))
 
 (defun calculate-lisp-indent (&optional parse-start)
   "Return appropriate indentation for current line as Lisp code.
@@ -24629,6 +26344,92 @@ Port of GNU's lisp-mode.el indentation dispatch."
       ;; after the indentation.  Else stay at same point in text.
       (if (> (- (point-max) pos) (point))
           (goto-char (- (point-max) pos))))))
+
+(defun lisp-indent-calc-next (state)
+  "Move to next line and return calculated indent for it.
+STATE is updated by side effect, the first state should be
+created by `lisp-indent-initial-state'.  This function may move
+by more than one line to cross a string literal.
+Port of GNU lisp-mode.el; `lisp-indent-state' accessors come from
+subr-x, so slots are fetched directly instead of via `pcase'."
+  (let* ((indent-stack (lisp-indent-state-stack state))
+         (ppss (lisp-indent-state-ppss state))
+         (ppss-point (lisp-indent-state-ppss-point state))
+         (indent-depth (car ppss)) ; Corresponding to indent-stack.
+         (depth indent-depth))
+    ;; Parse this line so we can learn the state to indent the
+    ;; next line.
+    (while (let ((last-sexp (nth 2 ppss)))
+             (setq ppss (parse-partial-sexp
+                         ppss-point (progn (end-of-line) (point))
+                         nil nil ppss))
+             ;; Preserve last sexp of state (position 2) for
+             ;; `calculate-lisp-indent', if we're at the same depth.
+             (if (and (not (nth 2 ppss)) (= depth (car ppss)))
+                 (setf (nth 2 ppss) last-sexp)
+               (setq last-sexp (nth 2 ppss)))
+             (setq depth (car ppss))
+             ;; Skip over newlines within strings.
+             (and (not (eobp)) (nth 3 ppss)))
+      (let ((string-start (nth 8 ppss)))
+        (setq ppss (parse-partial-sexp (point) (point-max)
+                                       nil nil ppss 'syntax-table))
+        (setf (nth 2 ppss) string-start) ; Finished a complete string.
+        (setq depth (car ppss)))
+      (setq ppss-point (point)))
+    (setq ppss-point (point))
+    (let* ((depth-delta (- depth indent-depth)))
+      (cond ((< depth-delta 0)
+             (setq indent-stack (nthcdr (- depth-delta) indent-stack)))
+            ((> depth-delta 0)
+             (setq indent-stack (nconc (make-list depth-delta nil)
+                                       indent-stack)))))
+    (prog1
+        (let (indent)
+          (cond ((= (forward-line 1) 1)
+                 ;; Can't move to the next line, apparently end of buffer.
+                 nil)
+                ((null indent-stack)
+                 ;; Negative depth, probably some kind of syntax
+                 ;; error.  Reset the state.
+                 (setq ppss (parse-partial-sexp (point) (point))))
+                ((car indent-stack))
+                ((integerp (setq indent (calculate-lisp-indent ppss)))
+                 (setf (car indent-stack) indent))
+                ((consp indent)       ; (COLUMN CONTAINING-SEXP-START)
+                 (car indent))
+                ;; This only happens if we're in a string, but the
+                ;; loop should always skip over strings (unless we hit
+                ;; end of buffer, which is taken care of by the first
+                ;; clause).
+                (t (error "This shouldn't happen"))))
+      (setf (lisp-indent-state-stack state) indent-stack)
+      (setf (lisp-indent-state-ppss-point state) ppss-point)
+      (setf (lisp-indent-state-ppss state) ppss))))
+
+(defun lisp-indent-region (start end)
+  "Indent region as Lisp code, efficiently."
+  (save-excursion
+    (setq end (copy-marker end))
+    (goto-char start)
+    (beginning-of-line)
+    ;; The default `indent-region-line-by-line' doesn't hold a running
+    ;; parse state, which forces each indent call to reparse from the
+    ;; beginning.  That has O(n^2) complexity.
+    (let* ((parse-state (lisp-indent-initial-state))
+           (pr (unless (minibufferp)
+                 (make-progress-reporter "Indenting region..." (point) end))))
+      (let ((ppss (lisp-indent-state-ppss parse-state)))
+        (unless (or (and (bolp) (eolp)) (nth 3 ppss))
+          (lisp-indent-line (calculate-lisp-indent ppss))))
+      (let ((indent nil))
+        (while (progn (setq indent (lisp-indent-calc-next parse-state))
+                      (< (point) end))
+          (unless (or (and (bolp) (eolp)) (not indent))
+            (lisp-indent-line indent))
+          (and pr (progress-reporter-update pr (point)))))
+      (and pr (progress-reporter-done pr))
+      (move-marker end nil))))
 
 ;; ---------- major modes ----------
 
@@ -25279,6 +27080,7 @@ determined at run time.")
   (setq-local multibyte-syntax-as-symbol t)
   (setq-local comment-indent-function #'lisp-comment-indent)
   ;; GNU `lisp-mode-variables' sets these for every Lisp mode.
+  (setq-local indent-region-function #'lisp-indent-region)
   (setq-local imenu-generic-expression lisp-imenu-generic-expression)
   (setq imenu-case-fold-search nil))
 
@@ -25321,7 +27123,11 @@ determined at run time.")
 (define-derived-mode lisp-interaction-mode emacs-lisp-mode
   "Lisp Interaction"
   "Major mode for typing and evaluating Emacs Lisp code."
-  :abbrev-table nil)
+  :abbrev-table nil
+  ;; GNU elisp-mode.el: the mode body ends with this setq-local —
+  ;; kill-all-local-variables inside `define-derived-mode' otherwise
+  ;; leaves *scratch*'s lexical-binding nil.
+  (setq-local lexical-binding t))
 
 ;; ---------- remaining navigation/indentation commands ----------
 
@@ -25333,7 +27139,7 @@ determined at run time.")
   "Non-nil means an open paren in column 0 starts a defun.")
 (defvar comment-use-syntax-ppss t
   "Non-nil means comment-related functions use `syntax-ppss'.")
-(defvar indent-region-function nil
+(defvar indent-region-function #'indent-region-line-by-line
   "Function to indent a region, or nil to indent each line.")
 
 ;; ---------- defun navigation (GNU lisp.el) ----------
@@ -25644,6 +27450,21 @@ If PREV is non-nil, return the previous one instead."
 ;;; Abbrev mode — port of GNU's obarray.el + abbrev.el.
 
 ;; From GNU's obarray.el (these are Lisp defuns there).
+
+;; GNU byte-run.el: `(declare (obsolete NEW WHEN))' inside a defun runs
+;; `make-obsolete' via `defun-declarations-alist' (which is populated
+;; lazily here — `defun'/`defmacro' consult it at definition time).
+;; Remacs: registered before `obarray-size' below so its obsolete info
+;; lands on `byte-obsolete-info' like GNU's.
+(defalias 'byte-run--set-obsolete
+  #'(lambda (f _args new-name when)
+      (list 'make-obsolete
+            (list 'quote f) (list 'quote new-name) when)))
+
+(when (boundp 'defun-declarations-alist)
+  (unless (assq 'obsolete defun-declarations-alist)
+    (push (list 'obsolete #'byte-run--set-obsolete)
+          defun-declarations-alist)))
 
 (defconst obarray-default-size 4
   "The default size of all obarrays.")
@@ -26975,8 +28796,10 @@ Use \\[edit-tab-stops] to edit them interactively."
                 (forward-char -1))
               (delete-region (point) before)))))))
 
-(defun count-screen-lines (&optional beg end)
-  "Count screen lines between BEG and END (batch: count-lines)."
+(defun count-screen-lines (&optional beg end _min-flag _window)
+  "Count screen lines between BEG and END (batch: count-lines).
+GNU takes MIN-FLAG and WINDOW too; font geometry is irrelevant on a
+batch terminal so both are ignored."
   (count-lines (or beg (point-min)) (or end (point-max))))
 
 ;; window.el cluster (verbatim GNU where possible).
@@ -27214,10 +29037,18 @@ SLOT may be a number from 0 to 17 inclusive, or a slot name (symbol)."
   (newline-and-indent))
 
 (defun indent-pp-sexp (&optional arg)
-  "Indent each line of the list starting just after point."
-  (interactive "*P")
-  (let ((end (save-excursion (forward-sexp (or arg 1)) (point))))
-    (when end (indent-region (point) end))))
+  "Indent each line of the list starting just after point, or prettyprint it.
+A prefix argument specifies pretty-printing."
+  (interactive "P")
+  (if arg
+      (save-excursion
+        (save-restriction
+          (narrow-to-region (point) (progn (forward-sexp 1) (point)))
+          (pp-buffer)
+          (goto-char (point-max))
+          (if (eq (char-before) ?\n)
+              (delete-char -1)))))
+  (indent-sexp))
 
 ;; ---------- balanced-expression navigation (GNU lisp.el) ----------
 
@@ -33828,9 +35659,25 @@ for AFTER in KEYMAP, the new binding goes at the end of the list.
 BINDING nil means remove the binding for KEY."
   (unless (keymapp keymap)
     (signal 'wrong-type-argument (list 'keymapp keymap)))
-  ;; GNU accepts a 1-element vector (e.g. tool-bar.el passes [quit]).
+  ;; GNU accepts a 1-element vector (e.g. tool-bar.el passes [quit]);
+  ;; a multi-key STRING/vector descends to the prefix map and takes its
+  ;; last element as the event (GNU subr.el `define-key-after').
   (when (vectorp key)
-    (setq key (aref key 0)))
+    (setq key (if (<= (length key) 1)
+                  (aref key 0)
+                (setq keymap (lookup-key
+                              keymap
+                              (apply #'vector
+                                     (butlast (mapcar #'identity key)))))
+                (aref key (1- (length key))))))
+  (when (stringp key)
+    (setq key (if (<= (length key) 1)
+                  (aref key 0)
+                (setq keymap (lookup-key
+                              keymap
+                              (apply #'vector
+                                     (butlast (mapcar #'identity key)))))
+                (aref key (1- (length key))))))
   (let* ((tail (cdr keymap))
          ;; Skip the optional prompt string: the bindings are the cdr
          ;; after it.
@@ -36803,6 +38650,8 @@ Returns the value of the last form in BODY."
   "Looping construct taken from Scheme.
 Like `let' but BINDINGS can be rebound via recursive calls to NAME."
   (declare (indent 2) (debug (symbolp (&rest (symbolp form)) body)))
+  (unless lexical-binding
+    (error "`named-let' requires lexical binding"))
   `(cl-labels ((,name ,(mapcar #'car bindings) ,@body))
      (,name ,@(mapcar #'cadr bindings))))
 
@@ -40164,11 +42013,13 @@ additional formats (octal, hexadecimal, and character)."
 (autoload 'pulse-momentary-highlight-region "pulse"
   "Highlight between START and END, unhighlighting before next command.")
 
-;; *scratch* starts in lisp-interaction-mode (GNU batch behavior too).
-(when (get-buffer "*scratch*")
-  (with-current-buffer "*scratch*"
-    (lisp-interaction-mode)))
-
+;;Remacs: *scratch* enters `lisp-interaction-mode' at the END of
+;;Remacs: `Interp::new' instead of here — GNU runs it from startup.el
+;;Remacs: after loadup.  Running it during the prelude installs
+;;Remacs: scratch's lisp-interaction-mode-syntax-table field BEFORE
+;;Remacs: characters.el loads, so its unqualified `modify-syntax-entry'
+;;Remacs: calls edit the buffer table instead of `standard-syntax-table'
+;;Remacs: (GNU semantics: buffer tables default to the standard object).
 ;;; GNU subr.el: strict word motion + hash-table membership.
 
 (defvar word-move-empty-char-table nil

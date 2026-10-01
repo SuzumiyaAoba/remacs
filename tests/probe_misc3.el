@@ -456,7 +456,8 @@ process-environment
 (func-arity '(lambda (a) a))
 (func-arity '(lambda (a &optional b) a))
 (func-arity '(lambda (&rest r) r))
-(func-arity '(closure (t) (a) a))
+;; GNU func_arity rejects quoted (closure ...) lists: invalid-function.
+(condition-case e (func-arity '(closure (t) (a) a)) (error (car e)))
 (func-arity 'car)
 (func-arity 'if)
 (color-distance "#ff0000" "#0000ff")

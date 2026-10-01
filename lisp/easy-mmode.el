@@ -168,29 +168,82 @@ are the mode's body, run on each toggle."
                                   `(if (boundp ',map-sym) ,map-sym)))))
          ',mode))))
 
-(defmacro define-globalized-minor-mode (global-mode mode turn-on &rest keys)
+(defmacro define-globalized-minor-mode (global-mode mode turn-on &rest body)
   "Define a global minor mode GLOBAL-MODE corresponding to buffer-local MODE.
 TURN-ON is a function or form run in each buffer to enable MODE."
-  (let* ((mode-name (symbol-name mode))
+  (declare (indent defun))
+  (let* ((global-mode-name (symbol-name global-mode))
+         (mode-name (symbol-name mode))
+         (group nil)
+         (extra-keywords nil)
+         (MODE-variable mode)
          (set-explicitly (intern (concat mode-name "--set-explicitly")))
          (suppress-set-explicitly
           (intern (concat mode-name "--suppress-set-explicitly")))
          (enable-in-buffer
-          (intern (concat (symbol-name global-mode) "-enable-in-buffer")))
-         (mode-hook (intern (concat mode-name "-hook"))))
+          (intern (concat global-mode-name "-enable-in-buffer")))
+         (mode-hook (intern (concat mode-name "-hook")))
+         (MODE-predicate
+          (intern (concat (replace-regexp-in-string
+                           "-mode\\'" "" global-mode-name)
+                          "-modes")))
+         (turn-on-function `#',turn-on)
+         keyw predicate)
+    ;; GNU easy-mmode: parse KEY VALUE pairs; :predicate builds the
+    ;; "-modes" defcustom and wraps TURN-ON behind
+    ;; `easy-mmode--globalized-predicate-p'; :global is swallowed.
+    (while (keywordp (setq keyw (car body)))
+      (pop body)
+      (pcase keyw
+        (:group (setq group (nconc group (list :group (pop body)))))
+        (:global (pop body))
+        (:variable (setq MODE-variable (pop body)))
+        (:predicate
+         (setq predicate (list (pop body)))
+         (setq turn-on-function
+               `(lambda ()
+                  (require 'easy-mmode)
+                  (when (easy-mmode--globalized-predicate-p ,MODE-predicate)
+                    (funcall ,turn-on-function)))))
+        (_ (push keyw extra-keywords) (push (pop body) extra-keywords))))
+    (setq extra-keywords (nreverse extra-keywords))
+    (when (and (plist-get extra-keywords :init-value)
+               (null (plist-get extra-keywords :initialize)))
+      (setq extra-keywords
+            `(:initialize #'custom-initialize-after-file-load
+                          . ,extra-keywords)))
     `(progn
+       (progn
+         (put ',global-mode 'globalized-minor-mode t)
+         :autoload-end
+         ,@(when predicate `((defvar ,MODE-predicate))))
+       ;; The actual global minor-mode.
        (define-minor-mode ,global-mode
-         ,(format "Toggle %s in all buffers." global-mode)
-         :global t ,@keys
+         ,(format "Toggle %s in many buffers." global-mode)
+         :global t ,@group ,@extra-keywords
+         ;; Setup hook to handle future mode changes and new buffers.
+         (if ,global-mode
+             (add-hook 'after-change-major-mode-hook
+                       #',enable-in-buffer)
+           (remove-hook 'after-change-major-mode-hook
+                        #',enable-in-buffer))
+         ;; Go through existing buffers.
          (dolist (buf (buffer-list))
            (with-current-buffer buf
              (if ,global-mode
-                 (,enable-in-buffer)
-               (,mode -1)))))
-       ;; GNU's `define-globalized-minor-mode' records explicit user
-       ;; toggles in `MODE--set-explicitly' (cleared by
-       ;; `kill-all-local-variables' since it is `defvar-local'); a
-       ;; globalized enable skips buffers where it is set.
+                 (funcall ,turn-on-function)
+               (when (bound-and-true-p ,MODE-variable) (,mode -1)))))
+         ,@body)
+       ,@(when predicate
+           `((defcustom ,MODE-predicate ,(car predicate)
+               ,(format "Which major modes `%s' is switched on in." mode)
+               :type '(choice
+                       (const :tag "Enable in all major modes" t)
+                       (const :tag "Don't enable in any major mode" nil)
+                       (repeat sexp))
+               ,@group)))
+       ;; MODE-set-explicitly records explicit user toggles; cleared
+       ;; by kill-all-local-variables (it is defvar-local).
        (defvar-local ,set-explicitly nil)
        (defvar ,suppress-set-explicitly nil)
        (defun ,set-explicitly ()
@@ -201,10 +254,29 @@ TURN-ON is a function or form run in each buffer to enable MODE."
        (defun ,enable-in-buffer ()
          (unless ,set-explicitly
            (let ((,suppress-set-explicitly t))
-             ,(if (symbolp turn-on)
-                  (list 'funcall (list 'quote turn-on))
-                (list 'funcall turn-on)))))
+             (funcall ,turn-on-function))))
        (put ',enable-in-buffer 'definition-name ',global-mode))))
+
+(defun easy-mmode--globalized-predicate-p (predicate)
+  "Like GNU easy-mmode: does PREDICATE permit enabling in `major-mode'?"
+  (cond
+   ((eq predicate t) t)
+   ((eq predicate nil) nil)
+   ((listp predicate)
+    ;; Legacy support for (not a b c).
+    (when (eq (car predicate) 'not)
+      (setq predicate (nconc (mapcar (lambda (e) (list 'not e))
+                                     (cdr predicate))
+                             (list t))))
+    (catch 'found
+      (dolist (elem predicate)
+        (cond
+         ((eq elem t) (throw 'found t))
+         ((eq elem nil) (throw 'found nil))
+         ((and (consp elem) (eq (car elem) 'not))
+          (when (derived-mode-p (cdr elem)) (throw 'found nil)))
+         ((symbolp elem)
+          (when (derived-mode-p elem) (throw 'found t)))))))))
 
 ;; GNU: `easy-mmode-define-minor-mode' is the pre-30.1 name, and
 ;; `define-global-minor-mode' the pre-29 name of the globalized macro.

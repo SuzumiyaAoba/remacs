@@ -114,7 +114,7 @@ pub fn render_grid(i: &Interp, width: usize, height: usize) -> Grid {
                     let bb = b.borrow();
                     (
                         bb.name.clone(),
-                        bb.modified,
+                        bb.is_modified(),
                         bb.text.line_of_pos(bb.point()) + 1,
                         bb.point() - bb.text.line_start(bb.text.line_of_pos(bb.point())),
                     )
@@ -758,7 +758,7 @@ impl Isearch {
             // RET: accept; mark goes at the entry position.
             13 => {
                 if let Some(b) = i.current_buffer_ref() {
-                    b.borrow_mut().mark = Some(self.start);
+                    b.borrow_mut().set_mark(self.start);
                 }
                 IsearchAction::Done
             }
@@ -823,7 +823,7 @@ impl Isearch {
             }
             other => {
                 if let Some(b) = i.current_buffer_ref() {
-                    b.borrow_mut().mark = Some(self.start);
+                    b.borrow_mut().set_mark(self.start);
                 }
                 IsearchAction::ReDispatch(other)
             }
@@ -968,13 +968,12 @@ fn minibuf_loop<T: KeyIo>(
             };
             let _ = t.draw_echo(&shown);
         }
-        let k = term
-            .borrow_mut()
-            .poll_key(Duration::from_secs(86400))
-            .ok()
-            .flatten();
-        let Some(code) = k else {
-            continue;
+        // Propagate io errors — swallowing them as None spins an
+        // infinite poll loop on a dead input source.
+        let code = match term.borrow_mut().poll_key(Duration::from_secs(86400)) {
+            Ok(Some(k)) => k,
+            Ok(None) => continue,
+            Err(e) => return Err(i.error(format!("minibuffer input: {e}"))),
         };
         if single {
             return Ok(MinibufInput::Key(code));
@@ -1084,7 +1083,7 @@ mod tests {
         let frame = crate::editor::Frame::new_tty(buf_id, mb_id, 80, 25);
         i.selected_frame = Some(frame.clone());
         i.frames.push(frame);
-        i.current_buffer = buf_id;
+        i.set_current_buffer(buf_id);
         i
     }
 
@@ -1164,7 +1163,7 @@ mod tests {
     fn isearch_interp(text: &str) -> crate::lisp::Interp {
         let mut i = crate::lisp::Interp::new();
         let buf_id = i.buffers.create("s");
-        i.current_buffer = buf_id;
+        i.set_current_buffer(buf_id);
         i.buffers.get(buf_id).unwrap().borrow_mut().insert(text);
         i.buffers.get(buf_id).unwrap().borrow_mut().set_point(0);
         i
@@ -1228,7 +1227,7 @@ mod tests {
         assert!(matches!(st.step(&mut i, 13), IsearchAction::Done));
         let b = i.current_buffer_ref().unwrap();
         let bb = b.borrow();
-        assert_eq!(bb.mark, Some(0));
+        assert_eq!(bb.mark_position(), Some(0));
         assert!(bb.point() > 0);
     }
 
@@ -1367,7 +1366,7 @@ mod tests {
             bb.insert(prompt);
             bb.locals.insert(km, map);
         }
-        i.current_buffer = mb;
+        i.set_current_buffer(mb);
         i.minibuf_prompts.push(prompt.to_string());
         i.minibuf_level = 1;
         i.minibuf_catching_exit = true;

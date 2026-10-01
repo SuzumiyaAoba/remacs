@@ -11,7 +11,7 @@ use crate::lisp::builtins::want_string;
 use crate::lisp::error::{EvalResult, Flow};
 use crate::lisp::eval::MatchData;
 use crate::lisp::obarray::sym;
-use crate::lisp::value::{Marker, Subr, Value};
+use crate::lisp::value::{Marker, Subr, SymId, Value};
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -309,7 +309,13 @@ pub(crate) static SUBRS: &[Subr] = &[
         f_set_default,
         "Set default value of SYMBOL."
     ),
-    S!("set-default-toplevel-value", 2, 2, f_set_default, ""),
+    S!(
+        "set-default-toplevel-value",
+        2,
+        2,
+        f_set_default_toplevel,
+        "Set default value of SYMBOL, return nil (GNU)."
+    ),
     S!(
         "default-boundp",
         1,
@@ -533,9 +539,9 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!("last-buffer", 0, 3, f_last_buffer, "Last buffer in order."),
     // --- insertion & deletion ---
     S!("insert", many 0, f_insert, "Insert args (strings/chars) at point."),
-    S!("insert-and-inherit", many 0, f_insert, "Insert with inherited props."),
+    S!("insert-and-inherit", many 0, f_insert_and_inherit, "Insert with inherited props."),
     S!("insert-before-markers", many 0, f_insert_before_markers, "Insert before markers."),
-    S!("insert-before-markers-and-inherit", many 0, f_insert_before_markers, ""),
+    S!("insert-before-markers-and-inherit", many 0, f_insert_before_markers_and_inherit, ""),
     S!(
         "insert-char",
         1,
@@ -573,13 +579,8 @@ pub(crate) static SUBRS: &[Subr] = &[
         f_delete_backward_char,
         "Delete N chars before point."
     ),
-    S!(
-        "backward-delete-char-untabify",
-        1,
-        2,
-        f_backward_delete_char_untabify,
-        "Delete N chars backward, untabifying."
-    ),
+    // backward-delete-char-untabify is Lisp (prelude): GNU's
+    // untabify-method dispatch needs insert-char/current-column.
     S!(
         "beginning-of-visual-line",
         0,
@@ -1048,7 +1049,7 @@ pub(crate) static SUBRS: &[Subr] = &[
         f_looking_at,
         "t if text at point matches REGEXP."
     ),
-    S!("looking-at-p", 1, 1, f_looking_at, "Predicate version."),
+    S!("looking-at-p", 1, 1, f_looking_at_p, "Predicate version."),
     S!(
         "string-match",
         2,
@@ -1091,8 +1092,9 @@ pub(crate) static SUBRS: &[Subr] = &[
         f_search_backward,
         "Literal search backward."
     ),
-    S!("search-forward-regexp", 1, 4, f_re_search_forward, ""),
-    S!("search-backward-regexp", 1, 4, f_re_search_backward, ""),
+    // GNU subr.el: search-forward-regexp / search-backward-regexp are
+    // `defalias' copies of re-search-* (same subr object) — done in
+    // prelude so `symbol-function' of both is `eq'.
     S!(
         "match-beginning",
         1,
@@ -1158,12 +1160,14 @@ pub(crate) static SUBRS: &[Subr] = &[
         f_regexp_quote,
         "Quote STRING for literal regexp match."
     ),
-    S!("posix-looking-at", 1, 2, f_looking_at, ""),
-    S!("posix-string-match", 2, 4, f_string_match, ""),
-    S!("posix-search-forward", 1, 4, f_re_search_forward, ""),
-    S!("posix-search-backward", 1, 4, f_re_search_backward, ""),
-    S!("word-search-forward", 1, 4, f_search_forward, ""),
-    S!("word-search-backward", 1, 4, f_search_backward, ""),
+    S!("posix-looking-at", 1, 2, f_posix_looking_at, ""),
+    S!("posix-string-match", 2, 4, f_posix_string_match, ""),
+    S!("posix-search-forward", 1, 4, f_posix_search_forward, ""),
+    S!("posix-search-backward", 1, 4, f_posix_search_backward, ""),
+    S!("word-search-forward", 1, 4, f_word_search_forward, ""),
+    S!("word-search-backward", 1, 4, f_word_search_backward, ""),
+    S!("word-search-forward-lax", 1, 4, f_word_search_forward_lax, ""),
+    S!("word-search-backward-lax", 1, 4, f_word_search_backward_lax, ""),
     // --- text properties ---
     S!(
         "put-text-property",
@@ -1207,8 +1211,8 @@ pub(crate) static SUBRS: &[Subr] = &[
         f_text_properties_at,
         "Plist at POSITION."
     ),
-    S!("get-char-property", 2, 3, f_get_text_property, ""),
-    S!("get-pos-property", 2, 3, f_get_text_property, ""),
+    S!("get-char-property", 2, 3, f_get_char_property, ""),
+    S!("get-pos-property", 2, 3, f_get_pos_property, ""),
     S!(
         "remove-list-of-text-properties",
         3,
@@ -1237,7 +1241,7 @@ pub(crate) static SUBRS: &[Subr] = &[
         "next-single-char-property-change",
         2,
         4,
-        f_next_single_property_change,
+        f_next_single_char_property_change,
         "Next pos where PROP changes (incl. overlays)."
     ),
     S!("previous-property-change", 1, 3, f_prev_property_change, ""),
@@ -1252,7 +1256,7 @@ pub(crate) static SUBRS: &[Subr] = &[
         "previous-single-char-property-change",
         2,
         4,
-        f_prev_single_property_change,
+        f_prev_single_char_property_change,
         ""
     ),
     S!("propertize", many 1, f_propertize, "Return a copy of STRING with properties."),
@@ -1495,13 +1499,16 @@ fn f_set_visited_file_modtime(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     }
 }
 
-/// Parse a lock-file target `USER@HOST.PID' or `USER@HOST.PID:BOOT'
-/// into (user, host, pid); None if malformed.
-fn parse_lock_target(target: &str) -> Option<(String, String, u32)> {
+/// Parse a lock-file target `USER@HOST.PID[:BOOT]' into
+/// (user, host, pid, boot); None if malformed.  A missing `:BOOT'
+/// suffix parses as 0 (GNU filelock.c `current_lock_owner').
+fn parse_lock_target(target: &str) -> Option<(String, String, u32, i64)> {
     let (user, rest) = target.split_once('@')?;
     let (host, pid) = rest.rsplit_once('.')?;
-    let pid = pid.split(':').next()?.parse().ok()?;
-    Some((user.to_string(), host.to_string(), pid))
+    let mut parts = pid.splitn(2, ':');
+    let pid = parts.next()?.parse().ok()?;
+    let boot = parts.next().and_then(|b| b.parse().ok()).unwrap_or(0);
+    Some((user.to_string(), host.to_string(), pid, boot))
 }
 
 /// GNU `current_lock_owner' result.
@@ -1515,15 +1522,22 @@ enum LockOwner {
 }
 
 /// Parse the lock target and classify ownership.  Err = not locked or
-/// stale (dead pid on this host, or unparseable target).
+/// stale (dead pid on this host, a boot-time mismatch meaning the
+/// lock predates the last reboot, or an unparseable target).
 fn lock_owner(target: &str) -> Result<LockOwner, ()> {
-    let (user, host, pid) = parse_lock_target(target).ok_or(())?;
+    let (user, host, pid, boot) = parse_lock_target(target).ok_or(())?;
     let same_host = host == crate::buffer::our_host_name();
     if same_host && pid == std::process::id() {
         return Ok(LockOwner::Ours);
     }
     if same_host {
-        // Same host: check whether the process is still alive.
+        // GNU current_lock_owner: the lock is stale when its recorded
+        // boot time differs from the system's (the lock was left by a
+        // process from a previous boot), or when the pid is dead.
+        let bt = crate::buffer::boot_time();
+        if bt != 0 && (boot - bt).abs() > 1 {
+            return Err(());
+        }
         #[cfg(unix)]
         unsafe {
             if libc::kill(pid as i32, 0) != 0 && *libc::__error() == libc::ESRCH {
@@ -1565,7 +1579,7 @@ pub(crate) fn barf_if_file_locked(i: &mut Interp) -> EvalResult {
     }
     let (modified, file) = {
         let bb = b.borrow();
-        (bb.modified, bb.file_name.clone())
+        (bb.is_modified(), bb.file_name.clone())
     };
     if modified {
         return Ok(Value::Nil);
@@ -1589,7 +1603,7 @@ fn f_lock_buffer(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     {
         let b = cur(i);
         let bb = b.borrow();
-        if !bb.modified {
+        if !bb.is_modified() {
             return Ok(Value::Nil);
         }
     }
@@ -1783,8 +1797,10 @@ fn f_ask_user_about_lock(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 /// GNU: 0 when equal, else +/-(1 + number of matching leading chars).
 /// Honors `case-fold-search`.
 fn f_compare_buffer_substrings(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let b1 = buf_of(i, &a[0])?;
-    let b2 = buf_of(i, &a[3])?;
+    // GNU Fcompare_buffer_substrings resolves buffer NAMES via
+    // decode_buffer → get_buffer.
+    let b1 = buf_or_name(i, &a[0])?;
+    let b2 = buf_or_name(i, &a[3])?;
     let (s1, s2) = {
         let bb1 = b1.borrow();
         let bb2 = b2.borrow();
@@ -1928,7 +1944,13 @@ pub(crate) fn want_sym(i: &mut Interp, v: &Value) -> Result<u32, Flow> {
 }
 
 /// Resolve optional buffer arg (Value::Buffer/Str/nil) to a shared ref.
-pub(crate) fn buf_of(
+/// Names resolve via `get-buffer'; nil selects the current buffer.
+/// Only for functions whose GNU twin takes buffer-or-name
+/// (`Fdecode_buffer` callers that funnel through `get_buffer'):
+/// bury/unbury/kill/set-buffer/other-buffer/rename-buffer,
+/// insert-buffer-substring, compare-buffer-substrings,
+/// buffer-disable/enable-undo.
+pub(crate) fn buf_or_name(
     i: &mut Interp,
     v: &Value,
 ) -> Result<Rc<RefCell<crate::buffer::Buffer>>, Flow> {
@@ -1951,6 +1973,27 @@ pub(crate) fn buf_of(
         }
         // GNU's Fget_buffer signals stringp for non-buffer/non-name args.
         other => Err(i.wrong_type_mut("stringp", other)),
+    }
+}
+
+/// GNU `Fdecode_buffer`: nil → current buffer; anything else must be a
+/// live buffer object — a string name is NOT accepted (CHECK_BUFFER).
+/// This is the argument decoder for buffer-size, buffer-modified-p,
+/// buffer-file-name, buffer-base-buffer, buffer-local-variables,
+/// buffer-local-value, buffer-local-boundp, local-variable-p,
+/// local-variable-if-set-p, verify-visited-file-modtime,
+/// buffer-swap-text, buffer-modified-tick, and the text-property
+/// functions' OBJECT argument when it is not a string.
+pub(crate) fn buf_of(
+    i: &mut Interp,
+    v: &Value,
+) -> Result<Rc<RefCell<crate::buffer::Buffer>>, Flow> {
+    match v {
+        Value::Nil => i
+            .current_buffer_ref()
+            .ok_or_else(|| i.error("Selecting deleted buffer")),
+        Value::Buffer(b) => Ok(b.clone()),
+        other => Err(i.wrong_type_mut("bufferp", other)),
     }
 }
 
@@ -2005,6 +2048,9 @@ pub(crate) fn chg_delete(i: &mut Interp, s0: usize, e0: usize) -> Result<String,
     if s0 >= e0 {
         return Ok(String::new());
     }
+    // GNU barf-if-buffer-read-only: kill/delete in a read-only buffer
+    // signals `buffer-read-only' before touching text.
+    check_writable(i)?;
     if text_ro_range(i, s0, e0) {
         return Err(text_ro_error(i));
     }
@@ -2046,9 +2092,9 @@ pub(crate) fn chg_with_buffer(
     f: impl FnOnce(&mut Interp) -> EvalResult,
 ) -> EvalResult {
     let old = i.current_buffer;
-    i.current_buffer = buf_idx;
+    i.set_current_buffer(buf_idx);
     let r = f(i);
-    i.current_buffer = old;
+    i.set_current_buffer(old);
     r
 }
 
@@ -2074,9 +2120,7 @@ pub(crate) fn check_writable(i: &mut Interp) -> Result<(), Flow> {
 /// Does `rear-nonsticky' at POS cover PROP?  `t' (or any non-list
 /// non-nil value, per GNU's stickiness rules) covers every property;
 /// a list covers its members.
-fn rear_nonsticky_covers(i: &mut Interp, pos: usize, prop: u32) -> bool {
-    let ns = i.intern("rear-nonsticky");
-    let v = prop_at(i, pos, ns);
+fn prop_list_covers(i: &mut Interp, v: Value, prop: u32) -> bool {
     match &v {
         Value::Cons(_) => {
             let prop_sym = Value::Sym(prop);
@@ -2095,6 +2139,18 @@ fn rear_nonsticky_covers(i: &mut Interp, pos: usize, prop: u32) -> bool {
         }
         _ => v.truthy(),
     }
+}
+
+fn rear_nonsticky_covers_bb(i: &mut Interp, bb: &crate::buffer::Buffer, pos: usize, prop: u32) -> bool {
+    let ns = i.intern("rear-nonsticky");
+    let v = prop_at_bb(i, bb, pos, ns);
+    prop_list_covers(i, v, prop)
+}
+
+fn rear_nonsticky_covers(i: &mut Interp, pos: usize, prop: u32) -> bool {
+    let ns = i.intern("rear-nonsticky");
+    let v = prop_at(i, pos, ns);
+    prop_list_covers(i, v, prop)
 }
 
 /// GNU `verify_interval_modification' read-only gate for insertion at
@@ -2136,6 +2192,71 @@ pub(crate) fn pos_idx(len_or_zv: usize, p: i128) -> usize {
     (p.max(1) as usize - 1).min(len_or_zv)
 }
 
+/// GNU `validate_interval_range' on a single position: signal
+/// `args-out-of-range (POS POS)' when POS is outside the buffer's
+/// [point-min, point-max].  Returns the 1-based position unchanged.
+pub(crate) fn want_pos_in_range(i: &mut Interp, v: &Value) -> Result<i128, Flow> {
+    let p = want_int(i, v)?;
+    let bc = cur(i);
+    let bb = bc.borrow();
+    let lo = bb.begv as i128 + 1;
+    let hi = bb.zv as i128 + 1;
+    drop(bb);
+    if p < lo || p > hi {
+        return Err(err_sym(
+            i,
+            "args-out-of-range",
+            vec![v.clone(), v.clone()],
+        ));
+    }
+    Ok(p)
+}
+
+/// Same for a START END pair: GNU signals `(args-out-of-range
+/// START END)' — the *raw* values, not swapped/clamped.  A reversed
+/// START>END pair is legal (the scan is simply empty).
+pub(crate) fn want_range_in_range(
+    i: &mut Interp,
+    s: &Value,
+    e: &Value,
+) -> Result<(i128, i128), Flow> {
+    let sv = want_int(i, s)?;
+    let ev = want_int(i, e)?;
+    let bc = cur(i);
+    let bb = bc.borrow();
+    let lo = bb.begv as i128 + 1;
+    let hi = bb.zv as i128 + 1;
+    drop(bb);
+    if sv < lo || sv > hi || ev < lo || ev > hi {
+        return Err(err_sym(
+            i,
+            "args-out-of-range",
+            vec![s.clone(), e.clone()],
+        ));
+    }
+    Ok((sv, ev))
+}
+
+/// `want_pos_in_range' against a specific buffer (OBJECT arg).  GNU
+/// validate_interval_range measures against the object, not the
+/// current buffer.
+pub(crate) fn want_pos_in_buf(
+    i: &mut Interp,
+    v: &Value,
+    bb: &crate::buffer::Buffer,
+) -> Result<i128, Flow> {
+    let p = want_int(i, v)?;
+    let (lo, hi) = (bb.begv as i128 + 1, bb.zv as i128 + 1);
+    if p < lo || p > hi {
+        return Err(err_sym(
+            i,
+            "args-out-of-range",
+            vec![v.clone(), v.clone()],
+        ));
+    }
+    Ok(p)
+}
+
 pub(crate) fn marker_value(m: Rc<RefCell<Marker>>) -> Value {
     Value::Marker(m)
 }
@@ -2151,7 +2272,15 @@ fn f_bufferp(_i: &mut Interp, a: Vec<Value>) -> EvalResult {
 }
 
 fn f_buffer_name(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let b = buf_of(i, &arg(&a, 0))?;
+    // GNU Fbuffer_name wants a real buffer object (bufferp check) —
+    // `set-buffer' resolves names, `buffer-name' doesn't.
+    let b = match &arg(&a, 0) {
+        Value::Nil => i
+            .current_buffer_ref()
+            .ok_or_else(|| i.error("Selecting deleted buffer"))?,
+        Value::Buffer(b) => b.clone(),
+        other => return Err(i.wrong_type_mut("bufferp", other)),
+    };
     // GNU Fbuffer_name: a killed buffer's name is nil.
     Ok(if b.borrow().live {
         Value::string(b.borrow().name.clone())
@@ -2178,9 +2307,23 @@ fn f_get_buffer_create(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     match &a[0] {
         Value::Str(s) => {
             let name = s.borrow().clone();
+            let inhibit = a.get(1).map(|v| v.truthy()).unwrap_or(false);
             let id = match i.buffers.by_name(&name) {
                 Some(id) => id,
-                None => i.buffers.create(&name),
+                None => {
+                    // GNU `init_buffer': buffer creation re-derives the
+                    // standard case table's extras if they aren't all
+                    // char-tables (characters.el clears them at loadup).
+                    crate::lisp::builtins::misc::heal_standard_case_table(i);
+                    let id = i.buffers.create(&name);
+                    if inhibit {
+                        if let Some(b) = i.buffers.get(id) {
+                            b.borrow_mut().inhibit_buffer_hooks = true;
+                        }
+                    }
+                    run_buffer_list_update(i, id);
+                    id
+                }
             };
             Ok(i.buffer_value(id).unwrap_or(Value::Nil))
         }
@@ -2194,7 +2337,14 @@ fn f_generate_new_buffer(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         Value::Str(s) => s.borrow().clone(),
         other => return Err(i.wrong_type_mut("stringp", other)),
     };
+    crate::lisp::builtins::misc::heal_standard_case_table(i);
     let id = i.buffers.create(&name);
+    if a.get(1).map(|v| v.truthy()).unwrap_or(false) {
+        if let Some(b) = i.buffers.get(id) {
+            b.borrow_mut().inhibit_buffer_hooks = true;
+        }
+    }
+    run_buffer_list_update(i, id);
     Ok(i.buffer_value(id).unwrap_or(Value::Nil))
 }
 
@@ -2213,14 +2363,36 @@ fn f_buffer_live_p(_i: &mut Interp, a: Vec<Value>) -> EvalResult {
     }))
 }
 
-/// Kill `id` and repair `current_buffer`: GNU always has a live
-/// buffer, so killing the last one yields a fresh *scratch*.
-pub(crate) fn kill_buffer_keep_current(i: &mut Interp, id: usize) -> bool {
+/// GNU `run_buffer_list_update_hook': run `buffer-list-update-hook'
+/// unless the buffer was created with INHIBIT-BUFFER-HOOKS.
+pub(crate) fn run_buffer_list_update(i: &mut Interp, id: usize) {
+    let inhibited = i
+        .buffers
+        .get(id)
+        .map(|b| b.borrow().inhibit_buffer_hooks)
+        .unwrap_or(true);
+    if inhibited {
+        return;
+    }
+    let h = i.intern("buffer-list-update-hook");
+    let rh = i.intern("run-hooks");
+    let _ = i.apply(&Value::Sym(rh), vec![Value::Sym(h)]);
+}
+
+/// Teardown shared by `kill-buffer' and child kills: unlock the file
+/// lock, drop the buffer from the registry, repair `current_buffer'
+/// (GNU always has a live buffer — killing the last one yields a fresh
+/// *scratch*), then run `buffer-list-update-hook'.
+fn kill_buffer_teardown(i: &mut Interp, id: usize) -> bool {
     // GNU kill-buffer unlocks the killed buffer's file lock.
     if let Some(b) = i.buffers.get(id) {
         b.borrow_mut().release_lock_file();
     }
-    if !i.buffers.kill(id) {
+    let killed = {
+        let obarray = &i.obarray;
+        i.buffers.kill(id, |s| obarray.symbol(s).always_local)
+    };
+    if !killed {
         return false;
     }
     if i.current_buffer == id {
@@ -2229,24 +2401,38 @@ pub(crate) fn kill_buffer_keep_current(i: &mut Interp, id: usize) -> bool {
             .other(id)
             .or_else(|| i.buffers.list().first().copied())
             .unwrap_or_else(|| i.buffers.create("*scratch*"));
-        i.current_buffer = next;
+        i.set_current_buffer(next);
     }
+    run_buffer_list_update(i, id);
     true
 }
 
-fn f_kill_buffer(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let id = match a.get(0) {
-        None | Some(Value::Nil) => i.current_buffer,
-        Some(v) => i
-            .buffer_id_of(v)
-            .ok_or_else(|| i.error(format!("No buffer named {}", i.princ_to_string(&v))))?,
-    };
+/// GNU `kill_buffer' minus the interactive/autosave questions:
+/// query functions + `kill-buffer-hook' (with the doomed buffer
+/// current), then — for a base buffer — recursively kill indirect
+/// children, then teardown.  Returns Ok(false) when a query function
+/// vetoes the kill.
+fn kill_buffer_impl(i: &mut Interp, id: usize) -> Result<bool, Flow> {
+    // GNU Fkill_buffer: killing an already-dead buffer is a no-op.
+    match i.buffers.get(id) {
+        Some(b) if b.borrow().live => {}
+        _ => return Ok(false),
+    }
+    let inhibit = i
+        .buffers
+        .get(id)
+        .map(|b| b.borrow().inhibit_buffer_hooks)
+        .unwrap_or(false);
     // GNU Fkill_buffer: first run `kill-buffer-query-functions' (each
     // returning nil aborts the kill), then run the buffer-local
-    // `kill-buffer-hook' with the doomed buffer current.
+    // `kill-buffer-hook' with the doomed buffer current — all skipped
+    // for buffers created with INHIBIT-BUFFER-HOOKS.
     let prev = i.current_buffer;
     i.set_current_buffer(id);
     let outcome = (|| -> Result<bool, Flow> {
+        if inhibit {
+            return Ok(true);
+        }
         let q = i.intern("kill-buffer-query-functions");
         if matches!(i.symbol_value(q), Value::Cons(_)) {
             let runf = i.intern("run-hook-with-args-until-failure");
@@ -2264,10 +2450,76 @@ fn f_kill_buffer(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         i.set_current_buffer(prev);
     }
     match outcome {
-        Ok(true) => Ok(Value::from_bool(kill_buffer_keep_current(i, id))),
-        Ok(false) => Ok(Value::Nil),
-        Err(e) => Err(e),
+        Ok(true) => {}
+        Ok(false) => return Ok(false),
+        Err(e) => return Err(e),
     }
+    // A hook may have killed the buffer already.
+    if !i
+        .buffers
+        .get(id)
+        .map(|b| b.borrow().live)
+        .unwrap_or(false)
+    {
+        return Ok(true);
+    }
+    // GNU kill_buffer: an ordinary buffer sharing its text with
+    // indirect buffers kills them too — before the base's own
+    // teardown, so their query functions/hooks still run; a child
+    // that refuses to die aborts the whole kill with an error.
+    let is_indirect = i
+        .buffers
+        .get(id)
+        .map(|b| b.borrow().base_buffer.is_some())
+        .unwrap_or(false);
+    if !is_indirect {
+        let children: Vec<usize> = i
+            .buffers
+            .list()
+            .into_iter()
+            .filter(|&cid| {
+                i.buffers
+                    .get(cid)
+                    .and_then(|cb| cb.borrow().base_buffer.as_ref().map(|br| br.borrow().id))
+                    == Some(id)
+            })
+            .collect();
+        for cid in children {
+            let cname = i
+                .buffers
+                .get(cid)
+                .map(|cb| cb.borrow().name.clone())
+                .unwrap_or_default();
+            kill_buffer_impl(i, cid)?;
+            if i.buffers.get(cid).is_some() {
+                return Err(i.error(format!(
+                    "Unable to kill buffer whose indirect buffer ‘{}’ cannot be killed",
+                    cname
+                )));
+            }
+        }
+        // GNU: a child's hook may have killed the base (Bug#11665).
+        if i.buffers.get(id).is_none() {
+            return Ok(true);
+        }
+    }
+    Ok(kill_buffer_teardown(i, id))
+}
+
+/// Kill `id` and repair `current_buffer`: GNU always has a live
+/// buffer, so killing the last one yields a fresh *scratch*.
+pub(crate) fn kill_buffer_keep_current(i: &mut Interp, id: usize) -> Result<bool, Flow> {
+    kill_buffer_impl(i, id)
+}
+
+fn f_kill_buffer(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let id = match a.get(0) {
+        None | Some(Value::Nil) => i.current_buffer,
+        Some(v) => i
+            .buffer_id_of(v)
+            .ok_or_else(|| i.error(format!("No buffer named {}", i.princ_to_string(&v))))?,
+    };
+    Ok(Value::from_bool(kill_buffer_impl(i, id)?))
 }
 
 fn f_buffer_list(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
@@ -2304,7 +2556,9 @@ fn f_set_buffer(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         .buffer_id_of(&a[0])
         .ok_or_else(|| i.error(format!("No buffer named {}", i.princ_to_string(&a[0]))))?;
     i.set_current_buffer(id);
-    Ok(a[0].clone())
+    // GNU Fset_buffer returns the BUFFER object, not the argument —
+    // a string name resolves to its buffer.
+    Ok(i.buffer_value(id).unwrap_or(Value::Nil))
 }
 
 fn f_rename_buffer(i: &mut Interp, a: Vec<Value>) -> EvalResult {
@@ -2323,8 +2577,13 @@ fn f_rename_buffer(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let actual = if unique {
         i.buffers.rename(i.current_buffer, &name)
     } else {
-        if i.buffers.by_name(&name).is_some() {
-            return Err(i.error(&format!("Buffer name \"{}\" is in use", name)));
+        // GNU: renaming to the buffer's OWN name is fine — the clash
+        // check excludes the buffer itself.
+        match i.buffers.by_name(&name) {
+            Some(other) if other != i.current_buffer => {
+                return Err(i.error(&format!("Buffer name ‘{}’ is in use", name)))
+            }
+            _ => {}
         }
         i.buffers.rename(i.current_buffer, &name)
     };
@@ -2354,17 +2613,36 @@ fn f_rename_buffer(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 }
 
 fn f_bury_buffer(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    // Move to end of order — our `touch` moves to front; implement bury
-    // by reordering BufferSet::order? We don't have a public API; emulate
-    // by killing nothing and moving to end via touch-in-reverse is not
-    // possible — add order manipulation via a small method on BufferSet.
-    let id = match a.get(0) {
-        Some(v) if v.truthy() => i
-            .buffer_id_of(v)
-            .ok_or_else(|| i.error(format!("No buffer named {}", i.princ_to_string(&v))))?,
-        _ => i.current_buffer,
+    // GNU window.el `bury-buffer': bury-buffer-internal the target,
+    // then — only when called with no arg AND the buffer is shown in
+    // the selected window — (window--delete nil t), else
+    // (switch-to-prev-buffer nil 'bury).  Batch windows can't be
+    // deleted (window--delete fails on the last window), so the
+    // switch always runs: prev_buffers first, `other-buffer'
+    // fallback — GNU's replace_buffer_in_windows_safely/switch path.
+    let (id, explicit) = match a.get(0) {
+        Some(v) if v.truthy() => (
+            i.buffer_id_of(v)
+                .ok_or_else(|| i.error(format!("No buffer named {}", i.princ_to_string(&v))))?,
+            true,
+        ),
+        _ => (i.current_buffer, false),
     };
     i.buffers.bury(id);
+    // GNU bury-buffer-internal runs `buffer-list-update-hook'.
+    run_buffer_list_update(i, id);
+    if !explicit {
+        let shown = crate::editor::sel_window(i)
+            .map(|w| w.borrow().buffer == id)
+            .unwrap_or(id == i.current_buffer);
+        if shown {
+            if let Some(other) = i.buffers.other(id) {
+                let target = i.buffer_value(other).unwrap_or(Value::Nil);
+                let _ = crate::editor::f_set_window_buffer(i, vec![Value::Nil, target]);
+                i.set_current_buffer(other);
+            }
+        }
+    }
     Ok(Value::Nil)
 }
 
@@ -2373,29 +2651,36 @@ fn f_bury_buffer_internal(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         .buffer_id_of(&a[0])
         .ok_or_else(|| i.error(format!("No buffer named {}", i.princ_to_string(&a[0]))))?;
     i.buffers.bury(id);
+    run_buffer_list_update(i, id);
     Ok(Value::Nil)
 }
 
 fn f_unbury_buffer(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
+    // GNU window.el: (switch-to-buffer (last-buffer)) — the LAST
+    // buffer in list order becomes current and is shown in the
+    // selected window (which also re-touches it to the front).
     let ids = i.buffers.list();
     match ids.last() {
-        Some(id) => Ok(i.buffer_value(*id).unwrap_or(Value::Nil)),
+        Some(id) => {
+            let target = i.buffer_value(*id).unwrap_or(Value::Nil);
+            let _ = crate::editor::f_set_window_buffer(i, vec![Value::Nil, target]);
+            i.set_current_buffer(*id);
+            Ok(i.buffer_value(*id).unwrap_or(Value::Nil))
+        }
         None => Ok(Value::Nil),
     }
 }
 
 fn f_buffer_size(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let b = buf_of(i, &arg(&a, 0))?;
-    // Emacs: ZV - BEGV (accessible portion under narrowing).
+    // GNU Fbuffer_size returns Z - BEG: total chars, ignoring narrowing.
     let bb = b.borrow();
-    Ok(Value::Int(
-        bb.zv.saturating_sub(bb.begv).min(bb.size()) as i128
-    ))
+    Ok(Value::Int(bb.size() as i128))
 }
 
 fn f_buffer_modified_p(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let b = buf_of(i, &arg(&a, 0))?;
-    Ok(Value::from_bool(b.borrow().modified))
+    Ok(Value::from_bool(b.borrow().is_modified()))
 }
 
 pub(crate) fn f_set_buffer_modified_p(i: &mut Interp, a: Vec<Value>) -> EvalResult {
@@ -2405,6 +2690,16 @@ pub(crate) fn f_set_buffer_modified_p(i: &mut Interp, a: Vec<Value>) -> EvalResu
     }
     cur(i).borrow_mut().note_modified(flag);
     Ok(Value::Nil)
+}
+
+/// `restore-buffer-modified-p' — same effect, but GNU returns FLAG.
+pub(crate) fn f_restore_buffer_modified_p(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let flag = a[0].truthy();
+    if flag {
+        barf_if_file_locked(i)?;
+    }
+    cur(i).borrow_mut().note_modified(flag);
+    Ok(a[0].clone())
 }
 
 fn f_not_modified(i: &mut Interp, a: Vec<Value>) -> EvalResult {
@@ -2418,7 +2713,15 @@ fn f_not_modified(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 
 fn f_buffer_file_name(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let b = buf_of(i, &arg(&a, 0))?;
-    match &b.borrow().file_name {
+    let bb = b.borrow();
+    // BVAR: a Lisp-level local binding shadows the slot (and is where
+    // plain `setq' lands); no binding → the slot itself.
+    if i.bfn_sym != 0 {
+        if let Some(v) = bb.locals.get(&i.bfn_sym) {
+            return Ok(v.clone());
+        }
+    }
+    match &bb.file_name {
         Some(f) => Ok(Value::string(f.clone())),
         None => Ok(Value::Nil),
     }
@@ -2426,81 +2729,186 @@ fn f_buffer_file_name(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 
 fn f_buffer_base_buffer(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let b = buf_of(i, &arg(&a, 0))?;
-    let base = b.borrow().base_buffer;
-    Ok(base.and_then(|id| i.buffer_value(id)).unwrap_or(Value::Nil))
+    // GNU Fbuffer_base_buffer: returns the base buffer OBJECT — even
+    // when it was killed (`#<killed buffer>' prints).  The Rc in
+    // `base_buffer' keeps the dead object reachable.
+    let base = b.borrow().base_buffer.clone();
+    Ok(base.map(Value::Buffer).unwrap_or(Value::Nil))
 }
 
 /// (make-indirect-buffer BASE-BUFFER NAME &optional CLONE
 /// INHIBIT-BUFFER-HOOKS) — create a buffer sharing BASE-BUFFER's text.
-/// The name must not already be in use; CLONE copies point, mark,
-/// narrowing, and locals from the base.
+/// GNU order: CHECK_STRING name → name-in-use → resolve base →
+/// dead-base error → empty-name error.  The new buffer always takes
+/// the ultimate base (no double indirection) and always copies
+/// PT/BEGV/ZV; CLONE additionally copies locals and the mark.
 fn f_make_indirect_buffer(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let base_id = match &a[0] {
-        Value::Buffer(b) => b.borrow().id,
-        other => return Err(i.wrong_type_mut("bufferp", other)),
-    };
-    if !i
-        .buffers
-        .get(base_id)
-        .map(|b| b.borrow().live)
-        .unwrap_or(false)
-    {
-        return Err(i.error("Selecting deleted buffer"));
-    }
+    // GNU checks NAME first (CHECK_STRING), then its uniqueness.
     let name = match &a[1] {
         Value::Str(s) => s.borrow().clone(),
         other => return Err(i.wrong_type_mut("stringp", other)),
     };
     if i.buffers.by_name(&name).is_some() {
-        return Err(i.error("Buffer name is already in use"));
+        return Err(i.error(format!("Buffer name ‘{}’ is in use", name)));
+    }
+    let base = match &a[0] {
+        Value::Buffer(b) => b.clone(),
+        // GNU: a string names a LIVE buffer via get-buffer — nil →
+        // plain `error' "No such buffer: ‘X’".
+        Value::Str(s) => match i
+            .buffers
+            .by_name(&s.borrow())
+            .and_then(|id| i.buffers.get(id))
+        {
+            Some(b) => b,
+            None => return Err(i.error(&format!("No such buffer: ‘{}’", s.borrow()))),
+        },
+        // GNU resolves base through Fget_buffer: a non-buffer/non-name
+        // errors `stringp' there.
+        other => return Err(i.wrong_type_mut("stringp", other)),
+    };
+    if !base.borrow().live {
+        return Err(i.error("Base buffer has been killed"));
+    }
+    if name.is_empty() {
+        return Err(i.error("Empty string for buffer name is not allowed"));
     }
     let clone = a.get(2).map(|v| v.truthy()).unwrap_or(false);
+    let inhibit_hooks = a.get(3).map(|v| v.truthy()).unwrap_or(false);
+    // No double indirection: indirect-of-indirect takes the real base
+    // (GNU `b->base_buffer = XBUFFER(base)->base_buffer ?: base').
+    let base = {
+        let bb = base.borrow();
+        bb.base_buffer.clone().unwrap_or_else(|| base.clone())
+    };
+    crate::lisp::builtins::misc::heal_standard_case_table(i);
     let id = i.buffers.create_exact(&name);
     {
-        let base = i.buffers.get(base_id).unwrap();
         let bb = base.borrow();
         let nb = i.buffers.get(id).unwrap();
         let mut n = nb.borrow_mut();
         n.text = bb.text.clone();
-        n.base_buffer = Some(base_id);
+        n.text.add_viewer(&nb);
+        n.base_buffer = Some(base.clone());
+        // GNU copies PT/BEGV/ZV unconditionally — a fresh indirect
+        // buffer opens at the base's point and narrowing.
+        n.point = bb.point;
+        n.begv = bb.begv;
+        n.zv = bb.zv;
+        n.inhibit_buffer_hooks = inhibit_hooks;
+        // Bug#18180: the indirect buffer shares the base's undo list
+        // (in GNU the value is copied at creation and re-synced on
+        // every buffer switch — see set_current_buffer).
+        n.set_undo_list(bb.undo_list());
         if clone {
-            n.point = bb.point;
-            n.mark = bb.mark;
-            n.begv = bb.begv;
-            n.zv = bb.zv;
+            // GNU clone_per_buffer_values: locals travel, but the
+            // indirect buffer cannot visit a file.
+            if let Some(mp) = bb.mark_position() {
+                n.set_mark(mp);
+            }
             n.locals = bb.locals.clone();
-            n.file_name = bb.file_name.clone();
+            n.file_name = None;
+            for s in [
+                "buffer-file-name",
+                "buffer-file-truename",
+                "buffer-auto-save-file-name",
+                "buffer-backed-up",
+                "local-minor-modes",
+                "buffer-save-without-query",
+                "buffer-file-number",
+            ] {
+                n.locals.remove(&i.intern(s));
+            }
+            n.locals.insert(i.intern("buffer-display-count"), Value::Int(0));
         }
     }
+    if clone {
+        // GNU: cloned buffers run `clone-indirect-buffer-hook' so
+        // e.g. faces can make indirect-safe copies.
+        let h = i.intern("clone-indirect-buffer-hook");
+        let nb = i.buffers.get(id).unwrap();
+        if !nb.borrow().inhibit_buffer_hooks {
+            let prev = i.current_buffer;
+            i.set_current_buffer(id);
+            let rh = i.intern("run-hooks");
+            let r = i.apply(&Value::Sym(rh), vec![Value::Sym(h)]);
+            if i.current_buffer == id && i.buffers.get(prev).is_some() {
+                i.set_current_buffer(prev);
+            }
+            r?;
+        }
+    }
+    run_buffer_list_update(i, id);
     Ok(i.buffer_value(id).unwrap_or(Value::Nil))
 }
 
-/// GNU `clone-indirect-buffer'/`clone-buffer': an indirect buffer on
-/// the current buffer with state cloned (locals, point, narrowing);
-/// the name is uniquified like `generate-new-buffer-name'.
-fn clone_buffer(i: &mut Interp, name: &str) -> Value {
-    let base_id = i.current_buffer;
+/// GNU `clone-indirect-buffer'/`clone-buffer': a buffer on the current
+/// buffer with state cloned (locals, point, narrowing); the name is
+/// uniquified like `generate-new-buffer-name'.  `share' selects text
+/// aliasing (`clone-indirect-buffer') vs an independent copy
+/// (`clone-buffer').
+fn clone_buffer(i: &mut Interp, name: &str, share: bool) -> Result<Value, Flow> {
+    // GNU clone_indirect_buffer → Fmake_indirect_buffer(BASE of the
+    // current buffer, NAME, CLONE=t): when the current buffer is
+    // itself indirect, per-buffer values are cloned from its BASE,
+    // not from the indirect buffer.
+    let base = {
+        let cb = cur(i);
+        let bb = cb.borrow();
+        bb.base_buffer.clone().unwrap_or_else(|| cb.clone())
+    };
+    crate::lisp::builtins::misc::heal_standard_case_table(i);
     let id = i.buffers.create(name);
     {
-        let base = i.buffers.get(base_id).unwrap();
         let bb = base.borrow();
         let nb = i.buffers.get(id).unwrap();
         let mut n = nb.borrow_mut();
-        n.text = bb.text.clone();
-        n.base_buffer = Some(base_id);
+        n.text = if share {
+            bb.text.clone()
+        } else {
+            bb.text.deep_clone()
+        };
+        n.text.add_viewer(&nb);
+        // GNU: `buffer-base-buffer' is set only when text is shared —
+        // `clone-buffer' (independent copy) reports nil.
+        n.base_buffer = if share { Some(base.clone()) } else { None };
         n.point = bb.point;
-        n.mark = bb.mark;
+        if let Some(mp) = bb.mark_position() {
+            n.set_mark(mp);
+        }
         n.begv = bb.begv;
         n.zv = bb.zv;
         n.locals = bb.locals.clone();
-        n.file_name = bb.file_name.clone();
+        n.set_undo_list(bb.undo_list());
+        // An indirect buffer cannot visit a file.
+        if share {
+            n.file_name = None;
+        } else {
+            n.file_name = bb.file_name.clone();
+        }
     }
-    i.buffer_value(id).unwrap_or(Value::Nil)
+    if share {
+        let nb = i.buffers.get(id).unwrap();
+        if !nb.borrow().inhibit_buffer_hooks {
+            // GNU runs `clone-indirect-buffer-hook' in the new buffer.
+            let h = i.intern("clone-indirect-buffer-hook");
+            let prev = i.current_buffer;
+            i.set_current_buffer(id);
+            let rh = i.intern("run-hooks");
+            let r = i.apply(&Value::Sym(rh), vec![Value::Sym(h)]);
+            if i.current_buffer == id && i.buffers.get(prev).is_some() {
+                i.set_current_buffer(prev);
+            }
+            r?;
+        }
+    }
+    run_buffer_list_update(i, id);
+    Ok(i.buffer_value(id).unwrap_or(Value::Nil))
 }
 
 fn f_clone_indirect_buffer(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let name = want_string(i, &a[0])?;
-    Ok(clone_buffer(i, &name))
+    clone_buffer(i, &name, true)
 }
 
 fn f_clone_buffer(i: &mut Interp, a: Vec<Value>) -> EvalResult {
@@ -2511,18 +2919,50 @@ fn f_clone_buffer(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         Some(other) if !other.is_nil() => return Err(i.wrong_type_mut("stringp", other)),
         _ => cur(i).borrow().name.clone(),
     };
-    Ok(clone_buffer(i, &name))
+    clone_buffer(i, &name, false)
 }
 
 fn f_buffer_local_variables(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let b = buf_of(i, &arg(&a, 0))?;
-    let pairs: Vec<Value> = {
+    let (locals, file_name) = {
         let bb = b.borrow();
-        bb.locals
-            .iter()
-            .map(|(s, v)| Value::cons(i.sym(*s), v.clone()))
-            .collect()
+        (bb.locals.clone(), bb.file_name.clone())
     };
+    // GNU buffer.c: the DEFVAR_PER_BUFFER slots live in every buffer,
+    // so `buffer-local-variables' reports them (with the slot's
+    // effective value) even when Lisp never setq'd them. remacs marks
+    // those symbols `always_local' — merge them into the reported
+    // list, value = real local, else `buffer-file-name'/global default.
+    let bfn = i.intern("buffer-file-name");
+    let always: Vec<SymId> = i
+        .obarray
+        .all_ids()
+        .into_iter()
+        .filter(|id| {
+            let s = i.obarray.symbol(*id);
+            s.always_local && !locals.contains_key(id)
+        })
+        .collect();
+    let mut pairs: Vec<Value> = locals
+        .iter()
+        .map(|(s, v)| Value::cons(i.sym(*s), v.clone()))
+        .collect();
+    for id in always {
+        let val = if id == bfn {
+            match &file_name {
+                Some(f) => Value::string(f.clone()),
+                None => Value::Nil,
+            }
+        } else {
+            let v = i.obarray.symbol(id).value.clone();
+            if matches!(v, Value::Sym(s) if s == sym::UNBOUND) {
+                Value::Nil
+            } else {
+                v
+            }
+        };
+        pairs.push(Value::cons(i.sym(id), val));
+    }
     Ok(Value::list(pairs))
 }
 
@@ -2547,21 +2987,33 @@ fn f_buffer_local_boundp(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         return Err(i.wrong_type_mut("bufferp", &a[1]));
     }
     let b = buf_of(i, &a[1])?;
-    // GNU: an explicit local binding, or an always-local variable
-    // (defvar-buffer-local / make-variable-buffer-local) which has a
-    // slot in every buffer.
-    let bound = b.borrow().locals.contains_key(&sid) || i.obarray.symbol(sid).make_local_if_set;
+    // GNU subr.el: `buffer-local-boundp' is (condition-case nil
+    //   (buffer-local-value SYMBOL BUFFER) (:success t)
+    //   (void-variable nil)) — it reports boundness in BUFFER, not
+    //   whether the binding is local.  A `defvar'd variable is t even
+    //   with no local binding.
+    let v = b
+        .borrow()
+        .locals
+        .get(&sid)
+        .cloned()
+        .unwrap_or_else(|| i.obarray.symbol(sid).value.clone());
+    let bound = !matches!(v, Value::Sym(s) if s == sym::UNBOUND);
     Ok(Value::from_bool(bound))
 }
 
 fn f_make_local_variable(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let sid = want_sym(i, &a[0])?;
+    // Seed with the CURRENT effective value: for BVAR-style variables
+    // (`buffer-file-name') the buffer slot is the binding even before
+    // `locals' has an entry, so the default cell would seed wrongly.
+    let seed = i.symbol_value(sid);
     let b = cur(i);
     let mut bb = b.borrow_mut();
     if !bb.locals.contains_key(&sid) {
         // The local binding starts with the default value, or void
         // (the unbound sentinel) when the variable is unbound.
-        bb.locals.insert(sid, i.obarray.symbol(sid).value.clone());
+        bb.locals.insert(sid, seed);
     }
     Ok(a[0].clone())
 }
@@ -2583,14 +3035,37 @@ fn f_make_variable_buffer_local(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 
 fn f_kill_local_variable(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let sid = want_sym(i, &a[0])?;
-    cur(i).borrow_mut().locals.remove(&sid);
+    // `buffer-file-name' is a BVAR: GNU's kill edits the buffer's
+    // local-vars alist where the slot variable never appears — a
+    // no-op (value AND `local-variable-p' survive; verified on 31.1).
+    if sid != i.bfn_sym {
+        cur(i).borrow_mut().locals.remove(&sid);
+    }
     Ok(a[0].clone())
 }
 
 pub(crate) fn f_kill_all_local_variables(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    // GNU: KILL-PERMANENT non-nil clears even `permanent-local' bindings.
+    // GNU reset_buffer_local_variables also resets the buffer's
+    // syntax-table, case-table and category-table fields to the
+    // standard objects (buffer slots, not Lisp locals, so they
+    // survive `locals' cleanup otherwise).
+    // KILL-PERMANENT non-nil clears even `permanent-local' bindings.
     if a.first().map(Value::truthy).unwrap_or(false) {
-        cur(i).borrow_mut().locals.clear();
+        let b = cur(i);
+        let mut bb = b.borrow_mut();
+        // `buffer-file-name' is a C buffer slot, not a resettable
+        // local: GNU keeps it across even `kill-all-local-variables t'
+        // (verified on 31.1).  Re-mirror the slot after clearing.
+        let keep_bfn = bb.file_name.clone();
+        bb.locals.clear();
+        if i.bfn_sym != 0 {
+            if let Some(f) = keep_bfn {
+                bb.locals.insert(i.bfn_sym, Value::string(f));
+            }
+        }
+        bb.syntax_table = None;
+        bb.case_table = None;
+        bb.category_table = None;
         return Ok(Value::Nil);
     }
     let keep: Vec<u32> = {
@@ -2607,8 +3082,17 @@ pub(crate) fn f_kill_all_local_variables(i: &mut Interp, a: Vec<Value>) -> EvalR
     };
     let b = cur(i);
     let mut bb = b.borrow_mut();
-    let keep_set: std::collections::HashSet<u32> = keep.into_iter().collect();
+    let mut keep_set: std::collections::HashSet<u32> = keep.into_iter().collect();
+    // `buffer-file-name' is a C buffer slot (BVAR), not a real local:
+    // GNU preserves it across `kill-all-local-variables' (verified on
+    // 31.1 — value and `local-variable-p' both survive).
+    if bb.file_name.is_some() && i.bfn_sym != 0 {
+        keep_set.insert(i.bfn_sym);
+    }
     bb.locals.retain(|s, _| keep_set.contains(s));
+    bb.syntax_table = None;
+    bb.case_table = None;
+    bb.category_table = None;
     Ok(Value::Nil)
 }
 
@@ -2646,6 +3130,13 @@ fn f_default_value(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     }
 }
 
+fn f_set_default_toplevel(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    // GNU's data.c `Fset_default_toplevel_value' sets the default but
+    // returns nil, unlike `set-default' which returns the value.
+    f_set_default(i, a)?;
+    Ok(Value::Nil)
+}
+
 fn f_set_default(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let sid = want_sym(i, &a[0])?;
     let sid = i.var_alias_target(sid);
@@ -2664,14 +3155,26 @@ fn f_default_boundp(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 
 // ---------- case tables ----------
 
+/// GNU `case-table-p': char-table with `case-table' purpose AND
+/// consistent extras — up is nil-or-char-table; canon+eqv are either
+/// both nil or canon is a char-table with eqv nil-or-char-table.
 fn is_case_table(i: &Interp, v: &Value) -> bool {
-    // A case table is a char-table whose subtype is `case-table'.
-    crate::lisp::builtins::misc::is_char_table(i, v)
-        && matches!(
+    use crate::lisp::builtins::misc::{ct_extra, is_char_table};
+    if !is_char_table(i, v)
+        || !matches!(
             v,
             Value::Record(r)
                 if matches!(r.borrow().get(1), Some(Value::Sym(s)) if i.symbol_name(*s) == "case-table")
         )
+    {
+        return false;
+    }
+    let up = ct_extra(v, 0);
+    let canon = ct_extra(v, 1);
+    let eqv = ct_extra(v, 2);
+    (up.is_nil() || is_char_table(i, &up))
+        && ((canon.is_nil() && eqv.is_nil())
+            || (is_char_table(i, &canon) && (eqv.is_nil() || is_char_table(i, &eqv))))
 }
 
 fn want_case_table(i: &mut Interp, v: &Value) -> Result<(), Flow> {
@@ -2696,6 +3199,9 @@ fn f_case_table_p(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 
 fn f_set_case_table(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     want_case_table(i, &a[0])?;
+    // GNU `set_case_table': nil UPCASE/CANON/EQV extras are derived
+    // from the downcase table here (casetab.c), not lazily later.
+    crate::lisp::builtins::misc::set_case_table_fill(i, &a[0]);
     if let Some(b) = i.buffers.get(i.current_buffer) {
         if let Ok(mut bb) = b.try_borrow_mut() {
             bb.case_table = Some(a[0].clone());
@@ -2706,6 +3212,7 @@ fn f_set_case_table(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 
 fn f_set_standard_case_table(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     want_case_table(i, &a[0])?;
+    crate::lisp::builtins::misc::set_case_table_fill(i, &a[0]);
     i.standard_case_table = Some(a[0].clone());
     Ok(a[0].clone())
 }
@@ -2736,7 +3243,7 @@ fn f_copy_case_table(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 
 fn f_buffer_disable_undo(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     // GNU defun: (with-current-buffer buffer (setq buffer-undo-list t))
-    let b = buf_of(i, &arg(&a, 0))?;
+    let b = buf_or_name(i, &arg(&a, 0))?;
     let mut bb = b.borrow_mut();
     bb.set_undo_list(Value::t());
     Ok(Value::t())
@@ -2744,7 +3251,7 @@ fn f_buffer_disable_undo(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 
 fn f_buffer_enable_undo(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     // GNU subr: reset buffer-undo-list to nil only when disabled (t).
-    let b = buf_of(i, &arg(&a, 0))?;
+    let b = buf_or_name(i, &arg(&a, 0))?;
     let mut bb = b.borrow_mut();
     if bb.undo_disabled() {
         bb.set_undo_list(Value::Nil);
@@ -2773,11 +3280,14 @@ fn f_goto_char(i: &mut Interp, a: Vec<Value>) -> EvalResult {
                 let mm = m.borrow();
                 (mm.position, mm.buffer)
             };
-            if let Some(bid) = buf {
-                i.set_current_buffer(bid);
+            // GNU Fgoto_char: a detached marker errors; a marker in
+            // another buffer contributes only its position.
+            if buf.is_none() {
+                return Err(i.error("Marker does not point anywhere"));
             }
             cur(i).borrow_mut().set_point(pos);
-            Ok(Value::Int(pos as i128 + 1))
+            // GNU returns the argument itself, marker object included.
+            Ok(a[0].clone())
         }
         v => {
             let p = want_int(i, v)?;
@@ -2787,7 +3297,8 @@ fn f_goto_char(i: &mut Interp, a: Vec<Value>) -> EvalResult {
             // Emacs clamps to the accessible region.
             let idx = idx.max(bb.begv).min(bb.text_len());
             bb.point = idx;
-            Ok(Value::Int(idx as i128 + 1))
+            // GNU returns the ORIGINAL argument even when clamped.
+            Ok(a[0].clone())
         }
     }
 }
@@ -3029,13 +3540,19 @@ fn f_point_max_marker(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
 fn f_char_after(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let b = cur(i);
     let bb = b.borrow();
-    let p = match a.get(0) {
-        Some(Value::Marker(m)) => m.borrow().position,
-        Some(v) if v.truthy() => pos_idx(bb.text.len(), want_int(i, v)?),
-        _ => bb.point(),
+    // GNU uses the RAW position (1-based int arg, 0-based marker pos,
+    // current point): out-of-range answers nil, never a clamp.
+    let p: i128 = match a.get(0) {
+        Some(Value::Marker(m)) => m.borrow().position as i128,
+        Some(Value::Nil) | None => bb.point() as i128,
+        Some(v) => want_int(i, v)? - 1,
     };
     // nil outside the accessible portion (GNU checks BEGV <= p < ZV).
-    if p < bb.begv || p >= bb.text_len() || p >= bb.text.len() {
+    if p < bb.begv as i128 || p >= bb.zv as i128 {
+        return Ok(Value::Nil);
+    }
+    let p = p as usize;
+    if p >= bb.text.len() {
         return Ok(Value::Nil);
     }
     Ok(Value::Int(crate::lisp::value::lisp_char_code(
@@ -3046,16 +3563,20 @@ fn f_char_after(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 fn f_char_before(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let b = cur(i);
     let bb = b.borrow();
-    let p = match a.get(0) {
-        Some(Value::Marker(m)) => m.borrow().position,
-        Some(v) if v.truthy() => pos_idx(bb.text.len(), want_int(i, v)?),
-        _ => bb.point(),
+    let p: i128 = match a.get(0) {
+        Some(Value::Marker(m)) => m.borrow().position as i128,
+        Some(Value::Nil) | None => bb.point() as i128,
+        Some(v) => want_int(i, v)? - 1,
     };
-    if p <= bb.begv || p > bb.text_len() || p > bb.text.len() {
+    if p <= bb.begv as i128 || p > bb.zv as i128 {
+        return Ok(Value::Nil);
+    }
+    let p = (p - 1) as usize;
+    if p >= bb.text.len() {
         return Ok(Value::Nil);
     }
     Ok(Value::Int(crate::lisp::value::lisp_char_code(
-        bb.text.char_at(p - 1),
+        bb.text.char_at(p),
     )))
 }
 
@@ -3130,10 +3651,16 @@ fn f_line_number_at_pos(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         Some(v) if v.truthy() => pos_idx(bb.text.len(), want_int(i, v)?),
         _ => bb.point(),
     };
-    // Emacs counts lines in the whole buffer unless narrowed-absolute.
-    Ok(Value::Int(
-        bb.text.line_of_pos(p.min(bb.text.len())) as i128 + 1,
-    ))
+    // GNU counts lines relative to the accessible (narrowed) portion;
+    // ABSOLUTE non-nil counts from the beginning of the buffer.
+    let absolute = a.get(1).map(|v| v.truthy()).unwrap_or(false);
+    let line = bb.text.line_of_pos(p.min(bb.text.len()));
+    let base = if absolute {
+        0
+    } else {
+        bb.text.line_of_pos(bb.begv.min(bb.text.len()))
+    };
+    Ok(Value::Int((line - base) as i128 + 1))
 }
 
 fn f_count_lines(i: &mut Interp, a: Vec<Value>) -> EvalResult {
@@ -3186,7 +3713,16 @@ fn f_current_column(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
 }
 
 fn f_move_to_column(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let goal = want_int(i, &a[0])?.max(0);
+    // GNU signals `wrong-type-argument' (natnump COLUMN) on a
+    // negative goal column.
+    let goal = want_int(i, &a[0])?;
+    if goal < 0 {
+        let natnump = i.intern("natnump");
+        return Err(i.signal_data(
+            sym::WRONG_TYPE_ARGUMENT,
+            vec![Value::Sym(natnump), a[0].clone()],
+        ));
+    }
     let force = a.get(1).map(|v| v.truthy()).unwrap_or(false);
     // Read buffer-local vars before borrow_mut: `symbol_value' can only
     // see buffer-locals while the buffer is not mutably borrowed.
@@ -4886,8 +5422,10 @@ fn f_forward_comment(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let beg = bb.begv;
     let stop = bb.zv.min(bb.text_len());
     let pt = bb.point();
-    let text = bb.text.as_slice();
-    let (np, ok) = forward_comment_scan(&syn, text, beg, stop, pt, count);
+    let (np, ok) = {
+        let text = bb.text.as_slice();
+        forward_comment_scan(&syn, &text, beg, stop, pt, count)
+    };
     bb.set_point(np);
     Ok(if ok { Value::Sym(sym::T) } else { Value::Nil })
 }
@@ -4903,9 +5441,12 @@ fn f_scan_lists(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let b = i.buffers.get(i.current_buffer).unwrap().clone();
     let mut bb = b.borrow_mut();
     let (beg, stop) = (bb.begv, bb.zv.min(bb.text_len()));
-    let text = bb.text.as_slice();
     let pos = pos_idx(stop, from).max(beg);
-    match scan_lists_gnu(&syn, text, beg, stop, pos, count, depth as i64, false) {
+    let scan = {
+        let text = bb.text.as_slice();
+        scan_lists_gnu(&syn, &text, beg, stop, pos, count, depth as i64, false)
+    };
+    match scan {
         Ok(Some(p)) => Ok(Value::Int(p as i128 + 1)),
         Ok(None) => Ok(Value::Nil),
         Err(e) => Err(scan_err_flow(i, e)),
@@ -4913,16 +5454,26 @@ fn f_scan_lists(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 }
 
 fn f_scan_sexps(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let from = want_int(i, &a[0])?;
-    let count = want_int(i, &a[1])?;
+    // GNU CHECK_FIXNUM on both args (`fixnump', not integer-or-marker).
+    let from = match &a[0] {
+        Value::Int(n) => *n,
+        v => return Err(i.wrong_type_mut("fixnump", v)),
+    };
+    let count = match &a[1] {
+        Value::Int(n) => *n,
+        v => return Err(i.wrong_type_mut("fixnump", v)),
+    };
     let upto = cur(i).borrow().zv + 1;
     let syn = crate::editor::Syn::current(i, upto);
     let b = i.buffers.get(i.current_buffer).unwrap().clone();
     let mut bb = b.borrow_mut();
     let (beg, stop) = (bb.begv, bb.zv.min(bb.text_len()));
-    let text = bb.text.as_slice();
     let pos = pos_idx(stop, from).max(beg);
-    match scan_lists_gnu(&syn, text, beg, stop, pos, count, 0, true) {
+    let scan = {
+        let text = bb.text.as_slice();
+        scan_lists_gnu(&syn, &text, beg, stop, pos, count, 0, true)
+    };
+    match scan {
         Ok(Some(p)) => Ok(Value::Int(p as i128 + 1)),
         Ok(None) => Ok(Value::Nil),
         Err(e) => Err(scan_err_flow(i, e)),
@@ -4932,13 +5483,23 @@ fn f_scan_sexps(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 /// GNU `syntax-after': (CLASS . MATCHING-CHAR) for the char at POS.
 pub(crate) fn f_syntax_after(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let pos = want_int(i, &a[0])?;
-    let syn = crate::editor::Syn::current(i, pos.max(1) as usize);
     let b = cur(i);
+    // GNU: POS outside [BEGV, ZV] returns nil (pos 0 is before
+    // position 1 — don't clamp).  Bounds + text index first, borrow
+    // released before Syn::current which may eval
+    // `internal--syntax-propertize' (Lisp → buffer mutation).
+    {
+        let bb = b.borrow();
+        if pos < bb.begv as i128 + 1 || pos > bb.zv as i128 + 1 {
+            return Ok(Value::Nil);
+        }
+        if pos_idx(bb.text_len(), pos) >= bb.text_len() {
+            return Ok(Value::Nil);
+        }
+    }
+    let syn = crate::editor::Syn::current(i, pos.max(1) as usize);
     let bb = b.borrow();
     let idx = pos_idx(bb.text_len(), pos);
-    if idx >= bb.text_len() {
-        return Ok(Value::Nil);
-    }
     let c = bb.text.char_at(idx);
     let cls = syn.class_at(idx, c);
     let matching = syn.matching_at(idx, c);
@@ -4969,8 +5530,10 @@ fn f_looking_back(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let lo = limit
         .map(|l| (l.max(1) as usize - 1).saturating_sub(base))
         .unwrap_or(0);
-    // Non-greedy: shortest match ending at point (nearest start).
-    // Greedy: longest (smallest start wins).
+    // GNU: candidates must end exactly at point; non-greedy picks the
+    // smallest (nearest start), greedy the largest (earliest start).
+    // `match_at_end' forces the match end so alternation order doesn't
+    // prematurely succeed on a shorter match.
     let order: Vec<usize> = if greedy {
         (lo..=pos).collect()
     } else {
@@ -4978,17 +5541,22 @@ fn f_looking_back(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     };
     let syn = crate::editor::re_syntax(i);
     for start in order {
-        if let Some(regs) =
-            crate::lisp::regexp::match_at(&re, &text, start, &syn, &crate::editor::re_category(i))
-        {
-            if regs[1] == Some(pos) {
-                i.match_data = Some(MatchData {
-                    regs,
-                    in_buffer: true,
-                    base,
-                });
-                return Ok(Value::t());
-            }
+        if let Some(regs) = crate::lisp::regexp::match_at_end(
+            &re,
+            &text,
+            start,
+            pos,
+            &syn,
+            &crate::editor::re_category(i),
+            pos,
+        ) {
+            i.match_data = Some(MatchData {
+                regs,
+                in_buffer: true,
+                base,
+                buffer: Some(i.current_buffer),
+            });
+            return Ok(Value::t());
         }
     }
     Ok(Value::Nil)
@@ -5031,7 +5599,7 @@ fn copy_str_props(i: &mut Interp, s: &crate::lisp::value::StrRef, base: usize) {
         let mut k = plist.len();
         while k >= 2 {
             if let Some(p) = i.sym_id(&plist[k - 2]) {
-                bb.text_props.push(TextProp {
+                bb.text.props.borrow_mut().push(TextProp {
                     start: base + st,
                     end: base + en,
                     prop: p,
@@ -5044,21 +5612,168 @@ fn copy_str_props(i: &mut Interp, s: &crate::lisp::value::StrRef, base: usize) {
     bb.note_prop_modified();
 }
 
-fn f_insert(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+/// Text to insert as it lands in a unibyte buffer: raw bytes stay
+/// chars ≤0xFF, eight-bit proxies decode to their byte, and anything
+/// wider truncates to a byte (GNU `(insert 300)' → char 44).
+fn unibyte_insert_text(s: &str) -> String {
+    s.chars()
+        .map(|c| {
+            if let Some(b) = crate::lisp::value::eight_bit_byte(c) {
+                char::from_u32(b as u32).unwrap()
+            } else {
+                char::from_u32((c as u32) & 0xFF).unwrap_or('\u{FFFD}')
+            }
+        })
+        .collect()
+}
+
+/// Does `front-sticky' at POS cover PROP?  `t' covers every property;
+/// a list covers its members; anything else means non-sticky.
+fn front_sticky_list_covers(i: &Interp, v: Value, prop: u32) -> bool {
+    match v {
+        Value::Sym(s) if s == sym::T => true,
+        Value::Cons(c) => {
+            let mut c = Value::Cons(c);
+            while let Value::Cons(cc) = &c {
+                let (h, tl) = {
+                    let b = cc.borrow();
+                    (b.car.clone(), b.cdr.clone())
+                };
+                if i.sym_id(&h) == Some(prop) {
+                    return true;
+                }
+                c = tl;
+            }
+            false
+        }
+        _ => false,
+    }
+}
+
+fn front_sticky_covers(i: &mut Interp, pos: usize, prop: u32) -> bool {
+    let fs = i.intern("front-sticky");
+    let v = prop_at(i, pos, fs);
+    front_sticky_list_covers(i, v, prop)
+}
+
+fn front_sticky_covers_bb(i: &mut Interp, bb: &crate::buffer::Buffer, pos: usize, prop: u32) -> bool {
+    let fs = i.intern("front-sticky");
+    let v = prop_at_bb(i, bb, pos, fs);
+    front_sticky_list_covers(i, v, prop)
+}
+
+/// The plist `insert-and-inherit' would graft onto text inserted at
+/// POS (0-based char index): the rear-sticky properties of the
+/// character *before* POS plus the front-sticky properties of the
+/// character *at* POS (front wins on ties, as in GNU's
+/// `text_property_stickiness'/interval grafting).
+fn inherit_plist_at(i: &mut Interp, pos: usize) -> Vec<(u32, Value)> {
+    let mut m: std::collections::BTreeMap<u32, Value> = if pos > 0 {
+        cur(i).borrow().plist_at(pos - 1)
+    } else {
+        Default::default()
+    };
+    m.retain(|p, _| !rear_nonsticky_covers(i, pos.saturating_sub(1), *p));
+    if pos < cur(i).borrow().text.len() {
+        for (p, v) in cur(i).borrow().plist_at(pos) {
+            if front_sticky_covers(i, pos, p) {
+                m.insert(p, v);
+            }
+        }
+    }
+    m.into_iter().collect()
+}
+
+fn insert_impl(i: &mut Interp, a: &[Value], before_markers: bool, inherit: bool) -> EvalResult {
     check_writable(i)?;
-    for v in &a {
+    let unibyte = buffer_is_unibyte(i);
+    for v in a {
         match v {
             Value::Str(s) => {
-                let t = s.borrow().clone();
+                let mut t = s.borrow().clone();
+                if unibyte {
+                    t = unibyte_insert_text(&t);
+                }
                 let n = t.chars().count();
                 let base = cur(i).borrow().point();
-                insert_str_at_point(i, &t, false)?;
+                let inherited = if inherit {
+                    inherit_plist_at(i, base)
+                } else {
+                    Vec::new()
+                };
+                let string_ivs = i.str_props(s).to_vec();
+                insert_str_at_point(i, &t, before_markers)?;
+                // Inheritance fills only where the inserted string
+                // carries no property of its own (GNU grafts onto the
+                // interval surrounding the insertion point but the
+                // string's own properties stay).
+                if !inherited.is_empty() {
+                    let mut spans: Vec<(usize, usize, u32, Value)> = Vec::new();
+                    for (p, val) in &inherited {
+                        // Coalesce maximal runs of positions where the
+                        // string lacks prop P (present-but-nil counts
+                        // as present, like GNU's textget).
+                        let mut q = 0usize;
+                        while q < n {
+                            let has = str_plist_at(&string_ivs, q)
+                                .chunks(2)
+                                .any(|c| c.len() == 2 && i.sym_id(&c[0]) == Some(*p));
+                            if has {
+                                q += 1;
+                                continue;
+                            }
+                            let mut e = q + 1;
+                            while e < n
+                                && !str_plist_at(&string_ivs, e)
+                                    .chunks(2)
+                                    .any(|c| c.len() == 2 && i.sym_id(&c[0]) == Some(*p))
+                            {
+                                e += 1;
+                            }
+                            spans.push((q, e, *p, val.clone()));
+                            q = e;
+                        }
+                    }
+                    if !spans.is_empty() {
+                        let b = cur(i);
+                        let mut bb = b.borrow_mut();
+                        for (st, en, p, val) in spans {
+                            bb.text.props.borrow_mut().push(TextProp {
+                                start: base + st,
+                                end: base + en,
+                                prop: p,
+                                value: val,
+                            });
+                        }
+                        bb.note_prop_modified();
+                    }
+                }
                 copy_str_props(i, s, base);
                 debug_assert_eq!(cur(i).borrow().point(), base + n);
             }
             Value::Int(n) => {
-                if let Some(c) = char::from_u32(*n as u32) {
-                    insert_str_at_point(i, &c.to_string(), false)?;
+                let code = if unibyte { *n & 0xFF } else { *n };
+                if let Some(c) = crate::lisp::value::lisp_char(code as u32) {
+                    let base = cur(i).borrow().point();
+                    let inherited = if inherit {
+                        inherit_plist_at(i, base)
+                    } else {
+                        Vec::new()
+                    };
+                    insert_str_at_point(i, &c.to_string(), before_markers)?;
+                    if !inherited.is_empty() {
+                        let b = cur(i);
+                        let mut bb = b.borrow_mut();
+                        for (p, val) in inherited {
+                            bb.text.props.borrow_mut().push(TextProp {
+                                start: base,
+                                end: base + 1,
+                                prop: p,
+                                value: val,
+                            });
+                        }
+                        bb.note_prop_modified();
+                    }
                 } else {
                     return Err(i.wrong_type_mut("characterp", v));
                 }
@@ -5067,35 +5782,31 @@ fn f_insert(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         }
     }
     Ok(Value::Nil)
+}
+
+fn f_insert(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    insert_impl(i, &a, false, false)
 }
 
 fn f_insert_before_markers(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    check_writable(i)?;
-    for v in &a {
-        match v {
-            Value::Str(s) => {
-                let t = s.borrow().clone();
-                let base = cur(i).borrow().point();
-                insert_str_at_point(i, &t, true)?;
-                copy_str_props(i, s, base);
-            }
-            Value::Int(n) => {
-                if let Some(c) = char::from_u32(*n as u32) {
-                    insert_str_at_point(i, &c.to_string(), true)?;
-                } else {
-                    return Err(i.wrong_type_mut("characterp", v));
-                }
-            }
-            other => return Err(i.wrong_type_mut("char-or-string-p", other)),
-        }
-    }
-    Ok(Value::Nil)
+    insert_impl(i, &a, true, false)
+}
+
+fn f_insert_and_inherit(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    insert_impl(i, &a, false, true)
+}
+
+fn f_insert_before_markers_and_inherit(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    insert_impl(i, &a, true, true)
 }
 
 fn f_insert_char(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let unibyte = buffer_is_unibyte(i);
     let c = match &a[0] {
         Value::Int(n) => {
-            char::from_u32(*n as u32).ok_or_else(|| i.wrong_type_mut("characterp", &a[0]))?
+            let code = if unibyte { *n & 0xFF } else { *n };
+            crate::lisp::value::lisp_char(code as u32)
+                .ok_or_else(|| i.wrong_type_mut("characterp", &a[0]))?
         }
         other => return Err(i.wrong_type_mut("characterp", other)),
     };
@@ -5107,7 +5818,8 @@ fn f_insert_char(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 }
 
 fn f_insert_buffer_substring(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let src = buf_of(i, &a[0])?;
+    // GNU Finsert_buffer_substring takes buffer-or-name.
+    let src = buf_or_name(i, &a[0])?;
     let (text, len) = {
         let bb = src.borrow();
         (bb.text.text(), bb.text.len())
@@ -5129,7 +5841,8 @@ fn f_insert_buffer_substring(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     // characters.
     let props: Vec<TextProp> = src
         .borrow()
-        .text_props
+        .text.props
+        .borrow()
         .iter()
         .filter(|tp| tp.start < hi && tp.end > lo)
         .map(|tp| TextProp {
@@ -5148,7 +5861,7 @@ fn f_insert_buffer_substring(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         for mut tp in props {
             tp.start += base;
             tp.end += base;
-            bb.text_props.push(tp);
+            bb.text.props.borrow_mut().push(tp);
         }
         bb.note_prop_modified();
     }
@@ -5157,12 +5870,22 @@ fn f_insert_buffer_substring(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 
 fn f_self_insert_command(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let n = a.get(0).and_then(|v| v.int()).unwrap_or(1).max(0);
-    // `last-command-event` holds the char.
-    let ev = i.symbol_value(i.intern_soft("last-command-event").unwrap_or(0));
-    let c = match ev {
-        Value::Int(x) => char::from_u32(x as u32),
-        _ => None,
+    // GNU `internal_self_insert' takes the char from arg 2 (explicit
+    // C) or `last-command-event' when C is nil/absent.
+    let c = match a.get(1) {
+        Some(Value::Int(x)) => crate::lisp::value::lisp_char(*x as u32),
+        Some(Value::Nil) | None => {
+            match i.symbol_value(i.intern_soft("last-command-event").unwrap_or(0)) {
+                Value::Int(x) => crate::lisp::value::lisp_char(x as u32),
+                _ => None,
+            }
+        }
+        Some(v) => return Err(i.wrong_type_mut("characterp", v)),
     };
+    if n <= 0 {
+        // GNU internal_self_insert returns before the hook on N<=0.
+        return Ok(Value::Nil);
+    }
     if let Some(c) = c {
         // GNU `internal_self_insert': before inserting a character
         // with non-word syntax, expand the abbrev before point when
@@ -5269,7 +5992,12 @@ fn f_newline(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 }
 
 fn f_open_line(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let n = a.get(0).and_then(|v| v.int()).unwrap_or(1).max(1);
+    let n = a.get(0).and_then(|v| v.int()).unwrap_or(1).max(0);
+    if n == 0 {
+        // GNU Fopen_line: nonpositive arg is a no-op (no newline,
+        // no modification hooks).
+        return Ok(Value::Nil);
+    }
     check_writable(i)?;
     let p = cur(i).borrow().point();
     chg_insert(i, p, &"\n".repeat(n as usize))?;
@@ -5309,16 +6037,6 @@ fn f_delete_backward_char(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     )
 }
 
-fn f_backward_delete_char_untabify(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    // Untabify: when deleting a single char that lands inside a tab,
-    // GNU converts the tab to spaces first. Our buffer stores '\t'
-    // literally; deleting the tab char is the closest equivalent.
-    let n = want_int(i, &a[0])?;
-    f_delete_char(
-        i,
-        vec![Value::Int(-n), a.get(1).cloned().unwrap_or(Value::Nil)],
-    )
-}
 
 fn f_beginning_of_visual_line(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     // tty: visual lines == logical lines.
@@ -5354,11 +6072,39 @@ fn f_forward_visible_line(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 fn f_delete_and_extract_region(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     check_writable(i)?;
     barf_if_file_locked(i)?;
-    let len = cur(i).borrow().text.len();
-    let s = pos_idx(len, want_int(i, &a[0])?);
-    let e = pos_idx(len, want_int(i, &a[1])?);
-    let (s, e) = (s.min(e), s.max(e));
-    Ok(Value::string(chg_delete(i, s, e)?))
+    let s0 = want_int(i, &a[0])?;
+    let e0 = want_int(i, &a[1])?;
+    // GNU `validate_region' bounds-checks against the accessible
+    // portion: out-of-[BEGV,ZV] args signal args-out-of-range with the
+    // ORIGINAL argument values.
+    let (s1, e1) = (s0.min(e0), s0.max(e0));
+    {
+        let b = cur(i);
+        let bb = b.borrow();
+        if s1 < bb.begv as i128 + 1 || e1 > bb.zv as i128 + 1 {
+            return Err(err_sym(
+                i,
+                "args-out-of-range",
+                vec![a[0].clone(), a[1].clone()],
+            ));
+        }
+    }
+    let (s, e) = ((s1 - 1) as usize, (e1 - 1) as usize);
+    // GNU `delete_and_extract' copies the deleted text WITH its text
+    // properties — grab them before the delete reshapes the table.
+    let ivs = {
+        let b = cur(i);
+        let bb = b.borrow();
+        buf_props_as_ivs(&bb.text.props.borrow(), s, e)
+    };
+    let text = chg_delete(i, s, e)?;
+    let v = Value::string(text);
+    if !ivs.is_empty() {
+        if let Value::Str(sr) = &v {
+            i.set_str_props(sr, ivs);
+        }
+    }
+    Ok(v)
 }
 
 fn f_delete_region(i: &mut Interp, a: Vec<Value>) -> EvalResult {
@@ -5511,21 +6257,45 @@ fn buf_props_as_ivs(props: &[TextProp], s: usize, e: usize) -> Vec<(usize, usize
     ivs
 }
 
+fn buffer_is_unibyte(i: &mut Interp) -> bool {
+    let sym = i.intern("enable-multibyte-characters");
+    !i.symbol_value(sym).truthy()
+}
 fn buffer_substring_impl(i: &mut Interp, a: &[Value], with_props: bool) -> EvalResult {
+    let unibyte = buffer_is_unibyte(i);
     let b = cur(i);
     let bb = b.borrow();
-    let len = bb.text.len();
-    let s = pos_idx(len, want_int(i, &a[0])?);
-    let e = pos_idx(len, want_int(i, &a[1])?);
+    // GNU Fbuffer_substring validates against BEGV..ZV (narrowed),
+    // and signals (args-out-of-range BUFFER START END) — the buffer
+    // object first, like validate_interval_range.
+    let len = bb.text_len();
+    let s_raw = want_int(i, &a[0])?;
+    let e_raw = want_int(i, &a[1])?;
+    let (lo, hi) = (bb.begv as i128 + 1, bb.zv.min(len) as i128 + 1);
+    if s_raw < lo || s_raw > hi || e_raw < lo || e_raw > hi {
+        let bv = i.buffer_value(i.current_buffer).unwrap_or(Value::Nil);
+        drop(bb);
+        return Err(i.signal_data(
+            sym::ARGS_OUT_OF_RANGE,
+            vec![bv, a[0].clone(), a[1].clone()],
+        ));
+    }
+    let s = pos_idx(len, s_raw);
+    let e = pos_idx(len, e_raw);
     let (s, e) = (s.min(e), s.max(e));
     let text = bb.text.substring(s, e);
     let ivs = if with_props {
-        buf_props_as_ivs(&bb.text_props, s, e)
+        buf_props_as_ivs(&bb.text.props.borrow(), s, e)
     } else {
         Vec::new()
     };
     drop(bb);
     let v = Value::string(text);
+    if unibyte {
+        if let Value::Str(sr) = &v {
+            i.mark_unibyte(sr);
+        }
+    }
     if !ivs.is_empty() {
         if let Value::Str(sr) = &v {
             i.set_str_props(sr, ivs);
@@ -5534,11 +6304,11 @@ fn buffer_substring_impl(i: &mut Interp, a: &[Value], with_props: bool) -> EvalR
     Ok(v)
 }
 
-fn f_buffer_substring(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+pub(crate) fn f_buffer_substring(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     buffer_substring_impl(i, &a, true)
 }
 
-fn f_buffer_substring_no_properties(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+pub(crate) fn f_buffer_substring_no_properties(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     buffer_substring_impl(i, &a, false)
 }
 
@@ -5571,15 +6341,21 @@ fn f_filter_buffer_substring(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 }
 
 fn f_buffer_string(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
+    let unibyte = buffer_is_unibyte(i);
     let b = cur(i);
     let bb = b.borrow();
     let (s, e) = (bb.begv, bb.text_len());
     let text = bb.text.substring(s, e);
     // GNU `buffer-string' copies the text properties like
     // `buffer-substring' does.
-    let ivs = buf_props_as_ivs(&bb.text_props, s, e);
+    let ivs = buf_props_as_ivs(&bb.text.props.borrow(), s, e);
     drop(bb);
     let v = Value::string(text);
+    if unibyte {
+        if let Value::Str(sr) = &v {
+            i.mark_unibyte(sr);
+        }
+    }
     if !ivs.is_empty() {
         if let Value::Str(sr) = &v {
             i.set_str_props(sr, ivs);
@@ -5595,15 +6371,16 @@ fn f_buffer_substring_with_bidi_context(i: &mut Interp, a: Vec<Value>) -> EvalRe
     let b = cur(i);
     let bb = b.borrow();
     let len = bb.text_len();
-    if s < bb.begv as i128 + 1 || e > len as i128 + 1 {
+    if s < bb.begv as i128 + 1 || e > bb.zv.min(len) as i128 + 1 {
         let sym = i.intern("args-out-of-range");
-        let args = vec![a[0].clone(), a[1].clone()];
+        let bv = i.buffer_value(i.current_buffer).unwrap_or(Value::Nil);
+        let args = vec![bv, a[0].clone(), a[1].clone()];
         drop(bb);
         return Err(i.signal_data(sym, args));
     }
     let (s0, e0) = ((s - 1) as usize, (e - 1) as usize);
     let text = bb.text.substring(s0, e0);
-    let ivs = buf_props_as_ivs(&bb.text_props, s0, e0);
+    let ivs = buf_props_as_ivs(&bb.text.props.borrow(), s0, e0);
     drop(bb);
     let v = Value::string(text);
     if !ivs.is_empty() {
@@ -5703,9 +6480,9 @@ fn car_is_only(v: &Value, i: &Interp) -> bool {
 /// GNU `deactivate-mark': gated on (region-active-p) unless FORCE;
 /// unwinds a temporary ('only . X) or 'lambda transient-mark-mode, then
 /// clears mark-active.
-fn deactivate_mark(i: &mut Interp, bb: &mut Buffer, force: bool) {
+fn deactivate_mark(i: &mut Interp, bb: &mut Buffer, force: bool) -> bool {
     if !(force || region_active(i, bb)) {
-        return;
+        return false;
     }
     let tmm = tmm_id(i);
     let tmmv = buf_var(i, bb, tmm);
@@ -5731,14 +6508,15 @@ fn deactivate_mark(i: &mut Interp, bb: &mut Buffer, force: bool) {
         bb.locals.remove(&tmm);
     }
     bb.locals.insert(ma_id(i), Value::Nil);
+    true
 }
 
 /// GNU `activate-mark' core: set mark-active; with NO-TMM leave
 /// transient-mark-mode alone, else set it buffer-locally to 'lambda
 /// when unset.  Only runs when the mark exists and region is inactive.
-fn activate_mark(i: &Interp, bb: &mut Buffer, no_tmm: bool) {
-    if bb.mark.is_none() || region_active(i, bb) {
-        return;
+fn activate_mark(i: &Interp, bb: &mut Buffer, no_tmm: bool) -> bool {
+    if bb.mark_position().is_none() || region_active(i, bb) {
+        return false;
     }
     bb.locals.insert(ma_id(i), Value::t());
     let tmm = tmm_id(i);
@@ -5746,6 +6524,7 @@ fn activate_mark(i: &Interp, bb: &mut Buffer, no_tmm: bool) {
         let lambda = i.intern_soft("lambda").unwrap_or(0);
         bb.locals.insert(tmm, Value::Sym(lambda));
     }
+    true
 }
 
 fn f_mark(i: &mut Interp, a: Vec<Value>) -> EvalResult {
@@ -5758,7 +6537,7 @@ fn f_mark(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         || !buf_var(i, &bb, tmm_id(i)).truthy()
         || mark_active(i, &bb)
         || buf_var(i, &bb, mei).truthy();
-    match bb.mark {
+    match bb.mark_position() {
         _ if !ok => Err(err_sym(i, "mark-inactive", vec![])),
         Some(m) => Ok(Value::Int(m as i128 + 1)),
         None => Ok(Value::Nil),
@@ -5774,27 +6553,40 @@ fn f_set_mark(i: &mut Interp, a: Vec<Value>) -> EvalResult {
             Value::Marker(m) => m.borrow().position,
             v => pos_idx(len, want_int(i, v)?),
         };
-        bb.mark = Some(p);
-        // (activate-mark 'no-tmm): mark-active on, tmm untouched.
-        if !region_active(i, &bb) {
+        bb.set_mark(p);
+        // (activate-mark 'no-tmm): mark-active on, tmm untouched —
+        // its hook still runs when the mark newly activates.
+        let fired = if !region_active(i, &bb) {
             bb.locals.insert(ma_id(i), Value::t());
+            true
+        } else {
+            false
+        };
+        drop(bb);
+        if fired {
+            call_hook(i, "activate-mark-hook")?;
         }
+        Ok(Value::Nil)
     } else {
-        // (deactivate-mark t) then clear the mark in any mode.
-        deactivate_mark(i, &mut bb, true);
+        // GNU: (deactivate-mark t) then detach the mark marker
+        // ((set-marker mark nil)); the marker object stays live and
+        // `mark-marker' keeps returning it.  GNU returns the marker.
+        let fired = deactivate_mark(i, &mut bb, true);
         bb.locals.insert(ma_id(i), Value::Nil);
-        bb.mark = None;
+        let m = bb.mark_marker();
+        m.borrow_mut().buffer = None;
+        drop(bb);
+        if fired {
+            call_hook(i, "deactivate-mark-hook")?;
+        }
+        Ok(marker_value(m))
     }
-    Ok(Value::Nil)
 }
 
 fn f_mark_marker(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
-    let (id, pos) = {
-        let b = cur(i);
-        let bb = b.borrow();
-        (bb.id, bb.mark.unwrap_or(0))
-    };
-    Ok(new_marker_at(i, id, pos))
+    let b = cur(i);
+    let mut bb = b.borrow_mut();
+    Ok(marker_value(bb.mark_marker()))
 }
 
 fn f_push_mark(i: &mut Interp, a: Vec<Value>) -> EvalResult {
@@ -5808,7 +6600,7 @@ fn f_push_mark(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let ring_sym = i.intern_soft("mark-ring").unwrap_or(0);
     // GNU pushes the OLD mark onto mark-ring before installing the new
     // one: (add-to-history 'mark-ring (copy-marker (mark-marker)) max).
-    if let Some(old) = bb.mark {
+    if let Some(old) = bb.mark_position() {
         let mut items = bb
             .locals
             .get(&ring_sym)
@@ -5829,7 +6621,7 @@ fn f_push_mark(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         items.truncate(max);
         bb.locals.insert(ring_sym, Value::list(items));
     }
-    bb.mark = Some(p);
+    bb.set_mark(p);
     // GNU pushes the new mark onto `global-mark-ring' unless its car is
     // already in this buffer.
     let gmr = i.intern_soft("global-mark-ring").unwrap_or(0);
@@ -5889,7 +6681,7 @@ fn f_pop_mark(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
     if !items.is_empty() {
         // GNU: (nconc mark-ring (list (copy-marker (mark-marker)))) then
         // take (car mark-ring) — the ring is a rotation, not a stack.
-        if let Some(mpos) = bb.mark {
+        if let Some(mpos) = bb.mark_position() {
             let m = Rc::new(RefCell::new(Marker {
                 buffer: Some(bb.id),
                 position: mpos,
@@ -5899,7 +6691,8 @@ fn f_pop_mark(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
             items.push(marker_value(m));
         }
         if let Value::Marker(mm) = &items[0] {
-            bb.mark = Some(mm.borrow().position.min(bb.text.len()));
+            let len = bb.text.len();
+            bb.set_mark(mm.borrow().position.min(len));
         }
         // (set-marker (car mark-ring) nil): kill the popped marker.
         if let Value::Marker(mm) = &items[0] {
@@ -5910,7 +6703,11 @@ fn f_pop_mark(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
     }
     // GNU's pop-mark calls (deactivate-mark) unconditionally; it is
     // itself gated on (region-active-p).
-    deactivate_mark(i, &mut bb, false);
+    let fired = deactivate_mark(i, &mut bb, false);
+    drop(bb);
+    if fired {
+        call_hook(i, "deactivate-mark-hook")?;
+    }
     Ok(Value::Nil)
 }
 
@@ -5989,7 +6786,7 @@ fn no_mark_err(i: &mut Interp) -> Flow {
 fn region_bounds(i: &mut Interp) -> Result<(usize, usize), Flow> {
     let b = cur(i);
     let bb = b.borrow();
-    match bb.mark {
+    match bb.mark_position() {
         Some(m) => {
             let p = bb.point();
             Ok((m.min(p), m.max(p)))
@@ -6263,7 +7060,7 @@ fn rect_tab_width(i: &Interp) -> i128 {
 
 /// Column of char index P on the line starting at LS.
 pub(crate) fn rect_col_at(
-    text: &crate::buffer::gapbuf::GapBuffer,
+    text: &crate::buffer::SharedText,
     ls: usize,
     p: usize,
     tab: i128,
@@ -6460,7 +7257,7 @@ fn rect_extract_delete_line(
 
 /// GNU extract-rectangle-line: non-destructive, padded with spaces.
 fn rect_extract_line(
-    text: &crate::buffer::gapbuf::GapBuffer,
+    text: &crate::buffer::SharedText,
     ls: usize,
     le: usize,
     sc: i128,
@@ -7050,8 +7847,11 @@ fn no_region_err(i: &mut Interp) -> Flow {
 fn f_region_beginning(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
     let b = cur(i);
     let bb = b.borrow();
-    match bb.mark {
-        Some(m) => Ok(Value::Int((m.min(bb.point()) + 1) as i128)),
+    match bb.mark_position() {
+        // GNU clips the raw mark position into the accessible region.
+        Some(m) => Ok(Value::Int(
+            (m.min(bb.point()).max(bb.begv) + 1) as i128,
+        )),
         None => Err(no_region_err(i)),
     }
 }
@@ -7059,8 +7859,10 @@ fn f_region_beginning(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
 fn f_region_end(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
     let b = cur(i);
     let bb = b.borrow();
-    match bb.mark {
-        Some(m) => Ok(Value::Int((m.max(bb.point()) + 1) as i128)),
+    match bb.mark_position() {
+        Some(m) => Ok(Value::Int(
+            (m.max(bb.point()).min(bb.zv) + 1) as i128,
+        )),
         None => Err(no_region_err(i)),
     }
 }
@@ -7073,17 +7875,31 @@ fn f_region_active_p(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
 
 fn f_deactivate_mark(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let b = cur(i);
-    let mut bb = b.borrow_mut();
-    let force = a.get(0).map(|v| v.truthy()).unwrap_or(false);
-    deactivate_mark(i, &mut bb, force);
+    let ran;
+    {
+        let mut bb = b.borrow_mut();
+        let force = a.get(0).map(|v| v.truthy()).unwrap_or(false);
+        ran = deactivate_mark(i, &mut bb, force);
+    }
+    // GNU simple.el: `deactivate-mark-hook' runs after the
+    // deactivate work, outside the gate.
+    if ran {
+        call_hook(i, "deactivate-mark-hook")?;
+    }
     Ok(Value::Nil)
 }
 
 fn f_activate_mark(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let b = cur(i);
-    let mut bb = b.borrow_mut();
-    let no_tmm = a.get(0).map(|v| v.truthy()).unwrap_or(false);
-    activate_mark(i, &mut bb, no_tmm);
+    let ran;
+    {
+        let mut bb = b.borrow_mut();
+        let no_tmm = a.get(0).map(|v| v.truthy()).unwrap_or(false);
+        ran = activate_mark(i, &mut bb, no_tmm);
+    }
+    if ran {
+        call_hook(i, "activate-mark-hook")?;
+    }
     Ok(Value::Nil)
 }
 
@@ -7092,7 +7908,7 @@ fn f_exchange_point_and_mark(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let mut bb = b.borrow_mut();
     // GNU's defun: (mark t) omark; (set-mark (point)); (goto-char omark);
     // then deactivate or activate per ARG and the region state.
-    let Some(omark) = bb.mark else {
+    let Some(omark) = bb.mark_position() else {
         let ue = i.intern("user-error");
         return Err(i.signal_data(ue, vec![Value::string("No mark set in this buffer")]));
     };
@@ -7100,7 +7916,7 @@ fn f_exchange_point_and_mark(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let tmmv = buf_var(i, &bb, tmm_id(i));
     let temp_highlight = car_is_only(&tmmv, i);
     let p = bb.point();
-    bb.mark = Some(p);
+    bb.set_mark(p);
     if !region_active(i, &bb) {
         bb.locals.insert(ma_id(i), Value::t());
     }
@@ -7122,10 +7938,17 @@ fn f_exchange_point_and_mark(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         !was_active
     };
     let arg = a.get(0).map(|v| v.truthy()).unwrap_or(false);
-    if arg != rhs {
-        deactivate_mark(i, &mut bb, false);
+    let (de, ac) = if arg != rhs {
+        (deactivate_mark(i, &mut bb, false), false)
     } else {
-        activate_mark(i, &mut bb, false);
+        (false, activate_mark(i, &mut bb, false))
+    };
+    drop(bb);
+    if de {
+        call_hook(i, "deactivate-mark-hook")?;
+    }
+    if ac {
+        call_hook(i, "activate-mark-hook")?;
     }
     Ok(Value::Nil)
 }
@@ -7140,7 +7963,7 @@ fn f_use_region_p(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
     }
     // GNU calls (region-end)/(region-beginning) here, which signal when
     // mark-active is non-nil but the mark was never set.
-    let Some(m) = bb.mark else {
+    let Some(m) = bb.mark_position() else {
         return Err(no_region_err(i));
     };
     if m != bb.point() {
@@ -7170,22 +7993,23 @@ fn f_narrow_to_region(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let len = bb.text.len();
     let sl = want_int(i, &a[0])?;
     let el = want_int(i, &a[1])?;
-    // GNU validates against the unrestricted bounds and signals
-    // args-out-of-range with the original arguments.
-    let (sl, el) = (sl.min(el), sl.max(el));
-    if !(1 <= sl && sl <= el && el <= len as i128 + 1) {
+    // GNU Fnarrow_to_region: BEG <= s <= e <= Z against the UNNARROWED
+    // bounds (an earlier narrowing does not shrink the valid range),
+    // args swap into order, `args-out-of-range' carries the originals.
+    if !(1 <= sl.min(el) && sl.max(el) <= len as i128 + 1) {
         return Err(err_sym(
             i,
             "args-out-of-range",
             vec![a[0].clone(), a[1].clone()],
         ));
     }
+    let (sl, el) = (sl.min(el), sl.max(el));
     let (s, e) = ((sl - 1) as usize, (el - 1) as usize);
     bb.begv = s;
     bb.zv = e;
-    if bb.point < s || bb.point > e {
-        bb.point = s;
-    }
+    // GNU pulls an outlying point toward the nearer boundary:
+    // below BEGV up to it, above ZV down to it.
+    bb.point = bb.point.clamp(s, e);
     Ok(Value::Nil)
 }
 
@@ -7205,21 +8029,22 @@ fn f_labeled_narrow_to_region(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let len = bb.text.len();
     let sl = want_int(i, &a[0])?;
     let el = want_int(i, &a[1])?;
-    let (sl, el) = (sl.min(el), sl.max(el));
-    if !(1 <= sl && sl <= el && el <= len as i128 + 1) {
+    // Same unnarrowed-bounds check as `narrow-to-region' (GNU
+    // Finternal__labeled_narrow_to_region shares the BEG/Z test).
+    if !(1 <= sl.min(el) && sl.max(el) <= len as i128 + 1) {
         return Err(err_sym(
             i,
             "args-out-of-range",
             vec![a[0].clone(), a[1].clone()],
         ));
     }
+    let (sl, el) = (sl.min(el), sl.max(el));
     let (s, e) = ((sl - 1) as usize, (el - 1) as usize);
     let (pb, pz) = (bb.begv, bb.zv);
     bb.begv = s;
     bb.zv = e;
-    if bb.point < s || bb.point > e {
-        bb.point = s;
-    }
+    // Same inward pull as `narrow-to-region'.
+    bb.point = bb.point.clamp(s, e);
     bb.narrow_labels.push((pb, pz, a[2].clone()));
     Ok(Value::Nil)
 }
@@ -7255,12 +8080,11 @@ fn f_set_buffer_modified_tick(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         _ => return Err(i.wrong_type_mut("wholenump", &a[0])),
     };
     let b = buf_of(i, &crate::lisp::builtins::arg(&a, 1))?;
-    b.borrow_mut().mod_tick = tick;
+    b.borrow().text.mod_tick.set(tick);
     Ok(Value::Nil)
 }
 
 // ---------- markers ----------
-
 fn f_markerp(_i: &mut Interp, a: Vec<Value>) -> EvalResult {
     Ok(Value::from_bool(matches!(&a[0], Value::Marker(_))))
 }
@@ -7274,19 +8098,17 @@ fn f_make_marker(_i: &mut Interp, _a: Vec<Value>) -> EvalResult {
 }
 
 fn f_copy_marker(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    // GNU: MARKER nil/omitted → a fresh marker at point in the
-    // current buffer.
+    // GNU Fcopy_marker: MARKER nil/omitted → a fresh marker with NO
+    // buffer (`#<marker in no buffer>'; marker-position → nil).  It is
+    // not the point marker — `(copy-marker nil)' is how Lisp makes a
+    // detached marker for later `set-marker' use.
     if arg(&a, 0).is_nil() {
-        let b = cur(i);
-        let pos = b.borrow().point;
-        let insertion_type = arg(&a, 1).truthy();
         let r = Rc::new(RefCell::new(Marker {
-            buffer: Some(b.borrow().id),
-            position: pos,
-            insertion_type,
+            buffer: None,
+            position: 0,
+            insertion_type: arg(&a, 1).truthy(),
         }));
-        b.borrow_mut().register_marker(&r);
-        return Ok(Value::Marker(r));
+        return Ok(marker_value(r));
     }
     match &a[0] {
         Value::Marker(m) => {
@@ -7294,7 +8116,9 @@ fn f_copy_marker(i: &mut Interp, a: Vec<Value>) -> EvalResult {
             let nm = Marker {
                 buffer: mm.buffer,
                 position: mm.position,
-                insertion_type: a.get(1).map(|v| v.truthy()).unwrap_or(mm.insertion_type),
+                // GNU Fcopy_marker: TYPE defaults to nil (advance), NOT
+                // the source marker's insertion type.
+                insertion_type: a.get(1).map(|v| v.truthy()).unwrap_or(false),
             };
             let r = Rc::new(RefCell::new(nm));
             if let Some(bid) = mm.buffer {
@@ -7323,7 +8147,7 @@ fn f_copy_marker(i: &mut Interp, a: Vec<Value>) -> EvalResult {
             }
             Ok(marker_value(r))
         }
-        other => Err(i.wrong_type_mut("markerp", other)),
+        other => Err(i.wrong_type_mut("integer-or-marker-p", other)),
     }
 }
 
@@ -7333,14 +8157,38 @@ fn f_set_marker(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         other => return Err(i.wrong_type_mut("markerp", other)),
     };
     let buf_id = match a.get(2) {
-        Some(v) if v.truthy() => i
-            .buffer_id_of(v)
-            .ok_or_else(|| i.error(format!("No buffer named {}", i.princ_to_string(&v))))?,
+        Some(v) if v.truthy() => {
+            // GNU Fset_marker: BUFFER must be a live buffer object —
+            // a name string is `(bufferp STR)'; a dead buffer detaches
+            // the marker silently (unchain_marker).
+            match v {
+                Value::Buffer(b) => {
+                    let (id, live) = {
+                        let bb = b.borrow();
+                        (bb.id, bb.live)
+                    };
+                    if !live {
+                        m.borrow_mut().buffer = None;
+                        return Ok(a[0].clone());
+                    }
+                    id
+                }
+                v => return Err(i.wrong_type_mut("bufferp", v)),
+            }
+        }
         _ => match &a[1] {
             Value::Marker(mm) => mm.borrow().buffer.unwrap_or(i.current_buffer),
             _ => i.current_buffer,
         },
     };
+    // GNU unchain_marker cases: a detached marker as POSITION detaches
+    // the target too (buffer/position both become nil).
+    if let Value::Marker(mm) = &a[1] {
+        if mm.borrow().buffer.is_none() {
+            m.borrow_mut().buffer = None;
+            return Ok(a[0].clone());
+        }
+    }
     let pos = match &a[1] {
         Value::Marker(mm) => mm.borrow().position,
         Value::Nil => {
@@ -7425,8 +8273,7 @@ pub(crate) fn regexp_compile(
         err_sym(i, "invalid-regexp", vec![Value::string(e.0)])
     })
 }
-
-fn f_looking_at(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+fn f_looking_at_impl(i: &mut Interp, a: Vec<Value>, posix: bool) -> EvalResult {
     let re = regexp_compile(i, &a[0])?;
     let syn = crate::editor::re_syntax(i);
     let regs = {
@@ -7442,6 +8289,8 @@ fn f_looking_at(i: &mut Interp, a: Vec<Value>) -> EvalResult {
             pos,
             &syn,
             &crate::editor::re_category(i),
+            pos,
+            posix,
         )
     };
     match regs {
@@ -7450,6 +8299,7 @@ fn f_looking_at(i: &mut Interp, a: Vec<Value>) -> EvalResult {
                 regs,
                 in_buffer: true,
                 base: cur(i).borrow().begv,
+                buffer: Some(i.current_buffer),
             });
             Ok(Value::t())
         }
@@ -7457,7 +8307,23 @@ fn f_looking_at(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     }
 }
 
-fn f_string_match(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+fn f_looking_at(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    f_looking_at_impl(i, a, false)
+}
+
+fn f_posix_looking_at(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    f_looking_at_impl(i, a, true)
+}
+
+/// GNU's `looking-at-p` does not change the match data.
+fn f_looking_at_p(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let saved = i.match_data.clone();
+    let r = f_looking_at_impl(i, a, false);
+    i.match_data = saved;
+    r
+}
+
+fn f_string_match_impl(i: &mut Interp, a: Vec<Value>, posix: bool) -> EvalResult {
     let pat = match &a[0] {
         Value::Str(s) => s.borrow().clone(),
         other => return Err(i.wrong_type_mut("stringp", other)),
@@ -7466,20 +8332,40 @@ fn f_string_match(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         Value::Str(s) => s.borrow().clone(),
         other => return Err(i.wrong_type_mut("stringp", other)),
     };
-    let start = a.get(2).and_then(|v| v.int()).unwrap_or(0).max(0) as usize;
+    let chars: Vec<char> = text.chars().collect();
+    // GNU: negative START counts back from the end of STRING
+    // (search.c: `if (start < 0) start += SCHARS(string)`); out of
+    // range signals args-out-of-range with the ORIGINAL value.
+    let raw_start = match a.get(2) {
+        None | Some(Value::Nil) => 0,
+        Some(v) => want_int(i, v)?,
+    };
+    let start = if raw_start < 0 {
+        raw_start + chars.len() as i128
+    } else {
+        raw_start
+    };
+    if start < 0 || start > chars.len() as i128 {
+        return Err(err_sym(
+            i,
+            "args-out-of-range",
+            vec![Value::string(text.clone()), Value::Int(raw_start)],
+        ));
+    }
     let case_fold = i
         .symbol_value(i.intern_soft("case-fold-search").unwrap_or(0))
         .truthy();
     let re = crate::lisp::regexp::compile_case(&pat, case_fold)
         .map_err(|e| err_sym(i, "invalid-regexp", vec![Value::string(e.0)]))?;
     let syn = crate::editor::re_syntax(i);
-    let chars: Vec<char> = text.chars().collect();
     match crate::lisp::regexp::search_full(
         &re,
         &chars,
-        start.min(chars.len()),
+        start as usize,
         &syn,
         &crate::editor::re_category(i),
+        crate::lisp::regexp::NO_POINT,
+        posix,
     ) {
         Some(regs) => {
             let start0 = regs[0].unwrap_or(0);
@@ -7487,6 +8373,7 @@ fn f_string_match(i: &mut Interp, a: Vec<Value>) -> EvalResult {
                 regs,
                 in_buffer: false,
                 base: 0,
+                buffer: None,
             });
             Ok(Value::Int(start0 as i128))
         }
@@ -7494,13 +8381,22 @@ fn f_string_match(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     }
 }
 
+fn f_string_match(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    f_string_match_impl(i, a, false)
+}
+
+fn f_posix_string_match(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    f_string_match_impl(i, a, true)
+}
+
 /// GNU's `string-match-p` does not change the match data.
 fn f_string_match_p(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let saved = i.match_data.clone();
-    let r = f_string_match(i, a);
+    let r = f_string_match_impl(i, a, false);
     i.match_data = saved;
     r
 }
+
 
 pub(crate) fn search_common(
     i: &mut Interp,
@@ -7508,6 +8404,7 @@ pub(crate) fn search_common(
     re: Option<&crate::lisp::regexp::Regex>,
     needle: Option<&str>,
     backward: bool,
+    posix: bool,
 ) -> EvalResult {
     let bound = match a.get(1) {
         Some(Value::Nil) | None => None,
@@ -7538,6 +8435,11 @@ pub(crate) fn search_common(
         }
     }
     let syn = crate::editor::re_syntax(i);
+    // GNU Fsearch_forward: literal search folds through the buffer's
+    // case table when `case-fold-search' is non-nil.
+    let literal_fold = i
+        .symbol_value(i.intern_soft("case-fold-search").unwrap_or(0))
+        .truthy();
     let found = {
         let b = cur(i);
         let mut bb = b.borrow_mut();
@@ -7559,6 +8461,8 @@ pub(crate) fn search_common(
                             cur_pos,
                             &syn,
                             &crate::editor::re_category(i),
+                            pos,
+                            posix,
                         )
                     } else {
                         crate::lisp::regexp::search_full(
@@ -7567,10 +8471,12 @@ pub(crate) fn search_common(
                             cur_pos,
                             &syn,
                             &crate::editor::re_category(i),
+                            pos,
+                            posix,
                         )
                     }
                 }
-                (_, Some(n)) => literal_search(text, n, cur_pos, backward),
+                (_, Some(n)) => literal_search(text, n, cur_pos, backward, literal_fold),
                 _ => None,
             };
             match hit {
@@ -7595,7 +8501,13 @@ pub(crate) fn search_common(
                         }
                     }
                 }
-                None => break,
+                // GNU: COUNT is all-or-nothing — a miss on any
+                // iteration fails the whole search (noerror moves to
+                // the bound/eob, else search-failed).
+                None => {
+                    found = None;
+                    break;
+                }
             }
         }
         found
@@ -7606,11 +8518,21 @@ pub(crate) fn search_common(
             let s = regs[0].unwrap_or(0);
             let landing = if backward { s } else { e };
             cur(i).borrow_mut().set_point(landing + begv);
-            i.match_data = Some(MatchData {
-                regs,
-                in_buffer: true,
-                base: begv,
-            });
+            // GNU: `inhibit-changing-match-data' suppresses the store;
+            // the search itself still runs (leaving any previous
+            // match data untouched).
+            let inhibit = i
+                .intern_soft("inhibit-changing-match-data")
+                .map(|s| i.symbol_value(s).truthy())
+                .unwrap_or(false);
+            if !inhibit {
+                i.match_data = Some(MatchData {
+                    regs,
+                    in_buffer: true,
+                    base: begv,
+                    buffer: Some(i.current_buffer),
+                });
+            }
             Ok(Value::Int(landing as i128 + begv as i128 + 1))
         }
         None => {
@@ -7636,17 +8558,30 @@ pub(crate) fn search_common(
     }
 }
 
-/// Literal (non-regexp) search.
+/// Literal (non-regexp) search.  `case_fold` applies a simple
+/// per-char lowercase fold (GNU folds through the buffer's case
+/// table's canon; lowercase is equivalent for unicase chars).
 pub(crate) fn literal_search(
     text: &[char],
     needle: &str,
     from: usize,
     backward: bool,
+    case_fold: bool,
 ) -> Option<crate::lisp::regexp::Regs> {
     let n: Vec<char> = needle.chars().collect();
     if n.is_empty() {
         return Some(vec![Some(from.min(text.len())), Some(from.min(text.len()))]);
     }
+    let at = |p: usize| -> bool {
+        if case_fold {
+            text[p..p + n.len()]
+                .iter()
+                .zip(n.iter())
+                .all(|(a, b)| a.to_lowercase().eq(b.to_lowercase()))
+        } else {
+            text[p..p + n.len()] == n[..]
+        }
+    };
     if backward {
         // GNU: the match must end at or before `from`.
         let mut p = match from.min(text.len()).checked_sub(n.len()) {
@@ -7654,7 +8589,7 @@ pub(crate) fn literal_search(
             None => return None,
         };
         loop {
-            if text[p..p + n.len()] == n[..] {
+            if at(p) {
                 return Some(vec![Some(p), Some(p + n.len())]);
             }
             if p == 0 {
@@ -7665,7 +8600,7 @@ pub(crate) fn literal_search(
     } else {
         let mut p = from;
         while p + n.len() <= text.len() {
-            if text[p..p + n.len()] == n[..] {
+            if at(p) {
                 return Some(vec![Some(p), Some(p + n.len())]);
             }
             p += 1;
@@ -7676,20 +8611,106 @@ pub(crate) fn literal_search(
 
 fn f_re_search_forward(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let re = regexp_compile(i, &a[0])?;
-    search_common(i, &a, Some(&re), None, false)
+    search_common(i, &a, Some(&re), None, false, false)
 }
 
 fn f_re_search_backward(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let re = regexp_compile(i, &a[0])?;
-    search_common(i, &a, Some(&re), None, true)
+    search_common(i, &a, Some(&re), None, true, false)
 }
+
+fn f_posix_search_forward(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let re = regexp_compile(i, &a[0])?;
+    search_common(i, &a, Some(&re), None, false, true)
+}
+
+fn f_posix_search_backward(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let re = regexp_compile(i, &a[0])?;
+    search_common(i, &a, Some(&re), None, true, true)
+}
+/// GNU `word-search-regexp' (isearch.el): quote each word, join with
+/// `\W+', bracket with `\<…\>' unless LAX (which drops the trailing
+/// `\>'); leading/trailing whitespace in STRING becomes `\W+'.
+fn word_search_regexp(i: &Interp, string: &str, lax: bool) -> String {
+    if string.is_empty() {
+        return String::new();
+    }
+    let is_word = |c: char| crate::editor::syntax_code_buf(i, c) == b'w';
+    if string.chars().all(|c| !is_word(c)) {
+        return "\\W+".to_string();
+    }
+    let mut out = String::new();
+    let lead = string.chars().next().map(|c| !is_word(c)).unwrap_or(false);
+    let trail = string.chars().last().map(|c| !is_word(c)).unwrap_or(false);
+    out.push_str(if lead { "\\W+" } else { "\\<" });
+    let quote = |w: &str| -> String {
+        let mut q = String::with_capacity(w.len());
+        for c in w.chars() {
+            if ".*+?[^$\\".contains(c) {
+                q.push('\\');
+            }
+            q.push(c);
+        }
+        q
+    };
+    let words: Vec<String> = string
+        .split(|c: char| !is_word(c))
+        .filter(|w| !w.is_empty())
+        .map(|w| quote(w))
+        .collect();
+    out.push_str(&words.join("\\W+"));
+    out.push_str(if trail {
+        "\\W+"
+    } else if lax {
+        ""
+    } else {
+        "\\>"
+    });
+    out
+}
+
+fn word_search(i: &mut Interp, a: &[Value], backward: bool, lax: bool) -> EvalResult {
+    let string = match &a[0] {
+        Value::Str(s) => s.borrow().clone(),
+        other => return Err(i.wrong_type_mut("stringp", other)),
+    };
+    let case_fold = i
+        .symbol_value(i.intern_soft("case-fold-search").unwrap_or(0))
+        .truthy();
+    let pat = word_search_regexp(i, &string, lax);
+    let re = crate::lisp::regexp::compile_case(&pat, case_fold)
+        .map_err(|e| err_sym(i, "invalid-regexp", vec![Value::string(e.0)]))?;
+    // GNU's Fword_search_forward calls search_command with the
+    // GENERATED regexp, so `search-failed' carries that pattern
+    // (e.g. "\\<foo\\W+bar\\>"), not the word string.
+    let mut a2 = a.to_vec();
+    a2[0] = Value::string(pat);
+    search_common(i, &a2, Some(&re), None, backward, false)
+}
+
+fn f_word_search_forward(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    word_search(i, &a, false, false)
+}
+
+fn f_word_search_backward(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    word_search(i, &a, true, false)
+}
+
+fn f_word_search_forward_lax(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    word_search(i, &a, false, true)
+}
+
+fn f_word_search_backward_lax(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    word_search(i, &a, true, true)
+}
+
 
 fn f_search_forward(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let needle = match &a[0] {
         Value::Str(s) => s.borrow().clone(),
         other => return Err(i.wrong_type_mut("stringp", other)),
     };
-    search_common(i, &a, None, Some(&needle), false)
+    search_common(i, &a, None, Some(&needle), false, false)
 }
 
 fn f_search_backward(i: &mut Interp, a: Vec<Value>) -> EvalResult {
@@ -7697,11 +8718,25 @@ fn f_search_backward(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         Value::Str(s) => s.borrow().clone(),
         other => return Err(i.wrong_type_mut("stringp", other)),
     };
-    search_common(i, &a, None, Some(&needle), true)
+    search_common(i, &a, None, Some(&needle), true, false)
+}
+
+/// GNU `match_limit': negative SUBEXP signals `args-out-of-range'
+/// with data (SUBEXP 0); too-large groups return nil.
+fn match_reg_index(i: &mut Interp, v: &Value) -> Result<usize, Flow> {
+    let n = want_int(i, v)?;
+    if n < 0 {
+        return Err(err_sym(
+            i,
+            "args-out-of-range",
+            vec![Value::Int(n), Value::Int(0)],
+        ));
+    }
+    Ok(n as usize)
 }
 
 fn f_match_beginning(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let n = want_int(i, &a[0])?.max(0) as usize;
+    let n = match_reg_index(i, &a[0])?;
     match &i.match_data {
         Some(md) => match md.regs.get(2 * n).copied().flatten() {
             Some(p) => Ok(Value::Int(
@@ -7714,7 +8749,7 @@ fn f_match_beginning(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 }
 
 fn f_match_end(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let n = want_int(i, &a[0])?.max(0) as usize;
+    let n = match_reg_index(i, &a[0])?;
     match &i.match_data {
         Some(md) => match md.regs.get(2 * n + 1).copied().flatten() {
             Some(p) => Ok(Value::Int(
@@ -7727,24 +8762,56 @@ fn f_match_end(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 }
 
 fn f_match_data(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let _integers = a.get(0).map(|v| v.truthy()).unwrap_or(false);
+    let integers = a.get(0).map(|v| v.truthy()).unwrap_or(false);
     let _reuse = a.get(1);
     let _reseat = a.get(2);
     match &i.match_data {
         Some(md) => {
+            // GNU: INTEGERS nil + a buffer match → real markers in the
+            // searched buffer; INTEGERS or a string match → positions.
+            let use_markers = !integers && md.in_buffer && md.buffer.is_some();
             let mut items = Vec::new();
-            for k in 0..(md.regs.len() / 2) {
+            // GNU drops trailing pairs where both registers are nil
+            // (a group that never participated); interior holes stay.
+            let mut npairs = md.regs.len() / 2;
+            while npairs > 0
+                && md.regs.get(2 * npairs - 2).copied().flatten().is_none()
+                && md.regs.get(2 * npairs - 1).copied().flatten().is_none()
+            {
+                npairs -= 1;
+            }
+            for k in 0..npairs {
                 let s = md.regs.get(2 * k).copied().flatten();
                 let e = md.regs.get(2 * k + 1).copied().flatten();
                 let off = md.base + if md.in_buffer { 1 } else { 0 };
-                items.push(match s {
-                    Some(p) => Value::Int((p + off) as i128),
-                    None => Value::Nil,
-                });
-                items.push(match e {
-                    Some(p) => Value::Int((p + off) as i128),
-                    None => Value::Nil,
-                });
+                for p in [s, e] {
+                    let v = match p {
+                        Some(p) if use_markers => {
+                            let bid = md.buffer.unwrap();
+                            let m = Rc::new(RefCell::new(Marker {
+                                buffer: Some(bid),
+                                position: p + off - 1,
+                                insertion_type: false,
+                            }));
+                            if let Some(b) = i.buffers.get(bid) {
+                                b.borrow_mut().register_marker(&m);
+                            }
+                            marker_value(m)
+                        }
+                        Some(p) => Value::Int((p + off) as i128),
+                        None => Value::Nil,
+                    };
+                    items.push(v);
+                }
+            }
+            // GNU search.c `match_data': with INTEGERS non-nil and a
+            // buffer match, the searched buffer trails the positions.
+            if integers && md.in_buffer {
+                if let Some(bid) = md.buffer {
+                    if let Some(v) = i.buffer_value(bid) {
+                        items.push(v);
+                    }
+                }
             }
             Ok(Value::list(items))
         }
@@ -7754,31 +8821,61 @@ fn f_match_data(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 
 fn f_set_match_data(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let items = a[0].list_to_vec().unwrap_or_default();
-    let mut regs = Vec::new();
-    let in_buffer = i.match_data.as_ref().map(|m| m.in_buffer).unwrap_or(true);
-    let base = i.match_data.as_ref().map(|m| m.base).unwrap_or(0);
+    // GNU: a marker in the list pins this match data to the marker's
+    // buffer coordinates; integers keep the *previous* match's origin
+    // (buffer or string), defaulting to a plain list when nothing was
+    // ever searched.
+    let marker_buf = items.iter().find_map(|v| match v {
+        Value::Marker(m) => m.borrow().buffer,
+        _ => None,
+    });
+    let has_marker = items.iter().any(|v| matches!(v, Value::Marker(_)));
+    let (in_buffer, base, buffer) = if has_marker {
+        (true, 0, marker_buf)
+    } else {
+        let prev = i.match_data.as_ref();
+        (
+            prev.map(|m| m.in_buffer).unwrap_or(false),
+            prev.map(|m| m.base).unwrap_or(0),
+            prev.and_then(|m| m.buffer).or(Some(i.current_buffer)),
+        )
+    };
     let off = base + if in_buffer { 1 } else { 0 };
+    let to_pos = |v: &Value| -> Option<usize> {
+        // GNU accepts markers in the list too (match-data returns them).
+        match v {
+            Value::Marker(m) => {
+                let mm = m.borrow();
+                mm.buffer.map(|_| mm.position.saturating_sub(base))
+            }
+            _ => v.int().map(|p| (p as usize).saturating_sub(off)),
+        }
+    };
+    let mut regs = Vec::new();
     let mut k = 0;
     while k < items.len() {
-        let s = items[k].int().map(|p| (p as usize).saturating_sub(off));
-        let e = items
-            .get(k + 1)
-            .and_then(|v| v.int())
-            .map(|p| (p as usize).saturating_sub(off));
+        let s = to_pos(&items[k]);
+        let e = items.get(k + 1).and_then(|v| to_pos(v));
         regs.push(s);
         regs.push(e);
         k += 2;
+    }
+    // GNU: an all-nil list clears the match entirely (match-data → nil).
+    if regs.iter().all(|r| r.is_none()) {
+        i.match_data = None;
+        return Ok(Value::Nil);
     }
     i.match_data = Some(MatchData {
         regs,
         in_buffer,
         base,
+        buffer,
     });
     Ok(Value::Nil)
 }
 
 fn f_match_string(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let n = want_int(i, &a[0])?.max(0) as usize;
+    let n = match_reg_index(i, &a[0])?;
     let md = match &i.match_data {
         Some(m) => m,
         None => return Ok(Value::Nil),
@@ -7806,7 +8903,22 @@ fn f_match_string(i: &mut Interp, a: Vec<Value>) -> EvalResult {
                         .collect::<String>(),
                 ))
             }
-            _ => Ok(Value::Nil),
+            // GNU requires STRING when the match data came from a
+            // string match; otherwise it indexes the current buffer
+            // and signals args-out-of-range (buffer S E) — S/E are
+            // the raw register positions.
+            _ => {
+                let b = cur(i);
+                return Err(err_sym(
+                    i,
+                    "args-out-of-range",
+                    vec![
+                        Value::Buffer(b),
+                        Value::Int(s as i128),
+                        Value::Int(e as i128),
+                    ],
+                ));
+            }
         }
     }
 }
@@ -7889,20 +9001,43 @@ fn f_replace_match(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     // STRING path: substitute within the given string's match registers.
     if let Some(text) = str_arg {
         let src: Vec<char> = text.chars().collect();
-        let rep = expand_replacement(i, &newtext, literal, &md, &src)?;
+        // GNU applyes case transference (`case_action') in the string
+        // path too: FIXEDCASE skips it, and the casing is taken from
+        // the replaced group's text.
         let (s, e) = match (
             md.regs.get(2 * subexp).copied().flatten(),
             md.regs.get(2 * subexp + 1).copied().flatten(),
         ) {
             (Some(s), Some(e)) => (s, e),
+            // GNU: subexp beyond the registers → args-out-of-range;
+            // an existing-but-unmatched group → plain `error'.
+            _ if 2 * subexp + 1 < md.regs.len() => {
+                return Err(err_sym(
+                    i,
+                    "error",
+                    vec![
+                        Value::string("replace-match subexpression does not exist"),
+                        Value::Int(subexp as i128),
+                    ],
+                ));
+            }
             _ => {
                 return Err(err_sym(
                     i,
                     "args-out-of-range",
-                    vec![Value::Int(subexp as i128)],
+                    vec![
+                        Value::Int(subexp as i128),
+                        Value::Int(0),
+                        Value::Int(md.regs.len() as i128 / 2 - 1),
+                    ],
                 ));
             }
         };
+        let mut rep = expand_replacement(i, &newtext, literal, &md, &src)?;
+        if !fixedcase {
+            let old: String = src[s.min(src.len())..e.min(src.len())].iter().collect();
+            rep = match_case(&old, &rep);
+        }
         let mut out: String = src[..s.min(src.len())].iter().collect();
         out.push_str(&rep);
         out.extend(src[e.min(src.len())..].iter());
@@ -7916,7 +9051,29 @@ fn f_replace_match(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         md.regs.get(2 * subexp + 1).copied().flatten(),
     ) {
         (Some(s), Some(e)) => (s, e),
-        _ => return Err(i.error("match subexp did not match")),
+        // GNU: same split as the string path — too-large subexp is
+        // args-out-of-range, unmatched group is a plain error.
+        _ if 2 * subexp + 1 < md.regs.len() => {
+            return Err(err_sym(
+                i,
+                "error",
+                vec![
+                    Value::string("replace-match subexpression does not exist"),
+                    Value::Int(subexp as i128),
+                ],
+            ));
+        }
+        _ => {
+            return Err(err_sym(
+                i,
+                "args-out-of-range",
+                vec![
+                    Value::Int(subexp as i128),
+                    Value::Int(0),
+                    Value::Int(md.regs.len() as i128 / 2 - 1),
+                ],
+            ));
+        }
     };
     // Buffer path: build replacement against buffer text.
     let b = cur(i);
@@ -7943,6 +9100,7 @@ fn f_match_substitute_replacement(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         Value::Str(s) => s.borrow().clone(),
         other => return Err(i.wrong_type_mut("stringp", other)),
     };
+    let fixedcase = a.get(1).map(|v| v.truthy()).unwrap_or(false);
     let literal = a.get(2).map(|v| v.truthy()).unwrap_or(false);
     let src: Vec<char> = match a.get(3) {
         Some(Value::Str(s)) => s.borrow().chars().collect(),
@@ -7980,13 +9138,24 @@ fn f_match_substitute_replacement(i: &mut Interp, a: Vec<Value>) -> EvalResult {
             ));
         }
     };
-    let rep = expand_replacement(i, &newtext, literal, &md, &src)?;
+    let mut rep = expand_replacement(i, &newtext, literal, &md, &src)?;
+    // GNU `match_substitute_replacement' applies `case_action' too:
+    // FIXEDCASE suppresses transfer from the matched text's case.
+    if !fixedcase {
+        if let (Some(s), Some(e)) = (
+            md.regs.first().copied().flatten(),
+            md.regs.get(1).copied().flatten(),
+        ) {
+            let old: String = src[s.min(src.len())..e.min(src.len())].iter().collect();
+            rep = match_case(&old, &rep);
+        }
+    }
     Ok(Value::string(rep))
 }
 
 /// Case-matching for `replace-match`: if OLD is all-caps/capitalized,
 /// apply the same to NEW.
-fn match_case(old: &str, new: &str) -> String {
+pub(crate) fn match_case(old: &str, new: &str) -> String {
     let letters: Vec<char> = old.chars().filter(|c| c.is_alphabetic()).collect();
     if letters.is_empty() {
         return new.to_string();
@@ -8233,19 +9402,47 @@ pub(crate) fn f_put_text_property(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         i.set_str_props(&s, ivs);
         return Ok(Value::Nil);
     }
-    let len = cur(i).borrow().text.len();
-    let s = pos_idx(len, want_int(i, &a[0])?);
-    let e = pos_idx(len, want_int(i, &a[1])?);
+    // OBJECT may be nil or a buffer; anything else is a type error.
+    match a.get(4) {
+        None | Some(Value::Nil) | Some(Value::Buffer(_)) => {}
+        Some(v) => return Err(i.wrong_type_mut("stringp", v)),
+    }
+    let b = match a.get(4) {
+        Some(v) => buf_of(i, v)?,
+        None => cur(i),
+    };
+    // GNU `validate_region' bounds-checks against the accessible
+    // portion: out-of-[BEGV,ZV] args signal args-out-of-range with the
+    // ORIGINAL argument values.
+    let (s0i, e0i) = (want_int(i, &a[0])?, want_int(i, &a[1])?);
+    {
+        let bb = b.borrow();
+        let (lo, hi) = (bb.begv as i128 + 1, bb.zv as i128 + 1);
+        if s0i.min(e0i) < lo || s0i.max(e0i) > hi {
+            return Err(err_sym(
+                i,
+                "args-out-of-range",
+                vec![a[0].clone(), a[1].clone()],
+            ));
+        }
+    }
+    let len = b.borrow().text.len();
+    let s = pos_idx(len, s0i);
+    let e = pos_idx(len, e0i);
     let prop = want_sym(i, &a[2])?;
+    if s == e {
+        // GNU set_text_properties returns early on an empty range:
+        // no interval, no modification hooks.
+        return Ok(Value::Nil);
+    }
     // GNU `set_text_properties_1': `modify_text_properties' (before-
     // change + MODIFF bump) and `signal_after_change' both fire
     // unconditionally on the buffer path.
     signal_before_change(i, s + 1, e + 1)?;
     {
-        let b = cur(i);
         let mut bb = b.borrow_mut();
         buf_record_prop(&mut bb, s, e, &a[2], prop, &a[3]);
-        bb.text_props.push(TextProp {
+        bb.text.props.borrow_mut().push(TextProp {
             start: s,
             end: e,
             prop,
@@ -8261,19 +9458,55 @@ pub(crate) fn f_put_text_property(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 /// `(nil PROP OLD BEG . END)' undo entry per contiguous run of OLD
 /// values that are not `eq' NEW.
 fn buf_record_prop(bb: &mut Buffer, s: usize, e: usize, prop: &Value, pid: u32, new: &Value) {
-    let mut p = s;
-    while p < e {
-        let old = bb.prop_value_at(p, pid);
-        if crate::lisp::builtins::eq_values(&old, new) {
-            p += 1;
+    // GNU `record_property_change' runs per contiguous run of equal OLD
+    // values.  Scan the covering entries once instead of doing a
+    // linear `prop_value_at' lookup per position — with thousands of
+    // accumulated properties (a Dired listing), the naive walk was
+    // quadratic in buffer size.
+    let mut runs: Vec<(usize, usize, Value)> = Vec::new();
+    for tp in bb.text.props.borrow().iter() {
+        if tp.prop != pid {
             continue;
         }
-        let mut q = p + 1;
-        while q < e && crate::lisp::builtins::eq_values(&bb.prop_value_at(q, pid), &old) {
-            q += 1;
+        let (os, oe) = (tp.start.max(s), tp.end.min(e));
+        if os >= oe {
+            continue;
         }
-        bb.record_prop_change(prop.clone(), old, p + 1, q + 1);
-        p = q;
+        // Later writes win: splice this interval into the collected
+        // runs, keeping rightmost-write priority.
+        let mut out: Vec<(usize, usize, Value)> = Vec::with_capacity(runs.len() + 1);
+        for (rs, re, rv) in runs.drain(..) {
+            if re <= os || rs >= oe {
+                out.push((rs, re, rv));
+                continue;
+            }
+            if rs < os {
+                out.push((rs, os, rv.clone()));
+            }
+            if re > oe {
+                out.push((oe, re, rv));
+            }
+        }
+        out.push((os, oe, tp.value.clone()));
+        out.sort_by_key(|r| r.0);
+        runs = out;
+    }
+    // Emit in position order; untouched stretches contribute nothing.
+    let mut p = s;
+    for (rs, re, rv) in runs {
+        if rs > p {
+            // gap: OLD is nil — record only when NEW differs.
+            if !crate::lisp::builtins::eq_values(&Value::Nil, new) {
+                bb.record_prop_change(prop.clone(), Value::Nil, p + 1, rs.min(e) + 1);
+            }
+        }
+        if !crate::lisp::builtins::eq_values(&rv, new) {
+            bb.record_prop_change(prop.clone(), rv, rs + 1, re.min(e) + 1);
+        }
+        p = re.max(p);
+    }
+    if p < e && !crate::lisp::builtins::eq_values(&Value::Nil, new) {
+        bb.record_prop_change(prop.clone(), Value::Nil, p + 1, e + 1);
     }
 }
 
@@ -8495,14 +9728,37 @@ fn f_add_text_properties(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         i.set_str_props(&s, ivs);
         return Ok(Value::from_bool(changed));
     }
-    let len = cur(i).borrow().text.len();
-    let s = pos_idx(len, want_int(i, &a[0])?);
-    let e = pos_idx(len, want_int(i, &a[1])?);
+    let b = match a.get(3) {
+        Some(v) => buf_of(i, v)?,
+        None => cur(i),
+    };
+    let len;
+    let s;
+    let e;
+    {
+        let bb = b.borrow();
+        len = bb.text.len();
+        let sv = want_int(i, &a[0])?;
+        let ev = want_int(i, &a[1])?;
+        let (lo, hi) = (bb.begv as i128 + 1, bb.zv as i128 + 1);
+        if sv < lo || sv > hi || ev < lo || ev > hi {
+            return Err(err_sym(
+                i,
+                "args-out-of-range",
+                vec![a[0].clone(), a[1].clone()],
+            ));
+        }
+        s = pos_idx(len, sv);
+        e = pos_idx(len, ev);
+    }
     let plist = a[2].list_to_vec().unwrap_or_default();
+    if s == e {
+        // Empty range: GNU returns nil, no hooks, no intervals.
+        return Ok(Value::Nil);
+    }
     // GNU: unconditional before/after-change on the buffer path.
     signal_before_change(i, s + 1, e + 1)?;
     let changed = {
-        let b = cur(i);
         let mut bb = b.borrow_mut();
         let r = buf_add_props(&mut bb, i, s, e, &plist, true);
         if r.is_ok() {
@@ -8536,7 +9792,7 @@ fn buf_add_props(
             if record {
                 buf_record_prop(bb, s, e, &plist[k], p, &plist[k + 1]);
             }
-            bb.text_props.push(TextProp {
+            bb.text.props.borrow_mut().push(TextProp {
                 start: s,
                 end: e,
                 prop: p,
@@ -8552,7 +9808,8 @@ fn buf_add_props(
 fn buf_prop_uniform(bb: &Buffer, s: usize, e: usize, prop: u32, val: &Value) -> bool {
     for p in s..e.max(s) {
         let cur = bb
-            .text_props
+            .text.props
+            .borrow()
             .iter()
             .rev()
             .find(|tp| tp.prop == prop && tp.start <= p && tp.end > p)
@@ -8636,10 +9893,33 @@ pub(crate) fn f_remove_text_properties(i: &mut Interp, a: Vec<Value>) -> EvalRes
         let removed = str_remove_props(i, &a, names)?;
         return Ok(Value::from_bool(removed));
     }
-    let len = cur(i).borrow().text.len();
-    let s = pos_idx(len, want_int(i, &a[0])?);
-    let e = pos_idx(len, want_int(i, &a[1])?);
+    let b = match a.get(3) {
+        Some(v) => buf_of(i, v)?,
+        None => cur(i),
+    };
+    let len;
+    let s;
+    let e;
+    {
+        let bb = b.borrow();
+        len = bb.text.len();
+        let sv = want_int(i, &a[0])?;
+        let ev = want_int(i, &a[1])?;
+        let (lo, hi) = (bb.begv as i128 + 1, bb.zv as i128 + 1);
+        if sv < lo || sv > hi || ev < lo || ev > hi {
+            return Err(err_sym(
+                i,
+                "args-out-of-range",
+                vec![a[0].clone(), a[1].clone()],
+            ));
+        }
+        s = pos_idx(len, sv);
+        e = pos_idx(len, ev);
+    }
     let plist = a[2].list_to_vec().unwrap_or_default();
+    if s == e {
+        return Ok(Value::Nil);
+    }
     let props: Vec<u32> = plist
         .iter()
         .step_by(2)
@@ -8648,9 +9928,9 @@ pub(crate) fn f_remove_text_properties(i: &mut Interp, a: Vec<Value>) -> EvalRes
     // GNU removes lazily: `modify_text_properties' and
     // `signal_after_change' fire only when something is removed.
     let will_change = {
-        let b = cur(i);
         let bb = b.borrow();
-        bb.text_props
+        bb.text.props
+            .borrow()
             .iter()
             .any(|tp| props.contains(&tp.prop) && tp.start < e && tp.end > s)
     };
@@ -8659,12 +9939,11 @@ pub(crate) fn f_remove_text_properties(i: &mut Interp, a: Vec<Value>) -> EvalRes
     }
     signal_before_change(i, s + 1, e + 1)?;
     {
-        let b = cur(i);
         let mut bb = b.borrow_mut();
         for (n, &p) in props.iter().enumerate() {
             buf_record_prop(&mut bb, s, e, &plist[n * 2], p, &Value::Nil);
         }
-        clip_props(&mut bb.text_props, s, e, |p| props.contains(&p));
+        clip_props(&mut bb.text.props.borrow_mut(), s, e, |p| props.contains(&p));
         bb.note_prop_modified();
     }
     signal_after_change(i, s + 1, e + 1, e - s)?;
@@ -8692,17 +9971,39 @@ fn f_set_text_properties(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         return Ok(Value::t());
     }
     // Remove all props in range, then add the plist.
-    let len = cur(i).borrow().text.len();
-    let s = pos_idx(len, want_int(i, &a[0])?);
-    let e = pos_idx(len, want_int(i, &a[1])?);
+    let b = match a.get(3) {
+        Some(v) => buf_of(i, v)?,
+        None => cur(i),
+    };
+    let len;
+    let s;
+    let e;
+    {
+        let bb = b.borrow();
+        len = bb.text.len();
+        let sv = want_int(i, &a[0])?;
+        let ev = want_int(i, &a[1])?;
+        let (lo, hi) = (bb.begv as i128 + 1, bb.zv as i128 + 1);
+        if sv < lo || sv > hi || ev < lo || ev > hi {
+            return Err(err_sym(
+                i,
+                "args-out-of-range",
+                vec![a[0].clone(), a[1].clone()],
+            ));
+        }
+        s = pos_idx(len, sv);
+        e = pos_idx(len, ev);
+    }
     let plist = a[2].list_to_vec().unwrap_or_default();
+    if s == e {
+        return Ok(Value::Nil);
+    }
     // GNU `set_text_properties_1': unconditional hooks + MODIFF bump.
     signal_before_change(i, s + 1, e + 1)?;
     {
-        let b = cur(i);
         let mut bb = b.borrow_mut();
         buf_record_set(&mut bb, i, s, e, &plist);
-        clip_props(&mut bb.text_props, s, e, |_| true);
+        clip_props(&mut bb.text.props.borrow_mut(), s, e, |_| true);
         buf_add_props(&mut bb, i, s, e, &plist, false)?;
         bb.note_prop_modified();
     }
@@ -8756,13 +10057,12 @@ fn buf_record_set(bb: &mut Buffer, i: &Interp, s: usize, e: usize, plist: &[Valu
     }
 }
 
-pub(crate) fn prop_at(i: &mut Interp, pos: usize, prop: u32) -> Value {
+/// Text property PROP at 0-based POS in buffer B (last write wins,
+/// with GNU's `category' plist fallback).
+pub(crate) fn prop_at_bb(i: &mut Interp, bb: &crate::buffer::Buffer, pos: usize, prop: u32) -> Value {
     let cat = i.intern_soft("category");
-    let b = cur(i);
-    let bb = b.borrow();
-    // Last write wins.
     let mut catval = Value::Nil;
-    for tp in bb.text_props.iter().rev() {
+    for tp in bb.text.props.borrow().iter().rev() {
         if pos >= tp.start && pos < tp.end {
             if tp.prop == prop {
                 return tp.value.clone();
@@ -8772,8 +10072,6 @@ pub(crate) fn prop_at(i: &mut Interp, pos: usize, prop: u32) -> Value {
             }
         }
     }
-    // GNU `lookup_char_property' fallback: consult the `category'
-    // symbol's plist when PROP isn't present directly.
     if cat.is_some() {
         if let Value::Sym(cs) = catval {
             return i.get_prop(cs, prop);
@@ -8782,23 +10080,184 @@ pub(crate) fn prop_at(i: &mut Interp, pos: usize, prop: u32) -> Value {
     Value::Nil
 }
 
+pub(crate) fn prop_at(i: &mut Interp, pos: usize, prop: u32) -> Value {
+    let b = cur(i);
+    let bb = b.borrow();
+    prop_at_bb(i, &bb, pos, prop)
+}
+
+/// Shared OBJECT dispatch for the *-property getters: a string goes
+/// to the string path via `f`, nil/buffer stays on the buffer path,
+/// anything else is a type error.
+fn prop_object_ok(i: &mut Interp, v: Option<&Value>) -> Result<(), Flow> {
+    match v {
+        None | Some(Value::Nil) | Some(Value::Buffer(_)) | Some(Value::Str(_)) => Ok(()),
+        Some(v) => Err(i.wrong_type_mut("stringp", v)),
+    }
+}
+
 pub(crate) fn f_get_text_property(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     // Emacs arg order: (get-text-property POSITION PROP &optional OBJECT).
+    prop_object_ok(i, a.get(2))?;
     if let Some(Value::Str(s)) = a.get(2) {
-        let pos = want_int(i, &a[0])?.max(0) as usize;
+        let s = s.clone();
+        let pos_v = want_int(i, &a[0])?;
+        // GNU `validate_interval_range' is called with BEG=END=POS:
+        // positions outside [0, len] signal (args-out-of-range POS POS).
+        if pos_v < 0 || pos_v > str_len(&s) as i128 {
+            return Err(err_sym(
+                i,
+                "args-out-of-range",
+                vec![a[0].clone(), a[0].clone()],
+            ));
+        }
         let prop = want_sym(i, &a[1])?;
-        let pl = str_plist_at(i.str_props(s), pos);
+        let pl = str_plist_at(i.str_props(&s), pos_v as usize);
         return Ok(str_plist_get_cat(&pl, prop, i).unwrap_or(Value::Nil));
     }
-    let len = cur(i).borrow().text.len();
-    let pos = pos_idx(len, want_int(i, &a[0])?);
+    // OBJECT may be a buffer: GNU validates POSITION against that
+    // buffer's bounds and reads its intervals.
+    let b = match a.get(2) {
+        Some(v) => buf_of(i, v)?,
+        None => cur(i),
+    };
+    let bb = b.borrow();
+    let len = bb.text.len();
+    let pos_v = want_int(i, &a[0])?;
+    let (lo, hi) = (bb.begv as i128 + 1, bb.zv as i128 + 1);
+    if pos_v < lo || pos_v > hi {
+        return Err(err_sym(
+            i,
+            "args-out-of-range",
+            vec![a[0].clone(), a[0].clone()],
+        ));
+    }
+    let pos = pos_idx(len, pos_v);
     let prop = want_sym(i, &a[1])?;
-    Ok(prop_at(i, pos, prop))
+    Ok(prop_at_bb(i, &bb, pos, prop))
+}
+
+/// GNU `get_char_property_and_overlay' order: among the overlays
+/// covering POS, the winner is the one with the highest `priority',
+/// then the smallest end, then the most recently created.  Returns
+/// the effective value of PROP at 0-based POS (overlays first, then
+/// the text property), plus the winning overlay's handle when the
+/// value came from an overlay.
+pub(crate) fn char_prop_at_overlay(
+    i: &mut Interp,
+    bb: &crate::buffer::Buffer,
+    pos: usize,
+    prop: u32,
+) -> (Value, Value) {
+    let prio = i.intern("priority");
+    let mut best: Option<(i128, std::cmp::Reverse<usize>, usize, Value, Value)> = None;
+    for (idx, ov) in bb.overlays.iter().enumerate() {
+        if ov.buffer != Some(bb.id) || pos < ov.start || pos >= ov.end {
+            continue;
+        }
+        let v = crate::lisp::eval::plist_get(&ov.plist, prop);
+        if v.is_nil() {
+            continue;
+        }
+        let p = crate::lisp::eval::plist_get(&ov.plist, prio)
+            .int()
+            .unwrap_or(0);
+        let key = (p, std::cmp::Reverse(ov.end), idx);
+        let better = match &best {
+            None => true,
+            Some((bp, bend, bidx, _, _)) => key > (*bp, *bend, *bidx),
+        };
+        if better {
+            best = Some((p, std::cmp::Reverse(ov.end), idx, v, ov.handle.clone()));
+        }
+    }
+    if let Some((_, _, _, v, h)) = best {
+        return (v, h);
+    }
+    (prop_at_bb(i, bb, pos, prop), Value::Nil)
+}
+
+/// `get-char-property' — text properties plus overlays.
+pub(crate) fn f_get_char_property(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    prop_object_ok(i, a.get(2))?;
+    if let Some(Value::Str(_)) = a.get(2) {
+        // String objects have no overlays — same as get-text-property.
+        return f_get_text_property(i, a);
+    }
+    let b = match a.get(2) {
+        Some(v) => buf_of(i, v)?,
+        None => cur(i),
+    };
+    let len = b.borrow().text.len();
+    let pos = {
+        let bb0 = b.borrow();
+        let p = want_pos_in_buf(i, &a[0], &bb0)?;
+        drop(bb0);
+        pos_idx(len, p)
+    };
+    let prop = want_sym(i, &a[1])?;
+    let bb = b.borrow();
+    Ok(char_prop_at_overlay(i, &bb, pos, prop).0)
+}
+
+/// `get-pos-property' — the property text inserted at POSITION would
+/// inherit: overlays at POSITION win; otherwise the rear-sticky props
+/// of the char before POSITION, then the front-sticky props of the
+/// char at POSITION (GNU Fget_pos_property).
+pub(crate) fn f_get_pos_property(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    prop_object_ok(i, a.get(2))?;
+    if let Some(Value::Str(_)) = a.get(2) {
+        // On a string, GNU degenerates to get-char-property.
+        return f_get_char_property(i, a);
+    }
+    let b = match a.get(2) {
+        Some(v) => buf_of(i, v)?,
+        None => cur(i),
+    };
+    let len;
+    let pos;
+    {
+        let bb = b.borrow();
+        len = bb.text.len();
+        pos = pos_idx(len, want_pos_in_buf(i, &a[0], &bb)?);
+    }
+    let prop = want_sym(i, &a[1])?;
+    {
+        let bb = b.borrow();
+        let (v, ov) = char_prop_at_overlay(i, &bb, pos, prop);
+        if !ov.is_nil() {
+            return Ok(v);
+        }
+    }
+    if pos > 0 {
+        let bb = b.borrow();
+        if !rear_nonsticky_covers_bb(i, &bb, pos - 1, prop) {
+            let v = prop_at_bb(i, &bb, pos - 1, prop);
+            if v.truthy() {
+                return Ok(v);
+            }
+        }
+    }
+    if pos < len {
+        let bb = b.borrow();
+        if front_sticky_covers_bb(i, &bb, pos, prop) {
+            return Ok(prop_at_bb(i, &bb, pos, prop));
+        }
+    }
+    Ok(Value::Nil)
 }
 
 fn f_text_properties_at(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     if let Some(Value::Str(s)) = a.get(1) {
-        let pos = want_int(i, &a[0])?.max(0) as usize;
+        let pos_v = want_int(i, &a[0])?;
+        if pos_v < 0 || pos_v > str_len(s) as i128 {
+            return Err(err_sym(
+                i,
+                "args-out-of-range",
+                vec![a[0].clone(), a[0].clone()],
+            ));
+        }
+        let pos = pos_v as usize;
         let pl = str_plist_at(i.str_props(s), pos);
         return Ok(if pl.is_empty() {
             Value::Nil
@@ -8806,14 +10265,26 @@ fn f_text_properties_at(i: &mut Interp, a: Vec<Value>) -> EvalResult {
             Value::list(pl)
         });
     }
-    let len = cur(i).borrow().text.len();
-    let pos = pos_idx(len, want_int(i, &a[0])?);
-    let b = cur(i);
+    let b = match a.get(1) {
+        Some(v) => buf_of(i, v)?,
+        None => cur(i),
+    };
     let bb = b.borrow();
+    let len = bb.text.len();
+    let pos_v = want_int(i, &a[0])?;
+    let (lo, hi) = (bb.begv as i128 + 1, bb.zv as i128 + 1);
+    if pos_v < lo || pos_v > hi {
+        return Err(err_sym(
+            i,
+            "args-out-of-range",
+            vec![a[0].clone(), a[0].clone()],
+        ));
+    }
+    let pos = pos_idx(len, pos_v);
     // GNU's plist is newest-first (put-text-property prepends):
     // iterate records in reverse and keep the newest value per prop.
     let mut plist: Vec<Value> = Vec::new();
-    for tp in bb.text_props.iter().rev() {
+    for tp in bb.text.props.borrow().iter().rev() {
         if pos >= tp.start && pos < tp.end {
             let psym = i.sym(tp.prop);
             let mut dup = false;
@@ -8914,15 +10385,21 @@ pub(crate) fn f_next_property_change(i: &mut Interp, a: Vec<Value>) -> EvalResul
     if let Some(Value::Str(_)) = a.get(1) {
         return str_prop_change(i, &a, true);
     }
-    let len = cur(i).borrow().text.len();
-    let pos = pos_idx(len, want_int(i, &a[0])?);
-    let b = cur(i);
+    let b = match a.get(1) {
+        Some(v) => buf_of(i, v)?,
+        None => cur(i),
+    };
     let bb = b.borrow();
-    // Any interval boundary after pos counts as a change.
+    let len = bb.text.len();
+    let pos = pos_idx(len, want_pos_in_buf(i, &a[0], &bb)?);
+    // Any interval boundary strictly inside (pos, ZV) counts as a
+    // change.  GNU never reports point-max itself (ZV char index = len,
+    // lisp pos len+1) — the region past the last char has no property
+    // state to change from.
     let mut next: Option<usize> = None;
-    for tp in &bb.text_props {
+    for tp in bb.text.props.borrow().iter() {
         for cand in [tp.start, tp.end] {
-            if cand > pos {
+            if cand > pos && cand < len {
                 next = Some(next.map(|n| n.min(cand)).unwrap_or(cand));
             }
         }
@@ -9003,30 +10480,93 @@ fn single_prop_change(i: &mut Interp, a: &[Value], forward: bool) -> EvalResult 
     };
     let bb = b.borrow();
     let len = bb.text.len() as i128;
-    // pos is a 1-based Lisp position; char index = pos-1.
-    let pos = pos_v.clamp(1, len + 1);
-    let cat = i.intern_soft("category");
-    let at = |p: i128| -> Value {
-        if p < 1 || p > len {
-            return Value::Nil;
+    // GNU validate_interval_range checks POS against the OBJECT
+    // buffer's bounds, not the current buffer's.
+    let pos = {
+        let (lo, hi) = (bb.begv as i128 + 1, bb.zv as i128 + 1);
+        if pos_v < lo || pos_v > hi {
+            return Err(err_sym(
+                i,
+                "args-out-of-range",
+                vec![a[0].clone(), a[0].clone()],
+            ));
         }
-        let mut catval = Value::Nil;
-        for tp in bb.text_props.iter().rev() {
-            if (p as usize - 1) >= tp.start && (p as usize - 1) < tp.end {
-                if tp.prop == prop {
-                    return tp.value.clone();
-                }
-                if Some(tp.prop) == cat && catval.is_nil() {
-                    catval = tp.value.clone();
-                }
-            }
-        }
-        // GNU `textget' is category-aware.
-        if let Value::Sym(cs) = catval {
-            return i.get_prop(cs, prop);
-        }
-        Value::Nil
+        pos_v
     };
+    let cat = i.intern_soft("category");
+    // Only boundaries of a PROP (or `category') interval can change the
+    // effective value.  GNU walks an interval tree; probing every char
+    // position with a full `text_props' scan was quadratic, and so is
+    // probing every candidate against every entry.  Instead, sweep the
+    // boundary events once: coverage of an interval [start+1, end] is
+    // constant on each segment between consecutive edges, so compute
+    // one value per segment and compare neighbours.
+    use std::collections::BTreeMap;
+    // Collect boundary events as (lisp-pos, ord, is_start); a sorted
+    // Vec replaces the per-call BTreeMap so the sweep below streams
+    // instead of building an index per candidate.
+    let mut events: Vec<(i128, usize, bool)> = Vec::new();
+    for (ord, tp) in bb.text.props.borrow().iter().enumerate() {
+        if tp.prop == prop || Some(tp.prop) == cat {
+            events.push((tp.start as i128 + 1, ord, true));
+            events.push((tp.end as i128 + 1, ord, false));
+        }
+    }
+    events.sort_unstable_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)));
+    // Covering-entry maps: ord -> value; the maximum ord wins (later
+    // `text_props' entries override earlier ones).
+    let mut prop_map: BTreeMap<usize, Value> = BTreeMap::new();
+    let mut cat_map: BTreeMap<usize, Value> = BTreeMap::new();
+    let mut cat_cache: std::collections::HashMap<u32, Value> = Default::default();
+    // Apply events at positions <= UPTO starting from index FROM;
+    // returns the next unconsumed index.  Writes go through &mut on the
+    // field selected per-event so neither map is moved.
+    fn next_ev<'a>(
+        bb: &'a Buffer,
+        pm: &mut BTreeMap<usize, Value>,
+        cm: &mut BTreeMap<usize, Value>,
+        ords: &[(i128, usize, bool)],
+        from: usize,
+        upto: i128,
+        prop: u32,
+        cat: Option<u32>,
+    ) -> usize {
+        let mut k = from;
+        while k < ords.len() && ords[k].0 <= upto {
+            let (_, ord, is_start) = ords[k];
+            let tp = &bb.text.props.borrow()[ord];
+            if is_start {
+                if tp.prop == prop {
+                    pm.insert(ord, tp.value.clone());
+                } else if Some(tp.prop) == cat {
+                    cm.insert(ord, tp.value.clone());
+                }
+            } else if tp.prop == prop {
+                pm.remove(&ord);
+            } else if Some(tp.prop) == cat {
+                cm.remove(&ord);
+            }
+            k += 1;
+        }
+        k
+    }
+    fn derive<'a>(
+        i: &Interp,
+        pm: &BTreeMap<usize, Value>,
+        cm: &BTreeMap<usize, Value>,
+        cc: &mut std::collections::HashMap<u32, Value>,
+        prop: u32,
+    ) -> Value {
+        if let Some((_, v)) = pm.iter().next_back() {
+            v.clone()
+        } else if let Some((_, Value::Sym(cs))) = cm.iter().next_back() {
+            // GNU `textget' is category-aware.
+            let _ = i;
+            cc.entry(*cs).or_insert_with(|| i.get_prop(*cs, prop)).clone()
+        } else {
+            Value::Nil
+        }
+    }
     let default_limit = if forward { len + 1 } else { 1 };
     // GNU: a nil/absent LIMIT means "no limit"; when no change is
     // found the result is nil then — LIMIT is returned only when the
@@ -9040,29 +10580,51 @@ fn single_prop_change(i: &mut Interp, a: &[Value], forward: bool) -> EvalResult 
             Value::Nil
         }
     };
+    let b = &*bb;
     if forward {
-        let mut p = pos + 1;
         // GNU never reports a "change" at point-max itself: positions
-        // beyond the last character are not inspected, so a property
-        // region ending exactly at the end of the buffer yields nil.
-        while p <= lim && p <= len {
-            if !crate::lisp::builtins::eq_values(&at(p), &at(p - 1)) {
-                return Ok(Value::Int(p));
+        // beyond the last character are not inspected.  Value at c-1 is
+        // the coverage state right before c's events; value at c is
+        // after applying them — a difference means c is a change.
+        let mut k = next_ev(b, &mut prop_map, &mut cat_map, &events, 0, pos, prop, cat);
+        let mut prev = derive(i, &prop_map, &cat_map, &mut cat_cache, prop);
+        while k < events.len() {
+            let c = events[k].0;
+            if c > lim || c > len {
+                break;
             }
-            p += 1;
+            let before = prev.clone();
+            k = next_ev(b, &mut prop_map, &mut cat_map, &events, k, c, prop, cat);
+            let after = derive(i, &prop_map, &cat_map, &mut cat_cache, prop);
+            if !crate::lisp::builtins::eq_values(&after, &before) {
+                return Ok(Value::Int(c));
+            }
+            prev = after;
         }
         Ok(no_change())
     } else {
-        // Last change strictly before POS: a boundary at P counts when
-        // at(P) != at(P-1); GNU never returns POS itself.
-        let mut p = pos - 1;
-        while p > lim && p >= 2 {
-            if !crate::lisp::builtins::eq_values(&at(p), &at(p - 1)) {
-                return Ok(Value::Int(p));
+        // Last change strictly before POS: sweep ascending through the
+        // range and remember the last boundary where the value flips.
+        let mut k = next_ev(b, &mut prop_map, &mut cat_map, &events, 0, lim.max(0), prop, cat);
+        let mut prev = derive(i, &prop_map, &cat_map, &mut cat_cache, prop);
+        let mut found: Option<i128> = None;
+        while k < events.len() {
+            let c = events[k].0;
+            if c > pos - 1 {
+                break;
             }
-            p -= 1;
+            let before = prev.clone();
+            k = next_ev(b, &mut prop_map, &mut cat_map, &events, k, c, prop, cat);
+            let after = derive(i, &prop_map, &cat_map, &mut cat_cache, prop);
+            if !crate::lisp::builtins::eq_values(&after, &before) {
+                found = Some(c);
+            }
+            prev = after;
         }
-        Ok(no_change())
+        match found {
+            Some(c) if c >= 2 => Ok(Value::Int(c)),
+            _ => Ok(no_change()),
+        }
     }
 }
 
@@ -9074,14 +10636,20 @@ pub(crate) fn f_prev_property_change(i: &mut Interp, a: Vec<Value>) -> EvalResul
     if let Some(Value::Str(_)) = a.get(1) {
         return str_prop_change(i, &a, false);
     }
-    let len = cur(i).borrow().text.len();
-    let pos = pos_idx(len, want_int(i, &a[0])?);
-    let b = cur(i);
+    let b = match a.get(1) {
+        Some(v) => buf_of(i, v)?,
+        None => cur(i),
+    };
     let bb = b.borrow();
+    let len = bb.text.len();
+    let pos = pos_idx(len, want_pos_in_buf(i, &a[0], &bb)?);
     let mut prev: Option<usize> = None;
-    for tp in &bb.text_props {
+    for tp in bb.text.props.borrow().iter() {
         for cand in [tp.start, tp.end] {
-            if cand < pos {
+            // GNU never reports point-min (BEGV char index = begv,
+            // lisp pos begv+1): there is no earlier state to differ
+            // from.  `pos` is 0-based; boundary cand maps to pos+1.
+            if cand < pos && cand > bb.begv {
                 prev = Some(prev.map(|n| n.max(cand)).unwrap_or(cand));
             }
         }
@@ -9097,6 +10665,93 @@ pub(crate) fn f_prev_property_change(i: &mut Interp, a: Vec<Value>) -> EvalResul
 
 fn f_prev_single_property_change(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     single_prop_change(i, &a, false)
+}
+
+/// Overlay-aware variant used by next/previous-single-char-property-
+/// change: the effective PROP value at 1-based P is
+/// `get-char-property-and-overlay' (overlays win over text props).
+/// Mirrors single_prop_change's scan semantics and limit handling.
+fn single_char_prop_change(i: &mut Interp, a: &[Value], forward: bool) -> EvalResult {
+    let pos_v = want_int(i, &a[0])?;
+    let prop = want_sym(i, &a[1])?;
+    let object = a.get(2);
+    let limit = a.get(3);
+    // String objects have no overlays — same as the text-prop scan.
+    if matches!(object, Some(Value::Str(_))) {
+        return single_prop_change(i, a, forward);
+    }
+    let buf_lim = match limit {
+        Some(v) if v.truthy() => Some(want_int(i, v)?),
+        _ => None,
+    };
+    let b = match object {
+        Some(v) if v.truthy() => buf_of(i, v)?,
+        _ => cur(i),
+    };
+    let len = b.borrow().text.len() as i128;
+    let pos = {
+        let bb = b.borrow();
+        let (lo, hi) = (bb.begv as i128 + 1, bb.zv as i128 + 1);
+        drop(bb);
+        if pos_v < lo || pos_v > hi {
+            return Err(err_sym(
+                i,
+                "args-out-of-range",
+                vec![a[0].clone(), a[0].clone()],
+            ));
+        }
+        pos_v
+    };
+    let at = |i: &mut Interp, p: i128| -> Value {
+        if p < 1 || p > len {
+            return Value::Nil;
+        }
+        let bb = b.borrow();
+        char_prop_at_overlay(i, &bb, (p - 1) as usize, prop).0
+    };
+    let default_limit = if forward { len + 1 } else { 1 };
+    let explicit = buf_lim.is_some();
+    let lim = buf_lim.unwrap_or(default_limit);
+    let no_change = || {
+        if explicit {
+            Value::Int(lim)
+        } else {
+            Value::Nil
+        }
+    };
+    if forward {
+        let mut p = pos + 1;
+        while p <= lim && p <= len {
+            if !crate::lisp::builtins::eq_values(&at(i, p), &at(i, p - 1)) {
+                return Ok(Value::Int(p));
+            }
+            p += 1;
+        }
+        Ok(no_change())
+    } else {
+        let mut p = pos - 1;
+        while p > lim && p >= 2 {
+            if !crate::lisp::builtins::eq_values(&at(i, p), &at(i, p - 1)) {
+                return Ok(Value::Int(p));
+            }
+            p -= 1;
+        }
+        Ok(no_change())
+    }
+}
+
+pub(crate) fn f_next_single_char_property_change(
+    i: &mut Interp,
+    a: Vec<Value>,
+) -> EvalResult {
+    single_char_prop_change(i, &a, true)
+}
+
+pub(crate) fn f_prev_single_char_property_change(
+    i: &mut Interp,
+    a: Vec<Value>,
+) -> EvalResult {
+    single_char_prop_change(i, &a, false)
 }
 
 pub(crate) fn f_remove_list_of_text_properties(i: &mut Interp, a: Vec<Value>) -> EvalResult {
@@ -9115,7 +10770,8 @@ pub(crate) fn f_remove_list_of_text_properties(i: &mut Interp, a: Vec<Value>) ->
     let will_change = {
         let b = cur(i);
         let bb = b.borrow();
-        bb.text_props
+        bb.text.props
+            .borrow()
             .iter()
             .any(|tp| props.contains(&tp.prop) && tp.start < e && tp.end > s)
     };
@@ -9129,7 +10785,7 @@ pub(crate) fn f_remove_list_of_text_properties(i: &mut Interp, a: Vec<Value>) ->
         for (n, &p) in props.iter().enumerate() {
             buf_record_prop(&mut bb, s, e, &names[n], p, &Value::Nil);
         }
-        clip_props(&mut bb.text_props, s, e, |p| props.contains(&p));
+        clip_props(&mut bb.text.props.borrow_mut(), s, e, |p| props.contains(&p));
         bb.note_prop_modified();
     }
     signal_after_change(i, s + 1, e + 1, e - s)?;
@@ -9144,8 +10800,19 @@ fn text_prop_any(i: &mut Interp, a: &[Value], any: bool) -> EvalResult {
     let want = a[3].clone();
     if let Some(Value::Str(s)) = a.get(4) {
         let len = str_len(s) as i128;
-        let st = want_int(i, &a[0])?.clamp(0, len);
-        let en = want_int(i, &a[1])?.clamp(0, len);
+        // GNU validate_interval_range: string positions are 0-based,
+        // valid range [0, len]; out-of-range signals (START END) raw.
+        let sv = want_int(i, &a[0])?;
+        let ev = want_int(i, &a[1])?;
+        if sv < 0 || sv > len || ev < 0 || ev > len {
+            return Err(err_sym(
+                i,
+                "args-out-of-range",
+                vec![a[0].clone(), a[1].clone()],
+            ));
+        }
+        let st = sv;
+        let en = ev;
         let ivs = i.str_props(s);
         let mut p = st;
         while p < en {
@@ -9159,12 +10826,27 @@ fn text_prop_any(i: &mut Interp, a: &[Value], any: bool) -> EvalResult {
         }
         return Ok(Value::Nil);
     }
-    let len = cur(i).borrow().text.len();
-    let s = pos_idx(len, want_int(i, &a[0])?);
-    let e = pos_idx(len, want_int(i, &a[1])?);
+    let b = match a.get(4) {
+        Some(v) => buf_of(i, v)?,
+        None => cur(i),
+    };
+    let bb = b.borrow();
+    let len = bb.text.len();
+    let sv = want_int(i, &a[0])?;
+    let ev = want_int(i, &a[1])?;
+    let (lo, hi) = (bb.begv as i128 + 1, bb.zv as i128 + 1);
+    if sv < lo || sv > hi || ev < lo || ev > hi {
+        return Err(err_sym(
+            i,
+            "args-out-of-range",
+            vec![a[0].clone(), a[1].clone()],
+        ));
+    }
+    let s = pos_idx(len, sv);
+    let e = pos_idx(len, ev);
     let mut p = s;
     while p < e {
-        let v = prop_at(i, p, prop);
+        let v = prop_at_bb(i, &bb, p, prop);
         if crate::lisp::builtins::eq_values(&v, &want) == any {
             return Ok(Value::Int(p as i128 + 1));
         }
@@ -9172,16 +10854,6 @@ fn text_prop_any(i: &mut Interp, a: &[Value], any: bool) -> EvalResult {
     }
     Ok(Value::Nil)
 }
-
-fn f_text_property_any(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    text_prop_any(i, &a, true)
-}
-
-fn f_text_property_not_all(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    text_prop_any(i, &a, false)
-}
-
-/// `add-face-text-property': combine FACE into the `face' prop of each
 /// interval in [S,E).  GNU dedups with memq; APPEND puts the new face
 /// last, otherwise first.
 pub(crate) fn f_add_face_text_property(i: &mut Interp, a: Vec<Value>) -> EvalResult {
@@ -9255,7 +10927,7 @@ pub(crate) fn f_add_face_text_property(i: &mut Interp, a: Vec<Value>) -> EvalRes
     while p < e {
         let mut old = Value::Nil;
         let mut catval = Value::Nil;
-        for tp in bb.text_props.iter().rev() {
+        for tp in bb.text.props.borrow().iter().rev() {
             if p >= tp.start && p < tp.end {
                 if tp.prop == fid {
                     old = tp.value.clone();
@@ -9272,7 +10944,7 @@ pub(crate) fn f_add_face_text_property(i: &mut Interp, a: Vec<Value>) -> EvalRes
                 old = i.get_prop(cs, fid);
             }
         }
-        bb.text_props.push(TextProp {
+        bb.text.props.borrow_mut().push(TextProp {
             start: p,
             end: p + 1,
             prop: fid,
@@ -9281,6 +10953,14 @@ pub(crate) fn f_add_face_text_property(i: &mut Interp, a: Vec<Value>) -> EvalRes
         p += 1;
     }
     Ok(Value::Nil)
+}
+
+fn f_text_property_any(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    text_prop_any(i, &a, true)
+}
+
+fn f_text_property_not_all(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    text_prop_any(i, &a, false)
 }
 
 fn f_propertize(i: &mut Interp, a: Vec<Value>) -> EvalResult {

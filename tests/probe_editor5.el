@@ -1,5 +1,8 @@
 ;; probe_editor5.el — target uncovered branches in editor/mod.rs
 
+;; probes below assume /tmp/fbv-test.el exists; create it up front.
+(with-temp-file "/tmp/fbv-test.el" (insert "fbv-content"))
+
 ;; ---- temp/directory file ops ----
 (let ((f (make-temp-file "pfx")))
   (file-exists-p f)

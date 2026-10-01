@@ -119,29 +119,34 @@
   (insert "x"))
 
 ;; ---- buffers ----
-(generate-new-buffer-name "probe-nm")
-(generate-new-buffer " probe-hidden")
-(bury-buffer)
-(unbury-buffer)
-(buffer-list)
-(other-buffer)
-(last-buffer)
-(buffer-base-buffer (current-buffer))
-(buffer-live-p (current-buffer))
-(buffer-name)
-(buffer-file-name)
-(buffer-modified-p)
-(set-buffer-modified-p nil)
-(buffer-string)
-(buffer-size)
-(buffer-disable-undo)
-(rename-buffer "probe-renamed" t)
-(current-buffer)
-(set-buffer (current-buffer))
-(buffer-substring 1 3)
-(insert-buffer-substring (current-buffer) 1 3)
-(erase-buffer)
-
+;; Run in a temp buffer with content: GNU `bury-buffer' on the
+;; selected window's buffer switches to `other-buffer' (and
+;; `unbury-buffer' switches to `last-buffer'), so against *scratch*
+;; the substring calls below error with args-out-of-range.
+(with-temp-buffer
+  (insert "xyz")
+  (generate-new-buffer-name "probe-nm")
+  (generate-new-buffer " probe-hidden")
+  (bury-buffer)
+  (unbury-buffer)
+  (buffer-list)
+  (other-buffer)
+  (last-buffer)
+  (buffer-base-buffer (current-buffer))
+  (buffer-live-p (current-buffer))
+  (buffer-name)
+  (buffer-file-name)
+  (buffer-modified-p)
+  (set-buffer-modified-p nil)
+  (buffer-string)
+  (buffer-size)
+  (buffer-disable-undo)
+  (rename-buffer "probe-renamed" t)
+  (current-buffer)
+  (set-buffer (current-buffer))
+  (buffer-substring 1 3)
+  (insert-buffer-substring (current-buffer) 1 3)
+  (erase-buffer))
 ;; ---- point/column/line motion ----
 (with-temp-buffer
   (insert "one\ntwo\nthree\nfour\n")

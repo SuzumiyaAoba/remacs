@@ -12,10 +12,20 @@ fn occur_buffer_contents() {
            (occur \"foo\")
            (with-current-buffer \"*Occur*\" (princ (buffer-string))))",
     );
+    // GNU `occur' reports via `message' (echo area), which no longer
+    // reaches the princ sink — assert the *Messages* log instead.
     assert_eq!(
         out,
-        "Searched 1 buffer; 2 matches for \"foo\"\n2 matches for \"foo\" in buffer:  *temp*\n      2:foo a\n      4:foo b\n"
+        "2 matches for \"foo\" in buffer:  *temp*\n      2:foo a\n      4:foo b\n"
     );
+    let log = ev(
+        "(with-temp-buffer
+           (insert \"x\\nfoo a\\ny\\nfoo b\\n\")
+           (occur \"foo\")
+           (with-current-buffer \"*Messages*\" (buffer-string)))",
+    );
+    // prin1 escapes the inner quotes: "foo" appears as \"foo\".
+    assert!(log.contains("Searched 1 buffer; 2 matches for \\\"foo\\\""));
 }
 
 #[test]

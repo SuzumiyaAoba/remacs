@@ -17,8 +17,10 @@ pub fn interp() -> (Interp, Rc<RefCell<String>>) {
 /// Deep evaluation (macro expansion of large library files, nested
 /// `let*' chains, …) can exceed the default 2 MiB test-thread stack,
 /// so every helper runs the interpreter on a dedicated 64 MiB stack.
-/// `Interp' is not `Send', so it is created inside the thread.
-fn on_big_stack<T, F>(f: F) -> T
+/// `Interp' is not `Send', so it is created inside the thread.  Tests
+/// that build the `Interp' directly (command-execute, TUI sessions)
+/// wrap their body in this too — libtest's 2 MiB threads overflow.
+pub fn on_big_stack<T, F>(f: F) -> T
 where
     T: Send + 'static,
     F: FnOnce() -> T + Send + 'static,

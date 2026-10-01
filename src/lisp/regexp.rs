@@ -36,6 +36,8 @@ enum Inst {
     /// \` / \' — absolute start/end.
     Bos,
     Eos,
+    /// \= — matches only at `point` (buffer point); never in strings.
+    AtPoint,
     /// \b \B \< \> — word boundaries.
     WordB,
     NotWordB,
@@ -61,7 +63,7 @@ struct CharSet {
     negated: bool,
     ranges: Vec<(char, char)>,
     singles: Vec<char>,
-    posix: Vec<(&'static str, bool)>, // (class-name, negated?)
+    posix: Vec<(String, bool)>, // (class-name, negated?)
     syntax: Vec<(u8, bool)>,          // (syntax code, negated?)
     cats: Vec<(u8, bool)>,            // (category bit, negated?) — \cX / \CX
 }
@@ -73,7 +75,7 @@ impl CharSet {
             || self
                 .posix
                 .iter()
-                .any(|(name, neg)| posix_match(name, c, syn) != *neg)
+                .any(|(name, neg)| posix_match(name.as_str(), c, syn) != *neg)
             || self
                 .syntax
                 .iter()
@@ -128,31 +130,40 @@ fn syntax_match(code: u8, c: char, syn: SynFn) -> bool {
     sc == code || (code == b'-' && sc == b' ')
 }
 
+/// GNU `[:name:]' classes.  Unknown names are rejected at parse time;
+/// this is only reached for names in `KNOWN_POSIX'.
 fn posix_match(name: &str, c: char, syn: SynFn) -> bool {
     match name {
-        "alnum" | "digit" | "xdigit" | "alpha" | "upper" | "lower" | "space" | "punct"
-        | "graph" | "print" | "cntrl" | "blank" | "word" => {
-            let r = match name {
-                "alnum" => c.is_alphanumeric(),
-                "alpha" => c.is_alphabetic(),
-                "digit" => c.is_ascii_digit(),
-                "xdigit" => c.is_ascii_hexdigit(),
-                "upper" => c.is_uppercase(),
-                "lower" => c.is_lowercase(),
-                "space" => c.is_whitespace(),
-                "punct" => c.is_ascii_punctuation(),
-                "graph" => !c.is_whitespace() && !c.is_control(),
-                "print" => !c.is_control(),
-                "cntrl" => c.is_control(),
-                "blank" => c == ' ' || c == '\t',
-                "word" => syn(c) == b'w',
-                _ => false,
-            };
-            r
-        }
+        "alnum" => c.is_alphanumeric(),
+        "alpha" => c.is_alphabetic(),
+        "digit" => c.is_ascii_digit(),
+        "xdigit" => c.is_ascii_hexdigit(),
+        "upper" => c.is_uppercase(),
+        "lower" => c.is_lowercase(),
+        "space" => c.is_whitespace(),
+        "punct" => c.is_ascii_punctuation(),
+        "graph" => !c.is_whitespace() && !c.is_control(),
+        "print" => !c.is_control(),
+        // GNU regex.c ISCNTRL: `(c) < \' \'` — ASCII controls only;
+        // DEL (0x7f) and C1 are NOT in the class.
+        "cntrl" => (c as u32) < 0x20,
+        "blank" => c == ' ' || c == '\t',
+        "word" => syn(c) == b'w',
+        // GNU's nonstandard extras (regex.c `RE_CHAR_CLASSES').
+        "ascii" => c.is_ascii(),
+        "nonascii" => !c.is_ascii(),
+        "unibyte" => (c as u32) <= 0xFF,
+        "multibyte" => (c as u32) > 0xFF,
         _ => false,
     }
 }
+
+/// Class names GNU accepts inside `[:...:]'.
+const KNOWN_POSIX: &[&str] = &[
+    "alnum", "alpha", "digit", "xdigit", "upper", "lower", "space", "punct",
+    "graph", "print", "cntrl", "blank", "word", "ascii", "nonascii", "unibyte",
+    "multibyte",
+];
 
 pub type SynFn<'a> = &'a dyn Fn(char) -> u8;
 
@@ -326,6 +337,18 @@ impl Parser {
                     if self.peek() == Some('\\') && self.chars.get(self.pos + 1) == Some(&'}') {
                         self.pos += 2;
                         let minv = min.parse::<usize>().unwrap_or(0);
+                        // GNU rejects `\{m,n\}' with n < m as invalid-regexp
+                        // at compile time (never a panic); bounds above
+                        // RE_DUP_MAX are likewise rejected, which also
+                        // keeps codegen from exploding on huge counts.
+                        const RE_DUP_MAX: usize = 32767;
+                        if minv > RE_DUP_MAX
+                            || matches!(max, Some(mv) if mv > RE_DUP_MAX || mv < minv)
+                        {
+                            return Err(RegexError(
+                                "invalid interval bound".into(),
+                            ));
+                        }
                         node = Ast::Repeat {
                             node: Box::new(node),
                             min: minv,
@@ -413,6 +436,8 @@ impl Parser {
             }
             Some('`') => Ok(Ast::Anchor('`')),
             Some('\'') => Ok(Ast::Anchor('\'')),
+            // \= — "at point": never matches in a string context.
+            Some('=') => Ok(Ast::Anchor('=')),
             Some('b') => Ok(Ast::Anchor('b')),
             Some('B') => Ok(Ast::Anchor('B')),
             Some('<') => Ok(Ast::Anchor('<')),
@@ -538,7 +563,12 @@ impl Parser {
                     }
                 }
                 if ok {
-                    set.posix.push((Box::leak(name.into_boxed_str()), neg));
+                    if !KNOWN_POSIX.contains(&name.as_str()) {
+                        return Err(RegexError(
+                            "Invalid character class name".into(),
+                        ));
+                    }
+                    set.posix.push((name, neg));
                 } else {
                     self.pos = save;
                     prev_char = Some('[');
@@ -621,6 +651,9 @@ impl Codegen {
             }
             Ast::Anchor('\'') => {
                 self.push(Inst::Eos);
+            }
+            Ast::Anchor('=') => {
+                self.push(Inst::AtPoint);
             }
             Ast::Anchor('b') => {
                 self.push(Inst::WordB);
@@ -754,6 +787,32 @@ pub fn compile(pattern: &str) -> Result<Regex, RegexError> {
     compile_case(pattern, true)
 }
 
+/// GNU rejects `\N' when group N has not yet been CLOSED in the
+/// pattern (forward refs and refs to enclosing groups are errors).
+fn check_backrefs(node: &Ast, closed: &mut [bool]) -> Result<(), RegexError> {
+    match node {
+        Ast::Backref(g) => {
+            if !closed.get(*g).copied().unwrap_or(false) {
+                return Err(RegexError("Invalid back reference".into()));
+            }
+        }
+        Ast::Group(g, inner) => {
+            check_backrefs(inner, closed)?;
+            closed[*g] = true;
+        }
+        Ast::ShyGroup(inner) | Ast::Repeat { node: inner, .. } => {
+            check_backrefs(inner, closed)?
+        }
+        Ast::Alt(bs) | Ast::Concat(bs) => {
+            for b in bs {
+                check_backrefs(b, closed)?;
+            }
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
 pub fn compile_case(pattern: &str, case_fold: bool) -> Result<Regex, RegexError> {
     let mut p = Parser {
         chars: pattern.chars().collect(),
@@ -767,6 +826,7 @@ pub fn compile_case(pattern: &str, case_fold: bool) -> Result<Regex, RegexError>
             p.pos
         )));
     }
+    check_backrefs(&ast, &mut vec![false; p.n_groups + 1])?;
     let mut cg = Codegen {
         prog: Vec::with_capacity(64),
         next_reg: 2 * (p.n_groups + 1),
@@ -805,6 +865,12 @@ fn char_eq(a: char, b: char, fold: bool) -> bool {
 }
 
 /// Recursive matcher. Returns final regs on success.
+/// `point` is the buffer point for `\=' (NO_POINT in string searches).
+/// `limit`, when not usize::MAX, caps how far into the text the match
+/// may consume — GNU `re_match's STOP: a backward search's candidate
+/// must end at or before the search start position.
+/// `end_cap`, when not usize::MAX, requires the match to end exactly
+/// there (POSIX longest-match and `looking-back' probing).
 fn run(
     re: &Regex,
     text: &[char],
@@ -814,14 +880,19 @@ fn run(
     depth: usize,
     syn: SynFn,
     cat: CatFn,
+    point: usize,
+    limit: usize,
+    end_cap: usize,
 ) -> Option<Regs> {
     if depth > 10_000 {
         return None;
     }
+    // Reads never go past the limit, the end cap, or the text itself.
+    let cap = limit.min(end_cap).min(text.len());
     loop {
         match &re.prog[pc] {
             Inst::Char(c) => {
-                if sp < text.len() && char_eq(text[sp], *c, re.case_fold) {
+                if sp < cap && char_eq(text[sp], *c, re.case_fold) {
                     sp += 1;
                     pc += 1;
                 } else {
@@ -829,7 +900,7 @@ fn run(
                 }
             }
             Inst::Any => {
-                if sp < text.len() && text[sp] != '\n' {
+                if sp < cap && text[sp] != '\n' {
                     sp += 1;
                     pc += 1;
                 } else {
@@ -837,7 +908,7 @@ fn run(
                 }
             }
             Inst::Class(set) => {
-                if sp < text.len() && set.contains(text[sp], re.case_fold, syn, cat) {
+                if sp < cap && set.contains(text[sp], re.case_fold, syn, cat) {
                     sp += 1;
                     pc += 1;
                 } else {
@@ -850,7 +921,7 @@ fn run(
                     _ => return None,
                 };
                 let n = e - s;
-                if sp + n <= text.len()
+                if sp + n <= cap
                     && (0..n).all(|k| char_eq(text[sp + k], text[s + k], re.case_fold))
                 {
                     sp += n;
@@ -941,8 +1012,27 @@ fn run(
                     return None;
                 }
             }
+            Inst::AtPoint => {
+                if sp == point {
+                    pc += 1;
+                } else {
+                    return None;
+                }
+            }
             Inst::Split(a, b) => {
-                if let Some(r) = run(re, text, *a, sp, regs.clone(), depth + 1, syn, cat) {
+                if let Some(r) = run(
+                    re,
+                    text,
+                    *a,
+                    sp,
+                    regs.clone(),
+                    depth + 1,
+                    syn,
+                    cat,
+                    point,
+                    limit,
+                    end_cap,
+                ) {
                     return Some(r);
                 }
                 pc = *b;
@@ -959,17 +1049,98 @@ fn run(
                 regs[*n] = Some(sp);
                 pc += 1;
             }
-            Inst::Match => return Some(regs),
+            // end_cap == NO_END means "no end constraint".
+            Inst::Match => {
+                return (end_cap == usize::MAX || sp == end_cap).then_some(regs)
+            }
         }
     }
 }
 
+/// `point` value for string searches and other contexts where the
+/// `\=' anchor can never match (GNU: \= only matches at buffer point).
+pub const NO_POINT: usize = usize::MAX;
+
 /// Try to match at exactly `pos`. Returns regs on success.
-pub fn match_at(re: &Regex, text: &[char], pos: usize, syn: SynFn, cat: CatFn) -> Option<Regs> {
+pub fn match_at(
+    re: &Regex,
+    text: &[char],
+    pos: usize,
+    syn: SynFn,
+    cat: CatFn,
+    point: usize,
+) -> Option<Regs> {
+    match_at_end(re, text, pos, usize::MAX, syn, cat, point)
+}
+
+/// Try to match at `pos` requiring the match to end exactly at `end`.
+pub fn match_at_end(
+    re: &Regex,
+    text: &[char],
+    pos: usize,
+    end: usize,
+    syn: SynFn,
+    cat: CatFn,
+    point: usize,
+) -> Option<Regs> {
+    match_at_within(re, text, pos, usize::MAX, end, syn, cat, point)
+}
+
+/// Try to match at `pos` on the truncated text `text[..limit]`
+/// (usize::MAX = no limit): the match may end anywhere at or before
+/// `limit` — GNU `re_match' with STOP, used for backward searches.
+/// `end_cap`, when not usize::MAX, additionally requires the match to
+/// end exactly there.
+pub fn match_at_within(
+    re: &Regex,
+    text: &[char],
+    pos: usize,
+    limit: usize,
+    end_cap: usize,
+    syn: SynFn,
+    cat: CatFn,
+    point: usize,
+) -> Option<Regs> {
     let n = 2 * (re.n_groups + 1);
-    let mut regs = run(re, text, 0, pos, vec![None; n + re.extra_regs], 0, syn, cat)?;
+    let mut regs = run(
+        re,
+        text,
+        0,
+        pos,
+        vec![None; n + re.extra_regs],
+        0,
+        syn,
+        cat,
+        point,
+        limit,
+        end_cap,
+    )?;
     regs.truncate(n);
     Some(regs)
+}
+
+/// POSIX match at `pos`: the LONGEST match whose end is <= `limit`
+/// (usize::MAX = no limit). Group/subexp tie-breaks stay first-match.
+pub fn posix_match_at(
+    re: &Regex,
+    text: &[char],
+    pos: usize,
+    limit: usize,
+    syn: SynFn,
+    cat: CatFn,
+    point: usize,
+) -> Option<Regs> {
+    let mut e = limit.min(text.len());
+    while e >= pos {
+        if let Some(regs) = match_at_end(re, text, pos, e, syn, cat, point) {
+            return Some(regs);
+        }
+        if e == 0 {
+            break;
+        }
+        e -= 1;
+    }
+    None
 }
 
 /// Search forward from `pos`; returns (match_start, match_end) of group 0.
@@ -979,10 +1150,11 @@ pub fn search(
     pos: usize,
     syn: SynFn,
     cat: CatFn,
+    point: usize,
 ) -> Option<(usize, usize)> {
     let mut p = pos;
     while p <= text.len() {
-        if let Some(regs) = match_at(re, text, p, syn, cat) {
+        if let Some(regs) = match_at(re, text, p, syn, cat, point) {
             let s = regs[0].unwrap_or(p);
             let e = regs[1].unwrap_or(p);
             return Some((s, e));
@@ -992,41 +1164,50 @@ pub fn search(
     None
 }
 
-/// Search backward from `pos` (find the latest match starting <= pos).
+/// Search backward from `pos`: GNU `re_search_backward' scans the
+/// start position downward and takes the first hit — the match is
+/// tried with STOP = pos, so it never consumes past `pos`.
 pub fn search_backward(
     re: &Regex,
     text: &[char],
     pos: usize,
     syn: SynFn,
     cat: CatFn,
+    point: usize,
 ) -> Option<(usize, usize)> {
-    let mut best: Option<(usize, usize)> = None;
-    let mut p = 0;
-    while p <= pos.min(text.len()) {
-        if let Some(regs) = match_at(re, text, p, syn, cat) {
+    let mut p = pos.min(text.len());
+    loop {
+        if let Some(regs) = match_at_within(re, text, p, pos, usize::MAX, syn, cat, point) {
             let s = regs[0].unwrap_or(p);
             let e = regs[1].unwrap_or(p);
-            if s <= pos && e >= s {
-                if e <= pos || s == pos {
-                    best = Some((s, e));
-                }
-            }
+            return Some((s, e));
         }
-        p += 1;
+        if p == 0 {
+            return None;
+        }
+        p -= 1;
     }
-    best
 }
 
-/// Full match info for `match-data`.
-pub struct FullMatch {
-    pub regs: Regs,
-}
-
-/// Search with full register info.
-pub fn search_full(re: &Regex, text: &[char], pos: usize, syn: SynFn, cat: CatFn) -> Option<Regs> {
+/// Search with full register info; `posix` selects GNU's leftmost-
+/// longest (`re_search` posix mode) instead of first-match.
+pub fn search_full(
+    re: &Regex,
+    text: &[char],
+    pos: usize,
+    syn: SynFn,
+    cat: CatFn,
+    point: usize,
+    posix: bool,
+) -> Option<Regs> {
     let mut p = pos;
     while p <= text.len() {
-        if let Some(regs) = match_at(re, text, p, syn, cat) {
+        let hit = if posix {
+            posix_match_at(re, text, p, usize::MAX, syn, cat, point)
+        } else {
+            match_at(re, text, p, syn, cat, point)
+        };
+        if let Some(regs) = hit {
             return Some(regs);
         }
         p += 1;
@@ -1042,26 +1223,46 @@ pub fn search_backward_full(
     pos: usize,
     syn: SynFn,
     cat: CatFn,
+    point: usize,
+    posix: bool,
 ) -> Option<Regs> {
-    let mut best: Option<Regs> = None;
-    let mut p = 0;
-    while p <= pos.min(text.len()) {
-        if let Some(regs) = match_at(re, text, p, syn, cat) {
-            let s = regs[0].unwrap_or(p);
-            let e = regs[1].unwrap_or(p);
-            if s <= pos && e <= pos {
-                best = Some(regs);
-            }
+    let mut p = pos.min(text.len());
+    loop {
+        // GNU re_search_backward: each candidate start is matched with
+        // STOP = pos — the match is cut off at `pos` rather than being
+        // allowed to extend past it and then rejected.
+        let hit = if posix {
+            posix_match_at(re, text, p, pos, syn, cat, point)
+        } else {
+            match_at_within(re, text, p, pos, usize::MAX, syn, cat, point)
+        };
+        if let Some(regs) = hit {
+            return Some(regs);
         }
-        p += 1;
+        if p == 0 {
+            return None;
+        }
+        p -= 1;
     }
-    best
 }
 
 /// `string-match` / `looking-at` need the text as chars; helpers to
 /// convert buffer substrings are in the caller.
 
 /// Simple `looking-at` helper: match at pos.
-pub fn looking_at(re: &Regex, text: &[char], pos: usize, syn: SynFn, cat: CatFn) -> Option<Regs> {
-    match_at(re, text, pos, syn, cat)
+pub fn looking_at(
+    re: &Regex,
+    text: &[char],
+    pos: usize,
+    syn: SynFn,
+    cat: CatFn,
+    point: usize,
+    posix: bool,
+) -> Option<Regs> {
+    if posix {
+        posix_match_at(re, text, pos, usize::MAX, syn, cat, point)
+    } else {
+        match_at(re, text, pos, syn, cat, point)
+    }
 }
+

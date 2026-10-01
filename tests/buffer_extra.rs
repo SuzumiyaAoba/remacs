@@ -224,7 +224,8 @@ fn narrow_to_indirect() {
               (insert \"0123456789\")
               (narrow-to-region 3 6)
               (list (point-min) (point-max) (buffer-size)))"),
-        "(3 6 3)"
+        // GNU Fbuffer_size ignores narrowing — the total text size.
+        "(3 6 10)"
     );
     assert_eq!(
         ev("(with-temp-buffer

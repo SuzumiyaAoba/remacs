@@ -33,10 +33,7 @@ fn main() {
     let headless = args.iter().any(|a| {
         matches!(
             a.as_str(),
-            "-Q" | "--quick"
-                | "-q"
-                | "--no-init"
-                | "--batch"
+            "--batch"
                 | "-batch"
                 | "--eval"
                 | "--execute"
@@ -62,10 +59,67 @@ fn main() {
 }
 
 fn real_main(args: Vec<String>) {
+    // GNU prints the version without booting the interpreter.
+    if args.iter().any(|a| a == "--version") {
+        println!("remacs 0.1 (Emacs-compatible editor in Rust)");
+        return;
+    }
+
+    // GUI dispatch BEFORE `Interp::new': run_gui spawns its own
+    // interpreter on the logic thread, so building one here would be
+    // a thrown-away ~30s prelude — and any arg that forces batch or
+    // the terminal front-end keeps this process headless.
+    let batch_arg = args.iter().any(|a| {
+        matches!(
+            a.as_str(),
+            "--batch"
+                | "-batch"
+                | "--eval"
+                | "--execute"
+                | "--load"
+                | "-l"
+                | "--script"
+                | "--ieval"
+                | "-f"
+                | "--funcall"
+        )
+    });
+    let no_window_arg = args
+        .iter()
+        .any(|a| matches!(a.as_str(), "-nw" | "--no-window-system"));
+    if !batch_arg && !no_window_arg {
+        // Same operand rule as the arg loop below: recognized flag
+        // names are consumed, every other arg is a file to visit.
+        let files: Vec<String> = args
+            .iter()
+            .filter(|a| {
+                !matches!(
+                    a.as_str(),
+                    "-Q"
+                        | "--quick"
+                        | "-q"
+                        | "--no-init"
+                        | "-no-x-resources"
+                        | "--no-x-resources"
+                )
+            })
+            .cloned()
+            .collect();
+        return match remacs::gui::run_gui(&files) {
+            Ok(()) => {}
+            Err(e) => {
+                eprintln!("remacs: gui error: {}", e);
+                std::process::exit(1);
+            }
+        };
+    }
+
     let mut i = Interp::new();
 
+    // `command-line-args'/`invocation-name'/`invocation-directory' are
+    // seeded in Interp::new (GNU init_cmdargs placement).
+
     let mut batch = false;
-    let mut no_window = false;
     let mut files: Vec<String> = Vec::new();
     let mut idx = 0;
     let exit = 0i32;
@@ -73,12 +127,12 @@ fn real_main(args: Vec<String>) {
     while idx < args.len() {
         let arg = &args[idx];
         match arg.as_str() {
-            "--version" => {
-                println!("remacs 0.1 (Emacs-compatible editor in Rust)");
-                return;
-            }
             "-Q" | "--quick" => {
-                batch = true;
+                // GNU: -Q inhibits site/user init, the splash screen,
+                // and X resources — it does NOT imply batch.  remacs
+                // never loads an init file or splash screen, so the
+                // observable remainder is the resource inhibition;
+                // interactive startup proceeds normally.
                 let sid = i.intern("inhibit-x-resources");
                 let _ = i.set_symbol_default(sid, Value::t());
             }
@@ -86,8 +140,12 @@ fn real_main(args: Vec<String>) {
                 let sid = i.intern("inhibit-x-resources");
                 let _ = i.set_symbol_default(sid, Value::t());
             }
-            "--batch" | "-batch" | "--no-init" | "-q" => {
+            "--batch" | "-batch" => {
                 batch = true;
+            }
+            "--no-init" | "-q" => {
+                // GNU: -q/--no-init skips user/site init files but
+                // still starts the interactive editor.
             }
             "--ieval" => {
                 idx += 1;
@@ -194,7 +252,8 @@ fn real_main(args: Vec<String>) {
                 }
             }
             "-nw" | "--no-window-system" => {
-                no_window = true;
+                // Already accounted for by the pre-`Interp::new'
+                // dispatch (this process only runs headless paths).
             }
             other => files.push(other.to_string()),
         }
@@ -207,17 +266,12 @@ fn real_main(args: Vec<String>) {
         batch_exit(&mut i, exit);
     }
 
-    if !no_window {
-        // Graphical front-end: the evaluator boots on a logic thread
-        // inside run_gui (Interp is !Send, AppKit needs main).
-        return match remacs::gui::run_gui(&files) {
-            Ok(()) => {}
-            Err(e) => {
-                eprintln!("remacs: gui error: {}", e);
-                std::process::exit(1);
-            }
-        };
-    }
+    // Reaching here means a batch flag or -nw was given; with a batch
+    // flag we already exited above, and the genuine GUI case was
+    // dispatched before Interp::new on the main thread.  What remains
+    // is the terminal editor — including a trailing flag that lost
+    // its operand (e.g. `remacs --eval' with no form), where GNU
+    // would still open an interactive session.
 
     // Interactive terminal: visit files, run the editor loop.
     for f in &files {
@@ -295,6 +349,24 @@ fn run_batch(i: &mut Interp, src: &str, cli_rest: &[String]) -> bool {
     }
 }
 
+/// GNU's `-l'/`--script' CLI handlers resolve
+/// `(file-truename (expand-file-name FILE))' before `load':
+///   -l:       use file-ex  when (file-regular-p file-ex)
+///   --script: use truename when (file-exists-p truename)
+/// `load' itself keeps the tried path; only the CLI layer truenames.
+fn cli_truename(i: &mut Interp, path: &str, regular_only: bool) -> String {
+    let ex = remacs::editor::expand_file_name_str(i, path);
+    let real = remacs::buffer::file_truename(&ex);
+    let ok = std::fs::metadata(&real)
+        .map(|m| !regular_only || m.is_file())
+        .unwrap_or(false);
+    if ok {
+        real
+    } else {
+        ex
+    }
+}
+
 fn load_file(i: &mut Interp, path: &str, cli_rest: &[String]) -> bool {
     i.noninteractive = true;
     if i.output.is_none() {
@@ -302,6 +374,7 @@ fn load_file(i: &mut Interp, path: &str, cli_rest: &[String]) -> bool {
     }
     let nid = i.intern("noninteractive");
     let _ = i.set_symbol_default(nid, Value::t());
+    let path = &cli_truename(i, path, true);
     match remacs::lisp::load::eval_file(i, path) {
         Ok(_) => true,
         Err(Flow::Exit(code)) => std::process::exit(code as i32),
@@ -331,6 +404,7 @@ fn load_file_script(i: &mut Interp, path: &str) -> bool {
     }
     let nid = i.intern("noninteractive");
     let _ = i.set_symbol_default(nid, Value::t());
+    let path = &cli_truename(i, path, false);
     match remacs::lisp::load::eval_file_script(i, path) {
         Ok(_) => true,
         Err(Flow::Exit(code)) => std::process::exit(code as i32),

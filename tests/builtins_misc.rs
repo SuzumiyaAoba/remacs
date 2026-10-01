@@ -7,7 +7,11 @@ use common::ev;
 fn make_string() {
     assert_eq!(ev("(make-string 3 ?a)"), "\"aaa\"");
     assert_eq!(ev("(make-string 0 ?a)"), "\"\"");
-    assert_eq!(ev("(make-string -1 ?a)"), "\"\"");
+    // GNU signals wholenump on negative lengths.
+    assert_eq!(
+        ev("(condition-case e (make-string -1 ?a) (error e))"),
+        "(wrong-type-argument wholenump -1)"
+    );
 }
 
 #[test]
@@ -27,8 +31,15 @@ fn take_ntake() {
     assert_eq!(ev("(take 2 '(1 2 3 4))"), "(1 2)");
     assert_eq!(ev("(take 0 '(1 2))"), "nil");
     assert_eq!(ev("(take 9 '(1 2))"), "(1 2)");
-    assert_eq!(ev("(take 2 [1 2 3])"), "[1 2]");
-    assert_eq!(ev("(take 2 \"abcd\")"), "\"ab\"");
+    // GNU: take is list-only; vectors/strings signal listp.
+    assert_eq!(
+        ev("(condition-case e (take 2 [1 2 3]) (wrong-type-argument 'wta))"),
+        "wta"
+    );
+    assert_eq!(
+        ev("(condition-case e (take 2 \"abcd\") (wrong-type-argument 'wta))"),
+        "wta"
+    );
     assert_eq!(ev("(let ((l (list 1 2 3 4))) (ntake 2 l))"), "(1 2)");
     // ntake mutates the original list.
     assert_eq!(ev("(let ((l (list 1 2 3 4))) (ntake 2 l) l)"), "(1 2)");
@@ -162,7 +173,8 @@ fn gensym() {
 #[test]
 fn symbol_misc() {
     assert_eq!(ev("(documentation-stringp \"x\")"), "t");
-    assert_eq!(ev("(documentation-stringp 1)"), "nil");
+    // GNU: a fixnum counts as a docstring (etc/DOC offset form).
+    assert_eq!(ev("(documentation-stringp 1)"), "t");
     // GNU requires the subr object; a symbol signals (subrp SYM).
     assert_eq!(ev("(subr-arity (symbol-function 'car))"), "(1 . 1)");
     assert_eq!(ev("(subr-arity (symbol-function '+))"), "(0 . many)");

@@ -124,7 +124,7 @@ fn errors() {
     assert_eq!(ev_err("(signal 'my-err '(1 2))"), "error");
     assert_eq!(ev_err("(throw 'notag 1)"), "no-catch");
     assert_eq!(ev_err("(setq t 1)"), "setting-constant");
-    assert_eq!(ev_err("(make-vector -1 0)"), "args-out-of-range");
+    assert_eq!(ev_err("(make-vector -1 0)"), "wrong-type-argument");
 }
 
 #[test]

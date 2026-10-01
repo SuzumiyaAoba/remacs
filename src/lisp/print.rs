@@ -92,14 +92,30 @@ fn print_stack_key(v: &Value) -> Option<usize> {
     }
 }
 
+/// `print-circle' key for an uninterned symbol.  GNU print.c numbers
+/// every non-atom reachable object in `print_preprocess' — including
+/// symbols when `print-gensym' is on — so a shared `#:test' prints
+/// `#1=#:test' … `#1#'.  SymIds live in a different namespace than
+/// heap pointers: fold them into key space by setting the high bit.
+fn gensym_circle_key(i: &Interp, v: &Value) -> Option<usize> {
+    // Cheap shape check first — runs for every printed symbol.
+    let Value::Sym(id) = v else {
+        return None;
+    };
+    if !i.obarray.symbol(*id).uninterned || !i.print_gensym() {
+        return None;
+    }
+    Some(*id as usize | (1usize << (usize::BITS - 1)))
+}
+
 /// GNU's `print_preprocess' pass: depth-first walk of the object
 /// graph (car before cdr, like GNU's recursion), numbering each
 /// shared/cyclic object when it is encountered a second time.
 /// Already-seen objects are not descended into, so cycles terminate.
-fn count_print_refs(v: &Value, ctx: &mut CircleCtx) {
+fn count_print_refs(i: &Interp, v: &Value, ctx: &mut CircleCtx) {
     let mut stack = vec![v.clone()];
     while let Some(x) = stack.pop() {
-        let Some(k) = print_stack_key(&x) else {
+        let Some(k) = print_stack_key(&x).or_else(|| gensym_circle_key(i, &x)) else {
             continue;
         };
         if !ctx.seen.insert(k) {
@@ -243,7 +259,7 @@ impl Interp {
             printed: std::collections::HashSet::new(),
             next: 1,
         };
-        count_print_refs(v, &mut ctx);
+        count_print_refs(self, v, &mut ctx);
         CIRCLE.with(|c| c.borrow_mut().replace(ctx))
     }
 
@@ -287,7 +303,8 @@ impl Interp {
     }
 
     fn prin1_inner(&self, v: &Value, out: &mut String, depth: usize, bq: bool) {
-        if let Some(k) = print_stack_key(v) {
+        let key = print_stack_key(v).or_else(|| gensym_circle_key(self, v));
+        if let Some(k) = key {
             if let Some(sub) = number_table_subst(self, v) {
                 out.push_str(&sub);
                 return;
@@ -330,15 +347,15 @@ impl Interp {
             out.push_str("##");
             return;
         }
-        // print-level: nested structure deeper than the limit prints "...".
+        // print-level: only CONS cells are truncated (GNU print.c
+        // checks `print_depth > Vprint_level' solely in the
+        // Lisp_Cons branch); vectors, records, hash tables and
+        // char-tables always print fully.
         if let Some(level) = self.print_level_limit() {
             if depth >= level {
-                match v {
-                    Value::Cons(_) | Value::Vec(_) | Value::Record(_) | Value::Hash(_) => {
-                        out.push_str("...");
-                        return;
-                    }
-                    _ => {}
+                if let Value::Cons(_) = v {
+                    out.push_str("...");
+                    return;
                 }
             }
         }
@@ -460,9 +477,13 @@ impl Interp {
                 } else {
                     for c in s.borrow().chars() {
                         // Eight-bit chars print as their byte's octal
-                        // escape even in multibyte strings.
+                        // escape even in multibyte strings; surrogate
+                        // proxies print as U+FFFD like GNU's raw
+                        // surrogate display.
                         if let Some(b) = crate::lisp::value::eight_bit_byte(c) {
                             let _ = write!(out, "\\{:03o}", b);
+                        } else if crate::lisp::value::surrogate_code(c).is_some() {
+                            out.push('\u{FFFD}');
                         } else {
                             escape_char_for_string(c, out, nl, mb, cc);
                         }
@@ -700,12 +721,9 @@ impl Interp {
     fn princ_inner_obj(&self, v: &Value, out: &mut String, depth: usize, bq: bool) {
         if let Some(level) = self.print_level_limit() {
             if depth >= level {
-                match v {
-                    Value::Cons(_) | Value::Vec(_) | Value::Record(_) | Value::Hash(_) => {
-                        out.push_str("...");
-                        return;
-                    }
-                    _ => {}
+                if let Value::Cons(_) = v {
+                    out.push_str("...");
+                    return;
                 }
             }
         }
@@ -730,12 +748,25 @@ impl Interp {
                     out.push_str(&r);
                     return;
                 }
+                let limit = self.print_length_limit();
                 out.push('[');
-                for (i, item) in items.borrow().iter().enumerate() {
-                    if i > 0 {
+                let mut n = 0usize;
+                let mut truncated = false;
+                for item in items.borrow().iter() {
+                    if let Some(l) = limit {
+                        if n >= l {
+                            truncated = true;
+                            break;
+                        }
+                    }
+                    if n > 0 {
                         out.push(' ');
                     }
                     self.princ_inner(item, out, depth + 1, bq);
+                    n += 1;
+                }
+                if truncated {
+                    out.push_str(if n == 0 { "..." } else { " ..." });
                 }
                 out.push(']');
             }
@@ -837,9 +868,27 @@ impl Interp {
                     if let Some(m) = rr.get(2) {
                         inner!(m);
                     }
+                    // GNU's `print_stack_push_vector' measures
+                    // `print-length' against the pseudovector SIZE
+                    // (depth+min_char header + slots) but starts
+                    // printing at SUB_CHAR_TABLE_OFFSET: a truncated
+                    // sub-table emits `print-length - 1' slots.
+                    let limit = self.print_length_limit().map(|l| l.saturating_sub(1));
+                    let mut n = 0usize;
+                    let mut truncated = false;
                     for s in &rr[3..] {
+                        if let Some(l) = limit {
+                            if n >= l {
+                                truncated = true;
+                                break;
+                            }
+                        }
                         out.push(' ');
                         inner!(s);
+                        n += 1;
+                    }
+                    if truncated {
+                        out.push_str(" ...");
                     }
                     out.push(']');
                     return;
@@ -951,39 +1000,47 @@ impl Interp {
         bq: bool,
     ) {
         out.push_str("#^[");
-        // defalt (side-table keyed on the Record pointer; Weak guards
-        // against address reuse by a different live char-table)
+        // defalt/parent (side-tables keyed on the Record pointer;
+        // Weak guards against address reuse by a different live
+        // char-table)
         let defalt = self
             .char_table_defalts
             .iter()
             .find(|(k, w, _)| *k == ptr && w.upgrade().is_some())
             .map(|(_, _, v)| v.clone())
             .unwrap_or(Value::Nil);
-        self.prin1_inner(&defalt, out, depth + 1, bq);
-        out.push(' ');
-        // parent (side-table keyed on the Record pointer)
         let parent = self
             .char_table_parents
             .iter()
             .find(|(k, w, _)| *k == ptr && w.upgrade().is_some())
             .map(|(_, _, v)| v.clone())
             .unwrap_or(Value::Nil);
-        self.prin1_inner(&parent, out, depth + 1, bq);
-        out.push(' ');
-        // purpose
-        match rr.get(1) {
-            Some(p) => self.prin1_inner(p, out, depth + 1, bq),
-            None => out.push_str("nil"),
-        }
-        // ASCII cache + contents[0..64]
-        for s in slots {
-            out.push(' ');
+        let purpose = rr.get(1).cloned().unwrap_or(Value::Nil);
+        // GNU `print_stack_push_vector' applies `print-length' to the
+        // whole pseudovector: defalt, parent, purpose, ascii cache,
+        // contents[64] and extras all count toward the limit.
+        let limit = self.print_length_limit();
+        let mut n = 0usize;
+        let mut truncated = false;
+        for s in [defalt, parent, purpose]
+            .iter()
+            .chain(slots.iter())
+            .chain(rr[3..].iter())
+        {
+            if let Some(l) = limit {
+                if n >= l {
+                    truncated = true;
+                    break;
+                }
+            }
+            if n > 0 {
+                out.push(' ');
+            }
             self.prin1_inner(s, out, depth + 1, bq);
+            n += 1;
         }
-        // extra slots
-        for e in &rr[3..] {
-            out.push(' ');
-            self.prin1_inner(e, out, depth + 1, bq);
+        if truncated {
+            out.push_str(" ...");
         }
         out.push(']');
     }

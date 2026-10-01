@@ -12,20 +12,26 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::{Rc, Weak};
 
-use crate::lisp::value::{BufferRef, Marker, SymId, Value};
+use crate::lisp::value::{BufferRef, Marker, MarkerRef, SymId, Value};
 
-pub use gapbuf::GapBuffer;
+pub use gapbuf::{GapBuffer, SharedText};
 
 /// One editor buffer.
 pub struct Buffer {
     /// Unique id in the BufferSet.
     pub id: usize,
     pub name: String,
-    pub text: GapBuffer,
+    /// Buffer text. Indirect buffers share the base buffer's storage
+    /// via `SharedText` (`Rc<RefCell<GapBuffer>>`), so edits made in
+    /// any buffer of the chain are visible in all of them.
+    pub text: SharedText,
     /// Point (0-based char offset). Emacs `point` = `self.point + 1`.
     pub point: usize,
-    /// The mark (0-based), if set.
-    pub mark: Option<usize>,
+    /// The mark marker (GNU `buffer->mark'), if the mark was ever
+    /// touched.  `mark-marker' hands this object out, so `set-marker'
+    /// on it moves the mark.  A Some value with `buffer = None' is a
+    /// detached mark: the mark reads as unset but identity persists.
+    pub mark: Option<MarkerRef>,
     /// Narrowing bounds (0-based, inclusive-exclusive).
     pub begv: usize,
     pub zv: usize,
@@ -35,8 +41,6 @@ pub struct Buffer {
     pub markers: Vec<Weak<RefCell<Marker>>>,
     /// Visited file name (or nil).
     pub file_name: Option<String>,
-    /// Modified since last save.
-    pub modified: bool,
     /// SymId of `buffer-undo-list'.  The undo list itself is the
     /// buffer-local variable binding (`locals[undo_sym]'), a Lisp list
     /// in GNU's format: (BEG . END) insertions, (TEXT . POS) deletions,
@@ -51,29 +55,24 @@ pub struct Buffer {
     /// last undo boundary/command, or None when this buffer was not
     /// current at that time (GNU's `buffer_before_last_command_or_undo').
     pub undo_pt_before: Option<usize>,
-    /// Time of last modification (for tick tracking).
-    pub mod_tick: u64,
-    /// GNU CHARS_MODIFF: bumped only when the buffer *text* changes
-    /// (`buffer-chars-modified-tick'); text-property changes bump
-    /// `mod_tick' alone.
-    pub chars_mod_tick: u64,
-    /// GNU SAVE_MODIFF: `mod_tick' at the last save or
-    /// `set-buffer-modified-p' nil.  When `mod_tick <= save_tick' the
-    /// next recorded change pushes a `(t . MODTIME)' first-change entry.
-    pub save_tick: u64,
-    /// Text property intervals (start, end, property, value).
-    /// Simplified model: a linear list, last write wins.
-    pub text_props: Vec<TextProp>,
+    /// GNU SAVE_MODIFF lives in `text.save_tick' (shared): the modified
+    /// flag `mod_tick > save_tick' is the same from every indirect view.
+    /// Text-property intervals live in `text.props', shared with
+    /// indirect buffers like GNU's `b->text->intervals' — last write
+    /// wins within the shared list.
     /// Read-only regions aren't modeled; `read-only` text prop is checked
     /// at edit time in primitives.
     pub overlays: Vec<Overlay>,
     /// False once the buffer has been killed (the object may still be
     /// referenced by variables, markers, or window configurations).
     pub live: bool,
-    /// For indirect buffers, the id of the base buffer whose text is
-    /// shared. (Text itself is currently copied at creation rather than
-    /// aliased — edit propagation is not yet modeled.)
-    pub base_buffer: Option<usize>,
+    /// For indirect buffers, the base buffer whose text is shared
+    /// (GNU `b->base_buffer'; always the ultimate base — GNU forbids
+    /// double indirection).  Holding the Rc keeps the base object
+    /// alive after `kill-buffer' so `buffer-base-buffer' still returns
+    /// the killed buffer object. (Text-props, markers, and undo stay
+    /// per-buffer; only the `text' storage is aliased.)
+    pub base_buffer: Option<BufferRef>,
     /// Buffer-local syntax table, installed by `set-syntax-table'
     /// (GNU: a C-level buffer field, NOT a Lisp variable — plain
     /// `setq' on `syntax-table' does not affect the scanner).
@@ -106,12 +105,19 @@ pub struct Buffer {
     /// `major-mode' so `major-mode-restore' can re-run it after a
     /// suspend/undump).
     pub suspended_mode: Option<crate::lisp::value::Value>,
+    /// Name before the last rename or kill (GNU `b->last_name'),
+    /// reported by `buffer-last-name'.
+    pub last_name: Option<String>,
+    /// GNU `b->inhibit_buffer_hooks': set by make-indirect-buffer's
+    /// INHIBIT-BUFFER-HOOKS arg; such buffers skip `kill-buffer-hook'
+    /// and `kill-buffer-query-functions' when killed.
+    pub inhibit_buffer_hooks: bool,
 }
 
 /// Resolve symlinks like GNU's `file-truename'.  When FILE doesn't
 /// exist, canonicalize resolves nothing — resolve the longest
 /// existing ancestor and reattach the missing tail instead.
-pub(crate) fn file_truename(path: &str) -> String {
+pub fn file_truename(path: &str) -> String {
     let mut missing: Vec<&str> = Vec::new();
     let mut rest = path;
     loop {
@@ -170,7 +176,7 @@ pub(crate) fn our_host_name() -> String {
 
 /// Seconds since the epoch of the last system boot, or 0 when it
 /// cannot be determined (GNU filelock.c `get_boot_time').
-fn boot_time() -> i64 {
+pub(crate) fn boot_time() -> i64 {
     #[cfg(target_os = "macos")]
     unsafe {
         let name = std::ffi::CString::new("kern.boottime").unwrap();
@@ -244,6 +250,9 @@ pub struct Overlay {
     pub front_advance: bool,
     /// `rear-advance': insertions exactly at `end' push it forward.
     pub rear_advance: bool,
+    /// `evaporate': the overlay detaches when a deletion leaves it
+    /// empty (cached so deletion paths need no symbol interning).
+    pub evaporate: bool,
     /// The canonical `[overlay BID IDX]' Lisp handle — reused by
     /// `overlays-at' & friends so `eq' holds for the same overlay.
     pub handle: Value,
@@ -264,8 +273,8 @@ impl Buffer {
         }
         Buffer {
             id,
-            name,
-            text: GapBuffer::new(),
+            name: name.clone(),
+            text: SharedText::new(),
             point: 0,
             mark: None,
             begv: 0,
@@ -273,16 +282,9 @@ impl Buffer {
             locals,
             markers: Vec::new(),
             file_name: None,
-            modified: false,
             undo_sym,
             undo_inhibit,
             undo_pt_before: None,
-            // Creation counts as the first modification (Emacs's
-            // fresh buffers report buffer-modified-tick = 1).
-            mod_tick: 1,
-            chars_mod_tick: 1,
-            save_tick: 1,
-            text_props: Vec::new(),
             overlays: Vec::new(),
             live: true,
             base_buffer: None,
@@ -295,6 +297,26 @@ impl Buffer {
             file_modtime_size: -1,
             file_lock_name: None,
             create_lockfiles: true,
+            // GNU sets last_name to the creation name; renames and
+            // kill update it (Frename_buffer, kill_buffer).
+            last_name: Some(name),
+            inhibit_buffer_hooks: false,
+        }
+    }
+
+    /// GNU `BUFFER_MODIFIED_P': the shared MODIFF vs our SAVE_MODIFF —
+    /// edits through any buffer sharing this text count.
+    pub fn is_modified(&self) -> bool {
+        self.text.mod_tick.get() > self.text.save_tick.get()
+    }
+
+    /// GNU `modiff_incr': MODIFF grows logarithmically with the number
+    /// of changed characters — floor(log2(len)) + 1 for len > 0, else 1.
+    fn modiff_incr(len: usize) -> u64 {
+        if len == 0 {
+            1
+        } else {
+            (usize::BITS - len.leading_zeros()) as u64
         }
     }
 
@@ -303,19 +325,30 @@ impl Buffer {
     /// (filelock.c `lock_file' via `prepare_to_modify_buffer'), and
     /// becoming unmodified releases our lock (`unlock_file').
     pub fn note_modified(&mut self, flag: bool) {
-        if !flag {
-            // GNU Fset_buffer_modified_p: SAVE_MODIFF = MODIFF, so the
-            // next recorded change pushes a `(t . MODTIME)' entry.
-            self.save_tick = self.mod_tick;
-        }
-        if flag == self.modified {
-            return;
-        }
-        self.modified = flag;
+        // GNU Frestore_buffer_modified_p: the modified flag is
+        // SAVE_MODIFF < MODIFF, and both counters live in the shared
+        // text — setting it on any indirect view affects them all.
+        let already = self.is_modified();
+        let mod_tick = self.text.mod_tick.get();
         if flag {
-            self.maybe_lock_file();
+            if self.text.save_tick.get() >= mod_tick {
+                // Park the old MODIFF in SAVE_MODIFF.
+                self.text.mod_tick.set(mod_tick + 1);
+                self.text.save_tick.set(mod_tick);
+            }
         } else {
-            self.release_lock_file();
+            self.text.save_tick.set(mod_tick);
+        }
+        // GNU locks/unlocks the file of the BASE buffer (an indirect
+        // buffer never visits a file itself), driven by the flag
+        // transition on that base.
+        let target = self.base_buffer.clone();
+        match (flag, already, target) {
+            (true, false, Some(b)) => b.borrow_mut().maybe_lock_file(),
+            (true, false, None) => self.maybe_lock_file(),
+            (false, true, Some(b)) => b.borrow_mut().release_lock_file(),
+            (false, true, None) => self.release_lock_file(),
+            _ => {}
         }
     }
 
@@ -388,6 +421,16 @@ impl Buffer {
         self.record_insert(pos, n);
         self.text.insert(pos, s);
         self.adjust_insert(pos, n, before_markers_flag(pos, self.point));
+        let id = self.id;
+        let text = self.text.clone();
+        text.each_sibling(id, move |sib| {
+            // GNU PT is an insertion_type=false marker: insert at the
+            // exact position does not advance it.
+            if sib.point > pos {
+                sib.point += n;
+            }
+            sib.adjust_markers_insert(pos, n, false)
+        });
     }
 
     /// Like Emacs's `insert`: inserted text goes *before* point when
@@ -413,6 +456,14 @@ impl Buffer {
         self.text.insert(p, s);
         self.point = p + n;
         self.adjust_markers_insert(p, n, false);
+        let id = self.id;
+        let text = self.text.clone();
+        text.each_sibling(id, move |sib| {
+            if sib.point > p {
+                sib.point += n;
+            }
+            sib.adjust_markers_insert(p, n, false)
+        });
     }
 
     /// `insert-before-markers`.
@@ -436,6 +487,14 @@ impl Buffer {
         self.text.insert(p, s);
         self.point = p + n;
         self.adjust_markers_insert(p, n, true);
+        let id = self.id;
+        let text = self.text.clone();
+        text.each_sibling(id, move |sib| {
+            if sib.point > p {
+                sib.point += n;
+            }
+            sib.adjust_markers_insert(p, n, true)
+        });
     }
 
     /// Point adjustment for `insert_at` (non-point-aware variant).
@@ -449,6 +508,8 @@ impl Buffer {
 
     /// Move markers after inserting `n` chars at `pos`.
     /// `before_markers` moves markers at exactly `pos` too.
+    /// Also applied to sibling buffers sharing this text (their
+    /// markers/zv/begv live in the same shared chain in GNU).
     pub fn adjust_markers_insert(&mut self, pos: usize, n: usize, before_markers: bool) {
         for w in &self.markers {
             if let Some(m) = w.upgrade() {
@@ -462,48 +523,17 @@ impl Buffer {
                 }
             }
         }
-        // The mark behaves like a marker with insertion_type = false.
-        if let Some(m) = self.mark {
-            if m > pos {
-                self.mark = Some(m + n);
-            }
-        }
-        // Widen narrowing bounds if needed.
+        // GNU BEGV/ZV are markers in the shared text: ZV is a
+        // before-insert marker (text at ZV lands inside), BEGV an
+        // after-insert marker; `insert-before-markers' advances both.
         if self.zv >= pos {
             self.zv += n;
         }
+        if self.begv > pos || (self.begv == pos && before_markers) {
+            self.begv += n;
+        }
         self.adjust_overlays_insert(pos, n, before_markers);
-        self.adjust_text_props_insert(pos, n);
-    }
-
-    /// GNU `insertion' of N chars at POS splits a covering text-property
-    /// interval — the new text is unpropertized (property inheritance
-    /// is a separate `insert-and-inherit' concern).  Intervals starting
-    /// at POS shift right wholesale.
-    fn adjust_text_props_insert(&mut self, pos: usize, n: usize) {
-        if self.text_props.is_empty() {
-            return;
-        }
-        let mut extra: Vec<TextProp> = Vec::new();
-        for tp in &mut self.text_props {
-            if tp.end <= pos {
-                continue;
-            }
-            if tp.start >= pos {
-                tp.start += n;
-                tp.end += n;
-            } else {
-                // pos strictly inside [start, end): split.
-                extra.push(TextProp {
-                    start: pos + n,
-                    end: tp.end + n,
-                    prop: tp.prop,
-                    value: tp.value.clone(),
-                });
-                tp.end = pos;
-            }
-        }
-        self.text_props.extend(extra);
+        // Text props ride along inside SharedText::insert.
     }
 
     /// GNU `adjust_markers_for_insert' applied to overlays: boundaries
@@ -526,7 +556,9 @@ impl Buffer {
 
     /// GNU `adjust_markers_for_delete': positions inside [START, END)
     /// clamp to START, positions at or past END shift down by the
-    /// removed length.  Overlays follow the same rule.
+    /// removed length.  Overlays follow the same rule.  BEGV/ZV are
+    /// markers in the shared text and follow it too — this also runs
+    /// on sibling buffers when an indirect buffer edits shared text.
     pub fn adjust_markers_delete(&mut self, start: usize, end: usize) {
         let n = end - start;
         for w in &self.markers {
@@ -541,31 +573,18 @@ impl Buffer {
                 }
             }
         }
+        if self.zv >= end {
+            self.zv -= n;
+        } else if self.zv > start {
+            self.zv = start;
+        }
+        if self.begv >= end {
+            self.begv -= n;
+        } else if self.begv > start {
+            self.begv = start;
+        }
         self.adjust_overlays_delete(start, end);
-        self.adjust_text_props_delete(start, end);
-    }
-
-    /// GNU `adjust_intervals_for_delete': interval boundaries inside the
-    /// deleted span clamp to START, those past END shift down; an
-    /// interval left empty is dropped.
-    fn adjust_text_props_delete(&mut self, start: usize, end: usize) {
-        if self.text_props.is_empty() {
-            return;
-        }
-        let n = end - start;
-        for tp in &mut self.text_props {
-            if tp.start >= end {
-                tp.start -= n;
-            } else if tp.start > start {
-                tp.start = start;
-            }
-            if tp.end >= end {
-                tp.end -= n;
-            } else if tp.end > start {
-                tp.end = start;
-            }
-        }
-        self.text_props.retain(|tp| tp.start < tp.end);
+        // Text props ride along inside SharedText::delete.
     }
 
     /// GNU `adjust_markers_for_delete' applied to overlays: boundaries
@@ -582,6 +601,11 @@ impl Buffer {
                 } else if *p > start {
                     *p = start;
                 }
+            }
+            // GNU `evaporate-overlays': an overlay left empty by the
+            // deletion detaches when its `evaporate' property is set.
+            if ov.evaporate && ov.start >= ov.end {
+                ov.buffer = None;
             }
         }
     }
@@ -613,24 +637,19 @@ impl Buffer {
         } else if self.point > start {
             self.point = start;
         }
-        if let Some(m) = self.mark {
-            if m >= end {
-                self.mark = Some(m - n);
-            } else if m > start {
-                self.mark = Some(start);
-            }
-        }
         self.adjust_markers_delete(start, end);
-        if self.zv >= end {
-            self.zv -= n;
-        } else if self.zv > start {
-            self.zv = start;
-        }
-        if self.begv >= end {
-            self.begv -= n;
-        } else if self.begv > start {
-            self.begv = start;
-        }
+        // Every buffer sharing this text re-bounds — GNU's BEGV/ZV/
+        // PT/markers live in the shared chain.
+        let id = self.id;
+        let text = self.text.clone();
+        text.each_sibling(id, |sib| {
+            if sib.point >= end {
+                sib.point -= n;
+            } else if sib.point > start {
+                sib.point = start;
+            }
+            sib.adjust_markers_delete(start, end)
+        });
         removed
     }
 
@@ -646,6 +665,44 @@ impl Buffer {
             return;
         }
         self.markers.push(Rc::downgrade(m));
+    }
+
+    /// The mark as a plain position (0-based char index), or None when
+    /// the mark is unset — i.e. the mark marker is absent or detached
+    /// (GNU `marker_position (BVAR (b, mark))' → nil when buffer = 0).
+    pub fn mark_position(&self) -> Option<usize> {
+        self.mark
+            .as_ref()
+            .and_then(|m| m.borrow().buffer.is_some().then(|| m.borrow().position))
+    }
+
+    /// The live mark marker object (GNU `mark-marker'): hands out the
+    /// same Rc every time, so `set-marker' on it moves the mark.
+    /// Lazily allocates a detached marker (buffer = None → the mark
+    /// reads as unset) when none exists yet.
+    pub fn mark_marker(&mut self) -> MarkerRef {
+        if self.mark.is_none() {
+            self.mark = Some(Rc::new(RefCell::new(Marker {
+                buffer: None,
+                position: 0,
+                insertion_type: false,
+            })));
+        }
+        self.mark.as_ref().unwrap().clone()
+    }
+
+    /// GNU `set-mark' core: point the mark marker at `pos' (0-based).
+    /// An existing marker (even detached) is re-attached in place so
+    /// handles obtained via `mark-marker' stay live; otherwise a fresh
+    /// marker is allocated and registered for text adjustment.
+    pub fn set_mark(&mut self, pos: usize) {
+        let m = self.mark_marker();
+        {
+            let mut mm = m.borrow_mut();
+            mm.buffer = Some(self.id);
+            mm.position = pos;
+        }
+        self.register_marker(&m);
     }
 
     // ---------- undo recording (GNU undo.c) ----------
@@ -704,7 +761,7 @@ impl Buffer {
             _ => true,
         };
         // First change since save gets a timestamp record.
-        if self.mod_tick <= self.save_tick {
+        if self.text.mod_tick.get() <= self.text.save_tick.get() {
             self.record_first_change();
         }
         // Right after a boundary, record where point was before the
@@ -764,7 +821,7 @@ impl Buffer {
     /// The effective value of PROP (last write wins) at 0-based POS,
     /// or nil when no covering entry exists.
     pub fn prop_value_at(&self, pos: usize, prop: u32) -> Value {
-        for tp in self.text_props.iter().rev() {
+        for tp in self.text.props.borrow().iter().rev() {
             if tp.prop == prop && tp.start <= pos && pos < tp.end {
                 return tp.value.clone();
             }
@@ -775,7 +832,7 @@ impl Buffer {
     /// The effective plist (prop -> value, last write wins) at POS.
     pub fn plist_at(&self, pos: usize) -> std::collections::BTreeMap<u32, Value> {
         let mut m = std::collections::BTreeMap::new();
-        for tp in self.text_props.iter().rev() {
+        for tp in self.text.props.borrow().iter().rev() {
             if tp.start <= pos && pos < tp.end {
                 m.entry(tp.prop).or_insert_with(|| tp.value.clone());
             }
@@ -791,7 +848,7 @@ impl Buffer {
         if self.undo_disabled() {
             return;
         }
-        if self.mod_tick <= self.save_tick {
+        if self.text.mod_tick.get() <= self.text.save_tick.get() {
             self.record_first_change();
         }
         let entry = Value::cons(
@@ -807,33 +864,24 @@ impl Buffer {
         self.push_undo(entry);
     }
 
-    /// GNU `modiff_incr': MODIFF grows logarithmically with the number
-    /// of changed characters — floor(log2(len)) + 1 for len > 0, else 1.
-    fn modiff_incr(len: usize) -> u64 {
-        if len == 0 {
-            1
-        } else {
-            (usize::BITS - len.leading_zeros()) as u64
-        }
-    }
-
     /// GNU insdel tick: `MODIFF += elogb(nchars) + 1' then
     /// `CHARS_MODIFF = MODIFF' (the chars counter mirrors MODIFF's
     /// absolute value, catching up any property-only bumps).
     pub fn note_text_change(&mut self, nchars: usize) {
         self.note_modified(true);
-        self.mod_tick += Self::modiff_incr(nchars);
-        self.chars_mod_tick = self.mod_tick;
+        let t = self.text.mod_tick.get() + Self::modiff_incr(nchars);
+        self.text.mod_tick.set(t);
+        self.text.chars_mod_tick.set(t);
     }
 
     /// GNU `modify_text_properties': first-change record (when this is
     /// the first change since save) + `MODIFF += 1'.  CHARS_MODIFF is
     /// not touched.
     pub fn note_prop_modified(&mut self) {
-        if self.mod_tick <= self.save_tick {
+        if self.text.mod_tick.get() <= self.text.save_tick.get() {
             self.record_first_change();
         }
-        self.mod_tick += 1;
+        self.text.mod_tick.set(self.text.mod_tick.get() + 1);
         self.note_modified(true);
     }
 
@@ -943,7 +991,9 @@ impl BufferSet {
             self.undo_sym,
             self.undo_inhibit.clone(),
         );
-        self.bufs.push(Some(Rc::new(RefCell::new(buf))));
+        let rc = Rc::new(RefCell::new(buf));
+        rc.borrow().text.add_viewer(&rc);
+        self.bufs.push(Some(rc));
         self.name_map.insert(final_name, id);
         self.order.push(id);
         self.counter += 1;
@@ -959,7 +1009,9 @@ impl BufferSet {
             self.undo_sym,
             self.undo_inhibit.clone(),
         );
-        self.bufs.push(Some(Rc::new(RefCell::new(buf))));
+        let rc = Rc::new(RefCell::new(buf));
+        rc.borrow().text.add_viewer(&rc);
+        self.bufs.push(Some(rc));
         self.name_map.insert(name.to_string(), id);
         self.order.push(id);
         id
@@ -973,14 +1025,26 @@ impl BufferSet {
         self.name_map.get(name).copied()
     }
 
-    /// Kill buffer `id`.
-    pub fn kill(&mut self, id: usize) -> bool {
+    /// Kill buffer `id`.  `always_local` identifies DEFVAR_PER_BUFFER
+    /// variables: GNU's kill_buffer clears the buffer-local alist but
+    /// keeps the per-buffer slots' values (so `default-directory' etc.
+    /// still read on the killed object) while `buffer-undo-list' is
+    /// explicitly reset to nil.
+    pub fn kill(&mut self, id: usize, always_local: impl Fn(SymId) -> bool) -> bool {
         if id >= self.bufs.len() || self.bufs[id].is_none() {
             return false;
         }
         {
             let mut bb = self.bufs[id].as_ref().unwrap().borrow_mut();
             bb.live = false;
+            // GNU: last_name = name before unchaining from the alist.
+            bb.last_name = Some(bb.name.clone());
+            // GNU: `bset_undo_list (b, Qnil)' happens before teardown.
+            let undo = bb.undo_sym;
+            bb.locals.insert(undo, Value::Nil);
+            // GNU reset_buffer_local_variables: drop ordinary locals,
+            // keep the per-buffer slot bindings (always_local).
+            bb.locals.retain(|s, _| always_local(*s));
             // Emacs unchains markers on kill: they point nowhere.
             for w in &bb.markers {
                 if let Some(m) = w.upgrade() {
@@ -988,6 +1052,10 @@ impl BufferSet {
                 }
             }
             bb.markers.clear();
+            // The mark marker detaches too.
+            if let Some(m) = &bb.mark {
+                m.borrow_mut().buffer = None;
+            }
             // Overlays detach too (`overlay-buffer' → nil).
             for ov in &mut bb.overlays {
                 ov.buffer = None;
@@ -1014,7 +1082,10 @@ impl BufferSet {
             n += 1;
         }
         if let Some(b) = self.get(id) {
-            b.borrow_mut().name = final_name.clone();
+            let mut bb = b.borrow_mut();
+            // GNU Frename_buffer: last_name records the previous name.
+            bb.last_name = Some(old_name.clone());
+            bb.name = final_name.clone();
         }
         self.name_map.insert(final_name.clone(), id);
         final_name

@@ -6,8 +6,8 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use crate::editor::{
-    Window, WindowRef, f_window_list, frame_of, is_terminal, sel_frame, sel_window, terminal_token,
-    win_of,
+    Window, WindowRef, f_window_list, fmenu_shift, frame_of, frame_of_window, is_terminal,
+    relay_children, sel_frame, sel_window, terminal_token, w_parent, w_siblings, win_of,
 };
 use crate::lisp::Interp;
 use crate::lisp::builtins::{S, arg, want_int};
@@ -28,17 +28,17 @@ pub(crate) static SUBRS: &[Subr] = &[
         "window-parent",
         0,
         1,
-        f_nil_win,
-        "Parent window (flat model: nil)."
+        f_window_parent,
+        "Parent internal window."
     ),
     S!(
         "window-top-child",
         0,
         1,
-        f_nil_win,
-        "First child (flat: nil)."
+        f_window_top_child,
+        "First child of a vc window."
     ),
-    S!("window-left-child", 0, 1, f_window_valid_nil, ""),
+    S!("window-left-child", 0, 1, f_window_left_child, ""),
     S!(
         "window-next-sibling",
         0,
@@ -89,14 +89,16 @@ pub(crate) static SUBRS: &[Subr] = &[
         f_window_buffer1,
         "Buffer last shown."
     ),
-    S!("window-old-pixel-width", 0, 1, f_window_width_px, ""),
-    S!("window-old-pixel-height", 0, 1, f_window_height_px, ""),
-    S!("window-old-body-pixel-width", 0, 1, f_window_width_px, ""),
-    S!("window-old-body-pixel-height", 0, 1, f_window_height_px, ""),
+    // GNU's `window-old-*' family reports the sizes from before the
+    // last redisplay-driven size change — always 0 in batch.
+    S!("window-old-pixel-width", 0, 1, f_zero_win, ""),
+    S!("window-old-pixel-height", 0, 1, f_zero_win, ""),
+    S!("window-old-body-pixel-width", 0, 1, f_zero_win, ""),
+    S!("window-old-body-pixel-height", 0, 1, f_zero_win, ""),
     S!(
         "window-combination-p", 0, 2,
-        f_false,
-        "t if WINDOW is internal (no)."
+        f_window_combination_p,
+        "t if WINDOW is internal."
     ),
     S!(
         "window-has-parameters",
@@ -126,8 +128,8 @@ pub(crate) static SUBRS: &[Subr] = &[
         f_window_safe_min_size,
         "Absolute minimum window size."
     ),
-    S!("window-max-delta", 0, 7, f_zero, ""),
-    S!("window-min-delta", 0, 7, f_zero, ""),
+    S!("window-max-delta", 0, 7, f_window_max_delta, ""),
+    S!("window-min-delta", 0, 7, f_window_min_delta, ""),
     S!("window-sizable-p", 2, 5, f_window_sizable_p, ""),
     S!("window-size-fixed-p", 0, 3, f_window_size_fixed_p, ""),
     S!(
@@ -292,7 +294,7 @@ pub(crate) static SUBRS: &[Subr] = &[
         "window-pixel-edges",
         0,
         1,
-        f_window_edges4,
+        f_window_pixel_edges4,
         "(l t r b) in pixels."
     ),
     S!("window-inside-pixel-edges", 0, 1, f_window_edges4, ""),
@@ -652,8 +654,10 @@ fn f_sel_window(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
     }
 }
 
+/// `window-valid-p': any window object — leaf or internal — that
+/// hasn't been deleted (GNU's WINDOW_VALID_P).
 fn f_window_valid_p(_i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    Ok(Value::from_bool(matches!(&a[0], Value::Window(_))))
+    Ok(Value::from_bool(matches!(&a[0], Value::Window(w) if !w.borrow().dead)))
 }
 
 fn f_window_live_t(i: &mut Interp, a: Vec<Value>) -> EvalResult {
@@ -661,26 +665,87 @@ fn f_window_live_t(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     Ok(Value::from_bool(!w.borrow().dead))
 }
 
-fn siblings(i: &mut Interp, w: &Value, next: bool) -> EvalResult {
-    let win = win_of(i, w)?;
-    let wid = win.borrow().id;
-    for f in &i.frames {
-        let fb = f.borrow();
-        let n = fb.windows.len();
-        for (k, w2) in fb.windows.iter().enumerate() {
-            if w2.borrow().id == wid {
-                let idx = if next {
-                    (k + 1) % n.max(1)
-                } else {
-                    (k + n.saturating_sub(1)) % n.max(1)
-                };
-                if let Some(target) = fb.windows.get(idx) {
-                    return Ok(Value::Window(target.clone()));
-                }
-            }
+/// The "N is not a valid window" error GNU's decode_valid_window
+/// signals for dead windows and non-window objects.
+fn valid_window_arg(i: &mut Interp, v: &Value) -> Result<WindowRef, Flow> {
+    match v {
+        Value::Nil => sel_window(i).ok_or_else(|| i.error("No window")),
+        Value::Window(w) if !w.borrow().dead => Ok(w.clone()),
+        other => {
+            let shown = i.princ_to_string(other);
+            Err(i.error(format!("{shown} is not a valid window")))
         }
     }
-    Ok(Value::Nil)
+}
+
+/// `window-parent' — the internal combination window above WINDOW,
+/// nil for the root and minibuffer windows.
+fn f_window_parent(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let w = valid_window_arg(i, &arg(&a, 0))?;
+    Ok(w_parent(&w).map(Value::Window).unwrap_or(Value::Nil))
+}
+
+/// `window-top-child': first child of a vc combination window;
+/// nil on leaves and hc internals.
+fn f_window_top_child(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let w = valid_window_arg(i, &arg(&a, 0))?;
+    let wb = w.borrow();
+    Ok(if wb.horiz == Some(false) {
+        wb.children
+            .first()
+            .map(|k| Value::Window(k.clone()))
+            .unwrap_or(Value::Nil)
+    } else {
+        Value::Nil
+    })
+}
+
+/// `window-left-child': first child of an hc combination window.
+fn f_window_left_child(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let w = valid_window_arg(i, &arg(&a, 0))?;
+    let wb = w.borrow();
+    Ok(if wb.horiz == Some(true) {
+        wb.children
+            .first()
+            .map(|k| Value::Window(k.clone()))
+            .unwrap_or(Value::Nil)
+    } else {
+        Value::Nil
+    })
+}
+
+/// `window-combination-p': internal windows only.
+fn f_window_combination_p(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let w = valid_window_arg(i, &arg(&a, 0))?;
+    Ok(Value::from_bool(w.borrow().horiz.is_some()))
+}
+
+/// 0 for the `window-old-pixel-*' family — no redisplay in batch.
+fn f_zero_win(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let _ = win_of(i, &arg(&a, 0))?;
+    Ok(Value::Int(0))
+}
+
+/// Sibling navigation: children of the same parent, or the frame's
+/// parentless chain (root … minibuffer).  Never wraps.
+fn siblings(i: &mut Interp, w: &Value, next: bool) -> EvalResult {
+    let win = valid_window_arg(i, w)?;
+    let Some(f) = frame_of_window(i, &win).or_else(|| sel_frame(i)) else {
+        return Ok(Value::Nil);
+    };
+    let (group, pos) = w_siblings(&f.borrow(), &win);
+    if pos == usize::MAX {
+        return Ok(Value::Nil);
+    }
+    let idx = if next {
+        pos.checked_add(1)
+    } else {
+        pos.checked_sub(1)
+    };
+    match idx.and_then(|j| group.get(j)) {
+        Some(t) => Ok(Value::Window(t.clone())),
+        _ => Ok(Value::Nil),
+    }
 }
 
 fn f_next_sibling(i: &mut Interp, a: Vec<Value>) -> EvalResult {
@@ -787,42 +852,216 @@ fn f_window_resize_no_error(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     window_resize_impl(i, a, true)
 }
 
+/// Window's size on the split axis its parent combines along, or
+/// None when the window can't be resized that way (root leaf,
+/// minibuffer, or parent splits the other axis — GNU: the parent's
+/// combination direction must match the resize direction).
+fn resize_axis(
+    w: &WindowRef,
+    horizontal: bool,
+) -> Option<(WindowRef, Vec<WindowRef>)> {
+    let p = w_parent(w)?;
+    let pb = p.borrow();
+    if pb.horiz != Some(horizontal) {
+        return None;
+    }
+    Some((p.clone(), pb.children.clone()))
+}
+
+/// Maximum grow capacity: total slack the siblings above their
+/// minimum sizes.  Shrink capacity: W's own slack above its minimum.
+fn resize_caps(i: &mut Interp, w: &WindowRef, horizontal: bool) -> (i128, i128) {
+    let Some((_, kids)) = resize_axis(w, horizontal) else {
+        return (0, 0);
+    };
+    let wmin = crate::lisp::builtins::misc::win_min_size(
+        i,
+        &Value::Window(w.clone()),
+        horizontal,
+        &Value::Nil,
+    );
+    let wsize = {
+        let wb = w.borrow();
+        (if horizontal { wb.width } else { wb.height }) as i128
+    };
+    let shrink = (wsize - wmin).max(0);
+    let grow: i128 = kids
+        .iter()
+        .filter(|k| !Rc::ptr_eq(k, w) && !k.borrow().dead)
+        .map(|k| {
+            let ks = {
+                let kb = k.borrow();
+                (if horizontal { kb.width } else { kb.height }) as i128
+            };
+            let kmin = crate::lisp::builtins::misc::win_min_size(
+                i,
+                &Value::Window(k.clone()),
+                horizontal,
+                &Value::Nil,
+            );
+            (ks - kmin).max(0)
+        })
+        .sum();
+    (grow, shrink)
+}
+
+/// `window-max-delta' — how far WINDOW can grow (batch: siblings'
+/// slack; 0 for root/minibuffer).
+fn f_window_max_delta(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    // GNU signature has a leading DELTA arg; window.el callers omit
+    // it (window WINDOW HORIZONTAL ...).  Detect the shape.
+    let (wv, horiz) = delta_args(i, &a)?;
+    let w = match wv {
+        Value::Window(w) if !w.borrow().dead => w,
+        _ => return Ok(Value::Int(0)),
+    };
+    if w.borrow().minibuffer || w.borrow().horiz.is_some() {
+        return Ok(Value::Int(0));
+    }
+    Ok(Value::Int(resize_caps(i, &w, horiz).0))
+}
+
+/// `window-min-delta' — how far WINDOW can shrink (positive amount).
+fn f_window_min_delta(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let (wv, horiz) = delta_args(i, &a)?;
+    let w = match wv {
+        Value::Window(w) if !w.borrow().dead => w,
+        _ => return Ok(Value::Int(0)),
+    };
+    if w.borrow().minibuffer || w.borrow().horiz.is_some() {
+        return Ok(Value::Int(0));
+    }
+    Ok(Value::Int(resize_caps(i, &w, horiz).1))
+}
+
+/// Parse the ambiguous (WINDOW DELTA ...)/(DELTA WINDOW ...) arg
+/// shapes `window-max-delta' sees from window.el vs direct calls.
+fn delta_args(i: &mut Interp, a: &[Value]) -> Result<(Value, bool), Flow> {
+    let first = arg(a, 0);
+    if matches!(first, Value::Int(_)) {
+        let w = arg(a, 1);
+        let horiz = a.get(3).map(|v| v.truthy()).unwrap_or(false);
+        Ok((w, horiz))
+    } else {
+        let horiz = a.get(1).map(|v| v.truthy()).unwrap_or(false);
+        Ok((first, horiz))
+    }
+}
+
 fn window_resize_impl(i: &mut Interp, a: Vec<Value>, no_error: bool) -> EvalResult {
-    let w = win_of(i, &arg(&a, 0))?;
+    // GNU Fwindow_resize uses decode_valid_window: bogus objects and
+    // dead windows get the plain "N is not a valid window" error.
+    let w = valid_window_arg(i, &arg(&a, 0))?;
     let delta = want_int(i, &a[1])?;
     let horizontal = arg(&a, 2).truthy();
-    // GNU: resizing a frame's root window is invalid.
-    let f = frame_of(i, &arg(&a, 0))?;
-    let is_root = {
-        let fb = f.borrow();
-        let live: Vec<&WindowRef> = fb.windows.iter().filter(|x| !x.borrow().dead).collect();
-        if live.len() == 1 {
-            std::rc::Rc::ptr_eq(live[0], &w)
+    let fail = |i: &mut Interp, msg: &str| -> EvalResult {
+        if no_error {
+            Ok(Value::Nil)
         } else {
-            fb.root
-                .as_ref()
-                .map_or(false, |r| std::rc::Rc::ptr_eq(r, &w))
+            Err(i.error(msg))
         }
     };
-    if is_root {
-        if no_error {
-            return Ok(Value::Nil);
+    {
+        let wb = w.borrow();
+        if wb.minibuffer {
+            return fail(i, "Cannot resize the minibuffer window");
         }
-        let err = i.intern("error");
-        return Err(i.signal_data(
-            err,
-            vec![Value::string(
-                "Cannot resize the root window of a frame".to_string(),
-            )],
-        ));
     }
-    let mut wb = w.borrow_mut();
-    if horizontal {
-        wb.width = (wb.width as i128 + delta).max(1) as usize;
+    // GNU: resizing a frame's root window is invalid.
+    let is_root = w_parent(&w).is_none();
+    if is_root {
+        return fail(i, "Cannot resize the root window of a frame");
+    }
+    if delta == 0 {
+        return fail(i, "Invalid window size");
+    }
+    let Some((p, kids)) = resize_axis(&w, horizontal) else {
+        return fail(i, "Invalid window size");
+    };
+    let (grow, shrink) = resize_caps(i, &w, horizontal);
+    let ok = if delta > 0 { delta <= grow } else { -delta <= shrink };
+    if !ok {
+        return fail(i, "Invalid window size");
+    }
+    // Apply: W takes DELTA; siblings give up (grow) or receive
+    // (shrink) space proportional to their current sizes.
+    {
+        let mut wb = w.borrow_mut();
+        if horizontal {
+            wb.width = (wb.width as i128 + delta).max(1) as usize;
+        } else {
+            wb.height = (wb.height as i128 + delta).max(1) as usize;
+        }
+    }
+    let pool = if delta > 0 {
+        grow
     } else {
-        wb.height = (wb.height as i128 + delta).max(1) as usize;
+        // Shrinking W releases space siblings soak up — proportional
+        // to their current sizes (a sole sibling takes it all).
+        kids.iter()
+            .filter(|k| !Rc::ptr_eq(k, &w) && !k.borrow().dead)
+            .map(|k| {
+                let kb = k.borrow();
+                (if horizontal { kb.width } else { kb.height }) as i128
+            })
+            .sum()
+    };
+    let mut need = delta.abs();
+    let last = kids
+        .iter()
+        .filter(|k| !Rc::ptr_eq(k, &w) && !k.borrow().dead)
+        .last()
+        .cloned();
+    for k in &kids {
+        if Rc::ptr_eq(k, &w) || k.borrow().dead {
+            continue;
+        }
+        let ksize = {
+            let kb = k.borrow();
+            (if horizontal { kb.width } else { kb.height }) as i128
+        };
+        let mut delta_k = if pool > 0 {
+            if delta > 0 {
+                // W grows: shrink K by its share of NEED (≤ its slack).
+                let kmin = crate::lisp::builtins::misc::win_min_size(
+                    i,
+                    &Value::Window(k.clone()),
+                    horizontal,
+                    &Value::Nil,
+                );
+                let slack = (ksize - kmin).max(0);
+                -(need * slack / pool).min(slack).min(need)
+            } else {
+                // W shrinks: grow K by its share of NEED.
+                (need * ksize / pool).min(need)
+            }
+        } else {
+            0
+        };
+        // The last sibling absorbs any rounding remainder so the
+        // parent combination stays exactly tiled.
+        if last.as_ref().is_some_and(|l| Rc::ptr_eq(l, k)) {
+            delta_k = if delta > 0 {
+                -need
+            } else {
+                need
+            };
+        }
+        need -= delta_k.abs();
+        {
+            let mut kb = k.borrow_mut();
+            if horizontal {
+                kb.width = (kb.width as i128 + delta_k).max(1) as usize;
+            } else {
+                kb.height = (kb.height as i128 + delta_k).max(1) as usize;
+            }
+        }
     }
-    Ok(Value::Nil)
+    relay_children(&p);
+    if no_error {
+        return Ok(Value::Nil);
+    }
+    Ok(Value::t())
 }
 
 fn f_window_list1(i: &mut Interp, a: Vec<Value>) -> EvalResult {
@@ -858,62 +1097,24 @@ fn some_window_candidates(i: &mut Interp, a: &[Value]) -> Vec<WindowRef> {
 }
 
 fn f_split_window_internal(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    // (split-window-internal WINDOW SIZE SIDE PIXELWISE) → new window.
-    let w = win_of(i, &a[0])?;
-    let size = want_int(i, &a[1])?;
-    let buf = w.borrow().buffer;
-    let new_id: usize = i.frames.iter().map(|f| f.borrow().windows.len()).sum();
-    let mut wb = w.borrow_mut();
-    let horizontal = i
-        .sym_id(&a[2])
-        .map(|id| i.symbol_name(id) == "right" || i.symbol_name(id) == "left")
-        .unwrap_or(false);
-    let new_win = crate::editor::Window {
-        id: wb.id + 1000 + new_id,
-        buffer: buf,
-        point: wb.point,
-        start: wb.start,
-        hscroll: wb.hscroll,
-        top: if horizontal {
-            wb.top
-        } else {
-            wb.top + size.max(0) as usize
-        },
-        height: if horizontal {
-            wb.height
-        } else {
-            (wb.height as i128 - size).max(1) as usize
-        },
-        left: if horizontal {
-            wb.left + size.max(0) as usize
-        } else {
-            wb.left
-        },
-        width: if horizontal {
-            (wb.width as i128 - size).max(1) as usize
-        } else {
-            wb.width
-        },
-        dedicated: false,
-        minibuffer: false,
-        params: Value::Nil,
-        margins: (0, 0),
-        use_time: 0,
-        prev_buffers: Value::Nil,
-        next_buffers: Value::Nil,
-        dead: false,
-    };
-    if horizontal {
-        wb.width = size.max(1) as usize;
-    } else {
-        wb.height = size.max(1) as usize;
+    // GNU Fsplit_window_internal validates SIZE before geometry:
+    // non-fixnum → wrong-type-argument; then on a tty frame every
+    // explicit SIZE fails — positive in `wset_new_size' ("Resizing
+    // old window failed"), non-positive in the minimum-size check
+    // ("Size of new window too small (after split)") — verified on
+    // GNU -Q --batch for right/below and 0/±N.  All remacs frames are
+    // tty-equivalent, so the tty branch applies unconditionally.
+    // (This strictness is only on the -internal worker: the public
+    // `split-window' computes its own size before delegating.)
+    match &a[1] {
+        Value::Int(s) => {
+            if *s > 0 {
+                return Err(i.error("Resizing old window failed".to_string()));
+            }
+            return Err(i.error("Size of new window too small (after split)".to_string()));
+        }
+        _ => return Err(i.wrong_type_mut("fixnump", &a[1])),
     }
-    drop(wb);
-    let wr = std::rc::Rc::new(std::cell::RefCell::new(new_win));
-    if let Some(f) = sel_frame(i) {
-        f.borrow_mut().windows.push(wr.clone());
-    }
-    Ok(Value::Window(wr))
 }
 
 fn f_delete_window_internal(i: &mut Interp, a: Vec<Value>) -> EvalResult {
@@ -927,6 +1128,11 @@ fn f_delete_window_internal(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         if let Some(pos) = fb.windows.iter().position(|x| x.borrow().id == wid) {
             let removed = fb.windows.remove(pos);
             removed.borrow_mut().dead = true;
+            // Unlink from the combination parent.
+            if let Some(p) = w_parent(&removed) {
+                p.borrow_mut().children.retain(|k| !Rc::ptr_eq(k, &removed));
+                removed.borrow_mut().parent = None;
+            }
             if fb.selected.borrow().id == wid {
                 if let Some(first) = fb.windows.first() {
                     fb.selected = first.clone();
@@ -1081,14 +1287,60 @@ fn f_window_margins(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     Ok(Value::cons(lv, rv))
 }
 
-fn f_window_edges4(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let w = win_of(i, &arg(&a, 0))?;
+/// Pixel-edge helpers shared by `window-inside-pixel-edges' /
+/// `window-absolute-pixel-edges' — GNU's batch inside geometry is the
+/// pre-split row space: subtract the menu-bar shift and the mode
+/// line (leaves only).
+fn inside_edges_of(i: &mut Interp, v: &Value) -> Result<(i128, i128, i128, i128), Flow> {
+    let w = win_of(i, v)?;
+    let shift = frame_of_window(i, &w)
+        .map(|f| fmenu_shift(&f.borrow()))
+        .unwrap_or(0);
     let wb = w.borrow();
+    let ml = usize::from(!wb.minibuffer && wb.horiz.is_none());
+    Ok((
+        wb.left as i128,
+        wb.top.saturating_sub(shift) as i128,
+        (wb.left + wb.width) as i128,
+        (wb.top + wb.height).saturating_sub(shift + ml) as i128,
+    ))
+}
+/// `window-pixel-edges': GNU's pixel edges are the *pre-split* row
+/// space (menu-bar shift undone) but still include the mode line —
+/// top equals `window-edges' minus the shift, bottom likewise.
+/// Verified on GNU -Q post-split: sel=(0 0 80 12) vs edges (0 1 80 13).
+fn pixel_edges_of(i: &mut Interp, v: &Value) -> Result<(i128, i128, i128, i128), Flow> {
+    let w = win_of(i, v)?;
+    let shift = frame_of_window(i, &w)
+        .map(|f| fmenu_shift(&f.borrow()))
+        .unwrap_or(0);
+    let wb = w.borrow();
+    Ok((
+        wb.left as i128,
+        wb.top.saturating_sub(shift) as i128,
+        (wb.left + wb.width) as i128,
+        (wb.top + wb.height).saturating_sub(shift) as i128,
+    ))
+}
+
+fn f_window_pixel_edges4(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let (l, t, r, b) = pixel_edges_of(i, &arg(&a, 0))?;
     Ok(Value::list(vec![
-        Value::Int(wb.left as i128),
-        Value::Int(wb.top as i128),
-        Value::Int((wb.left + wb.width) as i128),
-        Value::Int((wb.top + wb.height) as i128),
+        Value::Int(l),
+        Value::Int(t),
+        Value::Int(r),
+        Value::Int(b),
+    ]))
+}
+
+
+fn f_window_edges4(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let (l, t, r, b) = inside_edges_of(i, &arg(&a, 0))?;
+    Ok(Value::list(vec![
+        Value::Int(l),
+        Value::Int(t),
+        Value::Int(r),
+        Value::Int(b),
     ]))
 }
 
@@ -1113,40 +1365,12 @@ fn f_window_screen_lines(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 
 fn f_frame_root_window(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let f = frame_of(i, &arg(&a, 0))?;
-    // GNU: with one live window that window IS the root; otherwise a
-    // covering internal window spanning the frame minus the echo area.
-    let live: Vec<WindowRef> = f
-        .borrow()
-        .windows
-        .iter()
-        .filter(|w| !w.borrow().dead)
-        .cloned()
-        .collect();
-    if live.len() == 1 {
-        return Ok(Value::Window(live[0].clone()));
+    // GNU: the lone live window IS the root; once split the root is
+    // the internal combination window maintained by split/delete.
+    match &f.borrow().root {
+        Some(r) => Ok(Value::Window(r.clone())),
+        None => Ok(Value::Nil),
     }
-    let mut fb = f.borrow_mut();
-    if fb.root.is_none() {
-        let r = Window::new(usize::MAX);
-        {
-            let mini_top = fb
-                .minibuffer
-                .as_ref()
-                .map(|m| m.borrow().top)
-                .unwrap_or(fb.height);
-            // The root covers the content area: from the topmost
-            // child edge (0 before the first split, 1 once GNU's
-            // menu-bar row materialized) down to the echo area.
-            let top = fb.windows.iter().map(|w| w.borrow().top).min().unwrap_or(0);
-            let mut rb = r.borrow_mut();
-            rb.left = 0;
-            rb.top = top;
-            rb.width = fb.width;
-            rb.height = mini_top.saturating_sub(top);
-        }
-        fb.root = Some(r);
-    }
-    Ok(Value::Window(fb.root.as_ref().unwrap().clone()))
 }
 
 fn f_frame_sel_window(i: &mut Interp, a: Vec<Value>) -> EvalResult {
@@ -1154,13 +1378,28 @@ fn f_frame_sel_window(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     Ok(Value::Window(f.borrow().selected.clone()))
 }
 
+/// Leftmost/topmost live leaf of W's subtree.
+fn first_leaf(w: &WindowRef) -> WindowRef {
+    let first = {
+        let wb = w.borrow();
+        if wb.horiz.is_some() {
+            wb.children.first().cloned()
+        } else {
+            None
+        }
+    };
+    match first {
+        Some(k) => first_leaf(&k),
+        None => w.clone(),
+    }
+}
+
 fn f_frame_first_window(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     // GNU `frame_first_window' walks the window tree to the leftmost/
-    // topmost leaf; `windows' is kept in display order, so the first
-    // entry is that leaf.
+    // topmost leaf.
     let f = frame_of(i, &arg(&a, 0))?;
-    match f.borrow().windows.first() {
-        Some(w) => Ok(Value::Window(w.clone())),
+    match f.borrow().root.as_ref().map(first_leaf) {
+        Some(w) => Ok(Value::Window(w)),
         None => Ok(Value::Nil),
     }
 }
@@ -1232,7 +1471,8 @@ fn f_frame_list(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
 }
 
 fn f_tty_colors(_i: &mut Interp, _a: Vec<Value>) -> EvalResult {
-    Ok(Value::Int(256))
+    // GNU batch terminal: no color support → 0 cells.
+    Ok(Value::Int(0))
 }
 
 fn f_arg0(_i: &mut Interp, a: Vec<Value>) -> EvalResult {
@@ -1405,9 +1645,14 @@ fn f_truncated_partial_width(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 /// `window-mode-line-height' — 1 on tty; GNU uses a typed
 /// `window-live-p' check here (unlike the predicates above).
 fn f_window_mode_line_height(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    match arg(&a, 0) {
-        Value::Nil | Value::Window(_) => Ok(Value::Int(1)),
-        other => Err(i.wrong_type_mut("window-live-p", &other)),
+    match &arg(&a, 0) {
+        Value::Nil => Ok(Value::Int(1)),
+        Value::Window(w) => {
+            // The minibuffer window has no mode line.
+            let wb = w.borrow();
+            Ok(Value::Int(if wb.minibuffer || wb.horiz.is_some() { 0 } else { 1 }))
+        }
+        other => Err(i.wrong_type_mut("window-live-p", other)),
     }
 }
 
@@ -1440,14 +1685,19 @@ fn f_set_window_new_pixel(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     }
 }
 
-/// `set-window-combination-limit' — a leaf window cannot hold a
-/// combination limit; GNU signals a plain error.
+/// `set-window-combination-limit' — sets the flag on an internal
+/// window; GNU signals a plain error on leaves.
 fn f_set_window_combination_limit(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     match &a[0] {
-        Value::Nil | Value::Window(_) => {
-            Err(i.error("Combination limit is meaningful for internal windows only"))
+        Value::Window(w) if !w.borrow().dead => {
+            if w.borrow().horiz.is_some() {
+                w.borrow_mut().combination_limit = arg(&a, 1).truthy();
+                Ok(arg(&a, 1))
+            } else {
+                Err(i.error("Combination limit is meaningful for internal windows only"))
+            }
         }
-        other => Err(i.wrong_type_mut("window-valid-p", other)),
+        _ => Err(i.error("Combination limit is meaningful for internal windows only")),
     }
 }
 
@@ -1640,7 +1890,8 @@ fn f_set_terminal_parameter(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 
 fn f_frame_face_hash_table(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     // Validate FRAME like GNU (frame-live-p), then hand back a hash
-    // table of the known faces.
+    // table of the frame's faces: symbol → lface vector
+    // [face ATTR...] — `frame-face-alist' maphashes over this.
     if let Some(v) = a.first() {
         match v {
             Value::Nil | Value::Frame(_) => {}
@@ -1648,8 +1899,23 @@ fn f_frame_face_hash_table(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         }
     }
     use crate::lisp::value::{HashTest, LispHash};
-    let h = Value::Hash(Rc::new(RefCell::new(LispHash::new(HashTest::Eq))));
-    Ok(h)
+    let mut h = LispHash::new(HashTest::Eq);
+    let un = Value::Sym(i.intern("unspecified"));
+    let names: Vec<String> = crate::editor::KNOWN_FACES
+        .iter()
+        .map(|s| s.to_string())
+        .chain(i.face_table.iter().map(|(n, _)| n.clone()))
+        .collect();
+    for n in names {
+        let sym = Value::Sym(i.intern(&n));
+        let key = crate::lisp::builtins::hashfn::hash_key_for(i, &sym, HashTest::Eq);
+        let mut v = Vec::with_capacity(20);
+        v.push(Value::Sym(i.intern("face")));
+        v.resize(20, un.clone());
+        h.map.insert(key.clone(), Value::Vec(Rc::new(RefCell::new(v))));
+        h.put_key(key, sym);
+    }
+    Ok(Value::Hash(Rc::new(RefCell::new(h))))
 }
 
 /// `controlling-tty-p' — GNU validates the optional TERMINAL with
@@ -1700,8 +1966,9 @@ fn f_window_text_pixel_size(i: &mut Interp, a: Vec<Value>) -> EvalResult {
             other => return Err(i.wrong_type_mut("window-live-p", other)),
         }
     }
-    let h = if arg(&a, 5).truthy() { 1 } else { 0 };
-    Ok(Value::cons(Value::Int(0), Value::Int(h)))
+    // Nothing has ever been displayed in batch: the text area is
+    // degenerate (0 . 0) no matter the arguments.
+    Ok(Value::cons(Value::Int(0), Value::Int(0)))
 }
 
 /// tty output-buffer helpers on a non-tty terminal → GNU error.

@@ -3,6 +3,7 @@
 
 use crate::buffer::primitives::{buf_of, check_writable, cur, err_sym, pos_idx};
 use crate::lisp::Interp;
+use crate::lisp::obarray::sym;
 use crate::lisp::builtins::{S, arg, want_int, want_string};
 use crate::lisp::error::{EvalResult, Flow};
 use crate::lisp::value::{Subr, Value};
@@ -210,7 +211,7 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!("field-string", 0, 1, f_field_string, "Field text at POS."),
     S!(
         "field-string-no-properties", 0, 1,
-        f_field_string,
+        f_field_string_no_properties,
         "Field text (no props)."
     ),
     S!("delete-field", 0, 1, f_delete_field, "Delete field at POS."),
@@ -469,6 +470,8 @@ fn f_find_file_name_handler(i: &mut Interp, a: Vec<Value>) -> EvalResult {
                                     0,
                                     &syn,
                                     &crate::editor::re_category(i),
+                                    crate::lisp::regexp::NO_POINT,
+                                    false,
                                 )
                             })
                             .is_some();
@@ -1136,6 +1139,8 @@ fn f_sort_paragraphs(i: &mut Interp, a: Vec<Value>) -> EvalResult {
                     p - begv,
                     &syn,
                     &crate::editor::re_category(i),
+                    p - begv,
+                    false,
                 )
                 .is_none()
                 {
@@ -1397,13 +1402,14 @@ fn re_search_fwd(
     };
     let bound_idx = bound.map(|b| b.saturating_sub(begv)).unwrap_or(text.len());
     let syn = crate::editor::re_syntax(i);
-    match crate::lisp::regexp::search_full(re, &text, pos, &syn, &crate::editor::re_category(i)) {
+    match crate::lisp::regexp::search_full(re, &text, pos, &syn, &crate::editor::re_category(i), pos, false) {
         Some(regs) if regs[1].unwrap_or(0) <= bound_idx => {
             let e = regs[1].unwrap_or(0);
             i.match_data = Some(crate::lisp::eval::MatchData {
                 regs,
                 in_buffer: true,
                 base: begv,
+                buffer: Some(i.current_buffer),
             });
             cur(i).borrow_mut().set_point(begv + e);
             Ok(Value::t())
@@ -1811,7 +1817,7 @@ fn f_how_many(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let mut count = 0i128;
     let mut pos = 0usize;
     while let Some(regs) =
-        crate::lisp::regexp::search_full(&re, &chars, pos, &syn, &crate::editor::re_category(i))
+        crate::lisp::regexp::search_full(&re, &chars, pos, &syn, &crate::editor::re_category(i), crate::lisp::regexp::NO_POINT, false)
     {
         let (ms, me) = (regs[0].unwrap_or(0), regs[1].unwrap_or(0));
         count += 1;
@@ -1847,7 +1853,7 @@ fn delete_lines_matching(i: &mut Interp, a: &[Value], keep_match: bool) -> EvalR
         let line = part.strip_suffix('\n').unwrap_or(part);
         let chars: Vec<char> = line.chars().collect();
         let hit =
-            crate::lisp::regexp::search_full(&re, &chars, 0, &syn, &crate::editor::re_category(i))
+            crate::lisp::regexp::search_full(&re, &chars, 0, &syn, &crate::editor::re_category(i), crate::lisp::regexp::NO_POINT, false)
                 .is_some();
         let keep = if keep_match { hit } else { !hit };
         if keep {
@@ -1908,7 +1914,7 @@ fn f_replace_regexp(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let mut pos = 0usize;
     let mut n = 0usize;
     while let Some(regs) =
-        crate::lisp::regexp::search_full(&re, &region, pos, &syn, &crate::editor::re_category(i))
+        crate::lisp::regexp::search_full(&re, &region, pos, &syn, &crate::editor::re_category(i), crate::lisp::regexp::NO_POINT, false)
     {
         let (ms, me) = (regs[0].unwrap_or(0), regs[1].unwrap_or(0));
         out.extend(&region[pos..ms]);
@@ -2025,17 +2031,19 @@ fn f_replace_regexp_in_string(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         _ => String::new(),
     };
     let s = want_string(i, &a[2])?;
+    let fixedcase = arg(&a, 3).truthy();
     let literal = !arg(&a, 4).is_nil();
     let subexp = match arg(&a, 5) {
         Value::Int(n) => n.max(0) as usize,
         _ => 0,
     };
     let chars: Vec<char> = s.chars().collect();
+    let l = chars.len();
     let start = match arg(&a, 6) {
-        Value::Int(n) => n.max(0) as usize,
-        _ => 0,
+        Value::Nil => 0usize,
+        v => want_int(i, &v)?.max(0) as usize,
     };
-    if start > chars.len() {
+    if start > l {
         let e = i.intern("args-out-of-range");
         return Err(i.signal_data(e, vec![Value::string(s.clone()), Value::Int(start as i128)]));
     }
@@ -2044,26 +2052,47 @@ fn f_replace_regexp_in_string(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         .truthy();
     let re = crate::lisp::regexp::compile_case(&pat, case_fold)
         .map_err(|e| err_sym(i, "invalid-regexp", vec![Value::string(e.0)]))?;
-    // GNU: when START is non-nil the result excludes STRING's prefix.
-    let mut out = String::new();
+    // GNU (subr.el `replace-regexp-in-string'):
+    //   (while (and (< start l) (string-match regexp string start))
+    //     mb = match-beg, me = match-end; if empty, me = mb+1;
+    //     str = string[mb..me]; match data translated by -mb;
+    //     piece = (replace-match rep fixedcase literal str subexp)
+    //     — replace-match splices rep BEFORE the rest of str, so an
+    //     empty match inserts rep before the skipped char, and a
+    //     trailing empty match at mb == l never happens (start < l).)
+    let mut pieces: Vec<String> = Vec::new();
     let mut pos = start;
     let mut n = 0usize;
     let syn = crate::editor::re_syntax(i);
-    while let Some(regs) =
-        crate::lisp::regexp::search_full(&re, &chars, pos, &syn, &crate::editor::re_category(i))
-    {
+    while pos < l {
+        let regs = match crate::lisp::regexp::search_full(
+            &re,
+            &chars,
+            pos,
+            &syn,
+            &crate::editor::re_category(i),
+            crate::lisp::regexp::NO_POINT,
+            false,
+        ) {
+            Some(r) => r,
+            None => break,
+        };
         let (ms, me) = (regs[0].unwrap_or(0), regs[1].unwrap_or(0));
-        out.extend(&chars[pos..ms]);
-        // GNU: for a function REP, the match data is translated to the
-        // matched substring and REP is called with `match-string 0'; the
-        // result then undergoes replace-match's \-expansion unless LITERAL.
-        let rep_text;
-        let rep = if let Some(f) = &rep_fn {
+        let we = if me == ms { (ms + 1).min(l) } else { me };
+        pieces.push(chars[pos..ms].iter().collect());
+        // Match data translated to str = string[ms..we].
+        let tregs: Vec<Option<usize>> = regs.iter().map(|r| r.map(|x| x - ms)).collect();
+        let str_chars = &chars[ms..we];
+        // GNU: a function REP is called with `match-string 0' under
+        // the translated match data; the result is then expanded.
+        let rep_text: String;
+        let rep_str = if let Some(f) = &rep_fn {
             let saved_md = i.match_data.clone();
             i.match_data = Some(crate::lisp::eval::MatchData {
-                regs: regs.iter().map(|r| r.map(|x| x - ms)).collect(),
+                regs: tregs.clone(),
                 in_buffer: false,
                 base: 0,
+                buffer: None,
             });
             let mstr = str_slice(i, &a[2], ms, me);
             let rv = i.apply(f, vec![mstr]);
@@ -2073,29 +2102,51 @@ fn f_replace_regexp_in_string(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         } else {
             rep.as_str()
         };
-        if subexp > 0 {
-            // Replace only the SUBEXP group inside the match.
-            if let (Some(gs), Some(ge)) = (
-                regs.get(2 * subexp).copied().flatten(),
-                regs.get(2 * subexp + 1).copied().flatten(),
+        let (gs, ge) = if subexp > 0 {
+            match (
+                tregs.get(2 * subexp).copied().flatten(),
+                tregs.get(2 * subexp + 1).copied().flatten(),
             ) {
-                out.extend(&chars[ms..gs]);
-                expand_rep(i, rep, &regs, &chars, &mut out, literal)?;
-                out.extend(&chars[ge..me]);
-            } else {
-                out.extend(&chars[ms..me]);
+                (Some(s), Some(e)) => (s, e),
+                // GNU `replace-match': any subexp beyond the match
+                // registers — existing-but-unmatched or absent
+                // entirely — signals "replace-match subexpression
+                // does not exist".
+                _ => {
+                    return Err(err_sym(
+                        i,
+                        "error",
+                        vec![
+                            Value::string("replace-match subexpression does not exist"),
+                            Value::Int(subexp as i128),
+                        ],
+                    ))
+                }
             }
         } else {
-            expand_rep(i, rep, &regs, &chars, &mut out, literal)?;
+            (0, me - ms)
+        };
+        let mut rep_piece = String::new();
+        expand_rep(i, rep_str, &tregs, str_chars, &mut rep_piece, literal)?;
+        if !fixedcase {
+            let old: String = str_chars
+                [gs.min(str_chars.len())..ge.min(str_chars.len())]
+                .iter()
+                .collect();
+            rep_piece = crate::buffer::primitives::match_case(&old, &rep_piece);
         }
-        pos = if me > ms { me } else { me + 1 };
+        let mut piece: String = str_chars[..gs.min(str_chars.len())].iter().collect();
+        piece.push_str(&rep_piece);
+        piece.extend(str_chars[ge.min(str_chars.len())..].iter());
+        pieces.push(piece);
+        pos = we;
         n += 1;
-        if pos > chars.len() || n > 1_000_000 {
+        if n > 1_000_000 {
             break;
         }
     }
-    out.extend(&chars[pos.min(chars.len())..]);
-    Ok(Value::string(out))
+    pieces.push(chars[pos.min(l)..].iter().collect());
+    Ok(Value::string(pieces.concat()))
 }
 
 fn f_transpose_regions(i: &mut Interp, a: Vec<Value>) -> EvalResult {
@@ -2414,50 +2465,154 @@ fn f_make_translation_table_from_alist(i: &mut Interp, a: Vec<Value>) -> EvalRes
 }
 
 fn f_buffer_swap_text(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    // GNU Fbuffer_swap_text takes a buffer OBJECT (CHECK_BUFFER), not
+    // a name — and the checks run in this order: dead, then indirect,
+    // then has-indirect-children.
     let other = match &a[0] {
         Value::Buffer(b) => b.clone(),
-        Value::Str(s) => {
-            let name = s.borrow().clone();
-            let id = i.buffers.by_name(&name).ok_or_else(|| {
-                err_sym(
-                    i,
-                    "error",
-                    vec![Value::string(format!("No buffer {}", name))],
-                )
-            })?;
-            i.buffers.get(id).unwrap()
-        }
         other => return Err(i.wrong_type_mut("bufferp", other)),
     };
     let cur_b = cur(i);
+    if !other.borrow().live {
+        return Err(err_sym(
+            i,
+            "error",
+            vec![Value::string("Cannot swap a dead buffer’s text")],
+        ));
+    }
     // Swapping a buffer with itself is a no-op (and avoids a double
     // borrow_mut on the same RefCell).
     if std::rc::Rc::ptr_eq(&cur_b, &other) {
         return Ok(Value::Nil);
     }
+    if cur_b.borrow().base_buffer.is_some() || other.borrow().base_buffer.is_some() {
+        return Err(err_sym(
+            i,
+            "error",
+            vec![Value::string("Cannot swap indirect buffers’s text")],
+        ));
+    }
+    // Neither buffer may have indirect children hanging off its text.
+    let (cur_id, other_id) = (cur_b.borrow().id, other.borrow().id);
+    for cid in i.buffers.list() {
+        let is_child = i
+            .buffers
+            .get(cid)
+            .and_then(|cb| cb.borrow().base_buffer.as_ref().map(|br| br.borrow().id))
+            .map(|bid| bid == cur_id || bid == other_id)
+            .unwrap_or(false);
+        if is_child {
+            return Err(err_sym(
+                i,
+                "error",
+                vec![Value::string("One of the buffers to swap has indirect buffers")],
+            ));
+        }
+    }
     let (mut mine, mut theirs) = (cur_b.borrow_mut(), other.borrow_mut());
+    // GNU swapfield(own_text): the text storage — including intervals
+    // (our SharedText::props) and MODIFF ticks — moves wholesale.
     std::mem::swap(&mut mine.text, &mut theirs.text);
+    // Move the viewer registrations with the text: post-swap each
+    // buffer views the other's former SharedText.
+    mine.text.remove_viewer(&other);
+    mine.text.add_viewer(&cur_b);
+    theirs.text.remove_viewer(&cur_b);
+    theirs.text.add_viewer(&other);
+    // swapfield pt/begv/zv — point and narrowing travel with the text.
+    std::mem::swap(&mut mine.point, &mut theirs.point);
     std::mem::swap(&mut mine.begv, &mut theirs.begv);
     std::mem::swap(&mut mine.zv, &mut theirs.zv);
-    mine.point = mine.point.min(mine.text_len());
-    theirs.point = theirs.point.min(theirs.text_len());
+    // GNU swapfield_(undo_list), swapfield_(mark), swapfield_(mark_active).
+    let undo_sym = mine.undo_sym;
+    let mu = mine.locals.remove(&undo_sym).unwrap_or(Value::Nil);
+    let tu = theirs.locals.remove(&undo_sym).unwrap_or(Value::Nil);
+    mine.locals.insert(undo_sym, tu);
+    theirs.locals.insert(undo_sym, mu);
+    std::mem::swap(&mut mine.mark, &mut theirs.mark);
+    let ma = i.intern("mark-active");
+    let (mm_a, tm_a) = (mine.locals.remove(&ma), theirs.locals.remove(&ma));
+    if let Some(v) = tm_a {
+        mine.locals.insert(ma, v);
+    }
+    if let Some(v) = mm_a {
+        theirs.locals.insert(ma, v);
+    }
+    for s in [
+        "enable-multibyte-characters",
+        "bidi-display-reordering",
+        "bidi-paragraph-direction",
+        "bidi-paragraph-separate-re",
+        "bidi-paragraph-start-re",
+    ] {
+        let sid = i.intern(s);
+        let (mv, tv) = (mine.locals.remove(&sid), theirs.locals.remove(&sid));
+        if let Some(v) = tv {
+            mine.locals.insert(sid, v);
+        }
+        if let Some(v) = mv {
+            theirs.locals.insert(sid, v);
+        }
+    }
+    // GNU swap_buffer_overlays: overlay objects stay with their buffer
+    // handle but their positions… actually GNU swaps the overlay
+    // trees — each overlay's `buffer' retargets to the other buffer.
+    std::mem::swap(&mut mine.overlays, &mut theirs.overlays);
+    for ov in &mut mine.overlays {
+        if ov.buffer == Some(other_id) {
+            ov.buffer = Some(cur_id);
+        }
+    }
+    for ov in &mut theirs.overlays {
+        if ov.buffer == Some(cur_id) {
+            ov.buffer = Some(other_id);
+        }
+    }
+    // GNU: markers follow the text — each buffer's marker list moves
+    // to the other buffer and the markers retarget their owner.
+    std::mem::swap(&mut mine.markers, &mut theirs.markers);
+    for w in &mine.markers {
+        if let Some(m) = w.upgrade() {
+            let mut mm = m.borrow_mut();
+            if mm.buffer == Some(other_id) {
+                mm.buffer = Some(cur_id);
+            }
+        }
+    }
+    for w in &theirs.markers {
+        if let Some(m) = w.upgrade() {
+            let mut mm = m.borrow_mut();
+            if mm.buffer == Some(cur_id) {
+                mm.buffer = Some(other_id);
+            }
+        }
+    }
+    // GNU bumps MODIFF/CHARS_MODIFF on both texts after the swap.
+    mine.text.mod_tick.set(mine.text.mod_tick.get() + 1);
+    mine.text.chars_mod_tick.set(mine.text.chars_mod_tick.get() + 1);
+    theirs.text.mod_tick.set(theirs.text.mod_tick.get() + 1);
+    theirs.text.chars_mod_tick.set(theirs.text.chars_mod_tick.get() + 1);
     Ok(Value::Nil)
 }
 
 fn f_buffer_last_name(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let _ = a;
-    let _ = i;
-    Ok(Value::Nil)
+    // GNU: last name before the last rename or the kill; a fresh
+    // buffer's last name is its creation name.
+    let b = crate::buffer::primitives::buf_of(i, &crate::lisp::builtins::arg(&a, 0))?;
+    match &b.borrow().last_name {
+        Some(n) => Ok(Value::string(n.clone())),
+        None => Ok(Value::Nil),
+    }
 }
 
 fn f_buffer_mod_tick(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
     let b = cur(i);
-    Ok(Value::Int(b.borrow().mod_tick as i128))
+    Ok(Value::Int(b.borrow().text.mod_tick.get() as i128))
 }
 
 fn f_buffer_chars_mod_tick(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
     let b = cur(i);
-    Ok(Value::Int(b.borrow().chars_mod_tick as i128))
+    Ok(Value::Int(b.borrow().text.chars_mod_tick.get() as i128))
 }
 
 fn f_store_match_data(i: &mut Interp, a: Vec<Value>) -> EvalResult {
@@ -2467,13 +2622,20 @@ fn f_store_match_data(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let in_buffer = i.match_data.as_ref().map(|m| m.in_buffer).unwrap_or(true);
     let base = i.match_data.as_ref().map(|m| m.base).unwrap_or(0);
     let off = base + if in_buffer { 1 } else { 0 };
+    let to_pos = |v: &Value| -> Option<usize> {
+        // GNU accepts markers in the list too (match-data returns them).
+        match v {
+            Value::Marker(m) => {
+                let mm = m.borrow();
+                mm.buffer.map(|_| mm.position.saturating_sub(base))
+            }
+            _ => v.int().map(|p| (p as usize).saturating_sub(off)),
+        }
+    };
     let mut k = 0;
     while k < items.len() {
-        let s = items[k].int().map(|p| (p as usize).saturating_sub(off));
-        let e = items
-            .get(k + 1)
-            .and_then(|v| v.int())
-            .map(|p| (p as usize).saturating_sub(off));
+        let s = to_pos(&items[k]);
+        let e = items.get(k + 1).and_then(|v| to_pos(v));
         regs.push(s);
         regs.push(e);
         k += 2;
@@ -2482,6 +2644,7 @@ fn f_store_match_data(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         regs,
         in_buffer,
         base,
+        buffer: None,
     });
     Ok(Value::Nil)
 }
@@ -2489,7 +2652,7 @@ fn f_store_match_data(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 // ---------- text-property scans ----------
 
 fn prop_at_pos(bb: &crate::buffer::Buffer, pos: usize, prop: u32) -> Value {
-    for tp in bb.text_props.iter().rev() {
+    for tp in bb.text.props.borrow().iter().rev() {
         if tp.prop == prop && pos >= tp.start && pos < tp.end {
             return tp.value.clone();
         }
@@ -2497,186 +2660,371 @@ fn prop_at_pos(bb: &crate::buffer::Buffer, pos: usize, prop: u32) -> Value {
     Value::Nil
 }
 
-fn field_bounds(i: &mut Interp, a: &[Value], at_start: bool) -> Result<usize, Flow> {
-    // `field` text property delimits fields; default whole buffer.
-    let pos = match a.get(0) {
-        Some(v) if !v.is_nil() => {
-            let len = cur(i).borrow().text_len();
-            pos_idx(len, v.int().unwrap_or(1))
+/// GNU `find_field' (editfns.c): fields left/right of POS, the
+/// at_field_start/at_field_end edge detection driven by the
+/// rear-sticky `get-pos-property' value, then boundary scans via
+/// previous/next-single-char-property-change.  Positions are 1-based
+/// Lisp positions; BEG_LIMIT/END_LIMIT clamp the scans.
+fn find_field(
+    i: &mut Interp,
+    pos_v: Option<i128>,
+    merge_at_boundary: bool,
+    beg_limit: Option<i128>,
+    beg: Option<&mut i128>,
+    end_limit: Option<i128>,
+    end: Option<&mut i128>,
+) -> Result<(), Flow> {
+    let pos = pos_v.unwrap_or_else(|| cur(i).borrow().point() as i128 + 1);
+    let begv = cur(i).borrow().begv as i128 + 1;
+    let zv = cur(i).borrow().zv as i128 + 1;
+    let field_sym = i.intern("field");
+    let boundary_sym = i.intern("boundary");
+    let gcp = |i: &mut Interp, p: i128| -> Value {
+        if p < begv || p > zv {
+            return Value::Nil;
         }
-        _ => cur(i).borrow().point(),
+        let idx = (p - 1).max(0) as usize;
+        let b = cur(i);
+        let bb = b.borrow();
+        crate::buffer::primitives::char_prop_at_overlay(i, &bb, idx, field_sym).0
     };
-    let fid = i.intern("field");
-    let b = cur(i);
-    let bb = b.borrow();
-    let field = prop_at_pos(&bb, pos, fid);
-    if field.is_nil() {
-        return Ok(if at_start { bb.begv } else { bb.text_len() });
-    }
-    // Walk to the boundary where the field value changes.
-    let mut p = pos;
-    if at_start {
-        while p > bb.begv {
-            let v = prop_at_pos(&bb, p - 1, fid);
-            if !crate::lisp::builtins::eq_values(&v, &field) {
-                break;
-            }
-            p -= 1;
+    let gpos = |i: &mut Interp, p: i128| -> EvalResult {
+        crate::buffer::primitives::f_get_pos_property(
+            i,
+            vec![Value::Int(p), Value::Sym(field_sym)],
+        )
+    };
+    let next_change = |i: &mut Interp, p: i128, lim: Option<i128>| -> EvalResult {
+        crate::buffer::primitives::f_next_single_char_property_change(
+            i,
+            vec![
+                Value::Int(p),
+                Value::Sym(field_sym),
+                Value::Nil,
+                lim.map(Value::Int).unwrap_or(Value::Nil),
+            ],
+        )
+    };
+    let prev_change = |i: &mut Interp, p: i128, lim: Option<i128>| -> EvalResult {
+        crate::buffer::primitives::f_prev_single_char_property_change(
+            i,
+            vec![
+                Value::Int(p),
+                Value::Sym(field_sym),
+                Value::Nil,
+                lim.map(Value::Int).unwrap_or(Value::Nil),
+            ],
+        )
+    };
+    let after_field = gcp(i, pos);
+    let before_field = if pos > begv { gcp(i, pos - 1) } else { after_field.clone() };
+    let mut at_field_start = false;
+    let mut at_field_end = false;
+    if !merge_at_boundary {
+        let field = gpos(i, pos)?;
+        if !crate::lisp::builtins::eq_values(&field, &after_field) {
+            at_field_end = true;
         }
-        Ok(p)
-    } else {
-        let len = bb.text_len();
-        while p < len {
-            let v = prop_at_pos(&bb, p, fid);
-            if !crate::lisp::builtins::eq_values(&v, &field) {
-                break;
-            }
-            p += 1;
+        if !crate::lisp::builtins::eq_values(&field, &before_field) {
+            at_field_start = true;
         }
-        Ok(p)
+        if field.is_nil() && at_field_start && at_field_end {
+            // An inserted char would have a nil field while both
+            // sides are non-nil — a non-sticky field meant for
+            // display, not a real boundary (GNU's comint-prompt case).
+            at_field_start = false;
+            at_field_end = false;
+        }
     }
+    if let Some(b) = beg {
+        if at_field_start {
+            *b = pos;
+        } else {
+            let mut p = pos;
+            if merge_at_boundary && crate::lisp::builtins::eq_values(&before_field, &Value::Sym(boundary_sym)) {
+                p = prev_change(i, p, beg_limit)?.int().unwrap_or(begv);
+            }
+            let p2 = prev_change(i, p, beg_limit)?;
+            *b = p2.int().unwrap_or(begv);
+        }
+    }
+    if let Some(e) = end {
+        if at_field_end {
+            *e = pos;
+        } else {
+            let mut p = pos;
+            if merge_at_boundary && crate::lisp::builtins::eq_values(&after_field, &Value::Sym(boundary_sym)) {
+                p = next_change(i, p, end_limit)?.int().unwrap_or(zv);
+            }
+            let p2 = next_change(i, p, end_limit)?;
+            *e = p2.int().unwrap_or(zv);
+        }
+    }
+    Ok(())
+}
+
+/// (BEG, END) 1-based bounds of the field at POS via `find_field'.
+fn find_field_bounds(
+    i: &mut Interp,
+    pos_v: Option<i128>,
+    merge: bool,
+    blim: Option<i128>,
+    elim: Option<i128>,
+) -> Result<(i128, i128), Flow> {
+    let (mut b, mut e) = (0i128, 0i128);
+    find_field(i, pos_v, merge, blim, Some(&mut b), elim, Some(&mut e))?;
+    Ok((b, e))
 }
 
 fn f_field_beginning(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let p = field_bounds(i, &a, true)?;
-    Ok(Value::Int(p as i128 + 1))
+    let pos = match a.get(0) {
+        Some(v) if !v.is_nil() => Some(v.int().or_else(|| marker_pos(v)).unwrap_or(1)),
+        _ => None,
+    };
+    let merge = arg(&a, 1).truthy();
+    let lim = a.get(2).and_then(|v| v.int());
+    let (b, _) = find_field_bounds(i, pos, merge, lim, None)?;
+    Ok(Value::Int(b))
 }
 
 fn f_field_end(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let p = field_bounds(i, &a, false)?;
-    Ok(Value::Int(p as i128 + 1))
+    let pos = match a.get(0) {
+        Some(v) if !v.is_nil() => Some(v.int().or_else(|| marker_pos(v)).unwrap_or(1)),
+        _ => None,
+    };
+    let merge = arg(&a, 1).truthy();
+    let lim = a.get(2).and_then(|v| v.int());
+    let (_, e) = find_field_bounds(i, pos, merge, None, lim)?;
+    Ok(Value::Int(e))
 }
 
 fn f_field_string(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let s = field_bounds(i, &a, true)?;
-    let e = field_bounds(i, &a, false)?;
-    let b = cur(i);
-    let bb = b.borrow();
-    Ok(Value::string(bb.text.substring(s, e)))
+    let pos = match a.get(0) {
+        Some(v) if !v.is_nil() => Some(v.int().or_else(|| marker_pos(v)).unwrap_or(1)),
+        _ => None,
+    };
+    let (s, e) = find_field_bounds(i, pos, false, None, None)?;
+    let v = crate::buffer::primitives::f_buffer_substring(
+        i,
+        vec![Value::Int(s), Value::Int(e)],
+    )?;
+    // field-string-no-properties shares this fn; the caller strips
+    // via the OBJECT arg convention — distinguish by subr name is not
+    // possible here, so look at the registration: the -no-properties
+    // variant calls f_field_string_no_properties below.
+    Ok(v)
+}
+
+fn f_field_string_no_properties(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let pos = match a.get(0) {
+        Some(v) if !v.is_nil() => Some(v.int().or_else(|| marker_pos(v)).unwrap_or(1)),
+        _ => None,
+    };
+    let (s, e) = find_field_bounds(i, pos, false, None, None)?;
+    crate::buffer::primitives::f_buffer_substring_no_properties(
+        i,
+        vec![Value::Int(s), Value::Int(e)],
+    )
 }
 
 fn f_delete_field(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     check_writable(i)?;
-    let s = field_bounds(i, &a, true)?;
-    let e = field_bounds(i, &a, false)?;
-    crate::buffer::primitives::chg_delete(i, s, e)?;
+    let pos = match a.get(0) {
+        Some(v) if !v.is_nil() => Some(v.int().or_else(|| marker_pos(v)).unwrap_or(1)),
+        _ => None,
+    };
+    let (s, e) = find_field_bounds(i, pos, false, None, None)?;
+    if s != e {
+        crate::buffer::primitives::chg_delete(i, (s - 1) as usize, (e - 1) as usize)?;
+    }
     Ok(Value::Nil)
 }
 
 fn f_constrain_to_field(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    // (constrain-to-field NEW-POS OLD-POS ...) → clamp NEW-POS into the
-    // field containing OLD-POS.  GNU: when NEW-POS is nil, use the
-    // current point and also move point to the constrained position.
-    let len = cur(i).borrow().text_len();
-    let (new_pos, move_pt) = match a[0].int().or_else(|| marker_pos(&a[0])) {
-        Some(n) => (pos_idx(len, n), false),
-        None if a[0].is_nil() => (cur(i).borrow().point(), true),
-        None => return Err(i.wrong_type_mut("integer-or-marker-p", &a[0])),
+    // GNU Fconstrain_to_field (editfns.c): clamp NEW-POS into the
+    // field OLD-POS lives in; nil NEW-POS means point (and moves it).
+    let move_pt = a[0].is_nil();
+    let new_v = if move_pt {
+        cur(i).borrow().point() as i128 + 1
+    } else {
+        a[0].int()
+            .or_else(|| marker_pos(&a[0]))
+            .ok_or_else(|| i.wrong_type_mut("integer-or-marker-p", &a[0]))?
     };
-    let fid = i.intern("field");
-    let (field_at_new, bounds) = {
+    let old_v = a[1]
+        .int()
+        .or_else(|| marker_pos(&a[1]))
+        .ok_or_else(|| i.wrong_type_mut("integer-or-marker-p", &a[1]))?;
+    let merge = arg(&a, 2).truthy();
+    let only_in_line = arg(&a, 3).truthy();
+    let inhibit_prop = a.get(4).cloned().unwrap_or(Value::Nil);
+    let field_sym = i.intern("field");
+    let begv = cur(i).borrow().begv as i128 + 1;
+    let zv = cur(i).borrow().zv as i128 + 1;
+    let gcp = |i: &mut Interp, p: i128| -> Value {
+        if p < begv || p > zv {
+            return Value::Nil;
+        }
         let b = cur(i);
         let bb = b.borrow();
-        (prop_at_pos(&bb, new_pos, fid), (bb.begv, bb.text_len()))
+        crate::buffer::primitives::char_prop_at_overlay(i, &bb, (p - 1) as usize, field_sym).0
     };
-    if field_at_new.is_nil() {
-        if move_pt {
-            cur(i).borrow_mut().set_point(new_pos);
+    let fwd = new_v > old_v;
+    let mut result = new_v;
+    let inhibit_motion = i
+        .intern_soft("inhibit-field-text-motion")
+        .map(|id| i.symbol_value(id).truthy())
+        .unwrap_or(false);
+    let has_field = !gcp(i, new_v).is_nil()
+        || !gcp(i, old_v).is_nil()
+        || (new_v > begv && !gcp(i, new_v - 1).is_nil())
+        || (old_v > begv && !gcp(i, old_v - 1).is_nil());
+    let mut captured = false;
+    if inhibit_prop.truthy() {
+        let psym = i.sym_id(&inhibit_prop).unwrap_or(sym::NIL);
+        let pos_val = crate::buffer::primitives::f_get_pos_property(
+            i,
+            vec![Value::Int(old_v), inhibit_prop.clone()],
+        )?;
+        captured = pos_val.truthy()
+            && (old_v <= begv
+                || crate::buffer::primitives::char_prop_at_overlay(
+                    i,
+                    &cur(i).borrow(),
+                    (old_v - 1) as usize,
+                    psym,
+                )
+                .0
+                .truthy()
+                || crate::buffer::primitives::char_prop_at_overlay(
+                    i,
+                    &cur(i).borrow(),
+                    (old_v - 2).max(0) as usize,
+                    psym,
+                )
+                .0
+                .truthy());
+    }
+    if !inhibit_motion && new_v != old_v && has_field && !captured {
+        let field_bound = if fwd {
+            let (_, e) = find_field_bounds(i, Some(old_v), merge, None, Some(new_v))?;
+            e
+        } else {
+            let (b, _) = find_field_bounds(i, Some(old_v), merge, Some(new_v), None)?;
+            b
+        };
+        // If ESCAPE-FROM-EDGE moved the bound past NEW-POS, NEW-POS is
+        // already inside the right field — leave it.
+        let need = if field_bound < new_v { fwd } else { !fwd };
+        if need {
+            let same_line = if only_in_line {
+                // Constraint is OK only when NEW-POS and FIELD_BOUND
+                // share a line.
+                let b = cur(i);
+                let bb = b.borrow();
+                let (lo, hi) = (new_v.min(field_bound), new_v.max(field_bound));
+                let (s, e) = ((lo - 1).max(0) as usize, (hi - 1).max(0) as usize);
+                !bb.text.substring(s, e.min(bb.text.len())).contains('\n')
+            } else {
+                true
+            };
+            if same_line {
+                result = field_bound;
+            }
         }
-        return Ok(Value::Int(new_pos as i128 + 1));
     }
-    let _ = bounds;
-    let old_field = prop_at_pos(&cur(i).borrow(), pos_idx(len, a[1].int().unwrap_or(1)), fid);
-    let clamped = if crate::lisp::builtins::eq_values(&field_at_new, &old_field) {
-        new_pos
-    } else {
-        // Move to nearest boundary of the old field.
-        let s = field_bounds(i, &a[1..], true)?;
-        let e = field_bounds(i, &a[1..], false)?;
-        new_pos.clamp(s, e)
-    };
     if move_pt {
-        cur(i).borrow_mut().set_point(clamped);
+        cur(i).borrow_mut().set_point((result - 1).max(0) as usize);
     }
-    Ok(Value::Int(clamped as i128 + 1))
+    Ok(Value::Int(result))
 }
 
 fn f_get_char_prop_and_overlay(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    // Return (PROPVAL . OVERLAY) — we merge overlay plists.
+    // GNU `get_char_property_and_overlay': (PROPVAL . OVERLAY) where
+    // OVERLAY is the winning overlay or nil for a text property.
     let prop = crate::buffer::primitives::want_sym(i, &a[1])?;
     let len = cur(i).borrow().text_len();
     let pos = pos_idx(len, a[0].int().unwrap_or(1));
     let b = cur(i);
     let bb = b.borrow();
-    // Check overlays first (higher precedence).
-    for ov in &bb.overlays {
-        if pos >= ov.start && pos < ov.end {
-            let v = crate::lisp::eval::plist_get(&ov.plist, prop);
-            if !v.is_nil() {
-                return Ok(Value::cons(v, Value::Nil));
-            }
-        }
-    }
-    let v = prop_at_pos(&bb, pos, prop);
-    Ok(Value::cons(v, Value::Nil))
+    let (v, ov) = crate::buffer::primitives::char_prop_at_overlay(i, &bb, pos, prop);
+    Ok(Value::cons(v, ov))
 }
 
 fn f_next_prop_change_fwd(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    // Like next-property-change but also considers overlays.
+    // GNU `next-char-property-change': like next-property-change but
+    // also considers overlays — and defaults to point-max (not nil)
+    // when nothing changes.
     if matches!(a.get(1), Some(Value::Str(_))) {
-        // String objects have no overlays — same as
-        // next-property-change.
         return crate::buffer::primitives::f_next_property_change(i, a);
     }
-    let r = crate::buffer::primitives::f_next_property_change(i, a.clone());
-    // Check overlay boundaries too.
-    if let Ok(v) = &r {
-        let len = cur(i).borrow().text_len();
-        let pos = pos_idx(len, a[0].int().unwrap_or(1));
+    let len = cur(i).borrow().text_len();
+    let begv = cur(i).borrow().begv;
+    let pos = pos_idx(len, a[0].int().unwrap_or(1));
+    let explicit_lim = a.get(1).and_then(|v| v.int());
+    // LIMIT is a 1-based position; default is point-max.
+    let lim = explicit_lim
+        .map(|l| (l.max(begv as i128 + 1) as usize).min(len + 1))
+        .unwrap_or(len + 1);
+    let mut next: Option<usize> = None;
+    {
         let b = cur(i);
         let bb = b.borrow();
-        let mut next = v.int().map(|x| x as usize - 1);
+        let mut take = |cand: usize| {
+            // A boundary at 0-based index CAND is position CAND+1.
+            if cand > pos && cand < lim && next.map(|n| cand < n).unwrap_or(true) {
+                next = Some(cand);
+            }
+        };
+        for tp in bb.text.props.borrow().iter() {
+            take(tp.start);
+            take(tp.end);
+        }
         for ov in &bb.overlays {
-            for cand in [ov.start, ov.end] {
-                if cand > pos && next.map(|n| cand < n).unwrap_or(true) {
-                    next = Some(cand);
-                }
+            if ov.buffer == Some(bb.id) {
+                take(ov.start);
+                take(ov.end);
             }
         }
-        if let Some(n) = next {
-            return Ok(Value::Int(n as i128 + 1));
-        }
     }
-    r
+    Ok(Value::Int(next.map(|n| n as i128 + 1).unwrap_or(lim as i128)))
 }
 
 fn f_prev_prop_change(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    // GNU `previous-char-property-change': defaults to point-min
+    // (not nil) when nothing changes before POS.
     if matches!(a.get(1), Some(Value::Str(_))) {
         return crate::buffer::primitives::f_prev_property_change(i, a);
     }
     let len = cur(i).borrow().text_len();
     let pos = pos_idx(len, a[0].int().unwrap_or(1));
-    let b = cur(i);
-    let bb = b.borrow();
+    let begv = cur(i).borrow().begv;
+    // LIMIT is a 1-based position; default is point-min (GNU).
+    let explicit_lim = a.get(1).and_then(|v| v.int());
+    let lim = explicit_lim
+        .map(|l| (l.max(1) as usize - 1).min(len))
+        .unwrap_or(begv);
     let mut prev: Option<usize> = None;
-    for tp in &bb.text_props {
-        for cand in [tp.start, tp.end] {
-            if cand < pos && prev.map(|n| cand > n).unwrap_or(true) {
+    {
+        let b = cur(i);
+        let bb = b.borrow();
+        let mut take = |cand: usize| {
+            if cand < pos && cand >= lim && prev.map(|n| cand > n).unwrap_or(true) {
                 prev = Some(cand);
+            }
+        };
+        for tp in bb.text.props.borrow().iter() {
+            take(tp.start);
+            take(tp.end);
+        }
+        for ov in &bb.overlays {
+            if ov.buffer == Some(bb.id) {
+                take(ov.start);
+                take(ov.end);
             }
         }
     }
-    for ov in &bb.overlays {
-        for cand in [ov.start, ov.end] {
-            if cand < pos && prev.map(|n| cand > n).unwrap_or(true) {
-                prev = Some(cand);
-            }
-        }
-    }
-    match prev {
-        Some(p) => Ok(Value::Int(p as i128 + 1)),
-        None => Ok(arg(&a, 1)),
-    }
+    Ok(Value::Int(prev.map(|p| p as i128 + 1).unwrap_or(lim as i128 + 1)))
 }
 
 fn f_marker_last_position(i: &mut Interp, a: Vec<Value>) -> EvalResult {
@@ -2771,7 +3119,7 @@ fn f_vertical_motion(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     Ok(Value::Int(moved))
 }
 
-fn line_start(text: &crate::buffer::GapBuffer, pos: usize) -> usize {
+fn line_start(text: &crate::buffer::SharedText, pos: usize) -> usize {
     let mut p = pos.min(text.len());
     while p > 0 && text.char_at(p - 1) != '\n' {
         p -= 1;
@@ -2779,7 +3127,7 @@ fn line_start(text: &crate::buffer::GapBuffer, pos: usize) -> usize {
     p
 }
 
-fn line_end(text: &crate::buffer::GapBuffer, pos: usize) -> usize {
+fn line_end(text: &crate::buffer::SharedText, pos: usize) -> usize {
     let mut p = pos.min(text.len());
     while p < text.len() && text.char_at(p) != '\n' {
         p += 1;
@@ -2818,8 +3166,10 @@ fn f_backward_prefix_chars(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
     let b = cur(i);
     let mut bb = b.borrow_mut();
     let (beg, pt) = (bb.begv, bb.point());
-    let text = bb.text.as_slice();
-    let p = crate::buffer::primitives::backward_prefix_chars(&syn, text, beg, pt);
+    let p = {
+        let text = bb.text.as_slice();
+        crate::buffer::primitives::backward_prefix_chars(&syn, &text, beg, pt)
+    };
     bb.set_point(p);
     Ok(Value::Nil)
 }

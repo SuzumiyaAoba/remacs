@@ -21,6 +21,8 @@ pub fn special_form(id: SymId) -> Option<SpecialFn> {
         sym::IF => sf_if,
         sym::COND => sf_cond,
         sym::PROGN => sf_progn,
+        // `track-mouse' is a Lisp macro in GNU 31.1 (subr.el), not a
+        // special form - kept out so `special-form-p' returns nil.
         sym::PROG1 => sf_prog1,
         sym::PROG2 => sf_prog2,
         sym::AND => sf_and,
@@ -28,9 +30,14 @@ pub fn special_form(id: SymId) -> Option<SpecialFn> {
         sym::LET => sf_let,
         sym::LET_STAR => sf_let_star,
         sym::SETQ => sf_setq,
-        sym::SETQ_DEFAULT => sf_setq_default,
+        // `setq-default' is NOT a special form in GNU: subr.el defines
+        // it as a macro over `set-default' (prelude does the same).
         sym::DEFVAR => sf_defvar,
         sym::DEFCONST => sf_defconst,
+        // eval-side dispatch only: `defun'/`defmacro'/`lambda' carry
+        // MACRO cells in GNU (fboundp sees them) — never registered as
+        // Unevalled subrs, so special-form-p/indirect-function stay
+        // nil on the symbol surface.
         sym::DEFUN => sf_defun,
         sym::DEFMACRO => sf_defmacro,
         sym::LAMBDA => sf_lambda,
@@ -40,12 +47,11 @@ pub fn special_form(id: SymId) -> Option<SpecialFn> {
         sym::CONDITION_CASE => sf_condition_case,
         sym::INTERACTIVE => |_i, _a| Ok(Value::Nil),
         sym::SAVE_EXCURSION => sf_save_excursion,
+        // eval-side dispatch for names GNU keeps as Lisp macros.
         sym::SAVE_MARK_AND_EXCURSION => sf_save_mark_and_excursion,
         sym::SAVE_CURRENT_BUFFER => sf_save_current_buffer,
         sym::WITH_CURRENT_BUFFER => sf_with_current_buffer,
         sym::SAVE_RESTRICTION => sf_save_restriction,
-        sym::TRACK_MOUSE => sf_progn,
-        sym::BACKQUOTE => sf_backquote,
         _ => return None,
     })
 }
@@ -139,6 +145,16 @@ impl Interp {
         let is_special = self.obarray.symbol(sym).special
             || crate::lisp::eval::lexenv_declared(&self.lexenv, sym)
             || self.file_declared.borrow().contains(&sym);
+        // Constants (nil/t/keywords) are never dynamically bound —
+        // GNU binds them in the lexical env even when `special' would
+        // flag them (their defconst-ness isn't a defvar).
+        if self.obarray.symbol(sym).constant {
+            if let Some(frame) = lex_vars {
+                crate::lisp::eval::lexframe_bind(frame, sym, val);
+                return Ok(());
+            }
+            return self.specbind(sym, val);
+        }
         match (lex_vars, is_special) {
             (Some(frame), false) => {
                 crate::lisp::eval::lexframe_bind(frame, sym, val);
@@ -192,6 +208,11 @@ fn sf_cond(i: &mut Interp, args: Value) -> EvalResult {
                     let b = c.borrow();
                     (b.car.clone(), b.cdr.clone())
                 };
+                // GNU's Fcond XCARs each clause: a non-list clause
+                // signals `wrong-type-argument' (listp CLAUSE).
+                if !matches!(clause, Value::Cons(_) | Value::Nil) {
+                    return Err(i.wrong_type_mut("listp", &clause));
+                }
                 let test = car(&clause);
                 let v = i.eval(&test)?;
                 if v.truthy() {
@@ -203,7 +224,7 @@ fn sf_cond(i: &mut Interp, args: Value) -> EvalResult {
                 }
                 cur = next;
             }
-            _ => return Err(i.error("bad cond clause")),
+            tail => return Err(i.wrong_type_mut("listp", &tail)),
         }
     }
 }
@@ -225,51 +246,7 @@ fn sf_prog2(i: &mut Interp, args: Value) -> EvalResult {
     Ok(second)
 }
 
-/// `progv' stays out of `special_form': GNU has no Fprogv subr —
-/// `eval_sub' dispatches on the bare symbol, so `fboundp',
-/// `special-form-p' and `func-arity' all see a void function cell.
-pub(crate) fn sf_progv(i: &mut Interp, args: Value) -> EvalResult {
-    // GNU Fprogv: eval SYMBOLS and VALUES, then dynamically bind each
-    // symbol to its value while evaluating BODY.  More values than
-    // symbols are ignored; missing values bind nil.  The bindings are
-    // visible to `eval'/`symbol-value' inside BODY (let-when-compile,
-    // cl-progv rely on this).
-    let syms = i.eval(&car(&args))?;
-    let vals = i.eval(&cadr(&args))?;
-    let mark = i.specbind_depth();
-    let mut cur_s = syms;
-    let mut cur_v = vals;
-    let mut bind_err = None;
-    while let Value::Cons(sc) = cur_s.clone() {
-        let (sym_v, rest_s) = {
-            let b = sc.borrow();
-            (b.car.clone(), b.cdr.clone())
-        };
-        let val = if let Value::Cons(vc) = cur_v.clone() {
-            let b = vc.borrow();
-            let v = b.car.clone();
-            cur_v = b.cdr.clone();
-            v
-        } else {
-            Value::Nil
-        };
-        let Some(sid) = i.sym_id(&sym_v) else {
-            bind_err = Some(i.wrong_type_mut("symbolp", &sym_v));
-            break;
-        };
-        if let Err(e) = i.specbind(sid, val) {
-            bind_err = Some(e);
-            break;
-        }
-        cur_s = rest_s;
-    }
-    let r = match bind_err {
-        Some(e) => Err(e),
-        None => i.eval_progn(&cdr(&cdr(&args))),
-    };
-    i.unbind_to(mark)?;
-    r
-}
+
 
 fn sf_and(i: &mut Interp, args: Value) -> EvalResult {
     let mut cur = args;
@@ -402,6 +379,12 @@ fn sf_let(i: &mut Interp, args: Value) -> EvalResult {
         let mark = i.specbind_depth();
         let mut r = Ok(Value::Nil);
         for (v, val) in evaluated {
+            if std::env::var_os("DBG_SETCONST").is_some()
+                && let_var(i, &v).map(|s| s == sym::NIL).unwrap_or(false)
+            {
+                eprintln!("[let-nil-lex] spec={:?} val={:?}",
+                          i.princ_to_string(&v), i.princ_to_string(&val));
+            }
             r = match let_var(i, &v) {
                 Ok(s) => i.bind_var(Some(&frame), s, val).map(|_| Value::Nil),
                 Err(e) => Err(e),
@@ -421,6 +404,12 @@ fn sf_let(i: &mut Interp, args: Value) -> EvalResult {
         let mark = i.specbind_depth();
         let mut r = Ok(Value::Nil);
         for (v, val) in evaluated {
+            if std::env::var_os("DBG_SETCONST").is_some()
+                && let_var(i, &v).map(|s| s == sym::NIL).unwrap_or(false)
+            {
+                eprintln!("[let-nil] spec={:?} val={:?}",
+                          i.princ_to_string(&v), i.princ_to_string(&val));
+            }
             r = match let_var(i, &v) {
                 Ok(s) => i.specbind(s, val).map(|_| Value::Nil),
                 Err(e) => Err(e),
@@ -486,10 +475,10 @@ fn sf_let_star(i: &mut Interp, args: Value) -> EvalResult {
     }
 }
 
-fn setq_pairs(i: &mut Interp, args: &Value, default: bool) -> EvalResult {
+fn setq_pairs(i: &mut Interp, args: &Value, default: bool, who: SymId) -> EvalResult {
     let mut cur = args.clone();
     let mut last = Value::Nil;
-    let mut _n = 0usize;
+    let mut n = 0i128;
     loop {
         match cur {
             Value::Nil => return Ok(last),
@@ -498,18 +487,33 @@ fn setq_pairs(i: &mut Interp, args: &Value, default: bool) -> EvalResult {
                     let b = c.borrow();
                     (b.car.clone(), b.cdr.clone())
                 };
+                n += 1;
                 let (val_f, next2) = {
                     match &next1 {
                         Value::Cons(c2) => {
                             let b = c2.borrow();
                             (b.car.clone(), b.cdr.clone())
                         }
-                        _ => (Value::Nil, Value::Nil),
+                        Value::Nil => (Value::Nil, Value::Nil),
+                        other => {
+                            // Dotted tail counts as one more element in
+                            // GNU's arity report.
+                            let _ = other;
+                            n += 1;
+                            return Err(i.wrong_number_of_args(&Value::Sym(who), n));
+                        }
                     }
                 };
                 let sid = i
                     .sym_id(&sym_v)
                     .ok_or_else(|| i.wrong_type_mut("symbolp", &sym_v))?;
+                // GNU `Fsetq': a dangling symbol without a value form
+                // signals `wrong-number-of-arguments' BEFORE the
+                // missing value could evaluate.
+                if matches!(next2, Value::Nil) && !matches!(next1, Value::Cons(_)) {
+                    return Err(i.wrong_number_of_args(&Value::Sym(who), n));
+                }
+                n += 1;
                 last = i.eval(&val_f)?;
                 if default {
                     i.set_symbol_default(sid, last.clone())?;
@@ -534,20 +538,20 @@ fn setq_pairs(i: &mut Interp, args: &Value, default: bool) -> EvalResult {
                     }
                 }
                 cur = next2;
-                _n += 1;
             }
-            _ => return Err(i.error("odd number of setq args")),
+            other => {
+                // Non-list tail (dotted list): report the raw count.
+                let _ = other;
+                return Err(i.wrong_number_of_args(&Value::Sym(who), n + 1));
+            }
         }
     }
 }
 
 fn sf_setq(i: &mut Interp, args: Value) -> EvalResult {
-    setq_pairs(i, &args, false)
+    setq_pairs(i, &args, false, sym::SETQ)
 }
 
-fn sf_setq_default(i: &mut Interp, args: Value) -> EvalResult {
-    setq_pairs(i, &args, true)
-}
 
 fn sf_defvar(i: &mut Interp, args: Value) -> EvalResult {
     let name_v = car(&args);
@@ -650,6 +654,18 @@ fn sf_defmacro(i: &mut Interp, args: Value) -> EvalResult {
     eval_defun_declarations(i, &name_v, &params, &body, true)?;
     Ok(name_v)
 }
+
+fn sf_lambda(i: &mut Interp, args: Value) -> EvalResult {
+    // `(lambda ...)' self-evaluates to a function object; under
+    // lexical-binding it closes over the current lexical env.
+    let params = car(&args);
+    let body_v = cdr(&args);
+    let body = body_v.list_to_vec().unwrap_or_default();
+    let mut lambda = i.parse_lambda(&params, &body, None)?;
+    lambda.env = i.lambda_env();
+    Ok(Value::Lambda(Rc::new(lambda)))
+}
+
 
 /// GNU `macroexp--defun-declarations': each `(declare (PROP . ARGS))'
 /// spec in BODY dispatches to the handler bound in
@@ -755,16 +771,6 @@ fn eval_defun_declarations(
     Ok(Value::Nil)
 }
 
-fn sf_lambda(i: &mut Interp, args: Value) -> EvalResult {
-    // `(lambda ...)' self-evaluates to a function object; under
-    // lexical-binding it closes over the current lexical env.
-    let params = car(&args);
-    let body_v = cdr(&args);
-    let body = body_v.list_to_vec().unwrap_or_default();
-    let mut lambda = i.parse_lambda(&params, &body, None)?;
-    lambda.env = i.lambda_env();
-    Ok(Value::Lambda(Rc::new(lambda)))
-}
 
 fn sf_while(i: &mut Interp, args: Value) -> EvalResult {
     let test = car(&args);
@@ -981,16 +987,6 @@ fn sf_save_mark_and_excursion(i: &mut Interp, args: Value) -> EvalResult {
     r
 }
 
-fn sf_save_current_buffer(i: &mut Interp, args: Value) -> EvalResult {
-    let old = i.current_buffer;
-    let r = i.eval_progn(&args);
-    // GNU: set_buffer_if_live — restore only if the buffer survives.
-    if i.buffer_live(old) {
-        i.set_current_buffer(old);
-    }
-    r
-}
-
 fn sf_with_current_buffer(i: &mut Interp, args: Value) -> EvalResult {
     let buf_v = i.eval(&car(&args))?;
     // GNU's set-buffer/get_buffer: a buffer or its name string;
@@ -1015,6 +1011,18 @@ fn sf_with_current_buffer(i: &mut Interp, args: Value) -> EvalResult {
     r
 }
 
+
+fn sf_save_current_buffer(i: &mut Interp, args: Value) -> EvalResult {
+    let old = i.current_buffer;
+    let r = i.eval_progn(&args);
+    // GNU: set_buffer_if_live — restore only if the buffer survives.
+    if i.buffer_live(old) {
+        i.set_current_buffer(old);
+    }
+    r
+}
+
+
 fn sf_save_restriction(i: &mut Interp, args: Value) -> EvalResult {
     let saved = i.save_restriction_state();
     let r = i.eval_progn(&args);
@@ -1024,12 +1032,3 @@ fn sf_save_restriction(i: &mut Interp, args: Value) -> EvalResult {
 
 // ---------- backquote ----------
 
-fn sf_backquote(i: &mut Interp, args: Value) -> EvalResult {
-    // The expansion algorithm is a faithful Lisp port of GNU's
-    // emacs-lisp/backquote.el (backquote-process/backquote-listify/
-    // backquote-list*) living in the prelude — call it like GNU's
-    // `backquote' macro does: (cdr (backquote-process STRUCTURE)).
-    let proc = Value::Sym(i.intern("backquote-process"));
-    let tagged = i.apply(&proc, vec![car(&args)])?;
-    i.eval(&cdr(&tagged))
-}

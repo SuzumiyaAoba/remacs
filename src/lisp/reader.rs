@@ -42,6 +42,9 @@ pub struct Reader<'a> {
     /// sympos (a real symbol for every primitive) instead of the
     /// `symbol-with-pos' record.
     pub sympos_enabled: bool,
+    /// True when the source is a buffer (GNU `from_buffer_p'): read
+    /// errors then carry `(MSG LINE COLUMN)` like `invalid_syntax_lisp'.
+    pub from_buffer: bool,
 }
 
 fn read_err(interp: &mut Interp, msg: &str) -> Flow {
@@ -69,6 +72,9 @@ fn read_err_radix(interp: &mut Interp, radix: u32) -> Flow {
 
 fn eof_err(interp: &mut Interp) -> Flow {
     let sym_id = interp.intern("end-of-file");
+    // Refresh last_error_stack like `signal()` so a read error's
+    // backtrace isn't attributed to the previous signal's frames.
+    *interp.last_error_stack.borrow_mut() = interp.lisp_stack.clone();
     Flow::Signal(Value::Sym(sym_id), Value::Nil, false)
 }
 
@@ -113,6 +119,7 @@ impl<'a> Reader<'a> {
             label_markers: HashMap::new(),
             annotate_pos: None,
             sympos_enabled: false,
+            from_buffer: false,
         }
     }
 
@@ -170,14 +177,46 @@ impl<'a> Reader<'a> {
         }
     }
 
-    /// Read one object. `None` = clean EOF.
+    /// Read one object. `None` = clean EOF.  For buffer sources GNU's
+    /// `invalid_syntax_lisp' appends (LINE COLUMN) to the error data —
+    /// computed at the reader position where the error surfaced.
     pub fn read(&mut self) -> Result<Option<Value>, Flow> {
+        let r = self.read_inner();
+        if let Err(Flow::Signal(s, data, b)) = &r {
+            let irs = self.interp.intern("invalid-read-syntax");
+            if self.from_buffer && self.interp.sym_id(s) == Some(irs) {
+                let (line, col) = self.error_pos();
+                let mut data2 = data.list_to_vec().unwrap_or_default();
+                data2.push(Value::Int(line as i128));
+                data2.push(Value::Int(col as i128));
+                return Err(Flow::Signal(s.clone(), Value::list(data2), *b));
+            }
+        }
+        r
+    }
+
+    fn read_inner(&mut self) -> Result<Option<Value>, Flow> {
         if self.skip_layout()? {
             return Ok(None);
         }
         Ok(Some(self.read_object()?))
     }
 
+    /// GNU `invalid_syntax_lisp': (LINE COLUMN) of the read error —
+    /// 1-based newline count and char column before `pos'.
+    fn error_pos(&self) -> (usize, usize) {
+        let mut line = 1;
+        let mut col = 0;
+        for &c in self.chars[..self.pos.min(self.chars.len())].iter() {
+            if c == '\n' {
+                line += 1;
+                col = 0;
+            } else {
+                col += 1;
+            }
+        }
+        (line, col + 1)
+    }
     fn read_object(&mut self) -> Result<Value, Flow> {
         match self.peek() {
             None => Err(eof_err(self.interp)),
@@ -188,7 +227,15 @@ impl<'a> Reader<'a> {
             Some('[') => {
                 self.pos += 1;
                 let items = self.read_seq(']')?;
-                Ok(Value::Vec(std::rc::Rc::new(std::cell::RefCell::new(items))))
+                // GNU: `[]' reads as the shared zero_vector, so two
+                // empty-vector literals are eq.
+                if items.is_empty() {
+                    Ok(self.interp.zero_vector.clone())
+                } else {
+                    Ok(Value::Vec(std::rc::Rc::new(std::cell::RefCell::new(
+                        items,
+                    ))))
+                }
             }
             Some('\'') => {
                 self.pos += 1;
@@ -390,9 +437,20 @@ impl<'a> Reader<'a> {
                     return Ok(v);
                 }
                 Some('\\') => {
+                    // `\u'/`\U' produce a real Unicode character — GNU
+                    // marks the string multibyte even when the code
+                    // fits in 0x80..0xFF (e.g. \u00A0 → NBSP), unlike
+                    // the octal \NNN escapes which stay raw bytes.
+                    let uni_escape = matches!(self.peek(), Some('u') | Some('U'));
                     let c = self.read_string_escape()?;
                     if let Some(c) = c {
-                        if (c as u32) > 0xFF {
+                        // Eight-bit proxy chars (from \NNN octal/\xNN
+                        // escapes ≤0xFF) are raw bytes — they keep the
+                        // literal unibyte like GNU.
+                        if ((c as u32) > 0xFF
+                            && crate::lisp::value::eight_bit_byte(c).is_none())
+                            || uni_escape
+                        {
                             multibyte = true;
                         }
                         out.push(c);
@@ -935,23 +993,36 @@ impl<'a> Reader<'a> {
                 Ok(t)
             }
             Some('[') => {
-                // `#[ARGLIST BODY ENV]' — a function object.  GNU reads
-                // byte-code here; ours is an interpreted Lambda.  Like
-                // GNU we reject the degenerate shapes `#[]' and `#[x]'
-                // (the first element must be a list or nil arglist).
+                // `#[...]' — a compiled/interpreted function object.
+                // GNU read_bytecode() enforces the closure layout:
+                // size in CLOSURE_STACK_DEPTH..=CLOSURE_INTERACTIVE+1
+                // (3..=6), arglist a fixnum/cons/nil, and either
+                //   (STRING code && VECTOR constants && size>3
+                //    && FIXNATP stack-depth)   — byte-code, or
+                //   (CONS code && (CONS||NIL) constants) — interpreted.
                 self.pos += 2;
                 let items = self.read_seq_unannotated(']')?;
-                match items.first() {
-                    None => return Err(read_err_sym(self.interp, "Invalid byte-code object")),
-                    // GNU also accepts an integer arglist — the
-                    // compact `args & 0x7ff...' encoding used by the
-                    // byte-compiler's own constant vectors.
-                    Some(v) if !v.is_nil() && !matches!(v, Value::Cons(_) | Value::Int(_)) => {
-                        return Err(read_err_sym(self.interp, "Invalid byte-code object"));
-                    }
-                    _ => {}
-                }
+                let size = items.len();
                 let arglist = items.first().cloned().unwrap_or(Value::Nil);
+                let arglist_ok = matches!(arglist, Value::Nil | Value::Cons(_) | Value::Int(_));
+                let code_ok = match items.get(1) {
+                    Some(Value::Str(_)) => {
+                        // Byte-code: constants must be a vector and
+                        // STACK_DEPTH (slot 3) a natural fixnum.
+                        size > 3
+                            && matches!(items.get(2), Some(Value::Vec(_)))
+                            && matches!(items.get(3), Some(Value::Int(n)) if *n >= 0)
+                    }
+                    Some(Value::Cons(_)) => {
+                        // Interpreted: constants (env) cons or nil.
+                        size > 2
+                            && matches!(items.get(2), Some(Value::Nil) | Some(Value::Cons(_)))
+                    }
+                    _ => false,
+                };
+                if !(size >= 3 && size <= 6 && arglist_ok && code_ok) {
+                    return Err(read_err_sym(self.interp, "Invalid byte-code object"));
+                }
                 let body = items.get(1).cloned().unwrap_or(Value::Nil);
                 let env = items.get(2).cloned().unwrap_or(Value::Nil);
                 // `#[... nil]' prints with a `nil' env (plain lambda);
@@ -1189,8 +1260,12 @@ impl<'a> Reader<'a> {
         if tok.is_empty() {
             return Err(read_err(self.interp, "empty token"));
         }
-        if let Some(v) = parse_number(&tok) {
-            return Ok(v);
+        // GNU read0: a token that contains a `\` escape is never a
+        // number — `3\.5' reads as the symbol `3.5', not the float.
+        if !escaped {
+            if let Some(v) = parse_number(&tok) {
+                return Ok(v);
+            }
         }
         match tok.as_str() {
             // `nil' reads as the nil object, not a symbol cell.

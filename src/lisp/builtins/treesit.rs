@@ -572,7 +572,7 @@ fn ensure_parsed(i: &mut Interp, pid: u64) -> Result<Value, Flow> {
         (
             p.tree.is_none()
                 || p.need_reparse
-                || p.buf_tick != b.chars_mod_tick
+                || p.buf_tick != b.text.chars_mod_tick.get()
                 || p.begv != b.begv
                 || p.zv != b.zv,
             p.buffer.clone(),
@@ -611,7 +611,7 @@ fn reparse(i: &mut Interp, pid: u64, buf: &BufferRef) -> Result<Vec<(usize, usiz
         let begv = b.begv.min(chars.len());
         let zv = b.zv.min(chars.len()).max(begv);
         let text: String = chars[begv..zv].iter().collect();
-        (text, b.begv, b.zv, b.chars_mod_tick)
+        (text, b.begv, b.zv, b.text.chars_mod_tick.get())
     };
     if text.len() > u32::MAX as usize {
         return Err(sig(i, "treesit-buffer-too-large", vec![]));
@@ -819,11 +819,9 @@ fn want_buffer_or_current(i: &mut Interp, v: &Value) -> Result<(BufferRef, Value
         other => return Err(i.wrong_type_mut("bufferp", other)),
     };
     // Indirect buffers use their base buffer's parsers.
-    if let Some(base) = buf.borrow().base_buffer {
-        if let Some(bb) = i.buffers.get(base) {
-            let val = i.buffer_value(base).unwrap_or(buf_val);
-            return Ok((bb, val));
-        }
+    if let Some(base) = buf.borrow().base_buffer.clone() {
+        let val = i.buffer_value(base.borrow().id).unwrap_or(buf_val);
+        return Ok((base, val));
     }
     Ok((buf, buf_val))
 }
@@ -1149,8 +1147,8 @@ fn f_parse_string(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         b.text.set_text(&text);
         b.begv = 0;
         b.zv = b.text.len();
-        b.chars_mod_tick += 1;
-        b.mod_tick += 1;
+        b.text.chars_mod_tick.set(b.text.chars_mod_tick.get() + 1);
+        b.text.mod_tick.set(b.text.mod_tick.get() + 1);
     }
     let parser = f_parser_create(
         i,
@@ -1831,7 +1829,7 @@ fn predicate_match(i: &mut Interp, args: &[Value], captures: &[Value]) -> Result
         .map_err(|e| vec![Value::string(format!("Invalid regexp: {}", e.0))])?;
     let syn = crate::editor::re_syntax(i);
     let chars: Vec<char> = text.chars().collect();
-    Ok(crate::lisp::regexp::search(&re, &chars, 0, &syn, &crate::editor::re_category(i)).is_some())
+    Ok(crate::lisp::regexp::search(&re, &chars, 0, &syn, &crate::editor::re_category(i), crate::lisp::regexp::NO_POINT).is_some())
 }
 
 /// `#pred?' predicate — apply the interned function name to the
@@ -2356,6 +2354,7 @@ fn match_predicate(
                         0,
                         &syn,
                         &crate::editor::re_category(i),
+                        crate::lisp::regexp::NO_POINT,
                     )
                     .is_some())
                 }
@@ -2426,6 +2425,7 @@ fn match_predicate(
                         0,
                         &syn,
                         &crate::editor::re_category(i),
+                        crate::lisp::regexp::NO_POINT,
                     )
                     .is_none()
                     {

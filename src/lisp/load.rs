@@ -3,6 +3,7 @@
 use crate::lisp::Interp;
 use crate::lisp::error::EvalResult;
 use crate::lisp::value::Value;
+use std::cell::RefCell;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
@@ -12,25 +13,76 @@ use std::rc::Rc;
 fn candidates(dir: &Path, name: &str, nosuffix: bool, mustsuffix: bool) -> Vec<PathBuf> {
     let mut v = Vec::new();
     let base = dir.join(name);
+    // GNU Fload: MUST-SUFFIX falls away when NAME has a directory part
+    // or already ends in .el/.elc/.eln — then suffixes are tried and
+    // the bare name is a valid hit too (via the "" rep suffix).
+    let bare_ok = nosuffix
+        || !mustsuffix
+        || name.contains('/')
+        || name.ends_with(".el")
+        || name.ends_with(".elc")
+        || name.ends_with(".eln");
     if nosuffix {
         v.push(base);
-    } else if name.ends_with(".el") || name.ends_with(".elc") || name.ends_with(".eln") {
-        v.push(base);
-    } else if mustsuffix {
-        // `openp' with a suffix predicate never opens the bare name.
     } else {
-        // GNU prefers the native-compiled file when one exists.
-        v.push(base.with_extension("eln"));
-        v.push(base.with_extension("elc"));
-        v.push(base.with_extension("el"));
-        v.push(base);
+        // get-load-suffixes order (no native comp: .elc/.el first,
+        // then .gz reps via load-file-rep-suffixes), bare name last
+        // when MUST-SUFFIX doesn't bar it.
+        if name.ends_with(".el") || name.ends_with(".elc") || name.ends_with(".eln") {
+            v.push(base);
+        } else {
+            v.push(base.with_extension("eln"));
+            v.push(base.with_extension("elc"));
+            v.push(base.with_extension("el"));
+        }
+        if bare_ok {
+            v.push(dir.join(name));
+        }
     }
     v
 }
 
 /// Find library file NAME on load-path (or as an absolute/relative path).
+/// Directories don't count as hits here.
+/// GNU `openp' result: a hit is either a file or a directory — the
+/// directory case must reach `Fload' so it can signal "Is a directory".
+pub(crate) enum Found {
+    File(String),
+    Dir(String),
+}
+
+/// Pick the first existing candidate; with `load-prefer-newer' the
+/// newest of the file candidates in this dir wins (GNU `openp').
+fn pick_existing(paths: Vec<PathBuf>, prefer_newer: bool) -> Option<Found> {
+    let mut best: Option<(PathBuf, std::time::SystemTime)> = None;
+    for p in paths {
+        if p.is_dir() {
+            // GNU `openp' returns directories too — a dir shadows any
+            // later file candidate at the same position.
+            return Some(Found::Dir(p.to_string_lossy().into_owned()));
+        }
+        if !p.is_file() {
+            continue;
+        }
+        if !prefer_newer {
+            return Some(Found::File(p.to_string_lossy().into_owned()));
+        }
+        let m = std::fs::metadata(&p)
+            .and_then(|m| m.modified())
+            .unwrap_or(std::time::SystemTime::UNIX_EPOCH);
+        match &best {
+            Some((_, bm)) if *bm >= m => {}
+            _ => best = Some((p, m)),
+        }
+    }
+    best.map(|(p, _)| Found::File(p.to_string_lossy().into_owned()))
+}
+
 pub(crate) fn locate(i: &mut Interp, name: &str) -> Option<String> {
-    locate_opts(i, name, false, false)
+    match locate_full(i, name, false, false) {
+        Some(Found::File(p)) => Some(p),
+        _ => None,
+    }
 }
 
 /// `locate' honoring `load''s NOSUFFIX/MUST-SUFFIX arguments.
@@ -40,15 +92,39 @@ pub(crate) fn locate_opts(
     nosuffix: bool,
     mustsuffix: bool,
 ) -> Option<String> {
+    match locate_full(i, name, nosuffix, mustsuffix) {
+        Some(Found::File(p)) => Some(p),
+        _ => None,
+    }
+}
+
+/// `locate_opts' that also reports a directory hit: GNU's `openp'
+/// opens directories happily and `Fload' signals "Is a directory"
+/// afterwards, so the distinction must survive the search.
+pub(crate) fn locate_full(
+    i: &mut Interp,
+    name: &str,
+    nosuffix: bool,
+    mustsuffix: bool,
+) -> Option<Found> {
+    // GNU's `openp' consults `load-prefer-newer' per directory: the
+    // newest of the candidates inside a dir wins before the next dir.
+    let prefer_newer = !nosuffix
+        && !mustsuffix
+        && i
+            .symbol_value(i.intern_soft("load-prefer-newer").unwrap_or(0))
+            .truthy();
+    // GNU's `openp' on "" stats "" and misses (ENOENT) — never a hit.
+    if name.is_empty() {
+        return None;
+    }
     let p = Path::new(name);
     if p.is_absolute() || name.contains('/') || name.contains(std::path::MAIN_SEPARATOR) {
-        for c in candidates(Path::new(""), name, nosuffix, mustsuffix) {
-            if c.is_file() {
-                return Some(c.to_string_lossy().into_owned());
-            }
-        }
-        if !nosuffix && !mustsuffix && p.is_file() {
-            return Some(name.to_string());
+        if let Some(hit) = pick_existing(
+            candidates(Path::new(""), name, nosuffix, mustsuffix),
+            prefer_newer,
+        ) {
+            return Some(hit);
         }
         if p.is_absolute() {
             return None;
@@ -58,10 +134,10 @@ pub(crate) fn locate_opts(
         // (`leim' + "quail/arabic" → leim/quail/arabic.el); try the
         // same against every search dir.
         for dir in search_dirs(i) {
-            for c in candidates(&dir, name, nosuffix, mustsuffix) {
-                if c.is_file() {
-                    return Some(c.to_string_lossy().into_owned());
-                }
+            if let Some(hit) =
+                pick_existing(candidates(&dir, name, nosuffix, mustsuffix), prefer_newer)
+            {
+                return Some(hit);
             }
         }
         // Our bundled tree is flat under lisp/, with colliding
@@ -72,10 +148,10 @@ pub(crate) fn locate_opts(
         for dir_s in builtin_dirs() {
             let dir = PathBuf::from(dir_s);
             for n in [&flat, base] {
-                for c in candidates(&dir, n, nosuffix, mustsuffix) {
-                    if c.is_file() {
-                        return Some(c.to_string_lossy().into_owned());
-                    }
+                if let Some(hit) =
+                    pick_existing(candidates(&dir, n, nosuffix, mustsuffix), prefer_newer)
+                {
+                    return Some(hit);
                 }
             }
         }
@@ -83,10 +159,10 @@ pub(crate) fn locate_opts(
     }
     // Search load-path (a list of strings).
     for dir in search_dirs(i) {
-        for c in candidates(&dir, name, nosuffix, mustsuffix) {
-            if c.is_file() {
-                return Some(c.to_string_lossy().into_owned());
-            }
+        if let Some(hit) =
+            pick_existing(candidates(&dir, name, nosuffix, mustsuffix), prefer_newer)
+        {
+            return Some(hit);
         }
     }
     None
@@ -2491,10 +2567,38 @@ fn eval_file_lex_dumped(
             ));
         }
     };
+    // `load-file-rep-suffixes' decompression: a `.gz' candidate is the
+    // gzipped form of the source — GNU routes this through jka-compr;
+    // flate2 gives the same bytes.
+    let src = if path.ends_with(".gz") {
+        match std::fs::read(path).ok().and_then(|b| gunzip(&b)) {
+            Some(bytes) => decode_load_bytes(&bytes),
+            None => {
+                return Err(i.signal_data(
+                    crate::lisp::sym::FILE_ERROR,
+                    vec![
+                        Value::string("Opening input file"),
+                        Value::string("Malformed or misplaced compressed data"),
+                        Value::string(path),
+                    ],
+                ));
+            }
+        }
+    } else {
+        src
+    };
     // Track load-file-name / load-in-progress like Emacs does.  GNU
     // binds `load-file-name' to the filename `openp' located — the
     // tried path itself, not its truename.
     eval_src_opts(i, path, &src, force_lex, dumped_like)
+}
+
+/// Decompress gzip data; None on malformed input.
+fn gunzip(bytes: &[u8]) -> Option<Vec<u8>> {
+    use std::io::Read;
+    let mut d = flate2::read::GzDecoder::new(bytes);
+    let mut out = Vec::new();
+    d.read_to_end(&mut out).ok().map(|_| out)
 }
 
 /// Evaluate SRC as if loaded from file FILE (binds load-file-name,
@@ -2511,10 +2615,15 @@ fn eval_src_opts(
     dumped_like: bool,
 ) -> EvalResult {
     let lfn = i.intern("load-file-name");
+    let ltfn = i.intern("load-true-file-name");
     let lip = i.intern("load-in-progress");
     let cll = i.intern("current-load-list");
     let mark = i.specbind_depth();
     i.specbind(lfn, Value::string(file))?;
+    // GNU lread.c: `load-true-file-name' binds `found' — openp's hit
+    // (load-path-expanded, NOT canonicalized; /tmp stays /tmp on macOS
+    // since openp's path isn't a symlink resolution).
+    i.specbind(ltfn, Value::string(file))?;
     i.specbind(lip, Value::t())?;
     // Emacs: `load' honors a `lexical-binding' file cookie on the first
     // line (or the second, after a `#!' line); absent → dynamic eval.
@@ -2588,39 +2697,21 @@ fn eval_src_opts(
     if !i.face_table.iter().any(|(n, _)| n == "icon") {
         i.face_table.push(("icon".to_string(), Value::Nil));
         i.face_table.push(("icon-button".to_string(), Value::Nil));
+        crate::editor::face_register_global(i, "icon");
+        crate::editor::face_register_global(i, "icon-button");
     }
-    // Keep the `features' variable in sync with `i.features', but
-    // never clobber a live dynamic binding: Gnus's
-    // `(dlet ((features (cons 'gnus-group features))) (require ...))'
-    // cycle-breaker relies on the binding surviving into nested
-    // loads, so only append entries that are actually missing.
-    let fid = i.intern("features");
-    let cur = i.symbol_value(fid);
-    let mut items = match &cur {
-        Value::Cons(_) | Value::Nil => cur.list_to_vec().unwrap_or_default(),
-        _ => vec![],
-    };
-    let mut missing: Vec<Value> = Vec::new();
-    for sid in i.features.clone() {
-        let sym_v = Value::Sym(sid);
-        if !items
-            .iter()
-            .any(|v| matches!(v, Value::Sym(s) if *s == sid))
-        {
-            missing.push(sym_v);
-        }
-    }
-    if !missing.is_empty() {
-        items.extend(missing);
-        i.obarray.symbol_mut(fid).value = Value::list(items);
-    }
+    // NOTE: `features' is a plain variable whose current (possibly
+    // dynamically bound) value `provide' pushes onto — GNU has no
+    // second feature set, so nothing is synced from `i.features' here.
+    // The interpreter's `features' vec is only a boot-time ledger for
+    // the dump/prelude bookkeeping.
     i.specbind(cll, Value::Nil)?;
     // Embedded (`builtin:') libraries play the role of GNU's dumped
     // .elc files: functions defined while they load keep
     // `dumped_doc' docstring semantics.
     let was_dumped = i.loading_dumped;
     i.loading_dumped |= dumped_like || file.starts_with("builtin:");
-    let r = eval_str_for_load(i, &src);
+    let r = eval_str_for_load(i, file, &src);
     i.loading_dumped = was_dumped;
     // File-scoped `defvar' declarations live on the root frame; merge
     // them into `file_declared' before unwinding so `let's in later
@@ -2635,7 +2726,8 @@ fn eval_src_opts(
     i.lexenv = saved_lexenv;
     if r.is_ok() {
         // GNU records the file in `load-history': (FILE . ENTRIES),
-        // newest file first, entries in evaluation order.
+        // newest file first, entries in evaluation order.  Reloading a
+        // file REPLACES its entry rather than adding a duplicate.
         let mut entries = i.symbol_value(cll).list_to_vec().unwrap_or_default();
         entries.reverse();
         let entry = Value::cons(Value::string(file), Value::list(entries));
@@ -2645,45 +2737,39 @@ fn eval_src_opts(
             Value::Sym(s) if s == crate::lisp::sym::UNBOUND => Value::Nil,
             v => v,
         };
-        i.obarray.symbol_mut(lh).value = Value::cons(entry, cur);
-        run_after_load(i, file);
+        let fname = Value::string(file);
+        let mut kept = Vec::new();
+        for e in cur.list_to_vec().unwrap_or_default() {
+            let same = match &e {
+                Value::Cons(c) => {
+                    crate::lisp::builtins::equal_values(i, &c.borrow().car, &fname)
+                }
+                _ => false,
+            };
+            if !same {
+                kept.push(e);
+            }
+        }
+        i.obarray.symbol_mut(lh).value = Value::cons(entry, Value::list(kept));
     }
     i.unbind_to(mark)?;
+    if r.is_ok() {
+        // GNU runs `do-after-load-evaluation' after the load's dynamic
+        // bindings unwind, so after-load hooks see the OUTER
+        // `load-file-name' (nil at top level).
+        run_after_load(i, file);
+    }
     r
 }
 
-/// Fire `after-load-alist' entries whose regexp/symbol key matches FILE
-/// (GNU's `load' runs `eval-after-load' hooks this way).
+/// GNU's `do-after-load-evaluation' (subr.el): run the matching
+/// `after-load-alist' string keys plus `after-load-functions' for the
+/// file just loaded.  Early boot loads skip it: nothing is registered
+/// yet and the defun doesn't exist yet.
 fn run_after_load(i: &mut Interp, file: &str) {
-    let alist_sym = i.intern("after-load-alist");
-    let sm_sym = i.intern("string-match");
-    let entries = i.symbol_value(alist_sym).list_to_vec().unwrap_or_default();
-    for entry in entries {
-        let mut parts = entry.list_to_vec().unwrap_or_default();
-        if parts.is_empty() {
-            continue;
-        }
-        let key = parts.remove(0);
-        let matches = match key {
-            Value::Str(_) => i
-                .call_function(
-                    &Value::Sym(sm_sym),
-                    &Value::list(vec![key.clone(), Value::string(file)]),
-                    Some(sm_sym),
-                )
-                .map(|v| !v.is_nil())
-                .unwrap_or(false),
-            Value::Sym(s) => {
-                // Feature-name keys match the file's basename feature.
-                file.ends_with(&format!("{}.el", i.symbol_name(s)))
-            }
-            _ => false,
-        };
-        if matches {
-            for form in parts {
-                // Entries store 0-arg functions (lambdas or closures).
-                let _ = i.apply(&form, vec![]);
-            }
+    if let Some(dale) = i.intern_soft("do-after-load-evaluation") {
+        if i.fbound_p(dale) {
+            let _ = i.apply(&Value::Sym(dale), vec![Value::string(file)]);
         }
     }
 }
@@ -2692,28 +2778,128 @@ fn run_after_load(i: &mut Interp, file: &str) {
 /// GNU's `internal-macroexpand-for-load' does during `load'.  This is
 /// what resolves macro autoloads (e.g. `define-minor-mode') at load
 /// time rather than first call.
-fn eval_str_for_load(i: &mut Interp, src: &str) -> EvalResult {
+fn eval_str_for_load(i: &mut Interp, file: &str, src: &str) -> EvalResult {
     let chars: Rc<Vec<char>> = Rc::new(src.chars().collect());
     let mut pos = 0usize;
     let mut last = Value::Nil;
-    loop {
+    let lrf_sym = i.intern("load-read-function");
+    // GNU passes the file stream (`Qget_file_char') to a custom
+    // `load-read-function' — a *consuming* input.  Our equivalent is a
+    // marker into a scratch buffer holding the file text: `read' on a
+    // marker advances it and signals `end-of-file' at the end, so
+    // readers like edebug's `edebug--read' (`(funcall #'read stream)')
+    // terminate.  Created lazily; killed when the load exits.
+    let mut stream: Option<(usize, Rc<RefCell<crate::lisp::value::Marker>>)> = None;
+    let result = 'load: loop {
+        // GNU's `readevalloop' peeks at the stream itself; the
+        // `load-read-function' is consulted only while content remains,
+        // so a trailing-whitespace file never reaches it, and a custom
+        // reader's `end-of-file' signal propagates as a real error
+        // rather than ending the load cleanly.
         let next = {
-            let mut reader = crate::lisp::reader::Reader::with_chars(i, chars.clone());
-            reader.set_position(pos);
-            // GNU `readevalloop' reads loaded code with
-            // `locate_syms = false': `load' never produces positioned
-            // symbols even when `symbols-with-pos-enabled' is
-            // dynamically bound (e.g. by `byte-compile-from-buffer').
-            match reader.read()? {
-                Some(f) => Some((f, reader.position())),
-                None => None,
+            let lrf = i.symbol_value(lrf_sym);
+            let is_default = matches!(&lrf, Value::Nil)
+                || matches!(&lrf, Value::Sym(s) if i.symbol_name(*s) == "read");
+            if is_default {
+                if pos >= chars.len() {
+                    break 'load Ok(last);
+                }
+                let mut reader = crate::lisp::reader::Reader::with_chars(i, chars.clone());
+                reader.set_position(pos);
+                // GNU's `readevalloop' source is the load buffer —
+                // `invalid-read-syntax' carries (LINE COLUMN).
+                reader.from_buffer = true;
+                // GNU `readevalloop' reads loaded code with
+                // `locate_syms = false': `load' never produces positioned
+                // symbols even when `symbols-with-pos-enabled' is
+                // dynamically bound (e.g. by `byte-compile-from-buffer').
+                match reader.read() {
+                    Err(f) => break 'load Err(f),
+                    Ok(Some(f)) => Some((f, reader.position())),
+                    Ok(None) => None,
+                }
+            } else {
+                let (_, mark) = match &stream {
+                    Some(pair) => pair.clone(),
+                    None => {
+                        let bid = i.buffers.create(" *load-read*");
+                        let mk = Rc::new(RefCell::new(crate::lisp::value::Marker {
+                            buffer: Some(bid),
+                            position: 0,
+                            insertion_type: false,
+                        }));
+                        if let Some(b) = i.buffers.get(bid) {
+                            b.borrow_mut().insert_at(0, src);
+                        }
+                        let pair = (bid, mk);
+                        stream = Some(pair.clone());
+                        pair
+                    }
+                };
+                // GNU `readevalloop::read_next' consumes whitespace and
+                // `;'-comments on the stream itself before checking EOF,
+                // so the read function only ever sees real input.
+                let mut p = mark.borrow().position;
+                loop {
+                    while p < chars.len()
+                        && matches!(chars[p], ' ' | '\t' | '\n' | '\x0C' | '\r' | '\u{A0}')
+                    {
+                        p += 1;
+                    }
+                    if p < chars.len() && chars[p] == ';' {
+                        while p < chars.len() && chars[p] != '\n' {
+                            p += 1;
+                        }
+                        continue;
+                    }
+                    break;
+                }
+                mark.borrow_mut().position = p;
+                if p >= chars.len() {
+                    break 'load Ok(last);
+                }
+                match i.apply(&lrf, vec![Value::Marker(mark.clone())]) {
+                    Err(f) => break 'load Err(f),
+                    Ok(form) => {
+                        pos = mark.borrow().position;
+                        Some((form, pos))
+                    }
+                }
             }
         };
+        if std::env::var_os("REMACS_LOAD_POS").is_some() {
+            if let Some((form, end)) = &next {
+                eprintln!("[load-pos] {}: {}..{} len={} head={}", file, pos, end, chars.len(), i.princ_to_string(form).chars().take(60).collect::<String>());
+            }
+        }
         match next {
             Some((form, end)) => {
                 pos = end;
+                let t0 = std::env::var_os("REMACS_FORM_PROF")
+                    .map(|_| std::time::Instant::now());
                 match eval_for_load(i, form.clone()) {
-                    Ok(v) => last = v,
+                    Ok(v) => {
+                        last = v;
+                        if let Some(t0) = t0 {
+                            let ms = t0.elapsed().as_millis();
+                            let min: u128 = std::env::var("REMACS_FORM_PROF")
+                                .ok()
+                                .and_then(|v| v.parse().ok())
+                                .unwrap_or(10);
+                            if ms >= min {
+                                eprintln!(
+                                    "[form {}@{}] {}ms {}",
+                                    file,
+                                    end,
+                                    ms,
+                                    i.princ_to_string(&form)
+                                        .chars()
+                                        .take(90)
+                                        .collect::<String>()
+                                );
+                            }
+                        }
+                    }
                     Err(f) => {
                         if std::env::var_os("REMACS_TRACE_ERR").is_some() {
                             let fdesc = match &f {
@@ -2734,13 +2920,19 @@ fn eval_str_for_load(i: &mut Interp, src: &str) -> EvalResult {
                                 fdesc
                             );
                         }
-                        return Err(f);
+                        break 'load Err(f);
                     }
                 }
             }
-            None => return Ok(last),
+            None => break 'load Ok(last),
         }
+    };
+    if let Some((bid, mark)) = stream {
+        mark.borrow_mut().buffer = None;
+        let obarray = &i.obarray;
+        i.buffers.kill(bid, |s| obarray.symbol(s).always_local);
     }
+    result
 }
 
 /// Expand + eval one top-level form the way GNU's
@@ -2761,11 +2953,15 @@ fn eval_for_load(i: &mut Interp, form: Value) -> EvalResult {
         return Ok(last);
     }
     i.macroexp_call_depth += 1;
-    // GNU's `internal-macroexpand-for-load' runs `macroexpand-all' with
-    // a nil ENVIRONMENT, i.e. `macroexpand-all-environment' bound to nil.
+    // GNU's `internal-macroexpand-for-load' repeatedly expands the
+    // form's head (the `macroexpand' fixpoint), NOT a deep
+    // `macroexpand-all': subform macros expand lazily when the body
+    // later evals.  Deep expansion runs interpreted `pcase--expand'
+    // across every nested form, which blows up exponentially on files
+    // like mail-extr.el.  The nil ENVIRONMENT matches GNU's binding.
     let env_id = i.intern("macroexpand-all-environment");
     i.specbind(env_id, Value::Nil)?;
-    let expanded_result = crate::lisp::builtins::evalfn::macroexpand_all(i, &form);
+    let expanded_result = i.macroexpand(&form);
     let _ = i.unbind(1);
     i.macroexp_call_depth -= 1;
     let expanded = match expanded_result {
@@ -2926,7 +3122,10 @@ fn record_load_entry(i: &mut Interp, form: &Value) {
         "defface" | "custom-declare-face" => {
             name(&items).map(|nm| Value::cons(i.sym(defface_id), nm))
         }
-        "provide" => name(&items).map(|nm| Value::cons(i.sym(provide_id), nm)),
+        // `provide' is NOT recorded by the form reader in GNU: Fprovide
+        // does its own LOADHIST_ATTACH (catches nested provides too) —
+        // recording here too would push a duplicate entry.
+        "provide" => None,
         "require" => name(&items).map(|nm| Value::cons(i.sym(require_id), nm)),
         _ => None,
     };
@@ -2967,22 +3166,52 @@ fn file_lexical_binding(src: &str) -> bool {
     probe.contains("lexical-binding: t") || probe.contains("lexical-binding:t")
 }
 
-/// Load library NAME; returns true if a file was found and loaded.
-pub(crate) fn load_library(i: &mut Interp, name: &str) -> Result<bool, crate::lisp::Flow> {
-    load_library_opts(i, name, false, false, true)
+/// Outcome of a `load' attempt.
+pub(crate) enum LoadOutcome {
+    /// The file was found and evaluated to completion — payload is the
+    /// resolved file name (what `load-file-name' was bound to).
+    Loaded(String),
+    /// No candidate matched (GNU's openp returning -2).
+    Missing,
+    /// A directory matched: GNU's openp opens it and `Fload' then
+    /// fstat's it into a file-error "Is a directory".  Kept out of the
+    /// `Err' channel so `load' NOERROR can suppress just this class.
+    Dir(String),
 }
 
-/// `load_library' honoring `load''s NOSUFFIX, MUST-SUFFIX, and
-/// NOMESSAGE arguments.  Like GNU, `Loading %s...' is echoed (through
-/// `message') before the file's forms run; ` (source)' marks files
-/// read from Lisp source rather than byte-compiled output.
+/// Load library NAME; returns Ok(Loaded(resolved-path)) on success.
+pub(crate) fn load_library(
+    i: &mut Interp,
+    name: &str,
+) -> Result<LoadOutcome, crate::lisp::Flow> {
+    load_library_opts_msg(i, name, false, false, true, false)
+}
+
+/// `load_library' honoring `load''s NOSUFFIX and MUST-SUFFIX.  Like
+/// GNU, `Loading %s...' is echoed (through `message') before the
+/// file's forms run; ` (source)' marks files read from Lisp source
+/// rather than byte-compiled output.
 pub(crate) fn load_library_opts(
     i: &mut Interp,
     name: &str,
     nosuffix: bool,
     mustsuffix: bool,
+    can_elc: bool,
+) -> Result<LoadOutcome, crate::lisp::Flow> {
+    load_library_opts_msg(i, name, nosuffix, mustsuffix, can_elc, false)
+}
+
+/// Full form: NOMESSAGE suppresses the `Loading %s...' echo (GNU
+/// Fload NOMESSAGE — autoload loads pass t).
+pub(crate) fn load_library_opts_msg(
+    i: &mut Interp,
+    name: &str,
+    nosuffix: bool,
+    mustsuffix: bool,
+    can_elc: bool,
     nomessage: bool,
-) -> Result<bool, crate::lisp::Flow> {
+) -> Result<LoadOutcome, crate::lisp::Flow> {
+    let t0 = std::time::Instant::now();
     let announce = |i: &mut Interp, file: &str| {
         if nomessage {
             return;
@@ -3009,15 +3238,18 @@ pub(crate) fn load_library_opts(
     let bundled = embedded(stem).is_some();
     let gc = i.intern("gensym-counter");
     let saved_gc = bundled.then(|| i.symbol_value(gc));
-    let result = match locate_opts(i, name, nosuffix, mustsuffix) {
-        Some(path) => {
+    let result = match locate_full(i, name, nosuffix, mustsuffix) {
+        Some(Found::Dir(d)) => Ok(LoadOutcome::Dir(d)),
+        Some(Found::File(path)) => {
             announce(i, &path);
-            if path.ends_with(".eln") {
+            if can_elc && path.ends_with(".eln") {
                 // Native-compiled unit: register via dlopen instead of
                 // evaluating source.
-                crate::lisp::builtins::comp::native_load_file(i, &path).map(|_| true)
+                crate::lisp::builtins::comp::native_load_file(i, &path)
+                    .map(|_| LoadOutcome::Loaded(path))
             } else {
-                eval_file_lex_dumped(i, &path, false, bundled).map(|_| true)
+                eval_file_lex_dumped(i, &path, false, bundled)
+                    .map(|_| LoadOutcome::Loaded(path))
             }
         }
         // Fall back to the embedded copy of a built-in library, so that
@@ -3026,15 +3258,17 @@ pub(crate) fn load_library_opts(
             Some(src) => {
                 announce(i, name);
                 let virtual_path = format!("builtin:{}", name);
-                eval_src(i, &virtual_path, src, false).map(|_| true)
+                eval_src(i, &virtual_path, src, false)
+                    .map(|_| LoadOutcome::Loaded(virtual_path))
             }
-            None => Ok(false),
+            None => Ok(LoadOutcome::Missing),
         },
     };
     if let Some(v) = saved_gc {
         i.obarray.symbol_mut(gc).value = v;
     }
     if std::env::var_os("REMACS_LOAD_DEBUG").is_some() {
+        let ms = t0.elapsed().as_millis();
         match &result {
             Err(f) => {
                 let msg = match f {
@@ -3050,9 +3284,16 @@ pub(crate) fn load_library_opts(
                     }
                     _ => "other flow".to_string(),
                 };
-                eprintln!("[load-debug] {name}: {msg}");
+                eprintln!("[load-debug] {name}: {msg} ({ms}ms)");
             }
-            Ok(ok) => eprintln!("[load-debug] {name}: ok={ok}"),
+            Ok(o) => {
+                let tag = match o {
+                    LoadOutcome::Loaded(p) => format!("loaded {p}"),
+                    LoadOutcome::Missing => "missing".to_string(),
+                    LoadOutcome::Dir(d) => format!("dir {d}"),
+                };
+                eprintln!("[load-debug] {name}: {tag} ({ms}ms)");
+            }
         }
     }
     result

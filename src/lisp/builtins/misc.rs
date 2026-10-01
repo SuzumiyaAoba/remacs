@@ -6,6 +6,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use super::{S, arg, want_int, want_list, want_string, want_sym};
+use crate::lisp::eq_values;
 use crate::lisp::Interp;
 use crate::lisp::error::{EvalResult, Flow};
 use crate::lisp::obarray::sym;
@@ -930,8 +931,8 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!("window-normalize-frame", 1, 1, f_window_norm_frame, ""),
     S!("delete-windows-on", 0, 2, f_delete_windows_on, ""),
     // `split-window-sensibly' is Lisp (GNU window.el) — see prelude.
-    S!("window-child", 1, 1, f_window_valid_nil, ""),
-    S!("window-child-count", 1, 1, f_window_valid_zero, ""),
+    S!("window-child", 1, 1, f_window_child, ""),
+    S!("window-child-count", 1, 1, f_window_child_count, ""),
     S!("window-combined-p", 0, 2, f_window_combined_p, ""),
     // `window-leftmost-p'/`-rightmost-p'/`-topmost-p'/`-bottommost-p'
     // do not exist in GNU.
@@ -1702,14 +1703,23 @@ fn f_gensym(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     // GNU: the numeric suffix comes from the `gensym-counter' variable,
     // which is incremented by each call (and may be set by the user).
     let counter_sym = i.intern("gensym-counter");
-    let n = match i.symbol_value(counter_sym) {
+    let mut n = match i.symbol_value(counter_sym) {
         Value::Int(n) => n,
         _ => 0,
     };
-    i.obarray.symbol_mut(counter_sym).value = Value::Int(n + 1);
-    Ok(Value::Sym(
-        i.obarray.make_symbol(&format!("{}{}", prefix, n)),
-    ))
+    // GNU reads dumped libraries as .elc, so lexical `let' variables
+    // like composite.el's `g0' never enter the obarray; remacs reads
+    // source, so `g0'–`g3' ARE interned and a fresh `g0' symbol would
+    // be findable by `intern-soft'.  Skip interned names so the result
+    // is unfindable like GNU's.
+    loop {
+        let name = format!("{}{}", prefix, n);
+        n += 1;
+        if i.intern_soft(&name).is_none() {
+            i.obarray.symbol_mut(counter_sym).value = Value::Int(n);
+            return Ok(Value::Sym(i.obarray.make_symbol(&name)));
+        }
+    }
 }
 
 fn f_func_arity(i: &mut Interp, args: Vec<Value>) -> EvalResult {
@@ -1720,15 +1730,42 @@ fn f_func_arity(i: &mut Interp, args: Vec<Value>) -> EvalResult {
         }
     }
     let fun = i.indirect_function_value(&args[0]);
-    // A `(lambda ARGLIST ...)' or `(closure ENV ARGLIST ...)' list.
+    // GNU eval.c: (macro . X) is unwrapped one level before arity.
+    let fun = match &fun {
+        Value::Cons(c) if matches!(i.sym_id(&c.borrow().car), Some(s) if s == i.intern("macro")) => {
+            c.borrow().cdr.clone()
+        }
+        _ => fun,
+    };
+    // GNU `func_arity': a bare `(autoload ...)' cons that isn't reached
+    // through a symbol's function cell signals (symbolp OBJ).
+    let auto_id = i.intern("autoload");
+    if let Value::Cons(c) = &fun {
+        if !matches!(args[0], Value::Sym(_))
+            && matches!(i.sym_id(&c.borrow().car), Some(s) if s == auto_id)
+        {
+            return Err(i.wrong_type_mut("symbolp", &args[0]));
+        }
+    }
+    // GNU: `func-arity' on an autoloaded symbol LOADS the file first
+    // (Ffunc_arity calls autoload_do_load).
+    let fun = match &fun {
+        Value::Cons(c) if matches!(i.sym_id(&c.borrow().car), Some(s) if s == auto_id) => {
+            super::evalfn::autoload_do_load(i, fun.clone(), false)?
+        }
+        _ => fun,
+    };
+    // A `(lambda ARGLIST ...)' list.
     let mut list_arity = |v: &Value| -> Option<Arity> {
         let cells = v.list_to_vec().ok()?;
         let head = i.sym_id(cells.first()?)?;
         let name = i.symbol_name(head);
-        if name != "lambda" && name != "closure" {
+        // GNU 31.1: only `(lambda ...)' is a valid list function —
+        // old-style `(closure ENV ...)' lists are invalid-function.
+        if name != "lambda" {
             return None;
         }
-        let arglist_idx = if name == "closure" { 2 } else { 1 };
+        let arglist_idx = 1;
         let mut min = 0u16;
         let mut max = 0u16;
         let mut many = false;
@@ -1853,15 +1890,15 @@ fn f_subr_arity(i: &mut Interp, args: Vec<Value>) -> EvalResult {
 }
 
 fn f_closurep(_i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    // Byte-code objects aren't closures in GNU's type lattice.
-    Ok(Value::from_bool(
-        matches!(&args[0], Value::Lambda(l) if l.bc_items.is_none()),
-    ))
+    // GNU `closurep' is t for interpreted closures AND byte-code
+    // objects alike (both are `function' cells that close over state);
+    // only subrs/primitives and non-functions answer nil.
+    Ok(Value::from_bool(matches!(&args[0], Value::Lambda(_))))
 }
 
 fn f_interpreted_function_p(_i: &mut Interp, args: Vec<Value>) -> EvalResult {
     Ok(Value::from_bool(
-        matches!(&args[0], Value::Lambda(l) if l.bc_items.is_none()),
+        matches!(&args[0], Value::Lambda(l) if !l.is_bytecode()),
     ))
 }
 
@@ -1895,6 +1932,7 @@ fn f_make_interpreted_closure(i: &mut Interp, args: Vec<Value>) -> EvalResult {
         arglist: l.arglist.clone(),
         plain: l.plain,
         dumped_doc: l.dumped_doc,
+        compiled: l.compiled,
         advice_link: l.advice_link,
         bc_items: l.bc_items.clone(),
     })))
@@ -2030,6 +2068,7 @@ pub(crate) fn make_interpreted_closure(
         arglist: Some(arglist_v.clone()),
         plain,
         dumped_doc: false,
+        compiled: false,
         advice_link: None,
         bc_items: bc_items.map(|v| Rc::new(RefCell::new(v))),
         doc_value: None,
@@ -2090,27 +2129,12 @@ pub(crate) fn lambda_slot_values(l: &Lambda) -> Vec<Value> {
 
 fn f_getenv_internal(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     let name = want_string(i, &args[0])?;
-    // Emacs looks up `process-environment' first.
-    let pe = i.intern("process-environment");
-    let proc_env = i.symbol_value(pe);
-    if let Value::Cons(_) = &proc_env {
-        let prefix = format!("{}=", name);
-        let mut hit: Option<String> = None;
-        proc_env.each_car(|v| {
-            if let Value::Str(s) = v {
-                let s = s.borrow();
-                if s.starts_with(&prefix) {
-                    hit = Some(s[prefix.len()..].to_string());
-                }
-            }
-        });
-        if let Some(v) = hit {
-            return Ok(Value::string(v));
-        }
+    // GNU consults `process-environment' only (it is initialized from
+    // the OS environment at startup); shared with filename expansion.
+    match crate::editor::lisp_getenv(i, &name) {
+        Some(v) => Ok(Value::string(v)),
+        None => Ok(Value::Nil),
     }
-    // GNU consults `process-environment' only; it is initialized from
-    // the OS environment at startup.
-    Ok(Value::Nil)
 }
 
 fn f_command_modes(_i: &mut Interp, args: Vec<Value>) -> EvalResult {
@@ -2174,7 +2198,11 @@ fn f_accessible_keymaps(i: &mut Interp, args: Vec<Value>) -> EvalResult {
             .iter()
             .filter_map(|v| match v {
                 Value::Int(n) => Some(*n),
-                Value::Sym(s) => Some(crate::editor::event_code_for(&i.symbol_name(*s))),
+                Value::Sym(s) => {
+                    // GNU access_keymap reorders modifiers (M-C-x ≡ C-M-x).
+                    let c = reorder_event_symbol(i, *s);
+                    Some(crate::editor::event_code_for(&i.symbol_name(c)))
+                }
                 _ => None,
             })
             .collect();
@@ -2383,7 +2411,21 @@ fn f_documentation_stringp(_i: &mut Interp, args: Vec<Value>) -> EvalResult {
 }
 
 fn f_error_message_string(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    // Mirrors print_error_message in print.c.
+    // Mirrors print_error_message in print.c: OBJ must be a list
+    // (signal data); nil yields nil, other non-cons signals
+    // wrong-type-argument listp.
+    if !args[0].is_nil() && !matches!(args[0], Value::Cons(_)) {
+        return Err(i.wrong_type_mut("listp", &args[0]));
+    }
+    // nil falls through to error_message → "peculiar error" like GNU.
+    // GNU print.c Ferror_message_string: the CAR must be a symbol
+    // (error name); anything else signals wrong-type-argument symbolp.
+    if let Value::Cons(c) = &args[0] {
+        let car = c.borrow().car.clone();
+        if !matches!(car, Value::Sym(_)) && !car.is_nil() {
+            return Err(i.wrong_type_mut("symbolp", &car));
+        }
+    }
     // Fast path: (error STRING) → STRING.
     if let Value::Cons(c) = &args[0] {
         let (car, cdr) = {
@@ -2447,10 +2489,12 @@ pub fn error_message(i: &mut Interp, obj: &Value) -> String {
     } else {
         (errmsg, &tail_list[..])
     };
-    // quote-curve the message text (substitute-command-keys applies
-    // text-quoting-style 'curve to doc/error strings).
+    // GNU translates `...' quotes when the signal's message was
+    // formatted (verror → format-message); remacs's `i.error' stores
+    // text verbatim, so the translation happens here instead — still
+    // honoring `text-quoting-style'.
     let msg_text = match &errmsg {
-        Value::Str(s) => Some(curve_quotes(&s.borrow())),
+        Value::Str(s) => Some(super::evalfn::translate_message_quotes(i, &s.borrow())),
         _ => None,
     };
     let mut out = String::new();
@@ -2476,37 +2520,6 @@ pub fn error_message(i: &mut Interp, obj: &Value) -> String {
     out
 }
 
-/// Apply Emacs's default `text-quoting-style` (curve) to a message
-/// template: `'` after a word char → `’`, before a word char → `‘`;
-/// `` ` `` before a word char → `‘`.
-fn curve_quotes(s: &str) -> String {
-    let chars: Vec<char> = s.chars().collect();
-    let mut out = String::with_capacity(s.len());
-    for (k, &c) in chars.iter().enumerate() {
-        match c {
-            '\'' => {
-                let prev = if k > 0 {
-                    chars.get(k - 1).copied()
-                } else {
-                    None
-                };
-                out.push(
-                    if prev
-                        .map(|p| p.is_alphanumeric() || p == '\'')
-                        .unwrap_or(false)
-                    {
-                        '\u{2019}'
-                    } else {
-                        '\u{2018}'
-                    },
-                );
-            }
-            '`' => out.push('\u{2018}'),
-            _ => out.push(c),
-        }
-    }
-    out
-}
 
 fn f_external_debugging_output(_i: &mut Interp, args: Vec<Value>) -> EvalResult {
     if let Some(c) = args[0].int() {
@@ -2809,12 +2822,26 @@ fn want_opt_frame(i: &mut Interp, v: &Value) -> Result<(), Flow> {
 
 /// Whether V names a face (symbol or string), like GNU's face lookup.
 fn face_exists(i: &Interp, v: &Value) -> bool {
-    let name = match v {
+    let mut name = match v {
         Value::Sym(s) => i.symbol_name(*s),
         Value::Str(s) => s.borrow().clone(),
         _ => return false,
     };
-    crate::editor::face_known(i, &name)
+    // GNU: `face-alias' chains resolve to the target face.
+    for _ in 0..16 {
+        if crate::editor::face_known(i, &name) {
+            return true;
+        }
+        let alias = i.get_prop(
+            i.intern_soft(&name).unwrap_or(u32::MAX),
+            i.intern_soft("face-alias").unwrap_or(u32::MAX),
+        );
+        match i.sym_id(&alias).map(|s| i.symbol_name(s)) {
+            Some(t) => name = t,
+            None => return false,
+        }
+    }
+    false
 }
 
 /// `face-name` — GNU faces.el returns the face's name as a *string*
@@ -2847,7 +2874,32 @@ fn f_invert_face(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     if !face_exists(i, &a[0]) {
         return Err(i.error("Invalid face"));
     }
-    // GNU returns the face.
+    // GNU internal-set-lisp-face-attribute path: swap the stored
+    // :foreground/:background spec values (`unspecified' is legal and
+    // stays unspecified on both sides).
+    let name = match &a[0] {
+        Value::Sym(s) => i.symbol_name(*s),
+        Value::Str(s) => s.borrow().clone(),
+        _ => unreachable!(),
+    };
+    let fg_kw = i.intern(":foreground");
+    let bg_kw = i.intern(":background");
+    let unsp = i.intern("unspecified");
+    let getv = |t: &Vec<(String, Value)>, n: &str, kw, miss: &str| -> Value {
+        t.iter()
+            .find(|(f, _)| f == n)
+            .map(|(_, p)| crate::lisp::eval::plist_get(p, kw))
+            .map(|v| if v.is_nil() { Value::string(miss) } else { v })
+            .unwrap_or_else(|| Value::string(miss))
+    };
+    // GNU's tty realizes unset fg/bg as the "unspecified-fg"/
+    // "unspecified-bg" pseudo-strings; unset slots swap those.
+    let fg = getv(&i.face_table, &name, fg_kw, "unspecified-fg");
+    let bg = getv(&i.face_table, &name, bg_kw, "unspecified-bg");
+    if let Some((_, plist)) = i.face_table.iter_mut().find(|(n, _)| *n == name) {
+        *plist = crate::lisp::eval::plist_put(plist, fg_kw, bg);
+        *plist = crate::lisp::eval::plist_put(plist, bg_kw, fg);
+    }
     Ok(a[0].clone())
 }
 
@@ -2861,7 +2913,7 @@ fn f_frame_or_buffer_changed_p(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let mut fp = i.frames.len() as u64;
     for id in i.buffers.list() {
         if let Some(b) = i.buffers.get(id) {
-            fp = fp.wrapping_mul(31).wrapping_add(b.borrow().mod_tick);
+            fp = fp.wrapping_mul(31).wrapping_add(b.borrow().text.mod_tick.get());
         }
     }
     let changed = i.frame_state_seen != Some(fp);
@@ -2870,7 +2922,6 @@ fn f_frame_or_buffer_changed_p(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 }
 
 fn f_image_transforms_p(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    // Optional FRAME arg must be a live frame; no transforms in batch.
     match a.first() {
         None | Some(Value::Nil) => Ok(Value::Nil),
         Some(Value::Frame(f)) if !f.borrow().dead => Ok(Value::Nil),
@@ -3110,7 +3161,19 @@ fn f_bare_symbol(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     }
     match &args[0] {
         Value::Sym(_) => Ok(args[0].clone()),
-        other => Err(i.wrong_type_mut("symbolp", other)),
+        other => {
+            // GNU `Fbare_symbol' uses CHECK_SYMBOL_OR_SYMBOL_WITH_POS —
+            // the signaled predicate is the two-element list.
+            let swp = i.intern("symbol-with-pos-p");
+            let symbolp = i.intern("symbolp");
+            Err(i.signal_data(
+                sym::WRONG_TYPE_ARGUMENT,
+                vec![
+                    Value::list(vec![Value::Sym(symbolp), Value::Sym(swp)]),
+                    other.clone(),
+                ],
+            ))
+        }
     }
 }
 
@@ -3379,13 +3442,64 @@ unsafe extern "C" {
     pub(crate) fn localtime_r(timep: *const i64, result: *mut Tm) -> *mut Tm;
     pub(crate) fn gmtime_r(timep: *const i64, result: *mut Tm) -> *mut Tm;
     fn tzset();
+    fn mktime(tm: *mut Tm) -> i64;
 }
 
+/// Process-global TZ lock: `tz_local_tm' and `mktime_secs' flip TZ +
+/// call `tzset', and ambient readers (`local_tm', `mktime' with no
+/// zone) depend on the CURRENT TZ.  GNU Emacs is effectively
+/// single-threaded here; parallel Rust test threads race, so
+/// serialize every TZ-sensitive section (holders call
+/// `local_tm_locked' instead of `local_tm' — no recursion).
+/// `set-time-zone-rule' itself never touches process state: it stores
+/// the rule on the Interp (`tz_rule') and `interp_local_tm' applies it.
+pub(crate) fn tz_lock() -> std::sync::MutexGuard<'static, ()> {
+    static L: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    L.lock().unwrap_or_else(|p| p.into_inner())
+}
 /// Local-time breakdown for a unix-second timestamp.
 pub(crate) fn local_tm(secs: i64) -> Tm {
+    let _g = tz_lock();
     let mut tm = unsafe { std::mem::zeroed::<Tm>() };
     unsafe { localtime_r(&secs, &mut tm) };
     tm
+}
+
+/// Same as `local_tm' but for callers already holding `tz_lock'.
+fn local_tm_locked(secs: i64) -> Tm {
+    let mut tm = unsafe { std::mem::zeroed::<Tm>() };
+    unsafe { localtime_r(&secs, &mut tm) };
+    tm
+}
+
+/// Local-time breakdown honoring the interpreter's `tz_rule'
+/// (set by `set-time-zone-rule'); `None' falls back to the ambient
+/// zone.  This is the single entry point every "local zone" reader
+/// should use so one `Interp's rule can't leak into another's.
+pub(crate) fn interp_local_tm(i: &Interp, secs: i64) -> Tm {
+    interp_local_tm_named(i, secs).0
+}
+
+/// `interp_local_tm' plus the resolved zone abbreviation — under a
+/// rule the breakdown comes from `tz_local_tm', whose restore
+/// `tzset()' invalidates `tm_zone', so the name must come from the
+/// pre-restore copy, not the returned `Tm' (which reads as garbage
+/// like "LMT" on macOS).
+pub(crate) fn interp_local_tm_named(i: &Interp, secs: i64) -> (Tm, String) {
+    match &i.tz_rule {
+        Some(z) => tz_local_tm(secs, z),
+        None => {
+            let t = local_tm(secs);
+            let name = if t.tm_zone.is_null() {
+                String::new()
+            } else {
+                unsafe { std::ffi::CStr::from_ptr(t.tm_zone as *const i8) }
+                    .to_string_lossy()
+                    .into_owned()
+            };
+            (t, name)
+        }
+    }
 }
 
 /// UTC breakdown for a unix-second timestamp.
@@ -3399,7 +3513,18 @@ pub(crate) fn gmt_tm(secs: i64) -> Tm {
 /// locale-formatted text (e.g. `%a` -> weekday abbrev, `%p` -> AM/PM).
 /// The C library's locale is initialized once from the environment, like
 /// GNU does at startup.
-pub(crate) fn strftime_spec(fmt: &str, tm: &Tm) -> String {
+/// Run one `strftime` conversion against a broken-down time.  Returns the
+/// locale-formatted text (e.g. `%a` -> weekday abbrev, `%p` -> AM/PM).
+/// The C library's locale is initialized once from the environment, like
+/// GNU does at startup; an explicit LOCALE (`system-time-locale')
+/// temporarily overrides it — GNU's Fformat_time_string does exactly
+/// this pair of setlocale calls, falling back to "C" for unknown
+/// locale names.
+pub(crate) fn strftime_spec(fmt: &str, tm: &Tm, locale: Option<&str>) -> String {
+    // setlocale/strftime share process-global C state — serialize with
+    // the TZ lock so parallel threads can't observe a half-switched
+    // locale (or vice versa).
+    let _g = tz_lock();
     static INIT: std::sync::Once = std::sync::Once::new();
     INIT.call_once(|| unsafe {
         libc::setlocale(libc::LC_TIME, c"".as_ptr());
@@ -3408,26 +3533,55 @@ pub(crate) fn strftime_spec(fmt: &str, tm: &Tm) -> String {
     cfmt.push(0);
     let mut buf = vec![0u8; 512];
     // Our `Tm' mirrors the POSIX `struct tm' layout used by strftime.
-    let n = unsafe {
-        libc::strftime(
-            buf.as_mut_ptr() as *mut i8,
-            buf.len(),
-            cfmt.as_ptr() as *const i8,
-            tm as *const Tm as *const libc::tm,
-        )
+    let n = if let Some(loc) = locale {
+        unsafe {
+            let cloc = std::ffi::CString::new(loc).unwrap_or_default();
+            if libc::setlocale(libc::LC_TIME, cloc.as_ptr()).is_null() {
+                // GNU: an unusable locale name falls back to "C".
+                libc::setlocale(libc::LC_TIME, c"C".as_ptr());
+            }
+            let n = libc::strftime(
+                buf.as_mut_ptr() as *mut i8,
+                buf.len(),
+                cfmt.as_ptr() as *const i8,
+                tm as *const Tm as *const libc::tm,
+            );
+            libc::setlocale(libc::LC_TIME, c"".as_ptr());
+            n
+        }
+    } else {
+        unsafe {
+            libc::strftime(
+                buf.as_mut_ptr() as *mut i8,
+                buf.len(),
+                cfmt.as_ptr() as *const i8,
+                tm as *const Tm as *const libc::tm,
+            )
+        }
     };
     String::from_utf8_lossy(&buf[..n]).into_owned()
 }
 
 /// Local-time breakdown under an explicit TZ spec (e.g. "Europe/Paris",
-/// "UTC"), restoring the process TZ afterwards.
-pub(crate) fn tz_local_tm(secs: i64, zone: &str) -> Tm {
+/// "UTC"), restoring the process TZ afterwards.  Also returns the
+/// zone's abbreviation (`tm_zone`) — the pointer is copied BEFORE the
+/// restore `tzset()` because on macOS it aliases libc-internal zone
+/// state that `tzset` invalidates (reads as stale "LMT" garbage).
+pub(crate) fn tz_local_tm(secs: i64, zone: &str) -> (Tm, String) {
+    let _g = tz_lock();
     let saved = std::env::var_os("TZ");
     unsafe {
         std::env::set_var("TZ", zone);
         tzset();
     }
-    let tm = local_tm(secs);
+    let tm = local_tm_locked(secs);
+    let name = if tm.tm_zone.is_null() {
+        String::new()
+    } else {
+        unsafe { std::ffi::CStr::from_ptr(tm.tm_zone as *const i8) }
+            .to_string_lossy()
+            .into_owned()
+    };
     unsafe {
         match saved {
             Some(v) => std::env::set_var("TZ", v),
@@ -3435,7 +3589,7 @@ pub(crate) fn tz_local_tm(secs: i64, zone: &str) -> Tm {
         }
         tzset();
     }
-    tm
+    (tm, name)
 }
 
 /// Days since 1970-01-01 for (y, m, d) — Howard Hinnant's algorithm.
@@ -3449,50 +3603,219 @@ fn days_from_civil(y: i128, m: i128, d: i128) -> i128 {
     era * 146097 + doe - 719468
 }
 
+/// POSIX mktime: interpret a (possibly out-of-range) broken-down time
+/// in the given TZ spec — None means the ambient local zone — honoring
+/// tm_isdst (-1 guess / 0 standard / >0 DST).  Returns epoch seconds.
+fn mktime_secs(
+    sec: i64,
+    min: i64,
+    hour: i64,
+    day: i64,
+    mon: i64,
+    year: i64,
+    isdst: i32,
+    tz: Option<&str>,
+) -> i64 {
+    let _g = tz_lock();
+    let mut tm: Tm = unsafe { std::mem::zeroed() };
+    tm.tm_sec = sec as i32;
+    tm.tm_min = min as i32;
+    tm.tm_hour = hour as i32;
+    tm.tm_mday = day as i32;
+    tm.tm_mon = mon as i32 - 1;
+    tm.tm_year = year as i32 - 1900;
+    tm.tm_isdst = isdst;
+    if let Some(z) = tz {
+        let saved = std::env::var_os("TZ");
+        unsafe {
+            std::env::set_var("TZ", z);
+            tzset();
+        }
+        let r = unsafe { mktime(&mut tm) };
+        unsafe {
+            match saved {
+                Some(v) => std::env::set_var("TZ", v),
+                None => std::env::remove_var("TZ"),
+            }
+            tzset();
+        }
+        r
+    } else {
+        unsafe { mktime(&mut tm) }
+    }
+}
+
+/// How `encode-time' interprets ZONE: a fixed seconds-east-of-UTC
+/// offset (t, "UTC", integer) uses pure calendar arithmetic; nil uses
+/// the interpreter's zone rule (or ambient when unset), `wall' is the
+/// startup wall clock (GNU's `wall_tz', immune to `set-time-zone-rule'),
+/// other strings name a TZ spec.
+enum ZoneKind {
+    Fixed(i128),
+    /// nil: the interpreter's current rule, or ambient zone.
+    Local,
+    /// `wall': ambient system zone regardless of `set-time-zone-rule'.
+    Wall,
+    Named(String),
+}
+
+fn decode_zone(i: &mut Interp, zone: &Value) -> Result<ZoneKind, Flow> {
+    let t_sym = i.intern("t");
+    let wall_sym = i.intern("wall");
+    // GNU decode_time_zone: t = UTC, "UTC"/"t" = UTC, integer = fixed
+    // offset, a cons uses the car as a fixed offset, nil and `wall'
+    // mean local; anything else signals "Invalid time zone
+    // specification".
+    Ok(match zone {
+        Value::Int(off) => ZoneKind::Fixed(*off),
+        Value::Sym(s) if *s == t_sym => ZoneKind::Fixed(0),
+        Value::Sym(s) if *s == wall_sym => ZoneKind::Wall,
+        Value::Str(z) => {
+            let z = z.borrow().clone();
+            if z == "UTC" || z == "t" {
+                ZoneKind::Fixed(0)
+            } else {
+                ZoneKind::Named(z)
+            }
+        }
+        Value::Cons(c) => match &c.borrow().car {
+            Value::Int(n) => ZoneKind::Fixed(*n),
+            _ => ZoneKind::Fixed(0),
+        },
+        Value::Nil => ZoneKind::Local,
+        v => {
+            return Err(i.signal_data(
+                sym::ERROR,
+                vec![
+                    Value::string("Invalid time zone specification"),
+                    v.clone(),
+                ],
+            ));
+        }
+    })
+}
+
 fn f_encode_time(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    // (encode-time SECOND MINUTE HOUR DAY MONTH YEAR &rest) or a list.
+    // (encode-time TIME) where TIME is a list, or the obsolete
+    // (encode-time SECOND MINUTE HOUR DAY MONTH YEAR &rest) form.
+    // GNU signals `wrong-type-argument (consp X)' for a lone
+    // non-list argument.
     let items: Vec<Value> = if args.len() == 1 {
         match args[0].list_to_vec() {
             Ok(v) => v,
-            Err(_) => args.clone(),
+            Err(_) => return Err(i.wrong_type_mut("consp", &args[0])),
         }
     } else {
         args.clone()
     };
-    // GNU's Fencode_time CHECK_FIXNUMs each of the six time fields —
-    // nil (missing) elements signal `wrong-type-argument (fixnump nil)',
-    // which is what makes `safe-date-to-time' return 0 on garbage.
+    // GNU's Fencode_time CHECK_FIXNUMs the five fields after SEC —
+    // nil (missing) elements signal `wrong-type-argument (fixnump nil)'.
     let get = |i: &mut Interp, k: usize| -> Result<i128, Flow> {
         match items.get(k) {
             Some(Value::Int(n)) => Ok(*n),
             other => Err(i.wrong_type_mut("fixnump", &other.cloned().unwrap_or(Value::Nil))),
         }
     };
-    let (sec, min, hour, day, mon, year) = (
-        get(i, 0)?,
+    // SEC may be any Lisp time value — a fixnum, (HI LO), or
+    // (TICKS . HZ); whole seconds add to the wall time and the
+    // fraction becomes the sub-second part of the result.
+    let (sec_whole, sub_ps) = match items.first() {
+        Some(v @ (Value::Cons(_) | Value::Int(_) | Value::Float(_))) => {
+            let (ticks, hz) = decode_ticks_hz(i, v)?;
+            if hz <= 0 {
+                return Err(i.error("Invalid time specification"));
+            }
+            (
+                ticks.div_euclid(hz),
+                ticks.rem_euclid(hz) * 1_000_000_000_000 / hz,
+            )
+        }
+        other => return Err(i.wrong_type_mut("fixnump", &other.cloned().unwrap_or(Value::Nil))),
+    };
+    let (min, hour, day, mon, year) = (
         get(i, 1)?,
         get(i, 2)?,
         get(i, 3)?,
         get(i, 4)?,
         get(i, 5)?,
     );
-    let days = days_from_civil(year, mon.max(1).min(12), day.max(1));
-    let mut secs = days * 86400 + hour * 3600 + min * 60 + sec;
-    // ZONE (index 8) may give an explicit offset in seconds.
-    if let Some(Value::Int(off)) = items.get(8) {
-        secs -= off;
+    // GNU's obsolescent calling convention (the call wasn't the
+    // single-list form): when more than 6 args are given the LAST
+    // argument is ZONE — middle extras are ignored — and DST is -1.
+    // The one-list form reads ZONE at index 8 and DST at index 7.
+    let (zone, isdst) = if args.len() > 1 {
+        let zone = if items.len() > 6 {
+            items.last().cloned().unwrap_or(Value::Nil)
+        } else {
+            Value::Nil
+        };
+        (zone, -1i32)
     } else {
-        // Interpret as local time: find the local UTC offset at this
-        // approximate instant via localtime_r.
-        secs -= local_tm(secs as i64).tm_gmtoff as i128;
-    }
-    // Emacs returns (HIGH LOW) — seconds split at 2^16.
+        let zone = items.get(8).cloned().unwrap_or(Value::Nil);
+        let t_sym = i.intern("t");
+        let isdst = match items.get(7) {
+            Some(Value::Int(n)) => (*n).clamp(-1, 1) as i32,
+            Some(Value::Sym(s)) if *s == t_sym => 1,
+            _ => -1,
+        };
+        (zone, isdst)
+    };
+    let secs = match decode_zone(i, &zone)? {
+        ZoneKind::Fixed(off) => {
+            // Arithmetic path: normalize overflowing fields like
+            // mktime does (Jan 32 -> Feb 1, hour 24 -> next day).
+            let total_m = year * 12 + (mon - 1);
+            let (ny, nm0) = (total_m.div_euclid(12), total_m.rem_euclid(12) + 1);
+            let days = days_from_civil(ny, nm0, day);
+            days * 86400 + hour * 3600 + min * 60 + sec_whole - off
+        }
+        ZoneKind::Local => mktime_secs(
+            sec_whole as i64,
+            min as i64,
+            hour as i64,
+            day as i64,
+            mon as i64,
+            year as i64,
+            isdst,
+            // The interpreter's `set-time-zone-rule', when set, IS the
+            // local zone — don't read the process `TZ'.
+            i.tz_rule.as_deref(),
+        ) as i128,
+        ZoneKind::Named(z) => mktime_secs(
+            sec_whole as i64,
+            min as i64,
+            hour as i64,
+            day as i64,
+            mon as i64,
+            year as i64,
+            isdst,
+            Some(&z),
+        ) as i128,
+        ZoneKind::Wall => mktime_secs(
+            sec_whole as i64,
+            min as i64,
+            hour as i64,
+            day as i64,
+            mon as i64,
+            year as i64,
+            isdst,
+            None,
+        ) as i128,
+    };
+    // Emacs returns (HIGH LOW), plus (HIGH LOW USEC PSEC) when the
+    // SEC argument carried a sub-second fraction.
     let hi = secs.div_euclid(65536);
     let lo = secs.rem_euclid(65536);
-    Ok(Value::list(vec![
-        Value::Int(hi as i128),
-        Value::Int(lo as i128),
-    ]))
+    if sub_ps == 0 {
+        Ok(Value::list(vec![Value::Int(hi), Value::Int(lo)]))
+    } else {
+        Ok(Value::list(vec![
+            Value::Int(hi),
+            Value::Int(lo),
+            Value::Int(sub_ps / 1_000_000),
+            Value::Int(sub_ps % 1_000_000),
+        ]))
+    }
 }
 
 fn f_decode_time(i: &mut Interp, args: Vec<Value>) -> EvalResult {
@@ -3501,22 +3824,50 @@ fn f_decode_time(i: &mut Interp, args: Vec<Value>) -> EvalResult {
         None => lisp_time_to_us(i, &Value::Nil)?,
     };
     let secs = (t / 1_000_000) as i64;
-    // GNU (decode-time TIME ZONE): nil/`wall' = local wall clock, t = UTC,
-    // integer = fixed seconds-east-of-UTC offset.
+    // GNU decode_time_zone: nil/`wall' = local wall clock, t and
+    // "UTC"/"Universal" = UTC, integer = fixed seconds-east offset,
+    // other strings name a TZ spec, a (OFFSET . NAME) cons uses car.
+    // Anything else signals "Invalid time zone specification".
     let t_sym = i.intern("t");
+    let wall_sym = i.intern("wall");
     let (tm, zone) = match args.get(1) {
         Some(Value::Int(off)) => (gmt_tm(secs + *off as i64), *off),
         Some(Value::Sym(s)) if *s == t_sym => (gmt_tm(secs), 0),
-        Some(v) if v.truthy() && matches!(v, Value::Sym(_)) => {
+        Some(Value::Sym(s)) if *s == wall_sym => {
+            // `wall' is the system wall clock — GNU keeps a separate
+            // `wall_tz' allocated at startup, so `set-time-zone-rule'
+            // does NOT affect it; use the ambient zone, not tz_rule.
             let t = local_tm(secs);
             let off = t.tm_gmtoff as i128;
             (t, off)
         }
-        Some(v) if v.truthy() => (gmt_tm(secs), 0),
-        _ => {
-            let t = local_tm(secs);
+        Some(Value::Str(z)) => {
+            let z = z.borrow().clone();
+            if z == "UTC" || z == "t" {
+                (gmt_tm(secs), 0)
+            } else {
+                let (t, _zone_name) = tz_local_tm(secs, &z);
+                let off = t.tm_gmtoff as i128;
+                (t, off)
+            }
+        }
+        Some(Value::Cons(c)) => {
+            let off = match &c.borrow().car {
+                Value::Int(n) => *n as i64,
+                _ => 0,
+            };
+            (gmt_tm(secs + off), off as i128)
+        }
+        Some(Value::Nil) | None => {
+            let t = interp_local_tm(i, secs);
             let off = t.tm_gmtoff as i128;
             (t, off)
+        }
+        Some(v) => {
+            return Err(i.signal_data(
+                sym::ERROR,
+                vec![Value::string("Invalid time zone specification"), v.clone()],
+            ));
         }
     };
     Ok(Value::list(vec![
@@ -3548,7 +3899,7 @@ fn current_time_list(i: &mut Interp) -> bool {
 ///   (HI LO)    -> (HI*65536 + LO . 1)
 ///   (HI LO US) / (HI LO . US)  -> (*1e6 . 1e6)
 ///   (HI LO US PS ...)          -> (*1e12 . 1e12)
-fn decode_ticks_hz(i: &mut Interp, v: &Value) -> Result<(i128, i128), Flow> {
+pub(crate) fn decode_ticks_hz(i: &mut Interp, v: &Value) -> Result<(i128, i128), Flow> {
     match v {
         Value::Nil => {
             let ps = lisp_time_to_ps(i, &Value::Nil)?;
@@ -3734,8 +4085,8 @@ fn f_time_convert(i: &mut Interp, args: Vec<Value>) -> EvalResult {
             Value::Int((ticks * *form).div_euclid(hz)),
             Value::Int(*form),
         )),
-        Some(Value::Sym(_)) => {
-            let name = i.symbol_name(i.sym_id(&args[1]).unwrap_or(0));
+        Some(v) => {
+            let name = i.sym_id(v).map(|s| i.symbol_name(s)).unwrap_or_default();
             if name == "integer" {
                 Ok(Value::Int(ticks.div_euclid(hz)))
             } else if name == "t" {
@@ -3743,10 +4094,13 @@ fn f_time_convert(i: &mut Interp, args: Vec<Value>) -> EvalResult {
             } else if name == "list" {
                 Ok(ticks_hz_list4(ticks, hz))
             } else {
-                Err(i.wrong_type_mut("integerp", &args[1]))
+                // GNU: (error "Invalid time frequency" FORM).
+                Err(i.signal_data(
+                    sym::ERROR,
+                    vec![Value::string("Invalid time frequency"), v.clone()],
+                ))
             }
         }
-        _ => Err(i.wrong_type_mut("integerp", &args[1])),
     }
 }
 
@@ -3837,8 +4191,94 @@ fn f_current_cpu_time(_i: &mut Interp, _a: Vec<Value>) -> EvalResult {
 
 static START: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
 
-fn f_set_time_zone(_i: &mut Interp, _a: Vec<Value>) -> EvalResult {
-    Ok(Value::t())
+/// `set-time-zone-rule' — GNU's set_time_zone_rule: adopt TZ as the
+/// process-local zone (like `(setenv "TZ" TZ)' minus the
+/// `process-environment' entry).  nil/`wall' restores system wall
+/// clock (TZ unset); t = "UTC0"; an integer offset or a (OFFSET NAME)
+/// cons uses a fabricated POSIX spec.  Returns nil.
+fn f_set_time_zone(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let _g = tz_lock();
+    let t_sym = i.intern("t");
+    let wall_sym = i.intern("wall");
+    /// GNU's name for an integer zone: sign plus HH, then MM/SS only
+    /// when non-zero ("+01", "+0130", "+010101").
+    fn offset_name(off: i64) -> String {
+        let sign = if off < 0 { '-' } else { '+' };
+        let a = off.abs();
+        let (h, m, s) = (a / 3600, (a % 3600) / 60, a % 60);
+        if s != 0 {
+            format!("{}{:02}{:02}{:02}", sign, h, m, s)
+        } else if m != 0 {
+            format!("{}{:02}{:02}", sign, h, m)
+        } else {
+            format!("{}{:02}", sign, h)
+        }
+    }
+    /// POSIX TZ field for a fixed offset: POSIX inverts the sign
+    /// (the field is what to subtract from local time to get UTC).
+    fn posix_off(off: i64) -> String {
+        let sign = if off > 0 { '-' } else { '+' };
+        let a = off.abs();
+        let (h, m, s) = (a / 3600, (a % 3600) / 60, a % 60);
+        if s != 0 {
+            format!("{}{}:{:02}:{:02}", sign, h, m, s)
+        } else if m != 0 {
+            format!("{}{}:{:02}", sign, h, m)
+        } else {
+            format!("{}{}", sign, h)
+        }
+    }
+    /// Fabricate "NAME±H[:M[:S]]"; POSIX needs >=3 chars or <...>
+    /// quoting for NAME, and macOS honors "<+01>" but not "<X>", so
+    /// short/empty names use the offset's own "+HH" rendering.
+    fn fixed_spec(name: &str, off: i64) -> String {
+        let name = if name.len() >= 3 {
+            name.to_string()
+        } else {
+            offset_name(off)
+        };
+        format!("<{}>{}", name, posix_off(off))
+    }
+    let spec: Option<String> = match &a[0] {
+        Value::Str(z) => Some(z.borrow().clone()),
+        Value::Sym(s) if *s == t_sym => Some("UTC0".to_string()),
+        Value::Sym(s) if *s == wall_sym => None,
+        Value::Int(off) => Some(fixed_spec("", *off as i64)),
+        Value::Cons(c) => {
+            let (off, name) = {
+                let b = c.borrow();
+                let off = match &b.car {
+                    Value::Int(n) => *n as i64,
+                    _ => 0,
+                };
+                let name = match &b.cdr {
+                    Value::Cons(c2) => match &c2.borrow().car {
+                        Value::Str(s) => s.borrow().clone(),
+                        _ => String::new(),
+                    },
+                    Value::Str(s) => s.borrow().clone(),
+                    _ => String::new(),
+                };
+                (off, name)
+            };
+            Some(fixed_spec(&name, off))
+        }
+        Value::Nil => None,
+        v => {
+            return Err(i.signal_data(
+                sym::ERROR,
+                vec![
+                    Value::string("Invalid time zone specification"),
+                    v.clone(),
+                ],
+            ));
+        }
+    };
+    // Unlike GNU we do NOT set the process `TZ'/call `tzset': the rule
+    // lives on the Interp so parallel interpreters never see each
+    // other's zone (libtest runs them in the same process).
+    i.tz_rule = spec;
+    Ok(Value::Nil)
 }
 
 // ---------- hashing / base64 ----------
@@ -4663,13 +5103,11 @@ fn f_format_mode_line(_i: &mut Interp, _a: Vec<Value>) -> EvalResult {
 /// membership and label docstrings.
 pub(crate) fn make_category_table_value(i: &mut Interp, standard: bool) -> Value {
     // GNU extra slot 0: docstring vector of 95 (indexed by cat - 32);
-    // extra slot 1: an `equal' hash-table of category-set data.
+    // extra slot 1 starts nil and becomes an `equal' hash-table
+    // hash-consing category sets on the first `modify-category-entry'.
     let docs = Rc::new(RefCell::new(vec![Value::Nil; 95]));
-    let hash = Value::Hash(Rc::new(RefCell::new(crate::lisp::value::LispHash::new(
-        crate::lisp::value::HashTest::Equal,
-    ))));
     let tag = Value::Sym(i.intern("category-table"));
-    let t = make_ct(i, tag, Value::Nil, vec![Value::Vec(docs.clone()), hash]);
+    let t = make_ct(i, tag, Value::Nil, vec![Value::Vec(docs.clone()), Value::Nil]);
     if standard {
         // GNU's standard-category-table ASCII defaults.
         const DOCS: &[(usize, &str)] = &[
@@ -4866,14 +5304,37 @@ fn f_set_category_table(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 
 fn f_copy_category_table(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let src = want_category_table(i, &arg(&a, 0))?;
-    Ok(ct_copy(i, &Value::Record(src)))
+    let t = ct_copy(i, &Value::Record(src));
+    // GNU `copy_category_table' additionally copies the docstring
+    // vector (extra slot 0) and the category-set hash (slot 1) —
+    // the copy is independent.
+    if let Value::Record(r) = &t {
+        let mut rr = r.borrow_mut();
+        if let Some(Value::Vec(d)) = rr.get(3) {
+            let d = Value::Vec(Rc::new(RefCell::new(d.borrow().clone())));
+            rr[3] = d;
+        }
+        if let Some(Value::Hash(h)) = rr.get(4) {
+            let mut nh =
+                crate::lisp::value::LispHash::new(crate::lisp::value::HashTest::Equal);
+            {
+                let hm = h.borrow();
+                nh.map = hm.map.clone();
+                nh.keys = hm.keys.clone();
+            }
+            rr[4] = Value::Hash(Rc::new(RefCell::new(nh)));
+        }
+    }
+    Ok(t)
 }
 
 fn f_define_category(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let cat = want_int(i, &a[0])?;
-    if !(32..=126).contains(&cat) {
-        return Err(i.wrong_type_mut("categoryp", &a[0]));
-    }
+    // GNU `CHECK_CATEGORY': CATEGORY must be a printable-ASCII fixnum
+    // (32..=126); anything else is `(categoryp CATEGORY)'.
+    let cat = match &a[0] {
+        Value::Int(c) if (32..=126).contains(c) => *c,
+        _ => return Err(i.wrong_type_mut("categoryp", &a[0])),
+    };
     let doc = want_string(i, &a[1])?;
     let t = want_category_table(i, &arg(&a, 2))?;
     let docs = cat_docs(&t);
@@ -4891,10 +5352,10 @@ fn f_define_category(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 }
 
 fn f_category_docstring(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let cat = want_int(i, &a[0])?;
-    if !(32..=126).contains(&cat) {
-        return Err(i.wrong_type_mut("categoryp", &a[0]));
-    }
+    let cat = match &a[0] {
+        Value::Int(c) if (32..=126).contains(c) => *c,
+        _ => return Err(i.wrong_type_mut("categoryp", &a[0])),
+    };
     let t = want_category_table(i, &arg(&a, 1))?;
     Ok(cat_docs(&t).borrow()[cat as usize - 32].clone())
 }
@@ -4910,24 +5371,56 @@ fn f_get_unused_category(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     }
     Ok(Value::Nil)
 }
+/// Extra slot 1 of a category table: GNU's `equal' hash-table
+/// hash-consing category sets (created lazily by
+/// `modify-category-entry'), so equal sets are `eq'.
+fn cat_set_hash(t: &Rc<RefCell<Vec<Value>>>) -> Rc<RefCell<crate::lisp::value::LispHash>> {
+    {
+        let b = t.borrow();
+        if let Some(Value::Hash(h)) = b.get(4) {
+            return h.clone();
+        }
+    }
+    let h = Rc::new(RefCell::new(crate::lisp::value::LispHash::new(
+        crate::lisp::value::HashTest::Equal,
+    )));
+    if t.borrow().len() > 4 {
+        t.borrow_mut()[4] = Value::Hash(h.clone());
+    }
+    h
+}
 
 fn f_modify_category_entry(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    // CHAR may be a char or a (MIN . MAX) cons.
+    // CHAR may be a char or a (MIN . MAX) cons.  GNU checks `consp'
+    // only after the FIXNATP fast path: any other type is
+    // `(consp CHAR)', while ints and cons elements out of character
+    // range are `(characterp ...)'.
+    let _tt = std::env::var_os("REMACS_MCE_PROF").map(|_| std::time::Instant::now());
     let (lo, hi) = match &a[0] {
-        Value::Int(c) => (*c, *c),
+        Value::Int(c) if (0..=CT_MAX_CHAR as i128).contains(c) => (*c, *c),
+        Value::Int(_) => return Err(i.wrong_type_mut("characterp", &a[0])),
         Value::Cons(c) => {
-            let r = c.borrow();
-            match (&r.car, &r.cdr) {
-                (Value::Int(l), Value::Int(h)) => (*l, *h),
-                _ => return Err(i.wrong_type_mut("characterp", &a[0])),
-            }
+            let (car, cdr) = {
+                let r = c.borrow();
+                (r.car.clone(), r.cdr.clone())
+            };
+            let l = match &car {
+                Value::Int(n) if (0..=CT_MAX_CHAR as i128).contains(n) => *n,
+                _ => return Err(i.wrong_type_mut("characterp", &car)),
+            };
+            let h = match &cdr {
+                Value::Int(n) if (0..=CT_MAX_CHAR as i128).contains(n) => *n,
+                _ => return Err(i.wrong_type_mut("characterp", &cdr)),
+            };
+            (l, h)
         }
-        other => return Err(i.wrong_type_mut("characterp", other)),
+        other => return Err(i.wrong_type_mut("consp", other)),
     };
-    let cat = want_int(i, &a[1])?;
-    if !(32..=126).contains(&cat) {
-        return Err(i.wrong_type_mut("categoryp", &a[1]));
-    }
+    let cat = match &a[1] {
+        Value::Int(c) if (32..=126).contains(c) => *c,
+        _ => return Err(i.wrong_type_mut("categoryp", &a[1])),
+    };
+    let _tc = _tt.is_some().then(std::time::Instant::now);
     let reset = !arg(&a, 3).is_nil();
     let t = want_category_table(i, &arg(&a, 2))?;
     if cat_docs(&t).borrow()[cat as usize - 32].is_nil() {
@@ -4939,49 +5432,510 @@ fn f_modify_category_entry(i: &mut Interp, a: Vec<Value>) -> EvalResult {
             ))],
         ));
     }
+    if let Some(tc) = _tc {
+        eprintln!("[mce-prolog] {}us", tc.elapsed().as_micros());
+    }
+    if lo > hi {
+        // GNU: a reversed range is a silent no-op.
+        return Ok(Value::Nil);
+    }
+    // Fast path: the common `(modify-category-entry RANGE CAT)' form
+    // from characters.el / map-charset-chars — parentless table, plain
+    // scalar defalt.  Fuse the old-value walk and the write into one
+    // descent: each covered slot's new set derives from its old
+    // category-set via a per-object cache (`mce_new_set'), so no
+    // intermediate run list or per-run trie re-descent is needed.
+    if arg(&a, 2).is_nil() {
+        let defalt = i.char_table_defalt(&Value::Record(t.clone()));
+        let no_parent = i.char_table_parent(&Value::Record(t.clone())).is_nil();
+        if no_parent && !is_sub_ct(i, &defalt) {
+            let _tf = _tt.is_some().then(std::time::Instant::now);
+            let mut mce_cache: std::collections::HashMap<usize, Value> =
+                Default::default();
+            mce_fused(
+                i,
+                &t,
+                lo as u32,
+                hi as u32,
+                cat as usize,
+                reset,
+                &defalt,
+                &mut mce_cache,
+            );
+            if let Some(tf) = _tf {
+                eprintln!("[mce-fused] {}us", tf.elapsed().as_micros());
+            }
+            return Ok(Value::Nil);
+        }
+    }
     let table = Value::Record(t.clone());
     // Group the range by runs of equal old category-set: one
-    // bool-vector per run shared over the whole run — a per-char
-    // loop allocates a vector for every codepoint (multi-GB churn
-    // on CJK-wide categories), and `ct_effective_runs' walks the
-    // whole (possibly fragmented) table per call.
-    let lo = lo.max(0) as u32;
-    let hi = hi.min(CT_MAX_CHAR as i128).max(lo as i128) as u32;
-    let mut c = lo;
-    while c <= hi {
-        let old = char_table_ref(i, &table, c as usize);
-        let mut e = c;
-        while e < hi {
-            let nx = char_table_ref(i, &table, e as usize + 1);
-            if !super::eq_values(&nx, &old) {
-                break;
-            }
-            e += 1;
-        }
-        let mut bits = vec![false; 128];
-        if !reset && is_bool_vector(i, &old) {
-            if let Ok(b) = bool_vec_of(i, &old) {
-                for (k, v) in b.iter().enumerate() {
-                    if k < 128 {
-                        bits[k] = *v;
+    // bool-vector per run shared over the whole run.  Run
+    // boundaries come from `ct_runs_in' — leaf blocks of the
+    // char-table trie — instead of a per-character `char_table_ref'
+    // walk (multi-GB worth of lookups on CJK-wide categories).
+    // Adjacent runs carrying the SAME `old' set yield the same
+    // `set' — reuse it without re-hashing, and merge the writes
+    // into one `ct_set_range' covering the whole span.
+    let mut pending: Option<(u32, u32, Value)> = None; // (start,end,set)
+    // Cross-run cache keyed on the old object's identity (Rc pointer;
+    // nil/other immediates share one slot): identical `old' values
+    // recur non-adjacently too, so a single last-entry cache misses
+    // on alternating patterns.
+    let mut old_cache: std::collections::HashMap<usize, Value> = Default::default();
+    let _t0 = std::env::var_os("REMACS_MCE_PROF").map(|_| std::time::Instant::now());
+    let _runs_v = ct_runs_in(i, &table, lo as u32, hi as u32);
+    if let Some(t0) = _t0 {
+        eprintln!("[mce] runs_in {} runs {}us", _runs_v.len(), t0.elapsed().as_micros());
+    }
+    let _post_t = std::env::var_os("REMACS_MCE_PROF").map(|_| std::time::Instant::now());
+    for (c, e, old) in _runs_v {
+        // New set = old bits with bit CAT = !RESET (an unset cell
+        // starts from all-zero — GNU stores that empty set, never
+        // leaves nil behind), then hash-consed through extra slot 1
+        // so equal sets share one bool-vector object.
+        let key = match &old {
+            Value::Record(r) => std::rc::Rc::as_ptr(r) as usize,
+            Value::Vec(v) => std::rc::Rc::as_ptr(v) as usize,
+            Value::Cons(v) => std::rc::Rc::as_ptr(v) as usize,
+            _ => usize::MAX,
+        };
+        let set = match old_cache.get(&key) {
+            Some(s) => s.clone(),
+            None => {
+                let mut bits = vec![false; 128];
+                if is_bool_vector(i, &old) {
+                    if let Ok(old_bits) = bool_vec_of(i, &old) {
+                        for (k, v) in old_bits.iter().enumerate() {
+                            if k < 128 {
+                                bits[k] = *v;
+                            }
+                        }
                     }
                 }
+                bits[cat as usize] = !reset;
+                let newv = make_bool_vector(i, bits);
+                let hk = crate::lisp::builtins::hashfn::hash_key_for(
+                    i,
+                    &newv,
+                    crate::lisp::value::HashTest::Equal,
+                );
+                let h = cat_set_hash(&t);
+                let s = {
+                    let mut hm = h.borrow_mut();
+                    match hm.map.get(&hk) {
+                        Some(v) => v.clone(),
+                        None => {
+                            hm.map.insert(hk.clone(), newv.clone());
+                            hm.put_key(hk, newv.clone());
+                            newv.clone()
+                        }
+                    }
+                };
+                old_cache.insert(key, s.clone());
+                s
             }
+        };
+        match pending {
+            Some((pc, pe, ref ps)) if crate::lisp::builtins::eq_values(ps, &set) && pe + 1 == c => {
+                pending = Some((pc, e, set));
+            }
+            Some((pc, pe, ps)) => {
+                if pe == pc {
+                    ct_set(i, &table, pc, ps);
+                } else {
+                    ct_set_range(i, &table, pc, pe, ps);
+                }
+                pending = Some((c, e, set));
+            }
+            None => pending = Some((c, e, set)),
         }
-        bits[cat as usize] = true;
-        let bv = make_bool_vector(i, bits);
-        if e == c {
-            ct_set(i, &table, c, bv);
+    }
+    if let Some(t0) = _post_t {
+        eprintln!("[mce] body {}us", t0.elapsed().as_micros());
+    }
+    if let Some((pc, pe, ps)) = pending {
+        if pe == pc {
+            ct_set(i, &table, pc, ps);
         } else {
-            ct_set_range(i, &table, c, e, bv);
+            ct_set_range(i, &table, pc, pe, ps);
         }
-        c = e + 1;
+    }
+    if let Some(tt) = _tt {
+        eprintln!("[mce-total] {}us", tt.elapsed().as_micros());
     }
     Ok(Value::Nil)
 }
 
+/// Direct-call entry for `f_modify_category_entry' used by
+/// `map-charset-chars'' emit fast path (avoids per-range `apply'
+/// dispatch while characters.el seeds categories).
+pub(crate) fn call_modify_category_entry(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    f_modify_category_entry(i, a)
+}
+
+/// Pre-resolved `modify-category-entry' fast call: the standard
+/// category table + CAT + RESET validated once, then every (lo..=hi)
+/// range writes through `mce_fused' with a shared old→new cache.
+/// `mce_fast_for' returns None for anything needing the full
+/// `f_modify_category_entry' semantics (explicit TABLE arg, parented
+/// table, invalid CAT) so the caller falls back to `apply'.
+pub(crate) struct MceFast {
+    t: std::rc::Rc<RefCell<Vec<Value>>>,
+    cat: usize,
+    defalt: Value,
+    cache: std::collections::HashMap<usize, Value>,
+}
+
+pub(crate) fn mce_fast_for(i: &mut Interp, function: &Value, arg: &Value) -> Option<MceFast> {
+    let Value::Subr(s) = function else {
+        return None;
+    };
+    if s.name != "modify-category-entry" {
+        return None;
+    }
+    let Value::Int(c) = arg else {
+        return None;
+    };
+    if !(32..=126).contains(c) {
+        return None; // let the real call raise `categoryp'
+    }
+    let t = want_category_table(i, &Value::Nil).ok()?;
+    if cat_docs(&t).borrow()[*c as usize - 32].is_nil() {
+        return None; // undefined category must still signal
+    }
+    let tv = Value::Record(t.clone());
+    if !i.char_table_parent(&tv).is_nil() {
+        return None;
+    }
+    let defalt = i.char_table_defalt(&tv);
+    if is_sub_ct(i, &defalt) {
+        return None;
+    }
+    Some(MceFast {
+        t,
+        cat: *c as usize,
+        defalt,
+        cache: Default::default(),
+    })
+}
+
+impl MceFast {
+    /// `(modify-category-entry (LO . HI) CAT)' — RESET always nil here
+    /// since `map-charset-chars' passes exactly two arguments.
+    pub(crate) fn emit(&mut self, i: &mut Interp, lo: i64, hi: i64) {
+        if lo > hi {
+            return;
+        }
+        mce_fused(
+            i,
+            &self.t,
+            lo as u32,
+            hi as u32,
+            self.cat,
+            false,
+            &self.defalt,
+            &mut self.cache,
+        );
+    }
+}
+
+/// New category set for `cat' derived from the slot's old value OLD:
+/// copy bits, set CAT = !RESET, hash-cons through the table's extra
+/// slot so equal sets share one bool-vector (same rule as
+/// `f_modify_category_entry').  Results are cached by the old
+/// object's identity in CACHE — identical sets recur heavily across
+/// a call (nil leaves, alternating bool-vectors).
+fn mce_new_set(
+    i: &mut Interp,
+    t: &Rc<RefCell<Vec<Value>>>,
+    old: &Value,
+    cat: usize,
+    reset: bool,
+    cache: &mut std::collections::HashMap<usize, Value>,
+) -> Value {
+    let key = match old {
+        Value::Record(r) => std::rc::Rc::as_ptr(r) as usize,
+        Value::Vec(v) => std::rc::Rc::as_ptr(v) as usize,
+        Value::Cons(v) => std::rc::Rc::as_ptr(v) as usize,
+        _ => usize::MAX,
+    };
+    if let Some(s) = cache.get(&key) {
+        return s.clone();
+    }
+    let mut bits = vec![false; 128];
+    if is_bool_vector(i, old) {
+        if let Ok(old_bits) = bool_vec_of(i, old) {
+            for (k, v) in old_bits.iter().enumerate() {
+                if k < 128 {
+                    bits[k] = *v;
+                }
+            }
+        }
+    }
+    bits[cat] = !reset;
+    let newv = make_bool_vector(i, bits);
+    let hk = crate::lisp::builtins::hashfn::hash_key_for(
+        i,
+        &newv,
+        crate::lisp::value::HashTest::Equal,
+    );
+    let h = cat_set_hash(t);
+    let s = {
+        let mut hm = h.borrow_mut();
+        match hm.map.get(&hk) {
+            Some(v) => v.clone(),
+            None => {
+                hm.map.insert(hk.clone(), newv.clone());
+                hm.put_key(hk, newv.clone());
+                newv.clone()
+            }
+        }
+    };
+    cache.insert(key, s.clone());
+    s
+}
+
+/// Recursive worker for `mce_fused': write the transformed category
+/// set into every slot of SUB (a sub-char-table Value) intersecting
+/// [FROM,TO].  Fully covered scalar slots collapse to the new value;
+/// partially covered scalars materialize a deeper sub-table first —
+/// GNU `sub_char_table_set_range' shape, except the written value is
+/// computed per slot rather than constant.
+/// Recursive worker for `mce_fused'.  Transforms every slot of SUB
+/// intersecting [FROM,TO].  Returns Some(V) when the whole sub-table
+/// (not just the covered span) resolves to the single scalar V — the
+/// caller then collapses SUB's slot to V, matching GNU's
+/// `sub_char_table_set_range' block overwrite.  A partially covered
+/// child always makes the parent non-uniform (uncovered content
+/// stays mixed), so it yields None.
+/// Effective old value of a whole slot block when the subtree below V
+/// is *uniform* — nil slots read as DEFALT (GNU `char_table_ref' chain
+/// stops at this table's defalt for `mce_fused' purposes).  Returns
+/// None for mixed content: the caller must descend slot by slot.
+/// Purely read-only — lets covered blocks fold without materializing
+/// the (usually nil) leaf chain first.
+fn mce_fold_value(i: &Interp, v: &Value, defalt: &Value) -> Option<Value> {
+    if !is_sub_ct(i, v) {
+        return Some(if v.is_nil() { defalt.clone() } else { v.clone() });
+    }
+    let (depth, _min, r) = sub_ct_parts(v)?;
+    let b = r.borrow();
+    let mut uni: Option<Value> = None;
+    for k in 0..CHARTAB_SIZE[depth] {
+        let child = b.get(3 + k).cloned().unwrap_or(Value::Nil);
+        let vv = mce_fold_value(i, &child, defalt)?;
+        match &uni {
+            Some(u) if crate::lisp::builtins::eq_values(u, &vv) => {}
+            Some(_) => return None,
+            None => uni = Some(vv),
+        }
+    }
+    uni
+}
+
+fn mce_sub(
+    i: &mut Interp,
+    sub: &Value,
+    from: u32,
+    to: u32,
+    cat: usize,
+    reset: bool,
+    t: &Rc<RefCell<Vec<Value>>>,
+    defalt: &Value,
+    cache: &mut std::collections::HashMap<usize, Value>,
+) -> Option<Value> {
+    let (depth, min, r) = sub_ct_parts(sub)?;
+    let chars = 1u32 << CHARTAB_BITS[depth];
+    let lim = CHARTAB_SIZE[depth];
+    let lo = from.max(min);
+    let mut idx = (lo.saturating_sub(min) >> CHARTAB_BITS[depth]) as usize;
+    let mut c = min + chars * idx as u32;
+    // UNIFORM tracks one foldable value; starts unset and becomes
+    // Some(v) once a covered slot resolves — any later covered slot
+    // with a different value, or any uncovered child that keeps mixed
+    // content, breaks uniformity.
+    let mut uniform: Option<Value> = None;
+    let mut broke = false;
+    if depth == 3 {
+        // Leaf level: one slot = one character.  One borrow to read the
+        // old values, then one borrow_mut for the whole covered write —
+        // the transform cost is a per-object cache lookup (identical
+        // `old' objects share one entry), not per-character work.
+        let base = c;
+        let mut k = idx;
+        let mut cc = c;
+        let olds: Vec<Value> = {
+            let b = r.borrow();
+            let mut v: Vec<Value> = Vec::with_capacity(lim - k);
+            while k < lim && cc <= to {
+                v.push(b.get(3 + k).cloned().unwrap_or(Value::Nil));
+                k += 1;
+                cc += 1;
+            }
+            v
+        };
+        let end = k;
+        let mut sets: Vec<Value> = Vec::with_capacity(end - idx);
+        for (j, old) in olds.iter().enumerate() {
+            if from <= base + j as u32 {
+                let old_eff = if old.is_nil() { defalt.clone() } else { old.clone() };
+                sets.push(mce_new_set(i, t, &old_eff, cat, reset, cache));
+            } else {
+                sets.push(old.clone());
+            }
+        }
+        {
+            let mut b = r.borrow_mut();
+            for (j, set) in sets.iter().enumerate() {
+                if from <= base + j as u32 {
+                    b[3 + idx + j] = set.clone();
+                    match &uniform {
+                        Some(u) if crate::lisp::builtins::eq_values(u, set) => {}
+                        Some(_) => broke = true,
+                        None => uniform = Some(set.clone()),
+                    }
+                }
+            }
+        }
+        idx = k;
+        c = cc;
+    }
+    while idx < lim && c <= to {
+        let covered = from <= c && c + chars - 1 <= to;
+        if !covered {
+            // Uncovered content remains inside SUB: the parent can't
+            // fold this sub-table to a single scalar.
+            if depth < 3 {
+                let child = r.borrow()[3 + idx].clone();
+                if is_sub_ct(i, &child) {
+                    mce_sub(i, &child, from, to, cat, reset, t, defalt, cache);
+                } else {
+                    let n = make_sub_ct(i, depth + 1, c, child);
+                    r.borrow_mut()[3 + idx] = n.clone();
+                    mce_sub(i, &n, from, to, cat, reset, t, defalt, cache);
+                }
+            }
+            broke = true;
+        } else {
+            // Covered slot: try the read-only fold first — a uniform
+            // subtree collapses to one scalar write WITHOUT touching
+            // (or materializing) its leaves.  Only mixed content
+            // descends and writes per-slot.
+            let child = r.borrow()[3 + idx].clone();
+            let folded = mce_fold_value(i, &child, defalt)
+                .map(|old_eff| mce_new_set(i, t, &old_eff, cat, reset, cache));
+            match folded {
+                Some(v) => {
+                    r.borrow_mut()[3 + idx] = v.clone();
+                    match &uniform {
+                        Some(u) if crate::lisp::builtins::eq_values(u, &v) => {}
+                        Some(_) => broke = true,
+                        None => uniform = Some(v),
+                    }
+                }
+                None => {
+                    let v = if is_sub_ct(i, &child) {
+                        mce_sub(i, &child, from, to, cat, reset, t, defalt, cache)
+                    } else {
+                        let old_eff =
+                            if child.is_nil() { defalt.clone() } else { child };
+                        Some(mce_new_set(i, t, &old_eff, cat, reset, cache))
+                    };
+                    match v {
+                        Some(v) => {
+                            r.borrow_mut()[3 + idx] = v.clone();
+                            match &uniform {
+                                Some(u)
+                                    if crate::lisp::builtins::eq_values(u, &v) =>
+                                {
+                                }
+                                Some(_) => broke = true,
+                                None => uniform = Some(v),
+                            }
+                        }
+                        None => broke = true,
+                    }
+                }
+            }
+        }
+        idx += 1;
+        c += chars;
+    }
+    // This sub-table folds only if the covered span hit every slot
+    // (whole block) AND all resolved to one scalar.
+    if broke || idx < lim || lo > min {
+        return None;
+    }
+    uniform
+}
+
+/// Fused `modify-category-entry' for a parentless category table:
+/// one descent writes [LO,HI] (inclusive) at all levels.
+fn mce_fused(
+    i: &mut Interp,
+    t: &Rc<RefCell<Vec<Value>>>,
+    lo: u32,
+    hi: u32,
+    cat: usize,
+    reset: bool,
+    defalt: &Value,
+    cache: &mut std::collections::HashMap<usize, Value>,
+) {
+    // T is the char-table Record; its contents vector is slot 2.
+    let contents = match t.borrow().get(2).cloned() {
+        Some(Value::Vec(v)) => v,
+        _ => return,
+    };
+    let mut ti = (lo >> 16) as usize;
+    let lim = (hi.min(CT_MAX_CHAR) >> 16) as usize;
+    while ti <= lim {
+        let c = (ti as u32) << 16;
+        if c > hi {
+            break;
+        }
+        let slot = {
+            let b = contents.borrow();
+            b.get(1 + ti).cloned().unwrap_or(Value::Nil)
+        };
+        let covered = lo <= c && c + 65535 <= hi;
+        // Covered 64k block: fold the slot's effective value — uniform
+        // content (a nil slot inheriting DEFALT included) collapses to
+        // one scalar write without materializing the leaf chain.
+        let folded = if covered {
+            mce_fold_value(i, &slot, defalt)
+        } else {
+            None
+        };
+        if let Some(old_eff) = folded {
+            let set = mce_new_set(i, t, &old_eff, cat, reset, cache);
+            contents.borrow_mut()[1 + ti] = set;
+        } else {
+            let sub = if is_sub_ct(i, &slot) {
+                slot
+            } else {
+                let n = make_sub_ct(i, 1, c, slot);
+                contents.borrow_mut()[1 + ti] = n.clone();
+                n
+            };
+            if let Some(v) = mce_sub(i, &sub, lo, hi, cat, reset, t, defalt, cache) {
+                // Whole 64k block resolved to one scalar — collapse.
+                contents.borrow_mut()[1 + ti] = v;
+            }
+        }
+        ti += 1;
+    }
+    if lo < 128 {
+        ct_refresh_ascii(i, &contents);
+    }
+}
+
 fn f_char_category_set(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let ch = want_int(i, &a[0])?;
+    // GNU `CHECK_CHARACTER' — non-chars are `(characterp CH)'.
+    let ch = match &a[0] {
+        Value::Int(n) if (0..=CT_MAX_CHAR as i128).contains(n) => *n,
+        _ => return Err(i.wrong_type_mut("characterp", &a[0])),
+    };
     let t = want_category_table(i, &Value::Nil)?;
     let table = Value::Record(t);
     Ok(match char_table_ref(i, &table, ch as usize) {
@@ -5002,20 +5956,51 @@ fn f_category_set_mnemonics(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 }
 
 fn bool_vec_of_cat(i: &mut Interp, v: &Value) -> Result<Vec<bool>, Flow> {
-    if !is_bool_vector(i, v) {
+    // GNU `CHECK_CATEGORY_SET': a bool-vector of exactly 128 bits.
+    let bits = if is_bool_vector(i, v) {
+        bool_vec_of(i, v)?
+    } else {
+        return Err(i.wrong_type_mut("categorysetp", v));
+    };
+    if bits.len() != 128 {
         return Err(i.wrong_type_mut("categorysetp", v));
     }
-    bool_vec_of(i, v)
+    Ok(bits)
 }
 
 fn f_make_category_set(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let s = want_string(i, &a[0])?;
+    // GNU: STRING must be unibyte ("Multibyte string in
+    // `make-category-set'"), and every byte must name a category
+    // (printable ASCII 32..126 — `(categoryp BYTE)').
+    let Value::Str(sref) = &a[0] else {
+        return Err(i.wrong_type_mut("stringp", &a[0]));
+    };
+    let chars: Vec<char> = sref.borrow().chars().collect();
+    let multibyte = if i.is_unibyte_str(sref) {
+        false
+    } else if i.is_multibyte_str(sref) {
+        true
+    } else {
+        // Unmarked strings are multibyte when any char exceeds the
+        // byte range (same storage rule as `multibyte-string-p');
+        // eight-bit proxies in a still-unmarked string count as
+        // bytes, not multibyte chars.
+        chars
+            .iter()
+            .any(|&c| (c as u32) > 0xFF && crate::lisp::value::eight_bit_byte(c).is_none())
+    };
+    if multibyte {
+        return Err(i.error("Multibyte string in ‘make-category-set’"));
+    }
     let mut bits = vec![false; 128];
-    for c in s.chars() {
-        let k = c as usize;
-        if k < 128 {
-            bits[k] = true;
+    for c in chars {
+        let k = crate::lisp::value::eight_bit_byte(c)
+            .map(|b| b as usize)
+            .unwrap_or(c as usize);
+        if !(32..=126).contains(&k) {
+            return Err(i.wrong_type_mut("categoryp", &Value::Int(k as i128)));
         }
+        bits[k] = true;
     }
     Ok(make_bool_vector(i, bits))
 }
@@ -5424,7 +6409,7 @@ fn f_cl_type_of(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         Value::Hash(_) => "hash-table",
         Value::Subr(_) => "subr",
         Value::Lambda(l) => {
-            if l.bc_items.is_some() {
+            if l.is_bytecode() {
                 "byte-code-function"
             } else {
                 "interpreted-function"
@@ -5499,9 +6484,10 @@ fn f_bool_vector_p(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 fn f_make_bool_vector(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let n = super::want_int(i, &a[0])?;
     let init = !arg(&a, 1).is_nil();
+    // GNU Fmake_bool_vector CHECK_FIXNATs LENGTH → `wholenump', not
+    // args-out-of-range.
     if n < 0 {
-        let s = i.intern("args-out-of-range");
-        return Err(i.signal_data(s, vec![a[0].clone()]));
+        return Err(i.wrong_type_mut("wholenump", &a[0]));
     }
     Ok(make_bool_vector(i, vec![init; n as usize]))
 }
@@ -5614,7 +6600,7 @@ fn f_bool_vector_consec(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 
 use crate::editor::{
     CHAR_ALT, CHAR_CTL, CHAR_HYPER, CHAR_META, CHAR_SHIFT, CHAR_SUPER, WindowRef, is_keymap,
-    key_seq, parse_key_token, sel_frame, sel_window,
+    key_seq, parse_key_token, sel_frame, sel_window, w_parent,
 };
 
 fn f_eventp(_i: &mut Interp, a: Vec<Value>) -> EvalResult {
@@ -5645,6 +6631,8 @@ fn parse_event_symbol(name: &str) -> (Vec<String>, Vec<String>, String) {
     let mut cmods = Vec::new();
     let mut kmods = Vec::new();
     let mut name = name.to_string();
+    // GNU parse_modifiers_uncached scans all modifier prefixes in ONE
+    // pass, in the order written (drag-M-x parses both).
     loop {
         let mut hit = false;
         for (p, m) in [
@@ -5654,23 +6642,18 @@ fn parse_event_symbol(name: &str) -> (Vec<String>, Vec<String>, String) {
             ("M-", "meta"),
             ("S-", "shift"),
             ("s-", "super"),
+            ("down-", "down"),
+            ("drag-", "drag"),
+            ("double-", "double"),
+            ("triple-", "triple"),
+            ("up-", "up"),
         ] {
             if let Some(r) = name.strip_prefix(p) {
-                cmods.push(m.to_string());
-                name = r.to_string();
-                hit = true;
-                break;
-            }
-        }
-        if !hit {
-            break;
-        }
-    }
-    loop {
-        let mut hit = false;
-        for p in ["down-", "drag-", "double-", "triple-"] {
-            if let Some(r) = name.strip_prefix(p) {
-                kmods.push(p.trim_end_matches('-').to_string());
+                if p.len() == 2 {
+                    cmods.push(m.to_string());
+                } else {
+                    kmods.push(m.to_string());
+                }
                 name = r.to_string();
                 hit = true;
                 break;
@@ -5690,11 +6673,19 @@ fn event_sym_elements(name: &str) -> (String, Vec<String>) {
     let (cmods, kmods, base) = parse_event_symbol(name);
     let mut mods = cmods;
     mods.extend(kmods);
-    if base.starts_with("mouse-")
-        && !mods
-            .iter()
-            .any(|m| matches!(m.as_str(), "down" | "drag" | "double" | "triple" | "click"))
-    {
+    // GNU parse_modifiers_uncached: `mouse-D' (exactly one digit)
+    // implies click unless down/drag/double/triple is present; a
+    // `wheel-…' base implies click unless double/triple is present.
+    let no_dir = !mods
+        .iter()
+        .any(|m| matches!(m.as_str(), "down" | "drag" | "double" | "triple"));
+    let is_mouse_d = base.len() == 7
+        && base.starts_with("mouse-")
+        && base.as_bytes()[6].is_ascii_digit();
+    let is_wheel = base.len() > 6
+        && base.starts_with("wheel-")
+        && !mods.iter().any(|m| matches!(m.as_str(), "double" | "triple"));
+    if (no_dir && is_mouse_d) || is_wheel {
         mods.push("click".to_string());
     }
     mods.sort_by_key(|m| mod_list_rank(m));
@@ -5702,42 +6693,6 @@ fn event_sym_elements(name: &str) -> (String, Vec<String>) {
     (base, mods)
 }
 
-/// Is the parsed event (char mods, click mods, base) one of the
-/// standard events GNU predefines in `event-symbol-elements'?
-fn event_predefined(cmods: &[String], kmods: &[String], base: &str) -> bool {
-    let has = |m: &str, v: &[String]| v.iter().any(|x| x == m);
-    let only = |allowed: &[&str], v: &[String]| v.iter().all(|x| allowed.contains(&x.as_str()));
-    if let Some(n) = base
-        .strip_prefix("mouse-")
-        .and_then(|d| d.parse::<u32>().ok())
-    {
-        if !(1..=7).contains(&n) {
-            return false;
-        }
-        if kmods.is_empty() {
-            // Bare click events allow meta (M-mouse-3), nothing else.
-            return only(&["meta"], cmods);
-        }
-        if only(&["down", "drag"], kmods) {
-            // down-/drag- allow control only.
-            return only(&["control"], cmods);
-        }
-        // double-click is standard only on button 1.
-        return n == 1
-            && cmods.is_empty()
-            && only(&["double", "down"], kmods)
-            && has("double", kmods);
-    }
-    if kmods.is_empty() && eventish(base) {
-        // Named keys: at most two of control/meta/shift in standard
-        // combos (C-M-left, S-left); hyper/super/alt are nonstandard.
-        return cmods
-            .iter()
-            .all(|m| matches!(m.as_str(), "control" | "meta" | "shift"))
-            && !(has("shift", cmods) && cmods.len() > 1);
-    }
-    false
-}
 
 /// Modifier symbols of an event: (click mouse-1), (control ?a), or
 /// a symbol like `M-left` / int with modifier bits.
@@ -5794,18 +6749,37 @@ fn event_mod_list(i: &Interp, ev: &Value) -> Vec<String> {
     mods
 }
 
+/// `internal-event-symbol-parse-modifiers' (keyboard.c
+/// Fevent_symbol_parse_modifiers): parse SYMBOL like a key lookup
+/// does — caches `event-symbol-elements'/`-mask' and returns
+/// (BASE . MOD-SYMS).
+pub(crate) fn f_internal_event_symbol_parse(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    match &a[0] {
+        Value::Sym(s) => {
+            reorder_event_symbol(i, *s);
+            let ese = i.intern("event-symbol-elements");
+            match i.get_prop(*s, ese) {
+                Value::Cons(c) => {
+                    let (car, cdr) = {
+                        let b = c.borrow();
+                        (b.car.clone(), b.cdr.clone())
+                    };
+                    Ok(Value::cons(car, cdr))
+                }
+                other => Ok(other),
+            }
+        }
+        v => Err(i.wrong_type_mut("symbolp", v)),
+    }
+}
+
 fn f_event_modifiers(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let mods = event_mod_list(i, &a[0]);
-    // GNU's parse caches `event-symbol-elements' on the symbol, which
+    // GNU's parse (internal-event-symbol-parse-modifiers) caches
+    // `event-symbol-elements'/`-mask' on the symbol, which
     // `event-basic-type' then reads back.
     if let Some(s) = i.sym_id(&a[0]) {
-        let (base, ms) = event_sym_elements(&i.symbol_name(s));
-        let el = Value::cons(
-            Value::Sym(i.intern(&base)),
-            Value::list(ms.iter().map(|m| Value::Sym(i.intern(m))).collect()),
-        );
-        let prop = i.intern("event-symbol-elements");
-        i.put_prop(s, prop, el);
+        reorder_event_symbol(i, s);
     }
     Ok(Value::list(
         mods.iter().map(|m| Value::Sym(i.intern(m))).collect(),
@@ -5839,22 +6813,92 @@ fn event_basic(i: &mut Interp, ev: &Value) -> Value {
         }
         Value::Sym(s) => {
             // GNU: `event-basic-type' is the car of the symbol's cached
-            // `event-symbol-elements' (set by `event-modifiers' et al.);
-            // only standard events are predefined.
+            // `event-symbol-elements' (set by `event-modifiers' and
+            // `parse_modifiers' during key lookups); not set → nil.
             let ese = i.intern("event-symbol-elements");
             if let Value::Cons(c) = i.get_prop(*s, ese) {
                 return c.borrow().car.clone();
             }
-            let (cmods, kmods, name) = parse_event_symbol(&i.symbol_name(*s));
-            if event_predefined(&cmods, &kmods, &name) {
-                Value::Sym(i.intern(&name))
-            } else {
-                Value::Nil
-            }
+            Value::Nil
         }
         _ => ev.clone(),
     }
 }
+/// GNU `reorder_modifiers' (keymap.c): parse SYMBOL's modifier
+/// prefixes and return a symbol whose name has them in canonical
+/// order (A C H M S s, then double triple up down drag).  As a side
+/// effect — like GNU's `parse_modifiers' — the ORIGINAL symbol gets
+/// `event-symbol-element-mask' ((BASE . MASK)) and
+/// `event-symbol-elements' ((BASE . MOD-SYMS)) properties, which is
+/// what `event-basic-type' later reads.  GNU applies the
+/// single-letter modifier scan only when the leftover base is longer
+/// than one char.
+pub(crate) fn reorder_event_symbol(i: &mut Interp, s: SymId) -> SymId {
+    let name = i.symbol_name(s);
+    let (cmods, kmods, base) = parse_event_symbol(&name);
+    if base.is_empty() {
+        return s;
+    }
+    const ORDER: &[(&str, &str, i128)] = &[
+        ("alt", "A-", 1 << 21),
+        ("control", "C-", 1 << 25),
+        ("hyper", "H-", 1 << 23),
+        ("meta", "M-", 1 << 27),
+        ("shift", "S-", 1 << 24),
+        ("super", "s-", 1 << 22),
+        ("double", "double-", 1 << 4),
+        ("triple", "triple-", 1 << 5),
+        ("up", "up-", 1 << 0),
+        ("down", "down-", 1 << 1),
+        ("drag", "drag-", 1 << 2),
+    ];
+    let mut mask: i128 = 0;
+    let mut canon = String::new();
+    let mut lispy: Vec<String> = Vec::new();
+    for (modname, prefix, bit) in ORDER {
+        if cmods.iter().any(|m| m == modname) || kmods.iter().any(|m| m == modname) {
+            canon.push_str(prefix);
+            mask |= bit;
+            lispy.push(modname.to_string());
+        }
+    }
+    // GNU caches the parse even with zero modifiers (f1 → (f1 . nil)).
+    // click modifier rules from parse_modifiers_uncached: `mouse-D'
+    // (single digit) unless a down/drag/double/triple modifier is
+    // present; `wheel-…' unless double/triple.
+    let no_dir = !kmods
+        .iter()
+        .any(|m| matches!(m.as_str(), "down" | "drag" | "double" | "triple"));
+    let is_mouse_d = base.len() == 7
+        && base.starts_with("mouse-")
+        && base.as_bytes()[6].is_ascii_digit();
+    let is_wheel = base.len() > 6
+        && base.starts_with("wheel-")
+        && !kmods.iter().any(|m| matches!(m.as_str(), "double" | "triple"));
+    if (no_dir && is_mouse_d) || is_wheel {
+        mask |= 1 << 3;
+        lispy.push("click".to_string());
+    }
+    // GNU's lispy list order: meta control shift hyper super alt
+    // triple double down drag click (lispy_modifier_list walks the
+    // bit table descending).
+    lispy.sort_by_key(|m| mod_list_rank(m));
+    let base_sym = i.intern(&base);
+    let ese = i.intern("event-symbol-elements");
+    let mod_syms: Vec<Value> = lispy
+        .iter()
+        .map(|m| Value::Sym(i.intern(m)))
+        .collect();
+    i.put_prop(s, ese, Value::cons(Value::Sym(base_sym), Value::list(mod_syms)));
+    let esem = i.intern("event-symbol-element-mask");
+    i.put_prop(
+        s,
+        esem,
+        Value::list(vec![Value::Sym(base_sym), Value::Int(mask)]),
+    );
+    i.intern(&format!("{canon}{base}"))
+}
+
 
 /// Is NAME a key-event symbol (has event-symbol-elements in Emacs)?
 fn eventish(name: &str) -> bool {
@@ -6027,61 +7071,57 @@ fn f_listify_key_sequence(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     Ok(Value::list(keys.into_iter().map(Value::Int).collect()))
 }
 
-fn f_key_valid_p(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+fn f_key_valid_p(_i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let s = match &a[0] {
         Value::Str(s) => s.borrow().clone(),
         _ => return Ok(Value::Nil),
     };
-    if s.trim().is_empty() {
+    // GNU's top-level shape: `\`[^ ]+\( [^ ]+\)*\'' — non-empty words
+    // joined by SINGLE spaces (double spaces or leading/trailing are
+    // invalid).
+    if s.is_empty() || s.split(' ').any(|t| t.is_empty()) {
         return Ok(Value::Nil);
     }
-    const NAMED: &[&str] = &[
-        "ret",
-        "return",
-        "tab",
-        "lfd",
-        "spc",
-        "space",
-        "esc",
-        "escape",
-        "del",
-        "nul",
-        "backspace",
-        "delete",
-        "delchar",
-        "deletechar",
-        "home",
-        "end",
-        "left",
-        "right",
-        "up",
-        "down",
-        "prior",
-        "pageup",
-        "next",
-        "pagedown",
-        "insert",
-    ];
     for tok in s.split(' ').filter(|t| !t.is_empty()) {
-        // Strip modifiers.
+        // GNU `key-valid-p': modifiers may only be given in the fixed
+        // order A-C-H-M-S-s — each optional, but no repeats or
+        // reordering.
         let mut rest = tok;
-        loop {
-            let r = rest
-                .strip_prefix("C-")
-                .or_else(|| rest.strip_prefix("M-"))
-                .or_else(|| rest.strip_prefix("S-"))
-                .or_else(|| rest.strip_prefix("H-"))
-                .or_else(|| rest.strip_prefix("s-"))
-                .or_else(|| rest.strip_prefix("A-"));
-            match r {
-                Some(r) => rest = r,
-                None => break,
+        for m in ["A-", "C-", "H-", "M-", "S-", "s-"] {
+            if let Some(r) = rest.strip_prefix(m) {
+                rest = r;
             }
         }
-        let ok = rest.chars().count() == 1
-            || (rest.starts_with('<') && rest.ends_with('>') && rest.len() > 2)
-            || NAMED.contains(&rest.to_ascii_lowercase().as_str());
-        if !ok || parse_key_token(i, tok).is_empty() {
+        let chs: Vec<char> = rest.chars().collect();
+        let ok = if chs.len() == 1 {
+            // Single char: printable only (GNU rejects control chars
+            // and unibyte 128..255 high bytes).
+            let c = chs[0] as u32;
+            c >= 32 && !(128..=255).contains(&c)
+        } else if rest.starts_with('<') && rest.ends_with('>') {
+            // <NAME>: NAME is [-_A-Za-z0-9]+ with NO inner modifier
+            // prefixes (GNU rejects `<M-C-down>').
+            let inner = &rest[1..rest.len() - 1];
+            !inner.is_empty()
+                && inner
+                    .bytes()
+                    .all(|c| c.is_ascii_alphanumeric() || c == b'-' || c == b'_')
+                && !["A-", "C-", "H-", "M-", "S-", "s-"]
+                    .iter()
+                    .any(|m| inner.starts_with(m))
+        } else {
+            // Shorthand names NUL RET TAB LFD ESC SPC DEL, as the whole
+            // word or after a `-X' boundary (GNU's `\<…$').
+            ["NUL", "RET", "TAB", "LFD", "ESC", "SPC", "DEL"]
+                .iter()
+                .any(|n| {
+                    rest == *n
+                        || (rest.ends_with(n)
+                            && rest.len() > n.len()
+                            && rest.as_bytes()[rest.len() - n.len() - 1] == b'-')
+                })
+        };
+        if !ok {
             return Ok(Value::Nil);
         }
     }
@@ -6092,7 +7132,7 @@ fn f_key_parse(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let s = want_string(i, &a[0])?;
     let mut out = Vec::new();
     for tok in s.split(' ').filter(|t| !t.is_empty()) {
-        out.extend(parse_key_token(i, tok));
+        out.extend(parse_key_token(i, tok)?);
     }
     Ok(Value::Vec(Rc::new(RefCell::new(out))))
 }
@@ -6243,7 +7283,7 @@ fn f_date_to_time(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         // Broken-down fields are local wall time unless a zone was given.
         secs -= match zone {
             Some(z) => z as i128,
-            None => local_tm(secs as i64).tm_gmtoff as i128,
+            None => interp_local_tm(i, secs as i64).tm_gmtoff as i128,
         };
         let hi = secs.div_euclid(65536);
         let lo = secs.rem_euclid(65536);
@@ -6258,8 +7298,23 @@ fn f_date_to_time(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 }
 
 fn f_memory_limit(_i: &mut Interp, _a: Vec<Value>) -> EvalResult {
-    // Emacs fixnum range on 64-bit: 2^61 - 1.
-    Ok(Value::Int((1i128 << 61) - 1))
+    // GNU subr.el: (cdr (assq 'vsize (process-attributes (emacs-pid))))
+    // — own process virtual size in KiB via ps(1).
+    let pid = std::process::id();
+    if let Ok(o) = std::process::Command::new("ps")
+        .args(["-p", &pid.to_string(), "-o", "vsz="])
+        .output()
+    {
+        let text = String::from_utf8_lossy(&o.stdout);
+        if let Some(v) = text
+            .split_whitespace()
+            .next()
+            .and_then(|s| s.parse::<i128>().ok())
+        {
+            return Ok(Value::Int(v));
+        }
+    }
+    Ok(Value::Int(0))
 }
 
 fn f_help_function_arglist(i: &mut Interp, a: Vec<Value>) -> EvalResult {
@@ -6314,10 +7369,26 @@ fn f_help_function_arglist(i: &mut Interp, a: Vec<Value>) -> EvalResult {
                     }
                     Value::list(v)
                 }
-                Arity::Many { .. } | Arity::Unevalled => Value::list(vec![
-                    Value::Sym(i.intern("&rest")),
-                    Value::Sym(i.intern("rest")),
-                ]),
+                Arity::Many { min } => {
+                    let mut v: Vec<Value> = (0..min)
+                        .map(|k| Value::Sym(i.intern(&format!("arg{}", k + 1))))
+                        .collect();
+                    v.push(Value::Sym(i.intern("&rest")));
+                    v.push(Value::Sym(i.intern("rest")));
+                    Value::list(v)
+                }
+                // Special forms: GNU `func-arity' reports
+                // (MIN . unevalled); the arglist is `arg1..argN &rest
+                // rest' — e.g. `if' → (arg1 arg2 &rest rest).
+                Arity::Unevalled => {
+                    let min = crate::lisp::special::special_form_min_args(i.intern(s.name));
+                    let mut v: Vec<Value> = (0..min)
+                        .map(|k| Value::Sym(i.intern(&format!("arg{}", k + 1))))
+                        .collect();
+                    v.push(Value::Sym(i.intern("&rest")));
+                    v.push(Value::Sym(i.intern("rest")));
+                    Value::list(v)
+                }
             })
         }
         _ => Ok(Value::Nil),
@@ -7314,8 +8385,13 @@ pub(crate) fn coding_known(i: &Interp, v: &Value) -> Option<String> {
         .unwrap_or(&name);
     if CODING_SYSTEMS.contains(&name.as_str())
         || CODING_SYSTEMS.contains(&base)
+        || crate::lisp::builtins::csl_table::CODING_SYSTEM_LIST_SEED
+            .contains(&name.as_str())
+        || crate::lisp::builtins::csl_table::CODING_SYSTEM_LIST_SEED
+            .contains(&base)
         || CODING_ALIASES.iter().any(|&(n, _)| n == name)
         || i.extra_coding_systems.iter().any(|n| *n == name)
+        || i.extra_coding_aliases.iter().any(|(n, _)| *n == name)
     {
         Some(name)
     } else {
@@ -7324,26 +8400,37 @@ pub(crate) fn coding_known(i: &Interp, v: &Value) -> Option<String> {
 }
 
 fn f_coding_system_list(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    // GNU: (coding-system-list &optional BASE-ONLY) — BASE-ONLY drops
-    // the generated -unix/-dos/-mac EOL variants and the
-    // -with-signature/-auto detection variants, keeping base systems.
+    // GNU (mule.el): iterate the `coding-system-list' VARIABLE, keep
+    // members that are their own base, and (unless BASE-ONLY) expand
+    // each through `coding-system-aliases'; `cons'ing accumulates the
+    // reverse of the variable order.  The Lisp defun shadows this subr
+    // once mule.el loads — keep both implementations consistent.
     let base_only = arg(&a, 0).truthy();
-    let variant = |n: &&str| {
-        n.ends_with("-unix")
-            || n.ends_with("-dos")
-            || n.ends_with("-mac")
-            || n.ends_with("-with-signature")
-            || n.ends_with("-auto")
-    };
-    Ok(Value::list(
-        CODING_SYSTEMS
-            .iter()
-            .filter(|n| !base_only || !variant(n))
-            .map(|n| Value::Sym(i.intern(n)))
-            .collect(),
-    ))
+    let csl = i.intern("coding-system-list");
+    let members = i.symbol_value(csl).list_to_vec().unwrap_or_default();
+    let mut codings: Vec<Value> = Vec::new();
+    for member in members {
+        let Value::Sym(_) = member else { continue };
+        let base = f_coding_system_base(i, vec![member.clone()])?;
+        if !eq_values(&base, &member) {
+            continue;
+        }
+        if base_only {
+            codings.push(member);
+            continue;
+        }
+        match coding_alias_group(i, &member) {
+            Some(group) if !group.is_empty() => {
+                for n in group {
+                    codings.push(Value::Sym(i.intern(&n)));
+                }
+            }
+            _ => codings.push(member),
+        }
+    }
+    codings.reverse();
+    Ok(Value::list(codings))
 }
-
 fn f_coding_system_p(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     Ok(Value::from_bool(coding_known(i, &a[0]).is_some()))
 }
@@ -7392,22 +8479,63 @@ fn eol_split(name: &str) -> (&str, Option<usize>) {
 }
 
 /// The alias group (canonical name first) for a known coding-system
-/// name, resolving EOL variants to their base first.
-fn coding_alias_group<'a>(i: &'a Interp, v: &Value) -> Option<&'static [&'static str]> {
+/// name, resolving EOL variants to their base first; runtime aliases
+/// defined via `define-coding-system-alias' join their target's group
+/// appended (GNU extends the group's alias list).
+fn coding_alias_group(i: &Interp, v: &Value) -> Option<Vec<String>> {
     let name = match v {
         Value::Sym(s) => i.symbol_name(*s).to_string(),
         _ => return None,
     };
     let (base, _) = eol_split(&name);
+    // A runtime alias resolves through its target's group.
+    if let Some((_, target)) = i
+        .extra_coding_aliases
+        .iter()
+        .find(|(x, _)| *x == name || *x == base)
+    {
+        let (tbase, _) = eol_split(target);
+        if let Some(&(_, group)) = CODING_ALIASES
+            .iter()
+            .find(|&&(n, grp)| n == tbase || grp.iter().any(|m| *m == tbase))
+        {
+            let mut g: Vec<String> = group.iter().map(|s| s.to_string()).collect();
+            // Runtime aliases targeting this base join the group.
+            for (a, t) in &i.extra_coding_aliases {
+                let (tb, _) = eol_split(t);
+                if tb == tbase && !g.iter().any(|s| s == a) {
+                    g.push(a.clone());
+                }
+            }
+            if !g.iter().any(|s| *s == name) {
+                g.push(name);
+            }
+            return Some(g);
+        }
+        return Some(vec![name]);
+    }
     if let Some(&(_, group)) = CODING_ALIASES
         .iter()
-        .find(|&&(n, _)| n == name || n == base)
+        .find(|&&(n, grp)| {
+            n == name || n == base || grp.iter().any(|m| *m == name || *m == base)
+        })
     {
-        return Some(group);
+        // GNU's `coding-system-aliases' folds in runtime aliases that
+        // target this group.
+        let mut g: Vec<String> = group.iter().map(|s| s.to_string()).collect();
+        for (a, t) in &i.extra_coding_aliases {
+            let (tb, _) = eol_split(t);
+            if (tb == name || tb == base || group.contains(&tb))
+                && !g.iter().any(|s| s == a)
+            {
+                g.push(a.clone());
+            }
+        }
+        return Some(g);
     }
     // Custom-defined systems alias to themselves.
     if i.extra_coding_systems.iter().any(|n| *n == name) {
-        Some(&[])
+        Some(vec![name])
     } else {
         None
     }
@@ -7424,6 +8552,8 @@ fn f_coding_system_eol_type(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     if coding_known(i, &a[0]).is_none() {
         return Ok(Value::Nil);
     }
+    // GNU: an alias resolves to its target's variants.
+    let name = coding_base_extra(i, &name);
     let (base, idx) = eol_split(&name);
     if let Some(idx) = idx {
         return Ok(Value::Int(idx as i128));
@@ -7446,18 +8576,50 @@ fn f_coding_system_aliases(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     }
 }
 
-fn f_coding_system_base(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    match coding_known(i, &a[0]) {
-        Some(n) => {
-            let base = n
-                .strip_suffix("-unix")
-                .or_else(|| n.strip_suffix("-dos"))
-                .or_else(|| n.strip_suffix("-mac"))
-                .unwrap_or(&n);
-            Ok(Value::Sym(i.intern(base)))
+fn coding_base_extra(i: &Interp, base: &str) -> String {
+    // Runtime aliases (`define-coding-system-alias') resolve through
+    // their target, recursively, to the static group head or a custom
+    // system's own name.
+    let mut cur = base.to_string();
+    for _ in 0..16 {
+        match i.extra_coding_aliases.iter().find(|(x, _)| *x == cur) {
+            Some((_, t)) => {
+                let (tb, _) = eol_split(t);
+                cur = tb.to_string();
+            }
+            None => break,
         }
-        None => Ok(a[0].clone()),
     }
+    cur
+}
+
+fn f_coding_system_base(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let name = match &a[0] {
+        Value::Sym(s) => i.symbol_name(*s).to_string(),
+        _ => return Ok(a[0].clone()),
+    };
+    // GNU: the bare EOL names `unix'/`dos'/`mac' are subsidiaries of
+    // `undecided' (its eol-type vector), not self-based.
+    if matches!(name.as_str(), "unix" | "dos" | "mac") {
+        return Ok(Value::Sym(i.intern("undecided")));
+    }
+    // Subsidiaries resolve to the base coding system, and alias names
+    // resolve to their group's canonical head: GNU maps `cp1256-dos' →
+    // `windows-1256', `iso-8859-1' → `iso-latin-1', `mule-utf-8' → `utf-8'.
+    let stripped = name
+        .strip_suffix("-unix")
+        .or_else(|| name.strip_suffix("-dos"))
+        .or_else(|| name.strip_suffix("-mac"))
+        .unwrap_or(&name);
+    let resolved = coding_base_extra(i, stripped);
+    let base: &str = &resolved;
+    if let Some(&(_, group)) = CODING_ALIASES
+        .iter()
+        .find(|&&(n, grp)| n == base || grp.iter().any(|m| *m == base))
+    {
+        return Ok(Value::Sym(i.intern(group[0])));
+    }
+    Ok(Value::Sym(i.intern(base)))
 }
 
 fn f_coding_system_plist(i: &mut Interp, a: Vec<Value>) -> EvalResult {
@@ -7476,7 +8638,11 @@ fn f_coding_system_plist(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         let key = match &a[0] {
             Value::Sym(s) => {
                 let name = i.symbol_name(*s).to_string();
-                let (base, _) = eol_split(&name);
+                // Runtime aliases share their target's plist like
+                // EOL variants share the base's (GNU resolves
+                // `define-coding-system-alias' to the target object).
+                let resolved = coding_base_extra(i, &name);
+                let (base, _) = eol_split(&resolved);
                 Value::Sym(i.intern(base))
             }
             other => other.clone(),
@@ -7552,6 +8718,37 @@ fn f_coding_system_get(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         }
         _ => Ok(Value::Nil),
     }
+}
+
+/// GNU's `add-to-coding-system-list' (mule.el): sorted insert of NAME
+/// into the `coding-system-list' variable using `coding-system-lessp'
+/// (mnemonic-char ordering with no-conversion/emacs-mule/undecided
+/// special-cased), inserting AFTER equal keys — subsidiaries land in
+/// parent, mac, dos, unix order when registered that way.  Falls back
+/// to a plain append while the Lisp defun isn't bound yet (pre-mule
+/// init) or for names without a mnemonic.  No-op when already a member.
+pub(crate) fn add_to_coding_system_list(i: &mut Interp, name: &str) -> EvalResult {
+    let sid = i.intern(name);
+    let csl = i.intern("coding-system-list");
+    let cur = i.symbol_value(csl).list_to_vec().unwrap_or_default();
+    if cur.iter().any(|v| matches!(v, Value::Sym(s) if *s == sid)) {
+        return Ok(Value::Nil);
+    }
+    // Prefer the real Lisp function (mule.el loads it early): it knows
+    // mnemonics through `coding-system-plist'.
+    let add = i.intern("add-to-coding-system-list");
+    let fbound = !matches!(
+        i.symbol_function(add),
+        Value::Sym(s) if s == crate::lisp::sym::UNBOUND
+    );
+    if fbound {
+        i.apply(&Value::Sym(add), vec![Value::Sym(sid)])?;
+        return Ok(Value::Nil);
+    }
+    let mut items = cur;
+    items.push(Value::Sym(sid));
+    i.set_symbol(csl, Value::list(items))?;
+    Ok(Value::Nil)
 }
 
 fn f_coding_system_put(i: &mut Interp, a: Vec<Value>) -> EvalResult {
@@ -7729,8 +8926,7 @@ fn set_coding_system(i: &mut Interp, a: Vec<Value>, ret_name: bool) -> EvalResul
         _ => unreachable!(),
     };
     let canon = coding_alias_group(i, &a[0])
-        .and_then(|g| g.first())
-        .map(|s| s.to_string())
+        .and_then(|g| g.first().cloned())
         .unwrap_or(name);
     let bare = canon
         .strip_suffix("-unix")
@@ -7842,8 +9038,14 @@ fn f_internal_make_lisp_face(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let id = want_sym(i, &a[0])?;
     let name = i.symbol_name(id).to_string();
     if !i.face_table.iter().any(|(n, _)| *n == name) {
-        i.face_table.push((name, Value::Nil));
+        // GNU registers the NAME but creates no lface — so
+        // `internal-lisp-face-empty-p' (lface_from_face_name) still
+        // errors "Invalid face" on it, unlike `make-face' faces.
+        // The `remacs--raw-face' sentinel distinguishes the two.
+        let sentinel = Value::Sym(i.intern("remacs--raw-face"));
+        i.face_table.push((name.clone(), sentinel));
     }
+    crate::editor::face_register_global(i, &name);
     let mut v = vec![Value::Sym(i.intern("face"))];
     let unspec = Value::Sym(i.intern("unspecified"));
     for _ in 0..19 {
@@ -7868,7 +9070,19 @@ fn f_internal_copy_lisp_face(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let to = want_sym(i, &a[1])?;
     let to_name = i.symbol_name(to).to_string();
     if !i.face_table.iter().any(|(n, _)| *n == to_name) {
-        i.face_table.push((to_name, Value::Nil));
+        i.face_table.push((to_name.clone(), Value::Nil));
+    }
+    // GNU Finternal_copy_lisp_face: TO's frame face receives FROM's
+    // attributes (our spec/realized layer = face_table plist).
+    crate::editor::face_register_global(i, &to_name);
+    let src = i
+        .face_table
+        .iter()
+        .find(|(n, _)| *n == from_name)
+        .map(|(_, p)| p.clone())
+        .unwrap_or(Value::Nil);
+    if let Some((_, dst)) = i.face_table.iter_mut().find(|(n, _)| *n == to_name) {
+        *dst = src;
     }
     Ok(a[1].clone())
 }
@@ -7975,8 +9189,16 @@ fn f_image_metadata(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     Err(i.error("Window system frame should be used"))
 }
 
-fn f_detect_coding_string(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
-    Ok(Value::list(vec![Value::Sym(i.intern("undecided"))]))
+/// `detect-coding-string': returns the list of possible coding
+/// systems, or with non-nil HIGHEST the highest-priority one (a bare
+/// symbol).  This port detects only undecided/ASCII content.
+fn f_detect_coding_string(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let undecided = Value::Sym(i.intern("undecided"));
+    if a.get(1).is_some_and(|v| v.truthy()) {
+        Ok(undecided)
+    } else {
+        Ok(Value::list(vec![undecided]))
+    }
 }
 
 fn f_arg0(_i: &mut Interp, a: Vec<Value>) -> EvalResult {
@@ -8542,7 +9764,14 @@ pub(crate) fn check_region_positions(i: &mut Interp, a: &[Value]) -> Result<(), 
 
 fn f_detect_coding_region(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     check_region_positions(i, &a)?;
-    f_detect_coding_string(i, a)
+    // Args are START END HIGHEST — forward only HIGHEST to the string
+    // form's signature (STRING HIGHEST).
+    let undecided = Value::Sym(i.intern("undecided"));
+    if a.get(2).is_some_and(|v| v.truthy()) {
+        Ok(undecided)
+    } else {
+        Ok(Value::list(vec![undecided]))
+    }
 }
 
 /// Canonical coding-system name for the arg (alias-group head, EOL
@@ -8551,9 +9780,8 @@ fn coding_canonical(i: &Interp, v: &Value) -> String {
     let name = coding_known(i, v).unwrap_or_default();
     let (base, _) = eol_split(&name);
     coding_alias_group(i, v)
-        .and_then(|g| g.first().copied())
-        .unwrap_or(base)
-        .to_string()
+        .and_then(|g| g.first().cloned())
+        .unwrap_or_else(|| base.to_string())
 }
 
 fn f_encode_coding_string(i: &mut Interp, a: Vec<Value>) -> EvalResult {
@@ -8561,6 +9789,16 @@ fn f_encode_coding_string(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let s = want_string(i, &a[0])?;
     f_check_coding_system(i, vec![a[1].clone()])?;
     let canonical = coding_canonical(i, &a[1]);
+    // GNU substitutes the coding system's :default-char for
+    // unencodable chars (e.g. us-ascii's `?'), else a space.
+    let default_char = {
+        let plist = f_coding_system_plist(i, vec![a[1].clone()])?;
+        let dc = crate::lisp::eval::plist_get(&plist, i.intern(":default-char"));
+        match dc {
+            Value::Int(n) if (0..=0x3FFFFF).contains(&n) => n as u32,
+            _ => ' ' as u32,
+        }
+    };
     let unibyte_in = matches!(&a[0], Value::Str(r) if i.is_unibyte_str(r));
     let mut out = String::new();
     for c in s.chars() {
@@ -8578,8 +9816,8 @@ fn f_encode_coding_string(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         }
         match encode_one_char(&canonical, u) {
             Some(bs) => out.extend(bs.iter().map(|&b| b as char)),
-            // GNU substitutes the coding system's default-char (SPC).
-            None => out.push(' '),
+            // GNU substitutes the coding system's default-char.
+            None => out.push(char::from_u32(default_char).unwrap_or(' ')),
         }
     }
     let sv = Value::string(out);
@@ -8972,11 +10210,20 @@ fn f_color_defined_p(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 }
 
 fn f_color_gray_p(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    // GNU's batch tty: xg_check_color_db has no database, so any
+    // "gr[ae]y"/"gr[ae]y<NN>" spelling (and black/white) counts as
+    // gray — `color-name-to-rgb' parses gr[ae]y<NN> by name.
     let _ = i;
     let ok = match &a[0] {
         Value::Str(s) => {
             let s = s.borrow().to_ascii_lowercase();
-            s == "gray" || s == "grey" || s == "black" || s == "white"
+            match s
+                .strip_prefix("gray")
+                .or_else(|| s.strip_prefix("grey"))
+            {
+                Some(rest) => rest.is_empty() || rest.chars().all(|c| c.is_ascii_digit()),
+                None => s == "black" || s == "white",
+            }
         }
         _ => false,
     };
@@ -9008,9 +10255,17 @@ pub(crate) fn win_min_size(i: &mut Interp, wv: &Value, horiz: bool, ignore: &Val
     if i.sym_id(ignore).map(|id| i.symbol_name(id) == "safe") == Some(true) {
         return if horiz { 2 } else { 1 };
     }
-    // safe-min + decorations: vertical adds the mode-line (1),
+    // safe-min + decorations: vertical adds the mode-line (1);
     // horizontal adds margins/fringes/scroll-bars (0 on a tty frame).
-    let base: i128 = if horiz { 2 } else { 2 };
+    // The minibuffer window has no mode line, so its base is 1.
+    let mini = matches!(wv, Value::Window(w) if w.borrow().minibuffer);
+    let base: i128 = if horiz {
+        2
+    } else if mini {
+        1
+    } else {
+        2
+    };
     let ignore_p = match ignore {
         Value::Window(iw) => match wv {
             Value::Window(w) => !Rc::ptr_eq(w, iw),
@@ -9094,8 +10349,33 @@ fn f_pos_visible(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     Ok(Value::from_bool(ok))
 }
 
-fn f_window_line(_i: &mut Interp, _a: Vec<Value>) -> EvalResult {
-    Ok(Value::Int(0))
+/// `window-line' — display-line index of point in WINDOW (0-based
+/// line count from window-start to point).
+fn f_window_line(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let w = match arg(&a, 0) {
+        Value::Window(w) => w,
+        _ => match sel_window(i) {
+            Some(w) => w,
+            None => return Ok(Value::Nil),
+        },
+    };
+    let (start, bid) = { let b = w.borrow(); (b.start, b.buffer) };
+    let buf = match i.buffers.get(bid) {
+        Some(b) => b,
+        None => return Ok(Value::Nil),
+    };
+    let bb = buf.borrow();
+    let point = bb.point();
+    let s0 = start.min(bb.text.len());
+    let e0 = point.min(bb.text.len());
+    let (lo, hi) = if s0 <= e0 { (s0, e0) } else { (e0, s0) };
+    let mut n = 0i128;
+    for k in lo..hi {
+        if bb.text.char_at(k) == '\n' {
+            n += 1;
+        }
+    }
+    Ok(Value::Int(if s0 <= e0 { n } else { -n }))
 }
 
 fn f_selected_window(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
@@ -10222,8 +11502,10 @@ fn f_char_table_range(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     match &a[1] {
         Value::Nil => Ok(i.char_table_defalt(&a[0])),
         Value::Int(n) => {
+            // GNU: an out-of-character-range fixnum falls through to
+            // the generic "Invalid RANGE" error, not `characterp'.
             if !(0..=CT_MAX_CHAR as i128).contains(n) {
-                return Err(i.wrong_type_mut("characterp", &a[1]));
+                return Err(i.error("Invalid RANGE argument to ‘char-table-range’"));
             }
             Ok(char_table_ref(i, &a[0], *n as usize))
         }
@@ -10298,7 +11580,7 @@ fn f_set_char_table_range(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         }
         Value::Int(n) => {
             if !(0..=CT_MAX_CHAR as i128).contains(n) {
-                return Err(i.wrong_type_mut("characterp", &a[1]));
+                return Err(i.error("Invalid RANGE argument to ‘set-char-table-range’"));
             }
             ct_set(i, &a[0], *n as u32, val.clone());
         }
@@ -10315,10 +11597,10 @@ fn f_set_char_table_range(i: &mut Interp, a: Vec<Value>) -> EvalResult {
                 Value::Int(t) if (0..=CT_MAX_CHAR as i128).contains(t) => *t as u32,
                 _ => return Err(i.wrong_type_mut("characterp", &to)),
             };
-            if from > to {
-                return Err(i.signal_data(sym::ARGS_OUT_OF_RANGE, vec![a[0].clone(), a[1].clone()]));
+            // GNU: a reversed (FROM > TO) cons silently sets nothing.
+            if from <= to {
+                ct_set_range(i, &a[0], from, to, val.clone());
             }
-            ct_set_range(i, &a[0], from, to, val.clone());
         }
         _ => return Err(i.error("Invalid RANGE argument to ‘set-char-table-range’")),
     }
@@ -10375,6 +11657,83 @@ fn ct_spans(i: &Interp, table: &Value, uniprop: bool) -> Vec<(u32, u32, Value)> 
         }
     }
     out
+}
+
+/// Effective-value runs clipped to `[LO, HI]`: descend only into
+/// sub-tables overlapping the range, so untouched space costs
+/// nothing per character.  Each emitted leaf is resolved through
+/// `char_table_ref' — raw → own defalt → parent chain.  Adjacent
+/// runs with `eq' values merge via `merge_runs'.  Used by
+/// `modify-category-entry' to find run boundaries in O(leaves)
+/// instead of O(characters).
+fn ct_runs_in(i: &Interp, table: &Value, lo: u32, hi: u32) -> Vec<(u32, u32, Value)> {
+    fn walk(
+        i: &Interp,
+        v: &Value,
+        from: u32,
+        to: u32,
+        lo: u32,
+        hi: u32,
+        table: &Value,
+        out: &mut Vec<(u32, u32, Value)>,
+    ) {
+        if from > hi || to < lo {
+            return;
+        }
+        if is_sub_ct(i, v) {
+            if let Some((depth, min, r)) = sub_ct_parts(v) {
+                let chars = 1u32 << CHARTAB_BITS[depth];
+                for k in 0..CHARTAB_SIZE[depth] {
+                    let c = min + (k as u32) * chars;
+                    if c > hi || c + chars - 1 < lo {
+                        continue;
+                    }
+                    let child = {
+                        let b = r.borrow();
+                        b.get(3 + k).cloned().unwrap_or(Value::Nil)
+                    };
+                    walk(i, &child, c, c + chars - 1, lo, hi, table, out);
+                }
+            }
+            return;
+        }
+        let f = from.max(lo);
+        let t = to.min(hi);
+        // A scalar slot's value is uniform over its whole block.
+        // For a nil leaf the effective value comes from this
+        // table's defalt first (uniform for the span); only when
+        // the defalt is also nil do we follow the parent — whose
+        // runs may vary inside the span, so they are spliced in
+        // with a clipped recursive walk.
+        if !v.is_nil() {
+            out.push((f, t, v.clone()));
+            return;
+        }
+        let defalt = i.char_table_defalt(table);
+        if !defalt.is_nil() {
+            out.push((f, t, defalt));
+            return;
+        }
+        let parent = i.char_table_parent(table);
+        if parent.is_nil() {
+            out.push((f, t, Value::Nil));
+        } else {
+            out.extend(ct_runs_in(i, &parent, f, t));
+        }
+    }
+    let mut out = Vec::new();
+    if let Some(contents) = char_table_vec(table) {
+        let b = contents.borrow();
+        for k in 0..64usize {
+            let base = (k as u32) << 16;
+            if base > hi || base + 65535 < lo {
+                continue;
+            }
+            let slot = b.get(1 + k).cloned().unwrap_or(Value::Nil);
+            walk(i, &slot, base, base + 65535, lo, hi, table, &mut out);
+        }
+    }
+    merge_runs(out)
 }
 
 /// Merge adjacent spans with `eq' values (GNU's range coalescing).
@@ -10478,6 +11837,145 @@ fn f_map_char_table(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     Ok(Value::Nil)
 }
 
+/// Record slot 3+N of a char-table (the extra slots).
+pub(crate) fn ct_extra(table: &Value, n: usize) -> Value {
+    match table {
+        Value::Record(r) => r.borrow().get(3 + n).cloned().unwrap_or(Value::Nil),
+        _ => Value::Nil,
+    }
+}
+
+fn ct_set_extra(table: &Value, n: usize, v: Value) {
+    if let Value::Record(r) = table {
+        if r.borrow().len() > 3 + n {
+            r.borrow_mut()[3 + n] = v;
+        }
+    }
+}
+
+/// GNU casetab.c `set_case_table' (the shared body of `set-case-table'
+/// and `set-standard-case-table'): derive the UPCASE/CANON/EQV extra
+/// slots of TABLE when they are nil.  GNU builds each table with
+/// `map_char_table' over the *effective* entries of the source table:
+///
+///   up:    identity pass, then `shuffle' pass cycling each class
+///   canon: canon[range] = down[up[down[c]]]   (FIXNATP elts only)
+///   eqv:   identity + shuffle over the canon table's runs
+///
+/// and finally stashes `canon.extras[2] = eqv' so regexp's
+/// set_image_of_range_1 can find it.
+pub(crate) fn set_case_table_fill(i: &mut Interp, table: &Value) {
+    let case_table_sym = Value::Sym(i.intern("case-table"));
+    let up = ct_extra(table, 0);
+    let canon = ct_extra(table, 1);
+    let eqv = ct_extra(table, 2);
+
+    let up = if up.is_nil() {
+        let u = make_ct(
+            i,
+            case_table_sym.clone(),
+            Value::Nil,
+            vec![Value::Nil, Value::Nil, Value::Nil],
+        );
+        // set_identity pass over TABLE's runs, then shuffle pass.
+        // GNU's callbacks act only on FIXNATP elts — nil-valued runs
+        // (and strings/symbols) contribute nothing to either pass.
+        let runs: Vec<(u32, u32, u32)> = ct_effective_runs(i, table, true)
+            .into_iter()
+            .filter_map(|(f, t, v)| match v {
+                Value::Int(e) if e >= 0 => Some((f, t, e as u32)),
+                _ => None,
+            })
+            .collect();
+        for (from, to, _) in &runs {
+            for c in *from..=*to {
+                ct_set(i, &u, c, Value::Int(c as i128));
+            }
+        }
+        for (from, to, e) in &runs {
+            for c in *from..=*to {
+                let tem = char_table_ref(i, &u, *e as usize);
+                ct_set(i, &u, *e, Value::Int(c as i128));
+                ct_set(i, &u, c, tem.clone());
+            }
+        }
+        ct_set_extra(table, 0, u.clone());
+        u
+    } else {
+        up
+    };
+
+    let canon = if canon.is_nil() {
+        let cn = make_ct(
+            i,
+            case_table_sym.clone(),
+            Value::Nil,
+            vec![Value::Nil, Value::Nil, Value::Nil],
+        );
+        ct_set_extra(table, 1, cn.clone());
+        // set_canon: canon[range] = table[up[elt]].
+        for (from, to, elt) in ct_effective_runs(i, table, true) {
+            let Value::Int(e) = elt else { continue };
+            if e < 0 {
+                continue;
+            }
+            let uv = char_table_ref(i, &up, e as usize);
+            let dv = match uv {
+                Value::Int(n) if n >= 0 => char_table_ref(i, table, n as usize),
+                _ => Value::Nil,
+            };
+            ct_set_range(i, &cn, from, to, dv);
+        }
+        cn
+    } else {
+        canon
+    };
+
+    if eqv.is_nil() {
+        let eq = make_ct(
+            i,
+            case_table_sym.clone(),
+            Value::Nil,
+            vec![Value::Nil, Value::Nil, Value::Nil],
+        );
+        let runs: Vec<(u32, u32, u32)> = ct_effective_runs(i, &canon, true)
+            .into_iter()
+            .filter_map(|(f, t, v)| match v {
+                Value::Int(e) if e >= 0 => Some((f, t, e as u32)),
+                _ => None,
+            })
+            .collect();
+        for (from, to, _) in &runs {
+            for c in *from..=*to {
+                ct_set(i, &eq, c, Value::Int(c as i128));
+            }
+        }
+        for (from, to, e) in &runs {
+            for c in *from..=*to {
+                let tem = char_table_ref(i, &eq, *e as usize);
+                ct_set(i, &eq, *e, Value::Int(c as i128));
+                ct_set(i, &eq, c, tem.clone());
+            }
+        }
+        ct_set_extra(table, 2, eq.clone());
+        // canon.extras[2] = eqv (regex's set_image_of_range_1).
+        ct_set_extra(&canon, 2, eq);
+    }
+}
+
+/// GNU `buffer.c:1150' (`init_buffer'): if the standard case table's
+/// extras aren't all char-tables, re-run `set_case_table' on it so
+/// the extras recompute.  Called wherever GNU would create a buffer.
+pub(crate) fn heal_standard_case_table(i: &mut Interp) {
+    let Some(st) = i.standard_case_table.clone() else {
+        return;
+    };
+    let ok = (0..3).all(|n| is_char_table(i, &ct_extra(&st, n)));
+    if !ok {
+        set_case_table_fill(i, &st);
+    }
+}
+
 fn f_suppress_keymap(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     if !is_keymap(i, &a[0]) {
         return Err(i.wrong_type_mut("keymapp", &a[0]));
@@ -10507,33 +12005,40 @@ fn f_char_table_subtype(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 }
 
 fn f_char_table_extra_slot(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let Value::Record(r) = &a[0] else {
+    // GNU `Fchar_table_extra_slot': CHECK_CHAR_TABLE, then N is
+    // `fixnump' (non-fixnums are `(fixnump N)'; negatives fall to
+    // `args-out-of-range').
+    if !is_char_table(i, &a[0]) {
         return Err(i.wrong_type_mut("char-table-p", &a[0]));
+    }
+    let Value::Record(r) = &a[0] else { unreachable!() };
+    let Value::Int(n) = &a[1] else {
+        return Err(i.wrong_type_mut("fixnump", &a[1]));
     };
-    let n = match &a[1] {
-        Value::Int(n) if *n >= 0 => *n as usize,
-        other => return Err(i.wrong_type_mut("wholenump", other)),
-    };
-    if 3 + n >= r.borrow().len() {
+    let slots = r.borrow().len().saturating_sub(3);
+    let n = usize::try_from(*n).ok().filter(|u| *u < slots);
+    let Some(n) = n else {
         let s = i.intern("args-out-of-range");
         return Err(i.signal_data(s, vec![a[0].clone(), a[1].clone()]));
-    }
+    };
     Ok(r.borrow()[3 + n].clone())
 }
 
 fn f_set_char_table_extra_slot(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let Value::Record(r) = &a[0] else {
+    if !is_char_table(i, &a[0]) {
         return Err(i.wrong_type_mut("char-table-p", &a[0]));
-    };
-    let n = match &a[1] {
-        Value::Int(n) if *n >= 0 => *n as usize,
-        other => return Err(i.wrong_type_mut("wholenump", other)),
+    }
+    let Value::Record(r) = &a[0] else { unreachable!() };
+    let Value::Int(n) = &a[1] else {
+        return Err(i.wrong_type_mut("fixnump", &a[1]));
     };
     let mut rr = r.borrow_mut();
-    if 3 + n >= rr.len() {
+    let slots = rr.len().saturating_sub(3);
+    let n = usize::try_from(*n).ok().filter(|u| *u < slots);
+    let Some(n) = n else {
         let s = i.intern("args-out-of-range");
         return Err(i.signal_data(s, vec![a[0].clone(), a[1].clone()]));
-    }
+    };
     rr[3 + n] = a[2].clone();
     Ok(a[2].clone())
 }
@@ -10551,13 +12056,47 @@ fn f_recordp(_i: &mut Interp, a: Vec<Value>) -> EvalResult {
 
 // ---------- added GNU compat subrs ----------
 
+/// Conses reachable from LIST's head for length=/length</length>:
+/// GNU counts elements, stopping silently at a non-list tail (dotted
+/// lists don't error), and a circular list is unbounded (reported as
+/// i128::MAX so < is false, > is true).
+fn cons_seq_len(v: &Value) -> i128 {
+    let mut n = 0i128;
+    let mut cur = v.clone();
+    let mut tortoise = v.clone();
+    loop {
+        match &cur {
+            Value::Cons(c) => {
+                let next = c.borrow().cdr.clone();
+                cur = next;
+                n += 1;
+                if n % 2 == 0 {
+                    if let Value::Cons(tc) = &tortoise {
+                        let t = tc.borrow().cdr.clone();
+                        tortoise = t;
+                    }
+                }
+                if n > 1 && eq_values(&cur, &tortoise) {
+                    return i128::MAX;
+                }
+            }
+            _ => return n,
+        }
+    }
+}
+
 fn seq_len(i: &mut Interp, v: &Value) -> Result<i128, Flow> {
     Ok(match v {
         Value::Nil => 0,
-        Value::Cons(_) => v.list_to_vec().map(|x| x.len() as i128).unwrap_or(-1),
+        Value::Cons(_) => cons_seq_len(v),
         Value::Str(s) => s.borrow().chars().count() as i128,
-        Value::Vec(x) | Value::Record(x) => x.borrow().len() as i128,
-        Value::Hash(h) => h.borrow().map.len() as i128,
+        Value::Vec(x) => x.borrow().len() as i128,
+        // Bool-vectors are sequences of their bit count; char-tables
+        // cover the whole internal char space (MAX_CHAR + 1).
+        Value::Record(_) if is_bool_vector(i, v) => bool_vec_of(i, v)?.len() as i128,
+        Value::Record(_) if is_char_table(i, v) => CT_MAX_CHAR as i128 + 1,
+        Value::Record(x) => x.borrow().len() as i128,
+        // Hash tables aren't sequences (GNU signals sequencep).
         _ => return Err(i.wrong_type_mut("sequencep", v)),
     })
 }
@@ -10637,7 +12176,7 @@ fn f_time_to_days(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 
 fn f_time_to_day_in_year(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let us = lisp_time_to_us(i, &a[0])?;
-    let tm = local_tm((us / 1_000_000) as i64);
+    let tm = interp_local_tm(i, (us / 1_000_000) as i64);
     Ok(Value::Int(tm.tm_yday as i128 + 1))
 }
 
@@ -10748,8 +12287,18 @@ fn f_filepos_to_bufferpos(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     })
 }
 
-fn f_set_buffer_multibyte(_i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    // Buffers are unibyte-capable; return the flag like Emacs does.
+fn f_set_buffer_multibyte(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    // GNU Fset_buffer_multibyte: forbidden on indirect buffers — their
+    // multibyte flag belongs to the shared text's owner (base).
+    if let Some(b) = i.current_buffer_ref() {
+        if b.borrow().base_buffer.is_some() {
+            return Err(i.error("Cannot do ‘set-buffer-multibyte’ on an indirect buffer"));
+        }
+    }
+    // GNU Fset_buffer_multibyte flips the current buffer's
+    // `enable-multibyte-characters' local and returns the flag.
+    let sym = i.intern("enable-multibyte-characters");
+    i.set_symbol(sym, a[0].clone())?;
     Ok(a[0].clone())
 }
 
@@ -11126,13 +12675,21 @@ fn f_make_terminal_frame(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
 }
 
 fn f_define_coding_system_alias(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let _ = want_sym(i, &a[0])?;
-    let _ = want_sym(i, &a[1])?;
+    let alias_id = want_sym(i, &a[0])?;
+    let target_id = want_sym(i, &a[1])?;
     if coding_known(i, &a[1]).is_none() {
         let cs_err = i.intern("coding-system-error");
         return Err(i.signal_data(cs_err, vec![a[0].clone(), a[1].clone()]));
     }
-    Ok(Value::Nil)
+    // GNU: `define-coding-system-alias' adds ALIAS to
+    // `coding-system-list' (sorted via `add-to-coding-system-list')
+    // and resolves to CODING-SYSTEM's base for `coding-system-base'.
+    let alias = i.symbol_name(alias_id);
+    let target = i.symbol_name(target_id);
+    if !i.extra_coding_aliases.iter().any(|(x, _)| *x == alias) {
+        i.extra_coding_aliases.push((alias.clone(), target));
+    }
+    add_to_coding_system_list(i, &alias)
 }
 
 fn f_thread_buffer_disposition(i: &mut Interp, a: Vec<Value>) -> EvalResult {
@@ -11660,6 +13217,7 @@ fn f_make_closure(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         arglist: l.arglist.clone(),
         plain: l.plain,
         dumped_doc: l.dumped_doc,
+        compiled: l.compiled,
         advice_link: l.advice_link.clone(),
         bc_items: Some(Rc::new(RefCell::new(new_items))),
         doc_value: l.doc_value.clone(),
@@ -11741,10 +13299,56 @@ fn f_backtrace_locals(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     }
 }
 
-/// `backtrace-frame--internal` — GNU errors when no such frame exists.
+/// `backtrace-frame--internal` — call FUNCTION on the stack frame
+/// NFRAMES past BASE's nearest activation, returning its result; nil
+/// when no such frame exists.  GNU eval.c `get_backtrace_starting_at':
+/// BASE may be `(OFFSET . FUNCTION)', and FUNCTION is compared after
+/// `indirect-function' on both sides.  remacs's `lisp_stack' holds
+/// `(func, args)` innermost-last; GNU's `backtrace_top' sees the
+/// innermost live frame (this subr itself), and the BASE scan skips
+/// through the `backtrace-frame' Lisp frame.
 fn f_backtrace_frame_internal(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let e = i.intern("error");
-    Err(i.signal_data(e, vec![a[0].clone()]))
+    let fun = a[0].clone();
+    let nframes = match &a[1] {
+        Value::Int(n) if *n >= 0 => *n as usize,
+        other => return Err(i.wrong_type_mut("wholenump", other)),
+    };
+    let mut base = a[2].clone();
+    let mut offset: usize = 0;
+    if let Value::Cons(c) = &base {
+        let (car, cdr) = {
+            let b = c.borrow();
+            (b.car.clone(), b.cdr.clone())
+        };
+        if let Value::Int(n) = car {
+            offset = n.max(0) as usize;
+            base = cdr;
+        }
+    }
+    // Walk innermost→outermost over the live call stack.
+    let stack: Vec<(Value, Vec<Value>)> = i.lisp_stack.iter().rev().cloned().collect();
+    let mut idx = 0usize;
+    if !base.is_nil() {
+        let base_fn = i.indirect_function_value(&base);
+        let mut found = None;
+        for (k, (fval, _)) in stack.iter().enumerate() {
+            let ffn = i.indirect_function_value(fval);
+            if crate::lisp::builtins::eq_values(&ffn, &base_fn) {
+                found = Some(k);
+                break;
+            }
+        }
+        match found {
+            Some(k) => idx = k + offset,
+            None => return Ok(Value::Nil),
+        }
+    }
+    idx += nframes;
+    let Some((fval, args)) = stack.get(idx) else {
+        return Ok(Value::Nil);
+    };
+    let (fval, args) = (fval.clone(), args.clone());
+    i.apply(&fun, vec![Value::t(), fval, Value::list(args), Value::Nil])
 }
 
 /// `completion--flex-cost-gotoh` — GNU's affine-gap flex cost:
@@ -11837,15 +13441,84 @@ fn f_window_valid_zero(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     }
 }
 
-/// `window-combined-p` — GNU signals a plain `error' for non-windows.
-fn f_window_combined_p(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+/// `window-child' — first child of an internal window; nil on leaves.
+fn f_window_child(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     match arg(&a, 0) {
-        Value::Nil | Value::Window(_) => Ok(Value::Nil),
+        Value::Nil => {
+            let w = sel_window(i).ok_or_else(|| i.error("No window"))?;
+            Ok(w.borrow().children.first().map(|k| Value::Window(k.clone())).unwrap_or(Value::Nil))
+        }
+        Value::Window(w) => Ok(w
+            .borrow()
+            .children
+            .first()
+            .map(|k| Value::Window(k.clone()))
+            .unwrap_or(Value::Nil)),
+        ref other => Err(i.wrong_type_mut("window-valid-p", other)),
+    }
+}
+
+/// `window-child-count' — number of children of an internal window.
+fn f_window_child_count(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    match arg(&a, 0) {
+        Value::Nil => {
+            let w = sel_window(i).ok_or_else(|| i.error("No window"))?;
+            Ok(Value::Int(w.borrow().children.len() as i128))
+        }
+        Value::Window(w) => Ok(Value::Int(w.borrow().children.len() as i128)),
+        ref other => Err(i.wrong_type_mut("window-valid-p", other)),
+    }
+}
+
+/// `window-combined-p` — WINDOW is part of a combination in direction
+/// HORIZONTAL (nil = vertical): returns the parent's first child (the
+/// top/left window of the combination), which for the first child is
+/// WINDOW itself; nil when the parent splits the other axis.
+/// GNU signals a plain `error' for non-windows.
+fn f_window_combined_p(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let w = match arg(&a, 0) {
+        Value::Nil => sel_window(i).ok_or_else(|| i.error("No window"))?,
+        Value::Window(w) if !w.borrow().dead => w.clone(),
         other => {
             let shown = i.princ_to_string(&other);
-            Err(i.error(format!("{shown} is not a valid window")))
+            return Err(i.error(format!("{shown} is not a valid window")));
         }
+    };
+    let horiz = arg(&a, 1).truthy();
+    let Some(p) = w_parent(&w) else {
+        return Ok(Value::Nil);
+    };
+    let pb = p.borrow();
+    if pb.horiz != Some(horiz) {
+        return Ok(Value::Nil);
     }
+    Ok(pb
+        .children
+        .first()
+        .map(|k| Value::Window(k.clone()))
+        .unwrap_or(Value::Nil))
+}
+
+/// `window-main-window` — GNU returns the frame's root window object
+/// (a leaf while unsplit, the internal vc/hc window after splits).
+fn f_window_main_window(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let f = match arg(&a, 0) {
+        Value::Nil => sel_frame(i),
+        Value::Frame(fr) => Some(fr),
+        other => {
+            let shown = i.princ_to_string(&other);
+            return Err(i.error(format!("{shown} is not a live frame")));
+        }
+    };
+    let Some(f) = f else {
+        return f_selected_window(i, vec![]);
+    };
+    let fb = f.borrow();
+    Ok(fb
+        .root
+        .as_ref()
+        .map(|r| Value::Window(r.clone()))
+        .unwrap_or(Value::Nil))
 }
 
 /// `window-fixed-size-p` — GNU windowp-checks WINDOW; nil (nothing
@@ -11865,30 +13538,6 @@ fn f_safely_shrinkable(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     }
 }
 
-/// `window-main-window` — frame arg check, then the frame's main
-/// (non-minibuffer) window; single-window frames → that window.
-fn f_window_main_window(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let f = match arg(&a, 0) {
-        Value::Nil => sel_frame(i),
-        Value::Frame(fr) => Some(fr),
-        other => {
-            let shown = i.princ_to_string(&other);
-            return Err(i.error(format!("{shown} is not a live frame")));
-        }
-    };
-    let Some(f) = f else {
-        return f_selected_window(i, vec![]);
-    };
-    let fb = f.borrow();
-    let w = fb
-        .windows
-        .iter()
-        .find(|w| !w.borrow().minibuffer)
-        .or_else(|| fb.windows.first())
-        .cloned();
-    drop(fb);
-    Ok(w.map(Value::Window).unwrap_or(Value::Nil))
-}
 
 /// `face-attributes-as-vector` — GNU maps a plist of `:attr value'
 /// onto the 20-slot lface vector; anything else → all unspecified.

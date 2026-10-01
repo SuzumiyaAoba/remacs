@@ -1454,6 +1454,7 @@ fn form_to_lambda(
         arglist: Some(arglist.clone()),
         plain: false,
         dumped_doc: false,
+        compiled: false,
         advice_link: None,
         bc_items: None,
         doc_value: None,

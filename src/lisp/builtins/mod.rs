@@ -6,6 +6,7 @@
 pub(crate) mod arith;
 pub(crate) mod bidi_table;
 pub(crate) mod charset;
+pub(crate) mod csl_table;
 pub(crate) mod comp;
 pub(crate) mod data;
 pub(crate) mod dbus;
@@ -30,7 +31,7 @@ pub(crate) mod xml;
 use super::Interp;
 use super::error::Flow;
 use super::obarray::sym;
-use super::value::{Arity, Subr, SymId, Value};
+use super::value::{Arity, Subr, SymId, Value, FIXNUM_MAX, FIXNUM_MIN};
 
 /// Declare a subr entry.
 macro_rules! S {
@@ -70,7 +71,7 @@ pub(crate) use S;
 pub use misc::error_message;
 
 /// All subrs, aggregated from the category modules.
-fn collect() -> Vec<&'static Subr> {
+pub(crate) fn collect() -> Vec<&'static Subr> {
     let mut v: Vec<&'static Subr> = Vec::new();
     v.extend(arith::SUBRS);
     v.extend(data::SUBRS);
@@ -115,6 +116,7 @@ pub fn install(interp: &mut Interp) {
     gnutls::install(interp);
     dbus::install(interp);
     comp::install(interp);
+    crate::lisp::process::install(interp);
     install_aliases(interp);
 }
 
@@ -172,12 +174,6 @@ static SPECIAL_FORM_SUBRS: &[Subr] = &[
         doc: "",
     },
     Subr {
-        name: "prog2",
-        arity: Arity::Unevalled,
-        func: sf_cannot_call,
-        doc: "",
-    },
-    Subr {
         name: "and",
         arity: Arity::Unevalled,
         func: sf_cannot_call,
@@ -225,24 +221,11 @@ static SPECIAL_FORM_SUBRS: &[Subr] = &[
         func: sf_cannot_call,
         doc: "",
     },
-    Subr {
-        name: "defun",
-        arity: Arity::Unevalled,
-        func: sf_cannot_call,
-        doc: "",
-    },
-    Subr {
-        name: "defmacro",
-        arity: Arity::Unevalled,
-        func: sf_cannot_call,
-        doc: "",
-    },
-    Subr {
-        name: "lambda",
-        arity: Arity::Unevalled,
-        func: sf_cannot_call,
-        doc: "",
-    },
+    // GNU 31.1: `defun', `defmacro', `prog2', `lambda',
+    // `with-current-buffer', `save-mark-and-excursion', `backquote'
+    // are Lisp macros — no Unevalled subr registration, or
+    // `special-form-p'/indirect-function would see a special.
+
     Subr {
         name: "while",
         arity: Arity::Unevalled,
@@ -286,24 +269,14 @@ static SPECIAL_FORM_SUBRS: &[Subr] = &[
         doc: "",
     },
     Subr {
-        name: "with-current-buffer",
-        arity: Arity::Unevalled,
-        func: sf_cannot_call,
-        doc: "",
-    },
-    Subr {
         name: "save-restriction",
         arity: Arity::Unevalled,
         func: sf_cannot_call,
         doc: "",
     },
-    Subr {
-        name: "track-mouse",
-        arity: Arity::Unevalled,
-        func: sf_cannot_call,
-        doc: "",
-    },
 ];
+// `track-mouse' is deliberately absent: it is a Lisp macro in GNU 31.1
+// (`special-form-p' must return nil), not a special form.
 
 /// `defalias`-style alternate names.
 fn install_aliases(interp: &mut Interp) {
@@ -334,11 +307,25 @@ pub(crate) fn want_int(i: &mut Interp, v: &Value) -> Result<i128, Flow> {
     }
 }
 
+/// GNU `CHECK_FIXNUM': same range as `want_int' here (no bignums), but
+/// the error predicate is `fixnump' — `aref', `elt', `string-as-unibyte',
+/// `aset' and friends all use it.
+pub(crate) fn want_fixnum(i: &mut Interp, v: &Value) -> Result<i128, Flow> {
+    match v {
+        Value::Int(n) => Ok(*n),
+        _ => Err(i.wrong_type_mut("fixnump", v)),
+    }
+}
+
 pub(crate) fn want_num(i: &mut Interp, v: &Value) -> Result<f64, Flow> {
     match v {
         Value::Int(n) => Ok(*n as f64),
         Value::Float(f) => Ok(**f),
-        Value::Marker(m) => Ok(m.borrow().position as f64 + 1.0),
+        // GNU CHECK_NUMBER_OR_MARKER_COERCE: dead markers error.
+        Value::Marker(m) if m.borrow().buffer.is_some() => {
+            Ok(m.borrow().position as f64 + 1.0)
+        }
+        Value::Marker(_) => Err(i.error("Marker does not point anywhere")),
         _ => Err(i.wrong_type_mut("number-or-marker-p", v)),
     }
 }
@@ -389,7 +376,15 @@ pub fn eq_values(a: &Value, b: &Value) -> bool {
     match (a, b) {
         (Value::Nil, Value::Nil) => true,
         (Value::Nil, Value::Sym(0)) | (Value::Sym(0), Value::Nil) => true,
-        (Value::Int(x), Value::Int(y)) => x == y,
+        // Fixnums are immediates: `eq' compares values.  Integers outside
+        // the fixnum range are heap-allocated bignums in GNU, so two
+        // distinct objects with the same value are not `eq'.  Our Int is
+        // an inline i128 with no object identity; the fixnum-range check
+        // gives the right answer for every pair of distinct objects —
+        // the only divergence left is (eq x x) on a single bignum.
+        (Value::Int(x), Value::Int(y)) => {
+            x == y && (FIXNUM_MIN..=FIXNUM_MAX).contains(x)
+        }
         // Emacs floats are heap objects: `eq' compares object identity.
         (Value::Float(x), Value::Float(y)) => std::rc::Rc::ptr_eq(x, y),
         (Value::Sym(x), Value::Sym(y)) => x == y,
@@ -418,6 +413,9 @@ pub fn eq_values(a: &Value, b: &Value) -> bool {
 /// NaN when the payloads match.
 pub fn eql_values(a: &Value, b: &Value) -> bool {
     match (a, b) {
+        // eql compares numbers by value — including bignums, which are
+        // not `eq' unless literally the same object.
+        (Value::Int(x), Value::Int(y)) => x == y,
         (Value::Float(x), Value::Float(y)) => (**x).to_bits() == (**y).to_bits(),
         _ => eq_values(a, b),
     }
@@ -430,8 +428,20 @@ pub fn equal_values(interp: &Interp, a: &Value, b: &Value) -> bool {
     if misc::as_sympos(a).is_some() || misc::as_sympos(b).is_some() {
         return eql_values(a, b);
     }
+    // GNU `Fequal' first: EQ objects are equal (also terminates
+    // recursion on self-referential structures like eieio class
+    // records, whose slots point back at the same Rc).
+    if eq_values(a, b) {
+        return true;
+    }
     match (a, b) {
         (Value::Str(x), Value::Str(y)) => *x.borrow() == *y.borrow(),
+        (Value::Marker(x), Value::Marker(y)) => {
+            // GNU `equal' on markers compares buffer + position (they're
+            // `misc' objects with value semantics), not identity.
+            let (xb, yb) = (x.borrow(), y.borrow());
+            xb.buffer == yb.buffer && xb.position == yb.position
+        }
         (Value::Cons(_x), Value::Cons(_y)) => {
             // Structural walk with cycle guard.
             let mut ax = a.clone();

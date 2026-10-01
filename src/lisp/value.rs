@@ -136,6 +136,11 @@ pub struct LispHash {
     /// returns them verbatim from the accessors).
     pub rehash_size: Value,
     pub rehash_threshold: Value,
+    /// Name given to :test when it was a `define-hash-table-test'
+    /// symbol — `hash-table-test' reports it verbatim (GNU uses the
+    /// registered test/hash functions; we approximate with `equal'
+    /// semantics but keep the name).
+    pub test_name: Value,
 }
 
 impl LispHash {
@@ -148,6 +153,7 @@ impl LispHash {
             size: 0,
             rehash_size: Value::float(1.5),
             rehash_threshold: Value::float(0.8125),
+            test_name: Value::Nil,
         }
     }
 
@@ -273,6 +279,14 @@ pub struct Lambda {
     /// runs `Interp::advice_links[idx]'s (WHERE FUN . NEXT) layer, like
     /// GNU's `advice' oclosure layers.
     pub advice_link: Option<usize>,
+    /// True for functions whose source would be byte-compiled in GNU
+    /// (dumped/shipped-library functions, plus closures created while
+    /// one is running — e.g. `trace-make-advice''s wrapper).  Such a
+    /// function's symbol-head calls to byte-op primitives resolve to
+    /// the canonical subr directly, bypassing `symbol-function' like
+    /// GNU's Bcar/Bcdr/... opcodes, so `advice' on a primitive can't
+    /// recurse into the advice machinery's own calls.
+    pub compiled: bool,
     /// `Some(items)' for objects read via `#[...]' — GNU treats those
     /// as byte-code objects, which are `arrayp' and `aref'-able.  We
     /// keep the original element list so `aref'/`length' see GNU's
@@ -288,6 +302,19 @@ pub struct Lambda {
     /// (oldest-to-newest frame order reversed, like GNU's specbind
     /// prepends).  `oclosure--get' indexes this positionally.
     pub env_value: Option<Value>,
+}
+
+impl Lambda {
+    /// GNU's PVEC_COMPILED check: a `#[...]' object is byte-code only
+    /// when its code slot is a byte string (`#[ARGS "BYTESTR" CONSTS
+    /// DEPTH ...]'); a cons code slot reads as an interpreted closure
+    /// (lread.c read_bytecode).  Ordinary lambdas never are.
+    pub fn is_bytecode(&self) -> bool {
+        match &self.bc_items {
+            Some(items) => matches!(items.borrow().get(1), Some(Value::Str(_))),
+            None => false,
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -328,11 +355,18 @@ pub struct Marker {
 /// their real GNU codes.
 pub const EIGHT_BIT_BASE: u32 = 0xF_0000;
 
-/// Map a GNU char code to a storable Rust char; eight-bit codes
-/// become PUA proxies.
+/// Lone surrogates (0xD800..=0xDFFF) aren't Rust chars but ARE valid
+/// GNU char codes (`characterp' → t, `concat' inserts them, printing
+/// yields U+FFFD).  Proxy them into plane-15 PUA above the eight-bit
+/// block: codepoint c maps to U+F0100+(c-0xD800).
+pub const SURROGATE_BASE: u32 = 0xF_0100;
+
+/// Map a GNU char code to a storable Rust char; eight-bit codes and
+/// surrogates become PUA proxies.
 pub fn lisp_char(code: u32) -> Option<char> {
     match code {
         0x3FFF80..=0x3FFFFF => char::from_u32(EIGHT_BIT_BASE + (code & 0xFF)),
+        0xD800..=0xDFFF => char::from_u32(SURROGATE_BASE + (code - 0xD800)),
         _ => char::from_u32(code),
     }
 }
@@ -345,13 +379,24 @@ pub fn eight_bit_byte(c: char) -> Option<u8> {
         .then(|| (u - EIGHT_BIT_BASE) as u8)
 }
 
+/// If `c` is a surrogate proxy char, return its surrogate code.
+pub fn surrogate_code(c: char) -> Option<u32> {
+    let u = c as u32;
+    (SURROGATE_BASE..SURROGATE_BASE + 0x800)
+        .contains(&u)
+        .then(|| 0xD800 + (u - SURROGATE_BASE))
+}
+
 /// The GNU char code a string char stands for (proxies return their
-/// 0x3FFFxx code).
+/// real code: 0x3FFFxx for eight-bit, 0xD8xx..0xDFxx for surrogates).
 pub fn lisp_char_code(c: char) -> i128 {
-    match eight_bit_byte(c) {
-        Some(b) => 0x3FFF00 + b as i128,
-        None => c as i128,
+    if let Some(b) = eight_bit_byte(c) {
+        return 0x3FFF00 + b as i128;
     }
+    if let Some(s) = surrogate_code(c) {
+        return s as i128;
+    }
+    c as i128
 }
 
 impl Value {

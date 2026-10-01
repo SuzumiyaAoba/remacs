@@ -246,7 +246,8 @@ fn macroexpand_all_preserves_arglists() {
                     (macroexpand-all '(lambda (m) m))
                     (macroexpand-all '(let ((m 1)) m))
                     (macroexpand-all '(function (lambda (m) m)))))"),
-        "((defun f (m) (list m 1)) #'(lambda (m) m) (let ((m 1)) m) #'(lambda (m) m))"
+        // GNU expands (defun f ARGS . BODY) → (defalias 'f #'(lambda ...)).
+        "((defalias 'f #'(lambda (m) (list m 1))) #'(lambda (m) m) (let ((m 1)) m) #'(lambda (m) m))"
     );
 }
 
@@ -1834,19 +1835,26 @@ fn load_optional_arguments() {
                       (delete-file f))))"),
         "(t 41)"
     );
-    // NOMESSAGE controls GNU's `Loading FILE (source)...' echo (the
-    // suffix marks source files; .elc and extensionless files omit it).
+    // NOMESSAGE controls GNU's `Loading FILE (source)...' message; in
+    // batch GNU sends it to stderr (and *Messages*), not stdout.
     let out = ev_out(
         "(let ((f (make-temp-file \"remacs-load\" nil \".el\")))
             (unwind-protect
                 (progn (load f) (load f nil t))
               (delete-file f)))",
     );
-    assert!(
-        out.contains("Loading ") && out.contains("(source)..."),
-        "expected `Loading FILE (source)...' in output, got: {out}"
+    assert_eq!(out, "", "load messages must not hit stdout");
+    let msgs = ev(
+        "(let ((f (make-temp-file \"remacs-load\" nil \".el\")))
+            (unwind-protect
+                (progn (load f) (load f nil t)
+                       (with-current-buffer \"*Messages*\" (buffer-string)))
+              (delete-file f)))",
     );
-    assert_eq!(out.matches("Loading ").count(), 1);
+    assert!(
+        msgs.contains("Loading ") && msgs.contains("(source)..."),
+        "expected `Loading FILE (source)...' in *Messages*, got: {msgs}"
+    );
 }
 
 // -------------------------------------- compile/comint + process lifecycle

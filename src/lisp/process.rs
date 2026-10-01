@@ -566,6 +566,17 @@ fn poll_proc(i: &mut Interp, pref: &ProcessRef) -> Result<bool, Flow> {
         match ev {
             Ev::Out(bytes, stderr) => deliver_output(i, pref, bytes, stderr)?,
             Ev::Exit(st, code) => {
+                // GNU's status_notify: a process reaching `exit',
+                // `signal' or `closed' is removed from the process list
+                // (delete-exited-processes defaults to t) BEFORE the
+                // sentinel runs — the sentinel already sees it gone.
+                // Only the oldest alist cell goes, matching
+                // remove_process on Vprocess_alist.
+                if matches!(pref.borrow().status, "exit" | "signal" | "closed") {
+                    if let Some(pos) = i.processes.iter().position(|q| Rc::ptr_eq(q, pref)) {
+                        i.processes.remove(pos);
+                    }
+                }
                 if !pref.borrow().reported {
                     pref.borrow_mut().reported = true;
                     run_sentinel(i, pref, st, code)?;
@@ -828,6 +839,10 @@ fn eol_normalize(name: &str) -> String {
 }
 
 fn f_make_process(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    // GNU Fmake_process: nargs==0 returns nil before any checking.
+    if a.is_empty() {
+        return Ok(Value::Nil);
+    }
     let args = Value::list(a);
     let name_v = kw(i, &args, ":name");
     let name = match &name_v {
@@ -868,19 +883,23 @@ fn f_make_process(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     }
     let command = kw(i, &args, ":command");
     let cmd: Vec<String> = match &command {
+        // GNU: non-list :command → (wrong-type-argument listp VALUE),
+        // not a generic error; nil stays a no-command process.
         Value::Cons(_) | Value::Nil => {
-            let items = command.list_to_vec().map_err(|_| i.error("Bad :command"))?;
+            let items = command
+                .list_to_vec()
+                .map_err(|_| i.wrong_type_mut("listp", &command))?;
             let mut v = Vec::new();
             for it in items {
                 match &it {
                     Value::Str(s) => v.push(s.borrow().clone()),
-                    Value::Sym(id) => v.push(i.symbol_name(*id)),
-                    _ => return Err(i.error("Bad :command")),
+                    // GNU CHECK_STRINGs each element.
+                    _ => return Err(i.wrong_type_mut("stringp", &it)),
                 }
             }
             v
         }
-        _ => return Err(i.error("Bad :command")),
+        _ => return Err(i.wrong_type_mut("listp", &command)),
     };
     if cmd.is_empty() {
         // GNU allows make-process without :command — a "run"-status
@@ -924,12 +943,31 @@ fn f_make_process(i: &mut Interp, a: Vec<Value>) -> EvalResult {
                 .to_string_lossy()
                 .into_owned()
         };
-        // GNU puts the subprocess pty into a raw-ish mode: no echo, no
-        // canonical input, no output post-processing (so \n stays \n).
+        // GNU's child_setup_tty configures the subprocess side of the
+        // pty: canonical input stays ON with VEOF=^D, so process-send-eof's
+        // ^D makes the child see end-of-file (and flushes a partial
+        // line); echo is off, output postprocessing on but without
+        // NL→CR-NL mapping, delays and tab expansion off, 8-bit clean,
+        // and erase/kill processing disabled.
         let mut tio: libc::termios = std::mem::zeroed();
         if libc::tcgetattr(slave, &mut tio) == 0 {
-            tio.c_lflag &= !(libc::ECHO | libc::ICANON);
-            tio.c_oflag &= !libc::OPOST;
+            tio.c_oflag |= libc::OPOST;
+            tio.c_oflag &= !libc::ONLCR;
+            tio.c_oflag &= !(libc::NLDLY
+                | libc::CRDLY
+                | libc::TABDLY
+                | libc::BSDLY
+                | libc::VTDLY
+                | libc::FFDLY);
+            tio.c_lflag &= !libc::ECHO;
+            tio.c_lflag |= libc::ISIG;
+            tio.c_iflag &= !libc::ISTRIP;
+            tio.c_oflag &= !libc::TAB3;
+            tio.c_cflag = (tio.c_cflag & !libc::CSIZE) | libc::CS8;
+            tio.c_lflag |= libc::ICANON;
+            tio.c_cc[libc::VEOF] = 0o04; // Control-D
+            tio.c_cc[libc::VERASE] = libc::_POSIX_VDISABLE;
+            tio.c_cc[libc::VKILL] = libc::_POSIX_VDISABLE;
             libc::tcsetattr(slave, libc::TCSANOW, &tio);
         }
         (master, slave, name)
@@ -1384,8 +1422,10 @@ fn f_start_process(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     // (name buffer program &rest args)
     let name = match &a[0] {
         Value::Str(s) => s.borrow().clone(),
-        Value::Sym(id) => i.symbol_name(*id),
-        _ => return Err(i.wrong_type_mut("stringp", &a[0])),
+        // GNU: passes NAME through to make-process, whose
+        // get_required_string_keyword_param rejects non-strings
+        // (incl. symbols) with (error ":name value not a string").
+        _ => return Err(i.error(":name value not a string")),
     };
     let mut plist_items = vec![
         symv(i, ":name"),
@@ -1423,7 +1463,7 @@ fn f_get_process(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         // GNU's `get_process' resolves nil to the current buffer's
         // process, signalling "Buffer %s has no process" when none.
         Value::Nil => want_proc(i, &a[0]).map(|p| Value::Process(p)),
-        _ => Ok(Value::Nil),
+        other => Err(i.wrong_type_mut("stringp", other)),
     }
 }
 
@@ -2913,4 +2953,28 @@ fn f_internal_default_process_sentinel(i: &mut Interp, a: Vec<Value>) -> EvalRes
         Value::Process(_) => Ok(Value::Nil),
         other => Err(i.wrong_type_mut("processp", other)),
     }
+}
+
+/// GNU `make-network-process' advertises its capabilities through the
+/// feature's `subfeatures' plist (process.c's `syms_of_process' calls
+/// `provide' with the supported keyword matrix).  remacs implements
+/// local (Unix-domain) and IPv4 stream sockets with :server/:service;
+/// register only those entries so `(featurep 'make-network-process
+/// '(:family local))' reports t — `server.el' consults it to pick a
+/// Unix socket over TCP.
+pub(crate) fn install(i: &mut Interp) {
+    let mnp = i.intern("make-network-process");
+    let subs = i.intern("subfeatures");
+    let mkpair = |i: &mut Interp, a: &str, b: Value| {
+        Value::list(vec![Value::Sym(i.intern(a)), b])
+    };
+    let mut items: Vec<Value> = vec![
+        mkpair(i, ":server", Value::t()),
+        mkpair(i, ":service", Value::t()),
+    ];
+    for fam in ["ipv4", "local"] {
+        let fs = Value::Sym(i.intern(fam));
+        items.push(mkpair(i, ":family", fs));
+    }
+    i.put_prop(mnp, subs, Value::list(items));
 }

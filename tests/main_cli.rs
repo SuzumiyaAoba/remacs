@@ -186,8 +186,10 @@ fn pty_editor_smoke() {
         }
         buf_reader
     });
-    // Wait for the initial frame (the *scratch* mode line).
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+    // Wait for the initial frame (the *scratch* mode line).  Under
+    // parallel test load the ~30s prelude can stretch past 60s;
+    // 120s still bounds a wedged first-render loop.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(120);
     loop {
         if String::from_utf8_lossy(&buf.lock().unwrap()).contains("scratch") {
             break;
@@ -222,7 +224,12 @@ fn pty_editor_smoke() {
         b"\x0c",                     // C-l (recenter-top-bottom)
         b"\x08k\x06",                // C-h k C-f (describe-key)
         b"\x15\x07",                 // C-u C-g (abort prefix arg)
-        b"\x1bxxdescrib\r",          // M-x with partial completion
+        // GNU `read-extended-command' passes require-match=t to
+        // `completing-read', so a name with no matching command is
+        // refused on RET ("No match" + reprompt) — abort that read
+        // with C-g like a real user would.
+        b"\x1bxxdescrib\r",          // M-x xdescrib RET → refused
+        b"\x07",                     // C-g aborts the M-x minibuffer
         b"\x1bxdescribe-bindings\r", // M-x describe-bindings RET
         b"\x18\x03",                 // C-x C-c
     ];

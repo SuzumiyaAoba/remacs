@@ -73,6 +73,37 @@ Registration rules:
   it writes the `blessmail` script to CWD and calls `kill-emacs` by
   design): platform-gated *-win/android files fail as on any macOS
   build.
+- Startup ordering parity: the prelude no longer puts `*scratch*' in
+  `lisp-interaction-mode' — `Interp::new' does it after all library
+  loads (GNU startup.el ordering).  Otherwise `characters.el''s
+  unqualified `modify-syntax-entry' calls edit scratch's
+  lisp-interaction syntax table instead of `standard-syntax-table'
+  (GNU buffers' syntax_table field defaults to the standard object).
+  Case tables follow casetab.c: `set-case-table'/`set-standard-case-table'
+  recompute nil UPCASE/CANON/EQV extras (`set_case_table'), and buffer
+  creation re-derives them when the standard table's extras aren't all
+  char-tables (GNU `init_buffer', buffer.c:1150) — `characters.el'
+  clears extras 1–2 mid-loadup, so without the heal `-Q' reports nil.
+  `(require 'pcase)' sits after the vendored cl machinery
+  (cl-defstruct/cl--define-built-in-type), matching GNU loadup order
+  cl-preloaded.el → pcase.el: pcase's `with-eval-after-load
+  'cl-preloaded' upgrade of `pcase--subtype-bitsets' calls
+  `built-in-class-p', which must already exist when the deferred form
+  runs (aborted the whole prelude otherwise).
+- `(setf cl--find-class)`: GNU's `cl--find-class' is a `cl-macs'
+  defmacro, so `setf' on its call site compiles to `put' — but remacs
+  runs `cl--define-derived-type' interpreted, and after the macro's
+  cell is voided (GNU_VOID_FNS_LATE, matching GNU -Q) gv's lazy
+  expansion falls back to a `(setf cl--find-class)' function.
+  prelude.el defines that function and eval.rs voids it into
+  `remacs--dump-fn', keeping `symbol-function'/`fboundp' nil like GNU.
+- `lisp/loaddefs.el` is a *hand-maintained* reduced port of GNU's
+  generated loaddefs.el.  Its non-`(autoload ...)' side-effect forms
+  were grafted at the tail (`;Remacs: GNU loaddefs.el side-effect
+  forms...' block): `define-symbol-prop 'rx 'pcase-macroexpander`
+  (without it `pcase' can't expand `(rx ...)' patterns), `put'/
+  `function-put'/`make-obsolete'/`define-obsolete-function-alias'.
+  Do not regenerate it with a pure-autoload extractor.
 - `PRELUDE_MAX` env var truncates prelude evaluation for bisection;
   `--ieval` bisects a form interactively; `WHILE_WATCH` traces eval loops.
 
@@ -236,6 +267,192 @@ Architecture:
   are not run.
 
 Regression suite: `tests/nativecomp.rs` (8 tests).
+
+## Minibuffer reads (`src/lisp/eval.rs` + `src/editor/mod.rs` + `src/term`)
+
+GNU structure kept: `read-file-name`/`completing-read`/`read-buffer`
+are subrs that delegate to the user variables
+(`read-file-name-function`, `completing-read-function`,
+`read-buffer-function`) or their -default counterparts, exactly like
+GNU's Lisp wrappers.  `f_completing_read_default` does
+`completing-read-default`'s work in Rust: picks
+`minibuffer-local-must-match-map`/`minibuffer-local-completion-map` by
+REQUIRE-MATCH, composes `minibuffer-local-filename-completion-map` on
+top while `minibuffer-completing-file-name' is non-nil (so its nil SPC
+binding un-binds `minibuffer-complete-word`), specbinds
+`minibuffer-completion-table'/`-predicate'/`-confirm'/`--require-match',
+then `minibuf_read`.  `minibuf_read` is `read_minibuf`: installs the
+prompt (field props), KEYMAP or `minibuffer-local-map' as the buffer's
+`local-keymap', runs `minibuffer-setup-hook' (plain, not safe), pushes
+the `exit' catch tag, and the front-end `minibuf_loop' dispatches keys
+through the minibuffer's real keymaps until `exit-minibuffer's throw
+(`minibuf_exited') or `minibuffer-quit-recursive-edit'
+(`minibuf_exit_fn' — called after unwinding).  `execute-extended-command'
+goes through Lisp `read-extended-command' (must-match completion).
+
+Gotchas: `subr_interactive`'s sentinel for `(interactive)' is
+`"\u{1}nil"` — a literal backslash typo in the table silently parses
+as 8 unknown letter codes and breaks every affected command with
+`wrong-number-of-arguments` on RET (regression: `exit-minibuffer` in
+the minibuffer).  `minibuf_loop` must propagate `poll_key` errors —
+swallowing them spins forever on dead input.
+
+Regression suite: `tests/tui_session.rs` (scripted `KeyIo` drives
+C-x C-f/TAB/C-x b/M-x/C-x C-s/C-g/C-x C-c through the real loop).
+## GNU-compat QA suite (`tests/qa.rs` + `tests/qa_*.el`)
+
+Each `qa_*.el` file is a flat list of `(qa FORM EXPECTED)` checks driven
+by `tests/qa_framework.el`.  Every expected value was verified against
+GNU Emacs 31.1 (`emacs -Q --batch -l tests/qa_framework.el -l
+tests/qa_<dom>.el` must print "N checks passed").  A file doubles as the
+GNU-side ground truth and the remacs regression runner: `cargo test
+--test qa` evals framework+file per `#[test]` (one `Interp` each).
+
+Known GNU↔remacs divergences are pinned in-place:
+
+- `qa-xf` / `qa-xf-err` / `qa-xf-err-data` / `qa-xf-prin1` /
+  `qa-xf-same` — check still enforced under GNU; under remacs the result
+  is recorded as XFAIL (still wrong) or XPASS (now matching GNU).
+- `qa-skip` / `qa-skip-err` — for forms that CRASH or HANG remacs
+  (uncatchable); still run under GNU.
+- remacs is detected via `(string-match-p "remacs" (emacs-version))`.
+- `qa--done` fails only on unexpected FAILs; XFAIL/XPASS/SKIP entries
+  are printed for the ledger but the summary still says
+  "N checks passed (K xfail) [M xpass]".
+
+Known remacs bugs the ledger currently documents (fix → flip the
+qa-xf back to qa and watch it go XPASS→pass):
+
+- `(require 'eieio)` / `(require 'cl-lib)` work now; qa_eieio passes
+  fully.  Two causes fixed: a mis-balanced `cl--loop-expand' in
+  prelude.el (a `cond' closed early, splicing later clauses into the
+  `let' body so clause forms ran as calls and loop expansion never
+  finished — this same bug hung `require'), and `equal' missing GNU's
+  EQ fast-path, which overflowed the stack on eieio's cyclic class
+  records.
+- `copy-marker` on a non-marker signals `wrong-type-argument' (the
+  `end-of-file' report was fallout of the same prelude misparse);
+  `(copy-marker)' with no args makes a detached marker (qa_marker).
+- No unibyte buffers: `enable-multibyte-characters' tracks
+  `set-buffer-multibyte' (qa_misc3).  Unibyte *strings* are now
+  modeled: literals with only ≤0xFF octal/hex escapes stay unibyte,
+  `concat' follows GNU's promotion rules, `string-make-unibyte'/
+  `string-as-multibyte'/`string-as-unibyte'/`encode-coding-string'
+  (incl. `:default-char' → "?" for us-ascii) and `string-bytes'
+  (per-char storage count) match GNU.  `string-to-list` on unibyte
+  data and `position-bytes`/`byte-to-position` base-1 conversions
+  are under GNU-parity rework (verify before trusting).
+- charset layer: rewired to GNU char_charset() semantics — ordered
+  charset list model, `char-charset`/`charset-after`/`make-char`/
+  `split-char`/`decode-char`/`encode-char` (incl. integral-float and
+  cons args), `char-width`, `charset-priority-list`,
+  `set-charset-priority`, `sort-charsets`, `find-charset-*`,
+  `coding-system-charset-list`, synthesized builtin attribute plists.
+- Indirect buffers: fixed — text/ticks/text-props/undo-list are
+  shared via SharedText (per GNU's buffer_text), BEGV/ZV/point/markers
+  stay per-buffer, `buffer-base-buffer` returns a live object (killed
+  buffers remain in `BufferSet` with live=false), `buffer-swap-text`
+  errors on indirect buffers, `set-buffer-multibyte` errors on
+  indirect buffers, buffer-list-update-hook runs on create/kill/bury,
+  and `set-buffer` syncs the undo list with the base.
+- `cl-loop`: fully works now — the ledger's hang was the same
+  `cl--loop-expand' misparse; qa_clloop{,2..7} all pass.
+- `cl-destructuring-bind`/`cl-struct`/`cl-typep`/`cl-the` fixed too —
+  the same misparse was starving their expansions.  The old
+  `cl-locally (declare (special …))' pin was itself mis-specified
+  (it asserted void-variable under DYNAMIC eval; GNU's `(eval F nil)'
+  is dynamic regardless of `lexical-binding'); the checks now run
+  under `qa-lex' and pass on both.
+- `and-let*' fixed: `lisp/subr-x.el''s Emacs-28 recursive copy shadowed
+  the prelude's GNU subr.el defmacro (dropped); empty BODY now returns
+  the last binding value (qa_subrx).  `progv' is gone from 31.1 core —
+  it lives in obsolete cl.el (`(require 'cl)' first; tests updated).
+- Batch frame model differs from GNU -Q tty: `frame-parameter` values,
+  window edges, `tty-*`/`pos-visible-in-window-p`, etc. (qa_window).
+- `define-key` on prefix key, `keymap-set` return value, `help-function`
+  docstrings, `defalias`/`defvaralias` cycle detection
+  (`cyclic-*-indirection`), `subr-arity` on specials, `func-arity`,
+  `documentation` for unbound/`when`, `interactive-form`,
+  `funcall-interactively` — all fixed; qa_keymap/qa_symbol/qa_advice
+  pass with no pins left.
+- `format-time-string` %-zones/locale names, `format-spec`,
+  `float-time` rounding, `time-convert`, text-properties
+  (`add-face-text-property` defaults, `put-text-property` nil-end
+  clamp, `text-properties-at` boundary, `char-property-alias-p`),
+  `completions`/`completion-table-*`/`all-completions` boundary
+  sorting, charset-priority order — all fixed; qa_timefmt,
+  qa_textprops, qa_completion, qa_charset, qa_window, qa_case,
+  qa_readprint, qa_regex all pass clean.
+- `(describe-function)`/docstrings wired fully; `alist-get' default
+  test fixed to `eq'/`assq' (qa_subrx passes clean).
+- `process`/`file-attributes`/`locate-file`/`format-network-address`
+  tails fixed; `substitute-in-file-name' "/a/~/b" → "~/b" now drops
+  the slash like GNU (qa_filesys clean).  Process status follows
+  GNU's status_notify (exit/signal removed from the list, EOF via
+  GNU child_setup_tty termios: ICANON+VEOF=^D, -ECHO, +OPOST -ONLCR
+  -TAB3 -*DLY); `file-locked-p' ignores stale same-host locks whose
+  recorded boot differs (GNU within_one_second rule); `write-file'
+  runs the GNU files.el tail (mode/hack-local-variables) so
+  require-final-newline applies (qa_bufferfile clean).
+- `numbers`: no bignums — out-of-fixnum ints are inline i128 values,
+  so `(eq X Y)' on two equal bignums is nil like GNU (eql/equal
+  compare by value; a shared bignum `eq' to itself diverges since
+  there is no heap identity — unpinned, would need boxed ints).
+  Comparisons are exact (no f64 coercion): `<`/`=`/`/=`/`min`/`max`
+  over ≥2^61 values and `random' (BSD TYPE_3 + GNU string seeding)
+  all match GNU bit-for-bit; qa_numbers/qa_miscfn clean.
+- `json`: `json-serialize' returns unibyte UTF-8, plist input forms
+  objects, lone-surrogate `concat` crash skipped.  `json-value-p'
+  does not exist in GNU 31.1 either (stale ledger note).  Remaining:
+  `json-end-of-file' byte-offset in error data.
+- `search`/`replace`: `search-forward'-COUNT all-or-nothing,
+  `match-data 'integers' appends the buffer, `search-*-regexp' are
+  same-cell aliases, `inhibit-changing-match-data' honored
+  (qa_search); `forward-paragraph' reports subrp like GNU's
+  nativecomp build; `replace-match' in-buffer paths (qa_replace);
+  `re-search-backward' honors the GNU re_match STOP limit (matches
+  can't run past pos), fixing `forward-symbol'/`beginning-of-defun'
+  boundary behavior; case-fold items pass (qa_case clean).
+- `seq`/`map`/`ring`: `seq-let' vectors, `make-ring' arity errors, and
+  bool-vector `map-pairs'/`seq-do-indexed' all fixed (qa_seq/qa_mapring
+  clean; map_seq gained a bool-vector arm).
+- `syntax`: `modify-syntax-entry' on copied tables fixed; temp-buffer
+  `syntax-table' scope pins resolved (qa_syntax clean).
+- Batch `message' echo fixed: `load'-time "Loading FILE (source)..."
+  now goes to stderr/*Messages* like GNU --batch, not stdout.
+- `errors`: `arith-error' data is bare `(arith-error)' like GNU;
+  `error-message-string' validates like print.c (listp arg, symbolp
+  car — non-error data signals wrong-type-argument);
+  `signal'/`user-error'/`file-error' hierarchies match; Fsignal
+  rejects symbols without `error-conditions' ("Invalid error
+  symbol") like GNU.
+
+- Buffer-arg strictness split (GNU `decode_buffer' vs `get_buffer'):
+  `buffer-size'/`buffer-modified-p'/`buffer-file-name'/
+  `buffer-base-buffer'/`buffer-local-variables'/`buffer-local-value'/
+  `buffer-local-boundp'/`local-variable-p'/`local-variable-if-set-p'/
+  `verify-visited-file-modtime'/`buffer-swap-text'/
+  `buffer-modified-tick' CHECK_BUFFER (a name string signals
+  `wrong-type-argument bufferp'); only
+  `insert-buffer-substring'/`compare-buffer-substrings'/
+  `buffer-disable-undo'/`buffer-enable-undo'/`set-buffer'/
+  `kill-buffer'/`bury-buffer'/`other-buffer' resolve names
+  (`buf_or_name').  `args-out-of-range' from `buffer-substring'
+  carries the buffer object like GNU's validate_interval_range and
+  validates against BEGV..ZV (was whole-text len).
+- `replace-regexp-in-string' SUBEXP past the match registers now
+  signals `(error "replace-match subexpression does not exist" N)'
+  like GNU's Freplace_match (was args-out-of-range).
+- `error-message-string' accepts nil (→ "peculiar error" like GNU);
+  still signals listp on non-list non-nil.
+- `locate-library "subr-x"' returns the .el source — correct in this
+  tree (no .elc exists); pinned as an artifact-layout divergence in
+  qa_load.
+- `internal--syntax-propertize' held the buffer borrow across an
+  eval of `syntax-propertize-function' — now released before the
+  call (and likewise in `f_syntax_after').
+
+Total: ~5000 GNU-verified checks; run all: `cargo test --test qa`.
 
 ## Verification recipe
 

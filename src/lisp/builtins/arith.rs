@@ -1,10 +1,12 @@
 //! Arithmetic and numeric comparison subrs.
 
-use super::{S, arg, want_int, want_num};
+use super::{S, want_int, want_num};
 use crate::lisp::Interp;
 use crate::lisp::error::{EvalResult, Flow};
 use crate::lisp::obarray::sym;
-use crate::lisp::value::{Subr, Value};
+use crate::lisp::value::{Marker, Subr, Value};
+use std::cell::RefCell;
+use std::rc::Rc;
 
 fn arith_err(i: &Interp, _msg: &str) -> Flow {
     // GNU signals bare (arith-error) with no payload.
@@ -17,18 +19,63 @@ fn overflow_err(i: &mut Interp, v: &Value) -> Flow {
 }
 
 /// Number coercion: int if all-int else float.
+#[derive(Clone, Copy)]
 enum Num {
     I(i128),
     F(f64),
 }
 
-fn to_num(v: &Value) -> Option<Num> {
-    match v {
+/// Order `n` against `f` without precision loss.  `None` when `f` is
+/// NaN (the argument type check happens before this in GNU).
+fn int_f64_ord(n: i128, f: f64) -> Option<std::cmp::Ordering> {
+    use std::cmp::Ordering::*;
+    if f.is_nan() {
+        return None;
+    }
+    // (i128::MAX as f64) rounds up to 2**127 and i128::MIN is exactly
+    // -2**127, so only these two boundary comparisons need guarding.
+    if f >= 2f64.powi(127) {
+        return Some(Less);
+    }
+    if f < -2f64.powi(127) {
+        return Some(Greater);
+    }
+    let t = f.trunc() as i128;
+    Some(match n.cmp(&t) {
+        Equal => 0f64.partial_cmp(&f.fract()).unwrap_or(Equal),
+        o => o,
+    })
+}
+
+/// Exact ordering of two numbers (markers already reduced to their
+/// positions by `to_num`).  `None` iff a float operand is NaN, which
+/// makes every `=</<=/>/>=` comparison false, matching GNU.
+fn num_ord(a: Num, b: Num) -> Option<std::cmp::Ordering> {
+    match (a, b) {
+        (Num::I(x), Num::I(y)) => Some(x.cmp(&y)),
+        (Num::F(x), Num::F(y)) => x.partial_cmp(&y),
+        (Num::I(x), Num::F(y)) => int_f64_ord(x, y),
+        (Num::F(x), Num::I(y)) => int_f64_ord(y, x).map(std::cmp::Ordering::reverse),
+    }
+}
+
+/// GNU `CHECK_NUMBER_OR_MARKER_COERCE': a marker whose buffer is dead
+/// (or that points nowhere) signals "Marker does not point anywhere"
+/// rather than yielding a stale position.
+fn marker_pos_err(i: &mut Interp, m: &Rc<RefCell<Marker>>) -> Result<i128, Flow> {
+    if m.borrow().buffer.is_none() {
+        return Err(i.error("Marker does not point anywhere"));
+    }
+    Ok(m.borrow().position as i128 + 1)
+}
+
+fn to_num(i: &mut Interp, v: &Value) -> Result<Option<Num>, Flow> {
+    Ok(match v {
         Value::Int(n) => Some(Num::I(*n)),
         Value::Float(f) => Some(Num::F(**f)),
-        Value::Marker(m) => Some(Num::I(m.borrow().position as i128 + 1)),
+        Value::Marker(m) => Some(Num::I(marker_pos_err(i, m)?)),
         _ => None,
-    }
+    })
 }
 
 pub(crate) static SUBRS: &[Subr] = &[
@@ -190,7 +237,7 @@ fn f_plus(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     let mut acc_f: f64 = 0.0;
     let mut is_float = false;
     for a in &args {
-        match to_num(a) {
+        match to_num(i, a)? {
             Some(Num::I(n)) => {
                 if is_float {
                     acc_f += n as f64;
@@ -221,7 +268,7 @@ fn f_minus(i: &mut Interp, args: Vec<Value>) -> EvalResult {
         return Ok(Value::Int(0));
     }
     if args.len() == 1 {
-        return match to_num(&args[0]) {
+        return match to_num(i, &args[0])? {
             Some(Num::I(n)) => n
                 .checked_neg()
                 .map(Value::Int)
@@ -231,14 +278,14 @@ fn f_minus(i: &mut Interp, args: Vec<Value>) -> EvalResult {
         };
     }
     let mut it = args.iter();
-    let first = to_num(it.next().unwrap());
+    let first = to_num(i, it.next().unwrap())?;
     let (mut acc_i, mut acc_f, mut is_float) = match first {
         Some(Num::I(n)) => (n, 0.0, false),
         Some(Num::F(f)) => (0, f, true),
         None => return Err(i.wrong_type_mut("number-or-marker-p", &args[0])),
     };
     for a in it {
-        match to_num(a) {
+        match to_num(i, a)? {
             Some(Num::I(n)) => {
                 if is_float {
                     acc_f -= n as f64;
@@ -268,7 +315,7 @@ fn f_times(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     let mut acc_f: f64 = 1.0;
     let mut is_float = false;
     for a in &args {
-        match to_num(a) {
+        match to_num(i, a)? {
             Some(Num::I(n)) => {
                 if is_float {
                     acc_f *= n as f64;
@@ -296,7 +343,7 @@ fn f_times(i: &mut Interp, args: Vec<Value>) -> EvalResult {
 fn f_div(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     if args.len() == 1 {
         // (/ x) = 1/x
-        return match to_num(&args[0]) {
+        return match to_num(i, &args[0])? {
             Some(Num::I(n)) => {
                 if n == 0 {
                     Err(arith_err(i, "Division by zero"))
@@ -309,14 +356,14 @@ fn f_div(i: &mut Interp, args: Vec<Value>) -> EvalResult {
             None => Err(i.wrong_type_mut("number-or-marker-p", &args[0])),
         };
     }
-    let first = to_num(&args[0]);
+    let first = to_num(i, &args[0])?;
     let (mut acc_i, mut acc_f, mut is_float) = match first {
         Some(Num::I(n)) => (n, 0.0, false),
         Some(Num::F(f)) => (0, f, true),
         None => return Err(i.wrong_type_mut("number-or-marker-p", &args[0])),
     };
     for a in &args[1..] {
-        match to_num(a) {
+        match to_num(i, a)? {
             Some(Num::I(n)) => {
                 if is_float {
                     acc_f /= n as f64;
@@ -363,7 +410,7 @@ fn f_mod(i: &mut Interp, args: Vec<Value>) -> EvalResult {
 
 /// `mod` — floored remainder (sign of divisor). For ints only in Emacs.
 fn f_mod_fn(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    match (to_num(&args[0]), to_num(&args[1])) {
+    match (to_num(i, &args[0])?, to_num(i, &args[1])?) {
         (Some(Num::I(x)), Some(Num::I(y))) => {
             if y == 0 {
                 Err(arith_err(i, "Division by zero"))
@@ -387,7 +434,7 @@ fn f_mod_fn(i: &mut Interp, args: Vec<Value>) -> EvalResult {
             Ok(Value::float(if yf < 0.0 && r != 0.0 { r + yf } else { r }))
         }
         _ => {
-            let bad = if to_num(&args[0]).is_none() {
+            let bad = if to_num(i, &args[0])?.is_none() {
                 &args[0]
             } else {
                 &args[1]
@@ -398,7 +445,7 @@ fn f_mod_fn(i: &mut Interp, args: Vec<Value>) -> EvalResult {
 }
 
 fn f_1plus(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    match to_num(&args[0]) {
+    match to_num(i, &args[0])? {
         Some(Num::I(n)) => n
             .checked_add(1)
             .map(Value::Int)
@@ -409,7 +456,7 @@ fn f_1plus(i: &mut Interp, args: Vec<Value>) -> EvalResult {
 }
 
 fn f_1minus(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    match to_num(&args[0]) {
+    match to_num(i, &args[0])? {
         Some(Num::I(n)) => n
             .checked_sub(1)
             .map(Value::Int)
@@ -423,7 +470,7 @@ fn f_abs(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     if matches!(&args[0], Value::Marker(_)) {
         return Err(i.wrong_type_mut("numberp", &args[0]));
     }
-    match to_num(&args[0]) {
+    match to_num(i, &args[0])? {
         Some(Num::I(n)) => n
             .checked_abs()
             .map(Value::Int)
@@ -433,51 +480,70 @@ fn f_abs(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     }
 }
 
+/// `min`/`max` — GNU's minmax_driver: the winning argument's value is
+/// kept (markers coerce to their position first); a NaN argument wins
+/// immediately regardless of the comparison.
+fn minmax(i: &mut Interp, args: &[Value], lt: bool) -> EvalResult {
+    // The winning Num contributes its own Value, except a marker
+    // yields its (coerced) position fixnum like GNU.
+    fn winner(orig: &Value, n: Num) -> Value {
+        match (orig, n) {
+            (Value::Marker(_), Num::I(p)) => Value::Int(p),
+            _ => orig.clone(),
+        }
+    }
+    let mut best_n = match to_num(i, &args[0])? {
+        Some(n) => n,
+        None => return Err(i.wrong_type_mut("number-or-marker-p", &args[0])),
+    };
+    let mut best = winner(&args[0], best_n);
+    for a in &args[1..] {
+        let an = match to_num(i, a)? {
+            Some(n) => n,
+            None => return Err(i.wrong_type_mut("number-or-marker-p", a)),
+        };
+        if matches!(an, Num::F(f) if f.is_nan()) {
+            return Ok(a.clone());
+        }
+        let wins = match num_ord(an, best_n) {
+            Some(std::cmp::Ordering::Less) => lt,
+            Some(std::cmp::Ordering::Greater) => !lt,
+            _ => false,
+        };
+        if wins {
+            best_n = an;
+            best = winner(a, an);
+        }
+    }
+    Ok(best)
+}
 fn f_min(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    let mut best = arg(&args, 0);
-    if to_num(&best).is_none() {
-        return Err(i.wrong_type_mut("number-or-marker-p", &best));
-    }
-    for a in &args[1..] {
-        if to_num(a).is_none() {
-            return Err(i.wrong_type_mut("number-or-marker-p", a));
-        }
-        let (af, bf) = (want_num(i, a)?, want_num(i, &best)?);
-        if af < bf {
-            best = a.clone();
-        }
-    }
-    Ok(best)
+    minmax(i, &args, true)
 }
-
 fn f_max(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    let mut best = arg(&args, 0);
-    if to_num(&best).is_none() {
-        return Err(i.wrong_type_mut("number-or-marker-p", &best));
-    }
-    for a in &args[1..] {
-        if to_num(a).is_none() {
-            return Err(i.wrong_type_mut("number-or-marker-p", a));
-        }
-        let (af, bf) = (want_num(i, a)?, want_num(i, &best)?);
-        if af > bf {
-            best = a.clone();
-        }
-    }
-    Ok(best)
+    minmax(i, &args, false)
 }
 
-fn cmp_all(i: &mut Interp, args: &[Value], pred: fn(f64, f64) -> bool) -> EvalResult {
-    if args.len() == 1 {
-        if to_num(&args[0]).is_none() {
-            return Err(i.wrong_type_mut("number-or-marker-p", &args[0]));
-        }
-        return Ok(Value::t());
-    }
+/// `=</<=/>/>=`: adjacent pairwise `arithcompare'.  Comparisons use the
+/// exact int/float ordering of `num_ord` — coercing through f64 would
+/// collapse fixnums whose magnitude exceeds 2**53.  A NaN operand makes
+/// every comparison false.  GNU checks arguments lazily in pairs, so a
+/// single argument is always t (no type check).
+fn cmp_all(
+    i: &mut Interp,
+    args: &[Value],
+    pred: fn(Option<std::cmp::Ordering>) -> bool,
+) -> EvalResult {
     for w in args.windows(2) {
-        let a = want_num(i, &w[0])?;
-        let b = want_num(i, &w[1])?;
-        if !pred(a, b) {
+        let a = match to_num(i, &w[0])? {
+            Some(n) => n,
+            None => return Err(i.wrong_type_mut("number-or-marker-p", &w[0])),
+        };
+        let b = match to_num(i, &w[1])? {
+            Some(n) => n,
+            None => return Err(i.wrong_type_mut("number-or-marker-p", &w[1])),
+        };
+        if !pred(num_ord(a, b)) {
             return Ok(Value::Nil);
         }
     }
@@ -485,32 +551,43 @@ fn cmp_all(i: &mut Interp, args: &[Value], pred: fn(f64, f64) -> bool) -> EvalRe
 }
 
 fn f_numeq(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    cmp_all(i, &args, |a, b| a == b)
+    cmp_all(i, &args, |o| o == Some(std::cmp::Ordering::Equal))
 }
 fn f_numne(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    // /= : all distinct
-    for x in 0..args.len() {
-        for y in (x + 1)..args.len() {
-            let a = want_num(i, &args[x])?;
-            let b = want_num(i, &args[y])?;
-            if a == b {
-                return Ok(Value::Nil);
-            }
-        }
-    }
-    Ok(Value::t())
+    // `/=' takes exactly two args (enforced by arity); t iff they differ.
+    let a = match to_num(i, &args[0])? {
+        Some(n) => n,
+        None => return Err(i.wrong_type_mut("number-or-marker-p", &args[0])),
+    };
+    let b = match to_num(i, &args[1])? {
+        Some(n) => n,
+        None => return Err(i.wrong_type_mut("number-or-marker-p", &args[1])),
+    };
+    Ok(Value::from_bool(
+        num_ord(a, b) != Some(std::cmp::Ordering::Equal),
+    ))
 }
 fn f_lt(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    cmp_all(i, &args, |a, b| a < b)
+    cmp_all(i, &args, |o| o == Some(std::cmp::Ordering::Less))
 }
 fn f_le(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    cmp_all(i, &args, |a, b| a <= b)
+    cmp_all(i, &args, |o| {
+        matches!(
+            o,
+            Some(std::cmp::Ordering::Less) | Some(std::cmp::Ordering::Equal)
+        )
+    })
 }
 fn f_gt(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    cmp_all(i, &args, |a, b| a > b)
+    cmp_all(i, &args, |o| o == Some(std::cmp::Ordering::Greater))
 }
 fn f_ge(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    cmp_all(i, &args, |a, b| a >= b)
+    cmp_all(i, &args, |o| {
+        matches!(
+            o,
+            Some(std::cmp::Ordering::Greater) | Some(std::cmp::Ordering::Equal)
+        )
+    })
 }
 
 fn f_zerop(i: &mut Interp, args: Vec<Value>) -> EvalResult {
@@ -552,14 +629,14 @@ fn round_with(i: &mut Interp, args: &[Value], mode: u8) -> EvalResult {
             return Err(i.wrong_type_mut("numberp", a));
         }
     }
-    let x = match to_num(&args[0]) {
+    let x = match to_num(i, &args[0])? {
         Some(n) => n,
         None => return Err(i.wrong_type_mut("numberp", &args[0])),
     };
     let y = match args.get(1) {
         // GNU rounds with Y = 1 when the divisor is omitted OR nil.
         None | Some(Value::Nil) => None,
-        Some(v) => match to_num(v) {
+        Some(v) => match to_num(i, v)? {
             Some(n) => Some(n),
             None => return Err(i.wrong_type_mut("numberp", v)),
         },
@@ -634,6 +711,14 @@ fn round_with(i: &mut Interp, args: &[Value], mode: u8) -> EvalResult {
         2 => q.ceil(),
         _ => q.round_ties_even(),
     };
+    // GNU signals `overflow-error' when the rounded value exceeds
+    // fixnum range (it would cons a bignum — we have none).
+    let lo = crate::lisp::value::FIXNUM_MIN as f64;
+    let hi = crate::lisp::value::FIXNUM_MAX as f64;
+    if !r.is_finite() || r < lo || r > hi {
+        let osym = i.intern("overflow-error");
+        return Err(i.signal_data(osym, vec![args[0].clone()]));
+    }
     Ok(Value::Int(r as i128))
 }
 
@@ -665,7 +750,7 @@ fn want_number(i: &mut Interp, v: &Value) -> Result<f64, Flow> {
 fn want_int_or_marker(i: &mut Interp, v: &Value) -> Result<i128, Flow> {
     match v {
         Value::Int(n) => Ok(*n),
-        Value::Marker(m) => Ok(m.borrow().position as i128 + 1),
+        Value::Marker(m) => marker_pos_err(i, m),
         _ => Err(i.wrong_type_mut("integer-or-marker-p", v)),
     }
 }
@@ -680,7 +765,7 @@ fn f_expt(i: &mut Interp, args: Vec<Value>) -> EvalResult {
             return Err(i.wrong_type_mut("numberp", a));
         }
     }
-    match (to_num(&args[0]), to_num(&args[1])) {
+    match (to_num(i, &args[0])?, to_num(i, &args[1])?) {
         (Some(Num::I(x)), Some(Num::I(y))) => {
             if y >= 0 {
                 match x.checked_pow(y.min(u32::MAX as i128) as u32) {
@@ -702,7 +787,7 @@ fn f_expt(i: &mut Interp, args: Vec<Value>) -> EvalResult {
             Ok(Value::float(xf.powf(yf)))
         }
         _ => {
-            let bad = if to_num(&args[0]).is_none() {
+            let bad = if to_num(i, &args[0])?.is_none() {
                 &args[0]
             } else {
                 &args[1]
@@ -775,7 +860,8 @@ fn f_logxor(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     Ok(Value::Int(acc))
 }
 fn f_lognot(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    Ok(Value::Int(!want_int_or_marker(i, &args[0])?))
+    // GNU CHECK_INTEGER: markers are rejected, unlike logand/logior.
+    Ok(Value::Int(!want_int(i, &args[0])?))
 }
 /// Left shift with overflow detection: `wrapping_shl' yields the
 /// wrapped result even at c = 127 (where 1 << 127 becomes the
@@ -807,11 +893,16 @@ fn f_ash(i: &mut Interp, args: Vec<Value>) -> EvalResult {
 /// unsigned fixnum then shifts; left shift is a signed shift whose
 /// result may promote to a bignum. (Matches Emacs's mixed semantics.)
 fn f_lsh(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    // GNU checks arg1 with `number-or-marker-p' but then coerces to an
-    // integer, so floats and markers signal `integerp'.
+    // GNU `Flsh' coerces markers via CHECK_INTEGER_OR_MARKER: a dead
+    // marker signals "Marker does not point anywhere" before the
+    // integer check; a live one supplies its position.
     let v = match &args[0] {
         Value::Int(n) => *n,
-        Value::Float(_) | Value::Marker(_) => {
+        Value::Marker(m) => {
+            let _ = marker_pos_err(i, m)?;
+            return Err(i.wrong_type_mut("integerp", &args[0]));
+        }
+        Value::Float(_) => {
             return Err(i.wrong_type_mut("integerp", &args[0]));
         }
         other => return Err(i.wrong_type_mut("number-or-marker-p", other)),
@@ -842,62 +933,124 @@ fn f_lsh(i: &mut Interp, args: Vec<Value>) -> EvalResult {
         }
     }))
 }
+// GNU `random' = Gnulib BSD `random()' (TYPE_3: degree 31, sep 3,
+// Schrage-seeded table, 310-step warm-up) threaded through sysdep.c's
+// get_random bit-assembly.  State is per-interp thread like GNU's
+// global random_state.
+struct Rand3 {
+    state: [i32; 31],
+    f: usize,
+    r: usize,
+}
+
+impl Rand3 {
+    fn seeded(seed: u32) -> Self {
+        let mut st = [0i32; 31];
+        st[0] = if seed == 0 { 1 } else { seed as i32 };
+        for i in 1..31 {
+            let hi = st[i - 1] / 127773;
+            let lo = st[i - 1] % 127773;
+            let w = 16807i64 * lo as i64 - 2836i64 * hi as i64;
+            st[i] = (if w < 0 { w + 2147483647 } else { w }) as i32;
+        }
+        let mut g = Rand3 { state: st, f: 3, r: 0 };
+        for _ in 0..310 {
+            g.step();
+        }
+        g
+    }
+    fn step(&mut self) {
+        let t = self.state[self.f].wrapping_add(self.state[self.r]);
+        self.state[self.f] = t;
+        self.f = (self.f + 1) % 31;
+        self.r = (self.r + 1) % 31;
+    }
+    fn next(&mut self) -> u64 {
+        self.step();
+        // BSD random(): the updated *fptr value, shifted down.
+        let prev = (self.f + 30) % 31;
+        ((self.state[prev] as u32) >> 1) as u64
+    }
+}
+
 fn f_random(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    // Deterministic PRNG (xorshift64*); (random t) reseeds from time.
-    use std::cell::Cell;
+    use std::cell::RefCell;
     thread_local! {
-        static SEED: Cell<u64> = const { Cell::new(0x9e3779b97f4a7c15) };
+        static GEN: RefCell<Rand3> = RefCell::new(Rand3::seeded(1));
     }
-    let is_t = args
-        .get(0)
-        .map(|v| matches!(v, Value::Sym(_)) && i.sym_is(v, i.intern_soft("t").unwrap_or(u32::MAX)))
-        .unwrap_or(false);
-    if is_t {
-        let t = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.subsec_nanos() as u64 ^ (d.as_secs() << 16))
-            .unwrap_or(0xabcdef);
-        SEED.with(|s| s.set(t | 1));
-    }
-    let next = SEED.with(|s| {
-        let mut x = s.get();
-        x ^= x >> 12;
-        x ^= x << 25;
-        x ^= x >> 27;
-        s.set(x);
-        x.wrapping_mul(0x2545F4914F6CDD1D)
-    });
-    let limit = match args.get(0) {
-        Some(Value::Int(n)) if *n > 0 => *n,
-        Some(Value::Int(_)) => {
-            let s = i.intern("args-out-of-range");
-            return Err(i.signal_data(s, vec![args[0].clone()]));
+    let t_sym = i.intern_soft("t").unwrap_or(u32::MAX);
+    let mut limit: Option<i64> = None;
+    match args.get(0) {
+        Some(Value::Sym(s)) if *s == t_sym => {
+            // init_random: seed from OS entropy.
+            let t = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.subsec_nanos() as u64 ^ (d.as_secs() << 16))
+                .unwrap_or(0xabcdef);
+            GEN.with(|g| *g.borrow_mut() = Rand3::seeded(t as u32));
         }
-        // A string argument reseeds; any other non-fixnum limit
-        // (float, t, nil, ...) yields a full-range fixnum like GNU.
         Some(Value::Str(s)) => {
-            let seed = s.borrow().bytes().fold(0xcbf29ce484222325u64, |h, b| {
-                (h ^ b as u64).wrapping_mul(0x100000001b3)
-            });
-            SEED.with(|x| x.set(seed | 1));
-            crate::lisp::value::FIXNUM_MAX
+            // seed_random: XOR string bytes into a u32 seed
+            // (little-endian argp[i % 4] layout).
+            let b = s.borrow().as_bytes().to_vec();
+            let mut arg = 0u32;
+            for (k, &by) in b.iter().enumerate() {
+                arg ^= (by as u32) << ((k % 4) * 8);
+            }
+            GEN.with(|g| *g.borrow_mut() = Rand3::seeded(arg));
         }
-        _ => crate::lisp::value::FIXNUM_MAX,
-    };
-    if limit == crate::lisp::value::FIXNUM_MAX {
-        // Full range: any fixnum, signed — GNU spans
-        // [most-negative-fixnum, most-positive-fixnum].
-        let r = (next as i128 & 0x3fff_ffff_ffff_ffff) - 0x2000_0000_0000_0000;
-        return Ok(Value::Int(r));
+        Some(Value::Int(n)) => {
+            if *n <= 0 {
+                let s = i.intern("args-out-of-range");
+                return Err(i.signal_data(s, vec![args[0].clone()]));
+            }
+            limit = Some(*n as i64);
+        }
+        _ => {}
     }
-    Ok(Value::Int(((next >> 1) as i128) % limit))
+    // sysdep.c get_random: FIXNUM_BITS=62, RAND_BITS=31 → 2 draws per
+    // value; INTMASK = 2^62-1.  Seeding arms fall through to this same
+    // return in GNU, so (random "s")/(random t) also return a value.
+    let get = || -> i64 {
+        GEN.with(|g| {
+            let mut g = g.borrow_mut();
+            let mut val: u64 = 0;
+            for _ in 0..2 {
+                val = g.next() ^ (val << 31) ^ (val >> 33);
+            }
+            val ^= val >> 2;
+            (val & 0x3fff_ffff_ffff_ffff) as i64
+        })
+    };
+    match limit {
+        Some(lim) => {
+            // get_random_fixnum: remainder rejection near INTMASK.
+            let difflim: i64 = 0x3fff_ffff_ffff_ffff - lim + 1;
+            loop {
+                let r = get();
+                let rem = r % lim;
+                if r - rem <= difflim {
+                    return Ok(Value::Int(rem as i128));
+                }
+            }
+        }
+        None => {
+            // make_ufixnum: values past most-positive-fixnum wrap into
+            // the negative fixnum range (61-bit signed fixnums).
+            let v = get();
+            let signed = if v > 0x1fff_ffff_ffff_ffff {
+                v - 0x4000_0000_0000_0000
+            } else {
+                v
+            };
+            Ok(Value::Int(signed as i128))
+        }
+    }
 }
 fn f_eql(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     let _ = i;
     Ok(Value::from_bool(super::eql_values(&args[0], &args[1])))
 }
-
-// ---------- float decomposition & misc ----------
 
 fn f_frexp(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     let x = want_number(i, &args[0])?;

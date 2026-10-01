@@ -33,9 +33,10 @@ fn f_read(i: &mut Interp, args: Vec<Value>) -> EvalResult {
             // never produces positioned symbols.
             let (src, pos) = {
                 let bb = b.borrow();
-                (bb.text.text(), bb.point)
+                // `read' stops at point-max (respects narrowing).
+                (bb.text.substring(0, bb.text_len()), bb.point)
             };
-            let (v, end) = i.read_from_string_pos(&src, pos, None)?;
+            let (v, end) = i.read_from_string_buf(&src, pos)?;
             b.borrow_mut().set_point(end);
             Ok(v)
         }
@@ -46,8 +47,11 @@ fn f_read(i: &mut Interp, args: Vec<Value>) -> EvalResult {
             };
             match buf.and_then(|id| i.buffers.get(id)) {
                 Some(b) => {
-                    let src = b.borrow().text.text();
-                    let (v, end) = i.read_from_string_pos(&src, pos, None)?;
+                    let src = {
+                        let bb = b.borrow();
+                        bb.text.substring(0, bb.text_len())
+                    };
+                    let (v, end) = i.read_from_string_buf(&src, pos)?;
                     m.borrow_mut().position = end;
                     Ok(v)
                 }

@@ -23,10 +23,23 @@ mod coverage_tests {
     // the system.
     static PROBE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
+    /// Run `body` on a dedicated 64 MiB-stack thread — the evaluator
+    /// legitimately recurses several MB deep on the probes, and
+    /// libtest's default 2 MiB test threads overflow.
+    fn probe_stack(f: impl FnOnce() + Send + 'static) {
+        std::thread::Builder::new()
+            .stack_size(64 << 20)
+            .spawn(f)
+            .expect("spawn probe thread")
+            .join()
+            .expect("probe thread panicked");
+    }
+
     macro_rules! probe {
         ($name:ident, $file:literal) => {
             #[test]
             fn $name() {
+                probe_stack(|| {
                 let _lock = PROBE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
                 let mut i = Interp::new();
                 let src = include_str!(concat!("../tests/", $file));
@@ -67,6 +80,7 @@ mod coverage_tests {
                         panic!("probe {} failed: {:?}{}", $file, f, report);
                     }
                 }
+                });
             }
         };
     }
@@ -117,7 +131,7 @@ mod coverage_tests {
     /// with known args.
     #[test]
     fn u_interactive_spec_command_args() {
-        let mut i = Interp::new();
+        probe_stack(|| {        let mut i = Interp::new();
         i.command_args = vec![crate::lisp::Value::Int(42)];
         for code in [
             "s", "B", "b", "F", "f", "D", "z", "Z", "a", "C", "S", "v", "k", "K", "c", "e", "x",
@@ -130,6 +144,7 @@ mod coverage_tests {
             ))
             .unwrap();
         }
+        });
     }
 
     /// With a minibuffer reader installed, the prompting spec codes read
@@ -137,7 +152,7 @@ mod coverage_tests {
     /// tests/interactive.rs but lands inside the instrumented libtest.
     #[test]
     fn u_interactive_spec_reader() {
-        use crate::lisp::MinibufInput;
+        probe_stack(|| {        use crate::lisp::MinibufInput;
         use std::cell::RefCell;
         use std::collections::VecDeque;
         use std::rc::Rc;
@@ -167,11 +182,12 @@ mod coverage_tests {
             ))
             .unwrap();
         }
+        });
     }
 
     #[test]
     fn u_output_sinks() {
-        use crate::lisp::OutputSink;
+        probe_stack(|| {        use crate::lisp::OutputSink;
         use std::cell::RefCell;
         use std::rc::Rc;
 
@@ -181,12 +197,18 @@ mod coverage_tests {
         let sink = Rc::new(RefCell::new(String::new()));
         i.output = Some(OutputSink::Buffer(sink.clone()));
         i.eval_str("(princ \"into-sink\")").unwrap();
-        i.eval_str("(get-buffer-create \" *Messages*\")").unwrap();
         i.message("logged-msg");
         let got = sink.borrow().clone();
         assert!(got.contains("into-sink"), "{}", got);
-        assert!(got.contains("logged-msg"), "{}", got);
+        // GNU routes `message' to the echo area + the *Messages* log,
+        // NOT to the princ/output sink (a *Messages* with leading space
+        // is a separate buffer; the real log is `*Messages*').
+        assert!(!got.contains("logged-msg"), "{}", got);
         assert_eq!(i.echo_message, "logged-msg");
+        let msgs = i
+            .eval_str("(with-current-buffer \"*Messages*\" (buffer-string))")
+            .unwrap();
+        assert!(i.princ_to_string(&msgs).contains("logged-msg\n"));
 
         // Function sink is invoked with each printed string.
         let mut i2 = Interp::new();
@@ -205,6 +227,7 @@ mod coverage_tests {
         let mut i3 = Interp::new();
         i3.output = Some(OutputSink::Stdout);
         i3.eval_str("(princ \"to-stdout\")").unwrap();
+        });
     }
 
     #[test]

@@ -183,6 +183,10 @@ struct Parser<'a> {
     s: Vec<char>,
     pos: usize,
     line: usize,
+    /// Char index where parsing began — error POSITION is GNU's
+    /// `BYTE_TO_CHAR' offset from that start (0 at point/string
+    /// start), not the absolute index.
+    base: usize,
     i: &'a mut Interp,
     o: &'a Opts,
 }
@@ -199,14 +203,30 @@ impl<'a> Parser<'a> {
         } else {
             "json-parse-error"
         };
-        self.err_sym(sym)
+        // GNU `json_signal_error': POSITION is BYTE_TO_CHAR of the
+        // consumed byte count, relative to the parse start — i.e. the
+        // number of chars consumed (the erroring char itself was
+        // already consumed for mid-text errors, so it's pos-base+1
+        // under remacs's pre-consume `pos' tracking; EOF consumes
+        // nothing and reports the exhausted count directly).
+        let consumed = self.pos.saturating_sub(self.base);
+        let pos = if eof {
+            consumed as i128
+        } else {
+            consumed as i128 + 1
+        };
+        let id = self.i.intern(sym);
+        json_cond_chain(self.i, id);
+        self.i.signal_data(
+            id,
+            vec![Value::Int(self.line as i128), Value::Nil, Value::Int(pos)],
+        )
     }
 
-    /// A json-family error by name, carrying GNU's (LINE COLUMN
-    /// POSITION) shape — column is nil, position the 1-based char
-    /// offset of the offending spot.
+    /// A json-family error by name, carrying GNU's (LINE nil POSITION)
+    /// shape — position relative to the parse start like `err'.
     fn err_sym(&mut self, sym: &str) -> PErr {
-        let pos = if self.s.is_empty() { 0 } else { self.pos + 1 };
+        let pos = (self.pos.saturating_sub(self.base) + 1) as i128;
         let id = self.i.intern(sym);
         json_cond_chain(self.i, id);
         self.i.signal_data(
@@ -266,14 +286,46 @@ impl<'a> Parser<'a> {
         }
     }
 
+    /// Error POSITION = chars consumed since parse start (GNU reports
+    /// the consumed byte count, which already includes the char that
+    /// failed the check — hence no +1 here, unlike `err').
+    fn err_consumed(&mut self) -> PErr {
+        let pos = self.pos.saturating_sub(self.base) as i128;
+        let id = self.i.intern("json-parse-error");
+        json_cond_chain(self.i, id);
+        self.i.signal_data(
+            id,
+            vec![Value::Int(self.line as i128), Value::Nil, Value::Int(pos)],
+        )
+    }
+
+    /// GNU `json_is_token_char': chars that may extend a true/false/
+    /// null token (making the whole thing invalid).
+    fn is_token_char(c: char) -> bool {
+        c.is_ascii_alphanumeric() || c == '-'
+    }
+
     fn lit(&mut self, word: &str, v: Value) -> Result<Value, PErr> {
         for c in word.chars() {
             // GNU signals json-parse-error (not json-end-of-file) for
-            // a truncated literal like "tru".
-            if self.peek() != Some(c) {
-                return Err(self.err(false));
+            // a truncated literal like "tru"; its input was consumed
+            // by the literal check, so POSITION is the consumed count.
+            match self.peek() {
+                None => return Err(self.err_consumed()),
+                Some(x) => {
+                    self.pos += 1;
+                    if x != c {
+                        return Err(self.err_consumed());
+                    }
+                }
             }
-            self.pos += 1;
+        }
+        // GNU: a token char after the literal invalidates it ("truex").
+        if let Some(c) = self.peek() {
+            if Self::is_token_char(c) {
+                self.pos += 1;
+                return Err(self.err_consumed());
+            }
         }
         Ok(v)
     }
@@ -541,6 +593,7 @@ fn f_json_parse_string(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         s: src.chars().collect(),
         pos: 0,
         line: 1,
+        base: 0,
         i,
         o: &o,
     };
@@ -573,12 +626,14 @@ fn f_json_parse_buffer(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     };
     let chars: Vec<char> = text.chars().collect();
     let start = point.min(chars.len());
-    // Line count should reflect the position within the buffer.
-    let line = 1 + chars[..start].iter().filter(|c| **c == '\n').count();
+    // GNU `buffer_byte_to_line' counts newlines inside the parsed
+    // span only, so error LINE starts at 1 at point like POSITION
+    // starts at 0.
     let mut p = Parser {
         s: chars,
         pos: start,
-        line,
+        line: 1,
+        base: start,
         i,
         o: &o,
     };
@@ -657,55 +712,76 @@ fn ser_value(i: &mut Interp, v: &Value, o: &Opts, out: &mut String) -> Result<()
             out.push(']');
         }
         Value::Cons(_) => {
-            let items = v.list_to_vec().map_err(|_| json_value_err(i, v))?;
-            // plist iff first element is a keyword symbol.
-            let is_plist =
-                matches!(items.first(), Some(Value::Sym(s)) if i.symbol_name(*s).starts_with(':'));
-            if is_plist {
-                out.push('{');
-                let mut it = items.iter();
-                let mut first = true;
-                while let Some(k) = it.next() {
-                    let Value::Sym(id) = k else {
-                        return Err(i.wrong_type_mut("symbolp", k));
+            // GNU json_out_object_cons: `is_alist' iff the first
+            // ELEMENT is a cons. Alist mode takes (KEY . VALUE)
+            // elements — non-cons elements signal (consp ELEM);
+            // plist mode consumes two conses per pair — a non-cons
+            // value tail signals (consp TAIL). Keys must be bare
+            // symbols. After the walk, a surviving non-nil tail
+            // signals (listp WHOLE-OBJ).
+            let is_alist = {
+                let Value::Cons(c) = v else { unreachable!() };
+                matches!(c.borrow().car, Value::Cons(_))
+            };
+            out.push('{');
+            let mut tail = v.clone();
+            let mut first = true;
+            let mut seen = std::collections::HashSet::new();
+            while let Value::Cons(c) = tail.clone() {
+                let (car, cdr) = {
+                    let b = c.borrow();
+                    (b.car.clone(), b.cdr.clone())
+                };
+                let (key, value);
+                if is_alist {
+                    let Value::Cons(pair) = car else {
+                        return Err(i.wrong_type_mut("consp", &car));
                     };
-                    let name = i.symbol_name(*id).trim_start_matches(':').to_string();
-                    let Some(v) = it.next() else {
-                        return Err(json_value_err(i, k));
-                    };
+                    let b = pair.borrow();
+                    key = b.car.clone();
+                    value = b.cdr.clone();
+                } else {
+                    key = car;
+                    if !matches!(cdr, Value::Cons(_)) {
+                        return Err(i.wrong_type_mut("consp", &cdr));
+                    }
+                    let Value::Cons(vcons) = cdr.clone() else { unreachable!() };
+                    value = vcons.borrow().car.clone();
+                    tail = cdr;
+                }
+                if !matches!(key, Value::Sym(_)) {
+                    return Err(i.wrong_type_mut("symbolp", &key));
+                }
+                let Value::Sym(id) = key else { unreachable!() };
+                // GNU's symset dedupes: a repeated key's emit is
+                // skipped entirely, value and all.
+                if seen.insert(id) {
                     if !first {
                         out.push(',');
                     }
                     first = false;
+                    // Plist keys drop the leading ':'; alist keys don't.
+                    let raw = i.symbol_name(id);
+                    let name = if is_alist {
+                        raw.to_string()
+                    } else {
+                        raw.strip_prefix(':').unwrap_or(&raw).to_string()
+                    };
                     esc_into(&name, out);
                     out.push(':');
-                    ser_value(i, v, o, out)?;
+                    ser_value(i, &value, o, out)?;
                 }
-                out.push('}');
-            } else {
-                // alist: each element (KEY . VALUE) with symbol key.
-                out.push('{');
-                for (n, e) in items.iter().enumerate() {
-                    let Value::Cons(c) = e else {
-                        return Err(i.wrong_type_mut("symbolp", e));
-                    };
-                    let (k, val) = {
-                        let b = c.borrow();
-                        (b.car.clone(), b.cdr.clone())
-                    };
-                    let Value::Sym(id) = k else {
-                        return Err(i.wrong_type_mut("symbolp", &k));
-                    };
-                    if n > 0 {
-                        out.push(',');
-                    }
-                    let name = i.symbol_name(id).to_string();
-                    esc_into(&name, out);
-                    out.push(':');
-                    ser_value(i, &val, o, out)?;
-                }
-                out.push('}');
+                // FOR_EACH_TAIL stepper: advance one cons.
+                tail = match &tail {
+                    Value::Cons(c) => c.borrow().cdr.clone(),
+                    _ => Value::Nil,
+                };
             }
+            if !tail.is_nil() {
+                // CHECK_LIST_END carries the whole object as datum.
+                return Err(i.wrong_type_mut("listp", v));
+            }
+            out.push('}');
         }
         Value::Hash(h) => {
             // Collect (key, value) pairs first so the RefCell borrow
@@ -747,5 +823,12 @@ fn serialize(i: &mut Interp, v: &Value, rest: &[Value]) -> Result<String, Flow> 
 }
 
 fn f_json_serialize(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    Ok(Value::string(serialize(i, &a[0], &a[1..])?))
+    let s = serialize(i, &a[0], &a[1..])?;
+    // GNU's jansson-backed serializer returns a UNIBYTE string holding
+    // the UTF-8 output bytes (jansson emits UTF-8).
+    let v = Value::string(s.bytes().map(|b| b as char).collect::<String>());
+    if let Value::Str(r) = &v {
+        i.mark_unibyte(r);
+    }
+    Ok(v)
 }

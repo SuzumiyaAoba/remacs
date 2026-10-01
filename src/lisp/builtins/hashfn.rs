@@ -4,6 +4,7 @@ use super::{S, arg};
 use crate::lisp::Interp;
 use crate::lisp::error::EvalResult;
 use crate::lisp::value::{HashKey, HashTest, LispHash, Subr, Value};
+use crate::lisp::obarray::sym;
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -217,6 +218,7 @@ fn f_make_hash_table(i: &mut Interp, args: Vec<Value>) -> EvalResult {
         return Err(i.error("Odd number of arguments"));
     }
     let mut test = HashTest::Eql;
+    let mut test_name = Value::Nil;
     let mut weakness: Option<Value> = None;
     let mut size: i128 = 0;
     let rehash_size = Value::float(1.5);
@@ -240,6 +242,7 @@ fn f_make_hash_table(i: &mut Interp, args: Vec<Value>) -> EvalResult {
                         return Err(i.wrong_type_mut("symbolp", val));
                     }
                 };
+                let mut named: Option<Value> = None;
                 test = match tname.as_str() {
                     "eq" => HashTest::Eq,
                     "eql" => HashTest::Eql,
@@ -249,16 +252,25 @@ fn f_make_hash_table(i: &mut Interp, args: Vec<Value>) -> EvalResult {
                         // (a `hash-table-test' symbol property, as in
                         // GNU). remacs can't plug arbitrary test/hash
                         // functions into the table — accept the name and
-                        // use `equal' semantics.
+                        // use `equal' semantics, but keep the name for
+                        // `hash-table-test'.
                         let Some(id) = i.sym_id(val) else { unreachable!() };
                         let prop = i.intern("hash-table-test");
                         if !i.get_prop(id, prop).is_nil() {
+                            named = Some(val.clone());
                             HashTest::Equal
                         } else {
-                            return Err(i.error(&format!("Invalid hash table test {}", tname)));
+                            // GNU: (error "Invalid hash table test" VAL)
+                            return Err(i.signal_data(
+                                sym::ERROR,
+                                vec![Value::string("Invalid hash table test"), val.clone()],
+                            ));
                         }
                     }
                 };
+                if let Some(n) = named {
+                    test_name = n;
+                }
             }
             ":weakness" => match val {
                 Value::Nil => {}
@@ -274,20 +286,32 @@ fn f_make_hash_table(i: &mut Interp, args: Vec<Value>) -> EvalResult {
                             weakness = Some(Value::Sym(id));
                         }
                         _ => {
-                            return Err(i.error(&format!("Invalid hash table weakness {}", w)));
+                            // GNU: (error "Invalid hash table weakness" VAL)
+                            return Err(i.signal_data(
+                                sym::ERROR,
+                                vec![
+                                    Value::string("Invalid hash table weakness"),
+                                    val.clone(),
+                                ],
+                            ));
                         }
                     }
                 }
                 other => {
-                    let msg = i.prin1_to_string(other);
-                    return Err(i.error(&format!("Invalid hash table weakness {}", msg)));
+                    return Err(i.signal_data(
+                        sym::ERROR,
+                        vec![Value::string("Invalid hash table weakness"), other.clone()],
+                    ));
                 }
             },
             ":size" => match val {
                 Value::Int(n) if *n >= 0 => size = *n,
                 other => {
-                    let msg = i.prin1_to_string(other);
-                    return Err(i.error(&format!("Invalid hash table size {}", msg)));
+                    // GNU: (error "Invalid hash table size" VAL)
+                    return Err(i.signal_data(
+                        sym::ERROR,
+                        vec![Value::string("Invalid hash table size"), other.clone()],
+                    ));
                 }
             },
             // GNU 31 ignores :rehash-size/:rehash-threshold entirely
@@ -303,6 +327,7 @@ fn f_make_hash_table(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     h.size = size;
     h.rehash_size = rehash_size;
     h.rehash_threshold = rehash_threshold;
+    h.test_name = test_name;
     Ok(Value::Hash(Rc::new(RefCell::new(h))))
 }
 
@@ -389,7 +414,12 @@ fn f_hash_table_values(i: &mut Interp, args: Vec<Value>) -> EvalResult {
 fn f_hash_table_test(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     match &args[0] {
         Value::Hash(h) => {
-            let name = match h.borrow().test {
+            let hh = h.borrow();
+            // A named test (define-hash-table-test) reports its symbol.
+            if hh.test_name.truthy() {
+                return Ok(hh.test_name.clone());
+            }
+            let name = match hh.test {
                 HashTest::Eq => "eq",
                 HashTest::Eql => "eql",
                 HashTest::Equal => "equal",

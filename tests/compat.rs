@@ -142,9 +142,11 @@ fn kbd_events() {
 
 #[test]
 fn gensym_counter() {
-    // gensym uses its own counter (prefix + N).
+    // gensym uses its own counter (prefix + N); remacs skips names
+    // source-loaded libraries interned (g0–g9 land in the obarray,
+    // unlike GNU's .elc dump), so assert with a fresh prefix.
     assert_eq!(
-        ev("(progn (gensym) (gensym \"zz\") (symbol-name (gensym)))"),
-        "\"g2\""
+        ev("(progn (gensym \"xqa\") (gensym \"zz\") (symbol-name (gensym \"xqa\")))"),
+        "\"xqa2\""
     );
 }

@@ -66,14 +66,18 @@ fn buffer_string(i: &mut Interp) -> String {
 
 #[test]
 fn self_insert_via_command_execute() {
+    common::on_big_stack(move || {
     let (mut i, _) = interp();
     set(&mut i, "last-command-event", Value::Int(97));
     cmd(&mut i, "self-insert-command").unwrap();
     assert_eq!(buffer_string(&mut i), "a");
+
+    })
 }
 
 #[test]
 fn self_insert_prefix_repeat() {
+    common::on_big_stack(move || {
     let (mut i, _) = interp();
     set(&mut i, "last-command-event", Value::Int(98));
     set(
@@ -83,10 +87,13 @@ fn self_insert_prefix_repeat() {
     );
     cmd(&mut i, "self-insert-command").unwrap();
     assert_eq!(buffer_string(&mut i), "bbbb");
+
+    })
 }
 
 #[test]
 fn forward_char_prefix() {
+    common::on_big_stack(move || {
     let (mut i, _) = interp();
     ev_in(&mut i, "(insert \"0123456789\") (goto-char 5)");
     set(
@@ -96,10 +103,13 @@ fn forward_char_prefix() {
     );
     cmd(&mut i, "forward-char").unwrap();
     assert_eq!(pev(&mut i, "(point)"), "9");
+
+    })
 }
 
 #[test]
 fn kill_region_interactive() {
+    common::on_big_stack(move || {
     let (mut i, _) = interp();
     ev_in(
         &mut i,
@@ -107,22 +117,28 @@ fn kill_region_interactive() {
     );
     cmd(&mut i, "kill-region").unwrap();
     assert_eq!(buffer_string(&mut i), "aef");
+
+    })
 }
 
 #[test]
 fn commandp_reports_commands() {
+    common::on_big_stack(move || {
     assert_eq!(ev("(commandp 'self-insert-command)"), "t");
     assert_eq!(ev("(commandp 'forward-char)"), "t");
     assert_eq!(ev("(commandp 'universal-argument)"), "t");
     assert_eq!(ev("(commandp 'car)"), "nil");
     assert_eq!(ev("(commandp 'next-line)"), "t"); // prelude defun
     assert_eq!(ev("(commandp 42)"), "nil");
+
+    })
 }
 
 // ---------- universal-argument / digit-argument ----------
 
 #[test]
 fn universal_argument_sets_prefix() {
+    common::on_big_stack(move || {
     let (mut i, _) = interp();
     cmd(&mut i, "universal-argument").unwrap();
     let pa_id = i.intern("prefix-arg");
@@ -133,38 +149,50 @@ fn universal_argument_sets_prefix() {
     let pa_id = i.intern("prefix-arg");
     let pa = i.symbol_value(pa_id);
     assert_eq!(i.prin1_to_string(&pa), "(16)");
+
+    })
 }
 
 #[test]
 fn digit_argument_from_event() {
+    common::on_big_stack(move || {
     let (mut i, _) = interp();
     set(&mut i, "last-command-event", Value::Int(51 | 0x800_0000)); // M-3
     cmd(&mut i, "digit-argument").unwrap();
     let pa_id = i.intern("prefix-arg");
     let pa = i.symbol_value(pa_id);
     assert_eq!(i.prin1_to_string(&pa), "3");
+
+    })
 }
 
 // ---------- minibuffer via injected reader ----------
 
 #[test]
 fn read_string_via_hook() {
+    common::on_big_stack(move || {
     let (mut i, _) = interp();
     canned(&mut i, vec![MinibufInput::Text("hello".into())]);
     let v = ev_in(&mut i, "(read-string \"Name: \")");
     assert_eq!(i.prin1_to_string(&v), "\"hello\"");
+
+    })
 }
 
 #[test]
 fn read_char_via_hook() {
+    common::on_big_stack(move || {
     let (mut i, _) = interp();
     canned(&mut i, vec![MinibufInput::Key(97)]);
     let v = ev_in(&mut i, "(read-char)");
     assert_eq!(i.prin1_to_string(&v), "97");
+
+    })
 }
 
 #[test]
 fn y_or_n_p_via_hook() {
+    common::on_big_stack(move || {
     let (mut i, _) = interp();
     canned(&mut i, vec![MinibufInput::Key(121)]); // 'y'
     let v = ev_in(&mut i, "(y-or-n-p \"Proceed? \")");
@@ -172,10 +200,13 @@ fn y_or_n_p_via_hook() {
     canned(&mut i, vec![MinibufInput::Key(110)]); // 'n'
     let v = ev_in(&mut i, "(y-or-n-p \"Proceed? \")");
     assert_eq!(i.prin1_to_string(&v), "nil");
+
+    })
 }
 
 #[test]
 fn interactive_b_defaults_current_buffer() {
+    common::on_big_stack(move || {
     let (mut i, _) = interp();
     canned(&mut i, vec![MinibufInput::Text(String::new())]);
     let v = ev_in(
@@ -183,10 +214,13 @@ fn interactive_b_defaults_current_buffer() {
         "(defun f (b) (interactive \"bBuf: \") b) (call-interactively 'f)",
     );
     assert_eq!(i.prin1_to_string(&v), "\"*scratch*\"");
+
+    })
 }
 
 #[test]
 fn interactive_s_and_a_codes() {
+    common::on_big_stack(move || {
     let (mut i, _) = interp();
     canned(&mut i, vec![MinibufInput::Text("somestring".into())]);
     let v = ev_in(
@@ -200,10 +234,13 @@ fn interactive_s_and_a_codes() {
         "(defun g (s) (interactive \"aSym: \") s) (call-interactively 'g)",
     );
     assert_eq!(i.prin1_to_string(&v), "somesym");
+
+    })
 }
 
 #[test]
 fn interactive_x_evals_input() {
+    common::on_big_stack(move || {
     let (mut i, _) = interp();
     // GNU callint.c: 'x' reads a Lisp object WITHOUT evaluating it
     // (`eval-minibuffer' is 'X').
@@ -220,10 +257,13 @@ fn interactive_x_evals_input() {
         "(defun f (x) (interactive \"XEval: \") x) (call-interactively 'f)",
     );
     assert_eq!(i.prin1_to_string(&v), "42");
+
+    })
 }
 
 #[test]
 fn interactive_r_region_bounds() {
+    common::on_big_stack(move || {
     let (mut i, _) = interp();
     ev_in(&mut i, "(insert \"abcdef\") (set-mark 2) (goto-char 5)");
     let v = ev_in(
@@ -231,10 +271,13 @@ fn interactive_r_region_bounds() {
         "(defun f (b e) (interactive \"r\") (list b e)) (call-interactively 'f)",
     );
     assert_eq!(i.prin1_to_string(&v), "(2 5)");
+
+    })
 }
 
 #[test]
 fn interactive_list_form() {
+    common::on_big_stack(move || {
     let (mut i, _) = interp();
     let v = ev_in(
         &mut i,
@@ -242,42 +285,57 @@ fn interactive_list_form() {
          (call-interactively 'f)",
     );
     assert_eq!(i.prin1_to_string(&v), "(10 20)");
+
+    })
 }
 
 #[test]
 fn eval_expression_interactive() {
+    common::on_big_stack(move || {
     let (mut i, _) = interp();
     canned(&mut i, vec![MinibufInput::Text("(+ 1 2)".into())]);
     cmd(&mut i, "eval-expression").unwrap();
     // Result is echoed via `message`; also returned.
+
+    })
 }
 
 #[test]
 fn execute_extended_command_runs_named_command() {
+    common::on_big_stack(move || {
     let (mut i, _) = interp();
     ev_in(&mut i, "(insert \"x\ny\nz\") (goto-char 1)");
     canned(&mut i, vec![MinibufInput::Text("forward-line".into())]);
     cmd(&mut i, "execute-extended-command").unwrap();
     assert_eq!(pev(&mut i, "(point)"), "3");
+
+    })
 }
 
 #[test]
 fn minibuf_quit_signals() {
+    common::on_big_stack(move || {
     let (mut i, _) = interp();
     canned(&mut i, vec![]); // reader returns Quit immediately
     assert_eq!(ev_err_in(&mut i, "(read-string \"X: \")"), "quit");
+
+    })
 }
 
 #[test]
 fn read_minibuffer_absent_hook() {
+    common::on_big_stack(move || {
     // Without a front-end, GNU batch signals end-of-file reading stdin.
     assert_eq!(ev_err("(read-string \"P: \")"), "end-of-file");
+
+    })
 }
 
 // ---------- prefix arg plumbing ----------
 
 #[test]
 fn prefix_numeric_values() {
+    common::on_big_stack(move || {
     // raw prefix forms → numeric via the "p" spec
     let (mut i, _) = interp();
     for (arg, want) in [
@@ -295,12 +353,15 @@ fn prefix_numeric_values() {
         assert_eq!(i.prin1_to_string(&v), want, "arg {}", arg);
         ev_in(&mut i, "(makunbound 'f)");
     }
+
+    })
 }
 
 // ---------- keymaps ----------
 
 #[test]
 fn key_binding_and_define_key() {
+    common::on_big_stack(move || {
     assert_eq!(ev("(key-binding \"a\")"), "self-insert-command");
     assert_eq!(ev("(key-binding \"\\C-u\")"), "universal-argument");
     assert_eq!(ev("(key-binding \"\\C-f\")"), "forward-char");
@@ -312,25 +373,34 @@ fn key_binding_and_define_key() {
         ev("(progn (define-key (current-global-map) [f5] 'ignore) (key-binding [f5]))"),
         "ignore"
     );
+
+    })
 }
 
 #[test]
 fn where_is_internal_finds_binding() {
+    common::on_big_stack(move || {
     let v = ev("(where-is-internal 'forward-char)");
     assert!(v.contains("6") || v.contains("\\C-f"), "{}", v);
+
+    })
 }
 
 #[test]
 fn describe_key_shape() {
+    common::on_big_stack(move || {
     // describe-key renders into *Help*.
     let v = ev("(progn (describe-key \"\\C-f\")
                 (with-current-buffer \"*Help*\" (buffer-string)))");
     assert!(v.contains("forward-char"), "{}", v);
     assert!(v.contains("C-f"), "{}", v);
+
+    })
 }
 
 #[test]
 fn load_file_evals_forms() {
+    common::on_big_stack(move || {
     let path = std::env::temp_dir().join("remacs_test_load.el");
     std::fs::write(
         &path,
@@ -347,10 +417,13 @@ fn load_file_evals_forms() {
     // load-file-name is bound only during loading.
     let b = pev(&mut i, "(boundp 'load-file-name)");
     assert!(b == "nil" || b == "t");
+
+    })
 }
 
 #[test]
 fn load_path_search() {
+    common::on_big_stack(move || {
     let dir = std::env::temp_dir().join("remacs_load_path_test");
     std::fs::create_dir_all(&dir).unwrap();
     let lib = dir.join("mylib.el");
@@ -365,20 +438,26 @@ fn load_path_search() {
         ),
     );
     assert_eq!(i.prin1_to_string(&v), "from-mylib");
+
+    })
 }
 
 #[test]
 fn load_missing_signals() {
+    common::on_big_stack(move || {
     let (mut i, _) = interp();
     // GNU signals `file-missing' (a `file-error' subtype) for ENOENT.
     assert_eq!(
         ev_err_in(&mut i, "(load \"/nonexistent-dir-xyz/nofile\")"),
         "file-missing"
     );
+
+    })
 }
 
 #[test]
 fn substitute_command_keys_basic() {
+    common::on_big_stack(move || {
     // GNU propertizes the substituted key with help-key-binding.
     assert_eq!(
         ev("(substitute-command-keys \"Press \\\\[forward-char]\")"),
@@ -388,21 +467,25 @@ fn substitute_command_keys_basic() {
         ev("(substitute-command-keys \"\\\\=\\[not-a-key]\")"),
         "\"[not-a-key]\""
     );
+
+    })
 }
 
 // ---------- reader-dependent editor paths ----------
 
 #[test]
 fn completing_read_paths() {
+    common::on_big_stack(move || {
     let (mut i, _) = interp();
     // Exact match returns input.
     canned(&mut i, vec![MinibufInput::Text("beta".into())]);
     let v = ev_in(&mut i, "(completing-read \"P: \" '(\"alpha\" \"beta\"))");
     assert_eq!(i.prin1_to_string(&v), "\"beta\"");
-    // Unique prefix completes.
+    // GNU completing-read-default returns the input verbatim —
+    // completion happens on TAB/RET in the minibuffer, not on return.
     canned(&mut i, vec![MinibufInput::Text("alp".into())]);
     let v = ev_in(&mut i, "(completing-read \"P: \" '(\"alpha\" \"beta\"))");
-    assert_eq!(i.prin1_to_string(&v), "\"alpha\"");
+    assert_eq!(i.prin1_to_string(&v), "\"alp\"");
     // Empty input → default (4th arg position: INITIAL-INPUT then DEF).
     canned(&mut i, vec![MinibufInput::Text(String::new())]);
     let v = ev_in(
@@ -427,10 +510,13 @@ fn completing_read_paths() {
         ),
         "end-of-file"
     );
+
+    })
 }
 
 #[test]
 fn y_or_n_p_reprompt_and_quit() {
+    common::on_big_stack(move || {
     let (mut i, _) = interp();
     // A non-y/n key re-prompts, then 'y' answers.
     canned(&mut i, vec![MinibufInput::Key(120), MinibufInput::Key(121)]);
@@ -442,10 +528,13 @@ fn y_or_n_p_reprompt_and_quit() {
     // Batch default path (no reader): GNU signals end-of-file.
     let (mut j, _) = interp();
     assert_eq!(ev_err_in(&mut j, "(y-or-n-p \"Q? \")"), "end-of-file");
+
+    })
 }
 
 #[test]
 fn read_key_sequence_paths() {
+    common::on_big_stack(move || {
     let (mut i, _) = interp();
     canned(&mut i, vec![MinibufInput::Key(97)]);
     let v = ev_in(&mut i, "(read-key-sequence \"K: \")");
@@ -463,10 +552,13 @@ fn read_key_sequence_paths() {
         ev_err_in(&mut j, "(read-key-sequence \"K: \")"),
         "end-of-file"
     );
+
+    })
 }
 
 #[test]
 fn digit_argument_minus_and_accumulate() {
+    common::on_big_stack(move || {
     let (mut i, _) = interp();
     // M-- starts negative.
     set(
@@ -493,17 +585,23 @@ fn digit_argument_minus_and_accumulate() {
     cmd(&mut i, "digit-argument").unwrap();
     let pa = i.symbol_value(i.intern_soft("prefix-arg").unwrap());
     assert_eq!(i.prin1_to_string(&pa), "-7");
+
+    })
 }
 
 #[test]
 fn describe_key_undefined() {
+    common::on_big_stack(move || {
     let (mut i, _) = interp();
     // An unbound key renders into *Help* without panic.
     let _ = ev_in(&mut i, "(describe-key [f17])");
+
+    })
 }
 
 #[test]
 fn current_kill_and_yank_paths() {
+    common::on_big_stack(move || {
     let (mut i, _) = interp();
     ev_in(&mut i, "(insert \"hello world\") (kill-region 1 6)");
     let v = ev_in(&mut i, "(current-kill 0)");
@@ -516,12 +614,15 @@ fn current_kill_and_yank_paths() {
     assert_eq!(i.prin1_to_string(&v), "nil");
     let v = ev_in(&mut i, "(current-kill 0)");
     assert_eq!(i.prin1_to_string(&v), "\"xyz\"");
+
+    })
 }
 
 // ---------- more interactive spec codes ----------
 
 #[test]
 fn interactive_spec_codes_batch() {
+    common::on_big_stack(move || {
     let (mut i, _) = interp();
     // 'd' → point, 'm' → mark, 'i' → nil-ish, 'P' → raw prefix, 'n' reads a number.
     ev_in(&mut i, "(insert \"ab\") (goto-char 2) (set-mark 1)");
@@ -616,6 +717,8 @@ fn interactive_spec_codes_batch() {
         "(defun f (u) (interactive \"U\") u) (call-interactively 'f)",
     );
     let _ = v;
+
+    })
 }
 
 /// `command_args` pre-supplies arguments to every prompting code —
@@ -623,6 +726,7 @@ fn interactive_spec_codes_batch() {
 /// known args (e.g. by the front-end loop or `execute-extended-command`).
 #[test]
 fn interactive_spec_command_args() {
+    common::on_big_stack(move || {
     let (mut i, _) = interp();
     i.command_args = vec![Value::Int(42)];
     // 'N' (not 'n') consults a numeric prefix arg first
@@ -693,12 +797,15 @@ fn interactive_spec_command_args() {
         "(defun g (n) (interactive \"P\") n) (call-interactively 'g)",
     );
     assert_eq!(i.prin1_to_string(&v), "42");
+
+    })
 }
 
 // ---------- lambda arg binding paths ----------
 
 #[test]
 fn optional_args_dynamic_binding() {
+    common::on_big_stack(move || {
     let (mut i, _) = interp();
     // Dynamic scope exercises the specbind path for optional/rest
     // binding (bare optional vars; init/supplied-p triples are only
@@ -714,21 +821,24 @@ fn optional_args_dynamic_binding() {
         "(funcall (lambda (a &optional b &rest r) (list a b r)) 1)",
     );
     assert_eq!(i.prin1_to_string(&v), "(1 nil nil)");
-    // Macro arglists accept (var init supplied-p) under dynamic scope.
+    // GNU 31.1 rejects (var init)/(var init supplied-p) triples in a
+    // macro *call* — `funcall_lambda' won't parse the extended arglist
+    // (verified on GNU -Q).  The macro itself defines fine; expansion
+    // of the call site is what fails.
     ev_in(
         &mut i,
         "(defmacro mopt (&optional (p 10) (q 20 s)) `(list ',p ',q ',s))",
     );
-    let v = ev_in(&mut i, "(mopt)");
-    assert_eq!(i.prin1_to_string(&v), "(10 20 nil)");
-    let v = ev_in(&mut i, "(mopt 1)");
-    assert_eq!(i.prin1_to_string(&v), "(1 20 nil)");
-    let v = ev_in(&mut i, "(mopt 1 2)");
-    assert_eq!(i.prin1_to_string(&v), "(1 2 t)");
+    assert_eq!(ev_err_in(&mut i, "(mopt)"), "invalid-function");
+    assert_eq!(ev_err_in(&mut i, "(mopt 1)"), "invalid-function");
+    assert_eq!(ev_err_in(&mut i, "(mopt 1 2)"), "invalid-function");
+
+    })
 }
 
 #[test]
 fn command_args_supply_spec_values() {
+    common::on_big_stack(move || {
     let (mut i, _) = interp();
     // Pre-supplied command args feed spec codes without a reader.
     i.command_args = vec![Value::Int(42)];
@@ -768,12 +878,15 @@ fn command_args_supply_spec_values() {
         "(defun f (p) (interactive \"P\") p) (call-interactively 'f)",
     );
     assert_eq!(i.prin1_to_string(&v), "42");
+
+    })
 }
 
 // ---------- minibuffer lifecycle (GNU read_minibuf) ----------
 
 #[test]
 fn minibuf_read_runs_hooks_and_restores_state() {
+    common::on_big_stack(move || {
     let (mut i, _) = interp();
     canned(&mut i, vec![MinibufInput::Text("answer".into())]);
     // The setup hook runs with the minibuffer selected, depth 1,
@@ -807,10 +920,13 @@ fn minibuf_read_runs_hooks_and_restores_state() {
     assert!(s.contains("exit"), "{}", s);
     assert!(s.contains("\"P: \""), "{}", s);
     assert!(s.contains("Minibuf"), "{}", s);
+
+    })
 }
 
 #[test]
 fn minibuf_read_history_and_defaults() {
+    common::on_big_stack(move || {
     let (mut i, _) = interp();
     canned(
         &mut i,
@@ -828,10 +944,13 @@ fn minibuf_read_history_and_defaults() {
     );
     // GNU pushes the entered string, then the default on empty input.
     assert_eq!(i.prin1_to_string(&v), "(\"DEF\" \"first\")");
+
+    })
 }
 
 #[test]
 fn minibuf_read_setup_hook_error_unwinds() {
+    common::on_big_stack(move || {
     let (mut i, _) = interp();
     canned(&mut i, vec![MinibufInput::Text("x".into())]);
     // GNU `run_hook' for setup: an error aborts the read but the
@@ -848,12 +967,15 @@ fn minibuf_read_setup_hook_error_unwinds() {
                  (minibuffer-depth)))",
     );
     assert_eq!(i.prin1_to_string(&v), "(caught 1 0)");
+
+    })
 }
 
 // ---------- standard-output destinations ----------
 
 #[test]
 fn standard_output_dests() {
+    common::on_big_stack(move || {
     let (mut i, _) = interp();
     // Buffer destination.
     ev_in(
@@ -867,9 +989,11 @@ fn standard_output_dests() {
     // Marker destination.
     ev_in(
         &mut i,
-        "(let ((m (set-marker (make-marker) 1 \"so-buf\")))
+        "(let ((m (set-marker (make-marker) 1 (get-buffer \"so-buf\"))))
            (let ((standard-output m)) (princ \"MM\")))",
     );
+    let v = ev_in(&mut i, "(with-current-buffer \"so-buf\" (buffer-string))");
+    assert!(i.prin1_to_string(&v).contains("MM"));
     // Function destination: GNU calls the stream once per character.
     ev_in(
         &mut i,
@@ -890,12 +1014,15 @@ fn standard_output_dests() {
     assert_eq!(i.prin1_to_string(&v), "(81)");
     // kill the helper buffer.
     ev_in(&mut i, "(kill-buffer \"so-buf\")");
+
+    })
 }
 
 // ---------- lambda arg binding ----------
 
 #[test]
 fn lambda_optional_rest_bindings() {
+    common::on_big_stack(move || {
     let (mut i, _) = interp();
     // (var init) in a *lambda* arglist → invalid-function (GNU agrees);
     // the extended form is legal in macro arglists.
@@ -906,14 +1033,18 @@ fn lambda_optional_rest_bindings() {
         ),
         "invalid-function"
     );
-    // defmacro supports (var init) and (var init supplied-p).
-    let v = ev_in(
-        &mut i,
-        "(defmacro dm (&optional (a 5 ap)) (list 'list a ap)) (dm)",
+    // GNU 31.1 rejects (var init) / (var init supplied-p) triples at
+    // the call site: `funcall_lambda' doesn't parse extended arglist
+    // elements, so the macro's lambda signals `invalid-function'
+    // (verified on GNU -Q for both (dm) and (dm 9)).
+    assert_eq!(
+        ev_err_in(
+            &mut i,
+            "(defmacro dm (&optional (a 5 ap)) (list 'list a ap)) (dm)",
+        ),
+        "invalid-function"
     );
-    assert_eq!(i.prin1_to_string(&v), "(5 nil)");
-    let v = ev_in(&mut i, "(dm 9)");
-    assert_eq!(i.prin1_to_string(&v), "(9 t)");
+    assert_eq!(ev_err_in(&mut i, "(dm 9)"), "invalid-function");
     // &rest collects the tail.
     let v = ev_in(&mut i, "(funcall (lambda (a &rest r) (list a r)) 1 2 3 4)");
     assert_eq!(i.prin1_to_string(&v), "(1 (2 3 4))");
@@ -930,12 +1061,15 @@ fn lambda_optional_rest_bindings() {
     // apply spreads the last list arg.
     let v = ev_in(&mut i, "(apply (lambda (a b) (list a b)) 1 '(2))");
     assert_eq!(i.prin1_to_string(&v), "(1 2)");
+
+    })
 }
 
 // ---------- macroexpand edge cases ----------
 
 #[test]
 fn macroexpand_forms() {
+    common::on_big_stack(move || {
     let (mut i, _) = interp();
     // (macro lambda) form expands.
     let v = ev_in(&mut i, "(defmacro dm (x) `(+ ,x 1)) (macroexpand '(dm 5))");
@@ -948,4 +1082,6 @@ fn macroexpand_forms() {
     // read-from-string with START/END.
     let v = ev_in(&mut i, "(read-from-string \"xy(1 2)z\" 2 7)");
     assert!(i.prin1_to_string(&v).contains("(1 2)"));
+
+    })
 }

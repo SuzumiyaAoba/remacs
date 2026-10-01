@@ -13,14 +13,16 @@ use crate::lisp::builtins::listfn::nthcdr_of;
 use crate::lisp::builtins::{eq_values, equal_values};
 use crate::lisp::error::{EvalResult, Flow};
 use crate::lisp::obarray::sym;
-use crate::lisp::value::{Subr, SymId, Value};
+use crate::lisp::value::{HashTest, Subr, SymId, Value};
 
 pub(crate) mod winxtra;
 
-/// An editor window: a viewport into a buffer.
+/// An editor window: a viewport into a buffer, or an internal
+/// combination window in the frame's window tree (GNU's vc/hc
+/// parents — no buffer, children instead).
 pub struct Window {
     pub id: usize,
-    /// Displayed buffer id.
+    /// Displayed buffer id (garbage on internal windows).
     pub buffer: usize,
     /// Point when this window is selected (0-based).
     pub point: usize,
@@ -48,6 +50,16 @@ pub struct Window {
     pub prev_buffers: Value,
     /// Buffers recorded by `unrecord-window-buffer'/quit-restore.
     pub next_buffers: Value,
+    /// Internal window direction: Some(true) = children side-by-side
+    /// (GNU `hc'), Some(false) = stacked (`vc'), None = leaf window.
+    pub horiz: Option<bool>,
+    /// Children of an internal window, in display order.
+    pub children: Vec<WindowRef>,
+    /// Parent internal window; None for the frame root and the
+    /// minibuffer window.
+    pub parent: Option<std::rc::Weak<RefCell<Window>>>,
+    /// `window-combination-limit' flag (internal windows only).
+    pub combination_limit: bool,
     pub dead: bool,
 }
 
@@ -57,16 +69,20 @@ pub type WindowRef = Rc<RefCell<Window>>;
 pub struct Frame {
     pub id: usize,
     pub name: String,
-    /// Non-minibuffer windows in display order.
+    /// Live leaf windows in display order (internal windows live in
+    /// the tree hanging off `root', NOT here).
     pub windows: Vec<WindowRef>,
     pub selected: WindowRef,
     /// The minibuffer window (echo area in ttys).
     pub minibuffer: Option<WindowRef>,
-    /// Synthetic root window — spans the frame minus the echo area,
-    /// created lazily by `frame-root-window' once the frame holds more
-    /// than one live window (with a single window that window IS the
-    /// root in GNU).
+    /// The frame's root window: a leaf while unsplit (GNU: that leaf
+    /// IS the root), an internal vc/hc window once split.
     pub root: Option<WindowRef>,
+    /// GNU batch quirk: the first split materializes the menu-bar
+    /// line — window tops shift down one row (`window-edges' report
+    /// the shifted geometry while the *inside* edges keep the
+    /// pre-shift pixel rows).
+    pub menu_shift: bool,
     pub width: usize,
     pub height: usize,
     pub params: Value,
@@ -108,9 +124,71 @@ impl Window {
             use_time: 0,
             prev_buffers: Value::Nil,
             next_buffers: Value::Nil,
+            horiz: None,
+            children: Vec::new(),
+            parent: None,
+            combination_limit: false,
             dead: false,
         }))
     }
+
+    /// An internal combination window (`vc' stacked / `hc' side by
+    /// side) covering the given rect.  Internal windows are "valid"
+    /// but never "live" and carry no buffer.
+    pub fn new_internal(horiz: bool, left: usize, top: usize, width: usize, height: usize) -> WindowRef {
+        let r = Window::new(usize::MAX);
+        {
+            let mut rb = r.borrow_mut();
+            rb.horiz = Some(horiz);
+            rb.left = left;
+            rb.top = top;
+            rb.width = width;
+            rb.height = height;
+        }
+        r
+    }
+}
+
+/// W's parent internal window, if any (weak link upgrade).
+pub(crate) fn w_parent(w: &WindowRef) -> Option<WindowRef> {
+    w.borrow().parent.as_ref().and_then(|p| p.upgrade())
+}
+
+/// Sibling group: the parent's children, or the frame's parentless
+/// chain (root … minibuffer) for root/minibuffer windows — GNU's
+/// `window-next-sibling'/`-prev-sibling' semantics.  Returns the
+/// ordered group and W's index into it.
+pub(crate) fn w_siblings(f: &Frame, w: &WindowRef) -> (Vec<WindowRef>, usize) {
+    if let Some(p) = w_parent(w) {
+        let kids = p.borrow().children.clone();
+        let pos = kids.iter().position(|k| Rc::ptr_eq(k, w)).unwrap_or(usize::MAX);
+        (kids, pos)
+    } else {
+        let mut group: Vec<WindowRef> = Vec::new();
+        if let Some(r) = &f.root {
+            group.push(r.clone());
+        }
+        if let Some(m) = &f.minibuffer {
+            group.push(m.clone());
+        }
+        let pos = group.iter().position(|k| Rc::ptr_eq(k, w)).unwrap_or(usize::MAX);
+        (group, pos)
+    }
+}
+
+/// W's frame: searches live leaves, the root subtree and the
+/// minibuffer window.
+pub(crate) fn frame_of_window(i: &Interp, w: &WindowRef) -> Option<FrameRef> {
+    let wid = w.borrow().id;
+    i.frames
+        .iter()
+        .find(|f| {
+            let fb = f.borrow();
+            fb.windows.iter().any(|x| x.borrow().id == wid)
+                || fb.minibuffer.as_ref().map(|m| m.borrow().id == wid) == Some(true)
+                || fb.root.as_ref().map(|r| r.borrow().id == wid) == Some(true)
+        })
+        .cloned()
 }
 
 impl Frame {
@@ -139,15 +217,29 @@ impl Frame {
             id: next_id(),
             name: "F1".into(),
             windows: vec![main.clone()],
-            selected: main,
+            selected: main.clone(),
             minibuffer: Some(mb),
-            root: None,
+            // GNU: the lone live window IS the root window.
+            root: Some(main),
+            menu_shift: false,
             width,
             height,
             params: Value::Nil,
             dead: false,
         }))
     }
+}
+
+/// The frame's batch menu-bar shift (0 or 1 rows) — derived from the
+/// minibuffer's top edge so it also applies to frames whose geometry
+/// was installed by `set-window-configuration'.
+pub(crate) fn fmenu_shift(f: &Frame) -> usize {
+    let mtop = f
+        .minibuffer
+        .as_ref()
+        .map(|m| m.borrow().top)
+        .unwrap_or(f.height);
+    usize::from(f.menu_shift || mtop >= f.height)
 }
 
 macro_rules! S {
@@ -483,7 +575,7 @@ pub(crate) static SUBRS: &[Subr] = &[
         f_window_edges,
         "Edge coords of WINDOW."
     ),
-    S!("window-inside-edges", 0, 1, f_window_edges, ""),
+    S!("window-inside-edges", 0, 1, f_window_inside_edges, ""),
     S!("window-at", 2, 3, f_window_at, "Window at X,Y."),
     S!(
         "recenter",
@@ -1295,7 +1387,8 @@ pub(crate) static SUBRS: &[Subr] = &[
     ),
     // Process primitives are real implementations in lisp::process.
     // editing commands
-    S!("kill-line", 0, 1, f_kill_line, "Kill to end of line."),
+    // kill-line is Lisp (prelude), GNU simple.el semantics: ARG-aware,
+    // kill-whole-line/trailing-whitespace handling via kill-region.
     S!(
         "kill-whole-line",
         0,
@@ -1338,20 +1431,9 @@ pub(crate) static SUBRS: &[Subr] = &[
         f_zap_to_char,
         "Kill up to Nth occurrence of CHAR."
     ),
-    S!(
-        "transpose-chars",
-        1,
-        1,
-        f_transpose_chars,
-        "Swap chars around point."
-    ),
-    S!(
-        "transpose-lines",
-        1,
-        1,
-        f_transpose_lines,
-        "Swap lines around point."
-    ),
+    // transpose-chars / transpose-lines are Lisp (prelude), built on
+    // transpose-subr like GNU simple.el — the Rust implementations
+    // diverged on negative args, eol handling, and trailing newlines.
     S!("upcase-region", 2, 3, f_upcase_region, "Uppercase region."),
     S!(
         "downcase-region",
@@ -1404,13 +1486,8 @@ pub(crate) static SUBRS: &[Subr] = &[
         "Indent region rigidly."
     ),
     // `tab-to-tab-stop' is defined in Lisp (as in GNU's indent.el).
-    S!(
-        "delete-trailing-whitespace",
-        0,
-        2,
-        f_delete_trailing_whitespace,
-        ""
-    ),
+    // delete-trailing-whitespace is Lisp (prelude), GNU simple.el
+    // (regex-driven with syntax-table formfeed exclusion).
     S!("untabify", 0, 2, f_untabify, "Convert tabs to spaces."),
     S!(
         "tabify",
@@ -1745,6 +1822,17 @@ pub(crate) static SUBRS: &[Subr] = &[
         f_call_last_kbd_macro,
         "Call the last keyboard macro."
     ),
+    // GNU byte-compiles kmacro.el's `(defun kmacro ...)', leaving a
+    // `subr' in the function cell — (subrp #'kmacro) is t in GNU 31.1.
+    // Ours is a primitive that delegates to Lisp `kmacro--impl',
+    // autoloading kmacro.el on first call.
+    S!(
+        "kmacro",
+        1,
+        3,
+        f_kmacro,
+        "Create a `kmacro' for macro bound to symbol or key."
+    ),
     S!(
         "defining-kbd-macro",
         1,
@@ -1949,7 +2037,7 @@ pub(crate) static SUBRS: &[Subr] = &[
         "restore-buffer-modified-p",
         1,
         1,
-        crate::buffer::primitives::f_set_buffer_modified_p,
+        crate::buffer::primitives::f_restore_buffer_modified_p,
         ""
     ),
     // faces (minimal tty model)
@@ -1962,7 +2050,9 @@ pub(crate) static SUBRS: &[Subr] = &[
         ""
     ),
     S!("set-face-attribute", many 2, f_set_face_attribute, ""),
-    S!("face-attribute", 2, 4, f_face_attribute, ""),
+    // `face-attribute' is Lisp (prelude) on top of
+    // `internal-get-lisp-face-attribute', per GNU faces.el — the subr
+    // would shadow the merge/inherit logic.
     S!(
         "face-attribute-relative-p",
         2,
@@ -1971,7 +2061,7 @@ pub(crate) static SUBRS: &[Subr] = &[
         ""
     ),
     S!("merge-face-attribute", 3, 3, f_merge_face_attribute, ""),
-    S!("face-all-attributes", 1, 3, f_face_all_attributes, ""),
+    // `face-all-attributes' is Lisp (prelude) per GNU faces.el.
     S!("face-list", 0, 0, f_face_list, ""),
     S!("make-face", 1, 1, f_make_face, ""),
     S!("copy-face", 2, 4, f_copy_face, ""),
@@ -2076,7 +2166,7 @@ pub(crate) static SUBRS: &[Subr] = &[
         "internal-event-symbol-parse-modifiers",
         1,
         1,
-        f_identity,
+        crate::lisp::builtins::misc::f_internal_event_symbol_parse,
         ""
     ),
     S!(
@@ -2195,7 +2285,12 @@ fn f_windowp(_i: &mut Interp, a: Vec<Value>) -> EvalResult {
 
 fn f_window_live_p(_i: &mut Interp, a: Vec<Value>) -> EvalResult {
     match &a[0] {
-        Value::Window(w) => Ok(Value::from_bool(!w.borrow().dead)),
+        // Live = leaf window still attached to a frame; internal
+        // combination windows are valid but never live (GNU).
+        Value::Window(w) => {
+            let w = w.borrow();
+            Ok(Value::from_bool(!w.dead && w.horiz.is_none()))
+        }
         _ => Ok(Value::Nil),
     }
 }
@@ -2205,7 +2300,7 @@ fn f_window_buffer(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     Ok(i.buffer_value(w.borrow().buffer).unwrap_or(Value::Nil))
 }
 
-fn f_set_window_buffer(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+pub(crate) fn f_set_window_buffer(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let w = win_of(i, &arg(&a, 0))?;
     let bid = i
         .buffer_id_of(&a[1])
@@ -2432,10 +2527,30 @@ fn f_window_display_table(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 /// `:ignore-defface', in which case VALUE2.  (`:height' merges
 /// relative specs; we take VALUE1.)
 fn f_merge_face_attribute(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    // GNU xfaces.c: VALUE1 wins unless `unspecified'/`:ignore-defface';
+    // :height runs merge_face_heights — a float VALUE1 scales VALUE2.
     if let Value::Sym(s) = &a[1] {
         let n = i.symbol_name(*s);
         if n == "unspecified" || n == ":ignore-defface" {
             return Ok(a[2].clone());
+        }
+    }
+    let is_height = matches!(&a[0], Value::Sym(s) if i.symbol_name(*s) == ":height");
+    if is_height {
+        if let Value::Int(_) = &a[1] {
+            return Ok(a[1].clone()); // absolute, use as-is
+        }
+        if let Value::Float(f1) = &a[1] {
+            match &a[2] {
+                Value::Int(n) => return Ok(Value::Int((**f1 * *n as f64) as i128)),
+                Value::Float(f2) => {
+                    return Ok(Value::float(**f1 * **f2));
+                }
+                Value::Sym(s) if i.symbol_name(*s) == "unspecified" => {
+                    return Ok(a[1].clone())
+                }
+                _ => {}
+            }
         }
     }
     Ok(a[1].clone())
@@ -2476,7 +2591,9 @@ fn f_syntax_class(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         Value::Cons(c) => {
             let car = c.borrow().car.clone();
             match car {
-                Value::Int(_) => Ok(car),
+                // GNU `Fsyntax_class' returns SYNTAX_CODE_CLASS(code)
+                // = code & 0xff — flag bits are masked off.
+                Value::Int(n) => Ok(Value::Int(n & 0xff)),
                 _ => Ok(Value::Nil),
             }
         }
@@ -2567,7 +2684,7 @@ fn window_configuration(i: &mut Interp) -> Value {
             let mark = i
                 .buffers
                 .get(wb.buffer)
-                .and_then(|b| b.borrow().mark)
+                .and_then(|b| b.borrow().mark_position())
                 .map(|m| Value::Int(m as i128))
                 .unwrap_or(Value::Nil);
             specs.push(Value::list(vec![
@@ -2825,8 +2942,39 @@ pub(crate) fn f_set_window_configuration(i: &mut Interp, a: Vec<Value>) -> EvalR
     {
         let mut fr = f.borrow_mut();
         fr.windows = new_windows;
-        // The synthetic root's extent depends on the live set.
-        fr.root = None;
+        // Detach stale tree links, then rebuild: a single restored
+        // leaf becomes the root (GNU); several get a synthetic vc
+        // internal spanning the frame (flat-config approximation).
+        for w in &fr.windows {
+            let mut wb = w.borrow_mut();
+            wb.parent = None;
+            wb.children.clear();
+            wb.horiz = None;
+        }
+        fr.root = match fr.windows.len() {
+            0 => None,
+            1 => Some(fr.windows[0].clone()),
+            _ => {
+                let mini_top = fr
+                    .minibuffer
+                    .as_ref()
+                    .map(|m| m.borrow().top)
+                    .unwrap_or(fr.height);
+                let top = fr.windows.iter().map(|w| w.borrow().top).min().unwrap_or(0);
+                let r = Window::new_internal(
+                    false,
+                    0,
+                    top,
+                    fr.width,
+                    mini_top.saturating_sub(top),
+                );
+                r.borrow_mut().children = fr.windows.clone();
+                for w in &fr.windows {
+                    w.borrow_mut().parent = Some(Rc::downgrade(&r));
+                }
+                Some(r)
+            }
+        };
         match &selected {
             Value::Window(w) => fr.selected = w.clone(),
             _ => {
@@ -2846,12 +2994,12 @@ pub(crate) fn f_set_window_configuration(i: &mut Interp, a: Vec<Value>) -> EvalR
         };
         if let Some(b) = i.buffers.get(bid) {
             b.borrow_mut().set_point(pt);
-            i.current_buffer = bid;
+            i.set_current_buffer(bid);
         }
     }
     for (bid, pos) in marks {
         if let Some(b) = i.buffers.get(bid) {
-            b.borrow_mut().mark = Some(pos);
+            b.borrow_mut().set_mark(pos);
         }
     }
     Ok(Value::Sym(sym::T))
@@ -2975,8 +3123,18 @@ fn f_minibuffer_window_active_p(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     Ok(Value::Nil)
 }
 
-fn f_split_window(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+pub(crate) fn f_split_window(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let w = win_of(i, &arg(&a, 0))?;
+    {
+        let wb = w.borrow();
+        if wb.dead || wb.horiz.is_some() {
+            let shown = i.princ_to_string(&a[0]);
+            return Err(i.error(format!("{shown} is not a valid window")));
+        }
+        if wb.minibuffer {
+            return Err(i.error("Cannot split minibuffer window"));
+        }
+    }
     // GNU Fsplit_window: `above'/`below' split vertically, `left'
     // horizontally with the new window on the left, and ANY other
     // non-nil side (including `right', t, bogus) horizontally with
@@ -2996,31 +3154,50 @@ fn f_split_window(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     // GNU: positive SIZE is the part the PARENT keeps; negative SIZE
     // is the size of the NEW window; nil halves the parent.
     let size = arg(&a, 1).int();
-    // GNU batch/tty quirk: the first split materializes the
+    let Some(f) = sel_frame(i) else {
+        return Err(i.error("No frame"));
+    };
+    // GNU batch/tty quirk: the first *vertical* split materializes the
     // menu-bar line — the content area shifts down one row and the
     // minibuffer window moves down with it (`frame-height' keeps
-    // reporting the old value; observed GNU -Q: root becomes
-    // (0 1 80 25), minibuffer (0 25 80 26)).
-    if let Some(f) = sel_frame(i) {
-        let ff = f.borrow();
-        if ff.windows.len() == 1 && w.borrow().top == 0 {
-            w.borrow_mut().top = 1;
+    // reporting the old value; observed GNU -Q: 'below split gives
+    // root (0 1 80 25), minibuffer (0 25 80 26)).  A horizontal
+    // ('right/'left) split does NOT shift: GNU reports
+    // (0 0 40 24)/(40 0 80 24).
+    {
+        let mut ff = f.borrow_mut();
+        if !ff.menu_shift && !hor {
+            let mut mtop = 0;
+            for w2 in &ff.windows {
+                let mut wb = w2.borrow_mut();
+                wb.top += 1;
+                mtop = mtop.max(wb.top + wb.height);
+            }
+            if let Some(r) = &ff.root {
+                let mut rb = r.borrow_mut();
+                if rb.horiz.is_some() {
+                    rb.top += 1;
+                    rb.height = mtop.saturating_sub(rb.top);
+                }
+            }
             if let Some(mb) = &ff.minibuffer {
                 let top = mb.borrow().top;
                 mb.borrow_mut().top = top + 1;
             }
+            ff.menu_shift = true;
         }
     }
     let buf = w.borrow().buffer;
     let new = Window::new(buf);
-    {
-        let mut ww = w.borrow_mut();
-        let mut nw = new.borrow_mut();
-        nw.point = ww.point;
-        nw.start = ww.start;
-        if hor {
-            let total = ww.width;
-            let (keep, sz) = match size {
+    let (wl, wt, ww_, wh) = {
+        let wb = w.borrow();
+        (wb.left, wb.top, wb.width, wb.height)
+    };
+    // Geometry: halve W along the split axis and place NEW on SIDE.
+    let (w_new_geo, n_geo) = {
+        let (keep, sz) = if hor {
+            let total = ww_;
+            match size {
                 Some(s) if s >= 0 => (
                     (s.max(0) as usize).min(total),
                     total.saturating_sub(s.max(0) as usize),
@@ -3030,22 +3207,10 @@ fn f_split_window(i: &mut Interp, a: Vec<Value>) -> EvalResult {
                     (total.saturating_sub(n), n.min(total))
                 }
                 None => (total / 2, total - total / 2),
-            };
-            nw.top = ww.top;
-            nw.height = ww.height;
-            if side == 2 {
-                ww.width = keep;
-                nw.left = ww.left + keep;
-                nw.width = sz;
-            } else {
-                nw.left = ww.left;
-                nw.width = sz;
-                ww.left += sz;
-                ww.width = keep;
             }
         } else {
-            let total = ww.height;
-            let (keep, sz) = match size {
+            let total = wh;
+            match size {
                 Some(s) if s >= 0 => (
                     (s.max(0) as usize).min(total),
                     total.saturating_sub(s.max(0) as usize),
@@ -3055,22 +3220,91 @@ fn f_split_window(i: &mut Interp, a: Vec<Value>) -> EvalResult {
                     (total.saturating_sub(n), n.min(total))
                 }
                 None => (total / 2, total - total / 2),
-            };
-            nw.left = ww.left;
-            nw.width = ww.width;
-            if side == 0 {
-                ww.height = keep;
-                nw.top = ww.top + keep;
-                nw.height = sz;
+            }
+        };
+        if hor {
+            if side == 2 {
+                // new window on the right
+                ((wl, wt, keep, wh), (wl + keep, wt, sz, wh))
             } else {
-                nw.top = ww.top;
-                nw.height = sz;
-                ww.top += sz;
-                ww.height = keep;
+                // `left': new window on the left
+                ((wl + sz, wt, keep, wh), (wl, wt, sz, wh))
+            }
+        } else if side == 0 {
+            // `below'
+            ((wl, wt, ww_, keep), (wl, wt + keep, ww_, sz))
+        } else {
+            // `above'
+            ((wl, wt + sz, ww_, keep), (wl, wt, ww_, sz))
+        }
+    };
+    {
+        let mut wb = w.borrow_mut();
+        let mut nw = new.borrow_mut();
+        nw.point = wb.point;
+        nw.start = wb.start;
+        nw.left = n_geo.0;
+        nw.top = n_geo.1;
+        nw.width = n_geo.2;
+        nw.height = n_geo.3;
+        wb.left = w_new_geo.0;
+        wb.top = w_new_geo.1;
+        wb.width = w_new_geo.2;
+        wb.height = w_new_geo.3;
+    }
+    // GNU Fsplit_window_internal: when W's parent is a combination in
+    // the same direction without a combination limit, the new window
+    // is grafted onto it; otherwise a fresh internal window replaces
+    // W in the tree and parents both.
+    let parent = w_parent(&w);
+    let reuse = parent
+        .as_ref()
+        .map(|p| {
+            let pb = p.borrow();
+            pb.horiz == Some(hor) && !pb.combination_limit
+        })
+        .unwrap_or(false);
+    if reuse {
+        let p = parent.unwrap();
+        let mut pb = p.borrow_mut();
+        let pos = pb
+            .children
+            .iter()
+            .position(|k| Rc::ptr_eq(k, &w))
+            .unwrap_or(pb.children.len().saturating_sub(1));
+        let at = pos + usize::from(side == 0 || side == 2);
+        pb.children.insert(at, new.clone());
+        new.borrow_mut().parent = Some(Rc::downgrade(&p));
+    } else {
+        let p = Window::new_internal(hor, wl, wt, ww_, wh);
+        {
+            let mut pb = p.borrow_mut();
+            pb.parent = w.borrow().parent.clone();
+            // below/right → (W NEW); above/left → (NEW W).
+            if side == 0 || side == 2 {
+                pb.children = vec![w.clone(), new.clone()];
+            } else {
+                pb.children = vec![new.clone(), w.clone()];
             }
         }
+        match parent {
+            Some(par) => {
+                let mut parb = par.borrow_mut();
+                for k in parb.children.iter_mut() {
+                    if Rc::ptr_eq(k, &w) {
+                        *k = p.clone();
+                    }
+                }
+            }
+            None => {
+                // W was the root (a lone leaf): the new internal
+                // window becomes the frame root.
+                f.borrow_mut().root = Some(p.clone());
+            }
+        }
+        w.borrow_mut().parent = Some(Rc::downgrade(&p));
+        new.borrow_mut().parent = Some(Rc::downgrade(&p));
     }
-    let f = sel_frame(i).unwrap();
     // GNU inserts the new window adjacent to its parent in the
     // window-list order: after it for below/right, before it for
     // above/left.
@@ -3086,63 +3320,196 @@ fn f_split_window(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     Ok(Value::Window(new))
 }
 
+/// Re-lay out the children of internal window P so they tile P's
+/// rect along its split axis (proportional to their current sizes).
+pub(crate) fn relay_children(p: &WindowRef) {
+    let (horiz, pl, pt, pw, ph) = {
+        let pb = p.borrow();
+        (pb.horiz == Some(true), pb.left, pb.top, pb.width, pb.height)
+    };
+    let kids = p.borrow().children.clone();
+    let total: usize = kids
+        .iter()
+        .map(|k| {
+            let kb = k.borrow();
+            if horiz { kb.width } else { kb.height }
+        })
+        .sum();
+    let total = total.max(1);
+    let mut pos = if horiz { pl } else { pt };
+    let end = pos + if horiz { pw } else { ph };
+    let n = kids.len();
+    for (idx, k) in kids.iter().enumerate() {
+        let mut kb = k.borrow_mut();
+        let sz = if horiz { kb.width } else { kb.height };
+        let nsz = if idx + 1 == n {
+            end.saturating_sub(pos)
+        } else {
+            ((if horiz { pw } else { ph }) * sz / total).max(1)
+        };
+        if horiz {
+            kb.left = pos;
+            kb.width = nsz;
+            kb.top = pt;
+            kb.height = ph;
+        } else {
+            kb.top = pos;
+            kb.height = nsz;
+            kb.left = pl;
+            kb.width = pw;
+        }
+        pos += nsz;
+        if kb.horiz.is_some() {
+            drop(kb);
+            relay_children(k);
+        }
+    }
+}
+
+/// Recursively mark every window in W's subtree dead (for removing
+/// an internal node: its whole combination dies with it).
+pub(crate) fn mark_tree_dead(w: &WindowRef) {
+    let kids = {
+        let mut wb = w.borrow_mut();
+        wb.dead = true;
+        std::mem::take(&mut wb.children)
+    };
+    for k in kids {
+        mark_tree_dead(&k);
+    }
+}
+
 fn f_delete_window(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let w = win_of(i, &arg(&a, 0))?;
+    {
+        let wb = w.borrow();
+        if wb.dead {
+            let shown = i.princ_to_string(&a[0]);
+            return Err(i.error(format!("{shown} is not a valid window")));
+        }
+        if wb.minibuffer {
+            return Err(i.error("Attempt to delete the minibuffer window"));
+        }
+        if wb.horiz.is_some() {
+            return Err(i.error("Attempt to delete an internal window"));
+        }
+    }
     let wid = w.borrow().id;
     let f = sel_frame(i).unwrap();
-    {
-        let mut ff = f.borrow_mut();
-        if ff.windows.len() <= 1 {
-            return Err(i.error("Attempt to delete the only window"));
-        }
-        // GNU gives the deleted window's space to its sibling.  Flat
-        // model: merge into the first remaining window that shares a
-        // full edge (same left+width for vertical neighbors, same
-        // top+height for horizontal ones).
-        {
+    let mut ff = f.borrow_mut();
+    if ff.windows.len() <= 1 {
+        return Err(i.error("Attempt to delete the only window"));
+    }
+    let del_idx = ff
+        .windows
+        .iter()
+        .position(|w2| w2.borrow().id == wid)
+        .unwrap_or(0);
+    if let Some(p) = w_parent(&w) {
+        let mut pb = p.borrow_mut();
+        let pos = pb
+            .children
+            .iter()
+            .position(|k| Rc::ptr_eq(k, &w))
+            .unwrap_or(0);
+        let horiz = pb.horiz == Some(true);
+        let (dsize, dl, dt) = {
             let d = w.borrow();
-            let (dl, dt, dr, db) = (d.left, d.top, d.left + d.width, d.top + d.height);
-            for r in ff.windows.iter() {
-                if r.borrow().id == wid {
-                    continue;
+            (if horiz { d.width } else { d.height }, d.left, d.top)
+        };
+        // GNU gives the deleted window's space to its sibling:
+        // prefer the previous one, else the next.
+        let target = if pos > 0 {
+            pb.children.get(pos - 1).cloned()
+        } else {
+            pb.children.get(pos + 1).cloned()
+        };
+        if let Some(t) = &target {
+            let (tl, tt, tw, th) = {
+                let tb = t.borrow();
+                (tb.left, tb.top, tb.width, tb.height)
+            };
+            let mut tb = t.borrow_mut();
+            if horiz {
+                if tl + tw == dl {
+                    // T directly left of W: extend right.
+                    tb.width += dsize;
+                } else {
+                    // T directly right of W: extend left.
+                    tb.left = dl;
+                    tb.width += dsize;
                 }
-                let mut rb = r.borrow_mut();
-                let (rl, rt, rr, rb2) = (rb.left, rb.top, rb.left + rb.width, rb.top + rb.height);
-                if rl == dl && rb.width == dr - dl && rb2 == dt {
-                    // R directly above D: extend down over D's area.
-                    rb.height += db - dt;
-                    break;
-                } else if rl == dl && rb.width == dr - dl && rt == db {
-                    // R directly below D: extend up.
-                    rb.top = dt;
-                    rb.height += db - dt;
-                    break;
-                } else if rt == dt && rb.height == db - dt && rr == dl {
-                    // R directly left of D: extend right.
-                    rb.width += dr - dl;
-                    break;
-                } else if rt == dt && rb.height == db - dt && rl == dr {
-                    // R directly right of D: extend left.
-                    rb.left = dl;
-                    rb.width += dr - dl;
+            } else if tt + th == dt {
+                // T directly above W: extend down.
+                tb.height += dsize;
+            } else {
+                // T directly below W: extend up.
+                tb.top = dt;
+                tb.height += dsize;
+            }
+        }
+        pb.children.retain(|k| !Rc::ptr_eq(k, &w));
+        drop(pb);
+        // GNU collapses a single-child combination: the remaining child
+        // takes the parent's slot and geometry, recursively upward.
+        let mut cur = p;
+        loop {
+            let (pl, pt, pw, ph, pparent, kids) = {
+                let cb = cur.borrow();
+                (
+                    cb.left,
+                    cb.top,
+                    cb.width,
+                    cb.height,
+                    cb.parent.clone(),
+                    cb.children.clone(),
+                )
+            };
+            if kids.len() != 1 {
+                break;
+            }
+            let sole = kids[0].clone();
+            {
+                let mut sb = sole.borrow_mut();
+                sb.left = pl;
+                sb.top = pt;
+                sb.width = pw;
+                sb.height = ph;
+                sb.parent = pparent.clone();
+            }
+            {
+                let mut cb = cur.borrow_mut();
+                cb.children.clear();
+                cb.dead = true;
+            }
+            match pparent.and_then(|p| p.upgrade()) {
+                Some(gp) => {
+                    {
+                        let mut gpb = gp.borrow_mut();
+                        for k in gpb.children.iter_mut() {
+                            if Rc::ptr_eq(k, &cur) {
+                                *k = sole.clone();
+                            }
+                        }
+                    }
+                    cur = gp;
+                }
+                None => {
+                    ff.root = Some(sole);
                     break;
                 }
             }
         }
-        let del_idx = ff
-            .windows
-            .iter()
-            .position(|w2| w2.borrow().id == wid)
-            .unwrap_or(0);
-        let sel_dead = ff.selected.borrow().id == wid;
-        ff.windows.retain(|w2| w2.borrow().id != wid);
-        w.borrow_mut().dead = true;
-        if sel_dead {
-            // GNU: deleting the selected window selects the window
-            // FOLLOWING it in the frame's window chain.
-            let idx = del_idx % ff.windows.len().max(1);
-            ff.selected = ff.windows[idx].clone();
-        }
+    }
+    w.borrow_mut().parent = None;
+    w.borrow_mut().dead = true;
+    let sel_dead = ff.selected.borrow().id == wid;
+    ff.windows.retain(|w2| w2.borrow().id != wid);
+    if sel_dead {
+        // GNU: deleting the selected window selects the window
+        // FOLLOWING it in the frame's window chain.
+        let idx = del_idx % ff.windows.len().max(1);
+        ff.selected = ff.windows[idx].clone();
     }
     Ok(Value::Nil)
 }
@@ -3152,20 +3519,36 @@ fn f_delete_other_windows(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let wid = w.borrow().id;
     let f = sel_frame(i).unwrap();
     let mut ff = f.borrow_mut();
-    // GNU expands the kept window over the whole root area: frame
-    // width x (topmost content edge .. minibuffer top).
-    let root_top = ff
-        .windows
-        .iter()
-        .map(|w2| w2.borrow().top)
-        .min()
-        .unwrap_or(0);
-    let root_bot = ff
-        .minibuffer
+    // GNU expands the kept window over the whole root area: the
+    // frame's root window extent.
+    let (rl, rt, rw, rh) = ff
+        .root
         .as_ref()
-        .map(|m| m.borrow().top)
-        .unwrap_or(ff.height);
-    let fwidth = ff.width;
+        .map(|r| {
+            let rb = r.borrow();
+            (rb.left, rb.top, rb.width, rb.height)
+        })
+        .unwrap_or_else(|| {
+            let mb_top = ff
+                .minibuffer
+                .as_ref()
+                .map(|m| m.borrow().top)
+                .unwrap_or(ff.height);
+            (0, 0, ff.width, mb_top)
+        });
+    // Kill every other leaf and the internal nodes above W.
+    let dead_internal: Vec<WindowRef> = if let Some(r) = &ff.root {
+        if r.borrow().horiz.is_some() && !Rc::ptr_eq(r, &w) {
+            vec![r.clone()]
+        } else {
+            Vec::new()
+        }
+    } else {
+        Vec::new()
+    };
+    for r in dead_internal {
+        mark_tree_dead(&r);
+    }
     ff.windows.retain(|w2| {
         let keep = w2.borrow().id == wid;
         if !keep {
@@ -3175,11 +3558,14 @@ fn f_delete_other_windows(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     });
     {
         let mut wb = w.borrow_mut();
-        wb.left = 0;
-        wb.top = root_top;
-        wb.width = fwidth;
-        wb.height = root_bot.saturating_sub(root_top);
+        wb.left = rl;
+        wb.top = rt;
+        wb.width = rw;
+        wb.height = rh;
+        wb.parent = None;
+        wb.dead = false;
     }
+    ff.root = Some(w.clone());
     ff.selected = w.clone();
     Ok(Value::Nil)
 }
@@ -3210,10 +3596,15 @@ fn f_other_window(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     // select we copy window point into buffer.
     if let Some(b) = i.buffers.get(cur.borrow().buffer) {
         b.borrow_mut().set_point(cur.borrow().point);
-        i.current_buffer = cur.borrow().buffer;
+        i.set_current_buffer(cur.borrow().buffer);
         i.buffers.touch(cur.borrow().buffer);
     }
-    Ok(Value::Window(cur))
+    // GNU -Q --batch: other-window selects the window but returns nil.
+    if i.noninteractive {
+        Ok(Value::Nil)
+    } else {
+        Ok(Value::Window(cur))
+    }
 }
 
 fn f_select_window(i: &mut Interp, a: Vec<Value>) -> EvalResult {
@@ -3223,7 +3614,7 @@ fn f_select_window(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     w.borrow_mut().use_time = next_use_time();
     if let Some(b) = i.buffers.get(w.borrow().buffer) {
         b.borrow_mut().set_point(w.borrow().point);
-        i.current_buffer = w.borrow().buffer;
+        i.set_current_buffer(w.borrow().buffer);
         i.buffers.touch(w.borrow().buffer);
     }
     Ok(a[0].clone())
@@ -3328,9 +3719,12 @@ fn f_get_buffer_window_list(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         _ => i.selected_frame.iter().cloned().collect(),
     };
     let indirect = a.get(3).map(|v| v.truthy()).unwrap_or(false);
-    let base_of =
-        |id: usize| i.buffers.get(id).and_then(|b| b.borrow().base_buffer);
-    let buf_base = base_of(bid);
+    let base_id = |id: usize| {
+        i.buffers
+            .get(id)
+            .and_then(|b| b.borrow().base_buffer.as_ref().map(|bb| bb.borrow().id))
+    };
+    let buf_base = base_id(bid);
     let mut out: Vec<Value> = Vec::new();
     for f in &frames {
         let fb = f.borrow();
@@ -3346,7 +3740,7 @@ fn f_get_buffer_window_list(i: &mut Interp, a: Vec<Value>) -> EvalResult {
                 // `window-indirect-buffer-p': the window's buffer is
                 // B's base, is an indirect buffer of B, or shares B's
                 // base buffer.
-                let wbase = base_of(wb.buffer);
+                let wbase = base_id(wb.buffer);
                 if buf_base == Some(wb.buffer)
                     || wbase == Some(bid)
                     || (buf_base.is_some() && buf_base == wbase)
@@ -3377,7 +3771,10 @@ fn f_window_height(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 }
 fn f_window_body_height(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let w = win_of(i, &arg(&a, 0))?;
-    Ok(Value::Int(w.borrow().height.saturating_sub(1) as i128))
+    let wb = w.borrow();
+    // Body excludes the mode line; the minibuffer window has none.
+    let ml = usize::from(!wb.minibuffer && wb.horiz.is_none());
+    Ok(Value::Int(wb.height.saturating_sub(ml) as i128))
 }
 /// Body width = total width minus the one-column window divider that
 /// separates horizontally adjacent windows on a tty.  GNU: a window
@@ -3423,13 +3820,44 @@ fn f_window_edges(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         Value::Int((ww.top + ww.height) as i128),
     ]))
 }
+/// `window-inside-edges': GNU computes the text area from the pixel
+/// geometry, which in batch is the *pre-split* row space — the
+/// menu-bar line materialization shifts `window-edges' down one row
+/// but not the inside edges.  The bottom excludes the mode line
+/// (none on minibuffer/internal windows).
+fn f_window_inside_edges(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let w = win_of(i, &arg(&a, 0))?;
+    let shift = frame_of_window(i, &w)
+        .map(|f| fmenu_shift(&f.borrow()))
+        .unwrap_or(0);
+    let ww = w.borrow();
+    let ml = usize::from(!ww.minibuffer && ww.horiz.is_none());
+    Ok(Value::list(vec![
+        Value::Int(ww.left as i128),
+        Value::Int(ww.top.saturating_sub(shift) as i128),
+        Value::Int((ww.left + ww.width) as i128),
+        Value::Int((ww.top + ww.height).saturating_sub(shift + ml) as i128),
+    ]))
+}
 fn f_window_at(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let x = want_int(i, &a[0])? as usize;
-    let y = want_int(i, &a[1])? as usize;
+    let x = want_int(i, &a[0])?;
+    let y = want_int(i, &a[1])?;
     for f in &i.frames {
-        for w in &f.borrow().windows {
+        let fb = f.borrow();
+        let shift = fmenu_shift(&fb);
+        for w in &fb.windows {
             let ww = w.borrow();
-            if x >= ww.left && x < ww.left + ww.width && y >= ww.top && y < ww.top + ww.height {
+            // GNU's coordinate lookup runs on the inside (pre-shift)
+            // geometry: a window's rectangle covers its text area
+            // plus its own mode line, which lands on the next
+            // window's shifted top row.
+            let top = ww.top.saturating_sub(shift);
+            let bot = (ww.top + ww.height).saturating_sub(shift);
+            if x >= ww.left as i128
+                && x < (ww.left + ww.width) as i128
+                && y >= top as i128
+                && y < bot as i128
+            {
                 return Ok(Value::Window(w.clone()));
             }
         }
@@ -3911,6 +4339,11 @@ fn f_frame_edges(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     ]))
 }
 fn f_make_frame(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
+    // GNU batch: `make-frame' bails on terminal-init with
+    // "Unknown terminal type" — no usable display exists.
+    if i.noninteractive {
+        return Err(i.error("Unknown terminal type"));
+    }
     // On a tty, a "new frame" is a new full-screen view sharing the tty.
     let buf = i.current_buffer;
     let f = Frame::new_tty(buf, buf, 80, 25);
@@ -4075,6 +4508,9 @@ fn f_internal_char_font(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 /// `internal-lisp-face-empty-p' / `internal-lisp-face-attribute-
 /// values' — GNU signals a plain "Invalid face" error for unknown
 /// faces; a real face yields nil on a tty.
+/// `internal-lisp-face-empty-p' — t when the face's spec holds no
+/// attribute besides nil/`unspecified' (GNU checks the face vector's
+/// attr slots).  Unknown faces signal "Invalid face".
 fn f_lisp_face_check_nil(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let id = match &a[0] {
         Value::Sym(s) => *s,
@@ -4087,7 +4523,27 @@ fn f_lisp_face_check_nil(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     if !face_known(i, &name) {
         return Err(i.error(format!("Invalid face {name}")));
     }
-    Ok(Value::Nil)
+    let unsp = i.intern("unspecified");
+    let raw = i.intern("remacs--raw-face");
+    let empty = match i.face_table.iter().find(|(n, _)| *n == name) {
+        // internal-make-lisp-face registered the name only — GNU's
+        // lface_from_face_name still fails on it.
+        Some((_, Value::Sym(s))) if *s == raw => {
+            return Err(i.error(format!("Invalid face {name}")));
+        }
+        Some((_, p)) => p
+            .list_to_vec()
+            .map(|items| {
+                !items.chunks(2).any(|kv| {
+                    kv.get(1)
+                        .map(|v| v.truthy() && !matches!(v, Value::Sym(s) if *s == unsp))
+                        .unwrap_or(false)
+                })
+            })
+            .unwrap_or(true),
+        None => false,
+    };
+    Ok(Value::from_bool(empty))
 }
 
 /// `internal-lisp-face-attribute-values' — on a tty GNU reports the
@@ -4888,7 +5344,13 @@ fn f_set_keymap_parent(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 fn key_seq_elt(i: &mut Interp, x: &Value) -> Result<Option<i128>, Flow> {
     match x {
         Value::Int(n) => Ok(Some(*n)),
-        Value::Sym(s) => Ok(Some(event_code_for(&i.symbol_name(*s)))),
+        Value::Sym(s) => {
+            // GNU reorders modifier prefixes on event symbols
+            // (reorder_modifiers): M-C-left ≡ C-M-left; the parse
+            // also caches event-symbol-elements on the original.
+            let canon = crate::lisp::builtins::misc::reorder_event_symbol(i, *s);
+            Ok(Some(event_code_for(&i.symbol_name(canon))))
+        }
         Value::Cons(c) => {
             // A (LO . HI) character range isn't a Lucid event list —
             // GNU keeps it as a range key, which our i128 codes can't
@@ -4948,8 +5410,10 @@ pub(crate) fn key_seq(i: &mut Interp, v: &Value) -> Result<Vec<i128>, Flow> {
             Ok(out)
         }
         Value::Sym(id) => {
-            // A symbol key like `quit` or `f1`.
-            let name = i.symbol_name(*id);
+            // A symbol key like `quit` or `f1` (modifier prefixes
+            // reordered, GNU reorder_modifiers).
+            let canon = crate::lisp::builtins::misc::reorder_event_symbol(i, *id);
+            let name = i.symbol_name(canon);
             Ok(vec![event_code_for(&name)])
         }
         other => Err(i.wrong_type_mut("sequencep", other)),
@@ -5351,12 +5815,21 @@ fn f_define_key(i: &mut Interp, a: Vec<Value>) -> EvalResult {
             set_binding(i, &km, k, sub.clone());
             km = sub;
         } else {
-            let seq = Value::Vec(std::rc::Rc::new(std::cell::RefCell::new(
-                keys[..n + 2].iter().map(|&c| Value::Int(c)).collect(),
-            )));
-            return Err(i.error(&format!(
-                "Key sequence {} uses invalid prefix characters",
-                i.princ_to_string(&seq)
+            // GNU Fdefine_key: "Key sequence %s starts with non-prefix
+            // key %s" — sequence and prefix rendered via key-description.
+            let render = |i: &mut Interp, ks: &[i128]| -> String {
+                let v = Value::Vec(std::rc::Rc::new(std::cell::RefCell::new(
+                    ks.iter().map(|&c| Value::Int(c)).collect(),
+                )));
+                f_key_description(i, vec![v])
+                    .map(|r| i.princ_to_string(&r))
+                    .unwrap_or_default()
+            };
+            let full_s = render(i, &keys);
+            let pfx_s = render(i, &keys[..n + 1]);
+            return Err(i.error(format!(
+                "Key sequence {} starts with non-prefix key {}",
+                full_s, pfx_s
             )));
         }
     }
@@ -5667,6 +6140,11 @@ fn f_lookup_key(i: &mut Interp, a: Vec<Value>) -> EvalResult {
             m
         }
     };
+    // GNU CHECK_VECTOR_OR_STRING: a non-array KEY (nil, numbers, ...)
+    // signals wrong-type-argument rather than returning the keymap.
+    if !matches!(&a[1], Value::Vec(_) | Value::Str(_)) {
+        return Err(i.wrong_type_mut("arrayp", &a[1]));
+    }
     let elts = seq_events(&a[1]);
     let t_ok = a.get(2).map(|v| v.truthy()).unwrap_or(false);
     lookup_seq(i, &map, &elts, t_ok)
@@ -5801,6 +6279,21 @@ fn f_key_binding(i: &mut Interp, a: Vec<Value>) -> EvalResult {
             // GNU: a non-keymap def before the last key is an overlong
             // sequence — no binding in this map, try the next map.
             if n + 1 == keys.len() && raw.truthy() {
+                // GNU Fkey_binding: a command's [remap CMD] entry
+                // applies unless NO-REMAP or POSITION was passed.
+                if let Value::Sym(cmd) = &raw {
+                    let noremap = a.get(2).map(|v| v.truthy()).unwrap_or(false);
+                    let pos = a.get(3).cloned().unwrap_or(Value::Nil);
+                    if !noremap && pos.is_nil() {
+                        let r = f_command_remapping(
+                            i,
+                            vec![Value::Sym(*cmd), Value::Nil, Value::Nil],
+                        )?;
+                        if r.truthy() {
+                            return Ok(r);
+                        }
+                    }
+                }
                 return Ok(raw);
             }
             break;
@@ -5923,7 +6416,13 @@ fn f_global_set_key(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 }
 
 fn f_local_unset_key(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    f_local_set_key(i, vec![a[0].clone(), Value::Nil])
+    // GNU `Flocal_unset_key': only touches an existing local map —
+    // unlike `local-set-key' it never creates one.
+    let km = f_current_local_map(i, vec![])?;
+    if is_keymap(i, &km) {
+        f_define_key(i, vec![km, a[0].clone(), Value::Nil])?;
+    }
+    Ok(Value::Nil)
 }
 fn f_global_unset_key(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     f_global_set_key(i, vec![a[0].clone(), Value::Nil])
@@ -6075,7 +6574,10 @@ fn lookup_event(i: &mut Interp, map: &Value, ev: &Value, t_ok: bool) -> Result<V
     match ev {
         Value::Int(n) => lookup_in_keymap(i, map, *n, t_ok),
         Value::Sym(s) => {
-            let code = event_code_for(&i.symbol_name(*s));
+            // GNU access_keymap runs reorder_modifiers: [M-C-x]
+            // finds a [C-M-x] binding (and caches the parse).
+            let canon = crate::lisp::builtins::misc::reorder_event_symbol(i, *s);
+            let code = event_code_for(&i.symbol_name(canon));
             lookup_in_keymap(i, map, code, t_ok)
         }
         Value::Cons(c) => {
@@ -6501,7 +7003,19 @@ fn f_color_defined_p(_i: &mut Interp, a: Vec<Value>) -> EvalResult {
 
 fn f_kbd(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let s = want_str(i, &a[0])?;
-    let keys = parse_kbd(i, &s);
+    let mut keys = parse_kbd(i, &s)?;
+    // GNU `kbd' strips the "C-x ( … C-x )" wrapper (read-kbd-macro
+    // legacy): when the first two events are ?\C-x ( and the last two
+    // are ?\C-x ), the inner events are the sequence.
+    let cx = 24i128; // ?\C-x — the control-folded x.
+    if keys.len() >= 4
+        && matches!(keys[0], Value::Int(n) if n == cx)
+        && matches!(keys[1], Value::Int(40))
+        && matches!(keys[keys.len() - 2], Value::Int(n) if n == cx)
+        && matches!(keys[keys.len() - 1], Value::Int(41))
+    {
+        keys = keys[2..keys.len() - 2].to_vec();
+    }
     // Emacs: kbd returns a STRING when all events are plain
     // characters, else a vector of events.
     let all_plain = keys
@@ -6521,12 +7035,98 @@ fn f_kbd(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     }
 }
 
-pub(crate) fn parse_kbd(i: &mut Interp, s: &str) -> Vec<Value> {
+/// GNU `key-parse' (keymap.el): whitespace-separated words, with one
+/// exception — a `<...>' token may contain spaces (its body starts
+/// with a non-space, non-`<', non-`>' char and ends at the next `>').
+pub(crate) fn parse_kbd(i: &mut Interp, s: &str) -> Result<Vec<Value>, Flow> {
     let mut out = Vec::new();
-    for tok in s.split_whitespace() {
-        out.extend(parse_key_token(i, tok));
+    let b = s.as_bytes();
+    let mut pos = 0usize;
+    while pos < b.len() {
+        while pos < b.len() && matches!(b[pos], b' ' | b'\t' | b'\n' | 0x0c) {
+            pos += 1;
+        }
+        if pos >= b.len() {
+            break;
+        }
+        let beg = pos;
+        // <...> words: first char after < must not be space/</>/tab;
+        // then everything up to the first '>'.
+        if b[pos] == b'<'
+            && pos + 1 < b.len()
+            && !matches!(b[pos + 1], b' ' | b'<' | b'>' | b'\t' | b'\n' | 0x0c)
+        {
+            match s[pos..].find('>') {
+                Some(off) => pos += off + 1,
+                None => {
+                    while pos < b.len() && !matches!(b[pos], b' ' | b'\t' | b'\n' | 0x0c) {
+                        pos += 1;
+                    }
+                }
+            }
+        } else {
+            while pos < b.len() && !matches!(b[pos], b' ' | b'\t' | b'\n' | 0x0c) {
+                pos += 1;
+            }
+        }
+        let mut word = &s[beg..pos];
+        // N* repeat prefix (GNU: "\\([0-9]+\\)\\*." anywhere).
+        let mut times = 1usize;
+        if let Some(star) = word.find('*') {
+            let (digs, rest) = word.split_at(star);
+            if !digs.is_empty() && digs.bytes().all(|c| c.is_ascii_digit()) && !rest[1..].is_empty() {
+                times = digs.parse().unwrap_or(1);
+                word = &rest[1..];
+            }
+        }
+        // REM / ;; comments extend to end-of-line.
+        if word == "REM" || word.starts_with(";;") {
+            match s[pos..].find('\n') {
+                Some(off) => pos += off,
+                None => pos = s.len(),
+            }
+            continue;
+        }
+        let evs = parse_key_word(i, word)?;
+        for _ in 0..times {
+            out.extend(evs.iter().cloned());
+        }
     }
-    out
+    Ok(out)
+}
+
+/// GNU `key-parse' per-word dispatch: `<<...>>' menu keys,
+/// `(MODS-)*<NAME>' symbols, then the generic word parser (modifiers,
+/// ^X shorthand, octal, the NUL/RET/TAB/LFD/ESC/SPC/DEL assoc table).
+fn parse_key_word(i: &mut Interp, word: &str) -> Result<Vec<Value>, Flow> {
+    if word.starts_with("<<") && word.ends_with(">>") && word.len() > 4 {
+        // Menu shortcut: current binding of M-x (or its first
+        // where-is binding), then the literal body chars and \r.
+        let mx = i.intern("execute-extended-command");
+        let bound = f_key_binding(
+            i,
+            vec![Value::Vec(Rc::new(RefCell::new(vec![Value::Int(
+                CHAR_META + b'x' as i128,
+            )])))],
+        )
+        .unwrap_or(Value::Nil);
+        let mut evs: Vec<Value> = if matches!(&bound, Value::Sym(s) if *s == mx) {
+            vec![Value::Int(CHAR_META + b'x' as i128)]
+        } else {
+            match f_where_is_internal(i, vec![Value::Sym(mx), Value::Nil, Value::t()]) {
+                Ok(Value::Cons(c)) => vec![c.borrow().car.clone()],
+                _ => vec![Value::Int(CHAR_META + b'x' as i128)],
+            }
+        };
+        evs.extend(word[2..word.len() - 2].chars().map(|c| Value::Int(c as i128)));
+        evs.push(Value::Int(13));
+        return Ok(evs);
+    }
+    // General word (including `(MODS-)*<NAME>' symbol events):
+    // `parse_key_token' implements GNU's generic branch — modifier
+    // prefixes, the ^X control shorthand, octal \NNN, the special
+    // ASCII name table, and the joined-word rule for <NAME>.
+    parse_key_token(i, word)
 }
 
 pub(crate) const CHAR_META: i128 = 0x0800_0000;
@@ -6541,139 +7141,119 @@ pub(crate) const CHAR_ALT: i128 = 0x0040_0000;
 /// modifiers as bits) or `Value::Sym` for named/function-key
 /// events (`return`, `M-left`). A multi-char literal like `abc`
 /// yields one event per char with modifiers on the first.
-pub(crate) fn parse_key_token(i: &mut Interp, tok: &str) -> Vec<Value> {
+pub(crate) fn parse_key_token(i: &mut Interp, tok: &str) -> Result<Vec<Value>, Flow> {
     let mut mods = 0i128;
     let mut rest = tok;
+    // GNU adds modifier bits arithmetically (C-C- on a char folds to
+    // M-: C|C = META).  Prefixes strip in scan order, one char each.
     loop {
         if let Some(r) = rest.strip_prefix("C-") {
-            mods |= CHAR_CTL;
+            mods += CHAR_CTL;
             rest = r;
         } else if let Some(r) = rest.strip_prefix("M-") {
-            mods |= CHAR_META;
+            mods += CHAR_META;
             rest = r;
         } else if let Some(r) = rest.strip_prefix("S-") {
-            mods |= CHAR_SHIFT;
+            mods += CHAR_SHIFT;
             rest = r;
         } else if let Some(r) = rest.strip_prefix("H-") {
-            mods |= CHAR_HYPER;
+            mods += CHAR_HYPER;
             rest = r;
         } else if let Some(r) = rest.strip_prefix("s-") {
-            mods |= CHAR_SUPER;
+            mods += CHAR_SUPER;
             rest = r;
         } else if let Some(r) = rest.strip_prefix("A-") {
-            mods |= CHAR_ALT;
+            mods += CHAR_ALT;
             rest = r;
         } else {
             break;
         }
     }
-    // Modifier prefix for event symbols, Emacs order A C H M S s.
-    let mut mods_name = String::new();
-    for (bit, name) in [
-        (CHAR_ALT, "A-"),
-        (CHAR_CTL, "C-"),
-        (CHAR_HYPER, "H-"),
-        (CHAR_META, "M-"),
-        (CHAR_SHIFT, "S-"),
-        (CHAR_SUPER, "s-"),
-    ] {
-        if mods & bit != 0 {
-            mods_name.push_str(name);
-        }
-    }
+    // GNU interns `M-C-down' preserving the LITERAL modifier order
+    // written by the user (not the canonical A C H M S s order).
+    let mods_name = tok[..tok.len() - rest.len()].to_string();
     if rest.starts_with('<') && rest.ends_with('>') && rest.len() > 2 {
-        // Named event: <return>, M-<left>, <S-down> — modifier
-        // prefixes inside the brackets count too.
-        let mut name = &rest[1..rest.len() - 1];
-        loop {
-            if let Some(r) = name.strip_prefix("C-") {
-                mods |= CHAR_CTL;
-                name = r;
-            } else if let Some(r) = name.strip_prefix("M-") {
-                mods |= CHAR_META;
-                name = r;
-            } else if let Some(r) = name.strip_prefix("S-") {
-                mods |= CHAR_SHIFT;
-                name = r;
-            } else if let Some(r) = name.strip_prefix("H-") {
-                mods |= CHAR_HYPER;
-                name = r;
-            } else if let Some(r) = name.strip_prefix("s-") {
-                mods |= CHAR_SUPER;
-                name = r;
-            } else if let Some(r) = name.strip_prefix("A-") {
-                mods |= CHAR_ALT;
-                name = r;
-            } else {
-                break;
-            }
-        }
-        let mut mn = String::new();
-        for (bit, n) in [
-            (CHAR_ALT, "A-"),
-            (CHAR_CTL, "C-"),
-            (CHAR_HYPER, "H-"),
-            (CHAR_META, "M-"),
-            (CHAR_SHIFT, "S-"),
-            (CHAR_SUPER, "s-"),
+        // GNU `key-parse' joins outer modifiers with the bracketed
+        // name, then: the joined word ending in `-SPECIAL' (or being
+        // `SPECIAL') re-enters the generic path so inner X- prefixes
+        // become modifier bits (`<C-RET>' → C-\r, `<M-C-down>' keeps
+        // its inner mods as part of the symbol name).
+        let name = &rest[1..rest.len() - 1];
+        let joined = format!("{}{}", mods_name, name);
+        for (n, _) in [
+            ("NUL", 0i128), ("RET", 13), ("LFD", 10), ("TAB", 9),
+            ("ESC", 27), ("SPC", 32), ("DEL", 127),
         ] {
-            if mods & bit != 0 {
-                mn.push_str(n);
+            if joined == n
+                || (joined.ends_with(n)
+                    && joined.as_bytes()[joined.len() - n.len() - 1] == b'-')
+            {
+                return parse_key_token(i, &joined);
             }
         }
-        return vec![Value::Sym(i.intern(&format!(
-            "{}{}",
-            mn,
-            name.to_ascii_lowercase()
-        )))];
+        return Ok(vec![Value::Sym(i.intern(&joined))]);
     }
-    // A multi-char token that isn't a known key name is a literal
-    // char sequence (Emacs: (kbd "abc") -> "abc"); modifiers apply
-    // to the first char only.
-    let first: Vec<char> = rest.chars().collect();
-    if first.len() > 1 {
-        let base: Option<i128> = match rest.to_ascii_lowercase().as_str() {
-            "ret" | "return" => Some(b'\r' as i128),
-            "tab" => Some(b'\t' as i128),
-            "lfd" => Some(b'\n' as i128),
-            "spc" | "space" => Some(b' ' as i128),
-            "esc" | "escape" => Some(27),
-            "del" => Some(127),
-            "nul" => Some(0),
-            "backspace" | "delete" | "delchar" | "deletechar" | "home" | "end" | "left"
-            | "right" | "up" | "down" | "prior" | "pageup" | "next" | "pagedown" | "insert" => None,
-            _ => None,
-        };
-        match rest.to_ascii_lowercase().as_str() {
-            "backspace" | "delete" | "delchar" | "deletechar" | "home" | "end" | "left"
-            | "right" | "up" | "down" | "prior" | "pageup" | "next" | "pagedown" | "insert" => {
-                let name = rest.to_ascii_lowercase();
-                let canon = match name.as_str() {
-                    "delchar" | "deletechar" => "deletechar".to_string(),
-                    "pageup" => "prior".to_string(),
-                    "pagedown" => "next".to_string(),
-                    s => s.to_string(),
-                };
-                return vec![Value::Sym(i.intern(&format!("{}{}", mods_name, canon)))];
-            }
-            _ => {}
-        }
-        if let Some(b) = base {
-            return vec![Value::Int(apply_mods(b, mods))];
-        }
-        // Literal chars: modifiers apply to the first char only.
-        let mut out = Vec::with_capacity(first.len());
-        for (idx, ch) in first.iter().enumerate() {
-            let c = *ch as i128;
-            if idx == 0 {
-                out.push(Value::Int(apply_mods(c, mods)));
-            } else {
-                out.push(Value::Int(c));
-            }
-        }
-        return out;
+    // GNU `key-parse' generic branch: prefixes were consumed, `word'
+    // is what remains.  The ^X shorthand contributes the control bit;
+    // the NUL/RET/TAB/LFD/ESC/SPC/DEL table maps to control chars;
+    // \NNN is an octal char code; then modifiers decide the event.
+    let mut consumed = tok.len() - rest.len();
+    let mut word = rest;
+    if word.len() == 2 && word.starts_with('^') {
+        mods += CHAR_CTL;
+        word = &word[1..];
+        consumed += 1;
     }
-    vec![Value::Int(apply_mods(first[0] as i128, mods))]
+    let named: Option<i128> = match word {
+        "NUL" => Some(0),
+        "RET" => Some(13),
+        "LFD" => Some(10),
+        "TAB" => Some(9),
+        "ESC" => Some(27),
+        "SPC" => Some(32),
+        "DEL" => Some(127),
+        _ => None,
+    };
+    if let Some(n) = named {
+        // GNU adds the modifier bits arithmetically (no ctl fold).
+        return Ok(vec![Value::Int(mods + n)]);
+    }
+    if word.len() >= 2
+        && word.starts_with('\\')
+        && word[1..].bytes().all(|c| matches!(c, b'0'..=b'7'))
+    {
+        let n = i128::from_str_radix(&word[1..], 8).unwrap_or(0);
+        return Ok(vec![Value::Int(mods + n)]);
+    }
+    let chars: Vec<char> = word.chars().collect();
+    if mods == 0 {
+        // Literal characters — one event each (kbd "abc").
+        return Ok(chars.iter().map(|c| Value::Int(*c as i128)).collect());
+    }
+    if mods == CHAR_META
+        && !chars.is_empty()
+        && word.bytes().all(|c| c == b'-' || c.is_ascii_digit())
+    {
+        // M- on a digit string applies meta to each char.
+        return Ok(chars.iter().map(|c| Value::Int(mods + *c as i128)).collect());
+    }
+    if chars.len() != 1 {
+        // GNU: "M- must prefix a single character, not ret".
+        return Err(i.error(format!(
+            "{} must prefix a single character, not {}",
+            &tok[..consumed],
+            word
+        )));
+    }
+    // GNU key-parse ctl fold: bits - C + (c & 31) for @-_ a-z only
+    // (? is NOT folded: C-? keeps the control bit); else bits + c.
+    let c = chars[0] as i128;
+    let ev = if mods & CHAR_CTL != 0 && (matches!(c, 64..=95) || (97..=122).contains(&c)) {
+        mods - CHAR_CTL + (c & 31)
+    } else {
+        mods + c
+    };
+    Ok(vec![Value::Int(ev)])
 }
 
 /// Apply remaining modifier bits to a character code.
@@ -6844,13 +7424,19 @@ pub(crate) fn describe_key(k: i128) -> String {
     } else if k & 0x7fff_0000 != 0 && bare == 0 {
         out.push_str("<key>");
     } else if base_ctrl {
+        // Control char → its letter form: C-h prints 'h', C-@ prints
+        // '@', C-\\ prints '\\\\'.
         let ch = match bare {
             0 => '@',
             28 => '\\',
             29 => ']',
             30 => '^',
             31 => '_',
-            c => (b'a' + c as u8 - 1) as char,
+            63 => '?', // DEL base already handled as "DEL"
+            c if (1..=31).contains(&c) => (b'a' + c as u8 - 1) as char,
+            // Out-of-range bases (e.g. key -1 → bare -1) print the low
+            // byte like GNU's `push_key_description' (c & 0377).
+            c => char::from_u32((c & 0xff) as u32).unwrap_or('?'),
         };
         out.push(ch);
     } else {
@@ -6864,11 +7450,30 @@ fn f_single_key_description(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     match &a[0] {
         Value::Int(k) => Ok(Value::string(describe_key(*k))),
         Value::Sym(s) => {
-            let name = i.symbol_name(*s);
+            let name = i.symbol_name(*s).to_string();
+            // GNU splits leading modifier prefixes and angles the base
+            // key: `S-return' → "S-<return>", `C-M-down' → "C-M-<down>".
+            let mut rest = name.as_str();
+            let mut prefix = String::new();
+            while let Some(p) = rest.find('-') {
+                let head = &rest[..p + 1];
+                // GNU only consumes a prefix when more than one
+                // character follows it — `C-x'/'S-a' stay `<C-x>'.
+                if rest.len() - (p + 1) > 1
+                    && matches!(head, "C-" | "M-" | "S-" | "H-" | "A-" | "s-")
+                {
+                    prefix.push_str(head);
+                    rest = &rest[p + 1..];
+                } else {
+                    break;
+                }
+            }
             Ok(Value::string(if no_angles {
-                name
-            } else {
+                format!("{}{}", prefix, rest)
+            } else if prefix.is_empty() {
                 format!("<{}>", name)
+            } else {
+                format!("{}<{}>", prefix, rest)
             }))
         }
         other => Err(i.wrong_type_mut("integer-or-marker-p", other)),
@@ -7503,7 +8108,7 @@ fn f_yank(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     };
     let b = cur(i);
     let pt = b.borrow().point();
-    b.borrow_mut().mark = Some(pt);
+    b.borrow_mut().set_mark(pt);
     crate::buffer::primitives::chg_insert_pt(i, &s, false)?;
     Ok(Value::Nil)
 }
@@ -7520,7 +8125,7 @@ fn f_yank_pop(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let b = cur(i);
     let (m, p) = {
         let bb = b.borrow();
-        (bb.mark, bb.point())
+        (bb.mark_position(), bb.point())
     };
     if let Some(m) = m {
         let len = items.len();
@@ -7535,7 +8140,7 @@ fn f_yank_pop(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         };
         set_yank_ptr(i, &ring, pos);
         crate::buffer::primitives::chg_insert_pt(i, &text, false)?;
-        b.borrow_mut().mark = Some(s);
+        b.borrow_mut().set_mark(s);
         Ok(Value::Nil)
     } else {
         Err(i.error("Previous command was not a yank"))
@@ -7612,16 +8217,77 @@ fn want_filename(i: &mut Interp, v: &Value) -> Result<String, Flow> {
     Ok(expand_file_name_str(i, &s))
 }
 
-/// Expand ~, env vars, and make absolute via `default-directory`.
-pub(crate) fn expand_file_name_str(i: &mut Interp, name: &str) -> String {
-    let mut s = name.to_string();
-    // ~ expansion
-    if s.starts_with('~') {
-        let home = std::env::var("HOME").unwrap_or_else(|_| "/".into());
-        if s.len() == 1 || s.starts_with("~/") {
-            s = format!("{}{}", home, &s[1..]);
+/// GNU `getenv' consults `process-environment' only (it is
+/// initialized from the OS environment at startup).  Returns the
+/// variable's value, or None when unset.
+pub(crate) fn lisp_getenv(i: &Interp, name: &str) -> Option<String> {
+    let pe = i.intern_soft("process-environment")?;
+    let proc_env = i.symbol_value(pe);
+    if let Value::Cons(_) = &proc_env {
+        let prefix = format!("{}=", name);
+        let mut hit: Option<String> = None;
+        proc_env.each_car(|v| {
+            if hit.is_none() {
+                if let Value::Str(s) = v {
+                    let s = s.borrow();
+                    if s.starts_with(&prefix) {
+                        hit = Some(s[prefix.len()..].to_string());
+                    }
+                }
+            }
+        });
+        hit
+    } else {
+        None
+    }
+}
+
+/// Look up `~USER''s home directory via getpwnam(3); None when the
+/// user does not exist (GNU expand-file-name then treats the name
+/// as an ordinary relative path).
+#[cfg(unix)]
+fn tilde_user_home(user: &str) -> Option<String> {
+    let c = std::ffi::CString::new(user).ok()?;
+    unsafe {
+        let pw = libc::getpwnam(c.as_ptr());
+        if pw.is_null() || (*pw).pw_dir.is_null() {
+            return None;
         }
-        // ~user unsupported → leave
+        Some(
+            std::ffi::CStr::from_ptr((*pw).pw_dir)
+                .to_string_lossy()
+                .into_owned(),
+        )
+    }
+}
+
+/// Expand ~, env vars, and make absolute via `default-directory'.
+/// Returns None when NAME starts with `~' but is not expandable
+/// (`~user' for an unknown user): GNU `expand-file-name' then
+/// falls back to joining the name onto the DIRECTORY argument.
+fn expand_file_name_opt(i: &mut Interp, name: &str) -> Option<String> {
+    let mut s = name.to_string();
+    if let Some(rest) = s.strip_prefix('~') {
+        // `~/x' expands against $HOME (which GNU reads through
+        // `process-environment'); `~user' resolves via getpwnam and
+        // stays unexpanded (relative) when the user is unknown.
+        let (user, tail) = match rest.find('/') {
+            Some(p) => (&rest[..p], &rest[p..]),
+            None => (rest, ""),
+        };
+        let home = if user.is_empty() {
+            Some(
+                lisp_getenv(i, "HOME")
+                    .or_else(|| std::env::var("HOME").ok())
+                    .unwrap_or_else(|| "/".into()),
+            )
+        } else {
+            tilde_user_home(user)
+        };
+        match home {
+            Some(h) => s = format!("{}{}", h, tail),
+            None => return None,
+        }
     }
     // absolute?
     if !s.starts_with('/') {
@@ -7634,12 +8300,32 @@ pub(crate) fn expand_file_name_str(i: &mut Interp, name: &str) -> String {
         s = format!("{}{}{}", dir, sep, s);
     }
     // Collapse /./ and /../
-    normalize_path(&s)
+    Some(normalize_path(&s))
 }
 
+/// Expand ~, env vars, and make absolute via `default-directory';
+/// an unexpandable `~user' counts as a relative name, like GNU's
+/// inner expansion used by pathname-taking subrs.
+pub fn expand_file_name_str(i: &mut Interp, name: &str) -> String {
+    expand_file_name_opt(i, name).unwrap_or_else(|| {
+        let dir = default_directory(i);
+        let sep = if dir.ends_with('/') || dir.is_empty() {
+            ""
+        } else {
+            "/"
+        };
+        normalize_path(&format!("{}{}{}", dir, sep, name))
+    })
+}
+
+/// Collapse `/.'/`/..' and duplicate separators.  Like GNU's
+/// expand-file-name, a leading `//' is kept verbatim (a name with
+/// three or more leading slashes collapses to `/...').
 fn normalize_path(p: &str) -> String {
+    let lead_dd = p.starts_with("//") && !p.starts_with("///");
+    let body = if lead_dd { &p[1..] } else { p };
     let mut parts: Vec<&str> = Vec::new();
-    for comp in p.split('/') {
+    for comp in body.split('/') {
         match comp {
             "" | "." => {}
             ".." => {
@@ -7648,13 +8334,14 @@ fn normalize_path(p: &str) -> String {
             c => parts.push(c),
         }
     }
-    let mut out = String::from("/");
+    let mut out = String::from(if lead_dd { "//" } else { "/" });
     out.push_str(&parts.join("/"));
     if p.ends_with('/') && !out.ends_with('/') {
         out.push('/');
     }
     out
 }
+
 
 /// The current buffer's `default-directory`.
 pub(crate) fn default_directory(i: &Interp) -> String {
@@ -7885,11 +8572,13 @@ fn f_set_file_modes(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     };
     #[cfg(unix)]
     {
-        if nofollow {
-            // chmod on a symlink itself: fchmodat with AT_SYMLINK_NOFOLLOW.
-            // On Linux this is a no-op (returns EINVAL); macOS supports it.
-            let c = std::ffi::CString::new(p.clone())
-                .map_err(|_| i.signal_data(sym::FILE_ERROR, vec![Value::string("bad filename")]))?;
+        let res = if nofollow {
+            // chmod on a symlink itself: fchmodat with
+            // AT_SYMLINK_NOFOLLOW.  On Linux this is a no-op (returns
+            // EINVAL); macOS supports it.
+            let c = std::ffi::CString::new(p.clone()).map_err(|_| {
+                i.signal_data(sym::FILE_ERROR, vec![Value::string("bad filename")])
+            })?;
             unsafe {
                 libc::fchmodat(
                     libc::AT_FDCWD,
@@ -7897,10 +8586,34 @@ fn f_set_file_modes(i: &mut Interp, a: Vec<Value>) -> EvalResult {
                     mode as libc::mode_t,
                     libc::AT_SYMLINK_NOFOLLOW,
                 )
-            };
+            }
         } else {
-            use std::os::unix::fs::PermissionsExt;
-            let _ = std::fs::set_permissions(&p, std::fs::Permissions::from_mode(mode));
+            use std::os::unix::ffi::OsStrExt;
+            let c = std::ffi::CString::new(
+                std::path::Path::new(&p).as_os_str().as_bytes(),
+            )
+            .map_err(|_| {
+                i.signal_data(sym::FILE_ERROR, vec![Value::string("bad filename")])
+            })?;
+            unsafe { libc::chmod(c.as_ptr(), mode as libc::mode_t) }
+        };
+        if res != 0 {
+            // GNU report_file_error: ("Doing chmod" strerror FILE),
+            // ENOENT → `file-missing'.
+            let e = std::io::Error::last_os_error();
+            let s = if e.kind() == std::io::ErrorKind::NotFound {
+                sym::FILE_MISSING
+            } else {
+                sym::FILE_ERROR
+            };
+            return Err(i.signal_data(
+                s,
+                vec![
+                    Value::string("Doing chmod"),
+                    Value::string(file_error_string(&e)),
+                    Value::string(p.clone()),
+                ],
+            ));
         }
     }
     Ok(Value::Nil)
@@ -7911,19 +8624,30 @@ fn f_file_name_absolute_p(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 }
 fn f_expand_file_name(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let name = want_str(i, &a[0])?;
-    let s = match a.get(1) {
-        Some(Value::Str(d)) if !name.starts_with('/') && !name.starts_with('~') => {
-            // GNU expands the directory argument itself against
-            // `default-directory' before appending NAME.
-            let d = expand_file_name_str(i, &d.borrow());
-            let sep = if d.ends_with('/') || d.is_empty() {
-                ""
-            } else {
-                "/"
+    // GNU expands DIRECTORY against `default-directory' and appends
+    // NAME; an expandable `~' in NAME ignores DIRECTORY entirely, an
+    // unexpandable `~user' is treated as relative to DIRECTORY.
+    let s = match expand_file_name_opt(i, &name) {
+        Some(exp) if name.starts_with('~') || name.starts_with('/') => exp,
+        _ => {
+            let d = match a.get(1) {
+                Some(Value::Str(d)) => expand_file_name_str(i, &d.borrow()),
+                Some(Value::Nil) | None => default_directory(i),
+                Some(other) => return Err(i.wrong_type_mut("stringp", other)),
             };
-            normalize_path(&format!("{}{}{}", d, sep, name))
+            if name.is_empty() {
+                // GNU returns DIRECTORY with its directory separator
+                // dropped — (expand-file-name "" "/x/") is "/x".
+                d.trim_end_matches('/').to_string()
+            } else {
+                let sep = if d.ends_with('/') || d.is_empty() {
+                    ""
+                } else {
+                    "/"
+                };
+                normalize_path(&format!("{}{}{}", d, sep, name))
+            }
         }
-        _ => expand_file_name_str(i, &name),
     };
     Ok(Value::string(s))
 }
@@ -8081,7 +8805,10 @@ fn f_file_name_base(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 }
 fn f_file_name_as_directory(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let s = want_str(i, &a[0])?;
-    Ok(Value::string(if s.ends_with('/') {
+    // GNU: an empty name means the current directory ("./").
+    Ok(Value::string(if s.is_empty() {
+        "./".to_string()
+    } else if s.ends_with('/') {
         s
     } else {
         format!("{}/", s)
@@ -8098,10 +8825,21 @@ fn f_directory_file_name(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     Ok(Value::string(s.trim_end_matches('/').to_string()))
 }
 fn f_file_name_concat(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let mut out = want_str(i, &a[0])?;
+    // GNU files.el: nil components count as empty strings; empty
+    // leading components don't force a leading slash.
+    let mut out = match &a[0] {
+        Value::Nil => String::new(),
+        v => want_str(i, v)?,
+    };
     for v in &a[1..] {
-        let part = want_str(i, v)?;
-        if !out.ends_with('/') && !part.is_empty() {
+        let part = match v {
+            Value::Nil => continue,
+            _ => want_str(i, v)?,
+        };
+        if part.is_empty() {
+            continue;
+        }
+        if !out.is_empty() && !out.ends_with('/') {
             out.push('/');
         }
         out.push_str(&part);
@@ -8128,13 +8866,63 @@ fn f_file_relative_name(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     }
     out.push_str(&nparts[k..].join("/"));
     if out.is_empty() {
-        out.push('.');
+        // GNU keeps the trailing-slash flavor of FILENAME: the same
+        // directory spells "." for "a/b" and "./" for "a/b/".
+        out.push_str(if name.ends_with('/') { "./" } else { "." });
+    } else if !name.ends_with('/') && out.ends_with('/') {
+        // FILENAME is not a directory name: a lone ".."-run drops its
+        // separator — "/a/b" vs "/a/b/c" is "..", not "../".  (A
+        // FILENAME ending in "/" like "/" keeps "../" verbatim.)
+        out.pop();
+    } else if name.ends_with('/') && !out.ends_with('/') {
+        out.push('/');
     }
     Ok(Value::string(out))
 }
 fn f_abbreviate_file_name(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let name = want_str(i, &a[0])?;
-    let home = std::env::var("HOME").unwrap_or_default();
+    // GNU fileio.c: each `directory-abbrev-alist' entry whose regexp
+    // matches FILENAME substitutes its expansion for the matched
+    // portion (first match wins); otherwise a $HOME prefix becomes ~.
+    let daa = i
+        .intern_soft("directory-abbrev-alist")
+        .map(|id| i.symbol_value(id))
+        .unwrap_or(Value::Nil);
+    let mut entries = Vec::new();
+    daa.each_car(|v| {
+        if let Value::Cons(c) = v {
+            let b = c.borrow();
+            entries.push((b.car.clone(), b.cdr.clone()));
+        }
+    });
+    let name_chars: Vec<char> = name.chars().collect();
+    for (k, val) in &entries {
+        let (Value::Str(pat), Value::Str(rep)) = (k, val) else {
+            continue;
+        };
+        let Ok(re) = crate::lisp::regexp::compile_case(&pat.borrow(), false) else {
+            continue;
+        };
+        let syn = re_syntax(i);
+        let cat = re_category(i);
+        if let Some((cs, ce)) = crate::lisp::regexp::search(
+            &re,
+            &name_chars,
+            0,
+            &syn,
+            &cat,
+            crate::lisp::regexp::NO_POINT,
+        ) {
+            // Replace chars [cs, ce) with the expansion.
+            let mut out: String = name_chars[..cs].iter().collect();
+            out.push_str(&rep.borrow());
+            out.extend(name_chars[ce..].iter());
+            return Ok(Value::string(out));
+        }
+    }
+    let home = lisp_getenv(i, "HOME")
+        .or_else(|| std::env::var("HOME").ok())
+        .unwrap_or_default();
     if !home.is_empty() && name.starts_with(&home) {
         Ok(Value::string(format!("~{}", &name[home.len()..])))
     } else {
@@ -8143,7 +8931,8 @@ fn f_abbreviate_file_name(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 }
 /// GNU env-var substitution in filenames: `$VAR' and `${VAR}' expand to the
 /// variable's value, `$$' becomes `$', and unset variables stay literal.
-fn substitute_env_vars(s: &str) -> String {
+/// Values come from `process-environment' (what GNU's egetenv reads).
+fn substitute_env_vars(i: &Interp, s: &str) -> String {
     let mut out = String::new();
     let mut cs = s.chars().peekable();
     while let Some(c) = cs.next() {
@@ -8169,9 +8958,9 @@ fn substitute_env_vars(s: &str) -> String {
                     var.push(c2);
                 }
                 if closed {
-                    match std::env::var(&var) {
-                        Ok(v) => out.push_str(&v),
-                        Err(_) => {
+                    match lisp_getenv(i, &var) {
+                        Some(v) => out.push_str(&v),
+                        None => {
                             out.push_str("${");
                             out.push_str(&var);
                             out.push('}');
@@ -8195,9 +8984,9 @@ fn substitute_env_vars(s: &str) -> String {
                 if var.is_empty() {
                     out.push('$');
                 } else {
-                    match std::env::var(&var) {
-                        Ok(v) => out.push_str(&v),
-                        Err(_) => {
+                    match lisp_getenv(i, &var) {
+                        Some(v) => out.push_str(&v),
+                        None => {
                             out.push('$');
                             out.push_str(&var);
                         }
@@ -8211,14 +9000,37 @@ fn substitute_env_vars(s: &str) -> String {
 
 fn f_substitute_in_file_name(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let s = want_str(i, &a[0])?;
-    let out = substitute_env_vars(&s);
-    // A `//' after position 0 discards the text before it.
-    if let Some(idx) = out
-        .match_indices("//")
-        .find(|(i, _)| *i > 0)
-        .map(|(i, _)| i)
-    {
-        return Ok(Value::string(out[idx + 1..].to_string()));
+    // GNU fileio.c drops the `/:' quotation prefix first.
+    let s = s.strip_prefix("/:").unwrap_or(&s).to_string();
+    let out = substitute_env_vars(i, &s);
+    // A `//' or `/~X' (X = `/', end of string, or a real user name)
+    // discards the text before it; the LAST such marker wins, so
+    // "x//a/~/b" yields "~/b".
+    let mut cut: Option<usize> = None;
+    let bytes = out.as_bytes();
+    for idx in 0..bytes.len() {
+        if bytes[idx] != b'/' {
+            continue;
+        }
+        match bytes.get(idx + 1) {
+            Some(b'/') => cut = Some(idx + 1),
+            Some(b'~') => {
+                let rest = &out[idx + 2..];
+                let (user, _) = match rest.find('/') {
+                    Some(p) => (&rest[..p], ()),
+                    None => (rest, ()),
+                };
+                if user.is_empty() || tilde_user_home(user).is_some() {
+                    // GNU drops the '/' too: "/a/~/b" → "~/b"
+                    // (unlike "//", where the second slash stays).
+                    cut = Some(idx + 1);
+                }
+            }
+            _ => {}
+        }
+    }
+    if let Some(idx) = cut {
+        return Ok(Value::string(out[idx..].to_string()));
     }
     Ok(Value::string(out))
 }
@@ -8248,22 +9060,28 @@ fn f_directory_files(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         match &re {
             Some(r) => {
                 let chars: Vec<char> = name.chars().collect();
-                crate::lisp::regexp::search(r, &chars, 0, &syn, &crate::editor::re_category(i))
+                crate::lisp::regexp::search(r, &chars, 0, &syn, &crate::editor::re_category(i), crate::lisp::regexp::NO_POINT)
                     .is_some()
             }
             None => true,
         }
     };
     let mut names = Vec::new();
-    for dot in [".", ".."] {
-        if matches(dot) {
-            names.push(if full {
-                format!("{}{}", base, dot)
+    // GNU reads "." and ".." out of the directory stream; Rust's
+    // `read_dir' omits them, so they're collected here and appended at
+    // the end — the nosort path below reverses collection order, which
+    // lands them last exactly like GNU's reversed-readdir result.
+    let dots: Vec<String> = [".", ".."]
+        .iter()
+        .filter(|d| matches(d))
+        .map(|d| {
+            if full {
+                format!("{}{}", base, d)
             } else {
-                dot.to_string()
-            });
-        }
-    }
+                d.to_string()
+            }
+        })
+        .collect();
     match std::fs::read_dir(&dir) {
         Ok(rd) => {
             for ent in rd.flatten() {
@@ -8296,8 +9114,15 @@ fn f_directory_files(i: &mut Interp, a: Vec<Value>) -> EvalResult {
             ));
         }
     }
-    // GNU: COUNT must be a natural number (fixnum >= 0) when non-nil;
-    // truncation happens during collection and sorting follows it.
+    // GNU `directory_files_internal' conses each entry (the `.'/`..'
+    // stream entries included) onto the result list; COUNT truncates
+    // that collection, then it is either sorted with `string-lessp'
+    // or — NOSORT — returned as-is, i.e. reversed readdir order.
+    // Rust's `read_dir' omits `.'/`..', which GNU finds first, so they
+    // end up last in the cons-accumulated order.
+    let mut names = names;
+    names.reverse();
+    names.extend(dots.into_iter().rev());
     if let Some(v) = a.get(4) {
         if v.truthy() {
             match v {
@@ -8338,19 +9163,86 @@ fn f_directory_files_and_attributes(i: &mut Interp, a: Vec<Value>) -> EvalResult
     Ok(Value::list(out))
 }
 
-fn f_file_name_completion(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let file = want_str(i, &a[0])?;
-    let dir = want_filename(i, &a[1])?;
+/// Collect DIR's entries matching prefix FILE, GNU-style: `.` and
+/// `..' are offered as candidates too, and directories carry a
+/// trailing `/'.  Errors like GNU's directory_files: ENOENT maps to
+/// `file-missing' with ("Opening directory" strerror DIR) data.
+fn dir_completion_names(
+    i: &mut Interp,
+    file: &str,
+    dir: &str,
+) -> Result<Vec<String>, Flow> {
     let mut matches = Vec::new();
-    if let Ok(rd) = std::fs::read_dir(&dir) {
-        for ent in rd.flatten() {
-            let name = ent.file_name().to_string_lossy().into_owned();
-            if name.starts_with(&file) {
-                matches.push(name);
-            }
+    let rd = match std::fs::read_dir(dir) {
+        Ok(rd) => rd,
+        Err(e) => {
+            let s = if e.kind() == std::io::ErrorKind::NotFound {
+                sym::FILE_MISSING
+            } else {
+                sym::FILE_ERROR
+            };
+            return Err(i.signal_data(
+                s,
+                vec![
+                    Value::string("Opening directory"),
+                    Value::string(file_error_string(&e)),
+                    Value::string(dir.to_string()),
+                ],
+            ));
+        }
+    };
+    for dot in [".", ".."] {
+        if dot.starts_with(file) {
+            matches.push(format!("{}/", dot));
+        }
+    }
+    for ent in rd.flatten() {
+        let name = ent.file_name().to_string_lossy().into_owned();
+        if !name.starts_with(file) {
+            continue;
+        }
+        // Directories complete with a trailing separator; symlink
+        // targets are followed like GNU's file_name_completion.
+        if ent.path().is_dir() {
+            matches.push(format!("{}/", name));
+        } else {
+            matches.push(name);
         }
     }
     matches.sort();
+    Ok(matches)
+}
+
+fn f_file_name_completion(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let file = want_str(i, &a[0])?;
+    let dir = want_filename(i, &a[1])?;
+    let mut matches = dir_completion_names(i, &file, &dir)?;
+    // GNU calls PREDICATE on each candidate with `default-directory'
+    // dynamically bound to DIRECTORY, so predicates like
+    // `file-directory-p' resolve names relative to it.
+    if let Some(pred) = a.get(2) {
+        if pred.truthy() {
+            let dd = i.intern("default-directory");
+            let mark = i.specbind_depth();
+            i.specbind(dd, Value::string(dir.clone()))?;
+            let mut kept = Vec::new();
+            let mut res: Result<(), Flow> = Ok(());
+            for name in matches {
+                let args = Value::list(vec![Value::string(name.clone())]);
+                match i.call_function(pred, &args, None) {
+                    Ok(v) if v.truthy() => kept.push(name),
+                    Ok(_) => {}
+                    Err(e) => {
+                        res = Err(e);
+                        break;
+                    }
+                }
+            }
+            let _ = i.unbind(i.specbind_depth() - mark);
+            res?;
+            matches = kept;
+        }
+    }
     if matches.len() == 1 && matches[0] == file {
         return Ok(Value::t());
     }
@@ -8385,30 +9277,37 @@ fn longest_common_prefix(xs: &[String]) -> String {
 fn f_file_name_all_completions(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let file = want_str(i, &a[0])?;
     let dir = want_filename(i, &a[1])?;
-    let mut matches = Vec::new();
-    if let Ok(rd) = std::fs::read_dir(&dir) {
-        for ent in rd.flatten() {
-            let name = ent.file_name().to_string_lossy().into_owned();
-            if name.starts_with(&file) {
-                matches.push(name);
-            }
-        }
-    }
-    matches.sort();
+    let matches = dir_completion_names(i, &file, &dir)?;
     Ok(Value::list(
         matches.into_iter().map(Value::string).collect(),
     ))
 }
 
 /// Signal the GNU-matching error for a failed mkdir: EEXIST maps to
-/// `file-already-exists`, everything else to `file-error`.
+/// strerror(3) text for an io::Error — GNU reports errno strings
+/// like "No such file or directory" without Rust's "(os error N)"
+/// suffix.
+fn file_error_string(e: &std::io::Error) -> String {
+    if let Some(code) = e.raw_os_error() {
+        unsafe {
+            return std::ffi::CStr::from_ptr(libc::strerror(code))
+                .to_string_lossy()
+                .into_owned();
+        }
+    }
+    e.to_string()
+}
+
+/// Signal the GNU-matching error for a failed mkdir: EEXIST maps to
+/// `file-already-exists` with "File exists" data, everything else to
+/// `file-error' ("Creating directory" strerror DIR).
 fn signal_mkdir_error(i: &mut Interp, dir: &str, e: std::io::Error) -> Flow {
     if e.kind() == std::io::ErrorKind::AlreadyExists {
         let sym = i.intern("file-already-exists");
         i.signal_data(
             sym,
             vec![
-                Value::string("File already exists"),
+                Value::string("File exists"),
                 Value::string(dir.to_string()),
             ],
         )
@@ -8416,7 +9315,8 @@ fn signal_mkdir_error(i: &mut Interp, dir: &str, e: std::io::Error) -> Flow {
         i.signal_data(
             sym::FILE_ERROR,
             vec![
-                Value::string(format!("Creating directory: {}", e)),
+                Value::string("Creating directory"),
+                Value::string(file_error_string(&e)),
                 Value::string(dir.to_string()),
             ],
         )
@@ -8426,12 +9326,18 @@ fn signal_mkdir_error(i: &mut Interp, dir: &str, e: std::io::Error) -> Flow {
 fn f_make_directory(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let dir = want_filename(i, &a[0])?;
     let parents = a.get(1).map(|v| v.truthy()).unwrap_or(false);
-    let r = if parents {
-        std::fs::create_dir_all(&dir)
-    } else {
-        std::fs::create_dir(&dir)
-    };
-    match r {
+    if parents {
+        // GNU make-directory with PARENTS returns t (not nil) when
+        // the directory already exists.
+        if std::path::Path::new(&dir).is_dir() {
+            return Ok(Value::t());
+        }
+        match std::fs::create_dir_all(&dir) {
+            Ok(()) => return Ok(Value::Nil),
+            Err(e) => return Err(signal_mkdir_error(i, &dir, e)),
+        }
+    }
+    match std::fs::create_dir(&dir) {
         Ok(()) => Ok(Value::Nil),
         Err(e) => Err(signal_mkdir_error(i, &dir, e)),
     }
@@ -8572,10 +9478,23 @@ fn f_delete_directory(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     };
     match r {
         Ok(()) => Ok(Value::Nil),
-        Err(e) => Err(i.signal_data(
-            sym::FILE_ERROR,
-            vec![Value::string(format!("Removing directory: {}", e))],
-        )),
+        // GNU report_file_error: ("Removing directory" strerror DIR),
+        // with ENOENT mapping to `file-missing'.
+        Err(e) => {
+            let s = if e.kind() == std::io::ErrorKind::NotFound {
+                sym::FILE_MISSING
+            } else {
+                sym::FILE_ERROR
+            };
+            Err(i.signal_data(
+                s,
+                vec![
+                    Value::string("Removing directory"),
+                    Value::string(file_error_string(&e)),
+                    Value::string(dir.clone()),
+                ],
+            ))
+        }
     }
 }
 fn f_delete_file(i: &mut Interp, a: Vec<Value>) -> EvalResult {
@@ -8652,10 +9571,24 @@ fn f_rename_file(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     }
     match std::fs::rename(&from, &to) {
         Ok(()) => Ok(Value::Nil),
-        Err(e) => Err(i.signal_data(
-            sym::FILE_ERROR,
-            vec![Value::string(format!("Renaming: {}", e))],
-        )),
+        // GNU report_file_error: ("Renaming" strerror FILE NEWNAME),
+        // ENOENT → `file-missing'.
+        Err(e) => {
+            let s = if e.kind() == std::io::ErrorKind::NotFound {
+                sym::FILE_MISSING
+            } else {
+                sym::FILE_ERROR
+            };
+            Err(i.signal_data(
+                s,
+                vec![
+                    Value::string("Renaming"),
+                    Value::string(file_error_string(&e)),
+                    Value::string(from),
+                    Value::string(to),
+                ],
+            ))
+        }
     }
 }
 
@@ -8802,7 +9735,22 @@ fn f_copy_file(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     }
 }
 
-fn f_insert_file_contents(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+/// File bytes → the text `insert-file-contents-literally' inserts:
+/// each byte becomes a character (0x80..=0xFF become GNU eight-bit
+/// chars), so a multibyte buffer sees one char per byte.
+fn file_bytes_literal(bytes: &[u8]) -> String {
+    let mut s = String::with_capacity(bytes.len());
+    for &b in bytes {
+        s.push(if b < 0x80 {
+            b as char
+        } else {
+            crate::lisp::value::lisp_char(0x3FFF00 + b as u32).unwrap()
+        });
+    }
+    s
+}
+
+fn insert_file_contents_impl(i: &mut Interp, a: Vec<Value>, literal: bool) -> EvalResult {
     let path = want_filename(i, &a[0])?;
     let visit = a.get(1).map(|v| v.truthy()).unwrap_or(false);
     let beg = a.get(2).cloned().unwrap_or(Value::Nil);
@@ -8811,22 +9759,28 @@ fn f_insert_file_contents(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let is_regular = std::fs::metadata(&path)
         .map(|m| m.is_file())
         .unwrap_or(true);
-    match std::fs::read_to_string(&path) {
-        Ok(contents) => {
+    match std::fs::read(&path) {
+        Ok(raw) => {
             // GNU: BEG/END are byte offsets into the file.
-            let bytes = contents.as_bytes();
             let lo = match &beg {
-                Value::Int(n) if *n > 0 => (*n as usize).min(bytes.len()),
+                Value::Int(n) if *n > 0 => (*n as usize).min(raw.len()),
                 _ => 0,
             };
             let hi = match &end {
-                Value::Int(n) if *n >= 0 => (*n as usize).min(bytes.len()),
-                _ => bytes.len(),
+                Value::Int(n) if *n >= 0 => (*n as usize).min(raw.len()),
+                _ => raw.len(),
             };
-            let contents = if lo == 0 && hi == bytes.len() {
-                contents
+            let slice = &raw[lo..hi.max(lo)];
+            let contents = if literal {
+                file_bytes_literal(slice)
             } else {
-                String::from_utf8_lossy(&bytes[lo..hi.max(lo)]).into_owned()
+                let mut s = String::from_utf8_lossy(slice).into_owned();
+                // A UTF-8 signature at the start of the file is
+                // coding-system metadata, not text.
+                if lo == 0 && s.starts_with('\u{FEFF}') {
+                    s.remove(0);
+                }
+                s
             };
             let n = contents.chars().count();
             let b = cur(i);
@@ -8854,9 +9808,25 @@ fn f_insert_file_contents(i: &mut Interp, a: Vec<Value>) -> EvalResult {
                 bb.set_point(start);
             }
             if visit {
+                // GNU Finsert_file_contents records the visited name,
+                // truename, modtime, and default-directory.
+                let truename = crate::buffer::file_truename(&path);
                 let mut bb = b.borrow_mut();
                 bb.file_name = Some(path.clone());
+                let bft = i.intern_soft("buffer-file-truename").unwrap_or(u32::MAX);
+                let bfn = i.intern_soft("buffer-file-name").unwrap_or(u32::MAX);
+                bb.locals.insert(bft, Value::string(truename));
+                bb.locals.insert(bfn, Value::string(path.clone()));
                 bb.note_modified(false);
+                if let Ok(m) = std::fs::metadata(&path) {
+                    bb.file_modtime_ns = m
+                        .modified()
+                        .ok()
+                        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                        .map(|d| d.as_secs() as i128 * 1_000_000_000 + d.subsec_nanos() as i128)
+                        .unwrap_or(-2);
+                    bb.file_modtime_size = m.len() as i128;
+                }
                 // set default-directory to file's dir
                 if let Some(dir_end) = path.rfind('/') {
                     let dd = i.intern_soft("default-directory").unwrap_or(u32::MAX);
@@ -8871,7 +9841,7 @@ fn f_insert_file_contents(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         Err(e) => {
             let data = vec![
                 Value::string("Opening input file".to_string()),
-                Value::string(format!("{}", e)),
+                Value::string(file_error_string(&e)),
                 Value::string(path),
             ];
             if e.kind() == std::io::ErrorKind::NotFound {
@@ -8882,8 +9852,13 @@ fn f_insert_file_contents(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         }
     }
 }
+
+fn f_insert_file_contents(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    insert_file_contents_impl(i, a, false)
+}
+
 fn f_insert_file_contents_literally(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    f_insert_file_contents(i, a)
+    insert_file_contents_impl(i, a, true)
 }
 
 fn f_write_region(i: &mut Interp, a: Vec<Value>) -> EvalResult {
@@ -8921,8 +9896,45 @@ fn region_bounds(i: &mut Interp, s: &Value, e: &Value, len: usize) -> (usize, us
     (s0.min(len), e0.min(len))
 }
 
+/// Encode buffer/string text for file output: GNU's raw-text
+/// encoding writes eight-bit chars (0x3FFF80..=0x3FFFFF, held as PUA
+/// proxies) as their single byte values.
+fn file_bytes_of_str(text: &str) -> Vec<u8> {
+    let mut v = Vec::with_capacity(text.len());
+    for c in text.chars() {
+        match crate::lisp::value::eight_bit_byte(c) {
+            Some(b) => v.push(b),
+            None => {
+                let mut buf = [0u8; 4];
+                v.extend_from_slice(c.encode_utf8(&mut buf).as_bytes());
+            }
+        }
+    }
+    v
+}
+
+/// GNU's `write-region' VISIT side effects: make the buffer visit
+/// NAME (buffer-file-name, truename, default-directory, modtime)
+/// and clear the modified flag.
+fn set_visit_state(i: &mut Interp, path: &str) {
+    let truename = crate::buffer::file_truename(path);
+    let b = cur(i);
+    let mut bb = b.borrow_mut();
+    bb.file_name = Some(path.to_string());
+    let bfn = i.intern_soft("buffer-file-name").unwrap_or(u32::MAX);
+    let bft = i.intern_soft("buffer-file-truename").unwrap_or(u32::MAX);
+    bb.locals.insert(bfn, Value::string(path.to_string()));
+    bb.locals.insert(bft, Value::string(truename));
+    if let Some(dir_end) = path.rfind('/') {
+        let dd = i.intern_soft("default-directory").unwrap_or(u32::MAX);
+        bb.locals.insert(dd, Value::string(path[..=dir_end].to_string()));
+    }
+    update_visited_file_modtime(&mut bb, path);
+    bb.note_modified(false);
+}
+
 fn write_file_string(i: &mut Interp, path: &str, text: &str, a: &[Value]) -> EvalResult {
-    let append = a.get(3).map(|v| v.truthy()).unwrap_or(false);
+    let append = a.get(3).cloned().unwrap_or(Value::Nil);
     let excl = matches!(a.get(6), Some(Value::Sym(s)) if *s == i.intern("excl"));
     if excl && std::path::Path::new(path).exists() {
         // MUSTBENEW = 'excl: fail if the file exists.
@@ -8931,58 +9943,291 @@ fn write_file_string(i: &mut Interp, path: &str, text: &str, a: &[Value]) -> Eva
             vec![Value::string("File already exists"), Value::string(path)],
         ));
     }
-    let r = if append {
-        std::fs::OpenOptions::new()
+    let bytes = file_bytes_of_str(text);
+    let r = match &append {
+        // GNU: an integer APPEND overwrites at that byte offset
+        // (the file keeps its trailing bytes; no truncation).
+        Value::Int(off) => std::fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .open(path)
+            .and_then(|mut f| {
+                use std::io::{Seek, SeekFrom, Write};
+                f.seek(SeekFrom::Start((*off).max(0) as u64))
+                    .and_then(|_| f.write_all(&bytes))
+            }),
+        v if v.truthy() => std::fs::OpenOptions::new()
             .append(true)
             .create(true)
             .open(path)
-            .and_then(|mut f| std::io::Write::write_all(&mut f, text.as_bytes()))
-    } else {
-        std::fs::write(path, text)
+            .and_then(|mut f| std::io::Write::write_all(&mut f, &bytes)),
+        _ => std::fs::write(path, &bytes),
     };
     match r {
         Ok(()) => {
-            // GNU shows "Wrote ..." only interactively with a non-nil
-            // VISIT arg; batch write-region (e.g. with-temp-file) is
-            // silent.
-            let visit = a.get(4).map(|v| v.truthy()).unwrap_or(false);
-            if visit && !i.noninteractive {
-                i.message(&format!("Wrote {}", path));
-            }
             // GNU: writing the visited file refreshes the recorded
             // modtime (write-region / basic-save-buffer path).
             update_visited_file_modtime(&mut cur(i).borrow_mut(), path);
+            let visit = a.get(4).cloned().unwrap_or(Value::Nil);
+            match &visit {
+                // VISIT a string → the buffer visits THAT name.
+                Value::Str(name) => {
+                    set_visit_state(i, &name.borrow().clone());
+                    if !i.noninteractive {
+                        i.message(&format!("Wrote {}", path));
+                    }
+                }
+                // GNU: only `t' makes the buffer visit FILENAME; other
+                // truthy values ('quiet, 'nomsg, 'silent, ...) just
+                // suppress the "Wrote" message without visiting.
+                Value::Sym(s) if *s == sym::T => {
+                    set_visit_state(i, path);
+                    if !i.noninteractive {
+                        i.message(&format!("Wrote {}", path));
+                    }
+                }
+                // VISIT nil → GNU still prints "Wrote file"
+                // interactively (only batch and non-nil/non-t/non-string
+                // values suppress it).
+                Value::Nil => {
+                    if !i.noninteractive {
+                        i.message(&format!("Wrote {}", path));
+                    }
+                }
+                _ => {}
+            }
             Ok(Value::Nil)
         }
-        Err(e) => Err(i.signal_data(
-            sym::FILE_ERROR,
-            vec![
-                Value::string(format!("Writing region: {}", e)),
-                Value::string(path),
-            ],
-        )),
+        Err(e) => {
+            // GNU report_file_error: ("Opening output file" strerror
+            // FILENAME), ENOENT → `file-missing'.
+            let s = if e.kind() == std::io::ErrorKind::NotFound {
+                sym::FILE_MISSING
+            } else {
+                sym::FILE_ERROR
+            };
+            Err(i.signal_data(
+                s,
+                vec![
+                    Value::string("Opening output file"),
+                    Value::string(file_error_string(&e)),
+                    Value::string(path),
+                ],
+            ))
+        }
     }
 }
 
 fn f_set_visited_file_name(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let b = cur(i);
-    let mut bb = b.borrow_mut();
-    match &a.get(0).cloned().unwrap_or(Value::Nil) {
-        Value::Nil => bb.file_name = None,
-        Value::Str(s) => bb.file_name = Some(s.borrow().clone()),
-        other => return Err(i.wrong_type_mut("stringp", other)),
+    // GNU files.el: nil/"" unvisits; otherwise expand, record name,
+    // truename, and default-directory, rename the buffer to the file
+    // basename (uniquify keeps it unique), and — with a file name —
+    // mark the buffer modified since its contents no longer match
+    // the newly named file.
+    let fname = match &a.get(0).cloned().unwrap_or(Value::Nil) {
+        Value::Nil => None,
+        Value::Str(s) if s.borrow().is_empty() => None,
+        Value::Str(s) => Some(expand_file_name_str(i, &s.borrow())),
+        other => return Err(i.wrong_type_mut("stringp", &other.clone())),
+    };
+    let bid = i.current_buffer;
+    let truename = fname.as_ref().map(|f| crate::buffer::file_truename(f));
+    {
+        let b = cur(i);
+        let mut bb = b.borrow_mut();
+        let bfn = i.intern_soft("buffer-file-name").unwrap_or(u32::MAX);
+        let bft = i.intern_soft("buffer-file-truename").unwrap_or(u32::MAX);
+        bb.locals.insert(
+            bfn,
+            match &fname {
+                Some(f) => Value::string(f.clone()),
+                None => Value::Nil,
+            },
+        );
+        bb.locals.insert(
+            bft,
+            match &truename {
+                Some(t) => Value::string(t.clone()),
+                None => Value::Nil,
+            },
+        );
+        bb.file_name = fname.clone();
+        if let Some(f) = &fname {
+            if let Some(dir_end) = f.rfind('/') {
+                let dd = i.intern_soft("default-directory").unwrap_or(u32::MAX);
+                bb.locals.insert(dd, Value::string(f[..=dir_end].to_string()));
+            }
+            // GNU: (and buffer-file-name (not along-with-file)
+            //       (set-buffer-modified-p t))
+            bb.note_modified(true);
+        }
     }
-    bb.note_modified(false);
+    if let Some(f) = &fname {
+        let new_name = f.rsplit('/').next().unwrap_or(f).to_string();
+        if !new_name.is_empty() {
+            let cur_name = cur(i).borrow().name.clone();
+            if cur_name != new_name {
+                // (rename-buffer new-name t): uniquify on clash.
+                i.buffers.rename(bid, &new_name);
+            }
+        }
+    }
+    // GNU files.el set-visited-file-name tail: unless the mode is
+    // `special', let the file name pick the major mode
+    // (set-auto-mode) and re-run file-local variables when the mode
+    // changed.  Errors are swallowed (condition-case ... (error nil)).
+    // This is what gives e.g. .txt files `text-mode' and its
+    // buffer-local `require-final-newline' in `write-file'.
+    {
+        let cmmw = i
+            .intern_soft("change-major-mode-with-file-name")
+            .map(|id| i.symbol_value(id).truthy())
+            .unwrap_or(true);
+        let get = i.intern_soft("get");
+        let mc = i.intern_soft("mode-class");
+        let mm_id = i.intern_soft("major-mode");
+        let mode_val = mm_id
+            .and_then(|mm| cur(i).borrow().locals.get(&mm).cloned())
+            .unwrap_or(Value::Nil);
+        let special = if !cmmw {
+            true
+        } else {
+            match (mode_val.clone(), get, mc) {
+                (Value::Sym(m), Some(g), Some(mc)) => i
+                    .apply(&Value::Sym(g), vec![Value::Sym(m), Value::Sym(mc)])
+                    .map(|v| v.truthy())
+                    .unwrap_or(false),
+                _ => false,
+            }
+        };
+        if !special {
+            let hlv = i.intern("hack-local-variables");
+            let applied = i
+                .apply(&Value::Sym(hlv), vec![Value::t()])
+                .map(|v| v.truthy())
+                .unwrap_or(false);
+            if !applied {
+                let sam = i.intern("set-auto-mode");
+                if i.fbound_p(sam) {
+                    let _ = i.apply(&Value::Sym(sam), vec![Value::t()]);
+                    let now_mode = mm_id
+                        .and_then(|mm| cur(i).borrow().locals.get(&mm).cloned())
+                        .unwrap_or(Value::Nil);
+                    if !crate::lisp::builtins::equal_values(i, &now_mode, &mode_val) {
+                        let _ = i.apply(&Value::Sym(hlv), vec![Value::Nil]);
+                    }
+                }
+            }
+        }
+    }
     Ok(Value::Nil)
+}
+
+/// GNU `find-file-noselect' wildcard check: WILDCARDS arg +
+/// `find-file-wildcards' + glob chars in FILENAME.
+fn find_file_wildcards_p(i: &Interp, filename: &str, a: &[Value]) -> bool {
+    let wildcards = a.get(3).map(|v| v.truthy()).unwrap_or(false);
+    if !wildcards {
+        return false;
+    }
+    let ffw = i
+        .intern_soft("find-file-wildcards")
+        .map(|id| i.symbol_value(id).truthy())
+        .unwrap_or(true);
+    ffw && filename.chars().any(|c| matches!(c, '*' | '?' | '['))
 }
 
 fn f_find_file_noselect(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let path = want_filename(i, &a[0])?;
-    // If a buffer already visits this file, return it.
+    // GNU files.el: with WILDCARDS non-nil and `find-file-wildcards'
+    // enabled, a name containing glob metacharacters visits every
+    // match and returns a LIST of the buffers.
+    if find_file_wildcards_p(i, &path, &a) {
+        let few = i.intern("file-expand-wildcards");
+        if i.fbound_p(few) {
+            let files = i.apply(
+                &Value::Sym(few),
+                vec![Value::string(path.clone()), Value::t()],
+            )?;
+            let mut bufs = Vec::new();
+            let mut fs = files;
+            loop {
+                match fs {
+                    Value::Cons(c) => {
+                        let (car, cdr) = {
+                            let b = c.borrow();
+                            (b.car.clone(), b.cdr.clone())
+                        };
+                        if let Value::Str(f) = car {
+                            let b = f_find_file_noselect(
+                                i,
+                                vec![Value::Str(f.clone()), arg(&a, 1), arg(&a, 2), Value::Nil],
+                            )?;
+                            bufs.push(b);
+                        }
+                        fs = cdr;
+                    }
+                    _ => break,
+                }
+            }
+            return Ok(Value::list(bufs));
+        }
+    }
+    // GNU files.el `find-file-noselect': a directory argument goes to
+    // `find-directory-functions' (dired-noselect) instead of visiting
+    // it as a file — that's what makes `C-x C-f DIR RET' open Dired.
+    if std::path::Path::new(&path).is_dir() {
+        let ffrd = i.intern_soft("find-file-run-dired").map(|id| i.symbol_value(id));
+        if ffrd.map_or(false, |v| v.truthy()) {
+            // With `find-file-visit-truename' non-nil GNU passes the
+            // abbreviated truename to the hook functions.
+            let arg = if i
+                .intern_soft("find-file-visit-truename")
+                .map_or(false, |id| i.symbol_value(id).truthy())
+            {
+                let ft = i.intern("file-truename");
+                let tr = if i.fbound_p(ft) {
+                    i.apply(&Value::Sym(ft), vec![Value::string(path.clone())])?
+                } else {
+                    Value::string(path.clone())
+                };
+                let ab = i.intern("abbreviate-file-name");
+                if i.fbound_p(ab) {
+                    i.apply(&Value::Sym(ab), vec![tr])?
+                } else {
+                    tr
+                }
+            } else {
+                Value::string(path.clone())
+            };
+            let hook = i.intern("run-hook-with-args-until-success");
+            let fdf = i.intern("find-directory-functions");
+            let r = i.apply(&Value::Sym(hook), vec![Value::Sym(fdf), arg])?;
+            if r.truthy() {
+                return Ok(r);
+            }
+        }
+        return Err(i.error(format!("{} is a directory", path)));
+    }
+    // If a buffer already visits this file, return it.  GNU also
+    // recognizes the file's TRUENAME (a symlink to a visited file
+    // returns the target's buffer).
+    let truename = crate::buffer::file_truename(&path);
     for id in i.buffers.list() {
         if let Some(b) = i.buffers.get(id) {
-            if b.borrow().file_name.as_deref() == Some(path.as_str()) {
+            let bb = b.borrow();
+            if bb.file_name.as_deref() == Some(path.as_str()) {
                 return Ok(Value::Buffer(b.clone()));
+            }
+            // Alias: this buffer visits the truename of PATH.
+            if bb.file_name.as_deref() == Some(truename.as_str()) {
+                return Ok(Value::Buffer(b.clone()));
+            }
+            let bft = i.intern_soft("buffer-file-truename").unwrap_or(u32::MAX);
+            if let Some(Value::Str(tn)) = bb.locals.get(&bft) {
+                if tn.borrow().as_str() == truename {
+                    return Ok(Value::Buffer(b.clone()));
+                }
             }
         }
     }
@@ -9013,7 +10258,7 @@ fn f_find_file_noselect(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         let bfn = i.intern_soft("buffer-file-name").unwrap_or(u32::MAX);
         let bft = i.intern_soft("buffer-file-truename").unwrap_or(u32::MAX);
         bb.locals.insert(bfn, Value::string(path.clone()));
-        bb.locals.insert(bft, Value::string(path.clone()));
+        bb.locals.insert(bft, Value::string(truename.clone()));
         // Snapshot `create-lockfiles' for Buffer's C-level auto-lock
         // (which cannot see Lisp state during modification).
         if let Some(cl) = i.intern_soft("create-lockfiles") {
@@ -9106,22 +10351,52 @@ fn update_visited_file_modtime(bb: &mut crate::buffer::Buffer, path: &str) {
 
 fn f_save_buffer(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
     let b = cur(i);
-    let (path, text) = {
+    let path = {
         let bb = b.borrow();
         match &bb.file_name {
-            Some(p) => (p.clone(), bb.text.text()),
+            Some(p) => p.clone(),
+            // GNU basic-save-buffer prompts for a file name; in batch
+            // that read hits end-of-file.
+            None if i.noninteractive => {
+                let s = i.intern("end-of-file");
+                return Err(i.signal_data(s, vec![Value::string("Error reading from stdin")]));
+            }
             None => return Err(i.error("No file is associated with this buffer")),
         }
     };
-    match std::fs::write(&path, &text) {
+    // GNU basic-save-buffer: with `require-final-newline' non-nil a
+    // buffer that doesn't end in a newline gets one appended before
+    // writing (the buffer itself is extended, like save-excursion at
+    // point-max).
+    let rfn = i
+        .intern_soft("require-final-newline")
+        .map(|id| i.symbol_value(id))
+        .unwrap_or(Value::Nil);
+    {
+        let bb = b.borrow();
+        let len = bb.text.len();
+        let needs_nl = len > 0
+            && !bb.text.substring(len - 1, len).ends_with('\n')
+            && rfn.truthy();
+        drop(bb);
+        if needs_nl {
+            let len2 = cur(i).borrow().text.len();
+            crate::buffer::primitives::chg_insert(i, len2, "\n")?;
+        }
+    }
+    let text = b.borrow().text.text();
+    match std::fs::write(&path, file_bytes_of_str(&text)) {
         Ok(()) => {
             {
                 let mut bb = b.borrow_mut();
                 bb.note_modified(false);
                 update_visited_file_modtime(&mut bb, &path);
             }
-            i.message(&format!("Wrote {}", path));
-            Ok(Value::t())
+            if !i.noninteractive {
+                i.message(&format!("Wrote {}", path));
+            }
+            // GNU basic-save-buffer-1 returns nil.
+            Ok(Value::Nil)
         }
         Err(e) => Err(i.signal_data(
             sym::FILE_ERROR,
@@ -9134,8 +10409,11 @@ fn f_save_buffer(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
 }
 
 fn f_write_file(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    // GNU `write-file' → basic-save-buffer: visits FILENAME
+    // (renaming the buffer), writes, and returns nil.
     f_set_visited_file_name(i, vec![a[0].clone()])?;
-    f_save_buffer(i, vec![])
+    f_save_buffer(i, vec![])?;
+    Ok(Value::Nil)
 }
 
 fn f_append_to_file(i: &mut Interp, a: Vec<Value>) -> EvalResult {
@@ -9324,7 +10602,13 @@ fn f_file_name_quote(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 
 fn f_file_name_unquote(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let name = want_str(i, &a[0])?;
-    let n = name.strip_prefix("/:").unwrap_or(&name).to_string();
+    // GNU fileio.c: a "/:" that quotes the filesystem root itself
+    // unquotes to "/" rather than the empty string.
+    let n = match name.strip_prefix("/:") {
+        Some("") => "/".to_string(),
+        Some(rest) => rest.to_string(),
+        None => name,
+    };
     Ok(Value::string(n))
 }
 
@@ -9492,6 +10776,30 @@ fn f_call_process(i: &mut Interp, a: Vec<Value>) -> EvalResult {
             cmd.stdin(std::process::Stdio::from(f));
         }
     }
+    // (DEST . STDERR) with STDERR not a string: GNU shares the stdout
+    // pipe (callproc.c fd_error=fd1) → real interleaved arrival order.
+    // Decide before spawning: string cdr → file; else mix via a shared
+    // output tempfile.
+    let mix_stderr = matches!(&arg(&a, 2), Value::Cons(c) if {
+        let cb = c.borrow();
+        !matches!(&cb.car, Value::Sym(s) if *s == i.intern(":file"))
+            && !matches!(&cb.cdr, Value::Str(_))
+            && !matches!(&cb.cdr, Value::Cons(cc) if matches!(&cc.borrow().car, Value::Str(_)))
+    });
+    let mix_file = if mix_stderr {
+        let tf = std::env::temp_dir().join(format!("remacs-cp-{}", std::process::id()));
+        match std::fs::File::create(&tf) {
+            Ok(f) => {
+                let f2 = f.try_clone().ok();
+                cmd.stdout(std::process::Stdio::from(f));
+                cmd.stderr(std::process::Stdio::from(f2.unwrap()));
+                Some(tf)
+            }
+            Err(_) => None,
+        }
+    } else {
+        None
+    };
     let output = match cmd.output() {
         Ok(o) => o,
         Err(e) => {
@@ -9527,14 +10835,23 @@ fn f_call_process(i: &mut Interp, a: Vec<Value>) -> EvalResult {
                 other => other.clone(),
             };
             match &err {
-                Value::Sym(s) if *s == sym::T => (cb.car.clone(), true, None),
+                // Only a STRING cdr diverts stderr to a file — GNU
+                // callproc.c mixes stderr into the destination for
+                // both (DEST . t) and (DEST . nil) (pinned).
                 Value::Str(p) => (cb.car.clone(), false, Some(p.borrow().clone())),
-                _ => (cb.car.clone(), false, None),
+                _ => (cb.car.clone(), true, None),
             }
         }
         other => (other.clone(), false, None),
     };
-    let stdout = {
+    let stdout = if let Some(tf) = &mix_file {
+        // Interleaved bytes already merged at the fd; keep order.
+        let s = std::fs::read(tf)
+            .map(|b| String::from_utf8_lossy(&b).into_owned())
+            .unwrap_or_default();
+        let _ = std::fs::remove_file(tf);
+        s
+    } else {
         let mut s = String::from_utf8_lossy(&output.stdout).into_owned();
         if stderr_to_stdout {
             s.push_str(&String::from_utf8_lossy(&output.stderr));
@@ -9598,6 +10915,29 @@ fn f_call_process_region(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let mut cmd = std::process::Command::new(&prog);
     cmd.stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped());
+    // (DEST . STDERR-FILE) cons destinations: a string cdr diverts
+    // stderr to that file; t/nil merge stderr into the destination
+    // (GNU callproc convention; we append, losing only ordering).
+    let (real_dest, merge_stderr) = match &a.get(4).cloned().unwrap_or(Value::Nil) {
+        Value::Cons(c) => {
+            let cb = c.borrow();
+            let tail = match &cb.cdr {
+                Value::Cons(cc) => cc.borrow().car.clone(),
+                other => other.clone(),
+            };
+            match tail {
+                Value::Str(p) => {
+                    let path = p.borrow().clone();
+                    if let Ok(f) = std::fs::File::create(&path) {
+                        cmd.stderr(std::process::Stdio::from(f));
+                    }
+                    (cb.car.clone(), false)
+                }
+                _ => (cb.car.clone(), true),
+            }
+        }
+        other => (other.clone(), false),
+    };
     for v in a.get(6..).unwrap_or(&[]) {
         cmd.arg(want_str(i, v)?);
     }
@@ -9630,26 +10970,30 @@ fn f_call_process_region(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let output = child
         .wait_with_output()
         .map_err(|e| i.signal_data(sym::FILE_ERROR, vec![Value::string(e.to_string())]))?;
-    let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
-    // DELETE: replace the region.
+    let mut stdout = String::from_utf8_lossy(&output.stdout).into_owned();
+    if merge_stderr {
+        stdout.push_str(&String::from_utf8_lossy(&output.stderr));
+    }
+    // GNU: DELETE deletes the region; DESTINATION controls where the
+    // output goes — nil discards, a positive number inserts at that
+    // position, t/other buffers insert at their point.
     if a.get(3).map(|v| v.truthy()).unwrap_or(false) {
         let len = cur(i).borrow().text.len();
         let (s, e) = region_bounds(i, &a[0], &a[1], len);
         crate::buffer::primitives::chg_delete(i, s.min(e), s.max(e))?;
-        crate::buffer::primitives::chg_insert(i, s.min(e), &stdout)?;
-    } else {
-        let dest = arg(&a, 4);
-        if dest.truthy() {
-            let bid = if i.sym_id(&dest).map(|s| s == sym::T).unwrap_or(false) {
-                i.current_buffer
-            } else {
-                i.buffer_id_of(&dest).unwrap_or(i.current_buffer)
-            };
-            if i.buffers.get(bid).is_some() {
-                crate::buffer::primitives::chg_with_buffer(i, bid, |i| {
-                    crate::buffer::primitives::chg_insert_pt(i, &stdout, false)
-                })?;
-            }
+    }
+    if let Some(pos) = real_dest.int().filter(|n| *n > 0).map(|n| n as usize) {
+        crate::buffer::primitives::chg_insert(i, pos - 1, &stdout)?;
+    } else if real_dest.truthy() {
+        let bid = if i.sym_id(&real_dest).map(|s| s == sym::T).unwrap_or(false) {
+            i.current_buffer
+        } else {
+            i.buffer_id_of(&real_dest).unwrap_or(i.current_buffer)
+        };
+        if i.buffers.get(bid).is_some() {
+            crate::buffer::primitives::chg_with_buffer(i, bid, |i| {
+                crate::buffer::primitives::chg_insert_pt(i, &stdout, false)
+            })?;
         }
     }
     Ok(Value::Int(output.status.code().unwrap_or(1) as i128))
@@ -9664,31 +11008,64 @@ fn f_shell_command(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     match out {
         Ok(o) => {
             let stdout = String::from_utf8_lossy(&o.stdout).into_owned();
+            let stderr = String::from_utf8_lossy(&o.stderr).into_owned();
             let dest = arg(&a, 1);
-            if dest.truthy() || matches!(a.get(1), None) {
-                // t/nil → display in *Shell Command Output*
-                let bid = i
-                    .buffers
+            let bid = if dest.truthy()
+                && !i.sym_id(&dest).map(|s| s == sym::T).unwrap_or(false)
+            {
+                i.buffer_id_of(&dest).unwrap_or(i.current_buffer)
+            } else {
+                i.buffers
                     .by_name("*Shell Command Output*")
-                    .unwrap_or_else(|| i.buffers.create("*Shell Command Output*"));
-                if i.buffers.get(bid).is_some() {
-                    crate::buffer::primitives::chg_with_buffer(i, bid, |i| {
-                        let b = i.buffers.get(bid).unwrap();
-                        let old_len = b.borrow().text.len();
-                        crate::lisp::builtins::evalfn::signal_before_change(i, 1, old_len + 1)?;
-                        {
-                            let mut bb = b.borrow_mut();
-                            bb.text.set_text(&stdout);
-                            bb.zv = bb.text.len();
-                        }
-                        let new_len = stdout.chars().count();
-                        crate::lisp::builtins::evalfn::signal_after_change(
-                            i,
-                            1,
-                            new_len + 1,
-                            old_len,
-                        )
-                    })?;
+                    .unwrap_or_else(|| i.buffers.create("*Shell Command Output*"))
+            };
+            if i.buffers.get(bid).is_some() {
+                crate::buffer::primitives::chg_with_buffer(i, bid, |i| {
+                    let b = i.buffers.get(bid).unwrap();
+                    let old_len = b.borrow().text.len();
+                    crate::lisp::builtins::evalfn::signal_before_change(i, 1, old_len + 1)?;
+                    {
+                        let mut bb = b.borrow_mut();
+                        bb.text.set_text(&stdout);
+                        bb.zv = bb.text.len();
+                    }
+                    let new_len = stdout.chars().count();
+                    crate::lisp::builtins::evalfn::signal_after_change(
+                        i,
+                        1,
+                        new_len + 1,
+                        old_len,
+                    )
+                })?;
+            }
+            // ERROR-BUFFER captures stderr separately.
+            let errb = arg(&a, 2);
+            if errb.truthy() {
+                if let Some(eid) = i.buffer_id_of(&errb) {
+                    if i.buffers.get(eid).is_some() {
+                        let s = stderr.clone();
+                        crate::buffer::primitives::chg_with_buffer(i, eid, |i| {
+                            let b = i.buffers.get(eid).unwrap();
+                            let old_len = b.borrow().text.len();
+                            crate::lisp::builtins::evalfn::signal_before_change(
+                                i,
+                                1,
+                                old_len + 1,
+                            )?;
+                            {
+                                let mut bb = b.borrow_mut();
+                                bb.text.set_text(&s);
+                                bb.zv = bb.text.len();
+                            }
+                            let new_len = s.chars().count();
+                            crate::lisp::builtins::evalfn::signal_after_change(
+                                i,
+                                1,
+                                new_len + 1,
+                                old_len,
+                            )
+                        })?;
+                    }
                 }
             }
             Ok(Value::Int(o.status.code().unwrap_or(1) as i128))
@@ -9713,31 +11090,6 @@ fn f_shell_command_to_string(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 
 // ---------- editing commands ----------
 
-fn f_kill_line(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let n = arg(&a, 0).int().unwrap_or(1);
-    let b = cur(i);
-    let mut bb = b.borrow_mut();
-    let p = bb.point();
-    let le = bb.text.line_end(p);
-    let killed;
-    if p == le {
-        if p >= bb.text.len() {
-            // Point at the very end of the buffer: nothing to kill.
-            drop(bb);
-            let sym = i.intern("end-of-buffer");
-            return Err(i.signal_data(sym, Vec::new()));
-        }
-        // at EOL: kill the newline(s)
-        let end = (p + n.max(1) as usize).min(bb.text.len());
-        drop(bb);
-        killed = crate::buffer::primitives::chg_delete(i, p, end)?;
-    } else {
-        drop(bb);
-        killed = crate::buffer::primitives::chg_delete(i, p, le)?;
-    }
-    crate::buffer::primitives::push_kill_ring(i, killed)?;
-    Ok(Value::Nil)
-}
 
 fn f_kill_whole_line(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let n = arg(&a, 0).int().unwrap_or(1);
@@ -9757,7 +11109,15 @@ fn f_kill_whole_line(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let killed = crate::buffer::primitives::chg_delete(i, s, e.min(tlen))?;
     cur(i).borrow_mut().set_point(s);
     crate::buffer::primitives::push_kill_ring(i, killed)?;
-    Ok(Value::Nil)
+    // GNU's Lisp `kill-whole-line' ends with `(set-marker regions-begin
+    // nil)' which RETURNS the (now-detached) marker, not nil.
+    Ok(crate::lisp::value::Value::Marker(Rc::new(RefCell::new(
+        crate::lisp::value::Marker {
+            buffer: None,
+            position: 0,
+            insertion_type: false,
+        },
+    ))))
 }
 
 fn f_kill_word(i: &mut Interp, a: Vec<Value>) -> EvalResult {
@@ -9846,30 +11206,6 @@ fn f_just_one_space(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     Ok(Value::Nil)
 }
 
-fn f_delete_indentation(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
-    let b = cur(i);
-    let mut bb = b.borrow_mut();
-    // Join to previous line: find BOL, if >0 join with prev line.
-    let p = bb.point();
-    let line = bb.text.line_of_pos(p);
-    if line == 0 {
-        return Ok(Value::Nil);
-    }
-    let ls = bb.text.line_start(line);
-    if ls == 0 {
-        return Ok(Value::Nil);
-    }
-    // Delete the newline + leading whitespace of this line.
-    let mut e = ls;
-    while e < bb.text.len() && matches!(bb.text.char_at(e), ' ' | '\t') {
-        e += 1;
-    }
-    let s = ls - 1; // the newline
-    drop(bb);
-    crate::buffer::primitives::chg_delete(i, s, e)?;
-    cur(i).borrow_mut().set_point(s);
-    Ok(Value::Nil)
-}
 
 fn f_zap_to_char(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let n = arg(&a, 0).int().unwrap_or(1);
@@ -9897,81 +11233,18 @@ fn f_zap_to_char(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     Ok(Value::Nil)
 }
 
-fn f_transpose_chars(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let n = arg(&a, 0).int().unwrap_or(1);
-    if n == 0 {
-        return Ok(Value::Nil);
-    }
-    let b = cur(i);
-    let mut bb = b.borrow_mut();
-    let p = bb.point();
-    if p == 0 || p >= bb.text.len() {
-        return Err(i.error("No character to transpose"));
-    }
-    // transpose chars at p-1 and p (Emacs transposes the two chars around point)
-    let c1 = bb.text.char_at(p - 1);
-    let c2 = bb.text.char_at(p);
-    let s2 = c2.to_string();
-    let s1 = c1.to_string();
-    drop(bb);
-    crate::lisp::builtins::evalfn::signal_before_change(i, p, p + 1)?;
-    let b = cur(i);
-    let mut bb = b.borrow_mut();
-    bb.record_delete(p, s2.clone());
-    bb.text.delete(p, p + 1);
-    bb.adjust_markers_delete(p, p + 1);
-    bb.record_insert(p, s1.chars().count());
-    bb.text.insert(p, &s1);
-    bb.adjust_markers_insert(p, s1.chars().count(), false);
-    bb.record_delete(p - 1, s1);
-    bb.text.delete(p - 1, p);
-    bb.adjust_markers_delete(p - 1, p);
-    bb.record_insert(p - 1, s2.chars().count());
-    bb.text.insert(p - 1, &s2);
-    bb.adjust_markers_insert(p - 1, s2.chars().count(), false);
-    bb.note_text_change(2);
-    drop(bb);
-    crate::lisp::builtins::evalfn::signal_after_change(i, p, p + 1, 2)?;
-    Ok(Value::Nil)
-}
-
-fn f_transpose_lines(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let n = arg(&a, 0).int().unwrap_or(1);
-    let _ = n;
-    let b = cur(i);
-    let mut bb = b.borrow_mut();
-    let line = bb.text.line_of_pos(bb.point());
-    if line == 0 {
-        return Err(i.error("No previous line"));
-    }
-    let l1s = bb.text.line_start(line - 1);
-    let l1e = bb.text.line_end(l1s);
-    let l2s = bb.text.line_start(line);
-    let l2e = bb.text.line_end(l2s);
-    let l1 = bb.text.substring(l1s, l1e);
-    let l2 = bb.text.substring(l2s, l2e);
-    drop(bb);
-    crate::lisp::builtins::evalfn::signal_before_change(i, l1s + 1, l2e + 1)?;
-    let b = cur(i);
-    let mut bb = b.borrow_mut();
-    bb.record_delete(l1s, format!("{}\n{}", l1, l2));
-    bb.text.delete(l1s, l2e);
-    bb.adjust_markers_delete(l1s, l2e);
-    let new = format!("{}\n{}", l2, l1);
-    bb.record_insert(l1s, new.chars().count());
-    bb.text.insert(l1s, &new);
-    bb.adjust_markers_insert(l1s, new.chars().count(), false);
-    bb.note_text_change(l2e - l1s + new.chars().count());
-    drop(bb);
-    crate::lisp::builtins::evalfn::signal_after_change(i, l1s + 1, l2e + 1, l2e - l1s)?;
-    Ok(Value::Nil)
-}
 
 fn region_op(i: &mut Interp, a: &[Value], op: crate::lisp::builtins::strfn::CaseOp) -> EvalResult {
     use crate::lisp::builtins::strfn::{case_extra, case_str};
     let b = cur(i);
     let down = i.current_case_table();
     let up = case_extra(&down, 0).unwrap_or_else(|| down.clone());
+    let title = match op {
+        crate::lisp::builtins::strfn::CaseOp::Cap | crate::lisp::builtins::strfn::CaseOp::CapUp => {
+            crate::lisp::builtins::charset::unicode_prop_table(i, "titlecase")
+        }
+        _ => Value::Nil,
+    };
     let (s, e, old) = {
         let bb = b.borrow();
         let len = bb.text.len();
@@ -9979,7 +11252,7 @@ fn region_op(i: &mut Interp, a: &[Value], op: crate::lisp::builtins::strfn::Case
         let (s, e) = (s.min(e), s.max(e));
         (s, e, bb.text.substring(s, e))
     };
-    let new = case_str(i, &old, op, &down, &up);
+    let new = case_str(i, &old, op, &down, &up, &title);
     // GNU `casify_region': `modify_text' fires whenever the region is
     // non-empty (before-change + MODIFF bump even when nothing
     // changed); `after-change' fires only when case actually changed,
@@ -10043,6 +11316,12 @@ fn word_op(i: &mut Interp, a: &[Value], op: crate::lisp::builtins::strfn::CaseOp
     let b = cur(i);
     let down = i.current_case_table();
     let up = case_extra(&down, 0).unwrap_or_else(|| down.clone());
+    let title = match op {
+        crate::lisp::builtins::strfn::CaseOp::Cap | crate::lisp::builtins::strfn::CaseOp::CapUp => {
+            crate::lisp::builtins::charset::unicode_prop_table(i, "titlecase")
+        }
+        _ => Value::Nil,
+    };
     let syn = syntax_table_entries(i);
     let wordp = |c: char| syntax_entry_code(syn.as_ref(), c) == b'w';
     let start = b.borrow().point();
@@ -10069,7 +11348,7 @@ fn word_op(i: &mut Interp, a: &[Value], op: crate::lisp::builtins::strfn::CaseOp
     }
     let (s, e) = (start.min(p), start.max(p));
     let old = b.borrow().text.substring(s, e);
-    let new = case_str(i, &old, op, &down, &up);
+    let new = case_str(i, &old, op, &down, &up, &title);
     // GNU `casify_region' shape (see region_op).
     crate::lisp::builtins::evalfn::signal_before_change(i, s + 1, e + 1)?;
     let old_len = e - s;
@@ -10128,8 +11407,71 @@ fn f_capitalize_word(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     word_op(i, &a, crate::lisp::builtins::strfn::CaseOp::Cap)
 }
 
+fn f_delete_indentation(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let b = cur(i);
+    let mut bb = b.borrow_mut();
+    let syn = syntax_table_entries(i);
+    let arg_follow = a.first().map(|v| v.truthy()).unwrap_or(false);
+    let p = bb.point();
+    let line = bb.text.line_of_pos(p);
+    // GNU: ARG non-nil joins the FOLLOWING line to this one; otherwise
+    // join current line to the previous.
+    let join_line = if arg_follow { line + 1 } else { line };
+    if join_line == 0 {
+        return Ok(Value::Nil);
+    }
+    let ls = bb.text.line_start(join_line);
+    if ls == 0 || (arg_follow && ls >= bb.text.len()) {
+        return Ok(Value::Nil);
+    }
+    // Delete the newline + leading whitespace of the joined line,
+    // plus trailing horizontal whitespace on the previous line.
+    let mut e = ls;
+    while e < bb.text.len() && matches!(bb.text.char_at(e), ' ' | '\t') {
+        e += 1;
+    }
+    let mut s = ls - 1; // the newline
+    while s > 0 && matches!(bb.text.char_at(s - 1), ' ' | '\t')
+        && bb.text.char_at(s - 1) != '\n'
+    {
+        s -= 1;
+    }
+    // fixup-whitespace: insert one space unless point lands at
+    // BOL/EOL/close-paren, or follows open-paren/expression-prefix.
+    let need_space = {
+        let at = if e < bb.text.len() { Some(bb.text.char_at(e)) } else { None };
+        let before = if s > 0 { Some(bb.text.char_at(s - 1)) } else { None };
+        let close = at
+            .map(|c| syntax_entry_code(syn.as_ref(), c) == b')')
+            .unwrap_or(false);
+        let opens = before
+            .map(|c| {
+                let k = syntax_entry_code(syn.as_ref(), c);
+                k == b'(' || k == b'\''
+            })
+            .unwrap_or(false);
+        !(close || opens || at.is_none() || before.is_none())
+    };
+    drop(bb);
+    crate::buffer::primitives::chg_delete(i, s, e)?;
+    {
+        let b = cur(i);
+        let mut bb = b.borrow_mut();
+        if need_space {
+            bb.raw_insert_at(s, " ");
+        }
+        bb.set_point(s + usize::from(need_space));
+    }
+    Ok(Value::Nil)
+}
+
 fn f_indent_line_to(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let col = want_int(i, &a[0])?.max(0) as usize;
+    // GNU CHECK_WHOLENUM: negative COLUMN is a type error (markers ok).
+    let col = match &a[0] {
+        Value::Int(n) if *n >= 0 => *n as usize,
+        Value::Marker(m) => m.borrow().position,
+        _ => return Err(i.wrong_type_mut("wholenump", &a[0])),
+    };
     let tab = i
         .symbol_value(i.intern_soft("tab-width").unwrap_or(0))
         .int()
@@ -10145,7 +11487,13 @@ fn f_indent_line_to(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     // Delete existing leading whitespace, insert `col` columns of
     // whitespace (tabs when `indent-tabs-mode' is on, like GNU).
     let mut e = ls;
+    let mut curcol = 0usize;
     while e < bb.text.len() && matches!(bb.text.char_at(e), ' ' | '\t') {
+        curcol += if bb.text.char_at(e) == '\t' {
+            (curcol / tab + 1) * tab - curcol
+        } else {
+            1
+        };
         e += 1;
     }
     drop(bb);
@@ -10158,7 +11506,13 @@ fn f_indent_line_to(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let wlen = ws.chars().count();
     crate::buffer::primitives::chg_insert(i, ls, &ws)?;
     cur(i).borrow_mut().set_point(ls + wlen);
-    Ok(Value::Nil)
+    // GNU `indent-line-to' returns COLUMN only when it indented forward;
+    // dedenting or already-at-column returns nil.
+    Ok(if curcol < col {
+        Value::Int(col as i128)
+    } else {
+        Value::Nil
+    })
 }
 
 fn f_indent_to(i: &mut Interp, a: Vec<Value>) -> EvalResult {
@@ -10245,35 +11599,6 @@ fn f_indent_rigidly(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     Ok(Value::Nil)
 }
 
-fn f_delete_trailing_whitespace(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let len = cur(i).borrow().text.len();
-    let (s, e) = match (a.get(0), a.get(1)) {
-        (Some(sv), Some(ev)) if sv.truthy() => region_bounds(i, sv, ev, len),
-        _ => (0, len),
-    };
-    crate::lisp::builtins::evalfn::signal_before_change(i, s + 1, e + 1)?;
-    {
-        let b = cur(i);
-        let mut bb = b.borrow_mut();
-        let mut pos = s;
-        while pos < e && pos < bb.text.len() {
-            let le = bb.text.line_end(pos);
-            // trailing ws before le
-            let mut ts = le;
-            while ts > pos && matches!(bb.text.char_at(ts - 1), ' ' | '\t') {
-                ts -= 1;
-            }
-            if ts < le {
-                bb.delete_region(ts, le);
-            }
-            let le2 = bb.text.line_end(ts);
-            pos = if le2 < bb.text.len() { le2 + 1 } else { break };
-        }
-    }
-    let e2 = cur(i).borrow().text.len().min(e);
-    crate::lisp::builtins::evalfn::signal_after_change(i, s + 1, e2 + 1, e - s)?;
-    Ok(Value::Nil)
-}
 
 fn f_untabify(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let len = cur(i).borrow().text.len();
@@ -10466,13 +11791,20 @@ fn f_blink_cursor_mode(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     Ok(v)
 }
 
-/// `face-attribute-relative-p' — in GNU only `:height' is a
-/// "relative" attribute; any other name (known or not) yields nil.
+/// `face-attribute-relative-p' — GNU xfaces.c: `unspecified' (and
+/// `ignore-defface') are relative for every attribute; only :height
+/// distinguishes fixnum (absolute) from float/other (relative).
 fn f_face_attribute_relative_p(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    match &a[0] {
-        Value::Sym(s) => Ok(Value::from_bool(i.symbol_name(*s) == ":height")),
-        _ => Ok(Value::Nil),
-    }
+    let un = i.intern("unspecified");
+    let ig = i.intern("ignore-defface");
+    let rel = if i.sym_is(&a[1], un) || i.sym_is(&a[1], ig) {
+        true
+    } else if matches!(&a[0], Value::Sym(s) if i.symbol_name(*s) == ":height") {
+        !matches!(a[1], Value::Int(_))
+    } else {
+        false
+    };
+    Ok(Value::from_bool(rel))
 }
 
 /// `set-window-cursor-type' — window-live-p check, then no-op on
@@ -10484,52 +11816,217 @@ fn f_set_window_cursor_type(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     }
 }
 
-/// `window-state-get' — the leaf-window state alist GNU's window.c
-/// produces.  WRITABLE non-nil substitutes the buffer name and
-/// integer positions for buffer/marker objects.
-fn f_window_state_get(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let w = match arg(&a, 0) {
-        Value::Nil => sel_window(i).ok_or_else(|| i.error("No window"))?,
-        Value::Window(w) => w.clone(),
-        other => {
-            let shown = i.princ_to_string(&other);
-            return Err(i.error(format!("{shown} is not a live or internal window")));
-        }
-    };
-    let writable = arg(&a, 1).truthy();
-    let (ww, wh, bufid, point, start, selected, ml, mr) = {
+/// Minimum-size tuples for `window-state-get' headers:
+/// (min-height min-width min-height-ignore min-width-ignore
+/// min-height-safe min-width-safe).  Internal windows combine their
+/// children: sum along the split axis, max on the cross axis (GNU
+/// `window--min-size-1').  Leaves report the -Q defaults; the
+/// minibuffer's height minimums collapse to 1.
+fn win_node_mins(i: &mut Interp, w: &WindowRef) -> [i128; 6] {
+    let (horiz, mini, kids, ml, mr) = {
         let wb = w.borrow();
-        let point = window_point(i, &w) + 1;
-        let sel = sel_window(i).map(|s| s.borrow().id) == Some(wb.id);
         (
-            wb.width,
-            wb.height,
-            wb.buffer,
-            point,
-            wb.start + 1,
-            sel,
+            wb.horiz,
+            wb.minibuffer,
+            wb.children.clone(),
             wb.margins.0 as i128,
             wb.margins.1 as i128,
         )
     };
-    let ac = |i: &mut Interp, k: &str, v: Value| Value::cons(Value::Sym(i.intern(k)), v);
-    let ai = |i: &mut Interp, k: &str, n: i128| ac(i, k, Value::Int(n));
-    // GNU's ignore-widths add the margins to the safe minimum.
-    let w_ignore = 2 + ml + mr;
-    let header = Value::list(vec![
-        ai(i, "min-height", 4),
-        ai(i, "min-width", 10),
-        ai(i, "min-height-ignore", 2),
-        ai(i, "min-width-ignore", w_ignore),
-        ai(i, "min-height-safe", 1),
-        ai(i, "min-width-safe", 2),
-        ai(i, "min-pixel-height", 4),
-        ai(i, "min-pixel-width", 10),
-        ai(i, "min-pixel-height-ignore", 2),
-        ai(i, "min-pixel-width-ignore", w_ignore),
-        ai(i, "min-pixel-height-safe", 1),
-        ai(i, "min-pixel-width-safe", 2),
-    ]);
+    match horiz {
+        Some(hor) => {
+            let mut acc: Option<[i128; 6]> = None;
+            for k in &kids {
+                let m = win_node_mins(i, k);
+                acc = Some(match acc {
+                    None => m,
+                    Some(a) => {
+                        if hor {
+                            // side-by-side: heights max, widths sum
+                            [
+                                a[0].max(m[0]),
+                                a[1] + m[1],
+                                a[2].max(m[2]),
+                                a[3] + m[3],
+                                a[4].max(m[4]),
+                                a[5] + m[5],
+                            ]
+                        } else {
+                            // stacked: heights sum, widths max
+                            [
+                                a[0] + m[0],
+                                a[1].max(m[1]),
+                                a[2] + m[2],
+                                a[3].max(m[3]),
+                                a[4] + m[4],
+                                a[5].max(m[5]),
+                            ]
+                        }
+                    }
+                });
+            }
+            acc.unwrap_or([0; 6])
+        }
+        None if mini => [1, 10, 1, 2, 1, 2],
+        // min-width-ignore includes the window's margins.
+        None => [4, 10, 2, 2 + ml + mr, 1, 2],
+    }
+}
+
+/// Is V a list whose car is SYM named NAME?
+fn list_car_is(i: &Interp, v: &Value, name: &str) -> bool {
+    if let Value::Cons(c) = v {
+        if let Value::Sym(s) = c.borrow().car {
+            return i.symbol_name(s) == name;
+        }
+    }
+    false
+}
+
+/// `(name . VALUE)' lookup over a list of alist-style elements; the
+/// cdr of `(name)' alone is nil, matching `assq'.
+fn state_assq<'a>(i: &Interp, items: &'a [Value], name: &str) -> Option<&'a Value> {
+    items
+        .iter()
+        .find(|v| list_car_is(i, v, name))
+}
+
+fn ac(i: &mut Interp, k: &str, v: Value) -> Value {
+    Value::cons(Value::Sym(i.intern(k)), v)
+}
+
+fn ac_i(i: &mut Interp, k: &str, n: i128) -> Value {
+    ac(i, k, Value::Int(n))
+}
+
+/// `window--state-get-1' node body: returns the list ITEMS — TAG,
+/// optional `(last . t)', size slots, slots, then children for
+/// internal windows.  The caller prepends the min-size header.
+fn win_state_items(i: &mut Interp, w: &WindowRef, writable: bool, last: bool) -> Vec<Value> {
+    let (horiz, ww, wh, climit, params, kids) = {
+        let wb = w.borrow();
+        (
+            wb.horiz,
+            wb.width,
+            wb.height,
+            wb.combination_limit,
+            wb.params.clone(),
+            wb.children.clone(),
+        )
+    };
+    // normal sizes: this window's fraction of its parent along each
+    // axis (1.0 for parentless windows).
+    let (nh, nw) = match w_parent(w) {
+        Some(p) => {
+            let pb = p.borrow();
+            (
+                ww_of(pb.height, wh),
+                ww_of(pb.width, ww),
+            )
+        }
+        None => (1.0, 1.0),
+    };
+    let mut items = match horiz {
+        Some(hor) => {
+            let tag = i.intern(if hor { "hc" } else { "vc" });
+            let mut items = vec![Value::Sym(tag)];
+            if last {
+                items.push(ac(i, "last", Value::t()));
+            }
+            items.extend([
+                ac_i(i, "pixel-width", ww as i128),
+                ac_i(i, "pixel-height", wh as i128),
+                ac_i(i, "total-width", ww as i128),
+                ac_i(i, "total-height", wh as i128),
+                ac(i, "normal-height", Value::float(nh)),
+                ac(i, "normal-width", Value::float(nw)),
+                ac(i, "combination-limit", Value::from_bool(climit)),
+            ]);
+            items
+        }
+        None => {
+            let (bufid, point, start, selected, ml, mr) = {
+                let point = window_point(i, w) + 1;
+                let sel = sel_window(i).map(|s| s.borrow().id) == Some(w.borrow().id);
+                (w.borrow().buffer, point, w.borrow().start + 1, sel, w.borrow().margins.0 as i128, w.borrow().margins.1 as i128)
+            };
+            let _ = (ml, mr);
+            let mut items = vec![Value::Sym(i.intern("leaf"))];
+            if last {
+                items.push(ac(i, "last", Value::t()));
+            }
+            items.extend([
+                ac_i(i, "pixel-width", ww as i128),
+                ac_i(i, "pixel-height", wh as i128),
+                ac_i(i, "total-width", ww as i128),
+                ac_i(i, "total-height", wh as i128),
+                ac(i, "normal-height", Value::float(nh)),
+                ac(i, "normal-width", Value::float(nw)),
+            ]);
+            items.push(leaf_buffer_state(i, w, writable, bufid, point, start, selected, ml, mr));
+            items
+        }
+    };
+    // The `parameters' slot carries the (clone-of . W) back-reference
+    // on non-writable states plus the window's own parameters; it is
+    // dropped entirely from writable states when empty.
+    let mut pitems: Vec<Value> = Vec::new();
+    if !writable {
+        pitems.push(Value::cons(
+            Value::Sym(i.intern("clone-of")),
+            Value::Window(w.clone()),
+        ));
+    }
+    if let Ok(ps) = params.list_to_vec() {
+        pitems.extend(ps);
+    }
+    let has_params = !pitems.is_empty();
+    if has_params {
+        let mut pv = vec![Value::Sym(i.intern("parameters"))];
+        pv.extend(pitems);
+        // GNU emits parameters BEFORE the buffer slot on leaves and
+        // after combination-limit on internals.
+        if horiz.is_none() {
+            let buf = items.pop().unwrap();
+            items.push(Value::list(pv));
+            items.push(buf);
+        } else {
+            items.push(Value::list(pv));
+        }
+    }
+    if horiz.is_some() {
+        let n = kids.len();
+        for (idx, k) in kids.iter().enumerate() {
+            let mut child = win_state_items(i, k, writable, idx + 1 == n);
+            items.push(Value::list(std::mem::take(&mut child)));
+        }
+    }
+    items
+}
+
+fn ww_of(total: usize, part: usize) -> f64 {
+    if total == 0 {
+        1.0
+    } else {
+        part as f64 / total as f64
+    }
+}
+
+/// The leaf `(buffer BUFFER . STATE)' spec — buffer object (or name
+/// when WRITABLE), then selected/hscroll/fringes/margins/scroll-bars/
+/// vscroll/dedicated/point/start.
+fn leaf_buffer_state(
+    i: &mut Interp,
+    w: &WindowRef,
+    writable: bool,
+    bufid: usize,
+    point: usize,
+    start: usize,
+    selected: bool,
+    ml: i128,
+    mr: i128,
+) -> Value {
+    let _ = w;
     let (buf_obj, point_obj, start_obj) = if writable {
         let name = i
             .buffers
@@ -10557,7 +12054,7 @@ fn f_window_state_get(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let buf_state = Value::list(vec![
         buf_obj,
         ac(i, "selected", Value::from_bool(selected)),
-        ac(i, "hscroll", Value::Int(0)),
+        ac_i(i, "hscroll", 0),
         Value::list(vec![
             Value::Sym(i.intern("fringes")),
             Value::Int(0),
@@ -10589,60 +12086,379 @@ fn f_window_state_get(i: &mut Interp, a: Vec<Value>) -> EvalResult {
             Value::t(),
             Value::Nil,
         ]),
-        ac(i, "vscroll", Value::Int(0)),
+        ac_i(i, "vscroll", 0),
         Value::list(vec![Value::Sym(i.intern("dedicated"))]),
         ac(i, "point", point_obj),
         ac(i, "start", start_obj),
     ]);
-    let mut items = vec![
-        header,
-        Value::Sym(i.intern("leaf")),
-        ai(i, "pixel-width", ww as i128),
-        ai(i, "pixel-height", wh as i128),
-        ai(i, "total-width", ww as i128),
-        ai(i, "total-height", wh as i128),
-        ac(i, "normal-height", Value::float(1.0)),
-        ac(i, "normal-width", Value::float(1.0)),
-    ];
-    if !writable {
-        items.push(Value::list(vec![
-            Value::Sym(i.intern("parameters")),
-            Value::cons(Value::Sym(i.intern("clone-of")), Value::Window(w.clone())),
-        ]));
-    }
-    // The buffer spec is (buffer BUF . STATE), a cons.
-    items.push(Value::cons(Value::Sym(i.intern("buffer")), buf_state));
+    Value::cons(Value::Sym(i.intern("buffer")), buf_state)
+}
+
+/// `window-state-get' — serializes the frame's window tree (or the
+/// given node).  Element 0 is the min-size header, element 1 the
+/// `leaf'/`vc'/`hc' tag; WRITABLE substitutes buffer names and
+/// integer positions for objects and drops the clone-of slot.
+fn f_window_state_get(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    let w = match arg(&a, 0) {
+        // GNU serializes the frame's ROOT window by default.
+        Value::Nil => sel_frame(i)
+            .and_then(|f| f.borrow().root.clone())
+            .or_else(|| sel_window(i))
+            .ok_or_else(|| i.error("No window"))?,
+        Value::Window(w) => {
+            if w.borrow().dead {
+                let shown = i.princ_to_string(&a[0]);
+                return Err(i.error(format!("{shown} is not a valid window")));
+            }
+            w.clone()
+        }
+        other => {
+            let shown = i.princ_to_string(&other);
+            return Err(i.error(format!("{shown} is not a live or internal window")));
+        }
+    };
+    let writable = arg(&a, 1).truthy();
+    let m = win_node_mins(i, &w);
+    let header = Value::list(vec![
+        ac_i(i, "min-height", m[0]),
+        ac_i(i, "min-width", m[1]),
+        ac_i(i, "min-height-ignore", m[2]),
+        ac_i(i, "min-width-ignore", m[3]),
+        ac_i(i, "min-height-safe", m[4]),
+        ac_i(i, "min-width-safe", m[5]),
+        ac_i(i, "min-pixel-height", m[0]),
+        ac_i(i, "min-pixel-width", m[1]),
+        ac_i(i, "min-pixel-height-ignore", m[2]),
+        ac_i(i, "min-pixel-width-ignore", m[3]),
+        ac_i(i, "min-pixel-height-safe", m[4]),
+        ac_i(i, "min-pixel-width-safe", m[5]),
+    ]);
+    let mut items = vec![header];
+    items.extend(win_state_items(i, &w, writable, false));
     Ok(Value::list(items))
 }
 
-/// `window-state-put' — validates the WINDOW argument (a plain
-/// "N is not a valid window" error) and the state shape; applying a
-/// leaf state to our flat model is a no-op returning nil.
+/// Collect the live leaves of W's subtree in display order.
+pub(crate) fn subtree_leaves(w: &WindowRef, out: &mut Vec<WindowRef>) {
+    let (internal, kids, dead) = {
+        let wb = w.borrow();
+        (wb.horiz.is_some(), wb.children.clone(), wb.dead)
+    };
+    if internal {
+        for k in kids {
+            subtree_leaves(&k, out);
+        }
+    } else if !dead {
+        out.push(w.clone());
+    }
+}
+
+/// f64 from an Int/Float value (state normal sizes are floats).
+fn state_float(v: &Value) -> Option<f64> {
+    match v {
+        Value::Int(n) => Some(*n as f64),
+        Value::Float(f) => Some(**f),
+        _ => None,
+    }
+}
+
+
+/// Materialize one `window-state' node as a fresh window covering
+/// (L,T,W,H) and return it.  Child node lists get their share of the
+/// axis via their recorded normal size (equal split when absent).
+fn win_state_materialize(
+    i: &mut Interp,
+    f: &FrameRef,
+    items: &[Value],
+    l: usize,
+    t: usize,
+    wd: usize,
+    h: usize,
+    selected: &mut Option<WindowRef>,
+) -> Result<WindowRef, Flow> {
+    let tag = items
+        .first()
+        .and_then(|v| i.sym_id(v))
+        .map(|s| i.symbol_name(s))
+        .unwrap_or_else(|| "leaf".to_string());
+    let horiz = tag == "hc";
+    if tag == "vc" || tag == "hc" {
+        let node = Window::new_internal(horiz, l, t, wd, h);
+        // Children are the trailing elements that are `leaf'/`vc'/
+        // `hc' lists; a `(last . t)' marker rides on the final child.
+        let child_states: Vec<Vec<Value>> = items[1..]
+            .iter()
+            .filter(|v| {
+                list_car_is(i, v, "leaf")
+                    || list_car_is(i, v, "vc")
+                    || list_car_is(i, v, "hc")
+            })
+            .filter_map(|v| v.list_to_vec().ok())
+            .collect();
+        let n = child_states.len();
+        // Each child's share of the axis comes from its normal size
+        // (fraction of the parent); missing entries split evenly.
+        let fracs: Vec<f64> = child_states
+            .iter()
+            .map(|cs| {
+                let name = if horiz { "normal-width" } else { "normal-height" };
+                state_assq(i, &cs[1.min(cs.len())..], name)
+                    .and_then(|e| match e {
+                        Value::Cons(c) => state_float(&c.borrow().cdr),
+                        _ => None,
+                    })
+                    .unwrap_or(1.0 / n.max(1) as f64)
+            })
+            .collect();
+        let fsum: f64 = fracs.iter().sum();
+        let axis = if horiz { wd } else { h };
+        let mut pos = if horiz { l } else { t };
+        let end = pos + axis;
+        let mut kids: Vec<WindowRef> = Vec::new();
+        for (idx, cs) in child_states.iter().enumerate() {
+            let size = if idx + 1 == n {
+                end.saturating_sub(pos)
+            } else {
+                ((axis as f64 * fracs[idx] / fsum.max(f64::EPSILON)) as usize).max(1)
+            };
+            let (cl, ct, cw, ch) = if horiz {
+                (pos, t, size, h)
+            } else {
+                (l, pos, wd, size)
+            };
+            let child = win_state_materialize(i, f, cs, cl, ct, cw, ch, selected)?;
+            child.borrow_mut().parent = Some(Rc::downgrade(&node));
+            kids.push(child);
+            pos += size;
+        }
+        node.borrow_mut().children = kids;
+        if let Some(cl) = state_assq(i, &items[1..], "combination-limit") {
+            if let Value::Cons(c) = cl {
+                node.borrow_mut().combination_limit = c.borrow().cdr.truthy();
+            }
+        }
+        let _ = f;
+        Ok(node)
+    } else {
+        // Leaf: create a window on the recorded buffer.
+        let bufid = state_assq(i, &items[1..], "buffer")
+            .and_then(|e| match e {
+                Value::Cons(c) => {
+                    let b = c.borrow();
+                    match b.cdr.clone() {
+                        Value::Cons(lst) => Some(lst.borrow().car.clone()),
+                        other => Some(other),
+                    }
+                }
+                _ => None,
+            })
+            .and_then(|bobj| match bobj {
+                Value::Buffer(b) => Some(b.borrow().id),
+                Value::Str(s) => i
+                    .buffers
+                    .by_name(&s.borrow())
+                    .or_else(|| Some(i.buffers.create(&s.borrow()))),
+                _ => None,
+            })
+            .unwrap_or(i.current_buffer);
+        let w = Window::new(bufid);
+        {
+            let mut wb = w.borrow_mut();
+            wb.left = l;
+            wb.top = t;
+            wb.width = wd;
+            wb.height = h;
+        }
+        // Point/start/dedicated/parameters.
+        let bs = state_assq(i, &items[1..], "buffer").cloned();
+        if let Some(Value::Cons(c)) = &bs {
+            let state: Vec<Value> = c
+                .borrow()
+                .cdr
+                .list_to_vec()
+                .unwrap_or_default();
+            let int_slot = |i: &Interp, name: &str| -> Option<i128> {
+                state_assq(i, &state, name).and_then(|e| match e {
+                    Value::Cons(c) => c.borrow().cdr.int(),
+                    _ => None,
+                })
+            };
+            if let Some(p) = int_slot(i, "point") {
+                w.borrow_mut().point = (p.max(1) - 1) as usize;
+            }
+            if let Some(s) = int_slot(i, "start") {
+                w.borrow_mut().start = (s.max(1) - 1) as usize;
+            }
+            if state_assq(i, &state, "selected")
+                .and_then(|e| match e {
+                    Value::Cons(c) => Some(c.borrow().cdr.truthy()),
+                    _ => None,
+                })
+                .unwrap_or(false)
+            {
+                *selected = Some(w.clone());
+            }
+            if let Some(Value::Cons(d)) = state_assq(i, &state, "dedicated") {
+                if d.borrow().cdr.truthy() {
+                    w.borrow_mut().dedicated = true;
+                }
+            }
+        }
+        if let Some(ps) = state_assq(i, &items[1..], "parameters") {
+            if let Value::Cons(c) = ps {
+                let mut pl = c.borrow().cdr.list_to_vec().unwrap_or_default();
+                // strip the clone-of back-reference
+                pl.retain(|e| !list_car_is(i, e, "clone-of"));
+                w.borrow_mut().params = Value::list(pl);
+            }
+        }
+        Ok(w)
+    }
+}
+
+/// `window-state-put' — GNU's window.el protocol: a `leaf' state is
+/// applied onto WINDOW in place; a `vc'/`hc' state replaces WINDOW
+/// with a fresh subtree (the old window becomes invalid).
 fn f_window_state_put(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    if let Some(v) = a.get(1) {
-        match v {
-            Value::Nil | Value::Window(_) => {}
-            other => {
-                let shown = i.princ_to_string(other);
+    // GNU checks the WINDOW argument first: dead/invalid → plain
+    // "N is not a valid window" error.
+    let w = match arg(&a, 1) {
+        Value::Nil => sel_window(i).ok_or_else(|| i.error("No window"))?,
+        Value::Window(w) => {
+            if w.borrow().dead {
+                let shown = i.princ_to_string(&arg(&a, 1));
                 return Err(i.error(format!("{shown} is not a valid window")));
+            }
+            w
+        }
+        other => {
+            let shown = i.princ_to_string(&other);
+            return Err(i.error(format!("{shown} is not a valid window")));
+        }
+    };
+    // A well-formed state is a list (HEADER TAG . SLOTS); malformed
+    // input dies on GNU's number-or-marker check.
+    let items = match a[0].list_to_vec() {
+        Ok(v) if v.len() >= 2 => v,
+        _ => return Err(i.wrong_type_mut("number-or-marker-p", &Value::Nil)),
+    };
+    let tag = i
+        .sym_id(&items[1])
+        .map(|s| i.symbol_name(s))
+        .unwrap_or_default();
+    if tag == "leaf" {
+        // Apply the leaf spec onto W in place: display its buffer,
+        // restore point/start/params.
+        if let Some(bs) = state_assq(i, &items[2..], "buffer").cloned() {
+            if let Value::Cons(c) = &bs {
+                let (bobj, state) = {
+                    let cb = c.borrow();
+                    let lst = cb.cdr.clone();
+                    let bobj = match &lst {
+                        Value::Cons(head) => Some(head.borrow().car.clone()),
+                        _ => None,
+                    };
+                    (bobj, lst.list_to_vec().unwrap_or_default())
+                };
+                if let Some(bobj) = bobj {
+                    let bid = match &bobj {
+                        Value::Buffer(b) => Some(b.borrow().id),
+                        Value::Str(s) => i.buffers.by_name(&s.borrow()),
+                        _ => None,
+                    };
+                    if let Some(bid) = bid {
+                        w.borrow_mut().buffer = bid;
+                    }
+                }
+                for e in &state {
+                    if let Value::Cons(slot) = e {
+                        let (name, val) = {
+                            let sb = slot.borrow();
+                            (sb.car.clone(), sb.cdr.clone())
+                        };
+                        if let Value::Sym(s) = &name {
+                            match (i.symbol_name(*s).as_str(), val.int()) {
+                                ("point", Some(p)) => {
+                                    w.borrow_mut().point = (p.max(1) - 1) as usize;
+                                }
+                                ("start", Some(s2)) => {
+                                    w.borrow_mut().start = (s2.max(1) - 1) as usize;
+                                }
+                                ("dedicated", _) if val.truthy() => {
+                                    w.borrow_mut().dedicated = true;
+                                }
+                                _ => {}
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        if let Some(ps) = state_assq(i, &items[2..], "parameters") {
+            if let Value::Cons(c) = ps {
+                let mut pl = c.borrow().cdr.list_to_vec().unwrap_or_default();
+                pl.retain(|e| !list_car_is(i, e, "clone-of"));
+                w.borrow_mut().params = Value::list(pl);
+            }
+        }
+        return Ok(Value::Nil);
+    }
+    if tag != "vc" && tag != "hc" {
+        return Err(i.error("Invalid window state"));
+    }
+    // Rebuild: replace W with a fresh internal subtree.
+    let Some(f) = frame_of_window(i, &w).or_else(|| sel_frame(i)) else {
+        return Err(i.error("No frame"));
+    };
+    let (wl, wt, ww, wh) = {
+        let wb = w.borrow();
+        (wb.left, wb.top, wb.width, wb.height)
+    };
+    let par = w_parent(&w);
+    let sel_was_w = f.borrow().selected.borrow().id == w.borrow().id;
+    let mut selected: Option<WindowRef> = None;
+    let node = win_state_materialize(i, &f, &items[1..], wl, wt, ww, wh, &mut selected)?;
+    // Splice the new node into the tree where W sat.
+    match &par {
+        Some(p) => {
+            let mut pb = p.borrow_mut();
+            for k in pb.children.iter_mut() {
+                if Rc::ptr_eq(k, &w) {
+                    *k = node.clone();
+                }
+            }
+            node.borrow_mut().parent = Some(Rc::downgrade(p));
+        }
+        None => {
+            f.borrow_mut().root = Some(node.clone());
+        }
+    }
+    // Kill W's old subtree (W itself; internals take their children).
+    mark_tree_dead(&w);
+    // Refresh the frame's live-window list (preorder leaves).
+    let mut leaves = Vec::new();
+    if let Some(r) = f.borrow().root.clone() {
+        subtree_leaves(&r, &mut leaves);
+    }
+    {
+        let mut fb = f.borrow_mut();
+        fb.windows = leaves;
+        if let Some(s) = &selected {
+            fb.selected = s.clone();
+        } else if sel_was_w {
+            if let Some(first) = fb.windows.first() {
+                fb.selected = first.clone();
             }
         }
     }
-    // A well-formed state is (HEADER TYPE . STATE); malformed states
-    // die inside GNU's walker on a number-or-marker-p check.
-    let ok = a[0]
-        .list_to_vec()
-        .map(|items| {
-            items.len() >= 2
-                && matches!(&items[0], Value::Cons(_) | Value::Nil)
-                && matches!(&items[1], Value::Sym(_))
-        })
-        .unwrap_or(false);
-    if ok {
-        Ok(Value::Nil)
-    } else {
-        Err(i.wrong_type_mut("number-or-marker-p", &Value::Nil))
+    if let Some(s) = &selected {
+        let bid = s.borrow().buffer;
+        if let Some(b) = i.buffers.get(bid) {
+            b.borrow_mut().set_point(s.borrow().point);
+            i.set_current_buffer(bid);
+        }
     }
+    Ok(Value::Nil)
 }
 
 /// `Snarf-documentation' — opens FILE inside `doc-directory'; GNU
@@ -10788,51 +12604,72 @@ fn f_read_from_minibuffer(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     Ok(arg(&a, 5))
 }
 fn f_read_buffer(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    // GNU Fread_buffer: a BUFFER default becomes its name.
+    // GNU `read-buffer' (simple.el) is Lisp: completing-read over
+    // `internal-complete-buffer' with MUST-MATCH = REQUIRE-MATCH arg,
+    // plus `read-buffer-function' override.  In batch the raw line is
+    // returned verbatim (empty → DEF or "").
     let d = match arg(&a, 1) {
         Value::Buffer(b) => Value::string(b.borrow().name.clone()),
         v => v,
     };
     let p = read_buffer_prompt(i, &a[0], &d);
     if let Some(line) = i.batch_minibuf_line(&p)? {
-        // GNU batch: empty input yields the default (or "").
         if line.is_empty() {
             return Ok(if d.is_nil() { Value::string("") } else { d });
         }
         return Ok(Value::string(line));
     }
-    let args = crate::lisp::eval::MinibufArgs {
-        hist: Value::Sym(i.intern("buffer-name-history")),
-        defalt: d.clone(),
-        ..Default::default()
-    };
-    if let Some(s) = minibuf_or(i, &Value::string(p), args)? {
-        if s.is_empty() {
-            return Ok(if d.is_nil() { Value::string("") } else { d });
-        }
-        return Ok(Value::string(s));
+    if i.minibuf_reader.is_none() {
+        return Err(batch_eof(i));
     }
-    Ok(d)
+    let rbf = i.intern("read-buffer-function");
+    if i.bound_p(rbf) {
+        let fval = i.symbol_value(rbf);
+        if fval.truthy() {
+            return i.apply(&fval, vec![Value::string(p), d, arg(&a, 2)]);
+        }
+    }
+    // (completing-read prompt internal-complete-buffer nil require-match
+    // nil 'buffer-name-history default nil)
+    let cr = i.intern("completing-read");
+    let table = Value::Sym(i.intern("internal-complete-buffer"));
+    let hist = Value::Sym(i.intern("buffer-name-history"));
+    i.apply(
+        &Value::Sym(cr),
+        vec![
+            Value::string(p),
+            table,
+            Value::Nil,
+            arg(&a, 2),
+            Value::Nil,
+            hist,
+            d,
+            Value::Nil,
+        ],
+    )
 }
 fn f_read_file_name(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    // GNU `read-file-name-default' let-binds
-    // `minibuffer-completing-file-name' to t for the read.
-    let mark = i.specbind_depth();
-    let cf = i.intern("minibuffer-completing-file-name");
-    let _ = i.specbind(cf, Value::t());
-    let args = crate::lisp::eval::MinibufArgs {
-        hist: Value::Sym(i.intern("file-name-history")),
-        defalt: arg(&a, 3),
-        ..Default::default()
+    // GNU `read-file-name' (minibuffer.el) is a thin wrapper over
+    // `read-file-name-function' (default `read-file-name-default') —
+    // the Lisp function inserts the default directory, selects the
+    // filename completion map, substitutes-in-file-name on exit, and
+    // handles MUSTMATCH/confirm.  Route the same way.
+    let rfnf = i.intern("read-file-name-function");
+    let fval = {
+        let v = if i.bound_p(rfnf) {
+            i.symbol_value(rfnf)
+        } else {
+            Value::Nil
+        };
+        if v.truthy() {
+            v
+        } else {
+            Value::Sym(i.intern("read-file-name-default"))
+        }
     };
-    let r = minibuf_or(i, &a[0], args);
-    let _ = i.unbind_to(mark);
-    if let Some(s) = r? {
-        // GNU batch `read-file-name' echoes the raw prompt and returns
-        // the raw line ("" for empty input).
-        return Ok(Value::string(s));
-    }
-    Ok(arg(&a, 3))
+    let mut argv = a.clone();
+    argv.resize(6, Value::Nil);
+    i.apply(&fval, argv)
 }
 fn f_read_number(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let prompt = read_number_prompt(i, a.get(0).unwrap_or(&Value::Nil), &arg(&a, 1));
@@ -10910,12 +12747,13 @@ fn f_read_regexp(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     Ok(Value::string(line))
 }
 fn f_completing_read(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    // (completing-read PROMPT TABLE ...) — interactive: read a line and
-    // complete it against TABLE; batch: read the line from stdin.
+    // GNU Fcompleting_read calls `completing-read-function'
+    // (normally `completing-read-default').  Our default is a subr —
+    // resolve the indirection so a Lisp override is honored while the
+    // default never recurses through this function again.
     if i.minibuf_reader.is_none() && i.noninteractive {
-        // GNU batch `read_minibuf_noninteractive': the raw line is
-        // returned verbatim — no completion runs; empty input yields
-        // DEF (arg 6).
+        // Batch: GNU `read_minibuf_noninteractive' — the raw line is
+        // returned verbatim; empty input yields DEF (arg 6).
         let prompt = match &a[0] {
             Value::Str(s) => s.borrow().clone(),
             _ => String::new(),
@@ -10926,130 +12764,143 @@ fn f_completing_read(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         }
         return Ok(Value::string(input));
     }
-    if i.minibuf_reader.is_none() {
-        return Err(batch_eof(i));
+    let crf = i.intern("completing-read-function");
+    let fval = if i.bound_p(crf) {
+        i.symbol_value(crf)
+    } else {
+        Value::Nil
+    };
+    let resolved = match &fval {
+        Value::Sym(s) => i.symbol_function(*s),
+        v => v.clone(),
+    };
+    let is_default = matches!(&resolved, Value::Subr(s) if s.name == "completing-read-default");
+    if fval.truthy() && !is_default {
+        // A user Lisp override (helm/icomplete-style entry point).
+        let mut argv = a.clone();
+        argv.resize(8, Value::Nil);
+        return i.apply(&fval, argv);
     }
-    if i.minibuf_reader.is_some() {
-        let prompt = match &a[0] {
-            Value::Str(s) => s.borrow().clone(),
-            _ => String::new(),
-        };
-        // GNU Fcompleting_read specbinds the completion state for the
-        // minibuffer read (rfn-eshadow, icomplete & co. observe it).
-        let mark = i.specbind_depth();
-        let mct = i.intern("minibuffer-completion-table");
-        let _ = i.specbind(mct, arg(&a, 1));
-        let mcp = i.intern("minibuffer-completion-predicate");
-        let _ = i.specbind(mcp, arg(&a, 2));
-        // GNU completing-read-default setq-locals in the minibuffer:
-        // minibuffer-completion-confirm gets nil when require-match
-        // is t; minibuffer--require-match records the raw arg.
-        let rm = arg(&a, 3);
-        let mcc_val = match rm {
-            Value::Sym(s) if i.symbol_name(s) == "t" => Value::Nil,
-            _ => rm.clone(),
-        };
-        let mcc = i.intern("minibuffer-completion-confirm");
-        let _ = i.specbind(mcc, mcc_val);
-        let mrm = i.intern("minibuffer--require-match");
-        let _ = i.specbind(mrm, rm);
-        let mob = i.intern("minibuffer--original-buffer");
-        let orig = i.buffer_value(i.current_buffer).unwrap_or(Value::Nil);
-        let _ = i.specbind(mob, orig);
-        let cands = completion_candidates(i, &a[1]);
-        let args = crate::lisp::eval::MinibufArgs {
-            hist: arg(&a, 5),
-            defalt: arg(&a, 6),
-            initial: arg(&a, 4),
-            ..Default::default()
-        };
-        let input_r = i.minibuf_read(&prompt, args);
-        let _ = i.unbind_to(mark);
-        let input = input_r?;
-        if input.is_empty() {
-            // Empty input → DEF (arg 6) or "".
-            return Ok(arg(&a, 6));
-        }
-        // Complete: exact match, else unique prefix completion.
-        if cands
-            .iter()
-            .any(|(_, es)| cand_text(es).as_deref() == Some(input.as_str()))
-        {
-            return Ok(Value::string(input));
-        }
-        let matches: Vec<String> = cands
-            .iter()
-            .filter_map(|(_, es)| cand_text(es))
-            .filter(|c| c.starts_with(&input))
-            .collect();
-        return Ok(Value::string(match matches.len() {
-            1 => matches[0].clone(),
-            _ => input,
-        }));
-    }
-    let initial = arg(&a, 4);
-    if initial.truthy() {
-        if let Value::Str(s) = &initial {
-            return Ok(Value::string(s.borrow().clone()));
-        }
-    }
-    // TABLE: list, alist, obarray, or function.
-    match try_completions(i, "", &a[1], &Value::Nil) {
-        Ok(v) => Ok(v),
-        Err(_) => Ok(arg(&a, 6)),
-    }
+    f_completing_read_default(i, a)
 }
 
 /// Resolve a completion TABLE to (ELT, ELTSTRING) pairs.  ELTSTRING
 /// keeps its original `Value::Str' so text properties survive into
 /// try/all-completion results, as in GNU's C code.
-fn completion_candidates(i: &mut Interp, table: &Value) -> Vec<(Value, Value)> {
-    let eltstring = |i: &mut Interp, v: &Value| -> Value {
+/// Enumerate TABLE's candidates per GNU's collection dispatch
+/// (minibuf.c): alist, vector-as-obarray (via `resolve_obarray', which
+/// performs the obarray_slow bucket check and promotion), obarray
+/// record, or hash table.  Each entry is (ELT, ELTSTRING, EXTRA):
+/// ELT is the collection element PRED's first arg, ELTSTRING is the
+/// completion text (None for elements with no string/symbol name —
+/// GNU skips them), and EXTRA (hash-table values only) is PRED's
+/// second argument.
+fn completion_candidates(
+    i: &mut Interp,
+    table: &Value,
+) -> Result<Vec<(Value, Option<Value>, Option<Value>)>, Flow> {
+    /// GNU's eltstring derivation: from a symbol its name, from a cons
+    /// cell its CAR (which must again be a string or symbol).
+    /// Anything else has no completion text.
+    fn elt_text(i: &mut Interp, v: &Value) -> Option<Value> {
         match v {
-            s @ Value::Str(_) => s.clone(),
-            Value::Sym(s) => Value::string(i.symbol_name(*s)),
-            other => Value::string(i.princ_to_string(other)),
+            s @ Value::Str(_) => Some(s.clone()),
+            Value::Sym(s) => Some(Value::string(i.symbol_name(*s))),
+            _ => None,
         }
+    }
+    let one = |i: &mut Interp, v: &Value| match v {
+        Value::Cons(c) => elt_text(i, &c.borrow().car.clone()).map(|e| (v.clone(), Some(e), None)),
+        _ => elt_text(i, v).map(|e| (v.clone(), Some(e), None)),
     };
     match table {
         Value::Cons(_) => {
-            let items = table.list_to_vec().unwrap_or_default();
-            items
-                .iter()
-                .map(|v| {
-                    let es = match v {
-                        Value::Cons(c) => eltstring(i, &c.borrow().car.clone()),
-                        _ => eltstring(i, v),
+            // GNU walks the collection list element-by-element until a
+            // non-cons tail (a dotted tail is not an error here).
+            // A tortoise guards against circular collections.
+            let mut out: Vec<(Value, Option<Value>, Option<Value>)> = Vec::new();
+            let mut cur = table.clone();
+            let mut tortoise = table.clone();
+            let mut steps = 0usize;
+            while let Value::Cons(c) = &cur {
+                let (item, next) = {
+                    let b = c.borrow();
+                    (b.car.clone(), b.cdr.clone())
+                };
+                if let Some(cand) = one(i, &item) {
+                    out.push(cand);
+                }
+                cur = next;
+                steps += 1;
+                if steps % 2 == 0 {
+                    let tnext = match &tortoise {
+                        Value::Cons(tc) => tc.borrow().cdr.clone(),
+                        _ => tortoise.clone(),
                     };
-                    (v.clone(), es)
-                })
-                .collect()
+                    tortoise = tnext;
+                    if eq_values(&cur, &tortoise) {
+                        break;
+                    }
+                }
+            }
+            Ok(out)
         }
-        Value::Vec(v) => v
+        // A vector is a legacy obarray: empty vectors are valid (empty)
+        // obarrays, otherwise `resolve_obarray' validates the buckets
+        // and promotes (slot 0 becomes the obarray record).
+        Value::Vec(v) => {
+            if v.borrow().is_empty() {
+                return Ok(Vec::new());
+            }
+            match crate::lisp::builtins::data::resolve_obarray(i, Some(table))? {
+                Some(ob) if crate::lisp::builtins::data::is_default_obarray(i, &ob) => Ok(i
+                    .obarray
+                    .all_ids()
+                    .iter()
+                    .map(|&id| {
+                        let s = i.sym(id);
+                        (s.clone(), elt_text(i, &s), None)
+                    })
+                    .collect()),
+                Some(ob) => Ok(crate::lisp::builtins::data::obarray_syms(i, &ob)
+                    .iter()
+                    .map(|x| (x.clone(), elt_text(i, x), None))
+                    .collect()),
+                None => Ok(Vec::new()),
+            }
+        }
+        Value::Nil => Ok(Vec::new()),
+        // Hash-table collection: candidates are the keys; PRED is
+        // called on both key and value.
+        Value::Hash(h) => Ok(h
             .borrow()
+            .keys
             .iter()
-            .map(|x| (x.clone(), eltstring(i, x)))
-            .collect(),
-        Value::Nil => Vec::new(),
+            .map(|(hk, k)| {
+                let eltstr = elt_text(i, k);
+                let extra = h.borrow().map.get(hk).cloned();
+                (k.clone(), eltstr, extra)
+            })
+            .collect()),
         // An obarray is a tagged record; the `obarray' variable's record
         // denotes the global symbol table (enumerated via all_ids),
         // while `obarray-make' records carry their own symbol vec.
-        other if crate::lisp::builtins::data::is_default_obarray(i, other) => i
+        other if crate::lisp::builtins::data::is_default_obarray(i, other) => Ok(i
             .obarray
             .all_ids()
             .iter()
             .map(|&id| {
                 let s = i.sym(id);
-                (s.clone(), eltstring(i, &s))
+                (s.clone(), elt_text(i, &s), None)
             })
-            .collect(),
+            .collect()),
         other if crate::lisp::builtins::data::is_obarray(i, other) => {
-            crate::lisp::builtins::data::obarray_syms(i, other)
+            Ok(crate::lisp::builtins::data::obarray_syms(i, other)
                 .iter()
-                .map(|x| (x.clone(), eltstring(i, x)))
-                .collect()
+                .map(|x| (x.clone(), elt_text(i, x), None))
+                .collect())
         }
-        _ => Vec::new(),
+        _ => Ok(Vec::new()),
     }
 }
 
@@ -11062,7 +12913,29 @@ fn cand_text(v: &Value) -> Option<String> {
     }
 }
 
+/// Whether TABLE is one of GNU's collection types (list, obarray,
+/// vector-as-obarray, hash table, nil).  Anything else is treated as a
+/// function-style completion table and is funcalled, like GNU's
+/// call3 fallback (a non-function then signals `invalid-function').
+fn completion_is_collection(i: &mut Interp, table: &Value) -> bool {
+    match table {
+        Value::Nil | Value::Vec(_) | Value::Hash(_) => true,
+        // A `(lambda ...)' cons is a function, not a candidate list
+        // (completion-table-dynamic et al return lambda forms).
+        Value::Cons(c) => {
+            let car = c.borrow().car.clone();
+            !i.sym_is(&car, crate::lisp::obarray::sym::LAMBDA)
+        }
+        // A raw `nil' symbol (shouldn't occur post-eval) is the empty
+        // collection too.
+        Value::Sym(s) if *s == crate::lisp::obarray::sym::NIL => true,
+        v => crate::lisp::builtins::data::is_obarray(i, v),
+    }
+}
+
 /// Whether TABLE is a function-style completion table (a callable).
+/// Kept for `completion-boundaries', where GNU consults the table
+/// function for the `boundaries' action.
 fn table_is_callable(i: &mut Interp, table: &Value) -> bool {
     match table {
         Value::Lambda(_) | Value::Subr(_) => true,
@@ -11082,7 +12955,7 @@ fn table_is_callable(i: &mut Interp, table: &Value) -> bool {
 fn completion_ignore_case(i: &Interp) -> bool {
     i.intern_soft("completion-ignore-case")
         .map(|id| i.symbol_value(id).truthy())
-        .unwrap_or(false)
+        .unwrap_or_default()
 }
 
 /// GNU's `compare-strings' prefix check with `completion-ignore-case':
@@ -11126,6 +12999,7 @@ fn completion_match_regexps(i: &Interp, s: &str, ignore_case: bool) -> bool {
                             0,
                             &syn,
                             &crate::editor::re_category(i),
+                            crate::lisp::regexp::NO_POINT,
                         )
                         .is_none()
                         {
@@ -11146,6 +13020,7 @@ fn completion_match_regexps(i: &Interp, s: &str, ignore_case: bool) -> bool {
 fn completion_candidate_ok(
     i: &mut Interp,
     elt: &Value,
+    extra: &Option<Value>,
     c: &str,
     s: &str,
     pred: &Value,
@@ -11155,7 +13030,11 @@ fn completion_candidate_ok(
         return Ok(false);
     }
     if pred.truthy() {
-        let r = i.apply(pred, vec![elt.clone()])?;
+        let mut pargs = vec![elt.clone()];
+        if let Some(x) = extra {
+            pargs.push(x.clone());
+        }
+        let r = i.apply(pred, pargs)?;
         if !r.truthy() {
             return Ok(false);
         }
@@ -11212,10 +13091,10 @@ fn f_try_completion(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 }
 
 fn try_completions(i: &mut Interp, s: &str, table: &Value, pred: &Value) -> EvalResult {
-    if table_is_callable(i, table) {
+    if !completion_is_collection(i, table) {
         return i.apply(table, vec![Value::string(s), pred.clone(), Value::Nil]);
     }
-    let cands = completion_candidates(i, table);
+    let cands = completion_candidates(i, table)?;
     let ignore_case = completion_ignore_case(i);
     let s_chars = s.chars().count();
     // Port of GNU minibuf.c Ftry_completion: track the bestmatch
@@ -11224,12 +13103,15 @@ fn try_completions(i: &mut Interp, s: &str, table: &Value, pred: &Value) -> Eval
     let mut bestmatch: Option<Value> = None;
     let mut bestmatchsize: usize = 0;
     let mut matchcount = 0usize;
-    for (elt, eltstring) in cands {
+    for (elt, eltstring, extra) in cands {
+        let Some(eltstring) = eltstring else { continue };
         let Some(text) = cand_text(&eltstring) else {
             continue;
         };
         let eltlen = text.chars().count();
-        if eltlen < s_chars || !completion_candidate_ok(i, &elt, &text, s, pred, ignore_case)? {
+        if eltlen < s_chars
+            || !completion_candidate_ok(i, &elt, &extra, &text, s, pred, ignore_case)?
+        {
             continue;
         }
         match &bestmatch {
@@ -11284,17 +13166,18 @@ fn try_completions(i: &mut Interp, s: &str, table: &Value, pred: &Value) -> Eval
 
 fn f_all_completions(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let s = want_str(i, &a[0])?;
-    if table_is_callable(i, &a[1]) {
+    if !completion_is_collection(i, &a[1]) {
         return i.apply(&a[1], vec![Value::string(s), arg(&a, 2), Value::t()]);
     }
-    let cands = completion_candidates(i, &a[1]);
+    let cands = completion_candidates(i, &a[1])?;
     let pred = arg(&a, 2);
     let ignore_case = completion_ignore_case(i);
     let mut out: Vec<Value> = Vec::new();
-    for (elt, eltstring) in cands {
+    for (elt, eltstring, extra) in cands {
+        let Some(eltstring) = eltstring else { continue };
         if let Some(c) = cand_text(&eltstring) {
             if c.chars().count() >= s.chars().count()
-                && completion_candidate_ok(i, &elt, &c, &s, &pred, ignore_case)?
+                && completion_candidate_ok(i, &elt, &extra, &c, &s, &pred, ignore_case)?
             {
                 // Keep the original eltstring Value so text properties
                 // survive (GNU returns the candidate objects).
@@ -11424,7 +13307,7 @@ fn f_completion_flex_cost_gotoh(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 
 fn f_test_completion(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let s = want_str(i, &a[0])?;
-    if table_is_callable(i, &a[1]) {
+    if !completion_is_collection(i, &a[1]) {
         let lambda_kw = i.intern("lambda");
         let r = i.apply(
             &a[1],
@@ -11432,13 +13315,15 @@ fn f_test_completion(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         )?;
         return Ok(Value::from_bool(r.truthy()));
     }
-    let cands = completion_candidates(i, &a[1]);
+    let cands = completion_candidates(i, &a[1])?;
     let pred = arg(&a, 2);
     let ignore_case = completion_ignore_case(i);
     // GNU Ftest_completion: S must equal a candidate (obeying
     // `completion-ignore-case'), match `completion-regexp-list', and
-    // satisfy PRED (called on ELT, not the string).
-    for (elt, eltstring) in &cands {
+    // satisfy PRED (called on ELT, not the string; a hash-table
+    // collection passes key and value).
+    for (elt, eltstring, extra) in &cands {
+        let Some(eltstring) = eltstring else { continue };
         let Some(c) = cand_text(eltstring) else {
             continue;
         };
@@ -11451,7 +13336,11 @@ fn f_test_completion(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         };
         if eq && completion_match_regexps(i, &c, ignore_case) && {
             let r = if pred.truthy() {
-                i.apply(&pred, vec![elt.clone()])?.truthy()
+                let mut pargs = vec![elt.clone()];
+                if let Some(x) = extra {
+                    pargs.push(x.clone());
+                }
+                i.apply(&pred, pargs)?.truthy()
             } else {
                 true
             };
@@ -11491,12 +13380,13 @@ fn f_internal_complete_buffer(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     match &flag {
         Value::Nil => try_completions(i, &s, &table, &pred),
         Value::Sym(sym) if i.symbol_name(*sym) == "lambda" => {
-            let cands = completion_candidates(i, &table);
+            let cands = completion_candidates(i, &table)?;
             let ignore_case = completion_ignore_case(i);
-            for (elt, es) in cands {
+            for (elt, es, extra) in cands {
+                let Some(es) = es else { continue };
                 if let Some(c) = cand_text(&es) {
                     if c == s.as_str() || (ignore_case && c.eq_ignore_ascii_case(s.as_str())) {
-                        if completion_candidate_ok(i, &elt, &c, &s, &pred, ignore_case)? {
+                        if completion_candidate_ok(i, &elt, &extra, &c, &s, &pred, ignore_case)? {
                             return Ok(Value::t());
                         }
                     }
@@ -11505,12 +13395,13 @@ fn f_internal_complete_buffer(i: &mut Interp, a: Vec<Value>) -> EvalResult {
             Ok(Value::Nil)
         }
         Value::Sym(sym) if i.symbol_name(*sym) == "t" => {
-            let cands = completion_candidates(i, &table);
+            let cands = completion_candidates(i, &table)?;
             let ignore_case = completion_ignore_case(i);
             let mut out: Vec<Value> = Vec::new();
-            for (elt, es) in cands {
+            for (elt, es, extra) in cands {
+                let Some(es) = es else { continue };
                 if let Some(c) = cand_text(&es) {
-                    if completion_candidate_ok(i, &elt, &c, &s, &pred, ignore_case)? {
+                    if completion_candidate_ok(i, &elt, &extra, &c, &s, &pred, ignore_case)? {
                         out.push(es);
                     }
                 }
@@ -11796,8 +13687,9 @@ fn f_commandp(i: &mut Interp, a: Vec<Value>) -> EvalResult {
             crate::lisp::eval::subr_interactive(s.name).is_some()
                 || crate::lisp::builtins::comp::native_iform_by_name(s.name).is_some()
         }
-        // strings and vectors are keyboard macros — commands.
-        Value::Str(_) | Value::Vec(_) => true,
+        // strings and vectors are keyboard macros — commands, but
+        // FOR-CALL-INTERACTIVELY=t rejects them (GNU Fcommandp).
+        Value::Str(_) | Value::Vec(_) => !a.get(1).map(|v| v.truthy()).unwrap_or(false),
         // `(autoload FILE DOC INTERACTIVE TYPE)': a command when its
         // interactive flag is non-nil (GNU's Fcommandp checks the same
         // slot before deciding whether to load the file).
@@ -11812,6 +13704,10 @@ fn f_commandp(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 }
 
 fn f_call_interactively(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    // GNU signals (wrong-type-argument commandp CMD) for non-commands.
+    if !f_commandp(i, vec![a[0].clone()])?.truthy() {
+        return Err(i.wrong_type_mut("commandp", &a[0]));
+    }
     i.command_execute(&a[0])
 }
 
@@ -11824,20 +13720,16 @@ fn f_execute_extended_command(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     });
     let name = match supplied {
         Some(n) => n,
-        None if i.minibuf_reader.is_some() => {
-            let args = crate::lisp::eval::MinibufArgs {
-                hist: Value::Sym(i.intern("extended-command-history")),
-                ..Default::default()
-            };
-            i.minibuf_read("M-x ", args)?
-        }
         None => {
-            // `this-command' set by the harness.
-            let tc = i.symbol_value(i.intern_soft("this-command").unwrap_or(0));
-            return match tc {
-                Value::Sym(_) => i.command_execute(&tc),
-                _ => Ok(Value::Nil),
-            };
+            // GNU execute-extended-command reads COMMAND-NAME via
+            // `read-extended-command' — completing-read over obarray
+            // with `commandp' + must-match (TAB works, junk rejected);
+            // batch reads the name from stdin like every minibuffer read.
+            let rec = i.intern("read-extended-command");
+            match i.apply(&Value::Sym(rec), vec![])? {
+                Value::Str(s) => s.borrow().clone(),
+                v => i.princ_to_string(&v),
+            }
         }
     };
     if name.is_empty() {
@@ -12007,6 +13899,17 @@ fn f_call_last_kbd_macro(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     f_execute_kbd_macro(i, vec![last, count, arg(&a, 1)])
 }
 
+fn f_kmacro(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    // (kmacro KEYS &optional COUNTER FORMAT) — build a `kmacro'
+    // oclosure.  The constructor body lives in lisp/kmacro.el as
+    // `kmacro--impl'; lazily load the library (GNU autoloads it).
+    let impl_id = i.intern("kmacro--impl");
+    if matches!(i.symbol_function(impl_id), Value::Sym(s) if s == sym::UNBOUND) {
+        crate::lisp::load::load_library(i, "kmacro")?;
+    }
+    i.apply(&Value::Sym(impl_id), a)
+}
+
 fn f_prefix_numeric_value(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     match &a[0] {
         Value::Int(n) => Ok(Value::Int(*n)),
@@ -12093,32 +13996,57 @@ fn f_count_words(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     Ok(Value::Int(n as i128))
 }
 
-fn f_what_cursor_position(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
-    let (pos, len, c) = {
+fn f_what_cursor_position(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    // GNU simple.el `what-cursor-position': at EOB
+    // "point=N of TOTAL (EOB) column=C"; otherwise
+    // "Char: KEYDESC (code, #oOctal, #xHex) point=N of TOTAL (PCT%)
+    //  column=C" (with <BEG-END> markers when narrowed).
+    // `message' returns the printed string.
+    let _detail = a.get(0).map(|v| v.truthy()).unwrap_or(false);
+    let (pos, total, c, beg, end, col) = {
         let b = cur(i);
         let bb = b.borrow();
         let p = bb.point();
         let c = if p < bb.text_len() {
-            Some(bb.text.char_at(p) as i128)
+            Some(bb.text.char_at(p) as u32)
         } else {
             None
         };
-        (p + 1, bb.text.len(), c)
+        let line = bb.text.line_of_pos(p);
+        let ls = bb.text.line_start(line);
+        (p + 1, bb.text_len(), c, bb.begv + 1, bb.text_len() + 1, p - ls)
     };
+    let percent =
+        (((pos.saturating_sub(1)) as f64 * 100.0) / (total.max(1)) as f64).round() as i64;
+    let narrowed = beg != 1 || end != total + 1;
     let msg = match c {
-        Some(code) => format!(
-            "Char: {} ({}, #o{:o}, #x{:x}) point={} of {}",
-            char::from_u32(code as u32).unwrap_or('?'),
-            code,
-            code,
-            code,
-            pos,
-            len
+        None if narrowed => format!(
+            "point={} of {} ({}%) <{}-{}> column={}",
+            pos, total, percent, beg, end, col
         ),
-        None => format!("point={} of {}", pos, len),
+        None => format!("point={} of {} (EOB) column={}", pos, total, col),
+        Some(ch) => {
+            let name = if ch < 256 {
+                describe_key(ch as i128)
+            } else {
+                char::from_u32(ch).unwrap_or('\u{FFFD}').to_string()
+            };
+            let enc = format!("({}, #o{:o}, #x{:x})", ch, ch, ch);
+            if narrowed {
+                format!(
+                    "Char: {} {} point={} of {} ({}%) <{}-{}> column={}",
+                    name, enc, pos, total, percent, beg, end, col
+                )
+            } else {
+                format!(
+                    "Char: {} {} point={} of {} ({}%) column={}",
+                    name, enc, pos, total, percent, col
+                )
+            }
+        }
     };
     i.message(&msg);
-    Ok(Value::Nil)
+    Ok(Value::string(msg))
 }
 
 fn f_what_line(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
@@ -12349,7 +14277,7 @@ impl Syn {
             let buf = cur(i);
             let bb = buf.borrow();
             let mut cat_ranges = Vec::new();
-            for tp in bb.text_props.iter().rev() {
+            for tp in bb.text.props.borrow().iter().rev() {
                 if tp.prop == stid {
                     if let Value::Cons(_) = tp.value {
                         prop_ranges.push((tp.start, tp.end, tp.value.clone()));
@@ -12512,7 +14440,12 @@ impl Syn {
 }
 
 fn f_char_syntax(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let c = want_int(i, &a[0])? as u32;
+    // GNU CHECK_CHARACTER: signals `characterp' on non-chars
+    // (strings, negative ints, >MAX_CHAR).
+    let c = match &a[0] {
+        Value::Int(n) if (0..=0x3f_ffff).contains(n) => *n as u32,
+        other => return Err(i.wrong_type_mut("characterp", other)),
+    };
     match char::from_u32(c) {
         Some(ch) => Ok(Value::Int(syntax_code_buf(i, ch) as i128)),
         None => Ok(Value::Nil),
@@ -12563,8 +14496,10 @@ fn f_make_syntax_table(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     // when TABLE is nil/omitted).
     match a.first() {
         Some(v) if !v.is_nil() => {
-            if !is_syntax_table(i, v) {
-                return Err(i.wrong_type_mut("syntax-table-p", v));
+            // GNU CHECK_CHAR_TABLE (not syntax-table-p): the parent
+            // may be any char-table.
+            if !crate::lisp::builtins::misc::is_char_table(i, v) {
+                return Err(i.wrong_type_mut("char-table-p", v));
             }
             let t = empty_syntax_table(i);
             i.set_char_table_parent(&t, v.clone());
@@ -12583,7 +14518,9 @@ fn f_syntax_table_p(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 fn parse_syntax_desc(i: &mut Interp, s: &str) -> Result<Option<Value>, Flow> {
     let chars: Vec<char> = s.chars().collect();
     if chars.is_empty() {
-        return Err(i.error("Empty syntax descriptor"));
+        // GNU: "Invalid syntax description letter: \0" (literal NUL
+        // in the message) — same as `string-to-syntax ""'.
+        return Err(i.error("Invalid syntax description letter: \0"));
     }
     let code: i128 = match chars[0] {
         // GNU syntax.c accepts '-' as a legacy synonym for whitespace.
@@ -12639,7 +14576,10 @@ fn f_string_to_syntax(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         other => return Err(i.wrong_type_mut("stringp", other)),
     };
     if s.is_empty() {
-        return Err(i.signal_data(sym::ARGS_OUT_OF_RANGE, vec![a[0].clone(), Value::Int(0)]));
+        // GNU signals `error' with a NUL byte in the message
+        // ("Invalid syntax description letter: \0"), not
+        // args-out-of-range.
+        return Err(i.error("Invalid syntax description letter: \0"));
     }
     Ok(parse_syntax_desc(i, &s)?.unwrap_or(Value::Nil))
 }
@@ -12757,8 +14697,13 @@ fn f_modify_syntax_entry(i: &mut Interp, a: Vec<Value>) -> EvalResult {
             (want_int(i, &lo_v)? as u32, want_int(i, &hi_v)? as u32)
         }
         v => {
-            let c = want_int(i, v)? as u32;
-            (c, c)
+            // GNU CHECK_CHARACTER: `characterp' on non-chars
+            // (symbols, strings, negatives, >MAX_CHAR).
+            let n = match v {
+                Value::Int(n) if (0..=0x3f_ffff).contains(n) => *n,
+                other => return Err(i.wrong_type_mut("characterp", other)),
+            };
+            (n as u32, n as u32)
         }
     };
     if lo > crate::lisp::builtins::misc::CT_MAX_CHAR
@@ -12772,7 +14717,7 @@ fn f_modify_syntax_entry(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     };
     let entry = match parse_syntax_desc(i, &desc)? {
         Some(e) => e,
-        None => return Ok(Value::Nil),
+        None => Value::Nil,
     };
     let table = match a.get(2) {
         Some(v) if !v.is_nil() => {
@@ -12843,7 +14788,7 @@ fn f_parse_partial_sexp(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         let text = bb.text.as_slice();
         crate::buffer::primitives::scan_sexps_fwd(
             &syn,
-            text,
+            &text,
             begv,
             from,
             to,
@@ -12852,6 +14797,7 @@ fn f_parse_partial_sexp(i: &mut Interp, a: Vec<Value>) -> EvalResult {
             stopbefore,
             commentstop,
         );
+        drop(text);
         (st.location, st.externalize(i))
     };
     b.borrow_mut().set_point(stop_pos);
@@ -12934,6 +14880,7 @@ pub(crate) fn f_make_overlay(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         plist: Value::Nil,
         front_advance: arg(&a, 3).truthy(),
         rear_advance: arg(&a, 4).truthy(),
+        evaporate: false,
         handle: handle.clone(),
     });
     Ok(handle)
@@ -13097,9 +15044,14 @@ fn overlay_plist_put(plist: &Value, prop: SymId, val: Value) -> Value {
 fn f_overlay_put(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let (bid, idx) = overlay_of(i, &a[0])?;
     let ps = want_sym(i, &a[1])?;
+    let evap = i.intern("evaporate");
     if let Some(b) = i.buffers.get(bid) {
         let mut bb = b.borrow_mut();
         if let Some(ov) = bb.overlays.get_mut(idx) {
+            if ps == evap {
+                // Cached flag so the deletion path needs no interner.
+                ov.evaporate = a[2].truthy();
+            }
             ov.plist = overlay_plist_put(&ov.plist, ps, a[2].clone());
         }
     }
@@ -13152,11 +15104,26 @@ fn overlay_priority(i: &Interp, ov: &crate::buffer::Overlay) -> i128 {
         .unwrap_or(0)
 }
 
-/// GNU `sort_overlays' order: priority descending, then start
-/// ascending — shared by `overlays-at', `overlays-in' and
-/// `overlay-lists'.
-fn overlay_sort_key(i: &Interp, ov: &crate::buffer::Overlay) -> (std::cmp::Reverse<i128>, usize) {
-    (std::cmp::Reverse(overlay_priority(i, ov)), ov.start)
+/// GNU's interval tree keeps overlays ordered by (start asc, newest
+/// first).  `overlays-in'/`overlays-at' (SORTED nil) return that
+/// order verbatim.
+fn overlay_pos_order(hits: &mut Vec<(&crate::buffer::Overlay, usize)>) {
+    hits.sort_by_key(|(ov, idx)| (ov.start, std::cmp::Reverse(*idx)));
+}
+
+/// `overlays-at POS SORTED' order: priority descending, then end
+/// ascending, then newest first (GNU check_priorities/insertion).
+fn overlay_sorted_order(
+    i: &Interp,
+    hits: &mut Vec<(&crate::buffer::Overlay, usize)>,
+) {
+    hits.sort_by_key(|(ov, idx)| {
+        (
+            std::cmp::Reverse(overlay_priority(i, ov)),
+            ov.end,
+            std::cmp::Reverse(*idx),
+        )
+    });
 }
 
 fn f_overlays_at(i: &mut Interp, a: Vec<Value>) -> EvalResult {
@@ -13164,36 +15131,63 @@ fn f_overlays_at(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let b = cur(i);
     let bb = b.borrow();
     let bid = bb.id;
-    let mut hits: Vec<&crate::buffer::Overlay> = bb
+    let mut hits: Vec<(&crate::buffer::Overlay, usize)> = bb
         .overlays
         .iter()
-        .filter(|ov| ov.buffer == Some(bid) && pos >= ov.start && pos < ov.end)
+        .enumerate()
+        .filter(|(_, ov)| ov.buffer == Some(bid) && pos >= ov.start && pos < ov.end)
+        .map(|(idx, ov)| (ov, idx))
         .collect();
-    hits.sort_by_key(|ov| overlay_sort_key(i, ov));
+    // GNU: SORTED (any non-nil 2nd arg) sorts by descending priority;
+    // the default is buffer position order.
+    if arg(&a, 1).truthy() {
+        overlay_sorted_order(i, &mut hits);
+    } else {
+        overlay_pos_order(&mut hits);
+    }
     Ok(Value::list(
-        hits.into_iter().map(|ov| ov.handle.clone()).collect(),
+        hits.into_iter().map(|(ov, _)| ov.handle.clone()).collect(),
     ))
 }
 fn f_overlays_in(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let b = cur(i);
     let bb = b.borrow();
     let len = bb.text.len();
+    // GNU Foverlays_in → overlays_in(BEG, END, empty=1) over the
+    // interval tree (buffer.c + itree.c).  Working in GNU's 1-based
+    // positions (B = beg, E = end, Z = len+1): the tree yields a node
+    // when `ov.end > B && ov.begin < search_end' — search_end = Z+1
+    // when END >= Z, else Z — plus empty nodes sitting exactly at B.
+    // A node with `begin == E' qualifies only when empty AND (B == E
+    // or END at the buffer end); `begin > E' never qualifies.  A
+    // reversed range (B > E) yields nothing.
+    let (s, e) = region_bounds(i, &a[0], &a[1], len);
+    if s > e {
+        return Ok(Value::Nil);
+    }
+    let (big_b, big_e) = (s + 1, e + 1);
+    let z = len + 1;
+    let search_end = if big_e >= z { z + 1 } else { z };
     let bid = bb.id;
-    let s = (want_int(i, &a[0])?.max(1) as usize - 1).min(len);
-    let e = (want_int(i, &a[1])?.max(1) as usize - 1).min(len);
-    let mut hits: Vec<&crate::buffer::Overlay> = bb
-        .overlays
-        .iter()
-        .filter(|ov| {
-            ov.buffer == Some(bid)
-                && ((ov.start < e && ov.end > s)
-                    // GNU also reports an empty overlay exactly at BEG.
-                    || (ov.start == ov.end && ov.start == s))
-        })
-        .collect();
-    hits.sort_by_key(|ov| overlay_sort_key(i, ov));
+    let mut hits: Vec<(&crate::buffer::Overlay, usize)> = Vec::new();
+    for (idx, ov) in bb.overlays.iter().enumerate() {
+        if ov.buffer != Some(bid) {
+            continue;
+        }
+        let (beg, end) = (ov.start + 1, ov.end + 1);
+        let yielded =
+            (end > big_b && beg < search_end) || (beg == end && beg == big_b);
+        if !yielded || beg > big_e {
+            continue;
+        }
+        if beg == big_e && !(beg == end && (big_b == big_e || big_e >= z)) {
+            continue;
+        }
+        hits.push((ov, idx));
+    }
+    overlay_pos_order(&mut hits);
     Ok(Value::list(
-        hits.into_iter().map(|ov| ov.handle.clone()).collect(),
+        hits.into_iter().map(|(ov, _)| ov.handle.clone()).collect(),
     ))
 }
 fn f_overlays_at_point(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
@@ -13285,9 +15279,31 @@ fn f_documentation_property(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 
 fn f_documentation(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let f = match &a[0] {
-        Value::Sym(id) => i.symbol_function(*id),
+        // GNU signals `void-function' for a symbol with no fdefinition
+        // — 'nil (no function cell) included.
+        Value::Nil => {
+            return Err(i.signal_data(
+                crate::lisp::sym::VOID_FUNCTION,
+                vec![a[0].clone()],
+            ));
+        }
+        Value::Sym(id) => {
+            let v = i.symbol_function(*id);
+            if v.is_nil()
+                || matches!(v, Value::Sym(s) if s == crate::lisp::sym::UNBOUND)
+            {
+                return Err(i.signal_data(
+                    crate::lisp::sym::VOID_FUNCTION,
+                    vec![a[0].clone()],
+                ));
+            }
+            v
+        }
         other => other.clone(),
     };
+    // GNU `documentation-function-or-1': `(macro . FUN)' steps into FUN —
+    // a macro's docstring lives on the inner function.
+    let f = crate::lisp::builtins::data::macro_inner(i, f);
     match f.as_lambda() {
         Some(l) => match &l.doc {
             Some(d) => {
@@ -13382,6 +15398,33 @@ fn f_documentation(i: &mut Interp, a: Vec<Value>) -> EvalResult {
                     Ok(Value::string(s.doc))
                 }
             }
+            Value::Cons(c) => {
+                // GNU `documentation-function-or-1': an autoload cell's
+                // docstring is its third element.
+                let doc = {
+                    let b = c.borrow();
+                    let auto_id = i.intern("autoload");
+                    if i.sym_is(&b.car, auto_id) {
+                        f.list_to_vec()
+                            .ok()
+                            .and_then(|v| v.get(2).cloned())
+                            .unwrap_or(Value::Nil)
+                    } else {
+                        Value::Nil
+                    }
+                };
+                match doc {
+                    Value::Str(d) => {
+                        let d = d.borrow().clone();
+                        if !matches!(arg(&a, 1), Value::Nil) {
+                            return Ok(Value::string(d));
+                        }
+                        let sck = Value::Sym(i.intern("substitute-command-keys"));
+                        i.apply(&sck, vec![Value::string(d)])
+                    }
+                    _ => Ok(Value::Nil),
+                }
+            }
             _ => Ok(Value::Nil),
         },
     }
@@ -13396,7 +15439,7 @@ fn f_apropos_internal(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         let name = i.symbol_name(id);
         let syn = crate::editor::re_syntax(i);
         let chars: Vec<char> = name.chars().collect();
-        if crate::lisp::regexp::search(&re, &chars, 0, &syn, &crate::editor::re_category(i))
+        if crate::lisp::regexp::search(&re, &chars, 0, &syn, &crate::editor::re_category(i), crate::lisp::regexp::NO_POINT)
             .is_some()
         {
             out.push(i.sym(id));
@@ -13475,7 +15518,7 @@ pub(crate) fn lookup_command_in_maps(
 
 /// Face names GNU binds in a batch session (a subset of face-list;
 /// enough for facep/face-list lookups).
-const KNOWN_FACES: &[&str] = &[
+pub(crate) const KNOWN_FACES: &[&str] = &[
     "default",
     "bold",
     "italic",
@@ -13668,15 +15711,159 @@ const KNOWN_FACES: &[&str] = &[
 pub(crate) fn face_known(i: &Interp, name: &str) -> bool {
     KNOWN_FACES.contains(&name) || i.face_table.iter().any(|(n, _)| n == name)
 }
+/// GNU's `face--new-frame-defaults' entry for NAME: `(face-id . lface)'
+/// — the face-id lives in the symbol's `face' property (assigned on
+/// first definition like xfaces.c's next_lface_id), the lface is the
+/// canonical 20-slot [face ATTR...] vector (slot order per GNU's
+/// lface_attribute_index).
+pub(crate) fn face_register_global(i: &mut Interp, name: &str) {
+    let sym = match i.intern_soft(name) {
+        Some(s) => s,
+        None => i.intern(name),
+    };
+    let face_prop = i.intern("face");
+    if i.get_prop(sym, face_prop).is_nil() {
+        // IDs: built-ins keep GNU's fixed small ids; user faces grow
+        // past them like GNU's next_lface_id.
+        let id = if let Some(p) = KNOWN_FACES.iter().position(|n| *n == name) {
+            p as i128
+        } else {
+            let taken: i128 = i
+                .face_table
+                .iter()
+                .filter_map(|(n, _)| {
+                    i.intern_soft(n)
+                        .map(|s| i.get_prop(s, face_prop))
+                        .and_then(|v| match v {
+                            Value::Int(n) => Some(n),
+                            _ => None,
+                        })
+                })
+                .max()
+                .unwrap_or((KNOWN_FACES.len() - 1) as i128);
+            taken + 1
+        };
+        i.put_prop(sym, face_prop, Value::Int(id));
+    }
+    let mut v = vec![Value::Sym(i.intern("face"))];
+    let un = Value::Sym(i.intern("unspecified"));
+    v.resize(20, un);
+    let lface = Value::Vec(Rc::new(RefCell::new(v)));
+    let id = i.get_prop(sym, face_prop);
+    if let Some(d) = i.intern_soft("face--new-frame-defaults") {
+        if let Value::Hash(h) = i.symbol_value(d) {
+            let key =
+                crate::lisp::builtins::hashfn::hash_key_for(i, &Value::Sym(sym), crate::lisp::HashTest::Eq);
+            h.borrow_mut()
+                .map
+                .insert(key.clone(), Value::cons(id, lface));
+            h.borrow_mut().put_key(key, Value::Sym(sym));
+        }
+    }
+}
+/// Write ATTR=VAL into the global lface stored inside
+/// `face--new-frame-defaults' for NAME (GNU writes the lface slots
+/// directly; our canonical text attrs live in `face_t_table' — this
+/// mirrors them into the vector so `frame-face-alist'/dumped-face
+/// readers see the same values).
+pub(crate) fn face_global_update(i: &mut Interp, name: &str, attr: &str, val: Value) {
+    const SLOTS: &[&str] = &[
+        ":family",
+        ":foundry",
+        ":width",
+        ":height",
+        ":weight",
+        ":slant",
+        ":underline",
+        ":inverse-video",
+        ":foreground",
+        ":background",
+        ":stipple",
+        ":overline",
+        ":strike-through",
+        ":box",
+        ":font",
+        ":inherit",
+        ":fontset",
+        ":distant-foreground",
+        ":extend",
+    ];
+    let idx = match SLOTS.iter().position(|a| *a == attr) {
+        Some(p) => p + 1,
+        None => return,
+    };
+    let sym = match i.intern_soft(name) {
+        Some(s) => s,
+        None => return,
+    };
+    let defaults = match i.intern_soft("face--new-frame-defaults") {
+        Some(d) => d,
+        None => return,
+    };
+    let entry = {
+        let hv = i.symbol_value(defaults);
+        if let Value::Hash(h) = &hv {
+            let key =
+                crate::lisp::builtins::hashfn::hash_key_for(i, &Value::Sym(sym), crate::lisp::HashTest::Eq);
+            h.borrow().map.get(&key).cloned()
+        } else {
+            None
+        }
+    };
+    if let Some(Value::Cons(c)) = entry {
+        let lface = c.borrow().cdr.clone();
+        if let Value::Vec(v) = lface {
+            if idx < v.borrow().len() {
+                v.borrow_mut()[idx] = val;
+            }
+        }
+    }
+}
+
+
+/// GNU `face-alias' chains resolve to the target face's name
+/// (nil when the name never resolves to a known face).
+pub(crate) fn face_resolve(i: &Interp, name: &str) -> Option<String> {
+    let mut cur = name.to_string();
+    for _ in 0..16 {
+        if face_known(i, &cur) {
+            return Some(cur);
+        }
+        let alias = i.get_prop(
+            i.intern_soft(&cur).unwrap_or(u32::MAX),
+            i.intern_soft("face-alias").unwrap_or(u32::MAX),
+        );
+        match i.sym_id(&alias).map(|s| i.symbol_name(s)) {
+            Some(t) => cur = t,
+            None => return None,
+        }
+    }
+    None
+}
 
 fn face_name_of(i: &mut Interp, v: &Value) -> Result<String, Flow> {
-    let name = match i.sym_id(v) {
+    let mut name = match i.sym_id(v) {
         Some(s) => i.symbol_name(s),
         None => match v {
             Value::Str(s) => s.borrow().clone(),
             other => return Err(i.wrong_type_mut("symbolp", other)),
         },
     };
+    // GNU: `face-alias' resolves to the target face for callers
+    // needing the underlying face (lface_from_face_name honors it).
+    for _ in 0..16 {
+        if face_known(i, &name) {
+            return Ok(name);
+        }
+        let alias = i.get_prop(
+            i.intern_soft(&name).unwrap_or(u32::MAX),
+            i.intern_soft("face-alias").unwrap_or(u32::MAX),
+        );
+        match i.sym_id(&alias).map(|s| i.symbol_name(s)) {
+            Some(t) => name = t,
+            None => break,
+        }
+    }
     if !face_known(i, &name) {
         return Err(i.error(format!("Invalid face: {}", name)));
     }
@@ -13684,7 +15871,29 @@ fn face_name_of(i: &mut Interp, v: &Value) -> Result<String, Flow> {
 }
 
 /// One attribute of a face, GNU-style (`unspecified' when unset).
-fn face_attr(i: &mut Interp, name: &str, attr: &str) -> Value {
+/// GNU layers: FRAME=t reads the *new-frame defaults* lface — set only
+/// by `(set-face-attribute FACE t ...)', NOT by the defface spec — so
+/// it reports `unspecified' for spec-only faces; a real frame or nil
+/// reads the realized value (defface specs land in `face_table').
+fn face_attr(i: &mut Interp, name: &str, attr: &str, frame_is_t: bool) -> Value {
+    if frame_is_t {
+        // New-frame defaults: only `(set-face-attribute FACE t ...)'
+        // writes here — defface specs don't.
+        if let Some((_, Value::Cons(_))) =
+            i.face_t_table.iter().find(|(n, _)| *n == name)
+        {
+            let (_, plist) = i.face_t_table.iter().find(|(n, _)| *n == name).unwrap();
+            if let Some(v) = plist.list_to_vec().ok().and_then(|items| {
+                items.chunks(2).find_map(|kv| match (&kv[0], kv.get(1)) {
+                    (Value::Sym(k), Some(v)) if i.symbol_name(*k) == attr => Some(v.clone()),
+                    _ => None,
+                })
+            }) {
+                return v;
+            }
+        }
+        return Value::Sym(i.intern("unspecified"));
+    }
     if let Some((_, plist)) = i.face_table.iter().find(|(n, _)| n == name) {
         if let Value::Cons(_) = plist {
             if let Some(v) = plist.list_to_vec().ok().and_then(|items| {
@@ -13752,7 +15961,9 @@ fn f_face_attribute(i: &mut Interp, a: Vec<Value>) -> EvalResult {
             vec![Value::string("Invalid face attribute name"), a[1].clone()],
         ));
     }
-    Ok(face_attr(i, &name, &attr))
+    // FRAME=t → stored spec layer; real frame/nil → realized value.
+    let spec = matches!(arg(&a, 2), Value::Sym(s) if s == sym::T);
+    Ok(face_attr(i, &name, &attr, spec))
 }
 
 fn f_facep(i: &mut Interp, a: Vec<Value>) -> EvalResult {
@@ -13766,7 +15977,8 @@ fn f_facep(i: &mut Interp, a: Vec<Value>) -> EvalResult {
             _ => return Ok(Value::Nil),
         },
     };
-    if !face_known(i, &name) {
+    // GNU lface_from_face_name resolves `face-alias' chains.
+    if face_resolve(i, &name).is_none() {
         return Ok(Value::Nil);
     }
     let mut v = Vec::with_capacity(20);
@@ -13793,7 +16005,22 @@ fn f_face_list(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
 }
 
 fn f_face_id(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let name = face_name_of(i, &a[0])?;
+    // GNU faces.el face-id: `face-alias' chains resolve to the
+    // target's id; check-face validates existence along the way.
+    let mut name = face_name_of(i, &a[0])?;
+    for _ in 0..16 {
+        if face_known(i, &name) {
+            break;
+        }
+        let alias = i.get_prop(
+            i.intern_soft(&name).unwrap_or(u32::MAX),
+            i.intern_soft("face-alias").unwrap_or(u32::MAX),
+        );
+        match i.sym_id(&alias).map(|s| i.symbol_name(s)) {
+            Some(t) => name = t,
+            None => return Err(i.error(format!("Invalid face: {}", name))),
+        }
+    }
     let idx = KNOWN_FACES
         .iter()
         .position(|n| *n == name)
@@ -13808,9 +16035,38 @@ fn f_face_id(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 }
 
 fn f_face_equal(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    // GNU `internal-lisp-face-equal-p': true iff every attribute of
+    // the two faces compares equal on the requested layer — FRAME=t
+    // is the stored spec layer, nil/a real frame the realized one.
     let n1 = face_name_of(i, &a[0])?;
     let n2 = face_name_of(i, &a[1])?;
-    Ok(Value::from_bool(n1 == n2))
+    let spec = matches!(arg(&a, 2), Value::Sym(s) if s == sym::T);
+    const ATTRS: &[&str] = &[
+        ":family", ":foundry", ":width", ":height", ":weight", ":slant",
+        ":foreground", ":distant-foreground", ":background",
+        ":underline", ":overline", ":strike-through", ":box",
+        ":inverse-video", ":stipple", ":font", ":fontset", ":extend",
+        ":inherit",
+    ];
+    for at in ATTRS {
+        let v1 = face_attr(i, &n1, at, spec);
+        let v2 = face_attr(i, &n2, at, spec);
+        if !crate::lisp::builtins::equal_values(i, &v1, &v2) {
+            return Ok(Value::Nil);
+        }
+    }
+    Ok(Value::t())
+}
+
+fn set_face_attr(i: &mut Interp, name: &str, attr: &str, val: Value) {
+    let kw = i.intern(attr);
+    if !face_known(i, name) {
+        i.face_table.push((name.to_string(), Value::Nil));
+    }
+    face_register_global(i, name);
+    if let Some((_, plist)) = i.face_table.iter_mut().find(|(n, _)| n == name) {
+        *plist = crate::lisp::eval::plist_put(plist, kw, val);
+    }
 }
 
 fn f_make_face(i: &mut Interp, a: Vec<Value>) -> EvalResult {
@@ -13819,8 +16075,10 @@ fn f_make_face(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         other => return Err(i.wrong_type_mut("symbolp", other)),
     };
     if !face_known(i, &name) {
-        i.face_table.push((name, Value::Nil));
+        i.face_table.push((name.clone(), Value::Nil));
     }
+    // GNU make-face seeds the global definition + face id.
+    face_register_global(i, &name);
     Ok(a[0].clone())
 }
 
@@ -13852,21 +16110,15 @@ fn f_copy_face(i: &mut Interp, a: Vec<Value>) -> EvalResult {
         ":extend",
         ":inherit",
     ] {
-        let v = face_attr(i, &from, attr);
+        // GNU Fcopy_face copies each attribute's value as realized on
+        // the default frame (booting font-selection), i.e. nil frame —
+        // not the `unspecified'-padded spec layer.
+        let v = face_attr(i, &from, attr, false);
         set_face_attr(i, &to, attr, v);
     }
     Ok(a[1].clone())
 }
 
-fn set_face_attr(i: &mut Interp, name: &str, attr: &str, val: Value) {
-    let kw = i.intern(attr);
-    if !face_known(i, name) {
-        i.face_table.push((name.to_string(), Value::Nil));
-    }
-    if let Some((_, plist)) = i.face_table.iter_mut().find(|(n, _)| n == name) {
-        *plist = crate::lisp::eval::plist_put(plist, kw, val);
-    }
-}
 
 fn f_internal_set_lisp_face_attribute(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let name = match i.sym_id(&a[0]) {
@@ -13883,7 +16135,24 @@ fn f_internal_set_lisp_face_attribute(i: &mut Interp, a: Vec<Value>) -> EvalResu
     if !face_known(i, &name) {
         i.face_table.push((name.clone(), Value::Nil));
     }
-    set_face_attr(i, &name, &attr, a[2].clone());
+    // FRAME=t (4th arg) → new-frame defaults (face_t_table), mirrored
+    // into the global lface inside `face--new-frame-defaults' like
+    // GNU (which stores the lface directly); a real frame or nil →
+    // the spec/realized layer.
+    let to_t = matches!(arg(&a, 3), Value::Sym(s) if s == sym::T);
+    if to_t {
+        face_register_global(i, &name);
+        if !i.face_t_table.iter().any(|(n, _)| *n == name) {
+            i.face_t_table.push((name.clone(), Value::Nil));
+        }
+        let kw = i.intern(&attr);
+        if let Some((_, plist)) = i.face_t_table.iter_mut().find(|(n, _)| *n == name) {
+            *plist = crate::lisp::eval::plist_put(plist, kw, a[2].clone());
+        }
+        face_global_update(i, &name, &attr, a[2].clone());
+    } else {
+        set_face_attr(i, &name, &attr, a[2].clone());
+    }
     Ok(Value::Nil)
 }
 
@@ -13900,28 +16169,53 @@ fn f_set_face_attribute(i: &mut Interp, a: Vec<Value>) -> EvalResult {
             vec![Value::string("Invalid face".to_string()), a[0].clone()],
         ));
     }
+    // FRAME (2nd arg) t → new-frame defaults; anything else → spec.
+    let to_t = matches!(&a[1], Value::Sym(s) if *s == sym::T);
     for kv in a[2..].chunks(2) {
         if let (Some(k), Some(v)) = (i.sym_id(&kv[0]), kv.get(1)) {
             let attr = i.symbol_name(k);
-            set_face_attr(i, &name, &attr, v.clone());
+            if to_t {
+                if !i.face_t_table.iter().any(|(n, _)| *n == name) {
+                    i.face_t_table.push((name.clone(), Value::Nil));
+                }
+                if let Some((_, plist)) = i.face_t_table.iter_mut().find(|(n, _)| *n == name) {
+                    *plist = crate::lisp::eval::plist_put(plist, k, v.clone());
+                }
+            } else {
+                set_face_attr(i, &name, &attr, v.clone());
+            }
         }
     }
     Ok(Value::Nil)
 }
 
-fn f_face_background(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let name = face_name_of(i, &a[0])?;
-    match face_attr(i, &name, ":background") {
+/// Route through the Lisp `face-attribute' (faces.el layering) so the
+/// :inherit chain and the INHERIT arg merge like GNU's
+/// `internal-face-attribute' → `merge_face_ref'.  `unspecified' → nil.
+fn face_color_attr(i: &mut Interp, a: &[Value], attr: &str) -> EvalResult {
+    let _ = face_name_of(i, &a[0])?;
+    let fa = i.intern("face-attribute");
+    let attr_sym = Value::Sym(i.intern(attr));
+    let v = i.apply(
+        &Value::Sym(fa),
+        vec![
+            a[0].clone(),
+            attr_sym,
+            a.get(1).cloned().unwrap_or(Value::Nil),
+            a.get(2).cloned().unwrap_or(Value::Nil),
+        ],
+    )?;
+    match v {
         Value::Sym(s) if i.symbol_name(s) == "unspecified" => Ok(Value::Nil),
         v => Ok(v),
     }
 }
+
+fn f_face_background(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    face_color_attr(i, &a, ":background")
+}
 fn f_face_foreground(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let name = face_name_of(i, &a[0])?;
-    match face_attr(i, &name, ":foreground") {
-        Value::Sym(s) if i.symbol_name(s) == "unspecified" => Ok(Value::Nil),
-        v => Ok(v),
-    }
+    face_color_attr(i, &a, ":foreground")
 }
 
 /// `set-face-background` — set FACE's :background attribute; nil.
@@ -13934,7 +16228,7 @@ fn f_set_face_background(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 /// `face-extend-p` — t when FACE's :extend attribute is non-nil.
 fn f_face_extend_p(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let name = face_name_of(i, &a[0])?;
-    match face_attr(i, &name, ":extend") {
+    match face_attr(i, &name, ":extend", false) {
         Value::Nil => Ok(Value::Nil),
         Value::Sym(s) if i.symbol_name(s) == "unspecified" => Ok(Value::Nil),
         _ => Ok(Value::t()),
@@ -13951,7 +16245,7 @@ fn f_set_face_extend(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 /// (memq WEIGHT '(semi-bold bold extra-bold ultra-bold)) like GNU.
 fn f_face_bold_p(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let name = face_name_of(i, &a[0])?;
-    let w = face_attr(i, &name, ":weight");
+    let w = face_attr(i, &name, ":weight", false);
     let wname = match &w {
         Value::Sym(s) => i.symbol_name(*s),
         _ => String::new(),
@@ -13969,7 +16263,7 @@ fn f_face_bold_p(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 }
 fn f_face_italic_p(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let name = face_name_of(i, &a[0])?;
-    let w = face_attr(i, &name, ":slant");
+    let w = face_attr(i, &name, ":slant", false);
     let wname = match &w {
         Value::Sym(s) => i.symbol_name(*s),
         _ => String::new(),
@@ -13987,45 +16281,14 @@ fn f_face_italic_p(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 }
 fn f_face_underline_p(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let name = face_name_of(i, &a[0])?;
-    Ok(match face_attr(i, &name, ":underline") {
+    Ok(match face_attr(i, &name, ":underline", false) {
         Value::Sym(s) if i.symbol_name(s) == "unspecified" => Value::Nil,
         v => v,
     })
 }
 
-fn f_face_all_attributes(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    let name = face_name_of(i, &a[0])?;
-    let attrs = [
-        ":family",
-        ":foundry",
-        ":width",
-        ":height",
-        ":weight",
-        ":slant",
-        ":foreground",
-        ":distant-foreground",
-        ":background",
-        ":underline",
-        ":overline",
-        ":strike-through",
-        ":box",
-        ":inverse-video",
-        ":stipple",
-        ":font",
-        ":fontset",
-        ":extend",
-        ":inherit",
-    ];
-    Ok(Value::list(
-        attrs
-            .iter()
-            .map(|at| {
-                let v = face_attr(i, &name, at);
-                Value::cons(Value::Sym(i.intern(at)), v)
-            })
-            .collect(),
-    ))
-}
+// `face-all-attributes' is Lisp (prelude) on top of `face-attribute',
+// per GNU faces.el — a Rust subr would bypass the :inherit merge.
 
 // ---------- window resizing & layout ----------
 
@@ -14202,7 +16465,7 @@ fn f_quit_window(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let kill = arg(&a, 0).truthy();
     if kill {
         let bid = w.borrow().buffer;
-        crate::buffer::primitives::kill_buffer_keep_current(i, bid);
+        let _ = crate::buffer::primitives::kill_buffer_keep_current(i, bid);
     }
     let f = sel_frame(i).ok_or_else(|| i.error("No frame"))?;
     let live = f
@@ -14245,7 +16508,7 @@ fn f_kill_buffer_and_window(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
         return Err(i.error("Attempt to delete the only window"));
     }
     let bid = i.current_buffer;
-    crate::buffer::primitives::kill_buffer_keep_current(i, bid);
+    crate::buffer::primitives::kill_buffer_keep_current(i, bid)?;
     f_delete_window(i, vec![Value::Nil])?;
     let next = i
         .buffers
@@ -14277,43 +16540,69 @@ fn f_replace_buffer_in_windows(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     Ok(Value::Nil)
 }
 
+/// `window-tree' node: (VERTICAL-P EDGES CHILD...) for internal
+/// windows — VERTICAL-P t means children are stacked — or the window
+/// object itself for leaves.
+fn window_tree_node(w: &WindowRef) -> Value {
+    let (horiz, l, t, wd, h, kids) = {
+        let wb = w.borrow();
+        (
+            wb.horiz,
+            wb.left,
+            wb.top,
+            wb.width,
+            wb.height,
+            wb.children.clone(),
+        )
+    };
+    match horiz {
+        Some(hz) => {
+            // GNU window-tree: VERTICAL-P is t for a `vc' (stacked)
+            // parent — our `horiz' flag is the inverse (t = hc).
+            let mut node = vec![
+                Value::from_bool(!hz),
+                Value::list(vec![
+                    Value::Int(l as i128),
+                    Value::Int(t as i128),
+                    Value::Int((l + wd) as i128),
+                    Value::Int((t + h) as i128),
+                ]),
+            ];
+            for k in kids {
+                node.push(window_tree_node(&k));
+            }
+            Value::list(node)
+        }
+        None => Value::Window(w.clone()),
+    }
+}
+
 fn f_window_tree(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     let f = frame_of(i, &arg(&a, 0))?;
     let ff = f.borrow();
-    let (w, h) = (ff.width, ff.height);
-    let wins: Vec<Value> = ff
-        .windows
-        .iter()
-        .filter(|x| !x.borrow().dead && !x.borrow().minibuffer)
-        .map(|x| Value::Window(x.clone()))
-        .collect();
-    // Node = (VERTICAL-P EDGES CHILD...) where EDGES = (LEFT TOP RIGHT BOTTOM).
-    // A lone window appears directly, like GNU's root.
-    let root = if wins.len() == 1 {
-        wins[0].clone()
-    } else {
-        let mut node = vec![
-            Value::t(),
-            Value::list(vec![
-                Value::Int(0),
-                Value::Int(1),
-                Value::Int(w as i128),
-                Value::Int(h as i128),
-            ]),
-        ];
-        node.extend(wins);
-        Value::list(node)
-    };
-    let mut top = vec![root];
+    let mut top: Vec<Value> = Vec::new();
+    if let Some(r) = &ff.root {
+        top.push(window_tree_node(r));
+    }
     if let Some(mb) = &ff.minibuffer {
         top.push(Value::Window(mb.clone()));
     }
     Ok(Value::list(top))
 }
 
-fn f_window_combination_limit(i: &mut Interp, _a: Vec<Value>) -> EvalResult {
-    // All our windows are leaves — GNU errors on non-internal windows.
-    Err(i.error("Window is not a combination window"))
+fn f_window_combination_limit(i: &mut Interp, a: Vec<Value>) -> EvalResult {
+    // GNU: valid only on internal windows; leaves → plain error.
+    let w = match arg(&a, 0) {
+        Value::Nil => sel_window(i).ok_or_else(|| i.error("No window"))?,
+        Value::Window(w) => w,
+        other => return Err(i.wrong_type_mut("window-valid-p", &other)),
+    };
+    let wb = w.borrow();
+    if wb.horiz.is_some() && !wb.dead {
+        Ok(Value::from_bool(wb.combination_limit))
+    } else {
+        Err(i.error("Combination limit is meaningful for internal windows only"))
+    }
 }
 
 fn f_scroll_other_window_down(i: &mut Interp, a: Vec<Value>) -> EvalResult {
@@ -14379,7 +16668,88 @@ fn f_overlay_recenter(_i: &mut Interp, _a: Vec<Value>) -> EvalResult {
 // ---------- readers & redisplay ----------
 
 fn f_completing_read_default(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    f_completing_read(i, a)
+    // GNU `completing-read-default' (minibuffer.el): pick the base
+    // keymap, compose the filename map on top when completing file
+    // names, specbind the completion state, read via the minibuffer,
+    // then substitute DEF for empty input.
+    if i.minibuf_reader.is_none() {
+        return Err(batch_eof(i));
+    }
+    let prompt = match &a[0] {
+        Value::Str(s) => s.borrow().clone(),
+        _ => String::new(),
+    };
+    let mark = i.specbind_depth();
+    let rm = arg(&a, 3);
+    // GNU: base-keymap = must-match ? minibuffer-local-must-match-map
+    // : minibuffer-local-completion-map; while completing a file name
+    // (`minibuffer-completing-file-name' non-nil except `lambda' in a
+    // nested read) layer minibuffer-local-filename-completion-map on
+    // top so its nil SPC binding un-binds minibuffer-complete-word.
+    let base_name = if rm.truthy() {
+        "minibuffer-local-must-match-map"
+    } else {
+        "minibuffer-local-completion-map"
+    };
+    let mut keymap = i
+        .intern_soft(base_name)
+        .map(|id| i.symbol_value(id))
+        .unwrap_or(Value::Nil);
+    let cf = i.intern("minibuffer-completing-file-name");
+    let cfv = i.symbol_value(cf);
+    let completing_file = cfv.truthy()
+        && !matches!(&cfv, Value::Sym(s) if i.symbol_name(*s) == "lambda");
+    if completing_file {
+        let fm = i
+            .intern_soft("minibuffer-local-filename-completion-map")
+            .map(|id| i.symbol_value(id))
+            .unwrap_or(Value::Nil);
+        if is_keymap(i, &fm) {
+            let mck = i.intern("make-composed-keymap");
+            if i.fbound_p(mck) {
+                keymap = match i.apply(&Value::Sym(mck), vec![fm, keymap.clone()]) {
+                    Ok(v) => v,
+                    Err(_) => keymap,
+                };
+            }
+        }
+    }
+    // GNU completing-read-default setq-locals in the minibuffer:
+    // minibuffer-completion-confirm gets nil when require-match is t;
+    // minibuffer--require-match records the raw arg.
+    let mct = i.intern("minibuffer-completion-table");
+    let _ = i.specbind(mct, arg(&a, 1));
+    let mcp = i.intern("minibuffer-completion-predicate");
+    let _ = i.specbind(mcp, arg(&a, 2));
+    let mcc_val = match rm {
+        Value::Sym(s) if i.symbol_name(s) == "t" => Value::Nil,
+        _ => rm.clone(),
+    };
+    let mcc = i.intern("minibuffer-completion-confirm");
+    let _ = i.specbind(mcc, mcc_val);
+    let mrm = i.intern("minibuffer--require-match");
+    let _ = i.specbind(mrm, rm);
+    let mob = i.intern("minibuffer--original-buffer");
+    let orig = i.buffer_value(i.current_buffer).unwrap_or(Value::Nil);
+    let _ = i.specbind(mob, orig);
+    let args = crate::lisp::eval::MinibufArgs {
+        hist: arg(&a, 5),
+        defalt: arg(&a, 6),
+        initial: arg(&a, 4),
+        keymap,
+    };
+    let input_r = i.minibuf_read(&prompt, args);
+    let _ = i.unbind_to(mark);
+    let input = input_r?;
+    if input.is_empty() {
+        // GNU: empty result yields DEF (car of a list) or "".
+        let def = arg(&a, 6);
+        return Ok(match def {
+            Value::Cons(c) => c.borrow().car.clone(),
+            d => d,
+        });
+    }
+    Ok(Value::string(input))
 }
 
 fn f_completing_read_multiple(i: &mut Interp, a: Vec<Value>) -> EvalResult {
@@ -14470,7 +16840,7 @@ fn f_read_passwd(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 fn f_read_kbd_macro(i: &mut Interp, a: Vec<Value>) -> EvalResult {
     // GNU's read-kbd-macro always returns a vector (unlike `kbd').
     let s = want_str(i, &a[0])?;
-    let keys = parse_kbd(i, &s);
+    let keys = parse_kbd(i, &s)?;
     Ok(Value::Vec(Rc::new(RefCell::new(keys))))
 }
 
@@ -14513,10 +16883,34 @@ fn f_timer_event_handler(i: &mut Interp, a: Vec<Value>) -> EvalResult {
 }
 
 fn f_invisible_p(i: &mut Interp, a: Vec<Value>) -> EvalResult {
-    // Check the `invisible' text property at POS.
+    // GNU Finvisible_p consults `buffer-invisibility-spec': nil → no
+    // hiding; t → any non-nil `invisible' prop hides; a list hides
+    // when the prop is (or whose car is) a member.
     let pos = want_int(i, &a[0])?;
     let inv = i.intern("invisible");
-    crate::buffer::primitives::f_get_text_property(i, vec![Value::Int(pos), Value::Sym(inv)])
+    let prop =
+        crate::buffer::primitives::f_get_text_property(i, vec![Value::Int(pos), Value::Sym(inv)])?;
+    if prop.is_nil() {
+        return Ok(Value::Nil);
+    }
+    let spec_id = i.intern("buffer-invisibility-spec");
+    let spec = i.symbol_value(spec_id);
+    match &spec {
+        Value::Nil => Ok(Value::Nil),
+        Value::Sym(s) if *s == sym::T => Ok(Value::t()),
+        Value::Cons(_) => {
+            // member test: prop or (car prop) ∈ spec
+            let key = match &prop {
+                Value::Cons(c) => c.borrow().car.clone(),
+                _ => prop.clone(),
+            };
+            let hit = spec.list_to_vec().unwrap_or_default().iter().any(|e| {
+                eq_values(e, &key)
+            });
+            Ok(Value::from_bool(hit))
+        }
+        _ => Ok(Value::Nil),
+    }
 }
 
 fn f_fringe_bitmaps_at_pos(_i: &mut Interp, _a: Vec<Value>) -> EvalResult {

@@ -54,6 +54,16 @@
   (gv-define-setter cl--find-class (store name)
     `(put ,name 'cl--class ,store)))
 
+;; remacs: `setf' on a macro-named place is expanded lazily by the
+;; interpreter — where the dump-time `cl--find-class' macro is already
+;; voided — so gv falls back to a `(setf cl--find-class)' function.
+;; GNU never needs it (its copy is byte-compiled, `setf' expanding to
+;; `put' at compile time); provide it for the interpreted path.  The
+;; GNU -Q cell stays void: eval.rs voids it into `remacs--dump-fn'.
+(unless (symbol-function (intern "(setf cl--find-class)"))
+  (fset (intern "(setf cl--find-class)")
+        (lambda (v name) (put name 'cl--class v))))
+
 (eval-when-compile (require 'cl-lib))
 (eval-when-compile (require 'cl-macs))  ;For cl--find-class.
 

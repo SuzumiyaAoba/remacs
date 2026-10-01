@@ -1,10 +1,10 @@
 //! Type predicates and symbol-manipulation subrs.
 
 use super::{S, arg, eq_values, equal_values, want_sym};
-use crate::lisp::Interp;
-use crate::lisp::error::{EvalResult, Flow};
 use crate::lisp::obarray::sym;
 use crate::lisp::value::{Lambda, Subr, Value};
+use crate::lisp::{Interp, SymId};
+use crate::lisp::error::{EvalResult, Flow};
 use std::rc::Rc;
 
 pub(crate) static SUBRS: &[Subr] = &[
@@ -544,9 +544,17 @@ fn f_functionp(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     Ok(Value::from_bool(r))
 }
 fn f_subrp(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    // Emacs: strict type check — (subrp 'car) is nil.
+    // Emacs: strict type check — (subrp 'car) is nil.  GNU 31.1
+    // native-compiles its dumped libraries, so a Lisp-defined
+    // `forward-paragraph' is a (nativecomp) subr; remacs marks dumped
+    // definitions `compiled' — report those as subrs too.  Macros and
+    // `#[...]' byte-code objects are still plain closures.
     let _ = i;
-    Ok(Value::from_bool(matches!(&args[0], Value::Subr(_))))
+    Ok(Value::from_bool(match &args[0] {
+        Value::Subr(_) => true,
+        Value::Lambda(l) => l.compiled && !l.is_macro && !l.is_bytecode(),
+        _ => false,
+    }))
 }
 fn f_subr_primitive_p(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     // No byte-compiled/native-compiled subrs exist: primitive = subr.
@@ -575,11 +583,18 @@ fn f_macrop(i: &mut Interp, args: Vec<Value>) -> EvalResult {
             }
             let auto_id = i.intern("autoload");
             if i.sym_is(&b.car, auto_id) {
-                // GNU: TYPE field is `t' for macro autoloads; the
-                // return value is its tail, e.g. (t).
+                // GNU subr.el `macrop': `(memq (nth 4 def) '(macro t))'
+                // — the return value is the memq tail, so TYPE `macro'
+                // answers (macro t), TYPE `t' answers (t).
                 let items = fun.list_to_vec().unwrap_or_default();
                 if items.get(4).map(|v| v.truthy()).unwrap_or(false) {
-                    return Ok(Value::list(vec![Value::t()]));
+                    let tail: Vec<Value> = match items.get(4) {
+                        Some(Value::Sym(s)) if i.symbol_name(*s) == "macro" => {
+                            vec![Value::Sym(*s), Value::t()]
+                        }
+                        _ => vec![Value::t()],
+                    };
+                    return Ok(Value::list(tail));
                 }
             }
         }
@@ -589,15 +604,25 @@ fn f_macrop(i: &mut Interp, args: Vec<Value>) -> EvalResult {
 }
 fn f_keywordp(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     match i.sym_id(&args[0]) {
-        Some(id) => Ok(Value::from_bool(i.symbol_name(id).starts_with(':'))),
+        // GNU: a keyword is an INTERNED symbol whose name starts
+        // with ':' — `(make-symbol ":x")' is not a keyword.
+        Some(id) => Ok(Value::from_bool(
+            !i.obarray.symbol(id).uninterned && i.symbol_name(id).starts_with(':'),
+        )),
         _ => Ok(Value::Nil),
     }
 }
-fn f_sequencep(_i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    Ok(Value::from_bool(matches!(
-        &args[0],
-        Value::Cons(_) | Value::Nil | Value::Str(_) | Value::Vec(_)
-    )))
+fn f_sequencep(i: &mut Interp, args: Vec<Value>) -> EvalResult {
+    // GNU `SEQUENCEP': lists, strings, vectors — and also
+    // char-tables and bool-vectors (both Records here).
+    Ok(Value::from_bool(match &args[0] {
+        Value::Cons(_) | Value::Nil | Value::Str(_) | Value::Vec(_) => true,
+        Value::Record(_) => {
+            super::misc::is_bool_vector(i, &args[0])
+                || super::misc::is_char_table(i, &args[0])
+        }
+        _ => false,
+    }))
 }
 fn f_booleanp(_i: &mut Interp, args: Vec<Value>) -> EvalResult {
     Ok(Value::from_bool(matches!(
@@ -632,12 +657,22 @@ fn f_arrayp(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     }))
 }
 fn f_special_form_p(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    match i.sym_id(&args[0]) {
-        Some(id) => Ok(Value::from_bool(
-            crate::lisp::special::special_form(id).is_some(),
-        )),
-        _ => Ok(Value::Nil),
-    }
+    // GNU subr.el: `(and (subrp (indirect-function OBJ)) (eq (cdr
+    // (subr-arity OBJ)) 'unevalled))' — the FUNCTION CELL decides, not
+    // the evaluator's special table: `defun'/`defmacro'/`prog2'/
+    // `lambda' carry macro cells so they report nil even though eval
+    // dispatches them by name.
+    let cell = match &args[0] {
+        Value::Subr(_) => args[0].clone(),
+        v => match i.sym_id(v) {
+            Some(id) => i.indirect_function_value(&Value::Sym(id)),
+            None => return Ok(Value::Nil),
+        },
+    };
+    Ok(Value::from_bool(matches!(
+        cell,
+        Value::Subr(s) if matches!(s.arity, crate::lisp::Arity::Unevalled)
+    )))
 }
 fn f_type_of(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     let name = match &args[0] {
@@ -676,7 +711,7 @@ fn f_type_of(i: &mut Interp, args: Vec<Value>) -> EvalResult {
         Value::Hash(_) => "hash-table",
         Value::Subr(_) => "subr",
         Value::Lambda(l) => {
-            if l.bc_items.is_some() {
+            if l.is_bytecode() {
                 "byte-code-function"
             } else {
                 "interpreted-function"
@@ -785,6 +820,27 @@ fn f_fset(i: &mut Interp, args: Vec<Value>) -> EvalResult {
 fn f_defalias(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     let id = want_sym(i, &args[0])?;
     let def = normalize_fn_def(i, args[1].clone());
+    // GNU's `Fdefalias' chases the alias chain before installing: a
+    // definition that resolves back to SYMBOL signals
+    // `cyclic-function-indirection' with the symbol, at defalias time.
+    if let Value::Sym(start) = &def {
+        let mut seen: std::collections::HashSet<SymId> = std::collections::HashSet::new();
+        let mut cur = *start;
+        loop {
+            if cur == id || !seen.insert(cur) {
+                if cur == id {
+                    let sig = i.intern("cyclic-function-indirection");
+                    return Err(i.signal_data(sig, vec![Value::Sym(id)]));
+                }
+                break;
+            }
+            match i.symbol_function(cur) {
+                Value::Sym(next) if next == sym::UNBOUND => break,
+                Value::Sym(next) => cur = next,
+                _ => break,
+            }
+        }
+    }
     i.fset_defalias(id, def)?;
     // Emacs returns the aliased symbol, not the definition.
     Ok(args[0].clone())
@@ -792,20 +848,56 @@ fn f_defalias(i: &mut Interp, args: Vec<Value>) -> EvalResult {
 fn f_defvaralias(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     let newv = want_sym(i, &args[0])?;
     let _base = want_sym(i, &args[1])?;
+    // GNU checks the alias chain at defvaralias time.
+    if let Value::Sym(start) = &args[1] {
+        let mut seen: std::collections::HashSet<SymId> = std::collections::HashSet::new();
+        let mut cur = *start;
+        loop {
+            if cur == newv || !seen.insert(cur) {
+                if cur == newv {
+                    let sig = i.intern("cyclic-variable-indirection");
+                    return Err(i.signal_data(sig, vec![Value::Sym(newv)]));
+                }
+                break;
+            }
+            let alias_prop = i.intern("variable-alias");
+            match i.get_prop(cur, alias_prop) {
+                Value::Sym(next) => cur = next,
+                _ => break,
+            }
+        }
+    }
     let prop = i.intern("variable-alias");
     i.put_prop(newv, prop, args[1].clone());
+    // GNU data.c: a non-nil DOCSTRING is stored on the ALIAS
+    // symbol's `variable-documentation' property.
+    if let Some(doc) = args.get(2) {
+        if doc.truthy() {
+            let vd = i.intern("variable-documentation");
+            i.put_prop(newv, vd, doc.clone());
+        }
+    }
     // Emacs returns BASE-VARIABLE.
     Ok(args[1].clone())
 }
 
+
 fn f_indirect_variable(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    let id = want_sym(i, &args[0])?;
+    // GNU: non-symbol args pass through unchanged (no type check).
+    let id = match &args[0] {
+        Value::Sym(s) => *s,
+        other => return Ok(other.clone()),
+    };
     Ok(i.sym(i.var_alias_target(id)))
 }
 
 fn f_makunbound(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     let id = want_sym(i, &args[0])?;
     let id = i.var_alias_target(id);
+    // GNU refuses to unbind constants (keywords, nil, t).
+    if i.obarray.symbol(id).constant {
+        return Err(i.signal_data(sym::SETTING_CONSTANT, vec![args[0].clone()]));
+    }
     if std::env::var_os("WATCH_MAKUNBOUND").is_some() {
         let name = i.symbol_name(id);
         if std::env::var("WATCH_MAKUNBOUND").unwrap().split(',').any(|w| w == name) {
@@ -863,8 +955,16 @@ fn f_set_buffer_local_toplevel_value(i: &mut Interp, args: Vec<Value>) -> EvalRe
     Ok(Value::Nil)
 }
 
-fn f_internal_subr_documentation(_i: &mut Interp, _args: Vec<Value>) -> EvalResult {
-    // GNU returns t for primitive subrs (docstrings live in etc/DOC).
+fn f_internal_subr_documentation(i: &mut Interp, args: Vec<Value>) -> EvalResult {
+    // GNU doc.c: SUBRP returns the subr's DOC index (a fixnum);
+    // everything else returns t.
+    if let Value::Subr(s) = i.indirect_function_value(&args[0]) {
+        if let Some(off) =
+            crate::lisp::builtins::misc::doc_offset(i, &format!("F{}", s.name))
+        {
+            return Ok(Value::Int(off as i128));
+        }
+    }
     Ok(Value::t())
 }
 
@@ -976,13 +1076,18 @@ fn f_fmakunbound(i: &mut Interp, args: Vec<Value>) -> EvalResult {
 }
 pub(crate) fn f_get(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     let id = want_sym(i, &args[0])?;
-    let prop = want_sym(i, &args[1])?;
-    Ok(i.get_prop(id, prop))
+    // GNU accepts any propname (eq-compared), not only symbols.
+    Ok(crate::lisp::eval::plist_get_v(
+        &i.obarray.symbol(id).plist,
+        &args[1],
+    ))
 }
 fn f_put(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     let id = want_sym(i, &args[0])?;
-    let prop = want_sym(i, &args[1])?;
-    i.put_prop(id, prop, args[2].clone());
+    i.macro_gen += 1;
+    let plist = i.obarray.symbol(id).plist.clone();
+    let new_plist = crate::lisp::eval::plist_put_v(&plist, &args[1], args[2].clone());
+    i.obarray.symbol_mut(id).plist = new_plist;
     Ok(args[2].clone())
 }
 fn f_setplist(i: &mut Interp, args: Vec<Value>) -> EvalResult {
@@ -1016,7 +1121,6 @@ fn f_intern(i: &mut Interp, args: Vec<Value>) -> EvalResult {
             let id = i.intern(&name);
             Ok(i.sym(id))
         }
-        _ if i.sym_id(&args[0]).is_some() => Ok(args[0].clone()),
         _ => Err(i.wrong_type_mut("stringp", &args[0])),
     }
 }
@@ -1038,7 +1142,18 @@ fn f_intern_soft(i: &mut Interp, args: Vec<Value>) -> EvalResult {
                 None => Ok(Value::Nil),
             }
         }
-        _ if i.sym_id(&args[0]).is_some() => Ok(args[0].clone()),
+        Value::Sym(sid) => {
+            // GNU: a symbol arg returns itself only when it is actually
+            // interned in OBARRAY — `make-symbol' results yield nil.
+            let name = i.symbol_name(*sid);
+            let hit = match &ob {
+                Some(ob) if !is_default_obarray(i, ob) => obarray_syms(i, ob)
+                    .into_iter()
+                    .any(|v| matches!(v, Value::Sym(x) if i.symbol_name(x) == name)),
+                _ => i.intern_soft(&name).is_some(),
+            };
+            Ok(if hit { args[0].clone() } else { Value::Nil })
+        }
         _ => Err(i.wrong_type_mut("stringp", &args[0])),
     }
 }
@@ -1060,12 +1175,14 @@ fn f_unintern(i: &mut Interp, args: Vec<Value>) -> EvalResult {
             // but we can drop the name mapping so a fresh intern creates
             // a new symbol — matching unintern semantics.
             let name = i.symbol_name(id);
-            // Only if name actually maps to this symbol.
+            // GNU Funintern returns t only when the obarray actually
+            // held THIS symbol: an uninterned same-name twin removes
+            // nothing and yields nil.
             if i.intern_soft(&name) == Some(id) {
-                // Remove mapping.
                 i.obarray.unintern_by_name(&name);
+                return Ok(Value::t());
             }
-            Ok(Value::t())
+            Ok(Value::Nil)
         }
         Value::Str(s) => {
             let name = s.borrow().clone();
@@ -1167,28 +1284,65 @@ fn obarray_remove(i: &Interp, ob: &Value, sym: &Value) -> bool {
 
 /// Check an optional OBARRAY argument and resolve it to the effective
 /// obarray: nil/absent means the default obarray (None); a tagged
-/// record is used directly; a non-empty VECTOR holds a lazily created
-/// obarray object in slot 0 (GNU's legacy vector-as-obarray — the
-/// record appears in `aref V 0' once symbols are interned).  An empty
-/// vector or anything else is a type error.
-fn resolve_obarray(i: &mut Interp, v: Option<&Value>) -> Result<Option<Value>, Flow> {
+/// record is used directly; a VECTOR is GNU's legacy vector-as-obarray
+/// — every slot must be 0 or a symbol hashed to that bucket
+/// (obarray_slow check).  A valid vector is promoted by placing an
+/// obarray record in slot 0, carrying over any pre-existing symbols.
+/// Anything else is a type error.
+pub(crate) fn resolve_obarray(i: &mut Interp, v: Option<&Value>) -> Result<Option<Value>, Flow> {
     match v {
         None | Some(Value::Nil) => Ok(None),
         Some(v) if is_obarray(i, v) => Ok(Some(v.clone())),
         Some(w @ Value::Vec(vec)) => {
+            // GNU `check_obarray': a vector promoted earlier (slot 0
+            // holds the obarray record) is used as-is.
+            if let Some(v0) = vec.borrow().first() {
+                if is_obarray(i, v0) {
+                    return Ok(Some(v0.clone()));
+                }
+            }
+            // GNU `check_obarray_slow': a legacy vector is an obarray
+            // only when every slot is 0 or a symbol whose name hashes
+            // (mod size) to that bucket index.
+            let (valid, syms) = {
+                let vv = vec.borrow();
+                let size = vv.len() as u64;
+                let mut syms: Vec<Value> = Vec::new();
+                let mut valid = true;
+                for (idx, slot) in vv.iter().enumerate() {
+                    match slot {
+                        Value::Int(0) => {}
+                        Value::Sym(id) => {
+                            let name = i.symbol_name(*id);
+                            if crate::lisp::builtins::strfn::sxhash_char_array(name.as_bytes())
+                                % size
+                                != idx as u64
+                            {
+                                valid = false;
+                                break;
+                            }
+                            syms.push(slot.clone());
+                        }
+                        _ => {
+                            valid = false;
+                            break;
+                        }
+                    }
+                }
+                (valid, syms)
+            };
+            if !valid {
+                return Err(i.wrong_type_mut("obarrayp", w));
+            }
             let mut vv = vec.borrow_mut();
+            // A size-0 vector is a valid but unusable obarray (GNU's
+            // check_obarray_slow accepts it; interning still fails).
             if vv.is_empty() {
                 return Err(i.wrong_type_mut("obarrayp", w));
             }
-            if is_obarray(i, &vv[0]) {
-                return Ok(Some(vv[0].clone()));
-            }
             let rec = Value::Record(std::rc::Rc::new(std::cell::RefCell::new(vec![
                 obarray_tag(i),
-                Value::Vec(std::rc::Rc::new(std::cell::RefCell::new(vec![
-                    Value::Nil;
-                    4
-                ]))),
+                Value::Vec(std::rc::Rc::new(std::cell::RefCell::new(syms))),
             ])));
             vv[0] = rec.clone();
             Ok(Some(rec))
@@ -1267,11 +1421,14 @@ fn f_interactive_form(i: &mut Interp, args: Vec<Value>) -> EvalResult {
             }
         }
         _ => match f.as_lambda() {
-            Some(l) => Ok(l
-                .interactive
-                .clone()
-                .or_else(|| bc_interactive_form(i, &l))
-                .unwrap_or(Value::Nil)),
+            Some(l) => {
+                let raw = l
+                    .interactive
+                    .clone()
+                    .or_else(|| bc_interactive_form(i, &l))
+                    .unwrap_or(Value::Nil);
+                Ok(normalize_interactive_spec(i, raw))
+            }
             // GNU scans the body of a `(lambda ...)'/`(closure ...)'
             // /`(macro . (lambda ...))' form: docstring and `declare'
             // /`interactive-declare' elements are skipped and the first
@@ -1294,6 +1451,32 @@ pub(crate) fn bc_interactive_form(i: &mut Interp, l: &Rc<Lambda>) -> Option<Valu
         Value::Sym(i.intern("interactive")),
         spec.clone(),
     ]))
+}
+/// GNU `documentation-function-or-1' semantics for `(macro . FUN)':
+/// unwrap the macro cell so doc/subr lookups see the inner function.
+pub(crate) fn macro_inner(i: &mut Interp, f: Value) -> Value {
+    let m = i.intern("macro");
+    match &f {
+        Value::Cons(c) if i.sym_id(&c.borrow().car) == Some(m) => {
+            c.borrow().cdr.clone()
+        }
+        _ => f,
+    }
+}
+
+/// GNU `interactive-form' result for an `(interactive ...)' element:
+/// a bare `(interactive)' reads back as `(interactive nil)'.
+fn normalize_interactive_spec(i: &mut Interp, v: Value) -> Value {
+    let interactive = i.intern("interactive");
+    match &v {
+        Value::Cons(c)
+            if i.sym_id(&c.borrow().car) == Some(interactive)
+                && c.borrow().cdr.is_nil() =>
+        {
+            Value::list(vec![Value::Sym(interactive), Value::Nil])
+        }
+        _ => v,
+    }
 }
 
 /// `interactive-form' over a cons-shaped function (unevaluated
@@ -1333,6 +1516,8 @@ fn interactive_form_list(i: &mut Interp, f: &Value) -> Value {
             _ => None,
         };
         if head_id == Some(interactive) {
+            // Unevaluated lambda/closure data reads back verbatim —
+            // GNU returns the raw `(interactive)' (no nil padding).
             return el.clone();
         }
         if head_id == Some(declare) || head_id == Some(ideclare) {
@@ -1364,7 +1549,23 @@ fn f_function_get(i: &mut Interp, args: Vec<Value>) -> EvalResult {
     Ok(i.get_prop(id, prop))
 }
 fn f_function_put(i: &mut Interp, args: Vec<Value>) -> EvalResult {
-    let id = want_sym(i, &args[0])?;
+    // GNU's FUNCTION arg check is `symbol-with-pos-p' (symbols with
+    // position accepted); the signaled predicate is the combined
+    // `(symbolp symbol-with-pos-p)' form.
+    let id = match i.sym_id(&args[0]) {
+        Some(s) => s,
+        None => {
+            let swp = i.intern("symbol-with-pos-p");
+            let symbolp = i.intern("symbolp");
+            return Err(i.signal_data(
+                sym::WRONG_TYPE_ARGUMENT,
+                vec![
+                    Value::list(vec![Value::Sym(symbolp), Value::Sym(swp)]),
+                    args[0].clone(),
+                ],
+            ));
+        }
+    };
     let prop = want_sym(i, &args[1])?;
     i.put_prop(id, prop, args[2].clone());
     Ok(args[2].clone())
