@@ -522,9 +522,11 @@ fn y_or_n_p_reprompt_and_quit() {
     canned(&mut i, vec![MinibufInput::Key(120), MinibufInput::Key(121)]);
     let v = ev_in(&mut i, "(y-or-n-p \"Q? \")");
     assert_eq!(i.prin1_to_string(&v), "t");
-    // C-g/C-c quits.
+    // C-g → abort-minibuffers → `minibuffer-quit-recursive-edit',
+    // which signals `minibuffer-quit' (a `quit' subtype) after the
+    // read unwinds — GNU's exact signal for C-g in a minibuffer.
     canned(&mut i, vec![MinibufInput::Key(7)]);
-    assert_eq!(ev_err_in(&mut i, "(y-or-n-p \"Q? \")"), "quit");
+    assert_eq!(ev_err_in(&mut i, "(y-or-n-p \"Q? \")"), "minibuffer-quit");
     // Batch default path (no reader): GNU signals end-of-file.
     let (mut j, _) = interp();
     assert_eq!(ev_err_in(&mut j, "(y-or-n-p \"Q? \")"), "end-of-file");

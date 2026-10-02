@@ -249,6 +249,12 @@ pub struct Interp {
     /// dumped function's ordinary runtime calls still see GNU's void
     /// function cells.
     pub macroexp_call_depth: usize,
+    /// True while the reader is consuming an embedded/on-disk `.elc'
+    /// stream (`;ELC' magic).  `#[...]' byte-code objects read in this
+    /// window are dumped compiled functions: they get `compiled' set so
+    /// `subrp'/`type-of' report GNU's nativecomp surface, exactly like
+    /// the interpreted `compiled' lambdas they replace.
+    pub reading_elc: bool,
     /// Number of in-flight expander calls running in a
     /// compiled-equivalent context (a `dumped'/bundled lambda or a
     /// bundled file load).  GNU byte-compiles these libraries, so their
@@ -894,6 +900,7 @@ impl Interp {
             default_obarray: None,
             loading_dumped: false,
             dumped_call_depth: 0,
+            reading_elc: false,
             macroexp_call_depth: 0,
             expand_unadvised_depth: 0,
             macro_cache: HashMap::default(),
@@ -9732,6 +9739,7 @@ command-line arguments.\" \
                         if s.chars().any(|c| {
                             crate::lisp::value::eight_bit_byte(c).is_some()
                                 || crate::lisp::value::raw_byte_marker(c).is_some()
+                                || crate::lisp::value::mule_seq_code(c).is_some()
                         }) {
                             let mut bytes = Vec::with_capacity(s.len());
                             for c in s.chars() {
@@ -9739,6 +9747,12 @@ command-line arguments.\" \
                                     crate::lisp::value::raw_byte_marker(c)
                                 {
                                     bytes.push(b);
+                                } else if let Some(code) =
+                                    crate::lisp::value::mule_seq_code(c)
+                                {
+                                    bytes.extend_from_slice(
+                                        &crate::lisp::value::mule_high_bytes(code),
+                                    );
                                 } else {
                                     match crate::lisp::value::eight_bit_byte(c) {
                                         Some(b) => {
@@ -10140,7 +10154,35 @@ command-line arguments.\" \
                     let prev_catching = self.minibuf_catching_exit;
                     self.minibuf_catching_exit = true;
                     self.minibuf_exited = false;
-                    let r = self.minibuf_input(prompt, false);
+                    // A scripted `MinibufInput::Key' is dispatched
+                    // through the minibuffer's real keymaps (the
+                    // front-end's `minibuf_loop' behavior): remap
+                    // bindings like y-or-n-p-map's `y-or-n-p-insert-*'
+                    // run as commands instead of inserting raw text.
+                    let mut keys: Vec<i128> = Vec::new();
+                    let mut arg_mode = false;
+                    let r = loop {
+                        match self.minibuf_input(prompt, false) {
+                            Ok(MinibufInput::Key(k)) => {
+                                if let Err(e) = crate::term::minibuf_dispatch_key(
+                                    self, k, &mut keys, &mut arg_mode,
+                                ) {
+                                    break Err(e);
+                                }
+                                if let Some(f) = self.minibuf_exit_fn.take() {
+                                    break Ok(MinibufInput::Call(f));
+                                }
+                                if self.minibuf_exited {
+                                    break Ok(MinibufInput::Text(self.minibuf_contents()));
+                                }
+                                if let Some(f) = self.minibuf_pending_flow.take() {
+                                    break Err(f);
+                                }
+                                continue;
+                            }
+                            other => break other,
+                        }
+                    };
                     self.minibuf_catching_exit = prev_catching;
                     self.catch_tags.pop();
                     match r {

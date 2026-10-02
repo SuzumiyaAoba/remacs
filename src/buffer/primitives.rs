@@ -6730,6 +6730,18 @@ enum RectForce {
 /// covers zero-width (tag) chars and East-Asian double-width chars.
 /// TAB and newline are handled by the caller.
 pub(crate) fn char_width(c: char) -> i128 {
+    // PUA proxies stand in for chars a Rust `char' can't hold:
+    // eight-bit codes and ISO control chars render 4 columns
+    // (GNU's default char-width-table), surrogates/high-mule 1.
+    if crate::lisp::value::eight_bit_byte(c).is_some() {
+        return 4;
+    }
+    if crate::lisp::value::surrogate_code(c).is_some()
+        || crate::lisp::value::mule_seq_code(c).is_some()
+        || crate::lisp::value::raw_byte_marker(c).is_some()
+    {
+        return 1;
+    }
     let n = c as u32;
     if n < 0x20 || n == 0x7f {
         return 2;

@@ -521,11 +521,13 @@ fn f_subrp(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { // Emacs: st
 // native-compiles its dumped libraries, so a Lisp-defined
 // `forward-paragraph' is a (nativecomp) subr; remacs marks dumped
 // definitions `compiled' — report those as subrs too.  Macros and
-// `#[...]' byte-code objects are still plain closures.
+// `#[...]' byte-code objects are still plain closures — unless they
+// were read while loading the bundled `.elc' dump blobs (`compiled'),
+// which stand in for GNU's native-compiled subrs and report t.
 let _ = i;
 Ok(Value::from_bool(match &args[0] {
     Value::Subr(_) => true,
-    Value::Lambda(l) => l.compiled && !l.is_macro && !l.is_bytecode(),
+    Value::Lambda(l) => l.compiled && !l.is_macro,
     _ => false,
 })) }
 fn f_subr_primitive_p(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { // No byte-compiled/native-compiled subrs exist: primitive = subr.

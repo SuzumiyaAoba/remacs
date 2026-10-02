@@ -89,7 +89,7 @@ needs to be called on every use of `truncate-string-to-width' to
 decide whether the selected frame can display that Unicode character."
   (cond
    (truncate-string-ellipsis)
-   ((char-displayable-p ?…) "…")
+   ((char-displayable-p ?\u2026) "…")
    ("...")))
 
 (defun unrecord-window-buffer (window buffer &optional all-frames)
@@ -5854,7 +5854,7 @@ Return the entry as a string."
          (history-pos (when yank-from-kill-ring-rotate
                         (- (length kill-ring)
                            (length kill-ring-yank-pointer))))
-         (ellipsis (if (char-displayable-p ?…) "…" "..."))
+         (ellipsis (if (char-displayable-p ?\u2026) "…" "..."))
          ;; Remove keymaps from text properties of copied string,
          ;; because typing RET in the minibuffer might call
          ;; an irrelevant command from the map of copied string.
@@ -15604,7 +15604,7 @@ lighters hidden."
 
 
 (defcustom mode-line-collapse-minor-modes-to
-  (if (char-displayable-p ?…) " …" " ...")
+  (if (char-displayable-p ?\u2026) " …" " ...")
   "Lighter for collapsed minor modes.
 This is effective only when `mode-line-collapse-minor-modes' is non-nil."
   :type 'string
@@ -21305,12 +21305,12 @@ non-temporary buffer." (let ((select-active-regions nil)) (when (eq selection 'P
 The return value is a list (BEG END BUF) if VALUE is a cons of
 two markers or an overlay.  Otherwise, it is nil." (cond ((bufferp value) (with-current-buffer value (when (mark t) (list (mark t) (point) value)))) ((and (consp value) (markerp (car value)) (markerp (cdr value))) (when (and (marker-buffer (car value)) (buffer-name (marker-buffer (car value))) (eq (marker-buffer (car value)) (marker-buffer (cdr value)))) (list (marker-position (car value)) (marker-position (cdr value)) (marker-buffer (car value))))) ((overlayp value) (when (overlay-buffer value) (list (overlay-start value) (overlay-end value) (overlay-buffer value))))))
 (defun xselect--int-to-cons (n) (cons (ash n -16) (logand n 65535)))
-(defun xselect--encode-string (type str &optional can-modify prefer-string-to-c-string) (when str (if (null type) str (let ((coding (or next-selection-coding-system selection-coding-system))) (if coding (setq coding (coding-system-base coding))) (let ((inhibit-read-only t)) (unless can-modify (setq str (substring str 0))) (remove-text-properties 0 (length str) '(composition nil) str) (when (eq type 'TEXT) (cond ((featurep 'ns) (setq type 'UTF8_STRING)) ((not (multibyte-string-p str)) (setq type 'C_STRING)) (t (let (non-latin-1 non-unicode eight-bit) (mapc (lambda (x) (if (>= x 256) (if (< x 1114112) (setq non-latin-1 t) (if (< x 4194176) (setq non-unicode t) (setq eight-bit t))))) str) (setq type (if (or non-unicode (and non-latin-1 coding (eq (coding-system-get coding :mime-charset) 'x-ctext))) 'COMPOUND_TEXT (if non-latin-1 'UTF8_STRING (if eight-bit 'C_STRING 'STRING)))))))) (cond ((or (eq type 'UTF8_STRING) (eq type 'text/plain\;charset=utf-8)) (if (or (not coding) (not (eq (coding-system-type coding) 'utf-8))) (setq coding 'utf-8)) (setq str (encode-coding-string str coding))) ((eq type 'STRING) (if (or (not coding) (not (eq (coding-system-type coding) 'charset))) (setq coding 'iso-8859-1)) (setq str (encode-coding-string str coding))) ((eq type 'text/plain) (if (or (not coding) (not (eq (coding-system-type coding) 'charset))) (setq coding 'ascii)) (setq str (encode-coding-string str coding))) ((eq type 'COMPOUND_TEXT) (if (or (not coding) (not (eq (coding-system-type coding) 'iso-2022))) (setq coding 'compound-text-with-extensions)) (setq str (encode-coding-string str coding))) ((eq type 'C_STRING) (or (null (multibyte-string-p str)) (setq str (encode-coding-string str 'raw-text-unix)))) (t (error "Unknown selection type: %S" type))))) (setq str (string-replace " " "\\0" str)) (setq next-selection-coding-system nil) (cons (if (and prefer-string-to-c-string (eq type 'C_STRING)) 'STRING type) str))))
+(defun xselect--encode-string (type str &optional can-modify prefer-string-to-c-string) (when str (if (null type) str (let ((coding (or next-selection-coding-system selection-coding-system))) (if coding (setq coding (coding-system-base coding))) (let ((inhibit-read-only t)) (unless can-modify (setq str (substring str 0))) (remove-text-properties 0 (length str) '(composition nil) str) (when (eq type 'TEXT) (cond ((featurep 'ns) (setq type 'UTF8_STRING)) ((not (multibyte-string-p str)) (setq type 'C_STRING)) (t (let (non-latin-1 non-unicode eight-bit) (mapc (lambda (x) (if (>= x 256) (if (< x 1114112) (setq non-latin-1 t) (if (< x 4194176) (setq non-unicode t) (setq eight-bit t))))) str) (setq type (if (or non-unicode (and non-latin-1 coding (eq (coding-system-get coding :mime-charset) 'x-ctext))) 'COMPOUND_TEXT (if non-latin-1 'UTF8_STRING (if eight-bit 'C_STRING 'STRING)))))))) (cond ((or (eq type 'UTF8_STRING) (eq type 'text/plain\;charset=utf-8)) (if (or (not coding) (not (eq (coding-system-type coding) 'utf-8))) (setq coding 'utf-8)) (setq str (encode-coding-string str coding))) ((eq type 'STRING) (if (or (not coding) (not (eq (coding-system-type coding) 'charset))) (setq coding 'iso-8859-1)) (setq str (encode-coding-string str coding))) ((eq type 'text/plain) (if (or (not coding) (not (eq (coding-system-type coding) 'charset))) (setq coding 'ascii)) (setq str (encode-coding-string str coding))) ((eq type 'COMPOUND_TEXT) (if (or (not coding) (not (eq (coding-system-type coding) 'iso-2022))) (setq coding 'compound-text-with-extensions)) (setq str (encode-coding-string str coding))) ((eq type 'C_STRING) (or (null (multibyte-string-p str)) (setq str (encode-coding-string str 'raw-text-unix)))) (t (error "Unknown selection type: %S" type))))) (setq str (string-replace "\x00" "\\0" str)) (setq next-selection-coding-system nil) (cons (if (and prefer-string-to-c-string (eq type 'C_STRING)) 'STRING type) str))))
 (defun xselect-convert-to-string (_selection type value) (let ((str (cond ((stringp value) value) ((setq value (xselect--selection-bounds value)) (with-current-buffer (nth 2 value) (when (and (>= (nth 0 value) (point-min)) (<= (nth 1 value) (point-max))) (buffer-substring (nth 0 value) (nth 1 value)))))))) (when str (xselect--encode-string type str t))))
 (defun xselect-convert-to-length (_selection _type value) (let ((len (cond ((stringp value) (length value)) ((setq value (xselect--selection-bounds value)) (abs (- (nth 0 value) (nth 1 value))))))) (if len (xselect--int-to-cons len))))
 (defun xselect-convert-to-targets (selection _type value) (if (eq selection 'XdndSelection) (apply #'vector (mapcar #'intern x-dnd-targets-list)) (apply #'vector (delete-dups `(TIMESTAMP MULTIPLE \, (delq '_EMACS_INTERNAL (mapcar (lambda (conv) (if (or (not (consp (cdr conv))) (funcall (cadr conv) selection (car conv) value)) (car conv) '_EMACS_INTERNAL)) selection-converter-alist)))))))
 (defun xselect-convert-to-delete (selection _type _value) (unless (eq selection 'XdndSelection) (gui-backend-set-selection selection nil)) 'NULL)
-(defun xselect-convert-to-filename (selection _type value) (if (not (eq selection 'XdndSelection)) (when (setq value (xselect--selection-bounds value)) (xselect--encode-string 'TEXT (buffer-file-name (nth 2 value)))) (if (and (stringp value) (file-exists-p value)) (cons 'STRING (encode-coding-string (expand-file-name value) (or file-name-coding-system default-file-name-coding-system))) (when (vectorp value) (with-temp-buffer (cl-loop for file across value do (insert (expand-file-name file) " ")) (when (> (point) 1) (delete-char -1)) (cons 'STRING (encode-coding-string (buffer-string) (or file-name-coding-system default-file-name-coding-system))))))))
+(defun xselect-convert-to-filename (selection _type value) (if (not (eq selection 'XdndSelection)) (when (setq value (xselect--selection-bounds value)) (xselect--encode-string 'TEXT (buffer-file-name (nth 2 value)))) (if (and (stringp value) (file-exists-p value)) (cons 'STRING (encode-coding-string (expand-file-name value) (or file-name-coding-system default-file-name-coding-system))) (when (vectorp value) (with-temp-buffer (cl-loop for file across value do (insert (expand-file-name file) "\000")) (when (> (point) 1) (delete-char -1)) (cons 'STRING (encode-coding-string (buffer-string) (or file-name-coding-system default-file-name-coding-system))))))))
 (defun xselect-convert-to-charpos (_selection _type value) (when (setq value (xselect--selection-bounds value)) (let ((beg (1- (nth 0 value))) (end (1- (nth 1 value)))) (cons 'SPAN (vector (xselect--int-to-cons (min beg end)) (xselect--int-to-cons (max beg end)))))))
 (defun xselect-convert-to-lineno (_selection _type value) (when (setq value (xselect--selection-bounds value)) (with-current-buffer (nth 2 value) (let ((beg (line-number-at-pos (nth 0 value))) (end (line-number-at-pos (nth 1 value)))) (cons 'SPAN (vector (xselect--int-to-cons (min beg end)) (xselect--int-to-cons (max beg end))))))))
 (defun xselect-convert-to-colno (_selection _type value) (when (setq value (xselect--selection-bounds value)) (with-current-buffer (nth 2 value) (let ((beg (progn (goto-char (nth 0 value)) (current-column))) (end (progn (goto-char (nth 1 value)) (current-column)))) (cons 'SPAN (vector (xselect--int-to-cons (min beg end)) (xselect--int-to-cons (max beg end))))))))
@@ -23408,7 +23408,7 @@ has been requested by the completion table." (completions--start-background-upda
     (define-key map "p" 'set-buffer-process-coding-system)
     (define-key map "x" 'set-selection-coding-system)
     (define-key map "X" 'set-next-selection-coding-system)
-    (define-key map "" 'set-input-method)
+    (define-key map "\034" 'set-input-method)
     (define-key map "c" 'universal-coding-system-argument)
     (define-key map "l" 'set-language-environment) map)
   "Keymap for Mule (Multilingual environment) specific commands.")
@@ -26163,7 +26163,7 @@ The enable predicate for a menu binding should check this variable.")
 	   charset encoding-info)
 	(dolist (elt encoding-table) (push (car elt) charset-list))
 	(setq end-pos (point-marker))
-	(while (re-search-forward "[^ -]+" nil t)
+	(while (re-search-forward "[^\000-\177]+" nil t)
 	  (set-marker end-pos (match-end 0))
 	  (goto-char (match-beginning 0))
 	  (setq last-pos (point) charset
@@ -26187,17 +26187,17 @@ The enable predicate for a menu binding should check this variable.")
 		    (setq len
 			  (+ (length encoding-name) 1
 			     (- (point) last-pos)))
-		    (insert "(B")
+		    (insert "\033(B")
 		    (save-excursion
 		      (goto-char last-pos)
-		      (insert (format "%%/%d" noctets))
+		      (insert (format "\033%%/%d" noctets))
 		      (insert-byte (+ (/ len 128) 128) 1)
 		      (insert-byte (+ (% len 128) 128) 1)
 		      (insert encoding-name) (insert 2)))
 		(put-text-property last-pos (point) 'charset charset))
 	    (encode-coding-region last-pos (point) 'mule-utf-8)
-	    (save-excursion (goto-char last-pos) (insert "%G"))
-	    (insert "%@")))
+	    (save-excursion (goto-char last-pos) (insert "\033%G"))
+	    (insert "\033%@")))
 	(goto-char (point-min)))))
   nil)
 
@@ -26876,7 +26876,7 @@ The enable predicate for a menu binding should check this variable.")
     (if (stringp from)
 	(if (multibyte-string-p from)
 	    (let ((idx 0))
-	      (while (setq idx (string-match-p "[^ -]" from idx))
+	      (while (setq idx (string-match-p "[^\000-\177]" from idx))
 		(setq char (aref from idx) charset (char-charset char))
 		(unless (memq charset excludes)
 		  (let ((slot (assq charset chars)))
@@ -26893,7 +26893,7 @@ The enable predicate for a menu binding should check this variable.")
       (if enable-multibyte-characters
 	  (save-excursion
 	    (goto-char from)
-	    (while (re-search-forward "[^ -]" to t)
+	    (while (re-search-forward "[^\000-\177]" to t)
 	      (setq char (preceding-char) charset (char-charset char))
 	      (unless (memq charset excludes)
 		(let ((slot (assq charset chars)))
@@ -33547,7 +33547,7 @@ The enable predicate for a menu binding should check this variable.")
 		   " -t"))
     (when (bound-and-true-p dired-omit-mode) (dired-omit-mode -1)))
   (use-local-map (nconc (make-sparse-keymap) (current-local-map)))
-  (define-key (current-local-map) "" 'recover-session-finish)
+  (define-key (current-local-map) "\003\003" 'recover-session-finish)
   (save-excursion
     (goto-char (point-min))
     (or (looking-at " Move to the session you want to recover,")
@@ -34185,7 +34185,7 @@ The enable predicate for a menu binding should check this variable.")
 			  (help--key-description-fontified
 			   (kbd "<PageUp>"))
 			  " to scroll, "
-			  (help--key-description-fontified "")
+			  (help--key-description-fontified "\023")
 			  " to search, or \\<help-map>\\[help-quit] to exit.)"
 			  (help--for-help-make-sections
 			   `
@@ -43251,7 +43251,7 @@ listed for the current language environment under the key
 `ctext-non-standard-encodings' are used.")
 
 ;; ctext-non-standard-encodings-regexp (international/mule)
-(defvar ctext-non-standard-encodings-regexp (string-to-multibyte (concat "\\(%/[0-4][\200-\377][\200-\377]\\([^]+\\)\\)" "\\|" "\\(%G[^]*%@\\)")))
+(defvar ctext-non-standard-encodings-regexp (string-to-multibyte (concat "\\(\033%/[0-4][\200-\377][\200-\377]\\([^\002]+\\)\002\\)" "\\|" "\\(\033%G[^\033]*\033%@\\)")))
 
 ;; ctext-standard-encodings (international/mule)
 (defvar ctext-standard-encodings '(ascii latin-jisx0201 katakana-jisx0201 latin-iso8859-1 latin-iso8859-2 latin-iso8859-3 latin-iso8859-4 greek-iso8859-7 arabic-iso8859-6 hebrew-iso8859-8 cyrillic-iso8859-5 latin-iso8859-9 chinese-gb2312 japanese-jisx0208 korean-ksc5601) "List of approved standard encodings (i.e. charsets) of X's Compound Text.

@@ -509,12 +509,17 @@ pub fn run_editor_with<T: KeyIo + 'static>(frontend: T, i: &mut Interp) -> io::R
 /// Process one key event: extend the key sequence, look up the
 /// binding, and execute the command (or self-insert / enter isearch).
 /// Shared by every front-end via `run_editor_with`.
-fn dispatch_key<T: KeyIo>(
-    term: &std::rc::Rc<std::cell::RefCell<T>>,
+/// Dispatch one key event through the active keymaps — the shared
+/// core for the front-end key loop and `minibuf_read`'s scripted
+/// input path.  `isearch` intercepts the four incremental-search
+/// commands (TUI passes a closure that re-reads keys; the canned
+/// reader supplies `None` so isearch runs as an ordinary command).
+fn dispatch_key_core(
     i: &mut Interp,
     key: i128,
     keys: &mut Vec<i128>,
     arg_mode: &mut bool,
+    mut isearch: Option<&mut dyn FnMut(&mut Interp, bool, bool) -> io::Result<()>>,
 ) -> io::Result<()> {
     {
         if *arg_mode {
@@ -552,7 +557,18 @@ fn dispatch_key<T: KeyIo>(
         // Look up the key sequence.
         let binding = lookup_command(i, &seq);
         match binding {
-            LookupResult::Command(cmd) => {
+            LookupResult::Command(raw_cmd) => {
+                // GNU command_loop_1: a symbol binding is checked
+                // against `[remap CMD]' in the active maps first —
+                // `self-insert-command' under `y-or-n-p-map' becomes
+                // `y-or-n-p-insert-y'.
+                let cmd = match &raw_cmd {
+                    Value::Sym(_) => crate::editor::command_remapping_pub(i, &raw_cmd)
+                        .ok()
+                        .filter(|v| v.truthy())
+                        .unwrap_or_else(|| raw_cmd.clone()),
+                    _ => raw_cmd.clone(),
+                };
                 keys.clear();
                 let lce = i.intern("last-command-event");
                 let _ = i.set_symbol(lce, Value::Int(key));
@@ -570,7 +586,7 @@ fn dispatch_key<T: KeyIo>(
                 let _ = i.set_symbol(pa, Value::Nil);
                 // isearch commands enter a dedicated incremental loop
                 // rather than running once through command_execute.
-                let isearch = if let Value::Sym(id) = &cmd {
+                let isearch_cmd = if let Value::Sym(id) = &cmd {
                     match i.symbol_name(*id).as_str() {
                         "isearch-forward" => Some((false, false)),
                         "isearch-backward" => Some((true, false)),
@@ -581,10 +597,12 @@ fn dispatch_key<T: KeyIo>(
                 } else {
                     None
                 };
-                if let Some((back, re)) = isearch {
-                    isearch_loop(term, i, back, re)?;
-                    post_command_undo_boundary(i);
-                    return Ok(());
+                if let Some((back, re)) = isearch_cmd {
+                    if let Some(hook) = isearch.as_mut() {
+                        hook(i, back, re)?;
+                        post_command_undo_boundary(i);
+                        return Ok(());
+                    }
                 }
                 // GNU command_loop_1: `pre-command-hook' runs before
                 // the command, `post-command-hook' after it — even on
@@ -747,6 +765,32 @@ fn dispatch_key<T: KeyIo>(
         }
     }
     Ok(())
+}
+
+fn dispatch_key<T: KeyIo>(
+    term: &std::rc::Rc<std::cell::RefCell<T>>,
+    i: &mut Interp,
+    key: i128,
+    keys: &mut Vec<i128>,
+    arg_mode: &mut bool,
+) -> io::Result<()> {
+    let mut hook = |i: &mut Interp, back: bool, re: bool| isearch_loop(term, i, back, re);
+    dispatch_key_core(i, key, keys, arg_mode, Some(&mut hook))
+}
+
+/// The front-end-independent half of `minibuf_loop' for a canned/
+/// scripted input source: dispatch one `MinibufInput::Key' through
+/// the minibuffer's real keymaps.  `minibuf_read' owns `keys'/
+/// `arg_mode' across calls, then does minibuf_loop's post-dispatch
+/// checks (minibuf_exit_fn / minibuf_exited / minibuf_pending_flow).
+pub(crate) fn minibuf_dispatch_key(
+    i: &mut Interp,
+    key: i128,
+    keys: &mut Vec<i128>,
+    arg_mode: &mut bool,
+) -> Result<(), crate::lisp::error::Flow> {
+    dispatch_key_core(i, key, keys, arg_mode, None)
+        .map_err(|e| i.error(format!("minibuffer input: {e}")))
 }
 
 /// Incremental search loop (C-s / C-r). Reads keys directly until the

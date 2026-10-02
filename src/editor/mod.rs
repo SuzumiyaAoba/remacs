@@ -6308,6 +6308,12 @@ Ok(if matches!(v, Value::Int(_)) {
     v
 }) }
 
+/// `command-remapping' without POSITION/keymaps — the dispatcher's
+/// GNU command_loop_1 `[remap CMD]' check.
+pub(crate) fn command_remapping_pub(i: &mut Interp, cmd: &Value) -> Result<Value, Flow> {
+    f_command_remapping(i, vec![cmd.clone(), Value::Nil, Value::Nil].into())
+}
+
 /// All modifier bits in GNU's event encoding (CHAR_MODIFIER_MASK).
 pub(crate) const CHAR_MODIFIER_MASK: i128 =
     CHAR_ALT | CHAR_CTL | CHAR_HYPER | CHAR_META | CHAR_SHIFT | CHAR_SUPER;
@@ -7338,9 +7344,10 @@ pub(crate) fn describe_key(k: i128) -> String {
     } else {
         match crate::lisp::value::lisp_char(bare as u32) {
             Some(ch) => out.push(ch),
-            // GNU push_key_description emits the mule encoding raw
-            // for codes above the Unicode range.
-            None => crate::lisp::value::push_mule_high(&mut out, bare as u32),
+            // GNU push_key_description emits the mule encoding for
+            // codes above the Unicode range; the seq proxy keeps the
+            // description one char wide like GNU's single code.
+            None => out.push(crate::lisp::value::mule_seq_char(bare as u32)),
         }
     }
     out
@@ -11383,12 +11390,21 @@ let e = bb.text_len();
 let s = pe.min(e);
 Ok(Value::string(bb.text.substring(s, e))) }
 
-fn f_delete_minibuffer_contents(i: &mut Interp, _a: crate::lisp::Argv) -> EvalResult { if let Some(id) = minibuf_id(i) {
+fn f_delete_minibuffer_contents(i: &mut Interp, _a: crate::lisp::Argv) -> EvalResult {
+// GNU delete-minibuffer-contents (subr.el): erase only past the
+// prompt — `minibuffer-prompt-end' to point-max — since the prompt
+// text carries `read-only'.  Deleting [0..end) would trip
+// `text-read-only' on every y-or-n-p answer.
+let start = match f_minibuffer_prompt_end(i, vec![].into()) {
+    Ok(Value::Int(p)) => (p - 1).max(0) as usize,
+    _ => 0,
+};
+if let Some(id) = minibuf_id(i) {
     if i.buffers.get(id).is_some() {
         crate::buffer::primitives::chg_with_buffer(i, id, |i| {
             let tlen = cur(i).borrow().text.len();
-            crate::buffer::primitives::chg_delete(i, 0, tlen)?;
-            cur(i).borrow_mut().set_point(0);
+            crate::buffer::primitives::chg_delete(i, start, tlen)?;
+            cur(i).borrow_mut().set_point(start);
             Ok(Value::Nil)
         })?;
     }

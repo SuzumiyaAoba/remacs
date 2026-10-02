@@ -436,10 +436,33 @@ pub(crate) fn find_file_name_handler(
 ) -> Option<Value> {
     let fid = i.intern("file-name-handler-alist");
     let alist = i.symbol_value(fid);
-    let iid = i.intern("inhibit-file-name-handlers");
-    let inhibit = i.symbol_value(iid);
     let ops_id = i.intern("operations");
     let mut cur = alist;
+    // GNU fileio.c Ffind_file_name_handler:
+    // - every matching (REGEXP . HANDLER) is scanned; the match with
+    //   the largest start position wins (`match_pos > pos', ties keep
+    //   the earlier entry).
+    // - a handler symbol carrying an `operations' property serves only
+    //   the listed operations.
+    // - `inhibit-file-name-handlers' is consulted ONLY when OPERATION
+    //   is literally `inhibit-file-name-operation' (that is how
+    //   `tramp-run-real-handler' suppresses handler recursion);
+    //   ordinary operations ignore it — GNU-verified on 31.1.
+    let ifno = i.intern("inhibit-file-name-operation");
+    let inhibited: Option<Value> = if crate::lisp::builtins::eq_values(
+        &operation,
+        &Value::Sym(ifno),
+    ) {
+        let iid = i.intern("inhibit-file-name-handlers");
+        Some(i.symbol_value(iid))
+    } else {
+        None
+    };
+    let syn = crate::editor::re_syntax(i);
+    let cat = crate::editor::re_category(i);
+    let chars: Vec<char> = file.chars().collect();
+    let mut best: Option<Value> = None;
+    let mut best_pos: isize = -1;
     loop {
         match cur {
             Value::Cons(c) => {
@@ -455,69 +478,65 @@ pub(crate) fn find_file_name_handler(
                     };
                     if let Value::Str(pat) = &re {
                         let pat = pat.borrow().clone();
-                        let syn = crate::editor::re_syntax(i);
-                        let chars: Vec<char> = file.chars().collect();
-                        let matched = crate::lisp::regexp::compile_case(&pat, false)
+                        let match_start = crate::lisp::regexp::compile_case(&pat, false)
                             .ok()
                             .and_then(|re| {
                                 crate::lisp::regexp::search_full(
-                                    &re,
-                                    &chars,
-                                    0,
-                                    &syn,
-                                    &crate::editor::re_category(i),
-                                    crate::lisp::regexp::NO_POINT,
-                                    false,
+                                    &re, &chars, 0, &syn, &cat,
+                                    crate::lisp::regexp::NO_POINT, false,
                                 )
                             })
-                            .is_some();
-                        if matched {
-                            // GNU Ffind_file_name_handler: Fmemq on
-                            // Vinhibit_file_name_handlers skips
-                            // inhibited handlers.
-                            let mut inhibited = false;
-                            let mut ic = inhibit.clone();
+                            .and_then(|regs| regs.first().copied().flatten());
+                        let Some(ms) = match_start else { continue };
+                        // Non-nil `operations' property: only the listed
+                        // operations are served.
+                        if let Value::Sym(hs) = &handler {
+                            let ops = i.get_prop(*hs, ops_id);
+                            if !ops.is_nil() {
+                                let mut listed = false;
+                                let mut oc = ops;
+                                while let Value::Cons(cc) = oc {
+                                    let (h, n) = {
+                                        let b = cc.borrow();
+                                        (b.car.clone(), b.cdr.clone())
+                                    };
+                                    if crate::lisp::builtins::eq_values(&h, &operation) {
+                                        listed = true;
+                                        break;
+                                    }
+                                    oc = n;
+                                }
+                                if !listed {
+                                    continue;
+                                }
+                            }
+                        }
+                        if let Some(inh) = &inhibited {
+                            let mut ic = inh.clone();
+                            let mut skip = false;
                             while let Value::Cons(cc) = ic {
                                 let (h, n) = {
                                     let b = cc.borrow();
                                     (b.car.clone(), b.cdr.clone())
                                 };
                                 if crate::lisp::builtins::eq_values(&h, &handler) {
-                                    inhibited = true;
+                                    skip = true;
                                     break;
                                 }
                                 ic = n;
                             }
-                            if inhibited {
+                            if skip {
                                 continue;
                             }
-                            let mut excluded = false;
-                            if let Value::Sym(hs) = &handler {
-                                let ops = i.get_prop(*hs, ops_id);
-                                if !ops.is_nil() {
-                                    excluded = true;
-                                    let mut oc = ops;
-                                    while let Value::Cons(cc) = oc {
-                                        let (h, n) = {
-                                            let b = cc.borrow();
-                                            (b.car.clone(), b.cdr.clone())
-                                        };
-                                        if crate::lisp::builtins::eq_values(&h, &operation) {
-                                            excluded = false;
-                                            break;
-                                        }
-                                        oc = n;
-                                    }
-                                }
-                            }
-                            if !excluded {
-                                return Some(handler);
-                            }
+                        }
+                        if ms as isize > best_pos {
+                            best_pos = ms as isize;
+                            best = Some(handler);
                         }
                     }
                 }
             }
-            _ => return None,
+            _ => return best,
         }
     }
 }
