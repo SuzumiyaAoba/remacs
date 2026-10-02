@@ -233,7 +233,7 @@ impl Interp {
         // panic can't poison later prints.
         CIRCLE.with(|c| *c.borrow_mut() = prev_circle);
         BEING_PRINTED.with(|bp| bp.borrow_mut().truncate(mark));
-        s
+        Self::sink_text(&s).into_owned()
     }
 
     /// Alias for `print_to_string` matching the Lisp name.
@@ -307,7 +307,7 @@ impl Interp {
         self.princ_inner(v, &mut s, 0, false);
         CIRCLE.with(|c| *c.borrow_mut() = prev_circle);
         BEING_PRINTED.with(|bp| bp.borrow_mut().truncate(mark));
-        s
+        Self::sink_text(&s).into_owned()
     }
 
     /// When `print-circle' is non-nil, pre-scan V for shared/cyclic
@@ -536,17 +536,33 @@ impl Interp {
                     out.push_str("#(");
                 }
                 out.push('"');
+                let na = self
+                    .print_var("print-escape-nonascii")
+                    .truthy();
                 if self.is_unibyte_str(s) {
-                    // Unibyte strings (encoder output): bytes ≥0x80
-                    // print as `\NNN' octal escapes like GNU; they may
-                    // be held as PUA proxies or plain byte-chars.
+                    // GNU print_object: unibyte byte-chars ≥0x80 print
+                    // as `\NNN' only under print-escape-nonascii;
+                    // otherwise the eight-bit char itself is emitted
+                    // (stdout writes the 0xC0/0x80 overlong pair, a
+                    // string sink stores the eight-bit char).
                     for c in s.borrow().chars() {
-                        if let Some(b) = crate::lisp::value::eight_bit_byte(c) {
-                            let _ = write!(out, "\\{:03o}", b);
-                        } else if (c as u32) >= 0x80 {
-                            let _ = write!(out, "\\{:03o}", (c as u32) & 0xFF);
-                        } else {
-                            escape_char_for_string(c, out, nl, mb, cc);
+                        let byte = crate::lisp::value::eight_bit_byte(c)
+                            .or_else(|| crate::lisp::value::raw_byte_marker(c))
+                            .or_else(|| ((c as u32) >= 0x80)
+                                .then(|| (c as u32) as u8 & 0xFF));
+                        match (byte, na) {
+                            (Some(b), true) => {
+                                let _ = write!(out, "\\{:03o}", b);
+                            }
+                            (Some(b), false) => {
+                                // Sink decides: stdout → overlong pair,
+                                // string/buffer → `\NNN', function →
+                                // eight-bit code 0x3FFF80+b.
+                                out.push(crate::lisp::value::print_eight_bit_char(b));
+                            }
+                            (None, _) => {
+                                escape_char_for_string(c, out, nl, mb, cc)
+                            }
                         }
                     }
                 } else {

@@ -667,7 +667,12 @@ fn f_type_of(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { let name =
     Value::Hash(_) => "hash-table",
     Value::Subr(_) => "subr",
     Value::Lambda(l) => {
-        if l.is_bytecode() {
+        // GNU nativecomp parity: compiled lambdas (dumped source
+        // definitions and `#[...]' read from a bundled `.elc') report
+        // `subr'; raw `#[...]' literals stay `byte-code-function'.
+        if l.compiled {
+            "subr"
+        } else if l.is_bytecode() {
             "byte-code-function"
         } else {
             "interpreted-function"
@@ -773,6 +778,14 @@ if let Value::Sym(start) = &def {
         }
     }
 }
+// GNU data.c `defalias' LOADHIST_ATTACHes `(defun . SYM)' when the
+// definition is installed — source `defun'/`defmacro' forms and
+// `.elc' defalias calls alike (an `(autoload ...)' cell counts too).
+let defun_id = i.intern("defun");
+crate::lisp::builtins::evalfn::loadhist_attach(
+    i,
+    Value::cons(i.sym(defun_id), args[0].clone()),
+);
 i.fset_defalias(id, def)?;
 // Emacs returns the aliased symbol, not the definition.
 Ok(args[0].clone()) }
@@ -807,6 +820,8 @@ if let Some(doc) = args.get(2) {
         i.put_prop(newv, vd, doc.clone());
     }
 }
+// GNU eval.c `Fdefvaralias' LOADHIST_ATTACHes the bare alias symbol.
+crate::lisp::builtins::evalfn::loadhist_attach(i, args[0].clone());
 // Emacs returns BASE-VARIABLE.
 Ok(args[1].clone()) }
 
@@ -925,6 +940,8 @@ if let Some(Value::Str(s)) = args.get(1) {
     let vd = i.intern("variable-documentation");
     i.put_prop(id, vd, Value::string(s.borrow().clone()));
 }
+// GNU eval.c `defvar' LOADHIST_ATTACHes the bare symbol.
+crate::lisp::builtins::evalfn::loadhist_attach(i, args[0].clone());
 Ok(Value::Nil) }
 
 fn f_delete_indirect_variable(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { // We don't create indirect variable bindings, so this always fails.

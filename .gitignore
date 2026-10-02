@@ -5,3 +5,7 @@ mtf*
 pfx*
 remacs-*.profraw
 .#*
+tests/diff/sandbox/
+tests/diff/*.out
+tests/diff/*.err
+tests/diff/report.txt

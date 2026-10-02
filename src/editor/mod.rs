@@ -11391,23 +11391,22 @@ let s = pe.min(e);
 Ok(Value::string(bb.text.substring(s, e))) }
 
 fn f_delete_minibuffer_contents(i: &mut Interp, _a: crate::lisp::Argv) -> EvalResult {
-// GNU delete-minibuffer-contents (subr.el): erase only past the
-// prompt — `minibuffer-prompt-end' to point-max — since the prompt
-// text carries `read-only'.  Deleting [0..end) would trip
-// `text-read-only' on every y-or-n-p answer.
+// GNU delete-minibuffer-contents (subr.el): `(delete-region
+// (minibuffer-prompt-end) (point-max))' — works on the CURRENT buffer
+// even outside a minibuffer (`minibuffer-prompt-end' answers
+// point-min there), and inside one erases only past the prompt since
+// the prompt text carries `read-only'.
 let start = match f_minibuffer_prompt_end(i, vec![].into()) {
     Ok(Value::Int(p)) => (p - 1).max(0) as usize,
     _ => 0,
 };
-if let Some(id) = minibuf_id(i) {
-    if i.buffers.get(id).is_some() {
-        crate::buffer::primitives::chg_with_buffer(i, id, |i| {
-            let tlen = cur(i).borrow().text.len();
-            crate::buffer::primitives::chg_delete(i, start, tlen)?;
-            cur(i).borrow_mut().set_point(start);
-            Ok(Value::Nil)
-        })?;
-    }
+let tlen = cur(i).borrow().text.len();
+if start < tlen {
+    crate::buffer::primitives::chg_delete(i, start, tlen)?;
+}
+let pt = cur(i).borrow().point;
+if pt > start {
+    cur(i).borrow_mut().set_point(start);
 }
 Ok(Value::Nil) }
 

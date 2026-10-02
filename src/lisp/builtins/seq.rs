@@ -983,22 +983,74 @@ impl SortSpec {
         };
         Ok(r.truthy())
     }
+
+    /// Same comparator against a pre-resolved subr — `sort' calls its
+    /// predicate O(n log n) times, so skipping `apply's symbol-chase
+    /// and `lisp_stack' frame setup for the overwhelmingly common
+    /// "lessp is a plain 2-arg subr" case shaves measurable time off
+    /// `sort-coding-systems'/mule-cmds' charset tables at startup.
+    fn less_subr(
+        &self,
+        i: &mut Interp,
+        s: &Subr,
+        a: &Value,
+        b: &Value,
+    ) -> Result<bool, super::Flow> {
+        let ka = if self.keyf.truthy() {
+            i.apply(&self.keyf, vec![a.clone()])?
+        } else {
+            a.clone()
+        };
+        let kb = if self.keyf.truthy() {
+            i.apply(&self.keyf, vec![b.clone()])?
+        } else {
+            b.clone()
+        };
+        let argv = if self.reverse { vec![kb, ka] } else { vec![ka, kb] };
+        let r = (s.func)(i, crate::lisp::Argv::new(argv))?;
+        Ok(r.truthy())
+    }
+}
+
+/// If `f' resolves to a builtin subr we can call it without the
+/// `apply' dispatch overhead; otherwise returns None.
+fn sort_pred_subr(i: &Interp, f: &Value) -> Option<Subr> {
+    let id = match f {
+        Value::Sym(id) => *id,
+        _ => return None,
+    };
+    match i.symbol_function(id) {
+        Value::Subr(s) => Some(*s),
+        _ => None,
+    }
 }
 
 /// Stable merge sort (same order guarantees as Emacs `sort`).
 fn merge_sort(i: &mut Interp, items: &mut Vec<Value>, spec: &SortSpec) -> Result<(), super::Flow> {
+    merge_sort_inner(i, items, spec, sort_pred_subr(i, &spec.lessp))
+}
+
+fn merge_sort_inner(
+    i: &mut Interp,
+    items: &mut Vec<Value>,
+    spec: &SortSpec,
+    pred_subr: Option<Subr>,
+) -> Result<(), super::Flow> {
     if items.len() < 2 {
         return Ok(());
     }
     let mid = items.len() / 2;
     let mut left = items[..mid].to_vec();
     let mut right = items[mid..].to_vec();
-    merge_sort(i, &mut left, spec)?;
-    merge_sort(i, &mut right, spec)?;
+    merge_sort_inner(i, &mut left, spec, pred_subr)?;
+    merge_sort_inner(i, &mut right, spec, pred_subr)?;
     let (mut a, mut b, mut k) = (0usize, 0usize, 0usize);
     while a < left.len() && b < right.len() {
         // pred(right[b], left[a])? Emacs `sort` uses (pred a b) = "a < b"
-        let r = spec.less(i, &right[b], &left[a])?;
+        let r = match &pred_subr {
+            Some(s) => spec.less_subr(i, s, &right[b], &left[a])?,
+            None => spec.less(i, &right[b], &left[a])?,
+        };
         if r {
             items[k] = right[b].clone();
             b += 1;

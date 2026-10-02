@@ -588,6 +588,10 @@ fn sf_defvar(i: &mut Interp, args: Value) -> EvalResult {
         let vd = i.intern("variable-documentation");
         i.put_prop(sid, vd, Value::string(s.borrow().clone()));
     }
+    // GNU eval.c `defvar' LOADHIST_ATTACHes the bare symbol — this is
+    // what records `(defvar SYM)' inside compiled `byte-code' forms,
+    // where the definition can't be seen by scanning top-level forms.
+    crate::lisp::builtins::evalfn::loadhist_attach(i, name_v.clone());
     Ok(name_v)
 }
 
@@ -612,6 +616,9 @@ fn sf_defconst(i: &mut Interp, args: Value) -> EvalResult {
     }
     let rlv = i.intern("risky-local-variable");
     i.put_prop(sid, rlv, Value::t());
+    // GNU routes `defconst' through `defvar' (eval.c), which
+    // LOADHIST_ATTACHes the bare symbol.
+    crate::lisp::builtins::evalfn::loadhist_attach(i, name_v.clone());
     Ok(name_v)
 }
 
@@ -630,6 +637,13 @@ fn sf_defun(i: &mut Interp, args: Value) -> EvalResult {
     lambda.env = i.lambda_env();
     i.fset_defalias(sid, Value::Lambda(Rc::new(lambda)))?;
     eval_defun_declarations(i, &name_v, &params, &body, false)?;
+    // GNU `defun' reaches `defalias' (eval.c), which
+    // LOADHIST_ATTACHes `(defun . SYM)'.
+    let defun_id = i.intern("defun");
+    crate::lisp::builtins::evalfn::loadhist_attach(
+        i,
+        Value::cons(i.sym(defun_id), name_v.clone()),
+    );
     Ok(name_v)
 }
 
@@ -647,6 +661,12 @@ fn sf_defmacro(i: &mut Interp, args: Value) -> EvalResult {
     lambda.env = i.lambda_env();
     i.fset_defalias(sid, Value::Lambda(Rc::new(lambda)))?;
     eval_defun_declarations(i, &name_v, &params, &body, true)?;
+    // GNU `defmacro' reaches `defalias' the same way.
+    let defun_id = i.intern("defun");
+    crate::lisp::builtins::evalfn::loadhist_attach(
+        i,
+        Value::cons(i.sym(defun_id), name_v.clone()),
+    );
     Ok(name_v)
 }
 

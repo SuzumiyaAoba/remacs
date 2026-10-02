@@ -444,14 +444,16 @@ pub(crate) fn find_file_name_handler(
     //   the earlier entry).
     // - a handler symbol carrying an `operations' property serves only
     //   the listed operations.
-    // - `inhibit-file-name-handlers' is consulted ONLY when OPERATION
-    //   is literally `inhibit-file-name-operation' (that is how
-    //   `tramp-run-real-handler' suppresses handler recursion);
-    //   ordinary operations ignore it — GNU-verified on 31.1.
+    // - `inhibit-file-name-handlers' applies ONLY when OPERATION
+    //   equals the `inhibit-file-name-operation' variable's value —
+    //   `tramp-run-real-handler' binds it to the inner operation, so
+    //   handlers suppress themselves for that call — while ordinary
+    //   operations ignore it (GNU-verified on 31.1).
     let ifno = i.intern("inhibit-file-name-operation");
+    let inhibit_target = i.symbol_value(ifno);
     let inhibited: Option<Value> = if crate::lisp::builtins::eq_values(
         &operation,
-        &Value::Sym(ifno),
+        &inhibit_target,
     ) {
         let iid = i.intern("inhibit-file-name-handlers");
         Some(i.symbol_value(iid))

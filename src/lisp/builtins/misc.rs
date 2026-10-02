@@ -926,7 +926,7 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!("window-left-column", 0, 1, f_zero, ""),
     S!("pos-visible-in-window-group-p", 0, 3, f_pos_visible, ""),
     S!("window-line", 0, 1, f_window_line, ""),
-    S!("window-normalize-window", 1, 1, f_window_normalize, ""),
+    S!("window-normalize-window", 1, 2, f_window_normalize, ""),
     S!("window-normalize-buffer", 1, 1, f_window_norm_buffer, ""),
     S!("window-normalize-frame", 1, 1, f_window_norm_frame, ""),
     S!("delete-windows-on", 0, 2, f_delete_windows_on, ""),
@@ -1720,6 +1720,57 @@ loop {
     }
 } }
 
+/// A Lambda's `Arity': parsed arg fields for source closures, the
+/// packed/list argdesc in `bc_items[0]' for `#[...]' byte-code objects.
+fn lambda_arity(i: &mut Interp, l: &std::rc::Rc<Lambda>) -> Arity {
+    if let Some(items) = &l.bc_items {
+        match items.borrow().first() {
+            Some(Value::Int(n)) => {
+                let req = (*n & 0x7f) as u16;
+                let rest = (*n >> 7) & 1 != 0;
+                let max = ((*n >> 8) & 0x7f) as u16;
+                if rest {
+                    Arity::Many { min: req }
+                } else {
+                    Arity::Range { min: req, max }
+                }
+            }
+            Some(list @ (Value::Cons(_) | Value::Nil)) => {
+                let opt = i.intern("&optional");
+                let rst = i.intern("&rest");
+                let (mut min, mut max, mut rest, mut mode) = (0u16, 0u16, false, 0);
+                let mut cur = list.clone();
+                while let Value::Cons(c) = cur {
+                    let (hd, tl) = {
+                        let b = c.borrow();
+                        (b.car.clone(), b.cdr.clone())
+                    };
+                    match i.sym_id(&hd) {
+                        Some(s) if s == opt => mode = 1,
+                        Some(s) if s == rst => {
+                            rest = true;
+                            mode = 2;
+                        }
+                        Some(_) => {
+                            min += (mode == 0) as u16;
+                            max += (mode <= 1) as u16;
+                        }
+                        None => {}
+                    }
+                    cur = tl;
+                }
+                if rest {
+                    Arity::Many { min }
+                } else {
+                    Arity::Range { min, max }
+                }
+            }
+            _ => l.arity(),
+        }
+    } else {
+        l.arity()
+    }
+}
 fn f_func_arity(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { // GNU signals void-function for unbound symbols (indirect-function).
 if let Some(id) = i.sym_id(&args[0]) {
     if matches!(i.symbol_function(id), Value::Sym(s) if s == sym::UNBOUND) {
@@ -1793,60 +1844,10 @@ let mut list_arity = |v: &Value| -> Option<Arity> {
         Arity::Range { min, max }
     })
 };
+
 let arity = match &fun {
     Value::Subr(s) => s.arity,
-    Value::Lambda(l) => {
-        // `#[...]' byte-code objects keep their argdesc in
-        // bc_items[0] — an integer (packed req/opt/rest) or a
-        // dynamic-style arglist — rather than parsed arg fields.
-        if let Some(items) = &l.bc_items {
-            match items.borrow().first() {
-                Some(Value::Int(n)) => {
-                    let req = (*n & 0x7f) as u16;
-                    let rest = (*n >> 7) & 1 != 0;
-                    let max = ((*n >> 8) & 0x7f) as u16;
-                    if rest {
-                        Arity::Many { min: req }
-                    } else {
-                        Arity::Range { min: req, max }
-                    }
-                }
-                Some(list @ (Value::Cons(_) | Value::Nil)) => {
-                    let opt = i.intern("&optional");
-                    let rst = i.intern("&rest");
-                    let (mut min, mut max, mut rest, mut mode) = (0u16, 0u16, false, 0);
-                    let mut cur = list.clone();
-                    while let Value::Cons(c) = cur {
-                        let (hd, tl) = {
-                            let b = c.borrow();
-                            (b.car.clone(), b.cdr.clone())
-                        };
-                        match i.sym_id(&hd) {
-                            Some(s) if s == opt => mode = 1,
-                            Some(s) if s == rst => {
-                                rest = true;
-                                mode = 2;
-                            }
-                            Some(_) => {
-                                min += (mode == 0) as u16;
-                                max += (mode <= 1) as u16;
-                            }
-                            None => {}
-                        }
-                        cur = tl;
-                    }
-                    if rest {
-                        Arity::Many { min }
-                    } else {
-                        Arity::Range { min, max }
-                    }
-                }
-                _ => l.arity(),
-            }
-        } else {
-            l.arity()
-        }
-    }
+    Value::Lambda(l) => lambda_arity(i, l),
     v => match list_arity(v) {
         Some(a) => a,
         None => {
@@ -1878,7 +1879,7 @@ let arity = match &args[0] {
     // non-macro non-bytecode lambda must be accepted here too —
     // subr.el's Lisp `special-form-p' calls this on any `subrp'-true
     // object after its subr is shadowed by the ported defun.
-    Value::Lambda(l) if l.compiled && !l.is_macro && !l.is_bytecode() => l.arity(),
+    Value::Lambda(l) if l.compiled && !l.is_macro => lambda_arity(i, l),
     other => return Err(i.wrong_type_mut("subrp", other)),
 };
 let (min, max) = match arity {
@@ -2054,6 +2055,37 @@ pub(crate) fn make_interpreted_closure(
             }))
         }
     };
+    // A `#[ARGDESC STR CONSTS DEPTH DOC ISPEC]' literal read while
+    // evaluating a `.elc' dump blob stands in for GNU's byte-compiled
+    // (or, on nativecomp builds, subr-shaped) function object: mark it
+    // `compiled' so `subrp'/`type-of' report the nativecomp surface,
+    // and pull the doc/interactive slots into the Lambda like
+    // `parse_lambda' does for source definitions.  Plain `#[...]' reads
+    // (user code, `make-byte-code') stay `compiled' = nil.
+    let elc_compiled = i.reading_elc
+        && i.loading_dumped
+        && bc_items
+            .as_ref()
+            .map(|items| crate::lisp::bytecode::is_byte_code(items))
+            .unwrap_or(false);
+    let mut bc_doc = None;
+    let mut bc_doc_str = None;
+    let mut bc_interactive = None;
+    if elc_compiled {
+        let items = bc_items.as_ref().unwrap();
+        if let Some(dv) = items.get(4).filter(|v| !v.is_nil()) {
+            if let Value::Str(s) = dv {
+                bc_doc_str = Some(s.borrow().clone());
+            }
+            bc_doc = Some(dv.clone());
+        }
+        if let Some(spec) = items.get(5).filter(|v| !v.is_nil()) {
+            bc_interactive = Some(Value::list(vec![
+                Value::Sym(i.intern("interactive")),
+                spec.clone(),
+            ]));
+        }
+    }
     Value::Lambda(Rc::new(Lambda {
         is_macro: false,
         required,
@@ -2061,17 +2093,17 @@ pub(crate) fn make_interpreted_closure(
         rest,
         body,
         env,
-        doc: None,
-        interactive: None,
+        doc: bc_doc_str,
+        interactive: bc_interactive,
         name: None,
         bad_arglist: false,
         arglist: Some(arglist_v.clone()),
         plain,
         dumped_doc: false,
-        compiled: false,
+        compiled: elc_compiled,
         advice_link: None,
         bc_items: bc_items.map(|v| Rc::new(RefCell::new(v))),
-        doc_value: None,
+        doc_value: bc_doc,
         env_value: None,
     }))
 }
@@ -2897,14 +2929,14 @@ fn describe_vector(
             first = false;
         }
         if !elt_prefix.is_nil() {
-            i.write_output_to(&i.princ_to_string(&elt_prefix), &Value::Nil)?;
+            { let t = i.princ_to_string_cb(&elt_prefix)?; i.write_output_to(&t, &Value::Nil)?; }
         }
         let s = fontify(i, starting)?;
         i.write_output_to(&s, &Value::Nil)?;
         if range_end != starting {
             i.write_output_to(" .. ", &Value::Nil)?;
             if !elt_prefix.is_nil() {
-                i.write_output_to(&i.princ_to_string(&elt_prefix), &Value::Nil)?;
+                { let t = i.princ_to_string_cb(&elt_prefix)?; i.write_output_to(&t, &Value::Nil)?; }
             }
             let s = fontify(i, range_end)?;
             i.write_output_to(&s, &Value::Nil)?;
@@ -2934,7 +2966,7 @@ fn describe_vector(
         let defalt = i.char_table_defalt(vector);
         if !defalt.is_nil() {
             if !elt_prefix.is_nil() {
-                i.write_output_to(&i.princ_to_string(&elt_prefix), &Value::Nil)?;
+                { let t = i.princ_to_string_cb(&elt_prefix)?; i.write_output_to(&t, &Value::Nil)?; }
             }
             i.write_output_to("default", &Value::Nil)?;
             if basic {
@@ -10497,9 +10529,29 @@ for w in cands {
 }
 Ok(best.or(best_2).map(Value::Window).unwrap_or(Value::Nil)) }
 
-fn f_window_normalize(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult { match &a[0] {
-    Value::Window(_) => Ok(a[0].clone()),
+fn f_window_normalize(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
+// GNU window.el defun: nil → selected-window; LIVE-ONLY →
+// `window-live-p' gate; otherwise `window-valid-p' (a *dead* window
+// object is invalid, internal windows are fine).  The prelude defun
+// matches GNU textually; this subr shadows it for GNU's nativecomp
+// `subrp' surface, so it must carry the same 1+1 arity.
+match &a[0] {
     Value::Nil => f_selected_window(i, vec![].into()),
+    Value::Window(w) => {
+        let w = w.borrow();
+        let live_only = arg(&a, 1).truthy();
+        let ok = if live_only { !w.dead && w.horiz.is_none() } else { !w.dead };
+        if ok {
+            drop(w);
+            Ok(a[0].clone())
+        } else {
+            Err(i.error(if live_only {
+                format!("{} is not a live window", i.princ_to_string(&a[0]))
+            } else {
+                format!("{} is not a valid window", i.princ_to_string(&a[0]))
+            }))
+        }
+    }
     other => {
         let shown = i.princ_to_string(other);
         Err(i.error(format!("{shown} is not a valid window")))

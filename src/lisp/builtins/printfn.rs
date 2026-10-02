@@ -116,20 +116,45 @@ if ensure && i.output_at_bol(&stream) {
 i.write_output_to("\n", &stream)?;
 Ok(Value::Sym(sym::T)) }
 
-fn f_write_char(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { if let Value::Int(n) = &args[0] {
-    if let Some(c) = char::from_u32(*n as u32) {
-        let mut s = [0u8; 4];
-        i.write_output_to(c.encode_utf8(&mut s), &arg(&args, 1))?;
+fn f_write_char(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
+    // GNU's printchar resolves the char CODE (CHECK_CHARACTER first):
+    // eight-bit codes (0x3FFF80..0x3FFFFF) write as the byte,
+    // unrepresentable codes print as U+FFFD.
+    let n = match &args[0] {
+        Value::Int(n) => *n,
+        other => return Err(i.wrong_type_mut("characterp", other)),
+    };
+    if !(0..=0x3FFFFF).contains(&n) {
+        return Err(i.wrong_type_mut("characterp", &args[0]));
     }
+    // Eight-bit codes emit a sentinel so sinks get GNU's semantics:
+    // function → code, text → the eight-bit char, stdout → overlong.
+    if let Some(b) = (0x3FFF80..=0x3FFFFF)
+        .contains(&n)
+        .then(|| (n - 0x3FFF00) as u8)
+    {
+        let mut buf = [0u8; 4];
+        let ch = crate::lisp::value::write_char_eight_bit(b);
+        return i
+            .write_output_to(ch.encode_utf8(&mut buf), &arg(&args, 1))
+            .map(|_| args[0].clone());
+    }
+    let c = crate::lisp::value::lisp_char(n as u32)
+        .unwrap_or('\u{FFFD}');
+    let mut s = [0u8; 4];
+    i.write_output_to(c.encode_utf8(&mut s), &arg(&args, 1))?;
+    Ok(args[0].clone())
 }
-Ok(args[0].clone()) }
 
 fn f_prin1_to_string(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { let noescape = arg(&args, 1).truthy();
-Ok(Value::string(if noescape {
+let s = if noescape {
     i.princ_to_string_cb(&args[0])?
 } else {
     i.print_to_string_cb(&args[0])?
-})) }
+};
+// String sinks render eight-bit bytes as `\NNN' ASCII text like GNU's
+// strout — sentinels never reach the Lisp value.
+Ok(Value::string(crate::lisp::eval::Interp::sink_text(&s).as_ref())) }
 
 fn f_with_output_to_string(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { // (with-output-to-string &rest BODY)
 // GNU's macro binds `standard-output' to a temp BUFFER — code inside

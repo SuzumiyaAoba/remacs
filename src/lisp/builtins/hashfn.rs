@@ -106,7 +106,10 @@ pub(crate) fn hash_key_for(interp: &Interp, v: &Value, test: HashTest) -> HashKe
     match test {
         HashTest::Eq => eq_key(v),
         HashTest::Eql => eql_key(v),
-        HashTest::Equal => equal_key(interp, v),
+        HashTest::Equal => {
+            let mut ancestors = std::collections::HashSet::new();
+            equal_key(interp, v, &mut ancestors)
+        }
     }
 }
 
@@ -149,8 +152,32 @@ fn eql_key(v: &Value) -> HashKey {
     }
 }
 
-fn equal_key(interp: &Interp, v: &Value) -> HashKey {
-    match v {
+fn equal_key(
+    interp: &Interp,
+    v: &Value,
+    ancestors: &mut std::collections::HashSet<usize>,
+) -> HashKey {
+    // Cyclic structures must not recurse forever (cl--generic method
+    // tables embed self-referencing records — GNU accepts them in
+    // `equal' tables).  Rather than GNU sxhash's depth cap — which is
+    // unsound here because our HashKey IS the bucket entry, not a
+    // collision-checked digest — track the containers on the current
+    // descent path and emit a back-edge marker keyed by pointer.
+    let ptr = match v {
+        Value::Cons(c) => Some(Rc::as_ptr(c) as usize),
+        Value::Vec(c) => Some(Rc::as_ptr(c) as usize),
+        Value::Record(c) => Some(Rc::as_ptr(c) as usize),
+        _ => None,
+    };
+    if let Some(p) = ptr {
+        if !ancestors.insert(p) {
+            // Already on the path: a cycle.  The pointer value keeps
+            // equal keys equal and makes unrelated structures' back-
+            // edges distinguishable (unlike a flat constant).
+            return HashKey::Ptr(p | (1usize << 63));
+        }
+    }
+    let out = match v {
         Value::Str(s) => HashKey::Str(s.borrow().clone()),
         // Enabled sympos are `equal' to their bare symbol — same key
         // as the plain symbol arm below.
@@ -161,23 +188,23 @@ fn equal_key(interp: &Interp, v: &Value) -> HashKey {
         Value::Cons(c) => {
             let b = c.borrow();
             HashKey::Cons(
-                Box::new(equal_key(interp, &b.car)),
-                Box::new(equal_key(interp, &b.cdr)),
+                Box::new(equal_key(interp, &b.car, ancestors)),
+                Box::new(equal_key(interp, &b.cdr, ancestors)),
             )
         }
-        Value::Vec(vec) => {
-            HashKey::Vec(vec.borrow().iter().map(|x| equal_key(interp, x)).collect())
-        }
+        Value::Vec(vec) => HashKey::Vec(
+            vec.borrow().iter().map(|x| equal_key(interp, x, ancestors)).collect(),
+        ),
         // `equal' compares records elementwise — hash contents too,
         // tagged so records never collide with plain vectors.
         Value::Record(r) => HashKey::Tagged(
             1,
-            r.borrow().iter().map(|x| equal_key(interp, x)).collect(),
+            r.borrow().iter().map(|x| equal_key(interp, x, ancestors)).collect(),
         ),
         Value::Lambda(l) => {
             if let Some(items) = &l.bc_items {
                 let mut keys = vec![HashKey::Int(l.env.is_none() as i128)];
-                keys.extend(items.borrow().iter().map(|x| equal_key(interp, x)));
+                keys.extend(items.borrow().iter().map(|x| equal_key(interp, x, ancestors)));
                 HashKey::Tagged(2, keys)
             } else {
                 // Interpreted lambdas are `equal' by structure — cover
@@ -196,17 +223,21 @@ fn equal_key(interp: &Interp, v: &Value) -> HashKey {
                             None => HashKey::Nil,
                         },
                         match &p.default {
-                            Some(d) => equal_key(interp, d),
+                            Some(d) => equal_key(interp, d, ancestors),
                             None => HashKey::Nil,
                         },
                     ])
                 }));
-                keys.extend(l.body.iter().map(|x| equal_key(interp, x)));
+                keys.extend(l.body.iter().map(|x| equal_key(interp, x, ancestors)));
                 HashKey::Tagged(3, keys)
             }
         }
         _ => eql_key(v),
+    };
+    if let Some(p) = ptr {
+        ancestors.remove(&p);
     }
+    out
 }
 
 fn f_make_hash_table(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { // (make-hash-table &rest KEYWORD-ARGS) — GNU validates every

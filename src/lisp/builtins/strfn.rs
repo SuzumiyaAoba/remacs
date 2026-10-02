@@ -2222,7 +2222,12 @@ fn format_impl_spans(
         };
         let piece = match letter {
             's' => {
-                let s = i.princ_to_string(&a);
+                // GNU copies string arguments verbatim — the `%s' path
+                // is NOT `princ' (which escapes eight-bit bytes).
+                let s = match &a {
+                    Value::Str(raw) => raw.borrow().clone(),
+                    _ => i.princ_to_string(&a),
+                };
                 // Precision truncates the printed argument.
                 match prec {
                     Some(n) => s.chars().take(n).collect(),

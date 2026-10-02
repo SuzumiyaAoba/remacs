@@ -255,11 +255,21 @@ fn bq_process(i: &mut Interp, s: &Value, level: i64, syms: &BqSyms) -> Result<Va
         }
         _ => {
             // Atom: `(null s)', `t' and non-symbols pass raw; other
-            // symbols get `(quote s)'.
+            // symbols get `(quote s)'.  Symbol-with-position objects
+            // (`symbols-with-pos-enabled' records and `symbol-with-pos'
+            // PVECs) satisfy `symbolp' in GNU — without the quote their
+            // bare return is a *variable reference*, and `listify's
+            // `eval' would signal `void-variable' (ds11: `` `(x (f))'
+            // inside a file read by `read-positioning-symbols').
             let body = match s {
                 Value::Nil => s.clone(),
                 Value::Sym(id) if *id == sym::T => s.clone(),
                 Value::Sym(_) => Value::list(vec![quote_sym(i), s.clone()]),
+                v if crate::lisp::builtins::misc::as_sympos(v).is_some()
+                    || crate::lisp::builtins::misc::sym_pos_parts(i, v).is_some() =>
+                {
+                    Value::list(vec![quote_sym(i), v.clone()])
+                }
                 _ => s.clone(),
             };
             Ok(Value::cons(Value::Int(0), body))
@@ -307,6 +317,9 @@ fn bq_listify(
         if !heads.is_empty() || !old_tail_live.is_nil() || !is_tag(&car(&item), 0) {
             heads.insert(0, cdr(&item));
         } else {
+            if std::env::var_os("REMACS_BQ_DBG").is_some() {
+                eprintln!("BQ listify eval: {}", i.prin1_to_string(&cdr(&item)));
+            }
             let evaled = i.eval(&cdr(&item))?;
             tail = Value::cons(evaled, tail);
         }
@@ -377,6 +390,9 @@ fn f_backquote_liststar_function(i: &mut Interp, a: crate::lisp::Argv) -> EvalRe
 /// Installed as `(macro . #<subr>)' so expansion never consults a
 /// user-voidable function cell.
 fn f_backquote_macro(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
+    if std::env::var_os("REMACS_BQ_DBG").is_some() {
+        eprintln!("BQ macro arg: {}", i.prin1_to_string(&a[0]));
+    }
     let syms = bq_syms(i);
     let pair = bq_process(i, &a[0], 0, &syms)?;
     Ok(cdr(&pair))

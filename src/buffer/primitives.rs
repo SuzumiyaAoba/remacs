@@ -8043,15 +8043,28 @@ pub(crate) fn search_common(
     backward: bool,
     posix: bool,
 ) -> EvalResult {
-    let bound = match a.get(1) {
-        Some(Value::Nil) | None => None,
-        Some(v) => Some(want_int(i, v)?),
-    };
-    let noerror = a.get(2).map(|v| v.truthy()).unwrap_or(false);
+    // GNU search_command order: CHECK_FIXNUM (count) comes BEFORE
+    // CHECK_FIXNUM_COERCE_MARKER (bound).  A marker count is rejected
+    // (fixnump); a detached marker bound signals "Marker does not point
+    // anywhere"; a non-integer bound is integer-or-marker-p.
     let count = match a.get(3) {
         Some(Value::Nil) | None => 1,
-        Some(v) => want_int(i, v)?,
+        Some(Value::Int(n)) => *n,
+        Some(v) => return Err(i.wrong_type_mut("fixnump", v)),
     };
+    let bound = match a.get(1) {
+        Some(Value::Nil) | None => None,
+        Some(Value::Int(n)) => Some(*n),
+        Some(Value::Marker(m)) => {
+            let mm = m.borrow();
+            if mm.buffer.is_none() {
+                return Err(i.error("Marker does not point anywhere"));
+            }
+            Some(mm.position as i128 + 1)
+        }
+        Some(v) => return Err(i.wrong_type_mut("integer-or-marker-p", v)),
+    };
+    let noerror = a.get(2).map(|v| v.truthy()).unwrap_or(false);
     // GNU: a negative COUNT reverses the search direction (and BOUND
     // then limits the flipped direction).
     let backward = backward != (count < 0);

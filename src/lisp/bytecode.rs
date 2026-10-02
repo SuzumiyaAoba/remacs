@@ -71,6 +71,24 @@ pub(crate) fn exec(i: &mut Interp, l: &Lambda, argv: crate::lisp::Argv) -> EvalR
     let argdesc = items.first().cloned().unwrap_or(Value::Nil);
     let bytestr = items.get(1).cloned().unwrap_or(Value::Nil);
     let consts = items.get(2).cloned().unwrap_or(Value::Nil);
+    // Depth guard for debugging runaway bytecode recursion
+    // (REMACS_BC_DEPTH=N dumps recent frames and aborts).
+    if let Some(d) = std::env::var("REMACS_BC_DEPTH")
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+    {
+        i.bc_depth += 1;
+        if i.bc_depth > d {
+            eprintln!("=== bc depth {} ===", i.bc_depth);
+            for (f, _) in i.lisp_stack.iter().rev().take(40).rev() {
+                eprintln!("  {}", i.princ_to_string(f));
+            }
+            std::process::exit(3);
+        }
+        let r = run(i, &argdesc, &bytestr, &consts, &argv);
+        i.bc_depth -= 1;
+        return r;
+    }
     run(i, &argdesc, &bytestr, &consts, &argv)
 }
 
@@ -94,7 +112,11 @@ fn run(
     // Arity check against the args-description.
     let (req, max, has_rest, dyn_names) = parse_argdesc(i, argdesc);
     if argv.len() < req || (!has_rest && argv.len() > max) {
-        return Err(i.wrong_number_of_args(argdesc, argv.len() as i128));
+        // GNU exec_byte_code signals ((MIN . NONREST) NARGS) where
+        // NONREST is the raw `desc>>8' max field — always an int
+        // (e.g. dumped `when' (cond &rest body) reports (1 . 1)).
+        let desc = Value::cons(Value::Int(req as i128), Value::Int(max as i128));
+        return Err(i.wrong_number_of_args(&desc, argv.len() as i128));
     }
     let specmark = i.specbind_depth();
     // Dynamic-style argdesc (a list of names): each parameter name is
@@ -424,7 +446,8 @@ fn step_op(
             r!(i.specbind(id, v));
             unwinds.push(Unwind::VarBind);
         }
-        // call: fn + N args on the stack.
+        // call: fn sits BELOW its N args on the stack (deepest); GNU
+        // `BcallN' DISCARDs N args then reads call_fun = TOP.
         32..=39 => {
             let n = operand!();
             let fpos = stack.len().saturating_sub(n + 1);
@@ -534,19 +557,26 @@ fn step_op(
             let v = pop!();
             push!(Value::from_bool(v.is_nil()));
         }
+        // Bcar/Bcdr: GNU's CAR()/CDR() macros - nil -> nil, cons ->
+        // car/cdr, anything else signals `wrong-type-argument listp'
+        // (car_error).  Only car-safe/cdr-safe (ops 162/163) swallow.
         64 => {
             let v = pop!();
-            push!(match &v {
+            let r = match &v {
                 Value::Cons(c) => c.borrow().car.clone(),
-                _ => Value::Nil,
-            });
+                Value::Nil => Value::Nil,
+                _ => fail!(i.wrong_type_mut("listp", &v)),
+            };
+            push!(r);
         }
         65 => {
             let v = pop!();
-            push!(match &v {
+            let r = match &v {
                 Value::Cons(c) => c.borrow().cdr.clone(),
-                _ => Value::Nil,
-            });
+                Value::Nil => Value::Nil,
+                _ => fail!(i.wrong_type_mut("listp", &v)),
+            };
+            push!(r);
         }
         66 => {
             let d = pop!();

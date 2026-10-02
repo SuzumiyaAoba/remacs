@@ -407,7 +407,6 @@ pub(crate) static SUBRS: &[Subr] = &[
     S!("emacs-version", 0, 0, f_emacs_version, "Version string."),
     S!("emacs-build-time", 0, 0, f_emacs_build_time, "Build time."),
     S!("set-message-functions", 1, 1, f_noop, ""),
-    S!("set-fill-prefix", 0, 0, f_noop, ""),
     S!(
         "internal-make-interpreted-closure-function",
         3,
@@ -505,6 +504,15 @@ i.explicit_eval_depth += 1;
 // (verified on 31.1 → nil).  The `lexical-binding' specbind GNU
 // installs lives solely around eval-driven macroexpansion
 // (`eval_macro_expand').
+if std::env::var("REMACS_TRACE_EVAL").is_ok() {
+    let s = i.prin1_to_string(&args[0]);
+    if s.contains("rect") {
+        eprintln!("[eval-rect] {} | depth={}", &s[..s.len().min(200)], i.lisp_stack.len());
+        for (f, _) in i.lisp_stack.iter().rev().take(30).rev() {
+            eprintln!("   {}", i.princ_to_string(f));
+        }
+    }
+}
 let saved = std::mem::replace(&mut i.lexenv, lexenv);
 let r = i.eval(&args[0]);
 i.lexenv = saved;
@@ -1447,7 +1455,12 @@ pub(crate) fn apply_format_simple(i: &Interp, fmt: &str, args: &[Value]) -> Stri
                 Some('s') => {
                     if let Some(a) = args.get(ai) {
                         ai += 1;
-                        out.push_str(&i.princ_to_string(a));
+                        // `%s' on a string copies it verbatim — the
+                        // escaped princ rendering is for non-strings.
+                        match a {
+                            Value::Str(raw) => out.push_str(&raw.borrow()),
+                            _ => out.push_str(&i.princ_to_string(a)),
+                        }
                     }
                 }
                 Some('S') => {
@@ -1588,15 +1601,15 @@ fn feature_present(i: &mut Interp, id: SymId) -> bool {
 
 /// GNU's LOADHIST_ATTACH: push `elt' onto `current-load-list' when a
 /// load is in progress (and the list is still list-shaped).
-fn loadhist_attach(i: &mut Interp, entry: Value) {
+pub(crate) fn loadhist_attach(i: &mut Interp, entry: Value) {
     let cll = i.intern("current-load-list");
-    let cur = match i.symbol_value(cll) {
-        Value::Sym(s) if s == crate::lisp::sym::UNBOUND => return,
-        v => v,
-    };
-    let mut items = cur.list_to_vec().unwrap_or_default();
-    items.insert(0, entry);
-    i.obarray.symbol_mut(cll).value = Value::list(items);
+    let cur = i.symbol_value(cll);
+    if matches!(cur, Value::Sym(s) if s == crate::lisp::sym::UNBOUND) {
+        return;
+    }
+    // GNU conses onto the raw value — a non-list `t' tail produces the
+    // same dotted chain Fcons would.
+    i.obarray.symbol_mut(cll).value = Value::cons(entry, cur);
 }
 
 fn f_featurep(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { let id = want_sym(i, &args[0])?;
@@ -1669,6 +1682,32 @@ if !i.features.contains(&id) {
 Ok(args[0].clone()) }
 
 fn f_require(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { let id = want_sym(i, &args[0])?;
+// GNU fns.c Frequire: when `load_in_progress' (or a `load' stream is
+// mid-read — current-load-list's last element is a file-name string),
+// attach `(require . FEATURE)' BEFORE the `memq feature features'
+// early-exit, deduplicated by `member' — so a `(require 'seq)' in a
+// loaded file lands in load-history even though seq is dumped.
+let require_id = i.intern("require");
+let cll = i.intern("current-load-list");
+let tem = Value::cons(i.sym(require_id), i.sym(id));
+let cll_val = i.symbol_value(cll);
+let lip = i.intern("load-in-progress");
+let from_file = i.symbol_value(lip).truthy()
+    || cll_val
+        .list_to_vec()
+        .ok()
+        .and_then(|v| v.last().cloned())
+        .map(|last| matches!(last, Value::Str(_)))
+        .unwrap_or(false);
+if from_file {
+    let dup = cll_val
+        .list_to_vec()
+        .map(|v| v.iter().any(|e| super::equal_values(i, e, &tem)))
+        .unwrap_or(false);
+    if !dup {
+        loadhist_attach(i, tem);
+    }
+}
 // GNU `require' is `(unless (memq feature features) (load ...))':
 // the check consults the Lisp `features' variable, so a dynamic
 // binding (the Gnus `dlet' cycle-breaker) counts as provided.
@@ -1681,10 +1720,6 @@ let name = match args.get(1) {
     _ => i.symbol_name(id),
 };
 let noerror = args.get(2).map(|v| v.truthy()).unwrap_or(false);
-// GNU records `(require . FEATURE)' on `current-load-list' before
-// the load runs.
-let require_id = i.intern("require");
-loadhist_attach(i, Value::cons(i.sym(require_id), i.sym(id)));
 match crate::lisp::load::load_library(i, &name) {
     Ok(crate::lisp::load::LoadOutcome::Loaded(found)) => {
         // GNU's `require': after loading FILE, FEATURE must be
@@ -2492,7 +2527,10 @@ for k in 2..5 {
     cell.push(args.get(k).cloned().unwrap_or(Value::Nil));
 }
 i.fset(fid, Value::list(cell));
-// GNU's `autoload' returns FUNCTION.
+// GNU `Fautoload' installs the cell through `defalias' (eval.c),
+// which LOADHIST_ATTACHes `(defun . SYM)'.
+let defun_id = i.intern("defun");
+loadhist_attach(i, Value::cons(i.sym(defun_id), args[0].clone()));
 Ok(args[0].clone()) }
 fn f_autoloadp(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult { let auto_id = i.intern("autoload");
 let macro_id = i.intern("macro");

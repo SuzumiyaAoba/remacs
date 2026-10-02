@@ -204,6 +204,21 @@ pub(crate) fn builtin_dirs() -> Vec<String> {
     v
 }
 
+/// True when PATH resolves inside one of `builtin_dirs()' — i.e. it is
+/// our bundled copy of a library, not a user's load-path override.
+/// Comparison is canonicalized: `builtin_dirs' entries may be relative
+/// ("lisp/...") or `..'-joined while hits come in absolute.
+fn path_in_builtin_dirs(path: &str) -> bool {
+    let Ok(p) = std::fs::canonicalize(path) else {
+        return false;
+    };
+    builtin_dirs().iter().any(|d| {
+        std::fs::canonicalize(d)
+            .map(|cd| p.starts_with(&cd))
+            .unwrap_or(false)
+    })
+}
+
 /// Built-in Lisp libraries embedded in the binary (the repo's lisp/ dir),
 /// so `load`/autoload works regardless of the process cwd.
 static EMBEDDED_LISP: &[(&str, &str)] = &[
@@ -2738,7 +2753,14 @@ fn eval_src_opts(
     // `dumped_doc' docstring semantics.
     let was_dumped = i.loading_dumped;
     i.loading_dumped |= dumped_like || file.starts_with("builtin:");
+    // A `;ELC\x1f\0\0\0' stream marks `#[...]' literals read from it
+    // as compiled functions (GNU's byte-code objects); combined with
+    // `loading_dumped' they present the nativecomp `subr' surface.
+    let is_elc = src.starts_with(";ELC\u{1f}\u{0}\u{0}\u{0}");
+    let was_elc = i.reading_elc;
+    i.reading_elc = was_elc || is_elc;
     let r = eval_str_for_load(i, file, &src);
+    i.reading_elc = was_elc;
     i.loading_dumped = was_dumped;
     // File-scoped `defvar' declarations live on the root frame; merge
     // them into `file_declared' before unwinding so `let's in later
@@ -2852,7 +2874,14 @@ fn eval_str_for_load(i: &mut Interp, file: &str, src: &str) -> EvalResult {
                         let bid = i.buffers.create(" *load-read*");
                         let mk = Rc::new(RefCell::new(crate::lisp::value::Marker {
                             buffer: Some(bid),
-                            position: 0,
+                            // GNU `readevalloop' shares one read
+                            // position between the default reader and
+                            // a `load-read-function' installed
+                            // mid-file (edebug installs `edebug--read'
+                            // at top level): start the marker at the
+                            // byte the plain reader already reached,
+                            // not 0 — else earlier forms re-evaluate.
+                            position: pos,
                             insertion_type: false,
                         }));
                         if let Some(b) = i.buffers.get(bid) {
@@ -3017,10 +3046,11 @@ fn eval_for_load(i: &mut Interp, form: Value) -> EvalResult {
         return Ok(last);
     }
     match i.eval(&expanded) {
-        Ok(v) => {
-            record_load_entry(i, &expanded);
-            Ok(v)
-        }
+        // GNU records definitions via LOADHIST_ATTACH inside the
+        // defining subrs (defalias/defvar/defvaralias/provide/require/
+        // internal--define-uninitialized-variable) — evaluation-time,
+        // so `byte-code'-wrapped defs in `.elc' files register too.
+        Ok(v) => Ok(v),
         Err(crate::lisp::Flow::Throw(tag, val)) => {
             let nc = i.intern("no-catch");
             Err(i.signal_data(nc, vec![tag, val]))
@@ -3266,29 +3296,109 @@ pub(crate) fn load_library_opts_msg(
     let result = match locate_full(i, name, nosuffix, mustsuffix) {
         Some(Found::Dir(d)) => Ok(LoadOutcome::Dir(d)),
         Some(Found::File(path)) => {
-            announce(i, &path);
-            if can_elc && path.ends_with(".eln") {
-                // Native-compiled unit: register via dlopen instead of
-                // evaluating source.
-                crate::lisp::builtins::comp::native_load_file(i, &path)
-                    .map(|_| LoadOutcome::Loaded(path))
+            // Bundled tree: an on-disk `.el' of a boot library stands in
+            // for the same file GNU dumped byte-compiled — the
+            // generated `lisp-elc/STEM.elc' blob is its compiled twin
+            // and wins per openp's .elc-before-.el order, unless
+            // `load-prefer-newer' treats it as stale.  `REMACS_NO_ELC'
+            // drops the twin back to source for debugging/parity
+            // AOT `lisp-elc/STEM.elc' twins exist for the dump-time
+            // libraries, but they still poison the post-boot runtime:
+            // e.g. `cl-macs.elc' leaves `cl-defstruct' macros in a
+            // state that makes `(load "nadvice")' signal
+            // `void-variable car' (the .el fallback also dies).  Keep
+            // the mechanism behind an opt-in escape hatch until the
+            // byte-code VM's load-order semantics fully match GNU's
+            // `Fload' — the .el interpreter path is the default.
+            let use_elc = can_elc
+                && i.boot_loading
+                && std::env::var_os("REMACS_USE_ELC").is_some()
+                && std::env::var_os("REMACS_NO_ELC").is_none()
+                && !nosuffix
+                && !mustsuffix
+                && path.ends_with(".el")
+                && !name.contains('/')
+                && !name.ends_with(".el")
+                && path_in_builtin_dirs(&path)
+                && embedded_elc(stem).is_some()
+                && !i.symbol_value(i.intern_soft("load-prefer-newer").unwrap_or(0)).truthy();
+            if use_elc {
+                let src = embedded_elc(stem).unwrap();
+                let virtual_path = format!("builtin:{}", stem);
+                announce(i, &virtual_path);
+                // `.elc' top-level forms eval dynamically in GNU
+                // (`loading_dumped' still marks defs compiled);
+                // lexical env lives inside each `#[...]' constants
+                // vector, not in the file's eval scope.  force_lex
+                // would make the file's bare `defvar's file-scoped
+                // lexicals that later varrefs can't see.
+                let r = eval_src_opts(i, &virtual_path, src, false, true)
+                    .map(|_| LoadOutcome::Loaded(virtual_path.clone()));
+                match r {
+                    Ok(o) => Ok(o),
+                    Err(f) => {
+                        // The AOT blob was compiled against GNU's full
+                        // boot order — calls to helpers our prelude
+                        // guards differently (cl-generic-define before
+                        // cl-generic loads, GNU-only subrs like
+                        // `easy-menu-do-define') signal during eval.
+                        // Fall back to the interpreted `.el' source,
+                        // which carries the prelude's compat shims.
+                        if std::env::var_os("REMACS_DEBUG_ELC").is_some() {
+                            eprintln!("[elc-fail] {stem}: {} | head={}",
+                                match &f {
+                                    crate::lisp::Flow::Signal(s, d, _) => format!("{} {}",
+                                        i.prin1_to_string(s), i.prin1_to_string(d)),
+                                    o => format!("{o:?}"),
+                                },
+                                i.princ_to_string(&i.cur_head_form)
+                                    .chars().take(160).collect::<String>());
+                        }
+                        announce(i, &path);
+                        eval_file_lex_dumped(i, &path, false, bundled)
+                            .map(|_| LoadOutcome::Loaded(path))
+                    }
+                }
             } else {
-                eval_file_lex_dumped(i, &path, false, bundled)
-                    .map(|_| LoadOutcome::Loaded(path))
+                announce(i, &path);
+                if can_elc && path.ends_with(".eln") {
+                    // Native-compiled unit: register via dlopen instead of
+                    // evaluating source.
+                    crate::lisp::builtins::comp::native_load_file(i, &path)
+                        .map(|_| LoadOutcome::Loaded(path))
+                } else {
+                    eval_file_lex_dumped(i, &path, false, bundled)
+                        .map(|_| LoadOutcome::Loaded(path))
+                }
             }
         }
         // Fall back to the embedded copy of a built-in library, so that
         // autoloads work even when the lisp/ dir isn't reachable by path.
-        // Like GNU's openp order (.eln → .elc → .el), a committed
-        // byte-compiled blob wins over the embedded source.
-        None => match embedded_elc(stem).filter(|_| can_elc) {
+        // A `lisp-elc' blob wins over embedded source during boot only
+        // when REMACS_USE_ELC opts in (see the Found::File arm above —
+        // the twins still poison post-boot evaluation of the .el
+        // fallback path); `REMACS_NO_ELC' disables it entirely.
+        None => match embedded_elc(stem).filter(|_| can_elc && i.boot_loading && std::env::var_os("REMACS_USE_ELC").is_some() && std::env::var_os("REMACS_NO_ELC").is_none()) {
             Some(src) => {
                 announce(i, name);
                 let virtual_path = format!("builtin:{}", stem);
-                // `eval_src_opts' forces lexical binding for .elc
-                // blobs and the `;ELC' magic skips the cookie check.
-                eval_src_opts(i, &virtual_path, src, true, true)
-                    .map(|_| LoadOutcome::Loaded(virtual_path))
+                // `.elc' forms eval dynamically in GNU — no force_lex.
+                match eval_src_opts(i, &virtual_path, src, false, true) {
+                    Ok(_) => Ok(LoadOutcome::Loaded(virtual_path)),
+                    Err(f) => {
+                        // Same fallback as the Found::File arm: an
+                        // AOT blob that hits a GNU-only call or
+                        // boot-order dependency retries as source.
+                        match embedded(name) {
+                            Some(src) => {
+                                announce(i, name);
+                                eval_src(i, &virtual_path, src, false)
+                                    .map(|_| LoadOutcome::Loaded(virtual_path))
+                            }
+                            None => Err(f),
+                        }
+                    }
+                }
             }
             None => match embedded(name) {
                 Some(src) => {

@@ -236,6 +236,7 @@ pub enum Arity {
 }
 
 /// A primitive function implemented in Rust.
+#[derive(Clone, Copy)]
 pub struct Subr {
     pub name: &'static str,
     pub arity: Arity,
@@ -415,6 +416,7 @@ pub const RAW_BYTE_BASE: u32 = 0xF_0A00;
 pub fn lisp_char(code: u32) -> Option<char> {
     match code {
         0x3FFF80..=0x3FFFFF => char::from_u32(EIGHT_BIT_BASE + (code & 0xFF)),
+        0xD800..=0xDFFF => char::from_u32(SURROGATE_BASE + (code - 0xD800)),
         _ => char::from_u32(code),
     }
 }
@@ -453,6 +455,46 @@ pub fn raw_byte_marker(c: char) -> Option<u8> {
     (RAW_BYTE_BASE..RAW_BYTE_BASE + 0x100)
         .contains(&u)
         .then(|| (u - RAW_BYTE_BASE) as u8)
+}
+
+/// Base for printer-sentinel chars: `print`/`prin1` emit these for
+/// unibyte byte-chars ≥0x80 so the *sink* can choose GNU's encoding —
+/// stdout writes the overlong pair, a string/buffer gets `\NNN' text,
+/// a function stream gets the eight-bit Lisp char code (0x3FFF80+b).
+/// Distinct from `eight_bit_byte' proxies, which `princ' sinks treat
+/// as the raw byte value.
+pub const PRINT_EIGHT_BIT_BASE: u32 = 0xF_0C00;
+
+/// Sentinel char for a printed eight-bit byte.
+pub fn print_eight_bit_char(b: u8) -> char {
+    char::from_u32(PRINT_EIGHT_BIT_BASE + b as u32).unwrap_or(' ')
+}
+
+/// If `c` is a printer-sentinel eight-bit char, return its byte.
+pub fn print_eight_bit_byte(c: char) -> Option<u8> {
+    let u = c as u32;
+    (PRINT_EIGHT_BIT_BASE..PRINT_EIGHT_BIT_BASE + 0x100)
+        .contains(&u)
+        .then(|| (u - PRINT_EIGHT_BIT_BASE) as u8)
+}
+
+/// Base for `write-char' sentinels: GNU's printchar(0x3FFF80+code)
+/// emits the eight-bit *character* — function streams get the code,
+/// text sinks store the char itself (not `\NNN' text), stdout writes
+/// the overlong pair.
+pub const WRITE_CHAR_BASE: u32 = 0xF_0D00;
+
+/// Sentinel standing for the eight-bit char of byte `b`.
+pub fn write_char_eight_bit(b: u8) -> char {
+    char::from_u32(WRITE_CHAR_BASE + b as u32).unwrap_or(' ')
+}
+
+/// If `c` is a `write-char' sentinel, return its byte.
+pub fn write_char_eight_bit_byte(c: char) -> Option<u8> {
+    let u = c as u32;
+    (WRITE_CHAR_BASE..WRITE_CHAR_BASE + 0x100)
+        .contains(&u)
+        .then(|| (u - WRITE_CHAR_BASE) as u8)
 }
 
 /// A high-mule sequence proxy: GNU codes 0x110000..=0x3FFF7F can't

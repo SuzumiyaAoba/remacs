@@ -255,6 +255,16 @@ pub struct Interp {
     /// `subrp'/`type-of' report GNU's nativecomp surface, exactly like
     /// the interpreted `compiled' lambdas they replace.
     pub reading_elc: bool,
+    /// True while `Interp::new' is loading the boot libraries — the
+    /// AOT `lisp-elc' twins apply only during this window (post-boot
+    /// `load'/'require' of the same names resolves to the `.el'
+    /// source, keeping user-visible `symbol-file'/`load-history'
+    /// semantics and avoiding compiled-twin staleness for files whose
+    /// compiled forms assume GNU-only machinery).
+    pub boot_loading: bool,
+    /// Nesting depth of `bytecode::exec' frames — only for the
+    /// REMACS_BC_DEPTH debug escape hatch.
+    pub bc_depth: usize,
     /// Number of in-flight expander calls running in a
     /// compiled-equivalent context (a `dumped'/bundled lambda or a
     /// bundled file load).  GNU byte-compiles these libraries, so their
@@ -678,7 +688,20 @@ fn boot_lib(i: &mut Interp, name: &str) {
         eprintln!("[boot] {name}: {}ms", t0.elapsed().as_millis());
     }
     if let Err(e) = &r {
-        eprintln!("[boot-err] {name}: {e:?}");
+        // Print symbol names, not SymIds, so boot failures are legible.
+        let msg = match e {
+            crate::lisp::Flow::Signal(s, data, _) => format!(
+                "{} {}",
+                i.prin1_to_string(s),
+                i.prin1_to_string(data)
+            ),
+            other => format!("{other:?}"),
+        };
+        eprintln!("[boot-err] {name}: {msg} | head={}",
+            i.princ_to_string(&i.cur_head_form)
+                .chars()
+                .take(200)
+                .collect::<String>());
     }
     let _ = r;
 }
@@ -901,6 +924,8 @@ impl Interp {
             loading_dumped: false,
             dumped_call_depth: 0,
             reading_elc: false,
+            boot_loading: true,
+            bc_depth: 0,
             macroexp_call_depth: 0,
             expand_unadvised_depth: 0,
             macro_cache: HashMap::default(),
@@ -1962,6 +1987,7 @@ impl Interp {
                 "display-buffer-mark-dedicated",
                 "easy-mmode--next",
                 "easy-mmode--prev",
+                "easy-mmode--globalized-predicate-p",
                 "easy-mmode-define-navigation",
                 "easy-mmode-pretty-mode-name",
                 "emacs-build-time",
@@ -2334,18 +2360,28 @@ impl Interp {
             // defaults to t, so `eval_str' installs a `(t)' root env
             // and it evals lexically like GNU's dump does.
             let t_prelude = std::time::Instant::now();
-            if let Err(f) = interp.eval_str(crate::lisp::prelude::PRELUDE) {
-                // An error aborts `eval_str' mid-file, silently dropping
-                // every definition after the failing form — surface it.
-                let detail = match &f {
-                    crate::lisp::Flow::Signal(sym, data, _) => format!(
-                        "signal {} {}",
-                        interp.print_to_string(sym),
-                        interp.print_to_string(data)
-                    ),
-                    _ => format!("{:?}", f),
-                };
-                eprintln!("[prelude] eval aborted: {}", detail);
+            // Definitions during the prelude attach to
+            // `current-load-list' (GNU's LOADHIST_ATTACH) — bind it so
+            // those pushes die with the unwind; the real history entry
+            // comes from `record_prelude_load_history' below.
+            {
+                let cll = interp.intern("current-load-list");
+                let mark = interp.specbind_depth();
+                let _ = interp.specbind(cll, Value::Nil);
+                if let Err(f) = interp.eval_str(crate::lisp::prelude::PRELUDE) {
+                    // An error aborts `eval_str' mid-file, silently dropping
+                    // every definition after the failing form — surface it.
+                    let detail = match &f {
+                        crate::lisp::Flow::Signal(sym, data, _) => format!(
+                            "signal {} {}",
+                            interp.print_to_string(sym),
+                            interp.print_to_string(data)
+                        ),
+                        _ => format!("{:?}", f),
+                    };
+                    eprintln!("[prelude] eval aborted: {}", detail);
+                }
+                let _ = interp.unbind_to(mark);
             }
             if std::env::var_os("REMACS_BOOT_PROF").is_some() {
                 eprintln!("[boot] prelude eval: {}ms", t_prelude.elapsed().as_millis());
@@ -3907,6 +3943,9 @@ explicitly overridden.
             }
         }
         interp.loading_dumped = false;
+        // Boot library loading is finished — `.elc' twins stop
+        // applying so `(require …)' later reads the real source.
+        interp.boot_loading = false;
         if std::env::var("REMACS_NO_PRELUDE").is_err() {
             // startup.el processes variables whose defcustom used
             // `custom-initialize-delay' via `custom-reevaluate-setting',
@@ -4180,6 +4219,108 @@ command-line arguments.\" \
                     interp.put_prop(sid, pk, old);
                 }
                 interp.obarray.symbol_mut(sid).function = Value::Sym(sym::UNBOUND);
+            }
+            // `(setf NAME)' accessor cells: GNU -Q interns exactly the
+            // eleven setters its dumped `cl-defstruct's emit as real
+            // functions (built-in-class, cl-derived-type-class) plus
+            // `(setf seq-elt)'; every other slot setter is a
+            // compiler-macro/`gv-setter' plumbing artifact, so the
+            // symbol is never interned.  Our interpreted prelude
+            // spells them out as `(fset (intern "(setf …)") …)'
+            // instead — void those cells to match.  Definitions stay
+            // callable through `remacs--dump-fn' (callable_function),
+            // which `dumped_runtime_helper' already claims for the
+            // "(setf " prefix.
+            const GNU_SETF_FNS: &[&str] = &[
+                "(setf built-in-class--docstring)",
+                "(setf built-in-class--index-table)",
+                "(setf built-in-class--name)",
+                "(setf built-in-class--parents)",
+                "(setf built-in-class--slots)",
+                "(setf cl-derived-type-class-docstring)",
+                "(setf cl-derived-type-class-index-table)",
+                "(setf cl-derived-type-class-name)",
+                "(setf cl-derived-type-class-parents)",
+                "(setf cl-derived-type-class-slots)",
+                "(setf seq-elt)",
+            ];
+            let setf_ids: Vec<SymId> = interp
+                .obarray
+                .all_ids()
+                .iter()
+                .copied()
+                .filter(|&sid| {
+                    let n = interp.obarray.name(sid);
+                    n.starts_with("(setf ") && !GNU_SETF_FNS.contains(&n)
+                })
+                .collect();
+            for sid in setf_ids {
+                let old = interp.obarray.symbol(sid).function.clone();
+                let is_autoload = matches!(
+                    &old,
+                    Value::Cons(c) if matches!(&c.borrow().car, Value::Sym(s) if *s == auto_id)
+                );
+                let have_stash = !matches!(
+                    interp.get_prop(sid, pk),
+                    v if v.is_nil() || matches!(v, Value::Sym(s) if s == sym::UNBOUND)
+                );
+                if !matches!(old, Value::Sym(s) if s == sym::UNBOUND)
+                    && !is_autoload
+                    && !have_stash
+                {
+                    interp.put_prop(sid, pk, old);
+                }
+                interp.obarray.symbol_mut(sid).function = Value::Sym(sym::UNBOUND);
+            }
+            // GNU -Q keeps two autoload cells that our dump fold can't
+            // reproduce in-place: map-ynp.el's `(autoload
+            // 'cl--map-keymap-recursively "cl-extra")' is a no-op at
+            // boot_lib time (rolled cl-loaddefs installs the cell
+            // first, so `autoload' early-outs on `fboundp' and the
+            // rollback restore then voids it), and cl-preloaded.el's
+            // `(autoload 'cl--defsubst-expand "cl-macs")' never runs
+            // at all (the feature is pre-registered, its file never
+            // loaded).  Reinstall both so `fboundp'/`symbol-function'
+            // match GNU.
+            for (sym_name, file) in [
+                ("cl--map-keymap-recursively", "cl-extra"),
+                ("cl--defsubst-expand", "cl-macs"),
+            ] {
+                let sid = interp.intern(sym_name);
+                if matches!(
+                    interp.obarray.symbol(sid).function,
+                    Value::Sym(s) if s == sym::UNBOUND
+                ) {
+                    interp.obarray.symbol_mut(sid).function =
+                        Value::list(vec![
+                            Value::Sym(auto_id),
+                            Value::string(file),
+                            Value::Nil,
+                            Value::Nil,
+                            Value::Nil,
+                        ]);
+                }
+            }
+            // `comp--#$': comp.el's `(defvar comp--#$ "#$")' reads in
+            // *source* form as `comp--' + `#$' (the load-file-name
+            // reader macro) — GNU's dump ran the .elc, where the symbol
+            // name survives verbatim, so -Q binds `comp--#$' to "#$"
+            // (special) and leaves `comp--' void.  Our interpreted
+            // subr-x boot instead binds `comp--' to the load path;
+            // repair the split here.
+            {
+                let comp_dash = interp.intern("comp--");
+                {
+                    let s = interp.obarray.symbol_mut(comp_dash);
+                    s.value = Value::Sym(sym::UNBOUND);
+                    s.special = false;
+                }
+                let comp_hash = interp.intern("comp--#$");
+                {
+                    let s = interp.obarray.symbol_mut(comp_hash);
+                    s.value = Value::string("#$");
+                    s.special = true;
+                }
             }
         }
         // GNU's pdumper discards whatever the loadup wrote into
@@ -5398,6 +5539,9 @@ command-line arguments.\" \
                         self.specbind.iter().filter(|s| s.sym == id).count(),
                         self.case_handlers.len(),
                     );
+                    for (f, a) in self.lisp_stack.iter().rev().take(25) {
+                        eprintln!("   bt {} nargs={}", self.prin1_to_string(f), a.len());
+                    }
                 }
                 return Err(self.signal_data(sym::VOID_VARIABLE, vec![Value::Sym(id)]));
             }
@@ -5429,7 +5573,7 @@ command-line arguments.\" \
         // or `if''s test is evaluated.  Circular spines stay legal:
         // GNU's FOR_EACH_TAIL halts on a repeat, so only a truly
         // non-cons tail is an error.
-        {
+        let spine_len = {
             // Raw-pointer tortoise/hare over the cdr chain: identical
             // semantics to the Value-clone walk it replaces (nil tail
             // ends the spine, a non-cons tail is `listp' error, a
@@ -5437,10 +5581,14 @@ command-line arguments.\" \
             let mut slow = &args as *const Value;
             let mut fast = &args as *const Value;
             let mut guard = true;
+            let mut spine_len: i128 = 0;
             loop {
                 let sv = unsafe { &*slow };
                 match sv {
-                    Value::Cons(c) => slow = unsafe { cdr_ptr(c) },
+                    Value::Cons(c) => {
+                        slow = unsafe { cdr_ptr(c) };
+                        spine_len += 1;
+                    }
                     Value::Nil => break,
                     other => return Err(self.wrong_type_mut("listp", other)),
                 }
@@ -5463,10 +5611,13 @@ command-line arguments.\" \
                 if cons_ptr(unsafe { &*slow }) == cons_ptr(unsafe { &*fast })
                     && matches!(unsafe { &*slow }, Value::Cons(_))
                 {
+                    // Circular spine: length is unusable.
+                    spine_len = -1;
                     break;
                 }
             }
-        }
+            spine_len
+        };
 
 
 
@@ -5481,7 +5632,10 @@ command-line arguments.\" \
                 // Fsetq needs pairs, ...): report `(SYM N)'.
                 if let Some(sf) = super::special::special_form(id) {
                     let min = super::special::special_form_min_args(id) as i128;
-                    let n = self.raw_list_length(&args)?;
+                    let n = match spine_len {
+                        n if n >= 0 => n,
+                        _ => self.raw_list_length(&args)?,
+                    };
                     if n < min {
                         return Err(self.wrong_number_of_args(&Value::Sym(id), n));
                     }
@@ -5552,7 +5706,7 @@ command-line arguments.\" \
                         .insert(key, (self.macro_gen, fun, expansion.clone(), form.clone()));
                     return self.eval(&expansion);
                 }
-                self.call_function(&fun, &args, Some(id))
+                self.call_function_len(&fun, &args, Some(id), spine_len)
             }
             Value::Cons(_) => {
                 // `((lambda (x) ...) a b)` — function position lambda is
@@ -5563,18 +5717,50 @@ command-line arguments.\" \
                 };
                 if self.sym_is(&b, sym::LAMBDA) {
                     let lambda = self.lambda_from_form(&head, None)?;
-                    let argv = self.eval_args(&args)?;
+                    let argv = self.eval_args_len(&args, spine_len)?;
                     return self.apply(&Value::Lambda(Rc::new(lambda)), argv);
                 }
                 // GNU uses the cons HEAD itself as the function object:
                 // `(lambda ...)'/`(closure ...)'/`(macro . f)' are
                 // callable, anything else signals invalid-function with
                 // the cons (e.g. (('q)) → invalid-function (quote q)).
-                self.call_function(&head, &args, None)
+                self.call_function_len(&head, &args, None, spine_len)
             }
             _ => {
                 let fun = self.eval(&head)?;
-                self.call_function(&fun, &args, None)
+                self.call_function_len(&fun, &args, None, spine_len)
+            }
+        }
+    }
+
+    /// Evaluate each element of a list form, using PRE_LEN when the
+    /// caller already counted the spine (eval_form's check walk).
+    pub fn eval_args_len(
+        &mut self,
+        args: &Value,
+        pre_len: i128,
+    ) -> Result<Argv, Flow> {
+        // Raw-pointer spine walk: GNU's `eval_sub' reads the cdr AFTER
+        // evaluating the car, so a `setcdr' by an argument is seen.
+        // Cells stay alive through `args' while the walk runs.
+        let cap = if pre_len >= 0 {
+            pre_len as usize
+        } else {
+            self.raw_list_length(args).unwrap_or(4) as usize
+        };
+        let mut out = Vec::with_capacity(cap);
+        let mut cur = args as *const Value;
+        loop {
+            match unsafe { &*cur } {
+                Value::Nil => return Ok(Argv::new(out)),
+                Value::Cons(c) => {
+                    let cell = RefCell::as_ptr(c);
+                    out.push(self.eval(unsafe { &(*cell).car })?);
+                    cur = unsafe { &(*cell).cdr };
+                }
+                _ => {
+                    return Err(self.error("Invalid function call form (dotted)"));
+                }
             }
         }
     }
@@ -5609,6 +5795,18 @@ command-line arguments.\" \
         args: &Value,
         sym_name: Option<SymId>,
     ) -> EvalResult {
+        self.call_function_len(fun, args, sym_name, -1)
+    }
+
+    /// `call_function` with a precomputed spine length (-1 = unknown).
+    /// eval_form passes the count its arg-check walk already computed.
+    fn call_function_len(
+        &mut self,
+        fun: &Value,
+        args: &Value,
+        sym_name: Option<SymId>,
+        spine_len: i128,
+    ) -> EvalResult {
         let fun = crate::lisp::builtins::misc::unpos(fun);
         match &fun {
             Value::Sym(id) => {
@@ -5626,7 +5824,11 @@ command-line arguments.\" \
                     // special form with unevaluated arguments.
                     if let Some(sf) = super::special::special_form(cur) {
                         let min = super::special::special_form_min_args(cur) as i128;
-                        let n = self.raw_list_length(&args)?;
+                        let n = if spine_len >= 0 {
+                            spine_len
+                        } else {
+                            self.raw_list_length(&args)?
+                        };
                         if n < min {
                             return Err(self.wrong_number_of_args(&Value::Sym(cur), n));
                         }
@@ -5665,15 +5867,19 @@ command-line arguments.\" \
                     // argument forms, so `(car BAD EXTRA)' reports
                     // `wrong-number-of-arguments' rather than whatever
                     // BAD would signal.
-                    let n = self.raw_list_length(args)?;
+                    let n = if spine_len >= 0 {
+                        spine_len
+                    } else {
+                        self.raw_list_length(args)?
+                    };
                     self.check_arity_subr_n(s, n, sym_name)?;
-                    let argv = self.eval_args(args)?;
+                    let argv = self.eval_args_len(args, spine_len)?;
                     // Record the frame like apply_resolved does — GNU's
                     // specpdl holds every call, so backtraces show the
                     // innermost subr (`car(5)') too.
                     let shown = sym_name.map(Value::Sym).unwrap_or_else(|| fun.clone());
-                    self.lisp_stack.push((shown, argv.clone().into()));
-                    let r = (s.func)(self, argv.into());
+                    self.lisp_stack.push((shown, argv.clone()));
+                    let r = (s.func)(self, argv);
                     self.lisp_stack.pop();
                     r
                 }
@@ -5689,13 +5895,17 @@ command-line arguments.\" \
                 // evaluated (interpreted lambdas do not).  `dumped_doc'
                 // marks our dumped-equivalent definitions.
                 if l.dumped_doc {
-                    let n = self.raw_list_length(args)?;
+                    let n = if spine_len >= 0 {
+                        spine_len
+                    } else {
+                        self.raw_list_length(args)?
+                    };
                     let shown = sym_name.map(Value::Sym).unwrap_or_else(|| fun.clone());
                     self.check_arity_lambda_n(l, n, &shown)?;
                 }
-                let argv = self.eval_args(args)?;
+                let argv = self.eval_args_len(args, spine_len)?;
                 let shown = sym_name.map(Value::Sym).unwrap_or_else(|| fun.clone());
-                self.apply_resolved(&fun, argv.into(), shown)
+                self.apply_resolved(&fun, argv, shown)
             }
             Value::Cons(_) => {
                 // A cons as function: `(lambda ...)` form or `(macro . f)`.
@@ -5714,11 +5924,11 @@ command-line arguments.\" \
                 }
                 if self.sym_is(&car, sym::LAMBDA) || self.sym_is(&car, sym::QUOTE_FUNCTION) {
                     let lambda = Rc::new(self.lambda_from_form(&fun, sym_name)?);
-                    let argv = self.eval_args(args)?;
+                    let argv = self.eval_args_len(args, spine_len)?;
                     let shown = sym_name
                         .map(Value::Sym)
                         .unwrap_or_else(|| Value::Lambda(lambda.clone()));
-                    return self.apply_resolved(&Value::Lambda(lambda), argv.into(), shown);
+                    return self.apply_resolved(&Value::Lambda(lambda), argv, shown);
                 }
                 let auto_id = self.intern("autoload");
                 if self.sym_is(&car, auto_id) {
@@ -6389,6 +6599,14 @@ command-line arguments.\" \
                     Value::Vec(vv) => vv.borrow().clone(),
                     _ => Vec::new(),
                 };
+                // Require a proper alist: every element a cons pair.
+                // `make-closure' products splice closure vars into
+                // consts[0..] — a dispatch list like (0 GEN ...) is a
+                // Cons but not an alist, and must fall through to the
+                // real byte-code interpreter.
+                if !elems.iter().all(|e| matches!(e, Value::Cons(_))) {
+                    return None;
+                }
                 for e in elems {
                     if let Value::Cons(p) = &e {
                         if crate::lisp::builtins::eq_values(&p.borrow().car, &v) {
@@ -8482,6 +8700,9 @@ command-line arguments.\" \
             // outside of `load' (Vload_file_name), so it is always
             // readable (e.g. by `custom-current-group').
             ("load-file-name", Value::Nil),
+            // GNU lread.c DEFVAR_LISPs `load-true-file-name' to nil —
+            // bound (readable) at -Q even outside `load'.
+            ("load-true-file-name", Value::Nil),
             (
                 "default-directory",
                 Value::string({
@@ -9661,6 +9882,83 @@ command-line arguments.\" \
         }
     }
 
+    /// Rewrite printer byte-chars for a TEXT sink (buffer, marker,
+    /// captured string): unibyte byte-chars print as `\NNN' octal
+    /// escapes, matching GNU's printchar into text accumulators
+    /// (whereas stdout gets overlong bytes and function streams get
+    /// char codes).
+    pub(crate) fn sink_text_mb(s: &str, mb: bool) -> std::borrow::Cow<'_, str> {
+        use crate::lisp::value::{
+            eight_bit_byte, print_eight_bit_byte, raw_byte_marker,
+            write_char_eight_bit_byte, EIGHT_BIT_BASE,
+        };
+        if !s.chars().any(|c| {
+            eight_bit_byte(c).is_some()
+                || print_eight_bit_byte(c).is_some()
+                || raw_byte_marker(c).is_some()
+                || write_char_eight_bit_byte(c).is_some()
+        }) {
+            return std::borrow::Cow::Borrowed(s);
+        }
+        let mut out = String::with_capacity(s.len() + 8);
+        for c in s.chars() {
+            // write-char's sentinel stores the eight-bit CHARACTER
+            // (GNU inserts the char, not `\NNN' text).
+            if let Some(b) = write_char_eight_bit_byte(c) {
+                if let Some(p) = char::from_u32(EIGHT_BIT_BASE + b as u32) {
+                    out.push(p);
+                }
+                continue;
+            }
+            // print/princ byte-chars: `\NNN' escapes into multibyte
+            // text, the eight-bit char itself into unibyte text.
+            let b = print_eight_bit_byte(c)
+                .or_else(|| eight_bit_byte(c))
+                .or_else(|| raw_byte_marker(c));
+            match (b, mb) {
+                (Some(b), true) => {
+                    let _ = std::fmt::Write::write_fmt(
+                        &mut out,
+                        format_args!("\\{:03o}", b),
+                    );
+                }
+                (Some(b), false) => {
+                    if let Some(p) = char::from_u32(EIGHT_BIT_BASE + b as u32) {
+                        out.push(p);
+                    }
+                }
+                (None, _) => out.push(c),
+            }
+        }
+        std::borrow::Cow::Owned(out)
+    }
+
+    /// `sink_text' for the always-multibyte accumulators
+    /// (capture-output / echo area / string results).
+    pub(crate) fn sink_text(s: &str) -> std::borrow::Cow<'_, str> {
+        Self::sink_text_mb(s, true)
+    }
+
+    /// GNU printchar's function-stream argument: princ of a unibyte
+    /// byte-char passes the raw byte, prin1 and write-char pass the
+    /// eight-bit char code (0x3FFF80+b); everything else is the char's
+    /// own code.
+    fn fn_stream_code(c: char) -> i128 {
+        use crate::lisp::value::{
+            eight_bit_byte, print_eight_bit_byte, raw_byte_marker,
+            write_char_eight_bit_byte,
+        };
+        if let Some(b) = write_char_eight_bit_byte(c)
+            .or_else(|| print_eight_bit_byte(c))
+        {
+            0x3FFF80 + b as i128
+        } else if let Some(b) = eight_bit_byte(c).or_else(|| raw_byte_marker(c)) {
+            b as i128
+        } else {
+            crate::lisp::value::lisp_char_code(c)
+        }
+    }
+
     /// Send printed output to STREAM (nil → `standard-output', t → the
     /// real output sink, buffer/marker → insert, function → call).
     pub fn write_output_to(&mut self, s: &str, stream: &Value) -> Result<(), Flow> {
@@ -9668,7 +9966,7 @@ command-line arguments.\" \
             self.out_last_char = Some(c);
         }
         if self.capture_output {
-            self.output_buffer.push_str(s);
+            self.output_buffer.push_str(&Self::sink_text(s));
             return Ok(());
         }
         // `standard-output` may name a buffer, a marker, a function, or t.
@@ -9676,58 +9974,64 @@ command-line arguments.\" \
             Value::Nil => self.symbol_value(self.standard_output_sym),
             v => v.clone(),
         };
-        match dest {
+        match &dest {
             Value::Buffer(b) => {
                 let bid = b.borrow().id;
+                let text = Self::sink_text(s);
                 crate::buffer::primitives::chg_with_buffer(self, bid, |i| {
-                    crate::buffer::primitives::chg_insert_pt(i, s, false)
+                    crate::buffer::primitives::chg_insert_pt(i, &text, false)
                 })?;
             }
             Value::Marker(m) => {
                 // GNU inserts before the marker, then advances it past
-                // the inserted text.
+                // the inserted text (escapes are inserted as text).
                 let mm = m.borrow();
                 if let Some(buf_id) = mm.buffer {
                     let pos = mm.position;
                     drop(mm);
+                    let text = Self::sink_text(s);
                     if self.buffers.get(buf_id).is_some() {
                         crate::buffer::primitives::chg_with_buffer(self, buf_id, |i| {
-                            crate::buffer::primitives::chg_insert(i, pos, s)
+                            crate::buffer::primitives::chg_insert(i, pos, &text)
                         })?;
                     }
-                    let newpos = pos + s.chars().count();
+                    let newpos = pos + text.chars().count();
                     m.borrow_mut().position = newpos;
                 }
             }
-            // GNU calls a function print stream once per character.
+            // GNU calls a function print stream once per character;
+            // unibyte byte-chars arrive as raw bytes (princ) or the
+            // eight-bit char code (prin1), per fn_stream_code.
             Value::Lambda(_) | Value::Subr(_) => {
                 for ch in s.chars() {
-                    self.apply(&dest, vec![Value::Int(ch as i128)])?;
+                    self.apply(&dest, vec![Value::Int(Self::fn_stream_code(ch))])?;
                 }
             }
-            Value::Cons(ref c)
+            Value::Cons(c)
                 if {
                     let cb = c.borrow();
                     matches!(&cb.car, Value::Sym(s) if *s == self.intern("lambda") || *s == self.intern("closure"))
                 } =>
             {
                 for ch in s.chars() {
-                    self.apply(&dest, vec![Value::Int(ch as i128)])?;
+                    self.apply(&dest, vec![Value::Int(Self::fn_stream_code(ch))])?;
                 }
             }
-            Value::Sym(sid) if sid != sym::T => {
+            Value::Sym(sid) if *sid != sym::T => {
                 for ch in s.chars() {
-                    self.apply(&dest, vec![Value::Int(ch as i128)])?;
+                    self.apply(&dest, vec![Value::Int(Self::fn_stream_code(ch))])?;
                 }
             }
             _ => {
                 // nil or t: the real print destination — echo area
                 // interactively, stdout in batch.
                 match &self.output {
-                    Some(OutputSink::Buffer(buf)) => buf.borrow_mut().push_str(s),
+                    Some(OutputSink::Buffer(buf)) => {
+                        buf.borrow_mut().push_str(&Self::sink_text(s))
+                    }
                     Some(OutputSink::Function(f)) => {
                         let f = f.clone();
-                        let arg = Value::string(s);
+                        let arg = Value::string(Self::sink_text(s).as_ref());
                         let _ = self.apply(&f, vec![arg]);
                     }
                     Some(OutputSink::Stdout) => {
@@ -9738,6 +10042,8 @@ command-line arguments.\" \
                         // their literal byte.
                         if s.chars().any(|c| {
                             crate::lisp::value::eight_bit_byte(c).is_some()
+                                || crate::lisp::value::write_char_eight_bit_byte(c).is_some()
+                                || crate::lisp::value::print_eight_bit_byte(c).is_some()
                                 || crate::lisp::value::raw_byte_marker(c).is_some()
                                 || crate::lisp::value::mule_seq_code(c).is_some()
                         }) {
@@ -9753,19 +10059,24 @@ command-line arguments.\" \
                                     bytes.extend_from_slice(
                                         &crate::lisp::value::mule_high_bytes(code),
                                     );
+                                } else if let Some(b) =
+                                    crate::lisp::value::eight_bit_byte(c)
+                                {
+                                    // princ content byte: raw byte.
+                                    bytes.push(b);
+                                } else if let Some(b) =
+                                    crate::lisp::value::print_eight_bit_byte(c)
+                                        .or_else(|| crate::lisp::value::write_char_eight_bit_byte(c))
+                                {
+                                    // prin1/write-char: GNU's overlong
+                                    // two-byte encoding.
+                                    bytes.push(0xC0 + ((b >> 6) & 1));
+                                    bytes.push(0x80 + (b & 0x3F));
                                 } else {
-                                    match crate::lisp::value::eight_bit_byte(c) {
-                                        Some(b) => {
-                                            bytes.push(0xC0 + ((b >> 6) & 1));
-                                            bytes.push(0x80 + (b & 0x3F));
-                                        }
-                                        None => {
-                                            let mut tmp = [0u8; 4];
-                                            bytes.extend_from_slice(
-                                                c.encode_utf8(&mut tmp).as_bytes(),
-                                            );
-                                        }
-                                    }
+                                    let mut tmp = [0u8; 4];
+                                    bytes.extend_from_slice(
+                                        c.encode_utf8(&mut tmp).as_bytes(),
+                                    );
                                 }
                             }
                             use std::io::Write;
@@ -9777,7 +10088,7 @@ command-line arguments.\" \
                         let _ = std::io::stdout().flush();
                         self.stderr_need_newline = true;
                     }
-                    None => self.echo_message.push_str(s),
+                    None => self.echo_message.push_str(&Self::sink_text(s)),
                 }
             }
         }

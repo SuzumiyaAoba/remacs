@@ -1,0 +1,15 @@
+cl--defmethod-doc-pos
+command-error-default-function
+dump-emacs-portable--sort-predicate
+eval-defun
+continue-process
+frame--z-order-lessp
+help--read-key-sequence
+help-command-error-confusable-suggestions
+help-for-help
+internal-face-x-get-resource
+isearch-abort
+isearch-backward
+isearch-backward-regexp
+isearch-cancel
+isearch-describe-key

@@ -82,7 +82,29 @@ with `wrong-type-argument stringp t'.
 `command_execute' resolves `(autoload ...)' function cells through
 `autoload_do_load' before interactive-spec lookup — GNU's
 call-interactively does the same via `indirect_function'; without it,
-M-x on autoloaded commands hit apply's bare-cons `symbolp' check.
+
+## AOT .elc twins (opt-in, `src/lisp/embedded_elc.rs` + `lisp-elc/`)
+
+`tools/gen_boot_elc.py` runs GNU Emacs's `byte-compile-file' over the
+boot libraries and emits `lisp-elc/<stem>.elc' blobs plus a Rust table
+`src/lisp/embedded_elc.rs'.  `load_library_opts_msg' prefers a blob
+over the `.el' source while `boot_loading' (Interp::new's boot-lib
+window) is set — post-boot `(require '…)'/`load' of the same names
+reads the real `.el' so `symbol-file'/`load-history' stay right.
+`eval_src_opts' detects the `;ELC\x1f\0\0\0' magic and sets
+`Interp::reading_elc' for that eval; `make_interpreted_closure' then
+marks `#[...]' objects `compiled' so `subrp'/`type-of'/`func-arity'
+report GNU's nativecomp surface.  Opt-in while QA's green via
+`REMACS_USE_ELC=1' — several twins (`cl-macs' in particular) still
+poison later `.el' loads: `(load "nadvice")' signals
+`void-variable car' after `cl-macs.elc' runs because its compiled
+macro definitions leave shared macroexpand state divergent from the
+source path.  `REMACS_NO_ELC' bypasses twins entirely (parity
+debugging); `SKIP' in tools/gen_boot_elc.py lists files whose
+compiled form currently fails QA (`nadvice', `tex-mode', `cl-lib',
+`cl-generic', `loaddefs' — plus `pcase'/`seq'/`subr-x' which need
+the prelude's `fboundp'-guarded fallbacks).
+
 
 
 ## Known runtime gaps (not port defects)

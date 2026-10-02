@@ -1085,7 +1085,10 @@ fn bare_defvar_in_loaded_file_marks_special_for_later_lets() {
     // libraries).  Our `file_declared' set mirrors that: after a file
     // with a top-level bare defvar finishes loading, subsequent lets
     // on the name specbind so defuns see the value.
-    let path = std::env::temp_dir().join("remacs-scoped-defvar-test.el");
+    let path = std::env::temp_dir().join(format!(
+        "remacs-scoped-defvar-test-{}.el",
+        std::process::id()
+    ));
     std::fs::write(
         &path,
         ";;; -*- lexical-binding: t -*-\n(defvar remacs--scoped-dv)\n\
